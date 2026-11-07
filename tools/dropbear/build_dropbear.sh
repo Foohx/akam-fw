@@ -10,7 +10,9 @@
 #
 # DROPBEAR_PROGRAMS overrides the programs linked into the multi-call binary
 # (default "dropbear dropbearkey"; scp is deliberately not included).
-# Dropbear sources are NOT patched; options live in tools/dropbear/localoptions.h.
+# Options live in tools/dropbear/localoptions.h. The only source change is the
+# set of patches in tools/dropbear/patches/ (applied in name order, each one
+# must apply cleanly): see the header of each patch for why it exists.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,6 +41,23 @@ rm -rf "$work"
 mkdir -p "$src" "$wrap" "$dist"
 tar -xjf "$archive" -C "$src" --strip-components=1
 cp "$here/localoptions.h" "$src/localoptions.h"
+
+# Pinned patches (strict: a patch that does not apply cleanly aborts the build).
+command -v patch >/dev/null || die "the 'patch' tool is required"
+shopt -s nullglob
+patches=("$here"/patches/*.patch)
+shopt -u nullglob
+for p in "${patches[@]}"; do
+    (cd "$src" && patch -p1 --forward --fuzz=0 --no-backup-if-mismatch -s <"$p") \
+        || die "patch $(basename "$p") does not apply to Dropbear $DROPBEAR_VERSION"
+    log "applied $(basename "$p")"
+done
+# The camera must not depend on clock_gettime(): the tick based clock has to be in.
+grep -q camyn_ticks_now "$src/src/dbutil.c" || die "monotonic clock patch missing from dbutil.c"
+# No raw time syscall with a libc time struct may exist in the sources.
+if grep -nE 'syscall *\( *SYS_(clock_gettime|gettimeofday|time)' "$src"/src/*.c; then
+    die "raw time syscall left in the Dropbear sources (see above)"
+fi
 
 # autoconf wants plain program names, so wrap "zig cc/ar/ranlib" in tiny scripts.
 # The single quotes are intentional: "$@" must be expanded by the wrapper.
@@ -107,6 +126,9 @@ cp "$src/LICENSE" "$dist/LICENSE.dropbear"
     _cf="${cflags//$src/<dropbear-src>}"
     echo "cflags=${_cf//$root/<camyn-root>}"
     echo "localoptions_sha256=$(sha256sum "$here/localoptions.h" | cut -d' ' -f1)"
+    for p in "${patches[@]}"; do
+        echo "patch=$(basename "$p") sha256=$(sha256sum "$p" | cut -d' ' -f1)"
+    done
     echo "size_unstripped=$size_before"
     echo "size_stripped=$size_after"
     echo "sha256_unstripped=$sha_unstripped"
