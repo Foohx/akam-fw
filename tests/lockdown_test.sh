@@ -67,7 +67,7 @@ new_tree() { # new_tree <name> <fixture-dir>
 }
 
 echo "== P1. patch applies to fixture and variants"
-for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fake_variants/c:4"; do
+for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fake_variants/c:4" "app_fake_variants/d:2"; do
     name=${spec%%:*}
     want=${spec##*:}
     tag=$(echo "$name" | tr / _)
@@ -89,6 +89,12 @@ for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fa
 done
 check "variant c: comment line untouched" grep -q '^# telnetd is started below' "$WORK/app_fake_variants_c/sbin/service.sh"
 check "variant b: one-liner if body still valid" grep -q ': # CAMYN-DISABLED:.*bftpd' "$WORK/app_fake_variants_b/sbin/service.sh"
+
+check "variant d: assignment line untouched" grep -q '^AP_MODE_FILE=_ht_ap_mode.conf$' "$WORK/app_fake_variants_d/sbin/service.sh"
+check "variant d: dd of the AP mode file guarded" grep -q '^	\[ -f /mnt/CAMYN_MAINTENANCE \] && dd if=' "$WORK/app_fake_variants_d/sbin/service.sh"
+mkdir -p "$WORK/vd"
+cp -a "$FIXTURES/app_fake_variants/d/." "$WORK/vd/"
+check "variant d: NOTE about commented-only daemons" bash -c "CAMYN_PATCH_REPORT='$WORK/vd.diff' '$PATCH' '$WORK/vd' 2>&1 | grep -q 'commented mention'"
 
 echo "== P2. patched script behaves: nothing starts without the flag"
 FAKE=$WORK/behav

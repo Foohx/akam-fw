@@ -71,12 +71,16 @@ function bad(msg) {
 }
 BEGIN {
     dre = "(^|[^A-Za-z0-9_])(utelnetd|telnetd|bftpd|vsftpd|ftpd)([^A-Za-z0-9_-]|$)"
-    hre = "(_ht_ap_mode\\.conf|hack\\.sh|/mnt/[A-Za-z0-9_./-]*hostapd|/mnt/telnet\\.sh)"
+    hre = "(_ht_ap_mode\\.conf|hack\\.sh|/mnt/[A-Za-z0-9_./-]*hostapd|/mnt/telnet\\.sh|/mnt/\\$\\{?AP_MODE_FILE)"
     guard = "[ -f " flag " ]"
 }
 {
     line = $0
-    if (line ~ /^[ \t]*#/ || line ~ /^[ \t]*$/) { print line; next }
+    if (line ~ /^[ \t]*#/) { if (line ~ dre) dcomm++; print line; next }
+    if (line ~ /^[ \t]*$/) { print line; next }
+    # Bare variable assignment (AP_MODE_FILE=...): only names the file, runs nothing.
+    # (A daemon path in a variable, e.g. X=/usr/sbin/telnetd, is still handled below.)
+    if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=[^ \t;&|]*[ \t]*$/ && line !~ dre) { print line; next }
     if (index(line, "CAMYN-DISABLED:") > 0) { ddone++; print line; next }
     if (index(line, "CAMYN_MAINTENANCE") > 0 || index(line, flag) > 0) { hdone++; print line; next }
     if (line ~ dre) {
@@ -111,14 +115,19 @@ BEGIN {
     print line
 }
 END {
-    printf "%d %d %d %d %d\n", dnew + 0, hnew + 0, ddone + 0, hdone + 0, failed + 0 > counts
+    printf "%d %d %d %d %d %d\n", dnew + 0, hnew + 0, ddone + 0, hdone + 0, failed + 0, dcomm + 0 > counts
 }
 ' "$SVC" >"$WORK/new" || die "awk failed"
 
-read -r DNEW HNEW DDONE HDONE FAILED <"$WORK/counts" || die "no counts from awk"
+read -r DNEW HNEW DDONE HDONE FAILED DCOMM <"$WORK/counts" || die "no counts from awk"
 [ "$FAILED" -eq 0 ] || die "unsupported service.sh layout, nothing written; review by hand" 2
 
-if [ $((DNEW + DDONE)) -eq 0 ]; then
+# No active daemon line. If the stock script only carries COMMENTED launch lines
+# (vendor already disabled them; real LSC 2026 firmware), there is nothing to
+# disable: that is not an error as long as the SD hook was found.
+if [ $((DNEW + DDONE)) -eq 0 ] && [ "$DCOMM" -gt 0 ] && [ $((HNEW + HDONE)) -gt 0 ]; then
+    echo "patch_service_sh: NOTE: no active telnet/ftp launch in $SVC ($DCOMM commented mention(s) only); patching the SD hook only" >&2
+elif [ $((DNEW + DDONE)) -eq 0 ]; then
     {
         echo "patch_service_sh: WARNING: no telnet/ftp launch line found in $SVC"
         echo "    The image would NOT be locked down by this patch. File left untouched."
