@@ -20,7 +20,9 @@ _cfg_under_usr() {
 }
 
 # Absolute, physical path (symlinks resolved, up to 16 hops, using only
-# cd/pwd -P and readlink when present) so /mnt/x -> /usr/... cannot slip through.
+# shell builtins plus readlink when present) so /mnt/x -> /usr/... cannot slip
+# through. No dirname/basename: the bare UART init=/bin/sh rootfs has neither
+# (nor readlink, nor cut, wc, md5sum...): they live in the APP partition.
 _cfg_abspath() {
     _f=$1
     _h=0
@@ -29,14 +31,16 @@ _cfg_abspath() {
         _t=$(readlink "$_f" 2>/dev/null) || break
         case "$_t" in
             /*) _f=$_t ;;
-            *) _f=$(dirname "$_f")/$_t ;;
+            */*) _f=${_f%/*}/$_t ;;
+            *) case "$_f" in */*) _f=${_f%/*}/$_t ;; *) _f=$_t ;; esac ;;
         esac
     done
     case "$_f" in
-        */*) _d=$(cd "$(dirname "$_f")" 2>/dev/null && pwd -P) || _d=$(pwd -P) ;;
-        *) _d=$(pwd -P) ;;
+        */*) _dir=${_f%/*}; [ -n "$_dir" ] || _dir=/ ;;
+        *) _dir=. ;;
     esac
-    printf '%s/%s\n' "$_d" "$(basename "$_f")"
+    _d=$(cd "$_dir" 2>/dev/null && pwd -P) || _d=$(pwd -P)
+    printf '%s/%s\n' "$_d" "${_f##*/}"
 }
 
 # returns 0 if a dropbear process is among the ancestors of this shell

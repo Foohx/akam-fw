@@ -29,7 +29,8 @@
 # Permissions: Dropbear refuses authorized_keys if any path component is
 # writable by group/others, so the directory is 0700, the file 0600, and a
 # umask of 077 is used for every write. Modes of /etc/config, /etc and / are
-# logged for diagnosis; they are not changed.
+# logged for diagnosis; they are not changed (the stock / and /etc are 0775 and
+# read-only: see prepare_home, which moves root's HOME instead).
 
 CAMYN_ROOT=${CAMYN_ROOT:-}
 CONFIG_DIR=${CAMYN_CONFIG_DIR:-$CAMYN_ROOT/etc/config}
@@ -210,6 +211,60 @@ fix_shells() {
     return 0
 }
 
+# Dropbear walks from the authorized_keys directory up to root's HOME (or "/")
+# and ignores the key file if ANY directory on the way is writable by group or
+# others. On the real camera "/" and /etc come from the read-only ROOTFS
+# squashfs where they are mode 0775 (observed on the extracted stock tree), and
+# that cannot be changed at runtime: every key login would be refused. The walk
+# stops at root's HOME, so make HOME the key directory itself: a private 0700
+# directory on tmpfs holding a copy of authorized_keys, plus a private copy of
+# passwd (bind-mounted over /etc/passwd; the real file is untouched) whose root
+# entry has that HOME. If /etc/passwd has no root entry at all (dropbear would
+# reject every login as "nonexistent user") the private copy gets one.
+# Sets _keydir (the directory for -D): the tmpfs HOME when the bind mount took
+# effect, else the unchanged persistent directory. Never fatal.
+prepare_home() {
+    _keydir=$1
+    _home=$TMP_DIR/camyn_home
+    _pw=$CAMYN_ROOT/etc/passwd
+    _pwd=$TMP_DIR/camyn
+    _pwn=$_pwd/passwd
+    mkdir -p "$_home" "$_pwd" 2>/dev/null || return 0
+    chmod 700 "$_home" 2>/dev/null
+    chmod 755 "$_pwd" 2>/dev/null
+    if ! grep -q "^root:[^:]*:[^:]*:[^:]*:[^:]*:$_home:" "$_pw" 2>/dev/null; then
+        [ -e "$_pw" ] || : >"$_pw" 2>/dev/null
+        if grep -q '^root:' "$_pw" 2>/dev/null; then
+            sed "s|^\\(root:[^:]*:[^:]*:[^:]*:[^:]*:\\)[^:]*:|\\1$_home:|" "$_pw" >"$_pwn" 2>/dev/null
+        else
+            { cat "$_pw" 2>/dev/null; echo "root:x:0:0:root:$_home:/bin/sh"; } >"$_pwn" 2>/dev/null
+        fi
+        chmod 644 "$_pwn" 2>/dev/null
+        if [ -s "$_pwn" ] && mount -o bind "$_pwn" "$_pw" 2>/dev/null &&
+            grep -q "^root:[^:]*:[^:]*:[^:]*:[^:]*:$_home:" "$_pw" 2>/dev/null; then
+            log "root HOME is now $_home (private passwd bind-mounted over $_pw)"
+        else
+            log "could not set root HOME to $_home, keeping $_keydir (login may be refused if / or /etc is group-writable)"
+            return 0
+        fi
+    fi
+    if [ -s "$AUTHKEYS" ]; then
+        if cp "$AUTHKEYS" "$_home/.authorized_keys.new" 2>/dev/null &&
+            chmod 600 "$_home/.authorized_keys.new" &&
+            mv -f "$_home/.authorized_keys.new" "$_home/authorized_keys"; then
+            chown 0:0 "$_home" "$_home/authorized_keys" 2>/dev/null
+            _keydir=$_home
+        else
+            log "could not copy authorized_keys to $_home, keeping $_keydir"
+            rm -f "$_home/.authorized_keys.new"
+        fi
+    else
+        rm -f "$_home/authorized_keys"
+        _keydir=$_home
+    fi
+    return 0
+}
+
 do_start() {
     umask 077
     mkdir -p "$TMP_DIR" 2>/dev/null
@@ -296,9 +351,10 @@ do_start() {
     fi
 
     fix_shells
+    prepare_home "$_dir"
 
     # Dropbear daemonizes itself (no -F); -E sends its log to stderr -> $LOG.
-    "$BIN_DIR/dropbear" -r "$_hostkey" -D "$_dir" -p "$SSH_PORT" \
+    "$BIN_DIR/dropbear" -r "$_hostkey" -D "$_keydir" -p "$SSH_PORT" \
         -P "$PIDFILE" -T 3 -E >/dev/null 2>>"$LOG" </dev/null
     log "dropbear launcher returned status $? (daemon detached)"
     return 0
