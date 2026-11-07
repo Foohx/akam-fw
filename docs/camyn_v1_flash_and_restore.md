@@ -1,7 +1,7 @@
 # Camyn V1: Flashing and Restoring
 
 > **RISK.** Writing the SPI NOR can brick the camera. Restoring is **not guaranteed** to work (section
-> 6). Do not start without a verified 8-partition backup ([backup guide](camyn_v1_backup.md)) and a
+> 5). Do not start without a verified 8-partition backup ([backup guide](camyn_v1_backup.md)) and a
 > UART connection ([hardware_and_uart.md](hardware_and_uart.md)).
 >
 > Status: nothing in this document has been run on a camera by Camyn. The flashing tool and scripts
