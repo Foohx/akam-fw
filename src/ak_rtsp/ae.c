@@ -82,7 +82,7 @@ void ae_report_stats(int lum, uint32_t hw_exp, uint32_t hw_sgain, uint32_t hw_is
  * AE sliders, baked in as the new compile-time defaults for this deployment
  * (previously stable_range=hold_range=speed=10, exp_max=AE_EXP_MAX/32767). */
 static ae_tuning_t g_tuning = { .stable_range = 4, .hold_range = 4, .speed = 7,
-                                 .exp_max = 1039, .enabled = 1 };
+                                 .exp_max = 2, .enabled = 1 };
 
 void ae_get_tuning(ae_tuning_t *out) { *out = g_tuning; }
 
