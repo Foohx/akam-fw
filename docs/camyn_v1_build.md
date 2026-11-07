@@ -60,10 +60,9 @@ bash tools/dropbear/build_dropbear.sh
 ```
 
 Output (git-ignored): `dist/dropbear/dropbearmulti`, `dist/dropbear/BUILDINFO.txt`,
-`dist/dropbear/LICENSE.dropbear`. The multi-call binary contains `dropbear` and `dropbearkey`; `scp` is
-being added to the image (parallel change, symlink to `dropbearmulti`; check `build_report.txt` and
-`dist/dropbear/BUILDINFO.txt` of your build for the actual program list; file transfer: see the
-[SSH guide](camyn_v1_ssh_and_lockdown.md#5-file-transfer-scp)). Options
+`dist/dropbear/LICENSE.dropbear`. The multi-call binary contains `dropbear` and `dropbearkey` only;
+`scp` and SFTP are intentionally absent (see the
+[SSH guide](camyn_v1_ssh_and_lockdown.md#5-file-transfer-without-scp)). Options
 are fixed in `tools/dropbear/localoptions.h` (no password authentication, no forwarding, ed25519 only).
 Set `DROPBEAR_PROGRAMS` to change the program list. If you skip this step, `build_firmware.sh` runs it
 for you when `dist/dropbear/dropbearmulti` is missing.
@@ -150,7 +149,7 @@ The APP partition is 5 242 880 bytes. The check runs on the SquashFS **before** 
 The padded image is then checked to be exactly 5 242 880 bytes, to start with the SquashFS bytes and to
 contain nothing but `0xFF` afterwards. The free space on a real APP is **unknown until you build from
 your dump** (the stock `anyka_ipc`, about 5.9 MB uncompressed, is removed; `ak_rtsp` stripped is about
-129 KB and `dropbearmulti` about 213 KB without `scp`, about 250 KB with it, see the [resource report](camyn_v1_test_plan.md#4-resource-report)).
+129 KB and `dropbearmulti` about 213 KB, see the [resource report](camyn_v1_test_plan.md#4-resource-report)).
 
 ### Outputs in `FW_DIR`
 

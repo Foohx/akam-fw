@@ -124,25 +124,20 @@ Dropbear listens on all interfaces, port 22, public-key only (no password prompt
 binary). There is no rate limit beyond `-T 3` (three authentication attempts per connection). Keep
 the camera on a trusted segment (see [network hardening](camyn_v1_install.md#5-network-hardening)).
 
-## 5. File transfer (scp)
+## 5. File transfer without `scp`
 
-Dropbear's `scp` is shipped in the image (symlink to `dropbearmulti`; not yet verified on a camera).
-No SFTP server is shipped, and OpenSSH 9 and later `scp` speaks SFTP by default, so the **legacy
-protocol flag `-O` is required**:
+`scp` and SFTP are **intentionally absent**: the image ships neither an `scp` binary nor an SFTP
+server, and OpenSSH 9 and later `scp` speaks SFTP by default. Use `ssh` with `cat`:
 
 ```bash
 # PC -> camera (RAM-backed /tmp; the camera has 64 MiB of RAM, keep files small)
-scp -O -i ~/.ssh/camyn file root@<camera-ip>:/tmp/
+ssh -i ~/.ssh/camyn root@<camera-ip> 'cat > /tmp/f && chmod +x /tmp/f' < f
 
 # camera -> PC
-scp -O -i ~/.ssh/camyn root@<camera-ip>:/tmp/camyn_ssh.log .
-```
+ssh -i ~/.ssh/camyn root@<camera-ip> 'cat /tmp/f' > f
 
-Fallback that needs nothing but a shell:
-
-```bash
-ssh -i ~/.ssh/camyn root@<camera-ip> 'cat > /tmp/file && chmod +x /tmp/file' < file
-ssh -i ~/.ssh/camyn root@<camera-ip> 'cat /tmp/camyn_ssh.log' > camyn_ssh.log
+# a directory, PC -> camera (needs gzip support in the camera's BusyBox tar: a hypothesis to verify)
+tar czf - dir | ssh -i ~/.ssh/camyn root@<camera-ip> 'tar xzf - -C /tmp'
 ```
 
 `make -C src/ak_rtsp upload CAMERA_IP=<camera-ip>` uses the `cat` technique, with plain
