@@ -21,11 +21,14 @@ OUT="ak_rtsp_firmware_${TS}.squashfs"
 
 SIZE=$(stat -c%s "$SRC")
 PAD=$((TARGET - SIZE))
+if [ "$PAD" -lt 0 ]; then
+    echo "FATAL: $SRC is $SIZE bytes, larger than the $TARGET byte partition" >&2
+    exit 1
+fi
 echo "orig size=$SIZE pad=$PAD target=$TARGET"
 
-head -c "$PAD" /dev/zero | tr '\0' '\377' > pad.bin
-cat "$SRC" pad.bin > "$OUT"
-rm -f pad.bin
+# No temporary pad file: squashfs, then PAD bytes of 0xFF (erased-flash value).
+{ cat "$SRC"; head -c "$PAD" /dev/zero | tr '\0' '\377'; } > "$OUT"
 
 ls -la "$OUT"
 echo "--- tail bytes ---"

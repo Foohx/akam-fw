@@ -141,6 +141,26 @@ wait_config_writable() {
     return 1
 }
 
+# Dropbear (musl getusershell) refuses a login when /etc/shells EXISTS and does
+# not list the user's shell. If so, bind-mount a private list that has /bin/sh
+# over it (the real file is untouched). Never fatal; no file = musl default
+# list, which already contains /bin/sh.
+fix_shells() {
+    _shells=$CAMYN_ROOT/etc/shells
+    [ -f "$_shells" ] || return 0
+    grep -qx /bin/sh "$_shells" 2>/dev/null && return 0
+    _sd=$TMP_DIR/camyn
+    _sf=$_sd/shells
+    if mkdir -p "$_sd" 2>/dev/null && chmod 755 "$_sd" 2>/dev/null &&
+        echo /bin/sh >"$_sf" 2>/dev/null && chmod 644 "$_sf" 2>/dev/null &&
+        mount --bind "$_sf" "$_shells" 2>/dev/null; then
+        log "/etc/shells lacked /bin/sh, bind-mounted $_sf over it"
+    else
+        log "/etc/shells lacks /bin/sh and the bind mount failed (ignored); root login may be refused"
+    fi
+    return 0
+}
+
 do_start() {
     umask 077
     mkdir -p "$TMP_DIR" 2>/dev/null
@@ -223,6 +243,8 @@ do_start() {
             log "WARNING: no authorized key, nobody can log in (put authorized_keys on the SD card)"
         fi
     fi
+
+    fix_shells
 
     # Dropbear daemonizes itself (no -F); -E sends its log to stderr -> $LOG.
     "$BIN_DIR/dropbear" -r "$_hostkey" -D "$_dir" -p "$SSH_PORT" \
