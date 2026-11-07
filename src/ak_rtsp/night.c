@@ -45,8 +45,8 @@
 #define NIGHT_VTS        3426
 
 /* hw_exp proxy thresholds — NEEDS CALIBRATION (see header comment above). */
-#define NIGHT_TRIGGER_HW_EXP   1800  /* day, hw_exp above this -> switch to night (approaching day VTS ceiling) */
-#define DAY_TRIGGER_HW_EXP      800  /* night, hw_exp below this -> switch to day */
+#define NIGHT_TRIGGER_HW_EXP   3000  /* day, hw_exp above this -> switch to night (approaching day VTS ceiling) */
+#define DAY_TRIGGER_HW_EXP     1200  /* night, hw_exp below this -> switch to day */
 
 #define CONFIRM_SAMPLES    10        /* matches stock's ps_soft_day/night_check_frame_num */
 #define LOCK_MS         60000        /* matches stock's ps_soft_auto_lock_time_ms */
