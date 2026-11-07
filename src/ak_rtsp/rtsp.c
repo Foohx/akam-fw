@@ -32,6 +32,10 @@ typedef struct {
 
     uint64_t session_id;
     bool is_playing;
+    /* Set when a write to an RTSP/TCP client failed (peer gone or stalled
+     * past SO_SNDTIMEO): the interleaved stream is no longer valid, so the
+     * client loop drops the connection instead of blocking on it again. */
+    bool tx_fail;
 
     bool is_tcp;
     uint8_t rtp_channel;
@@ -332,7 +336,10 @@ static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
                         client->nal_transport,
                         SmolRTSP_RtpTimestamp_Raw(timestamp),
                         is_vcl, nalu) == -1)
+                {
                     perror("send RTP/NAL");
+                    if (client->is_tcp && errno != EINTR) client->tx_fail = true;
+                }
             }
             i = next_nalu_start;
         } else {
@@ -479,7 +486,10 @@ static void send_audio_frame(Client *client)
     if (SmolRTSP_RtpTransport_send_packet(
             client->audio_rtp_transport, SmolRTSP_RtpTimestamp_Raw(audio_rtp_ts),
             true, U8Slice99_empty(), payload) == -1)
+    {
         perror("send RTP/audio");
+        if (client->is_tcp && errno != EINTR) client->tx_fail = true;
+    }
 
     audio_rtp_ts += (uint32_t)n_samples;
 }
@@ -550,6 +560,14 @@ static void send_rtcp_reports(Client *client) {
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
+    /* Blocking writes (see above) must not wedge the whole single-client
+     * server on a peer that vanished without FIN (Wi-Fi drop): bound each
+     * write and let TCP keepalive reap idle dead peers. */
+    struct timeval snd_to = { .tv_sec = 5, .tv_usec = 0 };
+    int keepalive = 1;
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
+    setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+
     Client client;
     memset(&client, 0, sizeof(client));
     client.socket_fd = client_fd;
@@ -637,6 +655,10 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             }
             send_audio_frame(&client); /* no-op until the audio track is SETUP */
             send_rtcp_reports(&client); /* no-op for tracks not yet SETUP, or off-interval */
+            if (client.tx_fail) {
+                printf("[ak_rtsp] TCP write failed, closing\n");
+                break;
+            }
         }
     }
 
