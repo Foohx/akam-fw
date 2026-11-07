@@ -49,7 +49,7 @@ log() {
 
 is_running() {
     [ -s "$PIDFILE" ] || return 1
-    read -r _pid <"$PIDFILE" 2>/dev/null || return 1
+    read -r _pid 2>/dev/null <"$PIDFILE" || return 1
     case "$_pid" in
         '' | *[!0-9]*) return 1 ;;
     esac
@@ -104,6 +104,7 @@ provision_keys() {
         else
             chmod 600 "$_new"
             chown 0:0 "$_new" 2>/dev/null || log "chown 0:0 failed (ignored)"
+            sync
             if mv -f "$_new" "$AUTHKEYS"; then
                 log "authorized_keys installed from SD"
             else
@@ -146,11 +147,19 @@ do_start() {
 
     if ! mkdir "$LOCKDIR" 2>/dev/null; then
         # Another instance is running; take over only a stale lock.
+        # The holder writes its pid just after mkdir: if the file is not there
+        # yet, give it a moment instead of declaring the lock stale.
         _lp=
-        read -r _lp <"$LOCKDIR/pid" 2>/dev/null
-        case "$_lp" in
-            '' | *[!0-9]*) _lp= ;;
-        esac
+        _try=0
+        while [ "$_try" -lt 3 ]; do
+            read -r _lp 2>/dev/null <"$LOCKDIR/pid"
+            case "$_lp" in
+                '' | *[!0-9]*) _lp= ;;
+            esac
+            [ -n "$_lp" ] && break
+            _try=$((_try + 1))
+            sleep 1
+        done
         if [ -n "$_lp" ] && kill -0 "$_lp" 2>/dev/null; then
             log "another instance holds the lock, exiting"
             return 0

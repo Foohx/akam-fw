@@ -165,6 +165,17 @@ echo 999999 >"$R/tmp/camyn_ssh.lock/pid"
 ssh_run start
 check "stale lock taken over" test "$(launches)" = 2
 killdb
+# fresh lock whose pid file is not written yet must NOT be taken over
+rm -f "$R/tmp/dropbear_launches"
+mkdir "$R/tmp/camyn_ssh.lock"
+sleep 30 &
+HOLDER=$!
+( sleep 0.5; echo "$HOLDER" >"$R/tmp/camyn_ssh.lock/pid" ) &
+ssh_run start
+check "lock without pid yet is respected" test "$(launches)" = 0
+kill "$HOLDER" 2>/dev/null || true
+wait 2>/dev/null || true
+rm -rf "$R/tmp/camyn_ssh.lock"
 
 echo "== 4. missing SD / missing file"
 new_root t4
