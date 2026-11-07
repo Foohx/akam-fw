@@ -20,6 +20,16 @@ opened and **nothing is flashed**.
 > lists `3215672.3` / SI `D26228` as "reported working by a user" with its wizard 0.3.0, not tested by
 > its author. If anything below does not happen as described, stop and fall back to the UART route.
 
+> **WARNING: never boot the camera with `.bin` files on the card.** The stock `service.sh` runs
+> `tf_update.sh` at every boot, which mounts the card on `/mnt` and calls `system_upgrade` on every
+> file matching `/mnt/*.bin` (top level of the card only; subdirectories such as `dump1/` and
+> `dump2/` and hidden files are not matched). `system_upgrade` writes the MTD partitions named in
+> the file, so a stray OTA-format `.bin` on any card could reflash the camera. The checks in
+> `system_upgrade` (bundle name, higher version) are the only protection. Keep dumps in
+> subdirectories, and **remove the card before powering the camera again** once the dump is done.
+> Camyn images built from this repository guard that call behind `/mnt/CAMYN_MAINTENANCE`, but the
+> stock firmware you are dumping is not protected.
+
 ---
 
 ## 1. Why not just run the flasher?

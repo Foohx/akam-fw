@@ -7,6 +7,16 @@
 > Status: this procedure reuses the upstream dump commands (`dd` per partition) plus extra size and
 > hash checks written for Camyn. The extra checks have **not been run on a camera**.
 
+> **WARNING: never boot the camera with `.bin` files on the card.** The stock `service.sh` runs
+> `tf_update.sh` at every boot, which mounts the card on `/mnt` and calls `system_upgrade` on every
+> file matching `/mnt/*.bin` (top level of the card only; subdirectories such as `dump1/` and
+> `dump2/` and hidden files are not matched). `system_upgrade` writes the MTD partitions named in
+> the file, so a stray OTA-format `.bin` on any card could reflash the camera. The checks in
+> `system_upgrade` (bundle name, higher version) are the only protection. Keep dumps in
+> subdirectories, and **remove the card before powering the camera again** once the dump is done.
+> Camyn images built from this repository guard that call behind `/mnt/CAMYN_MAINTENANCE`, but the
+> stock firmware you are dumping is not protected.
+
 ---
 
 ## 1. What you need
