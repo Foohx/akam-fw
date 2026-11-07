@@ -91,8 +91,11 @@ static int camyn_fits32(time_t s)
 int __clock_gettime(clockid_t clk, struct timespec *ts)
 {
     long ts32[2] = {0, 0};
-    long r = camyn_svc4(CAMYN_NR_CLOCK_GETTIME32, (long)clk, (long)ts32, 0, 0);
+    long r;
 
+    if (!ts) /* the kernel would answer EFAULT; do not fault in user space */
+        return errno = EFAULT, -1;
+    r = camyn_svc4(CAMYN_NR_CLOCK_GETTIME32, (long)clk, (long)ts32, 0, 0);
     if (r == 0) {
         ts->tv_sec = ts32[0];
         ts->tv_nsec = ts32[1];
@@ -115,6 +118,8 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *new_value,
     long in32[4], old32[4] = {0, 0, 0, 0};
     long r;
 
+    if (!new_value)
+        return errno = EFAULT, -1;
     if (!camyn_fits32(new_value->it_interval.tv_sec) ||
         !camyn_fits32(new_value->it_value.tv_sec))
         return errno = ENOTSUP, -1;
@@ -135,8 +140,11 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *new_value,
 int timerfd_gettime(int fd, struct itimerspec *cur)
 {
     long cur32[4] = {0, 0, 0, 0};
-    long r = camyn_svc4(CAMYN_NR_TIMERFD_GETTIME32, fd, (long)cur32, 0, 0);
+    long r;
 
+    if (!cur)
+        return errno = EFAULT, -1;
+    r = camyn_svc4(CAMYN_NR_TIMERFD_GETTIME32, fd, (long)cur32, 0, 0);
     if (r == 0) {
         cur->it_interval.tv_sec = cur32[0];
         cur->it_interval.tv_nsec = cur32[1];

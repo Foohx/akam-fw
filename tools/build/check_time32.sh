@@ -40,18 +40,34 @@ svc_numbers() {
         for (i = 1; i <= NF; i++) if ($i == ".text") { print "0x" $(i + 2), "0x" $(i + 4); exit } }')
     [ -n "${start:-}" ] || return 1
     gdb -batch -ex "disassemble $start,$((start + size))" "$elf" 2>/dev/null | awk '
+        function reset(   k) { for (k in cand) delete cand[k]; ncand = 0 }
         {
             line = $0
             sub(/^[^\t]*\t/, "", line)
             split(line, f, /[ \t,]+/)
             op = f[1]
-            if (op == "mov" && f[2] == "r7" && f[3] ~ /^#[0-9]+$/) { r7 = substr(f[3], 2) + 0; known = 1; next }
-            if (op == "orr" && f[2] == "r7" && f[3] == "r7" && f[4] ~ /^#[0-9]+$/ && known) {
-                r7 = or(r7, substr(f[4], 2) + 0); next
+            # A conditional form (movne r7, #N) only ADDS a candidate number: it
+            # may or may not reach the svc, and every candidate is counted.
+            if (op ~ /^mov(eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?$/ && f[2] == "r7" && f[3] ~ /^#[0-9]+$/) {
+                if (op == "mov") reset()
+                cand[substr(f[3], 2) + 0] = 1; ncand++
+                next
             }
-            if (op == "svc") { cnt[known ? r7 : "?"]++; known = 0; next }
-            if (f[2] == "r7" && op !~ /^(cmp|cmn|tst|teq|str|strb|push)/) known = 0
-            if (op ~ /^(pop|ldm)/ && line ~ /r7/) known = 0
+            if (op ~ /^orr(eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?$/ && f[2] == "r7" && f[3] == "r7" && f[4] ~ /^#[0-9]+$/ && ncand) {
+                bits = substr(f[4], 2) + 0
+                n = 0
+                for (k in cand) vals[n++] = k + 0
+                if (op == "orr") reset()
+                for (i = 0; i < n; i++) { cand[or(vals[i], bits)] = 1; ncand++ }
+                next
+            }
+            if (op == "svc") {
+                if (ncand) { for (k in cand) cnt[k]++ } else cnt["?"]++
+                reset()
+                next
+            }
+            if (f[2] == "r7" && op !~ /^(cmp|cmn|tst|teq|str|strb|push)/) reset()
+            if (op ~ /^(pop|ldm)/ && line ~ /r7/) reset()
         }
         END { for (n in cnt) print n, cnt[n] }'
 }

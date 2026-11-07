@@ -89,6 +89,20 @@ echo "== machine code: no unconditional time64 syscall in the shim builds"
 if command -v gdb >/dev/null 2>&1; then
     check "users_shim: only 32-bit clock syscalls, clock_gettime32 present" "$CHECK" --require-263 "$WORK/users_shim"
     check "users_stock (control): stock musl is caught loading clock_gettime64" bash -c "! '$CHECK' '$WORK/users_stock' >/dev/null 2>&1"
+    # The gate must also see a number that is only loaded conditionally.
+    cat >"$WORK/cond.c" <<'EOF'
+int main(int argc, char **argv)
+{
+    (void)argv;
+    __asm__ volatile("mov r0, %0\n cmp r0, #1\n moveq r7, #192\n movne r7, #256\n"
+                     " orrne r7, r7, #147\n mov r1, #0\n svc 0"
+                     : : "r"(argc) : "r0", "r1", "r7", "memory");
+    return 0;
+}
+EOF
+    # shellcheck disable=SC2086  # CAMYN_CC is a command line by design
+    check "conditional-syscall control builds" $CAMYN_CC -static -Os -mfloat-abi=soft -o "$WORK/cond" "$WORK/cond.c"
+    check "gate catches a conditionally loaded clock_gettime64 (403)" bash -c "! '$CHECK' '$WORK/cond' >/dev/null 2>&1"
     for b in src/ak_rtsp/flash_tool src/ak_rtsp/isp_dump src/ak_rtsp/patch_div0; do
         if [ -f "$REPO/$b" ]; then
             check "$b: no forbidden time64 syscall" "$CHECK" "$REPO/$b"
@@ -119,6 +133,45 @@ if command -v qemu-arm >/dev/null 2>&1; then
     check "shim: no clock_gettime64" bash -c "! grep -q 'clock_gettime64' '$WORK/strace_shim.txt'"
     check "shim: no timerfd *time64" bash -c "! grep -q 'timerfd_[gs]ettime64' '$WORK/strace_shim.txt'"
     check "stock musl (control): calls clock_gettime64" grep -q 'clock_gettime64' "$WORK/strace_stock.txt"
+
+    # Shim edge cases: NULL pointers fail with EFAULT instead of faulting; every
+    # clock id is passed through; EINVAL comes back as errno.
+    cat >"$WORK/edge.c" <<'EOF'
+#include <errno.h>
+#include <sys/timerfd.h>
+#include <time.h>
+int main(void)
+{
+    struct timespec a, b;
+    struct itimerspec its = {{0, 0}, {0, 0}};
+    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    int ids[] = {CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_BOOTTIME, CLOCK_MONOTONIC_RAW,
+                 CLOCK_REALTIME_COARSE, CLOCK_MONOTONIC_COARSE, CLOCK_PROCESS_CPUTIME_ID,
+                 CLOCK_THREAD_CPUTIME_ID};
+    unsigned i;
+    if (fd < 0) return 1;
+    errno = 0;
+    if (clock_gettime(CLOCK_MONOTONIC, NULL) != -1 || errno != EFAULT) return 2;
+    errno = 0;
+    if (clock_gettime((clockid_t)999, &a) != -1 || errno != EINVAL) return 3;
+    errno = 0;
+    if (timerfd_settime(fd, 0, NULL, NULL) != -1 || errno != EFAULT) return 4;
+    errno = 0;
+    if (timerfd_gettime(fd, NULL) != -1 || errno != EFAULT) return 5;
+    errno = 0;
+    if (timerfd_create(999, 0) != -1 || errno != EINVAL) return 6;
+    for (i = 0; i < sizeof ids / sizeof *ids; i++)
+        if (clock_gettime(ids[i], &a) != 0 || a.tv_nsec < 0 || a.tv_nsec >= 1000000000L) return 10 + i;
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    if (b.tv_sec < a.tv_sec || (b.tv_sec == a.tv_sec && b.tv_nsec < a.tv_nsec)) return 30;
+    if (timerfd_settime(fd, 0, &its, &its) != 0) return 31;
+    return 0;
+}
+EOF
+    # shellcheck disable=SC2086  # CAMYN_CC is a command line by design
+    check "edge-case program builds with the shim" $CAMYN_CC -static -Os -mfloat-abi=soft -o "$WORK/edge" "$WORK/edge.c" "$REPO/src/common/time32_shim.c"
+    check "shim edge cases (NULL, EINVAL, all clock ids) under qemu" qemu-arm "$WORK/edge"
 
     qemu-arm "$WORK/probe_shim" "$WORK" >"$WORK/probe_shim.txt" 2>&1 || true
     qemu-arm "$WORK/probe_sim" "$WORK" >"$WORK/probe_sim.txt" 2>&1 || true
