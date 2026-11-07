@@ -15,7 +15,9 @@
 #     dropbear_ed25519_host_key               host key, generated on first boot, 0600
 #     authorized_keys                         client keys, 0600, root:root
 #   /mnt/camyn/authorized_keys                provisioning file on the microSD
-#                                             (mount point TO BE CONFIRMED on hardware)
+#                                             (stock mounts the SD on /mnt only during
+#                                             early boot, then umount -l; we re-mount it
+#                                             read-only on /tmp/camyn_sd, see mount_sd_ro)
 #   /tmp/camyn_ssh.log                        one line per step, no secret logged
 #   /tmp/dropbear.pid, /tmp/camyn_ssh.lock    runtime state
 #
@@ -97,12 +99,51 @@ filter_keys() {
     [ "$_n" -gt 0 ]
 }
 
+# The stock boot (service.sh) mounts the SD on /mnt for its own checks and then
+# lazily unmounts it, so by the time this script runs /mnt/camyn is normally
+# NOT visible. Mount the card read-only on a private directory, same device and
+# filesystem order as the stock tf_mount.sh, just to read the key file.
+# Sets _sdmnt (to be unmounted by the caller) and _sdfile. Never fatal.
+mount_sd_ro() {
+    _sdmnt=$TMP_DIR/camyn_sd
+    mkdir -p "$_sdmnt" 2>/dev/null || return 1
+    for _try in "vfat $CAMYN_ROOT/dev/mmcblk0p1" "exfat $CAMYN_ROOT/dev/mmcblk0p1" \
+        "vfat $CAMYN_ROOT/dev/mmcblk0" "exfat $CAMYN_ROOT/dev/mmcblk0"; do
+        # shellcheck disable=SC2086
+        set -- $_try
+        [ -e "$2" ] || continue
+        if mount -t "$1" -o ro "$2" "$_sdmnt" 2>/dev/null; then
+            if [ -f "$_sdmnt/camyn/authorized_keys" ]; then
+                _sdfile=$_sdmnt/camyn/authorized_keys
+                log "SD mounted read-only ($1 $2) on $_sdmnt"
+                return 0
+            fi
+            umount "$_sdmnt" 2>/dev/null
+        fi
+    done
+    return 1
+}
+
 provision_keys() {
     _sdfile=$SD_DIR/authorized_keys
+    _sdmnt=
+    if [ ! -f "$_sdfile" ] && [ "${CAMYN_SD_AUTOMOUNT:-1}" = 1 ]; then
+        mount_sd_ro || _sdmnt=
+        [ -f "$_sdfile" ] || _sdmnt=
+    fi
     if [ ! -f "$_sdfile" ]; then
-        log "no $_sdfile on SD, keeping existing authorized_keys"
+        log "no $SD_DIR/authorized_keys on SD, keeping existing authorized_keys"
         return 0
     fi
+    install_keys
+    if [ -n "$_sdmnt" ]; then
+        umount "$_sdmnt" 2>/dev/null || log "could not unmount $_sdmnt (ignored)"
+    fi
+    return 0
+}
+
+# Validate $_sdfile and install it as authorized_keys.
+install_keys() {
     _new=$DB_DIR/.authorized_keys.new.$$
     if filter_keys "$_sdfile" "$_new"; then
         if [ -f "$AUTHKEYS" ] && cmp -s "$_new" "$AUTHKEYS"; then
