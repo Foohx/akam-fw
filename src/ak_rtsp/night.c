@@ -65,10 +65,36 @@ static night_tuning_t g_tuning = {
     .lock_ms         = LOCK_MS,
     .override        = NIGHT_MODE_AUTO,
 };
+/* control.c updates g_tuning from a different pthread than night_loop().
+ * Protect the multi-field tuning snapshot and use a generation counter so a
+ * manual DAY/NIGHT/AUTO change invalidates stale debounce/lock state. */
+static pthread_mutex_t g_night_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned        g_mode_generation = 0;
 static volatile int g_is_night = 0;  /* current actual state, boot = day */
 
-void night_get_tuning(night_tuning_t *out) { *out = g_tuning; }
-void night_set_tuning(const night_tuning_t *in) { g_tuning = *in; }
+static unsigned night_get_snapshot(night_tuning_t *out)
+{
+    unsigned generation;
+    pthread_mutex_lock(&g_night_lock);
+    *out = g_tuning;
+    generation = g_mode_generation;
+    pthread_mutex_unlock(&g_night_lock);
+    return generation;
+}
+
+void night_get_tuning(night_tuning_t *out)
+{
+    (void)night_get_snapshot(out);
+}
+
+void night_set_tuning(const night_tuning_t *in)
+{
+    pthread_mutex_lock(&g_night_lock);
+    if (g_tuning.override != in->override)
+        ++g_mode_generation;
+    g_tuning = *in;
+    pthread_mutex_unlock(&g_night_lock);
+}
 int  night_is_night(void) { return g_is_night; }
 
 static long long now_ms(void)
@@ -160,8 +186,10 @@ static void switch_to_day(void)
 static void *night_loop(void *arg)
 {
     (void)arg;
-    int       confirm    = 0;
-    long long lock_until = 0;
+    int       confirm              = 0;
+    long long last_switch_ms       = 0;
+    unsigned  seen_mode_generation = 0;
+    int       have_mode_generation = 0;
 
     printf("[night] auto day/night monitor started (poll=%dms)\n", POLL_US / 1000);
 
@@ -169,40 +197,81 @@ static void *night_loop(void *arg)
         usleep(POLL_US);
 
         night_tuning_t t;
-        night_get_tuning(&t);
+        unsigned mode_generation = night_get_snapshot(&t);
 
-        /* Manual override from control.c takes priority over the auto
-         * threshold logic below — applied once per change, then idle. */
+        if (!have_mode_generation) {
+            seen_mode_generation = mode_generation;
+            have_mode_generation = 1;
+        } else if (mode_generation != seen_mode_generation) {
+            seen_mode_generation = mode_generation;
+            confirm = 0;
+            last_switch_ms = 0;
+            printf("[night] mode changed -> reset confirm/lock\n");
+        }
+
         if (t.override == NIGHT_MODE_FORCE_DAY) {
-            if (g_is_night) { switch_to_day(); g_is_night = 0; confirm = 0; }
+            if (g_is_night) {
+                switch_to_day();
+                g_is_night = 0;
+            }
+            confirm = 0;
+            last_switch_ms = 0;
             continue;
         }
+
         if (t.override == NIGHT_MODE_FORCE_NIGHT) {
-            if (!g_is_night) { switch_to_night(); g_is_night = 1; confirm = 0; }
+            if (!g_is_night) {
+                switch_to_night();
+                g_is_night = 1;
+            }
+            confirm = 0;
+            last_switch_ms = 0;
             continue;
         }
 
         long long now = now_ms();
-        if (now < lock_until) continue;  /* anti-flap lock active */
+
+        if (last_switch_ms != 0 && t.lock_ms > 0 &&
+            now - last_switch_ms < (long long)t.lock_ms) {
+            confirm = 0;
+            continue;
+        }
 
         int      lum;
         uint32_t hw_exp, hw_sgain, hw_isp;
         if (ae_get_last_stats(&lum, &hw_exp, &hw_sgain, &hw_isp) != 0)
-            continue;  /* AE hasn't sampled yet */
+            continue;
 
-        int trigger = g_is_night ? (hw_exp < t.day_hw_exp)
-                                  : (hw_exp > t.trigger_hw_exp);
+        int desired_night = g_is_night;
 
-        if (trigger) {
-            if (++confirm >= t.confirm_samples) {
-                if (g_is_night) switch_to_day(); else switch_to_night();
-                g_is_night = !g_is_night;
-                confirm    = 0;
-                lock_until = now + t.lock_ms;
-            }
+        if (g_is_night) {
+            if (hw_exp < t.day_hw_exp)
+                desired_night = 0;
         } else {
-            confirm = 0;
+            if (hw_exp > t.trigger_hw_exp)
+                desired_night = 1;
         }
+
+        if (desired_night == g_is_night) {
+            confirm = 0;
+            continue;
+        }
+
+        int needed = t.confirm_samples > 0 ? t.confirm_samples : 1;
+        if (++confirm < needed)
+            continue;
+
+        if (desired_night)
+            switch_to_night();
+        else
+            switch_to_day();
+
+        g_is_night = desired_night;
+        confirm = 0;
+        last_switch_ms = now_ms();
+
+        printf("[night] transition complete -> state=%s lock=%dms\n",
+               g_is_night ? "night" : "day", t.lock_ms);
     }
 
     printf("[night] auto day/night monitor stopped\n");
