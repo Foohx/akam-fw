@@ -236,7 +236,9 @@ fi
 SQ="$FW_DIR/new_app_${COMP}.squashfs"
 rm -f "$SQ"
 MKOPTS=(-comp "$COMP" -b "$BLOCK" -all-root -noappend -no-xattrs -no-progress -mkfs-time "$EPOCH" -all-time "$EPOCH")
-[ "$COMP" = xz ] && MKOPTS+=(-Xbcj arm)
+# Stock APP is xz WITHOUT a BCJ filter; match it (a BCJ-arm image needs CONFIG_XZ_DEC_ARM in the
+# kernel, unproven). CAMYN_XZ_BCJ=1 opts in: ~45 KB smaller, not proven to boot.
+[ "$COMP" = xz ] && [ "${CAMYN_XZ_BCJ:-0}" = 1 ] && MKOPTS+=(-Xbcj arm)
 # mksquashfs refuses explicit time options when SOURCE_DATE_EPOCH is in the env.
 env -u SOURCE_DATE_EPOCH mksquashfs "$PATCHED" "$SQ" "${MKOPTS[@]}" >/dev/null || die "mksquashfs failed (unsupported option? tool version: $(mksquashfs -version | head -1))"
 
