@@ -28,6 +28,7 @@
 #                   built with tools/dropbear/build_dropbear.sh if missing)
 #   CAMYN_SQUASHFS_COMP  gzip (default) | xz
 #   CAMYN_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
+#   CAMYN_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
 #   CAMYN_ALLOW_TIGHT=1  allow an image within one block of the partition size
 #   KEEP_PATCHED=1  reuse an existing app_patched/ instead of starting over
 #   SOURCE_DATE_EPOCH  fixed timestamp for the squashfs (reproducible content)
@@ -92,6 +93,14 @@ trap 'rm -rf "$TMP"' EXIT
 # stripped). Install a stripped COPY; the build output is never modified.
 # Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
 # $CAMYN_STRIP (a command taking "<in> <out>") if set.
+# Use the pinned toolchain from tools/.toolchain when zig is not on PATH.
+zig_pinned() {
+    local z
+    for z in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/zig; do
+        [ -x "$z" ] && { ZIG="$z"; return 0; }
+    done
+    return 1
+}
 install_stripped() {
     local src=$1 dst=$2 tmp="$TMP/strip.tmp"
     if [ "$(head -c4 "$src" | od -An -c | tr -d ' ')" != '177ELF' ]; then
@@ -100,12 +109,14 @@ install_stripped() {
     fi
     if [ -n "${CAMYN_STRIP:-}" ]; then
         $CAMYN_STRIP "$src" "$tmp" || die "CAMYN_STRIP failed on $src"
-    elif [ -x "${ZIG:-}" ] || command -v zig >/dev/null 2>&1; then
+    elif [ -x "${ZIG:-}" ] || command -v zig >/dev/null 2>&1 || zig_pinned; then
         "${ZIG:-zig}" objcopy --strip-all "$src" "$tmp" || die "zig objcopy --strip-all failed on $src"
-    else
-        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (source tools/build/env.sh)"
+    elif [ "${CAMYN_ALLOW_UNSTRIPPED:-0}" = 1 ]; then
+        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (CAMYN_ALLOW_UNSTRIPPED=1)"
         install -m 755 "$src" "$dst"
         return 0
+    else
+        die "no strip tool for $(basename "$dst"): run bootstrap.sh and source tools/build/env.sh (or set CAMYN_STRIP, or CAMYN_ALLOW_UNSTRIPPED=1)"
     fi
     [ -s "$tmp" ] || die "stripped copy of $src is empty"
     install -m 755 "$tmp" "$dst"

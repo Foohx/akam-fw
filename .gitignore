@@ -59,6 +59,11 @@ obj/
 /src/ak_rtsp/app_extracted/
 /src/ak_rtsp/app_patched/
 /src/ak_rtsp/new_app_gzip.squashfs
+# build_firmware.sh outputs when FW_DIR is the default (they quote the stock service.sh)
+/src/ak_rtsp/service_sh.diff
+/src/ak_rtsp/build_report.txt
+/src/ak_rtsp/audit_remote_services.txt
+/src/ak_rtsp/ak_rtsp_firmware_*
 
 # OS Specific
 .DS_Store
