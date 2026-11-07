@@ -264,11 +264,13 @@ if [ "$(id -u)" = 0 ]; then
     echo "  skip - running as root, chmod cannot make a dir read-only"
 else
     chmod 555 "$R/etc/config"
+    printf '%s\n' "$K1" >"$R/mnt/camyn/authorized_keys"
     ssh_run start
     check "dropbear started anyway" test -s "$R/tmp/dropbear.pid"
     check "ephemeral key in tmp" test -s "$R/tmp/camyn_dropbear/dropbear_ed25519_host_key"
     check "nothing persisted in CONFIG" test ! -e "$R/etc/config/dropbear"
     check "fallback logged" grep -q 'not writable' "$R/tmp/camyn_ssh.log"
+    check "SD key provisioned into the ephemeral dir" test -s "$R/tmp/camyn_dropbear/authorized_keys"
     killdb
     chmod 755 "$R/etc/config"
 fi

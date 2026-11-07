@@ -215,9 +215,12 @@ do_start() {
     else
         _dir=$TMP_DIR/camyn_dropbear
         _persistent=0
-        log "$CONFIG_DIR not writable, using ephemeral host key in $_dir and no persistent authorized_keys"
+        log "$CONFIG_DIR not writable, using ephemeral host key and authorized_keys in $_dir"
         mkdir -p "$_dir" 2>/dev/null
         chmod 700 "$_dir" 2>/dev/null
+        # Keep SD provisioning working (else nobody could log in at all).
+        DB_DIR=$_dir
+        AUTHKEYS=$_dir/authorized_keys
     fi
     _hostkey=$_dir/dropbear_ed25519_host_key
 
@@ -236,12 +239,10 @@ do_start() {
         fi
     fi
 
-    if [ "$_persistent" = 1 ]; then
-        provision_keys
-        fix_perms
-        if [ ! -s "$AUTHKEYS" ]; then
-            log "WARNING: no authorized key, nobody can log in (put authorized_keys on the SD card)"
-        fi
+    provision_keys
+    [ "$_persistent" = 1 ] && fix_perms
+    if [ ! -s "$AUTHKEYS" ]; then
+        log "WARNING: no authorized key, nobody can log in (put authorized_keys on the SD card)"
     fi
 
     fix_shells
