@@ -18,8 +18,9 @@
 - A FAT32 microSD card with enough free space (the 8 files total 8 MiB).
 - A PC to hold an independent copy.
 
-This guide does not document how to obtain a shell on the stock firmware over the network (stock
-Telnet credentials are not known to this project).
+Without opening the camera, a root shell over Wi-Fi can be obtained with a prepared microSD card
+(no UART needed): see [camyn_v1_backup_sd.md](camyn_v1_backup_sd.md). That route is untested by
+Camyn on a camera. The stock firmware's own Telnet credentials are not known to this project.
 
 ---
 
