@@ -97,9 +97,39 @@ void night_set_tuning(const night_tuning_t *in)
 }
 int  night_is_night(void) { return g_is_night; }
 
+/* Monotonic milliseconds for the anti-flap lock.
+ *
+ * On the camera (kernel 4.4, no clock_gettime64 syscall, musl with a 64-bit
+ * time_t) clock_gettime(CLOCK_MONOTONIC) did not behave: the 60 s lock was
+ * seen to expire within seconds. Take the time from the kernel tick counter
+ * (raw times(2): 32-bit jiffies, no struct, no time_t width) and accumulate
+ * it into 64 bits. Only the night thread calls this, so the state is unlocked.
+ * Other targets fall back to clock_gettime(). The lock is additionally
+ * counted in poll iterations (see night_loop), which needs no clock at all. */
 static long long now_ms(void)
 {
-    struct timespec ts;
+#if defined(__arm__) && defined(__linux__)
+    static uint32_t last_ticks;
+    static uint64_t total_ticks;
+    static long     hz;
+    register long r7 __asm__("r7") = 43; /* __NR_times */
+    register long r0 __asm__("r0") = 0;  /* NULL struct tms */
+
+    if (hz <= 0)
+        hz = sysconf(_SC_CLK_TCK);
+    if (hz > 0 && hz <= 1000) {
+        __asm__ volatile("svc 0" : "+r"(r0) : "r"(r7) : "memory");
+        uint32_t ticks = (uint32_t)r0;
+        /* Start above zero: callers use 0 as "never". */
+        if (total_ticks == 0)
+            total_ticks = (uint64_t)ticks + (uint64_t)hz;
+        else
+            total_ticks += (uint32_t)(ticks - last_ticks);
+        last_ticks = ticks;
+        return (long long)(total_ticks * 1000u / (uint64_t)hz);
+    }
+#endif
+    struct timespec ts = { 0, 0 };
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
@@ -188,6 +218,9 @@ static void *night_loop(void *arg)
     (void)arg;
     int       confirm              = 0;
     long long last_switch_ms       = 0;
+    /* Poll iterations left in the lock. usleep() never returns early on
+     * this loop, so N polls last at least N * POLL_US whatever the clock says. */
+    long      lock_polls_left      = 0;
     unsigned  seen_mode_generation = 0;
     int       have_mode_generation = 0;
 
@@ -206,6 +239,7 @@ static void *night_loop(void *arg)
             seen_mode_generation = mode_generation;
             confirm = 0;
             last_switch_ms = 0;
+            lock_polls_left = 0;
             printf("[night] mode changed -> reset confirm/lock\n");
         }
 
@@ -216,6 +250,7 @@ static void *night_loop(void *arg)
             }
             confirm = 0;
             last_switch_ms = 0;
+            lock_polls_left = 0;
             continue;
         }
 
@@ -226,13 +261,18 @@ static void *night_loop(void *arg)
             }
             confirm = 0;
             last_switch_ms = 0;
+            lock_polls_left = 0;
             continue;
         }
 
         long long now = now_ms();
 
-        if (last_switch_ms != 0 && t.lock_ms > 0 &&
-            now - last_switch_ms < (long long)t.lock_ms) {
+        if (lock_polls_left > 0)
+            --lock_polls_left;
+        if (t.lock_ms > 0 &&
+            (lock_polls_left > 0 ||
+             (last_switch_ms != 0 &&
+              now - last_switch_ms < (long long)t.lock_ms))) {
             confirm = 0;
             continue;
         }
@@ -269,6 +309,7 @@ static void *night_loop(void *arg)
         g_is_night = desired_night;
         confirm = 0;
         last_switch_ms = now_ms();
+        lock_polls_left = (long)(((long long)t.lock_ms * 1000 + POLL_US - 1) / POLL_US);
 
         printf("[night] transition complete -> state=%s lock=%dms\n",
                g_is_night ? "night" : "day", t.lock_ms);
