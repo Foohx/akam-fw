@@ -43,6 +43,8 @@ done
 printf 'musl stub copyright\n' >"$WORK/stub/COPYRIGHT"
 printf 'zig stub licence\n' >"$WORK/stub/ZIGLICENSE"
 export AK_RTSP_BIN=$WORK/stub/ak_rtsp DROPBEAR_MULTI=$WORK/stub/dropbearmulti
+# The stubs are not ARM ELF files: skip the time64 machine code gate (section 5b tests it).
+export CAMYN_ALLOW_UNCHECKED_TIME64=1
 export SMOLRTSP_DIR=$WORK/stub/smol MUSL_COPYRIGHT=$WORK/stub/COPYRIGHT ZIG_LICENSE=$WORK/stub/ZIGLICENSE
 
 # run_build <outdir> [VAR=val ...]: build from another cwd, as the flasher does.
@@ -137,6 +139,25 @@ printf 'xx-----BEGIN RSA PRIVATE KEY-----\000\001\002' >"$WORK/binkey/lib/libstr
 check "marker inside a binary (e.g. stock wpa_supplicant) is not a key" with_app "$WORK/binkey" "$WORK/o5d"
 if AK_RTSP_BIN=$WORK/nonexistent run_build "$WORK/o5c"; then ko "missing ak_rtsp refused"; else ok "missing ak_rtsp refused"; fi
 check "missing ak_rtsp: clear message" grep -q 'ak_rtsp binary not found' "$WORK/o5c.log"
+
+echo "== 5b. time64 machine code gate on the installed binaries"
+if AK_RTSP_BIN=$WORK/stub/ak_rtsp run_build "$WORK/o5e" CAMYN_ALLOW_UNCHECKED_TIME64=0; then
+    ko "stub binaries refused by the time64 gate"
+else
+    ok "stub binaries refused by the time64 gate"
+fi
+check "gate: clear message" grep -q 'time64 check failed on the installed binaries' "$WORK/o5e.log"
+check "override: stub build accepted" with_app "$FIXTURE" "$WORK/o5f"
+check "override warning recorded" grep -q 'time64 machine code check SKIPPED' "$WORK/o5f/build_report.txt"
+RA=$REPO/src/ak_rtsp/ak_rtsp
+RD=$REPO/dist/dropbear/dropbearmulti
+if command -v gdb >/dev/null 2>&1 && [ -f "$RA" ] && [ -f "$RD" ]; then
+    check "real ak_rtsp + dropbearmulti pass the gate" \
+        with_app "$FIXTURE" "$WORK/o5g" AK_RTSP_BIN="$RA" DROPBEAR_MULTI="$RD" CAMYN_ALLOW_UNCHECKED_TIME64=0
+    check "gate ran on the installed files" grep -q 'check_time32: .*bin/dropbearmulti: ok' "$WORK/o5g.log"
+else
+    echo "  skip - needs gdb, src/ak_rtsp/ak_rtsp and dist/dropbear/dropbearmulti"
+fi
 
 echo "== 6. service.sh without telnet/ftp lines"
 mkdir -p "$WORK/nosvc"

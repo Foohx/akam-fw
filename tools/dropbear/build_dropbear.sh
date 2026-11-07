@@ -15,8 +15,8 @@
 # must apply cleanly): see the header of each patch for why it exists.
 # src/common/time32_shim.c is compiled with the same flags and linked into the
 # multi-call binary: the camera's kernel does not execute musl's time64
-# clock_gettime syscall (docs/camyn_v1_kernel_time64.md). When gdb is
-# installed the final binary's machine code is checked for it.
+# clock_gettime syscall (docs/camyn_v1_kernel_time64.md). The final binary's
+# machine code is checked for it (gdb required, hard failure).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -119,10 +119,11 @@ done < <(grep -E '^#define [A-Z0-9_]+ [^ ]+$' "$here/localoptions.h")
 multi="$src/dropbearmulti"
 [ -f "$multi" ] || die "dropbearmulti not produced"
 # The machine code must read clocks with the 32-bit syscall only.
-if command -v gdb >/dev/null 2>&1; then
-    "$root/tools/build/check_time32.sh" --require-263 "$multi" || die "time64 check failed for dropbearmulti"
+if [ "${CAMYN_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+    log "warning: time64 machine code check SKIPPED (CAMYN_ALLOW_UNCHECKED_TIME64=1)"
 else
-    log "warning: gdb not installed, skipped the time64 machine code check"
+    "$root/tools/build/check_time32.sh" --require-263 "$multi" \
+        || die "time64 check failed for dropbearmulti (gdb is required; CAMYN_ALLOW_UNCHECKED_TIME64=1 skips it)"
 fi
 size_before="$(stat -c %s "$multi")"
 sha_unstripped="$(sha256sum "$multi" | cut -d' ' -f1)"
