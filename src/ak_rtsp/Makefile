@@ -33,6 +33,11 @@ BUILD_NUM_FILE := build_number.txt
 FORCE:
 .PHONY: FORCE all clean upload firmware
 
+# time32_shim.o replaces musl's clock_gettime()/timerfd_*(), which use time64
+# syscalls the camera's kernel acknowledges without executing. EVERY static
+# binary below must link it (see ../common/time32_shim.c).
+SHIM    = ../common/time32_shim.o
+
 ASM_SRCS = arm_atomics.S
 SRCS    = main.c \
           isp.c \
@@ -51,7 +56,7 @@ SRCS    = main.c \
           $(wildcard ../smolrtsp/src/writer/*.c) \
           $(wildcard ../smolrtsp/src/transport/*.c) \
           ../smolrtsp/src/nal/h264.c
-OBJS    = $(SRCS:.c=.o) $(ASM_SRCS:.S=.o)
+OBJS    = $(SRCS:.c=.o) $(ASM_SRCS:.S=.o) $(SHIM)
 
 all: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
 
@@ -93,14 +98,14 @@ $(TARGET_HOOK): isp_hook.c
 	$(CC) -std=gnu99 -mfloat-abi=soft -O1 -fPIC -shared -nostdlib -ffreestanding \
 	      -mcpu=arm926ej_s -o $@ $<
 
-$(TARGET_DBG): isp_dump.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
-
-$(TARGET_TOOL): flash_tool.c arm_atomics.S
+$(TARGET_DBG): isp_dump.c $(SHIM)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TARGET_DIV0): patch_div0.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+$(TARGET_TOOL): flash_tool.c arm_atomics.S $(SHIM)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TARGET_DIV0): patch_div0.c $(SHIM)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -118,7 +123,7 @@ version.o: version.c FORCE
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f *.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
+	rm -f *.o ../common/*.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
 	rm -f $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
 
 # -----------------------------------------------------------------------

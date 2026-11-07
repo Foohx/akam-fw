@@ -28,11 +28,14 @@ Camyn embeds **no key** in the image. At boot, `camyn_ssh.sh` reads the public k
 copies them into the persistent CONFIG partition.
 
 Exact location: a directory `camyn` at the root of the FAT32 card, containing the file
-`authorized_keys`. On the real firmware the stock `service.sh` mounts the card on `/mnt` only for its
-own boot checks and then runs `umount -l /mnt`, so `/mnt/camyn` is normally not visible afterwards.
-`camyn_ssh.sh` therefore mounts the card read-only on `/tmp/camyn_sd` (same devices and filesystem
-order as the stock `tf_mount.sh`: vfat then exfat, `/dev/mmcblk0p1` then `/dev/mmcblk0`), reads
-`camyn/authorized_keys` and unmounts. *(Not yet tested on hardware.)*
+`authorized_keys`. `camyn_ssh.sh` first looks for the card where it is **already mounted**: it parses
+`/proc/mounts` for `/dev/mmcblk0p1` (or `/dev/mmcblk0`) mounted on a directory, for instance `/tmp/sd`
+when the flasher toolkit mounted it (its file bind-mounts are ignored) or `/mnt`, and reads
+`<mountpoint>/camyn/authorized_keys`. Only if the card is not mounted anywhere does it mount it
+read-only on `/tmp/camyn_sd` (the stock `service.sh` unmounts `/mnt` after its boot checks; same devices
+and filesystem order as the stock `tf_mount.sh`: vfat then exfat, `/dev/mmcblk0p1` then `/dev/mmcblk0`),
+then unmounts. Every step, including mount errors, is logged in `/tmp/camyn_ssh.log`.
+*(Tested on fixtures only; not yet validated on hardware.)*
 
 ```bash
 # the card is mounted on your PC at /run/media/$USER/CARD (adapt)

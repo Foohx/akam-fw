@@ -212,6 +212,90 @@ check "key installed from the private mount" test "$(wc -l <"$R/etc/config/dropb
 check "private mount unmounted" grep -q camyn_sd "$R/tmp/umount_calls"
 killdb
 
+# The card is found where it is ALREADY mounted (first-boot report: the toolkit
+# mounts it on /tmp/sd with file bind-mounts, /mnt is an empty tmpfs).
+# sd_root <name> <mount-point>: fake root, card content under <mount-point>,
+# a /proc/mounts with unrelated lines and file bind-mounts from the card.
+sd_root() {
+    new_root "$1"
+    rm -rf "${R:?}/mnt"
+    mkdir -p "$R/stubbin" "$R/dev" "$R$2/camyn" "$R/etc/somefile"
+    rmdir "$R/etc/somefile"
+    : >"$R/etc/somefile"
+    : >"$R/dev/mmcblk0p1"
+    echo "$K1" >"$R$2/camyn/authorized_keys"
+    cat >"$R/proc_mounts" <<EOM
+rootfs / squashfs ro,relatime 0 0
+tmpfs /mnt tmpfs rw,relatime 0 0
+/dev/mmcblk0p1 /etc/somefile vfat rw,relatime,fmask=0022 0 0
+/dev/mmcblk0p1 /etc/missing_target vfat rw,relatime 0 0
+/dev/mmcblk0p1 $2 vfat rw,relatime,fmask=0022 0 0
+/dev/mtdblock5 /etc/config jffs2 rw,relatime 0 0
+EOM
+    export CAMYN_PROC_MOUNTS=$R/proc_mounts
+    # mount/umount stubs that record every call and would FAIL the test if used
+    printf '#!/bin/sh\necho "$*" >>"$CAMYN_ROOT/tmp/mount_calls"\nexit 1\n' >"$R/stubbin/mount"
+    printf '#!/bin/sh\necho "$*" >>"$CAMYN_ROOT/tmp/umount_calls"\n' >"$R/stubbin/umount"
+    chmod 755 "$R/stubbin/mount" "$R/stubbin/umount"
+}
+
+echo "== 4c. SD already mounted on /tmp/sd (toolkit) with file bind-mounts"
+sd_root t4c /tmp/sd
+PATH="$R/stubbin:$PATH" ssh_run start
+check "key installed from /tmp/sd/camyn" cmp -s "$R/etc/config/dropbear/authorized_keys" <(printf '%s\n' "$K1")
+check "no SD mount attempted" bash -c "! grep -q -e '-t vfat' -e '-t exfat' '$R/tmp/mount_calls' 2>/dev/null"
+check "log names the mount point" grep -q 'already mounted on /tmp/sd' "$R/tmp/camyn_ssh.log"
+check "SD file untouched" test -f "$R/tmp/sd/camyn/authorized_keys"
+killdb
+
+echo "== 4d. SD already mounted on /mnt"
+sd_root t4d /mnt
+PATH="$R/stubbin:$PATH" ssh_run start
+check "key installed from /mnt/camyn" cmp -s "$R/etc/config/dropbear/authorized_keys" <(printf '%s\n' "$K1")
+check "no SD mount attempted" bash -c "! grep -q -e '-t vfat' -e '-t exfat' '$R/tmp/mount_calls' 2>/dev/null"
+killdb
+
+echo "== 4e. SD mounted, file bind-mount lines only match a file: not a card mount"
+sd_root t4e /tmp/sd
+# only the file bind-mount lines remain: the card is NOT mounted on a directory
+grep -v ' /tmp/sd ' "$R/proc_mounts" >"$R/proc_mounts.new"
+mv "$R/proc_mounts.new" "$R/proc_mounts"
+rm -rf "$R/tmp/sd"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "falls back to a private read-only mount attempt" grep -q -- '-o ro' "$R/tmp/mount_calls"
+check "no key without the card" test ! -e "$R/etc/config/dropbear/authorized_keys"
+killdb
+
+echo "== 4f. SD mounted but without camyn/authorized_keys: no second mount"
+sd_root t4f /tmp/sd
+rm -f "$R/tmp/sd/camyn/authorized_keys"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "no SD mount attempted" bash -c "! grep -q -e '-t vfat' -e '-t exfat' '$R/tmp/mount_calls' 2>/dev/null"
+check "reason logged" grep -q 'no camyn/authorized_keys there' "$R/tmp/camyn_ssh.log"
+check "warning logged" grep -q 'WARNING: no authorized key' "$R/tmp/camyn_ssh.log"
+killdb
+
+echo "== 4g. SD not mounted and the mount fails: error is logged"
+new_root t4g
+rm -rf "${R:?}/mnt"
+mkdir -p "$R/stubbin" "$R/dev"
+: >"$R/dev/mmcblk0p1"
+printf 'tmpfs /mnt tmpfs rw 0 0\n' >"$R/proc_mounts"
+export CAMYN_PROC_MOUNTS=$R/proc_mounts
+printf '#!/bin/sh\necho "mount: wrong fs type, bad option" >&2\nexit 32\n' >"$R/stubbin/mount"
+chmod 755 "$R/stubbin/mount"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "mount error text logged" grep -q 'failed: mount: wrong fs type' "$R/tmp/camyn_ssh.log"
+check "both filesystems tried" test "$(grep -c 'failed:' "$R/tmp/camyn_ssh.log")" = 2
+check "dropbear still started" test -s "$R/tmp/dropbear.pid"
+killdb
+# no device node at all: said so
+rm -f "$R/dev/mmcblk0p1" "$R/tmp/camyn_ssh.log"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "missing device node logged" grep -q 'no /dev/mmcblk0p1 or /dev/mmcblk0 device node' "$R/tmp/camyn_ssh.log"
+killdb
+unset CAMYN_PROC_MOUNTS
+
 echo "== 5. SD key validation"
 new_root t5
 {

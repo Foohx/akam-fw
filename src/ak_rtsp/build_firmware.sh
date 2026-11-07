@@ -31,6 +31,8 @@
 #                   built with tools/dropbear/build_dropbear.sh if missing)
 #   CAMYN_SQUASHFS_COMP  xz (default, same as stock: no BCJ, 128 KiB blocks) | gzip
 #   CAMYN_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
+#   CAMYN_ALLOW_UNCHECKED_TIME64=1  skip the machine-code time64 gate (tools/build/check_time32.sh,
+#                   needs gdb) on the installed ak_rtsp and dropbearmulti; for stub binaries only
 #   CAMYN_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
 #   CAMYN_ALLOW_TIGHT=1  allow an image within one block of the partition size
 #   KEEP_PATCHED=1  reuse an existing app_patched/ instead of starting over
@@ -224,6 +226,16 @@ chmod 644 "$PATCHED/local/camyn/MANIFEST.txt"
 
 # --- 4. safety checks -------------------------------------------------------------
 echo "Checking tree..."
+# The camera's kernel acknowledges musl's time64 clock syscalls without executing
+# them (docs/camyn_v1_kernel_time64.md). Hard gate, run on the files that are
+# actually in the image (stripped): no forbidden time64 syscall, and the 32-bit
+# clock_gettime (263) of src/common/time32_shim.c present. A missing gdb is a failure.
+if [ "${CAMYN_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+    warn "*** time64 machine code check SKIPPED (CAMYN_ALLOW_UNCHECKED_TIME64=1): clocks may not work on the camera. ***"
+else
+    bash "$ROOT/tools/build/check_time32.sh" --require-263 "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" \
+        || die "time64 check failed on the installed binaries (see above; missing gdb also lands here)"
+fi
 # -I: text files only. The stock wpa_supplicant binary contains the marker as a
 # string literal (not a key); a binary can't be a PEM key file anyway.
 BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null || true

@@ -18,6 +18,7 @@ your own camera.
 | `patch_service_sh.sh` and `camyn_lockdown.sh` (variants of `service.sh`, idempotence, flag present/absent, exclusion list) | `bash tests/lockdown_test.sh` with fake `ps`/`kill` and a synthetic `service.sh` | passed on host |
 | `build_firmware.sh` (permissions, key refusal, round-trip, size guard, padding to 5 242 880) | `bash tests/build_firmware_test.sh` on `tests/fixtures/app_fake` with stub binaries | passed on host |
 | `camyn_hwcheck.sh` | `bash tests/hwcheck_test.sh` with fake `ss`/`ps`/proc | passed on host |
+| time64 clock shim ([kernel time64 note](camyn_v1_kernel_time64.md)) | `bash tests/time32_shim_test.sh` and `bash tests/dropbear_patch_test.sh`: final binaries scanned for forbidden time64 syscalls, `qemu-arm -strace`, probe verdict logic | passed on host; not run on the camera |
 
 The fixture is synthetic: it contains no vendor files, so these tests say nothing about the real
 `service.sh`, the real free space, or kernel behaviour.
@@ -111,6 +112,7 @@ Everything in Camyn's design that came from reading other projects instead of th
 | H15 | A leftover flasher SD would run its hook only with the maintenance flag | Telnet 24 | Test with and without the flag |
 | H16 | The camera's BusyBox `tar` supports gzip (`tar xzf -`) | Directory transfer | Try it |
 | H17 | Flashing from a running Camyn system (Dropbear in the erased APP) is unsafe | Reflash procedure | Recommended to use UART instead |
+| H18 | With `src/common/time32_shim.c` linked, clock reads and timed waits work on the camera kernel, which acknowledges `clock_gettime64` without executing it ([note](camyn_v1_kernel_time64.md)) | Dropbear sessions, night-mode lock | Run `time64_probe` on the camera: `RESULT PASS`; Dropbear login stays open |
 
 ---
 
