@@ -26,6 +26,7 @@
 #   AK_RTSP_BIN     ak_rtsp binary (default: ./ak_rtsp next to this script)
 #   SMOLRTSP_DIR    SmolRTSP checkout for licence texts (default: src/smolrtsp)
 #   MUSL_COPYRIGHT  musl COPYRIGHT (default: from the pinned Zig tarball)
+#   ZIG_LICENSE     Zig LICENSE (compiler-rt is linked in; default: pinned Zig tarball)
 #   DROPBEAR_MULTI  prebuilt dropbearmulti (default: dist/dropbear/dropbearmulti,
 #                   built with tools/dropbear/build_dropbear.sh if missing)
 #   CAMYN_SQUASHFS_COMP  gzip (default) | xz
@@ -93,6 +94,15 @@ if [ -z "${MUSL_COPYRIGHT:-}" ]; then
     done
 fi
 [ -f "${MUSL_COPYRIGHT:-}" ] || die "musl COPYRIGHT not found (run tools/build/bootstrap.sh or set MUSL_COPYRIGHT)"
+if [ -z "${ZIG_LICENSE:-}" ]; then
+    ZIG_LICENSE=""
+    for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/LICENSE; do
+        [ -f "$f" ] && ZIG_LICENSE="$f"
+    done
+fi
+[ -f "${ZIG_LICENSE:-}" ] || die "Zig LICENSE not found (run tools/build/bootstrap.sh or set ZIG_LICENSE)"
+# Camyn's own notices (ak_rtsp is FluxAlchemist/Camyn MIT code; the ported flasher fixes carry their own MIT notice).
+[ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
 LIC_SRC=("$SMOLRTSP_DIR/LICENSE")
 for d in slice99 metalang99 datatype99 interface99; do LIC_SRC+=("$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE"); done
 for f in "${LIC_SRC[@]}"; do [ -s "$f" ] || die "licence file $f missing (run tools/build/bootstrap.sh)"; done
@@ -167,6 +177,9 @@ chmod 755 "$PATCHED/local/camyn"
 install -m 644 "$DROPBEAR_LICENSE" "$PATCHED/local/camyn/LICENSE.dropbear"
 install -m 644 "$MUSL_COPYRIGHT" "$PATCHED/local/camyn/LICENSE.musl"
 install -m 644 "$SMOLRTSP_DIR/LICENSE" "$PATCHED/local/camyn/LICENSE.smolrtsp"
+install -m 644 "$ZIG_LICENSE" "$PATCHED/local/camyn/LICENSE.zig"
+install -m 644 "$ROOT/LICENSE" "$PATCHED/local/camyn/LICENSE.camyn"
+install -m 644 "$ROOT/THIRD_PARTY_NOTICES.md" "$PATCHED/local/camyn/THIRD_PARTY_NOTICES.md"
 for d in slice99 metalang99 datatype99 interface99; do
     install -m 644 "$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE" "$PATCHED/local/camyn/LICENSE.$d"
 done

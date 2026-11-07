@@ -41,8 +41,9 @@ for d in slice99 metalang99 datatype99 interface99; do
     printf '%s stub licence\n' "$d" >"$WORK/stub/smol/build/_deps/$d-src/LICENSE"
 done
 printf 'musl stub copyright\n' >"$WORK/stub/COPYRIGHT"
+printf 'zig stub licence\n' >"$WORK/stub/ZIGLICENSE"
 export AK_RTSP_BIN=$WORK/stub/ak_rtsp DROPBEAR_MULTI=$WORK/stub/dropbearmulti
-export SMOLRTSP_DIR=$WORK/stub/smol MUSL_COPYRIGHT=$WORK/stub/COPYRIGHT
+export SMOLRTSP_DIR=$WORK/stub/smol MUSL_COPYRIGHT=$WORK/stub/COPYRIGHT ZIG_LICENSE=$WORK/stub/ZIGLICENSE
 
 # run_build <outdir> [VAR=val ...]: build from another cwd, as the flasher does.
 run_build() {
@@ -83,6 +84,10 @@ check "LICENSE.dropbear shipped" test -s "$X/local/camyn/LICENSE.dropbear"
 for l in musl smolrtsp slice99 metalang99 datatype99 interface99; do
     check "LICENSE.$l shipped, 644, listed in MANIFEST" bash -c "[ -s '$X/local/camyn/LICENSE.$l' ] && [ \$(stat -c %a '$X/local/camyn/LICENSE.$l') = 644 ] && grep -q '^licence: LICENSE.$l ' '$X/local/camyn/MANIFEST.txt'"
 done
+check "LICENSE.zig shipped, 644, listed in MANIFEST" bash -c "[ -s '$X/local/camyn/LICENSE.zig' ] && [ \$(stat -c %a '$X/local/camyn/LICENSE.zig') = 644 ] && grep -q '^licence: LICENSE.zig ' '$X/local/camyn/MANIFEST.txt'"
+check "LICENSE.camyn is the repo LICENSE" cmp -s "$REPO/LICENSE" "$X/local/camyn/LICENSE.camyn"
+check "THIRD_PARTY_NOTICES.md shipped (flasher MIT notice)" cmp -s "$REPO/THIRD_PARTY_NOTICES.md" "$X/local/camyn/THIRD_PARTY_NOTICES.md"
+if run_build "$WORK/o_nozig" ZIG_LICENSE="$WORK/nonexistent"; then ko "build fails without Zig LICENSE"; else ok "build fails without Zig LICENSE"; fi
 if run_build "$WORK/o_nomusl" MUSL_COPYRIGHT="$WORK/nonexistent"; then ko "build fails without musl COPYRIGHT"; else ok "build fails without musl COPYRIGHT"; fi
 if run_build "$WORK/o_nosmol" SMOLRTSP_DIR="$WORK/nonexistent"; then ko "build fails without SmolRTSP licences"; else ok "build fails without SmolRTSP licences"; fi
 check "MANIFEST has ak_rtsp sha256" grep -q "^ak_rtsp_sha256=$(sha256sum "$WORK/stub/ak_rtsp" | cut -d' ' -f1)" "$X/local/camyn/MANIFEST.txt"

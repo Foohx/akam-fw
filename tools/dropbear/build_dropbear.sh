@@ -102,7 +102,10 @@ cp "$src/LICENSE" "$dist/LICENSE.dropbear"
     echo "zig_version=$ZIG_VERSION"
     echo "target=$CAMYN_TARGET mcpu=$CAMYN_MCPU soft-float static"
     echo "programs=$programs"
-    echo "cflags=$cflags"
+    # No absolute host paths in the file shipped inside the image (reproducible
+    # across checkouts, no user name leaked).
+    _cf="${cflags//$src/<dropbear-src>}"
+    echo "cflags=${_cf//$root/<camyn-root>}"
     echo "localoptions_sha256=$(sha256sum "$here/localoptions.h" | cut -d' ' -f1)"
     echo "size_unstripped=$size_before"
     echo "size_stripped=$size_after"
