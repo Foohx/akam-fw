@@ -14,6 +14,10 @@
 #   - maintenance flag present (/mnt/CAMYN_MAINTENANCE on the microSD, mount
 #     point TO BE CONFIRMED on hardware): log, kill nothing, exit. The flag is
 #     re-checked at every round, so inserting the SD stops the loop cleanly.
+#     Mount point: the flag sits at the ROOT of the microSD, which the stock
+#     firmware mounts on /mnt. camyn_ssh.sh reads its provisioning files from
+#     the camyn/ subdirectory of the same card (CAMYN_SD_DIR, /mnt/camyn): both
+#     assume the same /mnt mount point, to be confirmed together on hardware.
 #   - otherwise, each round: take one `ps` snapshot and SIGTERM (then SIGKILL on
 #     the next round if the pid is still there) every process whose command
 #     line has a token whose basename is telnetd, utelnetd, ftpd, bftpd,
