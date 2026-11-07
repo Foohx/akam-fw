@@ -10,6 +10,17 @@
 # APP squashfs tree.
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin
 
+# --- Camyn background helpers (SSH, lockdown) ---
+# Fire and forget: detached, output discarded, exit status ignored, so a
+# missing or failing helper can never delay or affect ak_rtsp below. Each
+# helper has its own anti-duplicate guard (this wrapper may be respawned).
+if [ -x /usr/sbin/camyn_ssh.sh ]; then
+    ( /usr/sbin/camyn_ssh.sh start </dev/null >/dev/null 2>&1 & )
+fi
+if [ -x /usr/sbin/camyn_lockdown.sh ]; then
+    ( /usr/sbin/camyn_lockdown.sh </dev/null >/dev/null 2>&1 & )
+fi
+
 # --- Manual WiFi bring-up ---
 # ethernet.sh's wifi_driver.sh install() deliberately SKIPS starting
 # wpa_supplicant and assigning an IP whenever /tmp/_ak39_factory.ini exists
