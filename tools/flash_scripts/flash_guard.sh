@@ -19,14 +19,24 @@ _cfg_under_usr() {
     return 1
 }
 
+# Absolute, physical path (symlinks resolved, up to 16 hops, using only
+# cd/pwd -P and readlink when present) so /mnt/x -> /usr/... cannot slip through.
 _cfg_abspath() {
-    case "$1" in
-        /*) printf '%s\n' "$1" ;;
-        *)
-            _d=$(cd "$(dirname "$1")" 2>/dev/null && pwd) || _d=$(pwd)
-            printf '%s/%s\n' "$_d" "$(basename "$1")"
-            ;;
+    _f=$1
+    _h=0
+    while [ -L "$_f" ] && [ "$_h" -lt 16 ]; do
+        _h=$((_h + 1))
+        _t=$(readlink "$_f" 2>/dev/null) || break
+        case "$_t" in
+            /*) _f=$_t ;;
+            *) _f=$(dirname "$_f")/$_t ;;
+        esac
+    done
+    case "$_f" in
+        */*) _d=$(cd "$(dirname "$_f")" 2>/dev/null && pwd -P) || _d=$(pwd -P) ;;
+        *) _d=$(pwd -P) ;;
     esac
+    printf '%s/%s\n' "$_d" "$(basename "$_f")"
 }
 
 # returns 0 if a dropbear process is among the ancestors of this shell

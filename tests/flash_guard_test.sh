@@ -57,6 +57,10 @@ run() {
 }
 outhas() { if grep -q -- "$2" "$WORK/out"; then ok "$1"; else ko "$1 (no '$2')"; fi; }
 
+ln -s /usr/bin/env "$WORK/sd_link.sh"
+run "symlink on SD pointing into /usr: blocked" 1 mounts_app "$WORK/sd_link.sh" /mnt/flash_tool
+run "symlink on SD pointing into /usr, stock mounts: allowed" 0 mounts_stock "$WORK/sd_link.sh" /mnt/flash_tool
+
 run "stock, SD script: allowed" 0 mounts_stock /mnt/x.sh /mnt/flash_tool
 run "APP on /usr, SD script+tool (UART shell): allowed" 0 mounts_app /mnt/x.sh /mnt/flash_tool
 run "SSH_CONNECTION: refused" 1 mounts_stock /mnt/x.sh /mnt/flash_tool SSH_CONNECTION="1.2.3.4 5 6.7.8.9 22"
