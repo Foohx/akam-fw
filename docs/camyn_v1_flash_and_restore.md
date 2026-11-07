@@ -221,7 +221,7 @@ bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/camyn.p
 ```
 
 The script verifies the pinned `lsc-tuya-toolkit` commit (`396db8a`) and the `sd_card` tree sha256
-(`0436e3f8...1e341d91`), refuses any device that is not a whole, removable, USB disk, shows `lsblk`
+(`3aa3f698...757747c2f`), refuses any device that is not a whole, removable, USB disk, shows `lsblk`
 and needs a typed `YES` before wiping, waits for the reader to come back after `wipefs` (some
 readers report "No medium found"), asks for the SSID and password **visibly**, and writes the toolkit
 payload configured as for the backup (telnet 24, `OFFLINE=1`, `wifi.conf`, entrypoint lock,

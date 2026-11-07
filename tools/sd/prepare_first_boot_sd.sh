@@ -25,7 +25,8 @@
 set -euo pipefail
 
 PIN_COMMIT=396db8a835d9787b2997de038b48f645c837e754
-PIN_TREE_SHA=0436e3f89f51ee1ff6b2085e007a7b51e2f155bdea5de7213ba1e05f1e341d91
+# Tree hash of sd_card, files listed in C-locale order (locale independent).
+PIN_TREE_SHA=3aa3f698fd6d6f228ee785726970f708035799aa5bbcb73ef369bc3757747c2f
 TOOLKIT_URL=https://github.com/tasarren/lsc-tuya-toolkit.git
 # Test hook, honoured ONLY with --dry-run: point the pins at a synthetic toolkit.
 TESTPIN=0
@@ -63,12 +64,17 @@ fi
 
 # --- public key ------------------------------------------------------------------
 [ -f "$PUBKEY" ] || die "public key not found: $PUBKEY"
-[ "$(wc -l <"$PUBKEY")" -le 1 ] || die "$PUBKEY must hold exactly one key line"
+[ "$(grep -c '' "$PUBKEY")" -le 1 ] || die "$PUBKEY must hold exactly one key line"
 KT=
 KB=
 read -r KT KB _ <"$PUBKEY" || true
 [ "$KT" = ssh-ed25519 ] || die "$PUBKEY is not an ssh-ed25519 public key"
-case "$KB" in AAAAC3NzaC1lZDI1NTE5*) ;; *) die "$PUBKEY does not look like an ed25519 public key" ;; esac
+case "$KB" in
+    *[!A-Za-z0-9+/]*) die "$PUBKEY: key blob has unexpected characters" ;;
+    AAAAC3NzaC1lZDI1NTE5*) ;;
+    *) die "$PUBKEY does not look like an ed25519 public key" ;;
+esac
+[ "${#KB}" -eq 68 ] || die "$PUBKEY: an ed25519 key blob is 68 characters long (got ${#KB})"
 
 # --- device checks (real run only) ----------------------------------------------
 SUDO=
@@ -91,7 +97,15 @@ if [ "$DRY" = 0 ]; then
     [ "$d_rm" = 1 ] || die "$DEV is not removable (RM=$d_rm): refusing"
     [ "$d_tran" = usb ] || die "$DEV is not USB-attached (TRAN=${d_tran:-none}): refusing"
     size=$(blockdev --getsize64 "$DEV" 2>/dev/null || echo 0)
+    [ "$size" -ge 134217728 ] || die "$DEV reports $size bytes (no medium, or under 128 MiB): refusing"
     [ "$size" -le 137438953472 ] || die "$DEV is larger than 128 GiB: use a small card"
+    # Never touch a disk that carries the running system, even if it claims to be removable.
+    while read -r mp; do
+        case "$mp" in
+            / | /boot | /boot/* | /usr | /usr/* | /var | /var/* | /etc | /home | /home/* | /opt | /srv | /nix | /nix/* | '[SWAP]')
+                die "$DEV carries the mounted system path $mp: refusing" ;;
+        esac
+    done < <(lsblk -nro MOUNTPOINT "$DEV")
 fi
 
 # --- toolkit: pinned commit + tree hash ------------------------------------------
@@ -148,6 +162,8 @@ sed -i -E 's/^TELNET=.*/TELNET=1/; s/^TELNET_PORT=.*/TELNET_PORT=24/; s/^OFFLINE
 [ "$(grep -cE '^(TELNET=1|TELNET_PORT=24|OFFLINE=1)$' "$CONF")" = 3 ] || die "hack.conf edits did not apply"
 printf 'MODE=sta\nSSID=%s\nPASS=%s\nSECURITY=3\nDHCP=1\n' "$(q "$SSID")" "$(q "$PASS")" >"$S/custom/configs/wifi.conf"
 sed -i '2i\# DECLOUD_ENTRYPOINT_LOCK\nmkdir /tmp/decloud_entrypoint.lock 2>/dev/null || exit 0' "$S/custom/scripts/entrypoint.sh"
+# The toolkit hack.sh has no trailing newline: keep the marker on its own line.
+if [ -n "$(tail -c1 "$S/hack.sh")" ]; then echo >>"$S/hack.sh"; fi
 cat >>"$S/hack.sh" <<'EOF_HOOK'
 # DECLOUD_WIZARD_HOOK
 /bin/sh "${SCRIPTS_DIR}/entrypoint.sh" >/dev/null 2>&1 &
@@ -200,10 +216,11 @@ while [ ! -b "$PART" ] && [ "$i" -lt 30 ]; do
 done
 [ -b "$PART" ] || die "$PART did not appear"
 wait_disk
+$SUDO umount "$PART" 2>/dev/null || true # a desktop automounter may have grabbed it
 $SUDO mkfs.vfat -F 32 -n CAMYNSD "$PART" >/dev/null || die "mkfs.vfat failed"
 MNT=$(mktemp -d) || die "mktemp failed"
 $SUDO mount -o "uid=$(id -u),gid=$(id -g),umask=022" "$PART" "$MNT" || die "mount failed"
-cp -a "$S/." "$MNT/" || die "copy to the card failed"
+cp -r "$S/." "$MNT/" || die "copy to the card failed"
 sync
 # Re-check on the card itself.
 { [ -f "$MNT/CAMYN_MAINTENANCE" ] && [ -s "$MNT/camyn/authorized_keys" ]; } || die "card verification failed"
