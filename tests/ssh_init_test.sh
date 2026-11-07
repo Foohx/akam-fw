@@ -273,6 +273,51 @@ else
     chmod 755 "$R/etc/config"
 fi
 
+echo "== 9b. /etc/shells without /bin/sh: bind mount of a private list"
+new_root t9b
+mkdir -p "$R/stubbin"
+cat >"$R/stubbin/mount" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$CAMYN_ROOT/tmp/mount_calls"
+exit 0
+EOF
+chmod 755 "$R/stubbin/mount"
+printf '/bin/bash\n' >"$R/etc/shells"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "mount --bind called over /etc/shells" grep -qx -- "--bind $R/tmp/camyn/shells $R/etc/shells" "$R/tmp/mount_calls"
+check "private shells file lists /bin/sh" grep -qx /bin/sh "$R/tmp/camyn/shells"
+check "private shells file mode 644, dir 755" test "$(mode_of "$R/tmp/camyn/shells")" = 644 -a "$(mode_of "$R/tmp/camyn")" = 755
+check "original /etc/shells untouched" test "$(cat "$R/etc/shells")" = /bin/bash
+check "bind mount logged" grep -q 'bind-mounted' "$R/tmp/camyn_ssh.log"
+check "dropbear still launched" test -s "$R/tmp/dropbear.pid"
+killdb
+new_root t9c
+mkdir -p "$R/stubbin"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\necho x >>"$CAMYN_ROOT/tmp/mount_calls"\n' >"$R/stubbin/mount"
+chmod 755 "$R/stubbin/mount"
+printf '/bin/sh\n/bin/bash\n' >"$R/etc/shells"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "/bin/sh already listed: no mount" test ! -e "$R/tmp/mount_calls"
+killdb
+new_root t9d
+mkdir -p "$R/stubbin"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\necho x >>"$CAMYN_ROOT/tmp/mount_calls"\n' >"$R/stubbin/mount"
+chmod 755 "$R/stubbin/mount"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "no /etc/shells: no mount" test ! -e "$R/tmp/mount_calls"
+killdb
+new_root t9e
+mkdir -p "$R/stubbin"
+printf '#!/bin/sh\nexit 1\n' >"$R/stubbin/mount"
+chmod 755 "$R/stubbin/mount"
+printf '/bin/bash\n' >"$R/etc/shells"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "mount failure is not fatal: dropbear launched" test -s "$R/tmp/dropbear.pid"
+check "mount failure logged" grep -q 'bind mount failed' "$R/tmp/camyn_ssh.log"
+killdb
+
 echo "== 10. fixture sanity"
 check "fixture has telnetd/ftpd lines" grep -q telnetd "$FIXTURE/sbin/service.sh"
 check "fixture symlink present" test -L "$FIXTURE/lib/libfake.so"
