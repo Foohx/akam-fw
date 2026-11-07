@@ -17,7 +17,8 @@
 # Camyn image, see flash_guard.sh): sh /mnt/install_padded_firmware.sh
 
 # Refuse to write APP from a context that depends on it (SSH, running from /usr).
-_g="$(dirname "$0")/flash_guard.sh"
+# No dirname: the bare UART init=/bin/sh rootfs has no dirname (it lives in the APP).
+case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esac
 if [ -r "$_g" ]; then
     # shellcheck source=flash_guard.sh
     . "$_g"

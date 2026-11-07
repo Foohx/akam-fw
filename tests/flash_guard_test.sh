@@ -95,5 +95,27 @@ for s in install_with_flash_tool quiet_and_flash_test restore install_custom_fir
     else ko "$s.sh fails closed (rc=$rc)"; fi
 done
 
+# Bare UART init=/bin/sh recovery shell: only the ROOTFS applets exist (no dirname,
+# basename, readlink, cut, wc, md5sum: they live in the APP partition). The guard
+# must still load and work, and restore_full_firmware.sh must parse its table.
+RB=$WORK/rootbin
+mkdir -p "$RB"
+for a in sh cat grep sed stat mount sleep kill dd touch sync echo ls ps mkdir mv rm cp mknod date chmod; do
+    ln -s "${SHCMD[0]}" "$RB/$a"
+done
+if [ "${#SHCMD[@]}" -gt 1 ]; then
+    for a in dirname basename cut wc; do [ -e "$RB/$a" ] && ko "$a must not be in the fake rootfs"; done
+    for s in install_with_flash_tool quiet_and_flash_test restore install_custom_firmware \
+        install_padded_firmware install_ak_rtsp_firmware restore_full_firmware; do
+        d=$WORK/sd_$s
+        cp "$FS/flash_guard.sh" "$d/"
+        (cd "$d" && env -i PATH="$RB" SSH_CONNECTION=x CAMYN_PROC_MOUNTS="$WORK/mounts_stock" \
+            CAMYN_PROC_DIR="$WORK/proc" "${SHCMD[0]}" sh "./$s.sh" >"$WORK/out" 2>&1)
+        rc=$?
+        if [ $rc -ne 0 ] && grep -q "refusing to write the APP" "$WORK/out"; then ok "$s.sh: guard loads without dirname (rootfs applets only)"
+        else ko "$s.sh: guard loads without dirname (rc=$rc)"; sed 's/^/      | /' "$WORK/out"; fi
+    done
+fi
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

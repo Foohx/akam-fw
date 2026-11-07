@@ -10,7 +10,8 @@
 # throughout this project.
 
 # Refuse to write APP from a context that depends on it (SSH, running from /usr).
-_g="$(dirname "$0")/flash_guard.sh"
+# No dirname: the bare UART init=/bin/sh rootfs has no dirname (it lives in the APP).
+case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esac
 if [ -r "$_g" ]; then
     # shellcheck source=flash_guard.sh
     . "$_g"
@@ -70,10 +71,9 @@ get_size() {
 
 echo "Checking all partition images before touching anything..."
 for P in $PARTS; do
-    IDX=$(echo $P | cut -d: -f1)
-    DEV=$(echo $P | cut -d: -f2)
-    EXPECT=$(echo $P | cut -d: -f3)
-    NAME=$(echo $P | cut -d: -f4)
+    IFS=: read -r IDX DEV EXPECT NAME <<EOP
+$P
+EOP
     IMG="$SRC/mtdblock${IDX}.bin"
     if [ ! -f "$IMG" ]; then
         echo "ERROR: $IMG not found — aborting, nothing has been written"
@@ -98,9 +98,9 @@ if [ "$CONFIRM" != "YES" ]; then
 fi
 
 for P in $PARTS; do
-    IDX=$(echo $P | cut -d: -f1)
-    DEV=$(echo $P | cut -d: -f2)
-    NAME=$(echo $P | cut -d: -f4)
+    IFS=: read -r IDX DEV _ NAME <<EOP
+$P
+EOP
     IMG="$SRC/mtdblock${IDX}.bin"
     echo "Flashing $NAME -> $DEV ..."
     dd_with_progress "$IMG" "$DEV" || { echo "ERROR: dd failed on $DEV, STOP and investigate before rebooting"; exit 1; }
