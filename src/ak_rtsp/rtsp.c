@@ -9,6 +9,7 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <poll.h>
 #include <stdbool.h>
@@ -567,6 +568,13 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     int keepalive = 1;
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
     setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    /* The kernel default probes only after 2 h of silence: a peer that vanished
+     * before PLAY (or while paused) would keep this single-client server busy
+     * for over 2 h. Probe after 30 s idle, every 10 s, give up after 3. */
+    int ka_idle = 30, ka_intvl = 10, ka_cnt = 3;
+    setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle));
+    setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl));
+    setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt));
 
     Client client;
     memset(&client, 0, sizeof(client));
