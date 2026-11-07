@@ -6,6 +6,8 @@
 # touching UART. This tests the DMA-contention
 # theory against a live Telnet session instead of a bare UART recovery shell.
 #
+# Live-Telnet use applies to STOCK firmware only; never run it over SSH on a Camyn
+# image (flash_guard.sh refuses unless CAMYN_FLASH_I_KNOW=1).
 # This is a TEST harness, not the proven-safe method — the bare UART recovery shell
 # (install_ak_rtsp_firmware.sh / install_custom_firmware.sh) remains the reliable
 # fallback. Keep a full recovery plan ready (restore.sh, UART access)
@@ -15,6 +17,17 @@
 
 DEV=/dev/mtd7
 TOOL=/mnt/flash_tool
+
+# Refuse to write APP from a context that depends on it (SSH, running from /usr).
+_g="$(dirname "$0")/flash_guard.sh"
+if [ -r "$_g" ]; then
+    # shellcheck source=flash_guard.sh
+    . "$_g"
+    camyn_flash_guard "$0" "$TOOL" || exit 1
+elif [ "${CAMYN_FLASH_I_KNOW:-}" != "1" ]; then
+    echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
+    exit 1
+fi
 EXPECTSIZE=5242880
 
 if [ ! -f "$TOOL" ]; then
