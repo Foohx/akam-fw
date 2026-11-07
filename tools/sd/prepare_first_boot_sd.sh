@@ -96,7 +96,8 @@ if [ "$DRY" = 0 ]; then
     [ "$d_type" = disk ] || die "$DEV is not a disk (type $d_type)"
     [ "$d_rm" = 1 ] || die "$DEV is not removable (RM=$d_rm): refusing"
     [ "$d_tran" = usb ] || die "$DEV is not USB-attached (TRAN=${d_tran:-none}): refusing"
-    size=$(blockdev --getsize64 "$DEV" 2>/dev/null || echo 0)
+    # sysfs reports the size in 512-byte sectors and is readable without root.
+    size=$(( $(cat "/sys/class/block/$(basename "$DEV")/size" 2>/dev/null || echo 0) * 512 ))
     [ "$size" -ge 134217728 ] || die "$DEV reports $size bytes (no medium, or under 128 MiB): refusing"
     [ "$size" -le 137438953472 ] || die "$DEV is larger than 128 GiB: use a small card"
     # Never touch a disk that carries the running system, even if it claims to be removable.
