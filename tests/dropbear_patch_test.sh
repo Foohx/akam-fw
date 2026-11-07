@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Host-side test of the Dropbear clock patch and the ARM clock probe:
+# Host-side test of the Dropbear clock patch and the ARM time64 probe:
 #  - every patch in tools/dropbear/patches applies cleanly (fuzz 0) to the
 #    pinned Dropbear archive and leaves no raw time syscall in the sources;
-#  - the probe builds with the pinned Zig and, when qemu-arm is installed,
+#  - the time64 probe builds with the pinned Zig and, when qemu-arm is installed,
 #    runs (qemu-user on a time64 host has a vDSO and clock_gettime64, so this
 #    only checks that the probe works, it does NOT reproduce the 4.4 kernel).
 # Skips (exit 0) when the bootstrap has not been run. Nothing touches hardware.
@@ -46,10 +46,10 @@ echo "== clock probe"
 if [ ! -x "$REPO/tools/.toolchain/zig-$ZIG_VERSION-x86_64-linux/zig" ]; then
     echo "  skip - zig not installed"
 else
-    check "probe builds" "$REPO/tests/native/build_probe.sh" "$WORK/time_probe"
+    check "probe builds" "$REPO/tests/native/build_probe.sh" "$WORK/time64_probe"
     if command -v qemu-arm >/dev/null 2>&1; then
         check "probe runs under qemu-arm: libc and raw legacy syscall agree" bash -c "
-            out=\$(qemu-arm '$WORK/time_probe') || exit 1
+            out=\$(qemu-arm '$WORK/time64_probe') || exit 1
             a=\$(printf '%s\n' \"\$out\" | sed -n 's/^  libc  MONOTONIC .* sec=\\([0-9]*\\) .*/\\1/p' | head -1)
             b=\$(printf '%s\n' \"\$out\" | sed -n 's/^  raw263 MONOTONIC .* sec=\\([0-9]*\\) .*/\\1/p' | head -1)
             [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \$((a - b)) -le 2 ] && [ \$((b - a)) -le 2 ]"
