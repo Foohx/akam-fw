@@ -16,6 +16,17 @@
 #
 # Run: sh /mnt/install_ak_rtsp_firmware.sh
 
+# Refuse to write APP from a context that depends on it (SSH, running from /usr).
+_g="$(dirname "$0")/flash_guard.sh"
+if [ -r "$_g" ]; then
+    # shellcheck source=flash_guard.sh
+    . "$_g"
+    camyn_flash_guard "$0" || exit 1
+elif [ "${CAMYN_FLASH_I_KNOW:-}" != "1" ]; then
+    echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
+    exit 1
+fi
+
 DEV=/dev/mtdblock7
 EXPECTSIZE=5242880
 

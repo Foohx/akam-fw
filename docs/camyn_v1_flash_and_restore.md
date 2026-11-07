@@ -55,7 +55,8 @@ cp ak_rtsp_firmware_*.squashfs "$SD/custom_firmware/"
 cp ~/camyn-backup/mtdblock*.bin "$SD/original_firmware/"          # for restore
 cp ~/Projects/camyn/src/ak_rtsp/flash_tool "$SD/"                 # path of your checkout
 cp ~/Projects/camyn/tools/flash_scripts/install_with_flash_tool.sh \
-   ~/Projects/camyn/tools/flash_scripts/restore.sh "$SD/"
+   ~/Projects/camyn/tools/flash_scripts/restore.sh \
+   ~/Projects/camyn/tools/flash_scripts/flash_guard.sh "$SD/"   # flash_guard.sh is mandatory
 cp ~/.ssh/camyn.pub "$SD/camyn/authorized_keys"
 touch "$SD/CAMYN_MAINTENANCE"               # first test only, see the SSH guide
 sync
@@ -138,6 +139,14 @@ resolved from ROOTFS). Camyn has **not** tried this and does not recommend it: y
 watchdog feeder and the SSH session, and cannot see the result. The `make -C src/ak_rtsp upload` target
 copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash; do
 not run them from an SSH session on a Camyn image.
+
+**`flash_guard.sh`.** Every script that writes APP sources `flash_guard.sh` from its own directory, so
+copy it to the SD card next to the scripts (a missing file makes the script refuse to run). The guard
+refuses inside an SSH session (`SSH_CONNECTION`/`SSH_CLIENT`, or a dropbear ancestor process) and when
+the script or `flash_tool` lives under `/usr` while `/usr` is the `mtdblock7` squashfs. It does not
+block the first flash from stock firmware over Telnet/UART or the `init=/bin/sh` shell, with scripts
+and `flash_tool` on the SD card. `CAMYN_FLASH_I_KNOW=1` overrides it (prints a warning); use it only
+on **stock firmware**, never on a Camyn image.
 
 Note that the header comments of `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` describe
 live flashing over **Telnet** on the stock firmware (a shell that is not Dropbear). That experience
