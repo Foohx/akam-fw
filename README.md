@@ -1,31 +1,117 @@
-# LSC Smart Connect Indoor IP Camera (AK3918AV130) Custom Firmware
+# Camyn: cloud-free firmware for the LSC Smart Connect 1080p camera (Anyka AK3918AV130)
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![SoC](https://img.shields.io/badge/SoC-Anyka%20AK3918AV130-orange.svg)]()
 [![Sensor](https://img.shields.io/badge/Sensor-GalaxyCore%20GC20C3%201080p-green.svg)]()
 [![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20PCM%20Audio-red.svg)]()
 
-A standalone, 100% cloud-free custom firmware and native RTSP server for the **LSC Smart Connect Smart Indoor IP Camera 1080p HD** (Action SKU `SI B26101`, model `3215672.2`).
+> **Camyn is a fork** of
+> [FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware](https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware).
+> All the reverse-engineering work behind `ak_rtsp` (ISP, H.264 encoder, audio, IR-cut, RTSP) is the
+> upstream author's. Camyn keeps that code, its MIT license and its credits (see
+> [Credits](#credits--acknowledgements) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and adds
+> a Linux-native build, a permanent SSH server, Telnet/FTP lockdown, and install/backup/restore
+> documentation. Upstream was developed on Windows 11 + WSL; Camyn's build is native Linux (Arch).
 
-This project completely removes the proprietary Tuya cloud agent (`anyka_ipc`) and replaces it with a lightweight, reverse-engineered C application (`ak_rtsp`) that streams pristine 1080p H.264 video and synchronized audio directly to your local network (Home Assistant, Synology Surveillance Station, Frigate, go2rtc, VLC).
+Camyn targets the **LSC Smart Connect Smart Indoor IP Camera 1080p HD, model `3215672.3`** (Action; the
+SI code is expected to be `D26228`, to be confirmed on your label). It removes the Tuya cloud agent
+(`anyka_ipc`), serves RTSP H.264 + audio from the standalone `ak_rtsp`, and runs a key-only SSH server
+(Dropbear) so that the stock Telnet/FTP daemons can stay off.
 
 ---
 
-![Camera Front & PCB](images/1.jpg)
+## Status: nothing is validated on hardware yet
 
----
-
-## ⚠️ Important Disclaimer & Risks
-
-> ⚠️ **CAUTION: FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
+> **This is Camyn V1 work in progress. No Camyn image has been flashed on any camera.**
 >
-> - **Experimental Codebase:** This is the public release of a much larger private reverse-engineering project. The reverse engineering itself — reading UART logs, decompiling `anyka_ipc` in Ghidra, strace-capturing the stock RTSP session, cross-referencing ioctl structs, etc. — was done by hand over many sessions. This public repository (its structure, docs, and some cleanup/refactoring) was then compiled and organized with AI assistance from that original project. While core streaming and hardware drivers have been verified on test units, the codebase has **not been exhaustively tested by hand across all conditions or manufacturing batches** and carries inherent experimental risks.
-> - **Risk of Permanent Hardware Bricking:** Writing to the SPI NOR flash chip carries a real risk of permanently bricking your camera. In the worst case, a corrupted flash may result in an unrecoverable hard brick that can only be fixed by physically desoldering the flash chip and using an external SPI programmer (e.g. CH341A).
-> - **No Liability:** The authors and contributors of this repository accept **zero liability or responsibility** for damaged hardware, bricked cameras, data loss, or voided warranties.
-> - **Windows + WSL only.** Every tool, script, and workflow in this repo (the .NET serial console, the `zig cc` cross-build, the WSL `mksquashfs` packaging step) has only ever been developed and tested on Windows 11 with WSL/Ubuntu. Native Linux or macOS hosts, other WSL distros, or other cross-compilers may well work, but they are **completely untested** — you're on your own figuring out any path/tooling differences if you go that route.
-> - **Always make a complete flash backup** before attempting to flash any custom image.
-> - **Always double-check the flash verification logs** before disconnecting power.
-> - If flashing fails or reports errors, **DO NOT power cycle**—attempt to flash your stock backup immediately!
+> - **Compiled / tested on the build host only:** the native Linux build of `ak_rtsp`, `flash_tool` and
+>   Dropbear (ARM EABI5, soft-float, static), and the host test suites in `tests/` (they run the
+>   install scripts against a synthetic fixture and fake binaries, not against a real firmware dump).
+> - **Not tested on hardware:** the Dropbear boot hook, Telnet/FTP lockdown, key provisioning from the
+>   microSD, the image size margin (the real APP dump is not available yet), the boot-time exposure
+>   window, memory use, and the restore procedures.
+> - Where this documentation says "expected" or "assumed", it is a hypothesis listed in the
+>   [hardware test plan](docs/camyn_v1_test_plan.md) to be checked on the camera.
+>
+> The V1 acceptance checklist lives in [docs/camyn_v1_test_plan.md](docs/camyn_v1_test_plan.md).
+> Tick a box only after you have seen the result on your own camera.
+
+---
+
+## What Camyn V1 contains
+
+| Component | What it does | Where |
+|---|---|---|
+| `ak_rtsp` | RTSP/RTP H.264 + audio server, 8091 tuning port (functionally upstream) | `src/ak_rtsp/` |
+| Native Linux build | Pinned Zig 0.14.1 + pinned SmolRTSP, `make` and `bash` only, no Windows | `tools/build/` |
+| Dropbear 2026.94 | Static multi-call binary, ed25519 public-key login only | `tools/dropbear/` |
+| SSH boot script | Starts Dropbear in the background, host key and client keys persist in CONFIG | `tools/firmware_patch_templates/camyn_ssh.sh` |
+| Telnet/FTP lockdown | Build-time patch of `service.sh` + runtime safety-net script | `tools/firmware_patch_templates/` |
+| Image builder | Patches **your own** APP dump, repacks, checks, pads to 5 242 880 bytes | `src/ak_rtsp/build_firmware.sh` |
+| Post-flash check | Read-only checklist script, run over SSH | `tools/hw_tests/camyn_hwcheck.sh` |
+
+Only the **APP partition (`mtd7`)** is ever rebuilt. U-Boot, kernel, DTB and ROOTFS are never written, so
+U-Boot stays reachable over UART if the APP image turns out to be bad.
+
+---
+
+## Important disclaimer and risks
+
+> **FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
+>
+> - **Experimental codebase:** upstream is the public release of a larger private reverse-engineering
+>   project, organised with AI assistance. Camyn's additions were written with AI assistance and have
+>   **not been run on a camera**.
+> - **Risk of permanent bricking:** writing to the SPI NOR flash can brick the camera. In the worst case
+>   only desoldering the flash chip and using an external SPI programmer (for example a CH341A) will
+>   recover it. **Restoring your backup is not guaranteed to work** (see
+>   [flash and restore](docs/camyn_v1_flash_and_restore.md)).
+> - **No liability:** the authors and contributors accept zero liability for damaged hardware, bricked
+>   cameras, data loss or voided warranties.
+> - **Always make and verify a complete 8-partition backup first** ([backup guide](docs/camyn_v1_backup.md)).
+>   Never publish it: it contains your Wi-Fi credentials and Tuya identifiers.
+> - **Always read the flash verification output before disconnecting power.** If flashing reports
+>   errors, do not power cycle; flash your stock backup immediately.
+
+---
+
+## Quick start (Arch Linux, x86-64)
+
+Nothing below touches the camera. Read the [backup guide](docs/camyn_v1_backup.md) and make your dump
+**before** you flash anything.
+
+```bash
+# 1. Host tools (the repo never calls sudo)
+sudo pacman -S --needed squashfs-tools shellcheck file binutils make git curl tar xz bzip2
+bash tools/build/check_host.sh          # lists anything still missing
+
+# 2. Download and verify the pinned toolchain and sources (Zig, SmolRTSP + deps, Dropbear archive)
+bash tools/build/bootstrap.sh
+
+# 3. Build ak_rtsp and flash_tool
+. tools/build/env.sh
+make -C src/ak_rtsp ak_rtsp flash_tool
+
+# 4. Build Dropbear -> dist/dropbear/dropbearmulti
+bash tools/dropbear/build_dropbear.sh
+
+# 5. Build the APP image from YOUR OWN dump (the unsquashed mtdblock7.bin)
+unsquashfs -d ~/camyn-work/app_extracted ~/camyn-backup/mtdblock7.bin
+APP_EXTRACTED=~/camyn-work/app_extracted FW_DIR=~/camyn-work/out \
+    bash src/ak_rtsp/build_firmware.sh
+```
+
+Step 5 produces `ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (exactly 5 242 880 bytes), its `.sha256`, and
+`build_report.txt` in `FW_DIR`. Then follow, in this order:
+
+1. [Backup first](docs/camyn_v1_backup.md): dump and verify the 8 partitions, confirm the model.
+2. [Build the image](docs/camyn_v1_build.md): tool details, size guard, compression, report.
+3. [SSH and Telnet/FTP lockdown](docs/camyn_v1_ssh_and_lockdown.md): generate your key, provision it.
+4. [Flash and restore](docs/camyn_v1_flash_and_restore.md): Camyn's own procedure and recovery.
+5. [Hardware test plan](docs/camyn_v1_test_plan.md): what to check on the camera, resource report.
+
+`cmake` is **not** required (the bootstrap populates SmolRTSP's four header-only dependencies itself).
+The upstream Windows/PowerShell/WSL build path is gone: the Makefile no longer calls `pwsh` or `wsl`.
 
 ---
 
@@ -41,7 +127,7 @@ This project completely removes the proprietary Tuya cloud agent (`anyka_ipc`) a
 
 ---
 
-## 📷 Current Status & Image Quality
+## Image Quality (upstream status)
 
 > ℹ️ **Image Quality Notice:**  
 > The custom firmware is fully functional and stable for continuous 24/7 streaming. However, **the dynamic image tuning (contrast, wide-dynamic range curves, and auto-exposure adjustments) is still somewhat behind the stock Tuya firmware's proprietary closed-source tuning**.  
@@ -70,7 +156,7 @@ This project completely removes the proprietary Tuya cloud agent (`anyka_ipc`) a
 | Component | Specification |
 |---|---|
 | **Retail Model** | LSC Smart Connect Smart Indoor IP Camera 1080p HD (Action) |
-| **Model / SKU** | `3215672.2` / `SI B26101` |
+| **Model / SKU** | `3215672.2` / `SI B26101` (upstream, tested by the upstream author). Camyn target: `3215672.3`, SI `D26228` expected, unconfirmed |
 | **PCB Revision** | `IPC280KG2-GNA-MAIN-V1.0` (Circular PCB, 2025-08-28) |
 | **SoC** | Anyka AK3918AV130 (ARM926EJ-S @ 400 MHz) |
 | **Image Sensor** | GalaxyCore GC20C3 (2MP 1/2.9" CMOS, I2C bus) |
@@ -78,64 +164,7 @@ This project completely removes the proprietary Tuya cloud agent (`anyka_ipc`) a
 | **Wireless** | Altobeam ATBM6012BX / ATBM6x3x USB WiFi |
 | **Power** | USB-C 5V / 1A |
 
-> ℹ️ **NOTE:** This repository is tailored for **Revision 2** (circular PCB, Anyka AK3918AV130). Older revisions with rectangular boards used different SoCs (AK3918EV200 or GK7102) which have different register maps and flash partitioning.
-
----
-
-## Step 0: MANDATORY — Dump Your Stock Firmware Backup!
-
-Before doing anything else, connect to your camera shell (via UART or Telnet) and create a full backup of all 8 flash partitions:
-
-```sh
-# 1. Mount SD card and create backup directory
-mount -t vfat /dev/mmcblk0p1 /mnt
-mkdir -p /mnt/original_firmware
-
-# 2. Dump all partitions
-dd if=/dev/mtdblock0 of=/mnt/original_firmware/mtdblock0.bin bs=64k
-dd if=/dev/mtdblock1 of=/mnt/original_firmware/mtdblock1.bin bs=64k
-dd if=/dev/mtdblock2 of=/mnt/original_firmware/mtdblock2.bin bs=64k
-dd if=/dev/mtdblock3 of=/mnt/original_firmware/mtdblock3.bin bs=64k
-dd if=/dev/mtdblock4 of=/mnt/original_firmware/mtdblock4.bin bs=64k
-dd if=/dev/mtdblock5 of=/mnt/original_firmware/mtdblock5.bin bs=64k
-dd if=/dev/mtdblock6 of=/mnt/original_firmware/mtdblock6.bin bs=64k
-dd if=/dev/mtdblock7 of=/mnt/original_firmware/mtdblock7.bin bs=64k
-sync
-```
-
-Keep a copy of `/mnt/original_firmware/` safely on your computer!
-
----
-
-## Quick Installation Guide
-
-### Step 1: Prepare the MicroSD Card
-Format a MicroSD card as FAT32 and copy the following files:
-- `custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (the padded firmware image — see
-  [Building Your Own Firmware](docs/building_your_own_firmware.md) for how to produce this)
-- `flash_tool` (pre-compiled binary from `src/ak_rtsp/`)
-- `tools/flash_scripts/install_with_flash_tool.sh`
-- `tools/flash_scripts/restore.sh` *(for safety fallback)*
-- `original_firmware/mtdblock*.bin` *(your stock backup)*
-
-### Step 2: Connect & Run Flashing Script
-Insert the SD card, connect to the camera over Telnet (or UART), mount the card, and execute:
-```sh
-mount -t vfat /dev/mmcblk0p1 /mnt
-sh /mnt/install_with_flash_tool.sh
-```
-
-### Step 3: Check Verification Output!
-> 🛑 **IMPORTANT: Always verify the tool output before powering down:**
-> ```text
-> FAULT SUMMARY: 0/1280 chunks needed retry, 0 total failed verify attempts.
-> Flashing and verification completed successfully!
-> ```
-> If any errors are displayed, **DO NOT DISCONNECT POWER!** Run `sh /mnt/restore.sh` to revert to your stock firmware image first.
-
-### Step 4: Power Cycle by Hand
-> ℹ️ **NOTE:** The software `reboot` command **does not work reliably** on this hardware platform.  
-> **Unplug and reconnect the USB-C power cable by hand** to power cycle the camera.
+> ℹ️ **NOTE:** The table above describes the upstream test unit. Camyn's target model `3215672.3` has not been opened or dumped yet; whether it has the same PCB, flash and partition table is to be confirmed (see the [backup guide](docs/camyn_v1_backup.md)). This repository is tailored for **Revision 2** (circular PCB, Anyka AK3918AV130). Older revisions with rectangular boards used different SoCs (AK3918EV200 or GK7102) which have different register maps and flash partitioning.
 
 ---
 
@@ -153,138 +182,54 @@ The custom `ak_rtsp` server is **path-agnostic** (it serves the 1080p video + au
 *(Note: `rtsp://<camera-ip>:554/main_ch` was the legacy path used by the original Tuya firmware, which continues to work seamlessly).*
 
 ---
-
 ## Repository Structure
 
 ```
 .
-├── docs/                                # Technical Documentation & Guides
-│   ├── hardware_and_uart.md             # Disassembly, UART pads, U-Boot shell & photos
-│   ├── flash_partition_map_and_rootfs.md# Flash layout, stock boot traps, de-Tuyafication
-│   ├── firmware_building_and_flashing.md# Build guide & SPI-NOR DMA contention gotchas
-│   ├── camera_and_audio_pipeline.md     # ISP registers, div0 kernel fix, audio capture
-│   └── building_your_own_firmware.md    # WSL setup, dump/unsquash/patch/rebuild your own image
+├── docs/
+│   ├── camyn_v1_install.md              # Camyn V1 overview, services, network hardening, licenses
+│   ├── camyn_v1_backup.md               # 8-partition backup and hardware identification (do this first)
+│   ├── camyn_v1_build.md                # Host tools, builds, image from your own dump
+│   ├── camyn_v1_ssh_and_lockdown.md     # SSH key provisioning, Telnet/FTP lockdown, maintenance flag
+│   ├── camyn_v1_flash_and_restore.md    # Flashing procedure, verification, restore, UART recovery
+│   ├── camyn_v1_test_plan.md            # Hardware test plan, hypotheses, resource report
+│   ├── hardware_and_uart.md             # Disassembly, UART pads, U-Boot shell & photos (upstream)
+│   ├── flash_partition_map_and_rootfs.md# Flash layout, stock boot traps, de-Tuyafication (upstream)
+│   ├── firmware_building_and_flashing.md# SPI-NOR DMA gotchas, flash_tool background (upstream)
+│   ├── building_your_own_firmware.md    # Short pointer to the Camyn build guide
+│   ├── camera_and_audio_pipeline.md     # ISP registers, div0 kernel fix, audio capture (upstream)
+│   └── serial_console_and_camera_tuning.md
 ├── images/                              # Hardware photographs and diagrams
-├── src/
-│   └── ak_rtsp/                         # Standalone C RTSP server & flash_tool source
-│       ├── Makefile                     # Cross-compilation Makefile (Zig / Anyka GCC)
-│       ├── build_firmware.sh            # Patches your own app_extracted/ dump & repacks squashfs
-│       ├── main.c                       # System bring-up and orchestration
-│       ├── isp.c / isp.h                # GC20C3 134-reg init & 24-module ISP pipeline
-│       ├── vi.c / vi.h                  # Video input channels (1080p slice mode)
-│       ├── venc.c / venc.h              # H.264 hardware encoder setup (VBR+)
-│       ├── rtsp.c / rtsp.h              # RTSP / RTP server & RTCP Sender Reports
-│       ├── audio.c / audio.h            # ALSA PCM mic capture & ring buffer
-│       ├── ircut.c / ircut.h            # IR-cut solenoid pulse controller
-│       ├── ae.c / night.c               # Hardware auto-exposure & day/night switching
-│       ├── flash_tool.c                 # Chunked verified MTD SPI-NOR flasher
-│       └── arm_atomics.S                # ARMv5TE legacy atomic stubs
+├── specs/                               # Camyn V1 brief and spec (French, working documents)
+├── src/ak_rtsp/                         # ak_rtsp, flash_tool, Makefile, build_firmware.sh
+├── tests/                               # Host tests (fake binaries, synthetic fixture)
 └── tools/
-    ├── flash_scripts/                   # Deployment and flash management scripts
-    │   ├── install_with_flash_tool.sh   # Primary proven Telnet/UART MTD flasher
-    │   ├── install_ak_rtsp_firmware.sh  # Bare UART fallback flasher
-    │   ├── pad_build.sh                 # SquashFS padding & timestamp naming script
-    │   ├── restore.sh                   # Restore stock APP partition
-    │   ├── restore_full_firmware.sh     # Restore ALL stock partitions
-    │   └── ...
-    ├── firmware_patch_templates/        # The actual de-Tuyafication patch (process.ini + wrapper)
-    └── hardware_debug/                  # Hardware tools
-        ├── lolin32_uart_bridge/         # ESP32 auto U-Boot interception firmware
-        └── serial_console_dotnet/       # WinUI 3 serial terminal with base64 transfer
-```
-
----
-
-## Building from Source
-
-### Prerequisite: SmolRTSP
-`ak_rtsp` is **not** linked against a prebuilt SmolRTSP library — its `Makefile` compiles
-[OpenIPC's SmolRTSP](https://github.com/OpenIPC/smolrtsp) sources directly into the `ak_rtsp`
-binary, and expects to find them as a sibling directory: `../smolrtsp` relative to
-`src/ak_rtsp/` — i.e. checked out at **`src/smolrtsp`**, next to `src/ak_rtsp/` (not at the repo
-root). This is *not* included in this repository. Before building, clone it there and let CMake
-populate its own header-only dependencies (`slice99`, `datatype99`, `interface99`, `metalang99`)
-via FetchContent — you only need the *configure* step, not a full build:
-
-```bash
-cd src
-git clone https://github.com/OpenIPC/smolrtsp.git
-cd smolrtsp
-cmake -S . -B build   # populates build/_deps/{slice99,datatype99,interface99,metalang99}-src
-```
-
-If you don't have (or don't want to install) CMake, you can populate the same four dependencies
-by hand instead — this was verified to produce an identical, working build:
-```bash
-cd src/smolrtsp
-mkdir -p build/_deps
-cd build/_deps
-for pair in "slice99:v0.7.8" "metalang99:v1.13.5" "datatype99:v1.6.5" "interface99:v1.0.2"; do
-    name="${pair%%:*}"; tag="${pair##*:}"
-    curl -sL "https://github.com/hirrolot/$name/archive/refs/tags/$tag.tar.gz" -o "$name.tar.gz"
-    mkdir -p "${name}-src"
-    tar xzf "$name.tar.gz" -C "${name}-src" --strip-components=1
-    rm "$name.tar.gz"
-done
-```
-(These are the exact versions SmolRTSP's own `CMakeLists.txt` `FetchContent_Declare` calls
-pinned at the time this project was built — check that file if the upstream repo has since
-bumped them.)
-
-The resulting `src/smolrtsp/` tree (with `include/` and the populated `build/_deps/`) is exactly
-what `src/ak_rtsp/Makefile`'s include paths expect. **Verified working end-to-end** (both the
-CMake-less dependency fetch above and the full `make` build below were run against this exact
-repo and produced statically-linked ARM/EABI5 binaries with no errors). This has only been
-tested against the SmolRTSP revision available at the time this project was built — if the
-upstream repo has since diverged, some source-level adjustments in `src/ak_rtsp/rtsp.c`/`venc.c`
-may be needed.
-
-### Prerequisite: GNU Make for Windows
-`make` for compiling `ak_rtsp` is run **natively on Windows, not inside WSL** (WSL is only used
-for the separate squashfs-packaging step in
-[Building Your Own Firmware](docs/building_your_own_firmware.md)). Windows doesn't ship `make`,
-so you need a native GNU Make on your `PATH`. This project was built against
-[GnuWin32 Make](https://gnuwin32.sourceforge.net/packages/make.htm) (GNU Make 3.81, installed to
-`C:\Program Files (x86)\GnuWin32\bin\make.exe` via its standalone installer) — that's an old,
-unmaintained package but it's a plain native `.exe` with no MSYS/Cygwin runtime needed, which is
-why it was picked. If you'd rather use a maintained source, a package manager works too and any
-recent GNU Make version should be fine:
-```powershell
-winget install GnuWin32.Make      # or: choco install make   /   scoop install make
-```
-Whichever you use, make sure `make.exe` ends up on `PATH` (open a new terminal after installing
-and confirm with `make --version`).
-
-### Compiling `ak_rtsp`
-You can cross-compile using [Zig](https://ziglang.org/) without needing complex toolchains installed:
-
-```powershell
-cd src/ak_rtsp
-make CC="zig cc -target arm-linux-musleabi -mcpu=arm926ej_s -static"
-```
-
-### Compiling `flash_tool`
-```bash
-cd src/ak_rtsp
-zig cc -target arm-linux-musleabi -mcpu=arm926ej_s -static -O2 flash_tool.c -o flash_tool
-```
-
-### Running the .NET Serial Console & Tuning Suite
-```powershell
-cd tools/hardware_debug/serial_console_dotnet
-dotnet run -c Release
+    ├── build/                           # check_host.sh, bootstrap.sh, env.sh, deps.lock (pinned versions)
+    ├── dropbear/                        # build_dropbear.sh, localoptions.h
+    ├── firmware_patch_templates/        # ini, wrapper, camyn_ssh.sh, camyn_lockdown.sh, patch_service_sh.sh
+    ├── flash_scripts/                   # install_with_flash_tool.sh, restore.sh, restore_full_firmware.sh, ...
+    ├── hw_tests/                        # camyn_hwcheck.sh (post-flash check, run over SSH)
+    └── hardware_debug/                  # Upstream ESP32 U-Boot bridge and .NET serial console (Windows)
 ```
 
 ---
 
 ## Detailed Documentation
 
+Camyn V1:
+- [Camyn V1 overview, services and network hardening](docs/camyn_v1_install.md)
+- [Backup first (8 partitions) and hardware identification](docs/camyn_v1_backup.md)
+- [Build the image from your own dump](docs/camyn_v1_build.md)
+- [SSH provisioning and Telnet/FTP lockdown](docs/camyn_v1_ssh_and_lockdown.md)
+- [Flash and restore](docs/camyn_v1_flash_and_restore.md)
+- [Hardware test plan and resource report](docs/camyn_v1_test_plan.md)
+
+Upstream background (hardware and firmware internals):
 - [Hardware & UART Connection Guide](docs/hardware_and_uart.md)
 - [Flash Partition Map & De-Tuyafication Details](docs/flash_partition_map_and_rootfs.md)
 - [Firmware Packaging & Flash DMA Gotchas](docs/firmware_building_and_flashing.md)
 - [Camera ISP, Audio & Div0 Fix Architecture](docs/camera_and_audio_pipeline.md)
-- [Serial Console & Live Camera Tuning App Guide](docs/serial_console_and_camera_tuning.md)
-- [Building Your Own Firmware From Your Own Dump](docs/building_your_own_firmware.md)
+- [Serial Console & Live Camera Tuning App Guide](docs/serial_console_and_camera_tuning.md) (Windows .NET tool, upstream)
 
 ---
 
@@ -315,3 +260,7 @@ many sessions before this repo was compiled:
 
 - **Anyka Community & Researchers:** Inspiration and reference implementations from [VGerris's Anyka Hacking Journey](https://github.com/VGerris/Anyka_ak3918_hacking_journey) and [Lawliet95's ANYKA Tuya Journey](https://github.com/Lawliet95/ANYKA-Tuya-Hacking-Journey-AK3918v200EN080-v200). Both cover earlier-generation Anyka SoCs (`AK3918EV200`/`GK7102`) with different register maps and flash layouts than this Revision 2 (`AK3918AV130`) hardware, but were valuable for general ioctl naming conventions and orientation.
 - **SmolRTSP (OpenIPC):** High-performance, lightweight RTSP library for embedded systems by [OpenIPC/smolrtsp](https://github.com/OpenIPC/smolrtsp).
+- **Action-Smart-Connect-Flasher (4ddict):** the four `ak_rtsp` fixes ported into this tree (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)) come from [4ddict/Action-Smart-Connect-Flasher](https://github.com/4ddict/Action-Smart-Connect-Flasher) (MIT). Camyn does not use that flasher for the first camera; see [flash and restore](docs/camyn_v1_flash_and_restore.md).
+- **Dropbear (Matt Johnston):** the SSH server, [mkj/dropbear](https://github.com/mkj/dropbear) (MIT-style license, with public-domain libtomcrypt/libtommath).
+- **Zig:** used as the cross-compiler (downloaded by the bootstrap, not redistributed).
+- **Upstream author:** [FluxAlchemist](https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware) for the whole reverse-engineered `ak_rtsp` and `flash_tool` code base, the hardware documentation and the images.

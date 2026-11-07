@@ -17,7 +17,7 @@ The camera uses an 8 MiB SPI NOR flash (`XM25QH64D` or Winbond equivalent) mappe
 | `KERNEL` | `0x044000` | 1536 KB | `/dev/mtdblock4` | uImage | Linux Kernel (ARM926EJ-S) |
 | `ROOTFS` | `0x1c4000` | 1008 KB | `/dev/mtdblock5` | SquashFS (gzip) | Read-only base root filesystem |
 | `CONFIG` | `0x2c0000` | 256 KB | `/dev/mtdblock6` | JFFS2 (rw) | Persistent writable user config |
-| `APP` | `0x300000` | 5120 KB | `/dev/mtdblock7` | SquashFS (XZ) | Application layer (mounted to `/usr`) |
+| `APP` | `0x300000` | 5120 KB | `/dev/mtdblock7` | SquashFS (XZ on the stock APP, per upstream) | Application layer (mounted to `/usr`). Camyn's image is gzip by default (xz selectable); see [camyn_v1_build.md](camyn_v1_build.md#6-compression-gzip-or-xz) |
 
 ---
 
@@ -26,18 +26,34 @@ The camera uses an 8 MiB SPI NOR flash (`XM25QH64D` or Winbond equivalent) mappe
 On boot, the kernel mounts `/` from `ROOTFS`, then `/etc/init.d/rc.local` mounts:
 1. `/dev/mtdblock7` (APP) → `/usr`
 2. `/dev/mtdblock6` (CONFIG) → `/etc/config`
-3. Runs `/usr/sbin/main.sh` → `/usr/sbin/service.sh`
+3. Runs `/usr/sbin/main.sh` → `/usr/sbin/service.sh` (which, per other projects' documentation, also starts `telnetd`/`ftpd`: not verified on this camera)
 
-### The Shadow Overwrite Trap
-In the stock firmware, `service.sh` explicitly copies `/usr/local/shadow` over `/etc/config/shadow` on every boot. This constantly reverts the root password to the unknown factory hash.
+### The shadow overwrite trap (stock behavior)
 
-**The Fix:**
-BusyBox `login` checks `/etc/passwd` directly. If the password field contains an MD5crypt hash instead of `x`, it verifies against that hash directly and **never consults `/etc/shadow`**. Since `service.sh` never touches `/etc/config/passwd`, writing a password hash to `/etc/config/passwd` provides a permanent Telnet backdoor on stock firmware!
+In the stock firmware, `service.sh` copies `/usr/local/shadow` over `/etc/config/shadow` on every
+boot, so a root password set the normal way is reverted to the unknown factory hash.
+
+### Upstream history: the `/etc/config/passwd` trick (stock firmware, maintenance only)
+
+Kept here as upstream knowledge and credit, **not** as a Camyn feature. BusyBox `login` checks
+`/etc/passwd` directly: if the password field holds an MD5crypt hash instead of `x`, it verifies against
+that hash and never consults `/etc/shadow`. Since `service.sh` never touches `/etc/config/passwd`,
+upstream used a hash written there to get a persistent Telnet/console login on the **stock** firmware:
 
 ```sh
-# Example: Setting root password to 'admin' permanently via /etc/config/passwd
+# Upstream example: root password 'admin' (a publicly known value; use your own hash)
 printf 'root:$1$anyka001$qk6nsIZ/vuhZcaN7A1ZIr/:0:0:root:/:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/sh\nbin:x:2:2:bin:/bin:/bin/sh\nnobody:x:99:99:nobody:/home:/bin/sh\n' > /etc/config/passwd
 ```
+
+Camyn's position:
+
+- Do not use it on a Camyn image. Camyn's remote access is SSH with public keys only
+  ([camyn_v1_ssh_and_lockdown.md](camyn_v1_ssh_and_lockdown.md)); Dropbear has no password
+  authentication compiled in, and Telnet is disabled, so this file would not give network access.
+- CONFIG is never rewritten by Camyn's flash, so an `/etc/config/passwd` made on stock **persists**
+  and would still accept that password on a local console (UART). Remove it, or restore your CONFIG
+  backup, if you used the trick and want a password-less console again.
+- The `admin` hash above is public: never rely on it for anything exposed on a network.
 
 ---
 
@@ -51,7 +67,7 @@ The Tuya cloud client (`anyka_ipc`) is a monolithic 5.9 MB binary that controls:
 ### Clean Exec-Takeover
 Rather than rebuilding the entire Linux kernel and rootfs from scratch, we perform an **exec-takeover** at the application layer (`APP` partition / `/dev/mtdblock7`):
 
-1. **Keep stock hardware initialization:** All driver modules (`ak_isp.ko`, `sensor_gc20c3.ko`, `atbm6x3x_wifi_usb.ko`, `ak_pcm.ko`), networking scripts (`ethernet.sh`), and standard daemons (`telnetd`, `ftpd`) remain intact.
+1. **Keep stock hardware initialization:** All driver modules (`ak_isp.ko`, `sensor_gc20c3.ko`, `atbm6x3x_wifi_usb.ko`, `ak_pcm.ko`), networking scripts (`ethernet.sh`), and the `cmdserver`/`msgserver` IPC daemons remain intact. (Upstream also left the stock `telnetd`/`ftpd` running; Camyn disables them: [lockdown](camyn_v1_ssh_and_lockdown.md#6-telnet-and-ftp-lockdown).)
 2. **Preserve `cmdserver` and `msgserver`:** These binaries handle local IPC (UNIX domain sockets and SysV message queues). They are **not** cloud daemons and are required for system stability.
 3. **Replace `anyka_ipc`:** `_ht_process.ini` is modified so the watchdog launches `ak_rtsp_wrapper.sh` instead of `anyka_ipc`.
 4. **Standalone RTSP Server (`ak_rtsp`):** Our lightweight C program takes direct ownership of the camera ISP, VENC hardware, and PCM microphone capture without needing any external cloud dependencies.

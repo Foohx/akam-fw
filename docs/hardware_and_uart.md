@@ -134,3 +134,20 @@ If you need a recovery root shell without knowing any passwords:
    mount -t sysfs sysfs /sys
    mount -t jffs2 /dev/mtdblock6 /etc/config
    ```
+
+---
+
+## 7. UART use in the Camyn V1 procedure
+
+For Camyn the UART console is the out-of-band path used when the network is not available:
+
+- taking the 8-partition backup in a quiet state ([camyn_v1_backup.md](camyn_v1_backup.md));
+- flashing the APP partition from the `init=/bin/sh` shell ([camyn_v1_flash_and_restore.md](camyn_v1_flash_and_restore.md));
+- restoring the stock APP, or recovering from a bad APP image: U-Boot, the kernel and ROOTFS are never
+  written by Camyn, so the boot in section 6 (`root=/dev/mtdblock5`) should still work; mount the SD
+  card and run `restore.sh`;
+- reading `/tmp/camyn_ssh.log` and `/tmp/camyn_lockdown.log` when SSH does not come up, and re-provisioning
+  `/etc/config/dropbear` after a CONFIG wipe.
+
+Keep the UART wired for the whole first test, until SSH, persistence and the lockdown are confirmed.
+Restore is not guaranteed; a damaged bootloader or flash may need an external SPI programmer.

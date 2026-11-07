@@ -9,107 +9,41 @@
 
 ## 1. MANDATORY: Backup Your Stock Firmware First!
 
-Before flashing any custom image, **always dump your camera's original stock firmware partitions to your MicroSD card and save a copy on your PC.**
-
-### Step 1: Mount the SD Card
-From your Telnet or UART shell:
-```sh
-mount -t vfat /dev/mmcblk0p1 /mnt
-mkdir -p /mnt/original_firmware
-```
-
-### Step 2: Dump All Partitions
-Run the following commands to create exact byte-for-byte dumps of all 8 flash partitions:
-```sh
-dd if=/dev/mtdblock0 of=/mnt/original_firmware/mtdblock0.bin bs=64k
-dd if=/dev/mtdblock1 of=/mnt/original_firmware/mtdblock1.bin bs=64k
-dd if=/dev/mtdblock2 of=/mnt/original_firmware/mtdblock2.bin bs=64k
-dd if=/dev/mtdblock3 of=/mnt/original_firmware/mtdblock3.bin bs=64k
-dd if=/dev/mtdblock4 of=/mnt/original_firmware/mtdblock4.bin bs=64k
-dd if=/dev/mtdblock5 of=/mnt/original_firmware/mtdblock5.bin bs=64k
-dd if=/dev/mtdblock6 of=/mnt/original_firmware/mtdblock6.bin bs=64k
-dd if=/dev/mtdblock7 of=/mnt/original_firmware/mtdblock7.bin bs=64k
-sync
-```
-
-> 🛑 **IMPORTANT:**
-> - Copy `/mnt/original_firmware` to your computer for safe keeping.
-> - Leave a copy in `/mnt/original_firmware/` on your SD card so you can restore stock at any time using `tools/flash_scripts/restore.sh` or `tools/flash_scripts/restore_full_firmware.sh`.
+Dump all 8 partitions, check sizes and hashes, and keep copies off the SD card. Camyn's procedure is
+in [camyn_v1_backup.md](camyn_v1_backup.md); the upstream commands are the `dd if=/dev/mtdblockN
+of=... bs=64k` loop used there.
 
 ---
 
 ## 2. Restoring Stock Firmware (Emergency Fallback)
 
-If anything goes wrong during testing or you wish to revert to stock Tuya:
-
-- **Restore APP partition only (reverts RTSP to stock):**
-  ```sh
-  sh /mnt/restore.sh
-  ```
-- **Restore ALL partitions (full factory state):**
-  ```sh
-  sh /mnt/restore_full_firmware.sh
-  ```
+See [camyn_v1_flash_and_restore.md](camyn_v1_flash_and_restore.md). In short: `tools/flash_scripts/restore.sh`
+restores the APP partition only, `tools/flash_scripts/restore_full_firmware.sh` rewrites all 8
+partitions (last resort). Restore is not guaranteed.
 
 ---
 
 ## 3. Building `ak_rtsp` & `flash_tool`
 
-The `ak_rtsp` binary is a standalone C program with custom ARMv5TE assembly atomic stubs.
+Native Linux build with a pinned Zig: see [camyn_v1_build.md](camyn_v1_build.md).
 
-> **Prerequisite:** `ak_rtsp`'s `Makefile` compiles [OpenIPC's SmolRTSP](https://github.com/OpenIPC/smolrtsp)
-> sources directly in, and expects them checked out as a sibling directory (`../smolrtsp`
-> relative to `src/ak_rtsp/`, i.e. at `src/smolrtsp`) — this is not included in this repo. Clone
-> it there and run CMake's configure step (no full build needed) to populate its FetchContent
-> dependencies:
-> ```bash
-> cd src
-> git clone https://github.com/OpenIPC/smolrtsp.git
-> cd smolrtsp && cmake -S . -B build
-> ```
-> No CMake available? See [Building from Source](../README.md#building-from-source) in the main
-> README for a verified-working CMake-less fallback (fetches the same four pinned dependency
-> tarballs by hand).
-
-> **Prerequisite:** `make` here runs **natively on Windows, not inside WSL** (WSL is only used
-> for the squashfs-packaging step in section 4 below). Windows has no built-in `make` — see
-> [Prerequisite: GNU Make for Windows](../README.md#building-from-source) in the main README for
-> how to install one and get it on `PATH`.
-
-### Method A: Zig Cross-Compiler (Recommended)
 ```bash
-cd src/ak_rtsp
-make CC="zig cc -target arm-linux-musleabi -mcpu=arm926ej_s -static"
-zig cc -target arm-linux-musleabi -mcpu=arm926ej_s -static -O2 flash_tool.c -o flash_tool
+bash tools/build/bootstrap.sh
+. tools/build/env.sh
+make -C src/ak_rtsp ak_rtsp flash_tool
 ```
 
-### Method B: Anyka GCC Toolchain
-```bash
-cd src/ak_rtsp
-make CC=arm-anykav200-linux-uclibcgnueabi-gcc
-arm-anykav200-linux-uclibcgnueabi-gcc -O2 flash_tool.c -o flash_tool
-```
+Alternative (untested by Camyn): the Anyka GCC toolchain, `make CC=arm-anykav200-linux-uclibcgnueabi-gcc`.
 
 ---
 
 ## 4. Packaging the APP SquashFS
 
-This step requires your **own** dump of the camera's stock APP partition (not included in this
-repo — see below) plus WSL for `mksquashfs`/`unsquashfs`. Full walkthrough, including WSL setup
-and how to dump/unsquash your own partition:
-**[Building Your Own Firmware From Your Own Dump](building_your_own_firmware.md)**.
-
-Short version, once you have `app_extracted/` (your own unsquashed stock APP dump):
+Needs your own stock APP dump. Full walkthrough: [camyn_v1_build.md](camyn_v1_build.md).
 
 ```bash
-cd src/ak_rtsp
-APP_EXTRACTED=/path/to/app_extracted bash build_firmware.sh
+APP_EXTRACTED=/path/to/app_extracted FW_DIR=/path/to/out bash src/ak_rtsp/build_firmware.sh
 ```
-
-This applies the patch templates in `tools/firmware_patch_templates/` (deletes `anyka_ipc`,
-installs `ak_rtsp_wrapper.sh`, repoints `_ht_process.ini`), repacks with `mksquashfs -comp gzip
--b 131072 -all-root -noappend`, round-trip verifies, and pads/timestamps the result via
-`pad_build.sh` — producing `ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs`.
 
 ---
 
@@ -123,33 +57,17 @@ installs `ak_rtsp_wrapper.sh`, repoints `_ht_process.ini`), repacks with `mksqua
 
 ## 6. Flashing Step-by-Step
 
-### Step 1: Copy Files to MicroSD Card
-Format the SD card (FAT32) and copy:
-- `custom_firmware/ak_rtsp_firmware_*.squashfs`
-- `flash_tool` (compiled ARM binary)
-- `tools/flash_scripts/install_with_flash_tool.sh`
-- `tools/flash_scripts/restore.sh` *(for safety)*
-- `original_firmware/mtdblock*.bin` *(your stock backup)*
+Camyn's procedure (UART shell, `install_with_flash_tool.sh`, read-back check, hand power cycle) is in
+[camyn_v1_flash_and_restore.md](camyn_v1_flash_and_restore.md). The upstream notes below describe the
+same tool; Camyn no longer uses Telnet for it.
 
-### Step 2: Connect via Telnet or UART
-Connect to the camera shell:
-```bash
-telnet 192.168.x.x
-```
-
-### Step 3: Run the Flash Tool
-```sh
-mount -t vfat /dev/mmcblk0p1 /mnt
-sh /mnt/install_with_flash_tool.sh
-```
-
-### Step 4: Verify the Flash Logs!
-> 🛑 **IMPORTANT: Carefully check the final output of `install_with_flash_tool.sh`:**
+### Verify the Flash Logs!
+> **Carefully check the final output of `install_with_flash_tool.sh`:**
 > ```text
-> FAULT SUMMARY: 0 chunks needed retry, 0 total failed verify attempts.
+> FAULT SUMMARY: 0/1280 chunks needed retry, 0 total failed verify attempts.
 > Flashing and verification completed successfully!
 > ```
-> **DO NOT power off if verification failed!** If errors are reported, run `sh /mnt/restore.sh` to restore your stock backup before powering off.
+> **Do not power off if verification failed.** Restore your stock backup first.
 
-### Step 5: Power Cycle the Camera
-> ℹ️ **NOTE:** The software `reboot` command **does not work reliably** on this hardware platform. You must **manually disconnect and reconnect the USB-C power cable** to perform a clean power cycle.
+### Power Cycle the Camera
+> The software `reboot` command **does not work reliably** on this hardware. Unplug and replug the USB-C power cable by hand.
