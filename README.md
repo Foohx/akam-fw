@@ -28,8 +28,10 @@ SI code is expected to be `D26228`, to be confirmed on your label). It removes t
 >   Dropbear (ARM EABI5, soft-float, static), and the host test suites in `tests/` (they run the
 >   install scripts against a synthetic fixture and fake binaries, not against a real firmware dump).
 > - **Not tested on hardware:** the Dropbear boot hook, Telnet/FTP lockdown, key provisioning from the
->   microSD, the image size margin (the real APP dump is not available yet), the boot-time exposure
+>   microSD, the boot-time exposure
 >   window, memory use, and the restore procedures.
+> - **Measured on a real APP dump, not on a camera:** the image size (about 3.07 MB of the 5.24 MB
+>   partition with gzip) and a byte-identical rebuild from the same inputs.
 > - Where this documentation says "expected" or "assumed", it is a hypothesis listed in the
 >   [hardware test plan](docs/camyn_v1_test_plan.md) to be checked on the camera.
 >

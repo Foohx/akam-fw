@@ -127,6 +127,11 @@ file, and bind-mounts a private copy of `passwd` over `/etc/passwd` (it is a sym
 `/etc/config/passwd`) whose `root` entry has that HOME (a missing `root` entry is added: without one
 Dropbear refuses every login). The real file is untouched. The log line is `root HOME is now ...`; if
 it says `could not set root HOME` the legacy directory is used and the login may be refused.
+The bind mount is made once per boot (a respawned script sees the root entry already points at
+`/tmp/camyn_home` and does not mount again). If `/etc/config/passwd` does not exist, the script creates
+it **empty** in CONFIG (a persistent write) so that there is a file to bind over; with the stock file
+present nothing in CONFIG is written. Root's HOME (and so the shell's starting directory) is on tmpfs
+and is empty after every reboot.
 
 ## 4. Network exposure of SSH
 
@@ -228,6 +233,10 @@ so this only matters for the AP-mode hook)*.
 - With the flag present: the patched `service.sh` lets the card's hook scripts run again, and
   `camyn_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping; as soon as the flag disappears it resumes killing at the next round. The flag does **not** start Telnet or
   FTP by itself: it only stops Camyn from preventing whatever the card's scripts start.
+- **Limit:** `camyn_lockdown.sh` looks for the flag on `/mnt`, which the stock boot unmounts, so in
+  practice the safety net does not stand down and still kills `telnetd`, `telnet.sh` and `hack.sh`.
+  Do not count on the flag as a no-UART rescue path (see the
+  [flash guide](camyn_v1_flash_and_restore.md#without-uart-what-can-be-recovered)).
 - Without the flag: everything is closed (including Telnet/FTP left running after the card was removed).
 - Every 60 s the safety net also runs `camyn_ssh.sh start` in the background, which restarts a dead Dropbear.
 - The flag is checked at boot and re-checked every round of the safety net. It is never set by the
@@ -242,8 +251,11 @@ normal use anyway**.
 ## 8. Test order: keep a way back until SSH is proven
 
 1. Wire UART first and keep it attached for the whole first test ([hardware_and_uart.md](hardware_and_uart.md)).
-   After the flash there is no network shell except SSH; UART is the fallback.
-2. Prepare the card with `camyn/authorized_keys` **and** an empty `CAMYN_MAINTENANCE`.
+   After the flash there is no network shell except SSH; UART is the fallback. Without UART, read
+   [what can and cannot be recovered](camyn_v1_flash_and_restore.md#without-uart-what-can-be-recovered)
+   and skip the flag in step 2.
+2. Prepare the card with `camyn/authorized_keys` **and** (UART route only) an empty `CAMYN_MAINTENANCE`.
+   Do not put the flag on a card that still holds the toolkit/flasher files.
 3. Flash, power cycle with the card inserted, and wait a few minutes for the first boot.
 4. Log in with `ssh -i ~/.ssh/camyn ...`. Run `camyn_hwcheck.sh` (it will WARN about the flag).
 5. Power-cut the camera, boot again, and log in again with the same key and the same host fingerprint.
