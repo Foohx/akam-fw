@@ -88,6 +88,30 @@ mkdir -p "$FW_DIR"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Flash budget: the Makefile builds ak_rtsp with -g (~1.6 MB vs ~130 KB
+# stripped). Install a stripped COPY; the build output is never modified.
+# Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
+# $CAMYN_STRIP (a command taking "<in> <out>") if set.
+install_stripped() {
+    local src=$1 dst=$2 tmp="$TMP/strip.tmp"
+    if [ "$(head -c4 "$src" | od -An -c | tr -d ' ')" != '177ELF' ]; then
+        install -m 755 "$src" "$dst" # not an ELF (test stub): nothing to strip
+        return 0
+    fi
+    if [ -n "${CAMYN_STRIP:-}" ]; then
+        $CAMYN_STRIP "$src" "$tmp" || die "CAMYN_STRIP failed on $src"
+    elif [ -x "${ZIG:-}" ] || command -v zig >/dev/null 2>&1; then
+        "${ZIG:-zig}" objcopy --strip-all "$src" "$tmp" || die "zig objcopy --strip-all failed on $src"
+    else
+        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (source tools/build/env.sh)"
+        install -m 755 "$src" "$dst"
+        return 0
+    fi
+    [ -s "$tmp" ] || die "stripped copy of $src is empty"
+    install -m 755 "$tmp" "$dst"
+    rm -f "$tmp"
+}
+
 # --- 1. tree -----------------------------------------------------------------
 if [ "${KEEP_PATCHED:-0}" = 1 ] && [ -d "$PATCHED" ]; then
     echo "KEEP_PATCHED=1: re-using $PATCHED (Camyn install/patch steps are re-applied)."
@@ -102,12 +126,12 @@ echo "Applying de-Tuyafication patch..."
 rm -f "$PATCHED/bin/anyka_ipc"
 install -m 755 "$TEMPLATES/ak_rtsp_wrapper.sh" "$PATCHED/sbin/ak_rtsp_wrapper.sh"
 install -m 644 "$TEMPLATES/_ht_process.ini" "$PATCHED/local/_ht_process.ini"
-install -m 755 "$BINARY" "$PATCHED/bin/ak_rtsp"
+install_stripped "$BINARY" "$PATCHED/bin/ak_rtsp"
 
 # --- 3. Camyn ------------------------------------------------------------------
 echo "Installing Camyn components..."
 rm -f "$PATCHED/bin/dropbearmulti" "$PATCHED/bin/dropbear" "$PATCHED/bin/dropbearkey"
-install -m 755 "$DROPBEAR_MULTI" "$PATCHED/bin/dropbearmulti"
+install_stripped "$DROPBEAR_MULTI" "$PATCHED/bin/dropbearmulti"
 ln -s dropbearmulti "$PATCHED/bin/dropbear"
 ln -s dropbearmulti "$PATCHED/bin/dropbearkey"
 install -m 755 "$TEMPLATES/camyn_ssh.sh" "$PATCHED/sbin/camyn_ssh.sh"
