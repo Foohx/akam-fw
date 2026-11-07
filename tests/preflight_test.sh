@@ -25,7 +25,8 @@ check "missing wpa conf: exit 1" bash -c "! CAMYN_ROOT=$R ${SHCMD[*]} $SCRIPT >/
 mkroot ap
 cp "$WORK/good/etc/config/wpa_supplicant.conf" "$R/etc/config/"
 : >"$R/mnt/_ht_ap_mode.conf"
-check "AP-mode file on SD: exit 1" bash -c "! CAMYN_ROOT=$R ${SHCMD[*]} $SCRIPT >/dev/null 2>&1"
+check "AP-mode file on SD (toolkit card): still exit 0" run
+check "AP-mode file in /tmp: warning only" bash -c ": >'$R/tmp/_ht_ap_mode.conf'; CAMYN_ROOT=$R ${SHCMD[*]} $SCRIPT | grep -q WARN"
 
 mkroot nopsk
 printf 'network={\n    ssid="SYNTH_SSID"\n    key_mgmt=WPA-PSK\n}\n' >"$R/etc/config/wpa_supplicant.conf"

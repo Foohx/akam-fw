@@ -7,7 +7,8 @@
 #
 # Why: Camyn removes anyka_ipc. The Wi-Fi comes back at boot only if the stock
 # ethernet.sh finds /etc/config/wpa_supplicant.conf (station mode, DHCP) and
-# nothing forces AP mode (/tmp/_ht_ap_mode.conf, copied from the SD at boot).
+# nothing forces AP mode (/tmp/_ht_ap_mode.conf, copied from the SD at boot; reported as
+# a warning only, because the toolkit card used for the flash carries that file).
 #
 # Paths are prefixed by $CAMYN_ROOT (empty on the camera) for the host test.
 
@@ -37,10 +38,12 @@ else
     ko "wpa_supplicant.conf missing or empty: Camyn would boot without Wi-Fi"
 fi
 
-if [ -e "$ROOT/tmp/_ht_ap_mode.conf" ] || [ -e "$ROOT/mnt/_ht_ap_mode.conf" ]; then
-    ko "_ht_ap_mode.conf present (/tmp or SD): the stock scripts would start AP mode"
+# The toolkit card itself carries _ht_ap_mode.conf (that is how its hook runs), so
+# this is only informative: a boot WITHOUT the card is in station mode.
+if [ -e "$ROOT/tmp/_ht_ap_mode.conf" ]; then
+    note "this boot has /tmp/_ht_ap_mode.conf (toolkit card): stock Wi-Fi script ran in AP branch; without the card it is station mode"
 else
-    ok "no _ht_ap_mode.conf on /tmp or /mnt (station mode)"
+    ok "no /tmp/_ht_ap_mode.conf (station mode)"
 fi
 
 if [ -s "$ROOT/etc/config/passwd" ]; then

@@ -256,8 +256,12 @@ normal use anyway**.
    After the flash there is no network shell except SSH; UART is the fallback. Without UART, read
    [what can and cannot be recovered](camyn_v1_flash_and_restore.md#without-uart-what-can-be-recovered)
    and skip the flag in step 2.
-2. Prepare the card with `camyn/authorized_keys` **and** (UART route only) an empty `CAMYN_MAINTENANCE`.
-   Do not put the flag on a card that still holds the toolkit/flasher files.
+2. Prepare the card with `camyn/authorized_keys`. **First-boot card (recommended, also without UART):**
+   `tools/sd/prepare_first_boot_sd.sh` builds a card with the pinned toolkit payload (telnet 24) plus
+   `CAMYN_MAINTENANCE` plus `camyn/authorized_keys`: the first boot then offers telnet 24 (kept alive by
+   the RAM marker) and SSH 22. After SSH is validated, remove the card and reboot; telnet must be gone
+   ([flash guide](camyn_v1_flash_and_restore.md#first-flash-without-uart-from-the-stock-firmware), step 5).
+   Do not put the flag on any other card that holds toolkit/flasher files.
 3. Flash, power cycle with the card inserted, and wait a few minutes for the first boot.
 4. Log in with `ssh -i ~/.ssh/camyn ...`. Run `camyn_hwcheck.sh` (it will WARN about the flag).
 5. Power-cut the camera, boot again, and log in again with the same key and the same host fingerprint.
