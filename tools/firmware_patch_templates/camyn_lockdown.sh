@@ -28,13 +28,14 @@
 #   - no pkill/killall (not guaranteed on the target BusyBox); only ps + kill.
 #   - never opens or listens on a network socket.
 #
-# Schedule (bounded, low cost):
+# Schedule (low cost; boot phase bounded, then unbounded):
 #   fast phase: every 5 s for 2 min (24 rounds). Late starts by the stock boot
 #     scripts (network bring-up, SD hook) happen within the first minute or
 #     two; 5 s keeps the exposure of a late daemon to a few seconds.
-#   slow phase: every 60 s for 24 h (1440 rounds), to catch a restart after a
-#     network reconnect. Then the script exits; it is re-armed whenever the
-#     wrapper is respawned by the watchdog.
+#   slow phase: every 60 s with NO end (CAMYN_SLOW_ROUNDS=-1, the default), so
+#     a restart after a network reconnect is always caught. The loop only ends
+#     when the maintenance flag appears or the process is signalled.
+#     CAMYN_SLOW_ROUNDS>=0 bounds it (used by the tests only).
 #   Cost: one sleeping sh plus one `ps` fork per round (~0.2 per second in the
 #     fast phase, ~0.017 per second after). RAM cost to be measured on hardware.
 #
@@ -47,7 +48,7 @@ TMP_DIR=${CAMYN_TMP_DIR:-$CAMYN_ROOT/tmp}
 FLAG=${CAMYN_MAINT_FLAG:-$CAMYN_ROOT/mnt/CAMYN_MAINTENANCE}
 FAST_ROUNDS=${CAMYN_FAST_ROUNDS:-24}
 FAST_PERIOD=${CAMYN_FAST_PERIOD:-5}
-SLOW_ROUNDS=${CAMYN_SLOW_ROUNDS:-1440}
+SLOW_ROUNDS=${CAMYN_SLOW_ROUNDS:--1}
 SLOW_PERIOD=${CAMYN_SLOW_PERIOD:-60}
 LOG=$TMP_DIR/camyn_lockdown.log
 LOCKDIR=$TMP_DIR/camyn_lockdown.lock
@@ -152,7 +153,7 @@ main() {
         sleep "$FAST_PERIOD"
     done
     _i=0
-    while [ "$_i" -lt "$SLOW_ROUNDS" ]; do
+    while [ "$SLOW_ROUNDS" -lt 0 ] || [ "$_i" -lt "$SLOW_ROUNDS" ]; do
         if maintenance; then
             log "maintenance mode: telnet not touched"
             return 0
