@@ -8,7 +8,7 @@
 >
 > Status: nothing in this document has been run on a camera by Camyn. The flashing tool and scripts
 > (`flash_tool`, `install_with_flash_tool.sh`, `restore.sh`) are upstream's; upstream reports a gzip APP
-> image flashed and booted on its own unit (`3215672.2`). Camyn's image, and every step that is
+> image flashed and booted on its own unit (`3215672.2`); Camyn's default image is xz, the stock format. Camyn's image, and every step that is
 > Camyn's own addition, is untested.
 
 ---
@@ -303,7 +303,7 @@ is in place. Consequences, stated plainly:
 
 So the no-UART first flash is a bet that the image mounts and the network comes up. The image checks
 (`build_firmware.sh` round-trip, padding, exact size) and the pre-flash gates above reduce but do not
-remove that risk; the gzip SquashFS format is proven only by upstream's reports, not on this unit.
+remove that risk; the xz SquashFS format is the stock one (the running kernel already mounts xz ROOTFS and APP), but Camyn's own image has not been booted.
 
 ### Caveat: restore is not guaranteed
 

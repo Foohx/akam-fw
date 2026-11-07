@@ -32,7 +32,7 @@ Installés par l'utilisateur via pacman avant le lot 1 : `squashfs-tools cmake s
 | D-B | Aucun dump caméra n'existe : tous les tests de build utilisent une **fixture APP factice** (arbre de fichiers synthétique). La doc place la procédure de sauvegarde des 8 partitions EN PREMIER. | utilisateur |
 | D-C | Zig **0.14.1** (x86_64-linux, sha256 `24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c`, vérifié contre `ziglang.org/download/index.json`). Même version que le flasheur 0.3.2 (cohérence). | spec |
 | D-D | Dropbear **DROPBEAR_2026.94** (voir §2). | spec |
-| D-E | Compression SquashFS : **gzip par défaut** (seul format flashé et testé sur matériel par l'amont et le flasheur), `xz` sélectionnable par variable d'environnement (le stock est xz, donc le noyau le supporte). | spec |
+| D-E | Compression SquashFS : **xz par défaut** (format du stock, sans filtre BCJ, blocs 128 Kio ; décision utilisateur, le noyau 4.4.302 le monte déjà pour ROOTFS/APP), `gzip` sélectionnable par `CAMYN_SQUASHFS_COMP=gzip` (tables de décompresseurs zlib/lzo/xz/lz4 présentes dans le noyau réel). | spec |
 | D-F | Point d'accroche SSH : lancé en arrière-plan depuis `ak_rtsp_wrapper.sh` (option A, §5.T3). | spec |
 | D-G | Clés d'hôte : ed25519, générées au premier boot par `dropbearkey` (pas `-R`). | spec |
 

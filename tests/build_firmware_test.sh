@@ -56,7 +56,7 @@ run_build() {
 # with_app <tree> <outdir> [VAR=val ...]: like run_build with another APP tree.
 with_app() { APP=$1 run_build "${@:2}"; }
 
-echo "== 1. nominal build (gzip)"
+echo "== 1. nominal build (xz, the default)"
 O=$WORK/o1
 check "build exits 0" run_build "$O" SOURCE_DATE_EPOCH=1700000000
 IMG=$(find "$O" -maxdepth 1 -name 'ak_rtsp_firmware_*.squashfs' | head -1)
@@ -64,7 +64,8 @@ check "image found by flasher pattern" test -n "$IMG"
 check "image is exactly $TARGET bytes" test "$(stat -c %s "$IMG")" = "$TARGET"
 check "name matches ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs" bash -c "basename '$IMG' | grep -Eq '^ak_rtsp_firmware_[0-9]{8}_[0-9]{6}\.squashfs\$'"
 check "sha256 file valid" bash -c "cd '$O' && sha256sum -c '$(basename "$IMG").sha256' >/dev/null"
-check "unsquashfs -s: gzip" bash -c "unsquashfs -s '$IMG' | grep -qi '^Compression gzip'"
+check "unsquashfs -s: xz" bash -c "unsquashfs -s '$IMG' | grep -qi '^Compression xz'"
+check "xz default: no BCJ filter (like stock)" bash -c "! unsquashfs -s '$IMG' | grep -qi 'filter'"
 check "unsquashfs -s: block 131072" bash -c "unsquashfs -s '$IMG' | grep -q '^Block size 131072'"
 check "report says fixture/free space" grep -q 'free in mtd7' "$O/build_report.txt"
 echo "--- resource report (fixture; not representative of the real APP) ---"
@@ -107,11 +108,11 @@ s1=$(grep '^squashfs sha256' "$O/build_report.txt" | awk '{print $3}')
 s2=$(grep '^squashfs sha256' "$WORK/o2/build_report.txt" | awk '{print $3}')
 check "same SOURCE_DATE_EPOCH -> same squashfs sha256" test -n "$s1" -a "$s1" = "$s2"
 
-echo "== 3. xz"
-check "xz build exits 0" run_build "$WORK/o3" CAMYN_SQUASHFS_COMP=xz
+echo "== 3. gzip (opt-in)"
+check "gzip build exits 0" run_build "$WORK/o3" CAMYN_SQUASHFS_COMP=gzip
 IMGX=$(find "$WORK/o3" -name 'ak_rtsp_firmware_*.squashfs' | head -1)
-check "xz image is exactly $TARGET bytes" test "$(stat -c %s "$IMGX")" = "$TARGET"
-check "xz recorded" bash -c "unsquashfs -s '$IMGX' | grep -qi '^Compression xz'"
+check "gzip image is exactly $TARGET bytes" test "$(stat -c %s "$IMGX")" = "$TARGET"
+check "gzip recorded" bash -c "unsquashfs -s '$IMGX' | grep -qi '^Compression gzip'"
 
 echo "== 4. size guard (oversize, nothing padded)"
 cp -a "$FIXTURE" "$WORK/big"

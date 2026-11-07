@@ -90,21 +90,21 @@ grep -rnE 'telnetd|utelnetd|ftpd|tcpsvd|bftpd|vsftpd|dropbear|sshd|httpd|lighttp
 The lockdown patch assumes the daemons are started from `sbin/service.sh` in the APP. Whether that is
 true on your unit is a hypothesis ([test plan](camyn_v1_test_plan.md#3-hypotheses-to-verify)).
 
-## 6. Compression: gzip or xz
+## 6. Compression: xz (default) or gzip
 
 `CAMYN_SQUASHFS_COMP` selects the SquashFS compressor (`CAMYN_SQUASH_COMP` is accepted as an alias):
 
 | Value | Notes |
 |---|---|
-| `gzip` (default) | The format the upstream project and users of the upstream flasher report having flashed and booted. The upstream docs describe the **stock** APP as XZ, so the kernel is expected to support both, but only a boot of **your** image proves it. |
-| `xz` | Smaller image, same format as the stock APP: xz, 128 KiB blocks, **no BCJ filter** (verified with `unsquashfs -s` on a real dump; ROOTFS is xz too). `CAMYN_XZ_BCJ=1` adds `-Xbcj arm` (about 45 KB smaller, but the stock image does not use it, so kernel support is unproven). Not exercised on a camera by Camyn. |
+| `xz` (default) | Same format as the stock APP: xz, 128 KiB blocks, **no BCJ filter** (verified with `unsquashfs -s` on a real dump; ROOTFS is xz too and the running kernel mounts it, so xz SquashFS support is certain). Chosen as the default so the first flash uses exactly the stock format. `CAMYN_XZ_BCJ=1` adds `-Xbcj arm` (about 45 KB smaller, but the stock image does not use it, so kernel support is unproven). Camyn's own image has not been booted yet. |
+| `gzip` | Opt-in. The format the upstream project reports having flashed and booted. Kernel analysis of the real KERNEL dump (Linux 4.4.302, `mtdblock4`) found the SquashFS `zlib`, `lzo`, `xz` and `lz4` decompressor tables and `zlib_inflate`, so gzip is expected to work too, but only xz is proven on this unit. |
 
 Sizes measured against a real APP dump (4,739,612 bytes used in the stock xz image): gzip 3,067,904 bytes
 (2,174,976 free of 5,242,880), xz with BCJ 2,449,408 (2,793,472 free), xz without BCJ about 2,494,000.
 
-Check what your own dump uses: `unsquashfs -s ~/camyn-backup/mtdblock7.bin`. Start with `gzip`
-unless the size guard (below) complains. Building both and comparing sizes in `build_report.txt`
-is cheap: `CAMYN_SQUASHFS_COMP=xz` with a different `FW_DIR`.
+Check what your own dump uses: `unsquashfs -s ~/camyn-backup/mtdblock7.bin`. Use the default `xz` for the first flash
+(same format as the stock APP). Building both and comparing sizes in `build_report.txt`
+is cheap: `CAMYN_SQUASHFS_COMP=gzip` with a different `FW_DIR`.
 
 ## 7. Build the image
 
@@ -126,7 +126,7 @@ Environment variables (all optional), from the script header:
 | `AK_RTSP_BIN` | `ak_rtsp` binary (default `src/ak_rtsp/ak_rtsp`) |
 | `ZIG_LICENSE`, `MUSL_COPYRIGHT` | Licence texts shipped in the image (default: from the pinned Zig tarball) |
 | `DROPBEAR_MULTI` | Prebuilt `dropbearmulti` (default `dist/dropbear/dropbearmulti`) |
-| `CAMYN_SQUASHFS_COMP` | `gzip` (default) or `xz` |
+| `CAMYN_SQUASHFS_COMP` | `xz` (default) or `gzip` |
 | `CAMYN_ALLOW_UNPATCHED_SERVICE=1` | Build even if `service.sh` could not be patched (Telnet/FTP may then still be launched; read the warning) |
 | `CAMYN_ALLOW_UNSTRIPPED=1` | Install ELF binaries unstripped when no strip tool is found (default: fatal; the pinned `zig` from `tools/.toolchain/` is found automatically) |
 | `CAMYN_ALLOW_TIGHT=1` | Accept an image within one block (131072 bytes) of the partition size |

@@ -152,7 +152,7 @@ Verify:
   If the camera computed `sha256sum`, compare it with `SHA256SUMS.pc`.
 - `file mtdblock7.bin` reports a SquashFS filesystem; `unsquashfs -s mtdblock7.bin` prints its
   compression and block size (write both down, they are used in the
-  [build guide](camyn_v1_build.md#6-compression-gzip-or-xz)).
+  [build guide](camyn_v1_build.md#6-compression-xz-default-or-gzip)).
 
 ### Keep an independent copy
 
