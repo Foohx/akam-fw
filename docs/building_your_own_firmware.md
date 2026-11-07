@@ -17,7 +17,7 @@ The current guides:
 What `build_firmware.sh` does to the tree (patch templates are in `tools/firmware_patch_templates/`):
 removes `bin/anyka_ipc`, installs `ak_rtsp`, `ak_rtsp_wrapper.sh` and a single-entry
 `_ht_process.ini`, adds Dropbear and the Camyn boot scripts, patches `sbin/service.sh`, repacks with
-`mksquashfs` (gzip by default), round-trip verifies, and pads to exactly 5 242 880 bytes.
+`mksquashfs` (xz by default, like the stock APP; gzip with `CAMYN_SQUASHFS_COMP=gzip`), round-trip verifies, and pads to exactly 5 242 880 bytes.
 
 > **Why keep `cmdserver`/`msgserver`?** They are pure local IPC (UNIX socket / SysV message queue),
 > not Tuya cloud clients; removing them stalls boot. See

@@ -17,7 +17,7 @@ The camera uses an 8 MiB SPI NOR flash (`XM25QH64D` or Winbond equivalent) mappe
 | `KERNEL` | `0x044000` | 1536 KB | `/dev/mtdblock4` | uImage | Linux Kernel (ARM926EJ-S) |
 | `ROOTFS` | `0x1c4000` | 1008 KB | `/dev/mtdblock5` | SquashFS (xz, 128 KiB blocks, verified on a real dump; older docs said gzip) | Read-only base root filesystem |
 | `CONFIG` | `0x2c0000` | 256 KB | `/dev/mtdblock6` | JFFS2 (rw) | Persistent writable user config |
-| `APP` | `0x300000` | 5120 KB | `/dev/mtdblock7` | SquashFS (XZ on the stock APP, per upstream) | Application layer (mounted to `/usr`). Camyn's image is gzip by default (xz selectable); see [camyn_v1_build.md](camyn_v1_build.md#6-compression-gzip-or-xz) |
+| `APP` | `0x300000` | 5120 KB | `/dev/mtdblock7` | SquashFS (XZ on the stock APP, per upstream) | Application layer (mounted to `/usr`). Camyn's image is xz by default, like the stock APP (gzip selectable); see [camyn_v1_build.md](camyn_v1_build.md#6-compression-xz-default-or-gzip) |
 
 ---
 

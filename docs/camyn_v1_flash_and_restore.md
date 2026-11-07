@@ -8,7 +8,7 @@
 >
 > Status: nothing in this document has been run on a camera by Camyn. The flashing tool and scripts
 > (`flash_tool`, `install_with_flash_tool.sh`, `restore.sh`) are upstream's; upstream reports a gzip APP
-> image flashed and booted on its own unit (`3215672.2`). Camyn's image, and every step that is
+> image flashed and booted on its own unit (`3215672.2`); Camyn's default image is xz, the stock format. Camyn's image, and every step that is
 > Camyn's own addition, is untested.
 
 ---
@@ -60,7 +60,7 @@ cp ~/Projects/camyn/tools/flash_scripts/install_with_flash_tool.sh \
    ~/Projects/camyn/tools/flash_scripts/restore.sh \
    ~/Projects/camyn/tools/flash_scripts/flash_guard.sh "$SD/"   # flash_guard.sh is mandatory
 cp ~/.ssh/camyn.pub "$SD/camyn/authorized_keys"
-touch "$SD/CAMYN_MAINTENANCE"               # UART route only (see the SSH guide); NOT for the no-UART route
+touch "$SD/CAMYN_MAINTENANCE"               # UART route only; the no-UART route uses the first-boot card (flash guide, step 5)
 sync
 ```
 
@@ -136,6 +136,7 @@ that the camera boots stock and opens `telnet CAMERA_IP 24`). Add, on the PC, in
 | `install_with_flash_tool.sh`, `flash_guard.sh` | from `tools/flash_scripts/`; `flash_guard.sh` is mandatory, a missing file makes the script refuse |
 | `original_firmware/mtdblock7.bin` | your stock APP backup, **in this subdirectory only** (section 3) |
 | `restore.sh` | optional, from `tools/flash_scripts/` |
+| `preflight_check.sh` | from `tools/flash_scripts/`: read-only Wi-Fi / AP-mode gates (step 3) |
 
 **Never leave any `*.bin` at the top level of the card**: the stock boot runs `system_upgrade` on it
 (see the warning in the SD backup guide).
@@ -156,9 +157,24 @@ ls -l /mnt/custom_firmware /mnt/flash_tool /mnt/flash_guard.sh
 is no UART to fix it afterwards):
 
 ```sh
+sh /mnt/preflight_check.sh      # read-only; prints presence and counts, never the SSID or the key
 ls -l /etc/config/wpa_supplicant.conf /etc/config/passwd
 ```
 
+Will the camera rejoin your Wi-Fi after the flash? **Expected yes, unproven on hardware.** What the
+real dump shows (CONFIG `mtdblock6` and the stock APP scripts, read on the PC): `wpa_supplicant.conf`
+exists (223 bytes, one `network` block with an `ssid` and a `psk`, `key_mgmt` list including
+`WPA-PSK`); `ethernet.sh` (run by `service.sh`, not by `anyka_ipc`) starts `wpa_supplicant -c
+/etc/config/wpa_supplicant.conf` and DHCP (`dhcp=1`) in **station** mode, and goes to AP mode only if
+`/tmp/_ht_ap_mode.conf` exists, which `service.sh` copies from `_ht_ap_mode.conf` on the SD card. The
+toolkit cards carry that file (it is how their hook runs), so a boot **with** such a card takes the
+AP branch and Wi-Fi is then brought up by the toolkit; a boot **without** a card, or with a card
+lacking that file, is station mode from `wpa_supplicant.conf`. Camyn's patched `service.sh` only
+copies it when `CAMYN_MAINTENANCE` is present. `hostapd.conf` in CONFIG is empty. The only thing that
+rewrites or deletes the file is `recover_cfg.sh` (factory reset, run when the settings file is under
+512 bytes; it is 3010 bytes here) and Tuya pairing inside `anyka_ipc`, which Camyn removes. Camyn does
+not touch CONFIG. Residual doubts: the Wi-Fi driver/DHCP path is the same one the toolkit used, but
+Camyn has not booted it; and the router must still accept the saved credentials (same SSID, 2.4 GHz).
 - `/etc/config/wpa_supplicant.conf` must exist and be non-empty. Camyn removes the Tuya agent that
   used to write it, and `ak_rtsp_wrapper.sh` only starts Wi-Fi when this file exists. The SD backup
   route does **not** write it (the toolkit keeps the Wi-Fi settings in RAM). If it is missing, the
@@ -196,13 +212,37 @@ dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum      # must equal the md5sum printed
 Read the `FAULT SUMMARY` and the success line in full. On any error, **do not power cycle**: rerun
 the script; if it still fails, go to "Without UART: what can be recovered" in section 5.
 
-**5. Prepare the first Camyn boot.** Power off by hand (unplug USB-C), take the card out, and put in
-a card with **only** `camyn/authorized_keys` (the exact path the camera reads; see the
-[SSH guide](camyn_v1_ssh_and_lockdown.md#2-put-the-public-key-on-the-microsd-card)), **without**
-`CAMYN_MAINTENANCE` and without the toolkit files (use a freshly formatted FAT32 card with an MBR
-partition). The toolkit card must not be used for the first Camyn boot: with the flag it would revive
-the toolkit hook (unauthenticated Telnet on port 24, a second Wi-Fi bring-up), and without the flag
-it does nothing useful. Then power on and wait a few minutes.
+**5. Prepare the first Camyn boot (recommended: the "first-boot" card).** Power off by hand (unplug
+USB-C) and swap the card for a **second, dedicated card** prepared on the PC with
+`tools/sd/prepare_first_boot_sd.sh`:
+
+```bash
+bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/camyn.pub
+```
+
+The script verifies the pinned `lsc-tuya-toolkit` commit (`396db8a`) and the `sd_card` tree sha256
+(`3aa3f698...757747c2f`), refuses any device that is not a whole, removable, USB disk, shows `lsblk`
+and needs a typed `YES` before wiping, waits for the reader to come back after `wipefs` (some
+readers report "No medium found"), asks for the SSID and password **visibly**, and writes the toolkit
+payload configured as for the backup (telnet 24, `OFFLINE=1`, `wifi.conf`, entrypoint lock,
+`hack.sh` hook, `dump.done`) **plus** an empty `CAMYN_MAINTENANCE` and `camyn/authorized_keys`. It never
+writes a `*.bin` to the card root. `--dry-run --stage-dir DIR` builds the tree without touching a
+device. The card holds your Wi-Fi password in clear text: keep it private.
+
+Why this works: with the card in, the patched `service.sh` lets the toolkit hook run (flag present) and
+records `/tmp/camyn_maintenance` while the SD is still mounted, so `camyn_lockdown.sh` does not kill the
+toolkit's telnet on port 24 after the stock script unmounts the card, while `camyn_ssh.sh` brings up
+SSH on port 22 from `camyn/authorized_keys`. Power on, wait a few minutes, then:
+
+1. `ssh -i ~/.ssh/camyn root@CAMERA_IP` and run `camyn_hwcheck.sh` (it warns about maintenance mode).
+2. Once SSH is validated, **unplug USB-C, remove the card, and boot again**: maintenance mode lasts
+   only until the next boot without the flag, so telnet 24 must be gone (ports 21, 23, 24 closed) and
+   SSH must still work with the same host fingerprint.
+3. Keep the first-boot card for emergencies only if you accept that it re-opens an unauthenticated
+   telnet whenever it is inserted; erase it otherwise.
+
+This path is untested on hardware. If SSH does not come up but telnet 24 does, you have a root shell
+to investigate (Wi-Fi, `/tmp/camyn_ssh.log`) before touching anything else.
 
 ### Reflashing later: never over an SSH session
 
@@ -297,13 +337,13 @@ is in place. Consequences, stated plainly:
 |---|---|
 | The write reported an error, the camera is still running | Rerun `install_with_flash_tool.sh`, or run `restore.sh` (stock APP) from the same shell. Do not power cycle before one of them succeeds. |
 | The APP image is corrupt or does not mount (no boot to `service.sh`) | **None.** Nothing on the SD card runs. UART (`init=/bin/sh`, section 5 below) or an external SPI programmer is required. |
-| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `CAMYN_MAINTENANCE` does re-enable the card's hook in `service.sh`, but `camyn_lockdown.sh` looks for the flag on `/mnt`, which the stock boot has already unmounted, so it keeps killing `telnetd`, `telnet.sh` and `hack.sh` seconds after they start. A custom hook script with other process names might survive; Camyn has not tried it. |
+| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `CAMYN_MAINTENANCE` re-enables the card's hook in `service.sh` and, through the RAM marker `/tmp/camyn_maintenance`, makes `camyn_lockdown.sh` stand down until the next reboot without the flag, so a toolkit-style telnet hook is no longer killed. This path is covered by host tests, **not yet proven on hardware**, and it needs a working network to be of any use. |
 | SSH refused (key not on the card, wrong key) | Put the right `camyn/authorized_keys` on the card and power cycle (keys are re-read at every boot). Needs the camera on the network. |
 | `*.bin` OTA-style upgrade from the card | Allowed only with `CAMYN_MAINTENANCE`; Camyn does not provide an OTA-format file, so this is not a recovery path. |
 
 So the no-UART first flash is a bet that the image mounts and the network comes up. The image checks
 (`build_firmware.sh` round-trip, padding, exact size) and the pre-flash gates above reduce but do not
-remove that risk; the gzip SquashFS format is proven only by upstream's reports, not on this unit.
+remove that risk; the xz SquashFS format is the stock one (the running kernel already mounts xz ROOTFS and APP), but Camyn's own image has not been booted.
 
 ### Caveat: restore is not guaranteed
 

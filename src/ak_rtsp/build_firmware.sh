@@ -29,7 +29,7 @@
 #   ZIG_LICENSE     Zig LICENSE (compiler-rt is linked in; default: pinned Zig tarball)
 #   DROPBEAR_MULTI  prebuilt dropbearmulti (default: dist/dropbear/dropbearmulti,
 #                   built with tools/dropbear/build_dropbear.sh if missing)
-#   CAMYN_SQUASHFS_COMP  gzip (default) | xz
+#   CAMYN_SQUASHFS_COMP  xz (default, same as stock: no BCJ, 128 KiB blocks) | gzip
 #   CAMYN_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
 #   CAMYN_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
 #   CAMYN_ALLOW_TIGHT=1  allow an image within one block of the partition size
@@ -47,7 +47,7 @@ APP_EXTRACTED="${APP_EXTRACTED:-$SCRIPT_DIR/app_extracted}"
 FW_DIR="${FW_DIR:-$SCRIPT_DIR}"
 PATCHED="$FW_DIR/app_patched"
 BINARY="${AK_RTSP_BIN:-$SCRIPT_DIR/ak_rtsp}"
-COMP="${CAMYN_SQUASHFS_COMP:-${CAMYN_SQUASH_COMP:-gzip}}"
+COMP="${CAMYN_SQUASHFS_COMP:-${CAMYN_SQUASH_COMP:-xz}}"
 EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 
 die() { echo "FATAL: $*" >&2; exit 1; }

@@ -97,7 +97,7 @@ Everything in Camyn's design that came from reading other projects instead of th
 | H1 | The unit is `3215672.3` / SI `D26228` with the same layout as upstream's `.2` | Whole project | Label, `/proc/mtd`, dump |
 | H2 | `telnetd` / `ftpd` are launched from `sbin/service.sh` in the APP (not from ROOTFS) | Layer 1 patch; exposure window | Read the dump; `grep` ([build guide](camyn_v1_build.md#5-extract-your-app-partition)); `--boot-window` |
 | H3 | The stock watchdog only restarts `_ht_process.ini` entries (not telnetd) | No re-enable | Read dump; boot window |
-| H4 | The kernel mounts a gzip SquashFS APP (stock is xz; upstream boots gzip) | Boot | A boot of Camyn's image |
+| H4 | The kernel mounts Camyn's xz SquashFS APP (same format as the stock APP; xz support proven by the stock ROOTFS/APP; gzip also expected from the kernel's decompressor tables) | Boot | A boot of Camyn's image |
 | H5 | Free space in the real APP is sufficient | Image fits | `build_report.txt` from the real dump |
 | H6 | The microSD is mounted on `/mnt` when the scripts run (keys at `/mnt/camyn/`, flag at `/mnt/CAMYN_MAINTENANCE`) | SSH provisioning; maintenance flag | UART: `mount`; `/tmp/camyn_ssh.log` |
 | H7 | `/etc/config` is writable, and `/etc/config`, `/etc`, `/` have modes Dropbear accepts | Key login | Log lines `mode of ...`; successful login |

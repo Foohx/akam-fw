@@ -224,22 +224,24 @@ Measure it on your unit with `camyn_hwcheck.sh --boot-window` ([test plan](camyn
 
 ## 7. Maintenance flag
 
-Create an **empty file named `CAMYN_MAINTENANCE` at the root of the microSD card**. The camera is
-expected to read it as `/mnt/CAMYN_MAINTENANCE` *(the patched `service.sh` sees it there during early
-boot, while the card is mounted; later the stock script unmounts `/mnt`, so `camyn_lockdown.sh` will
-normally not see the flag and keeps killing. With the real firmware nothing starts telnet or FTP anyway,
-so this only matters for the AP-mode hook)*.
+Create an **empty file named `CAMYN_MAINTENANCE` at the root of the microSD card**. The stock
+`service.sh` mounts the card on `/mnt`, runs the SD hooks and then unmounts it (`umount -l /mnt`)
+long before `camyn_lockdown.sh` starts. So the patched `service.sh` records the flag in RAM while
+the card is still mounted: right before the first guarded SD hook it runs
+`[ -f /mnt/CAMYN_MAINTENANCE ] && : > /tmp/camyn_maintenance`. `camyn_lockdown.sh` and
+`camyn_hwcheck.sh` honour that RAM marker (and still the `/mnt/...` file while a card is mounted).
 
-- With the flag present: the patched `service.sh` lets the card's hook scripts run again, and
-  `camyn_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping; as soon as the flag disappears it resumes killing at the next round. The flag does **not** start Telnet or
-  FTP by itself: it only stops Camyn from preventing whatever the card's scripts start.
-- **Limit:** `camyn_lockdown.sh` looks for the flag on `/mnt`, which the stock boot unmounts, so in
-  practice the safety net does not stand down and still kills `telnetd`, `telnet.sh` and `hack.sh`.
-  Do not count on the flag as a no-UART rescue path (see the
-  [flash guide](camyn_v1_flash_and_restore.md#without-uart-what-can-be-recovered)).
+- With the flag present at boot: the patched `service.sh` lets the card's hook scripts run again, and
+  `camyn_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping. The flag does **not**
+  start Telnet or FTP by itself: it only stops Camyn from preventing whatever the card's scripts start.
+- **Duration:** maintenance mode lasts **until the next reboot without the flag**. The marker lives in
+  RAM (`/tmp`), so removing the card does not end it; a power cycle with the card absent (or without
+  the flag file) does. Deleting `/tmp/camyn_maintenance` by hand over a shell also resumes the
+  lockdown at the next round.
 - Without the flag: everything is closed (including Telnet/FTP left running after the card was removed).
 - Every 60 s the safety net also runs `camyn_ssh.sh start` in the background, which restarts a dead Dropbear.
-- The flag is checked at boot and re-checked every round of the safety net. It is never set by the
+- The flag is read once at boot (into the RAM marker); the marker is re-checked every round of the
+  safety net. It is never set by the
   watchdog or by a network event; only physical access to the card can enable it. Treat it as exactly
   that: whoever can put a card in the camera can run code as root, as with the stock firmware.
 
@@ -254,8 +256,12 @@ normal use anyway**.
    After the flash there is no network shell except SSH; UART is the fallback. Without UART, read
    [what can and cannot be recovered](camyn_v1_flash_and_restore.md#without-uart-what-can-be-recovered)
    and skip the flag in step 2.
-2. Prepare the card with `camyn/authorized_keys` **and** (UART route only) an empty `CAMYN_MAINTENANCE`.
-   Do not put the flag on a card that still holds the toolkit/flasher files.
+2. Prepare the card with `camyn/authorized_keys`. **First-boot card (recommended, also without UART):**
+   `tools/sd/prepare_first_boot_sd.sh` builds a card with the pinned toolkit payload (telnet 24) plus
+   `CAMYN_MAINTENANCE` plus `camyn/authorized_keys`: the first boot then offers telnet 24 (kept alive by
+   the RAM marker) and SSH 22. After SSH is validated, remove the card and reboot; telnet must be gone
+   ([flash guide](camyn_v1_flash_and_restore.md#first-flash-without-uart-from-the-stock-firmware), step 5).
+   Do not put the flag on any other card that holds toolkit/flasher files.
 3. Flash, power cycle with the card inserted, and wait a few minutes for the first boot.
 4. Log in with `ssh -i ~/.ssh/camyn ...`. Run `camyn_hwcheck.sh` (it will WARN about the flag).
 5. Power-cut the camera, boot again, and log in again with the same key and the same host fingerprint.

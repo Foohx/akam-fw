@@ -38,6 +38,7 @@ ROOT=${CAMYN_ROOT:-}
 INTERVAL=${HWCHECK_INTERVAL:-1}
 TMP_DIR=${CAMYN_TMP_DIR:-$ROOT/tmp}
 FLAG=${CAMYN_MAINT_FLAG:-$ROOT/mnt/CAMYN_MAINTENANCE}
+MARK=${CAMYN_MAINT_MARK:-$TMP_DIR/camyn_maintenance}
 N_PASS=0
 N_FAIL=0
 N_WARN=0
@@ -71,7 +72,7 @@ show_file() {
 show_cmd() { "$@" 2>&1 | sed 's/^/    /'; }
 
 maint=0
-[ -e "$FLAG" ] && maint=1
+{ [ -e "$FLAG" ] || [ -e "$MARK" ]; } && maint=1
 
 # ---------------------------------------------------------------- listening
 hex_ip() { # 8 hex digits, little-endian as in /proc/net/tcp -> dotted quad
@@ -287,8 +288,8 @@ check_modes() {
 
 check_misc() {
     section "maintenance flag and SD"
-    if [ "$maint" = 1 ]; then warn "maintenance flag present ($FLAG): telnet/ftp are NOT locked down in this mode"
-    else pass "maintenance flag absent ($FLAG)"; fi
+    if [ "$maint" = 1 ]; then warn "maintenance mode ($MARK or $FLAG present): telnet/ftp are NOT locked down in this mode"
+    else pass "maintenance mode off ($MARK and $FLAG absent)"; fi
     if [ -r "$ROOT/proc/mounts" ]; then
         if grep -q ' /mnt ' "$ROOT/proc/mounts"; then info "SD mount: $(grep ' /mnt ' "$ROOT/proc/mounts" | head -n 1)"
         else info "nothing mounted on /mnt (no SD card, or another mount point: see mounts below)"; fi

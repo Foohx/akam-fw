@@ -11,7 +11,9 @@
 #
 # Behaviour:
 #   - anti-duplicate lock ($TMP/camyn_lockdown.lock/pid; stale locks taken over)
-#   - maintenance flag present (/mnt/CAMYN_MAINTENANCE on the microSD, mount
+#   - maintenance mode: RAM marker /tmp/camyn_maintenance (recorded by the patched
+#     service.sh at boot while the SD is mounted; it lasts until the next reboot
+#     without the flag) OR the flag on the SD (/mnt/CAMYN_MAINTENANCE, mount
 #     point TO BE CONFIRMED on hardware): log, kill nothing for that round, and
 #     KEEP LOOPING. The flag is re-checked at every round: inserting the SD
 #     pauses the killing, removing it (or deleting the file) resumes it at the
@@ -52,6 +54,7 @@ CAMYN_ROOT=${CAMYN_ROOT:-}
 TMP_DIR=${CAMYN_TMP_DIR:-$CAMYN_ROOT/tmp}
 SSH_HELPER=${CAMYN_SSH_HELPER:-$CAMYN_ROOT/usr/sbin/camyn_ssh.sh}
 FLAG=${CAMYN_MAINT_FLAG:-$CAMYN_ROOT/mnt/CAMYN_MAINTENANCE}
+MARK=${CAMYN_MAINT_MARK:-$TMP_DIR/camyn_maintenance}
 FAST_ROUNDS=${CAMYN_FAST_ROUNDS:-24}
 FAST_PERIOD=${CAMYN_FAST_PERIOD:-5}
 SLOW_ROUNDS=${CAMYN_SLOW_ROUNDS:--1}
@@ -109,8 +112,11 @@ EOF
 }
 
 # Returns 0 when the maintenance flag exists.
+# The RAM marker is written by the patched service.sh while the SD is still
+# mounted (the stock script unmounts /mnt afterwards) and lives until reboot;
+# the SD flag itself is still honoured while the card is mounted.
 maintenance() {
-    [ -e "$FLAG" ]
+    [ -e "$MARK" ] || [ -e "$FLAG" ]
 }
 
 # Detached, output discarded, never waited for: cannot block the loop.

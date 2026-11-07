@@ -86,8 +86,8 @@ Then check the content of the `sd_card/` tree (37 files). The digests below were
 research time from a clone of that commit:
 
 ```bash
-( cd toolkit/sd_card && find . -type f | sort | LC_ALL=C xargs sha256sum | sha256sum )
-# expected: 0436e3f89f51ee1ff6b2085e007a7b51e2f155bdea5de7213ba1e05f1e341d91  -
+( cd toolkit/sd_card && find . -type f | LC_ALL=C sort | LC_ALL=C xargs sha256sum | sha256sum )
+# expected: 3aa3f698fd6d6f228ee785726970f708035799aa5bbcb73ef369bc3757747c2f  -
 ```
 
 Key files (sha256, same origin):

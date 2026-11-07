@@ -79,7 +79,9 @@ for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fa
     check "$name: bash -n" bash -n "$T/sbin/service.sh"
     check "$name: sh -n" "${SHCMD[@]}" -n "$T/sbin/service.sh"
     check "$name: exactly $want lines changed" test "$(changed_lines "$CAMYN_PATCH_REPORT")" = "$want"
-    check "$name: line count unchanged" test "$(wc -l <"$T/sbin/service.sh")" = "$(wc -l <"$WORK/$tag.orig")"
+    check "$name: exactly one line added (RAM marker)" test "$(wc -l <"$T/sbin/service.sh")" = "$(( $(wc -l <"$WORK/$tag.orig") + 1 ))"
+    check "$name: one RAM marker line" test "$(grep -c ': > /tmp/camyn_maintenance' "$T/sbin/service.sh")" = 1
+    check "$name: marker precedes the first guarded hook" test "$(grep -n 'camyn_maintenance' "$T/sbin/service.sh" | head -1 | cut -d: -f1)" -lt "$(grep -n 'if \[ -f /mnt/CAMYN_MAINTENANCE \]\|^[[:space:]]*\[ -f /mnt/CAMYN_MAINTENANCE \] && [^:]' "$T/sbin/service.sh" | head -1 | cut -d: -f1)"
     check "$name: file mode preserved" test "$(stat -c %a "$T/sbin/service.sh")" = 755
     check "$name: hook guarded by flag" grep -q 'CAMYN_MAINTENANCE' "$T/sbin/service.sh"
     # idempotent
@@ -136,6 +138,25 @@ check "no flag: tf_update not run" test ! -e "$FU/flashed"
 : >"$FU/mnt/CAMYN_MAINTENANCE"
 "${SHCMD[@]}" "$FU/run.sh" >/dev/null 2>&1
 check "flag: tf_update runs (maintenance)" test -s "$FU/flashed"
+
+echo "== P2c. RAM marker is written while the SD is mounted, survives the unmount"
+FM=$WORK/mark
+mkdir -p "$FM/mnt" "$FM/tmp" "$FM/sbin"
+sed -e "s#/mnt/#$FM/mnt/#g" -e "s#/tmp/tf_update.sh#$FM/tmp/tf_update.sh#g" \
+    "$FIXTURES/app_fake_variants/d/sbin/service.sh" >"$FM/sbin/service.sh"
+CAMYN_MAINT_FLAG=$FM/mnt/CAMYN_MAINTENANCE CAMYN_MAINT_MARK=$FM/tmp/camyn_maintenance CAMYN_PATCH_REPORT=$WORK/mark.diff "$PATCH" "$FM" >/dev/null 2>&1
+sed -e "s#^\(.*\)sh /usr/sbin/tf_mount.sh#\1:#" -e "s#cp /usr/sbin/tf_update.sh .*#:#" -e 's#^\(\s*\)rm .*#\1:#' "$FM/sbin/service.sh" >"$FM/run.sh"
+"${SHCMD[@]}" "$FM/run.sh" >/dev/null 2>&1
+check "no flag: no RAM marker" test ! -e "$FM/tmp/camyn_maintenance"
+: >"$FM/mnt/CAMYN_MAINTENANCE"
+"${SHCMD[@]}" "$FM/run.sh" >/dev/null 2>&1
+check "flag: RAM marker written" test -e "$FM/tmp/camyn_maintenance"
+rm -f "$FM/mnt/CAMYN_MAINTENANCE"
+check "marker survives the SD removal" test -e "$FM/tmp/camyn_maintenance"
+# Already patched by an older version (no marker): the 2nd pass adds it once.
+grep -v 'camyn_maintenance' "$FM/sbin/service.sh" >"$FM/old.sh" && cp "$FM/old.sh" "$FM/sbin/service.sh"
+CAMYN_MAINT_FLAG=$FM/mnt/CAMYN_MAINTENANCE CAMYN_MAINT_MARK=$FM/tmp/camyn_maintenance CAMYN_PATCH_REPORT=$WORK/mark.diff "$PATCH" "$FM" >/dev/null 2>&1
+check "old-patched file gets the marker once" test "$(grep -c ': > ' "$FM/sbin/service.sh")" = 1
 
 echo "== P3. patch fails loudly on unexpected input"
 mkdir -p "$WORK/n1/sbin"
@@ -255,6 +276,19 @@ check "telnetd alive" alive "$(pid_of telnetd)"
 check "ftpd alive" alive "$(pid_of ftpd)"
 check "log says maintenance mode" grep -q 'maintenance mode: telnet not touched' "$LR/tmp/camyn_lockdown.log"
 check "loop ran to its end" grep -q 'bounded loop finished' "$LR/tmp/camyn_lockdown.log"
+
+echo "== L2b. RAM marker only (SD gone): toolkit-style telnet survives, killing resumes when cleared"
+new_ld_root l2b
+spawn telnetd "telnetd -p 24 -l /bin/sh"
+spawn hack "sh /mnt/custom/scripts/telnet.sh"
+: >"$LR/tmp/camyn_maintenance"
+check "bounded loop exits 0" run_lockdown "$LR"
+check "telnetd alive with marker" alive "$(pid_of telnetd)"
+check "telnet.sh respawner alive with marker" alive "$(pid_of hack)"
+check "log says maintenance mode" grep -q 'maintenance mode: telnet not touched' "$LR/tmp/camyn_lockdown.log"
+rm -f "$LR/tmp/camyn_maintenance"
+check "marker cleared: loop kills" run_lockdown "$LR"
+check "telnetd dead after marker cleared" dead "$(pid_of telnetd)"
 
 echo "== L3. flag present then removed: killing resumes, no exit in between"
 new_ld_root l3
