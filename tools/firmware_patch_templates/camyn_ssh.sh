@@ -14,10 +14,14 @@
 #   /etc/config/dropbear/                     persistent state (CONFIG, JFFS2), 0700
 #     dropbear_ed25519_host_key               host key, generated on first boot, 0600
 #     authorized_keys                         client keys, 0600, root:root
-#   /mnt/camyn/authorized_keys                provisioning file on the microSD
-#                                             (stock mounts the SD on /mnt only during
-#                                             early boot, then umount -l; we re-mount it
-#                                             read-only on /tmp/camyn_sd, see mount_sd_ro)
+#   <sd-mountpoint>/camyn/authorized_keys     provisioning file on the microSD. The card
+#                                             is looked up where it is ALREADY mounted
+#                                             (/proc/mounts: /dev/mmcblk0p1 or
+#                                             /dev/mmcblk0 on a directory, e.g. /tmp/sd
+#                                             with the toolkit or /mnt), see
+#                                             find_mounted_sd. Only when it is not
+#                                             mounted anywhere it is mounted read-only
+#                                             on /tmp/camyn_sd (see mount_sd_ro).
 #   /tmp/camyn_ssh.log                        one line per step, no secret logged
 #   /tmp/dropbear.pid, /tmp/camyn_ssh.lock    runtime state
 #
@@ -100,40 +104,84 @@ filter_keys() {
     [ "$_n" -gt 0 ]
 }
 
-# The stock boot (service.sh) mounts the SD on /mnt for its own checks and then
-# lazily unmounts it, so by the time this script runs /mnt/camyn is normally
-# NOT visible. Mount the card read-only on a private directory, same device and
-# filesystem order as the stock tf_mount.sh, just to read the key file.
+# Find the SD card where it is already mounted. The stock boot mounts it on /mnt
+# and unmounts it lazily; the toolkit mounts it read-write on /tmp/sd and adds
+# file bind-mounts from it (their /proc/mounts source is the same device but
+# the target is a file: ignored, only directories count). Looks in
+# /proc/mounts (override: CAMYN_PROC_MOUNTS) for /dev/mmcblk0p1 or /dev/mmcblk0
+# as the SOURCE of a mount on a directory.
+# Sets _sd_seen (mount point of the last card mount seen, empty if none) and,
+# when <mountpoint>/camyn/authorized_keys exists, _sdfile; returns 0 then.
+find_mounted_sd() {
+    _sd_seen=
+    _mounts=${CAMYN_PROC_MOUNTS:-/proc/mounts}
+    [ -r "$_mounts" ] || return 1
+    while read -r _msrc _mtgt _mrest; do
+        case "$_msrc" in
+            /dev/mmcblk0p1 | /dev/mmcblk0) ;;
+            *) continue ;;
+        esac
+        [ -d "$CAMYN_ROOT$_mtgt" ] || continue
+        _sd_seen=$_mtgt
+        if [ -f "$CAMYN_ROOT$_mtgt/camyn/authorized_keys" ]; then
+            _sdfile=$CAMYN_ROOT$_mtgt/camyn/authorized_keys
+            log "SD card already mounted on $_mtgt ($_msrc), using $_sdfile"
+            return 0
+        fi
+        log "SD card mounted on $_mtgt ($_msrc) but no camyn/authorized_keys there"
+    done <"$_mounts"
+    return 1
+}
+
+# Last resort when the card is not mounted anywhere: mount it read-only on a
+# private directory, same device and filesystem order as the stock
+# tf_mount.sh, just to read the key file. Every failure is logged.
 # Sets _sdmnt (to be unmounted by the caller) and _sdfile. Never fatal.
 mount_sd_ro() {
     _sdmnt=$TMP_DIR/camyn_sd
-    mkdir -p "$_sdmnt" 2>/dev/null || return 1
+    if ! mkdir -p "$_sdmnt" 2>/dev/null; then
+        log "SD not mounted and cannot create $_sdmnt"
+        return 1
+    fi
+    _found=0
     for _try in "vfat $CAMYN_ROOT/dev/mmcblk0p1" "exfat $CAMYN_ROOT/dev/mmcblk0p1" \
         "vfat $CAMYN_ROOT/dev/mmcblk0" "exfat $CAMYN_ROOT/dev/mmcblk0"; do
         # shellcheck disable=SC2086
         set -- $_try
         [ -e "$2" ] || continue
-        if mount -t "$1" -o ro "$2" "$_sdmnt" 2>/dev/null; then
+        _found=1
+        if _err=$(mount -t "$1" -o ro "$2" "$_sdmnt" 2>&1); then
             if [ -f "$_sdmnt/camyn/authorized_keys" ]; then
                 _sdfile=$_sdmnt/camyn/authorized_keys
                 log "SD mounted read-only ($1 $2) on $_sdmnt"
                 return 0
             fi
+            log "SD mounted ($1 $2) but no camyn/authorized_keys on it"
             umount "$_sdmnt" 2>/dev/null
+        else
+            log "mount -t $1 -o ro $2 $_sdmnt failed: $_err"
         fi
     done
+    [ "$_found" = 1 ] || log "SD not mounted and no /dev/mmcblk0p1 or /dev/mmcblk0 device node"
     return 1
 }
 
 provision_keys() {
     _sdfile=$SD_DIR/authorized_keys
     _sdmnt=
-    if [ ! -f "$_sdfile" ] && [ "${CAMYN_SD_AUTOMOUNT:-1}" = 1 ]; then
-        mount_sd_ro || _sdmnt=
-        [ -f "$_sdfile" ] || _sdmnt=
+    _sd_seen=
+    if [ ! -f "$_sdfile" ]; then
+        if find_mounted_sd; then
+            :
+        elif [ -n "$_sd_seen" ]; then
+            :   # card is mounted, the file is just not on it (logged above)
+        elif [ "${CAMYN_SD_AUTOMOUNT:-1}" = 1 ]; then
+            mount_sd_ro || _sdmnt=
+            [ -f "$_sdfile" ] || _sdmnt=
+        fi
     fi
     if [ ! -f "$_sdfile" ]; then
-        log "no $SD_DIR/authorized_keys on SD, keeping existing authorized_keys"
+        log "no authorized_keys on the SD card, keeping existing authorized_keys"
         return 0
     fi
     install_keys
