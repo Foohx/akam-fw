@@ -3,6 +3,8 @@
 #   - Zig toolchain          -> tools/.toolchain/zig-<ver>-x86_64-linux/
 #   - SmolRTSP checkout      -> src/smolrtsp
 #   - its 4 header-only deps -> src/smolrtsp/build/_deps/<name>-src
+#   - Dropbear archive       -> tools/.cache/ (verified; built by tools/dropbear/)
+#   - static BusyBox (tests) -> tools/.toolchain/busybox-<ver>-x86_64/busybox
 # Idempotent. Every download is sha256-checked; a mismatch aborts.
 # DEPS_LOCK may point to an alternative lock file (used for testing).
 set -euo pipefail
@@ -101,5 +103,16 @@ for name in slice99 metalang99 datatype99 interface99; do
     echo "$tag $sha" > "$dest/.camyn-dep"
     log "$name $tag extracted"
 done
+
+# --- Dropbear source archive (built by tools/dropbear/build_dropbear.sh) -----
+download "$DROPBEAR_URL" "$DROPBEAR_SHA256" "$cache/$(basename "$DROPBEAR_URL")"
+log "dropbear $DROPBEAR_VERSION archive verified"
+
+# --- Static BusyBox for host-side tests ------------------------------------
+bb_dir="$toolchain/busybox-$BUSYBOX_VERSION-x86_64"
+mkdir -p "$bb_dir"
+download "$BUSYBOX_URL" "$BUSYBOX_SHA256" "$bb_dir/busybox"
+chmod 755 "$bb_dir/busybox"
+log "busybox $BUSYBOX_VERSION at $bb_dir/busybox"
 
 log "done"
