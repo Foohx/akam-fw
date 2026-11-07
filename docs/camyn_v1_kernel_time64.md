@@ -62,10 +62,21 @@ redirect the public names on 32-bit time64 builds, so the symbols that end up de
 * `src/ak_rtsp/Makefile`: `../common/time32_shim.o` is linked into `ak_rtsp`, `isp_dump`, `flash_tool`
   and `patch_div0` (a binary that does not read a clock simply drops it at link time).
 * `tools/dropbear/build_dropbear.sh`: the shim is compiled with the Dropbear flags and passed to the
-  multi-call link; when `gdb` is installed the final binary is checked with `tools/build/check_time32.sh`.
+  multi-call link; the final binary is checked with `tools/build/check_time32.sh` (hard failure, `gdb` is required).
+* `src/ak_rtsp/build_firmware.sh`: the same check runs again on the stripped `ak_rtsp` and `dropbearmulti`
+  that are actually installed in the image (forbidden time64 syscall, or no `clock_gettime32`, or no `gdb`:
+  the build stops). `CAMYN_ALLOW_UNCHECKED_TIME64=1` skips it with a loud warning (stub binaries in tests only).
 * Limits: seconds are 32-bit on the wire, so `CLOCK_REALTIME` wraps in 2038 (this kernel cannot do
-  better). `utimensat`, `clock_getres`, `ppoll` and friends are not wrapped (see above) and are verified
-  by the probe instead.
+  better). `utimensat`, `ppoll` and friends are not wrapped (see above) and are verified by the probe instead.
+  `clock_getres` needs nothing: the musl bundled with Zig 0.14.1 calls the 32-bit `clock_getres` syscall
+  directly on this target and never the time64 one (`lib/libc/musl/src/time/clock_getres.c`).
+* The gate also counts syscall numbers loaded into `r7` by conditional `mov`/`orr`. It cannot see a number
+  that is not an immediate in `r7` just before the `svc` (such sites are reported as `?`); it is a
+  regression net for musl's code generation, not a proof: the camera probe is the proof.
+* Link robustness: the shim is a plain object on the link line, so musl's `clock_gettime.o` is never
+  extracted. If a musl/Zig update made another member need a symbol only that object defines, the link
+  would fail with a duplicate definition (loud), and if it ever silently won, the gate above would see
+  `clock_gettime64` (403) in the image and stop the build.
 
 **Defence in depth.** The earlier workarounds stay: the Dropbear patch that takes its monotonic
 seconds from `times(2)` ticks, and the tick based clock plus the iteration-counted lock in `night.c`.
