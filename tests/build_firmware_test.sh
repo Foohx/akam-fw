@@ -126,6 +126,9 @@ cp -a "$FIXTURE" "$WORK/key"
 printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nxx\n-----END OPENSSH PRIVATE KEY-----\n' >"$WORK/key/lib/oops.txt"
 if APP=$WORK/key run_build "$WORK/o5b"; then ko "planted private key refused"; else ok "planted private key refused"; fi
 check "private key: message" grep -q 'private key' "$WORK/o5b.log"
+cp -a "$FIXTURE" "$WORK/binkey"
+printf 'xx-----BEGIN RSA PRIVATE KEY-----\000\001\002' >"$WORK/binkey/lib/libstring.so"
+check "marker inside a binary (e.g. stock wpa_supplicant) is not a key" with_app "$WORK/binkey" "$WORK/o5d"
 if AK_RTSP_BIN=$WORK/nonexistent run_build "$WORK/o5c"; then ko "missing ak_rtsp refused"; else ok "missing ak_rtsp refused"; fi
 check "missing ak_rtsp: clear message" grep -q 'ak_rtsp binary not found' "$WORK/o5c.log"
 

@@ -211,7 +211,9 @@ chmod 644 "$PATCHED/local/camyn/MANIFEST.txt"
 
 # --- 4. safety checks -------------------------------------------------------------
 echo "Checking tree..."
-BADKEYS="$( (grep -rlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null || true
+# -I: text files only. The stock wpa_supplicant binary contains the marker as a
+# string literal (not a key); a binary can't be a PEM key file anyway.
+BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null || true
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
