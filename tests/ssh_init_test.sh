@@ -77,7 +77,7 @@ for a in "$@"; do
     prev=$a
 done
 echo "$*" >>"$(dirname "$pf")/dropbear_launches"
-( sleep 300 </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
+( sh -c 'sleep 300; :' dropbear </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
 exit 0
 EOF
     chmod 755 "$R/usr/bin/dropbear" "$R/usr/bin/dropbearkey"
@@ -264,14 +264,27 @@ if [ "$(id -u)" = 0 ]; then
     echo "  skip - running as root, chmod cannot make a dir read-only"
 else
     chmod 555 "$R/etc/config"
+    printf '%s\n' "$K1" >"$R/mnt/camyn/authorized_keys"
     ssh_run start
     check "dropbear started anyway" test -s "$R/tmp/dropbear.pid"
     check "ephemeral key in tmp" test -s "$R/tmp/camyn_dropbear/dropbear_ed25519_host_key"
     check "nothing persisted in CONFIG" test ! -e "$R/etc/config/dropbear"
     check "fallback logged" grep -q 'not writable' "$R/tmp/camyn_ssh.log"
+    check "SD key provisioned into the ephemeral dir" test -s "$R/tmp/camyn_dropbear/authorized_keys"
     killdb
     chmod 755 "$R/etc/config"
 fi
+
+echo "== 9a. pidfile pointing at a non-dropbear process is stale"
+new_root t9a
+sleep 300 </dev/null >/dev/null 2>&1 &
+other=$!
+echo "$other" >"$R/tmp/dropbear.pid"
+check "status: not running" bash -c '! "$@"' _ "${SHCMD[@]}" "$R/usr/sbin/camyn_ssh.sh" status
+ssh_run start
+check "dropbear launched despite stale pidfile" test "$(launches)" = 1
+kill "$other" 2>/dev/null
+killdb
 
 echo "== 9b. /etc/shells without /bin/sh: bind mount of a private list"
 new_root t9b

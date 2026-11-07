@@ -209,6 +209,8 @@ int main(int argc, char **argv)
 
     print_build_info();
     signal(SIGUSR1, sigusr1_handler);
+    /* A client closing mid-write must yield EPIPE, not kill the stream. */
+    signal(SIGPIPE, SIG_IGN);
 
     venc_reset_stale_channel();
 
