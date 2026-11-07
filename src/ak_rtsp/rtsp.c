@@ -543,16 +543,13 @@ static void send_rtcp_reports(Client *client) {
 /* -------------------------------------------------------------------------
  * Client connection loop
  *
- * Sets client socket non-blocking and uses poll() with:
+ * Uses poll() for incoming RTSP commands; the client socket remains blocking for writes:
  *   timeout = 0   when is_playing (check for commands, then immediately send)
  *   timeout = 5000 ms when idle (block until a request arrives)
  * ------------------------------------------------------------------------- */
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
-    int flags = fcntl(client_fd, F_GETFL, 0);
-    fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
-
     Client client;
     memset(&client, 0, sizeof(client));
     client.socket_fd = client_fd;
