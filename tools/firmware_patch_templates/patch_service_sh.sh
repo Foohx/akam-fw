@@ -20,7 +20,14 @@
 #      /mnt/*.bin at each boot, i.e. any inserted card could reflash the camera)
 #      is guarded the same way. For "if ..." lines the guard is
 #      inserted into the condition; for simple commands it is a prefix.
-#   3. No other line is changed.
+#   3. Right before the first guarded SD hook (the SD is mounted at that point),
+#      one line is inserted that records the flag in RAM:
+#          [ -f <flag> ] && : > /tmp/camyn_maintenance
+#      Stock service.sh unmounts the SD (umount -l /mnt) before camyn_lockdown.sh
+#      runs, so the lockdown and hwcheck read this RAM marker instead. The marker
+#      lives until the next reboot. Idempotent: skipped if the file already
+#      mentions it.
+#   4. No other line is changed.
 #
 # Exit codes:
 #   0  patched (or already patched). If no SD hook line was found, the daemon
@@ -36,6 +43,7 @@
 # Environment:
 #   CAMYN_MAINT_FLAG    flag path baked into the guard (default
 #                       /mnt/CAMYN_MAINTENANCE; mount point to be confirmed)
+#   CAMYN_MAINT_MARK    RAM marker path (default /tmp/camyn_maintenance)
 #   CAMYN_PATCH_REPORT  unified diff output (default <app_tree>.service_sh.diff)
 #
 # Limits (to be checked on the real dump, see audit): launches built from a
@@ -63,15 +71,33 @@ esac
 case "$FLAG" in
     *[!A-Za-z0-9_./-]*) die "CAMYN_MAINT_FLAG contains unsupported characters" ;;
 esac
+MARK=${CAMYN_MAINT_MARK:-/tmp/camyn_maintenance}
+case "$MARK" in
+    /* ) ;;
+    *) die "CAMYN_MAINT_MARK must be an absolute path" ;;
+esac
+case "$MARK" in
+    *[!A-Za-z0-9_./-]*) die "CAMYN_MAINT_MARK contains unsupported characters" ;;
+esac
+HASMARK=0
+grep -qF "$MARK" "$SVC" && HASMARK=1
 REPORT=${CAMYN_PATCH_REPORT:-$APP.service_sh.diff}
 
 WORK=$(mktemp -d) || die "mktemp failed"
 trap 'rm -rf "$WORK"' EXIT
 
-awk -v flag="$FLAG" -v counts="$WORK/counts" '
+awk -v flag="$FLAG" -v mark="$MARK" -v hasmark="$HASMARK" -v counts="$WORK/counts" '
 function bad(msg) {
     printf "patch_service_sh: ERROR: line %d: %s\n    %s\n", NR, msg, $0 > "/dev/stderr"
     failed = 1
+}
+# Insert the RAM marker line once, before the first guarded hook, same indent.
+function emit_mark(l,   ind) {
+    if (hasmark + 0 == 1 || marked) return
+    match(l, /^[ \t]*/)
+    ind = substr(l, 1, RLENGTH)
+    print ind "[ -f " flag " ] && : > " mark
+    marked = 1
 }
 BEGIN {
     dre = "(^|[^A-Za-z0-9_])(utelnetd|telnetd|bftpd|vsftpd|ftpd)([^A-Za-z0-9_-]|$)"
@@ -86,7 +112,11 @@ BEGIN {
     # (A daemon path in a variable, e.g. X=/usr/sbin/telnetd, is still handled below.)
     if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=[^ \t;&|]*[ \t]*$/ && line !~ dre) { print line; next }
     if (index(line, "CAMYN-DISABLED:") > 0) { ddone++; print line; next }
-    if (index(line, "CAMYN_MAINTENANCE") > 0 || index(line, flag) > 0) { hdone++; print line; next }
+    if (index(line, "CAMYN_MAINTENANCE") > 0 || index(line, flag) > 0) {
+        hdone++
+        if (index(line, mark) == 0) emit_mark(line)
+        print line; next
+    }
     if (line ~ dre) {
         if (line ~ /\\[ \t]*$/) { bad("daemon line ends with a continuation"); print line; next }
         match(line, /^[ \t]*/)
@@ -101,6 +131,7 @@ BEGIN {
         match(line, /^[ \t]*/)
         indent = substr(line, 1, RLENGTH)
         body = substr(line, RLENGTH + 1)
+        emit_mark(line)
         if (body ~ /^if[ \t]/) {
             if (body ~ /\|\|/) { bad("hook condition contains ||: the guard would not bind"); print line; next }
             sub(/^if[ \t]+/, "", body)

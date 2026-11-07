@@ -297,7 +297,7 @@ is in place. Consequences, stated plainly:
 |---|---|
 | The write reported an error, the camera is still running | Rerun `install_with_flash_tool.sh`, or run `restore.sh` (stock APP) from the same shell. Do not power cycle before one of them succeeds. |
 | The APP image is corrupt or does not mount (no boot to `service.sh`) | **None.** Nothing on the SD card runs. UART (`init=/bin/sh`, section 5 below) or an external SPI programmer is required. |
-| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `CAMYN_MAINTENANCE` does re-enable the card's hook in `service.sh`, but `camyn_lockdown.sh` looks for the flag on `/mnt`, which the stock boot has already unmounted, so it keeps killing `telnetd`, `telnet.sh` and `hack.sh` seconds after they start. A custom hook script with other process names might survive; Camyn has not tried it. |
+| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `CAMYN_MAINTENANCE` re-enables the card's hook in `service.sh` and, through the RAM marker `/tmp/camyn_maintenance`, makes `camyn_lockdown.sh` stand down until the next reboot without the flag, so a toolkit-style telnet hook is no longer killed. This path is covered by host tests, **not yet proven on hardware**, and it needs a working network to be of any use. |
 | SSH refused (key not on the card, wrong key) | Put the right `camyn/authorized_keys` on the card and power cycle (keys are re-read at every boot). Needs the camera on the network. |
 | `*.bin` OTA-style upgrade from the card | Allowed only with `CAMYN_MAINTENANCE`; Camyn does not provide an OTA-format file, so this is not a recovery path. |
 
