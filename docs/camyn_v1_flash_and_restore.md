@@ -70,9 +70,10 @@ used, so keep only one image there). It refuses an image that is not exactly 5 2
 Get a root shell over the **UART console** with the `init=/bin/sh` boot
 ([hardware_and_uart.md](hardware_and_uart.md#6-dropping-into-a-u-boot-root-shell)). Upstream reports
 `flash_tool` working live over Telnet with Wi-Fi and ISP active, but Camyn recommends the bare shell
-for two reasons: it is the state upstream's restore script was always run in, and the APP partition is
-mounted on `/usr`, so a live flash erases the filesystem that running programs (including Dropbear) are
-paged from *(assumed risk, not tested)*.
+for two reasons: it is the state upstream's restore script was always run in, and on a running camera
+the APP partition is mounted on `/usr`, so a live flash erases the filesystem that running programs
+(including Dropbear and the stock watchdog) are paged from *(assumed risk, not tested)*; see
+"Reflashing later" below.
 
 ```sh
 mount -t proc proc /proc
@@ -110,11 +111,37 @@ this hardware.
 After the boot, continue with the [test plan](camyn_v1_test_plan.md#2-post-flash-procedure) and the
 [SSH guide](camyn_v1_ssh_and_lockdown.md#8-test-order-keep-a-way-back-until-ssh-is-proven).
 
-### Reflashing later
+### Reflashing later: never over an SSH session
 
-When a Camyn camera is already running, the same script can be used. The warning above applies
-(Dropbear runs from the partition being erased), so prefer the UART bare shell. Upstream's
-`make upload` helper only copies binaries into `/tmp` and does not flash.
+Do **not** re-flash a running Camyn camera from an SSH login. On a running Camyn camera the APP
+partition is mounted on `/usr`, and everything Camyn starts lives there: `dropbear` and `dropbearkey`
+(`/usr/bin`), `ak_rtsp_wrapper.sh`, `camyn_ssh.sh`, `camyn_lockdown.sh`, and the stock
+`/usr/bin/watchdog` that supervises the system. `flash_tool` erases `/dev/mtd7` in place while those
+programs are paged in from it. Expected consequences *(reasoned from the layout and from
+`quiet_and_flash_test.sh`, which exists because killing the watchdog stops the hardware timer from
+being fed; not tested)*:
+
+- the SSH session, or the shell running the flash, can die in the middle of the write;
+- `watchdog` or another process can fault when its pages are read back from a half-erased partition,
+  and the hardware watchdog can then reset the board mid-write.
+
+A partly written APP is recoverable only through UART (section 5), so use UART for every re-flash:
+
+1. Attach UART and boot the `init=/bin/sh` shell as in section 4. APP is expected not to be mounted
+   there (`rc.local` does not run), so nothing is executing from the partition being written.
+2. Run `sh /mnt/install_with_flash_tool.sh` **from the SD card** (`/mnt`), as above. Both the script and
+   `flash_tool` are read from the card, never from `/usr`.
+
+If you have no UART, the only variant that avoids running from `/usr` is a fully detached run of the
+flash tool from RAM and SD (`nohup`, output to a file, copy of `flash_tool` in `/tmp`, shell and `dd`
+resolved from ROOTFS). Camyn has **not** tried this and does not recommend it: you still lose the
+watchdog feeder and the SSH session, and cannot see the result. The `make -C src/ak_rtsp upload` target
+copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash; do
+not run them from an SSH session on a Camyn image.
+
+Note that the header comments of `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` describe
+live flashing over **Telnet** on the stock firmware (a shell that is not Dropbear). That experience
+does not transfer to a Camyn camera, where Telnet is disabled and the session would be SSH.
 
 ## 5. Restore
 

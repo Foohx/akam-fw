@@ -31,10 +31,29 @@ On boot, the kernel mounts `/` from `ROOTFS`, then `/etc/init.d/rc.local` mounts
 ### The shadow overwrite trap (stock behavior)
 
 In the stock firmware, `service.sh` copies `/usr/local/shadow` over `/etc/config/shadow` on every
-boot, so a root password set the normal way is reverted to the unknown factory hash. An earlier
-version of this document described writing a password hash into `/etc/config/passwd` to get a
-permanent Telnet login. **Camyn does not use or support this**: Telnet is disabled, and remote
-access is SSH with public keys only ([camyn_v1_ssh_and_lockdown.md](camyn_v1_ssh_and_lockdown.md)).
+boot, so a root password set the normal way is reverted to the unknown factory hash.
+
+### Upstream history: the `/etc/config/passwd` trick (stock firmware, maintenance only)
+
+Kept here as upstream knowledge and credit, **not** as a Camyn feature. BusyBox `login` checks
+`/etc/passwd` directly: if the password field holds an MD5crypt hash instead of `x`, it verifies against
+that hash and never consults `/etc/shadow`. Since `service.sh` never touches `/etc/config/passwd`,
+upstream used a hash written there to get a persistent Telnet/console login on the **stock** firmware:
+
+```sh
+# Upstream example: root password 'admin' (a publicly known value; use your own hash)
+printf 'root:$1$anyka001$qk6nsIZ/vuhZcaN7A1ZIr/:0:0:root:/:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/sh\nbin:x:2:2:bin:/bin:/bin/sh\nnobody:x:99:99:nobody:/home:/bin/sh\n' > /etc/config/passwd
+```
+
+Camyn's position:
+
+- Do not use it on a Camyn image. Camyn's remote access is SSH with public keys only
+  ([camyn_v1_ssh_and_lockdown.md](camyn_v1_ssh_and_lockdown.md)); Dropbear has no password
+  authentication compiled in, and Telnet is disabled, so this file would not give network access.
+- CONFIG is never rewritten by Camyn's flash, so an `/etc/config/passwd` made on stock **persists**
+  and would still accept that password on a local console (UART). Remove it, or restore your CONFIG
+  backup, if you used the trick and want a password-less console again.
+- The `admin` hash above is public: never rely on it for anything exposed on a network.
 
 ---
 
