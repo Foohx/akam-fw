@@ -254,7 +254,7 @@ check_modes() {
     done
     ak=$ROOT/etc/config/dropbear/authorized_keys
     if [ -r "$ak" ]; then
-        n=$(grep -c '^ssh-' "$ak" 2>/dev/null)
+        n=$(grep -cE '^(ssh-|ecdsa-|sk-|[^#[:space:]].* (ssh-|ecdsa-|sk-))' "$ak" 2>/dev/null)
         if [ "${n:-0}" -gt 0 ]; then pass "authorized_keys holds $n key line(s) (content not shown)"
         else fail "authorized_keys has no key lines"; fi
     elif [ -e "$ak" ]; then unk "authorized_keys not readable"
@@ -269,7 +269,7 @@ check_modes() {
         done < "$ROOT/etc/passwd"
         info "root shell in passwd: '$rsh' (empty means /bin/sh)"
         if [ -n "$rsh" ] && [ -r "$ROOT/etc/shells" ]; then
-            if grep -qx "$rsh" "$ROOT/etc/shells"; then pass "root shell is listed in /etc/shells"
+            if grep -qxF "$rsh" "$ROOT/etc/shells"; then pass "root shell is listed in /etc/shells"
             else fail "root shell $rsh is not in /etc/shells: Dropbear would refuse the login"; fi
         elif [ -n "$rsh" ]; then
             warn "/etc/shells missing; Dropbear falls back to /bin/sh, /bin/csh"
@@ -291,7 +291,11 @@ check_misc() {
     if ! have nc; then unk "nc not available: cannot query 8091 LIST locally"
     elif [ -z "$(port_addrs 8091)" ]; then unk "8091 not listening, LIST skipped"
     else
-        printf 'LIST\n' | nc -w 3 127.0.0.1 8091 > "$WORK/list" 2>&1
+        tmo=
+        have timeout && tmo="timeout 8"
+        # bounded in time (timeout, nc -w) and in size (head)
+        # shellcheck disable=SC2086
+        printf 'LIST\n' | $tmo nc -w 3 127.0.0.1 8091 2>&1 | head -n 50 > "$WORK/list"
         if [ -s "$WORK/list" ]; then pass "8091 answered LIST ($(wc -l < "$WORK/list") line(s))"; show_file "$WORK/list" 8
         else fail "8091 gave no answer to LIST"; fi
     fi
