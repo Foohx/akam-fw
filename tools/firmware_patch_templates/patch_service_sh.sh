@@ -19,13 +19,14 @@
 #   3. No other line is changed.
 #
 # Exit codes:
-#   0  patched (or already patched) and BOTH kinds of lines were handled
+#   0  patched (or already patched). If no SD hook line was found, the daemon
+#      lines are still patched and a WARNING is printed on stderr.
 #   1  usage error, service.sh missing, or I/O error
 #   2  a matching line has a shape this script refuses to guess about
 #      (line continuation, compound command, elif/while/case ...), or the
 #      patched file fails "sh -n". Nothing is written.
-#   3  nothing to patch: no telnet/ftp launch line and/or no SD hook line
-#      found. The file is left untouched. build_firmware.sh must treat this as
+#   3  nothing to patch: no telnet/ftp launch line found. The file is left
+#      untouched. build_firmware.sh must treat this as
 #      blocking unless CAMYN_ALLOW_UNPATCHED_SERVICE=1.
 #
 # Environment:
@@ -117,14 +118,20 @@ END {
 read -r DNEW HNEW DDONE HDONE FAILED <"$WORK/counts" || die "no counts from awk"
 [ "$FAILED" -eq 0 ] || die "unsupported service.sh layout, nothing written; review by hand" 2
 
-if [ $((DNEW + DDONE)) -eq 0 ] || [ $((HNEW + HDONE)) -eq 0 ]; then
+if [ $((DNEW + DDONE)) -eq 0 ]; then
     {
-        echo "patch_service_sh: WARNING: expected lines NOT found in $SVC"
-        echo "    telnet/ftp launch lines: $((DNEW + DDONE))   SD hook lines: $((HNEW + HDONE))"
+        echo "patch_service_sh: WARNING: no telnet/ftp launch line found in $SVC"
         echo "    The image would NOT be locked down by this patch. File left untouched."
         echo "    Inspect the real service.sh and extend the patterns."
     } >&2
     exit 3
+fi
+if [ $((HNEW + HDONE)) -eq 0 ]; then
+    {
+        echo "patch_service_sh: WARNING: no SD hook line found in $SVC"
+        echo "    Daemon lines are still patched, but the SD hook (telnet:24 via hack.sh)"
+        echo "    is NOT guarded. Check the real service.sh by hand."
+    } >&2
 fi
 
 sh -n "$WORK/new" 2>"$WORK/syntax" || {
