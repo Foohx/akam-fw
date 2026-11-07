@@ -24,6 +24,8 @@
 #   APP_EXTRACTED   unsquashed stock APP dump (default: ./app_extracted)
 #   FW_DIR          output directory (default: this script's directory)
 #   AK_RTSP_BIN     ak_rtsp binary (default: ./ak_rtsp next to this script)
+#   SMOLRTSP_DIR    SmolRTSP checkout for licence texts (default: src/smolrtsp)
+#   MUSL_COPYRIGHT  musl COPYRIGHT (default: from the pinned Zig tarball)
 #   DROPBEAR_MULTI  prebuilt dropbearmulti (default: dist/dropbear/dropbearmulti,
 #                   built with tools/dropbear/build_dropbear.sh if missing)
 #   CAMYN_SQUASHFS_COMP  gzip (default) | xz
@@ -81,6 +83,19 @@ fi
 DROPBEAR_DIR="$(dirname "$DROPBEAR_MULTI")"
 DROPBEAR_LICENSE="${DROPBEAR_LICENSE:-$DROPBEAR_DIR/LICENSE.dropbear}"
 [ -f "$DROPBEAR_LICENSE" ] || die "LICENSE.dropbear not found at $DROPBEAR_LICENSE (the licence must ship with the binary)"
+# Licence texts of statically linked / macro-expanded third-party code, copied
+# from the pinned sources (never hand-written). Missing = fatal.
+SMOLRTSP_DIR="${SMOLRTSP_DIR:-$ROOT/src/smolrtsp}"
+if [ -z "${MUSL_COPYRIGHT:-}" ]; then
+    MUSL_COPYRIGHT=""
+    for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/lib/libc/musl/COPYRIGHT; do
+        [ -f "$f" ] && MUSL_COPYRIGHT="$f"
+    done
+fi
+[ -f "${MUSL_COPYRIGHT:-}" ] || die "musl COPYRIGHT not found (run tools/build/bootstrap.sh or set MUSL_COPYRIGHT)"
+LIC_SRC=("$SMOLRTSP_DIR/LICENSE")
+for d in slice99 metalang99 datatype99 interface99; do LIC_SRC+=("$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE"); done
+for f in "${LIC_SRC[@]}"; do [ -s "$f" ] || die "licence file $f missing (run tools/build/bootstrap.sh)"; done
 for f in camyn_ssh.sh camyn_lockdown.sh patch_service_sh.sh ak_rtsp_wrapper.sh _ht_process.ini; do
     [ -f "$TEMPLATES/$f" ] || die "template $TEMPLATES/$f missing"
 done
@@ -150,6 +165,11 @@ install -m 755 "$TEMPLATES/camyn_lockdown.sh" "$PATCHED/sbin/camyn_lockdown.sh"
 mkdir -p "$PATCHED/local/camyn"
 chmod 755 "$PATCHED/local/camyn"
 install -m 644 "$DROPBEAR_LICENSE" "$PATCHED/local/camyn/LICENSE.dropbear"
+install -m 644 "$MUSL_COPYRIGHT" "$PATCHED/local/camyn/LICENSE.musl"
+install -m 644 "$SMOLRTSP_DIR/LICENSE" "$PATCHED/local/camyn/LICENSE.smolrtsp"
+for d in slice99 metalang99 datatype99 interface99; do
+    install -m 644 "$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE" "$PATCHED/local/camyn/LICENSE.$d"
+done
 
 echo "Patching sbin/service.sh (telnet/ftp off, SD hook guarded)..."
 SVC_RC=0
@@ -180,6 +200,9 @@ GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo unknown
     echo "build_date=$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
     echo "ak_rtsp_sha256=$SHA_AK"
     echo "dropbearmulti_sha256=$SHA_DB"
+    for l in "$PATCHED"/local/camyn/LICENSE.*; do
+        echo "licence: $(basename "$l") sha256=$(sha256sum "$l" | cut -d' ' -f1)"
+    done
     if [ -f "$DROPBEAR_DIR/BUILDINFO.txt" ]; then
         sed 's/^/dropbear_buildinfo: /' "$DROPBEAR_DIR/BUILDINFO.txt"
     fi
@@ -268,7 +291,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh local/camyn/LICENSE.dropbear local/camyn/MANIFEST.txt; do
+    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh local/camyn/LICENSE.dropbear local/camyn/LICENSE.musl local/camyn/LICENSE.smolrtsp local/camyn/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
     echo "ak_rtsp sha256:     $SHA_AK"
