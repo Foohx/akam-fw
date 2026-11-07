@@ -31,7 +31,9 @@ download() {
         rm -f "$dest"
     fi
     log "downloading $url"
-    curl -fsSL --retry 3 -o "$dest.part" "$url" || die "download failed: $url"
+    rm -f "$dest.part"
+    curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 -o "$dest.part" "$url" \
+        || { rm -f "$dest.part"; die "download failed: $url"; }
     got="$(sha256sum "$dest.part" | cut -d' ' -f1)"
     if [ "$got" != "$sha" ]; then
         rm -f "$dest.part"

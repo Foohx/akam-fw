@@ -147,5 +147,5 @@ upload: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
 	         $(FLASH_SCRIPTS)/quiet_and_flash_test.sh; do \
 	    b=$$(basename "$$f"); \
 	    echo "upload $$b"; \
-	    ssh root@$(CAMERA_IP) "cat > /tmp/$$b && chmod +x /tmp/$$b" < "$$f"; \
+	    ssh "root@$(CAMERA_IP)" "cat > /tmp/$$b && chmod +x /tmp/$$b" < "$$f"; \
 	done
