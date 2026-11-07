@@ -331,6 +331,13 @@ check "mount failure is not fatal: dropbear launched" test -s "$R/tmp/dropbear.p
 check "mount failure logged" grep -q 'bind mount failed' "$R/tmp/camyn_ssh.log"
 killdb
 
+echo "== 9c. camera scripts only use applets present in the stock ROOTFS BusyBox"
+# The stock BusyBox 1.30.1 has no tr, uniq, gzip, mktemp, flock, nohup, wget.
+# shellcheck disable=SC2016
+check "no tr/uniq/gzip/mktemp/flock/nohup/wget command in camera scripts" bash -c '
+    ! grep -nE "(^|[|;&(]|\\$\\()[[:space:]]*(tr|uniq|gzip|mktemp|flock|nohup|wget)[[:space:]]" \
+        "$1"/camyn_ssh.sh "$1"/camyn_lockdown.sh "$1"/ak_rtsp_wrapper.sh' _ "$TPL"
+
 echo "== 10. fixture sanity"
 check "fixture has telnetd/ftpd lines" grep -q telnetd "$FIXTURE/sbin/service.sh"
 check "fixture symlink present" test -L "$FIXTURE/lib/libfake.so"

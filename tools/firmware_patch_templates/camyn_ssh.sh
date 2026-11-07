@@ -55,10 +55,9 @@ is_running() {
     esac
     kill -0 "$_pid" 2>/dev/null || return 1
     # A stale pidfile whose PID was reused must not count as "running".
-    _cl=$(tr '\0' ' ' <"${CAMYN_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null)
-    case "$_cl" in
-        *dropbear*) return 0 ;;
-    esac
+    # (No "tr": the camera's BusyBox has no such applet. cmdline is NUL
+    # separated; grep -a reads it fine.)
+    grep -qa dropbear "${CAMYN_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null && return 0
     return 1
 }
 
@@ -76,8 +75,10 @@ filter_keys() {
     : >"$_dst"
     _n=0
     _bad=0
+    _cr=$(printf '\r')
     while IFS= read -r _line || [ -n "$_line" ]; do
-        _line=$(printf '%s' "$_line" | tr -d '\r')
+        # Strip CRs (DOS line endings) in pure shell: no "tr" on the camera.
+        while [ "${_line%"$_cr"}" != "$_line" ]; do _line=${_line%"$_cr"}; done
         case "$_line" in
             '' | '#'*) continue ;;
             *command=*)
