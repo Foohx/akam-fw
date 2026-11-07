@@ -99,12 +99,14 @@ int  night_is_night(void) { return g_is_night; }
 
 /* Monotonic milliseconds for the anti-flap lock.
  *
- * On the camera (kernel 4.4, no clock_gettime64 syscall, musl with a 64-bit
- * time_t) clock_gettime(CLOCK_MONOTONIC) did not behave: the 60 s lock was
- * seen to expire within seconds. Take the time from the kernel tick counter
- * (raw times(2): 32-bit jiffies, no struct, no time_t width) and accumulate
- * it into 64 bits. Only the night thread calls this, so the state is unlocked.
- * Other targets fall back to clock_gettime(). The lock is additionally
+ * On the camera (kernel 4.4, which acknowledges clock_gettime64 without
+ * executing it) stock musl's clock_gettime(CLOCK_MONOTONIC) returned garbage:
+ * the 60 s lock was seen to expire within seconds. The root cause is fixed by
+ * src/common/time32_shim.c; this tick based clock is kept as defence in depth
+ * (the lock must never depend on one clock source). Take the time from the
+ * kernel tick counter (raw times(2): 32-bit jiffies, no struct, no time_t
+ * width) and accumulate it into 64 bits. Only the night thread calls
+ * this, so the state is unlocked. Other targets fall back to clock_gettime(). The lock is additionally
  * counted in poll iterations (see night_loop), which needs no clock at all. */
 static long long now_ms(void)
 {
