@@ -207,7 +207,7 @@ EOF
 chmod 755 "$R/stubbin/mount" "$R/stubbin/umount"
 echo "$K1" >"$R/sdkey"
 PATH="$R/stubbin:$PATH" ssh_run start
-check "tried vfat then exfat on p1, read-only" test "$(cut -d' ' -f1-3 "$R/tmp/mount_calls" | tr '\n' ,)" = "-t vfat -o,-t exfat -o,"
+check "tried vfat then exfat on p1, read-only" test "$(grep -v '^-o bind' "$R/tmp/mount_calls" | cut -d' ' -f1-3 | tr '\n' ,)" = "-t vfat -o,-t exfat -o,"
 check "key installed from the private mount" test "$(wc -l <"$R/etc/config/dropbear/authorized_keys")" = 1
 check "private mount unmounted" grep -q camyn_sd "$R/tmp/umount_calls"
 killdb
@@ -336,7 +336,7 @@ printf '#!/bin/sh\necho x >>"$CAMYN_ROOT/tmp/mount_calls"\n' >"$R/stubbin/mount"
 chmod 755 "$R/stubbin/mount"
 printf '/bin/sh\n/bin/bash\n' >"$R/etc/shells"
 PATH="$R/stubbin:$PATH" ssh_run start
-check "/bin/sh already listed: no mount" test ! -e "$R/tmp/mount_calls"
+check "/bin/sh already listed: no shells bind" bash -c "! grep -q -e --bind \"$R/tmp/mount_calls\""
 killdb
 new_root t9d
 mkdir -p "$R/stubbin"
@@ -344,7 +344,7 @@ mkdir -p "$R/stubbin"
 printf '#!/bin/sh\necho x >>"$CAMYN_ROOT/tmp/mount_calls"\n' >"$R/stubbin/mount"
 chmod 755 "$R/stubbin/mount"
 PATH="$R/stubbin:$PATH" ssh_run start
-check "no /etc/shells: no mount" test ! -e "$R/tmp/mount_calls"
+check "no /etc/shells: no shells bind" bash -c "! grep -q -e --bind \"$R/tmp/mount_calls\""
 killdb
 new_root t9e
 mkdir -p "$R/stubbin"
@@ -362,6 +362,60 @@ echo "== 9c. camera scripts only use applets present in the stock ROOTFS BusyBox
 check "no tr/uniq/gzip/mktemp/flock/nohup/wget command in camera scripts" bash -c '
     ! grep -nE "(^|[|;&(]|\\$\\()[[:space:]]*(tr|uniq|gzip|mktemp|flock|nohup|wget)[[:space:]]" \
         "$1"/camyn_ssh.sh "$1"/camyn_lockdown.sh "$1"/ak_rtsp_wrapper.sh' _ "$TPL"
+
+echo "== 9d. root HOME = key directory (stock / and /etc are 0775: dropbear would refuse the key)"
+# Stub mount: "-o bind SRC DST" copies SRC over DST (a real bind needs root).
+bind_stub() {
+    mkdir -p "$R/stubbin"
+    cat >"$R/stubbin/mount" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$CAMYN_ROOT/tmp/mount_calls"
+[ "$1" = -o ] && [ "$2" = bind ] && cp "$3" "$4"
+EOF
+    chmod 755 "$R/stubbin/mount"
+}
+new_root t9f
+bind_stub
+printf '%s\n' "$K1" >"$R/mnt/camyn/authorized_keys"
+printf 'root:x:0:0:root:/:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/sh\n' >"$R/etc/passwd"
+PATH="$R/stubbin:$PATH" ssh_run start
+H=$R/tmp/camyn_home
+check "root HOME rewritten in the private passwd" grep -qx "root:x:0:0:root:$H:/bin/sh" "$R/etc/passwd"
+check "other passwd entries kept" grep -qx 'daemon:x:1:1:daemon:/usr/sbin:/bin/sh' "$R/etc/passwd"
+check "HOME dir 700, key copy 600" test "$(mode_of "$H")" = 700 -a "$(mode_of "$H/authorized_keys")" = 600
+check "HOME key copy == SD key" cmp -s "$H/authorized_keys" <(printf '%s\n' "$K1")
+check "dropbear -D is the HOME dir" grep -q -- "-D $H " "$R/tmp/dropbear_launches"
+check "host key still persistent" grep -q -- "-r $R/etc/config/dropbear/dropbear_ed25519_host_key" "$R/tmp/dropbear_launches"
+check "HOME change logged" grep -q 'root HOME is now' "$R/tmp/camyn_ssh.log"
+killdb
+: >"$R/tmp/mount_calls"
+ssh_run_pathed() { PATH="$R/stubbin:$PATH" ssh_run "$@"; }
+ssh_run_pathed start
+check "respawn: passwd already points at HOME, no second bind" bash -c "! grep -q -e '-o bind' '$R/tmp/mount_calls'"
+check "respawn: -D still the HOME dir" grep -q -- "-D $H " "$R/tmp/dropbear_launches"
+killdb
+
+new_root t9g
+bind_stub
+printf '%s\n' "$K1" >"$R/mnt/camyn/authorized_keys"
+rm -f "$R/etc/passwd"
+ln -s config/passwd "$R/etc/passwd"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "dangling /etc/passwd symlink: root entry created through it" grep -qx "root:x:0:0:root:$R/tmp/camyn_home:/bin/sh" "$R/etc/config/passwd"
+check "dangling passwd: dropbear -D is the HOME dir" grep -q -- "-D $R/tmp/camyn_home " "$R/tmp/dropbear_launches"
+killdb
+
+new_root t9h
+mkdir -p "$R/stubbin"
+printf '#!/bin/sh\nexit 1\n' >"$R/stubbin/mount"
+chmod 755 "$R/stubbin/mount"
+printf '%s\n' "$K1" >"$R/mnt/camyn/authorized_keys"
+printf 'root:x:0:0:root:/:/bin/sh\n' >"$R/etc/passwd"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "bind failure: real passwd untouched" test "$(cat "$R/etc/passwd")" = 'root:x:0:0:root:/:/bin/sh'
+check "bind failure: falls back to the persistent -D dir" grep -q -- "-D $R/etc/config/dropbear " "$R/tmp/dropbear_launches"
+check "bind failure logged, dropbear launched" bash -c "grep -q 'could not set root HOME' '$R/tmp/camyn_ssh.log' && test -s '$R/tmp/dropbear.pid'"
+killdb
 
 echo "== 10. fixture sanity"
 check "fixture has telnetd/ftpd lines" grep -q telnetd "$FIXTURE/sbin/service.sh"

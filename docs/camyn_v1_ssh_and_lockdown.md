@@ -120,6 +120,14 @@ From the UART console: `cat /tmp/camyn_ssh.log`, `/usr/sbin/camyn_ssh.sh status`
 `authorized_keys` when any directory on the path is writable by group or others; the script logs the
 modes of `/etc/config`, `/etc` and `/` for this reason.
 
+The stock ROOTFS is a read-only squashfs whose `/` and `/etc` are mode 0775 (group-writable), which
+Dropbear would reject, and they cannot be changed at runtime. The walk stops at root's HOME, so
+`camyn_ssh.sh` makes HOME a private tmpfs directory (`/tmp/camyn_home`, 0700) holding a copy of the key
+file, and bind-mounts a private copy of `passwd` over `/etc/passwd` (it is a symlink to
+`/etc/config/passwd`) whose `root` entry has that HOME (a missing `root` entry is added: without one
+Dropbear refuses every login). The real file is untouched. The log line is `root HOME is now ...`; if
+it says `could not set root HOME` the legacy directory is used and the login may be refused.
+
 ## 4. Network exposure of SSH
 
 Dropbear listens on all interfaces, port 22, public-key only (no password prompt exists in the
