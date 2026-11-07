@@ -53,7 +53,13 @@ is_running() {
     case "$_pid" in
         '' | *[!0-9]*) return 1 ;;
     esac
-    kill -0 "$_pid" 2>/dev/null
+    kill -0 "$_pid" 2>/dev/null || return 1
+    # A stale pidfile whose PID was reused must not count as "running".
+    _cl=$(tr '\0' ' ' <"${CAMYN_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null)
+    case "$_cl" in
+        *dropbear*) return 0 ;;
+    esac
+    return 1
 }
 
 log_mode() {

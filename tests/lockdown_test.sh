@@ -221,27 +221,48 @@ check "log records kills" grep -q 'SIGTERM pid' "$LR/tmp/camyn_lockdown.log"
 check "log records SIGKILL escalation" grep -q 'SIGKILL pid' "$LR/tmp/camyn_lockdown.log"
 check "lock released" test ! -d "$LR/tmp/camyn_lockdown.lock"
 
-echo "== L2. maintenance flag: nothing killed"
+echo "== L2. maintenance flag: nothing killed, loop goes on"
 new_ld_root l2
 spawn telnetd "telnetd -p 24 -l /bin/sh"
 spawn ftpd "tcpsvd 0 21 ftpd -w /mnt"
 : >"$LR/mnt/CAMYN_MAINTENANCE"
-check "exits 0" run_lockdown "$LR"
+check "bounded loop exits 0" run_lockdown "$LR"
 check "telnetd alive" alive "$(pid_of telnetd)"
 check "ftpd alive" alive "$(pid_of ftpd)"
 check "log says maintenance mode" grep -q 'maintenance mode: telnet not touched' "$LR/tmp/camyn_lockdown.log"
+check "loop ran to its end" grep -q 'bounded loop finished' "$LR/tmp/camyn_lockdown.log"
 
-echo "== L3. flag appearing mid-run stops the loop, no later kill"
+echo "== L3. flag present then removed: killing resumes, no exit in between"
 new_ld_root l3
 LD_ENV=(CAMYN_FAST_ROUNDS=50 CAMYN_FAST_PERIOD=1 CAMYN_SLOW_ROUNDS=0 CAMYN_SLOW_PERIOD=1)
-(run_lockdown "$LR" >/dev/null 2>&1 &)
-sleep 1.5
 : >"$LR/mnt/CAMYN_MAINTENANCE"
 spawn telnetd "telnetd -p 24"
+(run_lockdown "$LR" >/dev/null 2>&1 &)
+sleep 2.5
+check "telnetd alive while flag present" alive "$(pid_of telnetd)"
+check "loop still running (lock held)" test -d "$LR/tmp/camyn_lockdown.lock"
+rm -f "$LR/mnt/CAMYN_MAINTENANCE"
 sleep 3
-check "late telnetd (after flag) alive" alive "$(pid_of telnetd)"
-check "loop stopped (lock released)" test ! -d "$LR/tmp/camyn_lockdown.lock"
+check "telnetd killed after flag removal" dead "$(pid_of telnetd)"
+check "log says lockdown resumed" grep -q 'lockdown resumed' "$LR/tmp/camyn_lockdown.log"
+kill "$(cat "$LR/tmp/camyn_lockdown.lock/pid")" 2>/dev/null
 LD_ENV=(CAMYN_FAST_ROUNDS=3 CAMYN_FAST_PERIOD=0 CAMYN_SLOW_ROUNDS=2 CAMYN_SLOW_PERIOD=0)
+
+echo "== L3b. slow loop relaunches camyn_ssh.sh start, detached"
+new_ld_root l3b
+mkdir -p "$LR/usr/sbin"
+cat >"$LR/usr/sbin/camyn_ssh.sh" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$CAMYN_ROOT/tmp/ssh_calls"
+sleep 20
+EOF
+chmod 755 "$LR/usr/sbin/camyn_ssh.sh"
+start=$(date +%s)
+check "lockdown exits 0 even with a slow helper" run_lockdown "$LR"
+check "loop not blocked by helper" test $(($(date +%s) - start)) -lt 10
+sleep 0.5
+check "helper called with start" grep -q '^start$' "$LR/tmp/ssh_calls"
+check "helper called once per slow round" test "$(wc -l <"$LR/tmp/ssh_calls")" = 2
 
 echo "== L4. late telnetd killed during the loop, then bounded exit"
 new_ld_root l4

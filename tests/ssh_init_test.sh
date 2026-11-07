@@ -77,7 +77,7 @@ for a in "$@"; do
     prev=$a
 done
 echo "$*" >>"$(dirname "$pf")/dropbear_launches"
-( sleep 300 </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
+( sh -c 'sleep 300; :' dropbear </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
 exit 0
 EOF
     chmod 755 "$R/usr/bin/dropbear" "$R/usr/bin/dropbearkey"
@@ -274,6 +274,17 @@ else
     killdb
     chmod 755 "$R/etc/config"
 fi
+
+echo "== 9a. pidfile pointing at a non-dropbear process is stale"
+new_root t9a
+sleep 300 </dev/null >/dev/null 2>&1 &
+other=$!
+echo "$other" >"$R/tmp/dropbear.pid"
+check "status: not running" bash -c '! "$@"' _ "${SHCMD[@]}" "$R/usr/sbin/camyn_ssh.sh" status
+ssh_run start
+check "dropbear launched despite stale pidfile" test "$(launches)" = 1
+kill "$other" 2>/dev/null
+killdb
 
 echo "== 9b. /etc/shells without /bin/sh: bind mount of a private list"
 new_root t9b

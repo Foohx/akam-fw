@@ -205,9 +205,10 @@ expected to read it as `/mnt/CAMYN_MAINTENANCE` *(assumed mount point; configura
 scripts)*.
 
 - With the flag present: the patched `service.sh` lets the card's hook scripts run again, and
-  `camyn_lockdown.sh` logs `maintenance mode` and kills nothing. The flag does **not** start Telnet or
+  `camyn_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping; as soon as the flag disappears it resumes killing at the next round. The flag does **not** start Telnet or
   FTP by itself: it only stops Camyn from preventing whatever the card's scripts start.
-- Without the flag: everything is closed.
+- Without the flag: everything is closed (including Telnet/FTP left running after the card was removed).
+- Every 60 s the safety net also runs `camyn_ssh.sh start` in the background, which restarts a dead Dropbear.
 - The flag is checked at boot and re-checked every round of the safety net. It is never set by the
   watchdog or by a network event; only physical access to the card can enable it. Treat it as exactly
   that: whoever can put a card in the camera can run code as root, as with the stock firmware.
