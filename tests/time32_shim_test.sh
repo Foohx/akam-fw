@@ -35,51 +35,7 @@ check() {
     if "$@"; then ok "$d"; else ko "$d"; fi
 }
 
-# Syscalls that musl issues UNCONDITIONALLY (whatever the value) and that the
-# camera's kernel does not execute. Must not be present in any final binary.
-# (Other time64 numbers, e.g. clock_nanosleep_time64 or futex_time64, are only
-# issued by musl for values that do not fit in 32 bits, so they may exist.)
-FORBIDDEN="403 405 408 409 410 411 417"
-
-# scan_svc <elf>: print "<number> <count>" for every `svc` whose r7 is a
-# constant visible in straight-line code ("?" when it is not).
-scan_svc() {
-    local elf=$1 start size
-    read -r start size < <(readelf -SW "$elf" | awk '{
-        for (i = 1; i <= NF; i++) if ($i == ".text") { print "0x" $(i + 2), "0x" $(i + 4); exit } }')
-    gdb -batch -ex "disassemble $start,$((start + size))" "$elf" 2>/dev/null | awk '
-        {
-            line = $0
-            sub(/^[^\t]*\t/, "", line)
-            split(line, f, /[ \t,]+/)
-            op = f[1]
-            if (op == "mov" && f[2] == "r7" && f[3] ~ /^#[0-9]+$/) { r7 = substr(f[3], 2) + 0; known = 1; next }
-            if (op == "orr" && f[2] == "r7" && f[3] == "r7" && f[4] ~ /^#[0-9]+$/ && known) {
-                r7 = or(r7, substr(f[4], 2) + 0); next
-            }
-            if (op == "svc") { cnt[known ? r7 : "?"]++; known = 0; next }
-            if (f[2] == "r7" && op !~ /^(cmp|cmn|tst|teq|str|strb|push)/) known = 0
-            if (op ~ /^(pop|ldm)/ && line ~ /r7/) known = 0
-        }
-        END { for (n in cnt) print n, cnt[n] }'
-}
-
-no_forbidden() {
-    local elf=$1 n out
-    out=$(scan_svc "$elf") || return 1
-    [ -n "$out" ] || { echo "    no svc found in $elf (scanner broken?)"; return 1; }
-    for n in $FORBIDDEN; do
-        if printf '%s\n' "$out" | awk -v n="$n" '$1 == n { found = 1 } END { exit !found }'; then
-            echo "    $elf loads forbidden time64 syscall $n"
-            return 1
-        fi
-    done
-    return 0
-}
-
-has_svc() { # <elf> <number>
-    scan_svc "$1" | awk -v n="$2" '$1 == n { found = 1 } END { exit !found }'
-}
+CHECK="$REPO/tools/build/check_time32.sh"
 
 echo "== build"
 export PROBE_KEEP_SYMBOLS=1
@@ -131,22 +87,22 @@ check "users program builds without the shim" build_users "$WORK/users_stock"
 
 echo "== machine code: no unconditional time64 syscall in the shim builds"
 if command -v gdb >/dev/null 2>&1; then
-    check "users_shim: only 32-bit clock syscalls" no_forbidden "$WORK/users_shim"
-    check "users_shim: issues clock_gettime32 (263)" has_svc "$WORK/users_shim" 263
-    check "users_stock: control, stock musl does load clock_gettime64 (403)" has_svc "$WORK/users_stock" 403
-    for b in src/ak_rtsp/ak_rtsp src/ak_rtsp/flash_tool src/ak_rtsp/isp_dump src/ak_rtsp/patch_div0; do
+    check "users_shim: only 32-bit clock syscalls, clock_gettime32 present" "$CHECK" --require-263 "$WORK/users_shim"
+    check "users_stock (control): stock musl is caught loading clock_gettime64" bash -c "! '$CHECK' '$WORK/users_stock' >/dev/null 2>&1"
+    for b in src/ak_rtsp/flash_tool src/ak_rtsp/isp_dump src/ak_rtsp/patch_div0; do
         if [ -f "$REPO/$b" ]; then
-            check "$b: no forbidden time64 syscall" no_forbidden "$REPO/$b"
+            check "$b: no forbidden time64 syscall" "$CHECK" "$REPO/$b"
         else
             echo "  skip - $b not built"
         fi
     done
     if [ -f "$REPO/src/ak_rtsp/ak_rtsp" ]; then
-        check "ak_rtsp issues clock_gettime32 (263)" has_svc "$REPO/src/ak_rtsp/ak_rtsp" 263
+        check "ak_rtsp: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/src/ak_rtsp/ak_rtsp"
+    else
+        echo "  skip - src/ak_rtsp/ak_rtsp not built"
     fi
     if [ -f "$REPO/dist/dropbear/dropbearmulti" ]; then
-        check "dropbearmulti: no forbidden time64 syscall" no_forbidden "$REPO/dist/dropbear/dropbearmulti"
-        check "dropbearmulti issues clock_gettime32 (263)" has_svc "$REPO/dist/dropbear/dropbearmulti" 263
+        check "dropbearmulti: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/dist/dropbear/dropbearmulti"
     else
         echo "  skip - dist/dropbear/dropbearmulti not built"
     fi
