@@ -12,9 +12,13 @@
 #      The ":" no-op keeps the shell syntax valid when the line was the only
 #      command of an if/then/function body.
 #   2. Every non-comment line that runs the microSD hook (mentions
-#      _ht_ap_mode.conf, hack.sh, /mnt/.../hostapd, /mnt/telnet.sh) gets the
+#      _ht_ap_mode.conf, hack.sh, /mnt/.../hostapd, /mnt/telnet.sh, or runs
+#      tf_update.sh) gets the
 #      guard "[ -f $CAMYN_MAINT_FLAG ] &&" so the hook only runs when the
-#      maintenance flag file exists on the SD. For "if ..." lines the guard is
+#      maintenance flag file exists on the SD. The SD firmware-update hook
+#      ("sh /tmp/tf_update.sh": stock tf_update.sh runs system_upgrade on every
+#      /mnt/*.bin at each boot, i.e. any inserted card could reflash the camera)
+#      is guarded the same way. For "if ..." lines the guard is
 #      inserted into the condition; for simple commands it is a prefix.
 #   3. No other line is changed.
 #
@@ -71,7 +75,7 @@ function bad(msg) {
 }
 BEGIN {
     dre = "(^|[^A-Za-z0-9_])(utelnetd|telnetd|bftpd|vsftpd|ftpd)([^A-Za-z0-9_-]|$)"
-    hre = "(_ht_ap_mode\\.conf|hack\\.sh|/mnt/[A-Za-z0-9_./-]*hostapd|/mnt/telnet\\.sh|/mnt/\\$\\{?AP_MODE_FILE)"
+    hre = "(_ht_ap_mode\\.conf|hack\\.sh|/mnt/[A-Za-z0-9_./-]*hostapd|/mnt/telnet\\.sh|/mnt/\\$\\{?AP_MODE_FILE|(^|[ \t;])sh[ \t]+[^ \t]*tf_update\\.sh)"
     guard = "[ -f " flag " ]"
 }
 {

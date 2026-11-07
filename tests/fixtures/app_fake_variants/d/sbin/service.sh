@@ -4,6 +4,15 @@
 # goes through a variable name (file name assigned once, used as /mnt/${VAR}).
 AP_MODE_FILE=_ht_ap_mode.conf
 
+update_sd ()
+{
+	sh /usr/sbin/tf_mount.sh
+	cp /usr/sbin/tf_update.sh /tmp/
+	sleep 1
+	sh /tmp/tf_update.sh
+	rm /tmp/tf_update.sh
+}
+
 system_run_init ()
 {
 	dd if="/mnt/${AP_MODE_FILE}" of="/tmp/${AP_MODE_FILE}" bs=1024 count=1
@@ -15,4 +24,5 @@ system_run_init ()
 	#telnetd
 }
 
+update_sd
 system_run_init

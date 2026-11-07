@@ -67,7 +67,7 @@ new_tree() { # new_tree <name> <fixture-dir>
 }
 
 echo "== P1. patch applies to fixture and variants"
-for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fake_variants/c:4" "app_fake_variants/d:2"; do
+for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fake_variants/c:4" "app_fake_variants/d:3"; do
     name=${spec%%:*}
     want=${spec##*:}
     tag=$(echo "$name" | tr / _)
@@ -92,6 +92,8 @@ check "variant b: one-liner if body still valid" grep -q ': # CAMYN-DISABLED:.*b
 
 check "variant d: assignment line untouched" grep -q '^AP_MODE_FILE=_ht_ap_mode.conf$' "$WORK/app_fake_variants_d/sbin/service.sh"
 check "variant d: dd of the AP mode file guarded" grep -q '^	\[ -f /mnt/CAMYN_MAINTENANCE \] && dd if=' "$WORK/app_fake_variants_d/sbin/service.sh"
+check "variant d: tf_update run guarded by flag" grep -q '^	\[ -f /mnt/CAMYN_MAINTENANCE \] && sh /tmp/tf_update.sh$' "$WORK/app_fake_variants_d/sbin/service.sh"
+check "variant d: tf_update cp/rm untouched" grep -q '^	cp /usr/sbin/tf_update.sh /tmp/$' "$WORK/app_fake_variants_d/sbin/service.sh"
 mkdir -p "$WORK/vd"
 cp -a "$FIXTURES/app_fake_variants/d/." "$WORK/vd/"
 check "variant d: NOTE about commented-only daemons" bash -c "CAMYN_PATCH_REPORT='$WORK/vd.diff' '$PATCH' '$WORK/vd' 2>&1 | grep -q 'commented mention'"
@@ -118,6 +120,22 @@ check "no flag: SD hook (hack.sh/hostapd) not run" test ! -e "$FAKE/hook_ran"
 run_service
 check "flag: SD hook runs (maintenance)" test -s "$FAKE/hook_ran"
 check "flag: telnetd/ftpd still not launched by service.sh" test ! -e "$FAKE/launched"
+
+echo "== P2b. tf_update (SD firmware flash) only runs with the flag"
+FU=$WORK/tfu
+mkdir -p "$FU/mnt" "$FU/tmp"
+sed -e "s#/mnt/#$FU/mnt/#g" -e "s#/tmp/tf_update.sh#$FU/tmp/tf_update.sh#g" \
+    "$FIXTURES/app_fake_variants/d/sbin/service.sh" >"$FU/service.sh"
+printf '#!/bin/sh\necho flashed >>"%s/flashed"\n' "$FU" >"$FU/tmp/tf_update.sh"
+CAMYN_MAINT_FLAG=$FU/mnt/CAMYN_MAINTENANCE CAMYN_PATCH_REPORT=$WORK/tfu.diff "$PATCH" "$FU" >/dev/null 2>&1 || true
+mkdir -p "$FU/sbin"; cp "$FU/service.sh" "$FU/sbin/service.sh"
+CAMYN_MAINT_FLAG=$FU/mnt/CAMYN_MAINTENANCE CAMYN_PATCH_REPORT=$WORK/tfu.diff "$PATCH" "$FU" >/dev/null 2>&1
+sed -e "s#^\(.*\)sh /usr/sbin/tf_mount.sh#\1:#" -e "s#cp /usr/sbin/tf_update.sh .*#:#" -e 's#^\(\s*\)rm .*#\1:#' "$FU/sbin/service.sh" >"$FU/run.sh"
+"${SHCMD[@]}" "$FU/run.sh" >/dev/null 2>&1
+check "no flag: tf_update not run" test ! -e "$FU/flashed"
+: >"$FU/mnt/CAMYN_MAINTENANCE"
+"${SHCMD[@]}" "$FU/run.sh" >/dev/null 2>&1
+check "flag: tf_update runs (maintenance)" test -s "$FU/flashed"
 
 echo "== P3. patch fails loudly on unexpected input"
 mkdir -p "$WORK/n1/sbin"
