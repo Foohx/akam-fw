@@ -124,6 +124,7 @@ Environment variables (all optional), from the script header:
 | `APP_EXTRACTED` | Your unsquashed APP tree (default `src/ak_rtsp/app_extracted`) |
 | `FW_DIR` | Output directory (default `src/ak_rtsp`) |
 | `AK_RTSP_BIN` | `ak_rtsp` binary (default `src/ak_rtsp/ak_rtsp`) |
+| `ZIG_LICENSE`, `MUSL_COPYRIGHT` | Licence texts shipped in the image (default: from the pinned Zig tarball) |
 | `DROPBEAR_MULTI` | Prebuilt `dropbearmulti` (default `dist/dropbear/dropbearmulti`) |
 | `CAMYN_SQUASHFS_COMP` | `gzip` (default) or `xz` |
 | `CAMYN_ALLOW_UNPATCHED_SERVICE=1` | Build even if `service.sh` could not be patched (Telnet/FTP may then still be launched; read the warning) |
@@ -135,7 +136,7 @@ Environment variables (all optional), from the script header:
 What the script does, in order: copies the tree to `$FW_DIR/app_patched/`; removes `bin/anyka_ipc`;
 installs the wrapper and the single-entry `_ht_process.ini`, the stripped `ak_rtsp`, the stripped
 `dropbearmulti` (plus `dropbear` / `dropbearkey` symlinks), `camyn_ssh.sh`, `camyn_lockdown.sh`,
-`LICENSE.dropbear` and a `MANIFEST.txt`; patches `sbin/service.sh`
+the licence texts under `/usr/local/camyn/` (`LICENSE.dropbear`, `.musl`, `.zig`, `.smolrtsp`, its four dependencies, `.camyn`, `THIRD_PARTY_NOTICES.md`) and a `MANIFEST.txt`; patches `sbin/service.sh`
 ([lockdown guide](camyn_v1_ssh_and_lockdown.md#6-telnet-and-ftp-lockdown)); checks modes and refuses any
 private-key material in the tree; runs `mksquashfs -b 131072 -all-root -noappend`; unpacks the result
 and compares type, mode, symlink target and SHA-256 of every entry with the source tree; applies the

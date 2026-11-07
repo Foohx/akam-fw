@@ -55,7 +55,10 @@ The image also carries, in `/usr/local/camyn/`, the licence texts of the other
 code linked into `ak_rtsp` and `dropbearmulti`: `LICENSE.musl` (musl's
 `COPYRIGHT`, from the pinned Zig tarball), `LICENSE.smolrtsp`, and
 `LICENSE.slice99`, `LICENSE.metalang99`, `LICENSE.datatype99`,
-`LICENSE.interface99` (their macros are expanded into `ak_rtsp`). They are
+`LICENSE.interface99` (their macros are expanded into `ak_rtsp`), `LICENSE.zig`
+(Zig's compiler-rt is linked into both binaries) and `LICENSE.camyn` (the
+repository's own MIT licence, covering `ak_rtsp`), plus this file as
+`THIRD_PARTY_NOTICES.md` (it carries the flasher's MIT notice above). They are
 copied unmodified from the pinned sources by `build_firmware.sh`, which fails
 if one is missing, and are listed with their SHA-256 in `MANIFEST.txt`.
 
@@ -78,5 +81,6 @@ Source: https://ziglang.org/ (version 0.14.1)
 
 `zig cc` is used as the cross-compiler (`arm-linux-musleabi`). Zig is
 downloaded by `tools/build/bootstrap.sh`, is not part of this repository, and
-is not distributed with the firmware. The musl libc that Zig links statically
-into the binaries is MIT licensed.
+the compiler itself is not distributed with the firmware. The musl libc and the
+compiler-rt that Zig links statically into the binaries are MIT licensed; their
+notices ship in the image (`LICENSE.musl`, `LICENSE.zig`).

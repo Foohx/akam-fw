@@ -1,8 +1,10 @@
 # Camyn V1: Flashing and Restoring
 
 > **RISK.** Writing the SPI NOR can brick the camera. Restoring is **not guaranteed** to work (section
-> 5). Do not start without a verified 8-partition backup ([backup guide](camyn_v1_backup.md)) and a
-> UART connection ([hardware_and_uart.md](hardware_and_uart.md)).
+> 5). Do not start without a verified 8-partition backup ([backup guide](camyn_v1_backup.md)). A UART
+> connection ([hardware_and_uart.md](hardware_and_uart.md)) is the only way back from an APP that does
+> not boot; the [no-UART variant](#first-flash-without-uart-from-the-stock-firmware) below exists, but
+> read what it can and cannot recover (section 5) before choosing it.
 >
 > Status: nothing in this document has been run on a camera by Camyn. The flashing tool and scripts
 > (`flash_tool`, `install_with_flash_tool.sh`, `restore.sh`) are upstream's; upstream reports a gzip APP
@@ -58,9 +60,13 @@ cp ~/Projects/camyn/tools/flash_scripts/install_with_flash_tool.sh \
    ~/Projects/camyn/tools/flash_scripts/restore.sh \
    ~/Projects/camyn/tools/flash_scripts/flash_guard.sh "$SD/"   # flash_guard.sh is mandatory
 cp ~/.ssh/camyn.pub "$SD/camyn/authorized_keys"
-touch "$SD/CAMYN_MAINTENANCE"               # first test only, see the SSH guide
+touch "$SD/CAMYN_MAINTENANCE"               # UART route only (see the SSH guide); NOT for the no-UART route
 sync
 ```
+
+This layout is for the UART route. For the no-UART route use the card described in
+[First flash without UART](#first-flash-without-uart-from-the-stock-firmware): do not create
+`CAMYN_MAINTENANCE`, and do not boot Camyn for the first time with the toolkit files on the card.
 
 The script uses fixed paths on the camera: `/mnt/flash_tool` and
 `/mnt/custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (the lexicographically last match is
@@ -111,6 +117,92 @@ this hardware.
 
 After the boot, continue with the [test plan](camyn_v1_test_plan.md#2-post-flash-procedure) and the
 [SSH guide](camyn_v1_ssh_and_lockdown.md#8-test-order-keep-a-way-back-until-ssh-is-proven).
+
+### First flash without UART (from the stock firmware)
+
+This is the variant for a camera that has only been opened through the microSD toolkit shell of the
+[SD backup guide](camyn_v1_backup_sd.md). It is **untested by Camyn**; the flashing itself is the
+upstream path (`install_with_flash_tool.sh` run live over the toolkit's Telnet on **stock** firmware,
+which upstream reports working), so the stock `/usr` (APP) is mounted and in use while it is erased
+*(assumed risk: if the write dies half-way, only UART or an SPI programmer recovers the APP)*.
+
+**1. Card for the flash** (the toolkit card from the backup, with its hook files left as they are, so
+that the camera boots stock and opens `telnet CAMERA_IP 24`). Add, on the PC, in these exact places:
+
+| On the card | What |
+|---|---|
+| `custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` | the one image to flash (keep only one) |
+| `flash_tool` | `src/ak_rtsp/flash_tool` (built by `make -C src/ak_rtsp flash_tool`) |
+| `install_with_flash_tool.sh`, `flash_guard.sh` | from `tools/flash_scripts/`; `flash_guard.sh` is mandatory, a missing file makes the script refuse |
+| `original_firmware/mtdblock7.bin` | your stock APP backup, **in this subdirectory only** (section 3) |
+| `restore.sh` | optional, from `tools/flash_scripts/` |
+
+**Never leave any `*.bin` at the top level of the card**: the stock boot runs `system_upgrade` on it
+(see the warning in the SD backup guide).
+
+**2. Shell and mount.** Boot the stock camera with this card, wait for the toolkit, then
+`telnet CAMERA_IP 24`. The stock boot has already unmounted `/mnt` (lazy `umount`), but every Camyn
+script reads `/mnt/...`, so mount the card there yourself:
+
+```sh
+mount -t vfat /dev/mmcblk0p1 /mnt
+ls -l /mnt/custom_firmware /mnt/flash_tool /mnt/flash_guard.sh
+```
+
+`flash_guard.sh` passes in this shell: it is not SSH, and the scripts and `flash_tool` live under
+`/mnt`, not `/usr`. Do not use `CAMYN_FLASH_I_KNOW=1` here.
+
+**3. Gates before writing** (each one costs nothing and an unmet one strands the camera, because there
+is no UART to fix it afterwards):
+
+```sh
+ls -l /etc/config/wpa_supplicant.conf /etc/config/passwd
+```
+
+- `/etc/config/wpa_supplicant.conf` must exist and be non-empty. Camyn removes the Tuya agent that
+  used to write it, and `ak_rtsp_wrapper.sh` only starts Wi-Fi when this file exists. The SD backup
+  route does **not** write it (the toolkit keeps the Wi-Fi settings in RAM). If it is missing, the
+  camera will boot Camyn without a network. Create it first, from the same shell, with the block
+  below *(untested format, matches the `wpa_cli -p/var/run/wpa_supplicant` used by the stock scripts;
+  this is a deliberate write to CONFIG)*.
+- `/etc/config/passwd` should exist (the stock `/etc/passwd` is a symlink to it). If it does not,
+  `camyn_ssh.sh` creates an **empty** one in CONFIG so that it can bind-mount its private copy over it.
+- `cat /proc/mtd` must show the `mtd7: 00500000 ... "APP"` line, and the image must be 5 242 880 bytes
+  (the script checks).
+
+Block for a missing `wpa_supplicant.conf` (paste with your SSID and passphrase):
+
+```sh
+umask 077
+cat > /etc/config/wpa_supplicant.conf <<'EOF'
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+    ssid="YOUR-SSID"
+    psk="YOUR-PASSPHRASE"
+    key_mgmt=WPA-PSK
+}
+EOF
+sync
+```
+
+**4. Flash and verify** (as in the UART variant, from this shell):
+
+```sh
+sh /mnt/install_with_flash_tool.sh
+dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum      # must equal the md5sum printed by the script
+```
+
+Read the `FAULT SUMMARY` and the success line in full. On any error, **do not power cycle**: rerun
+the script; if it still fails, go to "Without UART: what can be recovered" in section 5.
+
+**5. Prepare the first Camyn boot.** Power off by hand (unplug USB-C), take the card out, and put in
+a card with **only** `camyn/authorized_keys` (the exact path the camera reads; see the
+[SSH guide](camyn_v1_ssh_and_lockdown.md#2-put-the-public-key-on-the-microsd-card)), **without**
+`CAMYN_MAINTENANCE` and without the toolkit files (use a freshly formatted FAT32 card with an MBR
+partition). The toolkit card must not be used for the first Camyn boot: with the flag it would revive
+the toolkit hook (unauthenticated Telnet on port 24, a second Wi-Fi bring-up), and without the flag
+it does nothing useful. Then power on and wait a few minutes.
 
 ### Reflashing later: never over an SSH session
 
@@ -195,6 +287,24 @@ reachable:
 A card holding `original_firmware/` and the scripts is therefore your out-of-band recovery medium;
 the UART is the other half.
 
+### Without UART: what can be recovered
+
+The SD-card hooks (`_ht_ap_mode.conf` + `hostapd`, `CAMYN_MAINTENANCE`, the `*.bin` upgrade path) are
+implemented by `sbin/service.sh` **inside the APP partition**, so they exist only while a readable APP
+is in place. Consequences, stated plainly:
+
+| Situation after the flash | Recovery without UART |
+|---|---|
+| The write reported an error, the camera is still running | Rerun `install_with_flash_tool.sh`, or run `restore.sh` (stock APP) from the same shell. Do not power cycle before one of them succeeds. |
+| The APP image is corrupt or does not mount (no boot to `service.sh`) | **None.** Nothing on the SD card runs. UART (`init=/bin/sh`, section 5 below) or an external SPI programmer is required. |
+| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `CAMYN_MAINTENANCE` does re-enable the card's hook in `service.sh`, but `camyn_lockdown.sh` looks for the flag on `/mnt`, which the stock boot has already unmounted, so it keeps killing `telnetd`, `telnet.sh` and `hack.sh` seconds after they start. A custom hook script with other process names might survive; Camyn has not tried it. |
+| SSH refused (key not on the card, wrong key) | Put the right `camyn/authorized_keys` on the card and power cycle (keys are re-read at every boot). Needs the camera on the network. |
+| `*.bin` OTA-style upgrade from the card | Allowed only with `CAMYN_MAINTENANCE`; Camyn does not provide an OTA-format file, so this is not a recovery path. |
+
+So the no-UART first flash is a bet that the image mounts and the network comes up. The image checks
+(`build_firmware.sh` round-trip, padding, exact size) and the pre-flash gates above reduce but do not
+remove that risk; the gzip SquashFS format is proven only by upstream's reports, not on this unit.
+
 ### Caveat: restore is not guaranteed
 
 These procedures reuse upstream scripts that have worked for upstream, but:
@@ -211,7 +321,8 @@ your decision; a rehearsal is itself a flash write.
 ## 6. Checklist
 
 - [ ] Backup verified and copied off the SD card ([backup guide](camyn_v1_backup.md)).
-- [ ] UART attached and a root shell obtained before flashing.
+- [ ] UART attached and a root shell obtained before flashing, **or** the no-UART risks above accepted
+      and the pre-flash gates (`wpa_supplicant.conf`, `passwd`, `/proc/mtd`) passed.
 - [ ] Image hash checked on PC; same `md5sum` on the camera.
 - [ ] Only `/dev/mtd7` written; verification summary read in full.
 - [ ] Read-back `md5sum` equals the image.
