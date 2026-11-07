@@ -24,3 +24,19 @@ DATATYPE99_SHA256=f38c077afdb91b7d754321be5d3c4a43ed5420c1ad51514d1de20023960f9a
 INTERFACE99_TAG=v1.0.2
 INTERFACE99_URL=https://github.com/hirrolot/interface99/archive/refs/tags/v1.0.2.tar.gz
 INTERFACE99_SHA256=8bd007c48cf05436ced60884e8e3a05ede46105f3efae9bf29e0f4d30f938f9e
+
+# Dropbear SSH server (tag DROPBEAR_2026.94 -> commit 28216cd9af822732a1549b78621c2ea9a76a0fe5).
+# Release tarball sha256 cross-checked: second download from dropbear.nl/mirror
+# (same hash), detached .asc verified with the release signing key below, and
+# the tarball tree is identical to the GitHub tag archive.
+DROPBEAR_VERSION=2026.94
+DROPBEAR_URL=https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.94.tar.bz2
+DROPBEAR_SHA256=e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81
+# Release signing key (https://matt.ucc.asn.au/dropbear/releases/dropbear-key-2015.asc)
+DROPBEAR_SIGNING_FPR=F7347EF2EE2E07A267628CA944931494F29C6773
+
+# Static x86_64 musl BusyBox, host-side ash tests only (never installed system-wide).
+# Upstream publishes no checksum/signature for it; the hash was computed on download.
+BUSYBOX_VERSION=1.35.0
+BUSYBOX_URL=https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
+BUSYBOX_SHA256=6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348
