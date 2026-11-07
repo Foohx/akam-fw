@@ -124,6 +124,7 @@ Environment variables (all optional), from the script header:
 | `DROPBEAR_MULTI` | Prebuilt `dropbearmulti` (default `dist/dropbear/dropbearmulti`) |
 | `CAMYN_SQUASHFS_COMP` | `gzip` (default) or `xz` |
 | `CAMYN_ALLOW_UNPATCHED_SERVICE=1` | Build even if `service.sh` could not be patched (Telnet/FTP may then still be launched; read the warning) |
+| `CAMYN_ALLOW_UNSTRIPPED=1` | Install ELF binaries unstripped when no strip tool is found (default: fatal; the pinned `zig` from `tools/.toolchain/` is found automatically) |
 | `CAMYN_ALLOW_TIGHT=1` | Accept an image within one block (131072 bytes) of the partition size |
 | `KEEP_PATCHED=1` | Reuse an existing `app_patched/` instead of copying the tree again |
 | `SOURCE_DATE_EPOCH` | Fixed timestamp for the SquashFS (default: now) |

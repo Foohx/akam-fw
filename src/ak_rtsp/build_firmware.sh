@@ -24,10 +24,13 @@
 #   APP_EXTRACTED   unsquashed stock APP dump (default: ./app_extracted)
 #   FW_DIR          output directory (default: this script's directory)
 #   AK_RTSP_BIN     ak_rtsp binary (default: ./ak_rtsp next to this script)
+#   SMOLRTSP_DIR    SmolRTSP checkout for licence texts (default: src/smolrtsp)
+#   MUSL_COPYRIGHT  musl COPYRIGHT (default: from the pinned Zig tarball)
 #   DROPBEAR_MULTI  prebuilt dropbearmulti (default: dist/dropbear/dropbearmulti,
 #                   built with tools/dropbear/build_dropbear.sh if missing)
 #   CAMYN_SQUASHFS_COMP  gzip (default) | xz
 #   CAMYN_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
+#   CAMYN_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
 #   CAMYN_ALLOW_TIGHT=1  allow an image within one block of the partition size
 #   KEEP_PATCHED=1  reuse an existing app_patched/ instead of starting over
 #   SOURCE_DATE_EPOCH  fixed timestamp for the squashfs (reproducible content)
@@ -80,6 +83,19 @@ fi
 DROPBEAR_DIR="$(dirname "$DROPBEAR_MULTI")"
 DROPBEAR_LICENSE="${DROPBEAR_LICENSE:-$DROPBEAR_DIR/LICENSE.dropbear}"
 [ -f "$DROPBEAR_LICENSE" ] || die "LICENSE.dropbear not found at $DROPBEAR_LICENSE (the licence must ship with the binary)"
+# Licence texts of statically linked / macro-expanded third-party code, copied
+# from the pinned sources (never hand-written). Missing = fatal.
+SMOLRTSP_DIR="${SMOLRTSP_DIR:-$ROOT/src/smolrtsp}"
+if [ -z "${MUSL_COPYRIGHT:-}" ]; then
+    MUSL_COPYRIGHT=""
+    for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/lib/libc/musl/COPYRIGHT; do
+        [ -f "$f" ] && MUSL_COPYRIGHT="$f"
+    done
+fi
+[ -f "${MUSL_COPYRIGHT:-}" ] || die "musl COPYRIGHT not found (run tools/build/bootstrap.sh or set MUSL_COPYRIGHT)"
+LIC_SRC=("$SMOLRTSP_DIR/LICENSE")
+for d in slice99 metalang99 datatype99 interface99; do LIC_SRC+=("$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE"); done
+for f in "${LIC_SRC[@]}"; do [ -s "$f" ] || die "licence file $f missing (run tools/build/bootstrap.sh)"; done
 for f in camyn_ssh.sh camyn_lockdown.sh patch_service_sh.sh ak_rtsp_wrapper.sh _ht_process.ini; do
     [ -f "$TEMPLATES/$f" ] || die "template $TEMPLATES/$f missing"
 done
@@ -92,6 +108,14 @@ trap 'rm -rf "$TMP"' EXIT
 # stripped). Install a stripped COPY; the build output is never modified.
 # Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
 # $CAMYN_STRIP (a command taking "<in> <out>") if set.
+# Use the pinned toolchain from tools/.toolchain when zig is not on PATH.
+zig_pinned() {
+    local z
+    for z in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/zig; do
+        [ -x "$z" ] && { ZIG="$z"; return 0; }
+    done
+    return 1
+}
 install_stripped() {
     local src=$1 dst=$2 tmp="$TMP/strip.tmp"
     if [ "$(head -c4 "$src" | od -An -c | tr -d ' ')" != '177ELF' ]; then
@@ -100,12 +124,14 @@ install_stripped() {
     fi
     if [ -n "${CAMYN_STRIP:-}" ]; then
         $CAMYN_STRIP "$src" "$tmp" || die "CAMYN_STRIP failed on $src"
-    elif [ -x "${ZIG:-}" ] || command -v zig >/dev/null 2>&1; then
+    elif [ -x "${ZIG:-}" ] || command -v zig >/dev/null 2>&1 || zig_pinned; then
         "${ZIG:-zig}" objcopy --strip-all "$src" "$tmp" || die "zig objcopy --strip-all failed on $src"
-    else
-        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (source tools/build/env.sh)"
+    elif [ "${CAMYN_ALLOW_UNSTRIPPED:-0}" = 1 ]; then
+        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (CAMYN_ALLOW_UNSTRIPPED=1)"
         install -m 755 "$src" "$dst"
         return 0
+    else
+        die "no strip tool for $(basename "$dst"): run bootstrap.sh and source tools/build/env.sh (or set CAMYN_STRIP, or CAMYN_ALLOW_UNSTRIPPED=1)"
     fi
     [ -s "$tmp" ] || die "stripped copy of $src is empty"
     install -m 755 "$tmp" "$dst"
@@ -139,6 +165,11 @@ install -m 755 "$TEMPLATES/camyn_lockdown.sh" "$PATCHED/sbin/camyn_lockdown.sh"
 mkdir -p "$PATCHED/local/camyn"
 chmod 755 "$PATCHED/local/camyn"
 install -m 644 "$DROPBEAR_LICENSE" "$PATCHED/local/camyn/LICENSE.dropbear"
+install -m 644 "$MUSL_COPYRIGHT" "$PATCHED/local/camyn/LICENSE.musl"
+install -m 644 "$SMOLRTSP_DIR/LICENSE" "$PATCHED/local/camyn/LICENSE.smolrtsp"
+for d in slice99 metalang99 datatype99 interface99; do
+    install -m 644 "$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE" "$PATCHED/local/camyn/LICENSE.$d"
+done
 
 echo "Patching sbin/service.sh (telnet/ftp off, SD hook guarded)..."
 SVC_RC=0
@@ -169,6 +200,9 @@ GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo unknown
     echo "build_date=$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
     echo "ak_rtsp_sha256=$SHA_AK"
     echo "dropbearmulti_sha256=$SHA_DB"
+    for l in "$PATCHED"/local/camyn/LICENSE.*; do
+        echo "licence: $(basename "$l") sha256=$(sha256sum "$l" | cut -d' ' -f1)"
+    done
     if [ -f "$DROPBEAR_DIR/BUILDINFO.txt" ]; then
         sed 's/^/dropbear_buildinfo: /' "$DROPBEAR_DIR/BUILDINFO.txt"
     fi
@@ -257,7 +291,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh local/camyn/LICENSE.dropbear local/camyn/MANIFEST.txt; do
+    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh local/camyn/LICENSE.dropbear local/camyn/LICENSE.musl local/camyn/LICENSE.smolrtsp local/camyn/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
     echo "ak_rtsp sha256:     $SHA_AK"

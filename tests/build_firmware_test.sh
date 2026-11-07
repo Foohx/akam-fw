@@ -33,7 +33,16 @@ printf '#!/bin/sh\necho stub ak_rtsp\n' >"$WORK/stub/ak_rtsp"
 printf '#!/bin/sh\necho stub dropbearmulti\n' >"$WORK/stub/dropbearmulti"
 printf 'Dropbear stub licence\n' >"$WORK/stub/LICENSE.dropbear"
 chmod 755 "$WORK/stub/ak_rtsp" "$WORK/stub/dropbearmulti"
+# Stub licence sources (the real build copies the pinned ones).
+mkdir -p "$WORK/stub/smol/build/_deps"
+printf 'smolrtsp stub licence\n' >"$WORK/stub/smol/LICENSE"
+for d in slice99 metalang99 datatype99 interface99; do
+    mkdir -p "$WORK/stub/smol/build/_deps/$d-src"
+    printf '%s stub licence\n' "$d" >"$WORK/stub/smol/build/_deps/$d-src/LICENSE"
+done
+printf 'musl stub copyright\n' >"$WORK/stub/COPYRIGHT"
 export AK_RTSP_BIN=$WORK/stub/ak_rtsp DROPBEAR_MULTI=$WORK/stub/dropbearmulti
+export SMOLRTSP_DIR=$WORK/stub/smol MUSL_COPYRIGHT=$WORK/stub/COPYRIGHT
 
 # run_build <outdir> [VAR=val ...]: build from another cwd, as the flasher does.
 run_build() {
@@ -71,6 +80,11 @@ check "sbin/camyn_ssh.sh 755" test "$(stat -c %a "$X/sbin/camyn_ssh.sh")" = 755
 check "sbin/camyn_lockdown.sh 755" test "$(stat -c %a "$X/sbin/camyn_lockdown.sh")" = 755
 check "sbin/ak_rtsp_wrapper.sh 755" test "$(stat -c %a "$X/sbin/ak_rtsp_wrapper.sh")" = 755
 check "LICENSE.dropbear shipped" test -s "$X/local/camyn/LICENSE.dropbear"
+for l in musl smolrtsp slice99 metalang99 datatype99 interface99; do
+    check "LICENSE.$l shipped, 644, listed in MANIFEST" bash -c "[ -s '$X/local/camyn/LICENSE.$l' ] && [ \$(stat -c %a '$X/local/camyn/LICENSE.$l') = 644 ] && grep -q '^licence: LICENSE.$l ' '$X/local/camyn/MANIFEST.txt'"
+done
+if run_build "$WORK/o_nomusl" MUSL_COPYRIGHT="$WORK/nonexistent"; then ko "build fails without musl COPYRIGHT"; else ok "build fails without musl COPYRIGHT"; fi
+if run_build "$WORK/o_nosmol" SMOLRTSP_DIR="$WORK/nonexistent"; then ko "build fails without SmolRTSP licences"; else ok "build fails without SmolRTSP licences"; fi
 check "MANIFEST has ak_rtsp sha256" grep -q "^ak_rtsp_sha256=$(sha256sum "$WORK/stub/ak_rtsp" | cut -d' ' -f1)" "$X/local/camyn/MANIFEST.txt"
 check "fixture symlink preserved" test "$(readlink "$X/lib/libfake.so")" = libfake.so.1
 check "ini has a single ak_rtsp_wrapper.sh entry" bash -c "[ \$(grep -c '^\[process_' '$X/local/_ht_process.ini') = 1 ] && grep -q 'ak_rtsp_wrapper.sh' '$X/local/_ht_process.ini'"

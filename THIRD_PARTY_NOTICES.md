@@ -51,6 +51,14 @@ and bundled libtom* components) is copied unmodified to
 `dist/dropbear/LICENSE.dropbear` by the build script and must be kept with any
 redistributed binary.
 
+The image also carries, in `/usr/local/camyn/`, the licence texts of the other
+code linked into `ak_rtsp` and `dropbearmulti`: `LICENSE.musl` (musl's
+`COPYRIGHT`, from the pinned Zig tarball), `LICENSE.smolrtsp`, and
+`LICENSE.slice99`, `LICENSE.metalang99`, `LICENSE.datatype99`,
+`LICENSE.interface99` (their macros are expanded into `ak_rtsp`). They are
+copied unmodified from the pinned sources by `build_firmware.sh`, which fails
+if one is missing, and are listed with their SHA-256 in `MANIFEST.txt`.
+
 ## SmolRTSP and its dependencies (all MIT)
 
 Linked into `ak_rtsp` (SmolRTSP) or used as headers at compile time (the
