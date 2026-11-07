@@ -28,9 +28,11 @@ Camyn embeds **no key** in the image. At boot, `camyn_ssh.sh` reads the public k
 copies them into the persistent CONFIG partition.
 
 Exact location: a directory `camyn` at the root of the FAT32 card, containing the file
-`authorized_keys`. The stock firmware is expected to mount the card on `/mnt`, so the camera reads
-`/mnt/camyn/authorized_keys` *(assumed; the mount point is configured at the top of `camyn_ssh.sh`
-and is to be confirmed on hardware)*.
+`authorized_keys`. On the real firmware the stock `service.sh` mounts the card on `/mnt` only for its
+own boot checks and then runs `umount -l /mnt`, so `/mnt/camyn` is normally not visible afterwards.
+`camyn_ssh.sh` therefore mounts the card read-only on `/tmp/camyn_sd` (same devices and filesystem
+order as the stock `tf_mount.sh`: vfat then exfat, `/dev/mmcblk0p1` then `/dev/mmcblk0`), reads
+`camyn/authorized_keys` and unmounts. *(Not yet tested on hardware.)*
 
 ```bash
 # the card is mounted on your PC at /run/media/$USER/CARD (adapt)
@@ -172,6 +174,15 @@ Two independent layers; both are needed because the exact place where the stock 
 The build fails (exit 2 or 3) if the file has a shape the patch will not guess at, or no launch line is
 found, unless you set `CAMYN_ALLOW_UNPATCHED_SERVICE=1`.
 
+On the real stock firmware (audited from a dump) the `service.sh` and `main.sh` launch lines for
+`telnetd` and `tcpsvd ... ftpd` are already commented out, and nothing in the stock tree runs
+`hack.sh`. The only SD-controlled code path in `service.sh` is the AP-mode marker: if `_ht_ap_mode.conf`
+is on the card, the card's `hostapd` is copied to `/tmp` and later run as root by `wifi_driver.sh`. The
+patch accepts "commented-only" daemons (exit 0 with a NOTE) as long as it finds this hook, and guards
+the `dd` of the marker file and the `cp` of the card's `hostapd` with the maintenance flag. The stock
+`tf_update.sh` (a `*.bin` on the card triggers `system_upgrade`) is a separate SD-triggered path that
+Camyn does not change.
+
 ### Layer 2: runtime safety net, `camyn_lockdown.sh`
 
 Started in the background by the wrapper next to `camyn_ssh.sh`. It covers a layer-1 patch that had no
@@ -201,8 +212,10 @@ Measure it on your unit with `camyn_hwcheck.sh --boot-window` ([test plan](camyn
 ## 7. Maintenance flag
 
 Create an **empty file named `CAMYN_MAINTENANCE` at the root of the microSD card**. The camera is
-expected to read it as `/mnt/CAMYN_MAINTENANCE` *(assumed mount point; configurable at the top of the
-scripts)*.
+expected to read it as `/mnt/CAMYN_MAINTENANCE` *(the patched `service.sh` sees it there during early
+boot, while the card is mounted; later the stock script unmounts `/mnt`, so `camyn_lockdown.sh` will
+normally not see the flag and keeps killing. With the real firmware nothing starts telnet or FTP anyway,
+so this only matters for the AP-mode hook)*.
 
 - With the flag present: the patched `service.sh` lets the card's hook scripts run again, and
   `camyn_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping; as soon as the flag disappears it resumes killing at the next round. The flag does **not** start Telnet or

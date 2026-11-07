@@ -97,7 +97,10 @@ true on your unit is a hypothesis ([test plan](camyn_v1_test_plan.md#3-hypothese
 | Value | Notes |
 |---|---|
 | `gzip` (default) | The format the upstream project and users of the upstream flasher report having flashed and booted. The upstream docs describe the **stock** APP as XZ, so the kernel is expected to support both, but only a boot of **your** image proves it. |
-| `xz` | Smaller image (built with `-Xbcj arm`), same format as the stock APP. Not exercised on a camera by Camyn. |
+| `xz` | Smaller image, same format as the stock APP: xz, 128 KiB blocks, **no BCJ filter** (verified with `unsquashfs -s` on a real dump; ROOTFS is xz too). `CAMYN_XZ_BCJ=1` adds `-Xbcj arm` (about 45 KB smaller, but the stock image does not use it, so kernel support is unproven). Not exercised on a camera by Camyn. |
+
+Sizes measured against a real APP dump (4,739,612 bytes used in the stock xz image): gzip 3,067,904 bytes
+(2,174,976 free of 5,242,880), xz with BCJ 2,449,408 (2,793,472 free), xz without BCJ about 2,494,000.
 
 Check what your own dump uses: `unsquashfs -s ~/camyn-backup/mtdblock7.bin`. Start with `gzip`
 unless the size guard (below) complains. Building both and comparing sizes in `build_report.txt`

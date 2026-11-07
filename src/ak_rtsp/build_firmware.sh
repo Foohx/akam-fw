@@ -211,7 +211,9 @@ chmod 644 "$PATCHED/local/camyn/MANIFEST.txt"
 
 # --- 4. safety checks -------------------------------------------------------------
 echo "Checking tree..."
-BADKEYS="$( (grep -rlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null || true
+# -I: text files only. The stock wpa_supplicant binary contains the marker as a
+# string literal (not a key); a binary can't be a PEM key file anyway.
+BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null || true
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
@@ -234,7 +236,9 @@ fi
 SQ="$FW_DIR/new_app_${COMP}.squashfs"
 rm -f "$SQ"
 MKOPTS=(-comp "$COMP" -b "$BLOCK" -all-root -noappend -no-xattrs -no-progress -mkfs-time "$EPOCH" -all-time "$EPOCH")
-[ "$COMP" = xz ] && MKOPTS+=(-Xbcj arm)
+# Stock APP is xz WITHOUT a BCJ filter; match it (a BCJ-arm image needs CONFIG_XZ_DEC_ARM in the
+# kernel, unproven). CAMYN_XZ_BCJ=1 opts in: ~45 KB smaller, not proven to boot.
+[ "$COMP" = xz ] && [ "${CAMYN_XZ_BCJ:-0}" = 1 ] && MKOPTS+=(-Xbcj arm)
 # mksquashfs refuses explicit time options when SOURCE_DATE_EPOCH is in the env.
 env -u SOURCE_DATE_EPOCH mksquashfs "$PATCHED" "$SQ" "${MKOPTS[@]}" >/dev/null || die "mksquashfs failed (unsupported option? tool version: $(mksquashfs -version | head -1))"
 

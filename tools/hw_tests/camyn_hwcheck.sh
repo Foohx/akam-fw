@@ -42,7 +42,13 @@ N_PASS=0
 N_FAIL=0
 N_WARN=0
 N_UNK=0
+# The camera's BusyBox 1.30.1 has no mktemp (nor tr): mkdir a private dir by hand.
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/camyn_hwcheck.XXXXXX" 2>/dev/null) || WORK=
+if [ -z "$WORK" ]; then
+    WORK=${TMPDIR:-/tmp}/camyn_hwcheck.$$
+    rm -rf "$WORK"
+    (umask 077 && mkdir "$WORK" 2>/dev/null) || WORK=
+fi
 [ -n "$WORK" ] || { echo "FAIL    cannot create a work directory" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 
@@ -164,7 +170,7 @@ find_pids() {
         pid=${d##*/}
         [ "$pid" = "$$" ] && continue
         cl=
-        [ -r "$d/cmdline" ] && cl=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+        [ -r "$d/cmdline" ] && cl=$(strings -n 1 < "$d/cmdline" 2>/dev/null | paste -s -d ' ' - 2>/dev/null)
         if [ -z "$cl" ] && [ -r "$d/comm" ]; then read -r cl < "$d/comm"; fi
         set -f
         # shellcheck disable=SC2086
@@ -178,7 +184,7 @@ find_pids() {
         done
     done
 }
-pids_of() { NAME=$1; find_pids | tr '\n' ' ' | sed 's/ $//'; }
+pids_of() { NAME=$1; find_pids | paste -s -d ' ' - ; }
 rss_of() { # VmRSS (kB) of pid $1
     [ -r "$ROOT/proc/$1/status" ] || { echo "?"; return; }
     while read -r k v _u; do
@@ -347,13 +353,13 @@ check_facts() {
     else
         info "no busybox binary on PATH"
     fi
-    for a in stat cmp grep tr kill ps mount nc netstat ss sleep tail head cut sed wc mktemp; do
+    for a in stat cmp grep strings paste kill ps mount nc netstat ss sleep tail head cut sed wc mktemp tr; do
         if have "$a"; then
             if grep -qx "$a" "$WORK/applets" 2>/dev/null; then info "applet $a: present (busybox)"
             else info "applet $a: present"; fi
         else
             case $a in
-                ss|nc|netstat|cmp) warn "applet $a: MISSING (optional, a fallback exists or the check is skipped)" ;;
+                ss|nc|netstat|cmp|mktemp|tr) warn "applet $a: MISSING (optional, a fallback exists or the check is skipped)" ;;
                 *) warn "applet $a: MISSING" ;;
             esac
         fi

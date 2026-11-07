@@ -187,6 +187,31 @@ check "no authorized_keys created" test ! -e "$R/etc/config/dropbear/authorized_
 check "warning logged" grep -q 'WARNING: no authorized key' "$R/tmp/camyn_ssh.log"
 killdb
 
+echo "== 4b. SD not mounted at boot (stock unmounts /mnt): read-only private mount"
+new_root t4b
+rm -rf "${R:?}/mnt"
+mkdir -p "$R/stubbin" "$R/dev"
+: >"$R/dev/mmcblk0p1"
+cat >"$R/stubbin/mount" <<'EOF'
+#!/bin/sh
+# stub: mount -t <fs> -o ro <dev> <dir>; vfat "fails", exfat "succeeds" and exposes a key
+echo "$*" >>"$CAMYN_ROOT/tmp/mount_calls"
+[ "$2" = exfat ] || exit 1
+mkdir -p "$6/camyn" && cp "$CAMYN_ROOT/sdkey" "$6/camyn/authorized_keys"
+EOF
+cat >"$R/stubbin/umount" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$CAMYN_ROOT/tmp/umount_calls"
+rm -rf "$1/camyn"
+EOF
+chmod 755 "$R/stubbin/mount" "$R/stubbin/umount"
+echo "$K1" >"$R/sdkey"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "tried vfat then exfat on p1, read-only" test "$(cut -d' ' -f1-3 "$R/tmp/mount_calls" | tr '\n' ,)" = "-t vfat -o,-t exfat -o,"
+check "key installed from the private mount" test "$(wc -l <"$R/etc/config/dropbear/authorized_keys")" = 1
+check "private mount unmounted" grep -q camyn_sd "$R/tmp/umount_calls"
+killdb
+
 echo "== 5. SD key validation"
 new_root t5
 {
@@ -330,6 +355,13 @@ PATH="$R/stubbin:$PATH" ssh_run start
 check "mount failure is not fatal: dropbear launched" test -s "$R/tmp/dropbear.pid"
 check "mount failure logged" grep -q 'bind mount failed' "$R/tmp/camyn_ssh.log"
 killdb
+
+echo "== 9c. camera scripts only use applets present in the stock ROOTFS BusyBox"
+# The stock BusyBox 1.30.1 has no tr, uniq, gzip, mktemp, flock, nohup, wget.
+# shellcheck disable=SC2016
+check "no tr/uniq/gzip/mktemp/flock/nohup/wget command in camera scripts" bash -c '
+    ! grep -nE "(^|[|;&(]|\\$\\()[[:space:]]*(tr|uniq|gzip|mktemp|flock|nohup|wget)[[:space:]]" \
+        "$1"/camyn_ssh.sh "$1"/camyn_lockdown.sh "$1"/ak_rtsp_wrapper.sh' _ "$TPL"
 
 echo "== 10. fixture sanity"
 check "fixture has telnetd/ftpd lines" grep -q telnetd "$FIXTURE/sbin/service.sh"

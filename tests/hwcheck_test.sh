@@ -32,7 +32,7 @@ hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1";
 # --- base PATH: symlinks to the host tools the script may use -------------
 BASEBIN=$WORK/basebin
 mkdir -p "$BASEBIN"
-for t in cat head tail sed tr cut grep wc ls rm cp mktemp uname sh; do
+for t in cat head tail sed strings paste cut grep wc ls rm cp mkdir uname sh; do
     p=$(command -v "$t") && ln -s "$p" "$BASEBIN/$t"
 done
 
