@@ -55,9 +55,9 @@
 static volatile int g_night_running;
 static pthread_t    g_night_tid;
 
-/* Live-tunable thresholds + manual override, exposed for control.c. Same
- * whole-struct-copy convention as ae.c's g_tuning — see that file's comment
- * for why a mutex isn't used here. */
+/* Live-tunable thresholds + manual override, exposed for control.c.
+ * Guarded by g_night_lock below (unlike ae.c's g_tuning, which stays
+ * lock-free). */
 static night_tuning_t g_tuning = {
     .trigger_hw_exp  = NIGHT_TRIGGER_HW_EXP,
     .day_hw_exp      = DAY_TRIGGER_HW_EXP,
