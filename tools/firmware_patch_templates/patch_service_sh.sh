@@ -93,6 +93,7 @@ BEGIN {
         indent = substr(line, 1, RLENGTH)
         body = substr(line, RLENGTH + 1)
         if (body ~ /^if[ \t]/) {
+            if (body ~ /\|\|/) { bad("hook condition contains ||: the guard would not bind"); print line; next }
             sub(/^if[ \t]+/, "", body)
             print indent "if " guard " && " body
         } else if (body ~ /^(elif|while|until|case|for|then|else|do|fi|done|esac|\{|\()/) {

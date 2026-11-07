@@ -138,6 +138,10 @@ printf '#!/bin/sh\ntelnetd &\nsync; sh /mnt/hack.sh\n' >"$WORK/n1/sbin/service.s
 cp "$WORK/n1/sbin/service.sh" "$WORK/n1.orig"
 check "compound hook line: exit 2" rc_is 2 "$PATCH" "$WORK/n1"
 check "compound hook: file untouched" cmp -s "$WORK/n1/sbin/service.sh" "$WORK/n1.orig"
+printf '#!/bin/sh\ntelnetd &\nif [ -f /mnt/_ht_ap_mode.conf ] || [ -f /mnt/x ]; then\n  :\nfi\n' >"$WORK/n1/sbin/service.sh"
+cp "$WORK/n1/sbin/service.sh" "$WORK/n1.orig"
+check "hook condition with ||: exit 2" rc_is 2 "$PATCH" "$WORK/n1"
+check "hook condition with ||: file untouched" cmp -s "$WORK/n1/sbin/service.sh" "$WORK/n1.orig"
 check "relative CAMYN_MAINT_FLAG rejected" bash -c "CAMYN_MAINT_FLAG=mnt/x '$PATCH' '$FIXTURES/app_fake' >/dev/null 2>&1; [ \$? -eq 1 ]"
 
 # ------------------------------------------------------------- lockdown tests
