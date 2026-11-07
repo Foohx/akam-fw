@@ -1,0 +1,26 @@
+# Pinned external build dependencies (sourceable by sh: KEY=value, no spaces).
+# Every download is verified against the sha256 below; a mismatch aborts.
+
+ZIG_VERSION=0.14.1
+ZIG_URL=https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+ZIG_SHA256=24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+
+SMOLRTSP_URL=https://github.com/OpenIPC/smolrtsp.git
+SMOLRTSP_COMMIT=8ae3b5115f7a77c383080b51cb7fdba1046f862f
+
+# Header-only dependencies of SmolRTSP (same versions as its CMakeLists.txt).
+SLICE99_TAG=v0.7.8
+SLICE99_URL=https://github.com/hirrolot/slice99/archive/refs/tags/v0.7.8.tar.gz
+SLICE99_SHA256=07b06b29d06eb74798d85e34b2b50af330f5480e96457bcbfd20f5c6f61d1a30
+
+METALANG99_TAG=v1.13.5
+METALANG99_URL=https://github.com/hirrolot/metalang99/archive/refs/tags/v1.13.5.tar.gz
+METALANG99_SHA256=f3d1607d76b4b081d3295661c4c2b8d5fde4d5018b1aa409c84fb3a6660ffb90
+
+DATATYPE99_TAG=v1.6.5
+DATATYPE99_URL=https://github.com/hirrolot/datatype99/archive/refs/tags/v1.6.5.tar.gz
+DATATYPE99_SHA256=f38c077afdb91b7d754321be5d3c4a43ed5420c1ad51514d1de20023960f9a8e
+
+INTERFACE99_TAG=v1.0.2
+INTERFACE99_URL=https://github.com/hirrolot/interface99/archive/refs/tags/v1.0.2.tar.gz
+INTERFACE99_SHA256=8bd007c48cf05436ced60884e8e3a05ede46105f3efae9bf29e0f4d30f938f9e

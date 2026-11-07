@@ -1,4 +1,5 @@
-CC      = zig cc -target arm-linux-musleabi -mcpu=arm926ej_s
+ZIG    ?= zig
+CC      = $(ZIG) cc -target arm-linux-musleabi -mcpu=arm926ej_s
 CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -g \
           -I. \
           -I../smolrtsp/include \
@@ -20,10 +21,10 @@ TARGET_DIV0 = patch_div0
 # Build versioning
 #
 # build_number.txt  — persists the counter across builds (not committed)
-# version_info.h    — regenerated on every make by gen_version.ps1
+# version_info.h    — regenerated on every make by gen_version.sh
 #
 # version.o has a FORCE dependency so it always recompiles. Its recipe
-# calls gen_version.ps1 (pure PowerShell, no sh required) which:
+# calls gen_version.sh (POSIX sh) which:
 #   1. increments build_number.txt
 #   2. writes version_info.h with BUILD_NUMBER / BUILD_TIMESTAMP / GIT_HASH
 # -----------------------------------------------------------------------
@@ -110,40 +111,41 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# version.o — always rebuilt (FORCE). Calls gen_version.ps1 first to
+# version.o — always rebuilt (FORCE). Calls gen_version.sh first to
 # increment the counter and regenerate version_info.h, then compiles.
 version.o: version.c FORCE
-	pwsh -NoProfile -NonInteractive -File gen_version.ps1
+	./gen_version.sh
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	-pwsh -NoProfile -NonInteractive -Command "$$ErrorActionPreference='SilentlyContinue'; Get-ChildItem -Path '.' -Filter '*.o' | Remove-Item -Force; Get-ChildItem -Path '../smolrtsp' -Recurse -Filter '*.o' | Remove-Item -Force; Remove-Item -Force '$(TARGET)','$(TARGET_DBG)','$(TARGET_HOOK)','$(TARGET_TOOL)','$(TARGET_DIV0)','version_info.h'; exit 0"
+	rm -f *.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
+	rm -f $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
 
 # -----------------------------------------------------------------------
 # firmware — builds the flashable, timestamped APP squashfs image
 # (ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs, written next to build_firmware.sh
-# unless FW_DIR is overridden). Rebuilds ak_rtsp natively first, then shells
-# out to WSL for build_firmware.sh (mksquashfs/unsquashfs aren't available on
-# Windows). Requires an app_extracted/ dump of your own camera's APP
-# partition — see docs/building_your_own_firmware.md for the full walkthrough
-# and what PATCHED/FW_DIR should point at.
+# unless FW_DIR is overridden). Rebuilds ak_rtsp first, then runs
+# build_firmware.sh (needs mksquashfs/unsquashfs on the host). Requires an
+# app_extracted/ dump of your own camera's APP partition — see
+# docs/building_your_own_firmware.md for the full walkthrough and what
+# PATCHED/FW_DIR should point at.
 # -----------------------------------------------------------------------
 firmware: $(TARGET)
-	wsl -d Ubuntu -- bash -c 'cd "$$(wslpath "$(CURDIR)")" && bash build_firmware.sh'
+	bash build_firmware.sh
 
-# Upload binary + launch script to camera over FTP.
-# CAMERA_IP is this project's own dev camera on its LAN — override it for yours,
-# e.g. `make upload CAMERA_IP=192.168.1.50`. The root:admin credential assumes
-# you've set up the /etc/config/passwd backdoor from
-# docs/flash_partition_map_and_rootfs.md with that same password.
-CAMERA_IP = 192.168.50.4
+# Upload the binaries + launch scripts to the camera over SSH into /tmp.
+# CAMERA_IP has no default: `make upload CAMERA_IP=<camera address>`.
+# Plain `ssh ... 'cat > file'` is used instead of scp because OpenSSH >= 9
+# scp speaks SFTP, which Dropbear does not provide.
 FLASH_SCRIPTS = ../../tools/flash_scripts
 upload: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
-	curl -T $(TARGET) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_DBG) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_HOOK) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_TOOL) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_DIV0) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(FLASH_SCRIPTS)/start_rtsp.sh ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(FLASH_SCRIPTS)/install_with_flash_tool.sh ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(FLASH_SCRIPTS)/quiet_and_flash_test.sh ftp://$(CAMERA_IP)/mnt/ --user root:admin
+	@test -n "$(CAMERA_IP)" || { echo "usage: make upload CAMERA_IP=<camera address>" >&2; exit 1; }
+	@set -e; \
+	for f in $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0) \
+	         $(FLASH_SCRIPTS)/start_rtsp.sh \
+	         $(FLASH_SCRIPTS)/install_with_flash_tool.sh \
+	         $(FLASH_SCRIPTS)/quiet_and_flash_test.sh; do \
+	    b=$$(basename "$$f"); \
+	    echo "upload $$b"; \
+	    ssh "root@$(CAMERA_IP)" "cat > /tmp/$$b && chmod +x /tmp/$$b" < "$$f"; \
+	done

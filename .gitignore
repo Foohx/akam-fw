@@ -63,3 +63,17 @@ obj/
 # OS Specific
 .DS_Store
 Thumbs.db
+
+# Native build: pinned toolchain/download cache and build outputs
+/tools/.toolchain/
+/tools/.cache/
+/build/
+/dist/
+/src/ak_rtsp/*.o
+/src/ak_rtsp/isp_hook.so
+/src/ak_rtsp/isp_dump
+/src/ak_rtsp/new_app_*.squashfs
+
+# Synthetic test fixtures must stay tracked despite the bin/, *.bin and
+# *.squashfs rules above (keep this negation last).
+!/tests/fixtures/**
