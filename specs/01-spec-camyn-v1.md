@@ -373,3 +373,13 @@ Recommandation : **A**. L'option C reste un complément possible UNIQUEMENT pour
 5. Vague 4 : T6b. En parallèle possible avec la vague 3 uniquement pour les sections qui ne dépendent pas de T5 (à éviter : un seul agent docs, après T5).
 6. (optionnel) T1b selon O-1, à placer avant T5 si accepté (T5 n'en dépend pas fonctionnellement).
 7. Le dump réel (par l'utilisateur, après sauvegarde des 8 partitions) déclenche : `audit_remote_services.sh` sur l'arbre extrait, relecture de `service.sh`/`ini`/watchdog, décision O-4, puis build réel et premier flash par l'utilisateur.
+
+---
+
+## 10. Décisions utilisateur (2026-11-07) — font foi sur le §7
+
+- **O-1 → (b)** : T1b est lancée. Chaque correctif du flasheur = un commit `fix(ak_rtsp): ...` séparé, après relecture intégrale du 4e patch (`PY_NIGHT`).
+- **O-2 → (c)** : première caméra via notre procédure (backup manuel, `build_firmware.sh`, `install_with_flash_tool.sh`). Script d'adaptation du flasheur (b) reporté après validation matérielle. T5 garde quand même le contrat du §4.
+- **O-3 → (a)** : ed25519 uniquement (clé d'hôte et clés clientes). Désactiver RSA/ECDSA/DSS dans `localoptions.h` si Dropbear le permet sans casser l'échange de clés.
+- **O-5 → (b)** : AUCUNE clé publique embarquée dans l'image. `authorized_keys` provient uniquement de la microSD (copiée dans CONFIG). Ne pas implémenter `CAMYN_AUTHORIZED_KEYS_DEFAULT`. Documenter le repli SD/UART si CONFIG est effacée.
+- **O-4** : différée jusqu'au dump réel ; V1 implémente le filet côté APP uniquement.
