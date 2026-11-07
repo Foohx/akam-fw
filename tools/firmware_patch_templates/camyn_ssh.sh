@@ -138,6 +138,7 @@ provision_keys() {
     install_keys
     if [ -n "$_sdmnt" ]; then
         umount "$_sdmnt" 2>/dev/null || log "could not unmount $_sdmnt (ignored)"
+        _sdmnt=
     fi
     return 0
 }
@@ -235,7 +236,8 @@ do_start() {
         rm -rf "$LOCKDIR"
         mkdir "$LOCKDIR" 2>/dev/null || return 0
     fi
-    trap 'rm -rf "$LOCKDIR"' EXIT
+    # Also drop the read-only SD mount if we are killed while it is mounted.
+    trap 'rm -rf "$LOCKDIR"; [ -z "${_sdmnt:-}" ] || umount "$_sdmnt" 2>/dev/null' EXIT
     trap 'exit 0' INT TERM HUP
     echo $$ >"$LOCKDIR/pid"
 
