@@ -324,6 +324,55 @@ MOUNTS_FILE=$CAM/mounts_none wait_result
 has "camera: worker refuses when /tmp is not tmpfs" 'RESULT: REFUSED by flash_guard' "$RD/flash.log"
 cmp -s "$CAM/dev_mtd7" <(head -c 5242880 /dev/zero) && ok "camera: refused worker wrote nothing" || ko "camera: refused worker wrote nothing"
 
+# --- B6. one worker at a time (atomic lock) ------------------------------------------
+live_sleeper() { sleep 600 >/dev/null 2>&1 & LIVE_PID=$!; echo "$LIVE_PID" >>"$WORK/pids"; }
+zeros_ok() { cmp -s "$CAM/dev_mtd7" <(head -c 5242880 /dev/zero); }
+reset_cam
+camrun b_l1 prepare --md5 "$IMD5"
+live_sleeper
+mkdir "$RD/worker.lock"; echo "$LIVE_PID" >"$RD/worker.lock/pid"
+camrun b_l2 start --md5 "$IMD5" --i-understand-no-uart
+rc_not0 "camera: start refused while a live worker holds the lock" "$RC"
+has "camera: says a worker is already running" 'already running' "$WORK/b_l2.out"
+camrun b_l2p precheck
+rc_not0 "camera: precheck refused while a worker holds the lock" "$RC"
+# the worker itself refuses too (two racing starts) and leaves the owner's state alone
+echo "$LIVE_PID" >"$RD/worker.pid"
+cam_env setsid -w "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" __worker "$IMD5" --i-understand-no-uart >"$WORK/b_l3.out" 2>&1
+has "camera: a second worker refuses" 'RESULT: REFUSED another worker holds' "$WORK/b_l3.out"
+[ "$(cat "$RD/worker.pid")" = "$LIVE_PID" ] && [ "$(cat "$RD/worker.lock/pid")" = "$LIVE_PID" ] && ok "camera: a refused worker leaves the owner's pid/lock alone" || ko "camera: a refused worker leaves the owner's pid/lock alone"
+zeros_ok && ok "camera: nothing written by the refused worker" || ko "camera: nothing written by the refused worker"
+# a lock without a pid yet: do not take it over
+rm -rf "$RD/worker.lock" "$RD/worker.pid"; mkdir "$RD/worker.lock"
+camrun b_l4 start --md5 "$IMD5" --i-understand-no-uart
+rc_not0 "camera: start refused on a lock with no pid" "$RC"
+has "camera: tells to check by hand" 'without a live owner pid' "$WORK/b_l4.out"
+# a stale lock (dead owner) is taken over and the flash goes through
+rm -rf "$RD/worker.lock"; mkdir "$RD/worker.lock"; echo 999999 >"$RD/worker.lock/pid"
+camrun b_l5 start --md5 "$IMD5" --i-understand-no-uart
+rc_is "camera: start takes over a stale lock" "$RC" 0
+wait_result
+has "camera: flash done after the stale lock" 'RESULT: OK' "$RD/flash.log"
+sleep 1
+[ ! -d "$RD/worker.lock" ] && ok "camera: the lock is released when the worker exits" || ko "camera: the lock is released when the worker exits"
+
+# --- B7. mtd7 is re-checked by start and by the worker -----------------------------------
+reset_cam
+camrun b_m1 prepare --md5 "$IMD5"
+MTD_FILE=$CAM/mtd_bad camrun b_m2 start --md5 "$IMD5" --i-understand-no-uart
+rc_not0 "camera: start refused when mtd7 is not the APP" "$RC"
+has "camera: start names the mtd7 problem" 'mtd7 is not the 5 MiB APP' "$WORK/b_m2.out"
+zeros_ok && ok "camera: nothing written when mtd7 is wrong" || ko "camera: nothing written when mtd7 is wrong"
+MTD_FILE=$CAM/mtd_bad cam_env setsid -w "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" __worker "$IMD5" --i-understand-no-uart >"$WORK/b_m3.out" 2>&1
+has "camera: the worker re-checks mtd7 itself" 'RESULT: REFUSED mtd7 is not the 5 MiB APP' "$WORK/b_m3.out"
+zeros_ok && ok "camera: worker wrote nothing when mtd7 is wrong" || ko "camera: worker wrote nothing when mtd7 is wrong"
+[ ! -d "$RD/worker.lock" ] && ok "camera: refused worker released its lock" || ko "camera: refused worker released its lock"
+# wrong size reaching the worker directly
+cp "$WORK/small.img" "$RD/image.squashfs"
+cam_env setsid -w "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" __worker "$(md5sum "$WORK/small.img" | cut -d' ' -f1)" --i-understand-no-uart >"$WORK/b_m4.out" 2>&1
+has "camera: the worker refuses a wrong-size image" 'RESULT: REFUSED image is 1000 bytes' "$WORK/b_m4.out"
+zeros_ok && ok "camera: worker wrote nothing for a wrong-size image" || ko "camera: worker wrote nothing for a wrong-size image"
+
 # =============================================================== C. host helper
 cat >"$WORK/fakessh" <<EOF
 #!/bin/bash
@@ -367,7 +416,6 @@ hrun() { # hrun OUTNAME args... (all the camera env is exported by cam_env)
         >"$WORK/$n.out" 2>&1
     RC=$?
 }
-zeros_ok() { cmp -s "$CAM/dev_mtd7" <(head -c 5242880 /dev/zero); }
 host_clear() { rm -f "$WORK/no_second" "$WORK/flaky" "$WORK/tamper" "$WORK/corrupt_upload"; }
 
 # --- C1. refuses without the confirmation, before any ssh -------------------------------
@@ -454,6 +502,26 @@ hrun h_tamper --i-understand-no-uart
 rc_is "host: independent read-back mismatch exits 1" "$RC" 1
 has "host: says do not power cycle" 'independent read-back md5 .* expected .*DO NOT power-cycle' "$WORK/h_tamper.out"
 hasnt "host: no VERIFIED on mismatch" 'VERIFIED' "$WORK/h_tamper.out"
+# --- C10. a worker is running: the helper must not wipe its directory -----------------------
+reset_cam; host_clear
+start_fake_boot_dropbear
+live_sleeper
+echo "$LIVE_PID" >"$RD/worker.pid"
+echo "[up 1] precious log" >"$RD/flash.log"
+hrun h_busy --i-understand-no-uart
+rc_is "host: refuses while a worker is running" "$RC" 1
+has "host: says the worker is still running" 'worker is still running' "$WORK/h_busy.out"
+has "host: the running worker's log is intact" 'precious log' "$RD/flash.log"
+[ -e "$RD/worker.pid" ] && ok "host: the running worker's pid file is intact" || ko "host: the running worker's pid file is intact"
+zeros_ok && ok "host: nothing written while a worker runs" || ko "host: nothing written while a worker runs"
+# --- C11. a stale log from an earlier run must not be taken for this run's result ------------
+reset_cam; host_clear
+start_fake_boot_dropbear
+printf '[up 1] RESULT: FAILED after 3 attempts. DO NOT power cycle.\n' >"$RD/flash.log"
+echo 999999 >"$RD/worker.pid"
+hrun h_stale --i-understand-no-uart
+rc_is "host: a stale FAILED log does not block a new run" "$RC" 0
+hasnt "host: the stale result is not relayed" 'FAILED after 3' "$WORK/h_stale.out"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

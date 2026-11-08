@@ -66,6 +66,7 @@ SELF=$DIR/camyn_reflash_ssh.sh
 BIN=$DIR/bin
 LOG=$DIR/flash.log
 WPID=$DIR/worker.pid
+LOCK=$DIR/worker.lock
 DBPID=$DIR/dropbear2.pid
 DBLOG=$DIR/dropbear2.log
 CONFIRM_FLAG=--i-understand-no-uart
@@ -108,6 +109,32 @@ check_mtd() {
     esac
 }
 
+# Same test without exiting, for the worker (it must log a RESULT line).
+mtd_is_app() {
+    [ -r "$MTD" ] || return 1
+    _line=$(grep '^mtd7:' "$MTD") || return 1
+    case "$_line" in
+        'mtd7: 00500000 '*'"APP"'*) return 0 ;;
+    esac
+    return 1
+}
+
+# Worker lock: $LOCK is created with mkdir (atomic) by the worker and holds its
+# pid. Returns 0 if a live worker owns it, 1 if there is none or it is stale
+# (then it is removed), 2 if it exists without a pid yet (a worker is starting,
+# or died between mkdir and the pid write: leave it, the operator decides).
+lock_state() {
+    [ -d "$LOCK" ] || return 1
+    _lp=
+    [ -s "$LOCK/pid" ] && read -r _lp <"$LOCK/pid" 2>/dev/null
+    case "$_lp" in
+        '' | *[!0-9]*) return 2 ;;
+    esac
+    if kill -0 "$_lp" 2>/dev/null; then return 0; fi
+    rm -rf "$LOCK"
+    return 1
+}
+
 check_space() {
     [ -d "$RAMDIR" ] || die "$RAMDIR does not exist"
     _l=$(df -k "$RAMDIR" 2>/dev/null | tail -n 1)
@@ -126,6 +153,8 @@ cmd_precheck() {
     check_space
     [ -d "$DIR" ] || die "$DIR missing (upload the scripts first)"
     if alive "$WPID"; then die "a reflash worker is already running (see $LOG)"; fi
+    lock_state
+    [ $? -eq 1 ] || die "a reflash worker holds $LOCK (see $LOG)"
     if grep -q ' /usr .*mtdblock7' "$PROC/mounts" 2>/dev/null; then
         say "note: /usr is the APP squashfs (mtdblock7): that is why everything runs from RAM"
     fi
@@ -153,6 +182,9 @@ copy_busybox() {
     _src=$(command -v busybox 2>/dev/null)
     [ -n "$_src" ] || _src=$PROC/$$/exe
     [ -r "$_src" ] || die "no busybox binary found to copy"
+    # Unlink first: overwriting a busybox that a live session executes fails
+    # with "Text file busy" (a re-run while the second Dropbear session is up).
+    rm -f "$BIN/busybox"
     cp "$_src" "$BIN/busybox" || die "cannot copy busybox to $BIN"
     chmod 755 "$BIN/busybox"
     _list=$("$BIN/busybox" --list 2>/dev/null) || die "copied busybox does not run ($_src)"
@@ -223,7 +255,13 @@ cmd_start() {
     [ "$CONFIRM" = "$CONFIRM_FLAG" ] || die "refusing to start without $CONFIRM_FLAG (a half-written APP needs UART to recover)"
     check_hex_md5 "$MD5"
     [ -x "$BIN/busybox" ] || die "run prepare first ($BIN/busybox missing)"
+    check_mtd
     alive "$WPID" && die "a reflash worker is already running"
+    lock_state
+    case $? in
+        0) die "a reflash worker is already running (lock $LOCK)" ;;
+        2) die "$LOCK exists without a live owner pid: a worker is starting or died; check $LOG, remove $LOCK by hand only if no flash is running" ;;
+    esac
     alive "$DBPID" || die "the second dropbear (port $PORT) is not running: run prepare first"
     BIN_MD5=$BIN/md5sum
     check_files "$MD5"
@@ -255,6 +293,14 @@ cmd_start() {
 cmd_worker() {
     PATH=$BIN
     export PATH
+    # One worker at a time: mkdir is atomic, so two racing starts cannot both
+    # write. A refused duplicate must not touch $WPID or the lock of the owner.
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        log "RESULT: REFUSED another worker holds $LOCK (nothing was written by this one)"
+        exit 1
+    fi
+    echo $$ >"$LOCK/pid"
+    trap 'rm -rf "$LOCK"' EXIT
     echo $$ >"$WPID"
     log "worker pid $$ up, waiting to be detached from the launching shell"
     # shellcheck disable=SC1090,SC1091 # flash_guard.sh is uploaded next to this script
@@ -276,6 +322,20 @@ cmd_worker() {
         exit 1
     fi
     log "image in RAM md5 $_got"
+    # Re-checked here, not only in start: this is the last gate before the erase.
+    _sz=$(stat -c%s "$IMAGE" 2>/dev/null)
+    if [ "$_sz" != "$EXPECTSIZE" ]; then
+        log "RESULT: REFUSED image is ${_sz:-?} bytes, expected exactly $EXPECTSIZE (nothing was written)"
+        exit 1
+    fi
+    if ! mtd_is_app; then
+        log "RESULT: REFUSED mtd7 is not the 5 MiB APP partition in $MTD (nothing was written)"
+        exit 1
+    fi
+    if [ ! -e "$DEV" ]; then
+        log "RESULT: REFUSED $DEV does not exist (nothing was written)"
+        exit 1
+    fi
     _n=0
     while [ "$_n" -lt "$ATTEMPTS" ]; do
         _n=$((_n + 1))

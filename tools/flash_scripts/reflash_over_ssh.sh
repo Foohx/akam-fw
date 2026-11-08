@@ -120,7 +120,28 @@ RBB="$rdir/bin/busybox"
 
 # ------------------------------------------------------------ stage 1: scripts
 say "uploading the camera-side scripts to $rdir"
-rssh "$port" "rm -rf '$rdir' && umask 077 && mkdir -p '$rdir'" || die "cannot create $rdir on the camera"
+# Never wipe the work directory under a running worker: that would delete its
+# log and pid file, and a second start could then write at the same time. Refuse
+# (exit 3) while a worker or its lock is alive; otherwise remove only the files
+# this script uploads (the RAM busybox/Dropbear copies and the second Dropbear
+# of an earlier run stay, and are reused).
+# shellcheck disable=SC2016  # the snippet is expanded on the camera, not here
+busy_snippet='busy=0
+for f in RDIR/worker.pid RDIR/worker.lock/pid; do
+    p=; [ -s "$f" ] && read -r p <"$f"
+    case "$p" in "" | *[!0-9]*) ;; *) kill -0 "$p" 2>/dev/null && busy=1 ;; esac
+done
+[ -d RDIR/worker.lock ] && [ ! -s RDIR/worker.lock/pid ] && busy=1
+[ "$busy" = 0 ] || exit 3
+umask 077
+mkdir -p RDIR && cd RDIR || exit 1
+rm -f camyn_reflash_ssh.sh flash_guard.sh flash_tool image.squashfs flash.log worker.pid
+rm -rf worker.lock'
+rc=0
+# $rdir was validated above (plain absolute path): no quoting needed.
+rssh "$port" "${busy_snippet//RDIR/$rdir}" || rc=$?
+[ "$rc" -ne 3 ] || die "a flash worker is still running or starting in $rdir on the camera: nothing touched. Follow $rdir/flash.log over port $port2, do not power-cycle."
+[ "$rc" -eq 0 ] || die "cannot prepare $rdir on the camera"
 upload "$HERE/camyn_reflash_ssh.sh" camyn_reflash_ssh.sh
 upload "$HERE/flash_guard.sh" flash_guard.sh
 say "camera pre-checks (mtd7 = APP 00500000, free RAM)"
