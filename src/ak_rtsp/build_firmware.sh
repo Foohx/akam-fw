@@ -26,9 +26,11 @@
 #
 # Options:
 #   --kit DIR|TARBALL       use a prebuilt kit (or AKAM_KIT=...)
-#   --allow-unsigned        kit tarball without signature (checksum-only trust)
+#   --allow-unsigned        kit tarball without signature (checksum-only trust); also required for a
+#                           kit DIRECTORY, which cannot be authenticated
 #   --allow-test-kit        accept a kit_grade=test kit (development only)
-#   --recheck-time64        kit mode: also replay the time64 gate on the installed binaries
+#   --recheck-time64        kit mode: replay the time64 gate on the installed binaries (done by default
+#                           for a release kit when gdb is installed; otherwise MANIFEST + sha256 are trusted)
 #   --stock-app FILE        the dump of the stock APP partition (mtdblock7.bin): fingerprint it
 #   --backup-dir DIR        the backup directory (mtdblock*.bin); implies --stock-app DIR/mtdblock7.bin
 #                           and reads the kernel name from DIR/mtdblock4.bin
@@ -134,7 +136,17 @@ done
 
 mkdir -p "$FW_DIR"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# rm_tree <dir>...: rm -rf that also removes trees unpacked by a normal user from a squashfs with
+# read-only directories (rm cannot delete inside them).
+rm_tree() {
+    local d
+    for d in "$@"; do
+        [ -e "$d" ] || continue
+        chmod -R u+rwX "$d" 2>/dev/null || true
+        rm -rf "$d"
+    done
+}
+trap 'rm_tree "$TMP"' EXIT
 
 # --- inputs: kit or sources ---------------------------------------------------------
 # LICS: "<name in local/akam>:<source path>", installed 0644 by the common code below.
@@ -151,7 +163,9 @@ if [ -n "$KIT_ARG" ]; then
     if [ -d "$KIT_ARG" ]; then
         KIT="$(cd "$KIT_ARG" && pwd)"
         bash "$ROOT/tools/release/verify_kit.sh" "${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"}" "$KIT" || die "kit verification failed (see above); nothing built"
-        KIT_AUTH="directory (consistency checked, not authenticated)"
+        # A directory has no signature to check: it is exactly as (un)trusted as an unsigned tarball.
+        [ "$ALLOW_UNSIGNED" = 1 ] || die "the kit is a DIRECTORY, which cannot be authenticated (no signature): refusing. Pass the signed .tar.xz, or --allow-unsigned if you trust where this directory came from."
+        KIT_AUTH="directory (consistency checked, not authenticated; --allow-unsigned)"
     elif [ -f "$KIT_ARG" ]; then
         VRC=0
         bash "$ROOT/tools/release/verify_kit.sh" "${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"}" --extract-to "$TMP/kit" "$KIT_ARG" || VRC=$?
@@ -239,6 +253,14 @@ list_src() {
     done <"$IMAGE_FILES"
     return 1
 }
+# A kit newer than this script could carry overlay files the list does not know: they would be
+# silently left out of the image. Every file/link of the kit's overlay/ and patches/ must be listed.
+if [ "$MODE" = kit ]; then
+    awk '$1 == "file" || $1 == "link" { print $3 }' "$IMAGE_FILES" | LC_ALL=C sort -u >"$TMP/listed.paths"
+    (cd "$KIT" && find overlay patches \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort) >"$TMP/kit.paths"
+    KIT_EXTRA="$(LC_ALL=C comm -13 "$TMP/listed.paths" "$TMP/kit.paths" | tr '\n' ' ')"
+    [ -z "$KIT_EXTRA" ] || die "the kit has files this script does not install (kit newer than the scripts? update Akam): $KIT_EXTRA"
+fi
 PATCH_SERVICE="$(list_src patches/patch_service_sh.sh)" || die "image_files.txt has no patches/patch_service_sh.sh entry"
 [ -f "$PATCH_SERVICE" ] || die "service.sh patch script $PATCH_SERVICE missing"
 while read -r kind a b c d; do
@@ -256,36 +278,55 @@ while read -r kind a b c d; do
 done <"$IMAGE_FILES"
 
 # --- stock APP fingerprint, hardware verdict, compression ---------------------------------
-STOCK_COMP="" STOCK_BLOCK="" STOCK_BCJ="" STOCK_SHA="" STOCK_KERNEL="" STOCK_SRC=""
+STOCK_COMP="" STOCK_BLOCK="" STOCK_BCJ="" STOCK_SHA="" STOCK_KERNEL="" STOCK_SRC="" KERNEL_EXPECTED=0
 if [ -n "$BACKUP_DIR" ]; then
     [ -d "$BACKUP_DIR" ] || die "--backup-dir $BACKUP_DIR is not a directory"
     [ -n "$STOCK_APP" ] || STOCK_APP="$BACKUP_DIR/mtdblock7.bin"
-    NPART="$(find "$BACKUP_DIR" -maxdepth 1 -name 'mtdblock[0-9]*.bin' | wc -l | tr -d ' ')"
+    # MTD layout: exactly the 8 dumps mtdblock0.bin ... mtdblock7.bin, none empty (their sizes are
+    # not listed in supported_hardware.txt: only the APP size is compared, below).
+    NPART="$(find "$BACKUP_DIR" -maxdepth 1 -name 'mtdblock*.bin' | wc -l | tr -d ' ')"
     [ "$NPART" = 8 ] || die "MTD layout differs from the supported one: $NPART mtdblock*.bin in $BACKUP_DIR, expected 8. Refusing."
-    if [ -f "$BACKUP_DIR/mtdblock4.bin" ]; then
-        # u-boot legacy uImage header: image name at offset 32 (32 bytes), e.g. "Linux-4.4.302-cip94".
+    for i in 0 1 2 3 4 5 6 7; do
+        [ -s "$BACKUP_DIR/mtdblock$i.bin" ] || die "MTD layout differs from the supported one: $BACKUP_DIR/mtdblock$i.bin is missing or empty. Refusing."
+    done
+    # u-boot legacy uImage header (64 bytes): magic 27051956 at offset 0, image name at offset 32
+    # (32 bytes), e.g. "Linux-4.4.302-cip94". Anything else leaves the kernel unknown.
+    KMAGIC="$(dd if="$BACKUP_DIR/mtdblock4.bin" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+    if [ "$KMAGIC" = 27051956 ]; then
         STOCK_KERNEL="$(dd if="$BACKUP_DIR/mtdblock4.bin" bs=1 skip=32 count=32 2>/dev/null | tr -d '\000' | LC_ALL=C tr -cd 'A-Za-z0-9._+ -')"
-        case "$STOCK_KERNEL" in Linux-*) STOCK_KERNEL="${STOCK_KERNEL#Linux-}" ;; *) STOCK_KERNEL="" ;; esac
+        case "$STOCK_KERNEL" in Linux-?*) STOCK_KERNEL="${STOCK_KERNEL#Linux-}" ;; *) STOCK_KERNEL="" ;; esac
     fi
+    KERNEL_EXPECTED=1
 fi
 if [ -n "$STOCK_APP" ]; then
     [ -f "$STOCK_APP" ] || die "stock APP dump $STOCK_APP not found"
     [ "$(stat -c %s "$STOCK_APP")" = "$PARTITION" ] || die "MTD layout differs: $STOCK_APP is $(stat -c %s "$STOCK_APP") bytes, the APP partition (mtd7) is $PARTITION. Refusing."
     STOCK_SHA="$(sha256sum "$STOCK_APP" | cut -d' ' -f1)"
     SQINFO="$(LC_ALL=C unsquashfs -s "$STOCK_APP" 2>&1)" || die "$STOCK_APP is not a readable squashfs (unsquashfs -s failed): $SQINFO"
-    STOCK_COMP="$(awk '/^Compression /{print $2; exit}' <<<"$SQINFO")"
-    STOCK_BLOCK="$(awk '/^Block size /{print $3; exit}' <<<"$SQINFO")"
-    STOCK_BCJ="$(sed -n 's/^[[:space:]]*Filters selected: *//p' <<<"$SQINFO" | head -1)"
-    STOCK_BCJ="${STOCK_BCJ:-none}"
+    # unsquashfs -s (4.3 ... 4.7): "Compression xz", "Block size 131072", and for xz either
+    # "Filters selected: arm" / "No filters specified" (when the options are stored) or nothing.
+    STOCK_COMP="$(awk 'tolower($1) == "compression" && NF == 2 && tolower($2) != "options" { print tolower($2); exit }' <<<"$SQINFO")"
+    STOCK_BLOCK="$(awk 'tolower($1) == "block" && tolower($2) == "size" { print $3; exit }' <<<"$SQINFO")"
+    [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ] || die "cannot read the compression / block size of $STOCK_APP from 'unsquashfs -s' (unsupported squashfs-tools output?): $(head -8 <<<"$SQINFO" | tr '\n' '|')"
+    FLINE="$(awk 'tolower($0) ~ /filter/ { print; exit }' <<<"$SQINFO" | sed 's/^[[:space:]]*//')"
+    case "$FLINE" in
+        '' | [Nn]o\ filter*) STOCK_BCJ=none ;;
+        [Ff]ilters\ selected:*) STOCK_BCJ="$(tr '[:upper:]' '[:lower:]' <<<"${FLINE#*:}" | sed 's/^ *//')" ;;
+        *) STOCK_BCJ="unrecognised ($FLINE)" ;;
+    esac
+    [ -n "$STOCK_BCJ" ] || STOCK_BCJ=none
     STOCK_SRC="$STOCK_APP"
 elif [ -n "$STOCK_INFO" ]; then
     [ -f "$STOCK_INFO" ] || die "--stock-info $STOCK_INFO not found"
     si() { sed -n "s/^$1=//p" "$STOCK_INFO" | head -1; }
-    STOCK_COMP="$(si compression)"
+    STOCK_COMP="$(si compression | tr '[:upper:]' '[:lower:]')"
     STOCK_BLOCK="$(si block_size)"
-    STOCK_BCJ="$(si bcj)"
+    STOCK_BCJ="$(si bcj | tr '[:upper:]' '[:lower:]')"
     STOCK_BCJ="${STOCK_BCJ:-none}"
-    STOCK_SHA="$(si app_sha256)"
+    STOCK_SHA="$(si app_sha256 | tr '[:upper:]' '[:lower:]')"
+    if [ -n "$STOCK_SHA" ] && { [ "${#STOCK_SHA}" != 64 ] || [ -n "${STOCK_SHA//[0-9a-f]/}" ]; }; then
+        die "$STOCK_INFO: app_sha256 must be 64 hex digits"
+    fi
     STOCK_SRC="$STOCK_INFO"
     [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ] || die "$STOCK_INFO needs compression= and block_size="
 fi
@@ -309,11 +350,15 @@ else
     HW_VERDICT=unknown
     HW_DETAIL="stock APP sha256 ${STOCK_SHA:-(none)} is not listed in supported_hardware.txt"
     STOCK_FMT="squashfs $STOCK_COMP block=$STOCK_BLOCK bcj=$STOCK_BCJ"
-    while IFS='|' read -r st dev _soc kern _mtd sq sha _bb; do
+    while IFS='|' read -r st dev _soc kern _mtd sq sha _bb || [ -n "$st" ]; do
         case "$st" in '' | '#'* | supported_hardware_format=*) continue ;; esac
         [ -n "$STOCK_SHA" ] && [ "$sha" = "$STOCK_SHA" ] || continue
         if [ "$sq" != "$STOCK_FMT" ]; then
             HW_DETAIL="stock APP sha256 matches '$dev' but its squashfs format differs ($STOCK_FMT, listed: $sq)"
+            continue
+        fi
+        if [ "$KERNEL_EXPECTED" = 1 ] && [ -z "$STOCK_KERNEL" ] && [ "$kern" != - ]; then
+            HW_DETAIL="stock APP matches '$dev' but the kernel of the backup could not be read (mtdblock4.bin is not a uImage)"
             continue
         fi
         if [ -n "$STOCK_KERNEL" ] && [ "$kern" != - ] && [ "${kern%% *}" != "$STOCK_KERNEL" ]; then
@@ -407,7 +452,7 @@ install_stripped() {
 if [ "${KEEP_PATCHED:-0}" = 1 ] && [ -d "$PATCHED" ]; then
     echo "KEEP_PATCHED=1: re-using $PATCHED (Akam install/patch steps are re-applied)."
 else
-    rm -rf "$PATCHED"
+    rm_tree "$PATCHED"
     echo "Creating app_patched/ from $APP_EXTRACTED..."
     cp -a "$APP_EXTRACTED" "$PATCHED"
 fi
@@ -484,21 +529,30 @@ else
 fi
 chmod 644 "$PATCHED/local/akam/MANIFEST.txt"
 
+TIME64_NOTE=""
 # --- 4. safety checks -------------------------------------------------------------
 echo "Checking tree..."
 # The camera's kernel acknowledges musl's time64 clock syscalls without executing
 # them (docs/akam_v1_kernel_time64.md). Hard gate, run on the files that are
 # actually in the image (stripped): no forbidden time64 syscall, and the 32-bit
 # clock_gettime (263) of src/common/time32_shim.c present. A missing gdb is a failure.
-# Kit mode: no gdb needed. verify_kit.sh checked time64_gate=pass in the signed/hashed MANIFEST and the
-# sha256 of both binaries; --recheck-time64 replays the gate here.
+# Kit mode: verify_kit.sh checked time64_gate=pass in the hashed MANIFEST and the sha256 of both
+# binaries (--recheck-time64 forces the replay here; see below for the default).
+# Kit mode replays the gate by default whenever gdb is available (the MANIFEST is only a claim by
+# the kit builder); without gdb it relies on MANIFEST + sha256 and says so.
+if [ "$MODE" = kit ] && [ "$RECHECK_TIME64" != 1 ] && [ "$KIT_GRADE" = release ] && command -v gdb >/dev/null 2>&1; then
+    RECHECK_TIME64=1
+fi
 if [ "$MODE" = kit ] && [ "$RECHECK_TIME64" != 1 ]; then
-    echo "time64 gate: MANIFEST says pass and the binaries match its sha256 (--recheck-time64 to replay it)."
+    TIME64_NOTE="NOT replayed (no gdb, or a test kit): relies on the kit MANIFEST + sha256"
+    echo "time64 gate: $TIME64_NOTE (--recheck-time64 to replay it)."
 elif [ "$MODE" = source ] && [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+    TIME64_NOTE="SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1)"
     warn "*** time64 machine code check SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1): clocks may not work on the camera. ***"
 else
     bash "$ROOT/tools/build/check_time32.sh" --require-263 "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" \
         || die "time64 check failed on the installed binaries (see above; missing gdb also lands here)"
+    TIME64_NOTE="replayed on the installed binaries: ok"
 fi
 # -I: text files only. The stock wpa_supplicant binary contains the marker as a
 # string literal (not a key); a binary can't be a PEM key file anyway.
@@ -583,6 +637,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs sha256:    $(sha256sum "$SQ" | cut -d' ' -f1)  (content, before padding)"
     echo "compression:        $COMP, block $BLOCK, bcj $BCJ"
     echo "build mode:         $MODE"
+    echo "time64 gate:        $TIME64_NOTE"
     if [ "$MODE" = kit ]; then
         echo "kit:                akam_version=$KIT_VERSION source_commit=$KIT_COMMIT kit_grade=$KIT_GRADE"
         echo "kit authentication: $KIT_AUTH${KIT_INFO:+; $KIT_INFO}"

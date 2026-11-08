@@ -4,7 +4,7 @@
 #   tools/image/assemble_from_kit.sh --backup-dir DIR --kit KIT --out DIR [options]
 #
 #   --backup-dir DIR   your backup (mtdblock0.bin ... mtdblock7.bin); never modified
-#   --kit KIT          akam-kit-<version>.tar.xz (with SHA256SUMS next to it) or an extracted kit
+#   --kit KIT          akam-kit-<version>.tar.xz (with SHA256SUMS next to it) or an extracted kit (a directory needs --allow-unsigned)
 #   --out DIR          where the image, its .sha256 and build_report.txt are written
 # Options passed to src/ak_rtsp/build_firmware.sh --kit:
 #   --allow-unsigned, --allow-test-kit, --recheck-time64, --comp gzip|xz,
@@ -50,7 +50,8 @@ for t in unsquashfs mksquashfs sha256sum md5sum; do
 done
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# unsquashfs as a normal user keeps read-only directories read-only: make the tree removable first.
+trap 'chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 
 LIST="$(LC_ALL=C unsquashfs -lln "$BACKUP/mtdblock7.bin" 2>&1)" || die "mtdblock7.bin is not a readable squashfs: $LIST"
 NODES="$(awk '/^[cb]/' <<<"$LIST" | wc -l | tr -d ' ')"
