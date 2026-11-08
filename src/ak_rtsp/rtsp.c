@@ -121,6 +121,9 @@ typedef struct {
     int64_t next_sr_audio_us;
     /* Audio sample-index -> monotonic-time mapping, for the audio SR. */
     rtp_aclock_t audio_clock;
+    /* Holds audio until the first video frame, then drops the ring backlog
+     * captured before it (see rtp_astart_t). */
+    rtp_astart_t audio_start;
 } Client;
 
 declImpl(SmolRTSP_Controller, Client);
@@ -334,6 +337,9 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
     if (self->nal_transport) {
         self->need_idr = true;
         self->idr_wait_frames = 0;
+        rtp_astart_arm(&self->audio_start); /* released at the first sent frame */
+    } else {
+        rtp_astart_release(&self->audio_start, rtp_mono_us());
     }
     smolrtsp_header(ctx, SMOLRTSP_HEADER_RANGE, "npt=now-");
     smolrtsp_respond_ok(ctx);
@@ -588,6 +594,12 @@ static int send_video_frame(Client *client)
             send_it = false;
         }
     }
+    if (send_it) {
+        /* First video frame of this start/resync: audio starts from its
+         * capture time, not from the ring backlog. */
+        if (rtp_astart_holding(&client->audio_start))
+            rtp_astart_release(&client->audio_start, capture_us);
+    }
     if (send_it)
         send_frame_nalus(client, (uint8_t *)data, req.len, rtp_ts);
 
@@ -620,13 +632,18 @@ static void send_audio_frame(Client *client)
 {
     if (!client->audio_rtp_transport) return;
 
+    if (rtp_astart_holding(&client->audio_start)) return; /* no video frame yet */
+
     static int16_t pcm[AUDIO_PERIOD_SAMPLES];
     size_t n_samples = 0;
     uint64_t first_sample = 0;
     int64_t t_end_us = 0;
-    int got = audio_get_frame_ts(pcm, AUDIO_PERIOD_SAMPLES, &n_samples,
+    int got;
+    do {
+        got = audio_get_frame_ts(pcm, AUDIO_PERIOD_SAMPLES, &n_samples,
                                  &first_sample, &t_end_us);
-    if (got <= 0) return; /* 0 = nothing new yet, -1 = audio not running */
+        if (got <= 0) return; /* 0 = nothing new yet, -1 = audio not running */
+    } while (rtp_astart_stale(&client->audio_start, t_end_us)); /* backlog */
 
     static uint16_t net_pcm[AUDIO_PERIOD_SAMPLES];
     for (size_t i = 0; i < n_samples; i++)
@@ -950,6 +967,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                 if (client.nal_transport) {
                     client.need_idr = true;
                     client.idr_wait_frames = 0;
+                    rtp_astart_arm(&client.audio_start);
                 }
             }
             if (client.tx_fail) {
