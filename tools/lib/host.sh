@@ -3,7 +3,7 @@
 #   . tools/lib/host.sh
 # All functions are prefixed host_ and have no side effect at source time.
 # Test hooks (tests only): AKAM_OS_RELEASE overrides /etc/os-release,
-# AKAM_FORCE_TTY=1 pretends a terminal is attached.
+# AKAM_HOST_ARCH overrides uname -m, AKAM_FORCE_TTY=1 pretends a terminal is attached.
 
 # host_os_release_file: path of the os-release file to read.
 host_os_release_file() {
@@ -35,6 +35,29 @@ host_os() {
         *" debian "*) echo debian ;;
         *) echo unknown ;;
     esac
+}
+
+# host_arch: print x86_64 | aarch64 | the raw uname -m value. AKAM_HOST_ARCH overrides (tests).
+host_arch() {
+    local m=${AKAM_HOST_ARCH:-$(uname -m)}
+    case $m in
+        x86_64 | amd64) echo x86_64 ;;
+        aarch64 | arm64) echo aarch64 ;;
+        *) echo "$m" ;;
+    esac
+}
+
+# host_arm_gdb: print the first gdb that can disassemble ARM (gdb-multiarch, then gdb).
+# Debian/Ubuntu's plain `gdb` is native-only; Arch's gdb handles ARM. Returns 1 if none.
+host_arm_gdb() {
+    local g
+    for g in gdb-multiarch gdb; do
+        if host_have "$g" && "$g" -batch -ex 'set architecture arm' >/dev/null 2>&1; then
+            echo "$g"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # host_pkg_install_hint PKG...: print the install command for the detected OS.
