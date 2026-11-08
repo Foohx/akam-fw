@@ -130,6 +130,33 @@ uint64_t rtp_aclock_samples_at(const rtp_aclock_t *a, int64_t now_us,
     return (uint64_t)d * rate / 1000000ull;
 }
 
+void rtp_astart_arm(rtp_astart_t *g)
+{
+    g->waiting = true;
+    g->open = false;
+    g->cut_us = 0;
+}
+
+void rtp_astart_release(rtp_astart_t *g, int64_t cut_us)
+{
+    g->waiting = false;
+    g->open = false;
+    g->cut_us = cut_us;
+}
+
+bool rtp_astart_holding(const rtp_astart_t *g)
+{
+    return g->waiting;
+}
+
+bool rtp_astart_stale(rtp_astart_t *g, int64_t t_end_us)
+{
+    if (g->open) return false;
+    if (t_end_us < g->cut_us) return true;
+    g->open = true;
+    return false;
+}
+
 void rtp_ntp_from_unix_us(int64_t unix_us, uint32_t *ntp_sec, uint32_t *ntp_frac)
 {
     int64_t sec = unix_us / 1000000;
