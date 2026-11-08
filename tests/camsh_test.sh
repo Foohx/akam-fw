@@ -30,7 +30,7 @@ check() { # name, command...
     if "$@"; then ok "$n"; else ko "$n"; fi
 }
 T=$(mktemp -d)
-trap 'fc_stop; rm -rf "$T"' EXIT
+trap 'fc_cleanup; rm -rf "$T"' EXIT
 fc_start "$@" || { echo "cannot start the fake camera"; exit 1; }
 NOCOLOR=1
 export NO_COLOR=$NOCOLOR

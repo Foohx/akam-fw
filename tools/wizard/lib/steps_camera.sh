@@ -11,7 +11,7 @@
 #   - a flash is gated on image size, md5 on the PC, md5 on the camera and, after the write, the
 #     md5 of /dev/mtd7 read back.
 # Test hooks: AKAM_PORT_TELNET/SSH/RTSP/CTL, AKAM_PORT_XFER_IN/OUT, AKAM_SSH, AKAM_REFLASH,
-# AKAM_HWCHECK, AKAM_FLASH_TOOL, AKAM_BACKUP_ROOT, AKAM_WAIT_SECS, AKAM_CAMSH_TIMEOUT.
+# AKAM_HWCHECK, AKAM_FLASH_TOOL, AKAM_FLASH_SCRIPTS_DIR, AKAM_PORT_FTP, AKAM_PORT_TELNET23, AKAM_BACKUP_ROOT, AKAM_WAIT_SECS, AKAM_CAMSH_TIMEOUT.
 
 CAM_IP=""
 CAM_KEY=""
@@ -37,6 +37,8 @@ cam_port() {
         ctl) printf '%s\n' "${AKAM_PORT_CTL:-8091}" ;;
     esac
 }
+
+cam_scripts_dir() { printf '%s\n' "${AKAM_FLASH_SCRIPTS_DIR:-$ROOT/tools/flash_scripts}"; }
 
 # cam_valid_host STR: an IPv4 address or a plain host name (never something that looks like an option).
 cam_valid_host() {
@@ -287,7 +289,7 @@ bk_sizes_check() {
     for r in 1 2; do
         n=0
         for want in $CAM_MTD_SIZES; do
-            got=$(printf '%s\n' "$CAMSH_OUT" | sed -n "s# $CAM_SD/dump$r/mtdblock$n.bin\$##p" | tr -d '[:space:]')
+            got=$(printf '%s\n' "$CAMSH_OUT" | sed -n "s#^\([0-9]*\) .*/dump$r/mtdblock$n\.bin\$#\1#p" | tr -d '[:space:]')
             if [ "$got" != "$want" ]; then
                 ui_fail "dump$r mtdblock$n is $got bytes, expected $want." "the read is not usable; stop and try again."
                 return 1
@@ -441,7 +443,10 @@ backup_camera() {
     bk_write_pc_files "$pcdir"
     ui_good "  Backup copied and verified (every file matches the camera's two reads). SHA256SUMS written."
     app=$(host_sha256 "$pcdir/mtdblock7.bin")
-    cam_confirm_untested "$app" "Continue with untested firmware?" || return 1
+    if ! cam_confirm_untested "$app" "Continue with untested firmware?"; then
+        ui_say "  The verified copy stays in $pcdir (accept it later with: ./akam backup --backup-dir $pcdir)."
+        return 1
+    fi
     backup_accept "$pcdir"
 }
 
@@ -498,6 +503,7 @@ flash_ssh() {
         ui_say "  WOULD run the precheck of the SSH reflash (writes nothing), ask for a typed YES, then:"
         ui_say "    $(wiz_tool reflash) --host $CAM_IP --identity ${CAM_KEY:-<key>} --image <image> --md5 <md5> --flash-tool <flash_tool> --i-understand-no-uart"
         ui_say "  and relay its progress (the progress bars are filtered out). It never reboots the camera."
+        ui_confirm_typed "Write the camera flash now?" YES
         return 0
     fi
     [ -f "$(wiz_tool reflash)" ] || { ui_fail "the SSH reflash tool is missing: $(wiz_tool reflash)" ""; return 1; }
@@ -530,11 +536,11 @@ flash_ssh() {
 # ------------------------------------------------------------------ maintenance-telnet flash
 # ft_find_card: make the card visible as /mnt on the camera (the toolkit mounts it on /tmp/sd).
 ft_find_card() {
-    camsh_ok 'if [ -d /mnt/custom_firmware ]; then echo /mnt; elif [ -d /tmp/sd/custom_firmware ]; then echo /tmp/sd; else echo none; fi' ||
+    camsh_ok 'if [ -d /mnt/custom_firmware ]; then echo CARD_ON_MNT; elif [ -d /tmp/sd/custom_firmware ]; then echo CARD_ON_TMPSD; else echo CARD_NONE; fi' ||
         { ui_fail "cannot look for the flash card on the camera." ""; return 1; }
     case $(camsh_line 1 | tr -d '[:space:]') in
-        /mnt) ui_say "  The flash card files are already on /mnt." ;;
-        /tmp/sd)
+        CARD_ON_MNT) ui_say "  The flash card files are already on /mnt." ;;
+        CARD_ON_TMPSD)
             ui_say "  The card is on /tmp/sd; binding it to /mnt (every script reads /mnt)."
             camsh_ok 'mount --bind /tmp/sd /mnt' || { ui_fail "mount --bind /tmp/sd /mnt failed." ""; return 1; }
             ;;
@@ -608,6 +614,7 @@ flash_telnet() {
         ui_say "  /mnt/custom_firmware with the same md5 as this PC (pushing files over nc only after your yes), then run"
         ui_say "  'sh /mnt/install_with_flash_tool.sh', show its md5 line and its prompt, and ask YOU to type YES (relayed as typed)."
         ui_say "  After the write: dd if=/dev/mtd7 bs=64k | md5sum on the camera must equal the image md5. No reboot is ever sent."
+        ui_confirm_typed "Write the camera flash now?" YES
         return 0
     fi
     [ -s "$ft" ] || { ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."; return 1; }
@@ -615,8 +622,8 @@ flash_telnet() {
     ft_find_card || { camsh_close; return 1; }
     ft_ensure_image "$img" "$md5" || { camsh_close; return 1; }
     ft_ensure_file "$ft" /mnt/flash_tool exec "flash_tool" || { camsh_close; return 1; }
-    ft_ensure_file "$ROOT/tools/flash_scripts/install_with_flash_tool.sh" /mnt/install_with_flash_tool.sh plain "install_with_flash_tool.sh" || { camsh_close; return 1; }
-    ft_ensure_file "$ROOT/tools/flash_scripts/flash_guard.sh" /mnt/flash_guard.sh plain "flash_guard.sh" || { camsh_close; return 1; }
+    ft_ensure_file "$(cam_scripts_dir)/install_with_flash_tool.sh" /mnt/install_with_flash_tool.sh plain "install_with_flash_tool.sh" || { camsh_close; return 1; }
+    ft_ensure_file "$(cam_scripts_dir)/flash_guard.sh" /mnt/flash_guard.sh plain "flash_guard.sh" || { camsh_close; return 1; }
     ui_blank
     ui_warn "$label writes the camera's flash. If the power is cut while it writes, only a UART cable can recover the camera."
     ui_warn "Keep the camera powered and do not unplug anything until this step says it is finished."
@@ -785,13 +792,15 @@ cam_hwcheck() {
 
 # cam_ports_check EXPECT_TELNET: open = 22 554 8091 only (24 allowed while the card is in).
 cam_ports_check() {
-    local p bad=0
-    net_probe "$CAM_IP" "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)" "$(cam_port telnet)" 21 23
+    local p bad=0 ftp tel23
+    ftp=${AKAM_PORT_FTP:-21}
+    tel23=${AKAM_PORT_TELNET23:-23}
+    net_probe "$CAM_IP" "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)" "$(cam_port telnet)" "$ftp" "$tel23"
     ui_say "  Open ports: ${PROBE_OPEN:-none}"
     for p in "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)"; do
         case " $PROBE_OPEN " in *" $p "*) ;; *) ui_err "port $p should be open and is not."; bad=1 ;; esac
     done
-    for p in "$(cam_port telnet)" 21 23; do
+    for p in "$(cam_port telnet)" "$ftp" "$tel23"; do
         case " $PROBE_OPEN " in
             *" $p "*)
                 if [ "$1" = closed ]; then ui_err "port $p should be closed (telnet/FTP must be off without the card) and is open."; bad=1; fi

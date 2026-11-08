@@ -30,9 +30,9 @@ check() { # name, command...
     if "$@"; then ok "$n"; else ko "$n"; fi
 }
 T=$(mktemp -d)
-trap 'fc_stop; kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
+trap 'fc_cleanup; kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
 export NO_COLOR=1
-export AKAM_XFER_CONNECT_TRIES=8
+export AKAM_XFER_CONNECT_TRIES=40
 fc_start "$@" || { echo "cannot start the fake camera"; exit 1; }
 head -c 300000 /dev/urandom >"$T/data.bin"
 

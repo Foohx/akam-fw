@@ -12,7 +12,7 @@
 # sha256sum when the camera has it, else md5sum (XFER_HT says which one).
 # Needs camsh.sh (a session opened with camsh_open, or manual mode), ui.sh, host.sh.
 # Test hooks: AKAM_PORT_XFER_IN (8765), AKAM_PORT_XFER_OUT (8766), AKAM_XFER_TRIES (3),
-# AKAM_XFER_CONNECT_TRIES (20, one per second).
+# AKAM_XFER_CONNECT_TRIES (100, one every 0.2 s).
 
 XFER_HT=""
 XFER_REMOTE_SIZE=""
@@ -68,7 +68,7 @@ _xfer_timeout() {
 
 # _xfer_send FILE HOST PORT: connect (retrying while the listener is not up yet), send FILE.
 _xfer_send() {
-    local f=$1 h=$2 p=$3 i=0 max=${AKAM_XFER_CONNECT_TRIES:-20} rc size secs
+    local f=$1 h=$2 p=$3 i=0 max=${AKAM_XFER_CONNECT_TRIES:-100} rc size secs
     size=$(wc -c <"$f" | tr -d ' ')
     secs=$((30 + size / 100000))
     while [ "$i" -lt "$max" ]; do
@@ -82,14 +82,14 @@ _xfer_send() {
             4) return 1 ;; # connected, but the data did not go through
         esac
         i=$((i + 1))
-        sleep 1
+        sleep 0.2
     done
     return 1
 }
 
 # _xfer_recv HOST PORT OUT: connect, read until the camera closes, write OUT.
 _xfer_recv() {
-    local h=$1 p=$2 out=$3 i=0 max=${AKAM_XFER_CONNECT_TRIES:-20} rc
+    local h=$1 p=$2 out=$3 i=0 max=${AKAM_XFER_CONNECT_TRIES:-100} rc
     while [ "$i" -lt "$max" ]; do
         rc=0
         (
@@ -101,7 +101,7 @@ _xfer_recv() {
             4) return 1 ;;
         esac
         i=$((i + 1))
-        sleep 1
+        sleep 0.2
     done
     return 1
 }

@@ -6,11 +6,13 @@
 #   fc_start [flash-card IMAGE FLASH_TOOL]
 #                           init + start; sets FC_ROOT, FC_PORT, AKAM_PORT_TELNET, AKAM_PORT_XFER_IN/OUT
 #   fc_stop                 stop the server
+#   fc_cleanup              stop it and remove every tree made by fc_start
 #   fc_ctl NAME N           write a fault-injection counter (drop, close, corrupt_rx, corrupt_tx)
 #   fc_cmds                 print the lines the camera received
 
 FC_ROOT=""
 FC_PORT=""
+FC_DIRS=""
 
 fc_require_busybox() {
     local bb=${AKAM_BUSYBOX:-$ROOT/tools/.toolchain/busybox-1.35.0-x86_64/busybox}
@@ -37,6 +39,7 @@ fc_free_port() {
 
 fc_start() {
     FC_ROOT=$(mktemp -d)/camera
+    FC_DIRS="$FC_DIRS $(dirname "$FC_ROOT")"
     "$ROOT/tools/wizard/fake_camera.sh" init "$FC_ROOT" "$@" >/dev/null || return 1
     FC_PORT=$(fc_free_port)
     AKAM_PORT_XFER_IN=$(fc_free_port)
@@ -50,6 +53,16 @@ fc_start() {
 
 fc_stop() {
     if [ -n "$FC_ROOT" ]; then "$ROOT/tools/wizard/fake_camera.sh" stop "$FC_ROOT"; fi
+}
+
+# fc_cleanup: stop the server and remove every fake camera tree made by fc_start.
+fc_cleanup() {
+    local d
+    fc_stop
+    for d in $FC_DIRS; do
+        chmod -R u+rwX "$d" 2>/dev/null || true
+        rm -rf "${d:?}"
+    done
 }
 
 fc_ctl() { echo "$2" >"$FC_ROOT/ctl/$1"; }
