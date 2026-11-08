@@ -11,6 +11,7 @@
 #include "ak_rtsp.h"
 #include "ak_ioctls.h"
 #include "audio.h"
+#include "rtp_clock.h"
 
 static int g_audio_fd = -1;
 
@@ -39,9 +40,15 @@ static void audio_close_aux(void); /* closes g_audio_playback_fd/g_audio_loopbac
 #define AUDIO_RING_SLOTS 8
 
 struct audio_slot {
-    int16_t samples[AUDIO_PERIOD_SAMPLES];
-    size_t  n_samples;
+    int16_t  samples[AUDIO_PERIOD_SAMPLES];
+    size_t   n_samples;
+    uint64_t first_sample; /* capture-stream index of samples[0] */
+    int64_t  t_end_us;     /* CLOCK_MONOTONIC when this period's read() returned */
 };
+
+/* Samples delivered by read() since audio_start(); written by the capture
+ * thread only. */
+static uint64_t g_samples_total = 0;
 
 static struct audio_slot g_ring[AUDIO_RING_SLOTS];
 static volatile uint32_t g_ring_write = 0; /* total periods produced */
@@ -328,6 +335,9 @@ static void *audio_capture_loop(void *arg)
             continue;
         }
         slot->n_samples = (size_t)n / sizeof(int16_t);
+        slot->first_sample = g_samples_total;
+        slot->t_end_us = rtp_mono_us();
+        g_samples_total += slot->n_samples;
         g_ring_write++;
     }
     return NULL;
@@ -345,6 +355,7 @@ int audio_start(void)
 
     g_ring_write = 0;
     g_ring_read  = 0;
+    g_samples_total = 0;
     g_audio_running = 1;
 
     if (pthread_create(&g_audio_tid, NULL, audio_capture_loop, NULL) != 0) {
@@ -392,6 +403,14 @@ void audio_stop(void)
 
 int audio_get_frame(int16_t *buf, size_t max_samples, size_t *out_samples)
 {
+    uint64_t first;
+    int64_t t_end;
+    return audio_get_frame_ts(buf, max_samples, out_samples, &first, &t_end);
+}
+
+int audio_get_frame_ts(int16_t *buf, size_t max_samples, size_t *out_samples,
+                       uint64_t *first_sample, int64_t *t_end_us)
+{
     if (!g_audio_running) return -1;
     if (g_ring_read >= g_ring_write) return 0;
 
@@ -404,6 +423,8 @@ int audio_get_frame(int16_t *buf, size_t max_samples, size_t *out_samples)
     if (n > max_samples) n = max_samples;
     memcpy(buf, slot->samples, n * sizeof(int16_t));
     *out_samples = n;
+    *first_sample = slot->first_sample;
+    *t_end_us = slot->t_end_us;
     g_ring_read++;
     return 1;
 }
