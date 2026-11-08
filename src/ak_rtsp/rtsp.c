@@ -398,11 +398,17 @@ void drain_venc_ring(void)
 
         if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) != 0)
             return; /* nothing ready (EAGAIN) or transient error: wait again */
-        if (req.frame_type_raw == FRAME_TYPE_I) {
-            /* Keep the SPS/PPS cache current for DESCRIBE (sprop-parameter-sets). */
-            h264_params_scan(&g_params,
-                             (const uint8_t *)g_venc_virt + (req.frame_offset - g_venc_phys),
-                             (size_t)req.len, PARAMS_SCAN_BYTES);
+        /* Keep the SPS/PPS cache current for DESCRIBE (sprop-parameter-sets).
+         * This is the only place the idle path dereferences the ring, so the
+         * driver-supplied offset/length are range-checked first: a bad value
+         * must cost one skipped scan, not a SIGSEGV of the whole streamer. */
+        uint32_t off = req.frame_offset - g_venc_phys;
+        if (req.frame_type_raw == FRAME_TYPE_I && req.len > 0 &&
+            off < ENC_VENC_SIZE) {
+            size_t avail = ENC_VENC_SIZE - off;
+            size_t flen  = (size_t)req.len < avail ? (size_t)req.len : avail;
+            h264_params_scan(&g_params, (const uint8_t *)g_venc_virt + off,
+                             flen, PARAMS_SCAN_BYTES);
         }
         ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req);
     }
