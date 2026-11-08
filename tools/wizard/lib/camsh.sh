@@ -122,6 +122,13 @@ camsh_manual_on() {
 }
 
 # ------------------------------------------------------------------ reading
+# camsh_stream_set ON [SKIP_REGEX]: show (ON=1) the output of commands as it arrives, minus lines
+# matching SKIP_REGEX (progress noise).
+camsh_stream_set() {
+    CAMSH_STREAM=$1
+    CAMSH_STREAM_SKIP=${2:-}
+}
+
 camsh_show_line() { # line: shown to the user when streaming
     [ "$CAMSH_STREAM" = 1 ] || return 0
     if [ -n "$CAMSH_STREAM_SKIP" ] && [[ $1 =~ $CAMSH_STREAM_SKIP ]]; then return 0; fi

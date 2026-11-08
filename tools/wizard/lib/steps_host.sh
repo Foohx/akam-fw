@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # Host-side wizard steps. Sourced by ./akam after tools/lib/host.sh, log.sh, state.sh, ui.sh.
 # Expected globals (set by ./akam): ROOT, OPT_* (command-line values), UI_DRY.
-# Camera-side steps (find-camera, flash, verify, and the telnet part of backup) are placeholders
-# until the camera wave: they print the manual instructions from the docs.
+# The camera-side steps (find-camera, backup from the camera, flash, verify, update, restore) are in
+# steps_camera.sh; this file keeps the shared parts (backup_accept, hw_verdict, step metadata).
 # Test hooks: AKAM_CHECK_HOST, AKAM_VERIFY_KIT, AKAM_ASSEMBLE, AKAM_SD_CLI, AKAM_HW_LIST.
 
 WIZ_STEPS="doctor get-kit prepare-backup-sd find-camera backup image prepare-flash-sd flash verify"
@@ -18,6 +18,8 @@ wiz_tool() { # name default
         sd_cli) v=${AKAM_SD_CLI:-$ROOT/tools/sd/sd_card.sh} ;;
         hw_list) v=${AKAM_HW_LIST:-$ROOT/tools/release/supported_hardware.txt} ;;
         compat) v=${AKAM_KIT_COMPAT:-$ROOT/tools/wizard/kit_compat.txt} ;;
+        reflash) v=${AKAM_REFLASH:-$ROOT/tools/flash_scripts/reflash_over_ssh.sh} ;;
+        hwcheck) v=${AKAM_HWCHECK:-$ROOT/tools/hw_tests/akam_hwcheck.sh} ;;
     esac
     printf '%s\n' "$v"
 }
@@ -646,52 +648,6 @@ wipe_offer() {
     fi
 }
 
-# ------------------------------------------------------------------ camera placeholders (next wave)
-placeholder_step() { # name, doc, text...
-    local name=$1 doc=$2
-    shift 2
-    step_banner "$name"
-    ui_say "  Automatic handling of this step comes in the next release of the wizard."
-    ui_say "  For now do it by hand: $doc"
-    local l
-    for l in "$@"; do ui_say "    $l"; done
-    if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD ask: have you completed this step by hand? [y/N]"
-        state_mark_done "$name"
-        return 0
-    fi
-    if ui_confirm "  Have you completed this step by hand?"; then
-        state_mark_done "$name"
-        return 0
-    fi
-    ui_say "  Not marked as done. Run ./akam step $name when you have finished it."
-    return 1
-}
-
-cmd_find_camera() {
-    step_need find-camera || return 1
-    placeholder_step find-camera "docs/akam_v1_backup_sd.md section 7" \
-        "Insert the backup card, power the camera, wait about a minute." \
-        "Find its IP address in your router's DHCP list (maker name 'AltoBeam')." \
-        "Check it answers: ping -c 3 <ip>; the rescue shell listens on port 24."
-}
-
-cmd_flash() {
-    step_need flash || return 1
-    placeholder_step flash "docs/akam_v1_flash_and_restore.md" \
-        "Insert the flash card, open the Telnet shell on port 24 and run install_with_flash_tool.sh." \
-        "You must type YES yourself when it asks. Do NOT cut the power while it writes." \
-        "Never paste several lines at once: one command at a time."
-}
-
-cmd_verify() {
-    step_need verify || return 1
-    placeholder_step verify "docs/akam_v1_ssh_and_lockdown.md and docs/akam_v1_test_plan.md" \
-        "Check SSH with your key: ssh -i ~/.ssh/akam root@<ip>, then run akam_hwcheck.sh." \
-        "Remove the card, reboot, and confirm only ports 22, 554 and 8091 are open." || return 1
-    wipe_offer
-}
-
 # ------------------------------------------------------------------ backup (import + checks)
 BACKUP_FILES="mtdblock0.bin mtdblock1.bin mtdblock2.bin mtdblock3.bin mtdblock4.bin mtdblock5.bin mtdblock6.bin mtdblock7.bin"
 
@@ -722,35 +678,48 @@ backup_check() {
     fi
 }
 
-cmd_backup() {
-    local d=$OPT_BACKUP_DIR
-    # Importing a backup you already have (--backup-dir) skips the camera steps before it.
-    if [ -z "$d" ]; then step_need backup || return 1; fi
-    step_banner backup
-    ui_say "  Camera-side backup (double dd + copy to the PC) arrives with the camera steps."
-    ui_say "  Until then do it by hand: docs/akam_v1_backup_sd.md sections 8 and 9,"
-    ui_say "  then give the wizard the folder: ./akam backup --backup-dir DIR"
-    if [ -z "$d" ]; then
-        if [ "$UI_DRY" = 1 ]; then
-            ui_say "  WOULD check your backup folder (8 files, APP size, SHA256SUMS) once --backup-dir is given."
-            state_set backup_dir "<backup-dir>"
-            state_set backup_sha dry-run
-            state_mark_done backup
-            return 0
-        fi
-        { ui_fail "no backup folder given." "run: ./akam backup --backup-dir DIR"; return 1; }
-    fi
+# backup_accept DIR: final checks and the second-copy gate for a backup folder, then record it.
+# Used for a folder made by the camera steps and for an imported one (--backup-dir).
+backup_accept() {
+    local d=$1
     [ -d "$d" ] || { ui_fail "not a folder: $d" ""; return 1; }
     d="$(cd "$d" && pwd)"
     backup_check "$d" || return 1
     ui_warn "COPY THIS FOLDER TO A SECOND MEDIUM (another disk or USB stick) BEFORE continuing."
     ui_warn "It is the only way back to the original firmware. Never publish it: it holds proprietary firmware."
-    ui_confirm "  Have you made a second copy on a different medium?" ||
-        { ui_fail "second copy not confirmed." "make the copy, then run this step again."; return 1; }
+    if [ -n "${OPT_BACKUP_COPY:-}" ]; then
+        backup_copy_to "$d" "$OPT_BACKUP_COPY" || return 1
+        ui_confirm "  Is $OPT_BACKUP_COPY on a different medium (another disk or USB stick)?" ||
+            { ui_fail "second medium not confirmed." "copy the folder to another disk, then run this step again."; return 1; }
+    else
+        ui_confirm "  Have you made a second copy on a different medium?" ||
+            { ui_fail "second copy not confirmed." "make the copy, then run this step again."; return 1; }
+    fi
     state_set backup_dir "$d"
     state_set backup_sha "$(host_sha256 "$d/mtdblock7.bin")"
     state_mark_done backup
     ui_good "  Backup folder accepted: $d"
+}
+
+# backup_copy_to SRC DEST: copy the backup folder and check the copy with SHA256SUMS.
+backup_copy_to() {
+    local src=$1 dest=$2
+    case $dest in "$src" | "$src"/*) { ui_fail "the copy must be outside $src" ""; return 1; } ;; esac
+    run_cmd mkdir -p "$dest" || return 1
+    run_cmd cp -p "$src"/mtdblock[0-7].bin "$src"/SHA256SUMS "$dest"/ || { ui_fail "copying the backup failed." ""; return 1; }
+    if [ "$UI_DRY" = 1 ]; then return 0; fi
+    if ! (cd "$dest" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+        ui_fail "the copy in $dest does not match SHA256SUMS." "copy it again to a different medium."
+        return 1
+    fi
+    ui_good "  Copy checked: $dest matches SHA256SUMS."
+}
+
+# backup_import: --backup-dir DIR, a backup you made by hand (docs/akam_v1_backup_sd.md).
+backup_import() {
+    local d=$OPT_BACKUP_DIR
+    step_banner backup
+    backup_accept "$d"
 }
 
 # ------------------------------------------------------------------ image
