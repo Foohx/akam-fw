@@ -382,3 +382,16 @@ Acceptation : `local_check.sh` OK sans baseline ; scénarios dry-run « sans com
 - Reproductibilité bit-à-bit du kit et des images entre hôtes non démontrée ; seule celle du mainteneur est visée.
 - `reflash_over_ssh.sh` / `akam_reflash_ssh.sh` jamais exécutés sur la caméra : `./akam update` doit l'afficher.
 - Transcriptions telnet de test reconstituées depuis la doc, pas enregistrées.
+
+---
+
+## Décisions utilisateur (2026-11-08) — font foi
+
+- **D1** : wizard en bash compatible 3.2 (recommandation retenue). Interface utilisateur en **anglais**.
+- **D2** : distribution = archive attachée à la Release (wizard + kit, sans git) pour les débutants, `git clone` pour les contributeurs.
+- **D3** : **macOS reporté** à une version ulterieure. Cible actuelle : **Arch et Debian/Ubuntu** uniquement. Garder le code raisonnablement portable (pas de régression volontaire), mais aucune tâche macOS dans ce lot (pas de backend diskutil, pas de Zig macOS dans deps.lock, pas de shims BSD).
+- **D4** : session telnet scriptée automatiquement avec repli manuel après 2 échecs ; le `YES` du flash et l'`ERASE <disque>` restent toujours tapés par l'humain.
+- **D5** : **la v1.0 attend le wizard** (release unique : wizard + kit + procédure manuelle). Correction de la spec : Akam (image renommée) a été flashé et validé sur matériel le 2026-11-08 (boot, SSH, RTSP, CPU ~1 %, démarrage vidéo rapide, telnet off sans carte).
+- **D6** : SHA256SUMS + signature `ssh-keygen -Y` (recommandation retenue).
+- **D7** : `flash_tool` est dans ce dépôt (MIT, `src/ak_rtsp/flash_tool.c`) → inclus dans le kit.
+- **D8/D9** : recommandations retenues (fakeroot/sudo Linux seulement ; pas de CI macOS).
