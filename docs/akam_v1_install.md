@@ -3,9 +3,12 @@
 Akam is a fork of the upstream `LSC_AK3918AV130_cam_custom_firmware` project (MIT). This page is
 the map; each step has its own guide.
 
-> **Not validated on hardware.** Akam's code is compiled and tested on a build host with a synthetic
-> fixture only. See the [test plan](akam_v1_test_plan.md) for what remains to be checked. Flashing can
-> brick the camera, and restoring is not guaranteed.
+> **New here?** The guided path is `./akam` with the prebuilt kit: see the
+> [README](../README.md#quick-start-with-the-wizard). This page and the guides it links to are the
+> **manual procedure** behind the wizard.
+>
+> Validated on one real camera on 2026-11-08 (LSC `3215672.3`, SI `D26228`); some checks remain, see
+> the [test plan](akam_v1_test_plan.md). Flashing can brick the camera, and restoring is not guaranteed.
 
 ## 1. The path, in order
 
@@ -56,7 +59,7 @@ Inside the APP image: `anyka_ipc` (Tuya) removed; `ak_rtsp` started through `ak_
 single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` links; `akam_ssh.sh`
 and `akam_lockdown.sh`; `sbin/service.sh` patched; Dropbear license and a `MANIFEST.txt`.
 
-## 3. Services after Akam (targets, not yet verified on a camera)
+## 3. Services after Akam
 
 | Port | Service | Target state |
 |---|---|---|
@@ -67,8 +70,8 @@ and `akam_lockdown.sh`; `sbin/service.sh` patched; Dropbear license and a `MANIF
 | 21/tcp | FTP | Closed |
 | 80/tcp | HTTP | No Akam service |
 
-No cloud endpoint is needed: the Tuya client is removed and the camera has no Internet dependency
-(*to be confirmed with the no-route test*, criterion 14 of the test plan).
+No cloud endpoint is needed: the Tuya client is removed. Running with no Internet route at all has not
+been tested yet (criterion 14 of the test plan).
 
 ## 4. The 8091 control port
 
@@ -107,3 +110,5 @@ password. Therefore:
 
 Your built images contain your camera's stock APP files and are therefore not distributable. Do not
 publish them, your dumps, or any key.
+
+Problems along the way: [troubleshooting](troubleshooting.md).

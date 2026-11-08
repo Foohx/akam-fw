@@ -7,6 +7,7 @@
 - Debian 12 / Ubuntu 24.04 portability: POSIX awk only in `check_time32.sh` (no gawk `or()`), shellcheck 0.9 clean (SC2015), and `tools/ci/distro_check.sh` re-runs the whole build and local check in clean containers.
 - microSD preparation on Linux: `tools/sd/sd_card.sh` (`list-candidates`, `prepare --mode backup|first-boot|flash-files`, read-only `verify`, `wipe`) with a `backend_linux.sh` (sysfs size, USB/SD-only guards, typed `ERASE <device>`, `--dry-run --stage-dir`); `prepare_first_boot_sd.sh` is unchanged. macOS is deferred.
 - Added `tools/lib/host.sh` (Linux host helpers) and `tools/ci/local_check.sh` (local shellcheck + tests + tracked-file hygiene check).
+- README rewritten for newcomers (wizard quick start, supported hardware, stream, recovery, security), new `docs/troubleshooting.md`, and `tests/readme_links_test.sh` (relative links, anchors and `./akam` commands).
 
 The project was called Camyn during early development. Everything user-visible was renamed; the
 flash layout, ports, the `ak_rtsp` binary name, the 8091 protocol and the persistent key files under

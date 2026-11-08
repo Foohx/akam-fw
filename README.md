@@ -1,117 +1,155 @@
-# Akam: cloud-free firmware for the LSC Smart Connect 1080p camera (Anyka AK3918AV130)
+# Akam — firmware for LSC 1080p cameras
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![SoC](https://img.shields.io/badge/SoC-Anyka%20AK3918AV130-orange.svg)]()
-[![Sensor](https://img.shields.io/badge/Sensor-GalaxyCore%20GC20C3%201080p-green.svg)]()
 [![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20L16%20Audio-red.svg)]()
 
-## What is Akam?
+Akam replaces the Tuya cloud software of the **LSC Smart Indoor 1080p camera** (Action) with a small
+local firmware:
 
-Akam replaces the Tuya cloud software of the **LSC Smart Connect Smart Indoor IP Camera 1080p HD, model
-`3215672.3`** (Action) with a small local firmware. After flashing, the camera:
+- a **local-only RTSP stream** (H.264 1080p + audio) on port 554: no cloud, no account, no app;
+- **SSH** (key only) for maintenance; Telnet and FTP stay off;
+- only the APP partition is rewritten, from **your own** backup. U-Boot, kernel and ROOTFS are never
+  written.
 
-- serves **RTSP H.264 1080p video + audio** on port 554 (`ak_rtsp`), with a tuning port on 8091;
-- runs a **key-only SSH server** (Dropbear) so that the stock Telnet/FTP daemons can stay off;
-- no longer runs the Tuya cloud client (`anyka_ipc` is removed). Running with no Internet route at all has
-  not been tested yet.
+> **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
+> [disclaimer](#important-disclaimer-and-risks). The wizard asks for a full backup first.
 
-Only the APP partition (`mtd7`) is rebuilt, from **your own** dump of your camera. U-Boot, kernel, DTB
-and ROOTFS are never written, so U-Boot stays reachable over UART if the APP image turns out to be bad.
-
-> **Akam is a fork** of
-> [FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware](https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware).
-> All the reverse-engineering work behind `ak_rtsp` (ISP, H.264 encoder, audio, IR-cut, RTSP) is the
-> upstream author's. Akam keeps that code, its MIT license and its credits (see
-> [Credits](#credits--acknowledgements) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and adds
-> a Linux-native build, a permanent SSH server, Telnet/FTP lockdown, and install/backup/restore
-> documentation. Upstream was developed on Windows 11 + WSL; Akam's build is native Linux (Arch).
-> See the [CHANGELOG](CHANGELOG.md) for the project history.
+Akam is a fork of
+[FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware](https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware);
+the reverse-engineering behind `ak_rtsp` is the upstream author's (see [Credits](#credits--acknowledgements)).
 
 ## Status
 
-**Akam V1 is validated on a real camera (2026-11-08).** Seen working:
+**Validated on a real camera on 2026-11-08:**
 
-- boots without a microSD card, Wi-Fi connects by itself;
-- H.264 1080p with a fast start, and an L16 audio track in the RTSP stream;
-- the IR night image is delivered (day/night stability over time is not checked yet);
+- boots without a microSD card; Wi-Fi connects by itself;
+- H.264 1080p with a fast start, plus an audio track in the RTSP stream;
+- the IR night image is delivered;
 - port 8091 `GET` / `SET`;
-- Dropbear starts by itself; SSH as root by ed25519 key, also after a power cut;
-- only ports 22, 554 and 8091 listen; telnet and FTP are off; `anyka_ipc` is gone;
-- `ak_rtsp` uses about 1% CPU with a client connected (about 90% before the fixes), about 29 MB of RAM
-  stay free, and the image has 2.7 MB free in the APP partition.
+- SSH as root with an ed25519 key, also after a power cut;
+- only ports 22, 554 and 8091 listen; Telnet and FTP are off; the Tuya client is gone;
+- about 1% CPU with a viewer connected.
 
-Still to check: microphone audibility, telnet staying off after a Wi-Fi reconnect, and day/night
-stability over a long run. Details and the full checklist: [test plan](docs/akam_v1_test_plan.md).
-It was validated on one unit: report what you see on yours.
+**Still to check:** microphone audibility, day/night stability over a long run, Telnet staying off
+after a Wi-Fi reconnect. **Known:** the image is grainier than the stock firmware's (improvement
+planned for V1.1). Only one unit was tested: please report what you see on yours. Details:
+[test plan](docs/akam_v1_test_plan.md).
 
-## Supported camera
+## Supported hardware
 
-Only the **LSC Smart Connect 1080p, model `3215672.3`** (SoC Anyka AK3918AV130, Revision 2 circular
-PCB). Other revisions or SoCs (AK3918EV200, GK7102) have different register maps and flash layouts and
-are **not** supported. Hardware details are in [Hardware Overview](#hardware-overview).
+| Camera | Label | Status |
+|---|---|---|
+| LSC Smart Indoor 1080p `3215672.3` | SI `D26228`, kernel `4.4.302-cip94`, APP compressed with xz | **validated** |
+| LSC Smart Indoor 1080p `3215672.2` | SI `B26101` / `C26101` | untested (works with upstream, not tried with Akam) |
+| anything else (other SoC such as AK3918EV200 or GK7102, other kernel or APP) | | not supported |
+
+**Check your camera:** read the label under the camera (model `3215672.x` and the `SI ...` code). The
+wizard also compares the camera's kernel, flash layout and APP with the list in
+`tools/release/supported_hardware.txt`: a match continues, anything else shows a warning and needs a
+typed confirmation, and a different flash layout is refused.
 
 ## What you need
 
-- the camera, a microSD card, and a 2.4 GHz Wi-Fi network the camera can join;
-- a **Linux x86-64 PC** (Arch is the reference) with `squashfs-tools`, `make`, `git`, `curl`, `tar`, `xz`,
-  `bzip2`, `shellcheck`, `file`, `binutils` (`bash tools/build/check_host.sh` lists what is missing);
-- an SSH key pair dedicated to the camera;
-- a UART adapter is a useful safety net but not required: the documented route works without it.
+- the camera, and a 2.4 GHz Wi-Fi network it can join;
+- a **microSD card** and a **USB card reader** (cheap readers sometimes fail, see
+  [troubleshooting](docs/troubleshooting.md#no-medium-found-with-a-usb-card-reader));
+- a **Linux PC**: Arch, Debian 12 or Ubuntu 24.04 (all three tested in containers). macOS is not
+  supported yet;
+- a UART adapter is optional but recommended: it is the safety net if something goes wrong
+  ([UART guide](docs/hardware_and_uart.md)).
 
-## Install in 6 steps
+No compiling is needed: the default path uses a **prebuilt kit**.
 
-Steps 1 to 3 do not change the camera's flash. Read the [overview](docs/akam_v1_install.md) first.
+## Quick start with the wizard
 
-1. **Back up** all 8 flash partitions twice, compare, store them off-line:
-   [backup guide](docs/akam_v1_backup.md) (the no-UART microSD route is in
-   [akam_v1_backup_sd.md](docs/akam_v1_backup_sd.md)).
-2. **Build** the image from your own APP dump (pinned toolchain, native Linux, no `cmake`):
-   [build guide](docs/akam_v1_build.md).
+1. Get Akam: clone the repository (`git clone https://github.com/Foohx/akam-fw.git`) and enter it, or
+   unpack the release archive.
+2. Check your computer (changes nothing; prints the install command for anything missing):
    ```bash
-   bash tools/build/bootstrap.sh && . tools/build/env.sh
-   make -C src/ak_rtsp ak_rtsp flash_tool
-   bash tools/dropbear/build_dropbear.sh
-   unsquashfs -d ~/akam-work/app_extracted ~/akam-backup/mtdblock7.bin
-   APP_EXTRACTED=~/akam-work/app_extracted FW_DIR=~/akam-work/out bash src/ak_rtsp/build_firmware.sh
+   ./akam doctor
    ```
-3. **Prepare the SD card** (FAT32). For the first flash from the stock firmware, reuse the toolkit card
-   of the backup and add `custom_firmware/<image>.squashfs` (exactly one), `flash_tool`,
-   `install_with_flash_tool.sh`, `flash_guard.sh`, `preflight_check.sh` and `original_firmware/` (your
-   backup, never a `*.bin` at the card root). The layout is in the "Prepare the SD card" section and the
-   no-UART section of the [flash guide](docs/akam_v1_flash_and_restore.md). Your SSH public key goes
-   on a second, "first-boot" card made with
-   `bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/akam.pub` (it also holds
-   an empty `AKAM_MAINTENANCE`); see [SSH and lockdown](docs/akam_v1_ssh_and_lockdown.md).
-4. **Flash** the APP partition (`mtd7`) and verify the read-back before touching the power. Boot the
-   camera with the card, then `telnet <camera-ip> 24`. On the stock firmware mount the card with
-   `mount -t vfat /dev/mmcblk0p1 /mnt`; in a later Akam maintenance boot the card is on `/tmp/sd`, so
-   use `mount --bind /tmp/sd /mnt` instead. Then:
-   ```sh
-   sh /mnt/install_with_flash_tool.sh      # compare the printed md5sum with your PC, then type YES alone
-   dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum    # must equal the image md5sum
+3. Run the guided menu. It shows every step as done / todo / blocked and resumes where you stopped:
+   ```bash
+   ./akam
    ```
-   The `flash_tool` output must end with `Flashing and verification completed successfully!`. If it
-   reports errors or the md5 differs, do not power cycle. Then unplug and replug USB-C by hand (`reboot`
-   is unreliable). Read the gates (Wi-Fi config) and details in
-   [flash and restore](docs/akam_v1_flash_and_restore.md).
-5. **First boot** with the first-boot card inserted: Dropbear creates its host key and installs your
-   key. Then `ssh -i ~/.ssh/akam root@<camera-ip>` and run the post-flash check from the PC:
-   `ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh`
-   ([test plan](docs/akam_v1_test_plan.md)).
-6. **Remove the card** (this also removes the maintenance flag and its telnet), power cycle, and check
-   again: only ports 22, 554 and 8091 must listen.
+4. Follow the prompts, one step after the other. `./akam help` lists every command, and `--dry-run`
+   rehearses without changing anything.
 
-The stream is then at `rtsp://<camera-ip>:554/` (see [RTSP Stream URLs](#rtsp-stream-urls)).
+## What the wizard does
 
-## Update later
+| Step | What happens | Risk |
+|---|---|---|
+| `doctor` | checks the tools on your PC | none |
+| `get-kit` | downloads the prebuilt kit, verifies checksum and signature (`./akam build` builds from source instead) | none |
+| `prepare-backup-sd` | writes the backup toolkit to a microSD card | erases that card |
+| `find-camera` | locates the camera on your network | none |
+| `backup` | copies the 8 flash partitions twice, compares them, stores them on your PC | none (read only) |
+| `image` | builds the Akam image from your backup and shows the hardware verdict | none |
+| `prepare-flash-sd` | writes the image, your SSH key and the Wi-Fi settings to a card | erases that card |
+| `flash` | writes the APP partition; you type `YES` yourself | **can brick the camera** |
+| `verify` | checks over SSH that the camera behaves as expected | none |
+| `wipe-sd` | erases a card that holds your Wi-Fi password | erases that card |
 
-Rebuild the image and reflash the APP partition, through the maintenance route or over SSH from RAM:
-see "Reflashing later" in the [flash guide](docs/akam_v1_flash_and_restore.md).
+The wizard never runs `sudo` itself, shows every command before running it, and never stores your
+Wi-Fi password. Erasing a card needs a typed `ERASE <device>`. Keep your backup (two copies, on two
+media) and never publish it: it contains your Wi-Fi credentials.
 
-## Recover
+Prefer to do it by hand, or want to understand each step? See the
+[manual procedure](docs/akam_v1_install.md). To compile everything yourself, see the
+[build guide](docs/akam_v1_build.md). Something went wrong? See [troubleshooting](docs/troubleshooting.md).
 
-Keep your 8-partition backup. Restore the stock APP, or recover through UART/U-Boot if the APP is bad:
-see Restore in the [flash guide](docs/akam_v1_flash_and_restore.md). Restore is not guaranteed to work.
+## Watching the stream
+
+The stream is at `rtsp://<camera-ip>:554/` (any path works).
+
+```bash
+ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
+```
+
+- **One client at a time.** To serve several viewers, put [go2rtc](https://github.com/AlexxIT/go2rtc)
+  or [MediaMTX](https://github.com/bluenviron/mediamtx) in front of the camera.
+- **VLC:** on Arch install `vlc-plugin-live555` and `vlc-plugin-ffmpeg`. If hardware decoding fails,
+  run `vlc --rtsp-tcp --avcodec-hw=none rtsp://<camera-ip>:554/`.
+- Other problems: [troubleshooting](docs/troubleshooting.md).
+
+## Control port 8091
+
+A text protocol for exposure, day/night and image settings (`LIST`, `GET`, `SET`):
+
+```bash
+printf 'LIST\n' | nc -w 2 <camera-ip> 8091
+printf 'GET <name>\n' | nc -w 2 <camera-ip> 8091
+printf 'SET <name> <value>\n' | nc -w 2 <camera-ip> 8091
+```
+
+Settings are **volatile**: they are lost at the next boot. There is no password, so keep the port on
+your LAN (see [Security notes](#security-notes)). More in the
+[overview](docs/akam_v1_install.md#4-the-8091-control-port).
+
+## Updating
+
+Use the wizard's update step, or reflash over SSH without UART. Both are described under "Reflashing
+later" in the [flash guide](docs/akam_v1_flash_and_restore.md). The over-SSH route runs from RAM and
+keeps a small residual risk.
+
+## Recovery
+
+- **Maintenance card:** put an empty file named `AKAM_MAINTENANCE` at the root of a microSD card and
+  reboot; the card's scripts are allowed to run again
+  ([details](docs/akam_v1_ssh_and_lockdown.md#7-maintenance-flag)).
+- **UART:** U-Boot stays reachable, so a bad APP can be reflashed from the serial console
+  ([restore](docs/akam_v1_flash_and_restore.md#5-restore)).
+- **Backup:** restore your stock APP from your own backup. Restore is not guaranteed to work.
+
+## Security notes
+
+- **Never expose ports 554, 8091 or 22 to the Internet:** no port forwarding, UPnP or DMZ. Use a VPN
+  into your LAN for remote access. See [network hardening](docs/akam_v1_install.md#5-network-hardening).
+- The flash card holds your **Wi-Fi password in clear text**: erase it when done with
+  `./akam wipe-sd`.
+- Treat a card with `AKAM_MAINTENANCE` as root access to the camera.
+- Never publish your backup, your built images or your keys.
 
 ## Credits and license
 
@@ -226,6 +264,7 @@ The custom `ak_rtsp` server is **path-agnostic** (it serves the 1080p video + au
 ```
 .
 ├── docs/
+│   ├── troubleshooting.md               # Real problems we hit and their fixes
 │   ├── akam_v1_install.md               # Akam V1 overview, services, network hardening, licenses
 │   ├── akam_v1_backup.md                # 8-partition backup and hardware identification (do this first)
 │   ├── akam_v1_build.md                 # Host tools, builds, image from your own dump
@@ -256,6 +295,7 @@ The custom `ak_rtsp` server is **path-agnostic** (it serves the 1080p video + au
 ## Detailed Documentation
 
 Akam V1:
+- [Troubleshooting](docs/troubleshooting.md)
 - [Akam V1 overview, services and network hardening](docs/akam_v1_install.md)
 - [Backup first (8 partitions) and hardware identification](docs/akam_v1_backup.md)
 - [Build the image from your own dump](docs/akam_v1_build.md)
