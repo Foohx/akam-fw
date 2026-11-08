@@ -1,0 +1,5 @@
+# Kit formats this wizard knows how to use (checked after tools/release/verify_kit.sh succeeds).
+# One record per line: accept_kit_format|<kit_format value from the kit's MANIFEST.txt>
+# A kit with another kit_format is refused with an explanation: use the wizard release that
+# ships with that kit, or build from source.
+accept_kit_format|1

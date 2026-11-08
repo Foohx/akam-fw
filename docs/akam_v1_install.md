@@ -15,6 +15,24 @@ the map; each step has its own guide.
 4. [Flash only the APP partition, verify, and know how to restore](akam_v1_flash_and_restore.md).
 5. [Run the hardware checks and fill in the resource report](akam_v1_test_plan.md).
 
+## Using the wizard
+
+`./akam` walks through the PC-side steps and remembers where you stopped (state and log:
+`~/.local/state/akam/`, never containing your Wi-Fi password). It runs on Arch and Debian/Ubuntu.
+
+```
+./akam doctor            # check the tools on this computer (never runs sudo, prints the install command)
+./akam get-kit --version X.Y.Z   # download + verify the prebuilt kit (or: --kit FILE; or ./akam build)
+./akam backup --backup-dir DIR   # accept your backup folder (8 partitions, two copies on two media)
+./akam image             # build the Akam image: shows the hardware verdict and the stock compression
+./akam --dry-run         # rehearse everything: shows each command, changes nothing
+./akam status            # every step: done / todo / blocked
+```
+
+Untested firmware needs the typed phrase `I UNDERSTAND THIS IS UNTESTED`; erasing a card needs a typed
+`ERASE <disk>`. The camera-side steps (find the camera, back up over Telnet, flash, verify) are not
+automated yet: the wizard prints the manual instructions of the guides above for them.
+
 ## 2. What changes on the camera
 
 | Partition | Akam V1 |
