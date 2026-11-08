@@ -135,6 +135,24 @@ Whether the port-23 service really appears on your unit is unverified; this guid
 
 Identify the card with care. **Formatting the wrong device destroys its data.**
 
+**Recommended: one command.** `tools/sd/sd_card.sh` does everything below (pinned toolkit check,
+guards, format, payload, Wi-Fi, verification) and refuses any disk that is not a removable USB/SD
+whole disk, that carries `/`, `/boot`, `/home`, `/var`, swap, this repository or your home, or that is a
+LUKS/LVM/RAID member. It checks the disk again (size, model, serial) right before it writes:
+
+```bash
+tools/sd/sd_card.sh list-candidates                    # eligible cards: device, bytes, model, transport, mounts (TSV)
+tools/sd/sd_card.sh prepare --mode backup --device /dev/sdX
+tools/sd/sd_card.sh verify  --mode backup --device /dev/sdX   # read-only check of the finished card
+```
+
+It needs a terminal and a typed `ERASE /dev/sdX`. The Wi-Fi SSID and password come from
+`AKAM_WIFI_SSID` / `AKAM_WIFI_PASS` or are asked (visible; add `--hidden` to hide the password).
+Add `--dry-run --stage-dir DIR` to build the card tree in `DIR` without touching any device. When
+you are done with the card, `tools/sd/sd_card.sh wipe --device /dev/sdX` zero-fills it.
+
+The manual commands below are the fallback and document what the script does.
+
 ```bash
 lsblk -d -o NAME,SIZE,MODEL,TRAN,RM
 DEV=/dev/sdX          # <-- the SD card, e.g. /dev/sdb. Double-check the size shown above.

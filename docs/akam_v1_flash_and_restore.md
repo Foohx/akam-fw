@@ -64,7 +64,17 @@ touch "$SD/AKAM_MAINTENANCE"               # UART route only; the no-UART route 
 sync
 ```
 
-This layout is for the UART route. For the no-UART route use the card described in
+Shortcut: on a card already prepared with `tools/sd/sd_card.sh` (backup or first-boot card), the
+flash files are added in one go, with the image name, the 5 MiB size of `mtdblock7.bin`, one image only
+and no `*.bin` at the root all checked, then verified:
+
+```bash
+tools/sd/sd_card.sh prepare --mode flash-files --device /dev/sdX \
+    --image ~/akam-work/out/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --flash-tool src/ak_rtsp/flash_tool --backup-dir ~/akam-backup
+tools/sd/sd_card.sh verify --mode flash-files --device /dev/sdX
+```
+
+The manual commands above remain valid. This layout is for the UART route. For the no-UART route use the card described in
 [First flash without UART](#first-flash-without-uart-from-the-stock-firmware): do not create
 `AKAM_MAINTENANCE`, and do not boot Akam for the first time with the toolkit files on the card.
 
@@ -218,6 +228,13 @@ USB-C) and swap the card for a **second, dedicated card** prepared on the PC wit
 
 ```bash
 bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/akam.pub
+```
+
+The same card can be made with the newer, more general tool (same result, plus a read-only check):
+
+```bash
+tools/sd/sd_card.sh prepare --mode first-boot --device /dev/sdX --pubkey ~/.ssh/akam.pub
+tools/sd/sd_card.sh verify  --mode first-boot --device /dev/sdX
 ```
 
 The script verifies the pinned `lsc-tuya-toolkit` commit (`396db8a`) and the `sd_card` tree sha256
