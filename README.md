@@ -12,7 +12,8 @@ Akam replaces the Tuya cloud software of the **LSC Smart Connect Smart Indoor IP
 
 - serves **RTSP H.264 1080p video + audio** on port 554 (`ak_rtsp`), with a tuning port on 8091;
 - runs a **key-only SSH server** (Dropbear) so that the stock Telnet/FTP daemons can stay off;
-- **never talks to the Tuya cloud** (`anyka_ipc` is removed) and needs no Internet.
+- no longer runs the Tuya cloud client (`anyka_ipc` is removed). Running with no Internet route at all has
+  not been tested yet.
 
 Only the APP partition (`mtd7`) is rebuilt, from **your own** dump of your camera. U-Boot, kernel, DTB
 and ROOTFS are never written, so U-Boot stays reachable over UART if the APP image turns out to be bad.
@@ -32,7 +33,7 @@ and ROOTFS are never written, so U-Boot stays reachable over UART if the APP ima
 
 - boots without a microSD card, Wi-Fi connects by itself;
 - H.264 1080p with a fast start, and an L16 audio track in the RTSP stream;
-- IR night mode, stable on the first checks;
+- the IR night image is delivered (day/night stability over time is not checked yet);
 - port 8091 `GET` / `SET`;
 - Dropbear starts by itself; SSH as root by ed25519 key, also after a power cut;
 - only ports 22, 554 and 8091 listen; telnet and FTP are off; `anyka_ipc` is gone;
@@ -73,16 +74,32 @@ Steps 1 to 3 do not change the camera's flash. Read the [overview](docs/akam_v1_
    unsquashfs -d ~/akam-work/app_extracted ~/akam-backup/mtdblock7.bin
    APP_EXTRACTED=~/akam-work/app_extracted FW_DIR=~/akam-work/out bash src/ak_rtsp/build_firmware.sh
    ```
-3. **Prepare the SD card** with the image, `flash_tool`, your SSH public key and your Wi-Fi:
-   [SSH and lockdown](docs/akam_v1_ssh_and_lockdown.md) and the SD section of the
-   [flash guide](docs/akam_v1_flash_and_restore.md).
-4. **Flash** the APP partition and verify the read-back before touching the power:
+3. **Prepare the SD card** (FAT32). For the first flash from the stock firmware, reuse the toolkit card
+   of the backup and add `custom_firmware/<image>.squashfs` (exactly one), `flash_tool`,
+   `install_with_flash_tool.sh`, `flash_guard.sh`, `preflight_check.sh` and `original_firmware/` (your
+   backup, never a `*.bin` at the card root). The layout is in the "Prepare the SD card" section and the
+   no-UART section of the [flash guide](docs/akam_v1_flash_and_restore.md). Your SSH public key goes
+   on a second, "first-boot" card made with
+   `bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/akam.pub` (it also holds
+   an empty `AKAM_MAINTENANCE`); see [SSH and lockdown](docs/akam_v1_ssh_and_lockdown.md).
+4. **Flash** the APP partition (`mtd7`) and verify the read-back before touching the power. Boot the
+   camera with the card, then `telnet <camera-ip> 24`. On the stock firmware mount the card with
+   `mount -t vfat /dev/mmcblk0p1 /mnt`; in a later Akam maintenance boot the card is on `/tmp/sd`, so
+   use `mount --bind /tmp/sd /mnt` instead. Then:
+   ```sh
+   sh /mnt/install_with_flash_tool.sh      # compare the printed md5sum with your PC, then type YES alone
+   dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum    # must equal the image md5sum
+   ```
+   The `flash_tool` output must end with `Flashing and verification completed successfully!`. If it
+   reports errors or the md5 differs, do not power cycle. Then unplug and replug USB-C by hand (`reboot`
+   is unreliable). Read the gates (Wi-Fi config) and details in
    [flash and restore](docs/akam_v1_flash_and_restore.md).
-5. **First boot** with the card inserted: Dropbear creates its host key and installs your key. Then
-   `ssh -i ~/.ssh/akam root@<camera-ip>` and run `tools/hw_tests/akam_hwcheck.sh`
+5. **First boot** with the first-boot card inserted: Dropbear creates its host key and installs your
+   key. Then `ssh -i ~/.ssh/akam root@<camera-ip>` and run the post-flash check from the PC:
+   `ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh`
    ([test plan](docs/akam_v1_test_plan.md)).
-6. **Remove the card** (and the maintenance flag if you used one), power cycle, and check again: only
-   ports 22, 554 and 8091 must listen.
+6. **Remove the card** (this also removes the maintenance flag and its telnet), power cycle, and check
+   again: only ports 22, 554 and 8091 must listen.
 
 The stream is then at `rtsp://<camera-ip>:554/` (see [RTSP Stream URLs](#rtsp-stream-urls)).
 
