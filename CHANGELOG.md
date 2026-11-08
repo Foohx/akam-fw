@@ -17,6 +17,12 @@ after a reflash.
 | On the camera: `/usr/local/camyn/`, `/tmp/camyn_*` | `/usr/local/akam/`, `/tmp/akam_*` |
 | `LICENSE.camyn` in the image | `LICENSE.akam` |
 
+### Release kit
+
+- `tools/release/{make_kit,sign_kit,verify_kit}.sh`: build, sign (`ssh-keygen -Y`) and verify the
+  prebuilt-binaries kit (`akam-kit-<version>.tar.xz`, Akam's own files only, never a firmware image);
+  see `docs/akam_v1_kit.md`.
+
 ### Deprecated aliases (removed in the next release)
 
 An SD card prepared before the rename still works with the new image:
