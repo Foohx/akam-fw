@@ -20,12 +20,14 @@ state_init() {
     mkdir -p "$STATE_DIR"
     chmod 700 "$STATE_DIR" 2>/dev/null || true
     if [ "$STATE_DRY" = 1 ]; then STATE_FILE="$STATE_DIR/state.dry"; else STATE_FILE="$STATE_DIR/state"; fi
-    [ -f "$STATE_FILE" ] || : >"$STATE_FILE"
+    [ -f "$STATE_FILE" ] || (umask 077 && : >"$STATE_FILE")
+    chmod 600 "$STATE_FILE" 2>/dev/null || true
 }
 
 # state_reset_dry: forget a previous rehearsal.
 state_reset_dry() {
-    : >"$STATE_DIR/state.dry"
+    (umask 077 && : >"$STATE_DIR/state.dry")
+    chmod 600 "$STATE_DIR/state.dry" 2>/dev/null || true
 }
 
 # state_get KEY: print the value (empty when unset).
@@ -47,14 +49,14 @@ state_set() {
         return 1
     fi
     tmp="$STATE_FILE.tmp.$$"
-    { grep -v "^$key=" "$STATE_FILE" 2>/dev/null || true; printf '%s=%s\n' "$key" "$val"; } >"$tmp"
+    (umask 077 && { grep -v "^$key=" "$STATE_FILE" 2>/dev/null || true; printf '%s=%s\n' "$key" "$val"; } >"$tmp")
     mv "$tmp" "$STATE_FILE"
 }
 
 # state_unset KEY
 state_unset() {
     local tmp="$STATE_FILE.tmp.$$"
-    { grep -v "^$1=" "$STATE_FILE" 2>/dev/null || true; } >"$tmp"
+    (umask 077 && { grep -v "^$1=" "$STATE_FILE" 2>/dev/null || true; } >"$tmp")
     mv "$tmp" "$STATE_FILE"
 }
 

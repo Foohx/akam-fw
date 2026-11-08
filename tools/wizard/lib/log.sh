@@ -11,7 +11,7 @@ log_init() {
     mkdir -p "$1"
     chmod 700 "$1" 2>/dev/null || true
     LOG_FILE="$1/akam.log"
-    : >>"$LOG_FILE"
+    (umask 077 && : >>"$LOG_FILE")
     chmod 600 "$LOG_FILE" 2>/dev/null || true
 }
 
