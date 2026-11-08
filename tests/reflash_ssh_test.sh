@@ -179,6 +179,10 @@ exit 0
 EOF
 chmod +x "$WORK/flash_tool"
 head -c 5242880 /dev/urandom >"$WORK/image.squashfs"
+# The tamper/corrupt steps below overwrite fixed offsets with a known byte pattern; a random
+# image would already hold that byte there once in 256 runs and the "corruption" would be a no-op.
+printf '\0\0\0\0\0\0\0\0' | dd of="$WORK/image.squashfs" bs=1 seek=100 conv=notrunc 2>/dev/null
+printf '\0' | dd of="$WORK/image.squashfs" bs=1 seek=4000000 conv=notrunc 2>/dev/null
 IMD5=$(md5sum "$WORK/image.squashfs" | cut -d' ' -f1)
 head -c 1000 /dev/urandom >"$WORK/small.img"
 
