@@ -98,7 +98,7 @@ be_in_use() {
     n=$(basename "$1")
     for d in "$(be_sysfs)/class/block/$n/holders" "$(be_sysfs)/class/block/$n/$n"*/holders; do
         [ -d "$d" ] || continue
-        h=$(ls -A "$d" 2>/dev/null | head -n1)
+        h=$(find "$d" -mindepth 1 -maxdepth 1 -printf "%f\n" 2>/dev/null | head -n1)
         if [ -n "$h" ]; then printf '%s is held by %s' "$n" "$h"; return 0; fi
     done
     return 1
@@ -126,7 +126,7 @@ be_check_disk() {
     local dev=$1 line type rm tran name mp node sysmp kind why p serial wwn vendor majmin
     D_SIZE=0 D_MODEL="" D_TRAN="" D_MOUNTS="" D_WHY="" D_IDENT="" D_PTUUID=""
     if ! be_is_whole_disk_name "$dev"; then
-        D_WHY="$dev is not a whole-disk node like /dev/sdb or /dev/mmcblk0 (partitions are refused)"
+        D_WHY="$dev is not a whole USB/SD disk node like /dev/sdb or /dev/mmcblk0 (partitions, NVMe, loop and zram nodes are refused)"
         return 1
     fi
     line=$(lsblk -dpP -o NAME,TYPE,RM,TRAN,MODEL,SERIAL,WWN,VENDOR,MAJ:MIN,PTUUID "$dev" 2>/dev/null | head -n1) || line=""
