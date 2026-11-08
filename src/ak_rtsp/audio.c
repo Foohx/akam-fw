@@ -53,6 +53,9 @@ static uint64_t g_samples_total = 0;
 static struct audio_slot g_ring[AUDIO_RING_SLOTS];
 static volatile uint32_t g_ring_write = 0; /* total periods produced */
 static volatile uint32_t g_ring_read  = 0; /* total periods consumed */
+/* Single-core ARM926 (ARMv5: no ldrex, no __atomic libcalls linked): a
+ * compiler barrier orders the slot accesses against the counters. */
+#define RING_BARRIER() __asm__ __volatile__("" ::: "memory")
 
 /* Reports exactly which step failed (added after a real hardware run came
  * back with a bare "audio_init: config ioctl: Not a tty" (ENOTTY) and no
@@ -338,7 +341,9 @@ static void *audio_capture_loop(void *arg)
         slot->first_sample = g_samples_total;
         slot->t_end_us = rtp_mono_us();
         g_samples_total += slot->n_samples;
-        g_ring_write++;
+        /* Publish: the slot contents are written before the new count. */
+        RING_BARRIER();
+        g_ring_write = g_ring_write + 1;
     }
     return NULL;
 }
@@ -412,19 +417,32 @@ int audio_get_frame_ts(int16_t *buf, size_t max_samples, size_t *out_samples,
                        uint64_t *first_sample, int64_t *t_end_us)
 {
     if (!g_audio_running) return -1;
-    if (g_ring_read >= g_ring_write) return 0;
+    /* The producer overwrites slot (write % SLOTS) while filling it, so only
+     * SLOTS-1 completed periods are safe to read. The audio start gate can
+     * leave the ring unread for seconds (it laps many times), which makes the
+     * lapped case the normal one at release: clamp to SLOTS-1 and re-check
+     * after the copy that the producer did not reach the slot meanwhile. */
+    uint32_t r = g_ring_read;
+    size_t n;
+    for (;;) {
+        RING_BARRIER();
+        uint32_t w = g_ring_write;
+        if (r >= w) { g_ring_read = r; return 0; }
+        if (w - r > AUDIO_RING_SLOTS - 1) r = w - (AUDIO_RING_SLOTS - 1);
 
-    /* Producer lapped us — drop the oldest slots we can no longer trust. */
-    if (g_ring_write - g_ring_read > AUDIO_RING_SLOTS)
-        g_ring_read = g_ring_write - AUDIO_RING_SLOTS;
+        struct audio_slot *slot = &g_ring[r % AUDIO_RING_SLOTS];
+        n = slot->n_samples;
+        if (n > max_samples) n = max_samples;
+        memcpy(buf, slot->samples, n * sizeof(int16_t));
+        *first_sample = slot->first_sample;
+        *t_end_us = slot->t_end_us;
 
-    struct audio_slot *slot = &g_ring[g_ring_read % AUDIO_RING_SLOTS];
-    size_t n = slot->n_samples;
-    if (n > max_samples) n = max_samples;
-    memcpy(buf, slot->samples, n * sizeof(int16_t));
+        RING_BARRIER();
+        w = g_ring_write;
+        if (w - r <= AUDIO_RING_SLOTS - 1) break; /* slot untouched */
+        r = w - (AUDIO_RING_SLOTS - 1);           /* overwritten: retry */
+    }
     *out_samples = n;
-    *first_sample = slot->first_sample;
-    *t_end_us = slot->t_end_us;
-    g_ring_read++;
+    g_ring_read = r + 1;
     return 1;
 }
