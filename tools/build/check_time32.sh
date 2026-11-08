@@ -52,6 +52,15 @@ svc_numbers() {
         for (i = 1; i <= NF; i++) if ($i == ".text") { print "0x" $(i + 2), "0x" $(i + 4); exit } }')
     [ -n "${start:-}" ] || return 1
     "$GDB" -batch -ex "disassemble $start,$((start + size))" "$elf" 2>/dev/null | awk '
+        # POSIX awk has no or(): bitwise OR of two non-negative integers.
+        function bor(a, b,   r, p) {
+            r = 0; p = 1
+            while (a > 0 || b > 0) {
+                if (a % 2 == 1 || b % 2 == 1) r += p
+                a = int(a / 2); b = int(b / 2); p *= 2
+            }
+            return r
+        }
         function reset(   k) { for (k in cand) delete cand[k]; ncand = 0 }
         {
             line = $0
@@ -70,7 +79,7 @@ svc_numbers() {
                 n = 0
                 for (k in cand) vals[n++] = k + 0
                 if (op == "orr") reset()
-                for (i = 0; i < n; i++) { cand[or(vals[i], bits)] = 1; ncand++ }
+                for (i = 0; i < n; i++) { cand[bor(vals[i], bits)] = 1; ncand++ }
                 next
             }
             if (op == "svc") {
