@@ -1,0 +1,3 @@
+# Tracked paths allowed despite the forbidden-file patterns in local_check.sh.
+# Pre-existing, from the serial console tool; should be untracked (needs a decision).
+tools/hardware_debug/serial_console_dotnet/CLAUDE.md
