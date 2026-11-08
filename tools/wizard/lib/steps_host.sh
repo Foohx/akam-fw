@@ -15,7 +15,7 @@ wiz_tool() { # name default
         check_host) v=${AKAM_CHECK_HOST:-$ROOT/tools/build/check_host.sh} ;;
         verify_kit) v=${AKAM_VERIFY_KIT:-$ROOT/tools/release/verify_kit.sh} ;;
         assemble) v=${AKAM_ASSEMBLE:-$ROOT/tools/image/assemble_from_kit.sh} ;;
-        sd_cli) v=${AKAM_SD_CLI:-$ROOT/tools/sd/akam_sd.sh} ;;
+        sd_cli) v=${AKAM_SD_CLI:-$ROOT/tools/sd/sd_card.sh} ;;
         hw_list) v=${AKAM_HW_LIST:-$ROOT/tools/release/supported_hardware.txt} ;;
         compat) v=${AKAM_KIT_COMPAT:-$ROOT/tools/wizard/kit_compat.txt} ;;
     esac
@@ -164,6 +164,7 @@ _kit_current_sha() {
     local p
     p=$(state_get kit_path)
     if [ "$(state_get mode)" = source ]; then echo source; return 0; fi
+    if [ -d "$p" ]; then _file_sha "$p/MANIFEST.txt"; return 0; fi
     _file_sha "$p"
 }
 
@@ -225,6 +226,11 @@ step_validate() {
         prepare-flash-sd)
             if [ "$(state_get flash_sd_image_sha)" != "$(state_get image_sha)" ]; then
                 echo "the image changed after the flash card was prepared"
+                return 1
+            fi
+            # The card holds a copy of the image: if the image is stale, so is the card.
+            if ! now=$(step_validate image); then
+                echo "the card was made from an image that is out of date ($now)"
                 return 1
             fi
             ;;
@@ -334,11 +340,17 @@ kit_format_ok() {
     grep -v '^[[:space:]]*#' "$(wiz_tool compat)" | grep -qxF "accept_kit_format|$1"
 }
 
+# download_file URL OUT: HTTPS only (also for redirects). Returns curl's exit code (22 = HTTP error).
+download_file() {
+    run_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -o "$2" "$1"
+}
+
 cmd_get_kit() {
-    local kit=$OPT_KIT ver=$OPT_VERSION base dl f rc ext fmt sha vargs
+    local kit=$OPT_KIT ver=$OPT_VERSION base dl f rc ext fmt sha vargs unsigned=0
     step_need get-kit || return 1
     step_banner get-kit
     if [ -z "$kit" ]; then
+        ver=${ver#v}
         if [ -z "$ver" ]; then
             case $AKAM_WIZARD_VERSION in
                 *dev*)
@@ -347,25 +359,48 @@ cmd_get_kit() {
                         ui_say "  (development checkout: using the placeholder version X.Y.Z)"
                     else
                         ui_fail "this development checkout has no release to download." \
-                    "pass --version X.Y.Z to download that release, or --kit FILE for a kit you already have, or run ./akam build."
+                            "pass --kit FILE for a kit you already have, or --version X.Y.Z to download that release, or run ./akam build."
                         return 1
                     fi
                     ;;
                 *) ver=$AKAM_WIZARD_VERSION ;;
             esac
         fi
+        case $ver in
+            '' | *[!0-9A-Za-z._-]* | *..*)
+                ui_fail "'$ver' is not a valid version." "use a number such as 1.0.0 (see https://github.com/$KIT_REPO/releases)."
+                return 1
+                ;;
+        esac
         base="https://github.com/$KIT_REPO/releases/download/v$ver"
         dl="$STATE_DIR/downloads/$ver"
         kit="$dl/akam-kit-$ver.tar.xz"
-        ui_say "  Downloading kit $ver from $base"
+        ui_say "  Downloading kit $ver from $base (HTTPS only; nothing from it is run before it is verified)."
         run_cmd mkdir -p "$dl" || return 1
         for f in "akam-kit-$ver.tar.xz" SHA256SUMS; do
-            run_cmd curl --proto '=https' --tlsv1.2 -fL --retry 3 -o "$dl/$f" "$base/$f" ||
-                { ui_fail "download of $f failed." "check your network and the version number, then retry."; return 1; }
+            rc=0
+            download_file "$base/$f" "$dl/$f" || rc=$?
+            if [ "$rc" -ne 0 ]; then
+                if [ "$UI_DRY" != 1 ]; then rm -f "$dl/$f"; fi
+                if [ "$rc" -eq 22 ]; then
+                    ui_fail "release v$ver was not found ($f). Akam may not have published a release yet." \
+                        "see https://github.com/$KIT_REPO/releases for the versions that exist, or use a kit you already have: ./akam get-kit --kit FILE (or build from source: ./akam build)."
+                else
+                    ui_fail "download of $f failed (curl exit $rc)." \
+                        "check your network and retry, or use a kit you already have: ./akam get-kit --kit FILE."
+                fi
+                return 1
+            fi
         done
-        if ! run_cmd curl --proto '=https' --tlsv1.2 -fL --retry 3 -o "$dl/SHA256SUMS.sig" "$base/SHA256SUMS.sig"; then
+        rc=0
+        download_file "$base/SHA256SUMS.sig" "$dl/SHA256SUMS.sig" || rc=$?
+        if [ "$rc" -eq 22 ]; then
             ui_warn "no signature file in this release: the kit would be checked by checksum only."
-            rm -f "$dl/SHA256SUMS.sig"
+            if [ "$UI_DRY" != 1 ]; then rm -f "$dl/SHA256SUMS.sig"; fi
+        elif [ "$rc" -ne 0 ]; then
+            if [ "$UI_DRY" != 1 ]; then rm -f "$dl/SHA256SUMS.sig"; fi
+            ui_fail "download of SHA256SUMS.sig failed (curl exit $rc)." "check your network and retry."
+            return 1
         fi
     fi
     if [ -e "$kit" ]; then
@@ -377,7 +412,7 @@ cmd_get_kit() {
     ext="$STATE_DIR/kit"
     if [ "$UI_DRY" = 1 ]; then ext="$STATE_DIR/kit.dry"; fi
     vargs=(--extract-to "$ext")
-    if [ -n "$OPT_ALLOW_UNSIGNED" ]; then vargs+=(--allow-unsigned); fi
+    if [ -n "$OPT_ALLOW_UNSIGNED" ]; then vargs+=(--allow-unsigned); unsigned=1; fi
     if [ -n "$OPT_EXPECT_SHA256" ]; then vargs+=(--expect-sha256 "$OPT_EXPECT_SHA256"); fi
     if [ ! -e "$kit" ]; then
         ui_say "  WOULD run: $(wiz_tool verify_kit) ${vargs[*]} $kit   (kit not downloaded in a rehearsal)"
@@ -396,6 +431,7 @@ cmd_get_kit() {
         if ! ui_confirm_typed "Use this kit without a signature?" "USE UNSIGNED KIT"; then
             { ui_fail "unsigned kit refused." "get the signed release, or pass --allow-unsigned if you really mean it."; return 1; }
         fi
+        unsigned=1
         run_ro rm -rf "$ext"
         rc=0
         run_ro bash "$(wiz_tool verify_kit)" "${vargs[@]}" --allow-unsigned "$kit" || rc=$?
@@ -414,9 +450,13 @@ cmd_get_kit() {
     state_set kit_path "$kit"
     state_set kit_sha "$sha"
     state_set kit_format "$fmt"
+    state_set kit_unsigned_ok "$unsigned"
     state_set kit_version "$(_kit_manifest_value "$ext" akam_version)"
     state_mark_done get-kit
     ui_good "  Kit verified (format $fmt, sha256 ${sha:0:12}...)."
+    if [ -z "$OPT_EXPECT_SHA256" ]; then
+        ui_say "  Tip: compare that sha256 with the one in the release notes, or pass --expect-sha256 HEX."
+    fi
 }
 
 cmd_build() {
@@ -439,88 +479,171 @@ cmd_build() {
 }
 
 # ------------------------------------------------------------------ SD card adapter
-# Contract with tools/sd (parallel work), called through bash:
-#   list-candidates                         one removable disk per line
-#   prepare --mode backup|first-boot|flash-files --device DEV [--pubkey F] [--image F]
-#   verify  --mode MODE --device DEV
-# Wi-Fi settings reach it ONLY through the environment (AKAM_SD_SSID, AKAM_SD_PASS).
+# Real CLI: tools/sd/sd_card.sh, always called through bash (exit 0 ok, 1 refused/failed, 2 usage):
+#   list-candidates [--human]                  eligible whole disks; TSV: dev, bytes, model, transport, mounts
+#   prepare --mode backup|first-boot --device DEV [--pubkey F] [--toolkit DIR]   ERASES the card
+#   prepare --mode flash-files --device DEV --image F --flash-tool F --backup-dir DIR   adds files, no erase
+#   verify  --mode MODE (--device DEV | --mount DIR | --stage-dir DIR) [--toolkit DIR]
+#   wipe    --device DEV                       zero-fills the card
+# Wi-Fi settings reach it ONLY through the environment (AKAM_WIFI_SSID, AKAM_WIFI_PASS).
+# The SD tool asks for the typed "ERASE <device>" itself (real terminal only) and calls sudo
+# itself for the disk work; this wizard never runs sudo.
 sd_available() { [ -f "$(wiz_tool sd_cli)" ]; }
 
-# sd_call ARGS...: run the SD CLI with the Wi-Fi environment; rehearsal only shows it.
+sd_toolkit_dir() { printf '%s\n' "${AKAM_TOOLKIT_DIR:-$HOME/akam-sdprep/toolkit}"; }
+
+# sd_call ARGS...: run the SD CLI; the Wi-Fi environment is given to "prepare" only.
 sd_call() {
     local rc=0
-    export AKAM_SD_SSID="${SD_SSID:-}" AKAM_SD_PASS="${SD_PASS:-}"
+    if [ "$1" = prepare ] && [ -n "${SD_SSID:-}" ] && [ -n "${SD_PASS:-}" ]; then
+        export AKAM_WIFI_SSID="$SD_SSID" AKAM_WIFI_PASS="$SD_PASS"
+    fi
     run_cmd bash "$(wiz_tool sd_cli)" "$@" || rc=$?
-    unset AKAM_SD_SSID AKAM_SD_PASS
+    unset AKAM_WIFI_SSID AKAM_WIFI_PASS
     return "$rc"
 }
 
-# sd_choose_device: set SD_DEV (asks, with the candidate list when the SD CLI exists).
+# sd_need_cli HINT: fail with a manual fallback when the SD tool is missing.
+sd_need_cli() {
+    if [ "$UI_DRY" != 1 ] && ! sd_available; then
+        ui_fail "the SD card tool ($(wiz_tool sd_cli)) is not available in this checkout." "$1"
+        return 1
+    fi
+}
+
+# sd_choose_device: set SD_DEV (whole disk). Lists the eligible cards, then asks.
 sd_choose_device() {
+    local cand="" rc=0 line found=0
     SD_DEV=$OPT_DEVICE
-    if [ -z "$SD_DEV" ]; then
-        if sd_available; then
-            ui_say "  Removable disks found:"
-            run_ro bash "$(wiz_tool sd_cli)" list-candidates || true
+    if sd_available; then
+        ui_say "  Removable disks that can be used as a microSD card (system disks are never listed):"
+        run_ro bash "$(wiz_tool sd_cli)" list-candidates --human || true
+        run_ro_cap bash "$(wiz_tool sd_cli)" list-candidates || rc=$?
+        if [ "$rc" -eq 0 ]; then cand=$CAPTURED; fi
+        if [ -z "$cand" ] && [ "$UI_DRY" != 1 ]; then
+            { ui_fail "no microSD card found." "insert the card (USB reader or built-in SD slot), wait a few seconds, then run this step again."; return 1; }
         fi
-        if [ "$UI_DRY" = 1 ]; then SD_DEV=/dev/sdX; else
-            ui_prompt "  Device of your microSD card (for example /dev/sdb), or empty to cancel:" "" || return 1
+    fi
+    if [ -z "$SD_DEV" ]; then
+        if [ "$UI_DRY" = 1 ]; then
+            SD_DEV=/dev/sdX
+        else
+            ui_prompt "  Device of your microSD card from the list above (for example /dev/sdb), or empty to cancel:" "" || return 1
             SD_DEV=$ANSWER
         fi
     fi
     case $SD_DEV in
         /dev/?*) ;;
-        *) { ui_fail "no valid device given." "pass --device /dev/sdX (whole disk, not a partition)."; return 1; } ;;
+        *) { ui_fail "no valid device given." "pass --device /dev/sdX (the whole disk, not a partition)."; return 1; } ;;
     esac
     case $SD_DEV in
-        *" "*) { ui_fail "invalid device name." ""; return 1; } ;;
+        *" "*) { ui_fail "invalid device name." "pass --device /dev/sdX."; return 1; } ;;
     esac
+    # A /dev/disk/by-id link is resolved here so that the typed phrase names the real disk.
+    if [ -L "$SD_DEV" ]; then SD_DEV=$(readlink -f -- "$SD_DEV"); fi
+    if [ -n "$cand" ] && [ "$UI_DRY" != 1 ]; then
+        while IFS=$'\t' read -r line _; do
+            if [ "$line" = "$SD_DEV" ]; then found=1; fi
+        done <<<"$cand"
+        if [ "$found" != 1 ]; then
+            { ui_fail "$SD_DEV is not in the list of usable cards." \
+                "pick a device from the list above; system disks, partitions and non-removable disks are refused on purpose."; return 1; }
+        fi
+    fi
 }
 
-# sd_confirm_erase: typed ERASE <disk>; needs a TTY.
+# sd_get_wifi: SD_SSID / SD_PASS from --ssid, the environment (read once by ./akam) or a prompt.
+sd_get_wifi() {
+    SD_SSID=${OPT_SSID:-${ENV_WIFI_SSID:-}}
+    SD_PASS=${ENV_WIFI_PASS:-}
+    log_add_secret "$SD_PASS"
+    if [ "$UI_DRY" = 1 ]; then return 0; fi
+    if [ -z "$SD_SSID" ]; then
+        ui_prompt "  Wi-Fi network name (SSID, 2.4 GHz):" "" || return 1
+        SD_SSID=$ANSWER
+    fi
+    if [ -z "$SD_PASS" ]; then
+        ui_secret "  Wi-Fi password (typed without echo, never saved by the wizard):" || return 1
+        SD_PASS=$SECRET
+    fi
+    if [ -z "$SD_SSID" ] || [ -z "$SD_PASS" ]; then
+        { ui_fail "Wi-Fi name and password are required." "the camera needs them to join your network."; return 1; }
+    fi
+    ui_say "  Wi-Fi settings go to the SD tool through its environment (AKAM_WIFI_PASS=***), not the command line."
+}
+
+# sd_confirm_erase: typed ERASE <device> (the SD tool asks the same again); needs a real terminal.
 sd_confirm_erase() {
-    local name=${SD_DEV##*/}
     ui_require_tty "erasing the microSD card" || return 1
     ui_warn "everything on $SD_DEV will be ERASED. Check the model and size above: this must be your microSD card."
-    ui_confirm_typed "Erase $SD_DEV?" "ERASE $name" ||
+    ui_say "  You will type the phrase twice on purpose: once here, once in the SD tool."
+    ui_say "  The SD tool also asks for your sudo password itself (disk access needs root)."
+    ui_confirm_typed "Erase $SD_DEV?" "ERASE $SD_DEV" ||
         { ui_fail "erase not confirmed." "nothing was changed."; return 1; }
 }
 
 cmd_prepare_backup_sd() {
+    local tk
     step_need prepare-backup-sd || return 1
     step_banner prepare-backup-sd
     ui_say "  This card boots the camera into a temporary rescue shell (Telnet on port 24) so that"
     ui_say "  you can copy the original firmware. It holds your Wi-Fi password IN CLEAR TEXT:"
-    ui_say "  treat the card as secret and delete wifi.conf from it when you are done."
-    if [ "$UI_DRY" != 1 ] && ! sd_available; then
-        ui_fail "the SD card tool ($(wiz_tool sd_cli)) is not available in this checkout." \
-            "follow docs/akam_v1_backup_sd.md section 5 by hand, then run: ./akam step find-camera"
-        return 1
-    fi
+    ui_say "  treat the card as secret and wipe it when you are done (./akam wipe-sd)."
+    sd_need_cli "follow docs/akam_v1_backup_sd.md section 5 by hand, then run: ./akam step find-camera" || return 1
+    ui_require_tty "preparing the backup card" || return 1
+    tk=$(sd_toolkit_dir)
+    ui_say "  The SD tool uses the pinned LSC toolkit in $tk (downloaded once if missing, then"
+    ui_say "  checked against a fixed commit and file hashes)."
     sd_choose_device || return 1
-    SD_SSID=${OPT_SSID:-${AKAM_SD_SSID:-}}
-    SD_PASS=${AKAM_SD_PASS:-}
-    log_add_secret "$SD_PASS"
-    if [ "$UI_DRY" != 1 ]; then
-        if [ -z "$SD_SSID" ]; then
-            ui_prompt "  Wi-Fi network name (SSID):" "" || return 1
-            SD_SSID=$ANSWER
-        fi
-        if [ -z "$SD_PASS" ]; then
-            ui_secret "  Wi-Fi password (typed without echo, never saved by the wizard):" || return 1
-            SD_PASS=$SECRET
-        fi
-        if [ -z "$SD_SSID" ] || [ -z "$SD_PASS" ]; then
-            { ui_fail "Wi-Fi name and password are required." ""; return 1; }
-        fi
-    fi
-    ui_say "  Wi-Fi settings are passed to the SD tool through the environment (AKAM_SD_PASS=***)."
+    sd_get_wifi || return 1
     sd_confirm_erase || return 1
-    sd_call prepare --mode backup --device "$SD_DEV" || { ui_fail "preparing the card failed." "nothing else was changed; fix the problem above and retry."; return 1; }
-    sd_call verify --mode backup --device "$SD_DEV" || { ui_fail "the card did not verify." "prepare it again."; return 1; }
+    sd_call prepare --mode backup --device "$SD_DEV" --toolkit "$tk" ||
+        { ui_fail "preparing the card failed." "nothing else was changed; fix the problem above and retry."; return 1; }
+    sd_call verify --mode backup --device "$SD_DEV" --toolkit "$tk" ||
+        { ui_fail "the card did not verify." "prepare it again."; return 1; }
     state_set backup_sd_device "$SD_DEV"
     state_mark_done prepare-backup-sd
     ui_good "  Backup card ready. Put it in the camera, power the camera on, then run: ./akam"
+}
+
+# cmd_wipe_sd: zero-fill a card that holds the Wi-Fi password (or a dump).
+cmd_wipe_sd() {
+    local rc=0 d
+    ui_bold "Erase a microSD card"
+    ui_say "  Why: the cards made by this wizard hold your Wi-Fi password in clear text."
+    ui_say "  Risk: ERASES the whole card (it takes a few minutes). Nothing else is touched."
+    sd_need_cli "wipe the card with your own tools (for example: sudo dd if=/dev/zero of=/dev/sdX bs=4M)" || return 1
+    ui_require_tty "erasing the microSD card" || return 1
+    sd_choose_device || return 1
+    sd_confirm_erase || return 1
+    run_cmd bash "$(wiz_tool sd_cli)" wipe --device "$SD_DEV" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        { ui_fail "wiping the card failed." "nothing else was changed; fix the problem above and retry."; return 1; }
+    fi
+    for d in backup_sd_device flash_sd_device; do
+        if [ "$(state_get "$d")" = "$SD_DEV" ]; then state_unset "$d"; fi
+    done
+    ui_good "  Card wiped: it no longer holds your Wi-Fi password."
+}
+
+# wipe_offer: after the last step, offer to wipe the cards recorded as holding a secret.
+wipe_offer() {
+    if [ -z "$(state_get backup_sd_device)$(state_get flash_sd_device)" ]; then return 0; fi
+    ui_blank
+    ui_warn "your microSD card(s) still hold your Wi-Fi password in clear text (wifi.conf)."
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD offer: wipe them now (typed ERASE <device>), or later with ./akam wipe-sd"
+        return 0
+    fi
+    if ! host_is_tty; then
+        ui_say "  Wipe them with: ./akam wipe-sd"
+        return 0
+    fi
+    if ui_confirm "  Wipe a card now?"; then
+        cmd_wipe_sd || ui_say "  You can wipe later with: ./akam wipe-sd"
+    else
+        ui_say "  You can wipe later with: ./akam wipe-sd"
+    fi
 }
 
 # ------------------------------------------------------------------ camera placeholders (next wave)
@@ -565,7 +688,8 @@ cmd_verify() {
     step_need verify || return 1
     placeholder_step verify "docs/akam_v1_ssh_and_lockdown.md and docs/akam_v1_test_plan.md" \
         "Check SSH with your key: ssh -i ~/.ssh/akam root@<ip>, then run akam_hwcheck.sh." \
-        "Remove the card, reboot, and confirm only ports 22, 554 and 8091 are open."
+        "Remove the card, reboot, and confirm only ports 22, 554 and 8091 are open." || return 1
+    wipe_offer
 }
 
 # ------------------------------------------------------------------ backup (import + checks)
@@ -656,7 +780,7 @@ cmd_image() {
     out=${OPT_OUT:-$HOME/akam-image-$(date +%Y%m%d-%H%M%S)}
     pass=()
     if [ -n "$OPT_COMP" ]; then pass+=(--comp "$OPT_COMP"); fi
-    if [ -n "$OPT_ALLOW_UNSIGNED" ]; then pass+=(--allow-unsigned); fi
+    if [ -n "$OPT_ALLOW_UNSIGNED" ] || [ "$(state_get kit_unsigned_ok)" = 1 ]; then pass+=(--allow-unsigned); fi
 
     if [ -f "$bdir/mtdblock7.bin" ]; then
         backup_check "$bdir" || return 1
@@ -766,7 +890,7 @@ pubkey_check() {
 }
 
 cmd_prepare_flash_sd() {
-    local pub=${OPT_PUBKEY:-$HOME/.ssh/akam.pub}
+    local pub=${OPT_PUBKEY:-$HOME/.ssh/akam.pub} ft img bk tk
     step_need prepare-flash-sd || return 1
     step_banner prepare-flash-sd
     if [ ! -f "$pub" ]; then
@@ -779,33 +903,31 @@ cmd_prepare_flash_sd() {
         fi
     fi
     if [ -f "$pub" ] || [ "$UI_DRY" != 1 ]; then pubkey_check "$pub" || return 1; fi
-    if [ "$UI_DRY" != 1 ] && ! sd_available; then
-        ui_fail "the SD card tool ($(wiz_tool sd_cli)) is not available in this checkout." \
-            "prepare the card by hand: see docs/akam_v1_ssh_and_lockdown.md and tools/sd/prepare_first_boot_sd.sh"
+    sd_need_cli "prepare the card by hand: see docs/akam_v1_ssh_and_lockdown.md and tools/sd/prepare_first_boot_sd.sh" || return 1
+    ui_require_tty "preparing the flash card" || return 1
+    if [ "$(state_get mode)" = source ]; then ft=$ROOT/src/ak_rtsp/flash_tool; else ft=$STATE_DIR/kit/bin/flash_tool; fi
+    if [ "$UI_DRY" != 1 ] && [ ! -s "$ft" ]; then
+        ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."
         return 1
     fi
+    img=$(state_get image_path)
+    bk=$(state_get backup_dir)
+    tk=$(sd_toolkit_dir)
     sd_choose_device || return 1
-    SD_SSID=${OPT_SSID:-${AKAM_SD_SSID:-}}
-    SD_PASS=${AKAM_SD_PASS:-}
-    log_add_secret "$SD_PASS"
-    if [ "$UI_DRY" != 1 ]; then
-        if [ -z "$SD_SSID" ]; then
-            ui_prompt "  Wi-Fi network name (SSID):" "" || return 1
-            SD_SSID=$ANSWER
-        fi
-        if [ -z "$SD_PASS" ]; then
-            ui_secret "  Wi-Fi password (typed without echo, never saved by the wizard):" || return 1
-            SD_PASS=$SECRET
-        fi
-    fi
+    sd_get_wifi || return 1
     sd_confirm_erase || return 1
-    sd_call prepare --mode first-boot --device "$SD_DEV" --pubkey "$pub" --image "$(state_get image_path)" ||
+    sd_call prepare --mode first-boot --device "$SD_DEV" --pubkey "$pub" --toolkit "$tk" ||
         { ui_fail "preparing the card failed." "the camera was not touched; fix the problem above and retry."; return 1; }
-    sd_call verify --mode first-boot --device "$SD_DEV" ||
+    sd_call prepare --mode flash-files --device "$SD_DEV" --image "$img" --flash-tool "$ft" --backup-dir "$bk" ||
+        { ui_fail "adding the flash files to the card failed." "the card is already erased: run this step again."; return 1; }
+    sd_call verify --mode first-boot --device "$SD_DEV" --toolkit "$tk" ||
         { ui_fail "the card did not verify (no *.bin at its root, authorized_keys must be your public key)." "prepare it again."; return 1; }
+    sd_call verify --mode flash-files --device "$SD_DEV" ||
+        { ui_fail "the flash files on the card did not verify." "prepare it again."; return 1; }
+    state_set flash_sd_device "$SD_DEV"
     state_set flash_sd_image_sha "$(state_get image_sha)"
     state_mark_done prepare-flash-sd
-    ui_good "  Flash card ready. Remember: wifi.conf on the card holds your Wi-Fi password in clear text."
+    ui_good "  Flash card ready. Remember: wifi.conf on the card holds your Wi-Fi password in clear text (./akam wipe-sd erases it)."
 }
 
 # ------------------------------------------------------------------ dispatcher

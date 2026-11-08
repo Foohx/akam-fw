@@ -35,6 +35,7 @@ Commands:
   backup             accept your backup folder (--backup-dir DIR)
   image              build the Akam image from your backup
   prepare-flash-sd   prepare the microSD card used to flash the camera
+  wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
   step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
                      find-camera, backup, image, prepare-flash-sd, flash, verify)
   status             show every step: done / todo / blocked
@@ -53,15 +54,16 @@ Options:
                      allow a stock APP compression other than xz/gzip (expert)
   --device DEV       whole microSD disk, for example /dev/sdb
   --pubkey FILE      SSH public key for the flash card (default ~/.ssh/akam.pub)
-  --ssid NAME        Wi-Fi name (the password is asked without echo, or AKAM_SD_PASS)
+  --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
   --profile P        doctor profile: kit | build | all
   --state-dir DIR    where progress and the log are kept
                      (default ${XDG_STATE_HOME:-~/.local/state}/akam)
   --no-color         plain output (also automatic when not on a terminal)
 
-Safety: the wizard never runs sudo (it prints the command), shows every command before
-it runs, refuses destructive actions without a terminal, and never stores your Wi-Fi
-password. Erasing a card needs a typed ERASE <disk>; flashing needs a typed YES.
+Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
+for the disk work), shows every command before it runs, refuses destructive actions without a
+terminal, and never stores your Wi-Fi password. Erasing a card needs a typed ERASE <device>;
+flashing needs a typed YES.
 EOF
 }
 
@@ -108,7 +110,12 @@ UI_DRY=$DRY
 SD_DIR=${STATE_OVERRIDE:-$(state_default_dir)}
 state_init "$SD_DIR" "$DRY"
 log_init "$SD_DIR"
-log_add_secret "${AKAM_SD_PASS:-}"
+# The Wi-Fi settings are read once from the environment and removed from it, so that no tool
+# started by the wizard inherits them (only the SD tool gets them, explicitly).
+ENV_WIFI_SSID=${AKAM_WIFI_SSID:-${AKAM_SD_SSID:-}}
+ENV_WIFI_PASS=${AKAM_WIFI_PASS:-${AKAM_SD_PASS:-}}
+unset AKAM_WIFI_SSID AKAM_WIFI_PASS AKAM_SD_SSID AKAM_SD_PASS
+log_add_secret "$ENV_WIFI_PASS"
 state_set wizard_version "$AKAM_WIZARD_VERSION"
 log_line "START akam ${CMD:-menu} dry=$DRY"
 if [ "$DRY" = 1 ]; then
@@ -138,6 +145,7 @@ case $CMD in
     backup) cmd_backup || rc=$? ;;
     image) cmd_image || rc=$? ;;
     prepare-flash-sd) cmd_prepare_flash_sd || rc=$? ;;
+    wipe-sd) cmd_wipe_sd || rc=$? ;;
     find-camera) cmd_find_camera || rc=$? ;;
     flash) cmd_flash || rc=$? ;;
     verify) cmd_verify || rc=$? ;;
