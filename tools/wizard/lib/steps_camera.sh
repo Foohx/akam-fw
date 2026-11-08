@@ -619,6 +619,8 @@ flash_telnet() {
     fi
     [ -s "$ft" ] || { ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."; return 1; }
     cam_session_open || return 1
+    # Same layout gate as the backup: never aim /dev/mtd7 at a camera whose table is not the supported one.
+    bk_layout_check || { camsh_close; return 1; }
     ft_find_card || { camsh_close; return 1; }
     ft_ensure_image "$img" "$md5" || { camsh_close; return 1; }
     ft_ensure_file "$ft" /mnt/flash_tool exec "flash_tool" || { camsh_close; return 1; }
@@ -629,7 +631,8 @@ flash_telnet() {
     ui_warn "Keep the camera powered and do not unplug anything until this step says it is finished."
     ui_say "  Image md5 (this PC and the card): $md5"
     camsh_stream_set 1 "$FT_SKIP_RE"
-    camsh_start 'sh /mnt/install_with_flash_tool.sh' || { camsh_stream_set 0; camsh_close; return 1; }
+    # HUP is ignored: if the telnet link drops while it writes, the kernel's hangup must not kill flash_tool.
+    camsh_start "trap '' HUP; sh /mnt/install_with_flash_tool.sh" || { camsh_stream_set 0; camsh_close; return 1; }
     if [ "$CAMSH_MANUAL" = 1 ]; then
         camsh_stream_set 0
         flash_telnet_manual "$md5" "$label" || return 1
@@ -662,11 +665,20 @@ flash_telnet() {
         camsh_send_line "YES" || { ui_fail "lost the camera session." "DO NOT power-cycle; check the camera."; return 1; }
         camsh_stream_set 1 "$FT_SKIP_RE"
         rc=0
+        # The write is under way: Ctrl-C, hangup or kill of this wizard must not end it half way.
+        ui_warn "Writing. Do NOT press Ctrl-C and do NOT unplug anything until this says it is finished."
+        trap '' INT HUP TERM
         camsh_finish 900 || rc=$?
+        trap - INT HUP TERM
         camsh_stream_set 0
         if [ "$rc" -ne 0 ] || [ "$CAMSH_RC" != 0 ] || ! printf '%s\n' "$CAMSH_OUT" | grep -q 'completed successfully'; then
             ui_fail "the flash did not report success." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
-            camsh_close
+            if [ "$rc" -eq 1 ]; then
+                ui_warn "no output for a long time: the write may STILL be running. The session is left open and nothing is sent again;"
+                ui_warn "wait several minutes, then read the partition back by hand: dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum (must be $md5)."
+            else
+                camsh_close
+            fi
             return 1
         fi
     fi
@@ -740,7 +752,11 @@ cmd_flash() {
     md5=$IMG_MD5
     bk=$(state_get backup_dir)
     app=$(host_sha256 "$bk/mtdblock7.bin" 2>/dev/null || true)
-    if [ -n "$app" ]; then cam_confirm_untested "$app" "Flash with untested firmware?" || return 1; fi
+    if [ -z "$app" ]; then
+        ui_fail "the stock APP backup ($bk/mtdblock7.bin) is not readable, so the hardware cannot be checked." "run: ./akam backup --backup-dir DIR"
+        return 1
+    fi
+    cam_confirm_untested "$app" "Flash with untested firmware?" || return 1
     cam_key
     route=telnet
     if [ "$(state_get camera_kind)" = akam ] || [ "$(state_get camera_telnet)" != 1 ]; then

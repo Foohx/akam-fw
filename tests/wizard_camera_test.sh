@@ -227,6 +227,20 @@ check "flash: nothing rebooted the camera" test ! -s "$CAM_B_ROOT/ctl/events"
 check "flash: the step is done" bash -c 'grep -q "^step_flash_done=" "$1" && grep -q "^flash_md5=$2$" "$1"' _ "$S/state" "$IMG_MD5"
 check "flash: the log contains no YES sent by the wizard" bash -c '! grep -q "CAM> YES" "$1"' _ "$S/akam.log"
 
+check "flash: the script runs with HUP ignored (a dropped link must not kill the write)" bash -c 'grep -q "; trap .. HUP; sh /mnt/install_with_flash_tool.sh" "$1"' _ "$CAM_B_ROOT/ctl/commands.log"
+
+# ------------------------------------------------------------------ flash: layout mismatch refused before any write
+S=$(new_state flash_layout)
+seed_flash_state "$S" stock 1
+cp "$CAM_B_ROOT/proc/mtd" "$T/mtdB.orig"
+sed -i 's/00500000 00001000 "APP"/00600000 00001000 "APP"/' "$CAM_B_ROOT/proc/mtd"
+: >"$CAM_B_ROOT/ctl/confirm.log"
+: >"$CAM_B_ROOT/ctl/commands.log"
+printf 'YES\n' | a "$S" flash >"$T/fl_layout.out" 2>&1
+check "flash: a different MTD layout is refused" bash -c '[ "$1" -ne 0 ] && grep -q "not the supported 8-partition layout" "$2"' _ $? "$T/fl_layout.out"
+check "flash: layout refusal never starts the flash script" bash -c '! grep -q "install_with_flash_tool" "$1" && [ ! -s "$2" ]' _ "$CAM_B_ROOT/ctl/commands.log" "$CAM_B_ROOT/ctl/confirm.log"
+cp "$T/mtdB.orig" "$CAM_B_ROOT/proc/mtd"
+
 # ------------------------------------------------------------------ restore over telnet (pushes the stock APP)
 S=$(new_state restore)
 seed_flash_state "$S" stock 1
