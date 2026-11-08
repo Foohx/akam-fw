@@ -370,6 +370,8 @@ void drain_venc_ring(void)
     }
 }
 
+/* Returns 1 when a frame was sent, 0 when none was ready, -1 on a fatal
+ * error (the caller drops the client). */
 static int send_video_frame(Client *client)
 {
     struct venc_stream_req req;
@@ -381,8 +383,7 @@ static int send_video_frame(Client *client)
 
     if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) < 0) {
         if (errno == EAGAIN || errno == EFAULT || errno == EINTR) {
-            usleep(2000);
-            return 0;
+            return 0; /* nothing ready: the caller waits in poll() */
         }
         /* Unexpected error — drop this client, encoder keeps running */
         perror("VENC_IOCTL_GET_STREAM");
@@ -445,7 +446,7 @@ static int send_video_frame(Client *client)
         perror("VENC_IOCTL_RELEASE_STREAM");
         return -1;
     }
-    return 0;
+    return 1;
 }
 
 /* -------------------------------------------------------------------------
@@ -562,9 +563,14 @@ static void send_rtcp_reports(Client *client) {
  * Client connection loop
  *
  * Uses poll() for incoming RTSP commands; the client socket remains blocking for writes:
- *   timeout = 0   when is_playing (check for commands, then immediately send)
+ *   timeout = 0 / PLAY_IDLE_POLL_MS when is_playing (0 right after a frame,
+ *             PLAY_IDLE_POLL_MS when the encoder had nothing ready)
  *   timeout = 5000 ms when idle (block until a request arrives)
  * ------------------------------------------------------------------------- */
+/* Poll timeout while playing and the encoder has no frame ready. Short
+ * enough for 15 fps video (66 ms) and the 32 ms audio period. */
+#define PLAY_IDLE_POLL_MS 4
+
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
@@ -598,6 +604,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
 
     char buf[4096];
     size_t buf_len = 0;
+    bool video_idle = false;
 
     printf("[ak_rtsp] Client connected\n");
 
@@ -605,7 +612,12 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         struct pollfd pfd;
         pfd.fd = client_fd;
         pfd.events = POLLIN;
-        int poll_ret = poll(&pfd, 1, client.is_playing ? 0 : 5000);
+        /* While playing, wait PLAY_IDLE_POLL_MS in poll() when the last pass
+         * found no video frame (this replaces a usleep(2000) after every empty
+         * GET_STREAM and wakes at once on an RTSP request); poll again with
+         * no delay right after a frame, in case the next one is queued. */
+        int poll_ret = poll(&pfd, 1,
+                            client.is_playing ? (video_idle ? PLAY_IDLE_POLL_MS : 0) : 5000);
 
         if (poll_ret < 0) {
             if (errno == EINTR) continue;
@@ -664,10 +676,12 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         }
 
         if (client.is_playing) {
-            if (send_video_frame(&client) < 0) {
+            int vret = send_video_frame(&client);
+            if (vret < 0) {
                 printf("[ak_rtsp] Error sending frame, closing\n");
                 break;
             }
+            video_idle = (vret == 0);
             send_audio_frame(&client); /* no-op until the audio track is SETUP */
             send_rtcp_reports(&client); /* no-op for tracks not yet SETUP, or off-interval */
             if (client.tx_fail) {
