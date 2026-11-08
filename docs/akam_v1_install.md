@@ -15,6 +15,35 @@ the map; each step has its own guide.
 4. [Flash only the APP partition, verify, and know how to restore](akam_v1_flash_and_restore.md).
 5. [Run the hardware checks and fill in the resource report](akam_v1_test_plan.md).
 
+## Using the wizard
+
+`./akam` walks through the PC-side steps and remembers where you stopped (state and log:
+`~/.local/state/akam/`, never containing your Wi-Fi password). It runs on Arch and Debian/Ubuntu.
+
+```
+./akam doctor            # check the tools on this computer (never runs sudo, prints the install command)
+./akam get-kit --version X.Y.Z   # download + verify the prebuilt kit (or: --kit FILE; or ./akam build)
+./akam backup --backup-dir DIR   # accept your backup folder (8 partitions, two copies on two media)
+./akam image             # build the Akam image: shows the hardware verdict and the stock compression
+./akam --dry-run         # rehearse everything: shows each command, changes nothing
+./akam prepare-backup-sd # microSD card for the backup (uses tools/sd/sd_card.sh)
+./akam prepare-flash-sd  # microSD card for the flash: key, image, flash_tool, original APP
+./akam wipe-sd           # erase a card that holds your Wi-Fi password (offered again at the end)
+./akam status            # every step: done / todo / blocked
+```
+
+`get-kit` downloads from the project's GitHub Releases over HTTPS and checks the checksum and the
+signature (`tools/release/verify_kit.sh`) before anything from the download is used. If no release has
+been published yet, it says so: use `--kit FILE` with a kit you already have, or `./akam build`.
+
+Untested firmware needs the typed phrase `I UNDERSTAND THIS IS UNTESTED`; erasing a card needs a typed
+`ERASE <device>` (for example `ERASE /dev/sdb`), asked once by the wizard and once by the SD tool, on a
+real terminal only. The wizard never runs `sudo` itself; the SD tool (`tools/sd/sd_card.sh`) asks `sudo`
+for the disk work and refuses system disks, partitions and non-removable disks. Wi-Fi settings reach the SD
+tool through the environment (`AKAM_WIFI_SSID`, `AKAM_WIFI_PASS`, or `AKAM_SD_PASS` read by the wizard),
+never the command line, the state file or the log. The camera-side steps (find the camera, back up over Telnet, flash, verify) are not
+automated yet: the wizard prints the manual instructions of the guides above for them.
+
 ## 2. What changes on the camera
 
 | Partition | Akam V1 |

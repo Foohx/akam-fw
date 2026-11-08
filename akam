@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# akam: guided setup for Akam on the LSC Smart Indoor 1080p camera (this PC side).
+# Run ./akam help. All logic lives in tools/wizard/lib/*.sh; this file only dispatches.
+set -euo pipefail
+
+AKAM_WIZARD_VERSION=${AKAM_WIZARD_VERSION:-1.0.0-dev}
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=tools/lib/host.sh
+. "$ROOT/tools/lib/host.sh"
+# shellcheck source=tools/wizard/lib/log.sh
+. "$ROOT/tools/wizard/lib/log.sh"
+# shellcheck source=tools/wizard/lib/state.sh
+. "$ROOT/tools/wizard/lib/state.sh"
+# shellcheck source=tools/wizard/lib/ui.sh
+. "$ROOT/tools/wizard/lib/ui.sh"
+# shellcheck source=tools/wizard/lib/steps_host.sh
+. "$ROOT/tools/wizard/lib/steps_host.sh"
+
+# Never leak secrets through shell tracing.
+set +x
+
+usage() {
+    cat <<'EOF'
+akam - guided setup for Akam (PC side)
+
+Usage: ./akam [options] [command]
+
+Commands:
+  (none)             step menu with status; resumes where you stopped
+  doctor             check this computer (tools); changes nothing
+  get-kit            download and verify the prebuilt kit (no compiling)
+  build              build from source instead (optional, needs more tools)
+  prepare-backup-sd  prepare the microSD card used to back up the camera
+  backup             accept your backup folder (--backup-dir DIR)
+  image              build the Akam image from your backup
+  prepare-flash-sd   prepare the microSD card used to flash the camera
+  wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
+  step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
+                     find-camera, backup, image, prepare-flash-sd, flash, verify)
+  status             show every step: done / todo / blocked
+  help               this text
+
+Options:
+  --dry-run          rehearse: show every command, change nothing, ask nothing
+  --kit FILE         use a local kit (tarball with SHA256SUMS next to it, or folder)
+  --version X.Y.Z    release to download for get-kit
+  --allow-unsigned   accept a kit without a signature (checksum only)
+  --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
+  --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)
+  --out DIR          where the image is written (default ~/akam-image-<date>)
+  --comp xz|gzip     override the stock APP compression (not recommended)
+  --allow-unknown-stock-comp
+                     allow a stock APP compression other than xz/gzip (expert)
+  --device DEV       whole microSD disk, for example /dev/sdb
+  --pubkey FILE      SSH public key for the flash card (default ~/.ssh/akam.pub)
+  --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
+  --profile P        doctor profile: kit | build | all
+  --state-dir DIR    where progress and the log are kept
+                     (default ${XDG_STATE_HOME:-~/.local/state}/akam)
+  --no-color         plain output (also automatic when not on a terminal)
+
+Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
+for the disk work), shows every command before it runs, refuses destructive actions without a
+terminal, and never stores your Wi-Fi password. Erasing a card needs a typed ERASE <device>;
+flashing needs a typed YES.
+EOF
+}
+
+OPT_KIT="" OPT_VERSION="" OPT_ALLOW_UNSIGNED="" OPT_EXPECT_SHA256="" OPT_BACKUP_DIR=""
+OPT_OUT="" OPT_COMP="" OPT_ALLOW_UNKNOWN_COMP="" OPT_DEVICE="" OPT_PUBKEY="" OPT_SSID=""
+OPT_PROFILE="" OPT_BUILD=0
+DRY=0
+STATE_OVERRIDE=""
+ARGS=()
+need_val() { [ "$2" -ge 2 ] || { echo "akam: $1 needs a value (see ./akam help)" >&2; exit 2; }; }
+while [ $# -gt 0 ]; do
+    case $1 in
+        --dry-run) DRY=1 ;;
+        --no-color) export NO_COLOR=1 ;;
+        --allow-unsigned) OPT_ALLOW_UNSIGNED=1 ;;
+        --allow-unknown-stock-comp) OPT_ALLOW_UNKNOWN_COMP=1 ;;
+        --kit) need_val "$1" $#; OPT_KIT=$2; shift ;;
+        --version) need_val "$1" $#; OPT_VERSION=$2; shift ;;
+        --expect-sha256) need_val "$1" $#; OPT_EXPECT_SHA256=$2; shift ;;
+        --backup-dir) need_val "$1" $#; OPT_BACKUP_DIR=$2; shift ;;
+        --out) need_val "$1" $#; OPT_OUT=$2; shift ;;
+        --comp) need_val "$1" $#; OPT_COMP=$2; shift ;;
+        --device) need_val "$1" $#; OPT_DEVICE=$2; shift ;;
+        --pubkey) need_val "$1" $#; OPT_PUBKEY=$2; shift ;;
+        --ssid) need_val "$1" $#; OPT_SSID=$2; shift ;;
+        --profile) need_val "$1" $#; OPT_PROFILE=$2; shift ;;
+        --state-dir) need_val "$1" $#; STATE_OVERRIDE=$2; shift ;;
+        -h | --help) ARGS+=(help) ;;
+        -*) echo "akam: unknown option $1 (see ./akam help)" >&2; exit 2 ;;
+        *) ARGS+=("$1") ;;
+    esac
+    shift
+done
+CMD=${ARGS[0]:-}
+case $CMD in
+    help)
+        usage
+        exit 0
+        ;;
+esac
+case $OPT_COMP in "" | xz | gzip) ;; *) echo "akam: --comp must be xz or gzip" >&2; exit 2 ;; esac
+
+UI_DRY=$DRY
+SD_DIR=${STATE_OVERRIDE:-$(state_default_dir)}
+state_init "$SD_DIR" "$DRY"
+log_init "$SD_DIR"
+# The Wi-Fi settings are read once from the environment and removed from it, so that no tool
+# started by the wizard inherits them (only the SD tool gets them, explicitly).
+ENV_WIFI_SSID=${AKAM_WIFI_SSID:-${AKAM_SD_SSID:-}}
+ENV_WIFI_PASS=${AKAM_WIFI_PASS:-${AKAM_SD_PASS:-}}
+unset AKAM_WIFI_SSID AKAM_WIFI_PASS AKAM_SD_SSID AKAM_SD_PASS
+log_add_secret "$ENV_WIFI_PASS"
+state_set wizard_version "$AKAM_WIZARD_VERSION"
+log_line "START akam ${CMD:-menu} dry=$DRY"
+if [ "$DRY" = 1 ]; then
+    ui_say "REHEARSAL (--dry-run): commands are shown, nothing is changed."
+    # A new full rehearsal starts from scratch; single-step rehearsals continue the previous one.
+    if [ -z "$CMD" ]; then state_reset_dry; fi
+fi
+
+rc=0
+case $CMD in
+    "")
+        if [ "$DRY" = 1 ]; then
+            wizard_walk || rc=$?
+        elif host_is_tty; then
+            wizard_menu || rc=$?
+        else
+            status_table
+            ui_blank
+            ui_say "No terminal attached: showing status only. Run ./akam in a terminal to continue."
+        fi
+        ;;
+    status) status_table ;;
+    doctor) cmd_doctor || rc=$? ;;
+    get-kit) cmd_get_kit || rc=$? ;;
+    build) cmd_build || rc=$? ;;
+    prepare-backup-sd) cmd_prepare_backup_sd || rc=$? ;;
+    backup) cmd_backup || rc=$? ;;
+    image) cmd_image || rc=$? ;;
+    prepare-flash-sd) cmd_prepare_flash_sd || rc=$? ;;
+    wipe-sd) cmd_wipe_sd || rc=$? ;;
+    find-camera) cmd_find_camera || rc=$? ;;
+    flash) cmd_flash || rc=$? ;;
+    verify) cmd_verify || rc=$? ;;
+    step)
+        if [ "${#ARGS[@]}" -lt 2 ] || ! step_valid_name "${ARGS[1]}"; then
+            echo "akam: step needs a name: $WIZ_STEPS" >&2
+            exit 2
+        fi
+        step_run "${ARGS[1]}" || rc=$?
+        ;;
+    *)
+        echo "akam: unknown command '$CMD' (see ./akam help)" >&2
+        exit 2
+        ;;
+esac
+log_line "END rc=$rc"
+exit "$rc"
