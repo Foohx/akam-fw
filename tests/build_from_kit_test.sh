@@ -18,7 +18,7 @@ for t in tar xz sha256sum mksquashfs unsquashfs; do
 done
 
 WORK=$(mktemp -d)
-trap '[ -n "${KEEP:-}" ] || rm -rf "$WORK"' EXIT
+trap '[ -n "${KEEP:-}" ] || { chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"; }' EXIT
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
