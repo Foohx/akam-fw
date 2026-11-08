@@ -679,7 +679,7 @@ static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport,
     SmolRTSP_RtcpSr sr = {
         .padding     = false,
         .rc          = 0,
-        .ssrc        = SmolRTSP_RtpTransport_ssrc(transport),
+        .ssrc        = htonl(SmolRTSP_RtpTransport_ssrc(transport)), /* as in the RTP header */
         .ntp_sec     = htonl(ntp_sec),
         .ntp_frac    = htonl(ntp_frac),
         .rtp_ts      = htonl(rtp_ts),
