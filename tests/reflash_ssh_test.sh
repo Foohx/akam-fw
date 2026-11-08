@@ -62,7 +62,7 @@ cat >"$WORK/gdriver.sh" <<'DRV'
 . "$FS/flash_guard.sh"
 mkdir -p "$CAMYN_PROC_DIR/$$"
 sid=${FAKE_SID:-$$}
-echo "$$ (sh) S 800 $$ $sid 0" >"$CAMYN_PROC_DIR/$$/stat"
+echo "$$ (${FAKE_COMM:-sh}) S 800 $$ $sid 0" >"$CAMYN_PROC_DIR/$$/stat"
 if [ -n "${FAKE_ANCESTOR:-}" ]; then
     mkdir -p "$CAMYN_PROC_DIR/900" "$CAMYN_PROC_DIR/800"
     echo "800 (my shell) S 900 1 1 0" >"$CAMYN_PROC_DIR/800/stat"
@@ -106,6 +106,11 @@ grun "dropbear ancestor: refused" 1 mounts_ok "$S" "$T" "$I" "$C" FAKE_ANCESTOR=
 grun "non-dropbear ancestor: allowed" 0 mounts_ok "$S" "$T" "$I" "$C" FAKE_ANCESTOR=init
 grun "not a session leader (no setsid): refused" 1 mounts_ok "$S" "$T" "$I" "$C" FAKE_SID=777
 grep -q "session leader" "$WORK/gout" && ok "guard: refusal names setsid" || ko "guard: refusal names setsid"
+# /proc/PID/stat parsing with spaces and parentheses in the command name
+grun "comm with spaces and parens, leader: allowed" 0 mounts_ok "$S" "$T" "$I" "$C" FAKE_COMM='a) (b c) d'
+grun "comm with spaces and parens, not leader: refused" 1 mounts_ok "$S" "$T" "$I" "$C" FAKE_COMM='a) (b c) d' FAKE_SID=777
+grun "ancestor named 'dropbear-x': refused" 1 mounts_ok "$S" "$T" "$I" "$C" FAKE_ANCESTOR=dropbear-x
+grun "ancestor 'my dropbear' (does not start with it): allowed" 0 mounts_ok "$S" "$T" "$I" "$C" FAKE_ANCESTOR='my dropbear'
 
 # =============================================================== B. camera side
 CAM=$WORK/cam
