@@ -215,6 +215,65 @@ int main(void)
               "stream and SR use the same formula");
     }
 
+    /* ---- audio start gate: backlog + PLAY + later IDR ---------------- */
+    {
+        /* Ring of 8 periods (32 ms each) filled since boot; PLAY at 10.000 s,
+         * next IDR captured at 11.300 s. Audio must start at the IDR. */
+        enum { RATE = 8000, PER = 256, SLOTS = 8 };
+        const int64_t per_us = (int64_t)PER * 1000000 / RATE;
+        rtp_astart_t g;
+        rtp_aclock_t ac;
+        rtp_aclock_init(&ac);
+        rtp_astart_arm(&g);
+        CHECK(rtp_astart_holding(&g), "audio held after PLAY until a video frame");
+
+        int64_t idr_us = 11300000;
+        uint64_t first_sent = 0; int64_t first_end = 0; bool sent = false;
+        uint64_t prev_end = 0; bool contiguous = true, stale_sent = false;
+        /* Producer runs from t=9.0 s; consumer polls every 5 ms from PLAY. */
+        for (int64_t now = 10000000; now < 12000000; now += 5000) {
+            if (rtp_astart_holding(&g) && now >= idr_us) rtp_astart_release(&g, idr_us);
+            if (rtp_astart_holding(&g)) continue;
+            /* Ring state at "now": last SLOTS periods ended at multiples of per_us. */
+            int64_t newest = now / per_us;
+            for (int64_t k = newest - SLOTS + 1; k <= newest; k++) {
+                int64_t t_end = k * per_us;
+                uint64_t first = (uint64_t)(k * PER); /* sample index of period k */
+                static int64_t last_k = -1;
+                if (k <= last_k) continue;
+                last_k = k;
+                if (rtp_astart_stale(&g, t_end)) continue;
+                if (t_end < idr_us - per_us) stale_sent = true;
+                if (!sent) { sent = true; first_sent = first; first_end = t_end; }
+                else if (first != prev_end) contiguous = false;
+                prev_end = first + PER;
+                rtp_aclock_observe(&ac, first + PER, t_end, RATE);
+            }
+        }
+        int64_t first_start_us = first_end - per_us;
+        printf("       first audio period starts %lld us, IDR at %lld us\n",
+               (long long)first_start_us, (long long)idr_us);
+        CHECK(sent, "audio flows after the IDR");
+        CHECK(!stale_sent, "no sample captured before the IDR is sent");
+        CHECK(llabs((long long)(first_start_us - idr_us)) <= per_us,
+              "first audio maps to the IDR capture time within one frame");
+        CHECK(contiguous, "audio sample index stays continuous after the start");
+        CHECK(first_sent > 0 && first_sent % PER == 0,
+              "RTP timestamp keeps the capture-stream sample index");
+    }
+
+    /* ---- resync re-arms the gate ------------------------------------- */
+    {
+        rtp_astart_t g;
+        rtp_astart_arm(&g);
+        rtp_astart_release(&g, 5000000);
+        CHECK(rtp_astart_stale(&g, 4990000), "period before the cut is dropped");
+        CHECK(!rtp_astart_stale(&g, 5010000), "period after the cut passes");
+        CHECK(!rtp_astart_stale(&g, 4000000), "gate stays open once passed");
+        rtp_astart_arm(&g);
+        CHECK(rtp_astart_holding(&g), "resync holds audio again");
+    }
+
     printf(fails ? "FAILED: %d\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }
