@@ -43,3 +43,11 @@ void audio_stop(void);
  * Returns 1 if a frame was copied, 0 if none is available yet, -1 if audio
  * isn't running. */
 int audio_get_frame(int16_t *buf, size_t max_samples, size_t *out_samples);
+
+/* Same as audio_get_frame(), plus where the period sits on the capture
+ * stream: *first_sample is the index of buf[0] since audio_start() (it jumps
+ * if the ring dropped periods, so a timestamp built from it keeps the gap),
+ * *t_end_us the CLOCK_MONOTONIC time (us) at which the period's read()
+ * returned, i.e. when its last sample had just been captured. */
+int audio_get_frame_ts(int16_t *buf, size_t max_samples, size_t *out_samples,
+                       uint64_t *first_sample, int64_t *t_end_us);

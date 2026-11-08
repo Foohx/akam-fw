@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <smolrtsp.h>
 #include <smolrtsp/types/rtcp.h>
 #include <interface99.h>
@@ -23,6 +24,8 @@
 #include "audio.h"
 #include "rtsp.h"
 #include "h264_params.h"
+#include "rtp_clock.h"
+#include "net_tx.h"
 
 /* Latest SPS/PPS seen in the encoder output (main thread only: filled by
  * drain_venc_ring() and send_video_frame(), read by DESCRIBE). */
@@ -31,6 +34,33 @@ static h264_params_t g_params;
 /* The SPS/PPS sit at the very start of an I-frame, so only that much of the
  * (uncached) DMA buffer is inspected. */
 #define PARAMS_SCAN_BYTES 256
+
+/* Video capture clock, shared by all clients and also fed while nobody is
+ * connected (drain_venc_ring()), so the learned frame period is already
+ * locked when a client arrives. See rtp_clock.h for why the encoder's own
+ * timestamps are not used. */
+static rtp_vclock_t g_vclock;
+static bool g_vclock_ready;
+
+static int64_t video_capture_time_us(void)
+{
+    if (!g_vclock_ready) {
+        rtp_vclock_init(&g_vclock, 1000000.0 / ENC_FPS);
+        g_vclock_ready = true;
+    }
+    return rtp_vclock_stamp(&g_vclock, rtp_mono_us());
+}
+
+#define VIDEO_CLOCK_RATE 90000
+
+/* 64 random bits for the RTP timestamp origins (RFC 3550 section 5.1);
+ * rand() may be only 15 bits wide, so draw until 64 are filled. */
+static uint64_t rand_u64(void)
+{
+    uint64_t v = 0;
+    for (int i = 0; i < 5; i++) v = (v << 15) ^ (uint64_t)(rand() & 0x7fff);
+    return v;
+}
 
 /* -------------------------------------------------------------------------
  * Client connection context conforming to SmolRTSP_Controller interface
@@ -46,6 +76,9 @@ typedef struct {
      * past SO_SNDTIMEO): the interleaved stream is no longer valid, so the
      * client loop drops the connection instead of blocking on it again. */
     bool tx_fail;
+    /* Bounded, stall-tolerant writer for the RTSP/TCP socket (shared by the
+     * RTSP responses, interleaved RTP and interleaved RTCP). */
+    net_tx_t tx;
 
     bool is_tcp;
     uint8_t rtp_channel;
@@ -72,9 +105,22 @@ typedef struct {
     bool need_idr;
     int  idr_wait_frames;
 
-    /* time(NULL) value of the next scheduled RTCP Sender Report — see
-     * send_rtcp_reports() below. 0 means "not yet scheduled". */
-    time_t next_rtcp_sr_sec;
+    /* Interleaved channel of each track's RTCP (TCP transport). Kept per
+     * track: rtcp_channel above only holds the last SETUP's value. */
+    uint8_t video_rtcp_ch;
+    uint8_t audio_rtcp_ch;
+
+    /* RTP timestamp bases (RFC 3550 section 5.1: random origin per stream).
+     * Video: microseconds added to the capture time before conversion to
+     * 90 kHz ticks; audio: added to the capture-stream sample index. */
+    uint64_t video_ts_base_us;
+    uint32_t audio_ts_base;
+    /* Monotonic time (us) the next Sender Report of each track is due;
+     * 0 = as soon as the track has sent its first packet. */
+    int64_t next_sr_video_us;
+    int64_t next_sr_audio_us;
+    /* Audio sample-index -> monotonic-time mapping, for the audio SR. */
+    rtp_aclock_t audio_clock;
 } Client;
 
 declImpl(SmolRTSP_Controller, Client);
@@ -104,7 +150,8 @@ impl(SmolRTSP_Droppable, Client);
 static int setup_rtp_transport(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req,
                                 uint8_t payload_ty, uint32_t clock_rate,
                                 SmolRTSP_RtpTransport **out_transport,
-                                int *out_rtp_fd, int *out_rtcp_fd) {
+                                int *out_rtp_fd, int *out_rtcp_fd,
+                                uint8_t *out_rtcp_channel) {
     CharSlice99 transport_val;
     if (!SmolRTSP_HeaderMap_find(&req->header_map, SMOLRTSP_HEADER_TRANSPORT, &transport_val)) {
         smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Transport not present");
@@ -122,6 +169,7 @@ static int setup_rtp_transport(Client *self, SmolRTSP_Context *ctx, const SmolRT
             self->is_tcp = true;
             self->rtp_channel = interleaved->rtp_channel;
             self->rtcp_channel = interleaved->rtcp_channel;
+            *out_rtcp_channel = interleaved->rtcp_channel;
 
             printf("[ak_rtsp] Transport: TCP interleaved (RTP ch %d, RTCP ch %d)\n",
                    (int)interleaved->rtp_channel, (int)interleaved->rtcp_channel);
@@ -192,16 +240,23 @@ static int setup_rtp_transport(Client *self, SmolRTSP_Context *ctx, const SmolRT
 
 static int setup_video_transport(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     if (setup_rtp_transport(self, ctx, req, 96, 90000,
-                             &self->rtp_transport, &self->rtp_udp_fd, &self->rtcp_udp_fd) < 0)
+                             &self->rtp_transport, &self->rtp_udp_fd, &self->rtcp_udp_fd,
+                             &self->video_rtcp_ch) < 0)
         return -1;
     self->nal_transport = SmolRTSP_NalTransport_new(self->rtp_transport);
+    self->video_ts_base_us = rand_u64();
     return 0;
 }
 
 static int setup_audio_transport(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
-    return setup_rtp_transport(self, ctx, req, 97, AUDIO_SAMPLE_RATE,
-                                &self->audio_rtp_transport,
-                                &self->audio_rtp_udp_fd, &self->audio_rtcp_udp_fd);
+    if (setup_rtp_transport(self, ctx, req, 97, AUDIO_SAMPLE_RATE,
+                            &self->audio_rtp_transport,
+                            &self->audio_rtp_udp_fd, &self->audio_rtcp_udp_fd,
+                            &self->audio_rtcp_ch) < 0)
+        return -1;
+    self->audio_ts_base = (uint32_t)rand_u64();
+    rtp_aclock_init(&self->audio_clock);
+    return 0;
 }
 
 static void Client_options(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
@@ -323,7 +378,9 @@ impl(SmolRTSP_Controller, Client);
  * Walks Annex-B start codes, wraps each NALU in SmolRTSP_NalUnit, sets the
  * marker bit on the last VCL NALU of each access unit, and hands it to
  * SmolRTSP_NalTransport_send_packet for FU-A fragmentation if needed.
- * Timestamps: VENC gives milliseconds → multiply by 90 for 90 kHz RTP clock.
+ * Timestamps: the 90 kHz RTP clock follows the frame capture time estimated
+ * by g_vclock (CLOCK_MONOTONIC), NOT the encoder's own ms timestamp, which is
+ * nominal (see rtp_clock.h).
  * ------------------------------------------------------------------------- */
 /* Sends one NAL unit (data points at its header byte, no start code). */
 static void send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len,
@@ -398,6 +455,7 @@ void drain_venc_ring(void)
 
         if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) != 0)
             return; /* nothing ready (EAGAIN) or transient error: wait again */
+        (void)video_capture_time_us(); /* keep the capture clock locked */
         /* Keep the SPS/PPS cache current for DESCRIBE (sprop-parameter-sets).
          * This is the only place the idle path dereferences the ring, so the
          * driver-supplied offset/length are range-checked first: a bad value
@@ -436,8 +494,12 @@ static int send_video_frame(Client *client)
     }
 
     void *data = (char *)g_venc_virt + (req.frame_offset - g_venc_phys);
-    uint64_t ms_ts = (uint64_t)req.ts_hi << 32 | (uint64_t)(uint32_t)req.ts_lo;
-    uint32_t rtp_ts = (uint32_t)(ms_ts * 90);
+    /* The encoder's req.ts_hi/ts_lo is a nominal frame-index clock (exactly
+     * 66.667 ms per frame while the sensor delivers 14.67 fps): not used. */
+    int64_t capture_us = video_capture_time_us();
+    uint64_t ms_ts = (uint64_t)(capture_us / 1000);
+    uint32_t rtp_ts = rtp_ticks_from_us(capture_us, client->video_ts_base_us,
+                                        VIDEO_CLOCK_RATE);
 
     static int frame_count = 0;
     /* Always log I-frames; log a heartbeat every ~10s (150 frames at 15fps) */
@@ -447,11 +509,26 @@ static int send_video_frame(Client *client)
                req.frame_type_raw == FRAME_TYPE_I ? "I" :
                req.frame_type_raw == FRAME_TYPE_P ? "P" : "B",
                req.len, rtp_ts);
+    /* Measuring aid: the learned sensor rate and how far the capture
+     * estimate trails the fetch time (~10 s apart). */
+    static int64_t prev_cap_us;
+    static unsigned prev_cap_frames;
+    if (g_vclock.frames - prev_cap_frames >= 150) {
+        if (prev_cap_us != 0)
+            printf("[ak_rtsp] vclock: %.3f fps over the last %u frames, "
+                   "capture estimate trails the fetch by %lld us\n",
+                   (g_vclock.frames - prev_cap_frames) * 1e6 /
+                       (double)(capture_us - prev_cap_us),
+                   g_vclock.frames - prev_cap_frames,
+                   (long long)(rtp_mono_us() - capture_us));
+        prev_cap_us = capture_us;
+        prev_cap_frames = g_vclock.frames;
+    }
     frame_count++;
 
     /* Live active-bitrate log — accumulates encoded bytes over a window
-     * using the encoder's own ms_ts (not wall-clock time, so it stays
-     * accurate even if the process stalls briefly for some other reason).
+     * using the smoothed capture clock (ms_ts above: real time, but without
+     * the fetch jitter a briefly stalled process would add).
      *
      * Window length is 2 full GOPs, not a flat 1s: with VBR+ rate control
      * on a static/low-motion scene, I-frames are far larger than P-frames
@@ -525,23 +602,19 @@ static int send_video_frame(Client *client)
  * Audio: drain whatever periods audio.c's capture thread has ready and send
  * them as plain RTP (no NAL framing — this isn't H.264).
  *
- * Timestamp: a running sample counter (RFC 3551's intended scheme for a
- * fixed-rate PCM stream like L16), NOT wall-clock time. Originally used
- * SmolRTSP_RtpTimestamp_SysClockUs(clock_gettime(CLOCK_MONOTONIC)), which
- * hardware-confirmed broke badly: CLOCK_MONOTONIC is time-since-boot, while
- * the video track's timestamp (rtsp.c's send_video_frame, ms_ts*90) comes
- * from the VENC hardware encoder's own internal clock, which resets near
- * zero when the encoder channel initializes — a totally different epoch.
- * Whatever gap exists between "camera booted" and "ak_rtsp started the VENC
- * channel" (30-40s observed) showed up directly as a matching offset
- * between the two tracks' first timestamps, which broke VLC's initial A/V
- * sync badly (~34s stream-buffering stall, then large "buffer too late"
- * drops). A monotonically-incrementing sample count has no wall-clock
- * dependency at all and matches the actual data rate exactly, avoiding this
- * whole class of bug. Starts from a random 32-bit value per RFC 3550 §5.1
- * (receivers must not assume a stream's initial timestamp is 0). RFC 3551
- * L16 payload must be network (big-endian) byte order; our samples are
- * native (little-endian on ARM), so each sample is byte-swapped before
+ * Timestamp: the capture-stream sample index (RFC 3551's intended scheme for
+ * a fixed-rate PCM stream like L16) plus a random per-stream origin
+ * (RFC 3550 section 5.1). It is exact: no gaps or overlaps even if the
+ * capture thread's ring dropped periods (the index then jumps by the dropped
+ * amount, so the stream keeps its place on the time axis).
+ * Wall-clock time is NOT used for the packet timestamps. An earlier version
+ * stamped audio with CLOCK_MONOTONIC while video used the encoder's own
+ * clock (a different epoch: 30-40 s apart on hardware) and VLC's initial A/V
+ * sync broke badly. The wall-clock relation only goes into the RTCP Sender
+ * Reports below, via audio_clock, on the same CLOCK_MONOTONIC the video
+ * capture clock uses.
+ * RFC 3551 L16 payload must be network (big-endian) byte order; our samples
+ * are native (little-endian on ARM), so each sample is byte-swapped before
  * sending. */
 static void send_audio_frame(Client *client)
 {
@@ -549,19 +622,19 @@ static void send_audio_frame(Client *client)
 
     static int16_t pcm[AUDIO_PERIOD_SAMPLES];
     size_t n_samples = 0;
-    int got = audio_get_frame(pcm, AUDIO_PERIOD_SAMPLES, &n_samples);
+    uint64_t first_sample = 0;
+    int64_t t_end_us = 0;
+    int got = audio_get_frame_ts(pcm, AUDIO_PERIOD_SAMPLES, &n_samples,
+                                 &first_sample, &t_end_us);
     if (got <= 0) return; /* 0 = nothing new yet, -1 = audio not running */
 
     static uint16_t net_pcm[AUDIO_PERIOD_SAMPLES];
     for (size_t i = 0; i < n_samples; i++)
         net_pcm[i] = htons((uint16_t)pcm[i]);
 
-    static uint32_t audio_rtp_ts = 0;
-    static bool     audio_rtp_ts_init = false;
-    if (!audio_rtp_ts_init) {
-        audio_rtp_ts = (uint32_t)rand();
-        audio_rtp_ts_init = true;
-    }
+    rtp_aclock_observe(&client->audio_clock, first_sample + n_samples,
+                       t_end_us, AUDIO_SAMPLE_RATE);
+    uint32_t audio_rtp_ts = client->audio_ts_base + (uint32_t)first_sample;
 
     U8Slice99 payload = U8Slice99_new((uint8_t *)net_pcm, n_samples * sizeof(uint16_t));
     if (SmolRTSP_RtpTransport_send_packet(
@@ -571,37 +644,37 @@ static void send_audio_frame(Client *client)
         perror("send RTP/audio");
         if (client->is_tcp && errno != EINTR) client->tx_fail = true;
     }
-
-    audio_rtp_ts += (uint32_t)n_samples;
 }
 
 /* -------------------------------------------------------------------------
  * RTCP Sender Reports.
  *
- * Added to fix a VLC(/live555)-specific bug: without ANY RTCP SR at all
- * (this server previously opened RTCP sockets but never sent anything on
- * them), VLC's audio track eventually hit a hard "Timestamp conversion
- * failed" error and dropped audio permanently for the rest of the session
- * — video was unaffected. ffplay played the identical stream with no
- * dropout, confirming the wire data itself was correct and the receiver
- * just had no RTP-timestamp-to-wallclock mapping to fall back on once its
- * own internal clock model drifted.
- * An SR gives a receiver exactly that mapping (an (NTP time, RTP
- * timestamp) pair) so it can correct for drift indefinitely instead of
- * eventually giving up. UDP-transport only for now — TCP-interleaved RTCP
- * would need to write framed bytes over the RTSP TCP connection instead of
- * a separate socket; not implemented since this project only exercises UDP
- * transport in practice. */
+ * Added to fix a VLC(/live555)-specific bug: without ANY RTCP SR at all,
+ * VLC's audio track eventually hit a hard "Timestamp conversion failed"
+ * error and dropped audio permanently for the rest of the session. An SR
+ * gives a receiver an (NTP time, RTP timestamp) pair per track so it can map
+ * every RTP timestamp to wall-clock time, and so line the audio and video
+ * tracks up against each other (live555 does this for TCP-interleaved
+ * sessions too, hence the interleaved path below).
+ *
+ * The pair must describe ONE instant for both tracks, with the RTP timestamp
+ * exactly as the stream computes it for that instant:
+ *   - video: the capture-clock formula of send_video_frame() applied to
+ *     "now" on CLOCK_MONOTONIC;
+ *   - audio: origin + the sample index the capture stream reaches at "now"
+ *     (audio_clock maps that stream onto the same CLOCK_MONOTONIC).
+ * NTP time is CLOCK_REALTIME read next to the monotonic reading.
+ * A track sends nothing until it has sent a packet (an SR with no packet
+ * behind it would carry a made-up mapping and a zero packet count), then
+ * reports at once and every RTCP_SR_INTERVAL_SEC afterwards. */
 #define RTCP_SR_INTERVAL_SEC 5
 
-static void send_one_rtcp_sr(SmolRTSP_RtpTransport *transport, int rtcp_fd) {
-    if (!transport || rtcp_fd < 0) return;
-
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    /* Unix epoch (1970) -> NTP epoch (1900): RFC 3550 §4. */
-    uint32_t ntp_sec  = (uint32_t)ts.tv_sec + 2208988800u;
-    uint32_t ntp_frac = (uint32_t)(((uint64_t)ts.tv_nsec << 32) / 1000000000ull);
+static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport,
+                             int rtcp_fd, uint8_t tcp_channel, uint32_t rtp_ts,
+                             int64_t real_us)
+{
+    uint32_t ntp_sec, ntp_frac;
+    rtp_ntp_from_unix_us(real_us, &ntp_sec, &ntp_frac);
 
     SmolRTSP_RtcpSr sr = {
         .padding     = false,
@@ -609,27 +682,113 @@ static void send_one_rtcp_sr(SmolRTSP_RtpTransport *transport, int rtcp_fd) {
         .ssrc        = SmolRTSP_RtpTransport_ssrc(transport),
         .ntp_sec     = htonl(ntp_sec),
         .ntp_frac    = htonl(ntp_frac),
-        .rtp_ts      = htonl(SmolRTSP_RtpTransport_last_rtp_ts(transport)),
+        .rtp_ts      = htonl(rtp_ts),
         .pkt_count   = htonl(SmolRTSP_RtpTransport_pkt_count(transport)),
         .octet_count = htonl(SmolRTSP_RtpTransport_octet_count(transport)),
     };
 
+    if (client->is_tcp) {
+        /* RFC 2326 section 10.12: '$', channel, 16-bit length, packet. */
+        uint8_t frame[4 + SMOLRTSP_RTCP_SR_SIZE_BASE];
+        frame[0] = '$';
+        frame[1] = tcp_channel;
+        frame[2] = 0;
+        frame[3] = SMOLRTSP_RTCP_SR_SIZE_BASE;
+        (void)SmolRTSP_RtcpSr_serialize(sr, frame + 4);
+        if (net_tx_write_all(&client->tx, frame, sizeof(frame)) < 0) {
+            perror("send RTCP SR (interleaved)");
+            client->tx_fail = true;
+        }
+        return;
+    }
+
+    if (rtcp_fd < 0) return;
     uint8_t buf[SMOLRTSP_RTCP_SR_SIZE_BASE];
     if (write(rtcp_fd, SmolRTSP_RtcpSr_serialize(sr, buf), sizeof(buf)) < 0)
         perror("send RTCP SR");
 }
 
-/* Sends an SR for every track that's been SETUP, at most once every
- * RTCP_SR_INTERVAL_SEC seconds. Called once per client-loop iteration —
- * cheap to call every time since it no-ops between intervals. */
+/* Called once per client-loop iteration; cheap, no-ops between intervals. */
 static void send_rtcp_reports(Client *client) {
-    time_t now = time(NULL);
-    if (now < client->next_rtcp_sr_sec) return;
-    client->next_rtcp_sr_sec = now + RTCP_SR_INTERVAL_SEC;
+    int64_t now = rtp_mono_us();
+    int64_t real = rtp_realtime_us();
+    const int64_t interval = (int64_t)RTCP_SR_INTERVAL_SEC * 1000000;
 
-    send_one_rtcp_sr(client->rtp_transport, client->rtcp_udp_fd);
-    send_one_rtcp_sr(client->audio_rtp_transport, client->audio_rtcp_udp_fd);
+    if (client->rtp_transport &&
+        SmolRTSP_RtpTransport_pkt_count(client->rtp_transport) > 0 &&
+        now >= client->next_sr_video_us) {
+        client->next_sr_video_us = now + interval;
+        send_one_rtcp_sr(client, client->rtp_transport, client->rtcp_udp_fd,
+                         client->video_rtcp_ch,
+                         rtp_ticks_from_us(now, client->video_ts_base_us,
+                                           VIDEO_CLOCK_RATE),
+                         real);
+    }
+
+    if (client->audio_rtp_transport && client->audio_clock.init &&
+        SmolRTSP_RtpTransport_pkt_count(client->audio_rtp_transport) > 0 &&
+        now >= client->next_sr_audio_us) {
+        client->next_sr_audio_us = now + interval;
+        uint32_t ts = client->audio_ts_base +
+            (uint32_t)rtp_aclock_samples_at(&client->audio_clock, now,
+                                            AUDIO_SAMPLE_RATE);
+        send_one_rtcp_sr(client, client->audio_rtp_transport,
+                         client->audio_rtcp_udp_fd, client->audio_rtcp_ch,
+                         ts, real);
+    }
 }
+
+/* -------------------------------------------------------------------------
+ * RTSP/TCP writer over net_tx: the same bytes smolrtsp_fd_writer() would
+ * write, but a write only fails after the peer has accepted nothing for
+ * TX_STALL_BUDGET_MS (see handle_client() for the policy), and a short write
+ * is completed instead of being left half way in the interleaved stream.
+ * ------------------------------------------------------------------------- */
+typedef net_tx_t TxWriter;
+
+static ssize_t TxWriter_write(VSelf, CharSlice99 data) {
+    VSELF(TxWriter);
+    if (net_tx_write_all(self, data.ptr, data.len) < 0) return -1;
+    return (ssize_t)data.len;
+}
+
+static void TxWriter_lock(VSelf) { VSELF(TxWriter); (void)self; }
+static void TxWriter_unlock(VSelf) { VSELF(TxWriter); (void)self; }
+static size_t TxWriter_filled(VSelf) { VSELF(TxWriter); (void)self; return 0; }
+
+static int TxWriter_vwritef(VSelf, const char *restrict fmt, va_list ap) {
+    VSELF(TxWriter);
+    char small[512];
+    va_list ap2;
+    va_copy(ap2, ap);
+    int n = vsnprintf(small, sizeof(small), fmt, ap);
+    int ret = n;
+    if (n >= 0 && (size_t)n < sizeof(small)) {
+        if (net_tx_write_all(self, small, (size_t)n) < 0) ret = -1;
+    } else if (n >= 0) {
+        char *big = malloc((size_t)n + 1);
+        if (!big) {
+            ret = -1;
+        } else {
+            (void)vsnprintf(big, (size_t)n + 1, fmt, ap2);
+            if (net_tx_write_all(self, big, (size_t)n) < 0) ret = -1;
+            free(big);
+        }
+    }
+    va_end(ap2);
+    return ret;
+}
+
+static int TxWriter_writef(VSelf, const char *restrict fmt, ...) {
+    VSELF(TxWriter);
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = TxWriter_vwritef(self, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
+impl(SmolRTSP_Writer, TxWriter);
 
 /* -------------------------------------------------------------------------
  * Client connection loop
@@ -643,13 +802,32 @@ static void send_rtcp_reports(Client *client) {
  * enough for 15 fps video (66 ms) and the 32 ms audio period. */
 #define PLAY_IDLE_POLL_MS 4
 
+/* A client that accepts no byte at all for this long is considered gone. */
+#define TX_STALL_BUDGET_MS 15000
+/* A write that stalled this long left the VENC ring to wrap and frames
+ * behind: restart the video on the next keyframe rather than send P-frames
+ * whose references were overwritten. */
+#define TX_RESYNC_STALL_MS 1000
+
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
     /* Blocking writes (see above) must not wedge the whole single-client
-     * server on a peer that vanished without FIN (Wi-Fi drop): bound each
-     * write and let TCP keepalive reap idle dead peers. */
-    struct timeval snd_to = { .tv_sec = 5, .tv_usec = 0 };
+     * server on a peer that vanished without FIN (Wi-Fi drop), yet must not
+     * kill a client that is merely slow (a player that stops reading for a
+     * while, e.g. VLC stalling on its own A/V sync, or a Wi-Fi hiccup).
+     * Policy:
+     *  - SO_SNDTIMEO (1 s) only bounds ONE wait; it is not a verdict. The
+     *    previous 5 s value turned any 5 s read stall into a dropped client
+     *    and, because a timed-out write can be short, left a torn interleaved
+     *    frame behind it.
+     *  - net_tx completes every write and gives up only when the peer has
+     *    accepted NOT ONE BYTE for TX_STALL_BUDGET_MS (15 s). A slow reader
+     *    that still drains keeps its session; a dead one (no ACKs, send
+     *    buffer full) is freed after 15 s instead of wedging the server until
+     *    the kernel's ~15 min retransmission limit.
+     *  - TCP keepalive reaps peers that vanished while idle (no writes). */
+    struct timeval snd_to = { .tv_sec = 1, .tv_usec = 0 };
     int keepalive = 1;
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
     setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
@@ -670,9 +848,18 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     client.rtcp_udp_fd = -1;
     client.audio_rtp_udp_fd = -1;
     client.audio_rtcp_udp_fd = -1;
+    net_tx_init(&client.tx, client_fd, TX_STALL_BUDGET_MS);
+
+    /* rand() feeds the SSRCs, session id and RTP timestamp origins: seed it
+     * (once) so they differ from boot to boot. */
+    static bool seeded;
+    if (!seeded) {
+        seeded = true;
+        srand((unsigned)(rtp_mono_us() ^ ((int64_t)getpid() << 16) ^ (int64_t)time(NULL)));
+    }
 
     SmolRTSP_Controller controller = DYN(Client, SmolRTSP_Controller, &client);
-    SmolRTSP_Writer writer = smolrtsp_fd_writer(&client_fd);
+    SmolRTSP_Writer writer = DYN(TxWriter, SmolRTSP_Writer, &client.tx);
 
     char buf[4096];
     size_t buf_len = 0;
@@ -756,6 +943,15 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             video_idle = (vret == 0);
             send_audio_frame(&client); /* no-op until the audio track is SETUP */
             send_rtcp_reports(&client); /* no-op for tracks not yet SETUP, or off-interval */
+            int stall_ms = net_tx_take_stall(&client.tx);
+            if (stall_ms >= TX_RESYNC_STALL_MS && client.is_tcp) {
+                printf("[ak_rtsp] client slow: TCP write stalled %d ms, "
+                       "resuming video at the next keyframe\n", stall_ms);
+                if (client.nal_transport) {
+                    client.need_idr = true;
+                    client.idr_wait_frames = 0;
+                }
+            }
             if (client.tx_fail) {
                 printf("[ak_rtsp] TCP write failed, closing\n");
                 break;

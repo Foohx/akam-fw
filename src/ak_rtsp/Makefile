@@ -46,6 +46,8 @@ SRCS    = main.c \
           audio.c \
           rtsp.c \
           h264_params.c \
+          rtp_clock.c \
+          net_tx.c \
           ircut.c \
           ae.c \
           aec_custom.c \
