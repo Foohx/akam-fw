@@ -80,7 +80,7 @@ check "MANIFEST lists flash_tool, ak_rtsp and dropbearmulti with modes" bash -c 
     grep -qE '^file [0-9a-f]{64} 644 overlay/local/_ht_process.ini\$' '$K/MANIFEST.txt' &&
     grep -qx 'link dropbearmulti 777 overlay/bin/dropbear' '$K/MANIFEST.txt'"
 check "kit holds only our top-level directories" bash -c "
-    [ \"\$(LC_ALL=C ls '$K' | tr '\n' ' ')\" = 'MANIFEST.txt SHA256SUMS SOURCES.txt bin licenses overlay patches scripts ' ]"
+    [ \"\$(LC_ALL=C ls '$K' | tr '\n' ' ')\" = 'MANIFEST.txt SHA256SUMS SOURCES.txt bin licenses overlay patches scripts supported_hardware.txt ' ]"
 check "no image, squashfs or dump in the kit" bash -c "! find '$K' -iname '*.squashfs' -o -iname '*.img' -o -iname 'app_*' | grep -q ."
 check "wrapper, akam_*.sh, hwcheck and flash scripts present" bash -c "
     cd '$K' && test -x overlay/sbin/ak_rtsp_wrapper.sh && test -x overlay/sbin/akam_ssh.sh &&
@@ -110,28 +110,28 @@ check "sign_kit refuses a key inside the repository" bash -c "
     cp '$WORK/key' '$REPO/.kit_test_key' 2>/dev/null; rc=0
     bash '$SIGN' '$REPO/.kit_test_key' '$WORK/o1' >/dev/null 2>&1 || rc=\$?; rm -f '$REPO/.kit_test_key'; [ \$rc -ne 0 ]"
 check "unsigned kit: exit 3 with a WARNING" bash -c "
-    rc=0; bash '$VERIFY' --allowed-signers '$WORK/allowed' '$TB' >'$WORK/v.out' 2>&1 || rc=\$?; [ \$rc = 3 ] && grep -q 'WARNING: no signature' '$WORK/v.out'"
+    rc=0; bash '$VERIFY' --allow-test-kit --allowed-signers '$WORK/allowed' '$TB' >'$WORK/v.out' 2>&1 || rc=\$?; [ \$rc = 3 ] && grep -q 'WARNING: no signature' '$WORK/v.out'"
 check "unsigned kit with --allow-unsigned: exit 0, says UNSIGNED" bash -c "
-    bash '$VERIFY' --allow-unsigned '$TB' >'$WORK/v.out' 2>&1 && grep -q 'UNSIGNED' '$WORK/v.out'"
+    bash '$VERIFY' --allow-test-kit --allow-unsigned '$TB' >'$WORK/v.out' 2>&1 && grep -q 'UNSIGNED' '$WORK/v.out'"
 check "sign_kit signs" rc_is 0 bash "$SIGN" "$WORK/key" "$WORK/o1"
-check "signed kit verifies" rc_is 0 bash "$VERIFY" --allowed-signers "$WORK/allowed" "$TB"
+check "signed kit verifies" rc_is 0 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed" "$TB"
 check "  ... and says VERIFIED and signed" grep -q 'VERIFIED and signed' "$WORK/last.out"
-check "--expect-sha256 right prefix ok" rc_is 0 bash "$VERIFY" --allowed-signers "$WORK/allowed" \
+check "--expect-sha256 right prefix ok" rc_is 0 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed" \
     --expect-sha256 "$(sha256sum "$TB" | cut -c1-12)" "$TB"
-check "--expect-sha256 wrong prefix fails" rc_is 1 bash "$VERIFY" --allowed-signers "$WORK/allowed" \
+check "--expect-sha256 wrong prefix fails" rc_is 1 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed" \
     --expect-sha256 000000000000 "$TB"
 check "signature from another key: fail" bash -c "
     mkdir '$WORK/o6' && cp '$TB' '$WORK/o1/SHA256SUMS' '$WORK/o6/' && cd '$WORK/o6' &&
     ssh-keygen -Y sign -f '$WORK/key2' -n akam-release SHA256SUMS >/dev/null 2>&1 &&
-    rc=0; bash '$VERIFY' --allowed-signers '$WORK/allowed' akam-kit-test1.tar.xz >'$WORK/v.out' 2>&1 || rc=\$?
+    rc=0; bash '$VERIFY' --allow-test-kit --allowed-signers '$WORK/allowed' akam-kit-test1.tar.xz >'$WORK/v.out' 2>&1 || rc=\$?
     [ \$rc = 1 ] && grep -q 'INVALID signature' '$WORK/v.out'"
 check "signature over modified SHA256SUMS: fail" bash -c "
     mkdir '$WORK/o7' && cp '$TB' '$WORK/o1/SHA256SUMS' '$WORK/o1/SHA256SUMS.sig' '$WORK/o7/' &&
     printf '\n' >>'$WORK/o7/SHA256SUMS' &&
-    rc=0; bash '$VERIFY' --allowed-signers '$WORK/allowed' '$WORK/o7/akam-kit-test1.tar.xz' >/dev/null 2>&1 || rc=\$?; [ \$rc = 1 ]"
-check "signature with a placeholder allowed_signers: fail" rc_is 1 bash "$VERIFY" --allowed-signers "$WORK/allowed_empty" "$TB"
+    rc=0; bash '$VERIFY' --allow-test-kit --allowed-signers '$WORK/allowed' '$WORK/o7/akam-kit-test1.tar.xz' >/dev/null 2>&1 || rc=\$?; [ \$rc = 1 ]"
+check "signature with a placeholder allowed_signers: fail" rc_is 1 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed_empty" "$TB"
 check "--allow-unsigned does not excuse an invalid signature" bash -c "
-    ! bash '$VERIFY' --allow-unsigned --allowed-signers '$WORK/o6/none' '$WORK/o6/akam-kit-test1.tar.xz' >/dev/null 2>&1"
+    ! bash '$VERIFY' --allow-test-kit --allow-unsigned --allowed-signers '$WORK/o6/none' '$WORK/o6/akam-kit-test1.tar.xz' >/dev/null 2>&1"
 
 echo "== tampering"
 # repack <dir-with-akam-kit-test1> <out.tar.xz>: same layout as make_kit.
@@ -148,16 +148,16 @@ tamper() {
     repack "$WORK/t_$name" "$WORK/t_$name/out/akam-kit-test1.tar.xz"
     (cd "$WORK/t_$name/out" && sha256sum akam-kit-test1.tar.xz >SHA256SUMS)
 }
-vt() { rc_is 1 bash "$VERIFY" --allow-unsigned "$WORK/t_$1/out/akam-kit-test1.tar.xz"; }
+vt() { rc_is 1 bash "$VERIFY" --allow-test-kit --allow-unsigned "$WORK/t_$1/out/akam-kit-test1.tar.xz"; }
 tamper control true
-check "control repack verifies" rc_is 0 bash "$VERIFY" --allow-unsigned "$WORK/t_control/out/akam-kit-test1.tar.xz"
+check "control repack verifies" rc_is 0 bash "$VERIFY" --allow-test-kit --allow-unsigned "$WORK/t_control/out/akam-kit-test1.tar.xz"
 tamper byte bash -c "printf 'x' >>bin/ak_rtsp"
 check "one byte added to bin/ak_rtsp: fail" vt byte
 tamper licence bash -c "printf 'x' >>licenses/LICENSE.musl"
 check "one byte added to a licence: fail" vt licence
 tamper manifest bash -c "sed -i 's/^akam_version=test1/akam_version=test2/' MANIFEST.txt"
 check "one edit in MANIFEST.txt: fail" vt manifest
-tamper manhash bash -c "sed -i '0,/^file [0-9a-f]/s/^file [0-9a-f]/file 0/' MANIFEST.txt"
+tamper manhash bash -c "sed -i '0,/^file [0-9a-f]/s/^file [0-9a-f]/file z/' MANIFEST.txt"
 check "edited hash in MANIFEST.txt: fail" vt manhash
 tamper mode bash -c "chmod 777 bin/ak_rtsp"
 check "mode changed: fail" vt mode
@@ -173,30 +173,162 @@ check "  ... says so" grep -q 'kit_format 2 is not supported' "$WORK/last.out"
 tamper gate bash -c "sed -i 's/^time64_gate=pass/time64_gate=skipped/' MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS"
 check "time64_gate not pass: fail" vt gate
 check "sha256 of the tarball not in SHA256SUMS: fail" bash -c "
-    cp '$WORK/t_byte/out/akam-kit-test1.tar.xz' '$WORK/o7/other.tar.xz'; ! bash '$VERIFY' --allow-unsigned '$WORK/o7/other.tar.xz' >/dev/null 2>&1"
+    cp '$WORK/t_byte/out/akam-kit-test1.tar.xz' '$WORK/o7/other.tar.xz'; ! bash '$VERIFY' --allow-test-kit --allow-unsigned '$WORK/o7/other.tar.xz' >/dev/null 2>&1"
 
 echo "== hostile archives"
 mkdir -p "$WORK/h/akam-kit-test1/overlay/bin"
 ln -s /etc "$WORK/h/akam-kit-test1/evil"
 (cd "$WORK/h" && tar -cf - akam-kit-test1 | xz >evil_symlink.tar.xz)
 (cd "$WORK/h" && sha256sum evil_symlink.tar.xz >SHA256SUMS)
-check "archive with an unexpected symlink: fail" rc_is 1 bash "$VERIFY" --allow-unsigned "$WORK/h/evil_symlink.tar.xz"
+check "archive with an unexpected symlink: fail" rc_is 1 bash "$VERIFY" --allow-test-kit --allow-unsigned "$WORK/h/evil_symlink.tar.xz"
 check "  ... rejected before extraction" grep -q 'unexpected archive entry' "$WORK/last.out"
 rm "$WORK/h/akam-kit-test1/evil"
 echo x >"$WORK/h/outside"
 (cd "$WORK/h/akam-kit-test1" && tar --transform 's|^outside|../outside|' -cf - ../outside 2>/dev/null | xz >../evil_dotdot.tar.xz) || true
 (cd "$WORK/h" && sha256sum evil_dotdot.tar.xz >SHA256SUMS)
-check "archive with '..' path: fail" rc_is 1 bash "$VERIFY" --allow-unsigned "$WORK/h/evil_dotdot.tar.xz"
+check "archive with '..' path: fail" rc_is 1 bash "$VERIFY" --allow-test-kit --allow-unsigned "$WORK/h/evil_dotdot.tar.xz"
 
 echo "== directory mode"
-check "extracted kit directory verifies" rc_is 0 bash "$VERIFY" "$K"
+check "extracted kit directory verifies" rc_is 0 bash "$VERIFY" --allow-test-kit "$K"
 check "  ... and says it is not authenticated" grep -q 'not authenticated' "$WORK/last.out"
 cp -a "$K" "$WORK/kd"
 printf 'x' >>"$WORK/kd/bin/flash_tool"
-check "directory with a modified file: fail" rc_is 1 bash "$VERIFY" "$WORK/kd"
+check "directory with a modified file: fail" rc_is 1 bash "$VERIFY" --allow-test-kit "$WORK/kd"
 check "--extract-to keeps the verified tree" bash -c "
-    bash '$VERIFY' --allow-unsigned --extract-to '$WORK/keep' '$WORK/t_control/out/akam-kit-test1.tar.xz' >/dev/null 2>&1 &&
+    bash '$VERIFY' --allow-test-kit --allow-unsigned --extract-to '$WORK/keep' '$WORK/t_control/out/akam-kit-test1.tar.xz' >/dev/null 2>&1 &&
     test -s '$WORK/keep/MANIFEST.txt'"
+
+echo "== supported hardware (spec addition)"
+SH=$REPO/tools/release/supported_hardware.txt
+check "supported_hardware.txt is shipped byte for byte" cmp -s "$SH" "$K/supported_hardware.txt"
+check "MANIFEST records its sha256 and counts" bash -c "
+    grep -qx 'supported_hardware_sha256=$(sha256sum "$SH" | cut -d' ' -f1)' '$K/MANIFEST.txt' &&
+    grep -q '^supported_hardware=supported_hardware.txt (1 validated, 0 reported, 2 untested records)' '$K/MANIFEST.txt' &&
+    grep -qE '^file [0-9a-f]{64} 644 supported_hardware.txt\$' '$K/MANIFEST.txt'"
+check "validated record carries the stock APP fingerprint" bash -c "
+    grep -F '14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294' '$SH' | grep -q '^validated|.*3215672.3.*D26228)|AK3918AV130|4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025|8 partitions; mtd7=APP 00500000|squashfs xz block=131072 bcj=none|.*|1.30.1\$'"
+check "3215672.2 and any other target are untested" bash -c "
+    grep -q '^untested|.*3215672.2.*B26101.*C26101' '$SH' && grep -q '^untested|any other' '$SH'"
+check "every record has 8 fields" bash -c "
+    grep -vE '^(#|supported_hardware_format=|\$)' '$SH' | awk -F'|' 'NF != 8 { bad = 1 } END { exit bad }'"
+check "no record other than validated/reported/untested" bash -c "
+    ! grep -vE '^(#|supported_hardware_format=|validated\\||reported\\||untested\\||\$)' '$SH' | grep -q ."
+check "MANIFEST without kit_grade=release: verify refuses without --allow-test-kit" bash -c "
+    rc=0; bash '$VERIFY' --allow-unsigned '$WORK/t_control/out/akam-kit-test1.tar.xz' >'$WORK/g.out' 2>&1 || rc=\$?; [ \$rc = 1 ] && grep -q 'not a release kit' '$WORK/g.out'"
+check "stub-built kit is graded test" grep -qx kit_grade=test "$K/MANIFEST.txt"
+# regenerate the inner SHA256SUMS after an edit (so only the semantic checks can catch it).
+resum() { sha256sum $(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS; }
+tamper hwedit bash -c "
+    sed -i '/^validated|/d' supported_hardware.txt &&
+    sed -i \"s/^\\(file \\)[0-9a-f]* \\(.* supported_hardware.txt\\)\$/\\1\$(sha256sum supported_hardware.txt | cut -d' ' -f1) \\2/\" MANIFEST.txt &&
+    sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\\./||') >SHA256SUMS"
+check "supported_hardware.txt edited behind the MANIFEST: fail" vt hwedit
+check "  ... on the hardware checksum" grep -q 'supported_hardware_sha256' "$WORK/last.out"
+
+echo "== hostile archives (more)"
+tamper hardlink bash -c "ln bin/ak_rtsp bin/hl"
+check "hard link entry: fail" vt hardlink
+check "  ... rejected from the listing, before extraction" grep -q 'unexpected archive entry' "$WORK/last.out"
+tamper fifo bash -c "mkfifo bin/pipe"
+check "fifo entry: fail" vt fifo
+check "  ... rejected from the listing" grep -q 'unexpected archive entry' "$WORK/last.out"
+tamper setuid bash -c "chmod 4755 bin/ak_rtsp"
+check "setuid file: fail" vt setuid
+check "  ... rejected from the listing" grep -q 'unexpected file mode' "$WORK/last.out"
+tamper spacename bash -c "echo x >'sp ace'"
+check "file name with a space: fail" vt spacename
+check "  ... rejected from the listing" grep -q 'character outside' "$WORK/last.out"
+tamper dirmode bash -c "chmod 700 licenses"
+check "directory mode 700: fail" vt dirmode
+rm -rf "$WORK/t_dup" && mkdir -p "$WORK/t_dup/out" && cp -a "$K" "$WORK/t_dup/"
+(cd "$WORK/t_dup" && tar --owner=0 --group=0 -cf d.tar akam-kit-test1 && tar --owner=0 --group=0 -rf d.tar akam-kit-test1/MANIFEST.txt && xz -c d.tar >out/akam-kit-test1.tar.xz && rm d.tar &&
+    cd out && sha256sum akam-kit-test1.tar.xz >SHA256SUMS)
+check "duplicate archive entry: fail" vt dup
+check "  ... says so" grep -q 'duplicate entries' "$WORK/last.out"
+tamper evillink bash -c "ln -s /etc overlay/bin/evil && printf 'link /etc 777 overlay/bin/evil\n' >>MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\\./||') >SHA256SUMS"
+check "MANIFEST listing an extra symlink: fail (tarball)" vt evillink
+rm -rf "$WORK/kd2" && cp -a "$K" "$WORK/kd2" && ln -s /etc "$WORK/kd2/overlay/bin/evil" && printf 'link /etc 777 overlay/bin/evil\n' >>"$WORK/kd2/MANIFEST.txt" &&
+    (cd "$WORK/kd2" && sha256sum $(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS)
+check "MANIFEST listing an extra symlink: fail (directory mode)" rc_is 1 bash "$VERIFY" --allow-test-kit "$WORK/kd2"
+check "  ... says so" grep -q 'unexpected symlink' "$WORK/last.out"
+tamper twogates bash -c "printf 'time64_gate=fail\n' >>MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\\./||') >SHA256SUMS"
+check "two time64_gate lines: fail" vt twogates
+tamper badmode bash -c "chmod 4755 bin/flash_tool && sed -i 's|^\\(file [0-9a-f]* \\)755 bin/flash_tool|\\14755 bin/flash_tool|' MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\\./||') >SHA256SUMS"
+check "setuid mode recorded in MANIFEST: fail" vt badmode
+
+echo "== verify options"
+check "--sig naming a missing file: fail (not 'unsigned')" bash -c "
+    rc=0; bash '$VERIFY' --allow-test-kit --allow-unsigned --sig '$WORK/nope.sig' '$TB' >'$WORK/s.out' 2>&1 || rc=\$?; [ \$rc = 1 ] && grep -q 'no such file' '$WORK/s.out'"
+check "--expect-sha256 '' is refused" rc_is 2 bash "$VERIFY" --allow-test-kit --allow-unsigned --expect-sha256 '' "$TB"
+check "--expect-sha256 with 4 digits is refused" rc_is 2 bash "$VERIFY" --allow-test-kit --allow-unsigned --expect-sha256 abcd "$TB"
+check "--expect-sha256 upper-case prefix accepted" rc_is 0 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed" \
+    --expect-sha256 "$(sha256sum "$TB" | cut -c1-12 | tr a-f A-F)" "$TB"
+check "version with '.' and '+' verifies" bash -c "
+    AKAM_KIT_VERSION='1.0+rc.1' bash '$MAKE' --out '$WORK/o8' >/dev/null 2>&1 &&
+    bash '$VERIFY' --allow-test-kit --allow-unsigned '$WORK/o8/akam-kit-1.0+rc.1.tar.xz' >/dev/null 2>&1"
+check "signature present, signer principal not allowed: fail" bash -c "
+    printf 'someone-else namespaces=\"akam-release\" %s\n' \"\$(cut -d' ' -f1,2 '$WORK/key.pub')\" >'$WORK/allowed_other'
+    ! bash '$VERIFY' --allow-test-kit --allowed-signers '$WORK/allowed_other' '$TB' >/dev/null 2>&1"
+check "signature present, key allowed only for another namespace: fail" bash -c "
+    printf 'akam-release namespaces=\"other\" %s\n' \"\$(cut -d' ' -f1,2 '$WORK/key.pub')\" >'$WORK/allowed_ns'
+    ! bash '$VERIFY' --allow-test-kit --allowed-signers '$WORK/allowed_ns' '$TB' >/dev/null 2>&1"
+
+echo "== make_kit content guard and drift"
+mkdir -p "$WORK/badlic"
+printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nxx\n' >"$WORK/badlic/COPYRIGHT"
+check "a private key in a shipped file stops make_kit" bash -c "
+    ! MUSL_COPYRIGHT='$WORK/badlic/COPYRIGHT' bash '$MAKE' --out '$WORK/o9' >'$WORK/bad.out' 2>&1 && grep -q 'forbidden content' '$WORK/bad.out'"
+
+# image_files.txt is the single list; build_firmware.sh must install exactly the same files.
+FIXTURE=$REPO/tests/fixtures/app_fake
+check "fixture APP tree exists" test -d "$FIXTURE/sbin"
+DRIFT=$WORK/drift
+mkdir -p "$DRIFT"
+check "build_firmware.sh builds an image with the same stubs" bash -c "
+    cd '$WORK' && env APP_EXTRACTED='$FIXTURE' FW_DIR='$DRIFT' AKAM_ALLOW_UNCHECKED_TIME64=1 bash '$REPO/src/ak_rtsp/build_firmware.sh' >'$WORK/drift.log' 2>&1"
+P=$DRIFT/app_patched
+drift_check() {
+    local kind a b c d f rc=0 want="$WORK/drift.want" got="$WORK/drift.got"
+    : >"$want"
+    while read -r kind a b c d; do
+        case "$kind" in
+            '' | '#'*) continue ;;
+            file)
+                [ "$c" != - ] || continue
+                echo "$c" >>"$want"
+                [ "$(stat -c %a "$P/$c")" = "$a" ] || { echo "mode of $c differs from image_files.txt ($a)"; rc=1; }
+                cmp -s "$P/$c" "$REPO/$d" || { echo "content of $c differs from $d"; rc=1; }
+                [ "$(stat -c %a "$K/$b")" = "$a" ] && cmp -s "$K/$b" "$P/$c" || { echo "kit $b differs from image $c"; rc=1; }
+                ;;
+            link)
+                echo "$c" >>"$want"
+                [ "$(readlink "$P/$c")" = "$a" ] && [ "$(readlink "$K/$b")" = "$a" ] || { echo "link $c differs"; rc=1; }
+                ;;
+        esac
+    done <"$REPO/tools/release/image_files.txt"
+    # binaries and licences: built from variables, compared by name
+    for f in bin/ak_rtsp bin/dropbearmulti; do
+        echo "$f" >>"$want"
+        cmp -s "$P/$f" "$K/$f" && [ "$(stat -c %a "$P/$f")" = "$(stat -c %a "$K/$f")" ] || { echo "$f differs between image and kit"; rc=1; }
+    done
+    for f in "$K"/licenses/*; do
+        f=$(basename "$f")
+        case "$f" in THIRD_PARTY_NOTICES.md | LICENSE.*) ;; *) continue ;; esac
+        echo "local/akam/$f" >>"$want"
+        cmp -s "$P/local/akam/$f" "$K/licenses/$f" && [ "$(stat -c %a "$P/local/akam/$f")" = 644 ] || { echo "licence $f differs between image and kit"; rc=1; }
+    done
+    # every Akam-owned path of the image (new or changed against the stock tree) is in the list
+    echo sbin/service.sh >>"$want"
+    echo local/akam/MANIFEST.txt >>"$want"
+    (cd "$P" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort) |
+        while IFS= read -r f; do
+            if [ ! -e "$FIXTURE/$f" ] && [ ! -L "$FIXTURE/$f" ]; then echo "$f"; elif [ -L "$P/$f" ]; then [ "$(readlink "$P/$f")" = "$(readlink "$FIXTURE/$f")" ] || echo "$f"; elif ! cmp -s "$P/$f" "$FIXTURE/$f"; then echo "$f"; fi
+        done >"$got"
+    LC_ALL=C sort -u "$want" >"$want.s"
+    if ! diff "$want.s" "$got" >"$WORK/drift.diff"; then echo "image and image_files.txt disagree:"; cat "$WORK/drift.diff"; rc=1; fi
+    return $rc
+}
+check "image content/modes/links == image_files.txt == kit overlay (no drift)" drift_check
 
 echo
 echo "kit_test: $PASS passed, $FAIL failed"
