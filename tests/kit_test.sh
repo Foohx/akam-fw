@@ -217,7 +217,12 @@ check "MANIFEST without kit_grade=release: verify refuses without --allow-test-k
     rc=0; bash '$VERIFY' --allow-unsigned '$WORK/t_control/out/akam-kit-test1.tar.xz' >'$WORK/g.out' 2>&1 || rc=\$?; [ \$rc = 1 ] && grep -q 'not a release kit' '$WORK/g.out'"
 check "stub-built kit is graded test" grep -qx kit_grade=test "$K/MANIFEST.txt"
 # regenerate the inner SHA256SUMS after an edit (so only the semantic checks can catch it).
-resum() { sha256sum $(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS; }
+resum() { # rewrite SHA256SUMS of the current directory
+    local t
+    t=$(mktemp)
+    find . -type f ! -name SHA256SUMS | LC_ALL=C sort | sed 's|^\./||' | xargs sha256sum >"$t" && cat "$t" >SHA256SUMS
+    rm -f "$t"
+}
 tamper hwedit bash -c "
     sed -i '/^validated|/d' supported_hardware.txt &&
     sed -i \"s/^\\(file \\)[0-9a-f]* \\(.* supported_hardware.txt\\)\$/\\1\$(sha256sum supported_hardware.txt | cut -d' ' -f1) \\2/\" MANIFEST.txt &&
@@ -248,7 +253,7 @@ check "  ... says so" grep -q 'duplicate entries' "$WORK/last.out"
 tamper evillink bash -c "ln -s /etc overlay/bin/evil && printf 'link /etc 777 overlay/bin/evil\n' >>MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\\./||') >SHA256SUMS"
 check "MANIFEST listing an extra symlink: fail (tarball)" vt evillink
 rm -rf "$WORK/kd2" && cp -a "$K" "$WORK/kd2" && ln -s /etc "$WORK/kd2/overlay/bin/evil" && printf 'link /etc 777 overlay/bin/evil\n' >>"$WORK/kd2/MANIFEST.txt" &&
-    (cd "$WORK/kd2" && sha256sum $(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS)
+    (cd "$WORK/kd2" && resum)
 check "MANIFEST listing an extra symlink: fail (directory mode)" rc_is 1 bash "$VERIFY" --allow-test-kit "$WORK/kd2"
 check "  ... says so" grep -q 'unexpected symlink' "$WORK/last.out"
 tamper twogates bash -c "printf 'time64_gate=fail\n' >>MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\\./||') >SHA256SUMS"
@@ -298,7 +303,7 @@ drift_check() {
                 echo "$c" >>"$want"
                 [ "$(stat -c %a "$P/$c")" = "$a" ] || { echo "mode of $c differs from image_files.txt ($a)"; rc=1; }
                 cmp -s "$P/$c" "$REPO/$d" || { echo "content of $c differs from $d"; rc=1; }
-                [ "$(stat -c %a "$K/$b")" = "$a" ] && cmp -s "$K/$b" "$P/$c" || { echo "kit $b differs from image $c"; rc=1; }
+                if [ "$(stat -c %a "$K/$b")" != "$a" ] || ! cmp -s "$K/$b" "$P/$c"; then echo "kit $b differs from image $c"; rc=1; fi
                 ;;
             link)
                 echo "$c" >>"$want"

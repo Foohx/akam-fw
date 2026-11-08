@@ -211,11 +211,15 @@ verify_dir() {
     # Each of these keys must appear exactly once, with the expected value.
     local kv
     for kv in time64_gate=pass target=arm-linux-musleabi; do
-        [ "$(grep -c "^${kv%%=*}=" "$m")" = 1 ] && grep -qx "$kv" "$m" || die "MANIFEST.txt must contain exactly one ${kv%%=*} line, equal to ${kv#*=}"
+        if [ "$(grep -c "^${kv%%=*}=" "$m")" != 1 ] || ! grep -qx "$kv" "$m"; then
+            die "MANIFEST.txt must contain exactly one ${kv%%=*} line, equal to ${kv#*=}"
+        fi
     done
     [ "$(grep -c '^kit_grade=' "$m")" = 1 ] || die "MANIFEST.txt has no (single) kit_grade"
     if ! grep -qx 'kit_grade=release' "$m"; then
-        [ "$ALLOW_TEST" = 1 ] && grep -qx 'kit_grade=test' "$m" || die "this is not a release kit (kit_grade is not 'release'): development kits need --allow-test-kit"
+        if [ "$ALLOW_TEST" != 1 ] || ! grep -qx 'kit_grade=test' "$m"; then
+            die "this is not a release kit (kit_grade is not 'release'): development kits need --allow-test-kit"
+        fi
         echo "WARNING: kit_grade=test: development kit, NOT a release." >&2
     fi
 

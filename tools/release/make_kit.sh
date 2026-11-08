@@ -62,11 +62,11 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || die "not a git checkout
 KIT_GRADE=release
 if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
     [ "${AKAM_KIT_ALLOW_DIRTY:-0}" = 1 ] || die "working tree is not clean (uncommitted or untracked files; set AKAM_KIT_ALLOW_DIRTY=1 for a non-release test kit)"
-    KIT_GRADE=test
+    KIT_GRADE="test"
 fi
-[ "${AKAM_KIT_ALLOW_DIRTY:-0}" != 1 ] || KIT_GRADE=test
-[ "$NO_BUILD" != 1 ] || KIT_GRADE=test
-[ -z "${AKAM_KIT_CHECK_TIME32:-}" ] || KIT_GRADE=test
+[ "${AKAM_KIT_ALLOW_DIRTY:-0}" != 1 ] || KIT_GRADE="test"
+[ "$NO_BUILD" != 1 ] || KIT_GRADE="test"
+[ -z "${AKAM_KIT_CHECK_TIME32:-}" ] || KIT_GRADE="test"
 VERSION="${AKAM_KIT_VERSION:-$(git -C "$ROOT" describe --always 2>/dev/null)}"
 case "$VERSION" in '' | *[!A-Za-z0-9._+-]*) die "bad version string '$VERSION' (allowed: A-Z a-z 0-9 . _ + -)" ;; esac
 EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
@@ -187,7 +187,7 @@ done <"$IMAGE_FILES"
 while IFS= read -r f; do
     install -m 755 "$ROOT/$f" "$KIT/scripts/flash/$(basename "$f")"
 done < <(git -C "$ROOT" ls-files -- 'tools/flash_scripts/*.sh')
-[ -n "$(ls "$KIT/scripts/flash")" ] || die "no tracked flash scripts found"
+[ -n "$(find "$KIT/scripts/flash" -type f)" ] || die "no tracked flash scripts found"
 install -m 644 "$SUPPORTED_HW" "$KIT/supported_hardware.txt"
 for e in "${LICENSES[@]}"; do
     install -m 644 "${e#*:}" "$KIT/licenses/${e%%:*}"
@@ -221,7 +221,7 @@ BAD="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$KIT" 2>/dev/null || true
     grep -rl --binary-files=binary -e 'hsqs' "$KIT/scripts" "$KIT/overlay" "$KIT/patches" "$KIT/licenses" 2>/dev/null || true) | sort -u)"
 [ -z "$BAD" ] || die "forbidden content in the kit (key, image or vendor file):
 $BAD"
-[ "$(LC_ALL=C ls "$KIT/bin" | tr '\n' ' ')" = 'ak_rtsp dropbearmulti flash_tool ' ] || die "unexpected content in bin/"
+[ "$(find "$KIT/bin" -type f -printf "%f\n" | LC_ALL=C sort | tr "\n" " ")" = 'ak_rtsp dropbearmulti flash_tool ' ] || die "unexpected content in bin/"
 
 # --- normalise ----------------------------------------------------------------------------
 find "$KIT" -type d -exec chmod 755 {} +
