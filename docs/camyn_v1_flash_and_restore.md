@@ -6,10 +6,10 @@
 > not boot; the [no-UART variant](#first-flash-without-uart-from-the-stock-firmware) below exists, but
 > read what it can and cannot recover (section 5) before choosing it.
 >
-> Status: nothing in this document has been run on a camera by Camyn. The flashing tool and scripts
-> (`flash_tool`, `install_with_flash_tool.sh`, `restore.sh`) are upstream's; upstream reports a gzip APP
-> image flashed and booted on its own unit (`3215672.2`); Camyn's default image is xz, the stock format. Camyn's image, and every step that is
-> Camyn's own addition, is untested.
+> Status: `flash_tool` and `install_with_flash_tool.sh` were run on a real Camyn camera twice on
+> 2026-11-08 (stock telnet, then Camyn maintenance telnet), 0 chunk retries and a matching read-back
+> md5 each time. The reflash over SSH from RAM (`camyn_reflash_ssh.sh`) is tested on the build host
+> with fakes only: **not tested on hardware**. Restoring is untested.
 
 ---
 
@@ -79,7 +79,7 @@ Get a root shell over the **UART console** with the `init=/bin/sh` boot
 `flash_tool` working live over Telnet with Wi-Fi and ISP active, but Camyn recommends the bare shell
 for two reasons: it is the state upstream's restore script was always run in, and on a running camera
 the APP partition is mounted on `/usr`, so a live flash erases the filesystem that running programs
-(including Dropbear and the stock watchdog) are paged from *(assumed risk, not tested)*; see
+(including Dropbear and the stock watchdog) are paged from *(a live flash of a Camyn camera survived twice, but it remains a risk)*; see
 "Reflashing later" below.
 
 ```sh
@@ -265,24 +265,143 @@ A partly written APP is recoverable only through UART (section 5), so use UART f
 2. Run `sh /mnt/install_with_flash_tool.sh` **from the SD card** (`/mnt`), as above. Both the script and
    `flash_tool` are read from the card, never from `/usr`.
 
-If you have no UART, the only variant that avoids running from `/usr` is a fully detached run of the
-flash tool from RAM and SD (`nohup`, output to a file, copy of `flash_tool` in `/tmp`, shell and `dd`
-resolved from ROOTFS). Camyn has **not** tried this and does not recommend it: you still lose the
-watchdog feeder and the SSH session, and cannot see the result. The `make -C src/ak_rtsp upload` target
-copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash; do
-not run them from an SSH session on a Camyn image.
+UART is the only route with a safety net. Two no-UART routes are described below: the reflash over
+the **maintenance telnet** (card in the camera; used twice on a Camyn camera), and the **reflash over
+SSH from RAM** (no card; residual risk; tested on the build host with fakes only). The `make -C src/ak_rtsp upload`
+target copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash;
+do not run those two from an SSH session on a Camyn image (the guard refuses them).
 
 **`flash_guard.sh`.** Every script that writes APP sources `flash_guard.sh` from its own directory, so
 copy it to the SD card next to the scripts (a missing file makes the script refuse to run). The guard
-refuses inside an SSH session (`SSH_CONNECTION`/`SSH_CLIENT`, or a dropbear ancestor process) and when
-the script or `flash_tool` lives under `/usr` while `/usr` is the `mtdblock7` squashfs. It does not
-block the first flash from stock firmware over Telnet/UART or the `init=/bin/sh` shell, with scripts
-and `flash_tool` on the SD card. `CAMYN_FLASH_I_KNOW=1` overrides it (prints a warning); use it only
-on **stock firmware**, never on a Camyn image.
+has two entry points:
 
-Note that the header comments of `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` describe
-live flashing over **Telnet** on the stock firmware (a shell that is not Dropbear). That experience
-does not transfer to a Camyn camera, where Telnet is disabled and the session would be SSH.
+- `camyn_flash_guard` (all the install/restore scripts): refuses inside an SSH session
+  (`SSH_CONNECTION`/`SSH_CLIENT`, or a dropbear ancestor process) and when the script or `flash_tool`
+  lives under `/usr` while `/usr` is the `mtdblock7` squashfs. It does not block a flash from the stock
+  firmware over Telnet, the maintenance telnet, or the `init=/bin/sh` shell, with scripts and
+  `flash_tool` on the SD card. `CAMYN_FLASH_I_KNOW=1` overrides it (prints a warning); use it only on
+  **stock firmware**, never on a Camyn image.
+- `camyn_flash_guard_detached` (only `camyn_reflash_ssh.sh`, for the SSH route below): no override
+  variable. It allows the write only if **all** hold: the operator passed exactly
+  `--i-understand-no-uart`; the script, `flash_tool` and the image all resolve (symlinks followed)
+  under `/tmp`, none under `/usr`, and `/tmp` is a tmpfs/ramfs mount; `SSH_CONNECTION`, `SSH_CLIENT`
+  and `SSH_TTY` are unset; no dropbear process is among the ancestors; and the process is a session
+  leader (started with `setsid`), so the death of the SSH session cannot signal it. The old rule is
+  unchanged: running the same write directly from an SSH shell, or with tools under `/usr`, is still
+  refused.
+
+### Reflashing over the maintenance telnet (used twice on hardware)
+
+This is the procedure that was run on a real Camyn camera on 2026-11-08, first from the stock
+firmware's telnet, then from the Camyn maintenance telnet. Both times `flash_tool` needed **0 retries**,
+the read-back md5 of `/dev/mtd7` matched the image, and the running system (including the stock
+`/usr/bin/watchdog`, which lives in the APP) survived the write. That is an observation on one unit,
+not a guarantee: see the residual risks of the SSH route, which apply here too.
+
+1. Card: the first-boot card from `tools/sd/prepare_first_boot_sd.sh` (toolkit payload, empty
+   `CAMYN_MAINTENANCE`, `camyn/authorized_keys`), see the tips below. Boot with it and
+   `telnet CAMERA_IP 24`.
+2. The maintenance boot mounts the card on **`/tmp/sd`**, not on `/mnt` (the stock script unmounts
+   `/mnt`). Every Camyn script reads `/mnt/...`, so bind the card there:
+   ```sh
+   mount --bind /tmp/sd /mnt
+   ls -l /mnt/custom_firmware /mnt/flash_tool /mnt/flash_guard.sh /mnt/install_with_flash_tool.sh
+   ```
+3. If the image or `flash_tool` on the card are not the ones you want, do not pull the card: **push**
+   the new files from the PC. The PC's firewall blocks inbound connections, so the camera cannot
+   fetch them; it listens instead and the PC connects. On the camera (one file per run, into the card's
+   tree that you just bound on `/mnt`):
+   ```sh
+   nc -l -p 8765 > /mnt/custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs
+   ```
+   and, once it is listening, on the PC (tiny socket client, no netcat needed):
+   ```sh
+   python3 -c 'import socket,sys; s=socket.create_connection((sys.argv[1],8765)); s.sendall(open(sys.argv[2],"rb").read()); s.close()' CAMERA_IP ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs
+   ```
+   `nc -l` exits when the PC closes the connection. Check the result on the camera
+   (`ls -l`, `md5sum`) against the PC value before continuing; repeat for `flash_tool`
+   (`nc -l -p 8765 > /mnt/flash_tool; chmod +x /mnt/flash_tool`) and for any script you changed.
+   Keep exactly one `ak_rtsp_firmware_*.squashfs` in `custom_firmware/`, and never a `*.bin` at the root.
+4. `sh /mnt/install_with_flash_tool.sh`: compare the printed `md5sum` with the PC, type `YES`, read the
+   `FAULT SUMMARY` and the success line in full, then
+   `dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum` must equal the image md5. The guard accepts this: the
+   shell is not SSH and everything runs from `/mnt`.
+5. Power cycle by hand (unplug and replug USB-C), then follow the post-flash checks.
+
+### Reflashing over SSH, without UART (RAM-only, residual risk)
+
+For a camera with no UART and no card handy. **Read the risks first.** The design removes the two
+dependencies the plain "SSH reflash" has (the SSH session and the tools live on the APP partition being
+erased), but it cannot make the write itself safe:
+
+- **Residual risk 1, no safety net.** If power fails or the board resets while `/dev/mtd7` is half
+  written, the APP does not boot and nothing on the SD card runs (section 5, "Without UART"). Only UART
+  (`init=/bin/sh`) or an SPI programmer recovers it.
+- **Residual risk 2, `/usr` is still the partition being rewritten.** Processes already running from it
+  (`/usr/bin/watchdog`, the first Dropbear, `ak_rtsp`, `camyn_lockdown.sh`) keep paging code in from a
+  squashfs whose backing blocks change under them. Two live flashes did not break it, but a page that
+  is not in the cache when it is needed, read after the erase and with a different image, is garbage.
+  If `watchdog` dies the hardware watchdog resets the board, possibly mid-write.
+- **Residual risk 3, RAM.** The image (5 MiB), `flash_tool`, a BusyBox copy and a Dropbear copy go to
+  tmpfs; with ~29 MB free the script requires 10 MiB free in `/tmp` and aborts otherwise.
+
+What the scripts do:
+
+1. `reflash_over_ssh.sh` (PC) checks the image (exactly 5 242 880 bytes, md5 equal to the one **you**
+   pass), uploads `camyn_reflash_ssh.sh`, `flash_guard.sh`, `flash_tool` and the image to
+   `/tmp/camyn_reflash/` with `ssh ... 'cat > file'`, and compares the sha256 computed on the PC and on
+   the camera for the image and the tool.
+2. On the camera, `precheck` requires `/proc/mtd` to show `mtd7: 00500000 ... "APP"` and enough free
+   `/tmp`; `prepare` re-checks size and md5, copies BusyBox into RAM (linking the applets the write
+   needs), copies `dropbearmulti` to `/tmp` and starts a **second Dropbear on port 2222** from there,
+   with the same host key and the same key directory (`/tmp/camyn_home`) as the first one, so you have
+   a session that does not execute anything from `/usr`. Because it is the same host key,
+   the helper passes `-o HostKeyAlias=<host>` and your `known_hosts` entry applies to port 2222.
+3. The helper logs in on port 2222. If it cannot, it stops **before writing**.
+4. Through that session, `start --i-understand-no-uart` launches a worker with `setsid`, from the RAM
+   copies, with `SSH_*` removed from its environment, stdin on `/dev/null` and stdout/stderr on
+   `/tmp/camyn_reflash/flash.log`. The worker waits until the launching shell is gone, runs
+   `camyn_flash_guard_detached` (rules above) and refuses (`RESULT: REFUSED`, nothing written) otherwise;
+   then it checks the md5 of the RAM image once more, runs `flash_tool image /dev/mtd7`, reads the
+   partition back and compares its md5, up to 3 attempts. The log ends with `RESULT: OK` or
+   `RESULT: FAILED`. A dying SSH session cannot kill it.
+5. The helper polls the log over port 2222 (tolerating dropped connections), prints the new lines, and
+   when it sees `RESULT: OK` runs its own read-back (`dd if=/dev/mtd7 | md5sum` in a fresh session) and
+   compares it with the md5 you gave. Only then does it print that the flash is verified and tell you
+   to power-cycle **by hand**. Nothing in these scripts reboots the camera.
+
+Run it (the `flash_tool` is the ARM binary from `make -C src/ak_rtsp flash_tool`):
+
+```bash
+# 1. dry run: uploads only the two scripts, checks mtd7 and free RAM, writes nothing
+tools/flash_scripts/reflash_over_ssh.sh --host CAMERA_IP --identity ~/.ssh/camyn \
+    --image build/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --md5 <md5 of the image> \
+    --flash-tool src/ak_rtsp/flash_tool --precheck-only
+# 2. the flash itself
+tools/flash_scripts/reflash_over_ssh.sh ... same options ... --i-understand-no-uart
+```
+
+If the helper ends with anything but "VERIFIED", **do not power cycle**: read
+`/tmp/camyn_reflash/flash.log` over port 2222, run the helper again (a worker that is still running
+blocks a new start), or go to UART. If the session on port 22 drops while you wait, nothing is lost:
+the worker is detached; reconnect on port 2222.
+
+### Maintenance-card tips
+
+- The maintenance boot mounts the card on `/tmp/sd`; `mount --bind /tmp/sd /mnt` makes the unmodified
+  scripts work. The stock boot unmounts `/mnt` lazily, so do not expect it there.
+- The card is the trust anchor: whoever can insert it gets an unauthenticated root telnet on port 24.
+  Keep it for flashing days only, and erase or remove `CAMYN_MAINTENANCE` afterwards.
+- Never leave a `*.bin` at the card root (the stock boot would try to flash it). Keep the stock backup in
+  `original_firmware/`, and exactly one image in `custom_firmware/`.
+- Put `camyn/authorized_keys` on the card: it is the way back into SSH after a flash.
+- The camera's BusyBox 1.30.1 has `setsid`, `nc`, `timeout`, `sha256sum`, `md5sum`, `stat`, `cmp`,
+  `grep -E`, `strings`, `paste`, `cut`, `sed`, `wc`, and **lacks** `tr`, `mktemp`, `nohup`, `flock`,
+  `gzip`, `uniq`, `wget`. Do not write procedures that need them.
+- Moving files: the PC cannot be reached from the camera (firewall), so the camera listens
+  (`nc -l -p 8765 > file`) and the PC pushes; the camera has no `wget`.
+- `/tmp` is a tmpfs of ~22 MB free and total free RAM is ~29 MB: do not stage more than one image.
+- The software `reboot` is unreliable on this hardware: always unplug and replug USB-C.
 
 ## 5. Restore
 
