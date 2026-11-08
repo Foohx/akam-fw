@@ -31,5 +31,6 @@ An SD card prepared before the rename still works with the new image:
 
 What to change on your side: rename the `camyn` folder and the `CAMYN_MAINTENANCE` file on your SD
 card, use the new script and variable names, and (optionally) rename your local `~/.ssh/camyn` key
-and the `~/camyn-backup` / `~/camyn-work` directories that the docs now call `~/.ssh/akam`,
-`~/akam-backup` and `~/akam-work`.
+and the `~/camyn-backup` / `~/camyn-work` / `~/camyn-sdprep` directories that the docs now call
+`~/.ssh/akam`, `~/akam-backup`, `~/akam-work` and `~/akam-sdprep` (`prepare_first_boot_sd.sh` looks for
+the toolkit clone in `~/akam-sdprep/toolkit` by default: pass `--toolkit ~/camyn-sdprep/toolkit` to reuse an old clone).
