@@ -26,6 +26,14 @@
 #include "h264_params.h"
 #include "rtp_clock.h"
 #include "net_tx.h"
+#include "rtsp_in.h"
+
+/* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
+ * 60 s is also the protocol default). Clients refresh the session at about
+ * half of it with GET_PARAMETER / OPTIONS; any such request is answered. The
+ * server does not expire TCP sessions by itself: the socket's own keepalive
+ * (handle_client()) reaps vanished peers. */
+#define SESSION_TIMEOUT_SEC 60
 
 /* Latest SPS/PPS seen in the encoder output (main thread only: filled by
  * drain_venc_ring() and send_video_frame(), read by DESCRIBE). */
@@ -76,6 +84,9 @@ typedef struct {
      * past SO_SNDTIMEO): the interleaved stream is no longer valid, so the
      * client loop drops the connection instead of blocking on it again. */
     bool tx_fail;
+    /* Why the client loop must end (logged once, then the loop exits). Set by
+     * the first cause: TEARDOWN, RTCP BYE, bad input, write failure. */
+    const char *drop_reason;
     /* Bounded, stall-tolerant writer for the RTSP/TCP socket (shared by the
      * RTSP responses, interleaved RTP and interleaved RTCP). */
     net_tx_t tx;
@@ -262,10 +273,22 @@ static int setup_audio_transport(Client *self, SmolRTSP_Context *ctx, const Smol
     return 0;
 }
 
+/* Session header of a response inside an established session (RFC 2326
+ * section 12.37): lets the client match a keepalive answer to its session. */
+static void respond_session_header(const Client *self, SmolRTSP_Context *ctx) {
+    if (self->session_id != 0)
+        smolrtsp_header(ctx, SMOLRTSP_HEADER_SESSION, "%llu",
+                        (unsigned long long)self->session_id);
+}
+
+/* OPTIONS doubles as a keepalive (ffmpeg, live555): answered like any other
+ * request, with the Session header once a session exists. */
 static void Client_options(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
-    (void)self; (void)req;
-    smolrtsp_header(ctx, SMOLRTSP_HEADER_PUBLIC, "DESCRIBE, SETUP, PLAY, TEARDOWN");
+    (void)req;
+    smolrtsp_header(ctx, SMOLRTSP_HEADER_PUBLIC,
+                    "OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER");
+    respond_session_header(self, ctx);
     smolrtsp_respond_ok(ctx);
 }
 
@@ -326,7 +349,8 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
     /* Session ID must stay the same across both tracks' SETUP calls within
      * one session — only generate it once. */
     if (self->session_id == 0) self->session_id = (uint64_t)rand();
-    smolrtsp_header(ctx, SMOLRTSP_HEADER_SESSION, "%llu", (unsigned long long)self->session_id);
+    smolrtsp_header(ctx, SMOLRTSP_HEADER_SESSION, "%llu;timeout=%d",
+                    (unsigned long long)self->session_id, SESSION_TIMEOUT_SEC);
     smolrtsp_respond_ok(ctx);
 }
 
@@ -349,13 +373,48 @@ static void Client_teardown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     VSELF(Client);
     (void)req;
     self->is_playing = false;
+    respond_session_header(self, ctx);
     smolrtsp_respond_ok(ctx);
+    if (!self->drop_reason) self->drop_reason = "TEARDOWN";
 }
 
+/* The controller interface has no hook for GET_PARAMETER / SET_PARAMETER, so
+ * they arrive here. GET_PARAMETER without a body is the RFC 2326 section
+ * 10.8 keepalive (live555/VLC): 200 OK with the request's CSeq (added by the
+ * context) and the Session. A foreign Session is 454; a parameter query is
+ * not supported (451), nor is SET_PARAMETER (501). */
 static void Client_unknown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
-    (void)self; (void)req;
-    smolrtsp_respond(ctx, SMOLRTSP_STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
+    const SmolRTSP_Method method = req->start_line.method,
+                          get_param = SMOLRTSP_METHOD_GET_PARAMETER,
+                          set_param = SMOLRTSP_METHOD_SET_PARAMETER;
+
+    if (SmolRTSP_Method_eq(&method, &get_param)) {
+        CharSlice99 session;
+        if (self->session_id != 0 &&
+            SmolRTSP_HeaderMap_find(&req->header_map, SMOLRTSP_HEADER_SESSION, &session)) {
+            /* "Session: <id>[;timeout=N]" */
+            char sbuf[64];
+            size_t n = session.len < sizeof(sbuf) - 1 ? session.len : sizeof(sbuf) - 1;
+            memcpy(sbuf, session.ptr, n);
+            sbuf[n] = '\0';
+            if (strtoull(sbuf, NULL, 10) != self->session_id) {
+                smolrtsp_respond(ctx, SMOLRTSP_STATUS_SESSION_NOT_FOUND, "Session Not Found");
+                return;
+            }
+        }
+        if (!CharSlice99_is_empty(req->body)) {
+            smolrtsp_respond(ctx, SMOLRTSP_STATUS_PARAMETER_NOT_UNDERSTOOD,
+                             "Parameter Not Understood");
+            return;
+        }
+        respond_session_header(self, ctx);
+        smolrtsp_respond_ok(ctx);
+    } else if (SmolRTSP_Method_eq(&method, &set_param)) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_IMPLEMENTED, "Not Implemented");
+    } else {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
+    }
 }
 
 static SmolRTSP_ControlFlow Client_before(VSelf, SmolRTSP_Context *ctx,
@@ -372,8 +431,11 @@ static SmolRTSP_ControlFlow Client_before(VSelf, SmolRTSP_Context *ctx,
 static void Client_after(VSelf, ssize_t ret, SmolRTSP_Context *ctx,
                           const SmolRTSP_Request *req) {
     VSELF(Client);
-    (void)self; (void)ctx; (void)req;
-    if (ret < 0) printf("[ak_rtsp] Failed to respond to client\n");
+    (void)ctx; (void)req;
+    if (ret < 0) {
+        printf("[ak_rtsp] Failed to respond to client\n");
+        self->tx_fail = true; /* the response did not reach the peer */
+    }
 }
 
 impl(SmolRTSP_Controller, Client);
@@ -808,6 +870,78 @@ static int TxWriter_writef(VSelf, const char *restrict fmt, ...) {
 impl(SmolRTSP_Writer, TxWriter);
 
 /* -------------------------------------------------------------------------
+ * Input handling: rtsp_in frames the byte stream, these act on each item.
+ * ------------------------------------------------------------------------- */
+typedef struct {
+    Client *client;
+    SmolRTSP_Controller *controller;
+    SmolRTSP_Writer *writer;
+} InCtx;
+
+/* Error response written without the controller (request not parsed, or too
+ * big to buffer). The CSeq is taken from the message when it can be read. */
+static void send_error_reply(Client *client, int code, const char *reason,
+                             const char *msg, size_t len)
+{
+    unsigned long cseq = 0;
+    char out[160];
+    if (rtsp_in_header_uint(msg, len, "CSeq", &cseq) != 1) cseq = 0;
+    int n = snprintf(out, sizeof(out), "RTSP/1.0 %d %s\r\nCSeq: %lu\r\n\r\n",
+                     code, reason, cseq);
+    if (n > 0 && net_tx_write_all(&client->tx, out, (size_t)n) < 0)
+        client->tx_fail = true;
+}
+
+/* One complete RTSP request. A request SmolRTSP rejects is answered 400 and
+ * the session goes on: the framing (and thus the stream) is intact. */
+static int in_on_message(void *user, const char *data, size_t len)
+{
+    InCtx *c = user;
+    SmolRTSP_Request req = SmolRTSP_Request_uninit();
+    SmolRTSP_ParseResult res = SmolRTSP_Request_parse(&req, CharSlice99_new((char *)data, len));
+    bool ok = false;
+
+    match(res) {
+        of(SmolRTSP_ParseResult_Success, status) {
+            match(*status) {
+                of(SmolRTSP_ParseStatus_Complete, offset) {
+                    ok = (*offset == len);
+                }
+                otherwise {}
+            }
+        }
+        of(SmolRTSP_ParseResult_Failure, err) {
+            (void)err;
+        }
+    }
+
+    if (ok) {
+        smolrtsp_dispatch(*c->writer, *c->controller, &req);
+    } else {
+        printf("[ak_rtsp] Request parse failed (%zu bytes), answering 400\n", len);
+        send_error_reply(c->client, 400, "Bad Request", data, len);
+    }
+    return c->client->drop_reason != NULL || c->client->tx_fail;
+}
+
+/* Interleaved frame from the client (RFC 2326 section 10.12). Players send
+ * RTCP receiver reports on the RTCP channel of each track every few seconds;
+ * they need no answer. Only a BYE matters: the client is leaving. */
+static int in_on_interleaved(void *user, uint8_t channel, const uint8_t *data, size_t len)
+{
+    InCtx *c = user;
+    Client *client = c->client;
+    bool rtcp_ch = client->is_tcp &&
+        ((client->rtp_transport && channel == client->video_rtcp_ch) ||
+         (client->audio_rtp_transport && channel == client->audio_rtcp_ch));
+    if (rtcp_ch && rtsp_rtcp_scan(data, len, NULL)) {
+        client->drop_reason = "RTCP BYE from client";
+        return 1;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------
  * Client connection loop
  *
  * Uses poll() for incoming RTSP commands; the client socket remains blocking for writes:
@@ -878,8 +1012,10 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     SmolRTSP_Controller controller = DYN(Client, SmolRTSP_Controller, &client);
     SmolRTSP_Writer writer = DYN(TxWriter, SmolRTSP_Writer, &client.tx);
 
-    char buf[4096];
-    size_t buf_len = 0;
+    rtsp_in_t in;
+    rtsp_in_init(&in);
+    InCtx in_ctx = { &client, &controller, &writer };
+    const rtsp_in_ops_t in_ops = { &in_ctx, in_on_message, in_on_interleaved };
     bool video_idle = false;
 
     printf("[ak_rtsp] Client connected\n");
@@ -902,59 +1038,47 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         }
 
         if (poll_ret > 0) {
-            ssize_t n = recv(client_fd, buf + buf_len, sizeof(buf) - buf_len - 1, 0);
-            if (n < 0) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    perror("recv"); break;
+            /* rtsp_in guarantees room for at least one byte here: a request
+             * that fills the buffer is answered/dropped below, '$' frames are
+             * consumed as they complete. recv() is never asked for 0 bytes
+             * (which would read as end-of-stream). */
+            size_t cap;
+            char *dst = rtsp_in_space(&in, &cap);
+            ssize_t n = cap ? recv(client_fd, dst, cap, 0) : 0;
+            if (cap == 0) {
+                client.drop_reason = "input buffer full";
+            } else if (n < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                    perror("recv");
+                    client.drop_reason = "recv error";
                 }
             } else if (n == 0) {
-                printf("[ak_rtsp] Client disconnected\n");
-                break;
+                client.drop_reason = "client closed the connection";
             } else {
-                buf_len += n;
-                buf[buf_len] = '\0';
-
-                SmolRTSP_Request req = SmolRTSP_Request_uninit();
-                CharSlice99 input = CharSlice99_new(buf, buf_len);
-                SmolRTSP_ParseResult res = SmolRTSP_Request_parse(&req, input);
-
-                bool should_consume = false;
-                size_t bytes_to_consume = 0;
-
-                match(res) {
-                    of(SmolRTSP_ParseResult_Success, status) {
-                        match(*status) {
-                            of(SmolRTSP_ParseStatus_Complete, offset) {
-                                should_consume = true;
-                                bytes_to_consume = *offset;
-                            }
-                            otherwise {}
-                        }
-                    }
-                    of(SmolRTSP_ParseResult_Failure, err) {
-                        (void)err;
-                        printf("[ak_rtsp] Request parse failed (%zu bytes buffered)\n",
-                               buf_len);
-                        buf_len = 0;
-                    }
+                rtsp_in_commit(&in, (size_t)n);
+                switch (rtsp_in_pump(&in, &in_ops)) {
+                case RTSP_IN_PUMP_OVERFLOW: {
+                    size_t dl;
+                    const char *d = rtsp_in_data(&in, &dl);
+                    send_error_reply(&client, 413, "Request Entity Too Large", d, dl);
+                    client.drop_reason = "RTSP request larger than the input buffer";
+                    break;
                 }
-
-                if (should_consume) {
-                    smolrtsp_dispatch(writer, controller, &req);
-                    if (bytes_to_consume < buf_len) {
-                        memmove(buf, buf + bytes_to_consume, buf_len - bytes_to_consume);
-                        buf_len -= bytes_to_consume;
-                    } else {
-                        buf_len = 0;
-                    }
+                case RTSP_IN_PUMP_GARBAGE:
+                    client.drop_reason = "invalid input (neither RTSP nor interleaved frame)";
+                    break;
+                case RTSP_IN_PUMP_OK:
+                case RTSP_IN_PUMP_STOPPED:
+                    break;
                 }
             }
+            if (client.drop_reason) break;
         }
 
         if (client.is_playing) {
             int vret = send_video_frame(&client);
             if (vret < 0) {
-                printf("[ak_rtsp] Error sending frame, closing\n");
+                client.drop_reason = "error sending video frame";
                 break;
             }
             video_idle = (vret == 0);
@@ -970,13 +1094,15 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                     rtp_astart_arm(&client.audio_start);
                 }
             }
-            if (client.tx_fail) {
-                printf("[ak_rtsp] TCP write failed, closing\n");
-                break;
-            }
+        }
+        if (client.tx_fail) {
+            client.drop_reason = "TCP write failed or stalled";
+            break;
         }
     }
 
+    printf("[ak_rtsp] Dropping client: %s\n",
+           client.drop_reason ? client.drop_reason : "loop ended");
     VCALL(DYN(Client, SmolRTSP_Droppable, &client), drop);
     close(client_fd);
     printf("[ak_rtsp] Client connection closed\n");
