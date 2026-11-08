@@ -27,8 +27,16 @@
 #       Zero-fill the whole card with dd (typed "ERASE <device>"), to erase cards holding a Wi-Fi
 #       password or a dump.
 #
+# Safety: only whole removable USB disks or SD readers (mmcblk) of 128 MiB .. 128 GiB. Refused: partitions,
+# SATA/NVMe/loop disks, a disk carrying /, /boot, /home, /var, swap (any of its mounts, subvolumes included),
+# the repository, your home, the working or the temp directory, any LUKS/LVM/RAID member or disk with
+# device-mapper/md holders. /dev/disk/by-* links are resolved first. The disk (size, model, serial, wwn,
+# partition table) is re-checked after the typed "ERASE <device>" and right before wipefs, sfdisk, mkfs and dd.
+# AKAM_FORCE_TTY (test hook) does not unlock an erase: a real terminal is required.
+#
 # Wi-Fi: AKAM_WIFI_SSID / AKAM_WIFI_PASS from the environment, otherwise asked (visible input by
-# default, --hidden to hide). They are never printed or logged. The password sits in clear text in
+# default, --hidden to hide). They are never printed, logged or passed on a command line, and are
+# removed from the environment once read. The password sits in clear text in
 # custom/configs/wifi.conf on the card (and in --stage-dir): treat the card as a secret.
 # Exit status: 0 success, 1 refusal or failure, 2 usage.
 
@@ -118,6 +126,8 @@ get_wifi() { # AKAM_WIFI_SSID / AKAM_WIFI_PASS, else prompt (never echoed back, 
     fi
     if [ -z "$SSID" ] || [ -z "$PASS" ]; then die "SSID and password must not be empty"; fi
     case "$SSID$PASS" in *$'\n'* | *$'\r'*) die "SSID/password must not contain newlines" ;; esac
+    # The password must not stay in the environment of the children (sudo, mkfs, ...).
+    unset AKAM_WIFI_SSID AKAM_WIFI_PASS AKAM_SD_SSID AKAM_SD_PASS
     return 0
 }
 
@@ -130,6 +140,7 @@ no_root_bin() { # DIR
 build_payload() { # STAGE MODE TOOLKIT PUBKEY
     local s=$1 mode=$2 t=$3 pub=$4 conf
     cp -a "$t/sd_card/." "$s/"
+    chmod 700 "$s" # cp -a copied the mode of the toolkit dir; the tree will hold the Wi-Fi password
     mkdir -p "$s/custom/state" "$s/logs"
     : >"$s/custom/state/dump.done"
     rm -f "$s/custom/state/shadow.done"
@@ -138,6 +149,7 @@ build_payload() { # STAGE MODE TOOLKIT PUBKEY
     sed -i -E 's/^TELNET=.*/TELNET=1/; s/^TELNET_PORT=.*/TELNET_PORT=24/; s/^OFFLINE=.*/OFFLINE=1/' "$conf"
     [ "$(grep -cE '^(TELNET=1|TELNET_PORT=24|OFFLINE=1)$' "$conf")" = 3 ] || die "hack.conf edits did not apply"
     printf 'MODE=sta\nSSID=%s\nPASS=%s\nSECURITY=3\nDHCP=1\n' "$(q "$SSID")" "$(q "$PASS")" >"$s/custom/configs/wifi.conf"
+    chmod 600 "$s/custom/configs/wifi.conf"
     sed -i '2i\# DECLOUD_ENTRYPOINT_LOCK\nmkdir /tmp/decloud_entrypoint.lock 2>/dev/null || exit 0' "$s/custom/scripts/entrypoint.sh"
     # The toolkit hack.sh has no trailing newline: keep the marker on its own line.
     if [ -n "$(tail -c1 "$s/hack.sh")" ]; then echo >>"$s/hack.sh"; fi
@@ -297,19 +309,36 @@ parse_args() {
             --dry-run) DRY=1; shift ;;
             --hidden) HIDDEN=1; shift ;;
             --human) HUMAN=1; shift ;;
-            -h | --help) sed -n 2,40p "$SELF"; exit 0 ;;
+            -h | --help) sed -n 2,41p "$SELF"; exit 0 ;;
             *) usage_die "unknown argument: $1" ;;
         esac
     done
 }
 
-guard_device() { # DEV: refuse anything that is not an eligible card
-    if ! be_check_disk "$1"; then die "refusing: $D_WHY"; fi
+guard_device() { # DEV: refuse anything that is not an eligible card; resolves /dev/disk/by-* links
+    local dev=$1
+    if [ -L "$dev" ]; then
+        dev=$(readlink -f -- "$dev") || die "cannot resolve $1"
+        log "$1 resolves to $dev"
+    fi
+    DEV=$dev
+    BE_GUARD_PATHS=("$REPO" "$HOME" "$PWD" "${TMPDIR:-/tmp}")
+    if ! be_check_disk "$DEV"; then die "refusing: $D_WHY"; fi
+    G_IDENT=$D_IDENT
+    G_PTUUID=$D_PTUUID
+}
+
+real_tty() { # a real terminal on stdin and stderr: AKAM_FORCE_TTY (test hook) does not count for erasing
+    [ -t 0 ] && [ -t 2 ]
+}
+
+recheck_disk() { # the confirmed disk is still the same, right before touching it
+    be_recheck "$DEV" "$G_IDENT" "$G_PTUUID" || die "refusing: $D_WHY (nothing was written)"
 }
 
 need_tools() {
     local t
-    for t in "$@"; do host_have "$t" || die "missing tool: $t ($(host_pkg_install_hint util-linux dosfstools))"; done
+    for t in "$@"; do host_have "$t" || die "missing tool: $t ($(host_pkg_install_hint util-linux dosfstools parted))"; done
 }
 
 show_device() { # DEV (after guard_device)
@@ -350,6 +379,7 @@ make_stage() { # sets S
         [ -n "$STAGE" ] || usage_die "--dry-run needs --stage-dir DIR"
         mkdir -p "$STAGE"
         [ -z "$(ls -A "$STAGE")" ] || die "--stage-dir must be empty"
+        chmod 700 "$STAGE" # it will hold the Wi-Fi password in clear text
         S=$STAGE
     else
         STAGE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/akam-sd.XXXXXX") || die "mktemp failed"
@@ -367,7 +397,7 @@ cmd_list() {
 }
 
 cmd_prepare() {
-    local part
+    local part rc
     case "$MODE" in
         backup | first-boot | flash-files) ;;
         *) usage_die "--mode must be backup, first-boot or flash-files" ;;
@@ -390,7 +420,7 @@ cmd_prepare() {
         need_tools lsblk
         guard_device "$DEV"
         if [ "$MODE" != flash-files ]; then
-            host_is_tty || die "refusing to erase a card without a terminal"
+            real_tty || die "refusing to erase a card without a terminal"
             need_tools wipefs sfdisk mkfs.vfat partprobe blockdev
         fi
     fi
@@ -411,6 +441,7 @@ cmd_prepare() {
     get_wifi
     make_stage
     build_payload "$S" "$MODE" "$TOOLKIT" "$PUBKEY"
+    unset SSID PASS
     verify_dir "$S" "$MODE" "$TOOLKIT" >/dev/null || die "internal check failed on the staged tree"
     if [ "$DRY" = 1 ]; then
         log "dry run: card tree built in $S (no device touched). Top level:"
@@ -421,8 +452,16 @@ cmd_prepare() {
     show_device "$DEV"
     confirm_erase "$DEV"
     [ -b "$DEV" ] || die "$DEV is not a block device"
+    recheck_disk
     be_unmount_all "$DEV" || die "cannot unmount the partitions of $DEV"
-    part=$(be_format "$DEV") || die "formatting $DEV failed (a reader that says \"No medium found\" needs a replug)"
+    rc=0
+    be_format "$DEV" "$G_IDENT" "$G_PTUUID" || rc=$?
+    case $rc in
+        0) ;;
+        4) die "refusing: $D_WHY" ;;
+        *) die "formatting $DEV failed (a reader that says \"No medium found\" needs a replug)" ;;
+    esac
+    part=$D_PART
     MNT=$(mktemp -d "${TMPDIR:-/tmp}/akam-mnt.XXXXXX") || die "mktemp failed"
     be_mount "$part" "$MNT" || die "mount of $part failed"
     MOUNTED_BY_US=1
@@ -439,6 +478,7 @@ cmd_prepare() {
 
 flash_files_to_card() { # STAGE
     local s=$1 part node mp found="" old
+    recheck_disk
     part=$(be_part_path "$DEV")
     [ -b "$part" ] || die "$part is not a block device (is the card prepared and inserted?)"
     while IFS=$'\t' read -r node mp; do
@@ -452,6 +492,7 @@ flash_files_to_card() { # STAGE
         MOUNTED_BY_US=1
     fi
     [ -f "$MNT/hack.sh" ] || die "$part does not look like an Akam card (no hack.sh): prepare it first"
+    no_root_bin "$MNT" || die "a *.bin sits at the root of the card: remove it first (stock tf_update.sh would run system_upgrade on it)"
     for old in "$MNT"/custom_firmware/*; do
         if [ -e "$old" ]; then rm -f "$old"; log "removed the previous image $(basename "$old")"; fi
     done
@@ -496,6 +537,7 @@ cmd_verify() {
 }
 
 cmd_wipe() {
+    local rc
     [ -n "$DEV" ] || usage_die "--device is required"
     need_tools lsblk
     guard_device "$DEV"
@@ -503,23 +545,30 @@ cmd_wipe() {
         log "dry run: would zero-fill $DEV (${D_SIZE} bytes) with dd after the typed confirmation"
         return 0
     fi
-    host_is_tty || die "refusing to erase a card without a terminal"
+    real_tty || die "refusing to erase a card without a terminal"
     need_tools dd blockdev
     show_device "$DEV"
     confirm_erase "$DEV"
     [ -b "$DEV" ] || die "$DEV is not a block device"
+    recheck_disk
     be_unmount_all "$DEV" || die "cannot unmount the partitions of $DEV"
-    be_zero_fill "$DEV" "$D_SIZE" || die "dd failed"
+    rc=0
+    be_zero_fill "$DEV" "$D_SIZE" "$G_IDENT" "$G_PTUUID" || rc=$?
+    case $rc in
+        0) ;;
+        4) die "refusing: $D_WHY" ;;
+        *) die "dd failed" ;;
+    esac
     sync
     log "done: $DEV is zero-filled."
 }
 
 main() {
     local cmd=${1:-}
-    [ $# -gt 0 ] || { sed -n 2,40p "$SELF"; exit 2; }
+    [ $# -gt 0 ] || { sed -n 2,41p "$SELF"; exit 2; }
     shift
     case "$cmd" in
-        -h | --help | help) sed -n 2,40p "$SELF"; exit 0 ;;
+        -h | --help | help) sed -n 2,41p "$SELF"; exit 0 ;;
         list-candidates | prepare | verify | wipe) ;;
         *) usage_die "unknown subcommand: $cmd" ;;
     esac

@@ -22,12 +22,21 @@ cat >"$FB/lsblk" <<'EOF'
 # Fake lsblk: -d lists whole disks (optionally one), otherwise the tree of the last argument.
 last=${*: -1}
 case " $* " in
+    *MOUNTPOINTS*) [ "${FAKE_HAS_MPS:-}" = 1 ] || exit 1; cat "$FAKE_LSBLK_DIR/tree_$(basename "$last").txt" 2>/dev/null || exit 1 ;;
+    *" -nspro "*) cat "$FAKE_LSBLK_DIR/inv_$(basename "$last").txt" 2>/dev/null || exit 1 ;;
     *" -dpP "*)
         if [ "${last#/dev/}" != "$last" ]; then grep -F "NAME=\"$last\"" "$FAKE_LSBLK_DIR/disks.txt"; else cat "$FAKE_LSBLK_DIR/disks.txt"; fi ;;
-    *) cat "$FAKE_LSBLK_DIR/tree_$(basename "$last").txt" 2>/dev/null || exit 1 ;;
+    *) cat "$FAKE_LSBLK_DIR/tree_$(basename "$last").txt" 2>/dev/null | sed 's/ MOUNTPOINTS="[^"]*"//' ; [ -f "$FAKE_LSBLK_DIR/tree_$(basename "$last").txt" ] || exit 1 ;;
 esac
 EOF
 chmod +x "$FB/lsblk"
+cat >"$FB/findmnt" <<'EOF'
+#!/usr/bin/env bash
+# Fake findmnt: every path lives on $FAKE_FINDMNT_SRC (unset: not found).
+[ -n "${FAKE_FINDMNT_SRC:-}" ] || exit 1
+echo "$FAKE_FINDMNT_SRC"
+EOF
+chmod +x "$FB/findmnt"
 cat >"$FD/disks.txt" <<'EOF'
 NAME="/dev/sda" TYPE="disk" RM="0" TRAN="sata" MODEL="Samsung\x20SSD"
 NAME="/dev/sdb" TYPE="disk" RM="1" TRAN="usb" MODEL="Card\x20Reader"
@@ -36,6 +45,12 @@ NAME="/dev/sdd" TYPE="disk" RM="1" TRAN="usb" MODEL="Huge\x20Disk"
 NAME="/dev/sde" TYPE="disk" RM="1" TRAN="usb" MODEL="Empty\x20Reader"
 NAME="/dev/sdf" TYPE="disk" RM="1" TRAN="usb" MODEL="Swap\x20Stick"
 NAME="/dev/sdg" TYPE="disk" RM="1" TRAN="" MODEL="Odd"
+NAME="/dev/sdh" TYPE="disk" RM="1" TRAN="usb" MODEL="Luks\x20Stick"
+NAME="/dev/sdi" TYPE="disk" RM="1" TRAN="usb" MODEL="Lvm\x20Stick"
+NAME="/dev/sdj" TYPE="disk" RM="1" TRAN="usb" MODEL="Raid\x20Stick"
+NAME="/dev/sdk" TYPE="disk" RM="1" TRAN="usb" MODEL="Held\x20Stick"
+NAME="/dev/sdl" TYPE="disk" RM="1" TRAN="usb" MODEL="Multi\x20Mount"
+NAME="/dev/sdm" TYPE="disk" RM="1" TRAN="usb" MODEL="Repo\x20Disk"
 NAME="/dev/mmcblk0" TYPE="disk" RM="0" TRAN="" MODEL=""
 NAME="/dev/mmcblk1" TYPE="disk" RM="0" TRAN="" MODEL=""
 EOF
@@ -51,6 +66,19 @@ tree sde 'NAME="/dev/sde" TYPE="disk" MOUNTPOINT=""'
 tree sdf 'NAME="/dev/sdf" TYPE="disk" MOUNTPOINT=""
 NAME="/dev/sdf1" TYPE="part" MOUNTPOINT="[SWAP]"'
 tree sdg 'NAME="/dev/sdg" TYPE="disk" MOUNTPOINT=""'
+tree sdh 'NAME="/dev/sdh" TYPE="disk" FSTYPE="" MOUNTPOINT=""
+NAME="/dev/sdh1" TYPE="part" FSTYPE="ext4" MOUNTPOINT=""
+NAME="/dev/mapper/vault" TYPE="crypt" FSTYPE="ext4" MOUNTPOINT=""'
+tree sdi 'NAME="/dev/sdi" TYPE="disk" FSTYPE="" MOUNTPOINT=""
+NAME="/dev/sdi1" TYPE="part" FSTYPE="LVM2_member" MOUNTPOINT=""'
+tree sdj 'NAME="/dev/sdj" TYPE="disk" FSTYPE="" MOUNTPOINT=""
+NAME="/dev/sdj1" TYPE="part" FSTYPE="linux_raid_member" MOUNTPOINT=""'
+tree sdk 'NAME="/dev/sdk" TYPE="disk" FSTYPE="" MOUNTPOINT=""'
+tree sdl 'NAME="/dev/sdl" TYPE="disk" FSTYPE="" MOUNTPOINT="" MOUNTPOINTS=""
+NAME="/dev/sdl1" TYPE="part" FSTYPE="btrfs" MOUNTPOINT="/mnt/x" MOUNTPOINTS="/mnt/x\x0a/"'
+tree sdm 'NAME="/dev/sdm" TYPE="disk" FSTYPE="" MOUNTPOINT=""
+NAME="/dev/sdm1" TYPE="part" FSTYPE="ext4" MOUNTPOINT="/mnt/work"'
+printf '/dev/sdm1\n/dev/sdm\n' >"$FD/inv_sdm1.txt"
 tree mmcblk0 'NAME="/dev/mmcblk0" TYPE="disk" MOUNTPOINT=""
 NAME="/dev/mmcblk0p1" TYPE="part" MOUNTPOINT=""'
 tree mmcblk1 'NAME="/dev/mmcblk1" TYPE="disk" MOUNTPOINT=""
@@ -63,6 +91,8 @@ sysd sdd 536870912    # 256 GiB
 sysd sde 0
 sysd sdf 7744512
 sysd sdg 7744512
+for d in sdh sdi sdj sdk sdl sdm; do sysd $d 7744512; done
+mkdir -p "$SYS/class/block/sdk/sdk1/holders/dm-0"
 sysd mmcblk0 15523840 # ~7.4 GiB
 sysd mmcblk1 15523840
 mkdir -p "$SYS/class/block/mmcblk0/device" "$SYS/class/block/mmcblk1/device"
@@ -100,7 +130,7 @@ has() { grep -q -- "$1" "$WORK/o"; }
 plain list-candidates; LIST=$(cat "$WORK/o")
 check "list: USB card reader listed" grep -q '^/dev/sdb	' <<<"$LIST"
 check "list: SD reader on mmcblk0 listed" grep -q '^/dev/mmcblk0	' <<<"$LIST"
-for d in sda sdc sdd sde sdf sdg mmcblk1; do
+for d in sda sdc sdd sde sdf sdg sdh sdi sdj sdk mmcblk1; do
     check "list: /dev/$d excluded" bash -c "! grep -q '^/dev/$d	' <<<'$LIST'"
 done
 check "list: 5 TSV fields, size from sysfs, model unescaped, mounts" \
@@ -124,6 +154,93 @@ check "real wipe refuses without a TTY" refused plain wipe --device /dev/sdb
 check "  ... and says why" has "without a terminal"
 check "wipe needs a device" refused plain wipe
 check "AKAM_TEST_DRYRUN_ONLY refused on a real run" refused sd prepare --mode backup --device /dev/sdb --toolkit "$TK"
+
+# storage stacks, multi mounts, repo/home disk
+for d in sdh sdi sdj sdk; do
+    check "dry-run refuses /dev/$d (LUKS/LVM/RAID/holders)" refused sd prepare --mode backup --device "/dev/$d" --dry-run --stage-dir "$WORK/s_$d" --toolkit "$TK"
+    check "  ... as part of a storage stack" has "storage stack"
+done
+check "multi-mount: plain MOUNTPOINT shows /mnt/x only (disk listed)" bash -c "'$SCRIPT' list-candidates | grep -q '^/dev/sdl	'"
+check "multi-mount: hidden / mountpoint refused when MOUNTPOINTS is available" bash -c "FAKE_HAS_MPS=1 '$SCRIPT' wipe --device /dev/sdl --dry-run 2>&1 | grep -q 'carries the system path /'"
+check "repo/home/cwd/tmp on the disk refused" bash -c "FAKE_FINDMNT_SRC=/dev/sdm1 '$SCRIPT' wipe --device /dev/sdm --dry-run 2>&1 | grep -q 'carries'"
+check "  ... but another disk is fine with the same findmnt" bash -c "FAKE_FINDMNT_SRC=/dev/sdm1 '$SCRIPT' wipe --device /dev/sdb --dry-run >/dev/null 2>&1"
+# symlinks (/dev/disk/by-id style) are resolved, then judged
+ln -s /dev/sdb "$WORK/by-id-card"
+ln -s /dev/sda "$WORK/by-id-system"
+check "symlink to the card is resolved and accepted" plain wipe --device "$WORK/by-id-card" --dry-run
+check "  ... and the resolution is announced" has "resolves to /dev/sdb"
+check "symlink to the system disk is refused" refused plain wipe --device "$WORK/by-id-system" --dry-run
+# AKAM_FORCE_TTY is a test hook: it must not unlock a real erase
+check "AKAM_FORCE_TTY does not unlock a real prepare" bash -c "AKAM_FORCE_TTY=1 '$SCRIPT' prepare --mode backup --device /dev/sdb --toolkit '$TK' </dev/null 2>&1 | grep -q 'without a terminal'"
+check "AKAM_FORCE_TTY does not unlock a real wipe" bash -c "AKAM_FORCE_TTY=1 '$SCRIPT' wipe --device /dev/sdb </dev/null 2>&1 | grep -q 'without a terminal'"
+
+# identity re-check between the guard and the write (card swapped after the confirmation)
+cat >"$WORK/recheck.sh" <<EOF
+. '$SCRIPT'
+be_check_disk /dev/sdb || exit 9
+id=\$D_IDENT; pt=\$D_PTUUID
+size() { echo "\$1" >'$SYS/class/block/sdb/size'; }
+case "\$1" in
+    same) be_recheck /dev/sdb "\$id" ;;
+    size) size 15523840; be_recheck /dev/sdb "\$id" ;;
+    model) sed -i 's/Card.x20Reader/Other\\\\x20Reader/' '$FD/disks.txt'; be_recheck /dev/sdb "\$id" ;;
+    system) cp '$FD/tree_sdc.txt' '$FD/tree_sdb.txt'; be_recheck /dev/sdb "\$id" ;;
+    ptuuid) be_recheck /dev/sdb "\$id" OLD-PTUUID ;;
+    dd) size 15523840; be_zero_fill /dev/sdb 4096 "\$id" "\$pt" ;;
+esac
+EOF
+rck() { # <case>: run in a private copy of the fakes, so no case leaks into the next
+    local c=$1 rc
+    cp -a "$FD" "$WORK/lsblk.keep"; cp "$SYS/class/block/sdb/size" "$WORK/size.keep"
+    bash "$WORK/recheck.sh" "$c" >"$WORK/o" 2>&1; rc=$?
+    rm -rf "$FD"; mv "$WORK/lsblk.keep" "$FD"; cp "$WORK/size.keep" "$SYS/class/block/sdb/size"
+    return $rc
+}
+check "be_recheck accepts the same disk" rck same
+check "be_recheck refuses a replaced card (other size)" refused rck size
+check "be_recheck refuses a replaced card (other model)" refused rck model
+check "be_recheck refuses a disk that became ineligible" refused rck system
+check "be_recheck refuses a changed partition table" refused rck ptuuid
+check "be_zero_fill refuses a swapped card before dd (rc 4)" bash -c "cd '$WORK' && cp -a '$FD' lk && cp '$SYS/class/block/sdb/size' sz; bash recheck.sh dd >/dev/null 2>&1; r=\$?; rm -rf '$FD'; mv lk '$FD'; cp sz '$SYS/class/block/sdb/size'; [ \$r -eq 4 ]"
+
+# be_format with stub tools: nothing destructive runs once the re-check refuses
+STUB=$WORK/stub
+mkdir -p "$STUB"
+for t in wipefs sfdisk partprobe mkfs.vfat umount; do
+    printf '#!/bin/sh\necho "%s $*" >>"%s"\nexit 0\n' "$t" "$WORK/stub.log" >"$STUB/$t"
+    chmod +x "$STUB/$t"
+done
+printf '#!/bin/sh\necho 3965190144\n' >"$STUB/blockdev"
+chmod +x "$STUB/blockdev"
+cat >"$WORK/fmt.sh" <<EOF
+. '$SCRIPT'
+PATH='$STUB':\$PATH
+SUDO=
+be_is_block() { true; }
+be_part_of() { true; }
+sleep() { :; }
+be_check_disk /dev/sdb || exit 9
+id=\$D_IDENT; pt=\$D_PTUUID
+case "\$1" in
+    swap-before-wipefs) echo 15523840 >'$SYS/class/block/sdb/size' ;;
+    swap-after-wipefs) printf '#!/bin/sh\necho "wipefs \$*" >>"$WORK/stub.log"\necho 15523840 >"$SYS/class/block/sdb/size"\n' >'$STUB/wipefs' ;;
+esac
+be_format /dev/sdb "\$id" "\$pt"
+EOF
+fmt() { # <case>
+    : >"$WORK/stub.log"
+    cp "$STUB/wipefs" "$WORK/wipefs.keep"; cp "$SYS/class/block/sdb/size" "$WORK/size.keep"
+    bash "$WORK/fmt.sh" "$1" >"$WORK/o" 2>&1
+    local rc=$?
+    cp "$WORK/wipefs.keep" "$STUB/wipefs"; cp "$WORK/size.keep" "$SYS/class/block/sdb/size"
+    return $rc
+}
+check "be_format on the unchanged card succeeds" fmt ok
+check "  ... wipefs, sfdisk and mkfs.vfat ran" bash -c "grep -q '^wipefs' '$WORK/stub.log' && grep -q '^mkfs.vfat -F 32 -n AKAMSD /dev/sdb1' '$WORK/stub.log'"
+check "be_format refuses a swapped card before wipefs" refused fmt swap-before-wipefs
+check "  ... and ran no destructive tool" test ! -s "$WORK/stub.log"
+check "be_format refuses a card swapped right after wipefs" refused fmt swap-after-wipefs
+check "  ... mkfs.vfat never ran" bash -c "! grep -q mkfs '$WORK/stub.log'"
 
 # typed confirmation, exercised on the function itself (a real run needs a real device)
 confirm() { # <typed answer>
@@ -149,6 +266,10 @@ check "backup: no *.bin at the root" bash -c "! find '$B' -maxdepth 1 -iname '*.
 wifi_ok() { ( . "$1/custom/configs/wifi.conf" && [ "$SSID" = "$AKAM_WIFI_SSID" ] && [ "$PASS" = "$AKAM_WIFI_PASS" ] ); }
 check "wifi.conf sources back to the exact SSID/password (quotes, \$, backtick, backslash)" wifi_ok "$B"
 check "wifi.conf values were not executed" test ! -e "$WORK/pwned"
+check "stage dir is private (700) and wifi.conf 600" bash -c "[ \"\$(stat -c %a '$B')\" = 700 ] && [ \"\$(stat -c %a '$B/custom/configs/wifi.conf')\" = 600 ]"
+check "the Wi-Fi variables are removed from the environment after use" bash -c "
+    export AKAM_WIFI_SSID=a AKAM_WIFI_PASS=b AKAM_SD_SSID=c AKAM_SD_PASS=d
+    . '$SCRIPT'; HIDDEN=0; get_wifi; ! env | grep -q 'AKAM_WIFI\|AKAM_SD_S\|AKAM_SD_P'"
 check "verify (stage dir, with toolkit hashes) passes" sd verify --mode backup --stage-dir "$B" --toolkit "$TK"
 check "verify prints VERIFY: OK" has "VERIFY: OK"
 check "verify without toolkit passes (hash step skipped)" sd verify --mode backup --stage-dir "$B"

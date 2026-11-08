@@ -3,7 +3,7 @@
 # Linux backend of tools/sd/sd_card.sh (Arch, Debian/Ubuntu): device discovery, safety
 # guards and the privileged disk operations. Source it, do not run it.
 # Test hooks (tests only): AKAM_SYSFS overrides /sys; lsblk may be replaced by a stub on PATH.
-# Tools: lsblk wipefs sfdisk mkfs.vfat partprobe blockdev mount umount sync dd.
+# Tools: lsblk findmnt wipefs sfdisk mkfs.vfat partprobe blockdev mount umount sync dd.
 
 BE_MIN_BYTES=134217728     # 128 MiB
 BE_MAX_BYTES=137438953472  # 128 GiB
@@ -39,15 +39,29 @@ be_is_whole_disk_name() {
     [[ $1 =~ ^/dev/(sd[a-z]+|mmcblk[0-9]+)$ ]]
 }
 
+# be_tree DEV: `lsblk -P` lines (NAME TYPE FSTYPE MOUNTPOINT [MOUNTPOINTS]) for DEV and all its
+# descendants (partitions, crypt/LVM/RAID children). MOUNTPOINTS lists EVERY mount of a node
+# (btrfs subvolumes, bind mounts); older lsblk only knows MOUNTPOINT, which shows just one of them.
+be_tree() {
+    lsblk -pP -o NAME,TYPE,FSTYPE,MOUNTPOINT,MOUNTPOINTS "$1" 2>/dev/null ||
+        lsblk -pP -o NAME,TYPE,FSTYPE,MOUNTPOINT "$1" 2>/dev/null
+}
+
 # be_mounts DEV: lines "node<TAB>mountpoint" for every mounted node of DEV (partitions included).
 be_mounts() {
-    local line mp name
+    local line mp name list
     while IFS= read -r line; do
-        mp=$(be_kv "$line" MOUNTPOINT)
-        [ -n "$mp" ] || continue
         name=$(be_kv "$line" NAME)
-        printf '%s\t%s\n' "$name" "$mp"
-    done < <(lsblk -pP -o NAME,TYPE,MOUNTPOINT "$1" 2>/dev/null)
+        list=$(be_kv "$line" MOUNTPOINTS)
+        [ -n "$list" ] || list=$(be_kv "$line" MOUNTPOINT)
+        while [ -n "$list" ]; do
+            mp=${list%%\\x0a*}
+            if [ "$mp" = "$list" ]; then list=""; else list=${list#*\\x0a}; fi
+            [ -n "$mp" ] || continue
+            mp=$(printf '%b' "$mp") # lsblk escapes spaces and such as \xNN
+            printf '%s\t%s\n' "$name" "$mp"
+        done
+    done < <(be_tree "$1")
 }
 
 # be_carries_system DEV: print the first system mountpoint (/, /boot, /home, swap...) and return 0.
@@ -63,17 +77,65 @@ be_carries_system() {
     return 1
 }
 
-# be_check_disk DEV: sets D_SIZE D_MODEL D_TRAN D_MOUNTS (comma list node:mountpoint).
+# be_in_use DEV: print why DEV is part of a storage stack and return 0 (LUKS/LVM/RAID members,
+# crypt/LVM/RAID/loop children, device-mapper or md holders in sysfs). Return 1 when it is a plain disk.
+be_in_use() {
+    local line type fs name n d h
+    while IFS= read -r line; do
+        type=$(be_kv "$line" TYPE)
+        fs=$(be_kv "$line" FSTYPE)
+        name=$(be_kv "$line" NAME)
+        case $type in
+            disk | part | "") ;;
+            *) printf '%s is a %s device on top of it' "$name" "$type"; return 0 ;;
+        esac
+        case $fs in
+            crypto_LUKS | LVM2_member | linux_raid_member | zfs_member)
+                printf '%s is a %s member' "$name" "$fs"
+                return 0 ;;
+        esac
+    done < <(be_tree "$1")
+    n=$(basename "$1")
+    for d in "$(be_sysfs)/class/block/$n/holders" "$(be_sysfs)/class/block/$n/$n"*/holders; do
+        [ -d "$d" ] || continue
+        h=$(ls -A "$d" 2>/dev/null | head -n1)
+        if [ -n "$h" ]; then printf '%s is held by %s' "$n" "$h"; return 0; fi
+    done
+    return 1
+}
+
+# be_holds_path DEV PATH: true when PATH lives on DEV (or on a device stacked on DEV).
+be_holds_path() {
+    local src
+    host_have findmnt || return 1
+    src=$(findmnt -n -o SOURCE --target "$2" 2>/dev/null) || return 1
+    src=${src%%\[*}
+    case $src in /dev/*) ;; *) return 1 ;; esac
+    lsblk -nspro NAME "$src" 2>/dev/null | grep -qx "$1"
+}
+
+# BE_GUARD_PATHS (set by the caller): directories that must never sit on the target disk
+# (the repository, the home directory, the working directory, the temp directory).
+BE_GUARD_PATHS=()
+
+# be_check_disk DEV: sets D_SIZE D_MODEL D_TRAN D_MOUNTS (comma list node:mountpoint), D_IDENT
+# (size, model, serial, wwn, vendor, major:minor: what must not change between the check and the
+# write) and D_PTUUID (partition-table id, changes once the card is wiped).
 # Returns 0 when DEV is an eligible card; otherwise sets D_WHY (the reason) and returns 1.
 be_check_disk() {
-    local dev=$1 line type rm tran name mp node sysmp kind
-    D_SIZE=0 D_MODEL="" D_TRAN="" D_MOUNTS="" D_WHY=""
+    local dev=$1 line type rm tran name mp node sysmp kind why p serial wwn vendor majmin
+    D_SIZE=0 D_MODEL="" D_TRAN="" D_MOUNTS="" D_WHY="" D_IDENT="" D_PTUUID=""
     if ! be_is_whole_disk_name "$dev"; then
         D_WHY="$dev is not a whole-disk node like /dev/sdb or /dev/mmcblk0 (partitions are refused)"
         return 1
     fi
-    line=$(lsblk -dpP -o NAME,TYPE,RM,TRAN,MODEL "$dev" 2>/dev/null | head -n1) || line=""
+    line=$(lsblk -dpP -o NAME,TYPE,RM,TRAN,MODEL,SERIAL,WWN,VENDOR,MAJ:MIN,PTUUID "$dev" 2>/dev/null | head -n1) || line=""
     if [ -z "$line" ]; then D_WHY="$dev is unknown to lsblk"; return 1; fi
+    serial=$(be_kv "$line" SERIAL)
+    wwn=$(be_kv "$line" WWN)
+    vendor=$(be_kv "$line" VENDOR)
+    majmin=$(be_kv "$line" MAJ:MIN)
+    D_PTUUID=$(be_kv "$line" PTUUID)
     type=$(be_kv "$line" TYPE)
     rm=$(be_kv "$line" RM)
     tran=$(be_kv "$line" TRAN)
@@ -86,6 +148,16 @@ be_check_disk() {
         D_WHY="$dev carries the system path $sysmp"
         return 1
     fi
+    if why=$(be_in_use "$dev"); then
+        D_WHY="$dev is part of a storage stack ($why)"
+        return 1
+    fi
+    for p in "${BE_GUARD_PATHS[@]+"${BE_GUARD_PATHS[@]}"}"; do
+        if be_holds_path "$dev" "$p"; then
+            D_WHY="$dev carries $p (the repository, your home, the working or the temp directory)"
+            return 1
+        fi
+    done
     name=$(basename "$dev")
     case $name in
         mmcblk*)
@@ -101,10 +173,30 @@ be_check_disk() {
         D_WHY="$dev size $D_SIZE bytes is outside 128 MiB .. 128 GiB"
         return 1
     fi
+    D_IDENT="$D_SIZE|$D_MODEL|$serial|$wwn|$vendor|$majmin"
     while IFS=$'\t' read -r node mp; do
         if [ -n "$D_MOUNTS" ]; then D_MOUNTS+=","; fi
         D_MOUNTS+="$node:$mp"
     done < <(be_mounts "$dev")
+    return 0
+}
+
+# be_recheck DEV IDENT [PTUUID]: the whole guard again, right before a destructive step. The
+# disk must still be the one the user confirmed (same identity; same partition table when PTUUID
+# is given) and must still be eligible. Sets D_WHY on failure.
+be_recheck() {
+    local dev=$1 ident=$2 ptuuid=${3-} real
+    real=$(readlink -f "$dev" 2>/dev/null) || real=$dev
+    if [ "$real" != "$dev" ]; then D_WHY="$dev now resolves to $real"; return 1; fi
+    be_check_disk "$dev" || return 1
+    if [ "$D_IDENT" != "$ident" ]; then
+        D_WHY="$dev changed since it was checked (was: $ident, now: $D_IDENT): card replaced?"
+        return 1
+    fi
+    if [ $# -ge 3 ] && [ "$D_PTUUID" != "$ptuuid" ]; then
+        D_WHY="$dev partition table changed since it was checked: card replaced?"
+        return 1
+    fi
     return 0
 }
 
@@ -142,23 +234,41 @@ be_wait_medium() {
     return 1
 }
 
-# be_format DEV: wipe signatures, one MBR partition, FAT32 label AKAMSD. Prints the partition node.
+# be_is_block NODE: true for a block device node (a function so that tests can stub it).
+be_is_block() { [ -b "$1" ]; }
+
+# be_part_of PART DEV: true when the partition node PART belongs to the disk DEV.
+be_part_of() {
+    local pk
+    pk=$(lsblk -dnro PKNAME "$1" 2>/dev/null | head -n1) || pk=""
+    [ "$pk" = "$(basename "$2")" ]
+}
+
+# be_format DEV IDENT PTUUID: wipe signatures, one MBR partition, FAT32 label AKAMSD. The partition
+# node is left in D_PART (not on stdout: a subshell would lose D_WHY). IDENT/PTUUID are D_IDENT/D_PTUUID
+# of the confirmed disk: it is re-checked (still the same, still eligible) right before wipefs,
+# sfdisk and mkfs. Returns 4 when the re-check refuses (reason in D_WHY).
 be_format() {
-    local dev=$1 part i=0
+    local dev=$1 ident=$2 ptuuid=$3 part i=0
+    be_recheck "$dev" "$ident" "$ptuuid" || return 4
     $SUDO wipefs -a "$dev" >/dev/null || return 1
     be_wait_medium "$dev" 60 || return 2
+    be_recheck "$dev" "$ident" || return 4
     printf 'label: dos\n, , c, *\n' | $SUDO sfdisk -q "$dev" || return 1
     $SUDO partprobe "$dev" 2>/dev/null || true
     part=$(be_part_path "$dev")
-    while [ ! -b "$part" ] && [ "$i" -lt 30 ]; do
+    while ! be_is_block "$part" && [ "$i" -lt 30 ]; do
         sleep 1
         i=$((i + 1))
     done
-    [ -b "$part" ] || return 3
+    be_is_block "$part" || return 3
     be_wait_medium "$dev" 30 || return 2
     $SUDO umount "$part" 2>/dev/null || true # a desktop automounter may have grabbed it
+    be_recheck "$dev" "$ident" || return 4
+    be_part_of "$part" "$dev" || { D_WHY="$part is not a partition of $dev"; return 4; }
     $SUDO mkfs.vfat -F 32 -n AKAMSD "$part" >/dev/null || return 1
-    printf '%s\n' "$part"
+    D_PART=$part
+    return 0
 }
 
 # be_mount PART DIR [ro]: mount a FAT32 card owned by the calling user, umask 022.
@@ -169,7 +279,9 @@ be_mount() {
     $SUDO mount -o "$opt" "$1" "$2"
 }
 
-# be_zero_fill DEV SIZE_BYTES: write exactly SIZE bytes of zeros, so dd ends cleanly.
+# be_zero_fill DEV SIZE_BYTES IDENT PTUUID: write exactly SIZE bytes of zeros, so dd ends cleanly.
+# The disk is re-checked right before dd (same identity and partition table, still eligible).
 be_zero_fill() {
+    be_recheck "$1" "$3" "$4" || return 4
     head -c "$2" /dev/zero | $SUDO dd of="$1" bs=4M iflag=fullblock conv=fsync status=progress
 }

@@ -137,7 +137,8 @@ Identify the card with care. **Formatting the wrong device destroys its data.**
 
 **Recommended: one command.** `tools/sd/sd_card.sh` does everything below (pinned toolkit check,
 guards, format, payload, Wi-Fi, verification) and refuses any disk that is not a removable USB/SD
-whole disk or that carries `/`, `/boot`, `/home` or swap:
+whole disk, that carries `/`, `/boot`, `/home`, `/var`, swap, this repository or your home, or that is a
+LUKS/LVM/RAID member. It checks the disk again (size, model, serial) right before it writes:
 
 ```bash
 tools/sd/sd_card.sh list-candidates                    # eligible cards: device, bytes, model, transport, mounts (TSV)

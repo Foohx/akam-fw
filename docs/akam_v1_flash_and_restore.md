@@ -70,7 +70,7 @@ and no `*.bin` at the root all checked, then verified:
 
 ```bash
 tools/sd/sd_card.sh prepare --mode flash-files --device /dev/sdX \
-    --image ~/akam-work/out/ak_rtsp_firmware_*.squashfs --flash-tool src/ak_rtsp/flash_tool --backup-dir ~/akam-backup
+    --image ~/akam-work/out/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --flash-tool src/ak_rtsp/flash_tool --backup-dir ~/akam-backup
 tools/sd/sd_card.sh verify --mode flash-files --device /dev/sdX
 ```
 
