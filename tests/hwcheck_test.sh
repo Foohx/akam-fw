@@ -197,6 +197,18 @@ run t6b "$R6B" "$WORK/s6b"
 has "legacy flag: maintenance WARN" '^WARN +maintenance mode \(.*present\)' "$WORK/t6b.out"
 has "legacy flag: deprecation WARN" '^WARN +DEPRECATED flag name CAMYN_MAINTENANCE: rename it to AKAM_MAINTENANCE' "$WORK/t6b.out"
 
+# 6c. vanishing PIDs: /proc/<pid> exists but its files are gone (process exited
+# between listing and reading) -> no shell error, no bogus match ----------------
+R6C=$WORK/r6c; mkroot "$R6C"
+mkdir -p "$R6C/proc/120" "$R6C/proc/121"
+ln -s "$R6C/proc/nonexistent" "$R6C/proc/121/cmdline"
+ln -s "$R6C/proc/nonexistent" "$R6C/proc/121/comm"
+rm -f "$R6C/proc/101/status"
+run t6c "$R6C" "$WORK/s6c"
+hasnt "vanished pid: no can't open error" "can't open|No such file|cannot open" "$WORK/t6c.out"
+has "vanished pid: scan still finds ak_rtsp" '^PASS +ak_rtsp running \(pid 101\)' "$WORK/t6c.out"
+has "vanished pid: unreadable status gives ?" 'ak_rtsp pid 101 VmRSS \? kB' "$WORK/t6c.out"
+
 # 7. read-only: the fake root is unchanged and nothing is killed -----------------
 (cd "$R1" && find . -type f -exec cksum {} + | sort) > "$WORK/before.sum"
 run t7 "$R1" "$S1"

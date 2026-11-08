@@ -183,9 +183,11 @@ find_pids() {
         [ -d "$d" ] || continue
         pid=${d##*/}
         [ "$pid" = "$$" ] && continue
-        cl=
-        [ -r "$d/cmdline" ] && cl=$(strings -n 1 < "$d/cmdline" 2>/dev/null | paste -s -d ' ' - 2>/dev/null)
-        if [ -z "$cl" ] && [ -r "$d/comm" ]; then read -r cl < "$d/comm"; fi
+        # Each read may race with the process exiting: errors (including the
+        # shell's own "can't open") go to /dev/null and the pid is skipped.
+        cl=$({ strings -n 1 < "$d/cmdline" | paste -s -d ' ' - ; } 2>/dev/null) || cl=
+        if [ -z "$cl" ]; then { read -r cl < "$d/comm"; } 2>/dev/null || cl=; fi
+        [ -n "$cl" ] || continue
         set -f
         # shellcheck disable=SC2086
         set -- $cl
@@ -201,9 +203,9 @@ find_pids() {
 pids_of() { NAME=$1; find_pids | paste -s -d ' ' - ; }
 rss_of() { # VmRSS (kB) of pid $1
     [ -r "$ROOT/proc/$1/status" ] || { echo "?"; return; }
-    while read -r k v _u; do
+    { while read -r k v _u; do
         [ "$k" = "VmRSS:" ] && { echo "$v"; return; }
-    done < "$ROOT/proc/$1/status"
+    done < "$ROOT/proc/$1/status"; } 2>/dev/null
     echo "?"
 }
 
@@ -241,7 +243,7 @@ check_procs() {
 # after the ") " that ends the command name (which may contain spaces).
 proc_jiffies() { # utime+stime of pid $1; fails if unreadable
     [ -r "$ROOT/proc/$1/stat" ] || return 1
-    read -r st < "$ROOT/proc/$1/stat" || return 1
+    { read -r st < "$ROOT/proc/$1/stat"; } 2>/dev/null || return 1
     st=${st##*) }
     set -f
     # shellcheck disable=SC2086
