@@ -57,6 +57,8 @@ mkroot() {
     mkproc "$r" 104 wpa_supplicant 800
     mkproc "$r" 105 udhcpc 300
     echo 300 > "$r/proc/sys/kernel/random/entropy_avail"
+    mkstat "$r" 101 ak_rtsp 100 50
+    echo "cpu  1000 0 500 8000 0 0 0 0 0 0" > "$r/proc/stat"
     echo "root:x:0:0:root:/root:/bin/sh" > "$r/etc/passwd"
     printf '/bin/sh\n/bin/ash\n' > "$r/etc/shells"
     chmod 755 "$r" "$r/etc" "$r/etc/config"
@@ -77,6 +79,11 @@ mkproc() {
     printf 'Name:\t%s\nVmRSS:\t%s kB\n' "$3" "$4" > "$1/proc/$2/status"
 }
 
+# mkstat ROOT PID COMM UTIME STIME: /proc/PID/stat with utime/stime at fields 14/15.
+mkstat() {
+    printf '%s (%s) S 1 1 1 0 -1 0 0 0 0 0 %s %s 0 0 20 0 5 0 1 2 3\n' "$2" "$3" "$4" "$5" > "$1/proc/$2/stat"
+}
+
 # --- stubs ------------------------------------------------------------------
 stub() { # stub DIR NAME BODY
     mkdir -p "$1"
@@ -84,12 +91,13 @@ stub() { # stub DIR NAME BODY
     chmod +x "$1/$2"
 }
 
+EXTRA_ENV=(HWCHECK_X=1)
 # run NAME ROOT STUBDIR [args...]: output in $WORK/NAME.out, status in RC.
 run() {
     name=$1; root=$2; sdir=$3; shift 3
     mkdir -p "$sdir"
     [ -e "$sdir/sleep" ] || stub "$sdir" sleep 'exit 0'
-    env -i PATH="$sdir:$BASEBIN" CAMYN_ROOT="$root" HWCHECK_INTERVAL=0 TMPDIR="$WORK" \
+    env -i PATH="$sdir:$BASEBIN" CAMYN_ROOT="$root" HWCHECK_INTERVAL=0 HWCHECK_CPU_WINDOW=0 HWCHECK_NIGHT_INTERVAL=0 "${EXTRA_ENV[@]}" TMPDIR="$WORK" \
         "${SHCMD[@]}" "$SCRIPT" "$@" > "$WORK/$name.out" 2>&1
     RC=$?
 }
@@ -220,6 +228,90 @@ run t10 "$R1" "$S1" --boot-window abc
 if [ "$RC" -eq 2 ]; then ok "bad duration: exit 2"; else ko "bad duration: exit $RC"; fi
 run t11 "$R1" "$S1" --help
 has "help prints usage" 'Usage:' "$WORK/t11.out"
+
+# 12. HOME moved to a private tmpfs dir: "/" and "/etc" at 775 are INFO only ----
+R12=$WORK/r12; mkroot "$R12"
+mkdir -p "$R12/tmp/camyn_home"
+chmod 700 "$R12/tmp/camyn_home"
+echo "ssh-ed25519 AAAAFAKE test" > "$R12/tmp/camyn_home/authorized_keys"
+chmod 600 "$R12/tmp/camyn_home/authorized_keys"
+echo "root:x:0:0:root:/tmp/camyn_home:/bin/sh" > "$R12/etc/passwd"
+chmod 775 "$R12" "$R12/etc"
+run t12 "$R12" "$WORK/s12"
+has "HOME: reported" "root HOME in passwd: '/tmp/camyn_home'" "$WORK/t12.out"
+has "HOME: / is INFO" '^INFO +/ mode (775|drwxrwxr-x)' "$WORK/t12.out"
+has "HOME: /etc is INFO" '^INFO +/etc mode (775|drwxrwxr-x)' "$WORK/t12.out"
+hasnt "HOME: no FAIL on / or /etc" '^FAIL +/(etc)? ' "$WORK/t12.out"
+has "HOME: key path pass" '^PASS +key path \(/tmp/camyn_home\) is not group/other writable' "$WORK/t12.out"
+has "HOME: keys counted there" '^PASS +/tmp/camyn_home/authorized_keys holds 1 key' "$WORK/t12.out"
+if [ "$RC" -eq 0 ]; then ok "HOME moved, / and /etc 775: exit 0"; else ko "HOME moved: exit $RC"; grep -E '^FAIL' "$WORK/t12.out"; fi
+chmod 775 "$R12/tmp/camyn_home"
+run t13 "$R12" "$WORK/s13"
+has "HOME writable by group: FAIL" '^FAIL +/tmp/camyn_home mode (775|drwxrwxr-x)' "$WORK/t13.out"
+chmod 700 "$R12/tmp/camyn_home"; chmod 660 "$R12/tmp/camyn_home/authorized_keys"
+run t13b "$R12" "$WORK/s13b"
+has "HOME key file writable by group: FAIL" '^FAIL +/tmp/camyn_home/authorized_keys mode (660|-rw-rw----)' "$WORK/t13b.out"
+# HOME without keys: the persistent path is walked, so / at 775 is a real FAIL.
+R14=$WORK/r14; mkroot "$R14"
+chmod 775 "$R14"
+run t14 "$R14" "$WORK/s14"
+has "no keys in HOME: WARN" "^WARN +root HOME '/root' holds no authorized_keys" "$WORK/t14.out"
+has "no keys in HOME: / on the path is FAIL" '^FAIL +/ is group/other writable and on the key path' "$WORK/t14.out"
+
+# 15. ak_rtsp CPU from /proc deltas: +50 jiffies of 200 total = 25.0% -----------
+R15=$WORK/r15; mkroot "$R15"
+S15=$WORK/s15; mkdir -p "$S15"
+cat > "$S15/sleep" <<EOF
+#!/bin/sh
+if [ ! -e "$WORK/cpu_done" ]; then
+    : > "$WORK/cpu_done"
+    printf '101 (ak_rtsp) S 1 1 1 0 -1 0 0 0 0 0 130 70 0 0 20 0 5 0 1 2 3\n' > "$R15/proc/101/stat"
+    echo "cpu  1100 0 550 8050 0 0 0 0 0 0" > "$R15/proc/stat"
+fi
+exit 0
+EOF
+chmod +x "$S15/sleep"
+run t15 "$R15" "$S15"
+has "cpu: 25.0 percent" 'ak_rtsp pid 101 CPU 25\.0% of the machine over 0s \(50 of 200 jiffies\)' "$WORK/t15.out"
+# no ak_rtsp -> UNKNOWN, not a crash
+R15b=$WORK/r15b; mkroot "$R15b"; rm -r "$R15b/proc/101"
+run t15b "$R15b" "$WORK/s15b"
+has "cpu: ak_rtsp absent -> UNKNOWN" '^UNKNOWN +ak_rtsp not running: CPU use skipped' "$WORK/t15b.out"
+
+# 16. night mode and flap check through a scripted 8091 -----------------------------
+nc_night() { # nc_night DIR "state1 state2 ..." : GET night.state walks the list
+    mkdir -p "$1"
+    echo "$2" > "$1/states"
+    cat > "$1/nc" <<EOF
+#!/bin/sh
+read -r cmd
+case "\$cmd" in
+    "GET night.mode") echo "night.mode=auto" ;;
+    "GET night.state")
+        n=\$(cat "$1/count" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$1/count"
+        set -- \$(cat "$1/states")
+        [ "\$n" -le "\$#" ] || n=\$#
+        eval "echo night.state=\\\${\$n}" ;;
+    *) echo "ERR" ;;
+esac
+EOF
+    chmod +x "$1/nc"
+}
+S16=$WORK/s16; nc_night "$S16" "night night night night"
+run t16 "$R1" "$S16"
+has "night: mode shown" 'night\.mode=auto' "$WORK/t16.out"
+has "night: stable PASS" '^PASS +night\.state stable \(0 change' "$WORK/t16.out"
+has "night: samples listed" 'samples \(4 x 0s\): night night night night' "$WORK/t16.out"
+S17=$WORK/s17; nc_night "$S17" "night day day day"
+run t17 "$R1" "$S17"
+has "night: one change is PASS" '^PASS +night\.state stable \(1 change' "$WORK/t17.out"
+S18=$WORK/s18; nc_night "$S18" "night day night day"
+run t18 "$R1" "$S18"
+has "night: flapping WARN" '^WARN +night\.state changed 3 times in 4 samples' "$WORK/t18.out"
+EXTRA_ENV=(HWCHECK_NIGHT_SAMPLES=0)
+run t19 "$R1" "$S18"
+has "night: disabled" 'night check disabled' "$WORK/t19.out"
+EXTRA_ENV=(HWCHECK_X=1)
 
 echo
 echo "passed: $PASS, failed: $FAIL"

@@ -33,9 +33,18 @@
 # Paths are prefixed by $CAMYN_ROOT (empty on the camera) so the host test can
 # run the script against a fake root. $HWCHECK_INTERVAL (default 1) is the
 # --boot-window sampling period in seconds.
+#
+# Other knobs: HWCHECK_CPU_WINDOW (default 2) is the ak_rtsp CPU sampling
+# window in seconds; HWCHECK_NIGHT_SAMPLES (default 4, 0 disables) and
+# HWCHECK_NIGHT_INTERVAL (default 6) drive the day/night flap check, which
+# opens a short connection to 8091 per sample (the control port is single
+# client: a sample briefly replaces any other connected client).
 
 ROOT=${CAMYN_ROOT:-}
 INTERVAL=${HWCHECK_INTERVAL:-1}
+CPU_WINDOW=${HWCHECK_CPU_WINDOW:-2}
+NIGHT_SAMPLES=${HWCHECK_NIGHT_SAMPLES:-4}
+NIGHT_INTERVAL=${HWCHECK_NIGHT_INTERVAL:-6}
 TMP_DIR=${CAMYN_TMP_DIR:-$ROOT/tmp}
 FLAG=${CAMYN_MAINT_FLAG:-$ROOT/mnt/CAMYN_MAINTENANCE}
 MARK=${CAMYN_MAINT_MARK:-$TMP_DIR/camyn_maintenance}
@@ -223,6 +232,44 @@ check_procs() {
     done
 }
 
+# CPU use of a process from /proc/PID/stat deltas (no top dependency).
+# utime and stime are fields 14 and 15 of the stat line, i.e. the 12th and 13th
+# after the ") " that ends the command name (which may contain spaces).
+proc_jiffies() { # utime+stime of pid $1; fails if unreadable
+    [ -r "$ROOT/proc/$1/stat" ] || return 1
+    read -r st < "$ROOT/proc/$1/stat" || return 1
+    st=${st##*) }
+    set -f
+    # shellcheck disable=SC2086
+    set -- $st
+    set +f
+    [ -n "${13:-}" ] || return 1
+    echo $((${12} + ${13}))
+}
+total_jiffies() { # sum of the aggregate "cpu" line of /proc/stat
+    [ -r "$ROOT/proc/stat" ] || return 1
+    while read -r k a1 a2 a3 a4 a5 a6 a7 _rest; do
+        if [ "$k" = cpu ]; then echo $((a1 + a2 + a3 + a4 + a5 + a6 + a7)); return 0; fi
+    done < "$ROOT/proc/stat"
+    return 1
+}
+check_cpu() {
+    section "CPU use (ak_rtsp, ${CPU_WINDOW}s window)"
+    if ! ls "$ROOT"/proc/[0-9]* >/dev/null 2>&1; then unk "no /proc/<pid> entries: CPU use skipped"; return; fi
+    p=$(pids_of ak_rtsp)
+    p=${p%% *}
+    if [ -z "$p" ]; then unk "ak_rtsp not running: CPU use skipped"; return; fi
+    if ! j1=$(proc_jiffies "$p") || ! t1=$(total_jiffies); then unk "/proc/$p/stat or /proc/stat unreadable: CPU use skipped"; return; fi
+    sleep "$CPU_WINDOW"
+    if ! j2=$(proc_jiffies "$p") || ! t2=$(total_jiffies); then unk "ak_rtsp (pid $p) vanished during the CPU sample"; return; fi
+    dt=$((t2 - t1))
+    dj=$((j2 - j1))
+    if [ "$dt" -le 0 ]; then unk "CPU clock did not advance during the sample"; return; fi
+    tenths=$((dj * 1000 / dt))
+    info "ak_rtsp pid $p CPU $((tenths / 10)).$((tenths % 10))% of the machine over ${CPU_WINDOW}s ($dj of $dt jiffies)"
+    if [ "$tenths" -ge 900 ]; then warn "ak_rtsp uses $((tenths / 10))% CPU: no headroom"; fi
+}
+
 # ------------------------------------------------------------------ files
 mode_of() { # "mode owner:group" of $1; octal via stat, else the ls string
     if have stat && m=$(stat -c '%a %U:%G' "$1" 2>/dev/null) && [ -n "$m" ]; then echo "$m"; return; fi
@@ -244,28 +291,78 @@ wr_go() { # true if the mode string from mode_of is group/other writable
             return 1 ;;
     esac
 }
+root_home() { # HOME field of root in $ROOT/etc/passwd, as seen at runtime
+    [ -r "$ROOT/etc/passwd" ] || return 1
+    while IFS=: read -r u _p _uid _gid _gecos h _s; do
+        if [ "$u" = root ]; then echo "$h"; return 0; fi
+    done < "$ROOT/etc/passwd"
+    return 1
+}
+mode_line() { # mode_line LABEL FULLPATH ; sets MODE_BAD=1 if group/other writable
+    m=$(mode_of "$2")
+    if wr_go "$m"; then fail "$1 mode $m is group/other writable"; MODE_BAD=1; else info "$1 mode $m"; fi
+}
+count_keys() { # number of public-key lines in file $1
+    grep -cE '^(ssh-|ecdsa-|sk-|[^#[:space:]].* (ssh-|ecdsa-|sk-))' "$1" 2>/dev/null
+}
 check_modes() {
     section "permissions (Dropbear rejects authorized_keys under group/other-writable paths)"
-    for p in / /etc /etc/config /etc/config/dropbear /etc/config/dropbear/authorized_keys; do
+    # Dropbear walks from the key directory up to root's HOME (or "/"), so the
+    # chain to check depends on HOME. camyn_ssh.sh moves root's HOME to
+    # /tmp/camyn_home (private 0700 tmpfs): "/" and "/etc" are then not on the
+    # path, and the stock 0775 there is expected.
+    home=$(root_home) || home=
+    info "root HOME in passwd: '${home:-?}'"
+    for p in / /etc; do
         full=$ROOT$p
         [ "$p" = / ] && full=${ROOT:-/}
-        if [ ! -e "$full" ]; then
-            case $p in
-                /etc/config/dropbear*) fail "$p missing" ;;
-                *) unk "$p missing" ;;
-            esac
-            continue
-        fi
-        m=$(mode_of "$full")
-        if wr_go "$m"; then fail "$p mode $m is group/other writable"; else info "$p mode $m"; fi
+        if [ -e "$full" ]; then info "$p mode $(mode_of "$full") (informational: only on the key path if root's HOME is not the key directory)"
+        else unk "$p missing"; fi
     done
+    case $home in
+        /?*) hk=$ROOT$home/authorized_keys ;;
+        *) hk= ;;
+    esac
+    if [ -n "$hk" ] && [ -e "$hk" ]; then
+        info "key path: root HOME $home holds authorized_keys"
+        MODE_BAD=0
+        mode_line "$home" "$ROOT$home"
+        mode_line "$home/authorized_keys" "$hk"
+        [ "$MODE_BAD" = 0 ] && pass "key path ($home) is not group/other writable"
+        if [ -r "$hk" ]; then
+            n=$(count_keys "$hk")
+            if [ "${n:-0}" -gt 0 ]; then pass "$home/authorized_keys holds $n key line(s) (content not shown)"
+            else fail "$home/authorized_keys has no key lines"; fi
+        else unk "$home/authorized_keys not readable"; fi
+        for p in /etc/config /etc/config/dropbear; do
+            if [ -e "$ROOT$p" ]; then info "$p mode $(mode_of "$ROOT$p")"; else warn "$p missing"; fi
+        done
+    else
+        warn "root HOME '${home:-?}' holds no authorized_keys: Dropbear walks the persistent path, which must not be group/other writable"
+        for p in /etc/config /etc/config/dropbear /etc/config/dropbear/authorized_keys; do
+            full=$ROOT$p
+            if [ ! -e "$full" ]; then
+                fail "$p missing"
+                continue
+            fi
+            m=$(mode_of "$full")
+            if wr_go "$m"; then fail "$p mode $m is group/other writable"; else info "$p mode $m"; fi
+        done
+        for p in / /etc; do
+            full=$ROOT$p
+            [ "$p" = / ] && full=${ROOT:-/}
+            if [ -e "$full" ] && wr_go "$(mode_of "$full")"; then
+                fail "$p is group/other writable and on the key path (root HOME is not the key directory)"
+            fi
+        done
+    fi
     ak=$ROOT/etc/config/dropbear/authorized_keys
     if [ -r "$ak" ]; then
-        n=$(grep -cE '^(ssh-|ecdsa-|sk-|[^#[:space:]].* (ssh-|ecdsa-|sk-))' "$ak" 2>/dev/null)
-        if [ "${n:-0}" -gt 0 ]; then pass "authorized_keys holds $n key line(s) (content not shown)"
-        else fail "authorized_keys has no key lines"; fi
-    elif [ -e "$ak" ]; then unk "authorized_keys not readable"
-    else fail "authorized_keys missing"; fi
+        n=$(count_keys "$ak")
+        if [ "${n:-0}" -gt 0 ]; then pass "persistent authorized_keys holds $n key line(s) (content not shown)"
+        else fail "persistent authorized_keys has no key lines"; fi
+    elif [ -e "$ak" ]; then unk "persistent authorized_keys not readable"
+    else fail "persistent authorized_keys missing"; fi
     echo "  -- /etc/config/dropbear"
     # shellcheck disable=SC2012
     ls "$ROOT/etc/config/dropbear/" 2>/dev/null | sed 's/^/    /'
@@ -284,6 +381,45 @@ check_modes() {
     else
         unk "/etc/passwd not readable"
     fi
+}
+
+# Night mode/state through 8091, plus a short flap check: sample night.state a
+# few times and WARN if it changed more than once (a day/night flap).
+night_get() { # prints the value of GET $1 ("night.state=night" -> night)
+    # shellcheck disable=SC2086
+    printf 'GET %s\n' "$1" | $NIGHT_TMO nc -w 2 127.0.0.1 8091 2>/dev/null | head -n 3 > "$WORK/night"
+    while IFS= read -r l; do
+        case $l in "$1="*) v=${l#*=}; echo "${v%% *}"; return 0 ;; esac
+    done < "$WORK/night"
+    return 1
+}
+check_night() {
+    section "night mode and day/night flap check"
+    if [ "$NIGHT_SAMPLES" -le 0 ] 2>/dev/null; then info "night check disabled (HWCHECK_NIGHT_SAMPLES=0)"; return; fi
+    if ! have nc; then unk "nc not available: night check skipped"; return; fi
+    if [ -z "$(port_addrs 8091)" ]; then unk "8091 not listening: night check skipped"; return; fi
+    NIGHT_TMO=
+    have timeout && NIGHT_TMO="timeout 6"
+    mode=$(night_get night.mode) || mode=
+    if [ -n "$mode" ]; then info "night.mode=$mode"; else unk "night.mode not readable through 8091"; fi
+    seq_= ; prev= ; changes=0 ; got=0 ; i=0
+    while [ "$i" -lt "$NIGHT_SAMPLES" ]; do
+        i=$((i + 1))
+        st=$(night_get night.state) || st=
+        if [ -n "$st" ]; then
+            got=$((got + 1))
+            seq_="$seq_ $st"
+            if [ -n "$prev" ] && [ "$st" != "$prev" ]; then changes=$((changes + 1)); fi
+            prev=$st
+        else
+            seq_="$seq_ ?"
+        fi
+        [ "$i" -lt "$NIGHT_SAMPLES" ] && sleep "$NIGHT_INTERVAL"
+    done
+    if [ "$got" -eq 0 ]; then unk "night.state not readable through 8091"; return; fi
+    info "night.state samples (${NIGHT_SAMPLES} x ${NIGHT_INTERVAL}s):$seq_"
+    if [ "$changes" -gt 1 ]; then warn "night.state changed $changes times in $NIGHT_SAMPLES samples: day/night flapping"
+    else pass "night.state stable ($changes change(s) in $got sample(s)); now $prev"; fi
 }
 
 check_misc() {
@@ -306,6 +442,7 @@ check_misc() {
         if [ -s "$WORK/list" ]; then pass "8091 answered LIST ($(wc -l < "$WORK/list") line(s))"; show_file "$WORK/list" 8
         else fail "8091 gave no answer to LIST"; fi
     fi
+    check_night
     section "entropy and Dropbear re-exec"
     if [ -r "$ROOT/proc/sys/kernel/random/entropy_avail" ]; then
         read -r e < "$ROOT/proc/sys/kernel/random/entropy_avail"
@@ -433,6 +570,7 @@ esac
 echo "camyn_hwcheck: read-only check; results are evidence, not validation"
 check_ports
 check_procs
+check_cpu
 check_modes
 check_misc
 check_facts
