@@ -17,6 +17,33 @@
 #   4. safety checks (modes, no private key), mksquashfs, round-trip verify,
 #      size guard (BEFORE padding), pad to exactly 5242880 bytes, report,
 #      SHA-256 file.
+#
+# Two input modes, one assembly path (the Akam files come from
+# tools/release/image_files.txt in both, so they cannot drift):
+#   source mode (default)  binaries and licences from the build tree / env vars below
+#   --kit DIR|TARBALL      binaries, overlay, service.sh patch and licences from a prebuilt kit,
+#                          verified first with tools/release/verify_kit.sh (no compiler needed)
+#
+# Options:
+#   --kit DIR|TARBALL       use a prebuilt kit (or AKAM_KIT=...)
+#   --allow-unsigned        kit tarball without signature (checksum-only trust)
+#   --allow-test-kit        accept a kit_grade=test kit (development only)
+#   --recheck-time64        kit mode: also replay the time64 gate on the installed binaries
+#   --stock-app FILE        the dump of the stock APP partition (mtdblock7.bin): fingerprint it
+#   --backup-dir DIR        the backup directory (mtdblock*.bin); implies --stock-app DIR/mtdblock7.bin
+#                           and reads the kernel name from DIR/mtdblock4.bin
+#   --stock-info FILE       key=value file (compression=, block_size=, bcj=, app_sha256=) recorded
+#                           when only an extracted tree is available
+#   --comp gzip|xz          override the compression (default: the stock APP's, else xz); a
+#                           difference from the stock APP is reported loudly
+#   --allow-unknown-stock-comp  the stock APP uses a compressor Akam cannot follow (lzo, lz4,
+#                           zstd, ...): build anyway with --comp (check your kernel supports it!)
+#   --i-understand-untested hardware/firmware not marked "validated" in supported_hardware.txt
+#   Hardware check: with a stock fingerprint (--stock-app/--backup-dir/--stock-info) the dump is
+#   compared with supported_hardware.txt; anything but "validated" is refused without
+#   --i-understand-untested; a different MTD layout is always refused. In kit mode a missing
+#   fingerprint counts as unknown. In source mode without fingerprint the check is skipped.
+#
 # No key of any kind is ever put in the image: authorized_keys comes from the
 # microSD at runtime (spec O-5).
 #
@@ -29,7 +56,8 @@
 #   ZIG_LICENSE     Zig LICENSE (compiler-rt is linked in; default: pinned Zig tarball)
 #   DROPBEAR_MULTI  prebuilt dropbearmulti (default: dist/dropbear/dropbearmulti,
 #                   built with tools/dropbear/build_dropbear.sh if missing)
-#   AKAM_SQUASHFS_COMP  xz (default, same as stock: no BCJ, 128 KiB blocks) | gzip
+#   AKAM_SQUASHFS_COMP  xz | gzip (same as --comp). Default: follow the stock APP, else xz
+#                   (stock is xz, no BCJ, 128 KiB blocks)
 #   AKAM_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
 #   AKAM_ALLOW_UNCHECKED_TIME64=1  skip the machine-code time64 gate (tools/build/check_time32.sh,
 #                   needs gdb) on the installed ak_rtsp and dropbearmulti; for stub binaries only
@@ -43,20 +71,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEMPLATES="$ROOT/tools/firmware_patch_templates"
 PARTITION=5242880   # mtd7 (APP) size
-BLOCK=131072
 
 APP_EXTRACTED="${APP_EXTRACTED:-$SCRIPT_DIR/app_extracted}"
 FW_DIR="${FW_DIR:-$SCRIPT_DIR}"
 PATCHED="$FW_DIR/app_patched"
 BINARY="${AK_RTSP_BIN:-$SCRIPT_DIR/ak_rtsp}"
-COMP="${AKAM_SQUASHFS_COMP:-${AKAM_SQUASH_COMP:-xz}}"
+COMP_ARG="${AKAM_SQUASHFS_COMP:-${AKAM_SQUASH_COMP:-}}"
 EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
+IMAGE_FILES="$ROOT/tools/release/image_files.txt"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 WARNINGS=()
 warn() { echo "WARNING: $*" >&2; WARNINGS+=("$*"); }
+usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d;s/^# \{0,1\}//' >&2; exit 2; }
 
-case "$COMP" in gzip | xz) ;; *) die "AKAM_SQUASHFS_COMP must be gzip or xz (got '$COMP')" ;; esac
+KIT_ARG="${AKAM_KIT:-}"
+ALLOW_UNSIGNED=0
+ALLOW_TEST_KIT=0
+RECHECK_TIME64=0
+STOCK_APP=""
+BACKUP_DIR=""
+STOCK_INFO=""
+ALLOW_UNKNOWN_STOCK_COMP=0
+UNTESTED_OK=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --kit) [ $# -ge 2 ] || usage; KIT_ARG=$2; shift ;;
+        --allow-unsigned) ALLOW_UNSIGNED=1 ;;
+        --allow-test-kit) ALLOW_TEST_KIT=1 ;;
+        --recheck-time64) RECHECK_TIME64=1 ;;
+        --stock-app) [ $# -ge 2 ] || usage; STOCK_APP=$2; shift ;;
+        --backup-dir) [ $# -ge 2 ] || usage; BACKUP_DIR=$2; shift ;;
+        --stock-info) [ $# -ge 2 ] || usage; STOCK_INFO=$2; shift ;;
+        --comp) [ $# -ge 2 ] || usage; COMP_ARG=$2; shift ;;
+        --allow-unknown-stock-comp) ALLOW_UNKNOWN_STOCK_COMP=1 ;;
+        --i-understand-untested) UNTESTED_OK=1 ;;
+        -h | --help) usage ;;
+        *) echo "unknown argument: $1" >&2; usage ;;
+    esac
+    shift
+done
+
+case "$COMP_ARG" in '' | gzip | xz) ;; *) die "--comp / AKAM_SQUASHFS_COMP must be gzip or xz (got '$COMP_ARG')" ;; esac
 case "$EPOCH" in '' | *[!0-9]*) die "SOURCE_DATE_EPOCH must be an integer" ;; esac
 for t in mksquashfs unsquashfs sha256sum; do
     command -v "$t" >/dev/null 2>&1 || die "required tool '$t' not found"
@@ -74,52 +130,245 @@ fi
 for d in bin sbin local; do
     [ -d "$APP_EXTRACTED/$d" ] || die "$APP_EXTRACTED has no $d/ -- not an APP tree"
 done
-[ -f "$BINARY" ] || die "ak_rtsp binary not found at $BINARY (build it first: make -C src/ak_rtsp ak_rtsp, or set AK_RTSP_BIN)"
-
-# Dropbear: prebuilt, or build it with the pinned toolchain.
-DROPBEAR_MULTI="${DROPBEAR_MULTI:-$ROOT/dist/dropbear/dropbearmulti}"
-if [ ! -f "$DROPBEAR_MULTI" ]; then
-    echo "dropbearmulti not found, building it..."
-    bash "$ROOT/tools/dropbear/build_dropbear.sh"
-fi
-[ -f "$DROPBEAR_MULTI" ] || die "dropbearmulti not found at $DROPBEAR_MULTI"
-DROPBEAR_DIR="$(dirname "$DROPBEAR_MULTI")"
-DROPBEAR_LICENSE="${DROPBEAR_LICENSE:-$DROPBEAR_DIR/LICENSE.dropbear}"
-[ -f "$DROPBEAR_LICENSE" ] || die "LICENSE.dropbear not found at $DROPBEAR_LICENSE (the licence must ship with the binary)"
-# Licence texts of statically linked / macro-expanded third-party code, copied
-# from the pinned sources (never hand-written). Missing = fatal.
-SMOLRTSP_DIR="${SMOLRTSP_DIR:-$ROOT/src/smolrtsp}"
-if [ -z "${MUSL_COPYRIGHT:-}" ]; then
-    MUSL_COPYRIGHT=""
-    for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/lib/libc/musl/COPYRIGHT; do
-        [ -f "$f" ] && MUSL_COPYRIGHT="$f"
-    done
-fi
-[ -f "${MUSL_COPYRIGHT:-}" ] || die "musl COPYRIGHT not found (run tools/build/bootstrap.sh or set MUSL_COPYRIGHT)"
-if [ -z "${ZIG_LICENSE:-}" ]; then
-    ZIG_LICENSE=""
-    for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/LICENSE; do
-        [ -f "$f" ] && ZIG_LICENSE="$f"
-    done
-fi
-[ -f "${ZIG_LICENSE:-}" ] || die "Zig LICENSE not found (run tools/build/bootstrap.sh or set ZIG_LICENSE)"
-# Akam's own notices (ak_rtsp is FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware MIT code; the ported flasher fixes carry their own MIT notice).
-[ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
-LIC_SRC=("$SMOLRTSP_DIR/LICENSE")
-for d in slice99 metalang99 datatype99 interface99; do LIC_SRC+=("$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE"); done
-for f in "${LIC_SRC[@]}"; do [ -s "$f" ] || die "licence file $f missing (run tools/build/bootstrap.sh)"; done
-for f in akam_ssh.sh akam_lockdown.sh patch_service_sh.sh ak_rtsp_wrapper.sh _ht_process.ini; do
-    [ -f "$TEMPLATES/$f" ] || die "template $TEMPLATES/$f missing"
-done
+[ -s "$IMAGE_FILES" ] || die "$IMAGE_FILES missing"
 
 mkdir -p "$FW_DIR"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Flash budget: the Makefile builds ak_rtsp with -g (~1.6 MB vs ~130 KB
-# stripped). Install a stripped COPY; the build output is never modified.
-# Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
-# $AKAM_STRIP (a command taking "<in> <out>") if set.
+# --- inputs: kit or sources ---------------------------------------------------------
+# LICS: "<name in local/akam>:<source path>", installed 0644 by the common code below.
+LICS=()
+KIT=""
+KIT_INFO=""
+KIT_AUTH=""
+if [ -n "$KIT_ARG" ]; then
+    MODE=kit
+    VERIFY_ARGS=()
+    [ "$ALLOW_UNSIGNED" = 1 ] && VERIFY_ARGS+=(--allow-unsigned)
+    [ "$ALLOW_TEST_KIT" = 1 ] && VERIFY_ARGS+=(--allow-test-kit)
+    echo "Verifying the kit $KIT_ARG ..."
+    if [ -d "$KIT_ARG" ]; then
+        KIT="$(cd "$KIT_ARG" && pwd)"
+        bash "$ROOT/tools/release/verify_kit.sh" "${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"}" "$KIT" || die "kit verification failed (see above); nothing built"
+        KIT_AUTH="directory (consistency checked, not authenticated)"
+    elif [ -f "$KIT_ARG" ]; then
+        VRC=0
+        bash "$ROOT/tools/release/verify_kit.sh" "${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"}" --extract-to "$TMP/kit" "$KIT_ARG" || VRC=$?
+        case "$VRC" in
+            0) ;;
+            3) die "the kit is UNSIGNED: refusing. Use --allow-unsigned only if you trust where it came from and its sha256 (checksum-only trust)." ;;
+            *) die "kit verification failed (exit $VRC, see above); nothing built" ;;
+        esac
+        KIT="$TMP/kit"
+        if [ -f "$(dirname "$KIT_ARG")/SHA256SUMS.sig" ]; then
+            KIT_AUTH="signature verified"
+        else
+            KIT_AUTH="UNSIGNED (checksum-only trust, --allow-unsigned)"
+        fi
+        KIT_INFO="tarball sha256 $(sha256sum "$KIT_ARG" | cut -d' ' -f1)"
+    else
+        die "--kit $KIT_ARG: no such file or directory"
+    fi
+    kit_key() { sed -n "s/^$1=//p" "$KIT/MANIFEST.txt" | head -1; }
+    KIT_VERSION="$(kit_key akam_version)"
+    KIT_COMMIT="$(kit_key source_commit)"
+    KIT_GRADE="$(kit_key kit_grade)"
+    BINARY="$KIT/bin/ak_rtsp"
+    DROPBEAR_MULTI="$KIT/bin/dropbearmulti"
+    SUPPORTED_HW="$KIT/supported_hardware.txt"
+    for n in LICENSE.akam THIRD_PARTY_NOTICES.md LICENSE.dropbear LICENSE.musl LICENSE.zig LICENSE.smolrtsp \
+        LICENSE.slice99 LICENSE.metalang99 LICENSE.datatype99 LICENSE.interface99; do
+        [ -s "$KIT/licenses/$n" ] || die "kit has no licenses/$n"
+        LICS+=("$n:$KIT/licenses/$n")
+    done
+    DROPBEAR_DIR=""
+else
+    MODE=source
+    SUPPORTED_HW="$ROOT/tools/release/supported_hardware.txt"
+    [ -f "$BINARY" ] || die "ak_rtsp binary not found at $BINARY (build it first: make -C src/ak_rtsp ak_rtsp, or set AK_RTSP_BIN)"
+    # Dropbear: prebuilt, or build it with the pinned toolchain.
+    DROPBEAR_MULTI="${DROPBEAR_MULTI:-$ROOT/dist/dropbear/dropbearmulti}"
+    if [ ! -f "$DROPBEAR_MULTI" ]; then
+        echo "dropbearmulti not found, building it..."
+        bash "$ROOT/tools/dropbear/build_dropbear.sh"
+    fi
+    [ -f "$DROPBEAR_MULTI" ] || die "dropbearmulti not found at $DROPBEAR_MULTI"
+    DROPBEAR_DIR="$(dirname "$DROPBEAR_MULTI")"
+    DROPBEAR_LICENSE="${DROPBEAR_LICENSE:-$DROPBEAR_DIR/LICENSE.dropbear}"
+    [ -f "$DROPBEAR_LICENSE" ] || die "LICENSE.dropbear not found at $DROPBEAR_LICENSE (the licence must ship with the binary)"
+    # Licence texts of statically linked / macro-expanded third-party code, copied
+    # from the pinned sources (never hand-written). Missing = fatal.
+    SMOLRTSP_DIR="${SMOLRTSP_DIR:-$ROOT/src/smolrtsp}"
+    if [ -z "${MUSL_COPYRIGHT:-}" ]; then
+        MUSL_COPYRIGHT=""
+        for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/lib/libc/musl/COPYRIGHT; do
+            [ -f "$f" ] && MUSL_COPYRIGHT="$f"
+        done
+    fi
+    [ -f "${MUSL_COPYRIGHT:-}" ] || die "musl COPYRIGHT not found (run tools/build/bootstrap.sh or set MUSL_COPYRIGHT)"
+    if [ -z "${ZIG_LICENSE:-}" ]; then
+        ZIG_LICENSE=""
+        for f in "$ROOT"/tools/.toolchain/zig-*-x86_64-linux/LICENSE; do
+            [ -f "$f" ] && ZIG_LICENSE="$f"
+        done
+    fi
+    [ -f "${ZIG_LICENSE:-}" ] || die "Zig LICENSE not found (run tools/build/bootstrap.sh or set ZIG_LICENSE)"
+    # Akam's own notices (ak_rtsp is FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware MIT code; the ported flasher fixes carry their own MIT notice).
+    [ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
+    LICS=("LICENSE.akam:$ROOT/LICENSE" "THIRD_PARTY_NOTICES.md:$ROOT/THIRD_PARTY_NOTICES.md"
+        "LICENSE.dropbear:$DROPBEAR_LICENSE" "LICENSE.musl:$MUSL_COPYRIGHT" "LICENSE.zig:$ZIG_LICENSE"
+        "LICENSE.smolrtsp:$SMOLRTSP_DIR/LICENSE")
+    for d in slice99 metalang99 datatype99 interface99; do
+        LICS+=("LICENSE.$d:$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE")
+    done
+    for e in "${LICS[@]}"; do
+        [ -s "${e#*:}" ] || die "licence file ${e#*:} missing (run tools/build/bootstrap.sh)"
+    done
+fi
+
+# image_files.txt: the Akam files of the image. list_src <kit path> prints the source of an entry:
+# "$KIT/<kit path>" in kit mode, "$ROOT/<repository source>" in source mode.
+list_src() {
+    local kind a b c d
+    while read -r kind a b c d; do
+        if [ "$kind" = file ] && [ "$b" = "$1" ]; then
+            if [ "$MODE" = kit ]; then echo "$KIT/$b"; else echo "$ROOT/$d"; fi
+            return 0
+        fi
+    done <"$IMAGE_FILES"
+    return 1
+}
+PATCH_SERVICE="$(list_src patches/patch_service_sh.sh)" || die "image_files.txt has no patches/patch_service_sh.sh entry"
+[ -f "$PATCH_SERVICE" ] || die "service.sh patch script $PATCH_SERVICE missing"
+while read -r kind a b c d; do
+    case "$kind" in
+        '' | '#'*) continue ;;
+        file)
+            case "$a$b$c$d" in *..* | *' '*) die "image_files.txt: unsafe entry '$kind $a $b $c $d'" ;; esac
+            case "$b$c" in /*) die "image_files.txt: absolute path in '$kind $a $b $c'" ;; esac
+            src="$(list_src "$b")"
+            [ -f "$src" ] || die "image file source $src missing"
+            ;;
+        link) ;;
+        *) die "image_files.txt: unknown entry kind '$kind'" ;;
+    esac
+done <"$IMAGE_FILES"
+
+# --- stock APP fingerprint, hardware verdict, compression ---------------------------------
+STOCK_COMP="" STOCK_BLOCK="" STOCK_BCJ="" STOCK_SHA="" STOCK_KERNEL="" STOCK_SRC=""
+if [ -n "$BACKUP_DIR" ]; then
+    [ -d "$BACKUP_DIR" ] || die "--backup-dir $BACKUP_DIR is not a directory"
+    [ -n "$STOCK_APP" ] || STOCK_APP="$BACKUP_DIR/mtdblock7.bin"
+    NPART="$(find "$BACKUP_DIR" -maxdepth 1 -name 'mtdblock[0-9]*.bin' | wc -l | tr -d ' ')"
+    [ "$NPART" = 8 ] || die "MTD layout differs from the supported one: $NPART mtdblock*.bin in $BACKUP_DIR, expected 8. Refusing."
+    if [ -f "$BACKUP_DIR/mtdblock4.bin" ]; then
+        # u-boot legacy uImage header: image name at offset 32 (32 bytes), e.g. "Linux-4.4.302-cip94".
+        STOCK_KERNEL="$(dd if="$BACKUP_DIR/mtdblock4.bin" bs=1 skip=32 count=32 2>/dev/null | tr -d '\000' | LC_ALL=C tr -cd 'A-Za-z0-9._+ -')"
+        case "$STOCK_KERNEL" in Linux-*) STOCK_KERNEL="${STOCK_KERNEL#Linux-}" ;; *) STOCK_KERNEL="" ;; esac
+    fi
+fi
+if [ -n "$STOCK_APP" ]; then
+    [ -f "$STOCK_APP" ] || die "stock APP dump $STOCK_APP not found"
+    [ "$(stat -c %s "$STOCK_APP")" = "$PARTITION" ] || die "MTD layout differs: $STOCK_APP is $(stat -c %s "$STOCK_APP") bytes, the APP partition (mtd7) is $PARTITION. Refusing."
+    STOCK_SHA="$(sha256sum "$STOCK_APP" | cut -d' ' -f1)"
+    SQINFO="$(LC_ALL=C unsquashfs -s "$STOCK_APP" 2>&1)" || die "$STOCK_APP is not a readable squashfs (unsquashfs -s failed): $SQINFO"
+    STOCK_COMP="$(awk '/^Compression /{print $2; exit}' <<<"$SQINFO")"
+    STOCK_BLOCK="$(awk '/^Block size /{print $3; exit}' <<<"$SQINFO")"
+    STOCK_BCJ="$(sed -n 's/^[[:space:]]*Filters selected: *//p' <<<"$SQINFO" | head -1)"
+    STOCK_BCJ="${STOCK_BCJ:-none}"
+    STOCK_SRC="$STOCK_APP"
+elif [ -n "$STOCK_INFO" ]; then
+    [ -f "$STOCK_INFO" ] || die "--stock-info $STOCK_INFO not found"
+    si() { sed -n "s/^$1=//p" "$STOCK_INFO" | head -1; }
+    STOCK_COMP="$(si compression)"
+    STOCK_BLOCK="$(si block_size)"
+    STOCK_BCJ="$(si bcj)"
+    STOCK_BCJ="${STOCK_BCJ:-none}"
+    STOCK_SHA="$(si app_sha256)"
+    STOCK_SRC="$STOCK_INFO"
+    [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ] || die "$STOCK_INFO needs compression= and block_size="
+fi
+HAVE_STOCK=0
+[ -n "$STOCK_COMP" ] && HAVE_STOCK=1
+case "$STOCK_BLOCK" in *[!0-9]*) die "unreadable squashfs block size '$STOCK_BLOCK' in the stock APP" ;; esac
+[ "$HAVE_STOCK" = 0 ] || [ -n "$STOCK_BLOCK" ] || die "no squashfs block size found for the stock APP"
+
+# Hardware verdict against supported_hardware.txt.
+HW_VERDICT="" HW_DETAIL=""
+if [ "$HAVE_STOCK" = 0 ]; then
+    if [ "$MODE" = kit ]; then
+        HW_VERDICT=unknown
+        HW_DETAIL="no stock APP fingerprint given (--stock-app / --backup-dir)"
+    else
+        HW_VERDICT=not-checked
+        HW_DETAIL="source mode without stock APP fingerprint"
+    fi
+else
+    [ -s "$SUPPORTED_HW" ] || die "$SUPPORTED_HW missing"
+    HW_VERDICT=unknown
+    HW_DETAIL="stock APP sha256 ${STOCK_SHA:-(none)} is not listed in supported_hardware.txt"
+    STOCK_FMT="squashfs $STOCK_COMP block=$STOCK_BLOCK bcj=$STOCK_BCJ"
+    while IFS='|' read -r st dev _soc kern _mtd sq sha _bb; do
+        case "$st" in '' | '#'* | supported_hardware_format=*) continue ;; esac
+        [ -n "$STOCK_SHA" ] && [ "$sha" = "$STOCK_SHA" ] || continue
+        if [ "$sq" != "$STOCK_FMT" ]; then
+            HW_DETAIL="stock APP sha256 matches '$dev' but its squashfs format differs ($STOCK_FMT, listed: $sq)"
+            continue
+        fi
+        if [ -n "$STOCK_KERNEL" ] && [ "$kern" != - ] && [ "${kern%% *}" != "$STOCK_KERNEL" ]; then
+            HW_DETAIL="stock APP matches '$dev' but the kernel differs (dump: $STOCK_KERNEL, listed: ${kern%% *})"
+            continue
+        fi
+        HW_VERDICT="$st"
+        HW_DETAIL="matches '$dev'"
+        break
+    done <"$SUPPORTED_HW"
+fi
+echo "Hardware check: $HW_VERDICT ($HW_DETAIL)"
+case "$HW_VERDICT" in
+    validated | not-checked) ;;
+    *)
+        if [ "$UNTESTED_OK" = 1 ]; then
+            warn "*** UNTESTED hardware/firmware ($HW_VERDICT: $HW_DETAIL). Building anyway (--i-understand-untested). Akam makes no promise that the result boots. ***"
+        else
+            die "hardware/firmware is not validated ($HW_VERDICT: $HW_DETAIL). Akam is only validated for the targets in tools/release/supported_hardware.txt. If you accept the risk, repeat with --i-understand-untested."
+        fi
+        ;;
+esac
+
+# Compression: follow the stock APP (same compressor and options = proof the kernel reads it).
+COMP="" BLOCK=131072 BCJ=none
+if [ "$HAVE_STOCK" = 1 ]; then
+    case "$STOCK_COMP:$STOCK_BCJ" in
+        gzip:none | xz:none | xz:arm) STOCK_FOLLOWABLE=1 ;;
+        *) STOCK_FOLLOWABLE=0 ;;
+    esac
+    case "$STOCK_BLOCK" in 4096 | 8192 | 16384 | 32768 | 65536 | 131072 | 262144 | 524288 | 1048576) ;; *) STOCK_FOLLOWABLE=0 ;; esac
+    if [ "$STOCK_FOLLOWABLE" = 1 ]; then
+        COMP="$STOCK_COMP"
+        BLOCK="$STOCK_BLOCK"
+        BCJ="$STOCK_BCJ"
+        if [ -n "$COMP_ARG" ] && [ "$COMP_ARG" != "$STOCK_COMP" ]; then
+            warn "*** COMPRESSION DIFFERS FROM THE STOCK APP: stock is $STOCK_COMP, building $COMP_ARG (--comp). The stock kernel is only PROVEN to read $STOCK_COMP. ***"
+            COMP="$COMP_ARG"
+            BCJ=none
+        fi
+    else
+        if [ "$ALLOW_UNKNOWN_STOCK_COMP" != 1 ] || [ -z "$COMP_ARG" ]; then
+            die "the stock APP uses squashfs compression '$STOCK_COMP' (filter: $STOCK_BCJ, block $STOCK_BLOCK), which Akam cannot reproduce (only gzip and xz). Refusing. If your kernel (mtdblock4) supports gzip or xz squashfs, pass --comp gzip|xz together with --allow-unknown-stock-comp."
+        fi
+        warn "*** stock APP compression is '$STOCK_COMP', not reproducible: building $COMP_ARG as requested (--allow-unknown-stock-comp). Verify that your kernel supports it. ***"
+        COMP="$COMP_ARG"
+    fi
+else
+    COMP="${COMP_ARG:-xz}"
+fi
+if [ "$COMP" = xz ] && [ "${AKAM_XZ_BCJ:-0}" = 1 ] && [ "$BCJ" = none ]; then
+    [ "$HAVE_STOCK" = 0 ] || warn "AKAM_XZ_BCJ=1: BCJ arm filter differs from the stock APP (no filter); not proven to boot"
+    BCJ=arm
+fi
+
 # Use the pinned toolchain from tools/.toolchain when zig is not on PATH.
 zig_pinned() {
     local z
@@ -128,10 +377,14 @@ zig_pinned() {
     done
     return 1
 }
+# Flash budget: the Makefile builds ak_rtsp with -g (~1.6 MB vs ~130 KB
+# stripped). Install a stripped COPY; the build output is never modified.
+# Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
+# $AKAM_STRIP (a command taking "<in> <out>") if set. Kit binaries are already stripped.
 install_stripped() {
     local src=$1 dst=$2 tmp="$TMP/strip.tmp"
-    if [ "$(head -c4 "$src" | od -An -c | tr -d ' ')" != '177ELF' ]; then
-        install -m 755 "$src" "$dst" # not an ELF (test stub): nothing to strip
+    if [ "$MODE" = kit ] || [ "$(head -c4 "$src" | od -An -c | tr -d ' ')" != '177ELF' ]; then
+        install -m 755 "$src" "$dst" # kit (stripped at kit build time) or not an ELF (test stub)
         return 0
     fi
     if [ -n "${AKAM_STRIP:-}" ]; then
@@ -159,36 +412,38 @@ else
     cp -a "$APP_EXTRACTED" "$PATCHED"
 fi
 
-# --- 2. de-Tuyafication --------------------------------------------------------
+# --- 2. de-Tuyafication + 3. Akam: ONE code path for both modes ------------------------------
 echo "Applying de-Tuyafication patch..."
 rm -f "$PATCHED/bin/anyka_ipc"
-install -m 755 "$TEMPLATES/ak_rtsp_wrapper.sh" "$PATCHED/sbin/ak_rtsp_wrapper.sh"
-install -m 644 "$TEMPLATES/_ht_process.ini" "$PATCHED/local/_ht_process.ini"
+echo "Installing Akam components ($MODE mode)..."
+rm -f "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" "$PATCHED/bin/dropbear" "$PATCHED/bin/dropbearkey"
 install_stripped "$BINARY" "$PATCHED/bin/ak_rtsp"
-
-# --- 3. Akam ------------------------------------------------------------------
-echo "Installing Akam components..."
-rm -f "$PATCHED/bin/dropbearmulti" "$PATCHED/bin/dropbear" "$PATCHED/bin/dropbearkey"
 install_stripped "$DROPBEAR_MULTI" "$PATCHED/bin/dropbearmulti"
-ln -s dropbearmulti "$PATCHED/bin/dropbear"
-ln -s dropbearmulti "$PATCHED/bin/dropbearkey"
-install -m 755 "$TEMPLATES/akam_ssh.sh" "$PATCHED/sbin/akam_ssh.sh"
-install -m 755 "$TEMPLATES/akam_lockdown.sh" "$PATCHED/sbin/akam_lockdown.sh"
+# Overlay files and links: exactly the entries of tools/release/image_files.txt.
+while read -r kind a b c d; do
+    case "$kind" in
+        file)
+            [ "$c" != - ] || continue # not installed in the image (service.sh patch, hwcheck)
+            mkdir -p "$PATCHED/$(dirname "$c")"
+            rm -f "$PATCHED/$c"
+            install -m "$a" "$(list_src "$b")" "$PATCHED/$c"
+            ;;
+        link)
+            mkdir -p "$PATCHED/$(dirname "$c")"
+            rm -f "$PATCHED/$c"
+            ln -s "$a" "$PATCHED/$c"
+            ;;
+    esac
+done < <(grep -vE '^[[:space:]]*(#|$)' "$IMAGE_FILES")
 mkdir -p "$PATCHED/local/akam"
 chmod 755 "$PATCHED/local/akam"
-install -m 644 "$DROPBEAR_LICENSE" "$PATCHED/local/akam/LICENSE.dropbear"
-install -m 644 "$MUSL_COPYRIGHT" "$PATCHED/local/akam/LICENSE.musl"
-install -m 644 "$SMOLRTSP_DIR/LICENSE" "$PATCHED/local/akam/LICENSE.smolrtsp"
-install -m 644 "$ZIG_LICENSE" "$PATCHED/local/akam/LICENSE.zig"
-install -m 644 "$ROOT/LICENSE" "$PATCHED/local/akam/LICENSE.akam"
-install -m 644 "$ROOT/THIRD_PARTY_NOTICES.md" "$PATCHED/local/akam/THIRD_PARTY_NOTICES.md"
-for d in slice99 metalang99 datatype99 interface99; do
-    install -m 644 "$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE" "$PATCHED/local/akam/LICENSE.$d"
+for e in "${LICS[@]}"; do
+    install -m 644 "${e#*:}" "$PATCHED/local/akam/${e%%:*}"
 done
 
 echo "Patching sbin/service.sh (telnet/ftp off, SD hook guarded)..."
 SVC_RC=0
-AKAM_PATCH_REPORT="$FW_DIR/service_sh.diff" bash "$TEMPLATES/patch_service_sh.sh" "$PATCHED" || SVC_RC=$?
+AKAM_PATCH_REPORT="$FW_DIR/service_sh.diff" bash "$PATCH_SERVICE" "$PATCHED" || SVC_RC=$?
 case "$SVC_RC" in
     0) ;;
     2 | 3)
@@ -209,19 +464,24 @@ fi
 
 SHA_AK="$(sha256sum "$PATCHED/bin/ak_rtsp" | cut -d' ' -f1)"
 SHA_DB="$(sha256sum "$PATCHED/bin/dropbearmulti" | cut -d' ' -f1)"
-GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo unknown)"
-{
-    echo "akam_version=$GIT_DESC"
-    echo "build_date=$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
-    echo "ak_rtsp_sha256=$SHA_AK"
-    echo "dropbearmulti_sha256=$SHA_DB"
-    for l in "$PATCHED"/local/akam/LICENSE.*; do
-        echo "licence: $(basename "$l") sha256=$(sha256sum "$l" | cut -d' ' -f1)"
-    done
-    if [ -f "$DROPBEAR_DIR/BUILDINFO.txt" ]; then
-        sed 's/^/dropbear_buildinfo: /' "$DROPBEAR_DIR/BUILDINFO.txt"
-    fi
-} >"$PATCHED/local/akam/MANIFEST.txt"
+if [ "$MODE" = kit ]; then
+    GIT_DESC="$KIT_VERSION"
+    cp "$KIT/MANIFEST.txt" "$PATCHED/local/akam/MANIFEST.txt" # the kit's own manifest travels with the image
+else
+    GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo unknown)"
+    {
+        echo "akam_version=$GIT_DESC"
+        echo "build_date=$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "ak_rtsp_sha256=$SHA_AK"
+        echo "dropbearmulti_sha256=$SHA_DB"
+        for l in "$PATCHED"/local/akam/LICENSE.*; do
+            echo "licence: $(basename "$l") sha256=$(sha256sum "$l" | cut -d' ' -f1)"
+        done
+        if [ -f "$DROPBEAR_DIR/BUILDINFO.txt" ]; then
+            sed 's/^/dropbear_buildinfo: /' "$DROPBEAR_DIR/BUILDINFO.txt"
+        fi
+    } >"$PATCHED/local/akam/MANIFEST.txt"
+fi
 chmod 644 "$PATCHED/local/akam/MANIFEST.txt"
 
 # --- 4. safety checks -------------------------------------------------------------
@@ -230,7 +490,11 @@ echo "Checking tree..."
 # them (docs/akam_v1_kernel_time64.md). Hard gate, run on the files that are
 # actually in the image (stripped): no forbidden time64 syscall, and the 32-bit
 # clock_gettime (263) of src/common/time32_shim.c present. A missing gdb is a failure.
-if [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+# Kit mode: no gdb needed. verify_kit.sh checked time64_gate=pass in the signed/hashed MANIFEST and the
+# sha256 of both binaries; --recheck-time64 replays the gate here.
+if [ "$MODE" = kit ] && [ "$RECHECK_TIME64" != 1 ]; then
+    echo "time64 gate: MANIFEST says pass and the binaries match its sha256 (--recheck-time64 to replay it)."
+elif [ "$MODE" = source ] && [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
     warn "*** time64 machine code check SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1): clocks may not work on the camera. ***"
 else
     bash "$ROOT/tools/build/check_time32.sh" --require-263 "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" \
@@ -261,9 +525,10 @@ fi
 SQ="$FW_DIR/new_app_${COMP}.squashfs"
 rm -f "$SQ"
 MKOPTS=(-comp "$COMP" -b "$BLOCK" -all-root -noappend -no-xattrs -no-progress -mkfs-time "$EPOCH" -all-time "$EPOCH")
-# Stock APP is xz WITHOUT a BCJ filter; match it (a BCJ-arm image needs CONFIG_XZ_DEC_ARM in the
-# kernel, unproven). AKAM_XZ_BCJ=1 opts in: ~45 KB smaller, not proven to boot.
-[ "$COMP" = xz ] && [ "${AKAM_XZ_BCJ:-0}" = 1 ] && MKOPTS+=(-Xbcj arm)
+# Same compressor options as the stock APP: it is xz WITHOUT a BCJ filter (a BCJ-arm image needs
+# CONFIG_XZ_DEC_ARM in the kernel, unproven). A BCJ filter only when the stock has one or
+# AKAM_XZ_BCJ=1 (~45 KB smaller, not proven to boot; warned about above).
+if [ "$COMP" = xz ] && [ "$BCJ" = arm ]; then MKOPTS+=(-Xbcj arm); fi
 # mksquashfs refuses explicit time options when SOURCE_DATE_EPOCH is in the env.
 env -u SOURCE_DATE_EPOCH mksquashfs "$PATCHED" "$SQ" "${MKOPTS[@]}" >/dev/null || die "mksquashfs failed (unsupported option? tool version: $(mksquashfs -version | head -1))"
 
@@ -316,7 +581,25 @@ REPORT="$FW_DIR/build_report.txt"
     echo "image:              $(basename "$OUT")"
     echo "image sha256:       $SHA_OUT"
     echo "squashfs sha256:    $(sha256sum "$SQ" | cut -d' ' -f1)  (content, before padding)"
-    echo "compression:        $COMP, block $BLOCK"
+    echo "compression:        $COMP, block $BLOCK, bcj $BCJ"
+    echo "build mode:         $MODE"
+    if [ "$MODE" = kit ]; then
+        echo "kit:                akam_version=$KIT_VERSION source_commit=$KIT_COMMIT kit_grade=$KIT_GRADE"
+        echo "kit authentication: $KIT_AUTH${KIT_INFO:+; $KIT_INFO}"
+    fi
+    if [ "$HAVE_STOCK" = 1 ]; then
+        echo "stock APP:          squashfs $STOCK_COMP, block $STOCK_BLOCK, bcj $STOCK_BCJ (from $(basename "$STOCK_SRC"))"
+        echo "stock APP sha256:   ${STOCK_SHA:-unknown}"
+        if [ "$COMP" = "$STOCK_COMP" ] && [ "$BLOCK" = "$STOCK_BLOCK" ] && [ "$BCJ" = "$STOCK_BCJ" ]; then
+            echo "compression vs stock: SAME as the stock APP"
+        else
+            echo "compression vs stock: *** DIFFERENT from the stock APP ($STOCK_COMP/$STOCK_BLOCK/$STOCK_BCJ) ***"
+        fi
+    else
+        echo "stock APP:          not fingerprinted (no dump given); compression not compared with the stock"
+    fi
+    echo "stock kernel:       ${STOCK_KERNEL:-unknown (no mtdblock4.bin given or not a uImage)}"
+    echo "hardware verdict:   $HW_VERDICT ($HW_DETAIL)"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
