@@ -16,6 +16,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT/tools/wizard/lib/ui.sh"
 # shellcheck source=tools/wizard/lib/steps_host.sh
 . "$ROOT/tools/wizard/lib/steps_host.sh"
+# shellcheck source=tools/wizard/lib/camsh.sh
+. "$ROOT/tools/wizard/lib/camsh.sh"
+# shellcheck source=tools/wizard/lib/transfer.sh
+. "$ROOT/tools/wizard/lib/transfer.sh"
+# shellcheck source=tools/wizard/lib/steps_camera.sh
+. "$ROOT/tools/wizard/lib/steps_camera.sh"
 
 # Never leak secrets through shell tracing.
 set +x
@@ -32,9 +38,15 @@ Commands:
   get-kit            download and verify the prebuilt kit (no compiling)
   build              build from source instead (optional, needs more tools)
   prepare-backup-sd  prepare the microSD card used to back up the camera
-  backup             accept your backup folder (--backup-dir DIR)
+  find-camera        find the camera (asks its IP address, checks the ports)
+  backup             back up the camera (double read, checked, copied to ~/akam-backup-<date>/),
+                     or accept a backup folder you made by hand (--backup-dir DIR)
   image              build the Akam image from your backup
   prepare-flash-sd   prepare the microSD card used to flash the camera
+  flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
+  verify             check SSH, ports and hardware, then the same without the card
+  update             flash a new image over SSH (no card)
+  restore            put the original APP back from your backup
   wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
   step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
                      find-camera, backup, image, prepare-flash-sd, flash, verify)
@@ -48,6 +60,12 @@ Options:
   --allow-unsigned   accept a kit without a signature (checksum only)
   --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
   --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)
+  --backup-copy DIR  also copy the backup folder to DIR (another medium) and check the copy
+  --ip ADDRESS       the camera's IP address (find-camera asks otherwise)
+  --identity FILE    your SSH private key (default: ~/.ssh/akam, or --pubkey without .pub)
+  --image FILE       image for update (default: the one built by the image step)
+  --manual-telnet    never drive the camera's telnet shell: the wizard prints each command and
+                     you paste it in your own telnet window (also automatic after 2 failures)
   --out DIR          where the image is written (default ~/akam-image-<date>)
   --comp xz|gzip     override the stock APP compression (not recommended)
   --allow-unknown-stock-comp
@@ -63,13 +81,14 @@ Options:
 Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
 for the disk work), shows every command before it runs, refuses destructive actions without a
 terminal, and never stores your Wi-Fi password. Erasing a card needs a typed ERASE <device>;
-flashing needs a typed YES.
+flashing needs a typed YES, always typed by you. It never reboots or power-cycles the camera.
 EOF
 }
 
 OPT_KIT="" OPT_VERSION="" OPT_ALLOW_UNSIGNED="" OPT_EXPECT_SHA256="" OPT_BACKUP_DIR=""
 OPT_OUT="" OPT_COMP="" OPT_ALLOW_UNKNOWN_COMP="" OPT_DEVICE="" OPT_PUBKEY="" OPT_SSID=""
 OPT_PROFILE="" OPT_BUILD=0
+OPT_IP="" OPT_IDENTITY="" OPT_IMAGE="" OPT_BACKUP_COPY="" OPT_MANUAL_TELNET=0
 DRY=0
 STATE_OVERRIDE=""
 ARGS=()
@@ -84,6 +103,11 @@ while [ $# -gt 0 ]; do
         --version) need_val "$1" $#; OPT_VERSION=$2; shift ;;
         --expect-sha256) need_val "$1" $#; OPT_EXPECT_SHA256=$2; shift ;;
         --backup-dir) need_val "$1" $#; OPT_BACKUP_DIR=$2; shift ;;
+        --backup-copy) need_val "$1" $#; OPT_BACKUP_COPY=$2; shift ;;
+        --ip) need_val "$1" $#; OPT_IP=$2; shift ;;
+        --identity) need_val "$1" $#; OPT_IDENTITY=$2; shift ;;
+        --image) need_val "$1" $#; OPT_IMAGE=$2; shift ;;
+        --manual-telnet) OPT_MANUAL_TELNET=1 ;;
         --out) need_val "$1" $#; OPT_OUT=$2; shift ;;
         --comp) need_val "$1" $#; OPT_COMP=$2; shift ;;
         --device) need_val "$1" $#; OPT_DEVICE=$2; shift ;;
@@ -149,6 +173,8 @@ case $CMD in
     find-camera) cmd_find_camera || rc=$? ;;
     flash) cmd_flash || rc=$? ;;
     verify) cmd_verify || rc=$? ;;
+    update) cmd_update || rc=$? ;;
+    restore) cmd_restore || rc=$? ;;
     step)
         if [ "${#ARGS[@]}" -lt 2 ] || ! step_valid_name "${ARGS[1]}"; then
             echo "akam: step needs a name: $WIZ_STEPS" >&2

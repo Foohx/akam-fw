@@ -26,11 +26,17 @@ the map; each step has its own guide.
 ```
 ./akam doctor            # check the tools on this computer (never runs sudo, prints the install command)
 ./akam get-kit --version X.Y.Z   # download + verify the prebuilt kit (or: --kit FILE; or ./akam build)
-./akam backup --backup-dir DIR   # accept your backup folder (8 partitions, two copies on two media)
+./akam find-camera       # asks the camera IP, probes ports 24/22/554/8091, tells stock+toolkit from Akam
+./akam backup            # double read of the 8 partitions on the camera, copy to ~/akam-backup-<date>/
+./akam backup --backup-dir DIR   # or accept a backup folder you made by hand
 ./akam image             # build the Akam image: shows the hardware verdict and the stock compression
 ./akam --dry-run         # rehearse everything: shows each command, changes nothing
 ./akam prepare-backup-sd # microSD card for the backup (uses tools/sd/sd_card.sh)
 ./akam prepare-flash-sd  # microSD card for the flash: key, image, flash_tool, original APP
+./akam flash             # write the image: SSH if Akam already runs, else the maintenance telnet + card
+./akam verify            # SSH + akam_hwcheck.sh + ports, then the same again without the card
+./akam update            # later: flash a new image over SSH (--image FILE)
+./akam restore           # put the original APP back from your backup
 ./akam wipe-sd           # erase a card that holds your Wi-Fi password (offered again at the end)
 ./akam status            # every step: done / todo / blocked
 ```
@@ -44,8 +50,45 @@ Untested firmware needs the typed phrase `I UNDERSTAND THIS IS UNTESTED`; erasin
 real terminal only. The wizard never runs `sudo` itself; the SD tool (`tools/sd/sd_card.sh`) asks `sudo`
 for the disk work and refuses system disks, partitions and non-removable disks. Wi-Fi settings reach the SD
 tool through the environment (`AKAM_WIFI_SSID`, `AKAM_WIFI_PASS`, or `AKAM_SD_PASS` read by the wizard),
-never the command line, the state file or the log. The camera-side steps (find the camera, back up over Telnet, flash, verify) are not
-automated yet: the wizard prints the manual instructions of the guides above for them.
+never the command line, the state file or the log.
+
+### The camera steps
+
+The wizard talks to the camera's BusyBox shell (maintenance telnet, port 24) with plain bash over
+`/dev/tcp`, so the PC needs no telnet, `nc`, `expect` or Python, and the PC always connects OUT (its
+firewall may block inbound connections). Every command is sent alone and ends with a marker that carries
+its exit code; a command that gets no answer counts as a failure and after two failures (or with
+`--manual-telnet`) the wizard switches to manual mode: it prints the exact command, you paste it in your
+own `telnet CAMERA_IP 24` window and paste the output back (end it with a line `END`).
+
+- `find-camera` needs the camera address (router list, maker shown as `AltoBeam`; or `--ip`). Port 24 open
+  and 22 closed is a stock camera with the backup card; 22, 554 and 8091 open is a camera running Akam.
+- `backup` refuses any partition table other than the 8-partition layout, reads every partition twice on the
+  camera, checks the 16 sizes, compares the two reads (only `mtdblock6`, CONFIG, may differ and is read
+  again), copies `dump1` to the PC with `nc` and a size + hash check (3 tries per file), writes
+  `SHA256SUMS`, compares the stock APP hash with `tools/release/supported_hardware.txt` (typed
+  `I UNDERSTAND THIS IS UNTESTED` unless validated) and asks for a second copy on another medium
+  (`--backup-copy DIR` makes and checks it). If the transfer fails, the dumps are still on the card:
+  copy them by hand and use `--backup-dir`. A camera that already runs Akam cannot be backed up: its flash
+  no longer holds the original firmware.
+- `flash` checks the image (exactly 5242880 bytes, md5 on the PC and on the card), binds the card on
+  `/mnt` if it is on `/tmp/sd`, starts `install_with_flash_tool.sh`, shows its md5 line and its prompt and
+  asks YOU to type `YES`; only what you typed is sent, and an empty input or a missing terminal aborts the
+  script (nothing is written). Afterwards `dd if=/dev/mtd7 bs=64k | md5sum` must equal the image md5. If Akam
+  already runs and your key works, `flash` offers the no-card route
+  (`tools/flash_scripts/reflash_over_ssh.sh`, progress bars filtered, full output in the state
+  directory). Both routes need a typed `YES` and risk the camera if the power is cut (UART is the only way
+  back from a half-written APP).
+- `verify` waits for SSH, runs `akam_hwcheck.sh` from RAM, checks the ports, then asks you to unplug the
+  power, remove the card and plug the power back, and checks that telnet (24) and FTP (21) are closed.
+  The step is only done after that.
+- `update` flashes a new image over SSH; `restore` writes the stock APP from your backup over SSH or the
+  maintenance telnet (same gates).
+- The wizard never reboots or power-cycles the camera: you unplug and replug the USB-C power by hand.
+
+The camera steps were exercised against a fake camera (`tools/wizard/fake_camera.sh`) and, for the
+procedures they automate, on hardware by hand; the scripted telnet session itself has not been run on a
+real camera yet.
 
 ## 2. What changes on the camera
 
