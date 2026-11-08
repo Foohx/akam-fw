@@ -1,8 +1,8 @@
 # Camyn V1: Test Status, Hardware Test Plan and Resource Report
 
-**Nothing in Camyn V1 has been validated on hardware.** This page separates what was exercised on the
-build host from what must be checked on the camera. Tick a box only after you have seen the result on
-your own camera.
+Camyn V1 was first validated on a real camera on **2026-11-08** (one unit, list in section 1b). This
+page separates what was exercised on the build host, what was seen on that camera, and what is still to
+check. Tick a box only after you have seen the result on your own camera.
 
 ---
 
@@ -17,11 +17,41 @@ your own camera.
 | `camyn_ssh.sh` logic (first boot, second boot, duplicates, missing binaries, read-only CONFIG, SD keys valid/invalid/`command=`, modes) | `bash tests/ssh_init_test.sh` against a fake root with fake `dropbear` | passed on host |
 | `patch_service_sh.sh` and `camyn_lockdown.sh` (variants of `service.sh`, idempotence, flag present/absent, exclusion list) | `bash tests/lockdown_test.sh` with fake `ps`/`kill` and a synthetic `service.sh` | passed on host |
 | `build_firmware.sh` (permissions, key refusal, round-trip, size guard, padding to 5 242 880) | `bash tests/build_firmware_test.sh` on `tests/fixtures/app_fake` with stub binaries | passed on host |
-| `camyn_hwcheck.sh` | `bash tests/hwcheck_test.sh` with fake `ss`/`ps`/proc | passed on host |
+| `camyn_hwcheck.sh` (key path from root's HOME, `ak_rtsp` CPU from `/proc` deltas, night flap check) | `bash tests/hwcheck_test.sh` with fake `ss`/`ps`/proc and a scripted 8091 | passed on host |
+| No-UART reflash over SSH: guard decisions, detach (`setsid`), second Dropbear on 2222, log polling, md5 verification | `bash tests/reflash_ssh_test.sh` with fake `ssh`, `flash_tool`, `dropbear` and a regular file as `/dev/mtd7` | passed on host; **not run on a camera** |
 | time64 clock shim ([kernel time64 note](camyn_v1_kernel_time64.md)) | `bash tests/time32_shim_test.sh` and `bash tests/dropbear_patch_test.sh`: final binaries scanned for forbidden time64 syscalls, `qemu-arm -strace`, probe verdict logic | passed on host; not run on the camera |
 
 The fixture is synthetic: it contains no vendor files, so these tests say nothing about the real
 `service.sh`, the real free space, or kernel behaviour.
+
+### 1b. Validated on the camera, 2026-11-08
+
+Seen on one real unit (Camyn image flashed over the telnet routes of the
+[flash guide](camyn_v1_flash_and_restore.md)):
+
+- boots **without a microSD** card;
+- Wi-Fi connects by itself (station mode);
+- H.264 1080p video and an **L16 audio track** in the RTSP stream (`ffprobe`);
+- the **IR night image** is delivered;
+- port 8091: `GET` and `SET` work;
+- **Dropbear starts by itself** at boot;
+- **SSH as root by ed25519 key** works;
+- SSH still works **after a power cycle**, with the host key persisted (same fingerprint);
+- without the card only **22, 554 and 8091** are listening;
+- **telnet is gone** (23 and 24 closed) in a normal boot;
+- `anyka_ipc` is absent;
+- about **29 MB of RAM free** with everything running;
+- the APP image has **2.7 MB free**;
+- `flash_tool` reflashed the APP twice live (stock telnet, then maintenance telnet): 0 retries, read-back
+  md5 matched, the running system survived the write.
+
+Still to check:
+
+- the **microphone is audible** (the audio track exists; nobody has listened yet);
+- **no day/night flapping over a longer period** (hours, across dusk and dawn; use `camyn_hwcheck.sh`
+  repeatedly, its night check WARNs when `night.state` changes more than once in ~20 s);
+- **telnet is never re-enabled after a Wi-Fi reconnect** (restart the router, then check 23 and 24);
+- the reflash over SSH from RAM on hardware (host-tested only), and any restore.
 
 ### To test on the camera (V1 acceptance criteria)
 
@@ -29,20 +59,20 @@ The fixture is synthetic: it contains no vendor files, so these tests say nothin
 |---|---|---|---|
 | 1 | Hardware reference confirmed (`3215672.3`, SI `D26228`) | Label; `/proc/mtd`; UART boot log ([backup guide](camyn_v1_backup.md)) | [ ] |
 | 2 | 8 partitions backed up with SHA-256 | [Backup guide](camyn_v1_backup.md) checklist | [ ] |
-| 3 | Boots without a microSD | Remove the card after provisioning, power cycle, `ssh` in, `camyn_hwcheck.sh` | [ ] |
-| 4 | Wi-Fi connects automatically | Camera appears on the network after power-on; `wpa_supplicant` and `udhcpc` PASS in `camyn_hwcheck.sh` | [ ] |
-| 5 | H.264 1080p stream | `ffprobe rtsp://<camera-ip>:554/` and a viewer, 1920x1080 | [ ] |
-| 6 | Microphone audible | Listen to the stream audio | [ ] |
-| 7 | Night mode works | Cover the lens / darken the room: IR-cut switches, image stays usable | [ ] |
-| 8 | Port 8091 works | `camyn_hwcheck.sh` LIST check, then manual `GET` / `SET` | [ ] |
-| 9 | Dropbear starts by itself | `dropbear` PASS and port 22 PASS in `camyn_hwcheck.sh`; `/tmp/camyn_ssh.log` | [ ] |
-| 10 | SSH root by key | `ssh -i ~/.ssh/camyn root@<camera-ip>`; a password attempt must fail | [ ] |
-| 11 | Persists after a power cut | Cut power, reconnect: same key accepted, same host fingerprint | [ ] |
-| 12 | Telnet unreachable and never re-enabled | Ports 23 and 24 closed in `camyn_hwcheck.sh` after boot, `--boot-window`, and again after a Wi-Fi reconnect; `nmap` from the PC | [ ] |
+| 3 | Boots without a microSD | Remove the card after provisioning, power cycle, `ssh` in, `camyn_hwcheck.sh` | [x] 2026-11-08 |
+| 4 | Wi-Fi connects automatically | Camera appears on the network after power-on; `wpa_supplicant` and `udhcpc` PASS in `camyn_hwcheck.sh` | [x] 2026-11-08 |
+| 5 | H.264 1080p stream | `ffprobe rtsp://<camera-ip>:554/` and a viewer, 1920x1080 | [x] 2026-11-08 |
+| 6 | Microphone audible (the L16 track exists; listening still to do) | Listen to the stream audio | [ ] |
+| 7 | Night mode works | Cover the lens / darken the room: IR-cut switches, image stays usable | [x] 2026-11-08 (IR image; flapping over time still to check) |
+| 8 | Port 8091 works | `camyn_hwcheck.sh` LIST check, then manual `GET` / `SET` | [x] 2026-11-08 |
+| 9 | Dropbear starts by itself | `dropbear` PASS and port 22 PASS in `camyn_hwcheck.sh`; `/tmp/camyn_ssh.log` | [x] 2026-11-08 |
+| 10 | SSH root by key | `ssh -i ~/.ssh/camyn root@<camera-ip>`; a password attempt must fail | [x] 2026-11-08 |
+| 11 | Persists after a power cut | Cut power, reconnect: same key accepted, same host fingerprint | [x] 2026-11-08 |
+| 12 | Telnet unreachable and never re-enabled (gone at boot on 2026-11-08; the Wi-Fi reconnect case is still to check) | Ports 23 and 24 closed in `camyn_hwcheck.sh` after boot, `--boot-window`, and again after a Wi-Fi reconnect; `nmap` from the PC | [ ] |
 | 13 | FTP off | Port 21 closed (same checks) | [ ] |
 | 14 | No Internet dependency | Put the camera on a segment with no route out; everything above still works | [ ] |
-| 15 | Memory acceptable | Free memory and RSS in `camyn_hwcheck.sh` (section 4) | [ ] |
-| 16 | Image fits in APP | `build_report.txt` free bytes, and a successful flash | [ ] |
+| 15 | Memory acceptable | Free memory and RSS in `camyn_hwcheck.sh` (section 4) | [x] 2026-11-08 (~29 MB free) |
+| 16 | Image fits in APP | `build_report.txt` free bytes, and a successful flash | [x] 2026-11-08 (2.7 MB free) |
 | 17 | Restore documented and (your decision) rehearsed | [Flash and restore](camyn_v1_flash_and_restore.md) | [ ] |
 
 ---
@@ -66,6 +96,13 @@ reported as WARN if open), processes (`ak_rtsp`, `dropbear`, `wpa_supplicant`, `
 `anyka_ipc`, `telnetd`, `tcpsvd`, `ftpd` absent), resident memory, mounts and `/proc/mtd`, Dropbear
 files and modes, whether root's shell is in `/etc/shells`, the maintenance flag, a `LIST` to port 8091,
 entropy, the Camyn logs, and system facts.
+
+Details worth knowing: the Dropbear key path is judged from **root's HOME in `/etc/passwd` as seen at
+runtime** (`camyn_ssh.sh` moves it to the private `/tmp/camyn_home`), so `/` and `/etc` being 0775 is
+only `INFO`; a group/other-writable HOME or key file is a `FAIL`. The `ak_rtsp` CPU use is the delta of
+`/proc/PID/stat` over ~2 s (no `top`). The night check reads `night.mode` and samples `night.state` four
+times over ~20 s through 8091 (each sample is a short connection, which briefly replaces any other
+8091 client) and WARNs if it changed more than once; `HWCHECK_NIGHT_SAMPLES=0` disables it.
 
 Run order (the first run is expected to WARN about the maintenance flag if you left it in place):
 
@@ -101,9 +138,9 @@ Everything in Camyn's design that came from reading other projects instead of th
 | H4 | The kernel mounts Camyn's xz SquashFS APP (same format as the stock APP; xz support proven by the stock ROOTFS/APP; gzip also expected from the kernel's decompressor tables) | Boot | A boot of Camyn's image |
 | H5 | Free space in the real APP is sufficient | Image fits | `build_report.txt` from the real dump |
 | H6 | The microSD is mounted on `/mnt` when the scripts run (keys at `/mnt/camyn/`, flag at `/mnt/CAMYN_MAINTENANCE`) | SSH provisioning; maintenance flag | UART: `mount`; `/tmp/camyn_ssh.log` |
-| H7 | `/etc/config` is writable, and `/etc/config`, `/etc`, `/` have modes Dropbear accepts | Key login | Log lines `mode of ...`; successful login |
+| H7 | `/etc/config` is writable, and `/etc/config`, `/etc`, `/` have modes Dropbear accepts | Key login | Log lines `mode of ...`; successful login. **Resolved 2026-11-08:** `/` and `/etc` are 0775 on the real unit; the key path is root's HOME `/tmp/camyn_home` instead, and key login works |
 | H8 | `/dev/pts` is mounted (interactive shell); `/etc/shells` is absent or lists `/bin/sh` | Login | `ls /dev/pts`; hwcheck; log |
-| H9 | Root's `$HOME` is `/` (irrelevant: Dropbear is started with `-D`) | None | n/a |
+| H9 | Root's `$HOME` is `/` | Key path (Dropbear walks up to HOME) | **Superseded:** `camyn_ssh.sh` bind-mounts a private passwd whose root HOME is `/tmp/camyn_home` |
 | H10 | Entropy for key generation is available soon enough on a 4.4 kernel without RTC | First SSH latency | `/tmp/camyn_ssh.log` timing; hwcheck entropy |
 | H11 | A factory reset or CONFIG wipe removes `/etc/config/dropbear` | Re-provisioning | Deliberate only if you accept losing CONFIG; otherwise leave unknown |
 | H12 | Zig/musl static Dropbear runs on this ARM926 kernel (`getrandom`, `forkpty`) | SSH works at all | First SSH login |
@@ -111,7 +148,7 @@ Everything in Camyn's design that came from reading other projects instead of th
 | H14 | RAM cost of Dropbear and the helper shells is small | 64 MiB RAM | Section 4 |
 | H15 | A leftover flasher SD would run its hook only with the maintenance flag | Telnet 24 | Test with and without the flag |
 | H16 | The camera's BusyBox `tar` supports gzip (`tar xzf -`) | Directory transfer | Try it |
-| H17 | Flashing from a running Camyn system (Dropbear in the erased APP) is unsafe | Reflash procedure | Recommended to use UART instead |
+| H17 | Flashing from a running Camyn system (Dropbear in the erased APP) is unsafe | Reflash procedure | Two live flashes over telnet worked (0 retries, md5 OK, system survived); still no guarantee. UART remains the only safe route; the RAM-only SSH route is host-tested only |
 | H18 | With `src/common/time32_shim.c` linked, clock reads and timed waits work on the camera kernel, which acknowledges `clock_gettime64` without executing it ([note](camyn_v1_kernel_time64.md)) | Dropbear sessions, night-mode lock | Run `time64_probe` on the camera: `RESULT PASS`; Dropbear login stays open |
 
 ---
