@@ -13,13 +13,24 @@ nothing has been booted on a camera.
 ## 1. Host tools
 
 ```bash
-sudo pacman -S --needed squashfs-tools shellcheck file binutils make git curl tar xz bzip2
-bash tools/build/check_host.sh
+bash tools/build/check_host.sh            # checks the host and prints the exact install command
+bash tools/build/check_host.sh --json     # same, machine readable (used by the wizard)
 ```
 
-`check_host.sh` checks for `make git curl tar xz bzip2 mksquashfs unsquashfs shellcheck file readelf
-sha256sum` and prints the missing `pacman` line; it never calls `sudo`. `cmake` is not needed.
-`qemu-user` is optional and not required by any script.
+Supported hosts: Arch Linux and Debian/Ubuntu (x86_64; aarch64 Linux builds but is untested). The
+script never calls `sudo`; it prints one of
+
+```bash
+sudo pacman -S --needed <packages>        # Arch
+sudo apt-get install -y <packages>        # Debian 12 / Ubuntu 24.04
+```
+
+`--profile kit|build|all` limits the check (kit: prebuilt-kit path; build: from sources; all, the
+default, adds `shellcheck`). `gdb` is a hard requirement of the time64 gate
+(`tools/build/check_time32.sh`) and must be able to disassemble ARM: `gdb` on Arch,
+`gdb-multiarch` on Debian/Ubuntu (their plain `gdb` is native-only). `cmake`, `python3` and `telnet`
+are optional. Debian does not put `/usr/sbin` in a user's `PATH`; the SD-card tools are looked up
+there too, since the scripts run them through `sudo`. macOS is not supported yet.
 
 ## 2. Pinned toolchain and sources
 
@@ -31,13 +42,16 @@ Reads `tools/build/deps.lock` and downloads, with a SHA-256 check on every downl
 
 | Item | Pin | Location |
 |---|---|---|
-| Zig | 0.14.1 (x86_64-linux) | `tools/.toolchain/` (git-ignored) |
+| Zig | 0.14.1 (linux x86_64; aarch64 also pinned) | `tools/.toolchain/` (git-ignored) |
 | SmolRTSP | commit `8ae3b5115f7a77c383080b51cb7fdba1046f862f` | `src/smolrtsp` |
 | slice99 / metalang99 / datatype99 / interface99 | v0.7.8 / v1.13.5 / v1.6.5 / v1.0.2 | `src/smolrtsp/build/_deps/` |
 | Dropbear archive | 2026.94 | `tools/.cache/` |
 | static BusyBox | 1.35.0 (host-side tests only) | `tools/.toolchain/` |
 
 The script is idempotent and refuses to overwrite a locally modified `src/smolrtsp`.
+`--print-plan` shows what would be fetched for this host without downloading; `--offline` (or
+`AKAM_OFFLINE=1`) uses `tools/.cache` only and fails clearly if something is missing. Transient
+failures (HTTP 5xx/429, network errors) are retried with exponential backoff.
 
 ## 3. Build `ak_rtsp` and `flash_tool`
 
