@@ -5,8 +5,8 @@
 # Exit 0 only when every step passes. Prints "LOCAL CHECK: OK (N tests, M skipped)".
 # A test is counted as skipped when it exits 0 and prints a line starting with "skip:" or "SKIP:".
 # Data files (next to this script):
-#   shellcheck_legacy.txt  tracked scripts allowed to have shellcheck findings (known, not ours to fix here)
-#   tracked_exceptions.txt tracked paths allowed despite the forbidden-file patterns
+#   - tools/ci/shellcheck_legacy.txt: tracked scripts allowed to have findings (upstream or known)
+#   - tools/ci/tracked_exceptions.txt: tracked paths allowed despite the forbidden-file patterns
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

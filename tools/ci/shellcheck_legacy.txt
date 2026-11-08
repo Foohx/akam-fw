@@ -7,4 +7,3 @@ tools/flash_scripts/quiet_and_flash_test.sh
 tools/flash_scripts/restore_full_firmware.sh
 tools/flash_scripts/restore.sh
 tools/flash_scripts/start_rtsp.sh
-tools/firmware_patch_templates/ak_rtsp_wrapper.sh
