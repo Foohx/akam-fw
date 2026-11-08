@@ -39,7 +39,8 @@ Seen on one real unit (Akam image flashed over the telnet routes of the
 - **SSH as root by ed25519 key** works;
 - SSH still works **after a power cycle**, with the host key persisted (same fingerprint);
 - without the card only **22, 554 and 8091** are listening;
-- **telnet is gone** (23 and 24 closed) in a normal boot;
+- **telnet and FTP are off** (21, 23 and 24 closed) in a normal boot;
+- `ak_rtsp` uses about **1% CPU** with a client connected (about 90% before the fixes) and the H.264 stream starts fast;
 - `anyka_ipc` is absent;
 - about **29 MB of RAM free** with everything running;
 - the APP image has **2.7 MB free**;
@@ -70,7 +71,7 @@ Still to check:
 | 10 | SSH root by key | `ssh -i ~/.ssh/akam root@<camera-ip>`; a password attempt must fail | [x] 2026-11-08 |
 | 11 | Persists after a power cut | Cut power, reconnect: same key accepted, same host fingerprint | [x] 2026-11-08 |
 | 12 | Telnet unreachable and never re-enabled (gone at boot on 2026-11-08; the Wi-Fi reconnect case is still to check) | Ports 23 and 24 closed in `akam_hwcheck.sh` after boot, `--boot-window`, and again after a Wi-Fi reconnect; `nmap` from the PC | [ ] |
-| 13 | FTP off | Port 21 closed (same checks) | [ ] |
+| 13 | FTP off | Port 21 closed (same checks) | [x] 2026-11-08 |
 | 14 | No Internet dependency | Put the camera on a segment with no route out; everything above still works | [ ] |
 | 15 | Memory acceptable | Free memory and RSS in `akam_hwcheck.sh` (section 4) | [x] 2026-11-08 (~29 MB free) |
 | 16 | Image fits in APP | `build_report.txt` free bytes, and a successful flash | [x] 2026-11-08 (2.7 MB free) |
@@ -83,7 +84,7 @@ Still to check:
 `tools/hw_tests/akam_hwcheck.sh` is a read-only POSIX `sh` script. It never writes to flash or CONFIG,
 never kills or starts anything, and never prints key material. It prints `PASS`, `FAIL`, `WARN`,
 `UNKNOWN` and `INFO` lines, then facts, and exits 0 if there is no `FAIL`. It is **not** installed in
-the image, and it has never run on a camera. Run it without copying anything:
+the image, and it ran on the camera on 2026-11-08. Run it without copying anything:
 
 ```bash
 ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh | tee hwcheck-1.txt
@@ -166,7 +167,7 @@ Measured on the build host (binary sizes), or **not yet known** (everything that
 | Free space in the real APP image | **unknown until you build from your dump** | `build_report.txt` |
 | Free RAM before / after Akam services | **to measure** | `akam_hwcheck.sh` ("MemFree", "Cached") |
 | RSS of `dropbear`, `ak_rtsp` | **to measure** | `akam_hwcheck.sh` ("resident memory") |
-| CPU load with an RTSP client | **to measure** | `uptime` / `top` section |
+| CPU load with an RTSP client | `ak_rtsp` about 1% with one client (was about 90% before the fixes), 2026-11-08 | `akam_hwcheck.sh` (CPU section) |
 
 Fill in on your own camera:
 
