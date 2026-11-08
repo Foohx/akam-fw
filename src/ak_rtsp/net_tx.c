@@ -27,10 +27,14 @@ int net_tx_write_all(net_tx_t *t, const void *buf, size_t len)
     int64_t last_progress = rtp_mono_us();
 
     while (len > 0) {
-        /* MSG_NOSIGNAL: a vanished peer is an EPIPE here, not a SIGPIPE. */
-        ssize_t n = send(t->fd, p, len, MSG_NOSIGNAL);
+        /* MSG_NOSIGNAL: a vanished peer is an EPIPE here, not a SIGPIPE.
+         * MSG_DONTWAIT: never sleep inside send(). With SO_SNDTIMEO a
+         * blocking send() that keeps making progress still returns after
+         * the timeout, so the time spent in it cannot be told apart from a
+         * real zero-progress stall; waiting in poll() below measures
+         * exactly the time the peer accepted nothing. */
+        ssize_t n = send(t->fd, p, len, MSG_NOSIGNAL | MSG_DONTWAIT);
         if (n > 0) {
-            note_stall(t, last_progress);
             p += n;
             len -= (size_t)n;
             last_progress = rtp_mono_us();
@@ -38,8 +42,7 @@ int net_tx_write_all(net_tx_t *t, const void *buf, size_t len)
         }
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            /* SO_SNDTIMEO expired (or non-blocking socket) with the send
-             * buffer still full: the peer is slow or gone. Keep waiting while
+            /* Send buffer full: the peer is slow or gone. Keep waiting while
              * the budget lasts. */
             note_stall(t, last_progress);
             int stalled = (int)((rtp_mono_us() - last_progress) / 1000);
@@ -51,6 +54,7 @@ int net_tx_write_all(net_tx_t *t, const void *buf, size_t len)
             if (wait > t->slice_ms) wait = t->slice_ms;
             struct pollfd pfd = { .fd = t->fd, .events = POLLOUT };
             (void)poll(&pfd, 1, wait);
+            note_stall(t, last_progress);
             continue;
         }
         if (n == 0) errno = EPIPE;

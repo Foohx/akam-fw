@@ -77,9 +77,15 @@ int main(void)
         int64_t t0 = rtp_mono_us();
         int rc = net_tx_write_all(&t, data, LEN);
         int64_t ms = (rtp_mono_us() - t0) / 1000;
+        int worst = net_tx_take_stall(&t);
         close(sv[0]); pthread_join(th, NULL); close(sv[1]);
         printf("       slow reader: wrote %d KB in %lld ms\n", LEN / 1024, (long long)ms);
         CHECK(rc == 0, "slow-but-alive client keeps its stream");
+        /* The reader accepts a byte every 10 ms: the zero-progress stall is
+         * far below the 100 ms SO_SNDTIMEO. A blocking send() that kept
+         * progressing for the whole timeout used to be reported as a stall
+         * of that length (and, on the camera, forced a keyframe resync). */
+        CHECK(worst < 70, "progress is not reported as a stall");
         CHECK(ms > 300, "(the write really outlasted the stall budget)");
         CHECK(r.got == LEN && r.sum == checksum(data, LEN), "every byte arrived intact and in order");
     }
