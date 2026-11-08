@@ -129,9 +129,10 @@ your LAN (see [Security notes](#security-notes)). More in the
 
 ## Updating
 
-Use the wizard's update step, or reflash over SSH without UART. Both are described under "Reflashing
-later" in the [flash guide](docs/akam_v1_flash_and_restore.md). The over-SSH route runs from RAM and
-keeps a small residual risk.
+The wizard has no separate update step: flash again with the same steps, or reflash over SSH without
+UART with `tools/flash_scripts/reflash_over_ssh.sh`. Both are described in the
+[flash guide](docs/akam_v1_flash_and_restore.md#reflashing-over-ssh-without-uart-ram-only-residual-risk).
+The over-SSH route runs from RAM and keeps a small residual risk.
 
 ## Recovery
 

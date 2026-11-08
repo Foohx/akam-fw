@@ -33,8 +33,9 @@ nothing was written: run the step again. On the camera, type `YES` alone on its 
 
 ## VLC shows a black screen
 
-The firmware now sends correct RTP timestamps, which fixed the black screen seen in early builds. If
-you still see one, check the camera with `ffplay`:
+VLC sometimes shows a black screen while the camera is fine. A fix for the RTP timestamps is being
+confirmed on hardware and is not validated yet. To tell a camera problem from a VLC one, check with
+`ffplay`:
 
 ```bash
 ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
