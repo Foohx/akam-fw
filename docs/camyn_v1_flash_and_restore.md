@@ -337,11 +337,36 @@ erased), but it cannot make the write itself safe:
 - **Residual risk 1, no safety net.** If power fails or the board resets while `/dev/mtd7` is half
   written, the APP does not boot and nothing on the SD card runs (section 5, "Without UART"). Only UART
   (`init=/bin/sh`) or an SPI programmer recovers it.
-- **Residual risk 2, `/usr` is still the partition being rewritten.** Processes already running from it
-  (`/usr/bin/watchdog`, the first Dropbear, `ak_rtsp`, `camyn_lockdown.sh`) keep paging code in from a
-  squashfs whose backing blocks change under them. Two live flashes did not break it, but a page that
-  is not in the cache when it is needed, read after the erase and with a different image, is garbage.
-  If `watchdog` dies the hardware watchdog resets the board, possibly mid-write.
+- **Residual risk 2, `/usr` is still the partition being rewritten, and the stock watchdog runs from
+  it.** `flash_tool` erases the whole range first and writes afterwards, so for the whole write any
+  `/usr` page that is not already in the page cache reads back as blank flash or as the new image.
+  What the stock `/usr/bin/watchdog` does (read from the extracted APP, disassembled, not run under a
+  debugger): its main loop wakes about once per second (`CMsgClient::waitMsg`, 1 s limit) and each time
+  calls `clearHardwareWatchdog`, an `ioctl(WDIOC_KEEPALIVE)` on `/dev/watchdog`, then
+  `respawnProcessList` and `checkWatchdog`. Nothing else on a Camyn image feeds the hardware timer
+  (`ak_rtsp` and the wrapper never open the device). The kernel driver (`ak_top_wdt`) is a nowayout
+  one ("Device closed unexpectedly - timer will not stop"), so if the daemon dies the timer keeps
+  counting and the board resets when it expires. The timeout was not read from the kernel; it is longer
+  than the 5 s feeding period of `start_rtsp.sh`. What follows:
+  - The pages of that loop (the daemon and `libcommon.so`) are touched every second, so they stay in the
+    cache unless RAM runs out (about 29 MB free before staging, roughly 10 MB less after). That is the likely
+    reason the two live flashes survived.
+  - If the daemon takes a fault (a page evicted, then re-read from erased flash: SIGBUS) the hardware
+    resets the board within the timeout, in the middle of the write, and only UART recovers it.
+  - Cold paths also read `/usr`: a respawned child (`/usr/bin/ak_rtsp_wrapper.sh`) and
+    `camyn_lockdown.sh`, which runs `/usr/sbin/camyn_ssh.sh start` every 60 s. They can fail or run
+    garbage; that hurts that child, not the write.
+  - Two successes out of two prove very little: with no failure in two trials the 95 % upper bound on
+    the failure rate is still about 78 %. Treat the route as a gamble you take only if UART is out of
+    reach.
+  - **Mitigation evaluated, not implemented:** kill the daemon with `SIGKILL` and feed `/dev/watchdog`
+    from a RAM BusyBox (`while :; do printf V; sleep 5; done > /dev/watchdog`, the pattern of
+    `start_rtsp.sh` and `quiet_and_flash_test.sh`). The device is exclusive-open, so the daemon cannot
+    be fed around; it has to die first, and `start_rtsp.sh` documents an `EBUSY` race when the feeder
+    opens the device too early. The timer keeps running between the kill and the first feed, with an
+    unknown timeout. It also removes the supervisor (nothing would respawn the wrapper). It has never
+    run on a Camyn image, whereas the unmodified path survived twice, so adding it blind to a path with
+    no safety net was judged worse than documenting the risk. Try it first with UART connected.
 - **Residual risk 3, RAM.** The image (5 MiB), `flash_tool`, a BusyBox copy and a Dropbear copy go to
   tmpfs; with ~29 MB free the script requires 10 MiB free in `/tmp` and aborts otherwise.
 
@@ -362,9 +387,11 @@ What the scripts do:
    copies, with `SSH_*` removed from its environment, stdin on `/dev/null` and stdout/stderr on
    `/tmp/camyn_reflash/flash.log`. The worker waits until the launching shell is gone, runs
    `camyn_flash_guard_detached` (rules above) and refuses (`RESULT: REFUSED`, nothing written) otherwise;
-   then it checks the md5 of the RAM image once more, runs `flash_tool image /dev/mtd7`, reads the
-   partition back and compares its md5, up to 3 attempts. The log ends with `RESULT: OK` or
-   `RESULT: FAILED`. A dying SSH session cannot kill it.
+   then it takes an atomic lock (`/tmp/camyn_reflash/worker.lock`, so a second worker or a retried
+   `start` cannot write at the same time), checks the md5 and exact size of the RAM image and that
+   `/proc/mtd` still shows `mtd7` as the 5 MiB `APP`, runs `flash_tool image /dev/mtd7`, reads the
+   partition back and compares its md5, up to 3 attempts. The log ends with `RESULT: OK`,
+   `RESULT: FAILED` or `RESULT: REFUSED` (nothing written). A dying SSH session cannot kill it.
 5. The helper polls the log over port 2222 (tolerating dropped connections), prints the new lines, and
    when it sees `RESULT: OK` runs its own read-back (`dd if=/dev/mtd7 | md5sum` in a fresh session) and
    compares it with the md5 you gave. Only then does it print that the flash is verified and tell you
@@ -382,8 +409,9 @@ tools/flash_scripts/reflash_over_ssh.sh ... same options ... --i-understand-no-u
 ```
 
 If the helper ends with anything but "VERIFIED", **do not power cycle**: read
-`/tmp/camyn_reflash/flash.log` over port 2222, run the helper again (a worker that is still running
-blocks a new start), or go to UART. If the session on port 22 drops while you wait, nothing is lost:
+`/tmp/camyn_reflash/flash.log` over port 2222, run the helper again (while a worker is running the
+helper refuses before touching anything, and `start` refuses too; after a finished or dead worker it
+replaces only the files it uploads), or go to UART. If the session on port 22 drops while you wait, nothing is lost:
 the worker is detached; reconnect on port 2222.
 
 ### Maintenance-card tips

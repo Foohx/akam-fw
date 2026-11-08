@@ -18,6 +18,8 @@
 #            session, no SSH environment and stdio on a log file, so a dying
 #            SSH session cannot kill it. The worker re-checks everything with
 #            camyn_flash_guard_detached (flash_guard.sh) before the first write.
+# Only one worker can run (mkdir lock in $DIR/worker.lock); the worker also
+# re-checks mtd7 and the image size just before the erase.
 # Nothing here ever reboots the camera: power cycle by hand once the log says
 # "RESULT: OK" and the read-back md5 matches.
 #
