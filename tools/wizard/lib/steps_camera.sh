@@ -902,7 +902,10 @@ cmd_restore() {
         flash_telnet dry-run dry-run Restoring || return 1
         return 0
     fi
-    [ -n "$bk" ] && [ -f "$bk/mtdblock7.bin" ] || { ui_fail "no backup found." "pass --backup-dir DIR (it must hold mtdblock7.bin)."; return 1; }
+    if [ -z "$bk" ] || [ ! -f "$bk/mtdblock7.bin" ]; then
+        ui_fail "no backup found." "pass --backup-dir DIR (it must hold mtdblock7.bin)."
+        return 1
+    fi
     cam_image_gate "$bk/mtdblock7.bin" || return 1
     md5=$IMG_MD5
     if [ -f "$bk/SHA256SUMS" ] && ! (cd "$bk" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
