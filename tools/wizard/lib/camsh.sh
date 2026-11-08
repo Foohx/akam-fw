@@ -6,9 +6,11 @@
 #
 # How a command is run
 #   - one command per send, never longer than 350 bytes, no newline in it;
-#   - every command is followed by echo "__AKAM_DONE_<nonce>_<n>:"$?"__". The shell prints the
-#     marker with the exit code filled in; the echo of the typed line (pty echo) contains
-#     :"$?" with quotes and therefore never matches the marker pattern;
+#   - every command is wrapped as: echo "__AKAM_BEG_<nonce>_<n>_"x; CMD; echo "__AKAM_DONE_<nonce>_<n>:"$?"__".
+#     Both markers are built by the shell, so the pty echo of the typed line (which holds the quotes)
+#     never matches them. Everything received before the BEG marker is dropped: the BusyBox line
+#     editor echoes the typed line, wraps it with newlines every 80 columns and emits ESC[6n, none of
+#     which may leak into the output of the command;
 #   - the answer is read byte by byte with a read timeout; telnet IAC negotiation bytes and
 #     carriage returns are dropped; the timeout is an inactivity timeout (reset on every byte).
 #
@@ -35,6 +37,8 @@ CAMSH_FAILS=0
 CAMSH_SEQ=0
 CAMSH_NONCE=""
 CAMSH_RE=""
+CAMSH_BEG=""
+CAMSH_BEG_SEEN=""
 CAMSH_PART=""
 CAMSH_OUT=""
 CAMSH_RC=""
@@ -136,16 +140,26 @@ camsh_show_line() { # line: shown to the user when streaming
 }
 
 # _camsh_line LINE: handle one completed line. Returns 0 when it is the end marker.
+# Lines before the BEG marker (echo of the typed command, prompt, terminal queries) are dropped.
 _camsh_line() {
-    local line=$1
+    local line=$1 pre
     if [ -n "$CAMSH_RE" ] && [[ $line =~ $CAMSH_RE ]]; then
         CAMSH_RC=${BASH_REMATCH[1]}
         CAMSH_RE=""
+        pre=${line%%__AKAM_DONE_*}
+        # an output without a final newline ends right before the marker
+        if [ -n "$CAMSH_BEG_SEEN" ] && [ -n "$pre" ] && [ "${#CAMSH_OUT}" -lt "$CAMSH_MAX_OUT" ]; then
+            CAMSH_OUT="$CAMSH_OUT$pre"$'\n'
+            camsh_show_line "$pre"
+        fi
         return 0
     fi
-    case $line in
-        *'echo "__AKAM_DONE_'*) return 1 ;; # the pty echo of the line we sent
-    esac
+    if [ -n "$CAMSH_BEG" ] && [ -z "$CAMSH_BEG_SEEN" ]; then
+        case $line in
+            *"$CAMSH_BEG"*) CAMSH_BEG_SEEN=1 ;;
+        esac
+        return 1
+    fi
     if [ -n "$CAMSH_ECHO_SKIP" ]; then
         local e=$CAMSH_ECHO_SKIP
         CAMSH_ECHO_SKIP=""
@@ -196,7 +210,7 @@ _camsh_read() {
             esac
         elif [ "$rc" -gt 128 ]; then
             # Idle for one second: look for the prompt in the unfinished line.
-            if [ -n "$prompt" ] && [ -n "$line" ] && [[ $line == *"$prompt" || $line == *"${prompt% }" ]]; then
+            if [ -n "$prompt" ] && [ -n "$CAMSH_BEG_SEEN" ] && [ -n "$line" ] && [[ $line == *"$prompt" || $line == *"${prompt% }" ]]; then
                 camsh_show_line "$line"
                 CAMSH_PART=""
                 return 3
@@ -239,7 +253,10 @@ camsh_start() {
     [ "$CAMSH_OPEN" = 1 ] || return 1
     CAMSH_SEQ=$((CAMSH_SEQ + 1))
     CAMSH_RE="__AKAM_DONE_${CAMSH_NONCE}_${CAMSH_SEQ}:([0-9]+)__"
-    if ! printf '%s; echo "__AKAM_DONE_%s_%s:"$?"__"\n' "$cmd" "$CAMSH_NONCE" "$CAMSH_SEQ" >&7 2>/dev/null; then
+    CAMSH_BEG="__AKAM_BEG_${CAMSH_NONCE}_${CAMSH_SEQ}_x"
+    CAMSH_BEG_SEEN=""
+    if ! printf 'echo "__AKAM_BEG_%s_%s_"x; %s; echo "__AKAM_DONE_%s_%s:"$?"__"\n' \
+        "$CAMSH_NONCE" "$CAMSH_SEQ" "$cmd" "$CAMSH_NONCE" "$CAMSH_SEQ" >&7 2>/dev/null; then
         CAMSH_OPEN=0
         return 1
     fi

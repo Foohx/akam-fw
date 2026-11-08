@@ -148,6 +148,30 @@ t_prompt_command_ends_early() (
     camsh_wait_prompt 'Name: ' 5 || rc=$?
     [ "$rc" = 4 ] && [ "$CAMSH_RC" = 1 ]
 )
+# The REAL BusyBox telnetd and ash (line editor): the typed line is echoed wrapped every 80 columns
+# and the shell asks the terminal for the cursor position (ESC[6n). None of it may reach the output.
+t_real_telnetd_long_command() (
+    local d tp port long out
+    d=$(mktemp -d)
+    mkdir -p "$d/bin"
+    ln -s "$AKAM_BUSYBOX" "$d/bin/sh"
+    port=$(fc_free_port)
+    "$AKAM_BUSYBOX" telnetd -F -p "$port" -b 127.0.0.1 -l "$d/bin/sh" >/dev/null 2>&1 &
+    tp=$!
+    sleep 0.5
+    long=$(printf 'x%.0s' $(seq 1 300))
+    out=1
+    if camsh_open 127.0.0.1 "$port"; then
+        out=0
+        camsh_exec 'echo first; (exit 3)' 10 && [ "$CAMSH_RC" = 3 ] && [ "$CAMSH_OUT" = $'first\n' ] || out=1
+        camsh_exec "echo $long" 10 && [ "$CAMSH_OUT" = "$long"$'\n' ] || out=1
+        camsh_exec 'echo a; echo b' 10 && [ "$CAMSH_OUT" = $'a\nb\n' ] || out=1
+    fi
+    kill "$tp" 2>/dev/null
+    wait "$tp" 2>/dev/null
+    rm -rf "$d"
+    [ "$out" = 0 ]
+)
 t_connection_refused() (
     local port
     port=$(fc_free_port)
@@ -161,7 +185,7 @@ t_net_probe() (
 for t in t_basic t_iac_cr_filtered t_exit_code t_unique_markers t_two_commands_in_a_row t_timeout_single \
     t_command_limits t_reconnect_once t_manual_after_two_failures t_manual_stays_manual \
     t_manual_empty_stdin_fails t_manual_sends_nothing t_dry_run t_prompt_relay \
-    t_prompt_command_ends_early t_connection_refused t_net_probe; do
+    t_prompt_command_ends_early t_real_telnetd_long_command t_connection_refused t_net_probe; do
     check "$t" "$t"
 done
 
