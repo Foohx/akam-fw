@@ -268,6 +268,7 @@ refused "  ... filters Akam cannot reproduce: refused" 'filter: x86, arm' "$WORK
 # unsquashfs -s output we cannot parse must stop the build (never "no fingerprint, default xz")
 mkdir -p "$WORK/fakebin"
 REAL_UNSQ=$(command -v unsquashfs)
+# shellcheck disable=SC2016 # the stub script must keep its own $1 and $@ literal
 printf '#!/bin/sh\nif [ "$1" = -s ]; then echo "SQUASHFS something else"; exit 0; fi\nexec %s "$@"\n' "$REAL_UNSQ" >"$WORK/fakebin/unsquashfs"
 chmod 755 "$WORK/fakebin/unsquashfs"
 if (PATH="$WORK/fakebin:$PATH" run "$WORK/d7" --kit "$K" --allow-test-kit --allow-unsigned --stock-app "$WORK/bk_gz/mtdblock7.bin" --i-understand-untested); then
