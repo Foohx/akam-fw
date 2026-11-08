@@ -32,6 +32,13 @@ default, adds `shellcheck`). `gdb` is a hard requirement of the time64 gate
 are optional. Debian does not put `/usr/sbin` in a user's `PATH`; the SD-card tools are looked up
 there too, since the scripts run them through `sudo`. macOS is not supported yet.
 
+Tested on 2026-11-08 in clean Docker containers (`debian:12`, `ubuntu:24.04`, mawk as `awk`,
+shellcheck 0.9.x): the packages `check_host.sh` asks for, then `bootstrap.sh`, `make` in
+`src/ak_rtsp`, `tools/dropbear/build_dropbear.sh`, `tools/build/check_time32.sh --require-263` on
+`ak_rtsp` and `dropbearmulti`, and `tools/ci/local_check.sh` (ends with `LOCAL CHECK: OK`).
+Maintainers can repeat it with `tools/ci/distro_check.sh` (docker or podman, no sudo, read-only
+source mount, `--rm`). Host scripts use POSIX awk only, so mawk and busybox awk work.
+
 ## 2. Pinned toolchain and sources
 
 ```bash
