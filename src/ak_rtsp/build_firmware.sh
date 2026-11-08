@@ -185,7 +185,7 @@ if [ -n "$KIT_ARG" ]; then
     DROPBEAR_DIR=""
 else
     MODE=source
-    SUPPORTED_HW="$ROOT/tools/release/supported_hardware.txt"
+    SUPPORTED_HW="${AKAM_SUPPORTED_HARDWARE:-$ROOT/tools/release/supported_hardware.txt}" # env: tests only
     [ -f "$BINARY" ] || die "ak_rtsp binary not found at $BINARY (build it first: make -C src/ak_rtsp ak_rtsp, or set AK_RTSP_BIN)"
     # Dropbear: prebuilt, or build it with the pinned toolchain.
     DROPBEAR_MULTI="${DROPBEAR_MULTI:-$ROOT/dist/dropbear/dropbearmulti}"
