@@ -351,16 +351,23 @@ static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
 
 /* Drain any frames queued in the VENC ring without sending them.
  * Called while waiting for a client in accept() so the ring doesn't wrap
- * and the next client gets a fresh stream starting near an I-frame. */
+ * and the next client gets a fresh stream starting near an I-frame.
+ * Empties everything that is ready (bounded) in one call: the caller waits
+ * in poll() between calls instead of spinning. */
+#define DRAIN_MAX_FRAMES 16
+
 void drain_venc_ring(void)
 {
-    struct venc_stream_req req;
-    memset(&req, 0, sizeof(req));
-    req.chn_id = 0;
-    req.len    = venc_max_frame_size(ENC_WIDTH, ENC_HEIGHT);
+    for (int n = 0; n < DRAIN_MAX_FRAMES; n++) {
+        struct venc_stream_req req;
+        memset(&req, 0, sizeof(req));
+        req.chn_id = 0;
+        req.len    = venc_max_frame_size(ENC_WIDTH, ENC_HEIGHT);
 
-    if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) == 0)
+        if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) != 0)
+            return; /* nothing ready (EAGAIN) or transient error: wait again */
         ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req);
+    }
 }
 
 static int send_video_frame(Client *client)
