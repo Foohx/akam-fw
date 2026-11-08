@@ -395,3 +395,13 @@ Acceptation : `local_check.sh` OK sans baseline ; scénarios dry-run « sans com
 - **D6** : SHA256SUMS + signature `ssh-keygen -Y` (recommandation retenue).
 - **D7** : `flash_tool` est dans ce dépôt (MIT, `src/ak_rtsp/flash_tool.c`) → inclus dans le kit.
 - **D8/D9** : recommandations retenues (fakeroot/sudo Linux seulement ; pas de CI macOS).
+
+## Ajout utilisateur (2026-11-08) : matériel/firmware supportés explicites
+
+Chaque kit et chaque release DOIT indiquer exactement pour quoi ils sont validés, et le wizard DOIT le vérifier :
+- `MANIFEST.txt` du kit + notes de release + README + `docs/akam_v1_kit.md` : section **Supported hardware** avec, pour chaque cible, le statut (`validated` / `reported` / `untested`) :
+  - **validated** : LSC Smart Indoor 1080p **3215672.3**, **SI D26228**, SoC AK3918AV130, kernel `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`, table MTD 8 partitions (mtd7 APP `00500000`), APP stock squashfs **xz** 128 KiB, stock APP sha256 `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294` (dump de l'utilisateur, à confirmer identique sur d'autres exemplaires), BusyBox 1.30.1.
+  - **untested** : 3215672.2 (SI B26101/C26101, testés par l'amont avec ak_rtsp mais pas avec Akam), toute autre version de noyau ou d'APP.
+- Fichier machine-lisible `tools/release/supported_hardware.txt` (copié dans le kit) : liste des empreintes connues (version noyau, layout MTD, sha256 APP stock, format squashfs) avec statut.
+- Le wizard (étapes backup/image/flash) compare le matériel réel à cette liste : correspondance `validated` → continue ; `untested` ou inconnu → avertissement clair + confirmation tapée explicite (ex. `I UNDERSTAND THIS IS UNTESTED`) ; layout MTD différent → refus.
+- Les assemblages depuis le kit enregistrent dans `build_report.txt` l'empreinte du dump APP utilisé.
