@@ -24,6 +24,7 @@ after a reflash.
 - `tools/release/{make_kit,sign_kit,verify_kit}.sh`: build, sign (`ssh-keygen -Y`) and verify the
   prebuilt-binaries kit (`akam-kit-<version>.tar.xz`, Akam's own files only, never a firmware image);
   see `docs/akam_v1_kit.md`.
+- The kit ships `supported_hardware.txt` (validated: LSC 3215672.3 / SI D26228 with its stock APP fingerprint; untested: 3215672.2 and anything else), hashed in `MANIFEST.txt`.
 
 ### Deprecated aliases (removed in the next release)
 

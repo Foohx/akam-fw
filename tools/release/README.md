@@ -11,7 +11,10 @@ There is no CI. Everything below runs on the maintainer's Linux machine.
 
 `tools/build/bootstrap.sh` done (pinned Zig, SmolRTSP and its 4 dependencies,
 Dropbear archive), plus `gdb` (time64 gate), `make`, `patch`, GNU `tar`, `xz`,
-`ssh-keygen`. The tree must be clean and on the commit to release.
+`ssh-keygen`. The tree must be clean (no uncommitted and no untracked file) and on the commit to
+release. A kit built any other way (`AKAM_KIT_ALLOW_DIRTY`, `--no-build`, a gate
+override) is stamped `kit_grade=test` in `MANIFEST.txt`, and `verify_kit.sh` refuses it
+unless `--allow-test-kit` is given: never publish one.
 
 ## 1. Build the kit
 
@@ -33,6 +36,10 @@ number and timestamp (`gen_version.sh`), so two separate compilations of
 `ak_rtsp` are not byte-identical; reproducibility holds for the packaging of
 given binaries (this is what `tests/kit_test.sh` checks).
 
+Which Akam files end up in the image (overlay, `service.sh` patch, links) is listed once,
+in `image_files.txt`; `tests/kit_test.sh` builds an image with `build_firmware.sh` and
+fails if it disagrees with that list. Edit the list, not two scripts.
+
 ## 2. Verify it yourself, unsigned
 
 ```sh
@@ -51,6 +58,30 @@ it never copies or stores the key and refuses a key inside the repository. The
 matching public key must be in `tools/release/allowed_signers` (committed before
 the release, see the comments in that file) and quoted in the README and the
 release notes. Use a dedicated Ed25519 key with a passphrase.
+
+## Supported hardware (every release)
+
+`supported_hardware.txt` says exactly which cameras and firmware the kit is validated
+for. Review it before building: a record becomes `validated` only after an Akam image
+for that fingerprint was flashed and run on real hardware. It is copied into the kit and
+its hash is recorded in `MANIFEST.txt`. Put the same table in the release notes:
+
+```markdown
+## Supported hardware
+
+| Status | Device | Fingerprint |
+|---|---|---|
+| validated | LSC Smart Indoor 1080p 3215672.3 (board SI D26228), AK3918AV130 | kernel `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`; 8 MTD partitions, mtd7 = APP (`00500000`); stock APP squashfs xz, block 128 KiB, no BCJ; stock APP sha256 `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294`; BusyBox 1.30.1 |
+| untested | LSC Smart Indoor 1080p 3215672.2 (boards SI B26101 / C26101) | never run with Akam |
+| untested | any other camera, kernel build or stock APP | unknown |
+
+Anything not marked validated may not work or may brick your camera. The setup wizard
+warns and asks for an explicit confirmation. A different MTD layout is refused.
+
+## Verify
+sha256 of akam-kit-<version>.tar.xz: <64 hex digits>
+signature: ssh-keygen -Y verify (public key in tools/release/allowed_signers: <key>)
+```
 
 ## 4. Publish (by hand)
 
@@ -72,6 +103,8 @@ draft, then publish it. Never attach a firmware image or a dump.
 | File | Role |
 |---|---|
 | `make_kit.sh` | build, gate, MANIFEST, SHA256SUMS, tarball |
+| `image_files.txt` | single list of the Akam files installed into the image |
+| `supported_hardware.txt` | validated / reported / untested hardware and firmware fingerprints |
 | `sign_kit.sh` | `ssh-keygen -Y sign` of `SHA256SUMS` |
 | `verify_kit.sh` | user-side verification (checksums, signature, MANIFEST, `kit_format`) |
 | `allowed_signers` | trusted public keys (placeholder until the maintainer adds one) |

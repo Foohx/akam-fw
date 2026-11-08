@@ -15,6 +15,7 @@ The kit (`akam-kit-<version>.tar.xz`) holds **only Akam's own files**:
 | `patches/patch_service_sh.sh` | turns Telnet/FTP off in the stock `sbin/service.sh` |
 | `scripts/flash/`, `scripts/hwcheck/` | flash, restore and hardware check scripts |
 | `licenses/` | Akam (MIT), `THIRD_PARTY_NOTICES.md`, Dropbear, musl, Zig (compiler-rt), SmolRTSP and its four header-only dependencies |
+| `supported_hardware.txt` | which cameras and firmware Akam is validated for (see below) |
 | `SOURCES.txt` | source offer: commit, pinned upstream URLs and sha256, Dropbear patches |
 | `MANIFEST.txt`, `SHA256SUMS` | the checks described below |
 
@@ -39,11 +40,17 @@ script checks, in this order:
 1. the kit's sha256 against `SHA256SUMS`;
 2. the signature `SHA256SUMS.sig` (`ssh-keygen -Y verify`, identity and namespace
    `akam-release`) against the public key in `tools/release/allowed_signers`;
-3. the archive layout (regular files and two fixed symlinks only, no absolute or
-   `..` paths), then every file in `MANIFEST.txt` and the kit's inner
-   `SHA256SUMS`: content, mode, nothing missing, nothing extra;
-4. `kit_format` is one this version understands, and the MANIFEST records
-   `time64_gate=pass`.
+3. the archive layout, checked **before** anything is extracted: regular files and
+   directories plus the two fixed `dropbear` symlinks; no hard link, device, fifo,
+   absolute or `..` path, duplicate, odd character in a name, setuid mode or oversized
+   content; then every file in `MANIFEST.txt` and the kit's inner `SHA256SUMS`:
+   content, mode, nothing missing, nothing extra;
+4. `kit_format` is one this version understands, the MANIFEST records
+   `time64_gate=pass` and `kit_grade=release`, and `supported_hardware.txt` is the one
+   the MANIFEST hashes.
+
+Nothing from the kit is executed. The tarball is copied to a private temporary
+directory first, so the file that was hashed is the file that is extracted.
 
 Outcomes:
 
@@ -56,8 +63,32 @@ Outcomes:
 An unsigned kit is only protected against download corruption, not against a
 malicious replacement on the same server. Compare the kit's sha256 with the one
 in the release notes, the `CHANGELOG.md` and the tag message (another channel):
-`--expect-sha256 <first 12 hex digits>`. The signature is only worth what the
+`--expect-sha256 <first 12 hex digits>` (at least 8). The signature is only worth what the
 copy of the repository and public key you hold is worth.
+
+## Supported hardware
+
+Akam is validated for **one** hardware and firmware combination. The machine-readable
+list is `supported_hardware.txt` (shipped in the kit, hash recorded in `MANIFEST.txt`;
+source: `tools/release/supported_hardware.txt`).
+
+| Status | Device | Fingerprint |
+|---|---|---|
+| **validated** | LSC Smart Indoor 1080p **3215672.3** (board SI D26228), SoC AK3918AV130 | kernel `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`; 8 MTD partitions, mtd7 = APP (`00500000`); stock APP squashfs **xz**, block 128 KiB, no BCJ filter; stock APP sha256 `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294`; BusyBox 1.30.1 |
+| untested | LSC Smart Indoor 1080p **3215672.2** (boards SI B26101 / C26101) | upstream ak_rtsp ran there; Akam never did |
+| untested | any other camera, kernel build or stock APP (including a gzip-compressed stock APP) | unknown |
+
+What the words mean:
+
+- **validated**: an Akam image built for this exact fingerprint was flashed and run on a
+  real camera by the maintainer (boot, SSH, RTSP, low CPU, Telnet off).
+- **untested**: it may work or brick the camera. Akam promises nothing. The setup
+  wizard warns and asks you to type a confirmation before going on.
+- A different MTD layout is refused outright.
+
+The stock APP sha256 is that of one camera's dump. It is expected to be identical on
+other units with the same firmware, which has not been confirmed yet. The image is
+built with the same squashfs compression as your stock APP (xz or gzip).
 
 ## About the time64 check
 
