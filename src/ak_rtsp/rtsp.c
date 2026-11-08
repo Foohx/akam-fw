@@ -22,6 +22,15 @@
 #include "ak_ioctls.h"
 #include "audio.h"
 #include "rtsp.h"
+#include "h264_params.h"
+
+/* Latest SPS/PPS seen in the encoder output (main thread only: filled by
+ * drain_venc_ring() and send_video_frame(), read by DESCRIBE). */
+static h264_params_t g_params;
+
+/* The SPS/PPS sit at the very start of an I-frame, so only that much of the
+ * (uncached) DMA buffer is inspected. */
+#define PARAMS_SCAN_BYTES 256
 
 /* -------------------------------------------------------------------------
  * Client connection context conforming to SmolRTSP_Controller interface
@@ -57,6 +66,11 @@ typedef struct {
     SmolRTSP_RtpTransport *audio_rtp_transport;
     int audio_rtp_udp_fd;
     int audio_rtcp_udp_fd;
+
+    /* Set by PLAY: video is held back until the next IDR frame so the
+     * decoder starts on a keyframe (see send_video_frame()). */
+    bool need_idr;
+    int  idr_wait_frames;
 
     /* time(NULL) value of the next scheduled RTCP Sender Report — see
      * send_rtcp_reports() below. 0 means "not yet scheduled". */
@@ -200,7 +214,15 @@ static void Client_options(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request 
 static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
     (void)self; (void)req;
-    char sdp_buf[768];
+    char sdp_buf[1024];
+    /* sprop-parameter-sets lets a player decode from the very first frame it
+     * gets instead of waiting for in-band SPS/PPS. The cache is filled from
+     * the encoder's I-frames (also while no client is connected), so it is
+     * normally ready within one GOP (2 s) of boot; until then the plain
+     * "packetization-mode=1" form is advertised, as before. */
+    char fmtp[320];
+    if (!h264_fmtp_build(&g_params, fmtp, sizeof(fmtp)))
+        snprintf(fmtp, sizeof(fmtp), "packetization-mode=1");
     /* Audio track uses payload type 97 with L16 (linear PCM): anyka_ipc's own
      * capture stream is raw 8kHz/mono/16-bit, not G.711, so RFC 3551 L16
      * needs no fmtp at all. PT 97 (dynamic) matches the convention anyka_ipc's
@@ -214,14 +236,14 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
         "m=video 0 RTP/AVP 96\r\n"
         "c=IN IP4 0.0.0.0\r\n"
         "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 packetization-mode=1\r\n"
+        "a=fmtp:96 %s\r\n"
         "a=control:streamid=0\r\n"
         "m=audio 0 RTP/AVP 97\r\n"
         "c=IN IP4 0.0.0.0\r\n"
         "a=rtpmap:97 L16/%d/%d\r\n"
         "a=control:streamid=1\r\n",
         (unsigned long long)time(NULL), (unsigned long long)time(NULL),
-        AUDIO_SAMPLE_RATE, AUDIO_CHANNELS);
+        fmtp, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS);
 
     smolrtsp_header(ctx, SMOLRTSP_HEADER_CONTENT_TYPE, "application/sdp");
     smolrtsp_body(ctx, CharSlice99_from_str(sdp_buf));
@@ -254,6 +276,10 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
     VSELF(Client);
     (void)req;
     self->is_playing = true;
+    if (self->nal_transport) {
+        self->need_idr = true;
+        self->idr_wait_frames = 0;
+    }
     smolrtsp_header(ctx, SMOLRTSP_HEADER_RANGE, "npt=now-");
     smolrtsp_respond_ok(ctx);
 }
@@ -299,6 +325,25 @@ impl(SmolRTSP_Controller, Client);
  * SmolRTSP_NalTransport_send_packet for FU-A fragmentation if needed.
  * Timestamps: VENC gives milliseconds → multiply by 90 for 90 kHz RTP clock.
  * ------------------------------------------------------------------------- */
+/* Sends one NAL unit (data points at its header byte, no start code). */
+static void send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len,
+                          uint32_t timestamp, bool is_vcl)
+{
+    SmolRTSP_H264NalHeader h264_hdr = SmolRTSP_H264NalHeader_parse(data[0]);
+    SmolRTSP_NalUnit nalu = {
+        .header  = SmolRTSP_NalHeader_H264(h264_hdr),
+        .payload = U8Slice99_new((uint8_t *)data + 1, nalu_len - 1),
+    };
+    if (SmolRTSP_NalTransport_send_packet(
+            client->nal_transport,
+            SmolRTSP_RtpTimestamp_Raw(timestamp),
+            is_vcl, nalu) == -1)
+    {
+        perror("send RTP/NAL");
+        if (client->is_tcp && errno != EINTR) client->tx_fail = true;
+    }
+}
+
 static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
                               uint32_t timestamp)
 {
@@ -326,21 +371,8 @@ static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
             size_t nalu_len = next_nalu_start - nalu_start;
             if (nalu_len > 0) {
                 uint8_t nalu_type = data[nalu_start] & 0x1F;
-                SmolRTSP_H264NalHeader h264_hdr =
-                    SmolRTSP_H264NalHeader_parse(data[nalu_start]);
-                SmolRTSP_NalUnit nalu = {
-                    .header  = SmolRTSP_NalHeader_H264(h264_hdr),
-                    .payload = U8Slice99_new(data + nalu_start + 1, nalu_len - 1),
-                };
-                bool is_vcl = (nalu_type >= 1 && nalu_type <= 5);
-                if (SmolRTSP_NalTransport_send_packet(
-                        client->nal_transport,
-                        SmolRTSP_RtpTimestamp_Raw(timestamp),
-                        is_vcl, nalu) == -1)
-                {
-                    perror("send RTP/NAL");
-                    if (client->is_tcp && errno != EINTR) client->tx_fail = true;
-                }
+                send_one_nalu(client, data + nalu_start, nalu_len, timestamp,
+                              nalu_type >= 1 && nalu_type <= 5);
             }
             i = next_nalu_start;
         } else {
@@ -351,18 +383,39 @@ static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
 
 /* Drain any frames queued in the VENC ring without sending them.
  * Called while waiting for a client in accept() so the ring doesn't wrap
- * and the next client gets a fresh stream starting near an I-frame. */
+ * and the next client gets a fresh stream starting near an I-frame.
+ * Empties everything that is ready (bounded) in one call: the caller waits
+ * in poll() between calls instead of spinning. */
+#define DRAIN_MAX_FRAMES 16
+
 void drain_venc_ring(void)
 {
-    struct venc_stream_req req;
-    memset(&req, 0, sizeof(req));
-    req.chn_id = 0;
-    req.len    = venc_max_frame_size(ENC_WIDTH, ENC_HEIGHT);
+    for (int n = 0; n < DRAIN_MAX_FRAMES; n++) {
+        struct venc_stream_req req;
+        memset(&req, 0, sizeof(req));
+        req.chn_id = 0;
+        req.len    = venc_max_frame_size(ENC_WIDTH, ENC_HEIGHT);
 
-    if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) == 0)
+        if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) != 0)
+            return; /* nothing ready (EAGAIN) or transient error: wait again */
+        /* Keep the SPS/PPS cache current for DESCRIBE (sprop-parameter-sets).
+         * This is the only place the idle path dereferences the ring, so the
+         * driver-supplied offset/length are range-checked first: a bad value
+         * must cost one skipped scan, not a SIGSEGV of the whole streamer. */
+        uint32_t off = req.frame_offset - g_venc_phys;
+        if (req.frame_type_raw == FRAME_TYPE_I && req.len > 0 &&
+            off < ENC_VENC_SIZE) {
+            size_t avail = ENC_VENC_SIZE - off;
+            size_t flen  = (size_t)req.len < avail ? (size_t)req.len : avail;
+            h264_params_scan(&g_params, (const uint8_t *)g_venc_virt + off,
+                             flen, PARAMS_SCAN_BYTES);
+        }
         ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req);
+    }
 }
 
+/* Returns 1 when a frame was sent, 0 when none was ready, -1 on a fatal
+ * error (the caller drops the client). */
 static int send_video_frame(Client *client)
 {
     struct venc_stream_req req;
@@ -374,8 +427,7 @@ static int send_video_frame(Client *client)
 
     if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) < 0) {
         if (errno == EAGAIN || errno == EFAULT || errno == EINTR) {
-            usleep(2000);
-            return 0;
+            return 0; /* nothing ready: the caller waits in poll() */
         }
         /* Unexpected error — drop this client, encoder keeps running */
         perror("VENC_IOCTL_GET_STREAM");
@@ -432,13 +484,41 @@ static int send_video_frame(Client *client)
         bitrate_window_frames   = 0;
     }
 
-    send_frame_nalus(client, (uint8_t *)data, req.len, rtp_ts);
+    int in_band = 0;
+    if (req.frame_type_raw == FRAME_TYPE_I)
+        in_band = h264_params_scan(&g_params, (const uint8_t *)data, (size_t)req.len,
+                                   PARAMS_SCAN_BYTES);
+
+    /* Start the video on a keyframe: after PLAY, P-frames are dropped until
+     * the next I-frame so the decoder never sees slices that reference a
+     * missing SPS/PPS/reference picture. If the encoder never reports an
+     * I-frame within two GOPs, stop waiting rather than send nothing. */
+    bool send_it = true;
+    if (client->need_idr) {
+        if (req.frame_type_raw == FRAME_TYPE_I) {
+            client->need_idr = false;
+            /* Some encoders emit SPS/PPS only once at start-up: if this
+             * I-frame does not carry them, send the cached ones first. */
+            if (in_band != (H264_FOUND_SPS | H264_FOUND_PPS) && h264_params_ready(&g_params)) {
+                send_one_nalu(client, g_params.sps, g_params.sps_len, rtp_ts, false);
+                send_one_nalu(client, g_params.pps, g_params.pps_len, rtp_ts, false);
+            }
+        } else if (++client->idr_wait_frames > ENC_GOP * 2) {
+            printf("[ak_rtsp] no I-frame within %d frames, starting anyway\n",
+                   client->idr_wait_frames);
+            client->need_idr = false;
+        } else {
+            send_it = false;
+        }
+    }
+    if (send_it)
+        send_frame_nalus(client, (uint8_t *)data, req.len, rtp_ts);
 
     if (ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req) < 0) {
         perror("VENC_IOCTL_RELEASE_STREAM");
         return -1;
     }
-    return 0;
+    return 1;
 }
 
 /* -------------------------------------------------------------------------
@@ -555,9 +635,14 @@ static void send_rtcp_reports(Client *client) {
  * Client connection loop
  *
  * Uses poll() for incoming RTSP commands; the client socket remains blocking for writes:
- *   timeout = 0   when is_playing (check for commands, then immediately send)
+ *   timeout = 0 / PLAY_IDLE_POLL_MS when is_playing (0 right after a frame,
+ *             PLAY_IDLE_POLL_MS when the encoder had nothing ready)
  *   timeout = 5000 ms when idle (block until a request arrives)
  * ------------------------------------------------------------------------- */
+/* Poll timeout while playing and the encoder has no frame ready. Short
+ * enough for 15 fps video (66 ms) and the 32 ms audio period. */
+#define PLAY_IDLE_POLL_MS 4
+
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
@@ -591,6 +676,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
 
     char buf[4096];
     size_t buf_len = 0;
+    bool video_idle = false;
 
     printf("[ak_rtsp] Client connected\n");
 
@@ -598,7 +684,12 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         struct pollfd pfd;
         pfd.fd = client_fd;
         pfd.events = POLLIN;
-        int poll_ret = poll(&pfd, 1, client.is_playing ? 0 : 5000);
+        /* While playing, wait PLAY_IDLE_POLL_MS in poll() when the last pass
+         * found no video frame (this replaces a usleep(2000) after every empty
+         * GET_STREAM and wakes at once on an RTSP request); poll again with
+         * no delay right after a frame, in case the next one is queued. */
+        int poll_ret = poll(&pfd, 1,
+                            client.is_playing ? (video_idle ? PLAY_IDLE_POLL_MS : 0) : 5000);
 
         if (poll_ret < 0) {
             if (errno == EINTR) continue;
@@ -657,10 +748,12 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         }
 
         if (client.is_playing) {
-            if (send_video_frame(&client) < 0) {
+            int vret = send_video_frame(&client);
+            if (vret < 0) {
                 printf("[ak_rtsp] Error sending frame, closing\n");
                 break;
             }
+            video_idle = (vret == 0);
             send_audio_frame(&client); /* no-op until the audio track is SETUP */
             send_rtcp_reports(&client); /* no-op for tracks not yet SETUP, or off-interval */
             if (client.tx_fail) {

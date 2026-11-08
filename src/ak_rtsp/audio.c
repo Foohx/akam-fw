@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <stdint.h>
 #include <pthread.h>
@@ -125,6 +126,11 @@ static void audio_configure_playback(void)
  * not merely open/configured. Writes silence; audible output is a non-issue
  * since the speaker path is out of scope for this project. Same
  * retry-cap/backoff discipline as the capture loop. */
+/* Minimum duration of one playback loop pass: 90% of a period
+ * (256 samples at 8 kHz = 32 ms), so the stream stays slightly ahead. */
+#define PLAYBACK_MIN_PERIOD_US \
+    ((long)AUDIO_PERIOD_SAMPLES * 1000000L / AUDIO_SAMPLE_RATE * 9 / 10)
+
 static void *audio_playback_loop(void *arg)
 {
     (void)arg;
@@ -134,6 +140,8 @@ static void *audio_playback_loop(void *arg)
 
     int consecutive_fails = 0;
     while (g_playback_running) {
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
         ssize_t n = write(g_audio_playback_fd, silence, sizeof(silence));
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -149,6 +157,18 @@ static void *audio_playback_loop(void *arg)
             continue;
         }
         consecutive_fails = 0;
+
+        /* Safety net against a CPU spin: a healthy playback write blocks for
+         * about one period (32 ms) once the driver buffer is full, so this
+         * never sleeps. If the driver ever accepts the data without blocking
+         * (stream not really running, overrun dropped), pace the loop at
+         * slightly faster than real time instead of spinning at 100% CPU. */
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        long elapsed_us = (long)(t1.tv_sec - t0.tv_sec) * 1000000L +
+                          (t1.tv_nsec - t0.tv_nsec) / 1000L;
+        if (elapsed_us < 0) elapsed_us = 0;
+        if (elapsed_us < PLAYBACK_MIN_PERIOD_US)
+            usleep((useconds_t)(PLAYBACK_MIN_PERIOD_US - elapsed_us));
     }
     return NULL;
 }

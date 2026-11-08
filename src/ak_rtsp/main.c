@@ -163,7 +163,7 @@ static void close_devices(void)
  *
  * Init sequence:
  *   venc_reset_stale_channel  — clear any state left by a killed anyka_ipc
- *   open_devices              — open all /dev/* nodes
+ *   open_devices              — open all device nodes
  *   isp_load_sensor_conf      — program GC20C3 I2C registers
  *   isp_pipeline_init         — program 24 ISP image-pipeline modules
  *   venc_reset_stale_channel  — clear any state left by a killed anyka_ipc
@@ -188,6 +188,9 @@ static void close_devices(void)
  *                               (non-fatal — video keeps working if this fails)
  *   accept loop               — serve one RTSP client at a time on port 554
  * ------------------------------------------------------------------------- */
+/* Idle wait between ring drains while no RTSP client is connected. */
+#define IDLE_DRAIN_POLL_MS 20
+
 int main(int argc, char **argv)
 {
     /* Very first thing: tees stdout so the TCP tuning server's debug log
@@ -327,9 +330,18 @@ int main(int argc, char **argv)
             vi_grab_sub_frame(path);
         }
 
-        int p = poll(&pfd, 1, 0);
-        if (p < 0 && errno != EINTR) { perror("poll"); continue; }
-        if (p <= 0) {
+        /* Block in poll() instead of spinning: with a zero timeout this loop
+         * issued poll() + a non-blocking GET_STREAM back to back with no
+         * sleep, pinning a CPU core (hot in the kernel) while idle.
+         * IDLE_DRAIN_POLL_MS is well under the frame period (66 ms at
+         * 15 fps) so the ring is still emptied every frame, and a pending
+         * accept() or SIGUSR1 wakes poll() immediately. */
+        int p = poll(&pfd, 1, IDLE_DRAIN_POLL_MS);
+        if (p < 0) {
+            if (errno != EINTR) { perror("poll"); usleep(10000); }
+            continue;
+        }
+        if (p == 0) {
             drain_venc_ring();
             continue;
         }
