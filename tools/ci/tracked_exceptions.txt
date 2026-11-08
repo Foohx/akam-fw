@@ -1,0 +1,4 @@
+# Tracked paths allowed despite the forbidden-file patterns in local_check.sh.
+# Upstream file of the serial console tool (it documents that app, not this repo's agent setup).
+# The maintainer decided to keep it tracked; it is never read by Akam tooling.
+tools/hardware_debug/serial_console_dotnet/CLAUDE.md

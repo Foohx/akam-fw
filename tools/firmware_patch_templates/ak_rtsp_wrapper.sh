@@ -30,6 +30,8 @@ fi
 # instead. Plain DHCP only. Guarded by a running-check so a watchdog respawn
 # of this script after a crash doesn't spawn a second wpa_supplicant/udhcpc.
 WPA_CONF=/etc/config/wpa_supplicant.conf
+# pgrep may not be built into the camera BusyBox, so keep ps|grep (SC2009 is deliberate).
+# shellcheck disable=SC2009
 if [ -f "$WPA_CONF" ] && ! ps | grep -v grep | grep -q wpa_supplicant; then
     echo "ak_rtsp_wrapper: starting wpa_supplicant + udhcpc"
     wpa_supplicant -Dnl80211 -i wlan0 -c "$WPA_CONF" -B

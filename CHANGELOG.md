@@ -2,6 +2,8 @@
 
 ## Unreleased: project renamed from Camyn to Akam
 
+- Added `tools/lib/host.sh` (Linux host helpers) and `tools/ci/local_check.sh` (local shellcheck + tests + tracked-file hygiene check).
+
 The project was called Camyn during early development. Everything user-visible was renamed; the
 flash layout, ports, the `ak_rtsp` binary name, the 8091 protocol and the persistent key files under
 `/etc/config/dropbear/` are unchanged, so an existing camera keeps its host key and `authorized_keys`

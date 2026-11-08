@@ -3,10 +3,21 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![SoC](https://img.shields.io/badge/SoC-Anyka%20AK3918AV130-orange.svg)]()
 [![Sensor](https://img.shields.io/badge/Sensor-GalaxyCore%20GC20C3%201080p-green.svg)]()
-[![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20PCM%20Audio-red.svg)]()
+[![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20L16%20Audio-red.svg)]()
 
-> Akam (formerly Camyn during early development).
->
+## What is Akam?
+
+Akam replaces the Tuya cloud software of the **LSC Smart Connect Smart Indoor IP Camera 1080p HD, model
+`3215672.3`** (Action) with a small local firmware. After flashing, the camera:
+
+- serves **RTSP H.264 1080p video + audio** on port 554 (`ak_rtsp`), with a tuning port on 8091;
+- runs a **key-only SSH server** (Dropbear) so that the stock Telnet/FTP daemons can stay off;
+- no longer runs the Tuya cloud client (`anyka_ipc` is removed). Running with no Internet route at all has
+  not been tested yet.
+
+Only the APP partition (`mtd7`) is rebuilt, from **your own** dump of your camera. U-Boot, kernel, DTB
+and ROOTFS are never written, so U-Boot stays reachable over UART if the APP image turns out to be bad.
+
 > **Akam is a fork** of
 > [FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware](https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware).
 > All the reverse-engineering work behind `ak_rtsp` (ISP, H.264 encoder, audio, IR-cut, RTSP) is the
@@ -14,31 +25,98 @@
 > [Credits](#credits--acknowledgements) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and adds
 > a Linux-native build, a permanent SSH server, Telnet/FTP lockdown, and install/backup/restore
 > documentation. Upstream was developed on Windows 11 + WSL; Akam's build is native Linux (Arch).
+> See the [CHANGELOG](CHANGELOG.md) for the project history.
 
-Akam targets the **LSC Smart Connect Smart Indoor IP Camera 1080p HD, model `3215672.3`** (Action; the
-SI code is expected to be `D26228`, to be confirmed on your label). It removes the Tuya cloud agent
-(`anyka_ipc`), serves RTSP H.264 + audio from the standalone `ak_rtsp`, and runs a key-only SSH server
-(Dropbear) so that the stock Telnet/FTP daemons can stay off.
+## Status
 
----
+**Akam V1 is validated on a real camera (2026-11-08).** Seen working:
 
-## Status: nothing is validated on hardware yet
+- boots without a microSD card, Wi-Fi connects by itself;
+- H.264 1080p with a fast start, and an L16 audio track in the RTSP stream;
+- the IR night image is delivered (day/night stability over time is not checked yet);
+- port 8091 `GET` / `SET`;
+- Dropbear starts by itself; SSH as root by ed25519 key, also after a power cut;
+- only ports 22, 554 and 8091 listen; telnet and FTP are off; `anyka_ipc` is gone;
+- `ak_rtsp` uses about 1% CPU with a client connected (about 90% before the fixes), about 29 MB of RAM
+  stay free, and the image has 2.7 MB free in the APP partition.
 
-> **This is Akam V1 work in progress. No Akam image has been flashed on any camera.**
->
-> - **Compiled / tested on the build host only:** the native Linux build of `ak_rtsp`, `flash_tool` and
->   Dropbear (ARM EABI5, soft-float, static), and the host test suites in `tests/` (they run the
->   install scripts against a synthetic fixture and fake binaries, not against a real firmware dump).
-> - **Not tested on hardware:** the Dropbear boot hook, Telnet/FTP lockdown, key provisioning from the
->   microSD, the boot-time exposure
->   window, memory use, and the restore procedures.
-> - **Measured on a real APP dump, not on a camera:** the image size (about 2.5 MB of the 5.24 MB
->   partition with xz, like the stock APP) and a byte-identical rebuild from the same inputs.
-> - Where this documentation says "expected" or "assumed", it is a hypothesis listed in the
->   [hardware test plan](docs/akam_v1_test_plan.md) to be checked on the camera.
->
-> The V1 acceptance checklist lives in [docs/akam_v1_test_plan.md](docs/akam_v1_test_plan.md).
-> Tick a box only after you have seen the result on your own camera.
+Still to check: microphone audibility, telnet staying off after a Wi-Fi reconnect, and day/night
+stability over a long run. Details and the full checklist: [test plan](docs/akam_v1_test_plan.md).
+It was validated on one unit: report what you see on yours.
+
+## Supported camera
+
+Only the **LSC Smart Connect 1080p, model `3215672.3`** (SoC Anyka AK3918AV130, Revision 2 circular
+PCB). Other revisions or SoCs (AK3918EV200, GK7102) have different register maps and flash layouts and
+are **not** supported. Hardware details are in [Hardware Overview](#hardware-overview).
+
+## What you need
+
+- the camera, a microSD card, and a 2.4 GHz Wi-Fi network the camera can join;
+- a **Linux x86-64 PC** (Arch is the reference) with `squashfs-tools`, `make`, `git`, `curl`, `tar`, `xz`,
+  `bzip2`, `shellcheck`, `file`, `binutils` (`bash tools/build/check_host.sh` lists what is missing);
+- an SSH key pair dedicated to the camera;
+- a UART adapter is a useful safety net but not required: the documented route works without it.
+
+## Install in 6 steps
+
+Steps 1 to 3 do not change the camera's flash. Read the [overview](docs/akam_v1_install.md) first.
+
+1. **Back up** all 8 flash partitions twice, compare, store them off-line:
+   [backup guide](docs/akam_v1_backup.md) (the no-UART microSD route is in
+   [akam_v1_backup_sd.md](docs/akam_v1_backup_sd.md)).
+2. **Build** the image from your own APP dump (pinned toolchain, native Linux, no `cmake`):
+   [build guide](docs/akam_v1_build.md).
+   ```bash
+   bash tools/build/bootstrap.sh && . tools/build/env.sh
+   make -C src/ak_rtsp ak_rtsp flash_tool
+   bash tools/dropbear/build_dropbear.sh
+   unsquashfs -d ~/akam-work/app_extracted ~/akam-backup/mtdblock7.bin
+   APP_EXTRACTED=~/akam-work/app_extracted FW_DIR=~/akam-work/out bash src/ak_rtsp/build_firmware.sh
+   ```
+3. **Prepare the SD card** (FAT32). For the first flash from the stock firmware, reuse the toolkit card
+   of the backup and add `custom_firmware/<image>.squashfs` (exactly one), `flash_tool`,
+   `install_with_flash_tool.sh`, `flash_guard.sh`, `preflight_check.sh` and `original_firmware/` (your
+   backup, never a `*.bin` at the card root). The layout is in the "Prepare the SD card" section and the
+   no-UART section of the [flash guide](docs/akam_v1_flash_and_restore.md). Your SSH public key goes
+   on a second, "first-boot" card made with
+   `bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/akam.pub` (it also holds
+   an empty `AKAM_MAINTENANCE`); see [SSH and lockdown](docs/akam_v1_ssh_and_lockdown.md).
+4. **Flash** the APP partition (`mtd7`) and verify the read-back before touching the power. Boot the
+   camera with the card, then `telnet <camera-ip> 24`. On the stock firmware mount the card with
+   `mount -t vfat /dev/mmcblk0p1 /mnt`; in a later Akam maintenance boot the card is on `/tmp/sd`, so
+   use `mount --bind /tmp/sd /mnt` instead. Then:
+   ```sh
+   sh /mnt/install_with_flash_tool.sh      # compare the printed md5sum with your PC, then type YES alone
+   dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum    # must equal the image md5sum
+   ```
+   The `flash_tool` output must end with `Flashing and verification completed successfully!`. If it
+   reports errors or the md5 differs, do not power cycle. Then unplug and replug USB-C by hand (`reboot`
+   is unreliable). Read the gates (Wi-Fi config) and details in
+   [flash and restore](docs/akam_v1_flash_and_restore.md).
+5. **First boot** with the first-boot card inserted: Dropbear creates its host key and installs your
+   key. Then `ssh -i ~/.ssh/akam root@<camera-ip>` and run the post-flash check from the PC:
+   `ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh`
+   ([test plan](docs/akam_v1_test_plan.md)).
+6. **Remove the card** (this also removes the maintenance flag and its telnet), power cycle, and check
+   again: only ports 22, 554 and 8091 must listen.
+
+The stream is then at `rtsp://<camera-ip>:554/` (see [RTSP Stream URLs](#rtsp-stream-urls)).
+
+## Update later
+
+Rebuild the image and reflash the APP partition, through the maintenance route or over SSH from RAM:
+see "Reflashing later" in the [flash guide](docs/akam_v1_flash_and_restore.md).
+
+## Recover
+
+Keep your 8-partition backup. Restore the stock APP, or recover through UART/U-Boot if the APP is bad:
+see Restore in the [flash guide](docs/akam_v1_flash_and_restore.md). Restore is not guaranteed to work.
+
+## Credits and license
+
+MIT, see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Upstream author
+FluxAlchemist, SmolRTSP, Dropbear, 4ddict and others: see [Credits](#credits--acknowledgements).
 
 ---
 
@@ -54,9 +132,6 @@ SI code is expected to be `D26228`, to be confirmed on your label). It removes t
 | Image builder | Patches **your own** APP dump, repacks, checks, pads to 5 242 880 bytes | `src/ak_rtsp/build_firmware.sh` |
 | Post-flash check | Read-only checklist script, run over SSH | `tools/hw_tests/akam_hwcheck.sh` |
 
-Only the **APP partition (`mtd7`)** is ever rebuilt. U-Boot, kernel, DTB and ROOTFS are never written, so
-U-Boot stays reachable over UART if the APP image turns out to be bad.
-
 ---
 
 ## Important disclaimer and risks
@@ -65,7 +140,7 @@ U-Boot stays reachable over UART if the APP image turns out to be bad.
 >
 > - **Experimental codebase:** upstream is the public release of a larger private reverse-engineering
 >   project, organised with AI assistance. Akam's additions were written with AI assistance and have
->   **not been run on a camera**.
+>   been validated on a single camera so far.
 > - **Risk of permanent bricking:** writing to the SPI NOR flash can brick the camera. In the worst case
 >   only desoldering the flash chip and using an external SPI programmer (for example a CH341A) will
 >   recover it. **Restoring your backup is not guaranteed to work** (see
@@ -76,46 +151,6 @@ U-Boot stays reachable over UART if the APP image turns out to be bad.
 >   Never publish it: it contains your Wi-Fi credentials and Tuya identifiers.
 > - **Always read the flash verification output before disconnecting power.** If flashing reports
 >   errors, do not power cycle; flash your stock backup immediately.
-
----
-
-## Quick start (Arch Linux, x86-64)
-
-Nothing below touches the camera. Read the [backup guide](docs/akam_v1_backup.md) and make your dump
-**before** you flash anything.
-
-```bash
-# 1. Host tools (the repo never calls sudo)
-sudo pacman -S --needed squashfs-tools shellcheck file binutils make git curl tar xz bzip2
-bash tools/build/check_host.sh          # lists anything still missing
-
-# 2. Download and verify the pinned toolchain and sources (Zig, SmolRTSP + deps, Dropbear archive)
-bash tools/build/bootstrap.sh
-
-# 3. Build ak_rtsp and flash_tool
-. tools/build/env.sh
-make -C src/ak_rtsp ak_rtsp flash_tool
-
-# 4. Build Dropbear -> dist/dropbear/dropbearmulti
-bash tools/dropbear/build_dropbear.sh
-
-# 5. Build the APP image from YOUR OWN dump (the unsquashed mtdblock7.bin)
-unsquashfs -d ~/akam-work/app_extracted ~/akam-backup/mtdblock7.bin
-APP_EXTRACTED=~/akam-work/app_extracted FW_DIR=~/akam-work/out \
-    bash src/ak_rtsp/build_firmware.sh
-```
-
-Step 5 produces `ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (exactly 5 242 880 bytes), its `.sha256`, and
-`build_report.txt` in `FW_DIR`. Then follow, in this order:
-
-1. [Backup first](docs/akam_v1_backup.md): dump and verify the 8 partitions, confirm the model.
-2. [Build the image](docs/akam_v1_build.md): tool details, size guard, compression, report.
-3. [SSH and Telnet/FTP lockdown](docs/akam_v1_ssh_and_lockdown.md): generate your key, provision it.
-4. [Flash and restore](docs/akam_v1_flash_and_restore.md): Akam's own procedure and recovery.
-5. [Hardware test plan](docs/akam_v1_test_plan.md): what to check on the camera, resource report.
-
-`cmake` is **not** required (the bootstrap populates SmolRTSP's four header-only dependencies itself).
-The upstream Windows/PowerShell/WSL build path is gone: the Makefile no longer calls `pwsh` or `wsl`.
 
 ---
 
@@ -160,7 +195,7 @@ The upstream Windows/PowerShell/WSL build path is gone: the Makefile no longer c
 | Component | Specification |
 |---|---|
 | **Retail Model** | LSC Smart Connect Smart Indoor IP Camera 1080p HD (Action) |
-| **Model / SKU** | `3215672.2` / `SI B26101` (upstream, tested by the upstream author). Akam target: `3215672.3`, SI `D26228` expected, unconfirmed |
+| **Model / SKU** | `3215672.2` / `SI B26101` (upstream, tested by the upstream author). Akam target: `3215672.3`, SI `D26228` expected on the label |
 | **PCB Revision** | `IPC280KG2-GNA-MAIN-V1.0` (Circular PCB, 2025-08-28) |
 | **SoC** | Anyka AK3918AV130 (ARM926EJ-S @ 400 MHz) |
 | **Image Sensor** | GalaxyCore GC20C3 (2MP 1/2.9" CMOS, I2C bus) |
@@ -168,7 +203,7 @@ The upstream Windows/PowerShell/WSL build path is gone: the Makefile no longer c
 | **Wireless** | Altobeam ATBM6012BX / ATBM6x3x USB WiFi |
 | **Power** | USB-C 5V / 1A |
 
-> ℹ️ **NOTE:** The table above describes the upstream test unit. Akam's target model `3215672.3` has not been opened or dumped yet; whether it has the same PCB, flash and partition table is to be confirmed (see the [backup guide](docs/akam_v1_backup.md)). This repository is tailored for **Revision 2** (circular PCB, Anyka AK3918AV130). Older revisions with rectangular boards used different SoCs (AK3918EV200 or GK7102) which have different register maps and flash partitioning.
+> ℹ️ **NOTE:** The table above describes the upstream test unit. Akam runs on model `3215672.3`; check that your own unit matches (label, `/proc/mtd`, see the [backup guide](docs/akam_v1_backup.md)) before flashing. This repository is tailored for **Revision 2** (circular PCB, Anyka AK3918AV130). Older revisions with rectangular boards used different SoCs (AK3918EV200 or GK7102) which have different register maps and flash partitioning.
 
 ---
 
@@ -227,7 +262,7 @@ Akam V1:
 - [SSH provisioning and Telnet/FTP lockdown](docs/akam_v1_ssh_and_lockdown.md)
 - [Flash and restore](docs/akam_v1_flash_and_restore.md)
 - [Hardware test plan and resource report](docs/akam_v1_test_plan.md)
-- [Changelog and migration from the former Camyn names](CHANGELOG.md)
+- [Changelog](CHANGELOG.md)
 
 Upstream background (hardware and firmware internals):
 - [Hardware & UART Connection Guide](docs/hardware_and_uart.md)
