@@ -37,6 +37,11 @@ and filesystem order as the stock `tf_mount.sh`: vfat then exfat, `/dev/mmcblk0p
 then unmounts. Every step, including mount errors, is logged in `/tmp/akam_ssh.log`.
 *(Tested on fixtures only; not yet validated on hardware.)*
 
+> **Deprecated alias (one release).** A card prepared for the early-development image (formerly Camyn)
+> has the folder `camyn/` instead. `akam_ssh.sh` still reads `camyn/authorized_keys` when
+> `akam/authorized_keys` is absent and logs a `DEPRECATED` line in `/tmp/akam_ssh.log`. Rename the folder
+> to `akam` on your card; the fallback is removed in the next release.
+
 ```bash
 # the card is mounted on your PC at /run/media/$USER/CARD (adapt)
 mkdir -p /run/media/$USER/CARD/akam
@@ -231,7 +236,8 @@ Create an **empty file named `AKAM_MAINTENANCE` at the root of the microSD card*
 `service.sh` mounts the card on `/mnt`, runs the SD hooks and then unmounts it (`umount -l /mnt`)
 long before `akam_lockdown.sh` starts. So the patched `service.sh` records the flag in RAM while
 the card is still mounted: right before the first guarded SD hook it runs
-`[ -f /mnt/AKAM_MAINTENANCE ] && : > /tmp/akam_maintenance`. `akam_lockdown.sh` and
+`{ [ -f /mnt/AKAM_MAINTENANCE ] || [ -f /mnt/CAMYN_MAINTENANCE ]; } && : > /tmp/akam_maintenance`
+(the second test is the deprecated alias, see below). `akam_lockdown.sh` and
 `akam_hwcheck.sh` honour that RAM marker (and still the `/mnt/...` file while a card is mounted).
 
 - With the flag present at boot: the patched `service.sh` lets the card's hook scripts run again, and
@@ -247,6 +253,12 @@ the card is still mounted: right before the first guarded SD hook it runs
   safety net. It is never set by the
   watchdog or by a network event; only physical access to the card can enable it. Treat it as exactly
   that: whoever can put a card in the camera can run code as root, as with the stock firmware.
+
+**Deprecated alias (one release).** The flag was named `CAMYN_MAINTENANCE` in the early-development image
+(formerly Camyn). A card that still carries that file keeps working: the patched `service.sh`, the
+safety net and `akam_hwcheck.sh` accept it as an alias of `AKAM_MAINTENANCE`, and the last two log or
+print a `DEPRECATED` note. Rename the file on your card. The alias is removed in the next release; to
+build an image without it, set `AKAM_MAINT_FLAG_LEGACY=` (empty) when running `patch_service_sh.sh`.
 
 If you ever prepared a card with the Action-Smart-Connect-Flasher or the `lsc-tuya-toolkit`, its hook
 (`hack.sh`, `telnet.sh`, which opens an unauthenticated telnet on port 24) and its `wifi.conf` stay on

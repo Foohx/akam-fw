@@ -227,6 +227,7 @@ Akam V1:
 - [SSH provisioning and Telnet/FTP lockdown](docs/akam_v1_ssh_and_lockdown.md)
 - [Flash and restore](docs/akam_v1_flash_and_restore.md)
 - [Hardware test plan and resource report](docs/akam_v1_test_plan.md)
+- [Changelog and migration from the former Camyn names](CHANGELOG.md)
 
 Upstream background (hardware and firmware internals):
 - [Hardware & UART Connection Guide](docs/hardware_and_uart.md)

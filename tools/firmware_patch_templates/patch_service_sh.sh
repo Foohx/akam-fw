@@ -15,14 +15,17 @@
 #      _ht_ap_mode.conf, hack.sh, /mnt/.../hostapd, /mnt/telnet.sh, or runs
 #      tf_update.sh) gets the
 #      guard "[ -f $AKAM_MAINT_FLAG ] &&" so the hook only runs when the
-#      maintenance flag file exists on the SD. The SD firmware-update hook
+#      maintenance flag file exists on the SD. (Deprecated alias, one release:
+#      the guard also accepts the flag's former name, /mnt/CAMYN_MAINTENANCE,
+#      so an SD card prepared for the early-development image keeps working:
+#      the guard is then "{ [ -f <flag> ] || [ -f <legacy flag> ]; } &&".) The SD firmware-update hook
 #      ("sh /tmp/tf_update.sh": stock tf_update.sh runs system_upgrade on every
 #      /mnt/*.bin at each boot, i.e. any inserted card could reflash the camera)
 #      is guarded the same way. For "if ..." lines the guard is
 #      inserted into the condition; for simple commands it is a prefix.
 #   3. Right before the first guarded SD hook (the SD is mounted at that point),
 #      one line is inserted that records the flag in RAM:
-#          [ -f <flag> ] && : > /tmp/akam_maintenance
+#          [ -f <flag> ] && : > /tmp/akam_maintenance   (same guard as above)
 #      Stock service.sh unmounts the SD (umount -l /mnt) before akam_lockdown.sh
 #      runs, so the lockdown and hwcheck read this RAM marker instead. The marker
 #      lives until the next reboot. Idempotent: skipped if the file already
@@ -43,6 +46,9 @@
 # Environment:
 #   AKAM_MAINT_FLAG    flag path baked into the guard (default
 #                       /mnt/AKAM_MAINTENANCE; mount point to be confirmed)
+#   AKAM_MAINT_FLAG_LEGACY  deprecated alias of the flag (default
+#                       /mnt/CAMYN_MAINTENANCE; set it to the empty string
+#                       to bake no alias into the guard). Removed next release.
 #   AKAM_MAINT_MARK    RAM marker path (default /tmp/akam_maintenance)
 #   AKAM_PATCH_REPORT  unified diff output (default <app_tree>.service_sh.diff)
 #
@@ -71,6 +77,15 @@ esac
 case "$FLAG" in
     *[!A-Za-z0-9_./-]*) die "AKAM_MAINT_FLAG contains unsupported characters" ;;
 esac
+# Deprecated alias (former name of the flag), one release only.
+LEGACY=${AKAM_MAINT_FLAG_LEGACY-/mnt/CAMYN_MAINTENANCE}
+case "$LEGACY" in
+    '' | /* ) ;;
+    *) die "AKAM_MAINT_FLAG_LEGACY must be an absolute path (or empty)" ;;
+esac
+case "$LEGACY" in
+    *[!A-Za-z0-9_./-]*) die "AKAM_MAINT_FLAG_LEGACY contains unsupported characters" ;;
+esac
 MARK=${AKAM_MAINT_MARK:-/tmp/akam_maintenance}
 case "$MARK" in
     /* ) ;;
@@ -86,7 +101,7 @@ REPORT=${AKAM_PATCH_REPORT:-$APP.service_sh.diff}
 WORK=$(mktemp -d) || die "mktemp failed"
 trap 'rm -rf "$WORK"' EXIT
 
-awk -v flag="$FLAG" -v mark="$MARK" -v hasmark="$HASMARK" -v counts="$WORK/counts" '
+awk -v flag="$FLAG" -v legacy="$LEGACY" -v mark="$MARK" -v hasmark="$HASMARK" -v counts="$WORK/counts" '
 function bad(msg) {
     printf "patch_service_sh: ERROR: line %d: %s\n    %s\n", NR, msg, $0 > "/dev/stderr"
     failed = 1
@@ -96,13 +111,14 @@ function emit_mark(l,   ind) {
     if (hasmark + 0 == 1 || marked) return
     match(l, /^[ \t]*/)
     ind = substr(l, 1, RLENGTH)
-    print ind "[ -f " flag " ] && : > " mark
+    print ind guard " && : > " mark
     marked = 1
 }
 BEGIN {
     dre = "(^|[^A-Za-z0-9_])(utelnetd|telnetd|bftpd|vsftpd|ftpd)([^A-Za-z0-9_-]|$)"
     hre = "(_ht_ap_mode\\.conf|hack\\.sh|/mnt/[A-Za-z0-9_./-]*hostapd|/mnt/telnet\\.sh|/mnt/\\$\\{?AP_MODE_FILE|(^|[ \t;])sh[ \t]+[^ \t]*tf_update\\.sh)"
     guard = "[ -f " flag " ]"
+    if (legacy != "") guard = "{ " guard " || [ -f " legacy " ]; }"
 }
 {
     line = $0
@@ -111,7 +127,7 @@ BEGIN {
     # Bare variable assignment (AP_MODE_FILE=...): only names the file, runs nothing.
     # (A daemon path in a variable, e.g. X=/usr/sbin/telnetd, is still handled below.)
     if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=[^ \t;&|]*[ \t]*$/ && line !~ dre) { print line; next }
-    if (index(line, "AKAM-DISABLED:") > 0) { ddone++; print line; next }
+    if (index(line, "AKAM-DISABLED:") > 0 || index(line, "CAMYN-DISABLED:") > 0) { ddone++; print line; next }
     if (index(line, "AKAM_MAINTENANCE") > 0 || index(line, flag) > 0) {
         hdone++
         if (index(line, mark) == 0) emit_mark(line)

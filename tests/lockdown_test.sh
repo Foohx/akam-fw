@@ -81,7 +81,7 @@ for spec in "app_fake:5" "app_fake_variants/a:6" "app_fake_variants/b:5" "app_fa
     check "$name: exactly $want lines changed" test "$(changed_lines "$AKAM_PATCH_REPORT")" = "$want"
     check "$name: exactly one line added (RAM marker)" test "$(wc -l <"$T/sbin/service.sh")" = "$(( $(wc -l <"$WORK/$tag.orig") + 1 ))"
     check "$name: one RAM marker line" test "$(grep -c ': > /tmp/akam_maintenance' "$T/sbin/service.sh")" = 1
-    check "$name: marker precedes the first guarded hook" test "$(grep -n 'akam_maintenance' "$T/sbin/service.sh" | head -1 | cut -d: -f1)" -lt "$(grep -n 'if \[ -f /mnt/AKAM_MAINTENANCE \]\|^[[:space:]]*\[ -f /mnt/AKAM_MAINTENANCE \] && [^:]' "$T/sbin/service.sh" | head -1 | cut -d: -f1)"
+    check "$name: marker precedes the first guarded hook" test "$(grep -n 'akam_maintenance' "$T/sbin/service.sh" | head -1 | cut -d: -f1)" -lt "$(grep -n 'if { \[ -f /mnt/AKAM_MAINTENANCE \]\|^[[:space:]]*{ \[ -f /mnt/AKAM_MAINTENANCE \] || \[ -f /mnt/CAMYN_MAINTENANCE \]; } && [^:]' "$T/sbin/service.sh" | head -1 | cut -d: -f1)"
     check "$name: file mode preserved" test "$(stat -c %a "$T/sbin/service.sh")" = 755
     check "$name: hook guarded by flag" grep -q 'AKAM_MAINTENANCE' "$T/sbin/service.sh"
     # idempotent
@@ -93,8 +93,8 @@ check "variant c: comment line untouched" grep -q '^# telnetd is started below' 
 check "variant b: one-liner if body still valid" grep -q ': # AKAM-DISABLED:.*bftpd' "$WORK/app_fake_variants_b/sbin/service.sh"
 
 check "variant d: assignment line untouched" grep -q '^AP_MODE_FILE=_ht_ap_mode.conf$' "$WORK/app_fake_variants_d/sbin/service.sh"
-check "variant d: dd of the AP mode file guarded" grep -q '^	\[ -f /mnt/AKAM_MAINTENANCE \] && dd if=' "$WORK/app_fake_variants_d/sbin/service.sh"
-check "variant d: tf_update run guarded by flag" grep -q '^	\[ -f /mnt/AKAM_MAINTENANCE \] && sh /tmp/tf_update.sh$' "$WORK/app_fake_variants_d/sbin/service.sh"
+check "variant d: dd of the AP mode file guarded" grep -q '^	{ \[ -f /mnt/AKAM_MAINTENANCE \] || \[ -f /mnt/CAMYN_MAINTENANCE \]; } && dd if=' "$WORK/app_fake_variants_d/sbin/service.sh"
+check "variant d: tf_update run guarded by flag" grep -q '^	{ \[ -f /mnt/AKAM_MAINTENANCE \] || \[ -f /mnt/CAMYN_MAINTENANCE \]; } && sh /tmp/tf_update.sh$' "$WORK/app_fake_variants_d/sbin/service.sh"
 check "variant d: tf_update cp/rm untouched" grep -q '^	cp /usr/sbin/tf_update.sh /tmp/$' "$WORK/app_fake_variants_d/sbin/service.sh"
 mkdir -p "$WORK/vd"
 cp -a "$FIXTURES/app_fake_variants/d/." "$WORK/vd/"
@@ -157,6 +157,39 @@ check "marker survives the SD removal" test -e "$FM/tmp/akam_maintenance"
 grep -v 'akam_maintenance' "$FM/sbin/service.sh" >"$FM/old.sh" && cp "$FM/old.sh" "$FM/sbin/service.sh"
 AKAM_MAINT_FLAG=$FM/mnt/AKAM_MAINTENANCE AKAM_MAINT_MARK=$FM/tmp/akam_maintenance AKAM_PATCH_REPORT=$WORK/mark.diff "$PATCH" "$FM" >/dev/null 2>&1
 check "old-patched file gets the marker once" test "$(grep -c ': > ' "$FM/sbin/service.sh")" = 1
+
+echo "== P2d. deprecated CAMYN_MAINTENANCE alias (one release) in the patched service.sh"
+FL=$WORK/legacy
+mkdir -p "$FL/mnt" "$FL/tmp" "$FL/sbin"
+sed -e "s#/mnt/#$FL/mnt/#g" -e "s#/tmp/tf_update.sh#$FL/tmp/tf_update.sh#g" \
+    "$FIXTURES/app_fake_variants/d/sbin/service.sh" >"$FL/sbin/service.sh"
+AKAM_MAINT_FLAG=$FL/mnt/AKAM_MAINTENANCE AKAM_MAINT_FLAG_LEGACY=$FL/mnt/CAMYN_MAINTENANCE \
+    AKAM_MAINT_MARK=$FL/tmp/akam_maintenance AKAM_PATCH_REPORT=$WORK/legacy.diff "$PATCH" "$FL" >/dev/null 2>&1
+sed -e "s#^\(.*\)sh /usr/sbin/tf_mount.sh#\1:#" -e "s#cp /usr/sbin/tf_update.sh .*#:#" -e 's#^\(\s*\)rm .*#\1:#' "$FL/sbin/service.sh" >"$FL/run.sh"
+printf '#!/bin/sh\necho flashed >>"%s/flashed"\n' "$FL" >"$FL/tmp/tf_update.sh"
+check "alias: guard names both flags" grep -q "{ \[ -f $FL/mnt/AKAM_MAINTENANCE \] || \[ -f $FL/mnt/CAMYN_MAINTENANCE \]; } && sh " "$FL/sbin/service.sh"
+check "alias: patched file sh -n" "${SHCMD[@]}" -n "$FL/sbin/service.sh"
+"${SHCMD[@]}" "$FL/run.sh" >/dev/null 2>&1
+check "alias, no flag: tf_update not run, no marker" bash -c "! test -e '$FL/flashed' && ! test -e '$FL/tmp/akam_maintenance'"
+: >"$FL/mnt/CAMYN_MAINTENANCE"
+"${SHCMD[@]}" "$FL/run.sh" >/dev/null 2>&1
+check "alias: old flag name still opens the SD hook" test -s "$FL/flashed"
+check "alias: old flag name writes the new RAM marker" test -e "$FL/tmp/akam_maintenance"
+rm -f "$FL/flashed" "$FL/tmp/akam_maintenance" "$FL/mnt/CAMYN_MAINTENANCE"
+: >"$FL/mnt/AKAM_MAINTENANCE"
+"${SHCMD[@]}" "$FL/run.sh" >/dev/null 2>&1
+check "alias: new flag name works too" test -s "$FL/flashed"
+# alias disabled with an empty AKAM_MAINT_FLAG_LEGACY: plain single-flag guard
+mkdir -p "$WORK/nl/sbin"
+cp "$FIXTURES/app_fake_variants/d/sbin/service.sh" "$WORK/nl/sbin/service.sh"
+AKAM_MAINT_FLAG_LEGACY= AKAM_PATCH_REPORT=$WORK/nl.diff "$PATCH" "$WORK/nl" >/dev/null 2>&1
+check "alias off: single-flag guard, no CAMYN text" bash -c "grep -q '^	\[ -f /mnt/AKAM_MAINTENANCE \] && sh /tmp/tf_update.sh\$' '$WORK/nl/sbin/service.sh' && ! grep -qi camyn '$WORK/nl/sbin/service.sh'"
+# a service.sh whose daemon lines were already disabled by the old marker stays as is
+mkdir -p "$WORK/od/sbin"
+sed -e 's/AKAM-DISABLED/CAMYN-DISABLED/' "$WORK/app_fake_variants_b/sbin/service.sh" >"$WORK/od/sbin/service.sh"
+cp "$WORK/od/sbin/service.sh" "$WORK/od.before"
+AKAM_PATCH_REPORT=$WORK/od.diff "$PATCH" "$WORK/od" >/dev/null 2>&1
+check "old DISABLED marker is recognised (no double disabling)" bash -c "! grep -q 'AKAM-DISABLED' '$WORK/od/sbin/service.sh'"
 
 echo "== P3. patch fails loudly on unexpected input"
 mkdir -p "$WORK/n1/sbin"
@@ -289,6 +322,18 @@ check "log says maintenance mode" grep -q 'maintenance mode: telnet not touched'
 rm -f "$LR/tmp/akam_maintenance"
 check "marker cleared: loop kills" run_lockdown "$LR"
 check "telnetd dead after marker cleared" dead "$(pid_of telnetd)"
+
+echo "== L2c. deprecated CAMYN_MAINTENANCE alias: nothing killed, deprecation logged"
+new_ld_root l2c
+spawn telnetd "telnetd -p 24 -l /bin/sh"
+: >"$LR/mnt/CAMYN_MAINTENANCE"
+check "bounded loop exits 0" run_lockdown "$LR"
+check "telnetd alive with the old flag name" alive "$(pid_of telnetd)"
+check "log says maintenance mode" grep -q 'maintenance mode: telnet not touched' "$LR/tmp/akam_lockdown.log"
+check "log says the flag name is deprecated" grep -q 'DEPRECATED.*CAMYN_MAINTENANCE.*AKAM_MAINTENANCE' "$LR/tmp/akam_lockdown.log"
+rm -f "$LR/mnt/CAMYN_MAINTENANCE"
+check "old flag removed: loop kills" run_lockdown "$LR"
+check "telnetd dead after the old flag is removed" dead "$(pid_of telnetd)"
 
 echo "== L3. flag present then removed: killing resumes, no exit in between"
 new_ld_root l3

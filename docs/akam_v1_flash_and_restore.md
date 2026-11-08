@@ -279,7 +279,8 @@ has two entry points:
   (`SSH_CONNECTION`/`SSH_CLIENT`, or a dropbear ancestor process) and when the script or `flash_tool`
   lives under `/usr` while `/usr` is the `mtdblock7` squashfs. It does not block a flash from the stock
   firmware over Telnet, the maintenance telnet, or the `init=/bin/sh` shell, with scripts and
-  `flash_tool` on the SD card. `AKAM_FLASH_I_KNOW=1` overrides it (prints a warning); use it only on
+  `flash_tool` on the SD card. `AKAM_FLASH_I_KNOW=1` overrides it (prints a warning; the former name `CAMYN_FLASH_I_KNOW=1` is a
+  deprecated alias, accepted with an extra warning for one release); use it only on
   **stock firmware**, never on an Akam image.
 - `akam_flash_guard_detached` (only `akam_reflash_ssh.sh`, for the SSH route below): no override
   variable. It allows the write only if **all** hold: the operator passed exactly

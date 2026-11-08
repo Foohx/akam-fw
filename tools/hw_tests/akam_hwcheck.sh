@@ -48,6 +48,8 @@ NIGHT_INTERVAL=${HWCHECK_NIGHT_INTERVAL:-6}
 TMP_DIR=${AKAM_TMP_DIR:-$ROOT/tmp}
 FLAG=${AKAM_MAINT_FLAG:-$ROOT/mnt/AKAM_MAINTENANCE}
 MARK=${AKAM_MAINT_MARK:-$TMP_DIR/akam_maintenance}
+# Deprecated alias (former name of the flag), honoured for one release only.
+LEGACY_FLAG=${AKAM_MAINT_FLAG_LEGACY-$ROOT/mnt/CAMYN_MAINTENANCE}
 N_PASS=0
 N_FAIL=0
 N_WARN=0
@@ -82,6 +84,8 @@ show_cmd() { "$@" 2>&1 | sed 's/^/    /'; }
 
 maint=0
 { [ -e "$FLAG" ] || [ -e "$MARK" ]; } && maint=1
+legacy_flag=0
+if [ -n "$LEGACY_FLAG" ] && [ -e "$LEGACY_FLAG" ]; then maint=1; legacy_flag=1; fi
 
 # ---------------------------------------------------------------- listening
 hex_ip() { # 8 hex digits, little-endian as in /proc/net/tcp -> dotted quad
@@ -426,6 +430,7 @@ check_misc() {
     section "maintenance flag and SD"
     if [ "$maint" = 1 ]; then warn "maintenance mode ($MARK or $FLAG present): telnet/ftp are NOT locked down in this mode"
     else pass "maintenance mode off ($MARK and $FLAG absent)"; fi
+    if [ "$legacy_flag" = 1 ]; then warn "DEPRECATED flag name ${LEGACY_FLAG##*/}: rename it to ${FLAG##*/} (the old name is removed in the next release)"; fi
     if [ -r "$ROOT/proc/mounts" ]; then
         if grep -q ' /mnt ' "$ROOT/proc/mounts"; then info "SD mount: $(grep ' /mnt ' "$ROOT/proc/mounts" | head -n 1)"
         else info "nothing mounted on /mnt (no SD card, or another mount point: see mounts below)"; fi

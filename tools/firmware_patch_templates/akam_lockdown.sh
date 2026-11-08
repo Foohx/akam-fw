@@ -14,7 +14,8 @@
 #   - maintenance mode: RAM marker /tmp/akam_maintenance (recorded by the patched
 #     service.sh at boot while the SD is mounted; it lasts until the next reboot
 #     without the flag) OR the flag on the SD (/mnt/AKAM_MAINTENANCE, mount
-#     point TO BE CONFIRMED on hardware): log, kill nothing for that round, and
+#     point TO BE CONFIRMED on hardware; the former name CAMYN_MAINTENANCE is a
+#     deprecated alias kept for one release): log, kill nothing for that round, and
 #     KEEP LOOPING. The flag is re-checked at every round: inserting the SD
 #     pauses the killing, removing it (or deleting the file) resumes it at the
 #     next round, so telnet/ftp cannot outlive the card.
@@ -54,6 +55,8 @@ AKAM_ROOT=${AKAM_ROOT:-}
 TMP_DIR=${AKAM_TMP_DIR:-$AKAM_ROOT/tmp}
 SSH_HELPER=${AKAM_SSH_HELPER:-$AKAM_ROOT/usr/sbin/akam_ssh.sh}
 FLAG=${AKAM_MAINT_FLAG:-$AKAM_ROOT/mnt/AKAM_MAINTENANCE}
+# Deprecated alias (former name of the flag), honoured for one release only.
+LEGACY_FLAG=${AKAM_MAINT_FLAG_LEGACY-$AKAM_ROOT/mnt/CAMYN_MAINTENANCE}
 MARK=${AKAM_MAINT_MARK:-$TMP_DIR/akam_maintenance}
 FAST_ROUNDS=${AKAM_FAST_ROUNDS:-24}
 FAST_PERIOD=${AKAM_FAST_PERIOD:-5}
@@ -116,7 +119,7 @@ EOF
 # mounted (the stock script unmounts /mnt afterwards) and lives until reboot;
 # the SD flag itself is still honoured while the card is mounted.
 maintenance() {
-    [ -e "$MARK" ] || [ -e "$FLAG" ]
+    [ -e "$MARK" ] || [ -e "$FLAG" ] || { [ -n "$LEGACY_FLAG" ] && [ -e "$LEGACY_FLAG" ]; }
 }
 
 # Detached, output discarded, never waited for: cannot block the loop.
@@ -137,6 +140,9 @@ guarded_round() {
     if maintenance; then
         if [ "$MAINT_LOGGED" = 0 ]; then
             log "maintenance mode: telnet not touched"
+            if [ ! -e "$FLAG" ] && [ -n "$LEGACY_FLAG" ] && [ -e "$LEGACY_FLAG" ]; then
+                log "DEPRECATED: the flag file is named ${LEGACY_FLAG##*/}, rename it to ${FLAG##*/} (the old name is removed in the next release)"
+            fi
             MAINT_LOGGED=1
         fi
         return 0

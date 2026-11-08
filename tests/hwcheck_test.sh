@@ -190,6 +190,13 @@ has "maintenance: flag WARN" '^WARN +maintenance mode \(.*present\)' "$WORK/t6.o
 has "maintenance: telnetd only WARN" '^WARN +telnetd running' "$WORK/t6.out"
 has "maintenance: lockdown absent WARN" '^WARN +akam_lockdown not running' "$WORK/t6.out"
 
+# 6b. deprecated CAMYN_MAINTENANCE flag name (one release): maintenance + rename WARN
+R6B=$WORK/r6b; mkroot "$R6B"
+: > "$R6B/mnt/CAMYN_MAINTENANCE"
+run t6b "$R6B" "$WORK/s6b"
+has "legacy flag: maintenance WARN" '^WARN +maintenance mode \(.*present\)' "$WORK/t6b.out"
+has "legacy flag: deprecation WARN" '^WARN +DEPRECATED flag name CAMYN_MAINTENANCE: rename it to AKAM_MAINTENANCE' "$WORK/t6b.out"
+
 # 7. read-only: the fake root is unchanged and nothing is killed -----------------
 (cd "$R1" && find . -type f -exec cksum {} + | sort) > "$WORK/before.sum"
 run t7 "$R1" "$S1"

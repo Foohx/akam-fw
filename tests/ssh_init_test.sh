@@ -501,6 +501,32 @@ check "bind failure: falls back to the persistent -D dir" grep -q -- "-D $R/etc/
 check "bind failure logged, dropbear launched" bash -c "grep -q 'could not set root HOME' '$R/tmp/akam_ssh.log' && test -s '$R/tmp/dropbear.pid'"
 killdb
 
+echo "== 9z. deprecated camyn/ SD folder (one-release fallback)"
+new_root t9z1
+mv "$R/mnt/akam" "$R/mnt/camyn"
+printf '%s\n' "$K1" >"$R/mnt/camyn/authorized_keys"
+ssh_run start
+check "legacy: key installed from camyn/" cmp -s "$R/etc/config/dropbear/authorized_keys" <(printf '%s\n' "$K1")
+check "legacy: deprecation logged" grep -q 'DEPRECATED.*camyn/.*rename it to akam/' "$R/tmp/akam_ssh.log"
+killdb
+# akam/ wins over camyn/ when both exist, and nothing is logged as deprecated
+new_root t9z2
+mkdir -p "$R/mnt/camyn"
+printf '%s\n' "$K1" >"$R/mnt/akam/authorized_keys"
+printf '%s\n' "$K2" >"$R/mnt/camyn/authorized_keys"
+ssh_run start
+check "both: akam/ wins" cmp -s "$R/etc/config/dropbear/authorized_keys" <(printf '%s\n' "$K1")
+check "both: no deprecation note" bash -c "! grep -q DEPRECATED '$R/tmp/akam_ssh.log'"
+killdb
+# card already mounted (toolkit /tmp/sd) with only the old folder
+sd_root t9z3 /tmp/sd
+mv "$R/tmp/sd/akam" "$R/tmp/sd/camyn"
+PATH="$R/stubbin:$PATH" ssh_run start
+check "mounted card: key installed from camyn/" cmp -s "$R/etc/config/dropbear/authorized_keys" <(printf '%s\n' "$K1")
+check "mounted card: deprecation logged" grep -q 'DEPRECATED' "$R/tmp/akam_ssh.log"
+killdb
+unset AKAM_PROC_MOUNTS
+
 echo "== 10. fixture sanity"
 check "fixture has telnetd/ftpd lines" grep -q telnetd "$FIXTURE/sbin/service.sh"
 check "fixture symlink present" test -L "$FIXTURE/lib/libfake.so"

@@ -22,6 +22,11 @@
 #                                             find_mounted_sd. Only when it is not
 #                                             mounted anywhere it is mounted read-only
 #                                             on /tmp/akam_sd (see mount_sd_ro).
+#                                             DEPRECATED fallback (one release): a card
+#                                             prepared for the early-development image
+#                                             has camyn/authorized_keys instead; it is
+#                                             used (and logged as deprecated) only when
+#                                             akam/authorized_keys is absent.
 #   /tmp/akam_ssh.log                        one line per step, no secret logged
 #   /tmp/dropbear.pid, /tmp/akam_ssh.lock    runtime state
 #
@@ -42,6 +47,7 @@ DB_DIR=$CONFIG_DIR/dropbear
 HOSTKEY=$DB_DIR/dropbear_ed25519_host_key
 AUTHKEYS=$DB_DIR/authorized_keys
 SD_DIR=${AKAM_SD_DIR:-$AKAM_ROOT/mnt/akam}
+LEGACY_SD_DIR=${AKAM_SD_DIR_LEGACY:-$AKAM_ROOT/mnt/camyn}
 BIN_DIR=${AKAM_BIN_DIR:-$AKAM_ROOT/usr/bin}
 TMP_DIR=${AKAM_TMP_DIR:-$AKAM_ROOT/tmp}
 SSH_PORT=${AKAM_SSH_PORT:-22}
@@ -65,6 +71,25 @@ is_running() {
     # (No "tr": the camera's BusyBox has no such applet. cmdline is NUL
     # separated; grep -a reads it fine.)
     grep -qa dropbear "${AKAM_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null && return 0
+    return 1
+}
+
+log_legacy_sd() {
+    log "DEPRECATED: using $1 from the former camyn/ folder; rename it to akam/ on the SD card (the camyn/ fallback is removed in the next release)"
+}
+
+# Look for the key file below the SD mount point $1: akam/ first, then the
+# deprecated camyn/ folder. Sets _sdfile and returns 0 when one exists.
+sd_pick() {
+    if [ -f "$1/akam/authorized_keys" ]; then
+        _sdfile=$1/akam/authorized_keys
+        return 0
+    fi
+    if [ -f "$1/camyn/authorized_keys" ]; then
+        _sdfile=$1/camyn/authorized_keys
+        log_legacy_sd "$_sdfile"
+        return 0
+    fi
     return 1
 }
 
@@ -111,7 +136,7 @@ filter_keys() {
 # /proc/mounts (override: AKAM_PROC_MOUNTS) for /dev/mmcblk0p1 or /dev/mmcblk0
 # as the SOURCE of a mount on a directory.
 # Sets _sd_seen (mount point of the last card mount seen, empty if none) and,
-# when <mountpoint>/akam/authorized_keys exists, _sdfile; returns 0 then.
+# when <mountpoint>/akam/authorized_keys (or the deprecated camyn/) exists, _sdfile; returns 0 then.
 find_mounted_sd() {
     _sd_seen=
     _mounts=${AKAM_PROC_MOUNTS:-/proc/mounts}
@@ -123,8 +148,7 @@ find_mounted_sd() {
         esac
         [ -d "$AKAM_ROOT$_mtgt" ] || continue
         _sd_seen=$_mtgt
-        if [ -f "$AKAM_ROOT$_mtgt/akam/authorized_keys" ]; then
-            _sdfile=$AKAM_ROOT$_mtgt/akam/authorized_keys
+        if sd_pick "$AKAM_ROOT$_mtgt"; then
             log "SD card already mounted on $_mtgt ($_msrc), using $_sdfile"
             return 0
         fi
@@ -151,8 +175,7 @@ mount_sd_ro() {
         [ -e "$2" ] || continue
         _found=1
         if _err=$(mount -t "$1" -o ro "$2" "$_sdmnt" 2>&1); then
-            if [ -f "$_sdmnt/akam/authorized_keys" ]; then
-                _sdfile=$_sdmnt/akam/authorized_keys
+            if sd_pick "$_sdmnt"; then
                 log "SD mounted read-only ($1 $2) on $_sdmnt"
                 return 0
             fi
@@ -170,6 +193,10 @@ provision_keys() {
     _sdfile=$SD_DIR/authorized_keys
     _sdmnt=
     _sd_seen=
+    if [ ! -f "$_sdfile" ] && [ -f "$LEGACY_SD_DIR/authorized_keys" ]; then
+        _sdfile=$LEGACY_SD_DIR/authorized_keys
+        log_legacy_sd "$_sdfile"
+    fi
     if [ ! -f "$_sdfile" ]; then
         if find_mounted_sd; then
             :

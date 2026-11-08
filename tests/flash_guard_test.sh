@@ -47,7 +47,7 @@ run() {
     shift 5
     rm -rf "$WORK/proc"
     mkdir -p "$WORK/proc"
-    env -u SSH_CONNECTION -u SSH_CLIENT -u AKAM_FLASH_I_KNOW \
+    env -u SSH_CONNECTION -u SSH_CLIENT -u AKAM_FLASH_I_KNOW -u CAMYN_FLASH_I_KNOW \
         FS="$FS" AKAM_PROC_MOUNTS="$WORK/$mounts" AKAM_PROC_DIR="$WORK/proc" "$@" \
         "${SHCMD[@]}" "$WORK/driver.sh" "$script" "$tool" >"$WORK/out" 2>&1
     local rc=$?
@@ -76,6 +76,11 @@ run "override on SSH: allowed" 0 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x AKAM
 outhas "override prints loud warning" "WARNING"
 run "override on /usr script: allowed" 0 mounts_app /usr/bin/x.sh "" AKAM_FLASH_I_KNOW=1
 run "override must be exactly 1" 1 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x AKAM_FLASH_I_KNOW=yes
+# Deprecated alias (one release): the former CAMYN_FLASH_I_KNOW=1 still works, with a warning.
+run "deprecated CAMYN_FLASH_I_KNOW=1: allowed" 0 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=1
+outhas "deprecated override says so" "CAMYN_FLASH_I_KNOW is deprecated, use AKAM_FLASH_I_KNOW=1"
+outhas "deprecated override still prints the loud warning" "AKAM_FLASH_I_KNOW=1 set, flashing anyway"
+run "deprecated override must be exactly 1" 1 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=yes
 
 # Wiring: every APP-writing script refuses under SSH before doing anything else.
 for s in install_with_flash_tool quiet_and_flash_test restore install_custom_firmware \

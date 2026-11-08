@@ -7,7 +7,8 @@
 #   - /usr is a squashfs mounted from mtdblock7 AND the script or flash tool lives
 #     under /usr (it would be erased while executing).
 # Override: AKAM_FLASH_I_KNOW=1 (prints a loud warning; meant for STOCK firmware
-# over Telnet, where nothing runs from the APP partition being written).
+# over Telnet, where nothing runs from the APP partition being written). The
+# former name CAMYN_FLASH_I_KNOW=1 is a deprecated alias (warning, one release).
 #
 # Second entry point, akam_flash_guard_detached SCRIPT TOOL IMAGE CONFIRM, for
 # the no-UART reflash over SSH (akam_reflash_ssh.sh). It does NOT honour
@@ -27,6 +28,12 @@
 #
 # Test hooks: AKAM_PROC_MOUNTS (default /proc/mounts), AKAM_PROC_DIR (default /proc),
 # AKAM_FLASH_TMPDIR (default /tmp, the RAM directory of rule 2).
+
+# Deprecated alias (former name of the override), accepted for one release only.
+if [ "${CAMYN_FLASH_I_KNOW:-}" = "1" ] && [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; then
+    echo "WARNING: CAMYN_FLASH_I_KNOW is deprecated, use AKAM_FLASH_I_KNOW=1 (the old name is removed in the next release)." >&2
+    AKAM_FLASH_I_KNOW=1
+fi
 
 _cfg_doc="docs/akam_v1_flash_and_restore.md, section 'Reflashing later: never over an SSH session'"
 
