@@ -1,10 +1,10 @@
-# Camyn V1: kernel time64 syscalls (the clock bug)
+# Akam V1: kernel time64 syscalls (the clock bug)
 
 **TL;DR.** The camera's vendor kernel (Linux 4.4.302-cip94, ARM926, no vDSO) does not implement the
 time64 system calls, but it answers `clock_gettime64` (syscall 403) with "success" **without writing the
 result**. musl 1.2 trusts that answer and never falls back to the 32-bit call, so every
 `clock_gettime(CLOCK_MONOTONIC)` in a static musl binary returned whatever was already in the buffer.
-Camyn fixes this at the root with a small shim linked into every static binary
+Akam fixes this at the root with a small shim linked into every static binary
 (`src/common/time32_shim.c`).
 
 ## 1. The proof (measured on the camera)
@@ -65,7 +65,7 @@ redirect the public names on 32-bit time64 builds, so the symbols that end up de
   multi-call link; the final binary is checked with `tools/build/check_time32.sh` (hard failure, `gdb` is required).
 * `src/ak_rtsp/build_firmware.sh`: the same check runs again on the stripped `ak_rtsp` and `dropbearmulti`
   that are actually installed in the image (forbidden time64 syscall, or no `clock_gettime32`, or no `gdb`:
-  the build stops). `CAMYN_ALLOW_UNCHECKED_TIME64=1` skips it with a loud warning (stub binaries in tests only).
+  the build stops). `AKAM_ALLOW_UNCHECKED_TIME64=1` skips it with a loud warning (stub binaries in tests only).
 * Limits: seconds are 32-bit on the wire, so `CLOCK_REALTIME` wraps in 2038 (this kernel cannot do
   better). `utimensat`, `ppoll` and friends are not wrapped (see above) and are verified by the probe instead.
   `clock_getres` needs nothing: the musl bundled with Zig 0.14.1 calls the 32-bit `clock_getres` syscall

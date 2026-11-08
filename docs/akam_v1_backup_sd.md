@@ -1,6 +1,6 @@
-# Camyn V1: Back Up the Camera with a microSD Root Shell (no UART)
+# Akam V1: Back Up the Camera with a microSD Root Shell (no UART)
 
-This is an alternative to the UART route in [camyn_v1_backup.md](camyn_v1_backup.md). It gets a
+This is an alternative to the UART route in [akam_v1_backup.md](akam_v1_backup.md). It gets a
 root shell over Wi-Fi by booting the stock firmware from a prepared microSD card. The camera is not
 opened and **nothing is flashed**.
 
@@ -11,8 +11,8 @@ opened and **nothing is flashed**.
 > - **[Flasher]** comes from stage 1 of
 >   [`4ddict/Action-Smart-Connect-Flasher`](https://github.com/4ddict/Action-Smart-Connect-Flasher) v0.3.2
 >   (commit `b99baf2`), which prepares the same toolkit and runs a backup.
-> - **[Camyn, untested]** was written for Camyn and has **not been run on a camera**. This applies to
->   the procedure as a whole: Camyn reproduces the flasher's stage 1 by hand, minus its Wi-Fi
+> - **[Akam, untested]** was written for Akam and has **not been run on a camera**. This applies to
+>   the procedure as a whole: Akam reproduces the flasher's stage 1 by hand, minus its Wi-Fi
 >   persistence, and adds a second read plus a hash comparison.
 >
 > The toolkit was reverse-engineered on firmware `6.2863.123` (it says it "should work on any version,
@@ -27,7 +27,7 @@ opened and **nothing is flashed**.
 > the file, so a stray OTA-format `.bin` on any card could reflash the camera. The checks in
 > `system_upgrade` (bundle name, higher version) are the only protection. Keep dumps in
 > subdirectories, and **remove the card before powering the camera again** once the dump is done.
-> Camyn images built from this repository guard that call behind `/mnt/CAMYN_MAINTENANCE`, but the
+> Akam images built from this repository guard that call behind `/mnt/AKAM_MAINTENANCE`, but the
 > stock firmware you are dumping is not protected.
 
 ---
@@ -51,11 +51,11 @@ so it can be reproduced by hand without the persistent-Wi-Fi part. That is what 
 
 ## 2. Prerequisites
 
-- Camera: label `3215672.3`, SI `D26228` expected (see [camyn_v1_backup.md](camyn_v1_backup.md), section 3).
+- Camera: label `3215672.3`, SI `D26228` expected (see [akam_v1_backup.md](akam_v1_backup.md), section 3).
   Write the label down.
 - A microSD card. **[Toolkit]** FAT32 is required. **[Flasher]** "any small card is sufficient"; it creates
-  one MBR partition of type `c` (FAT32 LBA). Camyn needs about 17 MiB free for two dumps (8 MiB each).
-  Prefer a small card (up to 32 GB); larger cards were not tested by Camyn.
+  one MBR partition of type `c` (FAT32 LBA). Akam needs about 17 MiB free for two dumps (8 MiB each).
+  Prefer a small card (up to 32 GB); larger cards were not tested by Akam.
 - A 2.4 GHz Wi-Fi network the camera can join with DHCP (**[Flasher]**: the camera is 2.4 GHz only),
   and a PC on the same LAN/VLAN.
 - On the Arch PC: `git`, `dosfstools`, `util-linux`, `inetutils` (for `telnet`), `squashfs-tools`, and optionally `nmap`.
@@ -71,18 +71,18 @@ The card's contents (Wi-Fi password in clear text) must be treated as secret. Se
 ## 3. Get the pinned toolkit and verify it
 
 **[Flasher]** pins the toolkit to commit `396db8a` (`Do not create dump dirs on each boot`,
-2026-02-25). Camyn uses the same commit. Download it and **only read and copy files; never execute
+2026-02-25). Akam uses the same commit. Download it and **only read and copy files; never execute
 anything from it on the PC**.
 
 ```bash
-mkdir -p ~/camyn-sdprep && cd ~/camyn-sdprep
+mkdir -p ~/akam-sdprep && cd ~/akam-sdprep
 git clone https://github.com/tasarren/lsc-tuya-toolkit.git toolkit
 git -C toolkit checkout --detach 396db8a835d9787b2997de038b48f645c837e754
 git -C toolkit rev-parse HEAD
 # must print: 396db8a835d9787b2997de038b48f645c837e754
 ```
 
-Then check the content of the `sd_card/` tree (37 files). The digests below were computed by Camyn at
+Then check the content of the `sd_card/` tree (37 files). The digests below were computed by Akam at
 research time from a clone of that commit:
 
 ```bash
@@ -126,7 +126,7 @@ on your camera.
 
 Other markers in the tree: `_ak39_factory.ini` switches the stock firmware to its factory test mode
 (telnet on port 23 with `root` / `telnet`, RTSP on 554; **[Toolkit]** README). The toolkit ships it with
-an empty `[wifi_station]` section and so does the flasher; Camyn leaves it as is, like the flasher.
+an empty `[wifi_station]` section and so does the flasher; Akam leaves it as is, like the flasher.
 Whether the port-23 service really appears on your unit is unverified; this guide uses port 24.
 
 ---
@@ -148,9 +148,9 @@ sudo wipefs -a "$DEV"
 printf 'label: dos\n, , c, *\n' | sudo sfdisk "$DEV"
 sudo partprobe "$DEV"; sleep 2
 PART="${DEV}1"        # for /dev/mmcblkN use "${DEV}p1"
-sudo mkfs.vfat -F 32 -n CAMYNSD "$PART"
-mkdir -p ~/camyn-sdprep/mnt
-sudo mount -o uid="$(id -u)",gid="$(id -g)",umask=022 "$PART" ~/camyn-sdprep/mnt
+sudo mkfs.vfat -F 32 -n AKAMSD "$PART"
+mkdir -p ~/akam-sdprep/mnt
+sudo mount -o uid="$(id -u)",gid="$(id -g)",umask=022 "$PART" ~/akam-sdprep/mnt
 ```
 
 `hack.sh` mounts `/dev/mmcblk0p1` (falling back to `/dev/mmcblk0`), so the card needs a partition
@@ -160,7 +160,7 @@ the flasher uses the same mount options.
 Copy the toolkit payload and apply the flasher's settings:
 
 ```bash
-cd ~/camyn-sdprep
+cd ~/akam-sdprep
 M=mnt
 cp -a toolkit/sd_card/. "$M"/
 mkdir -p "$M/custom/state" "$M/logs"
@@ -193,14 +193,14 @@ EOF_HOOK
 sync
 ```
 
-Differences from the flasher's stage 1, on purpose: Camyn does **not** copy the flasher's
+Differences from the flasher's stage 1, on purpose: Akam does **not** copy the flasher's
 `decloud_stage1.sh` / `decloud_flash.sh` to the card and does **not** add the hook line that runs
 `decloud_stage1.sh` (that script also writes `/etc/config/wpa_supplicant.conf` into flash).
 `SECURITY=3` means WPA/WPA2 (**[Toolkit]** `wifi.conf`: 1 open, 2 WEP, 3 WPA/WPA2). `ONVIF=1` and
 the other toolkit defaults are left untouched, like the flasher (so ONVIF listens on port 8080 while the card is in).
 
 ```bash
-cd ~ && sudo umount ~/camyn-sdprep/mnt
+cd ~ && sudo umount ~/akam-sdprep/mnt
 ```
 
 ---
@@ -215,7 +215,7 @@ cd ~ && sudo umount ~/camyn-sdprep/mnt
 If, after about three minutes, nothing answers (section 7), unplug, put the card back in the PC and
 read `logs/*.log` on the card (`wifi.*.log`, `telnet.*.log`, `run.*.log`). The most common cause
 reported by the flasher is a wrong SSID or password. Do not improvise further on the camera; the UART
-route in [camyn_v1_backup.md](camyn_v1_backup.md) remains available.
+route in [akam_v1_backup.md](akam_v1_backup.md) remains available.
 
 ---
 
@@ -243,7 +243,7 @@ reassess rather than continuing.
 ## 8. Dump the 8 partitions twice and compare (BusyBox shell on the camera)
 
 Everything below runs in the telnet shell. `SD` is where the toolkit mounted the card.
-**[Camyn, untested]** unless noted. The `dd if=/dev/mtdblockN bs=64k` dump and the size check use the
+**[Akam, untested]** unless noted. The `dd if=/dev/mtdblockN bs=64k` dump and the size check use the
 same commands as **[Flasher]** stage 1.
 
 ### 8.1 Check card, free space and partition table
@@ -256,7 +256,7 @@ cat /proc/version
 cat /proc/mtd
 ```
 
-Compare `/proc/mtd` with the table in [camyn_v1_backup.md](camyn_v1_backup.md) section 2 (the same
+Compare `/proc/mtd` with the table in [akam_v1_backup.md](akam_v1_backup.md) section 2 (the same
 layout the flasher requires; these lines are what its `check_layout` greps for):
 
 ```sh
@@ -347,12 +347,12 @@ this firmware) and only afterwards take out the card.
 ## 9. Copy to the PC and verify there
 
 ```bash
-sudo mkdir -p /mnt/camynsd
-sudo mount -o ro /dev/disk/by-label/CAMYNSD /mnt/camynsd
-mkdir -p ~/camyn-backup
-cp -a /mnt/camynsd/dump1 /mnt/camynsd/dump2 /mnt/camynsd/sums_run* /mnt/camynsd/state_*.txt /mnt/camynsd/logs ~/camyn-backup/
-sudo umount /mnt/camynsd
-cd ~/camyn-backup
+sudo mkdir -p /mnt/akamsd
+sudo mount -o ro /dev/disk/by-label/AKAMSD /mnt/akamsd
+mkdir -p ~/akam-backup
+cp -a /mnt/akamsd/dump1 /mnt/akamsd/dump2 /mnt/akamsd/sums_run* /mnt/akamsd/state_*.txt /mnt/akamsd/logs ~/akam-backup/
+sudo umount /mnt/akamsd
+cd ~/akam-backup
 ```
 
 Verify with the hash tool the camera used (`sha256sum` or `md5sum`):
@@ -367,7 +367,7 @@ file dump1/mtdblock7.bin; unsquashfs -s dump1/mtdblock7.bin
 ```
 
 No output from the `cmp` loop means both dumps are byte-identical. The sizes must match
-[camyn_v1_backup.md](camyn_v1_backup.md) section 2 exactly, and the checklist in its section 7
+[akam_v1_backup.md](akam_v1_backup.md) section 2 exactly, and the checklist in its section 7
 applies (two independent copies on different media, `SHA256SUMS.pc` stored separately). The build
 guide expects the files as `mtdblockN.bin` in one directory; use `dump1/`.
 
@@ -391,12 +391,12 @@ What the toolkit's boot hook does on the camera, from reading `hack.sh` at the p
 Consequences:
 
 - **Your CONFIG dump (`mtdblock6.bin`) is taken after the toolkit hook ran**, so it may include those
-  empty files and updated timestamps. Camyn expects it to be functionally the stock CONFIG; this is
+  empty files and updated timestamps. Akam expects it to be functionally the stock CONFIG; this is
   not proven. The other seven partitions are not written by the hook. The flasher takes its
   "pristine" dump at the same point (hook first, then dump), so it has the same property.
 - Unverified: whether the stock `station_connect.sh` (called by the toolkit with your SSID and
   password) saves the network into CONFIG. The flasher's stage 1 comments say the script only adds the
-  network dynamically and that the flasher copies it to CONFIG itself. Camyn did not read
+  network dynamically and that the flasher copies it to CONFIG itself. Akam did not read
   `station_connect.sh` (it lives in the camera's APP partition; read it in your dump afterwards if you
   care).
 - While the card is in, the toolkit's `recover_cfg.sh` replaces the stock one and the camera's
@@ -411,7 +411,7 @@ empty files above (harmless, not verified). Then reformat the card (section 11).
 ## 11. Security notes
 
 - **Do not run stage 2 and do not flash anything.** This guide ends once the backup is verified.
-  Flashing is a separate step with its own guide ([flash and restore](camyn_v1_flash_and_restore.md)).
+  Flashing is a separate step with its own guide ([flash and restore](akam_v1_flash_and_restore.md)).
   Do not run the flasher's `install.sh` (section 1) and do not put `decloud_flash.sh` on the card.
 - **Telnet on port 24 has no password and is unencrypted.** Anyone on your LAN or Wi-Fi can get a root
   shell on the camera for as long as the card is inserted and the camera is powered. Use a trusted

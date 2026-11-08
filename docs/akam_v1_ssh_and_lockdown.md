@@ -1,13 +1,13 @@
-# Camyn V1: SSH Provisioning and Telnet/FTP Lockdown
+# Akam V1: SSH Provisioning and Telnet/FTP Lockdown
 
-Camyn replaces the stock remote access (Telnet 23, FTP 21, and whatever the stock boot scripts
+Akam replaces the stock remote access (Telnet 23, FTP 21, and whatever the stock boot scripts
 open) with one service: **SSH on port 22, root login by public key only**, no password. The SSH
 server is [Dropbear](https://github.com/mkj/dropbear) 2026.94 built without password authentication,
 forwarding, RSA, ECDSA or DSS.
 
 Status: the scripts described here are tested only on the build host, against fake binaries and a
 synthetic fixture (`tests/ssh_init_test.sh`, `tests/lockdown_test.sh`). **Nothing has run on a camera.**
-Items marked *(assumed)* are hypotheses listed in the [test plan](camyn_v1_test_plan.md#3-hypotheses-to-verify).
+Items marked *(assumed)* are hypotheses listed in the [test plan](akam_v1_test_plan.md#3-hypotheses-to-verify).
 
 ---
 
@@ -16,31 +16,31 @@ Items marked *(assumed)* are hypotheses listed in the [test plan](camyn_v1_test_
 Use a key made only for this camera (one key per camera; never reuse your everyday key):
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/camyn -C "camyn"
+ssh-keygen -t ed25519 -f ~/.ssh/akam -C "akam"
 ```
 
-Set a passphrase. This creates `~/.ssh/camyn` (private, stays on your PC, never copied anywhere) and
-`~/.ssh/camyn.pub` (public). Only **ed25519** keys are accepted by Camyn V1.
+Set a passphrase. This creates `~/.ssh/akam` (private, stays on your PC, never copied anywhere) and
+`~/.ssh/akam.pub` (public). Only **ed25519** keys are accepted by Akam V1.
 
 ## 2. Put the public key on the microSD card
 
-Camyn embeds **no key** in the image. At boot, `camyn_ssh.sh` reads the public keys from the card and
+Akam embeds **no key** in the image. At boot, `akam_ssh.sh` reads the public keys from the card and
 copies them into the persistent CONFIG partition.
 
-Exact location: a directory `camyn` at the root of the FAT32 card, containing the file
-`authorized_keys`. `camyn_ssh.sh` first looks for the card where it is **already mounted**: it parses
+Exact location: a directory `akam` at the root of the FAT32 card, containing the file
+`authorized_keys`. `akam_ssh.sh` first looks for the card where it is **already mounted**: it parses
 `/proc/mounts` for `/dev/mmcblk0p1` (or `/dev/mmcblk0`) mounted on a directory, for instance `/tmp/sd`
 when the flasher toolkit mounted it (its file bind-mounts are ignored) or `/mnt`, and reads
-`<mountpoint>/camyn/authorized_keys`. Only if the card is not mounted anywhere does it mount it
-read-only on `/tmp/camyn_sd` (the stock `service.sh` unmounts `/mnt` after its boot checks; same devices
+`<mountpoint>/akam/authorized_keys`. Only if the card is not mounted anywhere does it mount it
+read-only on `/tmp/akam_sd` (the stock `service.sh` unmounts `/mnt` after its boot checks; same devices
 and filesystem order as the stock `tf_mount.sh`: vfat then exfat, `/dev/mmcblk0p1` then `/dev/mmcblk0`),
-then unmounts. Every step, including mount errors, is logged in `/tmp/camyn_ssh.log`.
+then unmounts. Every step, including mount errors, is logged in `/tmp/akam_ssh.log`.
 *(Tested on fixtures only; not yet validated on hardware.)*
 
 ```bash
 # the card is mounted on your PC at /run/media/$USER/CARD (adapt)
-mkdir -p /run/media/$USER/CARD/camyn
-cp ~/.ssh/camyn.pub /run/media/$USER/CARD/camyn/authorized_keys
+mkdir -p /run/media/$USER/CARD/akam
+cp ~/.ssh/akam.pub /run/media/$USER/CARD/akam/authorized_keys
 sync
 ```
 
@@ -55,10 +55,10 @@ Rules enforced by the script:
 
 ## 3. First boot
 
-Insert the card **before applying power**. The keys are read only when `camyn_ssh.sh` starts at boot, so
+Insert the card **before applying power**. The keys are read only when `akam_ssh.sh` starts at boot, so
 a card inserted later has no effect until the next power cycle.
 
-At boot the wrapper (`ak_rtsp_wrapper.sh`) starts `camyn_ssh.sh` in the background before it brings up
+At boot the wrapper (`ak_rtsp_wrapper.sh`) starts `akam_ssh.sh` in the background before it brings up
 Wi-Fi and starts `ak_rtsp`; the helper can never delay or stop `ak_rtsp` (its exit status is ignored).
 It then:
 
@@ -72,7 +72,7 @@ It then:
 6. makes sure a login shell is accepted (section 4);
 7. starts `dropbear` on port 22 with `-r <hostkey> -D /etc/config/dropbear -P /tmp/dropbear.pid -T 3 -E`.
 
-It writes one line per step to `/tmp/camyn_ssh.log` (RAM; no secret is logged). If `/etc/config` never
+It writes one line per step to `/tmp/akam_ssh.log` (RAM; no secret is logged). If `/etc/config` never
 becomes writable it still starts Dropbear with an ephemeral host key in `/tmp` and **no** persistent
 keys, and logs that.
 
@@ -82,7 +82,7 @@ confirmed by the persistence test)*. After the first successful login you can re
 Connect:
 
 ```bash
-ssh -i ~/.ssh/camyn -o IdentitiesOnly=yes root@<camera-ip>
+ssh -i ~/.ssh/akam -o IdentitiesOnly=yes root@<camera-ip>
 ```
 
 Find `<camera-ip>` in your router's DHCP list. On the first connection, compare the displayed
@@ -91,7 +91,7 @@ ed25519 fingerprint with the one the camera computes (from the UART console):
 
 ### Changing keys later
 
-Put a new `camyn/authorized_keys` on the card and power cycle. A valid file **replaces** the whole
+Put a new `akam/authorized_keys` on the card and power cycle. A valid file **replaces** the whole
 stored list.
 
 ### Host key change after a CONFIG wipe
@@ -105,33 +105,33 @@ ssh-keygen -R <camera-ip>
 ```
 
 A CONFIG wipe also deletes `authorized_keys`. With no embedded default key, you must insert the card
-with `camyn/authorized_keys` again, or fall back to the UART console. Wi-Fi settings live in the same
+with `akam/authorized_keys` again, or fall back to the UART console. Wi-Fi settings live in the same
 partition (`/etc/config/wpa_supplicant.conf`), so a wipe also drops the camera off your network.
 
 ### `/etc/shells`
 
 Dropbear refuses a login if `/etc/shells` exists and does not list the user's shell. If the file exists
-without `/bin/sh`, `camyn_ssh.sh` bind-mounts a private one-line list over it (the real file is not
+without `/bin/sh`, `akam_ssh.sh` bind-mounts a private one-line list over it (the real file is not
 modified) and logs it. If that mount fails the log says `root login may be refused`.
-`camyn_hwcheck.sh` checks that root's shell is listed. Whether stock has `/etc/shells` is
+`akam_hwcheck.sh` checks that root's shell is listed. Whether stock has `/etc/shells` is
 unknown *(assumed absent or containing `/bin/sh`)*.
 
 ### If you cannot log in
 
-From the UART console: `cat /tmp/camyn_ssh.log`, `/usr/sbin/camyn_ssh.sh status`, and check that
+From the UART console: `cat /tmp/akam_ssh.log`, `/usr/sbin/akam_ssh.sh status`, and check that
 `/etc/config/dropbear` is mode 700 and `authorized_keys` mode 600 owned by root. Dropbear refuses
 `authorized_keys` when any directory on the path is writable by group or others; the script logs the
 modes of `/etc/config`, `/etc` and `/` for this reason.
 
 The stock ROOTFS is a read-only squashfs whose `/` and `/etc` are mode 0775 (group-writable), which
 Dropbear would reject, and they cannot be changed at runtime. The walk stops at root's HOME, so
-`camyn_ssh.sh` makes HOME a private tmpfs directory (`/tmp/camyn_home`, 0700) holding a copy of the key
+`akam_ssh.sh` makes HOME a private tmpfs directory (`/tmp/akam_home`, 0700) holding a copy of the key
 file, and bind-mounts a private copy of `passwd` over `/etc/passwd` (it is a symlink to
 `/etc/config/passwd`) whose `root` entry has that HOME (a missing `root` entry is added: without one
 Dropbear refuses every login). The real file is untouched. The log line is `root HOME is now ...`; if
 it says `could not set root HOME` the legacy directory is used and the login may be refused.
 The bind mount is made once per boot (a respawned script sees the root entry already points at
-`/tmp/camyn_home` and does not mount again). If `/etc/config/passwd` does not exist, the script creates
+`/tmp/akam_home` and does not mount again). If `/etc/config/passwd` does not exist, the script creates
 it **empty** in CONFIG (a persistent write) so that there is a file to bind over; with the stock file
 present nothing in CONFIG is written. Root's HOME (and so the shell's starting directory) is on tmpfs
 and is empty after every reboot.
@@ -140,7 +140,7 @@ and is empty after every reboot.
 
 Dropbear listens on all interfaces, port 22, public-key only (no password prompt exists in the
 binary). There is no rate limit beyond `-T 3` (three authentication attempts per connection). Keep
-the camera on a trusted segment (see [network hardening](camyn_v1_install.md#5-network-hardening)).
+the camera on a trusted segment (see [network hardening](akam_v1_install.md#5-network-hardening)).
 
 ## 5. File transfer without `scp`
 
@@ -149,13 +149,13 @@ server, and OpenSSH 9 and later `scp` speaks SFTP by default. Use `ssh` with `ca
 
 ```bash
 # PC -> camera (RAM-backed /tmp; the camera has 64 MiB of RAM, keep files small)
-ssh -i ~/.ssh/camyn root@<camera-ip> 'cat > /tmp/f && chmod +x /tmp/f' < f
+ssh -i ~/.ssh/akam root@<camera-ip> 'cat > /tmp/f && chmod +x /tmp/f' < f
 
 # camera -> PC
-ssh -i ~/.ssh/camyn root@<camera-ip> 'cat /tmp/f' > f
+ssh -i ~/.ssh/akam root@<camera-ip> 'cat /tmp/f' > f
 
 # a directory, PC -> camera (needs gzip support in the camera's BusyBox tar: a hypothesis to verify)
-tar czf - dir | ssh -i ~/.ssh/camyn root@<camera-ip> 'tar xzf - -C /tmp'
+tar czf - dir | ssh -i ~/.ssh/akam root@<camera-ip> 'tar xzf - -C /tmp'
 ```
 
 `make -C src/ak_rtsp upload CAMERA_IP=<camera-ip>` uses the `cat` technique, with plain
@@ -164,7 +164,7 @@ tar czf - dir | ssh -i ~/.ssh/camyn root@<camera-ip> 'tar xzf - -C /tmp'
 ```
 # ~/.ssh/config
 Host <camera-ip>
-    IdentityFile ~/.ssh/camyn
+    IdentityFile ~/.ssh/akam
     IdentitiesOnly yes
 ```
 
@@ -181,14 +181,14 @@ Two independent layers; both are needed because the exact place where the stock 
 `tools/firmware_patch_templates/patch_service_sh.sh`, run by `build_firmware.sh`:
 
 - every non-comment line that launches `telnetd`, `utelnetd`, `ftpd`, `bftpd` or `vsftpd` (this
-  includes `tcpsvd ... ftpd`) is replaced by `: # CAMYN-DISABLED: <original line>`, so the daemons are
+  includes `tcpsvd ... ftpd`) is replaced by `: # AKAM-DISABLED: <original line>`, so the daemons are
   never started;
 - lines that run the microSD hook (`_ht_ap_mode.conf`, `hack.sh`, `hostapd` on the card, `telnet.sh`) get
   a guard so that they run **only if the maintenance flag exists** (section 7);
 - no other line changes; the exact diff is written to `service_sh.diff` next to the image.
 
 The build fails (exit 2 or 3) if the file has a shape the patch will not guess at, or no launch line is
-found, unless you set `CAMYN_ALLOW_UNPATCHED_SERVICE=1`.
+found, unless you set `AKAM_ALLOW_UNPATCHED_SERVICE=1`.
 
 On the real stock firmware (audited from a dump) the `service.sh` and `main.sh` launch lines for
 `telnetd` and `tcpsvd ... ftpd` are already commented out, and nothing in the stock tree runs
@@ -197,20 +197,20 @@ is on the card, the card's `hostapd` is copied to `/tmp` and later run as root b
 patch accepts "commented-only" daemons (exit 0 with a NOTE) as long as it finds this hook, and guards
 the `dd` of the marker file and the `cp` of the card's `hostapd` with the maintenance flag. The stock
 `tf_update.sh` (a `*.bin` on the card triggers `system_upgrade`) is a separate SD-triggered path that
-Camyn does not change.
+Akam does not change.
 
-### Layer 2: runtime safety net, `camyn_lockdown.sh`
+### Layer 2: runtime safety net, `akam_lockdown.sh`
 
-Started in the background by the wrapper next to `camyn_ssh.sh`. It covers a layer-1 patch that had no
+Started in the background by the wrapper next to `akam_ssh.sh`. It covers a layer-1 patch that had no
 effect, or a late start by another script. It:
 
 - kills processes whose command line has a token named `telnetd`, `utelnetd`, `ftpd`, `bftpd`,
   `vsftpd`, or one of the SD-hook respawn scripts `telnet.sh` and `hack.sh` (respawn scripts first);
 - runs every 5 s for 2 minutes after boot, then every 60 s without end, so a restart after a Wi-Fi
   reconnect is also caught;
-- never touches `ak_rtsp`, `dropbear`, `wpa_supplicant`, `cmdserver`, `msgserver` or `camyn_*`;
+- never touches `ak_rtsp`, `dropbear`, `wpa_supplicant`, `cmdserver`, `msgserver` or `akam_*`;
 - uses only `ps` and `kill` (no `pkill`/`killall`), and opens no network socket;
-- logs to `/tmp/camyn_lockdown.log`.
+- logs to `/tmp/akam_lockdown.log`.
 
 The stock `anyka_ipc` is removed from the image, which also removes its factory-test mode that opens
 Telnet on port 23.
@@ -220,29 +220,29 @@ Telnet on port 23.
 | Situation | Window in which a telnet/FTP daemon can be reachable |
 |---|---|
 | Daemons started by APP `service.sh` and layer 1 applied | None: they are never launched |
-| Layer 1 had no effect, only layer 2 acts | From the stock launch until the first pass of `camyn_lockdown.sh`; on the order of tens of seconds *(estimate, not measured)* |
+| Layer 1 had no effect, only layer 2 acts | From the stock launch until the first pass of `akam_lockdown.sh`; on the order of tens of seconds *(estimate, not measured)* |
 | Daemons launched from ROOTFS (`rcS`, `inittab`, `rc.local`) | Until the first pass of the safety net after the wrapper starts; ROOTFS is not modified in V1, so this cannot be fixed without a decision to modify ROOTFS |
 
-Measure it on your unit with `camyn_hwcheck.sh --boot-window` ([test plan](camyn_v1_test_plan.md#2-post-flash-procedure)).
+Measure it on your unit with `akam_hwcheck.sh --boot-window` ([test plan](akam_v1_test_plan.md#2-post-flash-procedure)).
 
 ## 7. Maintenance flag
 
-Create an **empty file named `CAMYN_MAINTENANCE` at the root of the microSD card**. The stock
+Create an **empty file named `AKAM_MAINTENANCE` at the root of the microSD card**. The stock
 `service.sh` mounts the card on `/mnt`, runs the SD hooks and then unmounts it (`umount -l /mnt`)
-long before `camyn_lockdown.sh` starts. So the patched `service.sh` records the flag in RAM while
+long before `akam_lockdown.sh` starts. So the patched `service.sh` records the flag in RAM while
 the card is still mounted: right before the first guarded SD hook it runs
-`[ -f /mnt/CAMYN_MAINTENANCE ] && : > /tmp/camyn_maintenance`. `camyn_lockdown.sh` and
-`camyn_hwcheck.sh` honour that RAM marker (and still the `/mnt/...` file while a card is mounted).
+`[ -f /mnt/AKAM_MAINTENANCE ] && : > /tmp/akam_maintenance`. `akam_lockdown.sh` and
+`akam_hwcheck.sh` honour that RAM marker (and still the `/mnt/...` file while a card is mounted).
 
 - With the flag present at boot: the patched `service.sh` lets the card's hook scripts run again, and
-  `camyn_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping. The flag does **not**
-  start Telnet or FTP by itself: it only stops Camyn from preventing whatever the card's scripts start.
+  `akam_lockdown.sh` logs `maintenance mode`, kills nothing and keeps looping. The flag does **not**
+  start Telnet or FTP by itself: it only stops Akam from preventing whatever the card's scripts start.
 - **Duration:** maintenance mode lasts **until the next reboot without the flag**. The marker lives in
   RAM (`/tmp`), so removing the card does not end it; a power cycle with the card absent (or without
-  the flag file) does. Deleting `/tmp/camyn_maintenance` by hand over a shell also resumes the
+  the flag file) does. Deleting `/tmp/akam_maintenance` by hand over a shell also resumes the
   lockdown at the next round.
 - Without the flag: everything is closed (including Telnet/FTP left running after the card was removed).
-- Every 60 s the safety net also runs `camyn_ssh.sh start` in the background, which restarts a dead Dropbear.
+- Every 60 s the safety net also runs `akam_ssh.sh start` in the background, which restarts a dead Dropbear.
 - The flag is read once at boot (into the RAM marker); the marker is re-checked every round of the
   safety net. It is never set by the
   watchdog or by a network event; only physical access to the card can enable it. Treat it as exactly
@@ -257,19 +257,19 @@ normal use anyway**.
 
 1. Wire UART first and keep it attached for the whole first test ([hardware_and_uart.md](hardware_and_uart.md)).
    After the flash there is no network shell except SSH; UART is the fallback. Without UART, read
-   [what can and cannot be recovered](camyn_v1_flash_and_restore.md#without-uart-what-can-be-recovered)
+   [what can and cannot be recovered](akam_v1_flash_and_restore.md#without-uart-what-can-be-recovered)
    and skip the flag in step 2.
-2. Prepare the card with `camyn/authorized_keys`. **First-boot card (recommended, also without UART):**
+2. Prepare the card with `akam/authorized_keys`. **First-boot card (recommended, also without UART):**
    `tools/sd/prepare_first_boot_sd.sh` builds a card with the pinned toolkit payload (telnet 24) plus
-   `CAMYN_MAINTENANCE` plus `camyn/authorized_keys`: the first boot then offers telnet 24 (kept alive by
+   `AKAM_MAINTENANCE` plus `akam/authorized_keys`: the first boot then offers telnet 24 (kept alive by
    the RAM marker) and SSH 22. After SSH is validated, remove the card and reboot; telnet must be gone
-   ([flash guide](camyn_v1_flash_and_restore.md#first-flash-without-uart-from-the-stock-firmware), step 5).
+   ([flash guide](akam_v1_flash_and_restore.md#first-flash-without-uart-from-the-stock-firmware), step 5).
    Do not put the flag on any other card that holds toolkit/flasher files.
 3. Flash, power cycle with the card inserted, and wait a few minutes for the first boot.
-4. Log in with `ssh -i ~/.ssh/camyn ...`. Run `camyn_hwcheck.sh` (it will WARN about the flag).
+4. Log in with `ssh -i ~/.ssh/akam ...`. Run `akam_hwcheck.sh` (it will WARN about the flag).
 5. Power-cut the camera, boot again, and log in again with the same key and the same host fingerprint.
-6. Only then remove `CAMYN_MAINTENANCE`, power cycle, and run `camyn_hwcheck.sh` and
-   `camyn_hwcheck.sh --boot-window` again; ports 21, 23 and 24 must be closed. Then remove the card
+6. Only then remove `AKAM_MAINTENANCE`, power cycle, and run `akam_hwcheck.sh` and
+   `akam_hwcheck.sh --boot-window` again; ports 21, 23 and 24 must be closed. Then remove the card
    and repeat the login (boot without a card).
 
-Details of each check: [test plan](camyn_v1_test_plan.md).
+Details of each check: [test plan](akam_v1_test_plan.md).

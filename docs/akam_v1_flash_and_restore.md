@@ -1,22 +1,22 @@
-# Camyn V1: Flashing and Restoring
+# Akam V1: Flashing and Restoring
 
 > **RISK.** Writing the SPI NOR can brick the camera. Restoring is **not guaranteed** to work (section
-> 5). Do not start without a verified 8-partition backup ([backup guide](camyn_v1_backup.md)). A UART
+> 5). Do not start without a verified 8-partition backup ([backup guide](akam_v1_backup.md)). A UART
 > connection ([hardware_and_uart.md](hardware_and_uart.md)) is the only way back from an APP that does
 > not boot; the [no-UART variant](#first-flash-without-uart-from-the-stock-firmware) below exists, but
 > read what it can and cannot recover (section 5) before choosing it.
 >
-> Status: `flash_tool` and `install_with_flash_tool.sh` were run on a real Camyn camera twice on
-> 2026-11-08 (stock telnet, then Camyn maintenance telnet), 0 chunk retries and a matching read-back
-> md5 each time. The reflash over SSH from RAM (`camyn_reflash_ssh.sh`) is tested on the build host
+> Status: `flash_tool` and `install_with_flash_tool.sh` were run on a real Akam camera twice on
+> 2026-11-08 (stock telnet, then Akam maintenance telnet), 0 chunk retries and a matching read-back
+> md5 each time. The reflash over SSH from RAM (`akam_reflash_ssh.sh`) is tested on the build host
 > with fakes only: **not tested on hardware**. Restoring is untested.
 
 ---
 
-## 1. Why Camyn's own procedure and not the flasher
+## 1. Why Akam's own procedure and not the flasher
 
 The [Action-Smart-Connect-Flasher](https://github.com/4ddict/Action-Smart-Connect-Flasher) (v0.3.2) is
-a good tool, but for the first Camyn camera the decision (O-2c) is **not to use it**:
+a good tool, but for the first Akam camera the decision (O-2c) is **not to use it**:
 
 - Its repository and commit constants (`FIRMWARE_REPO`, `FIRMWARE_COMMIT`) are hard-coded to the upstream
   project. It builds upstream's `ak_rtsp`, not this tree, and knows nothing about Dropbear, the SSH
@@ -25,18 +25,18 @@ a good tool, but for the first Camyn camera the decision (O-2c) is **not to use 
   expected to **fail on this source tree**, where the flasher's fixes are already integrated
   (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
 - It talks to the camera through an unauthenticated Telnet shell on port 24, opened by an SD-card hook,
-  which is exactly what Camyn closes. A card left over from the flasher keeps that hook.
+  which is exactly what Akam closes. A card left over from the flasher keeps that hook.
 - The flasher's own post-flash check does not look at SSH.
 
-Camyn's procedure is: manual backup, `build_firmware.sh`, then `install_with_flash_tool.sh` below. The
-flasher stays a reference. Adapting it to Camyn is deferred until Camyn has been validated on hardware.
+Akam's procedure is: manual backup, `build_firmware.sh`, then `install_with_flash_tool.sh` below. The
+flasher stays a reference. Adapting it to Akam is deferred until Akam has been validated on hardware.
 The image builder still honours the flasher's interface (`APP_EXTRACTED`, `FW_DIR`, output name,
 exact size).
 
 ## 2. What is written, and what never is
 
 - Only `/dev/mtd7` (APP, 5 242 880 bytes at `0x300000`) is written by the install script.
-- **UBOOT, ENV, ENVBK, DTB, KERNEL and ROOTFS are never written by Camyn V1.** CONFIG is only written
+- **UBOOT, ENV, ENVBK, DTB, KERNEL and ROOTFS are never written by Akam V1.** CONFIG is only written
   by the camera itself at runtime (Dropbear keys).
 - Do not use `dd` to write `/dev/mtdblock7` on a running system: upstream documents silent corruption
   from SPI-NOR DMA contention ([details](firmware_building_and_flashing.md#5-the-spi-nor-dma-contention-gotcha)).
@@ -47,26 +47,26 @@ exact size).
 On the PC, check the image, then copy files to a FAT32 card:
 
 ```bash
-cd ~/camyn-work/out
+cd ~/akam-work/out
 sha256sum -c ak_rtsp_firmware_*.squashfs.sha256
 md5sum ak_rtsp_firmware_*.squashfs          # note it; the camera prints md5sum too
 
 SD=/run/media/$USER/CARD                    # adapt
-mkdir -p "$SD/custom_firmware" "$SD/camyn" "$SD/original_firmware"
+mkdir -p "$SD/custom_firmware" "$SD/akam" "$SD/original_firmware"
 cp ak_rtsp_firmware_*.squashfs "$SD/custom_firmware/"
-cp ~/camyn-backup/mtdblock*.bin "$SD/original_firmware/"          # for restore
-cp ~/Projects/camyn/src/ak_rtsp/flash_tool "$SD/"                 # path of your checkout
-cp ~/Projects/camyn/tools/flash_scripts/install_with_flash_tool.sh \
-   ~/Projects/camyn/tools/flash_scripts/restore.sh \
-   ~/Projects/camyn/tools/flash_scripts/flash_guard.sh "$SD/"   # flash_guard.sh is mandatory
-cp ~/.ssh/camyn.pub "$SD/camyn/authorized_keys"
-touch "$SD/CAMYN_MAINTENANCE"               # UART route only; the no-UART route uses the first-boot card (flash guide, step 5)
+cp ~/akam-backup/mtdblock*.bin "$SD/original_firmware/"          # for restore
+cp ~/Projects/akam/src/ak_rtsp/flash_tool "$SD/"                 # path of your checkout
+cp ~/Projects/akam/tools/flash_scripts/install_with_flash_tool.sh \
+   ~/Projects/akam/tools/flash_scripts/restore.sh \
+   ~/Projects/akam/tools/flash_scripts/flash_guard.sh "$SD/"   # flash_guard.sh is mandatory
+cp ~/.ssh/akam.pub "$SD/akam/authorized_keys"
+touch "$SD/AKAM_MAINTENANCE"               # UART route only; the no-UART route uses the first-boot card (flash guide, step 5)
 sync
 ```
 
 This layout is for the UART route. For the no-UART route use the card described in
 [First flash without UART](#first-flash-without-uart-from-the-stock-firmware): do not create
-`CAMYN_MAINTENANCE`, and do not boot Camyn for the first time with the toolkit files on the card.
+`AKAM_MAINTENANCE`, and do not boot Akam for the first time with the toolkit files on the card.
 
 The script uses fixed paths on the camera: `/mnt/flash_tool` and
 `/mnt/custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (the lexicographically last match is
@@ -76,10 +76,10 @@ used, so keep only one image there). It refuses an image that is not exactly 5 2
 
 Get a root shell over the **UART console** with the `init=/bin/sh` boot
 ([hardware_and_uart.md](hardware_and_uart.md#6-dropping-into-a-u-boot-root-shell)). Upstream reports
-`flash_tool` working live over Telnet with Wi-Fi and ISP active, but Camyn recommends the bare shell
+`flash_tool` working live over Telnet with Wi-Fi and ISP active, but Akam recommends the bare shell
 for two reasons: it is the state upstream's restore script was always run in, and on a running camera
 the APP partition is mounted on `/usr`, so a live flash erases the filesystem that running programs
-(including Dropbear and the stock watchdog) are paged from *(a live flash of a Camyn camera survived twice, but it remains a risk)*; see
+(including Dropbear and the stock watchdog) are paged from *(a live flash of an Akam camera survived twice, but it remains a risk)*; see
 "Reflashing later" below.
 
 ```sh
@@ -102,7 +102,7 @@ Flashing and verification completed successfully!
 ```
 
 (`flash_tool` prints the exact counts; any "failed" figure other than 0 deserves attention, and any
-error line means **do not power cycle**.) As an extra check that Camyn adds (not part of the upstream
+error line means **do not power cycle**.) As an extra check that Akam adds (not part of the upstream
 script), read the partition back and compare with the PC value:
 
 ```sh
@@ -115,13 +115,13 @@ still fails, restore your backup (section 5) **before** powering off.
 Then power cycle **by hand**: unplug and replug USB-C. The software `reboot` command is unreliable on
 this hardware.
 
-After the boot, continue with the [test plan](camyn_v1_test_plan.md#2-post-flash-procedure) and the
-[SSH guide](camyn_v1_ssh_and_lockdown.md#8-test-order-keep-a-way-back-until-ssh-is-proven).
+After the boot, continue with the [test plan](akam_v1_test_plan.md#2-post-flash-procedure) and the
+[SSH guide](akam_v1_ssh_and_lockdown.md#8-test-order-keep-a-way-back-until-ssh-is-proven).
 
 ### First flash without UART (from the stock firmware)
 
 This is the variant for a camera that has only been opened through the microSD toolkit shell of the
-[SD backup guide](camyn_v1_backup_sd.md). It is **untested by Camyn**; the flashing itself is the
+[SD backup guide](akam_v1_backup_sd.md). It is **untested by Akam**; the flashing itself is the
 upstream path (`install_with_flash_tool.sh` run live over the toolkit's Telnet on **stock** firmware,
 which upstream reports working), so the stock `/usr` (APP) is mounted and in use while it is erased
 *(assumed risk: if the write dies half-way, only UART or an SPI programmer recovers the APP)*.
@@ -142,7 +142,7 @@ that the camera boots stock and opens `telnet CAMERA_IP 24`). Add, on the PC, in
 (see the warning in the SD backup guide).
 
 **2. Shell and mount.** Boot the stock camera with this card, wait for the toolkit, then
-`telnet CAMERA_IP 24`. The stock boot has already unmounted `/mnt` (lazy `umount`), but every Camyn
+`telnet CAMERA_IP 24`. The stock boot has already unmounted `/mnt` (lazy `umount`), but every Akam
 script reads `/mnt/...`, so mount the card there yourself:
 
 ```sh
@@ -151,7 +151,7 @@ ls -l /mnt/custom_firmware /mnt/flash_tool /mnt/flash_guard.sh
 ```
 
 `flash_guard.sh` passes in this shell: it is not SSH, and the scripts and `flash_tool` live under
-`/mnt`, not `/usr`. Do not use `CAMYN_FLASH_I_KNOW=1` here.
+`/mnt`, not `/usr`. Do not use `AKAM_FLASH_I_KNOW=1` here.
 
 **3. Gates before writing** (each one costs nothing and an unmet one strands the camera, because there
 is no UART to fix it afterwards):
@@ -169,20 +169,20 @@ exists (223 bytes, one `network` block with an `ssid` and a `psk`, `key_mgmt` li
 `/tmp/_ht_ap_mode.conf` exists, which `service.sh` copies from `_ht_ap_mode.conf` on the SD card. The
 toolkit cards carry that file (it is how their hook runs), so a boot **with** such a card takes the
 AP branch and Wi-Fi is then brought up by the toolkit; a boot **without** a card, or with a card
-lacking that file, is station mode from `wpa_supplicant.conf`. Camyn's patched `service.sh` only
-copies it when `CAMYN_MAINTENANCE` is present. `hostapd.conf` in CONFIG is empty. The only thing that
+lacking that file, is station mode from `wpa_supplicant.conf`. Akam's patched `service.sh` only
+copies it when `AKAM_MAINTENANCE` is present. `hostapd.conf` in CONFIG is empty. The only thing that
 rewrites or deletes the file is `recover_cfg.sh` (factory reset, run when the settings file is under
-512 bytes; it is 3010 bytes here) and Tuya pairing inside `anyka_ipc`, which Camyn removes. Camyn does
+512 bytes; it is 3010 bytes here) and Tuya pairing inside `anyka_ipc`, which Akam removes. Akam does
 not touch CONFIG. Residual doubts: the Wi-Fi driver/DHCP path is the same one the toolkit used, but
-Camyn has not booted it; and the router must still accept the saved credentials (same SSID, 2.4 GHz).
-- `/etc/config/wpa_supplicant.conf` must exist and be non-empty. Camyn removes the Tuya agent that
+Akam has not booted it; and the router must still accept the saved credentials (same SSID, 2.4 GHz).
+- `/etc/config/wpa_supplicant.conf` must exist and be non-empty. Akam removes the Tuya agent that
   used to write it, and `ak_rtsp_wrapper.sh` only starts Wi-Fi when this file exists. The SD backup
   route does **not** write it (the toolkit keeps the Wi-Fi settings in RAM). If it is missing, the
-  camera will boot Camyn without a network. Create it first, from the same shell, with the block
+  camera will boot Akam without a network. Create it first, from the same shell, with the block
   below *(untested format, matches the `wpa_cli -p/var/run/wpa_supplicant` used by the stock scripts;
   this is a deliberate write to CONFIG)*.
 - `/etc/config/passwd` should exist (the stock `/etc/passwd` is a symlink to it). If it does not,
-  `camyn_ssh.sh` creates an **empty** one in CONFIG so that it can bind-mount its private copy over it.
+  `akam_ssh.sh` creates an **empty** one in CONFIG so that it can bind-mount its private copy over it.
 - `cat /proc/mtd` must show the `mtd7: 00500000 ... "APP"` line, and the image must be 5 242 880 bytes
   (the script checks).
 
@@ -212,12 +212,12 @@ dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum      # must equal the md5sum printed
 Read the `FAULT SUMMARY` and the success line in full. On any error, **do not power cycle**: rerun
 the script; if it still fails, go to "Without UART: what can be recovered" in section 5.
 
-**5. Prepare the first Camyn boot (recommended: the "first-boot" card).** Power off by hand (unplug
+**5. Prepare the first Akam boot (recommended: the "first-boot" card).** Power off by hand (unplug
 USB-C) and swap the card for a **second, dedicated card** prepared on the PC with
 `tools/sd/prepare_first_boot_sd.sh`:
 
 ```bash
-bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/camyn.pub
+bash tools/sd/prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/akam.pub
 ```
 
 The script verifies the pinned `lsc-tuya-toolkit` commit (`396db8a`) and the `sd_card` tree sha256
@@ -225,16 +225,16 @@ The script verifies the pinned `lsc-tuya-toolkit` commit (`396db8a`) and the `sd
 and needs a typed `YES` before wiping, waits for the reader to come back after `wipefs` (some
 readers report "No medium found"), asks for the SSID and password **visibly**, and writes the toolkit
 payload configured as for the backup (telnet 24, `OFFLINE=1`, `wifi.conf`, entrypoint lock,
-`hack.sh` hook, `dump.done`) **plus** an empty `CAMYN_MAINTENANCE` and `camyn/authorized_keys`. It never
+`hack.sh` hook, `dump.done`) **plus** an empty `AKAM_MAINTENANCE` and `akam/authorized_keys`. It never
 writes a `*.bin` to the card root. `--dry-run --stage-dir DIR` builds the tree without touching a
 device. The card holds your Wi-Fi password in clear text: keep it private.
 
 Why this works: with the card in, the patched `service.sh` lets the toolkit hook run (flag present) and
-records `/tmp/camyn_maintenance` while the SD is still mounted, so `camyn_lockdown.sh` does not kill the
-toolkit's telnet on port 24 after the stock script unmounts the card, while `camyn_ssh.sh` brings up
-SSH on port 22 from `camyn/authorized_keys`. Power on, wait a few minutes, then:
+records `/tmp/akam_maintenance` while the SD is still mounted, so `akam_lockdown.sh` does not kill the
+toolkit's telnet on port 24 after the stock script unmounts the card, while `akam_ssh.sh` brings up
+SSH on port 22 from `akam/authorized_keys`. Power on, wait a few minutes, then:
 
-1. `ssh -i ~/.ssh/camyn root@CAMERA_IP` and run `camyn_hwcheck.sh` (it warns about maintenance mode).
+1. `ssh -i ~/.ssh/akam root@CAMERA_IP` and run `akam_hwcheck.sh` (it warns about maintenance mode).
 2. Once SSH is validated, **unplug USB-C, remove the card, and boot again**: maintenance mode lasts
    only until the next boot without the flag, so telnet 24 must be gone (ports 21, 23, 24 closed) and
    SSH must still work with the same host fingerprint.
@@ -242,13 +242,13 @@ SSH on port 22 from `camyn/authorized_keys`. Power on, wait a few minutes, then:
    telnet whenever it is inserted; erase it otherwise.
 
 This path is untested on hardware. If SSH does not come up but telnet 24 does, you have a root shell
-to investigate (Wi-Fi, `/tmp/camyn_ssh.log`) before touching anything else.
+to investigate (Wi-Fi, `/tmp/akam_ssh.log`) before touching anything else.
 
 ### Reflashing later: never over an SSH session
 
-Do **not** re-flash a running Camyn camera from an SSH login. On a running Camyn camera the APP
-partition is mounted on `/usr`, and everything Camyn starts lives there: `dropbear` and `dropbearkey`
-(`/usr/bin`), `ak_rtsp_wrapper.sh`, `camyn_ssh.sh`, `camyn_lockdown.sh`, and the stock
+Do **not** re-flash a running Akam camera from an SSH login. On a running Akam camera the APP
+partition is mounted on `/usr`, and everything Akam starts lives there: `dropbear` and `dropbearkey`
+(`/usr/bin`), `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, and the stock
 `/usr/bin/watchdog` that supervises the system. `flash_tool` erases `/dev/mtd7` in place while those
 programs are paged in from it. Expected consequences *(reasoned from the layout and from
 `quiet_and_flash_test.sh`, which exists because killing the watchdog stops the hardware timer from
@@ -266,22 +266,22 @@ A partly written APP is recoverable only through UART (section 5), so use UART f
    `flash_tool` are read from the card, never from `/usr`.
 
 UART is the only route with a safety net. Two no-UART routes are described below: the reflash over
-the **maintenance telnet** (card in the camera; used twice on a Camyn camera), and the **reflash over
+the **maintenance telnet** (card in the camera; used twice on an Akam camera), and the **reflash over
 SSH from RAM** (no card; residual risk; tested on the build host with fakes only). The `make -C src/ak_rtsp upload`
 target copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash;
-do not run those two from an SSH session on a Camyn image (the guard refuses them).
+do not run those two from an SSH session on an Akam image (the guard refuses them).
 
 **`flash_guard.sh`.** Every script that writes APP sources `flash_guard.sh` from its own directory, so
 copy it to the SD card next to the scripts (a missing file makes the script refuse to run). The guard
 has two entry points:
 
-- `camyn_flash_guard` (all the install/restore scripts): refuses inside an SSH session
+- `akam_flash_guard` (all the install/restore scripts): refuses inside an SSH session
   (`SSH_CONNECTION`/`SSH_CLIENT`, or a dropbear ancestor process) and when the script or `flash_tool`
   lives under `/usr` while `/usr` is the `mtdblock7` squashfs. It does not block a flash from the stock
   firmware over Telnet, the maintenance telnet, or the `init=/bin/sh` shell, with scripts and
-  `flash_tool` on the SD card. `CAMYN_FLASH_I_KNOW=1` overrides it (prints a warning); use it only on
-  **stock firmware**, never on a Camyn image.
-- `camyn_flash_guard_detached` (only `camyn_reflash_ssh.sh`, for the SSH route below): no override
+  `flash_tool` on the SD card. `AKAM_FLASH_I_KNOW=1` overrides it (prints a warning); use it only on
+  **stock firmware**, never on an Akam image.
+- `akam_flash_guard_detached` (only `akam_reflash_ssh.sh`, for the SSH route below): no override
   variable. It allows the write only if **all** hold: the operator passed exactly
   `--i-understand-no-uart`; the script, `flash_tool` and the image all resolve (symlinks followed)
   under `/tmp`, none under `/usr`, and `/tmp` is a tmpfs/ramfs mount; `SSH_CONNECTION`, `SSH_CLIENT`
@@ -292,17 +292,17 @@ has two entry points:
 
 ### Reflashing over the maintenance telnet (used twice on hardware)
 
-This is the procedure that was run on a real Camyn camera on 2026-11-08, first from the stock
-firmware's telnet, then from the Camyn maintenance telnet. Both times `flash_tool` needed **0 retries**,
+This is the procedure that was run on a real Akam camera on 2026-11-08, first from the stock
+firmware's telnet, then from the Akam maintenance telnet. Both times `flash_tool` needed **0 retries**,
 the read-back md5 of `/dev/mtd7` matched the image, and the running system (including the stock
 `/usr/bin/watchdog`, which lives in the APP) survived the write. That is an observation on one unit,
 not a guarantee: see the residual risks of the SSH route, which apply here too.
 
 1. Card: the first-boot card from `tools/sd/prepare_first_boot_sd.sh` (toolkit payload, empty
-   `CAMYN_MAINTENANCE`, `camyn/authorized_keys`), see the tips below. Boot with it and
+   `AKAM_MAINTENANCE`, `akam/authorized_keys`), see the tips below. Boot with it and
    `telnet CAMERA_IP 24`.
 2. The maintenance boot mounts the card on **`/tmp/sd`**, not on `/mnt` (the stock script unmounts
-   `/mnt`). Every Camyn script reads `/mnt/...`, so bind the card there:
+   `/mnt`). Every Akam script reads `/mnt/...`, so bind the card there:
    ```sh
    mount --bind /tmp/sd /mnt
    ls -l /mnt/custom_firmware /mnt/flash_tool /mnt/flash_guard.sh /mnt/install_with_flash_tool.sh
@@ -343,7 +343,7 @@ erased), but it cannot make the write itself safe:
   What the stock `/usr/bin/watchdog` does (read from the extracted APP, disassembled, not run under a
   debugger): its main loop wakes about once per second (`CMsgClient::waitMsg`, 1 s limit) and each time
   calls `clearHardwareWatchdog`, an `ioctl(WDIOC_KEEPALIVE)` on `/dev/watchdog`, then
-  `respawnProcessList` and `checkWatchdog`. Nothing else on a Camyn image feeds the hardware timer
+  `respawnProcessList` and `checkWatchdog`. Nothing else on an Akam image feeds the hardware timer
   (`ak_rtsp` and the wrapper never open the device). The kernel driver (`ak_top_wdt`) is a nowayout
   one ("Device closed unexpectedly - timer will not stop"), so if the daemon dies the timer keeps
   counting and the board resets when it expires. The timeout was not read from the kernel; it is longer
@@ -354,7 +354,7 @@ erased), but it cannot make the write itself safe:
   - If the daemon takes a fault (a page evicted, then re-read from erased flash: SIGBUS) the hardware
     resets the board within the timeout, in the middle of the write, and only UART recovers it.
   - Cold paths also read `/usr`: a respawned child (`/usr/bin/ak_rtsp_wrapper.sh`) and
-    `camyn_lockdown.sh`, which runs `/usr/sbin/camyn_ssh.sh start` every 60 s. They can fail or run
+    `akam_lockdown.sh`, which runs `/usr/sbin/akam_ssh.sh start` every 60 s. They can fail or run
     garbage; that hurts that child, not the write.
   - Two successes out of two prove very little: with no failure in two trials the 95 % upper bound on
     the failure rate is still about 78 %. Treat the route as a gamble you take only if UART is out of
@@ -365,7 +365,7 @@ erased), but it cannot make the write itself safe:
     be fed around; it has to die first, and `start_rtsp.sh` documents an `EBUSY` race when the feeder
     opens the device too early. The timer keeps running between the kill and the first feed, with an
     unknown timeout. It also removes the supervisor (nothing would respawn the wrapper). It has never
-    run on a Camyn image, whereas the unmodified path survived twice, so adding it blind to a path with
+    run on an Akam image, whereas the unmodified path survived twice, so adding it blind to a path with
     no safety net was judged worse than documenting the risk. Try it first with UART connected.
 - **Residual risk 3, RAM.** The image (5 MiB), `flash_tool`, a BusyBox copy and a Dropbear copy go to
   tmpfs; with ~29 MB free the script requires 10 MiB free in `/tmp` and aborts otherwise.
@@ -373,21 +373,21 @@ erased), but it cannot make the write itself safe:
 What the scripts do:
 
 1. `reflash_over_ssh.sh` (PC) checks the image (exactly 5 242 880 bytes, md5 equal to the one **you**
-   pass), uploads `camyn_reflash_ssh.sh`, `flash_guard.sh`, `flash_tool` and the image to
-   `/tmp/camyn_reflash/` with `ssh ... 'cat > file'`, and compares the sha256 computed on the PC and on
+   pass), uploads `akam_reflash_ssh.sh`, `flash_guard.sh`, `flash_tool` and the image to
+   `/tmp/akam_reflash/` with `ssh ... 'cat > file'`, and compares the sha256 computed on the PC and on
    the camera for the image and the tool.
 2. On the camera, `precheck` requires `/proc/mtd` to show `mtd7: 00500000 ... "APP"` and enough free
    `/tmp`; `prepare` re-checks size and md5, copies BusyBox into RAM (linking the applets the write
    needs), copies `dropbearmulti` to `/tmp` and starts a **second Dropbear on port 2222** from there,
-   with the same host key and the same key directory (`/tmp/camyn_home`) as the first one, so you have
+   with the same host key and the same key directory (`/tmp/akam_home`) as the first one, so you have
    a session that does not execute anything from `/usr`. Because it is the same host key,
    the helper passes `-o HostKeyAlias=<host>` and your `known_hosts` entry applies to port 2222.
 3. The helper logs in on port 2222. If it cannot, it stops **before writing**.
 4. Through that session, `start --i-understand-no-uart` launches a worker with `setsid`, from the RAM
    copies, with `SSH_*` removed from its environment, stdin on `/dev/null` and stdout/stderr on
-   `/tmp/camyn_reflash/flash.log`. The worker waits until the launching shell is gone, runs
-   `camyn_flash_guard_detached` (rules above) and refuses (`RESULT: REFUSED`, nothing written) otherwise;
-   then it takes an atomic lock (`/tmp/camyn_reflash/worker.lock`, so a second worker or a retried
+   `/tmp/akam_reflash/flash.log`. The worker waits until the launching shell is gone, runs
+   `akam_flash_guard_detached` (rules above) and refuses (`RESULT: REFUSED`, nothing written) otherwise;
+   then it takes an atomic lock (`/tmp/akam_reflash/worker.lock`, so a second worker or a retried
    `start` cannot write at the same time), checks the md5 and exact size of the RAM image and that
    `/proc/mtd` still shows `mtd7` as the 5 MiB `APP`, runs `flash_tool image /dev/mtd7`, reads the
    partition back and compares its md5, up to 3 attempts. The log ends with `RESULT: OK`,
@@ -401,7 +401,7 @@ Run it (the `flash_tool` is the ARM binary from `make -C src/ak_rtsp flash_tool`
 
 ```bash
 # 1. dry run: uploads only the two scripts, checks mtd7 and free RAM, writes nothing
-tools/flash_scripts/reflash_over_ssh.sh --host CAMERA_IP --identity ~/.ssh/camyn \
+tools/flash_scripts/reflash_over_ssh.sh --host CAMERA_IP --identity ~/.ssh/akam \
     --image build/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --md5 <md5 of the image> \
     --flash-tool src/ak_rtsp/flash_tool --precheck-only
 # 2. the flash itself
@@ -409,7 +409,7 @@ tools/flash_scripts/reflash_over_ssh.sh ... same options ... --i-understand-no-u
 ```
 
 If the helper ends with anything but "VERIFIED", **do not power cycle**: read
-`/tmp/camyn_reflash/flash.log` over port 2222, run the helper again (while a worker is running the
+`/tmp/akam_reflash/flash.log` over port 2222, run the helper again (while a worker is running the
 helper refuses before touching anything, and `start` refuses too; after a finished or dead worker it
 replaces only the files it uploads), or go to UART. If the session on port 22 drops while you wait, nothing is lost:
 the worker is detached; reconnect on port 2222.
@@ -419,10 +419,10 @@ the worker is detached; reconnect on port 2222.
 - The maintenance boot mounts the card on `/tmp/sd`; `mount --bind /tmp/sd /mnt` makes the unmodified
   scripts work. The stock boot unmounts `/mnt` lazily, so do not expect it there.
 - The card is the trust anchor: whoever can insert it gets an unauthenticated root telnet on port 24.
-  Keep it for flashing days only, and erase or remove `CAMYN_MAINTENANCE` afterwards.
+  Keep it for flashing days only, and erase or remove `AKAM_MAINTENANCE` afterwards.
 - Never leave a `*.bin` at the card root (the stock boot would try to flash it). Keep the stock backup in
   `original_firmware/`, and exactly one image in `custom_firmware/`.
-- Put `camyn/authorized_keys` on the card: it is the way back into SSH after a flash.
+- Put `akam/authorized_keys` on the card: it is the way back into SSH after a flash.
 - The camera's BusyBox 1.30.1 has `setsid`, `nc`, `timeout`, `sha256sum`, `md5sum`, `stat`, `cmp`,
   `grep -E`, `strings`, `paste`, `cut`, `sed`, `wc`, and **lacks** `tr`, `mktemp`, `nohup`, `flock`,
   `gzip`, `uniq`, `wget`. Do not write procedures that need them.
@@ -458,11 +458,11 @@ harmless for stock.
 
 `tools/flash_scripts/restore_full_firmware.sh` rewrites **all 8 partitions**, including UBOOT, from the
 backup. It is a last resort: a power loss or error while the bootloader is being rewritten is the most
-likely way to hard-brick the camera. Camyn never needs it unless something other than APP was damaged.
+likely way to hard-brick the camera. Akam never needs it unless something other than APP was damaged.
 
 ### Recovery when the APP is bad (no network, no SSH)
 
-Camyn rebuilds only APP, so the bootloader, kernel and ROOTFS are untouched and U-Boot should stay
+Akam rebuilds only APP, so the bootloader, kernel and ROOTFS are untouched and U-Boot should stay
 reachable:
 
 1. Attach UART (115200 8N1, 3.3 V) and interrupt U-Boot at power-on (the ESP32 bridge helps; the
@@ -476,7 +476,7 @@ the UART is the other half.
 
 ### Without UART: what can be recovered
 
-The SD-card hooks (`_ht_ap_mode.conf` + `hostapd`, `CAMYN_MAINTENANCE`, the `*.bin` upgrade path) are
+The SD-card hooks (`_ht_ap_mode.conf` + `hostapd`, `AKAM_MAINTENANCE`, the `*.bin` upgrade path) are
 implemented by `sbin/service.sh` **inside the APP partition**, so they exist only while a readable APP
 is in place. Consequences, stated plainly:
 
@@ -484,13 +484,13 @@ is in place. Consequences, stated plainly:
 |---|---|
 | The write reported an error, the camera is still running | Rerun `install_with_flash_tool.sh`, or run `restore.sh` (stock APP) from the same shell. Do not power cycle before one of them succeeds. |
 | The APP image is corrupt or does not mount (no boot to `service.sh`) | **None.** Nothing on the SD card runs. UART (`init=/bin/sh`, section 5 below) or an external SPI programmer is required. |
-| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `CAMYN_MAINTENANCE` re-enables the card's hook in `service.sh` and, through the RAM marker `/tmp/camyn_maintenance`, makes `camyn_lockdown.sh` stand down until the next reboot without the flag, so a toolkit-style telnet hook is no longer killed. This path is covered by host tests, **not yet proven on hardware**, and it needs a working network to be of any use. |
-| SSH refused (key not on the card, wrong key) | Put the right `camyn/authorized_keys` on the card and power cycle (keys are re-read at every boot). Needs the camera on the network. |
-| `*.bin` OTA-style upgrade from the card | Allowed only with `CAMYN_MAINTENANCE`; Camyn does not provide an OTA-format file, so this is not a recovery path. |
+| The APP boots but there is no network (no Wi-Fi configuration, driver trouble) | **None from the network.** `AKAM_MAINTENANCE` re-enables the card's hook in `service.sh` and, through the RAM marker `/tmp/akam_maintenance`, makes `akam_lockdown.sh` stand down until the next reboot without the flag, so a toolkit-style telnet hook is no longer killed. This path is covered by host tests, **not yet proven on hardware**, and it needs a working network to be of any use. |
+| SSH refused (key not on the card, wrong key) | Put the right `akam/authorized_keys` on the card and power cycle (keys are re-read at every boot). Needs the camera on the network. |
+| `*.bin` OTA-style upgrade from the card | Allowed only with `AKAM_MAINTENANCE`; Akam does not provide an OTA-format file, so this is not a recovery path. |
 
 So the no-UART first flash is a bet that the image mounts and the network comes up. The image checks
 (`build_firmware.sh` round-trip, padding, exact size) and the pre-flash gates above reduce but do not
-remove that risk; the xz SquashFS format is the stock one (the running kernel already mounts xz ROOTFS and APP), but Camyn's own image has not been booted.
+remove that risk; the xz SquashFS format is the stock one (the running kernel already mounts xz ROOTFS and APP), but Akam's own image has not been booted.
 
 ### Caveat: restore is not guaranteed
 
@@ -502,15 +502,15 @@ These procedures reuse upstream scripts that have worked for upstream, but:
 - in that case the only remaining option is an external SPI programmer clipped or soldered to the
   flash chip (for example a CH341A) written with your backup.
 
-Camyn has not rehearsed a restore on any camera. Whether you rehearse one before relying on it is
+Akam has not rehearsed a restore on any camera. Whether you rehearse one before relying on it is
 your decision; a rehearsal is itself a flash write.
 
 ## 6. Checklist
 
-- [ ] Backup verified and copied off the SD card ([backup guide](camyn_v1_backup.md)).
+- [ ] Backup verified and copied off the SD card ([backup guide](akam_v1_backup.md)).
 - [ ] UART attached and a root shell obtained before flashing, **or** the no-UART risks above accepted
       and the pre-flash gates (`wpa_supplicant.conf`, `passwd`, `/proc/mtd`) passed.
 - [ ] Image hash checked on PC; same `md5sum` on the camera.
 - [ ] Only `/dev/mtd7` written; verification summary read in full.
 - [ ] Read-back `md5sum` equals the image.
-- [ ] Power cycled by hand; card with `camyn/authorized_keys` inserted.
+- [ ] Power cycled by hand; card with `akam/authorized_keys` inserted.

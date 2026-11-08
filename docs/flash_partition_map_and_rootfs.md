@@ -17,7 +17,7 @@ The camera uses an 8 MiB SPI NOR flash (`XM25QH64D` or Winbond equivalent) mappe
 | `KERNEL` | `0x044000` | 1536 KB | `/dev/mtdblock4` | uImage | Linux Kernel (ARM926EJ-S) |
 | `ROOTFS` | `0x1c4000` | 1008 KB | `/dev/mtdblock5` | SquashFS (xz, 128 KiB blocks, verified on a real dump; older docs said gzip) | Read-only base root filesystem |
 | `CONFIG` | `0x2c0000` | 256 KB | `/dev/mtdblock6` | JFFS2 (rw) | Persistent writable user config |
-| `APP` | `0x300000` | 5120 KB | `/dev/mtdblock7` | SquashFS (XZ on the stock APP, per upstream) | Application layer (mounted to `/usr`). Camyn's image is xz by default, like the stock APP (gzip selectable); see [camyn_v1_build.md](camyn_v1_build.md#6-compression-xz-default-or-gzip) |
+| `APP` | `0x300000` | 5120 KB | `/dev/mtdblock7` | SquashFS (XZ on the stock APP, per upstream) | Application layer (mounted to `/usr`). Akam's image is xz by default, like the stock APP (gzip selectable); see [akam_v1_build.md](akam_v1_build.md#6-compression-xz-default-or-gzip) |
 
 ---
 
@@ -35,7 +35,7 @@ boot, so a root password set the normal way is reverted to the unknown factory h
 
 ### Upstream history: the `/etc/config/passwd` trick (stock firmware, maintenance only)
 
-Kept here as upstream knowledge and credit, **not** as a Camyn feature. BusyBox `login` checks
+Kept here as upstream knowledge and credit, **not** as an Akam feature. BusyBox `login` checks
 `/etc/passwd` directly: if the password field holds an MD5crypt hash instead of `x`, it verifies against
 that hash and never consults `/etc/shadow`. Since `service.sh` never touches `/etc/config/passwd`,
 upstream used a hash written there to get a persistent Telnet/console login on the **stock** firmware:
@@ -45,12 +45,12 @@ upstream used a hash written there to get a persistent Telnet/console login on t
 printf 'root:$1$anyka001$qk6nsIZ/vuhZcaN7A1ZIr/:0:0:root:/:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/sh\nbin:x:2:2:bin:/bin:/bin/sh\nnobody:x:99:99:nobody:/home:/bin/sh\n' > /etc/config/passwd
 ```
 
-Camyn's position:
+Akam's position:
 
-- Do not use it on a Camyn image. Camyn's remote access is SSH with public keys only
-  ([camyn_v1_ssh_and_lockdown.md](camyn_v1_ssh_and_lockdown.md)); Dropbear has no password
+- Do not use it on an Akam image. Akam's remote access is SSH with public keys only
+  ([akam_v1_ssh_and_lockdown.md](akam_v1_ssh_and_lockdown.md)); Dropbear has no password
   authentication compiled in, and Telnet is disabled, so this file would not give network access.
-- CONFIG is never rewritten by Camyn's flash, so an `/etc/config/passwd` made on stock **persists**
+- CONFIG is never rewritten by Akam's flash, so an `/etc/config/passwd` made on stock **persists**
   and would still accept that password on a local console (UART). Remove it, or restore your CONFIG
   backup, if you used the trick and want a password-less console again.
 - The `admin` hash above is public: never rely on it for anything exposed on a network.
@@ -67,7 +67,7 @@ The Tuya cloud client (`anyka_ipc`) is a monolithic 5.9 MB binary that controls:
 ### Clean Exec-Takeover
 Rather than rebuilding the entire Linux kernel and rootfs from scratch, we perform an **exec-takeover** at the application layer (`APP` partition / `/dev/mtdblock7`):
 
-1. **Keep stock hardware initialization:** All driver modules (`ak_isp.ko`, `sensor_gc20c3.ko`, `atbm6x3x_wifi_usb.ko`, `ak_pcm.ko`), networking scripts (`ethernet.sh`), and the `cmdserver`/`msgserver` IPC daemons remain intact. (Upstream also left the stock `telnetd`/`ftpd` running; Camyn disables them: [lockdown](camyn_v1_ssh_and_lockdown.md#6-telnet-and-ftp-lockdown).)
+1. **Keep stock hardware initialization:** All driver modules (`ak_isp.ko`, `sensor_gc20c3.ko`, `atbm6x3x_wifi_usb.ko`, `ak_pcm.ko`), networking scripts (`ethernet.sh`), and the `cmdserver`/`msgserver` IPC daemons remain intact. (Upstream also left the stock `telnetd`/`ftpd` running; Akam disables them: [lockdown](akam_v1_ssh_and_lockdown.md#6-telnet-and-ftp-lockdown).)
 2. **Preserve `cmdserver` and `msgserver`:** These binaries handle local IPC (UNIX domain sockets and SysV message queues). They are **not** cloud daemons and are required for system stability.
 3. **Replace `anyka_ipc`:** `_ht_process.ini` is modified so the watchdog launches `ak_rtsp_wrapper.sh` instead of `anyka_ipc`.
 4. **Standalone RTSP Server (`ak_rtsp`):** Our lightweight C program takes direct ownership of the camera ISP, VENC hardware, and PCM microphone capture without needing any external cloud dependencies.

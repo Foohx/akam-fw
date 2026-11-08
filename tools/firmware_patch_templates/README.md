@@ -2,18 +2,18 @@
 
 These files are the patch applied on top of your own stock `app_extracted/`
 dump to produce the de-Tuyafied `app_patched/` tree. Used automatically by
-`src/ak_rtsp/build_firmware.sh` — see `docs/camyn_v1_build.md` for the
+`src/ak_rtsp/build_firmware.sh` — see `docs/akam_v1_build.md` for the
 full walkthrough. Listed here individually so the diff against stock is easy to read.
 
 | File | Installed as | Purpose |
 |---|---|---|
 | `_ht_process.ini` | `local/_ht_process.ini` | Single process entry launching the wrapper |
-| `ak_rtsp_wrapper.sh` | `sbin/ak_rtsp_wrapper.sh` | Starts the Camyn helpers in the background, Wi-Fi, then `ak_rtsp` |
-| `camyn_ssh.sh` | `sbin/camyn_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/camyn_v1_ssh_and_lockdown.md` |
-| `camyn_lockdown.sh` | `sbin/camyn_lockdown.sh` | Runtime safety net that kills telnet/FTP daemons |
+| `ak_rtsp_wrapper.sh` | `sbin/ak_rtsp_wrapper.sh` | Starts the Akam helpers in the background, Wi-Fi, then `ak_rtsp` |
+| `akam_ssh.sh` | `sbin/akam_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/akam_v1_ssh_and_lockdown.md` |
+| `akam_lockdown.sh` | `sbin/akam_lockdown.sh` | Runtime safety net that kills telnet/FTP daemons |
 | `patch_service_sh.sh` | host tool, not installed | Build-time patch of `sbin/service.sh` (telnet/FTP launch lines, SD hook guard) |
 
-The two sections below describe the first two files. The Camyn scripts document themselves in their
+The two sections below describe the first two files. The Akam scripts document themselves in their
 headers.
 
 ## `_ht_process.ini` → `app_patched/local/_ht_process.ini`
@@ -43,7 +43,7 @@ Removing them causes a boot stall. See `docs/flash_partition_map_and_rootfs.md`.
 
 ## `ak_rtsp_wrapper.sh` → `app_patched/sbin/ak_rtsp_wrapper.sh`
 
-`process_0`'s actual entry point. First starts `camyn_ssh.sh` and `camyn_lockdown.sh` in the
+`process_0`'s actual entry point. First starts `akam_ssh.sh` and `akam_lockdown.sh` in the
 background (fire and forget, only if present and executable). Then brings up WiFi manually (DHCP) before exec'ing
 `/usr/bin/ak_rtsp`, since `ethernet.sh` skips WiFi bring-up whenever
 `/tmp/_ak39_factory.ini` is present (its own factory/production-test gate) — relevant
