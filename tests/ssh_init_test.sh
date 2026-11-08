@@ -234,7 +234,9 @@ tmpfs /mnt tmpfs rw,relatime 0 0
 EOM
     export AKAM_PROC_MOUNTS=$R/proc_mounts
     # mount/umount stubs that record every call and would FAIL the test if used
+    # shellcheck disable=SC2016  # $* and $AKAM_ROOT must expand in the generated stub, not here
     printf '#!/bin/sh\necho "$*" >>"$AKAM_ROOT/tmp/mount_calls"\nexit 1\n' >"$R/stubbin/mount"
+    # shellcheck disable=SC2016
     printf '#!/bin/sh\necho "$*" >>"$AKAM_ROOT/tmp/umount_calls"\n' >"$R/stubbin/umount"
     chmod 755 "$R/stubbin/mount" "$R/stubbin/umount"
 }
@@ -386,7 +388,7 @@ fi
 
 echo "== 9a. pidfile pointing at a non-dropbear process is stale"
 new_root t9a
-sleep 300 </dev/null >/dev/null 2>&1 &
+sleep 300 >/dev/null 2>&1 &
 other=$!
 echo "$other" >"$R/tmp/dropbear.pid"
 check "status: not running" bash -c '! "$@"' _ "${SHCMD[@]}" "$R/usr/sbin/akam_ssh.sh" status

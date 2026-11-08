@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # flash_guard.sh — sourced (". flash_guard.sh") by every script that writes the APP
 # partition (mtd7). POSIX sh / BusyBox ash. Defines akam_flash_guard SCRIPT [TOOL].
 #

@@ -182,7 +182,7 @@ check "alias: new flag name works too" test -s "$FL/flashed"
 # alias disabled with an empty AKAM_MAINT_FLAG_LEGACY: plain single-flag guard
 mkdir -p "$WORK/nl/sbin"
 cp "$FIXTURES/app_fake_variants/d/sbin/service.sh" "$WORK/nl/sbin/service.sh"
-AKAM_MAINT_FLAG_LEGACY= AKAM_PATCH_REPORT=$WORK/nl.diff "$PATCH" "$WORK/nl" >/dev/null 2>&1
+AKAM_MAINT_FLAG_LEGACY='' AKAM_PATCH_REPORT=$WORK/nl.diff "$PATCH" "$WORK/nl" >/dev/null 2>&1
 check "alias off: single-flag guard, no CAMYN text" bash -c "grep -q '^	\[ -f /mnt/AKAM_MAINTENANCE \] && sh /tmp/tf_update.sh\$' '$WORK/nl/sbin/service.sh' && ! grep -qi camyn '$WORK/nl/sbin/service.sh'"
 # a service.sh whose daemon lines were already disabled by the old marker stays as is
 mkdir -p "$WORK/od/sbin"
