@@ -1072,6 +1072,11 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                     break;
                 }
             }
+            /* A response that could not be written: leave now instead of
+             * writing video to the dead socket (each write could wait out
+             * the whole stall budget again). */
+            if (client.tx_fail && !client.drop_reason)
+                client.drop_reason = "TCP write failed or stalled";
             if (client.drop_reason) break;
         }
 
