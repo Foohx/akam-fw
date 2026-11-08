@@ -51,7 +51,7 @@ esac
 os="$(host_os)"
 arch="$(host_arch)"
 
-# name|profile|level|arch package|debian/ubuntu package
+# name|profile|level|arch package|debian/ubuntu package (sfdisk is in `fdisk` on Debian 12+/Ubuntu 22.04+)
 # sbin tools (util-linux, dosfstools, parted) live in /usr/sbin, which is not in a normal
 # user's PATH on Debian: they are looked up there too (the scripts run them through sudo).
 tools_table='
@@ -65,7 +65,7 @@ ssh|kit|req|openssh|openssh-client
 ssh-keygen|kit|req|openssh|openssh-client
 lsblk|kit|req|util-linux|util-linux
 wipefs|kit|req|util-linux|util-linux
-sfdisk|kit|req|util-linux|util-linux
+sfdisk|kit|req|util-linux|fdisk
 blockdev|kit|req|util-linux|util-linux
 mkfs.vfat|kit|req|dosfstools|dosfstools
 partprobe|kit|req|parted|parted
