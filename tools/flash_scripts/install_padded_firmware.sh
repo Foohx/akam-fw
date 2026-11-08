@@ -14,7 +14,7 @@
 # (or whatever you rename it to below).
 #
 # Run from a UART root shell (Telnet only on STOCK firmware; never over SSH on a
-# Camyn image, see flash_guard.sh): sh /mnt/install_padded_firmware.sh
+# Akam image, see flash_guard.sh): sh /mnt/install_padded_firmware.sh
 
 # Refuse to write APP from a context that depends on it (SSH, running from /usr).
 # No dirname: the bare UART init=/bin/sh rootfs has no dirname (it lives in the APP).
@@ -22,8 +22,8 @@ case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esa
 if [ -r "$_g" ]; then
     # shellcheck source=flash_guard.sh
     . "$_g"
-    camyn_flash_guard "$0" || exit 1
-elif [ "${CAMYN_FLASH_I_KNOW:-}" != "1" ]; then
+    akam_flash_guard "$0" || exit 1
+elif [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; then
     echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
     exit 1
 fi

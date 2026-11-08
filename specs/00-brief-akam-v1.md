@@ -1,10 +1,10 @@
-# Camyn V1 — brief condensé (source de vérité côté produit)
+# Akam V1 — brief condensé (source de vérité côté produit)
 
 Version complète fournie par l'utilisateur le 2026-11-07. Ce résumé fait foi pour les agents.
 
 ## Objectif
 Fork de https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware (ce dépôt). Caméra LSC Smart Connect 1080p réf. 3215672.3 (SI D26228 attendu, à confirmer), SoC Anyka AK3918AV130, ARM926EJ-S/ARMv5TE, 64 Mio RAM, 8 Mio SPI NOR.
-Livrer Camyn V1 = `ak_rtsp` inchangé fonctionnellement + SSH Dropbear permanent + Telnet/FTP désactivés + build reproductible sous Arch Linux + doc sauvegarde/flash/restauration.
+Livrer Akam V1 = `ak_rtsp` inchangé fonctionnellement + SSH Dropbear permanent + Telnet/FTP désactivés + build reproductible sous Arch Linux + doc sauvegarde/flash/restauration.
 
 ## Règles absolues
 - Ne pas réécrire ce qui marche (ak_rtsp, SmolRTSP, vidéo, micro, IR, ISP, Wi-Fi, port 8091 et son protocole LIST/GET/SET).
@@ -37,7 +37,7 @@ Livrer Camyn V1 = `ak_rtsp` inchangé fonctionnellement + SSH Dropbear permanent
 https://github.com/4ddict/Action-Smart-Connect-Flasher v0.3.2 : déterminer comment l'utiliser avec notre fork au lieu de son ak_rtsp upstream. Ne pas supposer qu'il sait intégrer nos modifications.
 
 ## Services cibles
-RTSP 554 actif ; 8091 actif LAN seulement ; SSH 22 actif ; Telnet 23/24 désactivés ; HTTP 80 aucun service Camyn ; FTP 21 désactivé.
+RTSP 554 actif ; 8091 actif LAN seulement ; SSH 22 actif ; Telnet 23/24 désactivés ; HTTP 80 aucun service Akam ; FTP 21 désactivé.
 
 ## Audio sortant (V1.1, non bloquant)
 Référence https://github.com/berobloom/LSC-1080p-Anyka-Decloud (src/aoplay.c) : /dev/pcmC0D0p, ak_pcm, S16LE stéréo 8 kHz, ampli GPIO 69, IOC_SET_SOURCES=6. Pas dans le lot V1.

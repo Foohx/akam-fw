@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Host-side tests for tools/hw_tests/camyn_hwcheck.sh. The script runs under
-# $SH_UNDER_TEST (default: "$CAMYN_BUSYBOX sh", else "busybox sh", else "sh")
-# against a fake root ($CAMYN_ROOT with proc/, etc/, mnt/, tmp/) and a
+# Host-side tests for tools/hw_tests/akam_hwcheck.sh. The script runs under
+# $SH_UNDER_TEST (default: "$AKAM_BUSYBOX sh", else "busybox sh", else "sh")
+# against a fake root ($AKAM_ROOT with proc/, etc/, mnt/, tmp/) and a
 # restricted PATH made of symlinks to host tools plus stubs. Nothing here
 # touches hardware.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-SCRIPT=$REPO/tools/hw_tests/camyn_hwcheck.sh
+SCRIPT=$REPO/tools/hw_tests/akam_hwcheck.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
-    if [ -n "${CAMYN_BUSYBOX:-}" ]; then SH_UNDER_TEST="$CAMYN_BUSYBOX sh"
+    if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
     elif command -v busybox >/dev/null 2>&1; then SH_UNDER_TEST="busybox sh"
     else SH_UNDER_TEST="sh"; fi
 fi
@@ -53,7 +53,7 @@ mkroot() {
     } > "$r/proc/net/tcp"
     mkproc "$r" 101 ak_rtsp 4321
     mkproc "$r" 102 dropbear 1234
-    mkproc "$r" 103 "sh /usr/sbin/camyn_lockdown.sh" 600
+    mkproc "$r" 103 "sh /usr/sbin/akam_lockdown.sh" 600
     mkproc "$r" 104 wpa_supplicant 800
     mkproc "$r" 105 udhcpc 300
     echo 300 > "$r/proc/sys/kernel/random/entropy_avail"
@@ -69,8 +69,8 @@ mkroot() {
     printf 'Processor\t: ARM926EJ-S rev 5 (v5l)\nHardware\t: AK3918\n' > "$r/proc/cpuinfo"
     printf 'MemTotal: 60000 kB\nMemFree: 12000 kB\nCached: 9000 kB\n' > "$r/proc/meminfo"
     printf 'dev: size erasesize name\nmtd7: 00500000 00010000 "APP"\n' > "$r/proc/mtd"
-    echo "step one ok" > "$r/tmp/camyn_ssh.log"
-    echo "lockdown round" > "$r/tmp/camyn_lockdown.log"
+    echo "step one ok" > "$r/tmp/akam_ssh.log"
+    echo "lockdown round" > "$r/tmp/akam_lockdown.log"
 }
 # mkproc ROOT PID CMDLINE-with-spaces VMRSS
 mkproc() {
@@ -97,7 +97,7 @@ run() {
     name=$1; root=$2; sdir=$3; shift 3
     mkdir -p "$sdir"
     [ -e "$sdir/sleep" ] || stub "$sdir" sleep 'exit 0'
-    env -i PATH="$sdir:$BASEBIN" CAMYN_ROOT="$root" HWCHECK_INTERVAL=0 HWCHECK_CPU_WINDOW=0 HWCHECK_NIGHT_INTERVAL=0 "${EXTRA_ENV[@]}" TMPDIR="$WORK" \
+    env -i PATH="$sdir:$BASEBIN" AKAM_ROOT="$root" HWCHECK_INTERVAL=0 HWCHECK_CPU_WINDOW=0 HWCHECK_NIGHT_INTERVAL=0 "${EXTRA_ENV[@]}" TMPDIR="$WORK" \
         "${SHCMD[@]}" "$SCRIPT" "$@" > "$WORK/$name.out" 2>&1
     RC=$?
 }
@@ -118,7 +118,7 @@ has "netstat: port 22 pass" '^PASS +port 22 listening' "$WORK/t1.out"
 has "netstat: 8091 address info" '8091 listen address: 192.168.1.9' "$WORK/t1.out"
 has "netstat: port 23 closed" '^PASS +port 23 closed' "$WORK/t1.out"
 has "processes: ak_rtsp running" '^PASS +ak_rtsp running \(pid 101\)' "$WORK/t1.out"
-has "processes: lockdown matched via argv1" '^PASS +camyn_lockdown running \(pid 103\)' "$WORK/t1.out"
+has "processes: lockdown matched via argv1" '^PASS +akam_lockdown running \(pid 103\)' "$WORK/t1.out"
 has "processes: telnetd absent" '^PASS +telnetd absent' "$WORK/t1.out"
 has "rss: ak_rtsp" 'ak_rtsp pid 101 VmRSS 4321 kB' "$WORK/t1.out"
 has "rss: dropbear" 'dropbear pid 102 VmRSS 1234 kB' "$WORK/t1.out"
@@ -129,7 +129,7 @@ hasnt "no key material printed" 'AAAAFAKE' "$WORK/t1.out"
 has "root shell in /etc/shells" '^PASS +root shell is listed' "$WORK/t1.out"
 has "entropy pass" '^PASS +entropy_avail=300' "$WORK/t1.out"
 has "/proc/self/exe pass" '^PASS +/proc/self/exe' "$WORK/t1.out"
-has "camyn log tail shown" 'step one ok' "$WORK/t1.out"
+has "akam log tail shown" 'step one ok' "$WORK/t1.out"
 has "cpuinfo fact" 'ARM926EJ-S' "$WORK/t1.out"
 has "mtd fact" 'mtd7: 00500000' "$WORK/t1.out"
 if [ "$RC" -eq 0 ]; then ok "healthy: exit 0"; else ko "healthy: exit $RC"; grep -E '^FAIL' "$WORK/t1.out"; fi
@@ -177,18 +177,25 @@ chmod 777 "$R5/etc/config"
 echo "root:x:0:0:root:/root:/bin/zsh" > "$R5/etc/passwd"
 run t5 "$R5" "$WORK/s5"
 has "dropbear missing is FAIL" '^FAIL +dropbear not running' "$WORK/t5.out"
-has "lockdown missing is FAIL" '^FAIL +camyn_lockdown not running' "$WORK/t5.out"
+has "lockdown missing is FAIL" '^FAIL +akam_lockdown not running' "$WORK/t5.out"
 has "telnetd running is FAIL" '^FAIL +telnetd running \(pid 110\)' "$WORK/t5.out"
 has "writable /etc/config is FAIL" '^FAIL +/etc/config mode (777|drwxrwxrwx)' "$WORK/t5.out"
 has "shell not in /etc/shells is FAIL" '^FAIL +root shell /bin/zsh' "$WORK/t5.out"
 R6=$WORK/r6; mkroot "$R6"
 rm -rf "$R6/proc/103"
 mkproc "$R6" 110 "telnetd -p 24 -l /bin/sh" 200
-: > "$R6/mnt/CAMYN_MAINTENANCE"
+: > "$R6/mnt/AKAM_MAINTENANCE"
 run t6 "$R6" "$WORK/s6"
 has "maintenance: flag WARN" '^WARN +maintenance mode \(.*present\)' "$WORK/t6.out"
 has "maintenance: telnetd only WARN" '^WARN +telnetd running' "$WORK/t6.out"
-has "maintenance: lockdown absent WARN" '^WARN +camyn_lockdown not running' "$WORK/t6.out"
+has "maintenance: lockdown absent WARN" '^WARN +akam_lockdown not running' "$WORK/t6.out"
+
+# 6b. deprecated CAMYN_MAINTENANCE flag name (one release): maintenance + rename WARN
+R6B=$WORK/r6b; mkroot "$R6B"
+: > "$R6B/mnt/CAMYN_MAINTENANCE"
+run t6b "$R6B" "$WORK/s6b"
+has "legacy flag: maintenance WARN" '^WARN +maintenance mode \(.*present\)' "$WORK/t6b.out"
+has "legacy flag: deprecation WARN" '^WARN +DEPRECATED flag name CAMYN_MAINTENANCE: rename it to AKAM_MAINTENANCE' "$WORK/t6b.out"
 
 # 7. read-only: the fake root is unchanged and nothing is killed -----------------
 (cd "$R1" && find . -type f -exec cksum {} + | sort) > "$WORK/before.sum"
@@ -231,26 +238,26 @@ has "help prints usage" 'Usage:' "$WORK/t11.out"
 
 # 12. HOME moved to a private tmpfs dir: "/" and "/etc" at 775 are INFO only ----
 R12=$WORK/r12; mkroot "$R12"
-mkdir -p "$R12/tmp/camyn_home"
-chmod 700 "$R12/tmp/camyn_home"
-echo "ssh-ed25519 AAAAFAKE test" > "$R12/tmp/camyn_home/authorized_keys"
-chmod 600 "$R12/tmp/camyn_home/authorized_keys"
-echo "root:x:0:0:root:/tmp/camyn_home:/bin/sh" > "$R12/etc/passwd"
+mkdir -p "$R12/tmp/akam_home"
+chmod 700 "$R12/tmp/akam_home"
+echo "ssh-ed25519 AAAAFAKE test" > "$R12/tmp/akam_home/authorized_keys"
+chmod 600 "$R12/tmp/akam_home/authorized_keys"
+echo "root:x:0:0:root:/tmp/akam_home:/bin/sh" > "$R12/etc/passwd"
 chmod 775 "$R12" "$R12/etc"
 run t12 "$R12" "$WORK/s12"
-has "HOME: reported" "root HOME in passwd: '/tmp/camyn_home'" "$WORK/t12.out"
+has "HOME: reported" "root HOME in passwd: '/tmp/akam_home'" "$WORK/t12.out"
 has "HOME: / is INFO" '^INFO +/ mode (775|drwxrwxr-x)' "$WORK/t12.out"
 has "HOME: /etc is INFO" '^INFO +/etc mode (775|drwxrwxr-x)' "$WORK/t12.out"
 hasnt "HOME: no FAIL on / or /etc" '^FAIL +/(etc)? ' "$WORK/t12.out"
-has "HOME: key path pass" '^PASS +key path \(/tmp/camyn_home\) is not group/other writable' "$WORK/t12.out"
-has "HOME: keys counted there" '^PASS +/tmp/camyn_home/authorized_keys holds 1 key' "$WORK/t12.out"
+has "HOME: key path pass" '^PASS +key path \(/tmp/akam_home\) is not group/other writable' "$WORK/t12.out"
+has "HOME: keys counted there" '^PASS +/tmp/akam_home/authorized_keys holds 1 key' "$WORK/t12.out"
 if [ "$RC" -eq 0 ]; then ok "HOME moved, / and /etc 775: exit 0"; else ko "HOME moved: exit $RC"; grep -E '^FAIL' "$WORK/t12.out"; fi
-chmod 775 "$R12/tmp/camyn_home"
+chmod 775 "$R12/tmp/akam_home"
 run t13 "$R12" "$WORK/s13"
-has "HOME writable by group: FAIL" '^FAIL +/tmp/camyn_home mode (775|drwxrwxr-x)' "$WORK/t13.out"
-chmod 700 "$R12/tmp/camyn_home"; chmod 660 "$R12/tmp/camyn_home/authorized_keys"
+has "HOME writable by group: FAIL" '^FAIL +/tmp/akam_home mode (775|drwxrwxr-x)' "$WORK/t13.out"
+chmod 700 "$R12/tmp/akam_home"; chmod 660 "$R12/tmp/akam_home/authorized_keys"
 run t13b "$R12" "$WORK/s13b"
-has "HOME key file writable by group: FAIL" '^FAIL +/tmp/camyn_home/authorized_keys mode (660|-rw-rw----)' "$WORK/t13b.out"
+has "HOME key file writable by group: FAIL" '^FAIL +/tmp/akam_home/authorized_keys mode (660|-rw-rw----)' "$WORK/t13b.out"
 # HOME without keys: the persistent path is walked, so / at 775 is a real FAIL.
 R14=$WORK/r14; mkroot "$R14"
 chmod 775 "$R14"

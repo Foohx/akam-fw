@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Host-side tests for tools/flash_scripts/flash_guard.sh (and its wiring in the
-# flash scripts). Runs under $SH_UNDER_TEST (default: "$CAMYN_BUSYBOX sh", else
+# flash scripts). Runs under $SH_UNDER_TEST (default: "$AKAM_BUSYBOX sh", else
 # tools/.toolchain/busybox-1.35.0-x86_64/busybox sh if built, else "sh") with a
 # fake /proc/mounts and fake /proc/PID/stat. Nothing here writes any device.
 set -uo pipefail
@@ -11,7 +11,7 @@ FS=$REPO/tools/flash_scripts
 TCBB=$REPO/tools/.toolchain/busybox-1.35.0-x86_64/busybox
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
-    if [ -n "${CAMYN_BUSYBOX:-}" ]; then SH_UNDER_TEST="$CAMYN_BUSYBOX sh"
+    if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
     elif [ -x "$TCBB" ]; then SH_UNDER_TEST="$TCBB sh"
     else SH_UNDER_TEST="sh"; fi
 fi
@@ -33,12 +33,12 @@ printf '/dev/mtdblock6 /usr squashfs ro 0 0\n' >"$WORK/mounts_other"
 cat >"$WORK/driver.sh" <<'DRV'
 . "$FS/flash_guard.sh"
 if [ -n "${FAKE_ANCESTOR:-}" ]; then
-    mkdir -p "$CAMYN_PROC_DIR/$$" "$CAMYN_PROC_DIR/900" "$CAMYN_PROC_DIR/800"
-    echo "$$ (sh) S 800 1 1 0" >"$CAMYN_PROC_DIR/$$/stat"
-    echo "800 (my shell) S 900 1 1 0" >"$CAMYN_PROC_DIR/800/stat"
-    echo "900 ($FAKE_ANCESTOR) S 1 1 1 0" >"$CAMYN_PROC_DIR/900/stat"
+    mkdir -p "$AKAM_PROC_DIR/$$" "$AKAM_PROC_DIR/900" "$AKAM_PROC_DIR/800"
+    echo "$$ (sh) S 800 1 1 0" >"$AKAM_PROC_DIR/$$/stat"
+    echo "800 (my shell) S 900 1 1 0" >"$AKAM_PROC_DIR/800/stat"
+    echo "900 ($FAKE_ANCESTOR) S 1 1 1 0" >"$AKAM_PROC_DIR/900/stat"
 fi
-camyn_flash_guard "$1" "${2:-}"
+akam_flash_guard "$1" "${2:-}"
 DRV
 
 # run NAME EXPECT(0|1) MOUNTS SCRIPT TOOL [VAR=VAL...]
@@ -47,8 +47,8 @@ run() {
     shift 5
     rm -rf "$WORK/proc"
     mkdir -p "$WORK/proc"
-    env -u SSH_CONNECTION -u SSH_CLIENT -u CAMYN_FLASH_I_KNOW \
-        FS="$FS" CAMYN_PROC_MOUNTS="$WORK/$mounts" CAMYN_PROC_DIR="$WORK/proc" "$@" \
+    env -u SSH_CONNECTION -u SSH_CLIENT -u AKAM_FLASH_I_KNOW -u CAMYN_FLASH_I_KNOW \
+        FS="$FS" AKAM_PROC_MOUNTS="$WORK/$mounts" AKAM_PROC_DIR="$WORK/proc" "$@" \
         "${SHCMD[@]}" "$WORK/driver.sh" "$script" "$tool" >"$WORK/out" 2>&1
     local rc=$?
     if [ "$want" = 0 ] && [ $rc -eq 0 ]; then ok "$name"
@@ -72,10 +72,15 @@ run "APP on /usr, script under /usr: refused" 1 mounts_app /usr/bin/x.sh /mnt/fl
 run "APP on /usr, tool under /usr: refused" 1 mounts_app /mnt/x.sh /usr/bin/flash_tool
 run "other mtd on /usr, script under /usr: allowed" 0 mounts_other /usr/bin/x.sh ""
 run "/usr not mounted from mtdblock7: allowed" 0 mounts_stock /usr/bin/x.sh ""
-run "override on SSH: allowed" 0 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=1
+run "override on SSH: allowed" 0 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x AKAM_FLASH_I_KNOW=1
 outhas "override prints loud warning" "WARNING"
-run "override on /usr script: allowed" 0 mounts_app /usr/bin/x.sh "" CAMYN_FLASH_I_KNOW=1
-run "override must be exactly 1" 1 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=yes
+run "override on /usr script: allowed" 0 mounts_app /usr/bin/x.sh "" AKAM_FLASH_I_KNOW=1
+run "override must be exactly 1" 1 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x AKAM_FLASH_I_KNOW=yes
+# Deprecated alias (one release): the former CAMYN_FLASH_I_KNOW=1 still works, with a warning.
+run "deprecated CAMYN_FLASH_I_KNOW=1: allowed" 0 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=1
+outhas "deprecated override says so" "CAMYN_FLASH_I_KNOW is deprecated, use AKAM_FLASH_I_KNOW=1"
+outhas "deprecated override still prints the loud warning" "AKAM_FLASH_I_KNOW=1 set, flashing anyway"
+run "deprecated override must be exactly 1" 1 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=yes
 
 # Wiring: every APP-writing script refuses under SSH before doing anything else.
 for s in install_with_flash_tool quiet_and_flash_test restore install_custom_firmware \
@@ -83,7 +88,7 @@ for s in install_with_flash_tool quiet_and_flash_test restore install_custom_fir
     d=$WORK/sd_$s
     mkdir -p "$d"
     cp "$FS/$s.sh" "$FS/flash_guard.sh" "$d/"
-    SSH_CONNECTION=x CAMYN_PROC_MOUNTS="$WORK/mounts_stock" CAMYN_PROC_DIR="$WORK/proc" \
+    SSH_CONNECTION=x AKAM_PROC_MOUNTS="$WORK/mounts_stock" AKAM_PROC_DIR="$WORK/proc" \
         "${SHCMD[@]}" "$d/$s.sh" >"$WORK/out" 2>&1
     rc=$?
     if [ $rc -ne 0 ] && grep -q "refusing to write the APP" "$WORK/out"; then ok "$s.sh guarded"
@@ -109,8 +114,8 @@ if [ "${#SHCMD[@]}" -gt 1 ]; then
         install_padded_firmware install_ak_rtsp_firmware restore_full_firmware; do
         d=$WORK/sd_$s
         cp "$FS/flash_guard.sh" "$d/"
-        (cd "$d" && env -i PATH="$RB" SSH_CONNECTION=x CAMYN_PROC_MOUNTS="$WORK/mounts_stock" \
-            CAMYN_PROC_DIR="$WORK/proc" "${SHCMD[0]}" sh "./$s.sh" >"$WORK/out" 2>&1)
+        (cd "$d" && env -i PATH="$RB" SSH_CONNECTION=x AKAM_PROC_MOUNTS="$WORK/mounts_stock" \
+            AKAM_PROC_DIR="$WORK/proc" "${SHCMD[0]}" sh "./$s.sh" >"$WORK/out" 2>&1)
         rc=$?
         if [ $rc -ne 0 ] && grep -q "refusing to write the APP" "$WORK/out"; then ok "$s.sh: guard loads without dirname (rootfs applets only)"
         else ko "$s.sh: guard loads without dirname (rc=$rc)"; sed 's/^/      | /' "$WORK/out"; fi

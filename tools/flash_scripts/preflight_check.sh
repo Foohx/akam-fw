@@ -1,18 +1,18 @@
 #!/bin/sh
 # preflight_check.sh -- READ-ONLY pre-flash gates, run on the camera (stock
-# firmware, BusyBox sh) before writing Camyn's APP. Changes nothing and never
+# firmware, BusyBox sh) before writing Akam's APP. Changes nothing and never
 # prints the SSID or the key: only presence and counts.
 #
 # Usage: sh preflight_check.sh        exit 0 = all gates pass, 1 = a gate failed
 #
-# Why: Camyn removes anyka_ipc. The Wi-Fi comes back at boot only if the stock
+# Why: Akam removes anyka_ipc. The Wi-Fi comes back at boot only if the stock
 # ethernet.sh finds /etc/config/wpa_supplicant.conf (station mode, DHCP) and
 # nothing forces AP mode (/tmp/_ht_ap_mode.conf, copied from the SD at boot; reported as
 # a warning only, because the toolkit card used for the flash carries that file).
 #
-# Paths are prefixed by $CAMYN_ROOT (empty on the camera) for the host test.
+# Paths are prefixed by $AKAM_ROOT (empty on the camera) for the host test.
 
-ROOT=${CAMYN_ROOT:-}
+ROOT=${AKAM_ROOT:-}
 WPA=$ROOT/etc/config/wpa_supplicant.conf
 FAIL=0
 
@@ -35,7 +35,7 @@ if [ -s "$WPA" ]; then
     fi
     grep -q '^[[:space:]]*ctrl_interface=' "$WPA" || note "no ctrl_interface line (wpa_cli would not work)"
 else
-    ko "wpa_supplicant.conf missing or empty: Camyn would boot without Wi-Fi"
+    ko "wpa_supplicant.conf missing or empty: Akam would boot without Wi-Fi"
 fi
 
 # The toolkit card itself carries _ht_ap_mode.conf (that is how its hook runs), so
@@ -49,7 +49,7 @@ fi
 if [ -s "$ROOT/etc/config/passwd" ]; then
     ok "/etc/config/passwd present"
 else
-    note "/etc/config/passwd missing or empty (camyn_ssh.sh will create one)"
+    note "/etc/config/passwd missing or empty (akam_ssh.sh will create one)"
 fi
 
 if grep -q '"APP"' "$ROOT/proc/mtd" 2>/dev/null; then

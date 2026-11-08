@@ -1,5 +1,5 @@
 /*
- * time64_probe.c -- hardware probe for the time64 syscalls of the Camyn
+ * time64_probe.c -- hardware probe for the time64 syscalls of the Akam
  * camera kernel (static ARM binary).
  *
  * Why it exists: the camera's vendor kernel (Linux 4.4.302, ARM926, no vDSO)
@@ -122,7 +122,7 @@ static long raw6(long nr, long a, long b, long c, long d, long e, long f)
 #define RAW4(nr, a, b, c, d) raw6((nr), (long)(a), (long)(b), (long)(c), (long)(d), 0, 0)
 
 /* The shim marker (defined by src/common/time32_shim.c when linked in). */
-extern const int camyn_time32_shim_active __attribute__((weak));
+extern const int akam_time32_shim_active __attribute__((weak));
 
 /* ---------- verdict bookkeeping ---------- */
 
@@ -797,7 +797,7 @@ int main(int argc, char **argv)
            sizeof(time_t), sizeof(struct timespec), sizeof(long));
     printf("time64_probe: AT_SYSINFO_EHDR=0x%lx (%s)\n", vdso, vdso ? "vDSO present" : "no vDSO");
     printf("time64_probe: time32 shim %s\n",
-           &camyn_time32_shim_active ? "LINKED (libc clock_gettime/timerfd use the 32-bit syscalls)"
+           &akam_time32_shim_active ? "LINKED (libc clock_gettime/timerfd use the 32-bit syscalls)"
                                      : "NOT linked (stock musl behaviour)");
 
     printf("\n== 1. clock sources, 3 rounds one second apart\n");
@@ -824,7 +824,7 @@ int main(int argc, char **argv)
     libc_timerfd();
     libc_utimensat(dir);
 
-    printf("\n== SUMMARY (shim %s)\n", &camyn_time32_shim_active ? "linked" : "not linked");
+    printf("\n== SUMMARY (shim %s)\n", &akam_time32_shim_active ? "linked" : "not linked");
     for (i = 0; i < nres; i++) {
         printf("  %-7s %-6s %s\n", results[i].libc_level ? "libc" : "raw", vname[results[i].v],
                results[i].name);

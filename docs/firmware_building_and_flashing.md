@@ -9,15 +9,15 @@
 
 ## 1. MANDATORY: Backup Your Stock Firmware First!
 
-Dump all 8 partitions, check sizes and hashes, and keep copies off the SD card. Camyn's procedure is
-in [camyn_v1_backup.md](camyn_v1_backup.md); the upstream commands are the `dd if=/dev/mtdblockN
+Dump all 8 partitions, check sizes and hashes, and keep copies off the SD card. Akam's procedure is
+in [akam_v1_backup.md](akam_v1_backup.md); the upstream commands are the `dd if=/dev/mtdblockN
 of=... bs=64k` loop used there.
 
 ---
 
 ## 2. Restoring Stock Firmware (Emergency Fallback)
 
-See [camyn_v1_flash_and_restore.md](camyn_v1_flash_and_restore.md). In short: `tools/flash_scripts/restore.sh`
+See [akam_v1_flash_and_restore.md](akam_v1_flash_and_restore.md). In short: `tools/flash_scripts/restore.sh`
 restores the APP partition only, `tools/flash_scripts/restore_full_firmware.sh` rewrites all 8
 partitions (last resort). Restore is not guaranteed.
 
@@ -25,7 +25,7 @@ partitions (last resort). Restore is not guaranteed.
 
 ## 3. Building `ak_rtsp` & `flash_tool`
 
-Native Linux build with a pinned Zig: see [camyn_v1_build.md](camyn_v1_build.md).
+Native Linux build with a pinned Zig: see [akam_v1_build.md](akam_v1_build.md).
 
 ```bash
 bash tools/build/bootstrap.sh
@@ -33,13 +33,13 @@ bash tools/build/bootstrap.sh
 make -C src/ak_rtsp ak_rtsp flash_tool
 ```
 
-Alternative (untested by Camyn): the Anyka GCC toolchain, `make CC=arm-anykav200-linux-uclibcgnueabi-gcc`.
+Alternative (untested by Akam): the Anyka GCC toolchain, `make CC=arm-anykav200-linux-uclibcgnueabi-gcc`.
 
 ---
 
 ## 4. Packaging the APP SquashFS
 
-Needs your own stock APP dump. Full walkthrough: [camyn_v1_build.md](camyn_v1_build.md).
+Needs your own stock APP dump. Full walkthrough: [akam_v1_build.md](akam_v1_build.md).
 
 ```bash
 APP_EXTRACTED=/path/to/app_extracted FW_DIR=/path/to/out bash src/ak_rtsp/build_firmware.sh
@@ -57,9 +57,9 @@ APP_EXTRACTED=/path/to/app_extracted FW_DIR=/path/to/out bash src/ak_rtsp/build_
 
 ## 6. Flashing Step-by-Step
 
-Camyn's procedure (UART shell, `install_with_flash_tool.sh`, read-back check, hand power cycle) is in
-[camyn_v1_flash_and_restore.md](camyn_v1_flash_and_restore.md). The upstream notes below describe the
-same tool; Camyn no longer uses Telnet for it.
+Akam's procedure (UART shell, `install_with_flash_tool.sh`, read-back check, hand power cycle) is in
+[akam_v1_flash_and_restore.md](akam_v1_flash_and_restore.md). The upstream notes below describe the
+same tool; Akam no longer uses Telnet for it.
 
 ### Verify the Flash Logs!
 > **Carefully check the final output of `install_with_flash_tool.sh`:**

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check that a static ARM binary never issues a time64 system call that the
 # camera's kernel acknowledges without executing (see src/common/time32_shim.c
-# and docs/camyn_v1_kernel_time64.md).
+# and docs/akam_v1_kernel_time64.md).
 #
 #   tools/build/check_time32.sh [--require-263] <elf>...
 #

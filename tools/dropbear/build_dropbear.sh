@@ -15,7 +15,7 @@
 # must apply cleanly): see the header of each patch for why it exists.
 # src/common/time32_shim.c is compiled with the same flags and linked into the
 # multi-call binary: the camera's kernel does not execute musl's time64
-# clock_gettime syscall (docs/camyn_v1_kernel_time64.md). The final binary's
+# clock_gettime syscall (docs/akam_v1_kernel_time64.md). The final binary's
 # machine code is checked for it (gdb required, hard failure).
 set -euo pipefail
 
@@ -57,7 +57,7 @@ for p in "${patches[@]}"; do
     log "applied $(basename "$p")"
 done
 # The camera must not depend on clock_gettime(): the tick based clock has to be in.
-grep -q camyn_ticks_now "$src/src/dbutil.c" || die "monotonic clock patch missing from dbutil.c"
+grep -q akam_ticks_now "$src/src/dbutil.c" || die "monotonic clock patch missing from dbutil.c"
 # No raw time syscall with a libc time struct may exist in the sources.
 if grep -nE 'syscall *\( *SYS_(clock_gettime|gettimeofday|time)' "$src"/src/*.c; then
     die "raw time syscall left in the Dropbear sources (see above)"
@@ -65,13 +65,13 @@ fi
 
 # autoconf wants plain program names, so wrap "zig cc/ar/ranlib" in tiny scripts.
 # The single quotes are intentional: "$@" must be expanded by the wrapper.
-printf '#!/bin/sh\nexec "%s" cc -target %s -mcpu=%s "$@"\n' "$ZIG" "$CAMYN_TARGET" "$CAMYN_MCPU" >"$wrap/cc"
+printf '#!/bin/sh\nexec "%s" cc -target %s -mcpu=%s "$@"\n' "$ZIG" "$AKAM_TARGET" "$AKAM_MCPU" >"$wrap/cc"
 printf '#!/bin/sh\nexec "%s" ar "$@"\n' "$ZIG" >"$wrap/ar"
 printf '#!/bin/sh\nexec "%s" ranlib "$@"\n' "$ZIG" >"$wrap/ranlib"
 chmod 755 "$wrap/cc" "$wrap/ar" "$wrap/ranlib"
 
 # Strip absolute build paths from the binary (reproducibility).
-prefix_map="-ffile-prefix-map=$src=dropbear -ffile-prefix-map=$root=camyn"
+prefix_map="-ffile-prefix-map=$src=dropbear -ffile-prefix-map=$root=akam"
 cflags="-Os -mfloat-abi=soft -ffunction-sections -fdata-sections $prefix_map"
 
 # The shim is a plain object, linked explicitly (see its header for why that
@@ -107,7 +107,7 @@ effective="$work/effective_defs.txt"
     || die "could not preprocess includes.h"
 bad=0
 while read -r _ name value; do
-    case "$name" in CAMYN_LOCALOPTIONS_H) continue ;; esac
+    case "$name" in AKAM_LOCALOPTIONS_H) continue ;; esac
     eff="$(awk -v n="$name" '$1=="#define" && $2==n {print $3}' "$effective")"
     if [ "$eff" != "$value" ]; then
         echo "build_dropbear: option $name: wanted '$value', effective '${eff:-<undefined>}'" >&2
@@ -119,11 +119,11 @@ done < <(grep -E '^#define [A-Z0-9_]+ [^ ]+$' "$here/localoptions.h")
 multi="$src/dropbearmulti"
 [ -f "$multi" ] || die "dropbearmulti not produced"
 # The machine code must read clocks with the 32-bit syscall only.
-if [ "${CAMYN_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
-    log "warning: time64 machine code check SKIPPED (CAMYN_ALLOW_UNCHECKED_TIME64=1)"
+if [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+    log "warning: time64 machine code check SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1)"
 else
     "$root/tools/build/check_time32.sh" --require-263 "$multi" \
-        || die "time64 check failed for dropbearmulti (gdb is required; CAMYN_ALLOW_UNCHECKED_TIME64=1 skips it)"
+        || die "time64 check failed for dropbearmulti (gdb is required; AKAM_ALLOW_UNCHECKED_TIME64=1 skips it)"
 fi
 size_before="$(stat -c %s "$multi")"
 sha_unstripped="$(sha256sum "$multi" | cut -d' ' -f1)"
@@ -139,12 +139,12 @@ cp "$src/LICENSE" "$dist/LICENSE.dropbear"
     echo "dropbear_version=$DROPBEAR_VERSION"
     echo "dropbear_archive_sha256=$DROPBEAR_SHA256"
     echo "zig_version=$ZIG_VERSION"
-    echo "target=$CAMYN_TARGET mcpu=$CAMYN_MCPU soft-float static"
+    echo "target=$AKAM_TARGET mcpu=$AKAM_MCPU soft-float static"
     echo "programs=$programs"
     # No absolute host paths in the file shipped inside the image (reproducible
     # across checkouts, no user name leaked).
     _cf="${cflags//$src/<dropbear-src>}"
-    echo "cflags=${_cf//$root/<camyn-root>}"
+    echo "cflags=${_cf//$root/<akam-root>}"
     echo "time32_shim_sha256=$(sha256sum "$shim_src" | cut -d' ' -f1)"
     echo "localoptions_sha256=$(sha256sum "$here/localoptions.h" | cut -d' ' -f1)"
     for p in "${patches[@]}"; do

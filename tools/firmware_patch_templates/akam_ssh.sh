@@ -1,29 +1,34 @@
 #!/bin/sh
-# camyn_ssh.sh -- start Dropbear (public-key SSH, ed25519 only) at boot.
+# akam_ssh.sh -- start Dropbear (public-key SSH, ed25519 only) at boot.
 #
-# Installed as /usr/sbin/camyn_ssh.sh (mode 755) and launched in the background
+# Installed as /usr/sbin/akam_ssh.sh (mode 755) and launched in the background
 # by ak_rtsp_wrapper.sh. It must NEVER block or break ak_rtsp: every failure
 # path only logs and returns 0.
 #
-# Usage: camyn_ssh.sh [start|status]      (default: start)
+# Usage: akam_ssh.sh [start|status]      (default: start)
 #
-# Layout (all paths are prefixed by $CAMYN_ROOT, empty on the camera; the
+# Layout (all paths are prefixed by $AKAM_ROOT, empty on the camera; the
 # prefix and the variables below exist so the host-side test can run the
 # script in a fake root):
 #   /usr/bin/dropbear, /usr/bin/dropbearkey   binaries (from the Dropbear build)
 #   /etc/config/dropbear/                     persistent state (CONFIG, JFFS2), 0700
 #     dropbear_ed25519_host_key               host key, generated on first boot, 0600
 #     authorized_keys                         client keys, 0600, root:root
-#   <sd-mountpoint>/camyn/authorized_keys     provisioning file on the microSD. The card
+#   <sd-mountpoint>/akam/authorized_keys     provisioning file on the microSD. The card
 #                                             is looked up where it is ALREADY mounted
 #                                             (/proc/mounts: /dev/mmcblk0p1 or
 #                                             /dev/mmcblk0 on a directory, e.g. /tmp/sd
 #                                             with the toolkit or /mnt), see
 #                                             find_mounted_sd. Only when it is not
 #                                             mounted anywhere it is mounted read-only
-#                                             on /tmp/camyn_sd (see mount_sd_ro).
-#   /tmp/camyn_ssh.log                        one line per step, no secret logged
-#   /tmp/dropbear.pid, /tmp/camyn_ssh.lock    runtime state
+#                                             on /tmp/akam_sd (see mount_sd_ro).
+#                                             DEPRECATED fallback (one release): a card
+#                                             prepared for the early-development image
+#                                             has camyn/authorized_keys instead; it is
+#                                             used (and logged as deprecated) only when
+#                                             akam/authorized_keys is absent.
+#   /tmp/akam_ssh.log                        one line per step, no secret logged
+#   /tmp/dropbear.pid, /tmp/akam_ssh.lock    runtime state
 #
 # Key policy: NO key is embedded in the firmware image. authorized_keys comes
 # only from the microSD file, is validated (ssh-ed25519 lines only, no options,
@@ -36,22 +41,23 @@
 # logged for diagnosis; they are not changed (the stock / and /etc are 0775 and
 # read-only: see prepare_home, which moves root's HOME instead).
 
-CAMYN_ROOT=${CAMYN_ROOT:-}
-CONFIG_DIR=${CAMYN_CONFIG_DIR:-$CAMYN_ROOT/etc/config}
+AKAM_ROOT=${AKAM_ROOT:-}
+CONFIG_DIR=${AKAM_CONFIG_DIR:-$AKAM_ROOT/etc/config}
 DB_DIR=$CONFIG_DIR/dropbear
 HOSTKEY=$DB_DIR/dropbear_ed25519_host_key
 AUTHKEYS=$DB_DIR/authorized_keys
-SD_DIR=${CAMYN_SD_DIR:-$CAMYN_ROOT/mnt/camyn}
-BIN_DIR=${CAMYN_BIN_DIR:-$CAMYN_ROOT/usr/bin}
-TMP_DIR=${CAMYN_TMP_DIR:-$CAMYN_ROOT/tmp}
-SSH_PORT=${CAMYN_SSH_PORT:-22}
-WAIT_TRIES=${CAMYN_WAIT_TRIES:-30}
-LOG=$TMP_DIR/camyn_ssh.log
+SD_DIR=${AKAM_SD_DIR:-$AKAM_ROOT/mnt/akam}
+LEGACY_SD_DIR=${AKAM_SD_DIR_LEGACY:-$AKAM_ROOT/mnt/camyn}
+BIN_DIR=${AKAM_BIN_DIR:-$AKAM_ROOT/usr/bin}
+TMP_DIR=${AKAM_TMP_DIR:-$AKAM_ROOT/tmp}
+SSH_PORT=${AKAM_SSH_PORT:-22}
+WAIT_TRIES=${AKAM_WAIT_TRIES:-30}
+LOG=$TMP_DIR/akam_ssh.log
 PIDFILE=$TMP_DIR/dropbear.pid
-LOCKDIR=$TMP_DIR/camyn_ssh.lock
+LOCKDIR=$TMP_DIR/akam_ssh.lock
 
 log() {
-    echo "camyn_ssh: $*" >>"$LOG" 2>/dev/null
+    echo "akam_ssh: $*" >>"$LOG" 2>/dev/null
 }
 
 is_running() {
@@ -64,7 +70,26 @@ is_running() {
     # A stale pidfile whose PID was reused must not count as "running".
     # (No "tr": the camera's BusyBox has no such applet. cmdline is NUL
     # separated; grep -a reads it fine.)
-    grep -qa dropbear "${CAMYN_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null && return 0
+    grep -qa dropbear "${AKAM_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null && return 0
+    return 1
+}
+
+log_legacy_sd() {
+    log "DEPRECATED: using $1 from the former camyn/ folder; rename it to akam/ on the SD card (the camyn/ fallback is removed in the next release)"
+}
+
+# Look for the key file below the SD mount point $1: akam/ first, then the
+# deprecated camyn/ folder. Sets _sdfile and returns 0 when one exists.
+sd_pick() {
+    if [ -f "$1/akam/authorized_keys" ]; then
+        _sdfile=$1/akam/authorized_keys
+        return 0
+    fi
+    if [ -f "$1/camyn/authorized_keys" ]; then
+        _sdfile=$1/camyn/authorized_keys
+        log_legacy_sd "$_sdfile"
+        return 0
+    fi
     return 1
 }
 
@@ -108,27 +133,26 @@ filter_keys() {
 # and unmounts it lazily; the toolkit mounts it read-write on /tmp/sd and adds
 # file bind-mounts from it (their /proc/mounts source is the same device but
 # the target is a file: ignored, only directories count). Looks in
-# /proc/mounts (override: CAMYN_PROC_MOUNTS) for /dev/mmcblk0p1 or /dev/mmcblk0
+# /proc/mounts (override: AKAM_PROC_MOUNTS) for /dev/mmcblk0p1 or /dev/mmcblk0
 # as the SOURCE of a mount on a directory.
 # Sets _sd_seen (mount point of the last card mount seen, empty if none) and,
-# when <mountpoint>/camyn/authorized_keys exists, _sdfile; returns 0 then.
+# when <mountpoint>/akam/authorized_keys (or the deprecated camyn/) exists, _sdfile; returns 0 then.
 find_mounted_sd() {
     _sd_seen=
-    _mounts=${CAMYN_PROC_MOUNTS:-/proc/mounts}
+    _mounts=${AKAM_PROC_MOUNTS:-/proc/mounts}
     [ -r "$_mounts" ] || return 1
     while read -r _msrc _mtgt _mrest; do
         case "$_msrc" in
             /dev/mmcblk0p1 | /dev/mmcblk0) ;;
             *) continue ;;
         esac
-        [ -d "$CAMYN_ROOT$_mtgt" ] || continue
+        [ -d "$AKAM_ROOT$_mtgt" ] || continue
         _sd_seen=$_mtgt
-        if [ -f "$CAMYN_ROOT$_mtgt/camyn/authorized_keys" ]; then
-            _sdfile=$CAMYN_ROOT$_mtgt/camyn/authorized_keys
+        if sd_pick "$AKAM_ROOT$_mtgt"; then
             log "SD card already mounted on $_mtgt ($_msrc), using $_sdfile"
             return 0
         fi
-        log "SD card mounted on $_mtgt ($_msrc) but no camyn/authorized_keys there"
+        log "SD card mounted on $_mtgt ($_msrc) but no akam/authorized_keys there"
     done <"$_mounts"
     return 1
 }
@@ -138,25 +162,24 @@ find_mounted_sd() {
 # tf_mount.sh, just to read the key file. Every failure is logged.
 # Sets _sdmnt (to be unmounted by the caller) and _sdfile. Never fatal.
 mount_sd_ro() {
-    _sdmnt=$TMP_DIR/camyn_sd
+    _sdmnt=$TMP_DIR/akam_sd
     if ! mkdir -p "$_sdmnt" 2>/dev/null; then
         log "SD not mounted and cannot create $_sdmnt"
         return 1
     fi
     _found=0
-    for _try in "vfat $CAMYN_ROOT/dev/mmcblk0p1" "exfat $CAMYN_ROOT/dev/mmcblk0p1" \
-        "vfat $CAMYN_ROOT/dev/mmcblk0" "exfat $CAMYN_ROOT/dev/mmcblk0"; do
+    for _try in "vfat $AKAM_ROOT/dev/mmcblk0p1" "exfat $AKAM_ROOT/dev/mmcblk0p1" \
+        "vfat $AKAM_ROOT/dev/mmcblk0" "exfat $AKAM_ROOT/dev/mmcblk0"; do
         # shellcheck disable=SC2086
         set -- $_try
         [ -e "$2" ] || continue
         _found=1
         if _err=$(mount -t "$1" -o ro "$2" "$_sdmnt" 2>&1); then
-            if [ -f "$_sdmnt/camyn/authorized_keys" ]; then
-                _sdfile=$_sdmnt/camyn/authorized_keys
+            if sd_pick "$_sdmnt"; then
                 log "SD mounted read-only ($1 $2) on $_sdmnt"
                 return 0
             fi
-            log "SD mounted ($1 $2) but no camyn/authorized_keys on it"
+            log "SD mounted ($1 $2) but no akam/authorized_keys on it"
             umount "$_sdmnt" 2>/dev/null
         else
             log "mount -t $1 -o ro $2 $_sdmnt failed: $_err"
@@ -170,12 +193,16 @@ provision_keys() {
     _sdfile=$SD_DIR/authorized_keys
     _sdmnt=
     _sd_seen=
+    if [ ! -f "$_sdfile" ] && [ -f "$LEGACY_SD_DIR/authorized_keys" ]; then
+        _sdfile=$LEGACY_SD_DIR/authorized_keys
+        log_legacy_sd "$_sdfile"
+    fi
     if [ ! -f "$_sdfile" ]; then
         if find_mounted_sd; then
             :
         elif [ -n "$_sd_seen" ]; then
             :   # card is mounted, the file is just not on it (logged above)
-        elif [ "${CAMYN_SD_AUTOMOUNT:-1}" = 1 ]; then
+        elif [ "${AKAM_SD_AUTOMOUNT:-1}" = 1 ]; then
             mount_sd_ro || _sdmnt=
             [ -f "$_sdfile" ] || _sdmnt=
         fi
@@ -244,10 +271,10 @@ wait_config_writable() {
 # over it (the real file is untouched). Never fatal; no file = musl default
 # list, which already contains /bin/sh.
 fix_shells() {
-    _shells=$CAMYN_ROOT/etc/shells
+    _shells=$AKAM_ROOT/etc/shells
     [ -f "$_shells" ] || return 0
     grep -qx /bin/sh "$_shells" 2>/dev/null && return 0
-    _sd=$TMP_DIR/camyn
+    _sd=$TMP_DIR/akam
     _sf=$_sd/shells
     if mkdir -p "$_sd" 2>/dev/null && chmod 755 "$_sd" 2>/dev/null &&
         echo /bin/sh >"$_sf" 2>/dev/null && chmod 644 "$_sf" 2>/dev/null &&
@@ -273,9 +300,9 @@ fix_shells() {
 # effect, else the unchanged persistent directory. Never fatal.
 prepare_home() {
     _keydir=$1
-    _home=$TMP_DIR/camyn_home
-    _pw=$CAMYN_ROOT/etc/passwd
-    _pwd=$TMP_DIR/camyn
+    _home=$TMP_DIR/akam_home
+    _pw=$AKAM_ROOT/etc/passwd
+    _pwd=$TMP_DIR/akam
     _pwn=$_pwd/passwd
     mkdir -p "$_home" "$_pwd" 2>/dev/null || return 0
     chmod 700 "$_home" 2>/dev/null
@@ -358,15 +385,15 @@ do_start() {
     fi
 
     log_mode "$CONFIG_DIR"
-    log_mode "$CAMYN_ROOT/etc"
-    log_mode "$CAMYN_ROOT/"
+    log_mode "$AKAM_ROOT/etc"
+    log_mode "$AKAM_ROOT/"
 
     if wait_config_writable; then
         _dir=$DB_DIR
         _persistent=1
         fix_perms
     else
-        _dir=$TMP_DIR/camyn_dropbear
+        _dir=$TMP_DIR/akam_dropbear
         _persistent=0
         log "$CONFIG_DIR not writable, using ephemeral host key and authorized_keys in $_dir"
         mkdir -p "$_dir" 2>/dev/null
@@ -410,10 +437,10 @@ do_start() {
 
 do_status() {
     if is_running; then
-        echo "camyn_ssh: dropbear running (pid $_pid)"
+        echo "akam_ssh: dropbear running (pid $_pid)"
         return 0
     fi
-    echo "camyn_ssh: dropbear not running"
+    echo "akam_ssh: dropbear not running"
     return 1
 }
 

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Camyn builds on, or ships, the following third-party work. Versions are the
+Akam builds on, or ships, the following third-party work. Versions are the
 ones pinned in `tools/build/deps.lock`.
 
 ## Action-Smart-Connect-Flasher (MIT)
@@ -51,12 +51,12 @@ and bundled libtom* components) is copied unmodified to
 `dist/dropbear/LICENSE.dropbear` by the build script and must be kept with any
 redistributed binary.
 
-The image also carries, in `/usr/local/camyn/`, the licence texts of the other
+The image also carries, in `/usr/local/akam/`, the licence texts of the other
 code linked into `ak_rtsp` and `dropbearmulti`: `LICENSE.musl` (musl's
 `COPYRIGHT`, from the pinned Zig tarball), `LICENSE.smolrtsp`, and
 `LICENSE.slice99`, `LICENSE.metalang99`, `LICENSE.datatype99`,
 `LICENSE.interface99` (their macros are expanded into `ak_rtsp`), `LICENSE.zig`
-(Zig's compiler-rt is linked into both binaries) and `LICENSE.camyn` (the
+(Zig's compiler-rt is linked into both binaries) and `LICENSE.akam` (the
 repository's own MIT licence, covering `ak_rtsp`), plus this file as
 `THIRD_PARTY_NOTICES.md` (it carries the flasher's MIT notice above). They are
 copied unmodified from the pinned sources by `build_firmware.sh`, which fails

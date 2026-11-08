@@ -1,5 +1,5 @@
 #!/bin/sh
-# camyn_hwcheck.sh - read-only post-flash hardware check for Camyn (POSIX sh,
+# akam_hwcheck.sh - read-only post-flash hardware check for Akam (POSIX sh,
 # BusyBox ash). Not tested on hardware: written against the V1 spec only.
 #
 # It never writes to flash or CONFIG, never kills or starts anything, never
@@ -7,30 +7,30 @@
 # facts section for later work. Exit code: 0 if no FAIL, 1 otherwise.
 #
 # Usage:
-#   camyn_hwcheck.sh                     full report
-#   camyn_hwcheck.sh --boot-window [N]   sample listening ports every second
+#   akam_hwcheck.sh                     full report
+#   akam_hwcheck.sh --boot-window [N]   sample listening ports every second
 #                                        for N seconds (default 120)
-#   camyn_hwcheck.sh --help
+#   akam_hwcheck.sh --help
 #
 # Run it without installing anything in the image:
-#   ssh root@CAM 'sh -s' < tools/hw_tests/camyn_hwcheck.sh
+#   ssh root@CAM 'sh -s' < tools/hw_tests/akam_hwcheck.sh
 # or
-#   ssh root@CAM 'cat > /tmp/hwcheck.sh' < tools/hw_tests/camyn_hwcheck.sh
+#   ssh root@CAM 'cat > /tmp/hwcheck.sh' < tools/hw_tests/akam_hwcheck.sh
 #   ssh root@CAM 'sh /tmp/hwcheck.sh'
 # or copy it to the microSD (mounted on /mnt, to be confirmed) and run it
-# from the UART console: sh /mnt/camyn_hwcheck.sh
+# from the UART console: sh /mnt/akam_hwcheck.sh
 #
 # Measuring the telnet exposure window (--boot-window): start it as early as
 # possible after power-on, from the UART console as soon as a shell prompt
 # exists, with the output kept off the volatile /tmp, e.g.
-#   sh /mnt/camyn_hwcheck.sh --boot-window 180 > /mnt/bootwindow.log 2>&1 &
+#   sh /mnt/akam_hwcheck.sh --boot-window 180 > /mnt/bootwindow.log 2>&1 &
 # (the script itself writes nothing; the redirection is yours). Each sample
 # carries the uptime: a forbidden port already open on the first line means
 # the window began BEFORE the measurement and is longer than reported. The
 # summary gives first/last seen uptime per watched port. If the UART shell
 # only appears late, the result is a lower bound.
 #
-# Paths are prefixed by $CAMYN_ROOT (empty on the camera) so the host test can
+# Paths are prefixed by $AKAM_ROOT (empty on the camera) so the host test can
 # run the script against a fake root. $HWCHECK_INTERVAL (default 1) is the
 # --boot-window sampling period in seconds.
 #
@@ -40,22 +40,24 @@
 # opens a short connection to 8091 per sample (the control port is single
 # client: a sample briefly replaces any other connected client).
 
-ROOT=${CAMYN_ROOT:-}
+ROOT=${AKAM_ROOT:-}
 INTERVAL=${HWCHECK_INTERVAL:-1}
 CPU_WINDOW=${HWCHECK_CPU_WINDOW:-2}
 NIGHT_SAMPLES=${HWCHECK_NIGHT_SAMPLES:-4}
 NIGHT_INTERVAL=${HWCHECK_NIGHT_INTERVAL:-6}
-TMP_DIR=${CAMYN_TMP_DIR:-$ROOT/tmp}
-FLAG=${CAMYN_MAINT_FLAG:-$ROOT/mnt/CAMYN_MAINTENANCE}
-MARK=${CAMYN_MAINT_MARK:-$TMP_DIR/camyn_maintenance}
+TMP_DIR=${AKAM_TMP_DIR:-$ROOT/tmp}
+FLAG=${AKAM_MAINT_FLAG:-$ROOT/mnt/AKAM_MAINTENANCE}
+MARK=${AKAM_MAINT_MARK:-$TMP_DIR/akam_maintenance}
+# Deprecated alias (former name of the flag), honoured for one release only.
+LEGACY_FLAG=${AKAM_MAINT_FLAG_LEGACY-$ROOT/mnt/CAMYN_MAINTENANCE}
 N_PASS=0
 N_FAIL=0
 N_WARN=0
 N_UNK=0
 # The camera's BusyBox 1.30.1 has no mktemp (nor tr): mkdir a private dir by hand.
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/camyn_hwcheck.XXXXXX" 2>/dev/null) || WORK=
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/akam_hwcheck.XXXXXX" 2>/dev/null) || WORK=
 if [ -z "$WORK" ]; then
-    WORK=${TMPDIR:-/tmp}/camyn_hwcheck.$$
+    WORK=${TMPDIR:-/tmp}/akam_hwcheck.$$
     rm -rf "$WORK"
     (umask 077 && mkdir "$WORK" 2>/dev/null) || WORK=
 fi
@@ -82,6 +84,8 @@ show_cmd() { "$@" 2>&1 | sed 's/^/    /'; }
 
 maint=0
 { [ -e "$FLAG" ] || [ -e "$MARK" ]; } && maint=1
+legacy_flag=0
+if [ -n "$LEGACY_FLAG" ] && [ -e "$LEGACY_FLAG" ]; then maint=1; legacy_flag=1; fi
 
 # ---------------------------------------------------------------- listening
 hex_ip() { # 8 hex digits, little-endian as in /proc/net/tcp -> dotted quad
@@ -165,7 +169,7 @@ check_ports() {
         else fail "port $p listening ($a): must be closed"; fi
     done
     a=$(port_addrs 80)
-    if [ -z "$a" ]; then pass "port 80 closed"; else warn "port 80 listening ($a): no Camyn service uses it"; fi
+    if [ -z "$a" ]; then pass "port 80 closed"; else warn "port 80 listening ($a): no Akam service uses it"; fi
     a=$(port_addrs 8091)
     [ -n "$a" ] && info "8091 listen address: $a (must be LAN only)"
     return 0
@@ -209,11 +213,11 @@ check_procs() {
         unk "no /proc/<pid> entries readable; process checks skipped"
         return
     fi
-    for n in ak_rtsp dropbear camyn_lockdown; do
+    for n in ak_rtsp dropbear akam_lockdown; do
         p=$(pids_of $n)
         if [ -n "$p" ]; then pass "$n running (pid $p)"
-        elif [ "$n" = camyn_lockdown ] && [ "$maint" = 1 ]; then
-            warn "camyn_lockdown not running (expected: maintenance flag present)"
+        elif [ "$n" = akam_lockdown ] && [ "$maint" = 1 ]; then
+            warn "akam_lockdown not running (expected: maintenance flag present)"
         else fail "$n not running"; fi
     done
     for n in wpa_supplicant udhcpc; do
@@ -227,7 +231,7 @@ check_procs() {
         else fail "$n running (pid $p)"; fi
     done
     section "resident memory (VmRSS)"
-    for n in ak_rtsp dropbear camyn_lockdown; do
+    for n in ak_rtsp dropbear akam_lockdown; do
         for p in $(pids_of $n); do info "$n pid $p VmRSS $(rss_of "$p") kB"; done
     done
 }
@@ -308,8 +312,8 @@ count_keys() { # number of public-key lines in file $1
 check_modes() {
     section "permissions (Dropbear rejects authorized_keys under group/other-writable paths)"
     # Dropbear walks from the key directory up to root's HOME (or "/"), so the
-    # chain to check depends on HOME. camyn_ssh.sh moves root's HOME to
-    # /tmp/camyn_home (private 0700 tmpfs): "/" and "/etc" are then not on the
+    # chain to check depends on HOME. akam_ssh.sh moves root's HOME to
+    # /tmp/akam_home (private 0700 tmpfs): "/" and "/etc" are then not on the
     # path, and the stock 0775 there is expected.
     home=$(root_home) || home=
     info "root HOME in passwd: '${home:-?}'"
@@ -426,6 +430,7 @@ check_misc() {
     section "maintenance flag and SD"
     if [ "$maint" = 1 ]; then warn "maintenance mode ($MARK or $FLAG present): telnet/ftp are NOT locked down in this mode"
     else pass "maintenance mode off ($MARK and $FLAG absent)"; fi
+    if [ "$legacy_flag" = 1 ]; then warn "DEPRECATED flag name ${LEGACY_FLAG##*/}: rename it to ${FLAG##*/} (the old name is removed in the next release)"; fi
     if [ -r "$ROOT/proc/mounts" ]; then
         if grep -q ' /mnt ' "$ROOT/proc/mounts"; then info "SD mount: $(grep ' /mnt ' "$ROOT/proc/mounts" | head -n 1)"
         else info "nothing mounted on /mnt (no SD card, or another mount point: see mounts below)"; fi
@@ -450,8 +455,8 @@ check_misc() {
     else unk "entropy_avail unreadable"; fi
     if [ -e "$ROOT/proc/self/exe" ] || [ -L "$ROOT/proc/self/exe" ]; then pass "/proc/self/exe available (Dropbear re-exec)"
     else warn "/proc/self/exe missing: Dropbear re-exec may fail"; fi
-    section "camyn logs (last 15 lines)"
-    for l in camyn_ssh.log camyn_lockdown.log; do
+    section "akam logs (last 15 lines)"
+    for l in akam_ssh.log akam_lockdown.log; do
         echo "  -- $TMP_DIR/$l"
         if [ -r "$TMP_DIR/$l" ]; then tail -n 15 "$TMP_DIR/$l" | sed 's/^/    /'; else echo "    (absent)"; fi
     done
@@ -567,7 +572,7 @@ case ${1:-} in
     *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
-echo "camyn_hwcheck: read-only check; results are evidence, not validation"
+echo "akam_hwcheck: read-only check; results are evidence, not validation"
 check_ports
 check_procs
 check_cpu

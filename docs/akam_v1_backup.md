@@ -1,11 +1,11 @@
-# Camyn V1: Back Up Your Camera First
+# Akam V1: Back Up Your Camera First
 
 > **Do this before anything else.** Do not build, flash or even boot a modified image until you
 > hold a verified copy of all 8 flash partitions. The backup is also the source for building your
 > image: the APP partition (`mtdblock7`) is the input of `build_firmware.sh`.
 >
 > Status: this procedure reuses the upstream dump commands (`dd` per partition) plus extra size and
-> hash checks written for Camyn. The extra checks have **not been run on a camera**.
+> hash checks written for Akam. The extra checks have **not been run on a camera**.
 
 > **WARNING: never boot the camera with `.bin` files on the card.** The stock `service.sh` runs
 > `tf_update.sh` at every boot, which mounts the card on `/mnt` and calls `system_upgrade` on every
@@ -14,7 +14,7 @@
 > the file, so a stray OTA-format `.bin` on any card could reflash the camera. The checks in
 > `system_upgrade` (bundle name, higher version) are the only protection. Keep dumps in
 > subdirectories, and **remove the card before powering the camera again** once the dump is done.
-> Camyn images built from this repository guard that call behind `/mnt/CAMYN_MAINTENANCE`, but the
+> Akam images built from this repository guard that call behind `/mnt/AKAM_MAINTENANCE`, but the
 > stock firmware you are dumping is not protected.
 
 ---
@@ -29,8 +29,8 @@
 - A PC to hold an independent copy.
 
 Without opening the camera, a root shell over Wi-Fi can be obtained with a prepared microSD card
-(no UART needed): see [camyn_v1_backup_sd.md](camyn_v1_backup_sd.md). That route is untested by
-Camyn on a camera. The stock firmware's own Telnet credentials are not known to this project.
+(no UART needed): see [akam_v1_backup_sd.md](akam_v1_backup_sd.md). That route is untested by
+Akam on a camera. The stock firmware's own Telnet credentials are not known to this project.
 
 ---
 
@@ -58,7 +58,7 @@ The 8 partitions of the reference unit and their exact sizes in bytes (hex in `/
 
 These sizes are the ones hard-coded in `tools/flash_scripts/restore_full_firmware.sh` and
 `tools/flash_scripts/install_with_flash_tool.sh`. **If your `/proc/mtd` differs in count or sizes,
-stop.** Your unit is not the layout Camyn was written for; do not flash anything and ask before going on.
+stop.** Your unit is not the layout Akam was written for; do not flash anything and ask before going on.
 
 The partition names printed by your kernel are expected to match the table but are not relied on by
 any script; the sizes are what the scripts check.
@@ -67,7 +67,7 @@ any script; the sizes are what the scripts check.
 
 ## 3. Confirm the hardware before trusting the layout
 
-Camyn targets model **`3215672.3`**, SI code **`D26228` (expected, unconfirmed)**. The upstream
+Akam targets model **`3215672.3`**, SI code **`D26228` (expected, unconfirmed)**. The upstream
 documentation and tests are for `3215672.2` / `SI B26101`. Check and write down:
 
 1. The label on the camera and the retail box: model number and the `SI` code. Compare with the
@@ -138,9 +138,9 @@ Power the camera down (do not flash anything yet), move the SD card to the PC, a
 `original_firmware/` directory to a local directory:
 
 ```bash
-mkdir -p ~/camyn-backup
-cp -a /path/to/sd/original_firmware/. ~/camyn-backup/
-cd ~/camyn-backup
+mkdir -p ~/akam-backup
+cp -a /path/to/sd/original_firmware/. ~/akam-backup/
+cd ~/akam-backup
 sha256sum mtdblock*.bin | tee SHA256SUMS.pc
 stat -c '%n %s' mtdblock*.bin
 ```
@@ -152,7 +152,7 @@ Verify:
   If the camera computed `sha256sum`, compare it with `SHA256SUMS.pc`.
 - `file mtdblock7.bin` reports a SquashFS filesystem; `unsquashfs -s mtdblock7.bin` prints its
   compression and block size (write both down, they are used in the
-  [build guide](camyn_v1_build.md#6-compression-xz-default-or-gzip)).
+  [build guide](akam_v1_build.md#6-compression-xz-default-or-gzip)).
 
 ### Keep an independent copy
 
@@ -165,7 +165,7 @@ Verify:
 `mtdblock6.bin` (CONFIG) holds your Wi-Fi credentials, and the other partitions hold the vendor's
 proprietary firmware and device identifiers. **Never commit dumps to Git, attach them to issues, or
 share them.** The repository ignores `*.bin` and `*.squashfs`, but do not rely on that: keep dumps
-outside the working tree (the examples use `~/camyn-backup`). Images built by Camyn embed your
+outside the working tree (the examples use `~/akam-backup`). Images built by Akam embed your
 stock APP tree; do not publish those either.
 
 ---
@@ -173,8 +173,8 @@ stock APP tree; do not publish those either.
 ## 6. The upstream flasher also takes a backup
 
 The Action-Smart-Connect-Flasher saves the 8 partitions in its first stage and checks sizes and MD5.
-Camyn's first-camera procedure does not use that flasher (see
-[flash and restore](camyn_v1_flash_and_restore.md#1-why-camyns-own-procedure-and-not-the-flasher)), and you
+Akam's first-camera procedure does not use that flasher (see
+[flash and restore](akam_v1_flash_and_restore.md#1-why-akams-own-procedure-and-not-the-flasher)), and you
 should validate your backup yourself in any case, as above.
 
 ---
@@ -188,4 +188,4 @@ should validate your backup yourself in any case, as above.
 - [ ] At least two independent copies, outside Git.
 - [ ] `mtdblock7.bin` opens with `unsquashfs -s` on the PC.
 
-Next: [build the image from your dump](camyn_v1_build.md).
+Next: [build the image from your dump](akam_v1_build.md).

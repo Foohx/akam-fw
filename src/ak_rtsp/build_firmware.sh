@@ -9,10 +9,10 @@
 # supply your own unsquashed dump as app_extracted/ (see
 # docs/building_your_own_firmware.md). Steps:
 #   1. copy APP_EXTRACTED to $FW_DIR/app_patched/ (always from scratch, unless
-#      KEEP_PATCHED=1; the Camyn install/patch steps below run in both cases)
+#      KEEP_PATCHED=1; the Akam install/patch steps below run in both cases)
 #   2. de-Tuyafication: remove anyka_ipc, install ak_rtsp + wrapper + ini
-#   3. Camyn: install dropbearmulti (+ dropbear/dropbearkey symlinks),
-#      camyn_ssh.sh, camyn_lockdown.sh, LICENSE.dropbear, MANIFEST.txt;
+#   3. Akam: install dropbearmulti (+ dropbear/dropbearkey symlinks),
+#      akam_ssh.sh, akam_lockdown.sh, LICENSE.dropbear, MANIFEST.txt;
 #      patch sbin/service.sh (telnet/ftp off)
 #   4. safety checks (modes, no private key), mksquashfs, round-trip verify,
 #      size guard (BEFORE padding), pad to exactly 5242880 bytes, report,
@@ -29,12 +29,12 @@
 #   ZIG_LICENSE     Zig LICENSE (compiler-rt is linked in; default: pinned Zig tarball)
 #   DROPBEAR_MULTI  prebuilt dropbearmulti (default: dist/dropbear/dropbearmulti,
 #                   built with tools/dropbear/build_dropbear.sh if missing)
-#   CAMYN_SQUASHFS_COMP  xz (default, same as stock: no BCJ, 128 KiB blocks) | gzip
-#   CAMYN_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
-#   CAMYN_ALLOW_UNCHECKED_TIME64=1  skip the machine-code time64 gate (tools/build/check_time32.sh,
+#   AKAM_SQUASHFS_COMP  xz (default, same as stock: no BCJ, 128 KiB blocks) | gzip
+#   AKAM_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
+#   AKAM_ALLOW_UNCHECKED_TIME64=1  skip the machine-code time64 gate (tools/build/check_time32.sh,
 #                   needs gdb) on the installed ak_rtsp and dropbearmulti; for stub binaries only
-#   CAMYN_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
-#   CAMYN_ALLOW_TIGHT=1  allow an image within one block of the partition size
+#   AKAM_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
+#   AKAM_ALLOW_TIGHT=1  allow an image within one block of the partition size
 #   KEEP_PATCHED=1  reuse an existing app_patched/ instead of starting over
 #   SOURCE_DATE_EPOCH  fixed timestamp for the squashfs (reproducible content)
 set -euo pipefail
@@ -49,14 +49,14 @@ APP_EXTRACTED="${APP_EXTRACTED:-$SCRIPT_DIR/app_extracted}"
 FW_DIR="${FW_DIR:-$SCRIPT_DIR}"
 PATCHED="$FW_DIR/app_patched"
 BINARY="${AK_RTSP_BIN:-$SCRIPT_DIR/ak_rtsp}"
-COMP="${CAMYN_SQUASHFS_COMP:-${CAMYN_SQUASH_COMP:-xz}}"
+COMP="${AKAM_SQUASHFS_COMP:-${AKAM_SQUASH_COMP:-xz}}"
 EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 WARNINGS=()
 warn() { echo "WARNING: $*" >&2; WARNINGS+=("$*"); }
 
-case "$COMP" in gzip | xz) ;; *) die "CAMYN_SQUASHFS_COMP must be gzip or xz (got '$COMP')" ;; esac
+case "$COMP" in gzip | xz) ;; *) die "AKAM_SQUASHFS_COMP must be gzip or xz (got '$COMP')" ;; esac
 case "$EPOCH" in '' | *[!0-9]*) die "SOURCE_DATE_EPOCH must be an integer" ;; esac
 for t in mksquashfs unsquashfs sha256sum; do
     command -v "$t" >/dev/null 2>&1 || die "required tool '$t' not found"
@@ -103,12 +103,12 @@ if [ -z "${ZIG_LICENSE:-}" ]; then
     done
 fi
 [ -f "${ZIG_LICENSE:-}" ] || die "Zig LICENSE not found (run tools/build/bootstrap.sh or set ZIG_LICENSE)"
-# Camyn's own notices (ak_rtsp is FluxAlchemist/Camyn MIT code; the ported flasher fixes carry their own MIT notice).
+# Akam's own notices (ak_rtsp is FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware MIT code; the ported flasher fixes carry their own MIT notice).
 [ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
 LIC_SRC=("$SMOLRTSP_DIR/LICENSE")
 for d in slice99 metalang99 datatype99 interface99; do LIC_SRC+=("$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE"); done
 for f in "${LIC_SRC[@]}"; do [ -s "$f" ] || die "licence file $f missing (run tools/build/bootstrap.sh)"; done
-for f in camyn_ssh.sh camyn_lockdown.sh patch_service_sh.sh ak_rtsp_wrapper.sh _ht_process.ini; do
+for f in akam_ssh.sh akam_lockdown.sh patch_service_sh.sh ak_rtsp_wrapper.sh _ht_process.ini; do
     [ -f "$TEMPLATES/$f" ] || die "template $TEMPLATES/$f missing"
 done
 
@@ -119,7 +119,7 @@ trap 'rm -rf "$TMP"' EXIT
 # Flash budget: the Makefile builds ak_rtsp with -g (~1.6 MB vs ~130 KB
 # stripped). Install a stripped COPY; the build output is never modified.
 # Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
-# $CAMYN_STRIP (a command taking "<in> <out>") if set.
+# $AKAM_STRIP (a command taking "<in> <out>") if set.
 # Use the pinned toolchain from tools/.toolchain when zig is not on PATH.
 zig_pinned() {
     local z
@@ -134,16 +134,16 @@ install_stripped() {
         install -m 755 "$src" "$dst" # not an ELF (test stub): nothing to strip
         return 0
     fi
-    if [ -n "${CAMYN_STRIP:-}" ]; then
-        $CAMYN_STRIP "$src" "$tmp" || die "CAMYN_STRIP failed on $src"
+    if [ -n "${AKAM_STRIP:-}" ]; then
+        $AKAM_STRIP "$src" "$tmp" || die "AKAM_STRIP failed on $src"
     elif [ -x "${ZIG:-}" ] || command -v zig >/dev/null 2>&1 || zig_pinned; then
         "${ZIG:-zig}" objcopy --strip-all "$src" "$tmp" || die "zig objcopy --strip-all failed on $src"
-    elif [ "${CAMYN_ALLOW_UNSTRIPPED:-0}" = 1 ]; then
-        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (CAMYN_ALLOW_UNSTRIPPED=1)"
+    elif [ "${AKAM_ALLOW_UNSTRIPPED:-0}" = 1 ]; then
+        warn "no strip tool (zig objcopy): $(basename "$dst") installed UNSTRIPPED, image will be larger (AKAM_ALLOW_UNSTRIPPED=1)"
         install -m 755 "$src" "$dst"
         return 0
     else
-        die "no strip tool for $(basename "$dst"): run bootstrap.sh and source tools/build/env.sh (or set CAMYN_STRIP, or CAMYN_ALLOW_UNSTRIPPED=1)"
+        die "no strip tool for $(basename "$dst"): run bootstrap.sh and source tools/build/env.sh (or set AKAM_STRIP, or AKAM_ALLOW_UNSTRIPPED=1)"
     fi
     [ -s "$tmp" ] || die "stripped copy of $src is empty"
     install -m 755 "$tmp" "$dst"
@@ -152,7 +152,7 @@ install_stripped() {
 
 # --- 1. tree -----------------------------------------------------------------
 if [ "${KEEP_PATCHED:-0}" = 1 ] && [ -d "$PATCHED" ]; then
-    echo "KEEP_PATCHED=1: re-using $PATCHED (Camyn install/patch steps are re-applied)."
+    echo "KEEP_PATCHED=1: re-using $PATCHED (Akam install/patch steps are re-applied)."
 else
     rm -rf "$PATCHED"
     echo "Creating app_patched/ from $APP_EXTRACTED..."
@@ -166,36 +166,36 @@ install -m 755 "$TEMPLATES/ak_rtsp_wrapper.sh" "$PATCHED/sbin/ak_rtsp_wrapper.sh
 install -m 644 "$TEMPLATES/_ht_process.ini" "$PATCHED/local/_ht_process.ini"
 install_stripped "$BINARY" "$PATCHED/bin/ak_rtsp"
 
-# --- 3. Camyn ------------------------------------------------------------------
-echo "Installing Camyn components..."
+# --- 3. Akam ------------------------------------------------------------------
+echo "Installing Akam components..."
 rm -f "$PATCHED/bin/dropbearmulti" "$PATCHED/bin/dropbear" "$PATCHED/bin/dropbearkey"
 install_stripped "$DROPBEAR_MULTI" "$PATCHED/bin/dropbearmulti"
 ln -s dropbearmulti "$PATCHED/bin/dropbear"
 ln -s dropbearmulti "$PATCHED/bin/dropbearkey"
-install -m 755 "$TEMPLATES/camyn_ssh.sh" "$PATCHED/sbin/camyn_ssh.sh"
-install -m 755 "$TEMPLATES/camyn_lockdown.sh" "$PATCHED/sbin/camyn_lockdown.sh"
-mkdir -p "$PATCHED/local/camyn"
-chmod 755 "$PATCHED/local/camyn"
-install -m 644 "$DROPBEAR_LICENSE" "$PATCHED/local/camyn/LICENSE.dropbear"
-install -m 644 "$MUSL_COPYRIGHT" "$PATCHED/local/camyn/LICENSE.musl"
-install -m 644 "$SMOLRTSP_DIR/LICENSE" "$PATCHED/local/camyn/LICENSE.smolrtsp"
-install -m 644 "$ZIG_LICENSE" "$PATCHED/local/camyn/LICENSE.zig"
-install -m 644 "$ROOT/LICENSE" "$PATCHED/local/camyn/LICENSE.camyn"
-install -m 644 "$ROOT/THIRD_PARTY_NOTICES.md" "$PATCHED/local/camyn/THIRD_PARTY_NOTICES.md"
+install -m 755 "$TEMPLATES/akam_ssh.sh" "$PATCHED/sbin/akam_ssh.sh"
+install -m 755 "$TEMPLATES/akam_lockdown.sh" "$PATCHED/sbin/akam_lockdown.sh"
+mkdir -p "$PATCHED/local/akam"
+chmod 755 "$PATCHED/local/akam"
+install -m 644 "$DROPBEAR_LICENSE" "$PATCHED/local/akam/LICENSE.dropbear"
+install -m 644 "$MUSL_COPYRIGHT" "$PATCHED/local/akam/LICENSE.musl"
+install -m 644 "$SMOLRTSP_DIR/LICENSE" "$PATCHED/local/akam/LICENSE.smolrtsp"
+install -m 644 "$ZIG_LICENSE" "$PATCHED/local/akam/LICENSE.zig"
+install -m 644 "$ROOT/LICENSE" "$PATCHED/local/akam/LICENSE.akam"
+install -m 644 "$ROOT/THIRD_PARTY_NOTICES.md" "$PATCHED/local/akam/THIRD_PARTY_NOTICES.md"
 for d in slice99 metalang99 datatype99 interface99; do
-    install -m 644 "$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE" "$PATCHED/local/camyn/LICENSE.$d"
+    install -m 644 "$SMOLRTSP_DIR/build/_deps/$d-src/LICENSE" "$PATCHED/local/akam/LICENSE.$d"
 done
 
 echo "Patching sbin/service.sh (telnet/ftp off, SD hook guarded)..."
 SVC_RC=0
-CAMYN_PATCH_REPORT="$FW_DIR/service_sh.diff" bash "$TEMPLATES/patch_service_sh.sh" "$PATCHED" || SVC_RC=$?
+AKAM_PATCH_REPORT="$FW_DIR/service_sh.diff" bash "$TEMPLATES/patch_service_sh.sh" "$PATCHED" || SVC_RC=$?
 case "$SVC_RC" in
     0) ;;
     2 | 3)
-        if [ "${CAMYN_ALLOW_UNPATCHED_SERVICE:-0}" = 1 ]; then
-            warn "*** service.sh NOT patched (exit $SVC_RC): Telnet/FTP may still be launched by the stock boot script. CAMYN_ALLOW_UNPATCHED_SERVICE=1 set, continuing. ***"
+        if [ "${AKAM_ALLOW_UNPATCHED_SERVICE:-0}" = 1 ]; then
+            warn "*** service.sh NOT patched (exit $SVC_RC): Telnet/FTP may still be launched by the stock boot script. AKAM_ALLOW_UNPATCHED_SERVICE=1 set, continuing. ***"
         else
-            die "patch_service_sh.sh exit $SVC_RC: service.sh not patched, image would not be locked down. Fix the patterns, or set CAMYN_ALLOW_UNPATCHED_SERVICE=1 to build anyway."
+            die "patch_service_sh.sh exit $SVC_RC: service.sh not patched, image would not be locked down. Fix the patterns, or set AKAM_ALLOW_UNPATCHED_SERVICE=1 to build anyway."
         fi
         ;;
     *) die "patch_service_sh.sh failed (exit $SVC_RC)" ;;
@@ -211,27 +211,27 @@ SHA_AK="$(sha256sum "$PATCHED/bin/ak_rtsp" | cut -d' ' -f1)"
 SHA_DB="$(sha256sum "$PATCHED/bin/dropbearmulti" | cut -d' ' -f1)"
 GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo unknown)"
 {
-    echo "camyn_version=$GIT_DESC"
+    echo "akam_version=$GIT_DESC"
     echo "build_date=$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
     echo "ak_rtsp_sha256=$SHA_AK"
     echo "dropbearmulti_sha256=$SHA_DB"
-    for l in "$PATCHED"/local/camyn/LICENSE.*; do
+    for l in "$PATCHED"/local/akam/LICENSE.*; do
         echo "licence: $(basename "$l") sha256=$(sha256sum "$l" | cut -d' ' -f1)"
     done
     if [ -f "$DROPBEAR_DIR/BUILDINFO.txt" ]; then
         sed 's/^/dropbear_buildinfo: /' "$DROPBEAR_DIR/BUILDINFO.txt"
     fi
-} >"$PATCHED/local/camyn/MANIFEST.txt"
-chmod 644 "$PATCHED/local/camyn/MANIFEST.txt"
+} >"$PATCHED/local/akam/MANIFEST.txt"
+chmod 644 "$PATCHED/local/akam/MANIFEST.txt"
 
 # --- 4. safety checks -------------------------------------------------------------
 echo "Checking tree..."
 # The camera's kernel acknowledges musl's time64 clock syscalls without executing
-# them (docs/camyn_v1_kernel_time64.md). Hard gate, run on the files that are
+# them (docs/akam_v1_kernel_time64.md). Hard gate, run on the files that are
 # actually in the image (stripped): no forbidden time64 syscall, and the 32-bit
 # clock_gettime (263) of src/common/time32_shim.c present. A missing gdb is a failure.
-if [ "${CAMYN_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
-    warn "*** time64 machine code check SKIPPED (CAMYN_ALLOW_UNCHECKED_TIME64=1): clocks may not work on the camera. ***"
+if [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+    warn "*** time64 machine code check SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1): clocks may not work on the camera. ***"
 else
     bash "$ROOT/tools/build/check_time32.sh" --require-263 "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" \
         || die "time64 check failed on the installed binaries (see above; missing gdb also lands here)"
@@ -242,12 +242,12 @@ BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null 
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh; do
     [ "$(stat -c %a "$PATCHED/$f")" = 755 ] || die "$f is not mode 755"
 done
-BADW="$(find "$PATCHED/local/camyn" \( -type f -o -type d \) -perm /022 2>/dev/null)"
-[ -z "$BADW" ] || die "group/other-writable files in local/camyn: $BADW"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh sbin/service.sh; do
+BADW="$(find "$PATCHED/local/akam" \( -type f -o -type d \) -perm /022 2>/dev/null)"
+[ -z "$BADW" ] || die "group/other-writable files in local/akam: $BADW"
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/service.sh; do
     if [ ! -e "$PATCHED/$f" ] || [ -n "$(find "$PATCHED/$f" -perm /022)" ]; then
         die "$f is group/other-writable or missing"
     fi
@@ -262,8 +262,8 @@ SQ="$FW_DIR/new_app_${COMP}.squashfs"
 rm -f "$SQ"
 MKOPTS=(-comp "$COMP" -b "$BLOCK" -all-root -noappend -no-xattrs -no-progress -mkfs-time "$EPOCH" -all-time "$EPOCH")
 # Stock APP is xz WITHOUT a BCJ filter; match it (a BCJ-arm image needs CONFIG_XZ_DEC_ARM in the
-# kernel, unproven). CAMYN_XZ_BCJ=1 opts in: ~45 KB smaller, not proven to boot.
-[ "$COMP" = xz ] && [ "${CAMYN_XZ_BCJ:-0}" = 1 ] && MKOPTS+=(-Xbcj arm)
+# kernel, unproven). AKAM_XZ_BCJ=1 opts in: ~45 KB smaller, not proven to boot.
+[ "$COMP" = xz ] && [ "${AKAM_XZ_BCJ:-0}" = 1 ] && MKOPTS+=(-Xbcj arm)
 # mksquashfs refuses explicit time options when SOURCE_DATE_EPOCH is in the env.
 env -u SOURCE_DATE_EPOCH mksquashfs "$PATCHED" "$SQ" "${MKOPTS[@]}" >/dev/null || die "mksquashfs failed (unsupported option? tool version: $(mksquashfs -version | head -1))"
 
@@ -293,10 +293,10 @@ if [ "$SQ_SIZE" -gt "$PARTITION" ]; then
     die "squashfs is $SQ_SIZE bytes, larger than the $PARTITION byte APP partition (over by $((-FREE))). Nothing padded."
 fi
 if [ "$FREE" -lt "$BLOCK" ]; then
-    if [ "${CAMYN_ALLOW_TIGHT:-0}" = 1 ]; then
-        warn "only $FREE bytes free in the APP partition (< one block); CAMYN_ALLOW_TIGHT=1"
+    if [ "${AKAM_ALLOW_TIGHT:-0}" = 1 ]; then
+        warn "only $FREE bytes free in the APP partition (< one block); AKAM_ALLOW_TIGHT=1"
     else
-        die "only $FREE bytes free in the APP partition (< $BLOCK, one block of margin). Set CAMYN_ALLOW_TIGHT=1 to accept."
+        die "only $FREE bytes free in the APP partition (< $BLOCK, one block of margin). Set AKAM_ALLOW_TIGHT=1 to accept."
     fi
 fi
 
@@ -312,7 +312,7 @@ SHA_OUT="$(cd "$FW_DIR" && sha256sum "$(basename "$OUT")" | tee "$(basename "$OU
 # --- 9. report -----------------------------------------------------------------------------------
 REPORT="$FW_DIR/build_report.txt"
 {
-    echo "Camyn firmware build report"
+    echo "Akam firmware build report"
     echo "image:              $(basename "$OUT")"
     echo "image sha256:       $SHA_OUT"
     echo "squashfs sha256:    $(sha256sum "$SQ" | cut -d' ' -f1)  (content, before padding)"
@@ -320,7 +320,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/camyn_ssh.sh sbin/camyn_lockdown.sh local/camyn/LICENSE.dropbear local/camyn/LICENSE.musl local/camyn/LICENSE.smolrtsp local/camyn/MANIFEST.txt; do
+    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
     echo "ak_rtsp sha256:     $SHA_AK"

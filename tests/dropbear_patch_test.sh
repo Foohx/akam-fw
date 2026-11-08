@@ -39,7 +39,7 @@ for p in "$REPO"/tools/dropbear/patches/*.patch; do
     check "$(basename "$p") applies cleanly" bash -c "cd '$WORK/src' && patch -p1 --forward --fuzz=0 -s <'$p'"
 done
 check "at least one patch present" test "$n" -ge 1
-check "tick based clock present in dbutil.c" grep -q camyn_ticks_now "$WORK/src/src/dbutil.c"
+check "tick based clock present in dbutil.c" grep -q akam_ticks_now "$WORK/src/src/dbutil.c"
 check "no raw time syscall left" bash -c "! grep -nE 'syscall *\\( *SYS_(clock_gettime|gettimeofday|time)' '$WORK'/src/src/*.c"
 
 echo "== clock probe"

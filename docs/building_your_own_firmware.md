@@ -9,15 +9,15 @@ Linux build (reference host: Arch Linux). The upstream project was developed on 
 
 The current guides:
 
-1. [Back up all 8 partitions first](camyn_v1_backup.md)
-2. [Build the image from your own dump](camyn_v1_build.md) (host tools, `bootstrap.sh`, `ak_rtsp`,
+1. [Back up all 8 partitions first](akam_v1_backup.md)
+2. [Build the image from your own dump](akam_v1_build.md) (host tools, `bootstrap.sh`, `ak_rtsp`,
    Dropbear, `unsquashfs`, `build_firmware.sh`, size guard, `build_report.txt`)
-3. [Flash and restore](camyn_v1_flash_and_restore.md)
+3. [Flash and restore](akam_v1_flash_and_restore.md)
 
 What `build_firmware.sh` does to the tree (patch templates are in `tools/firmware_patch_templates/`):
 removes `bin/anyka_ipc`, installs `ak_rtsp`, `ak_rtsp_wrapper.sh` and a single-entry
-`_ht_process.ini`, adds Dropbear and the Camyn boot scripts, patches `sbin/service.sh`, repacks with
-`mksquashfs` (xz by default, like the stock APP; gzip with `CAMYN_SQUASHFS_COMP=gzip`), round-trip verifies, and pads to exactly 5 242 880 bytes.
+`_ht_process.ini`, adds Dropbear and the Akam boot scripts, patches `sbin/service.sh`, repacks with
+`mksquashfs` (xz by default, like the stock APP; gzip with `AKAM_SQUASHFS_COMP=gzip`), round-trip verifies, and pads to exactly 5 242 880 bytes.
 
 > **Why keep `cmdserver`/`msgserver`?** They are pure local IPC (UNIX socket / SysV message queue),
 > not Tuya cloud clients; removing them stalls boot. See
@@ -30,7 +30,7 @@ removes `bin/anyka_ipc`, installs `ak_rtsp`, `ak_rtsp_wrapper.sh` and a single-e
 
 While tuning `ak_rtsp`, keep a card in the camera and use `tools/flash_scripts/start_rtsp.sh` to
 stop the running `ak_rtsp`/`anyka_ipc`, reload the venc modules and start an uploaded binary, without a
-reflash. With Camyn running you can upload via SSH:
+reflash. With Akam running you can upload via SSH:
 `make -C src/ak_rtsp upload CAMERA_IP=<camera-ip>` (files go to `/tmp`; see
-[the SSH guide](camyn_v1_ssh_and_lockdown.md#5-file-transfer-without-scp)). This workflow is
-upstream's and has not been tried with Camyn's SSH on a camera.
+[the SSH guide](akam_v1_ssh_and_lockdown.md#5-file-transfer-without-scp)). This workflow is
+upstream's and has not been tried with Akam's SSH on a camera.

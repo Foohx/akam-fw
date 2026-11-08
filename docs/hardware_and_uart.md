@@ -137,16 +137,16 @@ If you need a recovery root shell without knowing any passwords:
 
 ---
 
-## 7. UART use in the Camyn V1 procedure
+## 7. UART use in the Akam V1 procedure
 
-For Camyn the UART console is the out-of-band path used when the network is not available:
+For Akam the UART console is the out-of-band path used when the network is not available:
 
-- taking the 8-partition backup in a quiet state ([camyn_v1_backup.md](camyn_v1_backup.md));
-- flashing the APP partition from the `init=/bin/sh` shell ([camyn_v1_flash_and_restore.md](camyn_v1_flash_and_restore.md));
+- taking the 8-partition backup in a quiet state ([akam_v1_backup.md](akam_v1_backup.md));
+- flashing the APP partition from the `init=/bin/sh` shell ([akam_v1_flash_and_restore.md](akam_v1_flash_and_restore.md));
 - restoring the stock APP, or recovering from a bad APP image: U-Boot, the kernel and ROOTFS are never
-  written by Camyn, so the boot in section 6 (`root=/dev/mtdblock5`) should still work; mount the SD
+  written by Akam, so the boot in section 6 (`root=/dev/mtdblock5`) should still work; mount the SD
   card and run `restore.sh`;
-- reading `/tmp/camyn_ssh.log` and `/tmp/camyn_lockdown.log` when SSH does not come up, and re-provisioning
+- reading `/tmp/akam_ssh.log` and `/tmp/akam_lockdown.log` when SSH does not come up, and re-provisioning
   `/etc/config/dropbear` after a CONFIG wipe.
 
 Keep the UART wired for the whole first test, until SSH, persistence and the lockdown are confirmed.
