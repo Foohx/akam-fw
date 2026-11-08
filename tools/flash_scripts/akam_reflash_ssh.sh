@@ -1,13 +1,13 @@
 #!/bin/sh
-# camyn_reflash_ssh.sh -- reflash the APP partition (mtd7) of a RUNNING Camyn
+# akam_reflash_ssh.sh -- reflash the APP partition (mtd7) of a RUNNING Akam
 # camera from an SSH session, WITHOUT UART and WITHOUT the SD card.
 # Runs ON the camera (POSIX sh, BusyBox 1.30.1: no tr, mktemp, nohup, flock).
 # Normally driven from the PC by reflash_over_ssh.sh, which uploads the files
-# to /tmp/camyn_reflash/ first. Read docs/camyn_v1_flash_and_restore.md
+# to /tmp/akam_reflash/ first. Read docs/akam_v1_flash_and_restore.md
 # ("Reflashing over SSH, without UART") before using it: a write that is
 # interrupted half way leaves an APP that only UART can recover.
 #
-# Why it is "safe enough": on a Camyn image /usr is the APP squashfs, so the
+# Why it is "safe enough": on an Akam image /usr is the APP squashfs, so the
 # running dropbear, watchdog, scripts are paged in from the partition being
 # written. This script keeps everything that matters OFF the partition:
 #   prepare  copies busybox, dropbear and (already uploaded) flash_tool and the
@@ -17,54 +17,54 @@
 #   start    launches the flash with setsid, from the RAM copies, with its own
 #            session, no SSH environment and stdio on a log file, so a dying
 #            SSH session cannot kill it. The worker re-checks everything with
-#            camyn_flash_guard_detached (flash_guard.sh) before the first write.
+#            akam_flash_guard_detached (flash_guard.sh) before the first write.
 # Only one worker can run (mkdir lock in $DIR/worker.lock); the worker also
 # re-checks mtd7 and the image size just before the erase.
 # Nothing here ever reboots the camera: power cycle by hand once the log says
 # "RESULT: OK" and the read-back md5 matches.
 #
-# Usage (all from the work directory, default /tmp/camyn_reflash):
-#   sh camyn_reflash_ssh.sh precheck
+# Usage (all from the work directory, default /tmp/akam_reflash):
+#   sh akam_reflash_ssh.sh precheck
 #       mtd7 is APP 00500000, enough free RAM in /tmp. Read-only.
-#   sh camyn_reflash_ssh.sh prepare --md5 HEX
+#   sh akam_reflash_ssh.sh prepare --md5 HEX
 #       image is 5242880 bytes with md5 HEX, tools are in RAM, 2nd dropbear up.
-#   sh camyn_reflash_ssh.sh start --md5 HEX --i-understand-no-uart
+#   sh akam_reflash_ssh.sh start --md5 HEX --i-understand-no-uart
 #       start the detached flash worker and return at once.
-#   sh camyn_reflash_ssh.sh status      worker state + log tail
-#   sh camyn_reflash_ssh.sh verify --md5 HEX
+#   sh akam_reflash_ssh.sh status      worker state + log tail
+#   sh akam_reflash_ssh.sh verify --md5 HEX
 #       read /dev/mtd7 back and compare (exit 0 only on a match).
 #
 # Environment (test hooks; the defaults are right on the camera):
-#   CAMYN_REFLASH_DIR  work directory           (/tmp/camyn_reflash)
-#   CAMYN_FLASH_TMPDIR the RAM directory        (/tmp)
-#   CAMYN_REFLASH_DEV  device written           (/dev/mtd7)
-#   CAMYN_PROC_MTD     partition table          (/proc/mtd)
-#   CAMYN_PROC_DIR     proc root                (/proc)
-#   CAMYN_REFLASH_PORT second dropbear port     (2222)
-#   CAMYN_BIN_DIR      where dropbear lives     (/usr/bin)
-#   CAMYN_TMP_DIR      dropbear.pid, camyn_home (/tmp)
-#   CAMYN_CONFIG_DIR   persistent dropbear dir  (/etc/config)
-#   CAMYN_REFLASH_ATTEMPTS  write+verify attempts (3)
-#   CAMYN_REFLASH_MIN_FREE_KB free /tmp needed  (10240)
-#   CAMYN_REFLASH_DETACH_WAIT seconds the worker waits to be detached (20)
+#   AKAM_REFLASH_DIR  work directory           (/tmp/akam_reflash)
+#   AKAM_FLASH_TMPDIR the RAM directory        (/tmp)
+#   AKAM_REFLASH_DEV  device written           (/dev/mtd7)
+#   AKAM_PROC_MTD     partition table          (/proc/mtd)
+#   AKAM_PROC_DIR     proc root                (/proc)
+#   AKAM_REFLASH_PORT second dropbear port     (2222)
+#   AKAM_BIN_DIR      where dropbear lives     (/usr/bin)
+#   AKAM_TMP_DIR      dropbear.pid, akam_home (/tmp)
+#   AKAM_CONFIG_DIR   persistent dropbear dir  (/etc/config)
+#   AKAM_REFLASH_ATTEMPTS  write+verify attempts (3)
+#   AKAM_REFLASH_MIN_FREE_KB free /tmp needed  (10240)
+#   AKAM_REFLASH_DETACH_WAIT seconds the worker waits to be detached (20)
 
-DIR=${CAMYN_REFLASH_DIR:-/tmp/camyn_reflash}
-RAMDIR=${CAMYN_FLASH_TMPDIR:-/tmp}
-DEV=${CAMYN_REFLASH_DEV:-/dev/mtd7}
-MTD=${CAMYN_PROC_MTD:-/proc/mtd}
-PROC=${CAMYN_PROC_DIR:-/proc}
-PORT=${CAMYN_REFLASH_PORT:-2222}
-BINSRC=${CAMYN_BIN_DIR:-/usr/bin}
-TMPD=${CAMYN_TMP_DIR:-/tmp}
-CONFD=${CAMYN_CONFIG_DIR:-/etc/config}
-ATTEMPTS=${CAMYN_REFLASH_ATTEMPTS:-3}
-MIN_FREE_KB=${CAMYN_REFLASH_MIN_FREE_KB:-10240}
-DETACH_WAIT=${CAMYN_REFLASH_DETACH_WAIT:-20}
+DIR=${AKAM_REFLASH_DIR:-/tmp/akam_reflash}
+RAMDIR=${AKAM_FLASH_TMPDIR:-/tmp}
+DEV=${AKAM_REFLASH_DEV:-/dev/mtd7}
+MTD=${AKAM_PROC_MTD:-/proc/mtd}
+PROC=${AKAM_PROC_DIR:-/proc}
+PORT=${AKAM_REFLASH_PORT:-2222}
+BINSRC=${AKAM_BIN_DIR:-/usr/bin}
+TMPD=${AKAM_TMP_DIR:-/tmp}
+CONFD=${AKAM_CONFIG_DIR:-/etc/config}
+ATTEMPTS=${AKAM_REFLASH_ATTEMPTS:-3}
+MIN_FREE_KB=${AKAM_REFLASH_MIN_FREE_KB:-10240}
+DETACH_WAIT=${AKAM_REFLASH_DETACH_WAIT:-20}
 EXPECTSIZE=5242880
 IMAGE=$DIR/image.squashfs
 TOOL=$DIR/flash_tool
 GUARD=$DIR/flash_guard.sh
-SELF=$DIR/camyn_reflash_ssh.sh
+SELF=$DIR/akam_reflash_ssh.sh
 BIN=$DIR/bin
 LOG=$DIR/flash.log
 WPID=$DIR/worker.pid
@@ -75,8 +75,8 @@ CONFIRM_FLAG=--i-understand-no-uart
 # Applets the flash path needs from the RAM copy of busybox.
 APPLETS="sh cat dd md5sum sha256sum sleep sync tail grep sed stat ls kill rm df setsid mkdir cp ln mknod chmod"
 
-say() { echo "camyn_reflash: $*"; }
-die() { echo "camyn_reflash: ERROR: $*" >&2; exit 1; }
+say() { echo "akam_reflash: $*"; }
+die() { echo "akam_reflash: ERROR: $*" >&2; exit 1; }
 
 uptime_s() {
     _up='?'
@@ -223,7 +223,7 @@ start_second_dropbear() {
     chmod 755 "$DIR/dropbearmulti"
     ln -sf dropbearmulti "$DIR/dropbear"
     _hk=$(running_dropbear_opt -r) || _hk=$CONFD/dropbear/dropbear_ed25519_host_key
-    _kd=$(running_dropbear_opt -D) || _kd=$TMPD/camyn_home
+    _kd=$(running_dropbear_opt -D) || _kd=$TMPD/akam_home
     [ -s "$_hk" ] || die "host key $_hk missing"
     [ -s "$_kd/authorized_keys" ] || die "$_kd/authorized_keys missing: nobody could log in on port $PORT"
     # No -F: dropbear daemonizes. -T 3: three auth tries. Public-key only
@@ -309,11 +309,11 @@ cmd_worker() {
     . "$GUARD" || { log "RESULT: REFUSED cannot load $GUARD"; exit 1; }
     _t=0
     while [ "$_t" -lt "$DETACH_WAIT" ]; do
-        camyn_flash_guard_detached "$SELF" "$TOOL" "$IMAGE" "$CONFIRM" 2>/dev/null && break
+        akam_flash_guard_detached "$SELF" "$TOOL" "$IMAGE" "$CONFIRM" 2>/dev/null && break
         sleep 1
         _t=$((_t + 1))
     done
-    if ! camyn_flash_guard_detached "$SELF" "$TOOL" "$IMAGE" "$CONFIRM"; then
+    if ! akam_flash_guard_detached "$SELF" "$TOOL" "$IMAGE" "$CONFIRM"; then
         log "RESULT: REFUSED by flash_guard (nothing was written)"
         exit 1
     fi

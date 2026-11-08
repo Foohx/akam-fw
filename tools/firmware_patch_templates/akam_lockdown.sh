@@ -1,26 +1,26 @@
 #!/bin/sh
-# camyn_lockdown.sh -- runtime safety net: keep telnet and FTP daemons dead.
+# akam_lockdown.sh -- runtime safety net: keep telnet and FTP daemons dead.
 #
-# Installed as /usr/sbin/camyn_lockdown.sh (mode 755) and launched in the
+# Installed as /usr/sbin/akam_lockdown.sh (mode 755) and launched in the
 # background by ak_rtsp_wrapper.sh. Second layer only: the first layer is the
 # build-time patch of the APP's service.sh (patch_service_sh.sh), which stops
 # the daemons from being launched at all. This script covers a patch that had
 # no effect, or a late start by some other script.
 #
-# Usage: camyn_lockdown.sh            (no arguments)
+# Usage: akam_lockdown.sh            (no arguments)
 #
 # Behaviour:
-#   - anti-duplicate lock ($TMP/camyn_lockdown.lock/pid; stale locks taken over)
-#   - maintenance mode: RAM marker /tmp/camyn_maintenance (recorded by the patched
+#   - anti-duplicate lock ($TMP/akam_lockdown.lock/pid; stale locks taken over)
+#   - maintenance mode: RAM marker /tmp/akam_maintenance (recorded by the patched
 #     service.sh at boot while the SD is mounted; it lasts until the next reboot
-#     without the flag) OR the flag on the SD (/mnt/CAMYN_MAINTENANCE, mount
+#     without the flag) OR the flag on the SD (/mnt/AKAM_MAINTENANCE, mount
 #     point TO BE CONFIRMED on hardware): log, kill nothing for that round, and
 #     KEEP LOOPING. The flag is re-checked at every round: inserting the SD
 #     pauses the killing, removing it (or deleting the file) resumes it at the
 #     next round, so telnet/ftp cannot outlive the card.
 #     Mount point: the flag sits at the ROOT of the microSD, which the stock
-#     firmware mounts on /mnt. camyn_ssh.sh reads its provisioning files from
-#     the camyn/ subdirectory of the same card (CAMYN_SD_DIR, /mnt/camyn): both
+#     firmware mounts on /mnt. akam_ssh.sh reads its provisioning files from
+#     the akam/ subdirectory of the same card (AKAM_SD_DIR, /mnt/akam): both
 #     assume the same /mnt mount point, to be confirmed together on hardware.
 #   - otherwise, each round: take one `ps` snapshot and SIGTERM (then SIGKILL on
 #     the next round if the pid is still there) every process whose command
@@ -28,7 +28,7 @@
 #     vsftpd, or one of the SD-hook respawn scripts (telnet.sh, hack.sh).
 #     The respawn scripts are killed first so they cannot restart a daemon.
 #   - NEVER touches ak_rtsp, dropbear, wpa_supplicant, cmdserver, msgserver,
-#     camyn_* (exclusion list checked before anything else), nor itself.
+#     akam_* (exclusion list checked before anything else), nor itself.
 #   - no pkill/killall (not guaranteed on the target BusyBox); only ps + kill.
 #   - never opens or listens on a network socket.
 #
@@ -36,35 +36,35 @@
 #   fast phase: every 5 s for 2 min (24 rounds). Late starts by the stock boot
 #     scripts (network bring-up, SD hook) happen within the first minute or
 #     two; 5 s keeps the exposure of a late daemon to a few seconds.
-#   slow phase: every 60 s with NO end (CAMYN_SLOW_ROUNDS=-1, the default), so
+#   slow phase: every 60 s with NO end (AKAM_SLOW_ROUNDS=-1, the default), so
 #     a restart after a network reconnect is always caught. The loop only ends
 #     when the maintenance flag appears or the process is signalled.
-#     CAMYN_SLOW_ROUNDS>=0 bounds it (used by the tests only).
-#   - Dropbear respawn: every slow round, camyn_ssh.sh start is launched fully
+#     AKAM_SLOW_ROUNDS>=0 bounds it (used by the tests only).
+#   - Dropbear respawn: every slow round, akam_ssh.sh start is launched fully
 #     detached (it has its own anti-duplicate guard and is a no-op when dropbear
 #     runs), so a dead dropbear comes back within ~60 s. Never waited for.
 #   Cost: one sleeping sh plus one `ps` fork per round (~0.2 per second in the
 #     fast phase, ~0.017 per second after). RAM cost to be measured on hardware.
 #
 # Every failure path only logs and returns 0: it must never break ak_rtsp.
-# Paths are prefixed by $CAMYN_ROOT (empty on the camera) so the host test can
+# Paths are prefixed by $AKAM_ROOT (empty on the camera) so the host test can
 # run it in a fake root.
 
-CAMYN_ROOT=${CAMYN_ROOT:-}
-TMP_DIR=${CAMYN_TMP_DIR:-$CAMYN_ROOT/tmp}
-SSH_HELPER=${CAMYN_SSH_HELPER:-$CAMYN_ROOT/usr/sbin/camyn_ssh.sh}
-FLAG=${CAMYN_MAINT_FLAG:-$CAMYN_ROOT/mnt/CAMYN_MAINTENANCE}
-MARK=${CAMYN_MAINT_MARK:-$TMP_DIR/camyn_maintenance}
-FAST_ROUNDS=${CAMYN_FAST_ROUNDS:-24}
-FAST_PERIOD=${CAMYN_FAST_PERIOD:-5}
-SLOW_ROUNDS=${CAMYN_SLOW_ROUNDS:--1}
-SLOW_PERIOD=${CAMYN_SLOW_PERIOD:-60}
-LOG=$TMP_DIR/camyn_lockdown.log
-LOCKDIR=$TMP_DIR/camyn_lockdown.lock
+AKAM_ROOT=${AKAM_ROOT:-}
+TMP_DIR=${AKAM_TMP_DIR:-$AKAM_ROOT/tmp}
+SSH_HELPER=${AKAM_SSH_HELPER:-$AKAM_ROOT/usr/sbin/akam_ssh.sh}
+FLAG=${AKAM_MAINT_FLAG:-$AKAM_ROOT/mnt/AKAM_MAINTENANCE}
+MARK=${AKAM_MAINT_MARK:-$TMP_DIR/akam_maintenance}
+FAST_ROUNDS=${AKAM_FAST_ROUNDS:-24}
+FAST_PERIOD=${AKAM_FAST_PERIOD:-5}
+SLOW_ROUNDS=${AKAM_SLOW_ROUNDS:--1}
+SLOW_PERIOD=${AKAM_SLOW_PERIOD:-60}
+LOG=$TMP_DIR/akam_lockdown.log
+LOCKDIR=$TMP_DIR/akam_lockdown.lock
 TERMED=' '
 
 log() {
-    echo "camyn_lockdown: $*" >>"$LOG" 2>/dev/null
+    echo "akam_lockdown: $*" >>"$LOG" 2>/dev/null
 }
 
 # Token classification of a command line ($1 = "ps" row without the pid).
@@ -74,7 +74,7 @@ classify() {
     for _tok in $1; do
         _b=${_tok##*/}
         case "$_b" in
-            ak_rtsp* | dropbear* | wpa_supplicant* | cmdserver | msgserver | camyn_*)
+            ak_rtsp* | dropbear* | wpa_supplicant* | cmdserver | msgserver | akam_*)
                 echo protect
                 return 0
                 ;;

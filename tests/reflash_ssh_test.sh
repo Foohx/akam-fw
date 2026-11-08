@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Host-side tests for the no-UART reflash over SSH:
-#   tools/flash_scripts/flash_guard.sh      camyn_flash_guard_detached decisions
-#   tools/flash_scripts/camyn_reflash_ssh.sh  (camera side, run under BusyBox sh)
+#   tools/flash_scripts/flash_guard.sh      akam_flash_guard_detached decisions
+#   tools/flash_scripts/akam_reflash_ssh.sh  (camera side, run under BusyBox sh)
 #   tools/flash_scripts/reflash_over_ssh.sh   (host helper, with a fake ssh that
 #                                              runs the "camera" commands locally)
 # Everything is fake: the "device" is a regular file, flash_tool and dropbear are
 # shell stubs, /tmp is a directory under a scratch dir. Nothing touches hardware,
 # a block device or the network.
 # Camera-side scripts run under $SH_UNDER_TEST (default: the bootstrap BusyBox
-# 1.35.0, else "$CAMYN_BUSYBOX sh", else sh).
+# 1.35.0, else "$AKAM_BUSYBOX sh", else sh).
 # shellcheck disable=SC2015  # ok/ko never fail, so "A && ok || ko" is safe
 set -uo pipefail
 
@@ -18,7 +18,7 @@ FS=$REPO/tools/flash_scripts
 TCBB=$REPO/tools/.toolchain/busybox-1.35.0-x86_64/busybox
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
-    if [ -n "${CAMYN_BUSYBOX:-}" ]; then SH_UNDER_TEST="$CAMYN_BUSYBOX sh"
+    if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
     elif [ -x "$TCBB" ]; then SH_UNDER_TEST="$TCBB sh"
     else SH_UNDER_TEST="sh"; fi
 fi
@@ -60,15 +60,15 @@ ln -s /usr/bin/env "$RAMP/tool_link"
 # and a session id different from the pid.
 cat >"$WORK/gdriver.sh" <<'DRV'
 . "$FS/flash_guard.sh"
-mkdir -p "$CAMYN_PROC_DIR/$$"
+mkdir -p "$AKAM_PROC_DIR/$$"
 sid=${FAKE_SID:-$$}
-echo "$$ (${FAKE_COMM:-sh}) S 800 $$ $sid 0" >"$CAMYN_PROC_DIR/$$/stat"
+echo "$$ (${FAKE_COMM:-sh}) S 800 $$ $sid 0" >"$AKAM_PROC_DIR/$$/stat"
 if [ -n "${FAKE_ANCESTOR:-}" ]; then
-    mkdir -p "$CAMYN_PROC_DIR/900" "$CAMYN_PROC_DIR/800"
-    echo "800 (my shell) S 900 1 1 0" >"$CAMYN_PROC_DIR/800/stat"
-    echo "900 ($FAKE_ANCESTOR) S 1 1 1 0" >"$CAMYN_PROC_DIR/900/stat"
+    mkdir -p "$AKAM_PROC_DIR/900" "$AKAM_PROC_DIR/800"
+    echo "800 (my shell) S 900 1 1 0" >"$AKAM_PROC_DIR/800/stat"
+    echo "900 ($FAKE_ANCESTOR) S 1 1 1 0" >"$AKAM_PROC_DIR/900/stat"
 fi
-camyn_flash_guard_detached "$1" "$2" "$3" "${4:-}"
+akam_flash_guard_detached "$1" "$2" "$3" "${4:-}"
 DRV
 
 # grun NAME WANT(0|1) MOUNTS SCRIPT TOOL IMAGE CONFIRM [VAR=VAL...]
@@ -77,9 +77,9 @@ grun() {
     shift 7
     rm -rf "$WORK/gproc"
     mkdir -p "$WORK/gproc"
-    env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY -u CAMYN_FLASH_I_KNOW \
-        FS="$FS" CAMYN_PROC_MOUNTS="$WORK/$mounts" CAMYN_PROC_DIR="$WORK/gproc" \
-        CAMYN_FLASH_TMPDIR="$RAMP" "$@" \
+    env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY -u AKAM_FLASH_I_KNOW \
+        FS="$FS" AKAM_PROC_MOUNTS="$WORK/$mounts" AKAM_PROC_DIR="$WORK/gproc" \
+        AKAM_FLASH_TMPDIR="$RAMP" "$@" \
         "${SHCMD[@]}" "$WORK/gdriver.sh" "$script" "$tool" "$image" "$conf" >"$WORK/gout" 2>&1
     local rc=$?
     if [ "$want" = 0 ] && [ $rc -eq 0 ]; then ok "guard: $name"
@@ -92,7 +92,7 @@ grun "RAM tools, confirmed, detached: allowed" 0 mounts_ok "$S" "$T" "$I" "$C"
 grun "no confirmation: refused" 1 mounts_ok "$S" "$T" "$I" ""
 grep -q "missing --i-understand-no-uart" "$WORK/gout" && ok "guard: refusal names the confirmation" || ko "guard: refusal names the confirmation"
 grun "wrong confirmation: refused" 1 mounts_ok "$S" "$T" "$I" "--yes"
-grun "CAMYN_FLASH_I_KNOW does not replace the confirmation" 1 mounts_ok "$S" "$T" "$I" "" CAMYN_FLASH_I_KNOW=1
+grun "AKAM_FLASH_I_KNOW does not replace the confirmation" 1 mounts_ok "$S" "$T" "$I" "" AKAM_FLASH_I_KNOW=1
 grun "tool under /usr: refused" 1 mounts_ok "$S" /usr/bin/flash_tool "$I" "$C"
 grun "script under /usr: refused" 1 mounts_ok /usr/bin/x.sh "$T" "$I" "$C"
 grun "image outside RAM (SD): refused" 1 mounts_ok "$S" "$T" /mnt/image "$C"
@@ -127,7 +127,7 @@ done
 CRAM=$CAM/ram
 mkdir -p "$CRAM"
 CRAMP=$(cd "$CRAM" && pwd -P)
-RD=$CRAMP/camyn_reflash
+RD=$CRAMP/akam_reflash
 printf '/dev/mtdblock7 /usr squashfs ro 0 0\ntmpfs %s tmpfs rw 0 0\n' "$CRAMP" >"$CAM/mounts"
 printf 'dev: size erasesize name\nmtd6: 00200000 00010000 "x"\nmtd7: 00500000 00010000 "APP"\n' >"$CAM/mtd"
 printf 'dev: size erasesize name\nmtd7: 00100000 00010000 "OTHER"\n' >"$CAM/mtd_bad"
@@ -186,24 +186,24 @@ head -c 1000 /dev/urandom >"$WORK/small.img"
 cam_env() {
     env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY \
         PATH="$PB:/usr/bin:/bin" \
-        CAMYN_REFLASH_DIR="$RD" CAMYN_FLASH_TMPDIR="$CRAMP" CAMYN_REFLASH_DEV="$CAM/dev_mtd7" \
-        CAMYN_PROC_MTD="${MTD_FILE:-$CAM/mtd}" CAMYN_PROC_MOUNTS="${MOUNTS_FILE:-$CAM/mounts}" \
-        CAMYN_BIN_DIR="$CAM/usr/bin" CAMYN_TMP_DIR="$CAM/tmp" CAMYN_CONFIG_DIR="$CAM/etc/config" \
-        CAMYN_REFLASH_DETACH_WAIT=3 "$@"
+        AKAM_REFLASH_DIR="$RD" AKAM_FLASH_TMPDIR="$CRAMP" AKAM_REFLASH_DEV="$CAM/dev_mtd7" \
+        AKAM_PROC_MTD="${MTD_FILE:-$CAM/mtd}" AKAM_PROC_MOUNTS="${MOUNTS_FILE:-$CAM/mounts}" \
+        AKAM_BIN_DIR="$CAM/usr/bin" AKAM_TMP_DIR="$CAM/tmp" AKAM_CONFIG_DIR="$CAM/etc/config" \
+        AKAM_REFLASH_DETACH_WAIT=3 "$@"
 }
 camrun() { # camrun OUTNAME args... : run the camera script under BusyBox sh
     local n=$1; shift
-    cam_env "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" "$@" >"$WORK/$n.out" 2>&1
+    cam_env "${SHCMD[@]}" "$RD/akam_reflash_ssh.sh" "$@" >"$WORK/$n.out" 2>&1
     RC=$?
 }
 reset_cam() {
     rm -rf "$RD" "$CAM/tmp" "$CAM/db_args" "$CAM/tool_info" "$CAM/failed_once"
-    mkdir -p "$RD" "$CAM/tmp/camyn_home"
-    chmod 700 "$CAM/tmp/camyn_home"
-    echo "ssh-ed25519 AAAAFAKE test" >"$CAM/tmp/camyn_home/authorized_keys"
+    mkdir -p "$RD" "$CAM/tmp/akam_home"
+    chmod 700 "$CAM/tmp/akam_home"
+    echo "ssh-ed25519 AAAAFAKE test" >"$CAM/tmp/akam_home/authorized_keys"
     echo hostkey >"$CAM/etc/config/dropbear/dropbear_ed25519_host_key"
     head -c 5242880 /dev/zero >"$CAM/dev_mtd7"
-    cp "$FS/camyn_reflash_ssh.sh" "$FS/flash_guard.sh" "$RD/"
+    cp "$FS/akam_reflash_ssh.sh" "$FS/flash_guard.sh" "$RD/"
     cp "$WORK/image.squashfs" "$RD/image.squashfs"
     cp "$WORK/flash_tool" "$RD/flash_tool"
     echo ok >"$CAM/tool_mode"
@@ -226,7 +226,7 @@ trap 'kill $!; exit 0' TERM
 sleep 600 &
 wait
 EOF
-    "${SHCMD[0]}" sh "$CAM/fakedb" -r "$CAM/etc/config/dropbear/dropbear_ed25519_host_key" -D "$CAM/tmp/camyn_home" -p 22 </dev/null >/dev/null 2>&1 &
+    "${SHCMD[0]}" sh "$CAM/fakedb" -r "$CAM/etc/config/dropbear/dropbear_ed25519_host_key" -D "$CAM/tmp/akam_home" -p 22 </dev/null >/dev/null 2>&1 &
     echo $! >"$CAM/tmp/dropbear.pid"
     echo $! >>"$WORK/pids"
 }
@@ -244,7 +244,7 @@ rc_is "camera: prepare passes" "$RC" 0
 has "camera: second dropbear runs from RAM" "argv0=$RD/dropbear " "$CAM/db_args"
 has "camera: second dropbear on 2222" ' -p 2222( |$)' "$CAM/db_args"
 has "camera: same host key as the running one" " -r $CAM/etc/config/dropbear/dropbear_ed25519_host_key " "$CAM/db_args"
-has "camera: same key directory as the running one" " -D $CAM/tmp/camyn_home " "$CAM/db_args"
+has "camera: same key directory as the running one" " -D $CAM/tmp/akam_home " "$CAM/db_args"
 has "camera: own pid file in RAM" " -P $RD/dropbear2.pid " "$CAM/db_args"
 camrun b_nocf start --md5 "$IMD5"
 rc_not0 "camera: start without the confirmation refuses" "$RC"
@@ -253,7 +253,7 @@ cmp -s "$CAM/dev_mtd7" <(head -c 5242880 /dev/zero) && ok "camera: nothing writt
 # Start from a shell that looks like an SSH session.
 cam_env \
     SSH_CONNECTION="1.2.3.4 5 6.7.8.9 22" SSH_CLIENT="1.2.3.4 5 22" SSH_TTY=/dev/pts/9 \
-    "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" start --md5 "$IMD5" --i-understand-no-uart >"$WORK/b_start.out" 2>&1
+    "${SHCMD[@]}" "$RD/akam_reflash_ssh.sh" start --md5 "$IMD5" --i-understand-no-uart >"$WORK/b_start.out" 2>&1
 rc_is "camera: start returns at once" "$?" 0
 has "camera: start reports a detached worker" 'detached worker started \(pid [0-9]+\)' "$WORK/b_start.out"
 if wait_result; then ok "camera: worker finished"; else ko "camera: worker finished"; fi
@@ -295,7 +295,7 @@ camrun b_size prepare --md5 "$(md5sum "$WORK/small.img" | cut -d' ' -f1)"
 rc_not0 "camera: wrong image size refused" "$RC"
 has "camera: names the size" 'expected exactly 5242880' "$WORK/b_size.out"
 reset_cam
-rm "$CAM/tmp/camyn_home/authorized_keys"
+rm "$CAM/tmp/akam_home/authorized_keys"
 camrun b_nokeys prepare --md5 "$IMD5"
 rc_not0 "camera: no authorized_keys: second dropbear not started" "$RC"
 has "camera: says nobody could log in" 'nobody could log in' "$WORK/b_nokeys.out"
@@ -343,7 +343,7 @@ camrun b_l2p precheck
 rc_not0 "camera: precheck refused while a worker holds the lock" "$RC"
 # the worker itself refuses too (two racing starts) and leaves the owner's state alone
 echo "$LIVE_PID" >"$RD/worker.pid"
-cam_env setsid -w "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" __worker "$IMD5" --i-understand-no-uart >"$WORK/b_l3.out" 2>&1
+cam_env setsid -w "${SHCMD[@]}" "$RD/akam_reflash_ssh.sh" __worker "$IMD5" --i-understand-no-uart >"$WORK/b_l3.out" 2>&1
 has "camera: a second worker refuses" 'RESULT: REFUSED another worker holds' "$WORK/b_l3.out"
 [ "$(cat "$RD/worker.pid")" = "$LIVE_PID" ] && [ "$(cat "$RD/worker.lock/pid")" = "$LIVE_PID" ] && ok "camera: a refused worker leaves the owner's pid/lock alone" || ko "camera: a refused worker leaves the owner's pid/lock alone"
 zeros_ok && ok "camera: nothing written by the refused worker" || ko "camera: nothing written by the refused worker"
@@ -368,13 +368,13 @@ MTD_FILE=$CAM/mtd_bad camrun b_m2 start --md5 "$IMD5" --i-understand-no-uart
 rc_not0 "camera: start refused when mtd7 is not the APP" "$RC"
 has "camera: start names the mtd7 problem" 'mtd7 is not the 5 MiB APP' "$WORK/b_m2.out"
 zeros_ok && ok "camera: nothing written when mtd7 is wrong" || ko "camera: nothing written when mtd7 is wrong"
-MTD_FILE=$CAM/mtd_bad cam_env setsid -w "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" __worker "$IMD5" --i-understand-no-uart >"$WORK/b_m3.out" 2>&1
+MTD_FILE=$CAM/mtd_bad cam_env setsid -w "${SHCMD[@]}" "$RD/akam_reflash_ssh.sh" __worker "$IMD5" --i-understand-no-uart >"$WORK/b_m3.out" 2>&1
 has "camera: the worker re-checks mtd7 itself" 'RESULT: REFUSED mtd7 is not the 5 MiB APP' "$WORK/b_m3.out"
 zeros_ok && ok "camera: worker wrote nothing when mtd7 is wrong" || ko "camera: worker wrote nothing when mtd7 is wrong"
 [ ! -d "$RD/worker.lock" ] && ok "camera: refused worker released its lock" || ko "camera: refused worker released its lock"
 # wrong size reaching the worker directly
 cp "$WORK/small.img" "$RD/image.squashfs"
-cam_env setsid -w "${SHCMD[@]}" "$RD/camyn_reflash_ssh.sh" __worker "$(md5sum "$WORK/small.img" | cut -d' ' -f1)" --i-understand-no-uart >"$WORK/b_m4.out" 2>&1
+cam_env setsid -w "${SHCMD[@]}" "$RD/akam_reflash_ssh.sh" __worker "$(md5sum "$WORK/small.img" | cut -d' ' -f1)" --i-understand-no-uart >"$WORK/b_m4.out" 2>&1
 has "camera: the worker refuses a wrong-size image" 'RESULT: REFUSED image is 1000 bytes' "$WORK/b_m4.out"
 zeros_ok && ok "camera: worker wrote nothing for a wrong-size image" || ko "camera: worker wrote nothing for a wrong-size image"
 
@@ -438,7 +438,7 @@ cam_env REFLASH_SSH="$WORK/fakessh" "$FS/reflash_over_ssh.sh" --host h --image "
     --md5 "$(md5sum "$WORK/small.img" | cut -d' ' -f1)" --flash-tool "$WORK/flash_tool" --i-understand-no-uart >"$WORK/h_size.out" 2>&1
 rc_is "host: wrong image size refused" "$?" 1
 has "host: names the size" 'expected exactly 5242880' "$WORK/h_size.out"
-hrun h_dir --i-understand-no-uart --remote-dir /etc/camyn
+hrun h_dir --i-understand-no-uart --remote-dir /etc/akam
 rc_is "host: --remote-dir outside /tmp refused" "$RC" 1
 # --- C3. precheck-only ---------------------------------------------------------------------
 reset_cam; host_clear

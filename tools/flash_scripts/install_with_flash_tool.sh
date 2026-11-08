@@ -8,10 +8,10 @@
 # immediately reads back each 4KB erase-block via the raw /dev/mtd7 char
 # device (not page-cached) and retries any mismatched chunk. This has been
 # confirmed safe running live over Telnet with WiFi/camera/ISP all active —
-# on STOCK firmware only. On a Camyn image the APP partition is mounted on /usr
+# on STOCK firmware only. On an Akam image the APP partition is mounted on /usr
 # and holds dropbear/watchdog, so flash from the UART init=/bin/sh shell with
 # this script and flash_tool on the SD card, never over SSH (flash_guard.sh
-# refuses; override CAMYN_FLASH_I_KNOW=1). See docs/camyn_v1_flash_and_restore.md.
+# refuses; override AKAM_FLASH_I_KNOW=1). See docs/akam_v1_flash_and_restore.md.
 #
 # Run: sh /mnt/install_with_flash_tool.sh
 
@@ -24,8 +24,8 @@ case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esa
 if [ -r "$_g" ]; then
     # shellcheck source=flash_guard.sh
     . "$_g"
-    camyn_flash_guard "$0" "$TOOL" || exit 1
-elif [ "${CAMYN_FLASH_I_KNOW:-}" != "1" ]; then
+    akam_flash_guard "$0" "$TOOL" || exit 1
+elif [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; then
     echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
     exit 1
 fi

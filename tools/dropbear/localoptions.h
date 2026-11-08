@@ -1,10 +1,10 @@
 /*
- * Camyn Dropbear options (copied over src/localoptions.h by build_dropbear.sh).
+ * Akam Dropbear options (copied over src/localoptions.h by build_dropbear.sh).
  * Written against DROPBEAR_2026.94 default_options.h. Goal: public-key-only,
  * ed25519-only server with shell and command execution, nothing else.
  */
-#ifndef CAMYN_LOCALOPTIONS_H
-#define CAMYN_LOCALOPTIONS_H
+#ifndef AKAM_LOCALOPTIONS_H
+#define AKAM_LOCALOPTIONS_H
 
 /* --- Authentication: public key only ------------------------------------ */
 /* No password logins (this also removes the -s -g -B -t options). */
@@ -71,4 +71,4 @@
 /* Keep delayed host key loading so "dropbear -R" works as a fallback. */
 #define DROPBEAR_DELAY_HOSTKEY 1
 
-#endif /* CAMYN_LOCALOPTIONS_H */
+#endif /* AKAM_LOCALOPTIONS_H */

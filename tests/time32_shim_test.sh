@@ -79,8 +79,8 @@ EOF
 build_users() { # <output> [extra source...]
     local out=$1
     shift
-    # shellcheck disable=SC2086  # CAMYN_CC is a command line by design
-    $CAMYN_CC -static -Os -mfloat-abi=soft -g -o "$out" "$WORK/users.c" "$@"
+    # shellcheck disable=SC2086  # AKAM_CC is a command line by design
+    $AKAM_CC -static -Os -mfloat-abi=soft -g -o "$out" "$WORK/users.c" "$@"
 }
 check "users program builds with the shim" build_users "$WORK/users_shim" "$REPO/src/common/time32_shim.c"
 check "users program builds without the shim" build_users "$WORK/users_stock"
@@ -100,8 +100,8 @@ int main(int argc, char **argv)
     return 0;
 }
 EOF
-    # shellcheck disable=SC2086  # CAMYN_CC is a command line by design
-    check "conditional-syscall control builds" $CAMYN_CC -static -Os -mfloat-abi=soft -o "$WORK/cond" "$WORK/cond.c"
+    # shellcheck disable=SC2086  # AKAM_CC is a command line by design
+    check "conditional-syscall control builds" $AKAM_CC -static -Os -mfloat-abi=soft -o "$WORK/cond" "$WORK/cond.c"
     check "gate catches a conditionally loaded clock_gettime64 (403)" bash -c "! '$CHECK' '$WORK/cond' >/dev/null 2>&1"
     for b in src/ak_rtsp/flash_tool src/ak_rtsp/isp_dump src/ak_rtsp/patch_div0; do
         if [ -f "$REPO/$b" ]; then
@@ -169,8 +169,8 @@ int main(void)
     return 0;
 }
 EOF
-    # shellcheck disable=SC2086  # CAMYN_CC is a command line by design
-    check "edge-case program builds with the shim" $CAMYN_CC -static -Os -mfloat-abi=soft -o "$WORK/edge" "$WORK/edge.c" "$REPO/src/common/time32_shim.c"
+    # shellcheck disable=SC2086  # AKAM_CC is a command line by design
+    check "edge-case program builds with the shim" $AKAM_CC -static -Os -mfloat-abi=soft -o "$WORK/edge" "$WORK/edge.c" "$REPO/src/common/time32_shim.c"
     check "shim edge cases (NULL, EINVAL, all clock ids) under qemu" qemu-arm "$WORK/edge"
 
     qemu-arm "$WORK/probe_shim" "$WORK" >"$WORK/probe_shim.txt" 2>&1 || true

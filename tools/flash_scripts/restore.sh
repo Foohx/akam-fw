@@ -17,8 +17,8 @@ case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esa
 if [ -r "$_g" ]; then
     # shellcheck source=flash_guard.sh
     . "$_g"
-    camyn_flash_guard "$0" || exit 1
-elif [ "${CAMYN_FLASH_I_KNOW:-}" != "1" ]; then
+    akam_flash_guard "$0" || exit 1
+elif [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; then
     echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
     exit 1
 fi

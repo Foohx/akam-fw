@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# prepare_first_boot_sd.sh -- HOST tool: build the "first-boot" microSD for Camyn.
+# prepare_first_boot_sd.sh -- HOST tool: build the "first-boot" microSD for Akam.
 #
-# The card is left in the camera for the FIRST Camyn boot and contains:
+# The card is left in the camera for the FIRST Akam boot and contains:
 #   - the pinned lsc-tuya-toolkit payload configured as for the backup
 #     (telnet on 24, OFFLINE=1, wifi.conf, entrypoint lock, hack.sh hook, dump.done),
-#   - an empty CAMYN_MAINTENANCE at the card root (keeps that telnet alive: the
-#     patched service.sh records it in /tmp/camyn_maintenance),
-#   - camyn/authorized_keys with your ed25519 public key (SSH on port 22),
+#   - an empty AKAM_MAINTENANCE at the card root (keeps that telnet alive: the
+#     patched service.sh records it in /tmp/akam_maintenance),
+#   - akam/authorized_keys with your ed25519 public key (SSH on port 22),
 #   - NO *.bin at the card root (stock tf_update.sh would feed it to system_upgrade).
 # After SSH is validated, remove the card and reboot: no telnet.
 #
-# Usage: prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/camyn.pub
+# Usage: prepare_first_boot_sd.sh --device /dev/sdX --pubkey ~/.ssh/akam.pub
 #                                 [--toolkit DIR] [--dry-run --stage-dir DIR]
-#   --toolkit    clone of lsc-tuya-toolkit (default ~/camyn-sdprep/toolkit; cloned
+#   --toolkit    clone of lsc-tuya-toolkit (default ~/akam-sdprep/toolkit; cloned
 #                if absent). Commit and sd_card tree hash are verified.
 #   --dry-run    touches NO device: verifies the toolkit, builds the card tree in
 #                --stage-dir and lists it. SSID/password may come from
-#                CAMYN_SD_SSID / CAMYN_SD_PASS (otherwise asked, echoed visibly).
+#                AKAM_SD_SSID / AKAM_SD_PASS (otherwise asked, echoed visibly).
 #
 # The real run refuses anything that is not a whole, removable, USB-attached disk
 # and needs a typed YES before wiping. The Wi-Fi password ends up in clear text on
@@ -30,9 +30,9 @@ PIN_TREE_SHA=3aa3f698fd6d6f228ee785726970f708035799aa5bbcb73ef369bc3757747c2f
 TOOLKIT_URL=https://github.com/tasarren/lsc-tuya-toolkit.git
 # Test hook, honoured ONLY with --dry-run: point the pins at a synthetic toolkit.
 TESTPIN=0
-if [ "${CAMYN_TEST_DRYRUN_ONLY:-}" = 1 ]; then
+if [ "${AKAM_TEST_DRYRUN_ONLY:-}" = 1 ]; then
     TESTPIN=1
-    PIN_TREE_SHA=${CAMYN_TEST_PIN_TREE_SHA:-}
+    PIN_TREE_SHA=${AKAM_TEST_PIN_TREE_SHA:-}
 fi
 
 die() { echo "prepare_first_boot_sd: error: $*" >&2; exit 1; }
@@ -40,7 +40,7 @@ log() { echo "prepare_first_boot_sd: $*"; }
 
 DEV=
 PUBKEY=
-TOOLKIT=$HOME/camyn-sdprep/toolkit
+TOOLKIT=$HOME/akam-sdprep/toolkit
 DRY=0
 STAGE=
 while [ $# -gt 0 ]; do
@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
         *) die "unknown argument: $1" ;;
     esac
 done
-if [ "$TESTPIN" = 1 ] && [ "$DRY" = 0 ]; then die "CAMYN_TEST_DRYRUN_ONLY is for --dry-run only"; fi
+if [ "$TESTPIN" = 1 ] && [ "$DRY" = 0 ]; then die "AKAM_TEST_DRYRUN_ONLY is for --dry-run only"; fi
 [ -n "$PUBKEY" ] || die "--pubkey is required"
 if [ "$DRY" = 1 ]; then
     [ -n "$STAGE" ] || die "--dry-run needs --stage-dir DIR"
@@ -126,8 +126,8 @@ got=$( (cd "$TOOLKIT/sd_card" && find . -type f | LC_ALL=C sort | LC_ALL=C xargs
 log "toolkit verified: sd_card tree $got"
 
 # --- Wi-Fi (visible prompts, by user preference) ---------------------------------
-SSID=${CAMYN_SD_SSID:-}
-PASS=${CAMYN_SD_PASS:-}
+SSID=${AKAM_SD_SSID:-}
+PASS=${AKAM_SD_PASS:-}
 if [ -z "$SSID" ]; then read -r -p 'Wi-Fi SSID: ' SSID; fi
 if [ -z "$PASS" ]; then read -r -p 'Wi-Fi password (shown): ' PASS; fi
 [ -n "$SSID" ] && [ -n "$PASS" ] || die "SSID and password must not be empty"
@@ -154,7 +154,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp -a "$TOOLKIT/sd_card/." "$S/"
-mkdir -p "$S/custom/state" "$S/logs" "$S/camyn"
+mkdir -p "$S/custom/state" "$S/logs" "$S/akam"
 : >"$S/custom/state/dump.done"
 rm -f "$S/custom/state/shadow.done"
 CONF=$S/custom/configs/hack.conf
@@ -169,8 +169,8 @@ cat >>"$S/hack.sh" <<'EOF_HOOK'
 # DECLOUD_WIZARD_HOOK
 /bin/sh "${SCRIPTS_DIR}/entrypoint.sh" >/dev/null 2>&1 &
 EOF_HOOK
-: >"$S/CAMYN_MAINTENANCE"
-cp "$PUBKEY" "$S/camyn/authorized_keys"
+: >"$S/AKAM_MAINTENANCE"
+cp "$PUBKEY" "$S/akam/authorized_keys"
 
 # Safety: nothing the stock tf_update.sh could treat as an update (top level *.bin).
 if find "$S" -maxdepth 1 -iname '*.bin' | grep -q .; then
@@ -218,16 +218,16 @@ done
 [ -b "$PART" ] || die "$PART did not appear"
 wait_disk
 $SUDO umount "$PART" 2>/dev/null || true # a desktop automounter may have grabbed it
-$SUDO mkfs.vfat -F 32 -n CAMYNSD "$PART" >/dev/null || die "mkfs.vfat failed"
+$SUDO mkfs.vfat -F 32 -n AKAMSD "$PART" >/dev/null || die "mkfs.vfat failed"
 MNT=$(mktemp -d) || die "mktemp failed"
 $SUDO mount -o "uid=$(id -u),gid=$(id -g),umask=022" "$PART" "$MNT" || die "mount failed"
 cp -r "$S/." "$MNT/" || die "copy to the card failed"
 sync
 # Re-check on the card itself.
-{ [ -f "$MNT/CAMYN_MAINTENANCE" ] && [ -s "$MNT/camyn/authorized_keys" ]; } || die "card verification failed"
+{ [ -f "$MNT/AKAM_MAINTENANCE" ] && [ -s "$MNT/akam/authorized_keys" ]; } || die "card verification failed"
 if find "$MNT" -maxdepth 1 -iname '*.bin' | grep -q .; then die "a *.bin sits at the card root"; fi
 $SUDO umount "$MNT" || die "umount failed"
 rmdir "$MNT"
 MNT=
-log "done. Card ready: toolkit telnet 24 + SSH 22 on the first boot (CAMYN_MAINTENANCE present)."
+log "done. Card ready: toolkit telnet 24 + SSH 22 on the first boot (AKAM_MAINTENANCE present)."
 log "After SSH works: remove the card and reboot; the telnet must be gone."

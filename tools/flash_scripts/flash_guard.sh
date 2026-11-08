@@ -1,17 +1,17 @@
 # flash_guard.sh — sourced (". flash_guard.sh") by every script that writes the APP
-# partition (mtd7). POSIX sh / BusyBox ash. Defines camyn_flash_guard SCRIPT [TOOL].
+# partition (mtd7). POSIX sh / BusyBox ash. Defines akam_flash_guard SCRIPT [TOOL].
 #
 # Refuses (returns 1) when the running system depends on the APP partition:
 #   - the shell is inside an SSH session (SSH_CONNECTION / SSH_CLIENT set, or a
 #     dropbear process among the ancestors), or
 #   - /usr is a squashfs mounted from mtdblock7 AND the script or flash tool lives
 #     under /usr (it would be erased while executing).
-# Override: CAMYN_FLASH_I_KNOW=1 (prints a loud warning; meant for STOCK firmware
+# Override: AKAM_FLASH_I_KNOW=1 (prints a loud warning; meant for STOCK firmware
 # over Telnet, where nothing runs from the APP partition being written).
 #
-# Second entry point, camyn_flash_guard_detached SCRIPT TOOL IMAGE CONFIRM, for
-# the no-UART reflash over SSH (camyn_reflash_ssh.sh). It does NOT honour
-# CAMYN_FLASH_I_KNOW and allows the write only when ALL of these hold:
+# Second entry point, akam_flash_guard_detached SCRIPT TOOL IMAGE CONFIRM, for
+# the no-UART reflash over SSH (akam_reflash_ssh.sh). It does NOT honour
+# AKAM_FLASH_I_KNOW and allows the write only when ALL of these hold:
 #   1. CONFIRM is exactly "--i-understand-no-uart" (the operator accepted that
 #      a partly written APP is recoverable only through UART);
 #   2. SCRIPT, TOOL and IMAGE all resolve (symlinks followed) under the RAM
@@ -22,13 +22,13 @@
 #      ancestors, and it is a session leader (setsid), so the session's death
 #      cannot signal it. A worker started from an SSH shell passes rule 3 only
 #      once the launching shell has exited and it was re-parented to init.
-# The plain camyn_flash_guard rule above (refuse inside SSH / tools under
+# The plain akam_flash_guard rule above (refuse inside SSH / tools under
 # /usr) is unchanged and stays the default for every other script.
 #
-# Test hooks: CAMYN_PROC_MOUNTS (default /proc/mounts), CAMYN_PROC_DIR (default /proc),
-# CAMYN_FLASH_TMPDIR (default /tmp, the RAM directory of rule 2).
+# Test hooks: AKAM_PROC_MOUNTS (default /proc/mounts), AKAM_PROC_DIR (default /proc),
+# AKAM_FLASH_TMPDIR (default /tmp, the RAM directory of rule 2).
 
-_cfg_doc="docs/camyn_v1_flash_and_restore.md, section 'Reflashing later: never over an SSH session'"
+_cfg_doc="docs/akam_v1_flash_and_restore.md, section 'Reflashing later: never over an SSH session'"
 
 _cfg_under_usr() {
     case "$1" in
@@ -67,8 +67,8 @@ _cfg_dropbear_ancestor() {
     _n=0
     while [ -n "$_p" ] && [ "$_p" -gt 1 ] 2>/dev/null && [ "$_n" -lt 64 ]; do
         _n=$((_n + 1))
-        [ -r "${CAMYN_PROC_DIR:-/proc}/$_p/stat" ] || return 1
-        _stat=$(cat "${CAMYN_PROC_DIR:-/proc}/$_p/stat" 2>/dev/null) || return 1
+        [ -r "${AKAM_PROC_DIR:-/proc}/$_p/stat" ] || return 1
+        _stat=$(cat "${AKAM_PROC_DIR:-/proc}/$_p/stat" 2>/dev/null) || return 1
         _comm=${_stat#*\(}
         _comm=${_comm%\)*}
         case "$_comm" in
@@ -90,11 +90,11 @@ _cfg_usr_is_app() {
                 *mtdblock7*) return 0 ;;
             esac
         fi
-    done <"${CAMYN_PROC_MOUNTS:-/proc/mounts}"
+    done <"${AKAM_PROC_MOUNTS:-/proc/mounts}"
     return 1
 }
 
-camyn_flash_guard() {
+akam_flash_guard() {
     _script=$(_cfg_abspath "$1")
     _tool=${2:-}
     _why=""
@@ -113,10 +113,10 @@ camyn_flash_guard() {
 
     [ -z "$_why" ] && return 0
 
-    if [ "${CAMYN_FLASH_I_KNOW:-}" = "1" ]; then
+    if [ "${AKAM_FLASH_I_KNOW:-}" = "1" ]; then
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
         echo "WARNING: $_why" >&2
-        echo "WARNING: CAMYN_FLASH_I_KNOW=1 set, flashing anyway. The session or" >&2
+        echo "WARNING: AKAM_FLASH_I_KNOW=1 set, flashing anyway. The session or" >&2
         echo "WARNING: the board may die mid-write; only UART recovers a partial APP." >&2
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
         return 0
@@ -125,7 +125,7 @@ camyn_flash_guard() {
     echo "ERROR: refusing to write the APP partition: $_why." >&2
     echo "The running system executes from that partition. Use the UART init=/bin/sh" >&2
     echo "shell with the scripts and flash_tool on the SD card. See $_cfg_doc." >&2
-    echo "(Stock firmware over Telnet only: re-run with CAMYN_FLASH_I_KNOW=1.)" >&2
+    echo "(Stock firmware over Telnet only: re-run with AKAM_FLASH_I_KNOW=1.)" >&2
     return 1
 }
 
@@ -146,14 +146,14 @@ _cfg_is_ram_dir() { # $1 is a mount point of type tmpfs or ramfs
                 tmpfs | ramfs) return 0 ;;
             esac
         fi
-    done <"${CAMYN_PROC_MOUNTS:-/proc/mounts}"
+    done <"${AKAM_PROC_MOUNTS:-/proc/mounts}"
     return 1
 }
 
 # returns 0 if this shell is the leader of its own session (sid == pid)
 _cfg_session_leader() {
-    [ -r "${CAMYN_PROC_DIR:-/proc}/$$/stat" ] || return 1
-    _stat=$(cat "${CAMYN_PROC_DIR:-/proc}/$$/stat" 2>/dev/null) || return 1
+    [ -r "${AKAM_PROC_DIR:-/proc}/$$/stat" ] || return 1
+    _stat=$(cat "${AKAM_PROC_DIR:-/proc}/$$/stat" 2>/dev/null) || return 1
     _rest=${_stat##*\) }
     # _rest is "STATE PPID PGRP SESSION ..."
     # shellcheck disable=SC2086
@@ -161,12 +161,12 @@ _cfg_session_leader() {
     [ "${4:-}" = "$$" ]
 }
 
-camyn_flash_guard_detached() {
+akam_flash_guard_detached() {
     _dscript=$1
     _dtool=$2
     _dimage=$3
     _confirm=${4:-}
-    _ramdir=${CAMYN_FLASH_TMPDIR:-/tmp}
+    _ramdir=${AKAM_FLASH_TMPDIR:-/tmp}
     _dwhy=""
 
     if [ "$_confirm" != "--i-understand-no-uart" ]; then
@@ -177,7 +177,7 @@ camyn_flash_guard_detached() {
         _dimage=$(_cfg_abspath "$_dimage")
         _ramdir=$(cd "$_ramdir" 2>/dev/null && pwd -P) || _ramdir=""
         if [ -z "$_ramdir" ]; then
-            _dwhy="RAM directory ${CAMYN_FLASH_TMPDIR:-/tmp} does not exist"
+            _dwhy="RAM directory ${AKAM_FLASH_TMPDIR:-/tmp} does not exist"
         elif ! _cfg_is_ram_dir "$_ramdir"; then
             _dwhy="$_ramdir is not a tmpfs/ramfs mount point"
         else

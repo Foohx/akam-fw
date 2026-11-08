@@ -91,7 +91,7 @@ for name in slice99 metalang99 datatype99 interface99; do
     tag_v="${up}_TAG"; url_v="${up}_URL"; sha_v="${up}_SHA256"
     tag="${!tag_v}"; url="${!url_v}"; sha="${!sha_v}"
     dest="$deps/$name-src"
-    if [ "$(cat "$dest/.camyn-dep" 2>/dev/null || true)" = "$tag $sha" ]; then
+    if [ "$(cat "$dest/.akam-dep" 2>/dev/null || true)" = "$tag $sha" ]; then
         log "$name $tag already in place"
         continue
     fi
@@ -100,7 +100,7 @@ for name in slice99 metalang99 datatype99 interface99; do
     rm -rf "$dest"
     mkdir -p "$dest"
     tar -xzf "$archive" -C "$dest" --strip-components=1
-    echo "$tag $sha" > "$dest/.camyn-dep"
+    echo "$tag $sha" > "$dest/.akam-dep"
     log "$name $tag extracted"
 done
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check that the host tools needed to build Camyn are installed.
+# Check that the host tools needed to build Akam are installed.
 # Prints the pacman command for missing ones (Arch). Never runs sudo.
 set -euo pipefail
 

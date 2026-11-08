@@ -3,18 +3,18 @@
 #
 # Usage: patch_service_sh.sh <app_tree>
 #
-# Layer 1 of the Telnet/FTP lockdown (layer 2 is camyn_lockdown.sh). Edits
+# Layer 1 of the Telnet/FTP lockdown (layer 2 is akam_lockdown.sh). Edits
 # <app_tree>/sbin/service.sh in place, deterministically and idempotently:
 #
 #   1. Every non-comment line that mentions telnetd, utelnetd, ftpd, bftpd or
 #      vsftpd (this also covers "tcpsvd ... ftpd") is replaced by
-#          <indent>: # CAMYN-DISABLED: <original text>
+#          <indent>: # AKAM-DISABLED: <original text>
 #      The ":" no-op keeps the shell syntax valid when the line was the only
 #      command of an if/then/function body.
 #   2. Every non-comment line that runs the microSD hook (mentions
 #      _ht_ap_mode.conf, hack.sh, /mnt/.../hostapd, /mnt/telnet.sh, or runs
 #      tf_update.sh) gets the
-#      guard "[ -f $CAMYN_MAINT_FLAG ] &&" so the hook only runs when the
+#      guard "[ -f $AKAM_MAINT_FLAG ] &&" so the hook only runs when the
 #      maintenance flag file exists on the SD. The SD firmware-update hook
 #      ("sh /tmp/tf_update.sh": stock tf_update.sh runs system_upgrade on every
 #      /mnt/*.bin at each boot, i.e. any inserted card could reflash the camera)
@@ -22,8 +22,8 @@
 #      inserted into the condition; for simple commands it is a prefix.
 #   3. Right before the first guarded SD hook (the SD is mounted at that point),
 #      one line is inserted that records the flag in RAM:
-#          [ -f <flag> ] && : > /tmp/camyn_maintenance
-#      Stock service.sh unmounts the SD (umount -l /mnt) before camyn_lockdown.sh
+#          [ -f <flag> ] && : > /tmp/akam_maintenance
+#      Stock service.sh unmounts the SD (umount -l /mnt) before akam_lockdown.sh
 #      runs, so the lockdown and hwcheck read this RAM marker instead. The marker
 #      lives until the next reboot. Idempotent: skipped if the file already
 #      mentions it.
@@ -38,13 +38,13 @@
 #      patched file fails "sh -n". Nothing is written.
 #   3  nothing to patch: no telnet/ftp launch line found. The file is left
 #      untouched. build_firmware.sh must treat this as
-#      blocking unless CAMYN_ALLOW_UNPATCHED_SERVICE=1.
+#      blocking unless AKAM_ALLOW_UNPATCHED_SERVICE=1.
 #
 # Environment:
-#   CAMYN_MAINT_FLAG    flag path baked into the guard (default
-#                       /mnt/CAMYN_MAINTENANCE; mount point to be confirmed)
-#   CAMYN_MAINT_MARK    RAM marker path (default /tmp/camyn_maintenance)
-#   CAMYN_PATCH_REPORT  unified diff output (default <app_tree>.service_sh.diff)
+#   AKAM_MAINT_FLAG    flag path baked into the guard (default
+#                       /mnt/AKAM_MAINTENANCE; mount point to be confirmed)
+#   AKAM_MAINT_MARK    RAM marker path (default /tmp/akam_maintenance)
+#   AKAM_PATCH_REPORT  unified diff output (default <app_tree>.service_sh.diff)
 #
 # Limits (to be checked on the real dump, see audit): launches built from a
 # variable defined in another file, heredocs that contain matching text, and
@@ -63,25 +63,25 @@ SVC=$APP/sbin/service.sh
 [ -f "$SVC" ] || die "$SVC not found"
 [ -r "$SVC" ] && [ -w "$SVC" ] || die "$SVC not readable/writable"
 
-FLAG=${CAMYN_MAINT_FLAG:-/mnt/CAMYN_MAINTENANCE}
+FLAG=${AKAM_MAINT_FLAG:-/mnt/AKAM_MAINTENANCE}
 case "$FLAG" in
     /* ) ;;
-    *) die "CAMYN_MAINT_FLAG must be an absolute path" ;;
+    *) die "AKAM_MAINT_FLAG must be an absolute path" ;;
 esac
 case "$FLAG" in
-    *[!A-Za-z0-9_./-]*) die "CAMYN_MAINT_FLAG contains unsupported characters" ;;
+    *[!A-Za-z0-9_./-]*) die "AKAM_MAINT_FLAG contains unsupported characters" ;;
 esac
-MARK=${CAMYN_MAINT_MARK:-/tmp/camyn_maintenance}
+MARK=${AKAM_MAINT_MARK:-/tmp/akam_maintenance}
 case "$MARK" in
     /* ) ;;
-    *) die "CAMYN_MAINT_MARK must be an absolute path" ;;
+    *) die "AKAM_MAINT_MARK must be an absolute path" ;;
 esac
 case "$MARK" in
-    *[!A-Za-z0-9_./-]*) die "CAMYN_MAINT_MARK contains unsupported characters" ;;
+    *[!A-Za-z0-9_./-]*) die "AKAM_MAINT_MARK contains unsupported characters" ;;
 esac
 HASMARK=0
 grep -qF "$MARK" "$SVC" && HASMARK=1
-REPORT=${CAMYN_PATCH_REPORT:-$APP.service_sh.diff}
+REPORT=${AKAM_PATCH_REPORT:-$APP.service_sh.diff}
 
 WORK=$(mktemp -d) || die "mktemp failed"
 trap 'rm -rf "$WORK"' EXIT
@@ -111,8 +111,8 @@ BEGIN {
     # Bare variable assignment (AP_MODE_FILE=...): only names the file, runs nothing.
     # (A daemon path in a variable, e.g. X=/usr/sbin/telnetd, is still handled below.)
     if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=[^ \t;&|]*[ \t]*$/ && line !~ dre) { print line; next }
-    if (index(line, "CAMYN-DISABLED:") > 0) { ddone++; print line; next }
-    if (index(line, "CAMYN_MAINTENANCE") > 0 || index(line, flag) > 0) {
+    if (index(line, "AKAM-DISABLED:") > 0) { ddone++; print line; next }
+    if (index(line, "AKAM_MAINTENANCE") > 0 || index(line, flag) > 0) {
         hdone++
         if (index(line, mark) == 0) emit_mark(line)
         print line; next
@@ -122,7 +122,7 @@ BEGIN {
         match(line, /^[ \t]*/)
         indent = substr(line, 1, RLENGTH)
         body = substr(line, RLENGTH + 1)
-        print indent ": # CAMYN-DISABLED: " body
+        print indent ": # AKAM-DISABLED: " body
         dnew++
         next
     }

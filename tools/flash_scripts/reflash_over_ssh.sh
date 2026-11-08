@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # reflash_over_ssh.sh -- PC-side driver of the no-UART reflash of a running
-# Camyn camera. Uploads the image, flash_tool and the camera-side scripts to
-# RAM (/tmp/camyn_reflash on the camera) over the existing SSH access, has the
+# Akam camera. Uploads the image, flash_tool and the camera-side scripts to
+# RAM (/tmp/akam_reflash on the camera) over the existing SSH access, has the
 # camera start a SECOND dropbear on port 2222 from RAM, starts the flash fully
 # detached from RAM, then polls the camera's log over port 2222, verifies the
 # read-back md5 of /dev/mtd7 itself and only then tells you to power-cycle BY
 # HAND. It never reboots the camera.
 #
 # RISK: if the write is interrupted (power loss, crash) the APP partition is
-# half written and only UART can recover it. Read docs/camyn_v1_flash_and_restore.md
+# half written and only UART can recover it. Read docs/akam_v1_flash_and_restore.md
 # ("Reflashing over SSH, without UART"). Without --i-understand-no-uart the
 # script refuses to flash (--precheck-only is allowed).
 #
@@ -26,7 +26,7 @@
 #   --image FILE         exactly 5242880 bytes
 #   --md5 HEX            md5 of the image you expect (checked locally and on the camera)
 #   --flash-tool FILE    the flash_tool binary (ARM, from the flasher build)
-#   --remote-dir DIR     RAM work dir on the camera (default /tmp/camyn_reflash)
+#   --remote-dir DIR     RAM work dir on the camera (default /tmp/akam_reflash)
 #   --poll-interval S    seconds between log polls (default 5)
 #   --timeout S          give up polling after S seconds (default 900)
 #   --precheck-only      upload the scripts and run the camera pre-checks only
@@ -45,7 +45,7 @@ RTMP="${REFLASH_REMOTE_TMP:-/tmp}"
 EXPECTSIZE=5242880
 
 host="" user=root port=22 port2=2222 ident="" image="" md5="" tool=""
-rdir=/tmp/camyn_reflash poll=5 tmo=900 precheck_only=0 confirm=0
+rdir=/tmp/akam_reflash poll=5 tmo=900 precheck_only=0 confirm=0
 
 die() { echo "reflash_over_ssh: ERROR: $*" >&2; exit 1; }
 say() { echo "reflash_over_ssh: $*"; }
@@ -83,7 +83,7 @@ esac
 [[ "$poll" =~ ^[0-9]+$ ]] && [[ "$tmo" =~ ^[0-9]+$ ]] || die "--poll-interval and --timeout must be integers"
 [ -f "$image" ] || die "image not found: $image"
 [ -f "$tool" ] || die "flash tool not found: $tool"
-for f in camyn_reflash_ssh.sh flash_guard.sh; do
+for f in akam_reflash_ssh.sh flash_guard.sh; do
     [ -f "$HERE/$f" ] || die "$HERE/$f missing"
 done
 size="$(stat -c%s "$image")"
@@ -95,7 +95,7 @@ if [ "$confirm" -ne 1 ] && [ "$precheck_only" -ne 1 ]; then
 reflash_over_ssh: refusing to flash without --i-understand-no-uart.
 Flashing a running camera over SSH has no UART safety net: an interrupted
 write leaves a half-written APP that only UART can recover. Read
-docs/camyn_v1_flash_and_restore.md first. Use --precheck-only to test the setup.
+docs/akam_v1_flash_and_restore.md first. Use --precheck-only to test the setup.
 EOF
     exit 2
 fi
@@ -114,7 +114,7 @@ upload() {
     rssh "$port" "umask 077; cat > '$rdir/$2'" < "$1" || die "upload of $2 failed"
 }
 cam_sh() { # run the camera script on the normal port (before the flash)
-    rssh "$port" "sh '$rdir/camyn_reflash_ssh.sh' $*"
+    rssh "$port" "sh '$rdir/akam_reflash_ssh.sh' $*"
 }
 RBB="$rdir/bin/busybox"
 
@@ -135,14 +135,14 @@ done
 [ "$busy" = 0 ] || exit 3
 umask 077
 mkdir -p RDIR && cd RDIR || exit 1
-rm -f camyn_reflash_ssh.sh flash_guard.sh flash_tool image.squashfs flash.log worker.pid
+rm -f akam_reflash_ssh.sh flash_guard.sh flash_tool image.squashfs flash.log worker.pid
 rm -rf worker.lock'
 rc=0
 # $rdir was validated above (plain absolute path): no quoting needed.
 rssh "$port" "${busy_snippet//RDIR/$rdir}" || rc=$?
 [ "$rc" -ne 3 ] || die "a flash worker is still running or starting in $rdir on the camera: nothing touched. Follow $rdir/flash.log over port $port2, do not power-cycle."
 [ "$rc" -eq 0 ] || die "cannot prepare $rdir on the camera"
-upload "$HERE/camyn_reflash_ssh.sh" camyn_reflash_ssh.sh
+upload "$HERE/akam_reflash_ssh.sh" akam_reflash_ssh.sh
 upload "$HERE/flash_guard.sh" flash_guard.sh
 say "camera pre-checks (mtd7 = APP 00500000, free RAM)"
 cam_sh precheck || die "camera pre-check failed, nothing was written"
@@ -180,13 +180,13 @@ say "port $port2 session works and does not depend on /usr"
 
 # ------------------------------------------------------------- stage 4: flash
 say "starting the detached flash (from now on an interruption can leave APP half written)"
-rssh "$port2" "$RBB sh '$rdir/camyn_reflash_ssh.sh' start --md5 '$md5' --i-understand-no-uart" \
+rssh "$port2" "$RBB sh '$rdir/akam_reflash_ssh.sh' start --md5 '$md5' --i-understand-no-uart" \
     || die "start failed (see the camera log $rdir/flash.log); check the flash state before anything else"
 
 # ------------------------------------------------------------- stage 5: poll
 printed=0 result="" fails=0 waited=0 dead=0
 while [ "$waited" -le "$tmo" ]; do
-    if out="$(rssh "$port2" "$RBB tail -n +$((printed + 1)) '$rdir/flash.log'; $RBB sh '$rdir/camyn_reflash_ssh.sh' status | $RBB grep '^worker='" 2>/dev/null)"; then
+    if out="$(rssh "$port2" "$RBB tail -n +$((printed + 1)) '$rdir/flash.log'; $RBB sh '$rdir/akam_reflash_ssh.sh' status | $RBB grep '^worker='" 2>/dev/null)"; then
         fails=0
         wline="$(printf '%s\n' "$out" | grep '^worker=' | tail -n 1 || true)"
         new="$(printf '%s\n' "$out" | grep -v '^worker=' || true)"
@@ -223,7 +223,7 @@ esac
 # --------------------------------------------- stage 6: independent read-back
 v=""
 for _ in 1 2 3; do
-    if v="$(rssh "$port2" "$RBB sh '$rdir/camyn_reflash_ssh.sh' verify --md5 '$md5'" 2>/dev/null)"; then break; fi
+    if v="$(rssh "$port2" "$RBB sh '$rdir/akam_reflash_ssh.sh' verify --md5 '$md5'" 2>/dev/null)"; then break; fi
     sleep 2
 done
 rb="$(grep '^READBACK_MD5=' <<<"$v" | tail -n 1 | cut -d= -f2 || true)"
