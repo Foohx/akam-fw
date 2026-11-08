@@ -18,6 +18,12 @@
 # --require-263 additionally demands at least one clock_gettime32 (263), to
 # prove the shim is the code that answers (use it for binaries that read a clock).
 #
+# gdb is a HARD requirement: an objdump/llvm-objdump fallback was evaluated and rejected
+# (Arch and Debian binutils objdump are native-only, no ARM; llvm-objdump is not packaged
+# the same way everywhere and its verdict could not be validated against gdb on the reference
+# binaries). It must be an ARM-capable gdb: `gdb` on Arch, `gdb-multiarch` on Debian/Ubuntu
+# (plain Debian gdb cannot disassemble ARM). tools/build/check_host.sh reports it.
+#
 # Exit: 0 ok, 1 forbidden syscall found / requirement missed, 2 usage or
 # missing tool (gdb, readelf, awk).
 set -euo pipefail
@@ -29,9 +35,15 @@ if [ "${1:-}" = "--require-263" ]; then
     shift
 fi
 [ "$#" -ge 1 ] || { echo "usage: $0 [--require-263] <elf>..." >&2; exit 2; }
-for t in gdb readelf awk; do
+# shellcheck source=tools/lib/host.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/host.sh"
+for t in readelf awk; do
     command -v "$t" >/dev/null 2>&1 || { echo "check_time32: '$t' not found" >&2; exit 2; }
 done
+GDB="$(host_arm_gdb)" || {
+    echo "check_time32: no ARM-capable gdb found: $(host_pkg_install_hint gdb-multiarch) (Debian/Ubuntu) or gdb (Arch)" >&2
+    exit 2
+}
 
 # svc_numbers <elf>: lines "<number> <count>" ("?" when r7 is not a visible constant).
 svc_numbers() {
@@ -39,7 +51,7 @@ svc_numbers() {
     read -r start size < <(readelf -SW "$elf" | awk '{
         for (i = 1; i <= NF; i++) if ($i == ".text") { print "0x" $(i + 2), "0x" $(i + 4); exit } }')
     [ -n "${start:-}" ] || return 1
-    gdb -batch -ex "disassemble $start,$((start + size))" "$elf" 2>/dev/null | awk '
+    "$GDB" -batch -ex "disassemble $start,$((start + size))" "$elf" 2>/dev/null | awk '
         function reset(   k) { for (k in cand) delete cand[k]; ncand = 0 }
         {
             line = $0
