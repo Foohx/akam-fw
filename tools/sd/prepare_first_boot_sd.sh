@@ -130,7 +130,7 @@ SSID=${AKAM_SD_SSID:-}
 PASS=${AKAM_SD_PASS:-}
 if [ -z "$SSID" ]; then read -r -p 'Wi-Fi SSID: ' SSID; fi
 if [ -z "$PASS" ]; then read -r -p 'Wi-Fi password (shown): ' PASS; fi
-[ -n "$SSID" ] && [ -n "$PASS" ] || die "SSID and password must not be empty"
+{ [ -n "$SSID" ] && [ -n "$PASS" ]; } || die "SSID and password must not be empty"
 case "$SSID$PASS" in *$'\n'* | *$'\r'*) die "SSID/password must not contain newlines" ;; esac
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 

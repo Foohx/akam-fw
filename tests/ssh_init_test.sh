@@ -21,7 +21,7 @@ FAIL=0
 cleanup() {
     local p
     for p in "$WORK"/*/tmp/dropbear.pid; do
-        [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null || true
+        { [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null; } || true
     done
     pkill -f "$WORK" 2>/dev/null || true
     chmod -R u+rwx "$WORK" 2>/dev/null || true
@@ -91,7 +91,7 @@ EOF
     unset STUB_KEY_DELAY || true
 }
 ssh_run() { "${SHCMD[@]}" "$R/usr/sbin/akam_ssh.sh" "$@"; }
-killdb() { [ -f "$R/tmp/dropbear.pid" ] && kill "$(cat "$R/tmp/dropbear.pid")" 2>/dev/null || true; rm -f "$R/tmp/dropbear.pid"; }
+killdb() { { [ -f "$R/tmp/dropbear.pid" ] && kill "$(cat "$R/tmp/dropbear.pid")" 2>/dev/null; } || true; rm -f "$R/tmp/dropbear.pid"; }
 launches() { [ -f "$R/tmp/dropbear_launches" ] && wc -l <"$R/tmp/dropbear_launches" || echo 0; }
 
 # Wrapper copy that points at the fake root (only the helper/ak_rtsp/wpa paths).

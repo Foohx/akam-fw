@@ -307,20 +307,20 @@ drift_check() {
                 ;;
             link)
                 echo "$c" >>"$want"
-                [ "$(readlink "$P/$c")" = "$a" ] && [ "$(readlink "$K/$b")" = "$a" ] || { echo "link $c differs"; rc=1; }
+                { [ "$(readlink "$P/$c")" = "$a" ] && [ "$(readlink "$K/$b")" = "$a" ]; } || { echo "link $c differs"; rc=1; }
                 ;;
         esac
     done <"$REPO/tools/release/image_files.txt"
     # binaries and licences: built from variables, compared by name
     for f in bin/ak_rtsp bin/dropbearmulti; do
         echo "$f" >>"$want"
-        cmp -s "$P/$f" "$K/$f" && [ "$(stat -c %a "$P/$f")" = "$(stat -c %a "$K/$f")" ] || { echo "$f differs between image and kit"; rc=1; }
+        { cmp -s "$P/$f" "$K/$f" && [ "$(stat -c %a "$P/$f")" = "$(stat -c %a "$K/$f")" ]; } || { echo "$f differs between image and kit"; rc=1; }
     done
     for f in "$K"/licenses/*; do
         f=$(basename "$f")
         case "$f" in THIRD_PARTY_NOTICES.md | LICENSE.*) ;; *) continue ;; esac
         echo "local/akam/$f" >>"$want"
-        cmp -s "$P/local/akam/$f" "$K/licenses/$f" && [ "$(stat -c %a "$P/local/akam/$f")" = 644 ] || { echo "licence $f differs between image and kit"; rc=1; }
+        { cmp -s "$P/local/akam/$f" "$K/licenses/$f" && [ "$(stat -c %a "$P/local/akam/$f")" = 644 ]; } || { echo "licence $f differs between image and kit"; rc=1; }
     done
     # every Akam-owned path of the image (new or changed against the stock tree) is in the list
     echo sbin/service.sh >>"$want"

@@ -197,13 +197,13 @@ verify_dir() {
     [ -f "$d/SHA256SUMS" ] || die "SHA256SUMS missing in $d"
     if find "$d" ! -type f ! -type d ! -type l | grep -q .; then die "unexpected file type in the kit"; fi
     kf="$(sed -n 's/^kit_format=//p' "$m")"
-    [ "$(printf '%s\n' "$kf" | wc -l | tr -d ' ')" = 1 ] && [ -n "$kf" ] || die "MANIFEST.txt has no (single) kit_format"
+    { [ "$(printf '%s\n' "$kf" | wc -l | tr -d ' ')" = 1 ] && [ -n "$kf" ]; } || die "MANIFEST.txt has no (single) kit_format"
     case " $SUPPORTED_KIT_FORMATS " in
         *" $kf "*) echo "ok: kit_format $kf is supported" ;;
         *) die "kit_format $kf is not supported by this verifier (supports: $SUPPORTED_KIT_FORMATS); use a matching Akam version" ;;
     esac
     ver="$(sed -n 's/^akam_version=//p' "$m")"
-    [ -n "$ver" ] && [ "$(printf '%s\n' "$ver" | wc -l | tr -d ' ')" = 1 ] || die "MANIFEST.txt has no (single) akam_version"
+    { [ -n "$ver" ] && [ "$(printf '%s\n' "$ver" | wc -l | tr -d ' ')" = 1 ]; } || die "MANIFEST.txt has no (single) akam_version"
     case "$ver" in *[!A-Za-z0-9._+-]*) die "MANIFEST.txt akam_version is not a plain version string" ;; esac
     if [ -n "$TOP_EXPECTED" ] && [ "$TOP_EXPECTED" != "akam-kit-$ver" ]; then
         die "archive directory $TOP_EXPECTED does not match MANIFEST akam_version $ver"
@@ -239,7 +239,7 @@ verify_dir() {
         case "$type" in
             file)
                 case "$mode" in 644 | 755) ;; *) die "MANIFEST mode $mode for $path is not 644 or 755" ;; esac
-                [ -f "$d/$path" ] && [ ! -L "$d/$path" ] || die "MANIFEST lists $path but it is not a regular file"
+                { [ -f "$d/$path" ] && [ ! -L "$d/$path" ]; } || die "MANIFEST lists $path but it is not a regular file"
                 got="$(sha256_of "$d/$path")"
                 [ "$got" = "$a" ] || die "sha256 mismatch for $path: MANIFEST $a, actual $got"
                 [ "$(mode_of "$d/$path")" = "$mode" ] || die "mode mismatch for $path: MANIFEST $mode, actual $(mode_of "$d/$path")"
