@@ -74,6 +74,31 @@ void rtp_aclock_observe(rtp_aclock_t *a, uint64_t end_sample, int64_t t_end_us,
 uint64_t rtp_aclock_samples_at(const rtp_aclock_t *a, int64_t now_us,
                                uint32_t rate);
 
+/* ---- Audio start gate ----------------------------------------------------
+ *
+ * The capture thread fills the audio ring from boot, so at PLAY it holds
+ * backlog that is up to a ring's worth older than "now" (measured: audio
+ * starting ~1.2 s ahead of video, the video waiting for the next IDR). The
+ * gate holds audio back until the first video frame is known, then discards
+ * every period that ended before that frame's capture time, so the first audio
+ * packet starts within one period of the first video packet. The RTP timestamp
+ * stays the capture-stream sample index (a dropped period only advances it). */
+typedef struct {
+    bool    waiting; /* true: hold audio until a cut time is set */
+    bool    open;    /* true once the first non-stale period went through */
+    int64_t cut_us;
+} rtp_astart_t;
+
+/* Hold audio (PLAY, resync after a stall). */
+void rtp_astart_arm(rtp_astart_t *g);
+/* Release: audio captured before cut_us (monotonic us) is stale. */
+void rtp_astart_release(rtp_astart_t *g, int64_t cut_us);
+/* True while audio must not be sent yet. */
+bool rtp_astart_holding(const rtp_astart_t *g);
+/* True when a period whose last sample was read at t_end_us predates the cut
+ * and must be discarded. Once a period passes, the gate stays open. */
+bool rtp_astart_stale(rtp_astart_t *g, int64_t t_end_us);
+
 /* ---- NTP/RTP pairing ---------------------------------------------------- */
 /* RTCP (RFC 3550 section 4) wants an NTP timestamp for the instant the RTP
  * timestamp refers to. Splits Unix microseconds into NTP seconds/fraction. */
