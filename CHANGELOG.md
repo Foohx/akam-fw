@@ -2,6 +2,7 @@
 
 ## Unreleased: project renamed from Camyn to Akam
 
+- Host dependencies for Arch and Debian/Ubuntu: `check_host.sh` (per-distro install command, `--profile`, `--json`), `bootstrap.sh` (per-arch Zig pin incl. aarch64, `--print-plan`, `--offline`, retries on transient 5xx), `env.sh` exports everything that exists even without Zig, `check_time32.sh` picks an ARM-capable gdb (`gdb-multiarch` on Debian/Ubuntu).
 - Added `tools/lib/host.sh` (Linux host helpers) and `tools/ci/local_check.sh` (local shellcheck + tests + tracked-file hygiene check).
 
 The project was called Camyn during early development. Everything user-visible was renamed; the
@@ -25,6 +26,8 @@ after a reflash.
   prebuilt-binaries kit (`akam-kit-<version>.tar.xz`, Akam's own files only, never a firmware image);
   see `docs/akam_v1_kit.md`.
 - The kit ships `supported_hardware.txt` (validated: LSC 3215672.3 / SI D26228 with its stock APP fingerprint; untested: 3215672.2 and anything else), hashed in `MANIFEST.txt`.
+
+- `src/ak_rtsp/build_firmware.sh --kit DIR|TARBALL` assembles the image from a verified kit (no compiler); source and kit modes install the Akam files from the same `tools/release/image_files.txt`. The image follows the stock APP compression (xz or gzip, block size, BCJ) read from the dump, `--comp` overrides it with a loud warning, other compressors are refused. The dump is compared with `supported_hardware.txt`: anything but `validated` is refused without `--i-understand-untested`, another MTD layout always. Verdicts and fingerprints go to `build_report.txt`. `tools/image/assemble_from_kit.sh` wraps it for a backup directory. A kit directory (no signature to check) needs `--allow-unsigned` like an unsigned tarball; a release kit's time64 gate is replayed on the installed binaries when gdb is present; a kit carrying overlay files this script does not install is refused; the backup must hold `mtdblock0..7.bin` and a readable uImage kernel for a `validated` verdict.
 
 ### Deprecated aliases (removed in the next release)
 
