@@ -229,7 +229,7 @@ else
     fi
     [ -f "${ZIG_LICENSE:-}" ] || die "Zig LICENSE not found (run tools/build/bootstrap.sh or set ZIG_LICENSE)"
     # Akam's own notices (ak_rtsp is FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware MIT code; the ported flasher fixes carry their own MIT notice).
-    [ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
+    { [ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ]; } || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
     LICS=("LICENSE.akam:$ROOT/LICENSE" "THIRD_PARTY_NOTICES.md:$ROOT/THIRD_PARTY_NOTICES.md"
         "LICENSE.dropbear:$DROPBEAR_LICENSE" "LICENSE.musl:$MUSL_COPYRIGHT" "LICENSE.zig:$ZIG_LICENSE"
         "LICENSE.smolrtsp:$SMOLRTSP_DIR/LICENSE")
@@ -307,7 +307,7 @@ if [ -n "$STOCK_APP" ]; then
     # "Filters selected: arm" / "No filters specified" (when the options are stored) or nothing.
     STOCK_COMP="$(awk 'tolower($1) == "compression" && NF == 2 && tolower($2) != "options" { print tolower($2); exit }' <<<"$SQINFO")"
     STOCK_BLOCK="$(awk 'tolower($1) == "block" && tolower($2) == "size" { print $3; exit }' <<<"$SQINFO")"
-    [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ] || die "cannot read the compression / block size of $STOCK_APP from 'unsquashfs -s' (unsupported squashfs-tools output?): $(head -8 <<<"$SQINFO" | tr '\n' '|')"
+    { [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ]; } || die "cannot read the compression / block size of $STOCK_APP from 'unsquashfs -s' (unsupported squashfs-tools output?): $(head -8 <<<"$SQINFO" | tr '\n' '|')"
     FLINE="$(awk 'tolower($0) ~ /filter/ { print; exit }' <<<"$SQINFO" | sed 's/^[[:space:]]*//')"
     case "$FLINE" in
         '' | [Nn]o\ filter*) STOCK_BCJ=none ;;
@@ -328,7 +328,7 @@ elif [ -n "$STOCK_INFO" ]; then
         die "$STOCK_INFO: app_sha256 must be 64 hex digits"
     fi
     STOCK_SRC="$STOCK_INFO"
-    [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ] || die "$STOCK_INFO needs compression= and block_size="
+    { [ -n "$STOCK_COMP" ] && [ -n "$STOCK_BLOCK" ]; } || die "$STOCK_INFO needs compression= and block_size="
 fi
 HAVE_STOCK=0
 [ -n "$STOCK_COMP" ] && HAVE_STOCK=1
@@ -352,7 +352,7 @@ else
     STOCK_FMT="squashfs $STOCK_COMP block=$STOCK_BLOCK bcj=$STOCK_BCJ"
     while IFS='|' read -r st dev _soc kern _mtd sq sha _bb || [ -n "$st" ]; do
         case "$st" in '' | '#'* | supported_hardware_format=*) continue ;; esac
-        [ -n "$STOCK_SHA" ] && [ "$sha" = "$STOCK_SHA" ] || continue
+        { [ -n "$STOCK_SHA" ] && [ "$sha" = "$STOCK_SHA" ]; } || continue
         if [ "$sq" != "$STOCK_FMT" ]; then
             HW_DETAIL="stock APP sha256 matches '$dev' but its squashfs format differs ($STOCK_FMT, listed: $sq)"
             continue

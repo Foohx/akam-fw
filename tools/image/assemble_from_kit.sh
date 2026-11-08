@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-[ -n "$BACKUP" ] && [ -n "$KIT" ] && [ -n "$OUT" ] || usage
+{ [ -n "$BACKUP" ] && [ -n "$KIT" ] && [ -n "$OUT" ]; } || usage
 [ -d "$BACKUP" ] || die "$BACKUP is not a directory"
 [ -f "$BACKUP/mtdblock7.bin" ] || die "$BACKUP/mtdblock7.bin not found (is this your backup directory?)"
 [ -e "$KIT" ] || die "kit $KIT not found"

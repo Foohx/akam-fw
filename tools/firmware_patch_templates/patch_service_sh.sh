@@ -67,7 +67,7 @@ die() {
 APP=${1%/}
 SVC=$APP/sbin/service.sh
 [ -f "$SVC" ] || die "$SVC not found"
-[ -r "$SVC" ] && [ -w "$SVC" ] || die "$SVC not readable/writable"
+{ [ -r "$SVC" ] && [ -w "$SVC" ]; } || die "$SVC not readable/writable"
 
 FLAG=${AKAM_MAINT_FLAG:-/mnt/AKAM_MAINTENANCE}
 case "$FLAG" in

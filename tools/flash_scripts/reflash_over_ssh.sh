@@ -73,14 +73,14 @@ done
 
 # ---------------------------------------------------------------- local checks
 [ -n "$host" ] || { usage; die "--host is required"; }
-[ -n "$image" ] && [ -n "$md5" ] && [ -n "$tool" ] || { usage; die "--image, --md5 and --flash-tool are required"; }
+{ [ -n "$image" ] && [ -n "$md5" ] && [ -n "$tool" ]; } || { usage; die "--image, --md5 and --flash-tool are required"; }
 [[ "$md5" =~ ^[0-9a-f]{32}$ ]] || die "--md5 must be 32 lowercase hex digits"
-[[ "$rdir" =~ ^/[A-Za-z0-9_./-]+$ ]] && [[ "$rdir" != *..* ]] || die "--remote-dir must be a plain absolute path"
+{ [[ "$rdir" =~ ^/[A-Za-z0-9_./-]+$ ]] && [[ "$rdir" != *..* ]]; } || die "--remote-dir must be a plain absolute path"
 case "$rdir" in
     "$RTMP"/?*) ;;
     *) die "--remote-dir must be below $RTMP (the camera's RAM disk)" ;;
 esac
-[[ "$poll" =~ ^[0-9]+$ ]] && [[ "$tmo" =~ ^[0-9]+$ ]] || die "--poll-interval and --timeout must be integers"
+{ [[ "$poll" =~ ^[0-9]+$ ]] && [[ "$tmo" =~ ^[0-9]+$ ]]; } || die "--poll-interval and --timeout must be integers"
 [ -f "$image" ] || die "image not found: $image"
 [ -f "$tool" ] || die "flash tool not found: $tool"
 for f in akam_reflash_ssh.sh flash_guard.sh; do

@@ -3,6 +3,7 @@
 ## Unreleased: project renamed from Camyn to Akam
 
 - Host dependencies for Arch and Debian/Ubuntu: `check_host.sh` (per-distro install command, `--profile`, `--json`), `bootstrap.sh` (per-arch Zig pin incl. aarch64, `--print-plan`, `--offline`, retries on transient 5xx), `env.sh` exports everything that exists even without Zig, `check_time32.sh` picks an ARM-capable gdb (`gdb-multiarch` on Debian/Ubuntu).
+- Debian 12 / Ubuntu 24.04 portability: POSIX awk only in `check_time32.sh` (no gawk `or()`), shellcheck 0.9 clean (SC2015), and `tools/ci/distro_check.sh` re-runs the whole build and local check in clean containers.
 - Added `tools/lib/host.sh` (Linux host helpers) and `tools/ci/local_check.sh` (local shellcheck + tests + tracked-file hygiene check).
 
 The project was called Camyn during early development. Everything user-visible was renamed; the

@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 die() { echo "sign_kit: error: $*" >&2; exit 1; }
 
-[ $# -ge 1 ] && [ $# -le 2 ] || { echo "usage: $0 <private-key-path> [dir-with-SHA256SUMS]" >&2; exit 2; }
+{ [ $# -ge 1 ] && [ $# -le 2 ]; } || { echo "usage: $0 <private-key-path> [dir-with-SHA256SUMS]" >&2; exit 2; }
 KEY=$1
 DIR="${2:-$ROOT/dist/kit}"
 command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found"
