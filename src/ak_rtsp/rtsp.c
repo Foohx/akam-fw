@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -436,6 +437,22 @@ static void Client_unknown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request 
     }
 }
 
+/* The Authorization header, found whatever the case of its name (header names
+ * are case-insensitive, RFC 2326; SmolRTSP_HeaderMap_find compares them exactly,
+ * so "authorization:" would count as "no credentials" and a client that sends
+ * it could never log in). */
+static bool find_authorization(const SmolRTSP_HeaderMap *m, CharSlice99 *out) {
+    static const char name[] = "Authorization";
+    for (size_t i = 0; i < m->len; i++) {
+        CharSlice99 k = m->headers[i].key;
+        if (k.len == sizeof(name) - 1 && strncasecmp(k.ptr, name, k.len) == 0) {
+            *out = m->headers[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Logs the request (the URI without any user:password@ a client may have put
  * in it) and enforces the optional Digest authentication: everything except
  * OPTIONS needs valid credentials once /etc/config/akam/rtsp_auth exists. The
@@ -449,7 +466,7 @@ static SmolRTSP_ControlFlow Client_before(VSelf, SmolRTSP_Context *ctx,
     printf("[ak_rtsp] %s %s CSeq=%u\n", method, uri, req->cseq);
 
     CharSlice99 auth = CharSlice99_empty();
-    bool have_auth = SmolRTSP_HeaderMap_find(&req->header_map, SMOLRTSP_HEADER_AUTHORIZATION, &auth);
+    bool have_auth = find_authorization(&req->header_map, &auth);
     rtsp_auth_result_t r;
     rtsp_auth_check(&g_auth, &self->auth, method, have_auth ? auth.ptr : NULL,
                     have_auth ? auth.len : 0, rtp_mono_us(), &r);
