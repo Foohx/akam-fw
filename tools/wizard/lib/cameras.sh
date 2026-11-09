@@ -109,6 +109,7 @@ cams_switch() {
     CAM_NAME=$1
     # What was given on the command line belonged to the previous camera: an address, a backup folder
     # or an image must never be applied to another camera (the SSH key is the user's, it stays).
+    # shellcheck disable=SC2034  # read by the steps, set by ./akam
     OPT_IP="" OPT_BACKUP_DIR="" OPT_IMAGE="" OPT_OUT=""
     cams_open
     cams_remember "$CAM_NAME"
@@ -257,6 +258,7 @@ cmd_register() {
         return 1
     fi
     ui_good "  SSH with $CAM_KEY works. Reading the camera's name and its APP partition (/dev/mtd7) ..."
+    # shellcheck disable=SC2016  # expanded by the camera's shell
     reg_out=$("${CAM_SSH[@]}" 'echo "REG_HOSTNAME=$(hostname)"; echo "REG_MTD7_MD5=$(dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum | cut -d" " -f1)"' 2>/dev/null) || reg_out=""
     reg_md5=$(printf '%s\n' "$reg_out" | sed -n 's/^REG_MTD7_MD5=//p' | tail -n 1 | tr -d '[:space:]')
     reg_host=$(printf '%s\n' "$reg_out" | sed -n 's/^REG_HOSTNAME=//p' | tail -n 1 | tr -cd 'A-Za-z0-9._-')

@@ -587,7 +587,7 @@ S=$(new_state reg_nossh)
 STUB_SSH_RC=255 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$BKDIR" --identity "$T/key" register </dev/null >"$T/reg9.out" 2>&1
 check "register: SSH that does not work refuses and marks nothing done" bash -c '[ "$1" -ne 0 ] && grep -q "cannot be checked" "$2" && ! grep -q "step_" "$3" 2>/dev/null' _ $? "$T/reg9.out" "$S/cameras/akam-01/state"
 S=$(new_state reg_nomd5)
-STUB_REG_MD5= AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$BKDIR" --identity "$T/key" register </dev/null >"$T/reg10.out" 2>&1
+STUB_REG_MD5='' AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$BKDIR" --identity "$T/key" register </dev/null >"$T/reg10.out" 2>&1
 check "register: an unreadable mtd7 refuses and marks nothing done" bash -c '[ "$1" -ne 0 ] && grep -q "could not read /dev/mtd7" "$2" && ! grep -q "step_" "$3" 2>/dev/null' _ $? "$T/reg10.out" "$S/cameras/akam-01/state"
 S=$(new_state reg_noip)
 a "$S" --camera akam-01 register </dev/null >"$T/reg3.out" 2>&1

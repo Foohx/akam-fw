@@ -177,6 +177,7 @@ ui_drain_input() {
     [ -t 0 ] || return 0
     saved=$(stty -g 2>/dev/null) || return 0
     stty -icanon -echo min 0 time 1 2>/dev/null || return 0
+    # shellcheck disable=SC2034  # the key is discarded
     while IFS= read -r -s -n 1 -t 0.1 k; do :; done
     stty "$saved" 2>/dev/null || true
 }
