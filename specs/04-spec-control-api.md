@@ -377,3 +377,13 @@ Chaque tâche : tests hôte verts (`tools/ci/local_check.sh`), shellcheck propre
 - **D9 — Application à chaud du nom DHCP** (relancer `udhcpc`) : refusée tant qu'on ne sait pas éviter `deconfig` ; reboot demandé par l'utilisateur.
 - **D10 — Parsing strict en v1.** Recommandé : ne pas changer (`atoi`) pour ne pas casser d'anciens scripts ; v2 strict.
 - **D11 — Source de `fw.version`.** `git describe` (déjà dans l'image) ; un fichier `VERSION` de release (par `make_kit.sh`) serait plus lisible ; à décider avec l'agent release.
+
+---
+
+## Décisions utilisateur (2026-11-09) — font foi
+
+- **D1** : auth des écritures **désactivée par défaut**, proposée par le wizard (défaut « non »). Lectures toujours ouvertes sur le LAN.
+- **D2** : hostname par défaut **`akam-XXXX`** (4 derniers chiffres hex de la MAC wlan0), modifiable ; remplace `IPCamera`.
+- **D7** : secret = **clé aléatoire 256 bits** générée par le wizard (stockée côté PC, jamais un mot de passe humain).
+- Autres décisions (D3–D6, D8–D11) : recommandations de la spec retenues.
+- Calendrier : **V1.1** (après la release v1.0).
