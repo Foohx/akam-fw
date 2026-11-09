@@ -27,7 +27,7 @@ the map; each step has its own guide.
 ./akam doctor            # check the tools on this computer (never runs sudo, prints the install command)
 ./akam get-kit --version X.Y.Z   # download + verify the prebuilt kit (or: --kit FILE; or ./akam build)
 ./akam find-camera       # asks the camera IP, probes ports 24/22/554/8091, tells stock+toolkit from Akam
-./akam backup            # double read of the 8 partitions on the camera, copy to ~/akam-backup-<date>/
+./akam backup            # double read of the 8 partitions on the camera, copy to ~/akam-backup-<name>-<date>/
 ./akam backup --backup-dir DIR   # or accept a backup folder you made by hand
 ./akam image             # build the Akam image: shows the hardware verdict and the stock compression
 ./akam --dry-run         # rehearse everything: shows each command, changes nothing
@@ -37,6 +37,10 @@ the map; each step has its own guide.
 ./akam verify            # SSH + akam_hwcheck.sh + ports, then the same again without the card
 ./akam update            # later: flash a new image over SSH (--image FILE)
 ./akam rtsp-auth [set|disable|status]   # optional password on the video stream, over SSH
+./akam hostname [NAME]  # give the camera its network name (default: the camera's name), over SSH
+./akam cameras           # list the cameras (one progress each); --camera NAME switches or starts one
+./akam rename-camera NEW # rename the current camera (its progress moves with it)
+./akam --camera NAME --ip IP [--backup-dir DIR] register   # a camera that already runs Akam
 ./akam restore           # put the original APP back from your backup
 ./akam wipe-sd           # erase a card that holds your Wi-Fi password (offered again at the end)
 ./akam step NAME         # run one step again (doctor, get-kit, ..., flash, verify)
@@ -45,15 +49,37 @@ the map; each step has its own guide.
 
 The same commands cover the whole life of the camera: `find-camera`, `backup`, `flash` and `verify` for
 the first install, `update` for every later image (over SSH, no card), `restore` to go back to the
-original firmware. Each one that writes to the camera asks you to type `YES` yourself.
+original firmware. Each one that writes to the camera asks you a red yes/no first (default No).
 
 `get-kit` downloads from the project's GitHub Releases over HTTPS and checks the checksum and the
 signature (`tools/release/verify_kit.sh`) before anything from the download is used. If no release has
 been published yet, it says so: use `--kit FILE` with a kit you already have, or `./akam build`.
 
-Untested firmware needs the typed phrase `I UNDERSTAND THIS IS UNTESTED`; erasing a card needs a typed
-`ERASE <device>` (for example `ERASE /dev/sdb`), asked once by the wizard and once by the SD tool, on a
-real terminal only. The wizard never runs `sudo` itself; the SD tool (`tools/sd/sd_card.sh`) asks `sudo`
+**Confirmations.** Nothing has to be typed. Before an irreversible action the wizard shows a red box that
+says exactly what will happen and asks ONE yes/no whose default is No (arrow keys or `y`/`N`; Esc, `q`,
+Enter and an empty input mean No; without a real terminal it refuses). The box names the card (device,
+model, size), or the camera and the image md5 ("do not unplug"), or the untested hardware verdict. After
+your yes the wizard answers the downstream prompts itself: it passes `--yes-i-confirmed <device>` to the SD
+tool (accepted only with the same `--device`, on a real terminal, and the disk is re-checked before any
+write; run by hand, the SD tool still asks for a typed `ERASE <device>`) and sends `YES` to
+`install_with_flash_tool.sh` on the camera. A rehearsal (`--dry-run`) never asks. Entering a step from the
+menu also asks "Start this step? [Y/n]" after a short summary.
+
+**Cameras and names.** The first run asks for a short name (`a-z`, `0-9`, `-`, at most 20; for example
+`salon`). Each camera keeps its own progress and log under `~/.local/state/akam/cameras/NAME/` (the kit is
+shared); progress saved by an earlier version is one camera that you are asked to name. The name is used in
+`~/akam-backup-<name>-<date>`, `~/akam-image-<name>-<date>` and, after a good `verify`, as the camera's
+network name through the camera command `/usr/sbin/akam_hostname.sh set NAME` (applied at the next power
+cycle; an older firmware without that command only gets a note). To use `update`, the video password or
+`hostname` on a camera that already runs Akam, register it: `./akam --camera akam-01 --ip 192.168.1.51
+--backup-dir DIR register`.
+
+**SSH key.** The wizard uses `~/.ssh/akam` (`--pubkey`/`--identity` override it). If `~/.ssh/akam.pub` does not
+exist it lists your other ed25519 public keys to choose from (or creates a new dedicated key) and remembers
+the choice. `ssh` is run with `-o LogLevel=ERROR`, so OpenSSH's post-quantum key exchange warning is
+hidden; real errors are still shown.
+
+The wizard never runs `sudo` itself; the SD tool (`tools/sd/sd_card.sh`) asks `sudo`
 for the disk work and refuses system disks, partitions and non-removable disks. Wi-Fi settings reach the SD
 tool through the environment (`AKAM_WIFI_SSID`, `AKAM_WIFI_PASS`, or `AKAM_SD_PASS` read by the wizard),
 never the command line, the state file or the log.
@@ -72,22 +98,28 @@ own `telnet CAMERA_IP 24` window and paste the output back (end it with a line `
 - `backup` refuses any partition table other than the 8-partition layout, reads every partition twice on the
   camera, checks the 16 sizes, compares the two reads (only `mtdblock6`, CONFIG, may differ and is read
   again), copies `dump1` to the PC with `nc` and a size + hash check (3 tries per file), writes
-  `SHA256SUMS`, compares the stock APP hash with `tools/release/supported_hardware.txt` (typed
-  `I UNDERSTAND THIS IS UNTESTED` unless validated) and asks for a second copy on another medium
+  `SHA256SUMS`, compares the stock APP hash with `tools/release/supported_hardware.txt` (a red yes/no
+  unless validated) and asks for a second copy on another medium
   (`--backup-copy DIR` makes and checks it). If the transfer fails, the dumps are still on the card:
   copy them by hand and use `--backup-dir`. A camera that already runs Akam cannot be backed up: its flash
   no longer holds the original firmware.
 - `flash` checks the image (exactly 5242880 bytes, md5 on the PC and on the card), binds the card on
-  `/mnt` if it is on `/tmp/sd`, starts `install_with_flash_tool.sh`, shows its md5 line and its prompt and
-  asks YOU to type `YES`; only what you typed is sent, and an empty input or a missing terminal aborts the
-  script (nothing is written). Afterwards `dd if=/dev/mtd7 bs=64k | md5sum` must equal the image md5. If Akam
+  `/mnt` if it is on `/tmp/sd`, makes sure the camera has a saved Wi-Fi network (`preflight_check.sh --ensure-wifi`, run on the camera: it
+  creates `/etc/config/wpa_supplicant.conf` from the card's `custom/configs/wifi.conf` when the file is
+  missing, and refuses before any write if it cannot), starts `install_with_flash_tool.sh`, shows its md5 line
+  and asks YOU a red yes/no (default No); only after your yes does the wizard send `YES` to the script, and a
+  No, an empty input or a missing terminal aborts it (nothing is written). The result is judged by the
+  partition itself: `dd if=/dev/mtd7 bs=64k | md5sum` must equal the image md5 (the script's own success
+  line is only information; flash_tool's progress bars are shown as a progress bar). If Akam
   already runs and your key works, `flash` offers the no-card route
   (`tools/flash_scripts/reflash_over_ssh.sh`, progress bars filtered, full output in the state
-  directory). Both routes need a typed `YES` and risk the camera if the power is cut (UART is the only way
+  directory). Both routes need your yes and risk the camera if the power is cut (UART is the only way
   back from a half-written APP).
-- `verify` waits for SSH, runs `akam_hwcheck.sh` from RAM, checks the ports, then asks you to unplug the
-  power, remove the card and plug the power back, and checks that telnet (24) and FTP (21) are closed.
-  The step is only done after that.
+- `verify` waits for SSH (showing what it waits for and the elapsed time), runs `akam_hwcheck.sh` from RAM,
+  checks the ports, makes sure the Wi-Fi is saved on the camera (creating it from the card when missing),
+  and only then asks you to unplug the power, remove the card and plug the power back, and checks that
+  telnet (24) and FTP (21) are closed. If the camera does not come back, it says the camera is probably not
+  on the network because no Wi-Fi is saved, and what to do. The step is only done after that.
 - `update` flashes a new image over SSH; `restore` writes the stock APP from your backup over SSH or the
   maintenance telnet (same gates).
 - The wizard never reboots or power-cycles the camera: you unplug and replug the USB-C power by hand.
