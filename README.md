@@ -128,7 +128,7 @@ No compiling is needed: the default path uses a **prebuilt kit**.
 | `flash` | writes the APP partition (over SSH when Akam already runs, else the maintenance telnet and the card); one red yes/no (default No) first. It also makes sure the camera has a saved Wi-Fi network (see below) | **can brick the camera** |
 | `verify` | checks over SSH that the camera behaves as expected, makes sure the Wi-Fi is saved before you remove the card, then checks the boot without the card and sets the camera's network name | none |
 | `update` | later: flashes a new image over SSH, no card needed (`--image FILE`); one red yes/no (default No) | **can brick the camera** |
-| `register` | a camera that already runs Akam: `./akam --camera NAME --ip IP [--backup-dir DIR] register` records it without redoing backup, image or flash | none |
+| `register` | a camera that already runs Akam: `./akam --camera NAME --ip IP [--backup-dir DIR] register` logs in over SSH, reads /dev/mtd7 back and records it without redoing backup, image or flash | none |
 | `hostname` | gives the camera its network name (the name of the camera), over SSH; applied at the next power cycle | none |
 | `rtsp-auth` | optional: sets, shows or removes a password on the video stream, over SSH (see below) | none |
 | `restore` | puts the original APP back from your backup; one red yes/no (default No) | **can brick the camera** |
