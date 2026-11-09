@@ -1,8 +1,9 @@
 # Akam V1: Test Status, Hardware Test Plan and Resource Report
 
-Akam V1 was first validated on a real camera on **2026-11-08** (one unit, list in section 1b). This
-page separates what was exercised on the build host, what was seen on that camera, and what is still to
-check. Tick a box only after you have seen the result on your own camera.
+Akam V1 was first validated on a real camera on **2026-11-08** and then on a second one, both through the
+wizard (2026-11-07 to 11-09; list in section 1b). This page separates what was exercised on the build host,
+what was seen on the cameras, and what is still to check. Tick a box only after you have seen the result on
+your own camera. The post-flash check script of section 2 is also run for you by `./akam verify`.
 
 ---
 
@@ -12,23 +13,28 @@ check. Tick a box only after you have seen the result on your own camera.
 
 | What | How | Result |
 |---|---|---|
-| `ak_rtsp`, `flash_tool` cross-build (ARM EABI5, soft-float, static) | `make -C src/ak_rtsp ak_rtsp flash_tool` | compiled; not run |
-| Dropbear 2026.94 static build | `tools/dropbear/build_dropbear.sh` | compiled; not run |
+| `ak_rtsp`, `flash_tool` cross-build (ARM EABI5, soft-float, static) | `make -C src/ak_rtsp ak_rtsp flash_tool` | compiled; runs on the camera |
+| Dropbear 2026.94 static build | `tools/dropbear/build_dropbear.sh` | compiled; runs on the camera |
 | `akam_ssh.sh` logic (first boot, second boot, duplicates, missing binaries, read-only CONFIG, SD keys valid/invalid/`command=`, modes) | `bash tests/ssh_init_test.sh` against a fake root with fake `dropbear` | passed on host |
 | `patch_service_sh.sh` and `akam_lockdown.sh` (variants of `service.sh`, idempotence, flag present/absent, exclusion list) | `bash tests/lockdown_test.sh` with fake `ps`/`kill` and a synthetic `service.sh` | passed on host |
 | Upgrade from an image built under the former name (Camyn): old first-boot card `camyn/` + `CAMYN_MAINTENANCE`, keys persisted in `/etc/config/dropbear`, then a boot without the card | `bash tests/upgrade_from_camyn_test.sh` with the shipped `service.sh` patch, `akam_ssh.sh` and `akam_lockdown.sh` in a fake root | passed on host |
 | `build_firmware.sh` (permissions, key refusal, round-trip, size guard, padding to 5 242 880) | `bash tests/build_firmware_test.sh` on `tests/fixtures/app_fake` with stub binaries | passed on host |
 | `akam_hwcheck.sh` (key path from root's HOME, `ak_rtsp` CPU from `/proc` deltas, night flap check) | `bash tests/hwcheck_test.sh` with fake `ss`/`ps`/proc and a scripted 8091 | passed on host |
-| No-UART reflash over SSH: guard decisions, detach (`setsid`), second Dropbear on 2222, log polling, md5 verification | `bash tests/reflash_ssh_test.sh` with fake `ssh`, `flash_tool`, `dropbear` and a regular file as `/dev/mtd7` | passed on host; **not run on a camera** |
-| time64 clock shim ([kernel time64 note](akam_v1_kernel_time64.md)) | `bash tests/time32_shim_test.sh` and `bash tests/dropbear_patch_test.sh`: final binaries scanned for forbidden time64 syscalls, `qemu-arm -strace`, probe verdict logic | passed on host; not run on the camera |
+| No-UART reflash over SSH: guard decisions, detach (`setsid`), second Dropbear on 2222, log polling, md5 verification | `bash tests/reflash_ssh_test.sh` with fake `ssh`, `flash_tool`, `dropbear` and a regular file as `/dev/mtd7` | passed on host; the real route was validated on hardware |
+| time64 clock shim ([kernel time64 note](akam_v1_kernel_time64.md)) | `bash tests/time32_shim_test.sh` and `bash tests/dropbear_patch_test.sh`: final binaries scanned for forbidden time64 syscalls, `qemu-arm -strace`, probe verdict logic | passed on host; Dropbear sessions and clock reads work on the camera |
 
 The fixture is synthetic: it contains no vendor files, so these tests say nothing about the real
 `service.sh`, the real free space, or kernel behaviour.
 
-### 1b. Validated on the camera, 2026-11-08
+### 1b. Validated on the cameras, 2026-11-07 to 11-09
 
-Seen on one real unit (Akam image flashed over the telnet routes of the
-[flash guide](akam_v1_flash_and_restore.md)):
+Seen on two real units (backup, image and flash through the wizard; the flash over the telnet routes and
+over SSH of the [flash guide](akam_v1_flash_and_restore.md)):
+
+- the **backup** through the wizard (scripted telnet, double read, checked copy) and the **image built from
+  the kit**;
+- the flash through the **maintenance telnet** and through **SSH with no card**; the Wi-Fi is **saved in
+  CONFIG** by the wizard;
 
 - boots **without a microSD** card;
 - Wi-Fi connects by itself (station mode);
@@ -41,6 +47,8 @@ Seen on one real unit (Akam image flashed over the telnet routes of the
 - without the card only **22, 554 and 8091** are listening;
 - **telnet and FTP are off** (21, 23 and 24 closed) in a normal boot;
 - `ak_rtsp` uses about **1% CPU** with a client connected (about 90% before the fixes) and the H.264 stream starts fast;
+- a **VLC run of 25 minutes** without a drop;
+- the **hostname** is announced to the router by DHCP (`akam-01`);
 - `anyka_ipc` is absent;
 - about **29 MB of RAM free** with everything running;
 - the APP image has **2.7 MB free**;
@@ -53,14 +61,16 @@ Still to check:
 - **no day/night flapping over a longer period** (hours, across dusk and dawn; use `akam_hwcheck.sh`
   repeatedly, its night check WARNs when `night.state` changes more than once in ~20 s);
 - **telnet is never re-enabled after a Wi-Fi reconnect** (restart the router, then check 23 and 24);
-- the reflash over SSH from RAM on hardware (host-tested only), and any restore.
+- a restore (`./akam restore`) has not been rehearsed on a camera.
+
+Known, not a test failure: the image is grainier than the stock firmware's (improvement planned).
 
 ### To test on the camera (V1 acceptance criteria)
 
 | # | Criterion | How to check | Done |
 |---|---|---|---|
-| 1 | Hardware reference confirmed (`3215672.3`, SI `D26228`) | Label; `/proc/mtd`; UART boot log ([backup guide](akam_v1_backup.md)) | [ ] |
-| 2 | 8 partitions backed up with SHA-256 | [Backup guide](akam_v1_backup.md) checklist | [ ] |
+| 1 | Hardware reference confirmed (`3215672.3`, SI `D26228`) | Label; `/proc/mtd`; the wizard's hardware verdict ([backup guide](akam_v1_backup.md)) | [x] 2026-11-07 to 09 |
+| 2 | 8 partitions backed up with SHA-256 | `./akam backup`, or the [backup guide](akam_v1_backup.md) checklist | [x] 2026-11-07 to 09 |
 | 3 | Boots without a microSD | Remove the card after provisioning, power cycle, `ssh` in, `akam_hwcheck.sh` | [x] 2026-11-08 |
 | 4 | Wi-Fi connects automatically | Camera appears on the network after power-on; `wpa_supplicant` and `udhcpc` PASS in `akam_hwcheck.sh` | [x] 2026-11-08 |
 | 5 | H.264 1080p stream | `ffprobe rtsp://<camera-ip>:554/` and a viewer, 1920x1080 | [x] 2026-11-08 |
@@ -75,7 +85,7 @@ Still to check:
 | 14 | No Internet dependency | Put the camera on a segment with no route out; everything above still works | [ ] |
 | 15 | Memory acceptable | Free memory and RSS in `akam_hwcheck.sh` (section 4) | [x] 2026-11-08 (~29 MB free) |
 | 16 | Image fits in APP | `build_report.txt` free bytes, and a successful flash | [x] 2026-11-08 (2.7 MB free) |
-| 17 | Restore documented and (your decision) rehearsed | [Flash and restore](akam_v1_flash_and_restore.md) | [ ] |
+| 17 | Restore documented and (your decision) rehearsed | [Flash and restore](akam_v1_flash_and_restore.md) | [ ] documented, not rehearsed |
 
 ---
 
@@ -137,7 +147,7 @@ Everything in Akam's design that came from reading other projects instead of thi
 | H1 | The unit is `3215672.3` / SI `D26228` with the same layout as upstream's `.2` | Whole project | Label, `/proc/mtd`, dump |
 | H2 | `telnetd` / `ftpd` are launched from `sbin/service.sh` in the APP (not from ROOTFS) | Layer 1 patch; exposure window | Read the dump; `grep` ([build guide](akam_v1_build.md#5-extract-your-app-partition)); `--boot-window` |
 | H3 | The stock watchdog only restarts `_ht_process.ini` entries (not telnetd) | No re-enable | Read dump; boot window |
-| H4 | The kernel mounts Akam's xz SquashFS APP (same format as the stock APP; xz support proven by the stock ROOTFS/APP; gzip also expected from the kernel's decompressor tables) | Boot | A boot of Akam's image |
+| H4 | The kernel mounts Akam's xz SquashFS APP (same format as the stock APP; xz support proven by the stock ROOTFS/APP; gzip also expected from the kernel's decompressor tables) | Boot | **Resolved:** Akam's xz image boots on hardware |
 | H5 | Free space in the real APP is sufficient | Image fits | `build_report.txt` from the real dump |
 | H6 | The microSD is mounted on `/mnt` when the scripts run (keys at `/mnt/akam/`, flag at `/mnt/AKAM_MAINTENANCE`) | SSH provisioning; maintenance flag | UART: `mount`; `/tmp/akam_ssh.log` |
 | H7 | `/etc/config` is writable, and `/etc/config`, `/etc`, `/` have modes Dropbear accepts | Key login | Log lines `mode of ...`; successful login. **Resolved 2026-11-08:** `/` and `/etc` are 0775 on the real unit; the key path is root's HOME `/tmp/akam_home` instead, and key login works |
@@ -150,7 +160,7 @@ Everything in Akam's design that came from reading other projects instead of thi
 | H14 | RAM cost of Dropbear and the helper shells is small | 64 MiB RAM | Section 4 |
 | H15 | A leftover flasher SD would run its hook only with the maintenance flag | Telnet 24 | Test with and without the flag |
 | H16 | The camera's BusyBox `tar` supports gzip (`tar xzf -`) | Directory transfer | Try it |
-| H17 | Flashing from a running Akam system (Dropbear in the erased APP) is unsafe | Reflash procedure | Two live flashes over telnet worked (0 retries, md5 OK, system survived); still no guarantee. UART remains the only safe route; the RAM-only SSH route is host-tested only |
+| H17 | Flashing from a running Akam system (Dropbear in the erased APP) is unsafe | Reflash procedure | Live flashes over telnet and the RAM-only SSH route worked on hardware (0 retries, md5 OK, system survived); still no guarantee. UART remains the only route with a safety net |
 | H18 | With `src/common/time32_shim.c` linked, clock reads and timed waits work on the camera kernel, which acknowledges `clock_gettime64` without executing it ([note](akam_v1_kernel_time64.md)) | Dropbear sessions, night-mode lock | Run `time64_probe` on the camera: `RESULT PASS`; Dropbear login stays open |
 
 ---

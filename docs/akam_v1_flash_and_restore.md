@@ -1,4 +1,9 @@
-# Akam V1: Flashing and Restoring
+# Akam V1: Flashing and Restoring (manual procedures)
+
+> **Advanced / manual procedure (without the wizard).** `./akam flash`, `./akam update` and `./akam restore`
+> run these routes for you, with the same checks and a red yes/no (default No) before any write
+> ([README](../README.md#quick-start)). Use this page to understand them, audit them, or when you cannot run
+> the wizard.
 
 > **RISK.** Writing the SPI NOR can brick the camera. Restoring is **not guaranteed** to work (section
 > 5). Do not start without a verified 8-partition backup ([backup guide](akam_v1_backup.md)). A UART
@@ -6,17 +11,17 @@
 > not boot; the [no-UART variant](#first-flash-without-uart-from-the-stock-firmware) below exists, but
 > read what it can and cannot recover (section 5) before choosing it.
 >
-> Status: `flash_tool` and `install_with_flash_tool.sh` were run on a real Akam camera twice on
-> 2026-11-08 (stock telnet, then Akam maintenance telnet), 0 chunk retries and a matching read-back
-> md5 each time. The reflash over SSH from RAM (`akam_reflash_ssh.sh`) is tested on the build host
-> with fakes only: **not tested on hardware**. Restoring is untested.
+> Status: `flash_tool` and `install_with_flash_tool.sh` were run on real cameras through the stock
+> telnet and the Akam maintenance telnet, with no chunk retries and a matching read-back md5 each time
+> (2026-11-07 to 11-09). The reflash over SSH from RAM (`reflash_over_ssh.sh`, no card) was also validated
+> on hardware, through `./akam update`. **Restoring has not been rehearsed on a camera.**
 
 ---
 
 ## 1. Why Akam's own procedure and not the flasher
 
 The [Action-Smart-Connect-Flasher](https://github.com/4ddict/Action-Smart-Connect-Flasher) (v0.3.2) is
-a good tool, but for the first Akam camera the decision (O-2c) is **not to use it**:
+a good tool, but Akam does **not** use it:
 
 - Its repository and commit constants (`FIRMWARE_REPO`, `FIRMWARE_COMMIT`) are hard-coded to the upstream
   project. It builds upstream's `ak_rtsp`, not this tree, and knows nothing about Dropbear, the SSH
@@ -28,9 +33,8 @@ a good tool, but for the first Akam camera the decision (O-2c) is **not to use i
   which is exactly what Akam closes. A card left over from the flasher keeps that hook.
 - The flasher's own post-flash check does not look at SSH.
 
-Akam's procedure is: manual backup, `build_firmware.sh`, then `install_with_flash_tool.sh` below. The
-flasher stays a reference. Adapting it to Akam is deferred until Akam has been validated on hardware.
-The image builder still honours the flasher's interface (`APP_EXTRACTED`, `FW_DIR`, output name,
+Akam's procedure is: backup, `build_firmware.sh`, then `install_with_flash_tool.sh` below. The
+flasher stays a reference. The image builder still honours the flasher's interface (`APP_EXTRACTED`, `FW_DIR`, output name,
 exact size).
 
 ## 2. What is written, and what never is
@@ -55,17 +59,18 @@ SD=/run/media/$USER/CARD                    # adapt
 mkdir -p "$SD/custom_firmware" "$SD/akam" "$SD/original_firmware"
 cp ak_rtsp_firmware_*.squashfs "$SD/custom_firmware/"
 cp ~/akam-backup/mtdblock*.bin "$SD/original_firmware/"          # for restore
-cp ~/Projects/akam/src/ak_rtsp/flash_tool "$SD/"                 # path of your checkout
-cp ~/Projects/akam/tools/flash_scripts/install_with_flash_tool.sh \
-   ~/Projects/akam/tools/flash_scripts/restore.sh \
-   ~/Projects/akam/tools/flash_scripts/flash_guard.sh "$SD/"   # flash_guard.sh is mandatory
+REPO=~/akam-fw                                                   # your checkout of the repository
+cp "$REPO/src/ak_rtsp/flash_tool" "$SD/"
+cp "$REPO/tools/flash_scripts/install_with_flash_tool.sh" \
+   "$REPO/tools/flash_scripts/restore.sh" \
+   "$REPO/tools/flash_scripts/flash_guard.sh" "$SD/"           # flash_guard.sh is mandatory
 cp ~/.ssh/akam.pub "$SD/akam/authorized_keys"
-touch "$SD/AKAM_MAINTENANCE"               # UART route only; the no-UART route uses the first-boot card (flash guide, step 5)
+touch "$SD/AKAM_MAINTENANCE"               # UART route only; the other routes use the first-boot card (see below)
 sync
 ```
 
-Shortcut: on a card already prepared with `tools/sd/sd_card.sh` (backup or first-boot card), the
-flash files are added in one go, with the image name, the 5 MiB size of `mtdblock7.bin`, one image only
+Shortcut (this is what `./akam prepare-flash-sd` does): on a card already prepared with
+`tools/sd/sd_card.sh` (backup or first-boot card), the flash files are added in one go, with the image name, the 5 MiB size of `mtdblock7.bin`, one image only
 and no `*.bin` at the root all checked, then verified:
 
 ```bash
@@ -74,15 +79,25 @@ tools/sd/sd_card.sh prepare --mode flash-files --device /dev/sdX \
 tools/sd/sd_card.sh verify --mode flash-files --device /dev/sdX
 ```
 
-The manual commands above remain valid. This layout is for the UART route. For the no-UART route use the card described in
+The manual commands above remain valid. This layout is for the UART route. For the telnet routes use the card described in
 [First flash without UART](#first-flash-without-uart-from-the-stock-firmware): do not create
-`AKAM_MAINTENANCE`, and do not boot Akam for the first time with the toolkit files on the card.
+`AKAM_MAINTENANCE` by hand, and do not boot Akam for the first time with the toolkit files on the card.
 
 The script uses fixed paths on the camera: `/mnt/flash_tool` and
 `/mnt/custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (the lexicographically last match is
 used, so keep only one image there). It refuses an image that is not exactly 5 242 880 bytes.
 
 ## 4. Flash
+
+Three routes, from the least to the most hardware:
+
+| Route | Needs | Used by | Status |
+|---|---|---|---|
+| [Maintenance telnet](#first-flash-without-uart-from-the-stock-firmware) on a stock camera (first install), then [from the Akam maintenance telnet](#reflashing-over-the-maintenance-telnet-validated-on-hardware) | the flash card, no UART | `./akam flash` | validated on hardware |
+| [SSH from RAM](#reflashing-over-ssh-without-uart-ram-only-residual-risk) | a camera already running Akam, no card | `./akam update`, `./akam flash` | validated on hardware, residual risk |
+| UART `init=/bin/sh` shell (below) | a UART adapter | by hand only | the safety net |
+
+### UART route
 
 Get a root shell over the **UART console** with the `init=/bin/sh` boot
 ([hardware_and_uart.md](hardware_and_uart.md#6-dropping-into-a-u-boot-root-shell)). Upstream reports
@@ -99,7 +114,7 @@ ls -l /mnt/custom_firmware /mnt/flash_tool
 sh /mnt/install_with_flash_tool.sh
 ```
 
-The script prints the image `md5sum` (compare it with the PC value), asks you to type `YES`, then runs
+The script prints the image `md5sum` (compare it with the PC value), asks you to type `YES` (the wizard sends it only after your own yes), then runs
 `flash_tool <image> /dev/mtd7`.
 
 ### Verify before you touch the power
@@ -131,10 +146,10 @@ After the boot, continue with the [test plan](akam_v1_test_plan.md#2-post-flash-
 ### First flash without UART (from the stock firmware)
 
 This is the variant for a camera that has only been opened through the microSD toolkit shell of the
-[SD backup guide](akam_v1_backup_sd.md). It is **untested by Akam**; the flashing itself is the
-upstream path (`install_with_flash_tool.sh` run live over the toolkit's Telnet on **stock** firmware,
-which upstream reports working), so the stock `/usr` (APP) is mounted and in use while it is erased
-*(assumed risk: if the write dies half-way, only UART or an SPI programmer recovers the APP)*.
+[SD backup guide](akam_v1_backup_sd.md); it is what `./akam flash` does on a stock camera, and it was
+validated on hardware. The flashing itself is the upstream path (`install_with_flash_tool.sh` run live
+over the toolkit's Telnet on **stock** firmware), so the stock `/usr` (APP) is mounted and in use while it
+is erased: if the write dies half-way, only UART or an SPI programmer recovers the APP.
 
 **1. Card for the flash** (the toolkit card from the backup, with its hook files left as they are, so
 that the camera boots stock and opens `telnet CAMERA_IP 24`). Add, on the PC, in these exact places:
@@ -172,8 +187,9 @@ sh /mnt/preflight_check.sh --ensure-wifi   # no saved Wi-Fi? creates it from the
 ls -l /etc/config/wpa_supplicant.conf /etc/config/passwd
 ```
 
-Will the camera rejoin your Wi-Fi after the flash? **Expected yes, unproven on hardware.** What the
-real dump shows (CONFIG `mtdblock6` and the stock APP scripts, read on the PC): `wpa_supplicant.conf`
+Will the camera rejoin your Wi-Fi after the flash? Only if `/etc/config/wpa_supplicant.conf` exists:
+the wizard creates it when missing (`--ensure-wifi` above), and a boot without a card with Wi-Fi saved was
+validated on hardware. What the real dump shows (CONFIG `mtdblock6` and the stock APP scripts, read on the PC): `wpa_supplicant.conf`
 exists (223 bytes, one `network` block with an `ssid` and a `psk`, `key_mgmt` list including
 `WPA-PSK`); `ethernet.sh` (run by `service.sh`, not by `anyka_ipc`) starts `wpa_supplicant -c
 /etc/config/wpa_supplicant.conf` and DHCP (`dhcp=1`) in **station** mode, and goes to AP mode only if
@@ -183,15 +199,14 @@ AP branch and Wi-Fi is then brought up by the toolkit; a boot **without** a card
 lacking that file, is station mode from `wpa_supplicant.conf`. Akam's patched `service.sh` only
 copies it when `AKAM_MAINTENANCE` is present. `hostapd.conf` in CONFIG is empty. The only thing that
 rewrites or deletes the file is `recover_cfg.sh` (factory reset, run when the settings file is under
-512 bytes; it is 3010 bytes here) and Tuya pairing inside `anyka_ipc`, which Akam removes. Akam does
-not touch CONFIG. Residual doubts: the Wi-Fi driver/DHCP path is the same one the toolkit used, but
-Akam has not booted it; and the router must still accept the saved credentials (same SSID, 2.4 GHz).
+512 bytes; it is 3010 bytes here) and Tuya pairing inside `anyka_ipc`, which Akam removes. Akam's flash does
+not touch CONFIG. The router must still accept the saved credentials (same SSID, 2.4 GHz).
 - `/etc/config/wpa_supplicant.conf` must exist and be non-empty. Akam removes the Tuya agent that
   used to write it, and `ak_rtsp_wrapper.sh` only starts Wi-Fi when this file exists. The SD backup
   route does **not** write it (the toolkit keeps the Wi-Fi settings in RAM). If it is missing, the
   camera will boot Akam without a network. Create it first, from the same shell, with the block
-  below *(untested format, matches the `wpa_cli -p/var/run/wpa_supplicant` used by the stock scripts;
-  this is a deliberate write to CONFIG)*.
+  below (the wizard's `--ensure-wifi` writes the same format, validated on hardware; this is a
+  deliberate write to CONFIG).
 - `/etc/config/passwd` should exist (the stock `/etc/passwd` is a symlink to it). If it does not,
   `akam_ssh.sh` creates an **empty** one in CONFIG so that it can bind-mount its private copy over it.
 - `cat /proc/mtd` must show the `mtd7: 00500000 ... "APP"` line, and the image must be 5 242 880 bytes
@@ -224,7 +239,7 @@ Read the `FAULT SUMMARY` and the success line in full. On any error, **do not po
 the script; if it still fails, go to "Without UART: what can be recovered" in section 5.
 
 **5. Prepare the first Akam boot (recommended: the "first-boot" card).** Power off by hand (unplug
-USB-C) and swap the card for a **second, dedicated card** prepared on the PC with
+USB-C) and swap the card for a **second, dedicated card** prepared on the PC (the wizard does this in `prepare-flash-sd`) with
 `tools/sd/prepare_first_boot_sd.sh`:
 
 ```bash
@@ -259,12 +274,13 @@ SSH on port 22 from `akam/authorized_keys`. Power on, wait a few minutes, then:
 3. Keep the first-boot card for emergencies only if you accept that it re-opens an unauthenticated
    telnet whenever it is inserted; erase it otherwise.
 
-This path is untested on hardware. If SSH does not come up but telnet 24 does, you have a root shell
+If SSH does not come up but telnet 24 does, you have a root shell
 to investigate (Wi-Fi, `/tmp/akam_ssh.log`) before touching anything else.
 
-### Reflashing later: never over an SSH session
+### Reflashing later: not from a plain SSH session
 
-Do **not** re-flash a running Akam camera from an SSH login. On a running Akam camera the APP
+Do **not** re-flash a running Akam camera by running the flash script from an ordinary SSH login (the SSH
+route below is different: it runs from RAM). On a running Akam camera the APP
 partition is mounted on `/usr`, and everything Akam starts lives there: `dropbear` and `dropbearkey`
 (`/usr/bin`), `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, and the stock
 `/usr/bin/watchdog` that supervises the system. `flash_tool` erases `/dev/mtd7` in place while those
@@ -284,8 +300,8 @@ A partly written APP is recoverable only through UART (section 5), so use UART f
    `flash_tool` are read from the card, never from `/usr`.
 
 UART is the only route with a safety net. Two no-UART routes are described below: the reflash over
-the **maintenance telnet** (card in the camera; used twice on an Akam camera), and the **reflash over
-SSH from RAM** (no card; residual risk; tested on the build host with fakes only). The `make -C src/ak_rtsp upload`
+the **maintenance telnet** (card in the camera) and the **reflash over SSH from RAM** (no card; residual
+risk). Both were validated on hardware. The `make -C src/ak_rtsp upload`
 target copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash;
 do not run those two from an SSH session on an Akam image (the guard refuses them).
 
@@ -309,10 +325,10 @@ has two entry points:
   unchanged: running the same write directly from an SSH shell, or with tools under `/usr`, is still
   refused.
 
-### Reflashing over the maintenance telnet (used twice on hardware)
+### Reflashing over the maintenance telnet (validated on hardware)
 
-This is the procedure that was run on a real Akam camera on 2026-11-08, first from the stock
-firmware's telnet, then from the Akam maintenance telnet. Both times `flash_tool` needed **0 retries**,
+This is the procedure that was run on real Akam cameras (first from the stock firmware's telnet, then from
+the Akam maintenance telnet, 2026-11-08 onwards). Each time `flash_tool` needed **0 retries**,
 the read-back md5 of `/dev/mtd7` matched the image, and the running system (including the stock
 `/usr/bin/watchdog`, which lives in the APP) survived the write. That is an observation on one unit,
 not a guarantee: see the residual risks of the SSH route, which apply here too.
@@ -369,15 +385,14 @@ erased), but it cannot make the write itself safe:
   than the 5 s feeding period of `start_rtsp.sh`. What follows:
   - The pages of that loop (the daemon and `libcommon.so`) are touched every second, so they stay in the
     cache unless RAM runs out (about 29 MB free before staging, roughly 10 MB less after). That is the likely
-    reason the two live flashes survived.
+    reason the live flashes survived.
   - If the daemon takes a fault (a page evicted, then re-read from erased flash: SIGBUS) the hardware
     resets the board within the timeout, in the middle of the write, and only UART recovers it.
   - Cold paths also read `/usr`: a respawned child (`/usr/bin/ak_rtsp_wrapper.sh`) and
     `akam_lockdown.sh`, which runs `/usr/sbin/akam_ssh.sh start` every 60 s. They can fail or run
     garbage; that hurts that child, not the write.
-  - Two successes out of two prove very little: with no failure in two trials the 95 % upper bound on
-    the failure rate is still about 78 %. Treat the route as a gamble you take only if UART is out of
-    reach.
+  - A few successes prove little: with no failure in two trials the 95 % upper bound on the failure rate
+    is still about 78 %. Prefer the card route, and treat this one as a risk you accept deliberately.
   - **Mitigation evaluated, not implemented:** kill the daemon with `SIGKILL` and feed `/dev/watchdog`
     from a RAM BusyBox (`while :; do printf V; sleep 5; done > /dev/watchdog`, the pattern of
     `start_rtsp.sh` and `quiet_and_flash_test.sh`). The device is exclusive-open, so the daemon cannot

@@ -4,7 +4,7 @@ Real problems met while installing and using Akam, with their fixes. Start with 
 (checks the tools on your PC) and `./akam status` (shows which step is done, todo or blocked). The
 wizard keeps a log in `~/.local/state/akam/` (it never contains your Wi-Fi password).
 
-Back to the [README](../README.md).
+Back to the [README](../README.md) or the [documentation index](README.md).
 
 ## Finding the camera's IP address
 
@@ -69,9 +69,9 @@ Then power-cycle without the card. Also check your router: the camera's address 
 
 ## VLC shows a black screen
 
-VLC sometimes shows a black screen while the camera is fine. A fix for the RTP timestamps is being
-confirmed on hardware and is not validated yet. To tell a camera problem from a VLC one, check with
-`ffplay`:
+VLC sometimes shows a black screen while the camera is fine (a VLC run of 25 minutes without a drop was
+validated on hardware, so a persistent black screen is worth investigating). To tell a camera problem
+from a VLC one, check with `ffplay`:
 
 ```bash
 ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
@@ -102,6 +102,8 @@ interleaved RTCP input is now read and discarded properly): update your camera w
 ## Only one viewer works at a time
 
 The camera serves **one RTSP client at a time**; a second client is refused or the first one is cut.
+A client that stays silent before PLAY is dropped after 20 s (60 s at most to reach PLAY), so a player
+that cannot connect right after another one only has to wait that long.
 To watch from several places, or to record and watch together, put a relay in front of the camera
 (go2rtc or MediaMTX): the relay is the only client of the camera and serves as many viewers as you
 need.
@@ -116,8 +118,7 @@ need.
   vlc --rtsp-tcp --avcodec-hw=none rtsp://<camera-ip>:554/
   ```
 
-- The camera serves **one RTSP client at a time**. Close the other viewer first, or put go2rtc or
-  MediaMTX in front of the camera.
+- The camera serves **one RTSP client at a time** (see above): close the other viewer first.
 
 ## 401 Unauthorized, or a password prompt on the stream
 
@@ -147,12 +148,14 @@ login. Check it:
   (`./akam update`). Without it the stream is open, as before.
 - Frigate and go2rtc: put the credentials in the stream URL as above (URL-encoded).
 
-## Transfers from the camera never arrive (PC firewall)
+## A transfer from the camera hangs or fails
 
-During the backup the camera sends files to your PC over the network. A PC firewall that blocks
-inbound connections makes the transfer hang or fail. Allow the incoming connection from the camera's
-address for the duration of the backup (or pause the firewall), then turn it back on. The manual way
-of getting files without a network transfer is in the [backup guide](akam_v1_backup.md).
+During the backup the camera listens and your PC connects to it (the PC never needs an inbound
+connection, so its firewall is not the cause). Check that the PC and the camera are on the same network,
+that the router's "AP isolation" or "client isolation" is off, and that the camera still answers
+(`ping <camera-ip>`). The wizard retries each file three times and checks size and hash. If it still
+fails, the dumps are on the card: copy them by hand and pass the folder with `--backup-dir`
+([manual backup](akam_v1_backup_sd.md#9-copy-to-the-pc-and-verify-there)).
 
 ## `nc` stays waiting on a Telnet session
 
@@ -196,12 +199,8 @@ post-quantum key exchange. The connection still works and is still encrypted. It
 LAN; ignore it. The wizard hides it (`ssh -o LogLevel=ERROR`, real errors are still shown); to hide it in
 your own ssh commands add `-o LogLevel=ERROR`.
 
-## A player cannot connect right after another one
-
-The camera serves one client at a time. A client that stays silent before PLAY is dropped after 20 s (60 s at most to reach PLAY); wait that long, or close the other player.
-
 ## Still stuck
 
 Run `./akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the
 project's repository with the step name and the (redacted) log. Never attach your backup or keys. For
-a camera that no longer boots, see [Recovery](../README.md#recovery).
+a camera that no longer boots, see [recovery](akam_v1_flash_and_restore.md#5-restore).
