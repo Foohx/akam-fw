@@ -27,6 +27,7 @@
 #include "rtp_clock.h"
 #include "net_tx.h"
 #include "rtsp_in.h"
+#include "rtsp_auth.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
  * 60 s is also the protocol default). Clients refresh the session at about
@@ -135,7 +136,25 @@ typedef struct {
     /* Holds audio until the first video frame, then drops the ring backlog
      * captured before it (see rtp_astart_t). */
     rtp_astart_t audio_start;
+
+    /* Digest authentication state of this connection (see rtsp_auth.h). */
+    rtsp_auth_conn_t auth;
 } Client;
+
+/* RTSP credentials (file on the CONFIG partition); absent = no authentication. */
+static rtsp_auth_db_t g_auth;
+
+/* Client address as text, for the journal. */
+static const char *client_ip(const Client *c, char *buf, size_t cap)
+{
+    const void *a = NULL;
+    if (c->addr.ss_family == AF_INET)
+        a = &((const struct sockaddr_in *)&c->addr)->sin_addr;
+    else if (c->addr.ss_family == AF_INET6)
+        a = &((const struct sockaddr_in6 *)&c->addr)->sin6_addr;
+    if (!a || !inet_ntop(c->addr.ss_family, a, buf, (socklen_t)cap)) snprintf(buf, cap, "?");
+    return buf;
+}
 
 declImpl(SmolRTSP_Controller, Client);
 
@@ -417,15 +436,38 @@ static void Client_unknown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request 
     }
 }
 
+/* Logs the request (the URI without any user:password@ a client may have put
+ * in it) and enforces the optional Digest authentication: everything except
+ * OPTIONS needs valid credentials once /etc/config/akam/rtsp_auth exists. The
+ * Authorization header, the credentials and the user name are never logged. */
 static SmolRTSP_ControlFlow Client_before(VSelf, SmolRTSP_Context *ctx,
                                            const SmolRTSP_Request *req) {
     VSELF(Client);
-    (void)self; (void)ctx;
-    printf("[ak_rtsp] %s %s CSeq=%u\n",
-           CharSlice99_alloca_c_str(req->start_line.method),
-           CharSlice99_alloca_c_str(req->start_line.uri),
-           req->cseq);
-    return SmolRTSP_ControlFlow_Continue;
+    const char *method = CharSlice99_alloca_c_str(req->start_line.method);
+    char uri[256];
+    rtsp_auth_redact_uri(CharSlice99_alloca_c_str(req->start_line.uri), uri, sizeof(uri));
+    printf("[ak_rtsp] %s %s CSeq=%u\n", method, uri, req->cseq);
+
+    CharSlice99 auth = CharSlice99_empty();
+    bool have_auth = SmolRTSP_HeaderMap_find(&req->header_map, SMOLRTSP_HEADER_AUTHORIZATION, &auth);
+    rtsp_auth_result_t r;
+    rtsp_auth_check(&g_auth, &self->auth, method, have_auth ? auth.ptr : NULL,
+                    have_auth ? auth.len : 0, rtp_mono_us(), &r);
+    if (r.log[0]) {
+        char ip[INET6_ADDRSTRLEN];
+        printf("[ak_rtsp] %s (client %s)\n", r.log, client_ip(self, ip, sizeof(ip)));
+    }
+    if (r.verdict == RTSP_AUTH_ALLOW) return SmolRTSP_ControlFlow_Continue;
+
+    /* Failed attempts are slowed down (single client at a time: the wait only
+     * costs the connection that is guessing). */
+    if (r.delay_ms) poll(NULL, 0, (int)r.delay_ms);
+    if (r.challenge[0])
+        smolrtsp_header(ctx, SMOLRTSP_HEADER_WWW_AUTHENTICATE, "%s", r.challenge);
+    smolrtsp_respond(ctx, SMOLRTSP_STATUS_UNAUTHORIZED, "Unauthorized");
+    if (r.verdict == RTSP_AUTH_DROP && !self->drop_reason)
+        self->drop_reason = "RTSP authentication refused";
+    return SmolRTSP_ControlFlow_Break;
 }
 
 static void Client_after(VSelf, ssize_t ret, SmolRTSP_Context *ctx,
@@ -1018,7 +1060,19 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     const rtsp_in_ops_t in_ops = { &in_ctx, in_on_message, in_on_interleaved };
     bool video_idle = false;
 
-    printf("[ak_rtsp] Client connected\n");
+    static bool auth_ready;
+    if (!auth_ready) {
+        auth_ready = true;
+        rtsp_auth_db_init(&g_auth, RTSP_AUTH_PATH);
+    }
+    rtsp_auth_conn_init(&client.auth);
+    int64_t next_auth_check_us = 0;
+    {
+        static const char *const names[] = { "disabled", "enabled (Digest)",
+                                             "INVALID credentials file, refusing all" };
+        printf("[ak_rtsp] Client connected, RTSP authentication %s\n",
+               names[rtsp_auth_db_refresh(&g_auth)]);
+    }
 
     while (client_fd >= 0) {
         struct pollfd pfd;
@@ -1081,6 +1135,16 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         }
 
         if (client.is_playing) {
+            /* Authentication switched on, or other credentials: a stream that
+             * started before must log in again (it reconnects and is asked). */
+            int64_t now_us = rtp_mono_us();
+            if (now_us >= next_auth_check_us) {
+                next_auth_check_us = now_us + 1000000;
+                if (!rtsp_auth_session_ok(&g_auth, &client.auth)) {
+                    client.drop_reason = "RTSP credentials changed or authentication enabled";
+                    break;
+                }
+            }
             int vret = send_video_frame(&client);
             if (vret < 0) {
                 client.drop_reason = "error sending video frame";
