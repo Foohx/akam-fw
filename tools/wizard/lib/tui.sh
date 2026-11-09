@@ -212,7 +212,7 @@ tui_rearm_traps() {
 # ------------------------------------------------------------------ keys
 # tui_readkey [TIMEOUT]: wait for one key; TUI_KEY is one of
 #   up down left right home end pgup pgdn enter esc tab space backspace delete
-#   ctrl-a ctrl-c ctrl-e ctrl-k ctrl-u ctrl-w eof timeout unknown, or the typed character.
+#   ctrl-a ctrl-c ctrl-e ctrl-k ctrl-u ctrl-w eof timeout resize unknown, or the typed character.
 tui_readkey() {
     local k="" k2="" c="" seq="" rc=0 t=${1:-0.5}
     TUI_KEY=""
@@ -226,6 +226,8 @@ tui_readkey() {
         if [ "$rc" -eq 0 ]; then break; fi
         if [ "$rc" -gt 128 ]; then
             if [ -n "${1:-}" ]; then TUI_KEY=timeout; return 0; fi
+            # a resize while an inline widget waits: re-measure and let the caller redraw
+            if [ "$TUI_RESIZED" = 1 ]; then tui_size; TUI_KEY=resize; return 0; fi
             continue
         fi
         TUI_KEY=eof
