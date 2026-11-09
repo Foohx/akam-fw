@@ -192,6 +192,20 @@ Settings are **volatile**: they are lost at the next boot. There is no password,
 your LAN (see [Security notes](#security-notes)). More in the
 [overview](docs/akam_v1_install.md#4-the-8091-control-port).
 
+## Network name (hostname)
+
+The camera announces a name to your router (DHCP), so it shows up as `akam-XXXX` instead of
+`IPCamera`; `XXXX` is the last four hex digits of its Wi-Fi MAC address. To choose another name, over SSH:
+
+```bash
+ssh root@<camera-ip> 'akam_hostname.sh set cam-salon'   # also: show, status, reset
+```
+
+The name is one label of 1 to 32 letters, digits or `-` (not starting or ending with `-`, not only
+digits) and is stored in lowercase in `/etc/config/akam/hostname`, so it survives reflashing the APP.
+The router sees the new name after the next reboot or DHCP lease (see
+[troubleshooting](docs/troubleshooting.md#the-router-still-shows-the-old-camera-name)).
+
 ## Updating
 
 The wizard has no separate update step: flash again with the same steps, or reflash over SSH without

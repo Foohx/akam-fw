@@ -133,6 +133,14 @@ fails, wait a few minutes and run the step again (`./akam step get-kit`). With n
 you already have (`./akam get-kit --kit FILE`) or run the bootstrap offline
 (`bash tools/build/bootstrap.sh --offline`).
 
+## The router still shows the old camera name
+
+The camera announces its name (`akam-XXXX`, or the one set with `akam_hostname.sh set NAME`) only when
+it asks the router for an address, and it is deliberately not restarted live. After a change, power-cycle
+the camera; the router lists the new name after its next DHCP lease (some routers cache the old name
+until the lease expires: release it in the router, or wait). `ssh root@<camera-ip> akam_hostname.sh
+status` shows the effective, configured and kernel names.
+
 ## SSH says "REMOTE HOST IDENTIFICATION HAS CHANGED"
 
 The camera keeps its SSH host key in the CONFIG partition. If CONFIG was erased (factory reset, a
