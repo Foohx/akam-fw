@@ -23,11 +23,13 @@ fc_require_busybox() {
     export AKAM_BUSYBOX=$bb
 }
 
-# fc_free_port: a localhost TCP port nobody listens on.
+# fc_free_port: a localhost TCP port nobody listens on. Drawn below the kernel's ephemeral range
+# (32768-60999): in that range a port can be taken by the source side of any local connection (the
+# wizard's /dev/tcp retries) between the probe and the moment a fake nc binds it.
 fc_free_port() {
     local p i=0
     while [ "$i" -lt 50 ]; do
-        p=$((20000 + RANDOM % 30000))
+        p=$((12000 + RANDOM % 20000))
         if ! (exec 9<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
             echo "$p"
             return 0
@@ -44,7 +46,9 @@ fc_start() {
     FC_PORT=$(fc_free_port)
     AKAM_PORT_XFER_IN=$(fc_free_port)
     AKAM_PORT_XFER_OUT=$(fc_free_port)
-    while [ "$AKAM_PORT_XFER_IN" = "$AKAM_PORT_XFER_OUT" ] || [ "$AKAM_PORT_XFER_IN" = "$FC_PORT" ]; do AKAM_PORT_XFER_IN=$(fc_free_port); done
+    # the three ports must be pairwise different (each draw is independent)
+    while [ "$AKAM_PORT_XFER_IN" = "$FC_PORT" ]; do AKAM_PORT_XFER_IN=$(fc_free_port); done
+    while [ "$AKAM_PORT_XFER_OUT" = "$FC_PORT" ] || [ "$AKAM_PORT_XFER_OUT" = "$AKAM_PORT_XFER_IN" ]; do AKAM_PORT_XFER_OUT=$(fc_free_port); done
     export AKAM_PORT_XFER_IN AKAM_PORT_XFER_OUT
     AKAM_PORT_TELNET=$FC_PORT
     export AKAM_PORT_TELNET

@@ -41,7 +41,34 @@ confirmed on hardware and is not validated yet. To tell a camera problem from a 
 ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
 ```
 
-If `ffplay` works, the camera is fine and the problem is in VLC: see the next two sections.
+If `ffplay` works, the camera is fine and the problem is in VLC: see the next sections.
+
+## VLC goes black or stops when its window is on another workspace
+
+Symptom: the picture is fine, you switch to another Hyprland (or other Wayland) workspace, and when
+you come back VLC shows a black screen and stays stopped; the log says `buffer deadlock prevented`.
+
+Cause: while the window is not visible, the compositor stops sending frame callbacks. VLC's video
+output then blocks, VLC stops reading the network, and the camera drops the stalled client after 15
+seconds **by design** (a client that does not read must not hold the only RTSP slot).
+
+Fix: keep the VLC window visible (a second monitor, a floating or pinned window), or put a relay in
+front of the camera (go2rtc or MediaMTX) and open the relay's stream in VLC. The relay keeps reading
+from the camera whatever the player does.
+
+## The stream stops after about 13 minutes (VLC, live555)
+
+Players that send RTCP receiver reports over the same TCP connection (VLC and anything built on
+live555) were dropped after about 13 minutes by older images. This is fixed in the firmware (the
+interleaved RTCP input is now read and discarded properly): update your camera with `./akam update`
+(or `./akam flash`) using an image built from a current kit.
+
+## Only one viewer works at a time
+
+The camera serves **one RTSP client at a time**; a second client is refused or the first one is cut.
+To watch from several places, or to record and watch together, put a relay in front of the camera
+(go2rtc or MediaMTX): the relay is the only client of the camera and serves as many viewers as you
+need.
 
 ## VLC cannot open the stream, or hardware decoding fails
 

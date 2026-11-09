@@ -83,12 +83,15 @@ No compiling is needed: the default path uses a **prebuilt kit**.
 | `doctor` | checks the tools on your PC | none |
 | `get-kit` | downloads the prebuilt kit, verifies checksum and signature (`./akam build` builds from source instead) | none |
 | `prepare-backup-sd` | writes the backup toolkit to a microSD card | erases that card |
-| `find-camera` | locates the camera on your network | none |
+| `find-camera` | asks the camera's address, probes its ports and tells a stock camera from one running Akam | none |
 | `backup` | copies the 8 flash partitions twice, compares them, stores them on your PC | none (read only) |
 | `image` | builds the Akam image from your backup and shows the hardware verdict | none |
 | `prepare-flash-sd` | writes the image, your SSH key and the Wi-Fi settings to a card | erases that card |
-| `flash` | writes the APP partition; you type `YES` yourself | **can brick the camera** |
+| `flash` | writes the APP partition (over SSH when Akam already runs, else the maintenance telnet and the card); you type `YES` yourself | **can brick the camera** |
 | `verify` | checks over SSH that the camera behaves as expected | none |
+| `update` | later: flashes a new image over SSH, no card needed (`--image FILE`); you type `YES` | **can brick the camera** |
+| `rtsp-auth` | optional: sets, shows or removes a password on the video stream, over SSH (see below) | none |
+| `restore` | puts the original APP back from your backup; you type `YES` | **can brick the camera** |
 | `wipe-sd` | erases a card that holds your Wi-Fi password | erases that card |
 
 The wizard never runs `sudo` itself, shows every command before running it, and never stores your
