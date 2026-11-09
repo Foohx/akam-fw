@@ -355,7 +355,7 @@ SD=$(new_state d)
     echo "flash_sd_image_sha=$IMG_SHA"
 } >"$SD/state"
 : >"$CAM_B/ctl/confirm.log"
-printf 'y\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d1.out" 2>&1
+printf 'y\ny\ny\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d1.out" 2>&1
 check "d restore: without the typed YES the APP is not touched" bash -c '[ "$1" -ne 0 ] && cmp -s "$2" "$3" && ! grep -q "CONFIRM=YES" "$4"' _ $? "$CAM_B/dev/mtd7" "$IMG" "$CAM_B/ctl/confirm.log"
 # (the stock APP is already on the card after the refused try above: no replace question this time)
 printf 'YES\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d2.out" 2>&1
