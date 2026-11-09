@@ -169,12 +169,28 @@ ui_choose() {
     done
 }
 
-# ui_confirm_typed PROMPT EXPECTED: exact typed text, never skipped, never defaulted.
-# A rehearsal only shows the question; it never passes a real confirmation.
-ui_confirm_typed() {
-    if [ "$UI_DRY" = 1 ]; then ui_say "WOULD ask: $1 (type: $2)"; return 0; fi
-    if [ "${TUI_ON:-0}" = 1 ]; then tui_typed "$1" "$2"; return; fi
-    host_confirm_typed "$1" "$2"
+# ui_danger TITLE QUESTION LINE...: the confirmation of an action that cannot be undone (erasing a card,
+# writing the camera flash, untested hardware). A red warning box states exactly what will happen, then ONE
+# yes/no choice whose default is No (arrow keys or y/N; Esc, q, an empty answer or the end of the input mean
+# No). It needs a real terminal (returns 2 and refuses without one). A rehearsal only shows the question and
+# never asks. Returns 0 only for an explicit yes. Nothing is typed: after a yes the wizard itself passes the
+# answers on to the tool that asks again (the SD tool, the camera's flash script).
+ui_danger() {
+    local title=$1 question=$2 l
+    shift 2
+    if [ "$UI_DRY" = 1 ]; then ui_say "WOULD ask: $question [y/N] (default: No) -- $title: $*"; return 0; fi
+    ui_require_tty "$title" || return 2
+    if [ "${TUI_ON:-0}" = 1 ]; then
+        TUI_BUF=()
+        tui_box_build "$TUI_R" "$TUI_I_WARN $title" "$@"
+        for l in "${TUI_BUF[@]}"; do printf '%s\n' "$l" >&2; done
+        tui_yesno "$question" n
+        return
+    fi
+    ui_blank
+    ui_warn "$title"
+    for l in "$@"; do ui_say "  $l"; done
+    host_confirm "  $question"
 }
 
 # ui_banner N TOTAL TITLE

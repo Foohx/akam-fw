@@ -10,7 +10,6 @@
 #   tui_multi [-i "I J"] TITLE ITEM...     checkboxes      -> TUI_SELECTED (indexes)
 #   tui_yesno PROMPT [y|n]                 yes/no          -> return 0 (yes) / 1 (no, Esc, EOF)
 #   tui_input [-s] [-v] PROMPT [DEFAULT]   text / secret   -> TUI_RESULT
-#   tui_typed PROMPT EXPECTED              typed phrase    -> return 0 only on an exact match
 #   tui_task LABEL CMD...                  spinner + elapsed time (+ progress bar when known)
 #   tui_box COLOR TITLE LINE...            coloured section box
 #   tui_error_panel MSG CMD RC HINT        error panel with the exact failed command
@@ -706,32 +705,6 @@ tui_input() {
     fi
     tui_widget_end
     return "$rc"
-}
-
-# ------------------------------------------------------------------ widget: typed confirmation
-# tui_typed PROMPT EXPECTED: a red box and a plain typing line. Nothing but the exact phrase passes;
-# there is no default, no shortcut key and no timeout. Esc, EOF or a different text return 1.
-tui_typed() {
-    local prompt=$1 want=$2 rc=0 ok=0 inner w
-    tui_widget_begin
-    w=$((TUI_COLS - 2))
-    if [ "$w" -gt 78 ]; then w=78; fi
-    inner=$((w - 4))
-    TUI_BUF=()
-    tui_box_build "$TUI_R" "$TUI_I_WARN Confirmation required" "$prompt" "" "Type exactly:  $want" "(Enter to confirm, Esc to cancel. Nothing happens unless it matches.)"
-    TUI_ABOVE=("${TUI_BUF[@]}")
-    tui_line_edit "$TUI_R$TUI_B$TUI_I_ARROW$TUI_RST" 1 text "" || rc=$?
-    if [ "$rc" -eq 0 ] && [ "$TUI_RESULT" = "$want" ]; then ok=1; fi
-    TUI_ABOVE=()
-    tui_cursor_hide
-    tui_clip "$want" $((inner - 14))
-    if [ "$ok" = 1 ]; then
-        tui_region_done "$TUI_G$TUI_I_OK$TUI_RST confirmed: $TUI_B$REPLY$TUI_RST"
-    else
-        tui_region_done "$TUI_R$TUI_I_ERR$TUI_RST not confirmed (nothing was changed)"
-    fi
-    tui_widget_end
-    [ "$ok" = 1 ]
 }
 
 # tui_pause [TEXT]: wait for one key.

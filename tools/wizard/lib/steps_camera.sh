@@ -5,8 +5,10 @@
 #
 # Rules kept everywhere in this file
 #   - the PC always connects OUT to the camera;
-#   - the typed YES (flash) and the typed confirmations are asked from the human; nothing here
-#     ever sends "YES" by itself, and an empty stdin or a missing terminal fails the step;
+#   - an irreversible action (the flash write, untested hardware) is confirmed by the human in a red
+#     box with ONE yes/no choice whose default is No (no terminal, Esc, q or an empty answer = No).
+#     Only after that explicit yes does the wizard answer "YES" to the camera's own flash script
+#     prompt (maintenance telnet) or pass --i-understand-no-uart to the SSH reflash;
 #   - nothing here ever reboots or power-cycles the camera: the user does it BY HAND;
 #   - a flash is gated on image size, md5 on the PC, md5 on the camera and, after the write, the
 #     md5 of /dev/mtd7 read back.
@@ -27,7 +29,6 @@ mtd5: 000fc000 00001000 "ROOTFS"
 mtd6: 00040000 00001000 "CONFIG"
 mtd7: 00500000 00001000 "APP"'
 CAM_MTD_SIZES="204800 4096 4096 65536 1572864 1032192 262144 5242880"
-CAM_UNTESTED_PHRASE="I UNDERSTAND THIS IS UNTESTED"
 
 cam_port() {
     case $1 in
@@ -113,7 +114,7 @@ cam_session_open() {
     return 1
 }
 
-# cam_confirm_untested APPSHA WHAT: refuse silently-untested hardware (typed phrase).
+# cam_confirm_untested APPSHA WHAT: untested hardware needs an explicit yes (red box, default No).
 cam_confirm_untested() {
     local verdict vstat vdev
     verdict=$(hw_verdict "$1")
@@ -122,9 +123,9 @@ cam_confirm_untested() {
     ui_say "  Hardware verdict for this stock APP: $vstat - $vdev"
     ui_say "  Stock APP sha256: $1"
     [ "$vstat" = validated ] && return 0
-    ui_warn "this firmware is NOT on the validated list. Akam may not work and the camera may need a restore."
-    ui_require_tty "confirming an untested firmware" || return 1
-    ui_confirm_typed "$2" "$CAM_UNTESTED_PHRASE" ||
+    ui_danger "Untested firmware" "$2" \
+        "This stock firmware is NOT on the validated list: Akam may not work and the camera may need a restore." \
+        "Hardware verdict: $vstat - $vdev" "Stock APP sha256: $1" ||
         { ui_fail "untested firmware not confirmed." "nothing was changed."; return 1; }
 }
 
@@ -465,13 +466,29 @@ cmd_backup() {
         ui_say "  check the 16 sizes, hash both runs on the camera and compare them (READS_IDENTICAL),"
         ui_say "  copy dump1 to ~/akam-backup-<name>-<date>/ over nc with size+hash checks (3 tries each),"
         ui_say "  write SHA256SUMS, compare the stock APP hash with tools/release/supported_hardware.txt"
-        ui_say "  (typed '$CAM_UNTESTED_PHRASE' unless validated) and ask for a second copy on another medium."
+        ui_say "  (a yes/no in a red box, default No, unless validated) and ask for a second copy on another medium."
         state_set backup_dir "<backup-dir>"
         state_set backup_sha dry-run
         state_mark_done backup
         return 0
     fi
     backup_camera
+}
+
+# cam_flash_confirm LABEL MD5 ROUTE: the one confirmation before the camera's flash is written: a red box that
+# says exactly what will happen, then a yes/no with the default No. Needs a real terminal.
+cam_flash_confirm() {
+    local label=$1 md5=$2 route=$3 what
+    case $label in
+        Restoring) what="put the ORIGINAL (stock) APP back on the camera" ;;
+        Updating) what="write the new Akam image to the camera" ;;
+        *) what="write the Akam image to the camera" ;;
+    esac
+    ui_danger "$label: WRITES THE CAMERA FLASH" "Write the camera flash now?" \
+        "Camera: $CAM_IP (route: $route)" \
+        "This will $what: it erases and rewrites the APP partition (/dev/mtd7)." \
+        "Image md5 (checked on this PC and on the camera): $md5" \
+        "Do NOT unplug the camera or the network until the wizard says it is finished: a power cut during the write can leave the camera dead (only a UART cable recovers it)."
 }
 
 # ------------------------------------------------------------------ SSH reflash (flash, update, restore)
@@ -509,15 +526,15 @@ cam_run_flash_script() {
     return "${rc:-1}"
 }
 
-# flash_ssh IMG MD5 LABEL: the validated no-card path. Precheck (writes nothing), typed YES, flash.
+# flash_ssh IMG MD5 LABEL: the validated no-card path. Precheck (writes nothing), yes/no (default No), flash.
 flash_ssh() {
     local img=$1 md5=$2 label=$3 ft args
     ft=$(cam_flash_tool)
     if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD run the precheck of the SSH reflash (writes nothing), ask for a typed YES, then:"
+        ui_say "  WOULD run the precheck of the SSH reflash (writes nothing), ask a yes/no (default No), then:"
         ui_say "    $(wiz_tool reflash) --host $CAM_IP --identity ${CAM_KEY:-<key>} --image <image> --md5 <md5> --flash-tool <flash_tool> --i-understand-no-uart"
         ui_say "  and relay its progress (the progress bars are filtered out). It never reboots the camera."
-        ui_confirm_typed "Write the camera flash now?" YES
+        ui_danger "Write the camera flash" "Write the camera flash now?" "<camera ip>" "<image md5>"
         return 0
     fi
     [ -f "$(wiz_tool reflash)" ] || { ui_fail "the SSH reflash tool is missing: $(wiz_tool reflash)" ""; return 1; }
@@ -538,9 +555,8 @@ flash_ssh() {
     ui_warn "$label over SSH has NO UART safety net. If the power is cut or the write is interrupted, the APP partition"
     ui_warn "is half written and only a UART cable can recover it. Keep the camera powered and do not touch it."
     ui_say "  Image md5 (checked on this PC): $md5"
-    ui_require_tty "writing the camera flash" || return 1
-    ui_confirm_typed "Write the camera flash now?" YES ||
-        { ui_fail "not confirmed (YES must be typed by you)." "nothing was written."; return 1; }
+    cam_flash_confirm "$label" "$md5" "SSH" ||
+        { ui_fail "not confirmed." "nothing was written."; return 1; }
     cam_run_flash_script "$STATE_DIR/reflash.log" bash "$(wiz_tool reflash)" "${args[@]}" --i-understand-no-uart ||
         { ui_fail "the SSH reflash failed or could not be verified." \
             "DO NOT power-cycle yet. Read $STATE_DIR/reflash.log and docs/akam_v1_flash_and_restore.md (Reflashing over SSH)."; return 1; }
@@ -702,11 +718,11 @@ flash_telnet() {
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD open the telnet shell, bind the card on /mnt if it is on /tmp/sd, check that exactly one image is in"
         ui_say "  /mnt/custom_firmware with the same md5 as this PC (pushing files over nc only after your yes), then run"
-        ui_say "  'sh /mnt/install_with_flash_tool.sh', show its md5 line and its prompt, and ask YOU to type YES (relayed as typed)."
+        ui_say "  'sh /mnt/install_with_flash_tool.sh', show its md5 line and its prompt, and ask YOU a yes/no (default No); only after your yes does the wizard answer the script."
         ui_say "  When flashing it also runs 'sh /mnt/preflight_check.sh --ensure-wifi' on the camera: if /etc/config/wpa_supplicant.conf has no"
         ui_say "  network it is created from the card's wifi.conf (on the camera; the password never passes through this PC)."
         ui_say "  After the write: dd if=/dev/mtd7 bs=64k | md5sum on the camera must equal the image md5. No reboot is ever sent."
-        ui_confirm_typed "Write the camera flash now?" YES
+        ui_danger "Write the camera flash" "Write the camera flash now?" "<camera ip>" "<image md5>"
         return 0
     fi
     [ -s "$ft" ] || { ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."; return 1; }
@@ -750,15 +766,15 @@ flash_telnet() {
             camsh_close
             return 1
         fi
-        ui_say "  The camera shows the same md5 as this PC. It now waits for YES."
-        if ! { ui_require_tty "writing the camera flash" && ui_confirm_typed "Write the camera flash now?" YES; }; then
-            ui_err "not confirmed: YES must be typed by you. Aborting; nothing was written."
+        ui_say "  The camera shows the same md5 as this PC. Its script now waits for a confirmation."
+        if ! cam_flash_confirm "$label" "$md5" "the maintenance telnet"; then
+            ui_err "not confirmed. Aborting; nothing was written."
             camsh_send_line "NO"
             camsh_finish 15 || true
             camsh_close
             return 1
         fi
-        # The only place where text goes to the flash script's prompt: what the human just typed.
+        # The only place where text goes to the flash script's prompt: "YES", sent only after the explicit yes above.
         camsh_send_line "YES" || { ui_fail "lost the camera session." "DO NOT power-cycle; check the camera."; return 1; }
         camsh_stream_set 1 "$FT_SKIP_RE"
         rc=0
@@ -811,7 +827,7 @@ ft_note_script_result() {
 flash_telnet_manual() {
     ui_say "  MANUAL: in your telnet window run the command above, compare the md5 it prints with this one:"
     ui_say "      $1"
-    ui_say "  If it matches, type YES yourself at its prompt. Wait until it says 'completed successfully'."
+    ui_say "  If it matches, type YES yourself at its prompt (in your own window). Wait until it says 'completed successfully'."
     ui_say "  Do NOT unplug anything. Then come back and paste its last lines."
     camsh_finish 900 || return 1
     ft_note_script_result
@@ -847,7 +863,7 @@ cmd_flash() {
         cam_need_ip || return 1
         cam_key
         ui_say "  WOULD check the image (size $APP_PARTITION_BYTES, md5) and the stock APP hardware verdict (typed"
-        ui_say "  '$CAM_UNTESTED_PHRASE' unless validated), then choose the route:"
+        ui_say "  a yes/no in a red box unless validated), then choose the route:"
         ui_say "    - SSH reflash when Akam already runs and your key works (no card needed), or"
         ui_say "    - the maintenance telnet with the flash card (stock firmware, or Akam with the maintenance card)."
         flash_telnet dry-run dry-run Flashing || return 1
@@ -1266,7 +1282,7 @@ cmd_restore() {
     bk=${OPT_BACKUP_DIR:-$(state_get backup_dir)}
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD check $bk/mtdblock7.bin (size $APP_PARTITION_BYTES, sha256 and md5), choose SSH (Akam running) or the"
-        ui_say "  maintenance telnet, and ask for a typed YES. Same gates as flash; no reboot is ever sent."
+        ui_say "  maintenance telnet, and ask a yes/no (default No). Same gates as flash; no reboot is ever sent."
         flash_telnet dry-run dry-run Restoring || return 1
         return 0
     fi

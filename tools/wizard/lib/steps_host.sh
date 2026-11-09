@@ -175,7 +175,7 @@ step_what() {
         hostname) echo "Gives the camera the network name you chose for it (the name of the camera), so your router lists it by name. Applied at the next power cycle." ;;
         update) echo "Flashes a newer image over SSH. No card and no maintenance shell needed once Akam runs." ;;
         restore) echo "Puts the original APP partition from your backup back on the camera." ;;
-        wipe-sd) echo "Zero-fills a microSD card that holds your Wi-Fi password in clear text (or a dump). The typed phrase ERASE <device> is required." ;;
+        wipe-sd) echo "Zero-fills a microSD card that holds your Wi-Fi password in clear text (or a dump). You get a red box naming the card and a yes/no (default No)." ;;
     esac
 }
 
@@ -204,7 +204,7 @@ step_is_risky() {
 
 # step_confirm_start NAME TITLE: before a step or tool starts from the menu: what it does, what it
 # touches, the risk, then "Start this step? [Y/n]" (Enter = yes). No, Esc or q = back to the menu.
-# The typed or destructive confirmations of the step itself come on top of this. Not used in a
+# The red yes/no confirmations of the step itself come on top of this. Not used in a
 # rehearsal. Returns 0 to start.
 step_confirm_start() {
     local name=$1 title=$2 why risk what touches a color
@@ -535,7 +535,9 @@ cmd_get_kit() {
     run_ro bash "$(wiz_tool verify_kit)" "${vargs[@]}" "$kit" || rc=$?
     if [ "$rc" -eq 3 ]; then
         ui_warn "this kit is NOT signed: only its checksum can be verified, so you must trust where you got it."
-        if ! ui_confirm_typed "Use this kit without a signature?" "USE UNSIGNED KIT"; then
+        if ! ui_danger "Unsigned kit" "Use this kit without a signature?" \
+            "Only the checksum of this kit can be verified: nothing proves who made it." \
+            "Kit: $kit" "Use it only if you got it from a source you trust. If in doubt, answer No."; then
             { ui_fail "unsigned kit refused." "get the signed release, or pass --allow-unsigned if you really mean it."; return 1; }
         fi
         unsigned=1
@@ -593,8 +595,9 @@ cmd_build() {
 #   verify  --mode MODE (--device DEV | --mount DIR | --stage-dir DIR) [--toolkit DIR]
 #   wipe    --device DEV                       zero-fills the card
 # Wi-Fi settings reach it ONLY through the environment (AKAM_WIFI_SSID, AKAM_WIFI_PASS).
-# The SD tool asks for the typed "ERASE <device>" itself (real terminal only) and calls sudo
-# itself for the disk work; this wizard never runs sudo.
+# The SD tool asks for its own typed "ERASE <device>" when run by hand; the wizard asks one yes/no
+# (default No) and then passes --yes-i-confirmed <device> (accepted only with the same --device, still on a
+# real terminal, and the disk is re-checked before any write). The tool calls sudo itself; this wizard never runs sudo.
 sd_available() { [ -f "$(wiz_tool sd_cli)" ]; }
 
 sd_toolkit_dir() { printf '%s\n' "${AKAM_TOOLKIT_DIR:-$HOME/akam-sdprep/toolkit}"; }
@@ -619,7 +622,7 @@ sd_need_cli() {
 }
 
 # sd_pick_device TSV: terminal only. A list to pick the card from (the TSV of list-candidates);
-# sets SD_DEV. The typed ERASE confirmation still follows, whatever is picked here.
+# sets SD_DEV. The red yes/no confirmation still follows, whatever is picked here.
 sd_pick_device() {
     local tsv=$1 dev size model tr mounts items=() devs=() gb
     while IFS=$'\t' read -r dev size model tr mounts; do
@@ -636,8 +639,9 @@ sd_pick_device() {
 
 # sd_choose_device: set SD_DEV (whole disk). Lists the eligible cards, then asks.
 sd_choose_device() {
-    local cand="" rc=0 line found=0
+    local cand="" rc=0 line found=0 size model tr mounts gb
     SD_DEV=$OPT_DEVICE
+    SD_INFO=""
     if sd_available; then
         ui_say "  Removable disks that can be used as a microSD card (system disks are never listed):"
         run_ro bash "$(wiz_tool sd_cli)" list-candidates --human || true
@@ -665,11 +669,16 @@ sd_choose_device() {
     case $SD_DEV in
         *" "*) { ui_fail "invalid device name." "pass --device /dev/sdX."; return 1; } ;;
     esac
-    # A /dev/disk/by-id link is resolved here so that the typed phrase names the real disk.
+    # A /dev/disk/by-id link is resolved here so that the confirmation names the real disk.
     if [ -L "$SD_DEV" ]; then SD_DEV=$(readlink -f -- "$SD_DEV"); fi
     if [ -n "$cand" ] && [ "$UI_DRY" != 1 ]; then
-        while IFS=$'\t' read -r line _; do
-            if [ "$line" = "$SD_DEV" ]; then found=1; fi
+        while IFS=$'\t' read -r line size model tr mounts; do
+            if [ "$line" = "$SD_DEV" ]; then
+                found=1
+                gb="?"
+                case $size in '' | *[!0-9]*) ;; *) gb="$((size / 1000000000)).$((size / 100000000 % 10)) GB" ;; esac
+                SD_INFO="Model: ${model:-unknown}  |  Size: $gb  |  Connected by: ${tr:-?}  |  Mounted: ${mounts:-nothing}"
+            fi
         done <<<"$cand"
         if [ "$found" != 1 ]; then
             { ui_fail "$SD_DEV is not in the list of usable cards." \
@@ -698,14 +707,24 @@ sd_get_wifi() {
     ui_say "  Wi-Fi settings go to the SD tool through its environment (AKAM_WIFI_PASS=***), not the command line."
 }
 
-# sd_confirm_erase: typed ERASE <device> (the SD tool asks the same again); needs a real terminal.
+# sd_confirm_erase WHAT: one yes/no choice (default No) in a red box that names the device, its model and size
+# and what will happen. Needs a real terminal. After a yes the wizard passes --yes-i-confirmed DEVICE to the SD
+# tool (which still re-checks the disk before it writes). WHAT: "erase" or "wipe".
 sd_confirm_erase() {
+    local what=${1:-erase} title q lines=()
     ui_require_tty "erasing the microSD card" || return 1
-    ui_warn "everything on $SD_DEV will be ERASED. Check the model and size above: this must be your microSD card."
-    ui_say "  You will type the phrase twice on purpose: once here, once in the SD tool."
-    ui_say "  The SD tool also asks for your sudo password itself (disk access needs root)."
-    ui_confirm_typed "Erase $SD_DEV?" "ERASE $SD_DEV" ||
-        { ui_fail "erase not confirmed." "nothing was changed."; return 1; }
+    if [ "$what" = wipe ]; then
+        title="ZERO-FILL $SD_DEV"
+        q="Zero-fill $SD_DEV now?"
+        lines+=("Every byte of $SD_DEV will be overwritten with zeros (it takes a few minutes). Nothing can be recovered.")
+    else
+        title="ERASE $SD_DEV"
+        q="Erase $SD_DEV now?"
+        lines+=("Everything on $SD_DEV will be ERASED: all partitions and files. This cannot be undone.")
+    fi
+    lines+=("Device: $SD_DEV" "${SD_INFO:-Model and size: see the list above}" "This must be your microSD card, not another disk. If in doubt, answer No.")
+    lines+=("The SD tool asks for your sudo password itself (disk access needs root), and checks the disk again right before it writes.")
+    ui_danger "$title" "$q" "${lines[@]}" || { ui_fail "not confirmed." "nothing was changed."; return 1; }
 }
 
 cmd_prepare_backup_sd() {
@@ -723,7 +742,7 @@ cmd_prepare_backup_sd() {
     sd_choose_device || return 1
     sd_get_wifi || return 1
     sd_confirm_erase || return 1
-    sd_call prepare --mode backup --device "$SD_DEV" --toolkit "$tk" ||
+    sd_call prepare --mode backup --device "$SD_DEV" --yes-i-confirmed "$SD_DEV" --toolkit "$tk" ||
         { ui_fail "preparing the card failed." "nothing else was changed; fix the problem above and retry."; return 1; }
     sd_call verify --mode backup --device "$SD_DEV" --toolkit "$tk" ||
         { ui_fail "the card did not verify." "prepare it again."; return 1; }
@@ -741,8 +760,8 @@ cmd_wipe_sd() {
     sd_need_cli "wipe the card with your own tools (for example: sudo dd if=/dev/zero of=/dev/sdX bs=4M)" || return 1
     ui_require_tty "erasing the microSD card" || return 1
     sd_choose_device || return 1
-    sd_confirm_erase || return 1
-    run_cmd bash "$(wiz_tool sd_cli)" wipe --device "$SD_DEV" || rc=$?
+    sd_confirm_erase wipe || return 1
+    run_cmd bash "$(wiz_tool sd_cli)" wipe --device "$SD_DEV" --yes-i-confirmed "$SD_DEV" || rc=$?
     if [ "$rc" -ne 0 ]; then
         { ui_fail "wiping the card failed." "nothing else was changed; fix the problem above and retry."; return 1; }
     fi
@@ -758,7 +777,7 @@ wipe_offer() {
     ui_blank
     ui_warn "your microSD card(s) still hold your Wi-Fi password in clear text (wifi.conf)."
     if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD offer: wipe them now (typed ERASE <device>), or later with ./akam wipe-sd"
+        ui_say "  WOULD offer: wipe them now (a yes/no, default No), or later with ./akam wipe-sd"
         return 0
     fi
     if ! host_is_tty; then
@@ -899,7 +918,10 @@ cmd_image() {
                     { ui_fail "the stock APP uses '${STOCK_COMP:-unknown}' compression, which Akam does not support." \
                         "only xz and gzip are supported. If you checked that your kernel can read it, add --allow-unknown-stock-comp."; return 1; }
                 fi
-                ui_confirm_typed "Build with unverified compression '${STOCK_COMP:-unknown}'?" "I HAVE CHECKED THE KERNEL" ||
+                ui_danger "Unverified compression" "Build with '${STOCK_COMP:-unknown}' compression?" \
+                    "Your stock APP uses '${STOCK_COMP:-unknown}' compression, which Akam has not been verified to read." \
+                    "If the camera's kernel cannot read the image it will not start and only a restore (or a UART cable) can recover it." \
+                    "Answer Yes only if you checked that your kernel supports it." ||
                     { ui_fail "not confirmed." ""; return 1; }
                 pass+=(--allow-unknown-stock-comp)
                 ;;
@@ -914,16 +936,16 @@ cmd_image() {
         ui_say "  Hardware verdict: $vstat - $vdev"
         ui_say "  Stock APP sha256: $asha"
         if [ "$vstat" != validated ]; then
-            ui_warn "this firmware is NOT on the validated list. Akam may not work and the camera may need a restore."
-            ui_require_tty "confirming an untested firmware" || return 1
-            ui_confirm_typed "Continue with untested firmware?" "I UNDERSTAND THIS IS UNTESTED" ||
+            ui_danger "Untested firmware" "Continue with this untested firmware?" \
+                "This stock firmware is NOT on the validated list: Akam may not work and the camera may need a restore." \
+                "Hardware verdict: $vstat - $vdev" "Stock APP sha256: $asha" ||
                 { ui_fail "untested firmware not confirmed." "nothing was built."; return 1; }
             pass+=(--i-understand-untested)
         fi
     elif [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD check the backup (8 files, APP readable with unsquashfs, bin/sbin/local present),"
-        ui_say "  show the stock compression and hardware verdict, and ask for"
-        ui_say "  'I UNDERSTAND THIS IS UNTESTED' unless the firmware is validated."
+        ui_say "  show the stock compression and hardware verdict, and ask a yes/no (default No) in a red box"
+        ui_say "  unless the firmware is validated."
         bdir=${bdir:-"<backup-dir>"}
         asha=dry-run
     else
@@ -1047,7 +1069,7 @@ cmd_prepare_flash_sd() {
     sd_choose_device || return 1
     sd_get_wifi || return 1
     sd_confirm_erase || return 1
-    sd_call prepare --mode first-boot --device "$SD_DEV" --pubkey "$pub" --toolkit "$tk" ||
+    sd_call prepare --mode first-boot --device "$SD_DEV" --yes-i-confirmed "$SD_DEV" --pubkey "$pub" --toolkit "$tk" ||
         { ui_fail "preparing the card failed." "the camera was not touched; fix the problem above and retry."; return 1; }
     sd_call prepare --mode flash-files --device "$SD_DEV" --image "$img" --flash-tool "$ft" --backup-dir "$bk" ||
         { ui_fail "adding the flash files to the card failed." "the card is already erased: run this step again."; return 1; }

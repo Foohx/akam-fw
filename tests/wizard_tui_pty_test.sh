@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016
 # ./akam on a real (pseudo) terminal: the full-screen menu, running a step from it, the card picker,
-# typed confirmations, the Wi-Fi password choice, Ctrl-C, resizing, NO_COLOR and the ASCII fallback.
+# red yes/no confirmations, the Wi-Fi password choice, Ctrl-C, resizing, NO_COLOR and the ASCII fallback.
 # The pseudo-terminal is driven by tests/fixtures/pty_drive.py (Python 3 standard library only);
 # without Python 3 the whole test is skipped with a "skip:" line. No camera, no card, no network:
 # the SD tool and check_host are stubs.
@@ -156,22 +156,30 @@ new_state
 run sigterm 'expect:Check this computer' 'sigint' -- "$AKAM" --state-dir "$T/st"
 check "SIGINT to the process group also restores the terminal" terminal_restored sigterm
 
-# ---------------------------------------------------------------- the card picker and typed confirmation
+# ---------------------------------------------------------------- the card picker and the red yes/no confirmation
 new_state
-run wipe_ok 'expect:Which disk is your microSD card?' 'send:j' 'send:k' 'send:\r' 'expect:Type exactly:  ERASE /dev/sdb' 'send:ERASE /dev/sdb\r' 'expect:Card wiped' -- "$AKAM" --state-dir "$T/st" wipe-sd
+run wipe_ok 'expect:Which disk is your microSD card?' 'send:j' 'send:k' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:y' 'expect:Card wiped' -- "$AKAM" --state-dir "$T/st" wipe-sd
 check "picker: lists the candidate disks with size and model" bash -c 'grep -q "/dev/sdb" "$1" && grep -q "3.9 GB" "$1" && grep -q "Ultra microSD" "$1" && grep -q "/dev/sdc" "$1"' _ "$T/wipe_ok.txt"
-check "picker + typed phrase: the SD tool is called for the picked disk" has "$STUB_LOG" "stub sd wipe wipe --device /dev/sdb"
-check "typed confirmation: the box names the exact phrase" has "$T/wipe_ok.txt" "Type exactly:  ERASE /dev/sdb"
-check "typed confirmation run ends cleanly" has "$T/wipe_ok.res" "EXIT=0"
+check "picker + yes: the SD tool is called for the picked disk, with --yes-i-confirmed for the same device" has "$STUB_LOG" "stub sd wipe wipe --device /dev/sdb --yes-i-confirmed /dev/sdb"
+check "red box: names the device, its model and size and what happens" bash -c 'grep -q "Device: /dev/sdb" "$1" && grep -q "Model: Card Reader" "$1" && grep -q "Size: 4.0 GB\|Size: 3.9 GB" "$1" && grep -q "overwritten with zeros" "$1"' _ "$T/wipe_ok.txt"
+check "red box: drawn in red" bash -c 'grep -qaP "\x1b\[3[01]m" "$1"' _ "$T/wipe_ok.raw"
+check "red box: nothing to type" hasnt "$T/wipe_ok.txt" "Type exactly"
+check "red box run ends cleanly" has "$T/wipe_ok.res" "EXIT=0"
 new_state
-run wipe_bad 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Type exactly:' 'send:y\r' 'expect:erase not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
-check "typed confirmation: y does not confirm, nothing is wiped" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
-check "typed confirmation: failure explains that nothing changed" has "$T/wipe_bad.txt" "nothing was changed"
-check "typed confirmation: the failure is an error panel" has "$T/wipe_bad.txt" "Something went wrong"
-check "typed confirmation: the run reports failure (exit 1)" has "$T/wipe_bad.res" "EXIT=1"
+run wipe_bad 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:\r' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: Enter takes the default (No), nothing is wiped" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+check "red box: No explains that nothing changed" has "$T/wipe_bad.txt" "nothing was changed"
+check "red box: the refusal is an error panel" has "$T/wipe_bad.txt" "Something went wrong"
+check "red box: the run reports failure (exit 1)" has "$T/wipe_bad.res" "EXIT=1"
 new_state
-run wipe_q 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Type exactly:' 'send:q\r' 'expect:erase not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
-check "typed confirmation: q is typed text, not a shortcut" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+run wipe_q 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:q' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: q means No" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+new_state
+run wipe_escb 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:\x1b' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: Esc means No" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+new_state
+run wipe_arrow 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:\x1b[C' 'send:\r' 'expect:Card wiped' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: arrow right then Enter selects Yes" has "$STUB_LOG" "wipe --device /dev/sdb --yes-i-confirmed /dev/sdb"
 new_state
 run wipe_esc 'expect:Which disk is your microSD card?' 'send:\x1b' 'expect:no card chosen' -- "$AKAM" --state-dir "$T/st" wipe-sd
 check "picker: Esc cancels, nothing is wiped" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
@@ -181,17 +189,17 @@ check "picker: cancelling leaves a clean terminal" has "$T/wipe_esc.res" "TTY=sa
 SEC="Wifi-S3cret-Pw"
 new_state
 printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st/state"
-run wifi_show 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:\r' "send:$SEC" 'expect:Type exactly:  ERASE /dev/sdb' 'send:\x03' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
+run wifi_show 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:\r' "send:$SEC" 'expect:Erase /dev/sdb now?' 'send:\x03' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
 check "wifi: asks 'Show the password while typing?' with Y as the default" bash -c 'grep -q "Show the password while typing?" "$1" && grep -q "\[Y/n\]" "$1"' _ "$T/wifi_show.txt"
 check "wifi: the password is visible while typing when the user said yes" has "$T/wifi_show.txt" "$SEC"
 new_state
 printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st/state"
-run wifi_hide 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:n' "send:$SEC\r" 'expect:Type exactly:  ERASE /dev/sdb' 'send:ERASE /dev/sdb\r' 'expect:Backup card ready' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
+run wifi_hide 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:n' "send:$SEC\r" 'expect:Erase /dev/sdb now?' 'send:y' 'expect:Backup card ready' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
 check "wifi: with 'n' the password never appears on the terminal" hasnt "$T/wifi_hide.raw" "$SEC"
 check "wifi: the card tool got the password through its environment" has "$STUB_LOG" "stub sd prepare"
 check "wifi: ... as pass=set, not on the command line" bash -c 'grep -q "pass=set" "$1" && ! grep -q "$2" "$1"' _ "$STUB_LOG" "$SEC"
 check "wifi: no secret in the state file or the log" bash -c '! grep -rq "$2" "$1"' _ "$T/st" "$SEC"
-check "wifi: the flow completes (typed ERASE accepted)" has "$T/wifi_hide.res" "EXIT=0"
+check "wifi: the flow completes (the yes was accepted)" has "$T/wifi_hide.res" "EXIT=0"
 
 # ---------------------------------------------------------------- resize, colours, ASCII
 new_state

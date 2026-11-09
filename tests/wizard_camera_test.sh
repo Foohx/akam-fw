@@ -102,13 +102,16 @@ check "backup: nothing is read from the flash when the layout differs" bash -c '
 check "backup: layout refusal leaves the step undone" hasnt "$S/state" step_backup_done
 cp "$T/mtd.orig" "$CAM_A_ROOT/proc/mtd"
 
-# ------------------------------------------------------------------ backup: untested firmware needs the typed phrase
+# ------------------------------------------------------------------ backup: untested firmware needs an explicit yes (red box, default No)
 S=$(new_state bk_untested)
 { mark doctor prepare_backup_sd find_camera; echo camera_ip=127.0.0.1; echo camera_kind=stock; echo camera_telnet=1; } >"$S/state"
-printf 'y\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt.out" 2>&1
-check "backup: untested firmware without the typed phrase fails" bash -c '[ "$1" -ne 0 ] && grep -q "untested firmware not confirmed" "$2"' _ $? "$T/bk_unt.out"
+printf 'n\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt.out" 2>&1
+check "backup: untested firmware answered no fails" bash -c '[ "$1" -ne 0 ] && grep -q "untested firmware not confirmed" "$2"' _ $? "$T/bk_unt.out"
 check "backup: that failure leaves the step undone" hasnt "$S/state" step_backup_done
 check "backup: the verdict is shown" has "$T/bk_unt.out" "Hardware verdict for this stock APP: untested"
+check "backup: the untested warning box shows the verdict and the APP sha and asks a yes/no (default No)" bash -c 'grep -q "Hardware verdict: untested" "$1" && grep -q "Stock APP sha256:" "$1" && grep -q "Continue with untested firmware? \[y/N\]" "$1"' _ "$T/bk_unt.out"
+printf '\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt3.out" 2>&1
+check "backup: an empty answer to the untested question is No" bash -c '[ "$1" -ne 0 ] && ! grep -q "^step_backup_done=" "$2"' _ $? "$S/state"
 
 # ------------------------------------------------------------------ backup: the real thing (validated list)
 S=$(new_state bk)
@@ -136,11 +139,11 @@ check "backup: no password-looking data in the log" hasnt "$S/akam.log" "PASSWOR
 # backup folder usable by the image step's own checks (same layout rules)
 check "backup: no stray partition file in the folder" bash -c 'ls "$1"/mtdblock*.bin | wc -l | grep -q "^8$"' _ "$BKDIR"
 
-# ------------------------------------------------------------------ backup: untested with the phrase
+# ------------------------------------------------------------------ backup: untested with an explicit yes
 S=$(new_state bk_unt2)
 { mark doctor prepare_backup_sd find_camera; echo camera_ip=127.0.0.1; echo camera_kind=stock; echo camera_telnet=1; } >"$S/state"
-printf 'I UNDERSTAND THIS IS UNTESTED\ny\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt2.out" 2>&1
-check "backup: untested firmware with the typed phrase goes on" bash -c 'grep -q "^step_backup_done=" "$1"' _ "$S/state"
+printf 'y\ny\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt2.out" 2>&1
+check "backup: untested firmware with an explicit yes goes on" bash -c 'grep -q "^step_backup_done=" "$1"' _ "$S/state"
 
 # ------------------------------------------------------------------ backup of an Akam camera is refused
 S=$(new_state bk_akam)
@@ -192,7 +195,7 @@ seed_flash_state() { # STATE_DIR KIND TELNET
     } >"$1/state"
 }
 
-# ------------------------------------------------------------------ flash over the maintenance telnet: YES gate
+# ------------------------------------------------------------------ flash over the maintenance telnet: one yes/no, default No
 S=$(new_state fl_empty)
 seed_flash_state "$S" stock 1
 a "$S" flash </dev/null >"$T/fl_empty.out" 2>&1
@@ -212,23 +215,24 @@ check "flash: no YES sent without a terminal" bash -c '! grep -q "CONFIRM=YES" "
 
 S=$(new_state fl_wrong)
 seed_flash_state "$S" stock 1
-printf 'yes\n' | a "$S" flash >"$T/fl_wrong.out" 2>&1
-check "flash: a typed 'yes' (not YES) is not accepted" test $? -ne 0
+printf 'n\n' | a "$S" flash >"$T/fl_wrong.out" 2>&1
+check "flash: answering n is not a yes" test $? -ne 0
 check "flash: nothing written after a wrong confirmation" bash -c '! grep -q "CONFIRM=YES" "$1" 2>/dev/null && [ "$(md5sum <"$2" | cut -d" " -f1)" = "$3" ]' _ "$CAM_B_ROOT/ctl/confirm.log" "$CAM_B_ROOT/dev/mtd7" "$STOCK_MD5"
 
 # ------------------------------------------------------------------ flash over the maintenance telnet: success
 S=$(new_state fl_ok)
 seed_flash_state "$S" stock 1
-printf 'YES\n' | a "$S" flash >"$T/fl_ok.out" 2>&1
-check "flash: succeeds when the human types YES" test $? -eq 0
-check "flash: the camera received YES exactly once, typed by the human" bash -c '[ "$(grep -c "CONFIRM=YES" "$1")" = 1 ]' _ "$CAM_B_ROOT/ctl/confirm.log"
+printf 'y\n' | a "$S" flash >"$T/fl_ok.out" 2>&1
+check "flash: succeeds after the human's explicit yes" test $? -eq 0
+check "flash: the wizard answered YES to the camera script exactly once, only after the human yes" bash -c '[ "$(grep -c "CONFIRM=YES" "$1")" = 1 ]' _ "$CAM_B_ROOT/ctl/confirm.log"
 check "flash: /dev/mtd7 now equals the image" bash -c 'cmp -s "$1" "$2"' _ "$CAM_B_ROOT/dev/mtd7" "$IMG"
 check "flash: the read-back md5 is verified" has "$T/fl_ok.out" "Read-back md5 of /dev/mtd7 = image md5 ($IMG_MD5)"
 check "flash: the card was bound on /mnt" test -L "$CAM_B_ROOT/mnt"
 check "flash: tells the user to power-cycle by hand" has "$T/fl_ok.out" "power-cycle it BY HAND"
 check "flash: nothing rebooted the camera" test ! -s "$CAM_B_ROOT/ctl/events"
 check "flash: the step is done" bash -c 'grep -q "^step_flash_done=" "$1" && grep -q "^flash_md5=$2$" "$1"' _ "$S/state" "$IMG_MD5"
-check "flash: the log contains no YES sent by the wizard" bash -c '! grep -q "CAM> YES" "$1"' _ "$S/akam.log"
+check "flash: the red box names the camera, the md5 and the no-unplug warning" bash -c 'grep -q "Camera: 127.0.0.1" "$1" && grep -q "Image md5 (checked on this PC and on the camera): $2" "$1" && grep -q "Do NOT unplug" "$1" && grep -q "Write the camera flash now? \[y/N\]" "$1"' _ "$T/fl_ok.out" "$IMG_MD5"
+check "flash: nothing is typed any more (no YES phrase is asked of the human)" bash -c '! grep -q "type YES" "$1"' _ "$T/fl_ok.out"
 
 check "flash: the script runs with HUP ignored (a dropped link must not kill the write)" bash -c 'grep -q "; trap .. HUP; sh /mnt/install_with_flash_tool.sh" "$1"' _ "$CAM_B_ROOT/ctl/commands.log"
 # The fake flash script prints ~150 KB of \r progress bars (as flash_tool does). A big output used to
@@ -242,20 +246,20 @@ check "flash: no false warning about the image on the card" hasnt "$T/fl_ok.out"
 S=$(new_state fl_noline)
 seed_flash_state "$S" stock 1
 printf 'noline\n' >"$CAM_B_ROOT/ctl/flash_mode"
-printf 'YES\n' | a "$S" flash >"$T/fl_noline.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_noline.out" 2>&1
 check "flash: a good write without the script's success line is accepted on the read-back md5" bash -c '[ "$1" -eq 0 ] && grep -q "^step_flash_done=" "$2"' _ $? "$S/state"
 check "flash: ...and says the success line was missing" has "$T/fl_noline.out" "ended without its success line"
 
 S=$(new_state fl_badwrite)
 seed_flash_state "$S" stock 1
 printf 'badwrite\n' >"$CAM_B_ROOT/ctl/flash_mode"
-printf 'YES\n' | a "$S" flash >"$T/fl_badwrite.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_badwrite.out" 2>&1
 check "flash: a script that says success while the partition differs is a failure" bash -c '[ "$1" -ne 0 ] && grep -q "read back as md5" "$2" && ! grep -q "^step_flash_done=" "$3"' _ $? "$T/fl_badwrite.out" "$S/state"
 
 S=$(new_state fl_scriptfail)
 seed_flash_state "$S" stock 1
 printf 'fail\n' >"$CAM_B_ROOT/ctl/flash_mode"
-printf 'YES\n' | a "$S" flash >"$T/fl_scriptfail.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_scriptfail.out" 2>&1
 check "flash: a failing flash script leaves the step undone" bash -c '[ "$1" -ne 0 ] && ! grep -q "^step_flash_done=" "$2"' _ $? "$S/state"
 rm -f "$CAM_B_ROOT/ctl/flash_mode"
 cp "$IMG" "$CAM_B_ROOT/dev/mtd7"
@@ -267,7 +271,7 @@ rm -f "$WPA_B"
 : >"$CAM_B_ROOT/ctl/commands.log"
 S=$(new_state fl_wifi)
 seed_flash_state "$S" stock 1
-printf 'YES\n' | a "$S" flash >"$T/fl_wifi.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_wifi.out" 2>&1
 check "flash: succeeds and creates the camera's wpa_supplicant.conf from the card's wifi.conf" bash -c '[ "$1" -eq 0 ] && grep -q "^step_flash_done=" "$2" && grep -q "was created ON the camera" "$3"' _ $? "$S/state" "$T/fl_wifi.out"
 check "flash: the file holds ctrl_interface, update_config and the network (ssid, psk, WPA-PSK)" bash -c 'f=$1; grep -qx "ctrl_interface=/var/run/wpa_supplicant" "$f" && grep -qx "update_config=1" "$f" && grep -qx "network={" "$f" && grep -qx "    ssid=\"Sentinel Net\"" "$f" && grep -qx "    psk=\"$2\"" "$f" && grep -qx "    key_mgmt=WPA-PSK" "$f"' _ "$WPA_B" "$WIFI_SENT"
 check "flash: the file is mode 0600" bash -c '[ "$(stat -c %a "$1")" = 600 ]' _ "$WPA_B"
@@ -278,7 +282,7 @@ check "flash: the camera was asked to run preflight_check.sh --ensure-wifi" bash
 S=$(new_state fl_wifi2)
 seed_flash_state "$S" stock 1
 cp "$WPA_B" "$T/wpa.keep"
-printf 'YES\n' | a "$S" flash >"$T/fl_wifi2.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_wifi2.out" 2>&1
 check "flash: an existing network in wpa_supplicant.conf is kept as it is" bash -c '[ "$1" -eq 0 ] && cmp -s "$2" "$3" && grep -q "holds a Wi-Fi network" "$4"' _ $? "$WPA_B" "$T/wpa.keep" "$T/fl_wifi2.out"
 
 # no saved Wi-Fi and nothing on the card to make it from: refused BEFORE anything is written
@@ -288,7 +292,7 @@ mv "$CAM_B_ROOT/tmp/sd/custom/configs/wifi.conf" "$T/wifi.conf.keep"
 cp "$CAM_B_ROOT/dev/mtd7" "$T/mtd7.before"
 S=$(new_state fl_nowifi)
 seed_flash_state "$S" stock 1
-printf 'YES\n' | a "$S" flash >"$T/fl_nowifi.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_nowifi.out" 2>&1
 check "flash: no saved Wi-Fi and no wifi.conf on the card is refused with advice" bash -c '[ "$1" -ne 0 ] && grep -q "no saved Wi-Fi" "$2" && grep -q "NO network once the card is removed" "$2"' _ $? "$T/fl_nowifi.out"
 check "flash: ...before the flash script is even started (nothing written, no YES asked)" bash -c '[ ! -s "$1" ] && cmp -s "$2" "$3"' _ "$CAM_B_ROOT/ctl/confirm.log" "$CAM_B_ROOT/dev/mtd7" "$T/mtd7.before"
 check "flash: ...and the step stays undone" hasnt "$S/state" step_flash_done
@@ -297,7 +301,7 @@ check "flash: ...and the step stays undone" hasnt "$S/state" step_flash_done
 printf "SSID='Net'\nPASS='pass\"word99'\nSECURITY=3\n" >"$CAM_B_ROOT/tmp/sd/custom/configs/wifi.conf"
 S=$(new_state fl_badwifi)
 seed_flash_state "$S" stock 1
-printf 'YES\n' | a "$S" flash >"$T/fl_badwifi.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_badwifi.out" 2>&1
 check "flash: a Wi-Fi password with a double quote is refused with an explanation, nothing is written" bash -c '[ "$1" -ne 0 ] && grep -q "double quote, a backslash or a line break" "$2" && [ ! -e "$3" ] && [ ! -s "$4" ]' _ $? "$T/fl_badwifi.out" "$WPA_B" "$CAM_B_ROOT/ctl/confirm.log"
 mv "$T/wifi.conf.keep" "$CAM_B_ROOT/tmp/sd/custom/configs/wifi.conf"
 
@@ -308,7 +312,7 @@ cp "$CAM_B_ROOT/proc/mtd" "$T/mtdB.orig"
 sed -i 's/00500000 00001000 "APP"/00600000 00001000 "APP"/' "$CAM_B_ROOT/proc/mtd"
 : >"$CAM_B_ROOT/ctl/confirm.log"
 : >"$CAM_B_ROOT/ctl/commands.log"
-printf 'YES\n' | a "$S" flash >"$T/fl_layout.out" 2>&1
+printf 'y\n' | a "$S" flash >"$T/fl_layout.out" 2>&1
 check "flash: a different MTD layout is refused" bash -c '[ "$1" -ne 0 ] && grep -q "not the supported 8-partition layout" "$2"' _ $? "$T/fl_layout.out"
 check "flash: layout refusal never starts the flash script" bash -c '! grep -q "install_with_flash_tool" "$1" && [ ! -s "$2" ]' _ "$CAM_B_ROOT/ctl/commands.log" "$CAM_B_ROOT/ctl/confirm.log"
 cp "$T/mtdB.orig" "$CAM_B_ROOT/proc/mtd"
@@ -316,7 +320,7 @@ cp "$T/mtdB.orig" "$CAM_B_ROOT/proc/mtd"
 # ------------------------------------------------------------------ restore over telnet (pushes the stock APP)
 S=$(new_state restore)
 seed_flash_state "$S" stock 1
-printf 'y\nYES\n' | a "$S" restore --backup-dir "$BKDIR" >"$T/restore.out" 2>&1
+printf 'y\ny\n' | a "$S" restore --backup-dir "$BKDIR" >"$T/restore.out" 2>&1
 check "restore: succeeds" test $? -eq 0
 check "restore: the stock APP was pushed to the card and verified" has "$T/restore.out" "Verified on the camera: /mnt/custom_firmware/"
 check "restore: /dev/mtd7 equals the backup APP" bash -c 'cmp -s "$1" "$2"' _ "$CAM_B_ROOT/dev/mtd7" "$BKDIR/mtdblock7.bin"
@@ -327,7 +331,7 @@ check "restore: nothing rebooted the camera" test ! -s "$CAM_B_ROOT/ctl/events"
 # ------------------------------------------------------------------ flash: image on the card differs -> pushed after a yes
 S=$(new_state fl_push)
 seed_flash_state "$S" stock 1
-printf 'y\nYES\n' | a "$S" flash >"$T/fl_push.out" 2>&1
+printf 'y\ny\n' | a "$S" flash >"$T/fl_push.out" 2>&1
 check "flash: a different image on the card is replaced only after a yes, then flashed" bash -c 'grep -q "Replace the image on the card" "$1"' _ "$T/fl_push.out"
 check "flash (after push): /dev/mtd7 equals the image" bash -c 'cmp -s "$1" "$2"' _ "$CAM_B_ROOT/dev/mtd7" "$IMG"
 
@@ -399,8 +403,8 @@ CLOSED_TEL=$(fc_free_port)
 : >"$STUB_DIR/reflash.log"
 S=$(new_state ssh_ok)
 seed_flash_state "$S" akam 0
-printf 'y\nYES\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_ok.out" 2>&1
-check "flash over SSH: succeeds with a typed YES" test $? -eq 0
+printf 'y\ny\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_ok.out" 2>&1
+check "flash over SSH: succeeds after an explicit yes" test $? -eq 0
 check "flash over SSH: precheck first, then the flash with the no-UART flag" bash -c '
     sed -n 1p "$1" | grep -q -e "--precheck-only" && sed -n 2p "$1" | grep -q -e "--i-understand-no-uart"' _ "$STUB_DIR/reflash.log"
 check "flash over SSH: passes host, key, md5 and flash_tool" bash -c 'grep -q -e "--host 127.0.0.1" -e "--identity '"$T"'/key" "$1" && grep -q -e "--md5 '"$IMG_MD5"'" "$1"' _ "$STUB_DIR/reflash.log"
@@ -414,7 +418,7 @@ check "flash over SSH: the step is done and the route recorded" bash -c 'grep -q
 S=$(new_state ssh_noyes)
 seed_flash_state "$S" akam 0
 printf 'y\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_noyes.out" 2>&1
-check "flash over SSH: without a typed YES the flash is never started" bash -c '[ "$1" -ne 0 ] && ! grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUB_DIR/reflash.log"
+check "flash over SSH: without a yes (default No) the flash is never started" bash -c '[ "$1" -ne 0 ] && ! grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUB_DIR/reflash.log"
 
 : >"$STUB_DIR/reflash.log"
 S=$(new_state ssh_empty)
@@ -425,33 +429,33 @@ check "flash over SSH: empty stdin fails and starts no flash" bash -c '[ "$1" -n
 : >"$STUB_DIR/reflash.log"
 S=$(new_state ssh_bad)
 seed_flash_state "$S" akam 0
-printf 'y\nYES\n' | STUB_REFLASH_RC=1 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_bad.out" 2>&1
+printf 'y\ny\n' | STUB_REFLASH_RC=1 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_bad.out" 2>&1
 check "flash over SSH: a failing reflash is reported and the step stays undone" bash -c '[ "$1" -ne 0 ] && grep -q "DO NOT power-cycle" "$2"' _ $? "$T/ssh_bad.out"
 check "flash over SSH: ...and the step is not marked" hasnt "$S/state" step_flash_done
 
 : >"$STUB_DIR/reflash.log"
 S=$(new_state ssh_nokey)
 seed_flash_state "$S" akam 0
-printf 'y\nYES\n' | STUB_SSH_RC=255 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_nokey.out" 2>&1
+printf 'y\ny\n' | STUB_SSH_RC=255 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_nokey.out" 2>&1
 check "flash: Akam running but SSH refused and telnet closed gives clear advice" bash -c '[ "$1" -ne 0 ] && grep -q "no way in" "$2"' _ $? "$T/ssh_nokey.out"
 
 : >"$STUB_DIR/reflash.log"
 S=$(new_state ssh_pre)
 seed_flash_state "$S" akam 0
-printf 'y\nYES\n' | STUB_PRECHECK_RC=1 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_pre.out" 2>&1
-check "flash over SSH: a failing precheck stops before the typed YES is even asked" bash -c '[ "$1" -ne 0 ] && grep -q "the precheck failed" "$2" && ! grep -q -e "--i-understand-no-uart" "$3"' _ $? "$T/ssh_pre.out" "$STUB_DIR/reflash.log"
+printf 'y\ny\n' | STUB_PRECHECK_RC=1 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" flash >"$T/ssh_pre.out" 2>&1
+check "flash over SSH: a failing precheck stops before the yes/no is even asked" bash -c '[ "$1" -ne 0 ] && grep -q "the precheck failed" "$2" && ! grep -q -e "--i-understand-no-uart" "$3"' _ $? "$T/ssh_pre.out" "$STUB_DIR/reflash.log"
 
 # update
 : >"$STUB_DIR/reflash.log"
 S=$(new_state upd)
 printf 'camera_ip=127.0.0.1\n' >"$S/state"
-printf 'YES\n' | a "$S" --identity "$T/key" --image "$IMG" update >"$T/upd.out" 2>&1
-check "update: reflashes over SSH with a typed YES" bash -c '[ "$1" -eq 0 ] && grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUB_DIR/reflash.log"
+printf 'y\n' | a "$S" --identity "$T/key" --image "$IMG" update >"$T/upd.out" 2>&1
+check "update: reflashes over SSH after an explicit yes" bash -c '[ "$1" -eq 0 ] && grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUB_DIR/reflash.log"
 : >"$STUB_DIR/reflash.log"
 a "$S" --identity "$T/key" --image "$IMG" update </dev/null >"$T/upd2.out" 2>&1
 check "update: empty stdin fails and starts no flash" bash -c '[ "$1" -ne 0 ] && ! grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUB_DIR/reflash.log"
 head -c 1000 /dev/urandom >"$T/short.img"
-printf 'YES\n' | a "$S" --identity "$T/key" --image "$T/short.img" update >"$T/upd3.out" 2>&1
+printf 'y\n' | a "$S" --identity "$T/key" --image "$T/short.img" update >"$T/upd3.out" 2>&1
 check "update: an image of the wrong size is refused" bash -c '[ "$1" -ne 0 ] && grep -q "expected exactly 5242880" "$2"' _ $? "$T/upd3.out"
 
 # ------------------------------------------------------------------ verify (fake ssh + listeners)
@@ -660,7 +664,7 @@ check "dry-run: shows WOULD lines for the camera steps" bash -c 'for s in find-c
 check "dry-run: the camera received nothing" bash -c '[ "$(wc -l <"$1")" = "$2" ]' _ "$CAM_B_ROOT/ctl/commands.log" "$before"
 check "dry-run: the reflash tool was not called" bash -c '[ "$(wc -l <"$1/reflash.log")" = "$2" ]' _ "$STUB_DIR" "$rf_before"
 check "dry-run verify: shows the password question and sends nothing" bash -c 'grep -q "WOULD ask: Protect the video stream with a username/password? \[y/N\] (default: No)" "$1" && grep -q "WOULD run: ssh root@[^ ]* /usr/sbin/akam_rtsp_auth.sh set-hash" "$1"' _ "$T/dry_verify.out"
-check "dry-run flash: asks for the typed YES (shown, never answered)" has "$T/dry_flash.out" "WOULD ask: Write the camera flash now? (type: YES)"
+check "dry-run flash: asks the yes/no (shown, never answered)" has "$T/dry_flash.out" "WOULD ask: Write the camera flash now? [y/N] (default: No)"
 
 echo "wizard_camera_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
