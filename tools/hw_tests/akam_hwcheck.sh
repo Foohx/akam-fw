@@ -389,6 +389,28 @@ check_modes() {
     fi
 }
 
+# Network hostname: information only. Effective = stored name or akam-XXXX (see
+# akam_hostname.sh); the router shows a new name after the next boot / DHCP lease.
+check_hostname() {
+    section "network hostname"
+    hn_f=$ROOT/etc/config/akam/hostname
+    hn_s=$ROOT/usr/sbin/akam_hostname.sh
+    hn_cfg=
+    [ -r "$hn_f" ] && IFS= read -r hn_cfg < "$hn_f"
+    hn_eff=
+    [ -x "$hn_s" ] && hn_eff=$(AKAM_ROOT=${AKAM_ROOT:-} "$hn_s" show 2>/dev/null)
+    hn_k=
+    [ -r "$ROOT/proc/sys/kernel/hostname" ] && IFS= read -r hn_k < "$ROOT/proc/sys/kernel/hostname"
+    if [ -z "$hn_eff" ]; then
+        info "hostname: akam_hostname.sh not installed (kernel name: ${hn_k:-unknown})"
+        return 0
+    fi
+    info "hostname: effective $hn_eff, configured ${hn_cfg:-none (default akam-XXXX)}, kernel ${hn_k:-unknown}"
+    if [ -n "$hn_k" ] && [ "$hn_k" != "$hn_eff" ]; then
+        warn "hostname: kernel name '$hn_k' differs from the effective name '$hn_eff' (applied at boot; was it changed by hand?)"
+    fi
+}
+
 # RTSP Digest authentication (src/ak_rtsp/rtsp_auth.h): information only, never a FAIL. The
 # credentials file is "user:akam:HA1"; only the user name is shown, never the hash.
 check_rtsp_auth() {
@@ -612,6 +634,7 @@ check_cpu
 check_modes
 check_misc
 check_rtsp_auth
+check_hostname
 check_facts
 section "manual tests still to do (not automated)"
 cat <<'MSG'
