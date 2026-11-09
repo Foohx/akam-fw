@@ -169,6 +169,18 @@ ui_choose() {
     done
 }
 
+# ui_drain_input: throw away what was typed ahead on the real terminal (a key pressed during a long
+# command or a sudo prompt must never answer a question that was not on screen yet). Piped input
+# (tests, AKAM_FORCE_TTY) is not a terminal and is left alone.
+ui_drain_input() {
+    local saved k
+    [ -t 0 ] || return 0
+    saved=$(stty -g 2>/dev/null) || return 0
+    stty -icanon -echo min 0 time 1 2>/dev/null || return 0
+    while IFS= read -r -s -n 1 -t 0.1 k; do :; done
+    stty "$saved" 2>/dev/null || true
+}
+
 # ui_danger TITLE QUESTION LINE...: the confirmation of an action that cannot be undone (erasing a card,
 # writing the camera flash, untested hardware). A red warning box states exactly what will happen, then ONE
 # yes/no choice whose default is No (arrow keys or y/N; Esc, q, an empty answer or the end of the input mean
@@ -184,12 +196,14 @@ ui_danger() {
         TUI_BUF=()
         tui_box_build "$TUI_R" "$TUI_I_WARN $title" "$@"
         for l in "${TUI_BUF[@]}"; do printf '%s\n' "$l" >&2; done
+        ui_drain_input
         tui_yesno "$question" n
         return
     fi
     ui_blank
     ui_warn "$title"
     for l in "$@"; do ui_say "  $l"; done
+    ui_drain_input
     host_confirm "  $question"
 }
 

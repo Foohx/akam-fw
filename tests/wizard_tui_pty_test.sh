@@ -172,6 +172,9 @@ check "red box: No explains that nothing changed" has "$T/wipe_bad.txt" "nothing
 check "red box: the refusal is an error panel" has "$T/wipe_bad.txt" "Something went wrong"
 check "red box: the run reports failure (exit 1)" has "$T/wipe_bad.res" "EXIT=1"
 new_state
+run wipe_ahead 'expect:Which disk is your microSD card?' 'send:\ry' 'expect:Zero-fill /dev/sdb now?' 'wait:1' 'send:\x1b' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: a key typed ahead (before the box was on screen) is thrown away, it never answers yes" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+new_state
 run wipe_q 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:q' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
 check "red box: q means No" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
 new_state
