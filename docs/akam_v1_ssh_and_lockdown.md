@@ -5,9 +5,15 @@ open) with one service: **SSH on port 22, root login by public key only**, no pa
 server is [Dropbear](https://github.com/mkj/dropbear) 2026.94 built without password authentication,
 forwarding, RSA, ECDSA or DSS.
 
-Status: the scripts described here are tested only on the build host, against fake binaries and a
-synthetic fixture (`tests/ssh_init_test.sh`, `tests/lockdown_test.sh`). **Nothing has run on a camera.**
-Items marked *(assumed)* are hypotheses listed in the [test plan](akam_v1_test_plan.md#3-hypotheses-to-verify).
+> **Reference page.** The wizard does the key and card work for you (`./akam prepare-flash-sd`,
+> `./akam flash`, `./akam verify`); this page explains what the camera-side scripts do and how to use the
+> manual route.
+
+Status: SSH start, key login, persistence across power cuts and the Telnet/FTP lockdown were validated on
+two cameras (2026-11-07 to 11-09) and are covered on the build host by `tests/ssh_init_test.sh` and
+`tests/lockdown_test.sh`. Items marked *(assumed)* are hypotheses listed in the
+[test plan](akam_v1_test_plan.md#3-hypotheses-to-verify); one check remains: Telnet staying off after a
+Wi-Fi reconnect.
 
 ---
 
@@ -19,7 +25,8 @@ Use a key made only for this camera (one key per camera; never reuse your everyd
 ssh-keygen -t ed25519 -f ~/.ssh/akam -C "akam"
 ```
 
-Set a passphrase. This creates `~/.ssh/akam` (private, stays on your PC, never copied anywhere) and
+Set a passphrase. (The wizard offers your existing ed25519 keys to choose from if `~/.ssh/akam.pub` is
+missing, or creates this dedicated one.) This creates `~/.ssh/akam` (private, stays on your PC, never copied anywhere) and
 `~/.ssh/akam.pub` (public). Only **ed25519** keys are accepted by Akam V1.
 
 ## 2. Put the public key on the microSD card
@@ -35,7 +42,6 @@ when the flasher toolkit mounted it (its file bind-mounts are ignored) or `/mnt`
 read-only on `/tmp/akam_sd` (the stock `service.sh` unmounts `/mnt` after its boot checks; same devices
 and filesystem order as the stock `tf_mount.sh`: vfat then exfat, `/dev/mmcblk0p1` then `/dev/mmcblk0`),
 then unmounts. Every step, including mount errors, is logged in `/tmp/akam_ssh.log`.
-*(Tested on fixtures only; not yet validated on hardware.)*
 
 > **Deprecated alias (one release).** A card prepared for the early-development image (formerly Camyn)
 > has the folder `camyn/` instead. `akam_ssh.sh` still reads `camyn/authorized_keys` when
@@ -81,8 +87,7 @@ It writes one line per step to `/tmp/akam_ssh.log` (RAM; no secret is logged). I
 becomes writable it still starts Dropbear with an ephemeral host key in `/tmp` and **no** persistent
 keys, and logs that.
 
-The host key and `authorized_keys` live in CONFIG, so they survive power cuts and reboots *(to be
-confirmed by the persistence test)*. After the first successful login you can remove the card.
+The host key and `authorized_keys` live in CONFIG, so they survive power cuts and reboots (confirmed on hardware). After the first successful login you can remove the card.
 
 Connect:
 
@@ -266,6 +271,9 @@ that card. Without the flag the patched `service.sh` does not run them, but **em
 normal use anyway**.
 
 ## 8. Test order: keep a way back until SSH is proven
+
+The manual order (advanced). `./akam flash` then `./akam verify` follow the same sequence: card with the key,
+flash, SSH and checks, then a boot without the card.
 
 1. Wire UART first and keep it attached for the whole first test ([hardware_and_uart.md](hardware_and_uart.md)).
    After the flash there is no network shell except SSH; UART is the fallback. Without UART, read

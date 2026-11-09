@@ -1,4 +1,8 @@
-# Akam V1: Back Up the Camera with a microSD Root Shell (no UART)
+# Akam V1: Back Up the Camera with a microSD Root Shell (manual, no UART)
+
+> **Advanced / manual procedure (without the wizard).** `./akam prepare-backup-sd`, `find-camera` and
+> `backup` do all of this for you ([README](../README.md#quick-start)). Read on to understand or audit what
+> they do, or when you cannot run the wizard.
 
 This is an alternative to the UART route in [akam_v1_backup.md](akam_v1_backup.md). It gets a
 root shell over Wi-Fi by booting the stock firmware from a prepared microSD card. The camera is not
@@ -11,14 +15,13 @@ opened and **nothing is flashed**.
 > - **[Flasher]** comes from stage 1 of
 >   [`4ddict/Action-Smart-Connect-Flasher`](https://github.com/4ddict/Action-Smart-Connect-Flasher) v0.3.2
 >   (commit `b99baf2`), which prepares the same toolkit and runs a backup.
-> - **[Akam, untested]** was written for Akam and has **not been run on a camera**. This applies to
->   the procedure as a whole: Akam reproduces the flasher's stage 1 by hand, minus its Wi-Fi
->   persistence, and adds a second read plus a hash comparison.
+> - **[Akam]** was written for Akam: Akam reproduces the flasher's stage 1 by hand, minus its Wi-Fi
+>   persistence, and adds a second read plus a hash comparison. The wizard's scripted version of this
+>   procedure was run on two cameras (2026-11-07 to 11-09); the manual commands below are the same.
 >
 > The toolkit was reverse-engineered on firmware `6.2863.123` (it says it "should work on any version,
 > as long as you tweak the config files"). The firmware version of your unit is unknown. The flasher
-> lists `3215672.3` / SI `D26228` as "reported working by a user" with its wizard 0.3.0, not tested by
-> its author. If anything below does not happen as described, stop and fall back to the UART route.
+> lists `3215672.3` / SI `D26228` as "reported working by a user"; Akam validated it on two units. If anything below does not happen as described, stop and fall back to the UART route.
 
 > **WARNING: never boot the camera with `.bin` files on the card.** The stock `service.sh` runs
 > `tf_update.sh` at every boot, which mounts the card on `/mnt` and calls `system_upgrade` on every
@@ -51,14 +54,14 @@ so it can be reproduced by hand without the persistent-Wi-Fi part. That is what 
 
 ## 2. Prerequisites
 
-- Camera: label `3215672.3`, SI `D26228` expected (see [akam_v1_backup.md](akam_v1_backup.md), section 3).
+- Camera: label `3215672.3`, SI `D26228` (see [akam_v1_backup.md](akam_v1_backup.md), section 3).
   Write the label down.
 - A microSD card. **[Toolkit]** FAT32 is required. **[Flasher]** "any small card is sufficient"; it creates
   one MBR partition of type `c` (FAT32 LBA). Akam needs about 17 MiB free for two dumps (8 MiB each).
   Prefer a small card (up to 32 GB); larger cards were not tested by Akam.
 - A 2.4 GHz Wi-Fi network the camera can join with DHCP (**[Flasher]**: the camera is 2.4 GHz only),
   and a PC on the same LAN/VLAN.
-- On the Arch PC: `git`, `dosfstools`, `util-linux`, `inetutils` (for `telnet`), `squashfs-tools`, and optionally `nmap`.
+- On the PC (the Arch packages are shown; `./akam doctor` prints the command for Debian and Ubuntu): `git`, `dosfstools`, `util-linux`, `inetutils` (for `telnet`), `squashfs-tools`, and optionally `nmap`.
 
 ```bash
 sudo pacman -S --needed git dosfstools util-linux inetutils squashfs-tools nmap
@@ -146,7 +149,7 @@ tools/sd/sd_card.sh prepare --mode backup --device /dev/sdX
 tools/sd/sd_card.sh verify  --mode backup --device /dev/sdX   # read-only check of the finished card
 ```
 
-It needs a terminal and a typed `ERASE /dev/sdX`. The Wi-Fi SSID and password come from
+Run by hand it needs a terminal and a typed `ERASE /dev/sdX` (the wizard asks one red yes/no instead). The Wi-Fi SSID and password come from
 `AKAM_WIFI_SSID` / `AKAM_WIFI_PASS` or are asked (visible; add `--hidden` to hide the password).
 Add `--dry-run --stage-dir DIR` to build the card tree in `DIR` without touching any device. When
 you are done with the card, `tools/sd/sd_card.sh wipe --device /dev/sdX` zero-fills it.
@@ -261,7 +264,7 @@ reassess rather than continuing.
 ## 8. Dump the 8 partitions twice and compare (BusyBox shell on the camera)
 
 Everything below runs in the telnet shell. `SD` is where the toolkit mounted the card.
-**[Akam, untested]** unless noted. The `dd if=/dev/mtdblockN bs=64k` dump and the size check use the
+**[Akam]** unless noted. The `dd if=/dev/mtdblockN bs=64k` dump and the size check use the
 same commands as **[Flasher]** stage 1.
 
 ### 8.1 Check card, free space and partition table

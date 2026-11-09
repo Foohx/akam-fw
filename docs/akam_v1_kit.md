@@ -1,5 +1,8 @@
 # The Akam release kit
 
+`./akam get-kit` downloads and verifies the kit for you; this page explains what is inside and how the
+verification works, for people who want to check it by hand.
+
 The kit lets you build an Akam firmware image without installing a compiler,
 Zig, CMake or gdb. You only need `squashfs-tools` and your own dump of the
 camera's APP partition.
@@ -11,8 +14,8 @@ The kit (`akam-kit-<version>.tar.xz`) holds **only Akam's own files**:
 | Path | Content |
 |---|---|
 | `bin/ak_rtsp`, `bin/dropbearmulti`, `bin/flash_tool` | static ARM EABI5 soft-float binaries, stripped |
-| `overlay/` | files copied into the image: `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, `akam_rtsp_auth.sh`, `_ht_process.ini`, `dropbear`/`dropbearkey` links |
-| `patches/patch_service_sh.sh` | turns Telnet/FTP off in the stock `sbin/service.sh` |
+| `overlay/` | files copied into the image: `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `_ht_process.ini`, `dropbear`/`dropbearkey` links |
+| `patches/` | `patch_service_sh.sh` turns Telnet/FTP off in the stock `sbin/service.sh`; `patch_ethernet_hostname.sh` makes DHCP announce the camera's name |
 | `scripts/flash/`, `scripts/hwcheck/` | flash, restore and hardware check scripts |
 | `licenses/` | Akam (MIT), `THIRD_PARTY_NOTICES.md`, Dropbear, musl, Zig (compiler-rt), SmolRTSP and its four header-only dependencies |
 | `supported_hardware.txt` | which cameras and firmware Akam is validated for (see below) |
@@ -81,9 +84,9 @@ source: `tools/release/supported_hardware.txt`).
 What the words mean:
 
 - **validated**: an Akam image built for this exact fingerprint was flashed and run on a
-  real camera by the maintainer (boot, SSH, RTSP, low CPU, Telnet off).
+  real camera by the maintainer (boot, SSH, RTSP, low CPU, Telnet off); two units so far.
 - **untested**: it may work or brick the camera. Akam promises nothing. The setup
-  wizard warns and asks you to type a confirmation before going on.
+  wizard warns and asks an explicit yes/no (red box, default No) before going on.
 - A different MTD layout is refused outright.
 
 The stock APP sha256 is that of one camera's dump. It is expected to be identical on
@@ -109,5 +112,5 @@ different `ak_rtsp` bytes. Maintainer procedure:
 
 ## Status
 
-The kit format and tooling are tested on the build host. v1.0 will ship the
-kit together with the setup wizard; macOS is not supported yet.
+The kit format and tooling are tested on the build host, and kits were used on two cameras.
+The kit is used on Linux only (Arch, Debian 12, Ubuntu 24.04); macOS and Windows are not supported.

@@ -1,16 +1,16 @@
-# Akam V1: Build the Image From Your Own Dump
+# Akam V1: Build the Image From Your Own Dump (advanced, from source)
 
-**This guide is optional.** Most people should use the prebuilt kit through `./akam` (see the
-[README](../README.md#quick-start-with-the-wizard)); build from source only to audit the code or
-change it, or if no kit is available (`./akam build` drives the same steps).
+**Advanced / manual procedure, and optional.** Most people use the prebuilt kit through `./akam` (see the
+[README](../README.md#quick-start)): `./akam get-kit` then `./akam image`. Build from source only to audit
+or change the code, or if no kit is available (`./akam build` drives the same steps).
 
 All build steps run on the PC (Arch Linux x86-64 is the reference host) and never touch the camera.
 Nothing here ships a vendor image: the APP tree comes from **your own** `mtdblock7.bin`
 ([backup guide](akam_v1_backup.md)).
 
-Status: the scripts below compile and run on the build host, and `tests/build_firmware_test.sh` builds
-an image from a **synthetic fixture** with stub binaries. An image built this way from a real dump was
-flashed and validated on one camera on 2026-11-08 (see the [README status](../README.md#status)).
+Status: `tests/build_firmware_test.sh` builds an image from a **synthetic fixture** with stub binaries. Images
+built from a real dump (from the kit and from source) were flashed and validated on two cameras between
+2026-11-07 and 11-09 (see the [README status](../README.md#status-and-limits)).
 
 ---
 
@@ -112,8 +112,9 @@ absent), so do it by hand:
 grep -rnE 'telnetd|utelnetd|ftpd|tcpsvd|bftpd|vsftpd|dropbear|sshd|httpd|lighttpd' ~/akam-work/app_extracted/sbin ~/akam-work/app_extracted/local
 ```
 
-The lockdown patch assumes the daemons are started from `sbin/service.sh` in the APP. Whether that is
-true on your unit is a hypothesis ([test plan](akam_v1_test_plan.md#3-hypotheses-to-verify)).
+The lockdown patch assumes the daemons are started from `sbin/service.sh` in the APP. That holds on the
+validated units (Telnet and FTP were closed after boot); on another unit read the output above
+([test plan](akam_v1_test_plan.md#3-hypotheses-to-verify)).
 
 ## 6. Compression: xz (default) or gzip
 
@@ -121,13 +122,13 @@ true on your unit is a hypothesis ([test plan](akam_v1_test_plan.md#3-hypotheses
 
 | Value | Notes |
 |---|---|
-| `xz` (default) | Same format as the stock APP: xz, 128 KiB blocks, **no BCJ filter** (verified with `unsquashfs -s` on a real dump; ROOTFS is xz too and the running kernel mounts it, so xz SquashFS support is certain). Chosen as the default so the first flash uses exactly the stock format. `AKAM_XZ_BCJ=1` adds `-Xbcj arm` (about 45 KB smaller, but the stock image does not use it, so kernel support is unproven). Akam's own image has not been booted yet. |
+| `xz` (default) | Same format as the stock APP: xz, 128 KiB blocks, **no BCJ filter** (verified with `unsquashfs -s` on a real dump; ROOTFS is xz too and the running kernel mounts it, so xz SquashFS support is certain). Chosen as the default so the flash uses exactly the stock format, and validated on hardware. `AKAM_XZ_BCJ=1` adds `-Xbcj arm` (about 45 KB smaller, but the stock image does not use it, so kernel support is unproven). |
 | `gzip` | Opt-in. The format the upstream project reports having flashed and booted. Kernel analysis of the real KERNEL dump (Linux 4.4.302, `mtdblock4`) found the SquashFS `zlib`, `lzo`, `xz` and `lz4` decompressor tables and `zlib_inflate`, so gzip is expected to work too, but only xz is proven on this unit. |
 
 Sizes measured against a real APP dump (4,739,612 bytes used in the stock xz image): gzip 3,067,904 bytes
 (2,174,976 free of 5,242,880), xz with BCJ 2,449,408 (2,793,472 free), xz without BCJ about 2,494,000.
 
-Check what your own dump uses: `unsquashfs -s ~/akam-backup/mtdblock7.bin`. Use the default `xz` for the first flash
+Check what your own dump uses: `unsquashfs -s ~/akam-backup/mtdblock7.bin`. Use the default `xz`
 (same format as the stock APP). Building both and comparing sizes in `build_report.txt`
 is cheap: `AKAM_SQUASHFS_COMP=gzip` with a different `FW_DIR`.
 

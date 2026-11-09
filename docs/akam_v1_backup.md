@@ -1,11 +1,16 @@
-# Akam V1: Back Up Your Camera First
+# Akam V1: Back Up Your Camera First (manual, by UART)
+
+> **Advanced / manual procedure (without the wizard).** `./akam backup` does all of this for you, over
+> the maintenance telnet ([README](../README.md#quick-start)). Read on to understand it, audit it, or when
+> you cannot run the wizard.
 
 > **Do this before anything else.** Do not build, flash or even boot a modified image until you
 > hold a verified copy of all 8 flash partitions. The backup is also the source for building your
 > image: the APP partition (`mtdblock7`) is the input of `build_firmware.sh`.
 >
-> Status: this procedure reuses the upstream dump commands (`dd` per partition) plus extra size and
-> hash checks written for Akam. The extra checks have **not been run on a camera**.
+> Status: the dump commands are upstream's (`dd` per partition); the double read and the size and hash
+> checks are the ones the wizard runs, which were validated on two cameras (2026-11-07 to 11-09). The
+> UART root shell itself is the route this page describes by hand.
 
 > **WARNING: never boot the camera with `.bin` files on the card.** The stock `service.sh` runs
 > `tf_update.sh` at every boot, which mounts the card on `/mnt` and calls `system_upgrade` on every
@@ -29,8 +34,8 @@
 - A PC to hold an independent copy.
 
 Without opening the camera, a root shell over Wi-Fi can be obtained with a prepared microSD card
-(no UART needed): see [akam_v1_backup_sd.md](akam_v1_backup_sd.md). That route is untested by
-Akam on a camera. The stock firmware's own Telnet credentials are not known to this project.
+(no UART needed): see [akam_v1_backup_sd.md](akam_v1_backup_sd.md); this is the route the wizard
+uses. The stock firmware's own Telnet credentials are not known to this project.
 
 ---
 
@@ -67,12 +72,12 @@ any script; the sizes are what the scripts check.
 
 ## 3. Confirm the hardware before trusting the layout
 
-Akam targets model **`3215672.3`**, SI code **`D26228` (expected, unconfirmed)**. The upstream
-documentation and tests are for `3215672.2` / `SI B26101`. Check and write down:
+Akam is validated on model **`3215672.3`**, SI code **`D26228`**. The upstream documentation and tests
+are for `3215672.2` / `SI B26101` (untested with Akam). Check and write down:
 
-1. The label on the camera and the retail box: model number and the `SI` code. Compare with the
-   expected `D26228`. Whether `.3` / `D26228` uses the same flash layout and the same APP contents
-   as upstream's unit is exactly what the partition table above and the dump itself will tell you.
+1. The label on the camera and the retail box: model number and the `SI` code. Compare with
+   `D26228`. Whether your unit uses the same flash layout and APP contents as the validated one is what
+   the partition table above and the dump itself will tell you.
 2. If you open the camera ([disassembly guide](hardware_and_uart.md)): the PCB marking (upstream:
    `IPC280KG2-GNA-MAIN-V1.0`), the SoC (AK3918AV130) and the 8 MiB SPI NOR chip.
 3. The U-Boot / kernel boot log over UART (SoC name, `mtdparts`).
@@ -181,7 +186,7 @@ should validate your backup yourself in any case, as above.
 
 ## 7. Checklist before you continue
 
-- [ ] Label reads `3215672.3`; SI code noted (expected `D26228`).
+- [ ] Label reads `3215672.3`; SI code noted (`D26228` is the validated one).
 - [ ] `/proc/mtd` shows 8 partitions with exactly the sizes above.
 - [ ] 8 files dumped, each with the exact size.
 - [ ] Hashes computed on the camera and re-computed on the PC, and they match.
