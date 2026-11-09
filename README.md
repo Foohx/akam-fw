@@ -184,6 +184,9 @@ The over-SSH route runs from RAM and keeps a small residual risk.
   `./akam wipe-sd`.
 - The video stream is **open by default**; you can protect it with a
   [password](#password-on-the-video-stream-optional). Port 8091 has no password in any case.
+- The stream password does not protect availability: the server serves one viewer at a time, and
+  anyone on your network who connects and stays silent occupies that place. Keep untrusted devices
+  (guest Wi-Fi, IoT) off the camera's network.
 - Treat a card with `AKAM_MAINTENANCE` as root access to the camera.
 - Never publish your backup, your built images or your keys.
 
