@@ -21,7 +21,7 @@ user:akam:<HA1>      HA1 = md5hex("user:akam:password"), 32 hexa minuscules
 - `user` : 1 à 32 caractères parmi `A-Z a-z 0-9 . _ @ + -` (pas de `:`, ni d'espace, ni de caractère à échapper dans une URL). Realm fixe : `akam`.
 - Le HA1 dépend du realm : un fichier `user:autre:...` est invalide.
 
-### États (relus à chaque requête protégée par `stat` : dev, ino, mtime, taille ; pas de redémarrage)
+### États (le fichier est relu à chaque requête protégée et chaque seconde pendant un flux : 70 octets, pas de redémarrage)
 
 | Fichier | État | Comportement |
 |---|---|---|
