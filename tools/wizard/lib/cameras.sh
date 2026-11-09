@@ -136,6 +136,131 @@ cams_first_run_name() {
     CAM_NAME=$CAM_ASKED
 }
 
+# cams_has_legacy: progress from before cameras had names sits in BASE/state (that camera is "default").
+cams_has_legacy() {
+    [ ! -f "$BASE_DIR/current_camera" ] && [ ! -d "$BASE_DIR/cameras" ] && [ -f "$BASE_DIR/state" ] &&
+        grep -q '^step_[a-z_]*_done=' "$BASE_DIR/state"
+}
+
+# cams_move_files OLD NEW: move the state, log and reflash logs of OLD into the directory of NEW (never
+# overwrites). The kit and the downloads are shared and stay where they are.
+cams_move_files() {
+    local od nd f
+    od=$(cams_dir "$1")
+    nd=$(cams_dir "$2")
+    if [ -e "$nd/state" ]; then return 1; fi
+    mkdir -p "$nd"
+    chmod 700 "$nd" 2>/dev/null || true
+    if [ "$1" = default ]; then
+        for f in state state.dry akam.log reflash.log reflash-precheck.log rtsp_auth.err; do
+            if [ -e "$od/$f" ]; then mv "$od/$f" "$nd/$f"; fi
+        done
+    else
+        for f in "$od"/* "$od"/.[!.]*; do
+            if [ -e "$f" ]; then mv "$f" "$nd/"; fi
+        done
+        rmdir "$od" 2>/dev/null || true
+    fi
+}
+
+# cams_first_run_legacy: the first menu run after an update: the progress already made belongs to one
+# camera. Ask what to call it (Enter keeps "default") and move its files. Sets CAM_NAME. Returns 1 when
+# nothing was asked.
+cams_first_run_legacy() {
+    local a
+    if [ "$DRY" = 1 ] || [ -n "$OPT_CAMERA" ] || ! host_is_tty || ! cams_has_legacy; then return 1; fi
+    ui_say "  The progress saved by an earlier version belongs to one camera. What is its name?"
+    ui_say "  (Enter keeps 'default'. Choose the name you want to see in the menu and in the folder names.)"
+    cams_ask_name || return 1
+    a=$CAM_ASKED
+    if [ "$a" != default ]; then
+        cams_move_files default "$a" || { ui_warn "a camera called '$a' already has progress: keeping the name 'default'."; return 1; }
+    fi
+    CAM_NAME=$a
+}
+
+# cmd_rename_camera NEW: give the current camera another name (its progress moves with it).
+cmd_rename_camera() {
+    local new=$1 old=$CAM_NAME
+    if ! cams_name_valid "$new"; then
+        ui_fail "'$new' is not a valid camera name." "use lowercase letters, digits and '-' (at most $CAM_NAME_MAX, not starting or ending with '-')."
+        return 1
+    fi
+    if [ "$new" = "$old" ]; then ui_say "  This camera is already called $new."; return 0; fi
+    if [ "$DRY" = 1 ]; then ui_say "  WOULD rename the camera '$old' to '$new' (its state and logs move to $(cams_dir "$new"))."; return 0; fi
+    if [ -e "$(cams_dir "$new")/state" ]; then
+        ui_fail "a camera called '$new' already exists." "pick another name (./akam cameras lists them)."
+        return 1
+    fi
+    cams_move_files "$old" "$new" || return 1
+    CAM_NAME=$new
+    cams_open
+    cams_remember "$new"
+    ui_good "  Camera '$old' is now called '$new'. Backup and image folders already made keep their names."
+}
+
+# cmd_register: ./akam --camera NAME --ip IP register [--backup-dir DIR]. A camera that already runs Akam
+# (flashed before, or by hand): no backup, image or flash is redone. It probes the camera, records its
+# address, and marks the install steps done so that update, rtsp-auth, hostname and restore are usable.
+cmd_register() {
+    local sp rp cp tp p
+    step_banner_free "Register a camera that already runs Akam"
+    ui_say "  Why: use update, the video password and the network name on a camera that is already installed. Risk: none (only this PC's notes change)."
+    if [ -z "$OPT_IP" ]; then
+        ui_fail "register needs the camera's address." "run: ./akam --camera NAME --ip ADDRESS register [--backup-dir DIR]"
+        return 1
+    fi
+    CAM_IP=$OPT_IP
+    if [ "$UI_DRY" != 1 ]; then cam_valid_host "$CAM_IP" || { ui_fail "'$CAM_IP' is not a valid address." "use the camera's IPv4 address."; return 1; }; fi
+    sp=$(cam_port ssh) rp=$(cam_port rtsp) cp=$(cam_port ctl) tp=$(cam_port telnet)
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD probe $CAM_IP (ports $sp, $rp, $cp open and $tp closed = Akam), check the backup folder given with --backup-dir,"
+        ui_say "  then record the address and mark find-camera, flash and verify (and backup, with a backup folder) as done for camera '$CAM_NAME'."
+        return 0
+    fi
+    net_probe "$CAM_IP" "$sp" "$rp" "$cp" "$tp"
+    ui_say "  Open ports: ${PROBE_OPEN:-none}"
+    for p in "$sp" "$rp" "$cp"; do
+        case " $PROBE_OPEN " in
+            *" $p "*) ;;
+            *)
+                ui_fail "$CAM_IP does not look like a camera running Akam (SSH, video and control ports must answer; port $p does not)." \
+                    "check the address in your router, and that the camera has finished booting."
+                return 1
+                ;;
+        esac
+    done
+    case " $PROBE_OPEN " in
+        *" $tp "*) ui_fail "port $tp (maintenance telnet) is open: this camera still runs the toolkit card." "finish with ./akam step verify instead, or take the card out and restart it."; return 1 ;;
+    esac
+    if [ -n "$OPT_BACKUP_DIR" ]; then
+        if [ ! -d "$OPT_BACKUP_DIR" ]; then ui_fail "not a folder: $OPT_BACKUP_DIR" ""; return 1; fi
+        backup_check "$(cd "$OPT_BACKUP_DIR" && pwd)" || return 1
+    else
+        ui_warn "no --backup-dir: restore and the hardware check need your backup folder. Register it later with: ./akam --camera $CAM_NAME backup --backup-dir DIR"
+    fi
+    cam_key
+    if cam_ssh_ok; then
+        ui_good "  SSH with $CAM_KEY works."
+    else
+        ui_warn "SSH with $CAM_KEY does not work yet (the camera was flashed with another key?): pass --identity FILE for the SSH steps."
+    fi
+    state_set camera_ip "$CAM_IP"
+    state_set camera_kind akam
+    state_set camera_telnet 0
+    state_set camera_registered 1
+    state_mark_done find-camera
+    if [ -n "$OPT_BACKUP_DIR" ]; then
+        OPT_BACKUP_DIR="$(cd "$OPT_BACKUP_DIR" && pwd)"
+        state_set backup_dir "$OPT_BACKUP_DIR"
+        state_set backup_sha "$(host_sha256 "$OPT_BACKUP_DIR/mtdblock7.bin")"
+        state_mark_done backup
+    fi
+    state_mark_done flash
+    state_mark_done verify
+    ui_good "  Camera '$CAM_NAME' registered at $CAM_IP as already installed. Use the maintenance tools of the menu: update, video password, network name."
+}
+
 # cmd_cameras: list the known cameras.
 cmd_cameras() {
     local n mark

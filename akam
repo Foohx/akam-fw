@@ -64,6 +64,9 @@ Commands:
                      find-camera, backup, image, prepare-flash-sd, flash, verify)
   status             show every step: done / todo / blocked
   cameras            list the cameras you set up (one progress each); switch with --camera NAME
+  rename-camera NEW  give the current camera another name (its progress moves with it)
+  register           record a camera that ALREADY runs Akam, without redoing backup, image or flash:
+                     ./akam --camera NAME --ip ADDRESS [--backup-dir DIR] register
   help               this text
 
 Options:
@@ -165,7 +168,9 @@ fi
 cams_init "${STATE_OVERRIDE:-$(state_default_dir)}" "$OPT_CAMERA"
 # The very first run of the menu asks for the camera's name before any state exists.
 CAMS_ASKED=0
-if [ -z "$CMD" ] && cams_first_run_name; then CAMS_ASKED=1; fi
+if [ -z "$CMD" ]; then
+    if cams_first_run_name || cams_first_run_legacy; then CAMS_ASKED=1; fi
+fi
 cams_open
 if [ -n "$OPT_CAMERA" ] || [ "$CAMS_ASKED" = 1 ]; then cams_remember "$CAM_NAME"; fi
 # The Wi-Fi settings are read once from the environment and removed from it, so that no tool
@@ -183,6 +188,12 @@ if [ "$DRY" = 1 ]; then
 fi
 
 rc=0
+# ./akam --camera NAME --ip ADDRESS on a camera without progress: offer to record it as already installed.
+if [ -z "$CMD" ] && [ -n "$OPT_CAMERA" ] && [ -n "$OPT_IP" ] && [ "$DRY" != 1 ] && [ -z "$(state_get camera_kind)" ] && host_is_tty; then
+    if ui_ask_yn "Camera '$CAM_NAME' has no progress yet. Is it a camera that ALREADY runs Akam at $OPT_IP (register it, no backup or flash)?"; then
+        cmd_register || rc=$?
+    fi
+fi
 case $CMD in
     "")
         if [ "$TUI_ON" = 1 ]; then
@@ -199,6 +210,11 @@ case $CMD in
         ;;
     status) status_table ;;
     cameras) cmd_cameras ;;
+    rename-camera)
+        if [ -z "${ARGS[1]:-}" ]; then echo "akam: rename-camera needs the new name" >&2; exit 2; fi
+        cmd_rename_camera "${ARGS[1]}" || rc=$?
+        ;;
+    register) cmd_register || rc=$? ;;
     doctor) cmd_doctor || rc=$? ;;
     get-kit) cmd_get_kit || rc=$? ;;
     build) cmd_build || rc=$? ;;

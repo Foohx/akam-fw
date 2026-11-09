@@ -583,6 +583,31 @@ mkdir -p "$T/st4"
 HOME=$HC "$AKAM" --plain --state-dir "$T/st4" </dev/null >"$T/c12.out" 2>&1
 check "camera: nothing is asked without a terminal" bash -c '! grep -q "Camera name" "$1"' _ "$T/c12.out"
 
+# migration: the progress of an earlier version is one camera; the first menu run asks what to call it
+rm -rf "$T/st5"
+mkdir -p "$T/st5/kit"
+printf 'step_doctor_done=2026-01-01T00:00:00Z\ncamera_ip=192.0.2.2\n' >"$T/st5/state"
+printf 'old log\n' >"$T/st5/akam.log"
+printf 'akam-02\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st5" >"$T/g1.out" 2>&1
+check "migration: the first menu run asks what to call the existing progress" has "$T/g1.out" "progress saved by an earlier version belongs to one camera"
+check "migration: the existing state moves to cameras/akam-02 (address and steps kept)" bash -c 'grep -q "^camera_ip=192.0.2.2$" "$1/cameras/akam-02/state" && grep -q "^step_doctor_done=" "$1/cameras/akam-02/state" && grep -q "old log" "$1/cameras/akam-02/akam.log" && [ ! -e "$1/state" ]' _ "$T/st5"
+check "migration: the shared kit folder stays at the base and the name is remembered" bash -c '[ -d "$1/kit" ] && [ "$(cat "$1/current_camera")" = akam-02 ]' _ "$T/st5"
+check "migration: the menu now shows the new name" has "$T/g1.out" "camera: akam-02"
+rm -rf "$T/st6"
+mkdir -p "$T/st6"
+printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st6/state"
+printf '\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st6" >"$T/g2.out" 2>&1
+check "migration: Enter keeps the name default and leaves the files where they are" bash -c 'grep -q "^step_doctor_done=" "$1/state" && [ "$(cat "$1/current_camera")" = default ] && [ ! -d "$1/cameras" ]' _ "$T/st6"
+printf 'q\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st6" >"$T/g3.out" 2>&1
+check "migration: it is asked only once" bash -c '! grep -q "earlier version" "$1"' _ "$T/g3.out"
+HOME=$HC "$AKAM" --state-dir "$T/st6" rename-camera akam-01 </dev/null >"$T/g4.out" 2>&1
+check "rename-camera: moves the progress to the new name and remembers it" bash -c '[ "$1" -eq 0 ] && grep -q "^step_doctor_done=" "$2/cameras/akam-01/state" && [ ! -e "$2/state" ] && [ "$(cat "$2/current_camera")" = akam-01 ]' _ $? "$T/st6"
+HOME=$HC "$AKAM" --state-dir "$T/st6" rename-camera Bad_Name </dev/null >"$T/g5.out" 2>&1
+check "rename-camera: a bad name is refused" bash -c '[ "$1" -ne 0 ] && [ -f "$2/cameras/akam-01/state" ]' _ $? "$T/st6"
+HOME=$HC "$AKAM" --state-dir "$T/st5" --camera akam-01 doctor </dev/null >/dev/null 2>&1
+HOME=$HC "$AKAM" --state-dir "$T/st5" --camera akam-01 rename-camera akam-02 </dev/null >"$T/g6.out" 2>&1
+check "rename-camera: refuses a name that is already used" bash -c '[ "$1" -ne 0 ] && grep -q "already exists" "$2"' _ $? "$T/g6.out"
+
 echo
 echo "wizard_core_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

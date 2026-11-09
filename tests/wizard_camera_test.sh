@@ -565,6 +565,37 @@ check "hostname: with no camera name and no argument it asks (and fails without 
 STUB_SSH_RC=255 a "$S" --identity "$T/key" hostname salon </dev/null >"$T/host6.out" 2>&1
 check "hostname: SSH refused gives advice" bash -c '[ "$1" -ne 0 ] && grep -q "does not work" "$2"' _ $? "$T/host6.out"
 
+# register: a camera that already runs Akam (flashed before) is recorded without redoing backup, image or flash
+reg_before=$(wc -l <"$CAM_B_ROOT/ctl/commands.log")
+S=$(new_state reg)
+AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$BKDIR" --identity "$T/key" register </dev/null >"$T/reg1.out" 2>&1
+rc=$?
+RS=$S/cameras/akam-01/state
+check "register: --camera NAME --ip IP register records the camera as installed" bash -c '[ "$1" -eq 0 ] && grep -q "^camera_ip=127.0.0.1$" "$2" && grep -q "^camera_kind=akam$" "$2" && grep -q "^backup_dir=$3$" "$2" && for s in find_camera backup flash verify; do grep -q "^step_${s}_done=" "$2" || exit 1; done' _ "$rc" "$RS" "$BKDIR"
+check "register: it probed the ports and found Akam" bash -c 'grep -q "Open ports:" "$1" && grep -q "registered at 127.0.0.1" "$1"' _ "$T/reg1.out"
+check "register: nothing was sent to the fake camera's shell" bash -c '[ "$(wc -l <"$1")" = "$2" ]' _ "$CAM_B_ROOT/ctl/commands.log" "$reg_before"
+AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --identity "$T/key" status </dev/null >"$T/reg2.out" 2>&1
+check "register: status shows flash and verify done for that camera" bash -c 'grep -q "\[done   \] flash" "$1" && grep -q "\[done   \] verify" "$1" && grep -q "camera: akam-01" "$1"' _ "$T/reg2.out"
+check "register: the hostname tool then works with the recorded address" bash -c 'rm -f "$1/hostname.log"; AKAM_PORT_TELNET="$2" AKAM_FORCE_TTY=1 bash "$3" --no-color --state-dir "$4" --camera akam-01 --identity "$5" hostname </dev/null >/dev/null 2>&1 && grep -qx "/usr/sbin/akam_hostname.sh set akam-01" "$1/hostname.log"' _ "$STUB_DIR" "$CLOSED_TEL" "$AKAM" "$S" "$T/key"
+S=$(new_state reg_noip)
+a "$S" --camera akam-01 register </dev/null >"$T/reg3.out" 2>&1
+check "register: without --ip it explains what to type" bash -c '[ "$1" -ne 0 ] && grep -q "needs the camera.s address" "$2"' _ $? "$T/reg3.out"
+S=$(new_state reg_tel)
+AKAM_PORT_TELNET=$FC_PORT a "$S" --camera akam-01 --ip 127.0.0.1 --identity "$T/key" register </dev/null >"$T/reg4.out" 2>&1
+check "register: a camera whose maintenance telnet is open is refused (still on the toolkit card)" bash -c '[ "$1" -ne 0 ] && grep -q "still runs the toolkit card" "$2" && ! grep -q "^camera_kind" "$3" 2>/dev/null' _ $? "$T/reg4.out" "$S/cameras/akam-01/state"
+S=$(new_state reg_closed)
+AKAM_PORT_SSH=$CLOSED_TEL AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --identity "$T/key" register </dev/null >"$T/reg5.out" 2>&1
+check "register: an address that does not look like Akam is refused" bash -c '[ "$1" -ne 0 ] && grep -q "does not look like a camera running Akam" "$2"' _ $? "$T/reg5.out"
+S=$(new_state reg_badbk)
+AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$T/nonexistent" --identity "$T/key" register </dev/null >"$T/reg6.out" 2>&1
+check "register: a missing backup folder is refused" bash -c '[ "$1" -ne 0 ] && grep -q "not a folder" "$2"' _ $? "$T/reg6.out"
+S=$(new_state reg_nobk)
+AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --identity "$T/key" register </dev/null >"$T/reg7.out" 2>&1
+check "register: without a backup folder it works but warns that restore needs one" bash -c '[ "$1" -eq 0 ] && grep -q "no --backup-dir" "$2" && ! grep -q "^step_backup_done" "$3"' _ $? "$T/reg7.out" "$S/cameras/akam-01/state"
+S=$(new_state reg_menu)
+printf 'y\nq\n' | AKAM_PORT_TELNET=$CLOSED_TEL AKAM_FORCE_TTY=1 bash "$AKAM" --no-color --plain --state-dir "$S" --camera akam-02 --ip 127.0.0.1 --identity "$T/key" >"$T/reg8.out" 2>&1
+check "register: --camera NAME --ip IP alone offers to register a camera without progress" bash -c 'grep -q "ALREADY runs Akam" "$1" && grep -q "^camera_kind=akam$" "$2"' _ "$T/reg8.out" "$S/cameras/akam-02/state"
+
 # verify: after the power cycle without the card the camera never comes back (no Wi-Fi saved): says what it waits for, then why it probably failed
 P_SSH2=$(fc_free_port)
 "$BB" nc -lk -p "$P_SSH2" -e true >/dev/null 2>&1 &
