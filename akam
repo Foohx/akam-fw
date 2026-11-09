@@ -53,6 +53,8 @@ Commands:
   flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
   verify             check SSH, ports and hardware, then the same without the card
   update             flash a new image over SSH (no card)
+  hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
+                     applied at the next power cycle (needs a firmware that has akam_hostname.sh)
   rtsp-auth [set|disable|status]
                      password (Digest login) on the video stream, over SSH; off by default
                      (typed here, never shown, sent to the camera only as a hash); default: status
@@ -209,6 +211,7 @@ case $CMD in
     flash) cmd_flash || rc=$? ;;
     verify) cmd_verify || rc=$? ;;
     update) cmd_update || rc=$? ;;
+    hostname) cmd_hostname "${ARGS[1]:-}" || rc=$? ;;
     rtsp-auth) cmd_rtsp_auth "${ARGS[1]:-status}" || rc=$? ;;
     restore) cmd_restore || rc=$? ;;
     step)

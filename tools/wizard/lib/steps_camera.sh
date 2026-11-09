@@ -958,6 +958,15 @@ cam_ports_check() {
     return "$bad"
 }
 
+# verify_hostname: after a good verify, give the camera the network name chosen for it (never fails the step).
+verify_hostname() {
+    if [ "$CAM_NAME" = default ]; then
+        if [ "$UI_DRY" = 1 ]; then ui_say "  WOULD also set the camera's network name over SSH when you gave the camera a name (./akam --camera NAME)."; fi
+        return 0
+    fi
+    cam_hostname_apply "$CAM_NAME" || ui_say "  You can try again later with: ./akam hostname $CAM_NAME"
+}
+
 cmd_verify() {
     step_need verify || return 1
     step_banner verify
@@ -969,6 +978,7 @@ cmd_verify() {
         ui_say "  unplug the power, take the card out and plug the power back in BY HAND, and repeat the checks:"
         ui_say "  telnet 24 and FTP 21 must then be closed. Only then is the step marked done."
         state_mark_done verify
+        verify_hostname
         rtsp_auth_offer
         wipe_offer
         return 0
@@ -998,8 +1008,73 @@ cmd_verify() {
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure without the card." ""; return 1; }
     state_mark_done verify
     ui_good "  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off."
+    verify_hostname
     rtsp_auth_offer
     wipe_offer
+}
+
+# ------------------------------------------------------------------ host name
+# The camera's network name (what the router lists) comes from the name given to the camera here. The
+# camera-side command /usr/sbin/akam_hostname.sh set|show|status NAME stores it in /etc/config/akam/hostname
+# and DHCP announces it at the next boot. An older firmware does not have it: that is only a note.
+HOSTNAME_CMD=/usr/sbin/akam_hostname.sh
+HOSTNAME_MAX=32
+
+# cam_hostname_valid NAME: a lowercase RFC 1123 label, at most 32 characters.
+cam_hostname_valid() {
+    case $1 in
+        '' | -* | *- | *[!a-z0-9-]*) return 1 ;;
+    esac
+    [ "${#1}" -le "$HOSTNAME_MAX" ]
+}
+
+# cam_hostname_apply NAME: over SSH. Returns 0 also when the firmware lacks the command (a note is shown).
+cam_hostname_apply() {
+    local name=$1 out
+    cam_hostname_valid "$name" || { ui_warn "'$name' is not a valid network name (lowercase letters, digits and '-', at most $HOSTNAME_MAX)."; return 1; }
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH: test -x $HOSTNAME_CMD, then $HOSTNAME_CMD set $name (applies after the next power cycle)."
+        return 0
+    fi
+    cam_ssh_setup
+    log_line "CMD ssh root@$CAM_IP test -x $HOSTNAME_CMD"
+    if ! "${CAM_SSH[@]}" "test -x $HOSTNAME_CMD" >/dev/null 2>&1; then
+        ui_say "  Note: this firmware does not have $HOSTNAME_CMD yet, so the camera keeps its default network name."
+        ui_say "  Update to a newer Akam image, then run: ./akam hostname $name"
+        return 0
+    fi
+    log_line "CMD ssh root@$CAM_IP $HOSTNAME_CMD set $name"
+    if ! out=$("${CAM_SSH[@]}" "$HOSTNAME_CMD set $name" 2>&1); then
+        ui_warn "setting the network name failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"
+        return 1
+    fi
+    ui_good "  The camera's network name is set to '$name'. It applies after the next power cycle (unplug, wait 5 seconds, plug back)."
+}
+
+# cmd_hostname [NAME]: ./akam hostname [NAME]; NAME defaults to the camera's name.
+cmd_hostname() {
+    local name=${1:-}
+    step_banner_free "Set the camera's network name"
+    ui_say "  Why: your router will list the camera under this name instead of a number. Risk: none (a small file on the camera)."
+    if [ -z "$name" ] && [ "$CAM_NAME" != default ]; then name=$CAM_NAME; fi
+    if [ -z "$name" ]; then
+        if [ "$UI_DRY" = 1 ]; then
+            name="<name>"
+        else
+            ui_prompt "  Network name for the camera (lowercase letters, digits, '-'):" "" || { ui_fail "no input." "run ./akam hostname NAME"; return 1; }
+            name=$ANSWER
+        fi
+    fi
+    if [ "$UI_DRY" != 1 ] && ! cam_hostname_valid "$name"; then
+        ui_fail "'$name' is not a valid network name." "use lowercase letters, digits and '-' (at most $HOSTNAME_MAX, not starting or ending with '-')."
+        return 1
+    fi
+    cam_need_ip || return 1
+    cam_key
+    if [ "$UI_DRY" != 1 ]; then
+        cam_ssh_ok || { ui_fail "SSH to root@$CAM_IP with the key $CAM_KEY does not work." "the camera must run Akam and be on the network (--identity FILE, --ip ADDRESS)."; return 1; }
+    fi
+    cam_hostname_apply "$name" || return 1
 }
 
 # ------------------------------------------------------------------ rtsp-auth

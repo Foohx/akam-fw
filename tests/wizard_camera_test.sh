@@ -354,6 +354,8 @@ cmd=${cmd# }
 case $cmd in
     true) exit 0 ;;
     "cat > /tmp/akam_hwcheck.sh") cat >"$STUB_DIR/hwcheck.copy"; exit 0 ;;
+    "test -x /usr/sbin/akam_hostname.sh") [ -z "${STUB_HOSTNAME_MISSING:-}" ]; exit $? ;;
+    "/usr/sbin/akam_hostname.sh set "*) echo "$cmd" >>"$STUB_DIR/hostname.log"; exit "${STUB_HOSTNAME_RC:-0}" ;;
     "cat > /tmp/akam_preflight.sh") cat >"$STUB_DIR/preflight.copy"; exit 0 ;;
     "sh /tmp/akam_preflight.sh --ensure-wifi")
         # the real script, against a private "camera root" (never the real /etc)
@@ -518,6 +520,50 @@ printf '\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$
 check "verify: no saved Wi-Fi and no card config: refused, never invites to remove the card" bash -c '[ "$1" -ne 0 ] && grep -q "no saved Wi-Fi" "$2" && ! grep -q "take the microSD card out" "$2"' _ $? "$T/ver_wifi_none.out"
 check "verify: ...and the step stays undone" hasnt "$S/state" step_verify_done
 mv "$STUB_DIR/wpa.saved" "$CR/etc/config/wpa_supplicant.conf"
+
+# host name: a named camera gets its network name after a good verify (when the firmware has the command)
+seed_cam_state() { # BASE NAME: same state as seed_verify_state, for the camera NAME
+    mkdir -p "$1/cameras/$2"
+    chmod 700 "$1" "$1/cameras" "$1/cameras/$2"
+    seed_verify_state "$1/cameras/$2"
+}
+rm -f "$STUB_DIR/hostname.log"
+S=$(new_state ver_host)
+seed_cam_state "$S" salon
+printf '\n\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera salon --identity "$T/key" verify >"$T/ver_host.out" 2>&1
+check "hostname: verify sets the network name of a named camera over SSH" bash -c '[ "$1" -eq 0 ] && grep -qx "/usr/sbin/akam_hostname.sh set salon" "$2" && grep -q "network name is set to .salon." "$3"' _ $? "$STUB_DIR/hostname.log" "$T/ver_host.out"
+check "hostname: it says the name applies after the next power cycle" has "$T/ver_host.out" "applies after the next power cycle"
+rm -f "$STUB_DIR/hostname.log"
+S=$(new_state ver_host_old)
+seed_cam_state "$S" salon
+printf '\n\n' | STUB_HOSTNAME_MISSING=1 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera salon --identity "$T/key" verify >"$T/ver_host_old.out" 2>&1
+check "hostname: a firmware without akam_hostname.sh only gets a note, verify still succeeds" bash -c '[ "$1" -eq 0 ] && grep -q "does not have /usr/sbin/akam_hostname.sh yet" "$2" && [ ! -e "$3" ] && grep -q "^step_verify_done=" "$4/cameras/salon/state"' _ $? "$T/ver_host_old.out" "$STUB_DIR/hostname.log" "$S"
+S=$(new_state ver_host_def)
+seed_verify_state "$S"
+printf '\n\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_host_def.out" 2>&1
+check "hostname: the camera called default is not renamed by verify" test ! -e "$STUB_DIR/hostname.log"
+# ./akam hostname [NAME]
+S=$(new_state host_cmd)
+mkdir -p "$S/cameras/salon"
+printf 'camera_ip=127.0.0.1\n' >"$S/cameras/salon/state"
+chmod 700 "$S/cameras" "$S/cameras/salon"
+a "$S" --camera salon --identity "$T/key" hostname </dev/null >"$T/host1.out" 2>&1
+check "hostname: ./akam hostname uses the camera's name" bash -c '[ "$1" -eq 0 ] && grep -qx "/usr/sbin/akam_hostname.sh set salon" "$2"' _ $? "$STUB_DIR/hostname.log"
+a "$S" --camera salon --identity "$T/key" hostname chambre-1 </dev/null >"$T/host2.out" 2>&1
+check "hostname: ./akam hostname NAME sets that name" bash -c 'grep -qx "/usr/sbin/akam_hostname.sh set chambre-1" "$1"' _ "$STUB_DIR/hostname.log"
+n=$(wc -l <"$STUB_DIR/hostname.log")
+for bad in Salon "a b" 'a_b' "$(printf 'a%.0s' $(seq 1 33))" "x-"; do
+    a "$S" --camera salon --identity "$T/key" hostname "$bad" </dev/null >"$T/host3.out" 2>&1
+    check "hostname: the name '$bad' is refused and nothing is sent" bash -c '[ "$1" -ne 0 ] && grep -q "not a valid network name" "$2" && [ "$(wc -l <"$3")" = "$4" ]' _ $? "$T/host3.out" "$STUB_DIR/hostname.log" "$n"
+done
+a "$S" --camera salon --identity "$T/key" hostname "$(printf 'a%.0s' $(seq 1 32))" </dev/null >"$T/host4.out" 2>&1
+check "hostname: a 32-character name is accepted" test $? -eq 0
+S=$(new_state host_def)
+printf 'camera_ip=127.0.0.1\n' >"$S/state"
+a "$S" --identity "$T/key" hostname </dev/null >"$T/host5.out" 2>&1
+check "hostname: with no camera name and no argument it asks (and fails without input)" test $? -ne 0
+STUB_SSH_RC=255 a "$S" --identity "$T/key" hostname salon </dev/null >"$T/host6.out" 2>&1
+check "hostname: SSH refused gives advice" bash -c '[ "$1" -ne 0 ] && grep -q "does not work" "$2"' _ $? "$T/host6.out"
 
 # verify: after the power cycle without the card the camera never comes back (no Wi-Fi saved): says what it waits for, then why it probably failed
 P_SSH2=$(fc_free_port)

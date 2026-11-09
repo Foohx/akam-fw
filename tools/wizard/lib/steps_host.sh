@@ -172,6 +172,7 @@ step_what() {
         flash) echo "Writes the image to the camera's flash over SSH (when Akam already runs) or through the maintenance shell, then reads it back and compares." ;;
         verify) echo "Checks SSH, the open ports and the hardware, powers nothing off, then repeats the check without the card." ;;
         rtsp-auth) echo "Adds or removes a user name and password (Digest login) on the video stream. Off by default." ;;
+        hostname) echo "Gives the camera the network name you chose for it (the name of the camera), so your router lists it by name. Applied at the next power cycle." ;;
         update) echo "Flashes a newer image over SSH. No card and no maintenance shell needed once Akam runs." ;;
         restore) echo "Puts the original APP partition from your backup back on the camera." ;;
         wipe-sd) echo "Zero-fills a microSD card that holds your Wi-Fi password in clear text (or a dump). The typed phrase ERASE <device> is required." ;;

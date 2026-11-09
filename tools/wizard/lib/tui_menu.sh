@@ -19,11 +19,12 @@ MENU_MSG=""
 MENU_MSG_KIND=""
 MENU_TOP=0
 MENU_SEL=0
-MENU_TOOLS="rtsp-auth update restore wipe-sd"
+MENU_TOOLS="rtsp-auth hostname update restore wipe-sd"
 
 tool_title() {
     case $1 in
         rtsp-auth) echo "Password on the video stream" ;;
+        hostname) echo "Network name of the camera (from its name)" ;;
         update) echo "Update the image over SSH (no card)" ;;
         restore) echo "Restore the original firmware from your backup" ;;
         wipe-sd) echo "Erase a microSD card (it holds your Wi-Fi password)" ;;
@@ -273,6 +274,7 @@ tui_menu_run() {
                     esac
                 fi
                 ;;
+            hostname) cmd_hostname || rc=$? ;;
             update) cmd_update || rc=$? ;;
             restore) cmd_restore || rc=$? ;;
             wipe-sd) cmd_wipe_sd || rc=$? ;;
