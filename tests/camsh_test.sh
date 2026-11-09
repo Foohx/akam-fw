@@ -172,6 +172,27 @@ t_real_telnetd_long_command() (
     rm -rf "$d"
     [ "$out" = 0 ]
 )
+t_ansi_stripped() (
+    # BusyBox ls colours names even over telnet; the colour codes must not reach the output.
+    camsh_open 127.0.0.1 "$FC_PORT" || exit 1
+    camsh_exec 'printf "\033[1;32mname.squashfs\033[m\n\033[0mplain\n"' || exit 1
+    [ "$CAMSH_OUT" = $'name.squashfs\nplain\n' ]
+)
+t_progress_not_in_output() (
+    # \r bars (flash_tool) are not output: they feed the progress bar (one line per 10 percent here).
+    local out
+    camsh_open 127.0.0.1 "$FC_PORT" || exit 1
+    camsh_stream_set 1
+    out=$(camsh_exec 'i=0; while [ $i -le 100 ]; do printf "\rWriting: [====>      ] %3d%% (%d/100)" $i $i; i=$((i+1)); done; printf "\nDone line\n"' 20; printf 'RC=%s OUT=%s' "$CAMSH_RC" "$(printf '%s' "$CAMSH_OUT" | tr '\n' '|')")
+    printf '%s' "$out" | grep -q 'RC=0 OUT=Done line|$' &&
+        [ "$(printf '%s\n' "$out" | grep -c '| Writing: ')" -le 12 ] && printf '%s' "$out" | grep -q 'Writing: 100%'
+)
+t_big_output_has_marker() (
+    # 200 KB of bars then a text line: camsh_out_has must find it (pipefail + grep -q would not).
+    camsh_open 127.0.0.1 "$FC_PORT" || exit 1
+    camsh_exec 'i=0; while [ $i -le 3000 ]; do printf "\rjunk %d percent " $i; i=$((i+1)); done; printf "\nfound me successfully\n"' 60 || exit 1
+    camsh_out_has 'found me successfully'
+)
 t_connection_refused() (
     local port
     port=$(fc_free_port)
@@ -185,7 +206,7 @@ t_net_probe() (
 for t in t_basic t_iac_cr_filtered t_exit_code t_unique_markers t_two_commands_in_a_row t_timeout_single \
     t_command_limits t_reconnect_once t_manual_after_two_failures t_manual_stays_manual \
     t_manual_empty_stdin_fails t_manual_sends_nothing t_dry_run t_prompt_relay \
-    t_prompt_command_ends_early t_real_telnetd_long_command t_connection_refused t_net_probe; do
+    t_prompt_command_ends_early t_ansi_stripped t_progress_not_in_output t_big_output_has_marker t_real_telnetd_long_command t_connection_refused t_net_probe; do
     check "$t" "$t"
 done
 

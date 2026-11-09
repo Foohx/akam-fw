@@ -228,6 +228,34 @@ check "flash: the step is done" bash -c 'grep -q "^step_flash_done=" "$1" && gre
 check "flash: the log contains no YES sent by the wizard" bash -c '! grep -q "CAM> YES" "$1"' _ "$S/akam.log"
 
 check "flash: the script runs with HUP ignored (a dropped link must not kill the write)" bash -c 'grep -q "; trap .. HUP; sh /mnt/install_with_flash_tool.sh" "$1"' _ "$CAM_B_ROOT/ctl/commands.log"
+# The fake flash script prints ~150 KB of \r progress bars (as flash_tool does). A big output used to
+# make `printf | grep -q` die of SIGPIPE under pipefail: a real success was reported as a failure.
+check "flash: the success is recognised although the script printed a flood of progress bars" has "$T/fl_ok.out" "The flash script reported: completed successfully"
+check "flash: the progress bars are not echoed (one line per 10 percent at most)" bash -c '! grep -q "====>" "$1" && [ "$(grep -c "| Writing:" "$1")" -le 12 ] && grep -q "| Writing: 100%" "$1"' _ "$T/fl_ok.out"
+check "flash: the output stays small" bash -c '[ "$(wc -c <"$1")" -lt 20000 ]' _ "$T/fl_ok.out"
+check "flash: no false warning about the image on the card" hasnt "$T/fl_ok.out" "does not carry exactly the image"
+
+# the read-back md5 is what counts, not the last line of the script
+S=$(new_state fl_noline)
+seed_flash_state "$S" stock 1
+printf 'noline\n' >"$CAM_B_ROOT/ctl/flash_mode"
+printf 'YES\n' | a "$S" flash >"$T/fl_noline.out" 2>&1
+check "flash: a good write without the script's success line is accepted on the read-back md5" bash -c '[ "$1" -eq 0 ] && grep -q "^step_flash_done=" "$2"' _ $? "$S/state"
+check "flash: ...and says the success line was missing" has "$T/fl_noline.out" "ended without its success line"
+
+S=$(new_state fl_badwrite)
+seed_flash_state "$S" stock 1
+printf 'badwrite\n' >"$CAM_B_ROOT/ctl/flash_mode"
+printf 'YES\n' | a "$S" flash >"$T/fl_badwrite.out" 2>&1
+check "flash: a script that says success while the partition differs is a failure" bash -c '[ "$1" -ne 0 ] && grep -q "read back as md5" "$2" && ! grep -q "^step_flash_done=" "$3"' _ $? "$T/fl_badwrite.out" "$S/state"
+
+S=$(new_state fl_scriptfail)
+seed_flash_state "$S" stock 1
+printf 'fail\n' >"$CAM_B_ROOT/ctl/flash_mode"
+printf 'YES\n' | a "$S" flash >"$T/fl_scriptfail.out" 2>&1
+check "flash: a failing flash script leaves the step undone" bash -c '[ "$1" -ne 0 ] && ! grep -q "^step_flash_done=" "$2"' _ $? "$S/state"
+rm -f "$CAM_B_ROOT/ctl/flash_mode"
+cp "$IMG" "$CAM_B_ROOT/dev/mtd7"
 
 # ------------------------------------------------------------------ flash: layout mismatch refused before any write
 S=$(new_state flash_layout)

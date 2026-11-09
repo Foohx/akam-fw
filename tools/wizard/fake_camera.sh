@@ -62,7 +62,8 @@ cmd_init() {
         done
     } >"$R/proc/mtd"
     echo "Linux version ${FAKE_STOCK_VERSION:-4.4.302-cip94} (fake@build) (gcc) #1 Fri Nov 14 19:06:55 CST 2025" >"$R/proc/version"
-    echo "fake config" >"$R/etc/config"
+    mkdir -p "$R/etc/config"
+    echo "fake config" >"$R/etc/config/fake"
     for i in 0 1 2 3 4 5 6; do
         # Distinct, deterministic content, exact size.
         { yes "fake mtd$i content" | head -c "${MTD_SIZES[$i]}"; } >"$R/dev/mtdblock$i" 2>/dev/null
@@ -135,9 +136,25 @@ if [ "$CONFIRM" != "YES" ]; then
     echo "Aborted."
     exit 1
 fi
+MODE=ok
+[ -f "$FAKE_ROOT/ctl/flash_mode" ] && MODE=$(cat "$FAKE_ROOT/ctl/flash_mode")
+# flash_tool draws its bars with a carriage return and no newline: about 200 KB on the real camera
+i=0
+while [ $i -le 3000 ]; do
+    printf '\rWriting: [====>                                   ] %3d%% (%d/5242880)' $((i / 30)) $((i * 1747))
+    i=$((i + 1))
+done
+printf '\n'
+if [ "$MODE" = fail ]; then
+    echo "ERROR: Flashing/Verification failed with code 1!"
+    exit 1
+fi
 cp "$IMG" "$DEV"
+# badwrite: the script says success but the partition is not the image (the read-back must catch it)
+[ "$MODE" = badwrite ] && printf 'Z' | dd of="$DEV" bs=1 count=1 conv=notrunc 2>/dev/null
 echo "FAULT SUMMARY: 0 retries"
-echo "Flashing and verification completed successfully!"
+# noline: the write is good, the success line is missing (the read-back must still pass)
+[ "$MODE" = noline ] || echo "Flashing and verification completed successfully!"
 echo "Disconnect and reconnect USB-C power to power cycle."
 EOF
         chmod +x "$R/tmp/sd/flash_tool"
@@ -178,7 +195,7 @@ flip_byte() { # file: change the first byte
 cmd_session() {
     R=$1
     local line cmd target tmp
-    export PATH="$R/.bin" FAKE_ROOT="$R"
+    export PATH="$R/.bin" FAKE_ROOT="$R" AKAM_ROOT="$R"
     printf '\377\375\042\377\373\001'
     printf '# '
     while IFS= read -r line; do

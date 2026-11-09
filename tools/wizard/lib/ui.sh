@@ -158,3 +158,45 @@ ui_banner() {
         ui_bold "Step $1/$2 - $3"
     fi
 }
+
+# ui_progress LABEL PERCENT: one progress bar for a long camera command (flash_tool prints about
+# 200 KB of carriage-return bars). On a terminal widget screen the bar is redrawn in place; in
+# plain mode only one line per 10 % is printed, so a log or a pipe never floods.
+UI_PROG_LABEL=""
+UI_PROG_LAST=-1
+UI_PROG_OPEN=0
+ui_progress() {
+    local label=$1 pct=$2 bar
+    if [ "$label" != "$UI_PROG_LABEL" ]; then
+        ui_progress_close
+        UI_PROG_LABEL=$label
+        UI_PROG_LAST=-1
+    fi
+    if [ "$pct" -gt 100 ]; then pct=100; fi
+    if [ "${TUI_ON:-0}" = 1 ]; then
+        if [ "$pct" -eq "$UI_PROG_LAST" ]; then return 0; fi
+        UI_PROG_LAST=$pct
+        tui_bar "$pct" 24
+        bar=$REPLY
+        printf '\r\e[K    | %s  %s' "$label" "$bar" >&2
+        UI_PROG_OPEN=1
+        if [ "$pct" -ge 100 ]; then ui_progress_close; fi
+        return 0
+    fi
+    # plain mode: the first value, then every 10 %, then 100 %
+    if [ "$UI_PROG_LAST" -lt 0 ] || [ "$pct" -ge $((UI_PROG_LAST + 10)) ] || { [ "$pct" -ge 100 ] && [ "$UI_PROG_LAST" -lt 100 ]; }; then
+        UI_PROG_LAST=$pct
+        printf '    | %s: %s%%\n' "$label" "$pct"
+    fi
+}
+
+# ui_progress_close: end the bar line (a bar redrawn in place has no newline yet) and forget a
+# finished bar so that the next phase starts from 0.
+ui_progress_close() {
+    if [ "$UI_PROG_OPEN" = 1 ]; then printf '\n' >&2; fi
+    UI_PROG_OPEN=0
+    if [ "$UI_PROG_LAST" -ge 100 ]; then
+        UI_PROG_LABEL=""
+        UI_PROG_LAST=-1
+    fi
+}

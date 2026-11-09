@@ -578,19 +578,25 @@ ft_ensure_file() {
 
 # ft_ensure_image IMG MD5: exactly one image on the card and it is IMG.
 ft_ensure_image() {
-    local img=$1 md5=$2 name list n
-    camsh_ok 'ls -1 /mnt/custom_firmware' || { ui_fail "cannot list /mnt/custom_firmware." ""; return 1; }
+    local img=$1 md5=$2 name list n why
+    # A shell loop, not `ls -1`: the camera's ls colours its names (the escape codes are also
+    # stripped by camsh, but a plain list of names needs no ls at all).
+    # shellcheck disable=SC2016  # expanded by the camera's shell
+    camsh_ok 'for f in /mnt/custom_firmware/*; do if [ -e "$f" ]; then echo "${f##*/}"; fi; done' ||
+        { ui_fail "cannot list /mnt/custom_firmware." ""; return 1; }
     list=$CAMSH_OUT
     n=$(printf '%s\n' "$list" | grep -c . || true)
     name=$(printf '%s\n' "$list" | grep -E '^ak_rtsp_firmware_[0-9]{8}_[0-9]{6}\.squashfs$' | tail -1 || true)
+    why="found: $(printf '%s' "$list" | tr '\n' ' ')"
     if [ "$n" = 1 ] && [ -n "$name" ]; then
         ft_remote_md5 "/mnt/custom_firmware/$name" || return 1
         if [ "$FT_RMD5" = "$md5" ]; then
             ui_say "  Image on the card: $name, md5 $md5 (same as this PC)."
             return 0
         fi
+        why="$name has md5 ${FT_RMD5:-unreadable} on the card, this PC's image has $md5"
     fi
-    ui_warn "the card does not carry exactly the image you want to flash (found: $(printf '%s' "$list" | tr '\n' ' '))."
+    ui_warn "the card does not carry exactly the image you want to flash ($why)."
     ui_confirm "  Replace the image on the card with this PC's image?" ||
         { ui_fail "the image on the card does not match." "prepare the flash card again (./akam step prepare-flash-sd)."; return 1; }
     name=$(basename "$img")
@@ -672,8 +678,9 @@ flash_telnet() {
         trap - INT HUP TERM
         tui_rearm_traps
         camsh_stream_set 0
-        if [ "$rc" -ne 0 ] || [ "$CAMSH_RC" != 0 ] || ! printf '%s\n' "$CAMSH_OUT" | grep -q 'completed successfully'; then
-            ui_fail "the flash did not report success." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
+        ui_progress_close
+        if [ "$rc" -ne 0 ]; then
+            ui_fail "the flash script did not finish (no end of output, code $rc)." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
             if [ "$rc" -eq 1 ]; then
                 ui_warn "no output for a long time: the write may STILL be running. The session is left open and nothing is sent again;"
                 ui_warn "wait several minutes, then read the partition back by hand: dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum (must be $md5)."
@@ -682,7 +689,9 @@ flash_telnet() {
             fi
             return 1
         fi
+        ft_note_script_result
     fi
+    # The authoritative check is the partition itself, never the wording of the script's last line.
     ui_say "  Reading the partition back to check it ..."
     camsh_exec 'dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum' 600 || { ui_fail "cannot read /dev/mtd7 back." "DO NOT power-cycle."; camsh_close; return 1; }
     sums=$(camsh_line 1 | awk '{print $1}')
@@ -695,6 +704,18 @@ flash_telnet() {
     ui_good "  Read-back md5 of /dev/mtd7 = image md5 ($md5)."
 }
 
+# ft_note_script_result: tell what the flash script itself said (secondary information, the
+# read-back md5 decides). CAMSH_OUT and CAMSH_RC are those of the script.
+ft_note_script_result() {
+    if camsh_out_has 'completed successfully' && [ "$CAMSH_RC" = 0 ]; then
+        ui_say "  The flash script reported: completed successfully."
+    elif [ "$CAMSH_RC" = 0 ]; then
+        ui_warn "the flash script ended without its success line; the read-back below decides."
+    else
+        ui_warn "the flash script exited with code $CAMSH_RC; the read-back below decides."
+    fi
+}
+
 # flash_telnet_manual MD5 LABEL: manual mode: the user runs the script and types YES in their own window.
 flash_telnet_manual() {
     ui_say "  MANUAL: in your telnet window run the command above, compare the md5 it prints with this one:"
@@ -702,10 +723,7 @@ flash_telnet_manual() {
     ui_say "  If it matches, type YES yourself at its prompt. Wait until it says 'completed successfully'."
     ui_say "  Do NOT unplug anything. Then come back and paste its last lines."
     camsh_finish 900 || return 1
-    if [ "$CAMSH_RC" != 0 ] || ! printf '%s\n' "$CAMSH_OUT" | grep -q 'completed successfully'; then
-        ui_fail "the flash did not report success." "DO NOT power-cycle yet; docs/akam_v1_flash_and_restore.md (Recovery)."
-        return 1
-    fi
+    ft_note_script_result
 }
 
 # ------------------------------------------------------------------ flash
