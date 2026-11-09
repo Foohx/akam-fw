@@ -73,6 +73,35 @@ No compiling is needed: the default path uses a **prebuilt kit**.
    ```bash
    ./akam
    ```
+   On a terminal it opens a full-screen menu (this is what you see, in text form; the real one is in
+   colour):
+   ```text
+   ╭─ Akam · guided setup ───────────────────────────────── v1.0.0-dev  3/9 done ╮
+   │ Host    Arch Linux x86_64             Camera  192.168.1.50                  │
+   │ Kit     akam 1.0.0                    Image   not built yet                 │
+   ╰─────────────────────────────────────────────────────────────────────────────╯
+      ✔  1  Check this computer                                          done
+      ●  2  Get the Akam kit                                             todo
+      ✔  3  Prepare the backup microSD card                              done
+      ✔  4  Find the camera on your network                              done
+    ▸ ●  5  Back up the camera (all 8 partitions)                        todo
+      ✖  6  Build the Akam image from your backup                        blocked
+      ✖  7  Prepare the flash microSD card                               blocked
+      ✖  8  Flash the image to the camera                                blocked
+      ✖  9  Verify the result                                            blocked
+     ── Maintenance ─────────────────────────────────────────────────────────────
+
+     Reads the 8 flash partitions of the camera twice through the rescue shell,
+     compares the two reads, and copies them to a folder on this PC.
+
+    ↑↓ move  ⏎ run  ? help  r pick several  a run all  q quit
+   ```
+   Move with the arrow keys (or `j`/`k`), press Enter to run the highlighted step, `?` to read what
+   it does and what it risks, `q` to quit (your progress is kept). Steps that cannot run yet are
+   marked blocked, and a step whose inputs changed is marked stale. Questions are asked with the
+   same keyboard-driven widgets (lists, checkboxes, yes/no, hidden or visible text); anything
+   destructive still needs a phrase you type yourself. Without a terminal, or with `--plain`, the
+   wizard falls back to the plain line-by-line prompts; `NO_COLOR=1` turns colours off.
 4. Follow the prompts, one step after the other. `./akam help` lists every command, and `--dry-run`
    rehearses without changing anything.
 
