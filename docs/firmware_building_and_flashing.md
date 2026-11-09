@@ -57,9 +57,10 @@ APP_EXTRACTED=/path/to/app_extracted FW_DIR=/path/to/out bash src/ak_rtsp/build_
 
 ## 6. Flashing Step-by-Step
 
-Akam's procedure (UART shell, `install_with_flash_tool.sh`, read-back check, hand power cycle) is in
-[akam_v1_flash_and_restore.md](akam_v1_flash_and_restore.md). The upstream notes below describe the
-same tool; Akam no longer uses Telnet for it.
+Akam's procedures (the wizard's `./akam flash`, the maintenance telnet, SSH from RAM, or the UART shell,
+always with `install_with_flash_tool.sh` or `flash_tool` and a read-back check, then a hand power cycle)
+are in [akam_v1_flash_and_restore.md](akam_v1_flash_and_restore.md). The upstream notes below describe the
+same tool as upstream used it.
 
 ### Verify the Flash Logs!
 > **Carefully check the final output of `install_with_flash_tool.sh`:**

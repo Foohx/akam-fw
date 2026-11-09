@@ -139,7 +139,8 @@ If you need a recovery root shell without knowing any passwords:
 
 ## 7. UART use in the Akam V1 procedure
 
-For Akam the UART console is the out-of-band path used when the network is not available:
+UART is **optional** for Akam: the wizard installs, updates and checks the camera without it. It stays
+the safety net, the out-of-band path when the network is not available:
 
 - taking the 8-partition backup in a quiet state ([akam_v1_backup.md](akam_v1_backup.md));
 - flashing the APP partition from the `init=/bin/sh` shell ([akam_v1_flash_and_restore.md](akam_v1_flash_and_restore.md));
@@ -149,5 +150,5 @@ For Akam the UART console is the out-of-band path used when the network is not a
 - reading `/tmp/akam_ssh.log` and `/tmp/akam_lockdown.log` when SSH does not come up, and re-provisioning
   `/etc/config/dropbear` after a CONFIG wipe.
 
-Keep the UART wired for the whole first test, until SSH, persistence and the lockdown are confirmed.
+If you have an adapter, keep the UART wired for the first flash, until SSH, persistence and the lockdown are confirmed.
 Restore is not guaranteed; a damaged bootloader or flash may need an external SPI programmer.

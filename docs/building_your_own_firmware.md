@@ -1,5 +1,8 @@
 # Building Your Own Firmware From Your Own Dump
 
+Short pointer (advanced). Most people use `./akam` with the prebuilt kit: see the
+[README](../README.md#quick-start). To build from source, follow the guides below.
+
 This repository ships the `ak_rtsp` source code and the tooling, but deliberately does **not** ship a
 stock APP-partition dump or a pre-built image: that partition is the vendor's proprietary firmware.
 You dump your own camera, patch it locally, and rebuild it.
