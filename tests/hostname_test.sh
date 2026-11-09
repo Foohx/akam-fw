@@ -2,6 +2,7 @@
 # Host-side tests for akam_hostname.sh (camera script, run under busybox sh when
 # available) and patch_ethernet_hostname.sh (build-time patcher). Nothing here
 # touches hardware: the kernel hostname command is replaced by a recording stub.
+# shellcheck disable=SC2016  # single quotes on purpose: literal $ in generated/expected shell text
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -95,7 +96,6 @@ check "wrapper: valid shell (sh -n)" "${SHCMD[@]}" -n "$WRAPPER"
 echo "== patch_ethernet_hostname.sh"
 mkapp() { rm -rf "$1"; mkdir -p "$1/sbin"; printf '%s' "$2" >"$1/sbin/ethernet.sh"; }
 patch() { bash "$PATCH" "$1" >"$WORK/p.out" 2>&1; PRC=$?; }
-STOCKLINE='        udhcpc -i wlan0 -x hostname:IPCamera &'
 A=$WORK/app1
 cp -a "$FIXTURE" "$A"
 patch "$A"
