@@ -11,6 +11,7 @@
 #include "ak_rtsp.h"
 #include "ak_ioctls.h"
 #include "audio.h"
+#include "audio_out.h"
 #include "rtp_clock.h"
 
 static int g_audio_fd = -1;
@@ -28,6 +29,7 @@ static int g_audio_fd = -1;
 static int g_audio_playback_fd = -1;
 static int g_audio_loopback_fd = -1;
 
+static int g_audio_out_active = 0; /* audio_out owns the playback device */
 static volatile int g_playback_running = 0;
 static volatile int g_playback_thread_started = 0;
 static pthread_t    g_playback_tid;
@@ -280,6 +282,22 @@ fail:
  * session. */
 static void audio_init_playback(void)
 {
+    /* Speaker output (spec 05): when enabled and the device sequence works,
+     * audio_out owns the playback fd and its own thread, and the legacy
+     * silence loop below is not used. When disabled, blocked by the crash
+     * guard or failed, audio_out leaves nothing open and the legacy path
+     * runs exactly as before. */
+    if (audio_out_start() == 0) {
+        g_audio_out_active = 1;
+        g_audio_loopback_fd = open(DEV_PCM_LOOPBACK, O_RDWR);
+        if (g_audio_loopback_fd < 0)
+            fprintf(stderr, "audio_init: open %s failed (non-fatal): %s\n",
+                    DEV_PCM_LOOPBACK, strerror(errno));
+        printf("[ak_rtsp] audio: playback owned by audio_out, loopback_fd=%d "
+               "(held open, unconfigured)\n", g_audio_loopback_fd);
+        return;
+    }
+
     g_audio_playback_fd = open(DEV_PCM_PLAYBACK, O_WRONLY);
     if (g_audio_playback_fd < 0)
         fprintf(stderr, "audio_init: open %s failed (non-fatal): %s\n",
@@ -392,6 +410,10 @@ int audio_start(void)
 
 void audio_stop(void)
 {
+    if (g_audio_out_active) {
+        audio_out_stop(); /* amp off, thread joined, device closed */
+        g_audio_out_active = 0;
+    }
     g_playback_running = 0;
     if (g_playback_thread_started) {
         pthread_join(g_playback_tid, NULL);
