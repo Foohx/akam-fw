@@ -296,3 +296,11 @@ Chaque tâche fige les en-têtes de ses modules (relus à la fusion). Les ajouts
 - **D9 — Carillon.** Synthétisé, désactivé par défaut, jamais les mp3 d'origine.
 - **D10 — Entrée SSH/FIFO.** Écartée (tunnel SSH `-L 8092` suffit pour le chiffrement) ; à rouvrir si l'authentification HMAC paraît trop lourde.
 - **D11 — Source des constantes matérielles.** Les noms/valeurs de `ak_ioctls.h` côté lecture sont corrigés par alias (`AKPCM_IOC_PREPARE`, `RESUME`, `SET_SOURCES`, `SET_GAIN`, `SET_SPEAKER`) ; confirmation par Ghidra de `ak_pcm.ko` (qui a déjà servi pour la capture) en parallèle de T2 si l'utilisateur le souhaite.
+
+---
+
+## Décisions utilisateur (2026-11-10) — font foi
+
+- **Sortie audio ACTIVÉE par défaut** (`audio.out_enable=1`), port talk 8092 ouvert ; l'ampli ne s'allume que pendant une session (mode `auto`, extinction 2 s après) ; l'auth suivra le modèle opt-in.
+- Autres décisions ouvertes : recommandations de la spec retenues (port 8092 dédié ; persistance dans `/etc/config/akam/audio_out` en attendant `ctl_store` de la spec 04 ; micro coupé pendant la parole ; défauts volume/gain fixés après l'étape A à l'oreille ; carillon désactivé ; rétrocanal ONVIF/RTSP plus tard ; alias pour les noms d'ioctl).
+- Ordre : T2 en priorité (étape A, bip à l'oreille) en parallèle de T1 ; T3/T5 après validation de l'étape A.
