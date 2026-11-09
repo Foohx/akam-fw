@@ -82,6 +82,7 @@ check "bin/dropbear -> dropbearmulti" test "$(readlink "$X/bin/dropbear")" = dro
 check "bin/dropbearkey -> dropbearmulti" test "$(readlink "$X/bin/dropbearkey")" = dropbearmulti
 check "sbin/akam_ssh.sh 755" test "$(stat -c %a "$X/sbin/akam_ssh.sh")" = 755
 check "sbin/akam_lockdown.sh 755" test "$(stat -c %a "$X/sbin/akam_lockdown.sh")" = 755
+check "sbin/akam_rtsp_auth.sh 755" test "$(stat -c %a "$X/sbin/akam_rtsp_auth.sh")" = 755
 check "sbin/ak_rtsp_wrapper.sh 755" test "$(stat -c %a "$X/sbin/ak_rtsp_wrapper.sh")" = 755
 check "LICENSE.dropbear shipped" test -s "$X/local/akam/LICENSE.dropbear"
 for l in musl smolrtsp slice99 metalang99 datatype99 interface99; do

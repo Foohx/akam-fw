@@ -83,6 +83,34 @@ need.
 - The camera serves **one RTSP client at a time**. Close the other viewer first, or put go2rtc or
   MediaMTX in front of the camera.
 
+## 401 Unauthorized, or a password prompt on the stream
+
+The stream is protected by a password when you (or the wizard, at your request) switched on the RTSP
+login. Check it:
+
+```bash
+./akam rtsp-auth status
+```
+
+- **`401 Unauthorized`, or the player asks for credentials:** use
+  `rtsp://<user>:<password>@<camera-ip>:554/`. VLC may also ask in a dialog; ffplay and ffmpeg want the
+  credentials in the address.
+- **Still 401 with the right password:** special characters in the password must be URL-encoded in the
+  address: `@` is `%40`, `:` is `%3A`, `/` is `%2F`, `?` is `%3F`, `#` is `%23`, `%` is `%25`, a space is
+  `%20`. The quickest test is a password with letters and digits only
+  (`./akam rtsp-auth set`). The user name takes letters, digits and `. _ @ + -`.
+- **Several wrong tries in a row:** the camera slows the answers down (up to 2 seconds) and closes the
+  connection after 5 failures; wait a minute, then try again with the right password.
+- **Forgot the password:** it cannot be read back (only a hash is stored). Over SSH,
+  `./akam rtsp-auth disable` removes it, `./akam rtsp-auth set` sets a new one.
+- **`INVALID` in `status`:** the credentials file is damaged. The camera then refuses every request
+  until you run `./akam rtsp-auth set` or `disable`.
+- **A player that was working stops after you changed the password:** expected; it is disconnected and
+  must log in again with the new one.
+- **`rtsp-auth` says the command is missing:** your image is older than this feature; flash a new one
+  (`./akam update`). Without it the stream is open, as before.
+- Frigate and go2rtc: put the credentials in the stream URL as above (URL-encoded).
+
 ## Transfers from the camera never arrive (PC firewall)
 
 During the backup the camera sends files to your PC over the network. A PC firewall that blocks

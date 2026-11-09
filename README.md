@@ -115,6 +115,39 @@ ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
   run `vlc --rtsp-tcp --avcodec-hw=none rtsp://<camera-ip>:554/`.
 - Other problems: [troubleshooting](docs/troubleshooting.md).
 
+## Password on the video stream (optional)
+
+By default the stream is open: anyone on your network can watch it. You can ask for a user name and
+a password (RTSP **Digest** login, supported by VLC, ffmpeg/ffplay, go2rtc and Frigate). It is
+**off by default**; the wizard offers to switch it on at the end of `./akam step verify`, and you can
+change your mind at any time, over SSH, without reflashing:
+
+```bash
+./akam rtsp-auth set       # asks a user name and a password (typed here, never shown)
+./akam rtsp-auth status    # enabled (user ...) or disabled
+./akam rtsp-auth disable   # the stream is open again
+```
+
+Or on the camera itself (`ssh root@<camera-ip>`): `akam_rtsp_auth.sh set <user>`, `show`, `status`,
+`disable`.
+
+Then put the credentials in the address:
+
+```bash
+ffplay -rtsp_transport tcp rtsp://<user>:<password>@<camera-ip>:554/
+```
+
+- Characters such as `@ : / ? # %` and spaces in the password must be URL-encoded (`@` is `%40`,
+  `:` is `%3A`, `/` is `%2F`, `?` is `%3F`, `#` is `%23`, `%` is `%25`). Letters and digits need
+  nothing: a password without special characters is the simplest choice. At least 8 characters.
+- The camera stores only a hash (`/etc/config/akam/rtsp_auth`, kept across reflashes) and never the
+  password. Digest does not encrypt the video: it keeps casual viewers out, it is no replacement for a
+  VPN (see [Security notes](#security-notes)).
+- Switching it on, off or changing the password disconnects a viewer that is watching: it reconnects
+  and is asked again. `OPTIONS` stays open, everything else needs the login.
+- The password is **not** managed through port 8091 (which has no authentication).
+- Errors such as `401 Unauthorized`: [troubleshooting](docs/troubleshooting.md#401-unauthorized-or-a-password-prompt-on-the-stream).
+
 ## Control port 8091
 
 A text protocol for exposure, day/night and image settings (`LIST`, `GET`, `SET`):
@@ -151,6 +184,11 @@ The over-SSH route runs from RAM and keeps a small residual risk.
   into your LAN for remote access. See [network hardening](docs/akam_v1_install.md#5-network-hardening).
 - The flash card holds your **Wi-Fi password in clear text**: erase it when done with
   `./akam wipe-sd`.
+- The video stream is **open by default**; you can protect it with a
+  [password](#password-on-the-video-stream-optional). Port 8091 has no password in any case.
+- The stream password does not protect availability: the server serves one viewer at a time, and
+  anyone on your network who connects and stays silent occupies that place. Keep untrusted devices
+  (guest Wi-Fi, IoT) off the camera's network.
 - Treat a card with `AKAM_MAINTENANCE` as root access to the camera.
 - Never publish your backup, your built images or your keys.
 
@@ -258,6 +296,9 @@ The custom `ak_rtsp` server is **path-agnostic** (it serves the 1080p video + au
 |---|---|---|
 | **Root (Simplest)** | `rtsp://<camera-ip>:554/` | 1920x1080 H.264 + Synchronized L16 Audio |
 | **Named Path (Optional)** | `rtsp://<camera-ip>:554/live` or `/main_ch` | Any sub-path works interchangeably |
+
+With the optional [stream password](#password-on-the-video-stream-optional) switched on, the URL is
+`rtsp://<user>:<password>@<camera-ip>:554/`.
 
 *(Note: `rtsp://<camera-ip>:554/main_ch` was the legacy path used by the original Tuya firmware, which continues to work seamlessly).*
 
