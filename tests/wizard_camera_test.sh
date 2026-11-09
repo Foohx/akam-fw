@@ -163,11 +163,14 @@ IMG_MD5=$(host_md5 "$IMG")
 IMG_SHA=$(host_sha256 "$IMG")
 printf '#!/bin/sh\necho flash tool\n' >"$T/flash_tool"
 fc_stop
+WIFI_SENT='S3NTINEL-wifi-pass-9'
+export FAKE_WIFI_SSID='Sentinel Net' FAKE_WIFI_PASS=$WIFI_SENT
 fc_start --flash-card "$IMG" "$T/flash_tool" || { echo "cannot start fake camera B"; exit 1; }
+unset FAKE_WIFI_SSID FAKE_WIFI_PASS
 CAM_B_ROOT=$FC_ROOT
 # Scripts that "the card" carries: the fake ones, so that pushing is not needed in the main flow.
 mkdir -p "$T/scripts"
-cp "$CAM_B_ROOT/tmp/sd/install_with_flash_tool.sh" "$CAM_B_ROOT/tmp/sd/flash_guard.sh" "$T/scripts/"
+cp "$CAM_B_ROOT/tmp/sd/install_with_flash_tool.sh" "$CAM_B_ROOT/tmp/sd/flash_guard.sh" "$CAM_B_ROOT/tmp/sd/preflight_check.sh" "$T/scripts/"
 export AKAM_FLASH_SCRIPTS_DIR=$T/scripts
 export AKAM_FLASH_TOOL=$T/flash_tool
 STOCK_MD5=$(host_md5 "$CAM_B_ROOT/dev/mtd7")
@@ -231,7 +234,7 @@ check "flash: the script runs with HUP ignored (a dropped link must not kill the
 # The fake flash script prints ~150 KB of \r progress bars (as flash_tool does). A big output used to
 # make `printf | grep -q` die of SIGPIPE under pipefail: a real success was reported as a failure.
 check "flash: the success is recognised although the script printed a flood of progress bars" has "$T/fl_ok.out" "The flash script reported: completed successfully"
-check "flash: the progress bars are not echoed (one line per 10 percent at most)" bash -c '! grep -q "====>" "$1" && [ "$(grep -c "| Writing:" "$1")" -le 12 ] && grep -q "| Writing: 100%" "$1"' _ "$T/fl_ok.out"
+check "flash: the progress bars are not echoed (one line per 10 percent at most)" bash -c '! grep -q "====>" "$1" && [ "$(grep -c "| Writing:" "$1")" -le 24 ] && grep -q "| Writing: 100%" "$1"' _ "$T/fl_ok.out"
 check "flash: the output stays small" bash -c '[ "$(wc -c <"$1")" -lt 20000 ]' _ "$T/fl_ok.out"
 check "flash: no false warning about the image on the card" hasnt "$T/fl_ok.out" "does not carry exactly the image"
 
@@ -256,6 +259,47 @@ printf 'YES\n' | a "$S" flash >"$T/fl_scriptfail.out" 2>&1
 check "flash: a failing flash script leaves the step undone" bash -c '[ "$1" -ne 0 ] && ! grep -q "^step_flash_done=" "$2"' _ $? "$S/state"
 rm -f "$CAM_B_ROOT/ctl/flash_mode"
 cp "$IMG" "$CAM_B_ROOT/dev/mtd7"
+
+# ------------------------------------------------------------------ flash: the Wi-Fi must survive the card (hard gate)
+# The fake camera has no /etc/config/wpa_supplicant.conf (never paired with the app); the card has wifi.conf.
+WPA_B=$CAM_B_ROOT/etc/config/wpa_supplicant.conf
+rm -f "$WPA_B"
+: >"$CAM_B_ROOT/ctl/commands.log"
+S=$(new_state fl_wifi)
+seed_flash_state "$S" stock 1
+printf 'YES\n' | a "$S" flash >"$T/fl_wifi.out" 2>&1
+check "flash: succeeds and creates the camera's wpa_supplicant.conf from the card's wifi.conf" bash -c '[ "$1" -eq 0 ] && grep -q "^step_flash_done=" "$2" && grep -q "was created ON the camera" "$3"' _ $? "$S/state" "$T/fl_wifi.out"
+check "flash: the file holds ctrl_interface, update_config and the network (ssid, psk, WPA-PSK)" bash -c 'f=$1; grep -qx "ctrl_interface=/var/run/wpa_supplicant" "$f" && grep -qx "update_config=1" "$f" && grep -qx "network={" "$f" && grep -qx "    ssid=\"Sentinel Net\"" "$f" && grep -qx "    psk=\"$2\"" "$f" && grep -qx "    key_mgmt=WPA-PSK" "$f"' _ "$WPA_B" "$WIFI_SENT"
+check "flash: the file is mode 0600" bash -c '[ "$(stat -c %a "$1")" = 600 ]' _ "$WPA_B"
+check "flash: the Wi-Fi password never went through the PC (output, log, commands sent to the camera)" bash -c '! grep -q "$1" "$2" "$3" "$4" "$5"' _ "$WIFI_SENT" "$T/fl_wifi.out" "$S/akam.log" "$CAM_B_ROOT/ctl/commands.log" "$S/state"
+check "flash: the camera was asked to run preflight_check.sh --ensure-wifi" bash -c 'grep -q "sh /mnt/preflight_check.sh --ensure-wifi" "$1"' _ "$CAM_B_ROOT/ctl/commands.log"
+
+# a file that already holds a network is left alone
+S=$(new_state fl_wifi2)
+seed_flash_state "$S" stock 1
+cp "$WPA_B" "$T/wpa.keep"
+printf 'YES\n' | a "$S" flash >"$T/fl_wifi2.out" 2>&1
+check "flash: an existing network in wpa_supplicant.conf is kept as it is" bash -c '[ "$1" -eq 0 ] && cmp -s "$2" "$3" && grep -q "holds a Wi-Fi network" "$4"' _ $? "$WPA_B" "$T/wpa.keep" "$T/fl_wifi2.out"
+
+# no saved Wi-Fi and nothing on the card to make it from: refused BEFORE anything is written
+rm -f "$WPA_B"
+mv "$CAM_B_ROOT/tmp/sd/custom/configs/wifi.conf" "$T/wifi.conf.keep"
+: >"$CAM_B_ROOT/ctl/confirm.log"
+cp "$CAM_B_ROOT/dev/mtd7" "$T/mtd7.before"
+S=$(new_state fl_nowifi)
+seed_flash_state "$S" stock 1
+printf 'YES\n' | a "$S" flash >"$T/fl_nowifi.out" 2>&1
+check "flash: no saved Wi-Fi and no wifi.conf on the card is refused with advice" bash -c '[ "$1" -ne 0 ] && grep -q "no saved Wi-Fi" "$2" && grep -q "NO network once the card is removed" "$2"' _ $? "$T/fl_nowifi.out"
+check "flash: ...before the flash script is even started (nothing written, no YES asked)" bash -c '[ ! -s "$1" ] && cmp -s "$2" "$3"' _ "$CAM_B_ROOT/ctl/confirm.log" "$CAM_B_ROOT/dev/mtd7" "$T/mtd7.before"
+check "flash: ...and the step stays undone" hasnt "$S/state" step_flash_done
+
+# a password with a double quote cannot be written safely: refused, no file
+printf "SSID='Net'\nPASS='pass\"word99'\nSECURITY=3\n" >"$CAM_B_ROOT/tmp/sd/custom/configs/wifi.conf"
+S=$(new_state fl_badwifi)
+seed_flash_state "$S" stock 1
+printf 'YES\n' | a "$S" flash >"$T/fl_badwifi.out" 2>&1
+check "flash: a Wi-Fi password with a double quote is refused with an explanation, nothing is written" bash -c '[ "$1" -ne 0 ] && grep -q "double quote, a backslash or a line break" "$2" && [ ! -e "$3" ] && [ ! -s "$4" ]' _ $? "$T/fl_badwifi.out" "$WPA_B" "$CAM_B_ROOT/ctl/confirm.log"
+mv "$T/wifi.conf.keep" "$CAM_B_ROOT/tmp/sd/custom/configs/wifi.conf"
 
 # ------------------------------------------------------------------ flash: layout mismatch refused before any write
 S=$(new_state flash_layout)
@@ -298,6 +342,8 @@ cat >"$T/stubs/ssh" <<'EOF'
 #!/usr/bin/env bash
 # fake ssh: logs, answers `true`, stores the stdin of `cat > FILE`, fakes akam_hwcheck.sh
 printf '%s\n' "$*" >>"$STUB_DIR/ssh.log"
+# without -o LogLevel=ERROR the real ssh prints this noise on stderr (OpenSSH 10)
+case " $* " in *" LogLevel=ERROR "*) ;; *) echo "** WARNING: connection is not using a post-quantum key exchange algorithm." >&2 ;; esac
 cmd=""; seen=0
 for x in "$@"; do
     if [ "$seen" = 1 ]; then cmd="$cmd $x"; fi
@@ -308,6 +354,11 @@ cmd=${cmd# }
 case $cmd in
     true) exit 0 ;;
     "cat > /tmp/akam_hwcheck.sh") cat >"$STUB_DIR/hwcheck.copy"; exit 0 ;;
+    "cat > /tmp/akam_preflight.sh") cat >"$STUB_DIR/preflight.copy"; exit 0 ;;
+    "sh /tmp/akam_preflight.sh --ensure-wifi")
+        # the real script, against a private "camera root" (never the real /etc)
+        AKAM_ROOT="$STUB_DIR/camroot" sh "$STUB_DIR/preflight.copy" --ensure-wifi
+        exit $? ;;
     "/usr/sbin/akam_rtsp_auth.sh status") echo "${STUB_RTSP_STATUS:-disabled}"; exit 0 ;;
     "/usr/sbin/akam_rtsp_auth.sh set-hash") cat >"$STUB_DIR/rtsp_auth.stdin"; exit 0 ;;
     "sh /tmp/akam_hwcheck.sh")
@@ -326,6 +377,9 @@ echo "reflash_over_ssh: pre-checks passed"
 i=0
 while [ $i -lt 300 ]; do printf '\r[#######] %d%% PROGRESS_JUNK' "$i"; i=$((i + 1)); done
 echo
+i=0
+while [ $i -le 100 ]; do printf '\rcamera: Writing: [====>      ] %3d%% (%d/100)' "$i" "$i"; i=$((i + 1)); done
+echo
 case " $* " in
     *" --i-understand-no-uart "*) echo "reflash_over_ssh: read-back md5 verified"; exit "${STUB_REFLASH_RC:-0}" ;;
 esac
@@ -333,6 +387,9 @@ exit "${STUB_PRECHECK_RC:-0}"
 EOF
 chmod +x "$T/stubs/ssh" "$T/stubs/reflash.sh"
 export STUB_DIR=$T/stubs
+# the fake ssh runs preflight_check.sh against this private camera root: Wi-Fi already saved by default
+mkdir -p "$STUB_DIR/camroot/etc/config"
+printf 'ctrl_interface=/var/run/wpa_supplicant\nnetwork={\n    ssid="Net"\n    psk="password1"\n    key_mgmt=WPA-PSK\n}\n' >"$STUB_DIR/camroot/etc/config/wpa_supplicant.conf"
 export AKAM_SSH=$T/stubs/ssh AKAM_REFLASH=$T/stubs/reflash.sh
 printf 'fake key\n' >"$T/key"
 CLOSED_TEL=$(fc_free_port)
@@ -347,6 +404,7 @@ check "flash over SSH: precheck first, then the flash with the no-UART flag" bas
 check "flash over SSH: passes host, key, md5 and flash_tool" bash -c 'grep -q -e "--host 127.0.0.1" -e "--identity '"$T"'/key" "$1" && grep -q -e "--md5 '"$IMG_MD5"'" "$1"' _ "$STUB_DIR/reflash.log"
 check "flash over SSH: the progress bars are filtered from the output" hasnt "$T/ssh_ok.out" PROGRESS_JUNK
 check "flash over SSH: the full output is kept in a log" has "$S/reflash.log" PROGRESS_JUNK
+check "flash over SSH: a Writing bar becomes a few lines, ending at 100%" bash -c '[ "$(grep -c "| Writing:" "$1")" -le 24 ] && grep -q "| Writing: 100%" "$1" && ! grep -q "====>" "$1"' _ "$T/ssh_ok.out"
 check "flash over SSH: the camera's verdict is relayed" has "$T/ssh_ok.out" "read-back md5 verified"
 check "flash over SSH: the step is done and the route recorded" bash -c 'grep -q "^step_flash_done=" "$1" && grep -q "^flash_route=ssh$" "$1"' _ "$S/state"
 
@@ -420,6 +478,7 @@ printf '\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$
 check "verify: succeeds when SSH works, hwcheck passes and the ports are right" test $? -eq 0
 check "verify: hwcheck ran on the camera (copied to RAM then executed)" bash -c 'grep -q "fake hwcheck" "$1/hwcheck.copy" && grep -q "sh /tmp/akam_hwcheck.sh" "$1/ssh.log"' _ "$STUB_DIR"
 check "verify: guides the card removal and the power cycle by hand" bash -c 'grep -q "take the microSD card out" "$1" && grep -q "plug the power back in" "$1"' _ "$T/ver_ok.out"
+check "verify: OpenSSH's post-quantum warning noise is hidden (LogLevel=ERROR)" bash -c '! grep -q "post-quantum" "$1" && grep -q -e "-o LogLevel=ERROR" "$2"' _ "$T/ver_ok.out" "$STUB_DIR/ssh.log"
 check "verify: checks the ports twice" bash -c '[ "$(grep -c "Open ports:" "$1")" = 2 ]' _ "$T/ver_ok.out"
 check "verify: step done" bash -c 'grep -q "^step_verify_done=" "$1"' _ "$S/state"
 
@@ -438,6 +497,27 @@ S=$(new_state ver_hw)
 seed_verify_state "$S"
 printf '\n' | STUB_HWCHECK_RC=1 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_hw.out" 2>&1
 check "verify: a hwcheck failure fails the step" bash -c '[ "$1" -ne 0 ] && grep -q "reported a failure" "$2"' _ $? "$T/ver_hw.out"
+
+# verify: a camera never paired with the app has no wpa_supplicant.conf: it is created from the card BEFORE
+# the user is asked to remove the card; without a card config the step refuses to go on
+CR=$STUB_DIR/camroot
+mv "$CR/etc/config/wpa_supplicant.conf" "$STUB_DIR/wpa.saved"
+mkdir -p "$CR/tmp/sd/custom/configs"
+printf "MODE=sta\nSSID='Verify Net'\nPASS='%s'\nSECURITY=3\nDHCP=1\n" "$WIFI_SENT" >"$CR/tmp/sd/custom/configs/wifi.conf"
+S=$(new_state ver_wifi_make)
+seed_verify_state "$S"
+printf '\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_wifi_make.out" 2>&1
+check "verify: creates the missing wpa_supplicant.conf from the card, then goes on" bash -c '[ "$1" -eq 0 ] && grep -q "was created ON the camera" "$2" && grep -qx "    ssid=\"Verify Net\"" "$3" && grep -qx "    psk=\"$4\"" "$3"' _ $? "$T/ver_wifi_make.out" "$CR/etc/config/wpa_supplicant.conf" "$WIFI_SENT"
+check "verify: the Wi-Fi gate comes before the invitation to remove the card" bash -c 'a=$(grep -n "was created ON the camera" "$1" | head -1 | cut -d: -f1); b=$(grep -n "take the microSD card out" "$1" | head -1 | cut -d: -f1); [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]' _ "$T/ver_wifi_make.out"
+check "verify: the password is not in the output, the log or the ssh command lines" bash -c '! grep -q "$1" "$2" "$3" "$4"' _ "$WIFI_SENT" "$T/ver_wifi_make.out" "$S/akam.log" "$STUB_DIR/ssh.log"
+rm -f "$CR/etc/config/wpa_supplicant.conf"
+rm -rf "$CR/tmp"
+S=$(new_state ver_wifi_none)
+seed_verify_state "$S"
+printf '\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_wifi_none.out" 2>&1
+check "verify: no saved Wi-Fi and no card config: refused, never invites to remove the card" bash -c '[ "$1" -ne 0 ] && grep -q "no saved Wi-Fi" "$2" && ! grep -q "take the microSD card out" "$2"' _ $? "$T/ver_wifi_none.out"
+check "verify: ...and the step stays undone" hasnt "$S/state" step_verify_done
+mv "$STUB_DIR/wpa.saved" "$CR/etc/config/wpa_supplicant.conf"
 
 S=$(new_state ver_empty)
 seed_verify_state "$S"

@@ -11,7 +11,9 @@
 #   fake_camera.sh init ROOT [--flash-card IMAGE FLASH_TOOL] [--no-card]
 #   fake_camera.sh start ROOT PORT       start the server (pid in ROOT/ctl/pid)
 #   fake_camera.sh stop ROOT
-# Environment: AKAM_BUSYBOX (default: the pinned one), FAKE_STOCK_VERSION to change /proc/version.
+# Environment: AKAM_BUSYBOX (default: the pinned one), FAKE_STOCK_VERSION to change /proc/version,
+# FAKE_WIFI_SSID / FAKE_WIFI_PASS (the card's custom/configs/wifi.conf with --flash-card; the camera
+# starts WITHOUT /etc/config/wpa_supplicant.conf, like one never paired with the vendor app).
 #
 # What the shell looks like (reconstructed from docs/akam_v1_backup_sd.md, NOT recorded on a camera):
 #   - IAC negotiation bytes at connect, CRLF line endings on the echo of the typed line, "# " prompt;
@@ -110,6 +112,12 @@ EOF
         cp "$img" "$R/tmp/sd/custom_firmware/$(basename "$img")"
         cp "$ft" "$R/tmp/sd/flash_tool"
         echo "#!/bin/sh" >"$R/tmp/sd/flash_guard.sh"
+        # What the toolkit card carries: the real preflight_check.sh and the Wi-Fi settings (the card is
+        # the only place that holds them on a camera never paired with the app: no wpa_supplicant.conf).
+        cp "$REPO/tools/flash_scripts/preflight_check.sh" "$R/tmp/sd/preflight_check.sh"
+        mkdir -p "$R/tmp/sd/custom/configs"
+        printf "MODE=sta\nSSID='%s'\nPASS='%s'\nSECURITY=3\nDHCP=1\n" "${FAKE_WIFI_SSID:-Fake Net}" "${FAKE_WIFI_PASS:-fake-wifi-pass}" \
+            >"$R/tmp/sd/custom/configs/wifi.conf"
         cat >"$R/tmp/sd/install_with_flash_tool.sh" <<'EOF'
 #!/bin/sh
 # fake of tools/flash_scripts/install_with_flash_tool.sh (same prompts and messages)

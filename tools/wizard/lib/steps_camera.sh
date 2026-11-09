@@ -69,11 +69,12 @@ cam_key() {
 }
 
 # cam_ssh_setup: build CAM_SSH. The host key is remembered the first time (accept-new) under the
-# alias <ip>, the same alias reflash_over_ssh.sh uses.
+# alias <ip>, the same alias reflash_over_ssh.sh uses. LogLevel=ERROR hides OpenSSH's warnings
+# (for example "not using a post-quantum key exchange"); real errors are still printed.
 cam_ssh_setup() {
     cam_key
     CAM_SSH=("${AKAM_SSH:-ssh}" -i "$CAM_KEY" -p "$(cam_port ssh)" -o BatchMode=yes -o ConnectTimeout=10
-        -o StrictHostKeyChecking=accept-new -o "HostKeyAlias=$CAM_IP" -o IdentitiesOnly=yes "root@$CAM_IP")
+        -o StrictHostKeyChecking=accept-new -o "HostKeyAlias=$CAM_IP" -o IdentitiesOnly=yes -o LogLevel=ERROR "root@$CAM_IP")
 }
 
 cam_ssh_ok() {
@@ -474,8 +475,20 @@ cmd_backup() {
 
 # ------------------------------------------------------------------ SSH reflash (flash, update, restore)
 # cam_filter_flash_output: drop the progress bars (about 80 KB) and keep what matters.
+CAM_FLASH_KEEP_RE='^reflash_over_ssh:|error|fail|mismatch|md5|verif|retry|retries|fault|success|complete|refus'
 cam_filter_flash_output() {
-    tr '\r' '\n' | grep --line-buffered -i -E '^reflash_over_ssh:|error|fail|mismatch|md5|verif|retry|retries|fault|success|complete|refus' || true
+    local l
+    shopt -s nocasematch
+    tr '\r' '\n' | while IFS= read -r l; do
+        l=${l#camera: }
+        if [[ $l =~ $CAMSH_PROG_RE ]]; then
+            ui_progress "${BASH_REMATCH[1]}" "$((10#${BASH_REMATCH[2]}))"
+        elif [[ $l =~ $CAM_FLASH_KEEP_RE ]]; then
+            ui_progress_close
+            printf '    | %s\n' "$l"
+        fi
+    done
+    ui_progress_close
 }
 
 # cam_run_flash_script LOGFILE CMD...: run it, show a filtered output, keep the full output in LOGFILE.
@@ -488,7 +501,7 @@ cam_run_flash_script() {
     ui_say "  (full output: $logf)"
     rcf=$(mktemp)
     (umask 077 && : >"$logf")
-    { "$@" 2>&1; echo "$?" >"$rcf"; } | tee -a "$logf" | cam_filter_flash_output | sed 's/^/    | /'
+    { "$@" 2>&1; echo "$?" >"$rcf"; } | tee -a "$logf" | cam_filter_flash_output
     rc=$(cat "$rcf")
     rm -f "$rcf"
     log_line "RC $rc"
@@ -608,6 +621,76 @@ ft_ensure_image() {
     xfer_put "$img" "/mnt/custom_firmware/$name" || return 1
 }
 
+# ------------------------------------------------------------------ Wi-Fi must survive the card
+# A camera that was never paired with the vendor app has no /etc/config/wpa_supplicant.conf: with the
+# toolkit card the toolkit brings Wi-Fi up from the card, but the camera has NO network once the card
+# is removed. tools/flash_scripts/preflight_check.sh --ensure-wifi (run ON the camera) writes the
+# file from the card's custom/configs/wifi.conf, so the password never passes through this PC (not
+# in a command line, not in the log). Hard gate: nothing tells the user to remove the card while the
+# file is missing.
+
+# cam_wifi_verdict OUTPUT: read the WIFI= line of preflight_check.sh --ensure-wifi; 0 = the file holds a network.
+cam_wifi_verdict() {
+    local code
+    code=$(printf '%s\n' "$1" | sed -n 's/^WIFI=\([A-Z_]*\).*/\1/p' | tail -1)
+    case $code in
+        PRESENT)
+            ui_say "  /etc/config/wpa_supplicant.conf holds a Wi-Fi network: the camera keeps its network without the card."
+            ;;
+        CREATED)
+            ui_good "  /etc/config/wpa_supplicant.conf was missing (the camera was never paired with the app): it was created ON the camera from the card's Wi-Fi settings."
+            ui_say "  (the password never passed through this PC's command lines or logs.)"
+            ;;
+        NO_CARD_CONFIG)
+            ui_fail "the camera has no saved Wi-Fi (/etc/config/wpa_supplicant.conf) and the card holds no usable custom/configs/wifi.conf to create it from." \
+                "without it the camera has NO network once the card is removed. Prepare the flash card again (./akam step prepare-flash-sd), or create the file by hand: docs/akam_v1_install.md (Troubleshooting: no network after removing the card)."
+            ;;
+        BAD_CHARS)
+            ui_fail "the Wi-Fi name or password on the card holds a double quote, a backslash or a line break: the camera's wpa_supplicant.conf cannot be written safely from it." \
+                "create /etc/config/wpa_supplicant.conf by hand (docs/akam_v1_install.md, Troubleshooting), or use a Wi-Fi password without those characters."
+            ;;
+        BAD_PSK_LENGTH)
+            ui_fail "the Wi-Fi password on the card is not 8 to 63 characters long, so it is not a WPA password." \
+                "check the password, then prepare the card again (./akam step prepare-flash-sd)."
+            ;;
+        UNSUPPORTED_SECURITY)
+            ui_fail "the card's Wi-Fi settings use a security type other than WPA/WPA2-PSK (SECURITY=3) or open (SECURITY=1)." \
+                "create /etc/config/wpa_supplicant.conf by hand for your network (docs/akam_v1_install.md, Troubleshooting)."
+            ;;
+        WRITE_FAILED)
+            ui_fail "the camera could not write /etc/config/wpa_supplicant.conf." \
+                "do not remove the card. Create the file by hand (docs/akam_v1_install.md, Troubleshooting)."
+            ;;
+        *)
+            ui_fail "could not check the camera's saved Wi-Fi (no answer from preflight_check.sh --ensure-wifi)." \
+                "do not remove the card; run this step again."
+            ;;
+    esac
+}
+
+# cam_wifi_gate_telnet: through the maintenance shell (the card is on /mnt, preflight_check.sh was just verified there).
+cam_wifi_gate_telnet() {
+    ui_say "  Checking that the camera will keep its Wi-Fi after the card is removed ..."
+    camsh_exec 'sh /mnt/preflight_check.sh --ensure-wifi' 60 ||
+        { ui_fail "cannot run preflight_check.sh on the camera." "check the telnet session."; return 1; }
+    cam_wifi_verdict "$CAMSH_OUT"
+}
+
+# cam_wifi_gate_ssh: over SSH (verify, card still in). The script is sent through stdin into /tmp (RAM).
+cam_wifi_gate_ssh() {
+    local pf out rc=0
+    pf="$(cam_scripts_dir)/preflight_check.sh"
+    [ -f "$pf" ] || { ui_fail "preflight_check.sh not found: $pf" ""; return 1; }
+    cam_ssh_setup
+    ui_say "  Checking that the camera will keep its Wi-Fi after the card is removed ..."
+    log_line "CMD ssh root@$CAM_IP 'cat > /tmp/akam_preflight.sh' < preflight_check.sh"
+    "${CAM_SSH[@]}" 'cat > /tmp/akam_preflight.sh' <"$pf" ||
+        { ui_fail "cannot copy preflight_check.sh over SSH." "do not remove the card yet."; return 1; }
+    log_line "CMD ssh root@$CAM_IP 'sh /tmp/akam_preflight.sh --ensure-wifi'"
+    out=$("${CAM_SSH[@]}" 'sh /tmp/akam_preflight.sh --ensure-wifi' 2>&1) || rc=$?
+    cam_wifi_verdict "$out"
+}
+
 # Lines of the flash output that are not worth showing.
 FT_SKIP_RE='^[[:space:]]*$|^[[:space:]]*[0-9]+%'
 
@@ -619,6 +702,8 @@ flash_telnet() {
         ui_say "  WOULD open the telnet shell, bind the card on /mnt if it is on /tmp/sd, check that exactly one image is in"
         ui_say "  /mnt/custom_firmware with the same md5 as this PC (pushing files over nc only after your yes), then run"
         ui_say "  'sh /mnt/install_with_flash_tool.sh', show its md5 line and its prompt, and ask YOU to type YES (relayed as typed)."
+        ui_say "  When flashing it also runs 'sh /mnt/preflight_check.sh --ensure-wifi' on the camera: if /etc/config/wpa_supplicant.conf has no"
+        ui_say "  network it is created from the card's wifi.conf (on the camera; the password never passes through this PC)."
         ui_say "  After the write: dd if=/dev/mtd7 bs=64k | md5sum on the camera must equal the image md5. No reboot is ever sent."
         ui_confirm_typed "Write the camera flash now?" YES
         return 0
@@ -632,6 +717,11 @@ flash_telnet() {
     ft_ensure_file "$ft" /mnt/flash_tool exec "flash_tool" || { camsh_close; return 1; }
     ft_ensure_file "$(cam_scripts_dir)/install_with_flash_tool.sh" /mnt/install_with_flash_tool.sh plain "install_with_flash_tool.sh" || { camsh_close; return 1; }
     ft_ensure_file "$(cam_scripts_dir)/flash_guard.sh" /mnt/flash_guard.sh plain "flash_guard.sh" || { camsh_close; return 1; }
+    if [ "$label" = Flashing ]; then
+        # Akam does not bring Wi-Fi up by itself: the saved network must exist before the write (hard gate).
+        ft_ensure_file "$(cam_scripts_dir)/preflight_check.sh" /mnt/preflight_check.sh plain "preflight_check.sh" || { camsh_close; return 1; }
+        cam_wifi_gate_telnet || { camsh_close; ui_say "  Nothing was written to the camera."; return 1; }
+    fi
     ui_blank
     ui_warn "$label writes the camera's flash. If the power is cut while it writes, only a UART cable can recover the camera."
     ui_warn "Keep the camera powered and do not unplug anything until this step says it is finished."
@@ -851,7 +941,9 @@ cmd_verify() {
     step_banner verify
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD wait for the camera, check SSH with your key, copy and run akam_hwcheck.sh (expecting no FAIL),"
-        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in), then ask you to"
+        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in), make sure the camera has a saved"
+        ui_say "  Wi-Fi network (preflight_check.sh --ensure-wifi on the camera; it is created from the card's wifi.conf when missing,"
+        ui_say "  and you are never asked to remove the card before that is done), then ask you to"
         ui_say "  unplug the power, take the card out and plug the power back in BY HAND, and repeat the checks:"
         ui_say "  telnet 24 and FTP 21 must then be closed. Only then is the step marked done."
         state_mark_done verify
@@ -870,6 +962,8 @@ cmd_verify() {
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure (lines above)." "do not remove the card yet; read docs/akam_v1_test_plan.md."; return 1; }
     cam_ports_check card || { ui_fail "unexpected port state." "do not remove the card yet."; return 1; }
     ui_good "  Checks passed with the card in."
+    # Hard gate: never invite the user to remove the card while the camera has no saved Wi-Fi.
+    cam_wifi_gate_ssh || { ui_say "  The step is NOT done: do not remove the card."; return 1; }
     ui_blank
     ui_say "  Now the real test: without the card. By hand:"
     ui_say "    1. unplug the camera's USB-C power  2. take the microSD card out  3. plug the power back in."
