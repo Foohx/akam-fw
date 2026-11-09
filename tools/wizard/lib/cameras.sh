@@ -107,6 +107,9 @@ cams_open() {
 cams_switch() {
     if ! cams_name_valid "$1"; then return 1; fi
     CAM_NAME=$1
+    # What was given on the command line belonged to the previous camera: an address, a backup folder
+    # or an image must never be applied to another camera (the SSH key is the user's, it stays).
+    OPT_IP="" OPT_BACKUP_DIR="" OPT_IMAGE="" OPT_OUT=""
     cams_open
     cams_remember "$CAM_NAME"
 }
