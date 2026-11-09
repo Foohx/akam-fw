@@ -520,6 +520,20 @@ check "state_set refuses a registered secret and a bad key" bash -c '
     state_init "$2/sl" 0; log_add_secret "hunter2hunter2"
     ! state_set k "x hunter2hunter2 y" 2>/dev/null && ! state_set "Bad-Key" v 2>/dev/null && state_set ok_key v' _ "$ROOT" "$T"
 
+# ---------------------------------------------------------------- entering a step from the plain menu asks first
+new_state
+printf 'default\n' >"$T/st/current_camera"
+printf '\nn\nq\n' | AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st" >"$T/m1.out" 2>&1
+check "menu: a step shows what it does, what it touches and asks 'Start this step? [Y/n]'" bash -c 'grep -q "What it does:" "$1" && grep -q "What it touches:" "$1" && grep -q "Start this step? \[Y/n\]" "$1"' _ "$T/m1.out"
+check "menu: answering n returns to the menu and the step is not run" bash -c 'grep -q "Not started" "$1" && ! grep -q "stub check_host" "$1" && ! grep -q "^step_doctor_done=" "$2/state"' _ "$T/m1.out" "$T/st"
+printf '\n\nq\n' | AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st" >"$T/m2.out" 2>&1
+check "menu: Enter at the question means yes: the step runs" bash -c 'grep -q "^step_doctor_done=" "$1/state"' _ "$T/st"
+printf '2\nn\nq\n' | AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st" >"$T/m3.out" 2>&1
+check "menu: a step chosen by number asks as well" bash -c 'grep -q "Start this step?" "$1" && ! grep -q "^step_get_kit_done=" "$2/state"' _ "$T/m3.out" "$T/st"
+new_state
+a step doctor >"$T/m4.out" 2>&1
+check "a step started by name (./akam step NAME) is not asked again" bash -c '! grep -q "Start this step?" "$1"' _ "$T/m4.out"
+
 # ---------------------------------------------------------------- several cameras (names, one state each)
 HC=$T/home_cam
 mkdir -p "$HC"

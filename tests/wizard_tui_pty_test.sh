@@ -127,14 +127,24 @@ run blocked 'expect:Check this computer' 'send:j' 'send:\r' 'expect:Waiting for:
 check "menu: Enter on a blocked step explains and stays in the menu" has "$T/blocked.txt" "Waiting for: doctor"
 check "menu: ... and does not start the step" hasnt "$T/blocked.txt" "Step 2/9"
 new_state
-run step 'expect:Check this computer' 'send:\r' 'expect:Press any key' 'send:x' 'expect:Get the Akam kit' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+run step 'expect:Check this computer' 'send:\r' 'expect:Start this step?' 'send:\r' 'expect:Press any key' 'send:x' 'expect:Get the Akam kit' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
 check "menu: Enter runs the step (section rule shown)" has "$T/step.txt" "Step 1/9"
+check "menu: entering a step shows what it does, what it touches and asks Start this step?" bash -c 'grep -q "What it does:" "$1" && grep -q "What it touches:" "$1" && grep -q "Start this step?" "$1"' _ "$T/step.txt"
+check "menu: Enter takes the default (Yes) and the step runs" bash -c 'grep -q "Start this step? .*Yes" "$1"' _ "$T/step.txt"
 check "menu: the command is shown before it runs" has "$T/step.txt" "Running (read-only): $T/check_host.sh --profile kit"
 check "menu: the step's result is announced" has "$T/step.txt" "Check this computer: finished"
 check "menu: the step is recorded as done" bash -c 'grep -q "^step_doctor_done=" "$1/state"' _ "$T/st"
 check "menu: back in the menu, the next step is no longer blocked" bash -c '! grep -q "Waiting for" <(sed -n "/Press any key to return/,\$p" "$1")' _ "$T/step.txt"
 check "menu: terminal restored after running a step and quitting" terminal_restored step
 check "menu: the first todo step is preselected after a run (Get the Akam kit described)" has "$T/step.txt" "Downloads the prebuilt Akam kit"
+
+# the start question: No / Esc go back to the menu and the step is not run
+new_state
+run startno 'expect:Check this computer' 'send:\r' 'expect:Start this step?' 'send:n' 'expect:not started' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "menu: answering n to 'Start this step?' returns to the menu without running it" bash -c 'grep -q "not started" "$1" && ! grep -q "Step 1/9" "$1" && ! grep -q "^step_doctor_done=" "$2/state"' _ "$T/startno.txt" "$T/st"
+new_state
+run startesc 'expect:Check this computer' 'send:\r' 'expect:Start this step?' 'send:\x1b' 'expect:not started' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "menu: Esc at 'Start this step?' means No" bash -c '! grep -q "Step 1/9" "$1" && ! grep -q "^step_doctor_done=" "$2/state"' _ "$T/startesc.txt" "$T/st"
 
 # ---------------------------------------------------------------- Ctrl-C
 new_state

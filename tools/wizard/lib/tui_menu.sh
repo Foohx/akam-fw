@@ -260,6 +260,12 @@ tui_menu_run() {
     name=${MENU_NAMES[i]}
     tui_screen_leave
     printf '\n' >&2
+    if ! step_confirm_start "$name" "${MENU_TITLE[i]}"; then
+        MENU_MSG="${MENU_TITLE[i]}: not started" MENU_MSG_KIND=warn
+        tui_screen_enter
+        tui_menu_refresh
+        return 0
+    fi
     if [ "${MENU_KIND[i]}" = step ]; then
         step_run "$name" || rc=$?
     else
@@ -345,6 +351,7 @@ tui_menu_pick() {
     if tui_multi -i "$init" "Which steps do you want to run now (in this order)?" "${items[@]}"; then
         for s in ${TUI_SELECTED[@]+"${TUI_SELECTED[@]}"}; do
             printf '\n' >&2
+            if ! step_confirm_start "${MENU_NAMES[${idx[s]}]}" "${MENU_TITLE[${idx[s]}]}"; then rc=1; break; fi
             step_run "${MENU_NAMES[${idx[s]}]}" || { rc=$?; break; }
         done
         if [ "$rc" -ne 0 ]; then

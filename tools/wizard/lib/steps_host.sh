@@ -179,6 +179,59 @@ step_what() {
     esac
 }
 
+# step_touches NAME: what the step changes (shown before it starts).
+step_touches() {
+    case $1 in
+        doctor | find-camera) echo "Nothing is changed (read-only checks)." ;;
+        get-kit) echo "Files in the wizard's folder on this PC (the kit)." ;;
+        prepare-backup-sd | prepare-flash-sd) echo "The microSD card you choose: it is ERASED. Files on this PC." ;;
+        backup) echo "The camera is only read. A new backup folder on this PC." ;;
+        image) echo "Files on this PC only (the image folder)." ;;
+        flash) echo "The camera's flash (APP partition), and its saved Wi-Fi file if it is missing." ;;
+        verify) echo "The camera's saved Wi-Fi file if it is missing, and its network name. Nothing else; you unplug the power yourself." ;;
+        rtsp-auth) echo "One small file on the camera (the stream password), over SSH." ;;
+        hostname) echo "One small file on the camera (its network name), over SSH." ;;
+        update | restore) echo "The camera's flash (APP partition)." ;;
+        wipe-sd) echo "The microSD card you choose: it is zero-filled." ;;
+    esac
+}
+
+# step_is_risky NAME: the step writes a flash or erases a card (the start box is red).
+step_is_risky() {
+    case $1 in prepare-backup-sd | prepare-flash-sd | flash | update | restore | wipe-sd) return 0 ;; esac
+    return 1
+}
+
+# step_confirm_start NAME TITLE: before a step or tool starts from the menu: what it does, what it
+# touches, the risk, then "Start this step? [Y/n]" (Enter = yes). No, Esc or q = back to the menu.
+# The typed or destructive confirmations of the step itself come on top of this. Not used in a
+# rehearsal. Returns 0 to start.
+step_confirm_start() {
+    local name=$1 title=$2 why risk what touches a color
+    what=$(step_what "$name")
+    touches=$(step_touches "$name")
+    why=$(step_why "$name")
+    risk=""
+    case $why in *" Risk: "*) risk=${why#* Risk: } ;; esac
+    if [ "${TUI_ON:-0}" = 1 ]; then
+        color=$TUI_C
+        if step_is_risky "$name"; then color=$TUI_R; fi
+        TUI_BUF=()
+        tui_box_build "$color" "$title" "What it does:  $what" "What it touches:  $touches" ${risk:+"Risk:  $risk"}
+        for a in "${TUI_BUF[@]}"; do printf '%s\n' "$a" >&2; done
+        tui_yesno "Start this step?" y
+        return
+    fi
+    ui_bold "$title"
+    ui_say "  What it does: $what"
+    ui_say "  What it touches: $touches"
+    if [ -n "$risk" ]; then ui_say "  Risk: $risk"; fi
+    printf '  Start this step? [Y/n] ' >&2
+    IFS= read -r a || return 1
+    case $a in n | N | no | No | NO | q | Q) return 1 ;; esac
+    return 0
+}
+
 step_deps() {
     case $1 in
         get-kit | prepare-backup-sd) echo "doctor" ;;
@@ -1042,6 +1095,15 @@ wizard_walk() {
     ui_good "All steps are done."
 }
 
+# menu_start NAME: from the plain menu: summary and "Start this step? [Y/n]", then the step.
+menu_start() {
+    if step_confirm_start "$1" "$(step_title "$1")"; then
+        step_run "$1" || true
+    else
+        ui_say "  Not started."
+    fi
+}
+
 # wizard_menu: numbered menu; Enter runs the next step.
 wizard_menu() {
     local s next n
@@ -1057,10 +1119,10 @@ wizard_menu() {
         case $ANSWER in
             q | Q) return 0 ;;
             a | A) wizard_walk || true ;;
-            "") step_run "$next" || true ;;
+            "") menu_start "$next" ;;
             [1-9])
                 n=0
-                for s in $WIZ_STEPS; do n=$((n + 1)); if [ "$n" = "$ANSWER" ]; then step_run "$s" || true; fi; done
+                for s in $WIZ_STEPS; do n=$((n + 1)); if [ "$n" = "$ANSWER" ]; then menu_start "$s"; fi; done
                 ;;
             *) ui_say "Please type a step number, a, or q." ;;
         esac
