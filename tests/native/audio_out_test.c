@@ -629,6 +629,23 @@ static void test_ctl(void)
     CHECK(ao_ctl_set(ao, "audio.out_source", "4", out, sizeof(out)) == 0 && ao->source == 4, "set source 4");
     CHECK(ao_ctl_set(ao, "audio.out_source", "5", out, sizeof(out)) == 1 && ao->source == 4, "source 5 refused");
     CHECK(ao_ctl_set(ao, "audio.out_source", "7", out, sizeof(out)) == 1, "source 7 refused");
+    {
+        char pbuf[256] = "";
+        FILE *pf = fopen(ao->conf_path, "r");
+        size_t pn = pf ? fread(pbuf, 1, sizeof(pbuf) - 1, pf) : 0;
+        if (pf) fclose(pf);
+        pbuf[pn] = 0;
+        CHECK(strstr(pbuf, "volume=30\n") && strstr(pbuf, "gain=5\n") && strstr(pbuf, "source=4\n"),
+              "volume, gain and source are persisted when they change");
+        unlink(ao->conf_path);
+        ao_ctl_set(ao, "audio.out_volume", "30", out, sizeof(out));
+        ao_ctl_set(ao, "audio.out_gain", "5", out, sizeof(out));
+        ao_ctl_set(ao, "audio.out_source", "4", out, sizeof(out));
+        CHECK(!file_exists(ao->conf_path), "same-value SET does not write the flash");
+        ao_ctl_set(ao, "audio.out_volume", "31", out, sizeof(out));
+        CHECK(file_exists(ao->conf_path), "a changed value is written");
+        ao_ctl_set(ao, "audio.out_volume", "30", out, sizeof(out));
+    }
     CHECK(ao_ctl_set(ao, "audio.out_amp", "on", out, sizeof(out)) == 0 && ao->amp_mode == AO_AMP_ON, "amp on");
     CHECK(ao_ctl_set(ao, "audio.out_amp", "off", out, sizeof(out)) == 0 && ao->amp_mode == AO_AMP_OFF, "amp off");
     CHECK(ao_ctl_set(ao, "audio.out_amp", "auto", out, sizeof(out)) == 0 && ao->amp_mode == AO_AMP_AUTO, "amp auto");
@@ -698,6 +715,11 @@ static void test_thread(void)
     ao_thread_start(ao);
     for (int i = 0; i < 2000 && ao->state != AO_ERROR; i++) usleep(1000);
     CHECK(ao->state == AO_ERROR, "write failures end in state error");
+    {
+        char emsg[160];
+        CHECK(ao_ctl_set(ao, "audio.out_test", "1", emsg, sizeof(emsg)) == 1 && strstr(emsg, "not running"),
+              "test refused in state error (thread is gone)");
+    }
     ao_thread_stop(ao);
     ao_close(ao);
     free(ao);

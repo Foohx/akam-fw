@@ -595,6 +595,15 @@ void ao_ctl_list(audio_out_t *ao, void (*emit)(void *arg, const char *line), voi
     }
 }
 
+/* Persist the four saved keys after a change (8091 commands only, never from
+ * the playback thread; a same-value SET does not touch the flash). Fills note
+ * with " (not saved: ...)" on failure, else "". */
+static void persist_note(audio_out_t *ao, char *note, size_t cap)
+{
+    note[0] = '\0';
+    if (ao_save_config(ao) < 0) snprintf(note, cap, " (not saved: %s)", strerror(errno));
+}
+
 int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, size_t cap)
 {
     if (!is_audio_key(key)) return -1;
@@ -604,25 +613,26 @@ int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, siz
     if (!strcmp(k, "enable")) {
         if (parse_int(val, 0, 1, &x) < 0) { snprintf(msg, cap, "ERR audio.out_enable range [0,1]"); return 1; }
         ao->enabled = (int)x;
-        int rc = ao_save_config(ao);
         char note[64] = "";
-        if (rc < 0)
-            snprintf(note, sizeof(note), " (not saved: %s)", strerror(errno));
-        else if (x == 1 && !ao_device_open(ao))
+        persist_note(ao, note, sizeof(note));
+        if (!note[0] && x == 1 && !ao_device_open(ao))
             snprintf(note, sizeof(note), " (restart to apply)");
         snprintf(msg, cap, "OK audio.out_enable=%ld%s", x, note);
     } else if (!strcmp(k, "volume")) {
         if (parse_int(val, 0, 100, &x) < 0) { snprintf(msg, cap, "ERR audio.out_volume range [0,100]"); return 1; }
-        ao->volume = (int)x;
-        snprintf(msg, cap, "OK audio.out_volume=%ld", x);
+        char note[64] = "";
+        if (ao->volume != (int)x) { ao->volume = (int)x; persist_note(ao, note, sizeof(note)); }
+        snprintf(msg, cap, "OK audio.out_volume=%ld%s", x, note);
     } else if (!strcmp(k, "gain")) {
         if (parse_int(val, 0, 5, &x) < 0) { snprintf(msg, cap, "ERR audio.out_gain range [0,5]"); return 1; }
-        ao->gain = (int)x;
-        snprintf(msg, cap, "OK audio.out_gain=%ld", x);
+        char note[64] = "";
+        if (ao->gain != (int)x) { ao->gain = (int)x; persist_note(ao, note, sizeof(note)); }
+        snprintf(msg, cap, "OK audio.out_gain=%ld%s", x, note);
     } else if (!strcmp(k, "source")) {
         if (parse_int(val, 4, 6, &x) < 0 || x == 5) { snprintf(msg, cap, "ERR audio.out_source want 4 or 6"); return 1; }
-        ao->source = (int)x;
-        snprintf(msg, cap, "OK audio.out_source=%ld", x);
+        char note[64] = "";
+        if (ao->source != (int)x) { ao->source = (int)x; persist_note(ao, note, sizeof(note)); }
+        snprintf(msg, cap, "OK audio.out_source=%ld%s", x, note);
     } else if (!strcmp(k, "amp")) {
         int m;
         if      (!strcmp(val, "auto")) m = AO_AMP_AUTO;
@@ -634,7 +644,7 @@ int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, siz
     } else if (!strcmp(k, "test")) {
         if (parse_int(val, 0, 1, &x) < 0) { snprintf(msg, cap, "ERR audio.out_test want 1 (play the beep)"); return 1; }
         if (x == 1) {
-            if (!ao_device_open(ao) || !ao->enabled) {
+            if (!ao_device_open(ao) || !ao->enabled || ao->state == AO_ERROR) {
                 snprintf(msg, cap, "ERR audio out is not running (audio.out_state=%s)", ao_state_name(ao->state));
                 return 1;
             }
