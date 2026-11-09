@@ -616,3 +616,33 @@ struct akpcm_pars {
  * missing from our own capture sequence prior to §23 — a strong candidate
  * for (part of) the actual fix for capture's read() EPERM. */
 #define AKPCM_IOC_RESET_BUF     0x000050e3  /* _IO('P',0xe3) */
+
+/* -------------------------------------------------------------------------
+ * Playback-side names (spec 05, section 1.2). Cross-reading ak_pcm.ko's
+ * strings and the aoplay reference player shows that several names above
+ * describe the CAPTURE fd only and are misleading on /dev/pcmC0D0p. The
+ * numeric values are unchanged and the old names stay (capture still uses
+ * them, replayed byte for byte); these aliases give the same numbers the
+ * names the driver uses on the playback fd:
+ *
+ *   0xE0 (GET_PARS)    = IOC_PREPARE: copy_FROM_user of struct akpcm_pars,
+ *                        allocates the hardware buffer; must succeed first.
+ *   0xE1 (SET_MODE)    = IOC_RESUME: starts the DMA. Issuing it without a
+ *                        successful PREPARE is the likely cause of the old
+ *                        "SET_MODE crashes the kernel" observation.
+ *   0x10 (SET_STATE)   = IOC_SET_SOURCES: mixer routing. 4 = DAC (muted on
+ *                        this board), 6 = DAC + LINEIN (audible).
+ *   0x30 (SET_PERIODS) = IOC_SET_GAIN: hardware headphone/speaker gain 0..5.
+ *   0x81 (GET_CAPS)    = IOC_SET_SPEAKER: only the _IOW form exists. It
+ *                        enables the amplifier (GPIO 69, driven by the
+ *                        driver itself, never by sysfs).
+ * Hypotheses from strings and a reference project, to be confirmed on
+ * hardware (specs/05-spec-audio-out.md, step A).
+ * ------------------------------------------------------------------------- */
+#define AKPCM_IOC_PREPARE       AKPCM_IOC_GET_PARS     /* 0x401c50e0, 28-byte struct akpcm_pars */
+#define AKPCM_IOC_RESUME        AKPCM_IOC_SET_MODE     /* 0x000050e1, no argument */
+#define AKPCM_IOC_SET_SOURCES   AKPCM_IOC_SET_STATE    /* 0x80045010, int32 */
+#define AKPCM_IOC_GET_SOURCES   AKPCM_IOC_GET_STATE    /* 0x40045010 */
+#define AKPCM_IOC_SET_GAIN      AKPCM_IOC_SET_PERIODS  /* 0x80045030, int32 */
+#define AKPCM_IOC_GET_GAIN      AKPCM_IOC_GET_PERIODS  /* 0x40045030 */
+#define AKPCM_IOC_SET_SPEAKER   0x80045081             /* _IOW('P',0x81,4), int32 0/1 */
