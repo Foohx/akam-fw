@@ -310,6 +310,7 @@ tui_rep() {
 # tui_fit TEXT WIDTH: set REPLY to TEXT cut with an ellipsis and padded to exactly WIDTH.
 tui_fit() {
     local t=$1 w=$2 pad
+    if [ "$w" -lt 0 ]; then w=0; fi
     if [ "${#t}" -gt "$w" ]; then
         if [ "$w" -gt 1 ]; then t="${t:0:$((w - 1))}$TUI_I_ELL"; else t=${t:0:$w}; fi
     fi
@@ -319,9 +320,13 @@ tui_fit() {
 
 # tui_clip TEXT WIDTH: like tui_fit without the padding.
 tui_clip() {
+    local w=$2
     REPLY=$1
-    if [ "${#REPLY}" -gt "$2" ]; then
-        if [ "$2" -gt 1 ]; then REPLY="${REPLY:0:$(($2 - 1))}$TUI_I_ELL"; else REPLY=${REPLY:0:$2}; fi
+    # The caller may compute a negative width on a narrow line (e.g. a long
+    # spinner label): clip to nothing instead of a bash substring error.
+    if [ "$w" -lt 0 ]; then w=0; fi
+    if [ "${#REPLY}" -gt "$w" ]; then
+        if [ "$w" -gt 1 ]; then REPLY="${REPLY:0:$((w - 1))}$TUI_I_ELL"; else REPLY=${REPLY:0:$w}; fi
     fi
 }
 
