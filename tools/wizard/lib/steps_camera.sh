@@ -670,6 +670,7 @@ flash_telnet() {
         trap '' INT HUP TERM
         camsh_finish 900 || rc=$?
         trap - INT HUP TERM
+        tui_rearm_traps
         camsh_stream_set 0
         if [ "$rc" -ne 0 ] || [ "$CAMSH_RC" != 0 ] || ! printf '%s\n' "$CAMSH_OUT" | grep -q 'completed successfully'; then
             ui_fail "the flash did not report success." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
@@ -763,7 +764,8 @@ cmd_flash() {
         cam_ssh_setup
         if cam_ssh_ok; then
             ui_say "  Akam already runs and SSH works: the card is not needed."
-            if ui_confirm "  Reflash over SSH (recommended)? [no = use the maintenance telnet and the card]"; then route=ssh; fi
+            if ui_pick_route "  Reflash over SSH (recommended)? [no = use the maintenance telnet and the card]" \
+                "Reflash over SSH (recommended, no card needed)" "Use the maintenance telnet and the card" "How do you want to flash?"; then route=ssh; fi
         elif [ "$(state_get camera_telnet)" != 1 ]; then
             ui_fail "no way in: SSH with $CAM_KEY does not work and the maintenance telnet is closed." \
                 "check the key (--identity FILE), or put the first-boot card in the camera and run ./akam step find-camera."
@@ -954,7 +956,7 @@ rtsp_auth_disable() {
     fi
     rtsp_connect || return 1
     ui_require_tty "switching the stream password off" || return 1
-    host_confirm "  Switch the video stream password off (anyone on your network could watch the camera)?" || { ui_say "  Left as it was."; return 0; }
+    ui_ask_yn "  Switch the video stream password off (anyone on your network could watch the camera)?" || { ui_say "  Left as it was."; return 0; }
     rtsp_remote disable || { ui_fail "the camera could not remove the credentials." "does this image have $RTSP_AUTH_CMD? (./akam update)"; return 1; }
     ui_good "  The video stream is open again (no password)."
 }
@@ -980,7 +982,7 @@ rtsp_auth_offer() {
         ui_say "  Already on: $RTSP_TEXT. Change it with ./akam rtsp-auth set."
         return 0
     fi
-    if host_confirm "  Protect the video stream with a username/password?"; then
+    if ui_ask_yn "  Protect the video stream with a username/password?"; then
         rtsp_auth_set || ui_warn "the stream password was not set (the verification above still stands). Run ./akam rtsp-auth set later."
     else
         ui_say "  Stream left open. Run ./akam rtsp-auth set whenever you want a password."
@@ -1072,7 +1074,8 @@ cmd_restore() {
     cam_ssh_setup
     if [ "$(state_get camera_kind)" = akam ] && cam_ssh_ok; then
         ui_say "  Akam runs and SSH works."
-        if ui_confirm "  Restore over SSH (no card needed)? [no = use the maintenance telnet and the card]"; then route=ssh; fi
+        if ui_pick_route "  Restore over SSH (no card needed)? [no = use the maintenance telnet and the card]" \
+            "Restore over SSH (no card needed)" "Use the maintenance telnet and the card" "How do you want to restore?"; then route=ssh; fi
     fi
     ui_say "  Route: $route"
     if [ "$route" = ssh ]; then flash_ssh "$bk/mtdblock7.bin" "$md5" Restoring || return 1; else flash_telnet "$bk/mtdblock7.bin" "$md5" Restoring || return 1; fi
