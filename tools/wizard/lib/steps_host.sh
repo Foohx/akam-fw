@@ -323,7 +323,7 @@ step_need() {
 status_table() {
     local s st n=0 label reason mode=real
     if [ "$UI_DRY" = 1 ]; then mode=rehearsal; fi
-    ui_bold "Akam setup progress ($mode; state: $STATE_FILE)"
+    ui_bold "Akam setup progress ($mode; camera: $CAM_NAME; state: $STATE_FILE)"
     for s in $WIZ_STEPS; do
         n=$((n + 1))
         st=$(step_status "$s")
@@ -426,7 +426,7 @@ cmd_get_kit() {
                 ;;
         esac
         base="https://github.com/$KIT_REPO/releases/download/v$ver"
-        dl="$STATE_DIR/downloads/$ver"
+        dl="$BASE_DIR/downloads/$ver"
         kit="$dl/akam-kit-$ver.tar.xz"
         ui_say "  Downloading kit $ver from $base (HTTPS only; nothing from it is run before it is verified)."
         run_cmd mkdir -p "$dl" || return 1
@@ -462,8 +462,8 @@ cmd_get_kit() {
         { ui_fail "kit not found: $kit" "check the path given to --kit."; return 1; }
     fi
 
-    ext="$STATE_DIR/kit"
-    if [ "$UI_DRY" = 1 ]; then ext="$STATE_DIR/kit.dry"; fi
+    ext="$BASE_DIR/kit"
+    if [ "$UI_DRY" = 1 ]; then ext="$BASE_DIR/kit.dry"; fi
     vargs=(--extract-to "$ext")
     if [ -n "$OPT_ALLOW_UNSIGNED" ]; then vargs+=(--allow-unsigned); unsigned=1; fi
     if [ -n "$OPT_EXPECT_SHA256" ]; then vargs+=(--expect-sha256 "$OPT_EXPECT_SHA256"); fi
@@ -816,7 +816,7 @@ cmd_image() {
     bdir=${OPT_BACKUP_DIR:-$(state_get backup_dir)}
     kit=$(state_get kit_path)
     [ -z "$bdir" ] || [ ! -d "$bdir" ] || bdir="$(cd "$bdir" && pwd)"
-    out=${OPT_OUT:-$HOME/akam-image-$(date +%Y%m%d-%H%M%S)}
+    out=${OPT_OUT:-$HOME/akam-image-$(cams_slug)$(date +%Y%m%d-%H%M%S)}
     pass=()
     if [ -n "$OPT_COMP" ]; then pass+=(--comp "$OPT_COMP"); fi
     if [ -n "$OPT_ALLOW_UNSIGNED" ] || [ "$(state_get kit_unsigned_ok)" = 1 ]; then pass+=(--allow-unsigned); fi
@@ -982,7 +982,7 @@ cmd_prepare_flash_sd() {
     if [ "$UI_DRY" != 1 ]; then state_set ssh_pubkey "$pub"; fi
     sd_need_cli "prepare the card by hand: see docs/akam_v1_ssh_and_lockdown.md and tools/sd/prepare_first_boot_sd.sh" || return 1
     ui_require_tty "preparing the flash card" || return 1
-    if [ "$(state_get mode)" = source ]; then ft=$ROOT/src/ak_rtsp/flash_tool; else ft=$STATE_DIR/kit/bin/flash_tool; fi
+    if [ "$(state_get mode)" = source ]; then ft=$ROOT/src/ak_rtsp/flash_tool; else ft=$BASE_DIR/kit/bin/flash_tool; fi
     if [ "$UI_DRY" != 1 ] && [ ! -s "$ft" ]; then
         ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."
         return 1

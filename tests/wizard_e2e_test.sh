@@ -158,6 +158,8 @@ case $cmd in
     true) exit 0 ;;
     "cat > /tmp/akam_hwcheck.sh") cat >"$STUB_DIR/hwcheck.copy"; exit 0 ;;
     "sh /tmp/akam_hwcheck.sh") echo "PASS port 22 listening"; echo "PASS port 554 listening"; exit 0 ;;
+    "cat > /tmp/akam_preflight.sh") cat >"$STUB_DIR/preflight.copy"; exit 0 ;;
+    "sh /tmp/akam_preflight.sh --ensure-wifi") echo "WIFI=PRESENT"; exit 0 ;;
 esac
 exit 0
 EOF
@@ -265,7 +267,7 @@ fc_stop
 fc_start --flash-card "$IMG" "$T/flash_tool" || { echo "cannot start fake camera B"; exit 1; }
 CAM_B=$FC_ROOT
 mkdir -p "$T/scripts"
-cp "$CAM_B/tmp/sd/install_with_flash_tool.sh" "$CAM_B/tmp/sd/flash_guard.sh" "$T/scripts/"
+cp "$CAM_B/tmp/sd/install_with_flash_tool.sh" "$CAM_B/tmp/sd/flash_guard.sh" "$CAM_B/tmp/sd/preflight_check.sh" "$T/scripts/"
 export AKAM_FLASH_SCRIPTS_DIR=$T/scripts AKAM_FLASH_TOOL=$T/flash_tool
 STOCK_B_MD5=$(host_md5 "$CAM_B/dev/mtd7")
 CLOSED_TEL=$(fc_free_port)

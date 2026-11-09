@@ -72,7 +72,7 @@ run() {
     python3 -I "$DRIVE" --out "$T/$name.raw" "$@" >"$T/$name.res" 2>&1
     sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$T/$name.raw" | tr -d '\r' >"$T/$name.txt"
 }
-new_state() { rm -rf "$T/st"; mkdir -p "$T/st"; : >"$STUB_LOG"; }
+new_state() { rm -rf "$T/st"; mkdir -p "$T/st"; printf "default\n" >"$T/st/current_camera"; : >"$STUB_LOG"; }
 # last_frame NAME: the last full menu frame (text only).
 last_frame() {
     python3 -I - "$T/$1.raw" <<'EOF'
@@ -224,6 +224,16 @@ check "AKAM_PLAIN=1 on a terminal: the line-based menu" bash -c '! grep -qa "104
 new_state
 run dry 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --dry-run --state-dir "$T/st"
 check "--dry-run on a terminal: menu with the rehearsal badge" has "$T/dry.txt" "REHEARSAL"
+
+# ---------------------------------------------------------------- cameras: name asked on the first run, shown in the header, c switches
+rm -rf "$T/st"
+mkdir -p "$T/st"
+run camname 'expect:Camera name' 'send:salon\r' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: the first terminal run asks for the camera's name" has "$T/camname.txt" "Camera name"
+check "cameras: the menu header shows the camera" has "$T/camname.txt" "salon"
+check "cameras: its state lives in cameras/salon" bash -c '[ -f "$1/cameras/salon/state" ] && [ "$(cat "$1/current_camera")" = salon ]' _ "$T/st"
+run camsw 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:\r' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: the c key offers the known cameras and a new one" bash -c 'grep -q "salon" "$1" && grep -q "A new camera" "$1"' _ "$T/camsw.txt"
 
 echo
 echo "wizard_tui_pty_test: $PASS passed, $FAIL failed"

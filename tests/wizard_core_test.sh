@@ -520,6 +520,55 @@ check "state_set refuses a registered secret and a bad key" bash -c '
     state_init "$2/sl" 0; log_add_secret "hunter2hunter2"
     ! state_set k "x hunter2hunter2 y" 2>/dev/null && ! state_set "Bad-Key" v 2>/dev/null && state_set ok_key v' _ "$ROOT" "$T"
 
+# ---------------------------------------------------------------- several cameras (names, one state each)
+HC=$T/home_cam
+mkdir -p "$HC"
+new_state
+printf 'step_doctor_done=2026-01-01T00:00:00Z\ncamera_ip=192.0.2.10\n' >"$T/st/state"   # the state of earlier versions = camera "default"
+HOME=$HC a --camera salon doctor >"$T/c1.out" 2>&1
+check "camera: --camera NAME keeps its own state under cameras/NAME" bash -c '[ -f "$1/cameras/salon/state" ] && grep -q "^step_doctor_done=" "$1/cameras/salon/state" && [ -f "$1/cameras/salon/akam.log" ]' _ "$T/st"
+check "camera: the old state is untouched (it is the camera called default)" bash -c 'grep -q "^camera_ip=192.0.2.10$" "$1/state" && [ "$(grep -c . "$1/state")" -ge 2 ]' _ "$T/st"
+HOME=$HC a --camera salon status >"$T/c2.out" 2>&1
+check "camera: status shows the camera name" has "$T/c2.out" "camera: salon"
+HOME=$HC a status >"$T/c3.out" 2>&1
+check "camera: the camera used last is remembered" bash -c 'grep -q "camera: salon" "$1" && [ "$(cat "$2/current_camera")" = salon ]' _ "$T/c3.out" "$T/st"
+HOME=$HC a --camera default status >"$T/c4.out" 2>&1
+check "camera: --camera default selects the legacy state" has "$T/c4.out" "camera: default"
+HOME=$HC a cameras >"$T/c5.out" 2>&1
+check "camera: cameras lists default and salon with their progress and marks the current one" bash -c 'grep -q "^  \* default .*1/9 steps done  192.0.2.10" "$1" && grep -q "^    salon .*1/9 steps done" "$1"' _ "$T/c5.out"
+for bad in Salon 'my room' -x '' abcdefghijklmnopqrstu 'a_b' 'trail-'; do
+    HOME=$HC "$AKAM" --state-dir "$T/st" --camera "$bad" status </dev/null >"$T/c6.out" 2>&1
+    check "camera: the name '$bad' is refused (exit 2)" test $? -eq 2
+done
+HOME=$HC "$AKAM" --state-dir "$T/st" --camera abcdefghijklmnopqrst status </dev/null >"$T/c6.out" 2>&1
+check "camera: a name of exactly 20 characters is accepted" test $? -eq 0
+HOME=$HC a --camera salon get-kit --kit "$KIT" >"$T/c7.out" 2>&1
+check "camera: the kit is shared (BASE/kit), not copied per camera" bash -c '[ -d "$1/kit" ] && [ ! -d "$1/cameras/salon/kit" ]' _ "$T/st"
+HOME=$HC at "y" --camera salon backup --backup-dir "$BK" >/dev/null 2>&1
+HOME=$HC AKAM_HW_LIST=$HWV a --camera salon image >"$T/c8.out" 2>&1
+check "camera: the image folder carries the camera name" bash -c 'grep -q "^assemble .*--out '"$HC"'/akam-image-salon-[0-9]*-[0-9]*" "$1"' _ "$STUB_LOG"
+check "camera: the other camera's progress is not changed" bash -c '! grep -q "^step_image_done" "$1/state"' _ "$T/st"
+HOME=$HC "$AKAM" --state-dir "$T/st" --camera salon --dry-run status </dev/null >/dev/null 2>&1
+printf 'default\n' >"$T/st/current_camera"
+HOME=$HC "$AKAM" --state-dir "$T/st" --camera salon --dry-run status </dev/null >/dev/null 2>&1
+check "camera: a rehearsal never changes the remembered camera" test "$(cat "$T/st/current_camera")" = default
+# first run of the menu: asks for the name before creating any state
+rm -rf "$T/st2"
+mkdir -p "$T/st2"
+printf 'bad name\nsalon\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st2" >"$T/c9.out" 2>&1
+check "camera: the first menu run asks for a name, refuses a bad one and asks again" bash -c 'grep -q "Camera name \[default\]" "$1" && grep -q "is not valid" "$1"' _ "$T/c9.out"
+check "camera: ...then works in cameras/<name> and remembers it" bash -c '[ -f "$1/cameras/salon/state" ] && [ "$(cat "$1/current_camera")" = salon ] && [ ! -e "$1/state" ]' _ "$T/st2"
+printf 'q\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st2" >"$T/c10.out" 2>&1
+check "camera: the second menu run does not ask again" bash -c '! grep -q "Camera name" "$1" && grep -q "camera: salon" "$1"' _ "$T/c10.out"
+rm -rf "$T/st3"
+mkdir -p "$T/st3"
+printf '\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st3" >"$T/c11.out" 2>&1
+check "camera: Enter at the name question means default" bash -c 'grep -q "camera: default" "$1" && [ -f "$2/state" ]' _ "$T/c11.out" "$T/st3"
+rm -rf "$T/st4"
+mkdir -p "$T/st4"
+HOME=$HC "$AKAM" --plain --state-dir "$T/st4" </dev/null >"$T/c12.out" 2>&1
+check "camera: nothing is asked without a terminal" bash -c '! grep -q "Camera name" "$1"' _ "$T/c12.out"
+
 echo
 echo "wizard_core_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

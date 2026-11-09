@@ -101,7 +101,7 @@ cam_show_fingerprint() {
 # cam_flash_tool: path of the ARM flash_tool binary (kit or source build).
 cam_flash_tool() {
     if [ -n "${AKAM_FLASH_TOOL:-}" ]; then printf '%s\n' "$AKAM_FLASH_TOOL"; return 0; fi
-    if [ "$(state_get mode)" = source ]; then printf '%s\n' "$ROOT/src/ak_rtsp/flash_tool"; else printf '%s\n' "$STATE_DIR/kit/bin/flash_tool"; fi
+    if [ "$(state_get mode)" = source ]; then printf '%s\n' "$ROOT/src/ak_rtsp/flash_tool"; else printf '%s\n' "$BASE_DIR/kit/bin/flash_tool"; fi
 }
 
 # cam_session_open: open the telnet session (or enter manual mode). Prints the hint on failure.
@@ -364,10 +364,10 @@ bk_fingerprint() {
     fi
 }
 
-# bk_pc_dir: a new folder ~/akam-backup-<date>[-N].
+# bk_pc_dir: a new folder ~/akam-backup-<name>-<date>[-N] (no name part for the camera "default").
 bk_pc_dir() {
     local base d n=1
-    base=${AKAM_BACKUP_ROOT:-$HOME}/akam-backup-$(date +%Y%m%d)
+    base=${AKAM_BACKUP_ROOT:-$HOME}/akam-backup-$(cams_slug)$(date +%Y%m%d)
     d=$base
     while [ -e "$d" ]; do n=$((n + 1)); d="$base-$n"; done
     printf '%s\n' "$d"
@@ -463,7 +463,7 @@ cmd_backup() {
         ui_say "  WOULD open the telnet shell on the camera and: check /proc/mtd is the 8-partition layout (refuse otherwise),"
         ui_say "  read the kernel version, find the card and its free space, dd the 8 partitions twice,"
         ui_say "  check the 16 sizes, hash both runs on the camera and compare them (READS_IDENTICAL),"
-        ui_say "  copy dump1 to ~/akam-backup-<date>/ over nc with size+hash checks (3 tries each),"
+        ui_say "  copy dump1 to ~/akam-backup-<name>-<date>/ over nc with size+hash checks (3 tries each),"
         ui_say "  write SHA256SUMS, compare the stock APP hash with tools/release/supported_hardware.txt"
         ui_say "  (typed '$CAM_UNTESTED_PHRASE' unless validated) and ask for a second copy on another medium."
         state_set backup_dir "<backup-dir>"
