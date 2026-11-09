@@ -238,7 +238,10 @@ console: lines starting with `[audio_out]` show the device calls and every error
   stays off to avoid a reboot loop. Over SSH: `rm /etc/config/akam/audio_out.trying`, then restart `ak_rtsp`
   (or reboot) to try again. Send the log lines to the project if it happens twice.
 - **`audio.out_state=error`:** a device call failed; the `[audio_out]` lines say which. Video and microphone
-  carry on, and the old silence path is used.
+  carry on. If it failed at start, the old silence path is used; if it failed later, the speaker stays
+  silent until `ak_rtsp` restarts.
+- **Saved settings:** `audio.out_volume`, `audio.out_gain` and `audio.out_source` are saved like `enable`
+  (only when the value changes), so the last tuning survives a restart. `audio.out_amp` is not saved.
 - **Turn it off:** `printf 'SET audio.out_enable 0\n' | nc -w 2 <cam> 8091` silences it at once and the choice is
   saved in `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `SET audio.out_enable 1`
   turns it back on; the answer says `restart to apply` when `ak_rtsp` started with it off.
