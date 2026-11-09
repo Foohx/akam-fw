@@ -365,6 +365,7 @@ case $cmd in
         # the real script, against a private "camera root" (never the real /etc)
         AKAM_ROOT="$STUB_DIR/camroot" sh "$STUB_DIR/preflight.copy" --ensure-wifi
         exit $? ;;
+    *REG_MTD7_MD5*) echo "REG_HOSTNAME=${STUB_REG_HOST:-akam-stub}"; echo "REG_MTD7_MD5=${STUB_REG_MD5-0123456789abcdef0123456789abcdef}"; exit 0 ;;
     "/usr/sbin/akam_rtsp_auth.sh status") echo "${STUB_RTSP_STATUS:-disabled}"; exit 0 ;;
     "/usr/sbin/akam_rtsp_auth.sh set-hash") cat >"$STUB_DIR/rtsp_auth.stdin"; exit 0 ;;
     "sh /tmp/akam_hwcheck.sh")
@@ -581,6 +582,13 @@ check "register: nothing was sent to the fake camera's shell" bash -c '[ "$(wc -
 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --identity "$T/key" status </dev/null >"$T/reg2.out" 2>&1
 check "register: status shows flash and verify done for that camera" bash -c 'grep -q "\[done   \] flash" "$1" && grep -q "\[done   \] verify" "$1" && grep -q "camera: akam-01" "$1"' _ "$T/reg2.out"
 check "register: the hostname tool then works with the recorded address" bash -c 'rm -f "$1/hostname.log"; AKAM_PORT_TELNET="$2" AKAM_FORCE_TTY=1 bash "$3" --no-color --state-dir "$4" --camera akam-01 --identity "$5" hostname </dev/null >/dev/null 2>&1 && grep -qx "/usr/sbin/akam_hostname.sh set akam-01" "$1/hostname.log"' _ "$STUB_DIR" "$CLOSED_TEL" "$AKAM" "$S" "$T/key"
+check "register: the camera's mtd7 md5 and name are read over SSH and recorded" bash -c 'grep -q "^flash_md5=0123456789abcdef0123456789abcdef$" "$1" && grep -q "^camera_hostname=akam-stub$" "$1"' _ "$RS"
+S=$(new_state reg_nossh)
+STUB_SSH_RC=255 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$BKDIR" --identity "$T/key" register </dev/null >"$T/reg9.out" 2>&1
+check "register: SSH that does not work refuses and marks nothing done" bash -c '[ "$1" -ne 0 ] && grep -q "cannot be checked" "$2" && ! grep -q "step_" "$3" 2>/dev/null' _ $? "$T/reg9.out" "$S/cameras/akam-01/state"
+S=$(new_state reg_nomd5)
+STUB_REG_MD5= AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --camera akam-01 --ip 127.0.0.1 --backup-dir "$BKDIR" --identity "$T/key" register </dev/null >"$T/reg10.out" 2>&1
+check "register: an unreadable mtd7 refuses and marks nothing done" bash -c '[ "$1" -ne 0 ] && grep -q "could not read /dev/mtd7" "$2" && ! grep -q "step_" "$3" 2>/dev/null' _ $? "$T/reg10.out" "$S/cameras/akam-01/state"
 S=$(new_state reg_noip)
 a "$S" --camera akam-01 register </dev/null >"$T/reg3.out" 2>&1
 check "register: without --ip it explains what to type" bash -c '[ "$1" -ne 0 ] && grep -q "needs the camera.s address" "$2"' _ $? "$T/reg3.out"

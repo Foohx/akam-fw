@@ -151,6 +151,11 @@ cams_move_files() {
     if [ -e "$nd/state" ]; then return 1; fi
     mkdir -p "$nd"
     chmod 700 "$nd" 2>/dev/null || true
+    if [ "$1" = default ] && [ -f "$od/state" ] && [ ! -e "$od/state.before-rename.bak" ]; then
+        # the progress of earlier versions is the user's: keep an untouched copy before anything moves
+        (umask 077 && cp -p "$od/state" "$od/state.before-rename.bak") ||
+            { ui_warn "could not keep a backup copy of $od/state: not moving anything."; return 1; }
+    fi
     if [ "$1" = default ]; then
         for f in state state.dry akam.log reflash.log reflash-precheck.log rtsp_auth.err; do
             if [ -e "$od/$f" ]; then mv "$od/$f" "$nd/$f"; fi
@@ -202,8 +207,9 @@ cmd_rename_camera() {
 # cmd_register: ./akam --camera NAME --ip IP register [--backup-dir DIR]. A camera that already runs Akam
 # (flashed before, or by hand): no backup, image or flash is redone. It probes the camera, records its
 # address, and marks the install steps done so that update, rtsp-auth, hostname and restore are usable.
+# Nothing is recorded unless SSH works and /dev/mtd7 reads back over SSH (its md5 is kept as flash_md5).
 cmd_register() {
-    local sp rp cp tp p
+    local sp rp cp tp p reg_out reg_md5 reg_host
     step_banner_free "Register a camera that already runs Akam"
     ui_say "  Why: use update, the video password and the network name on a camera that is already installed. Risk: none (only this PC's notes change)."
     if [ -z "$OPT_IP" ]; then
@@ -214,7 +220,7 @@ cmd_register() {
     if [ "$UI_DRY" != 1 ]; then cam_valid_host "$CAM_IP" || { ui_fail "'$CAM_IP' is not a valid address." "use the camera's IPv4 address."; return 1; }; fi
     sp=$(cam_port ssh) rp=$(cam_port rtsp) cp=$(cam_port ctl) tp=$(cam_port telnet)
     if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD probe $CAM_IP (ports $sp, $rp, $cp open and $tp closed = Akam), check the backup folder given with --backup-dir,"
+        ui_say "  WOULD probe $CAM_IP (ports $sp, $rp, $cp open and $tp closed = Akam), check the backup folder given with --backup-dir, log in over SSH and read /dev/mtd7 back,"
         ui_say "  then record the address and mark find-camera, flash and verify (and backup, with a backup folder) as done for camera '$CAM_NAME'."
         return 0
     fi
@@ -240,12 +246,29 @@ cmd_register() {
         ui_warn "no --backup-dir: restore and the hardware check need your backup folder. Register it later with: ./akam --camera $CAM_NAME backup --backup-dir DIR"
     fi
     cam_key
-    if cam_ssh_ok; then
-        ui_good "  SSH with $CAM_KEY works."
-    else
-        ui_warn "SSH with $CAM_KEY does not work yet (the camera was flashed with another key?): pass --identity FILE for the SSH steps."
+    # Never record flash and verify as done for a camera that was not really looked at: SSH must work and
+    # the APP partition must read back (its md5 is kept as the proof of what the camera runs).
+    if ! cam_ssh_ok; then
+        ui_fail "SSH to root@$CAM_IP with the key $CAM_KEY does not work, so this camera cannot be checked: nothing was recorded." \
+            "pass the private key you put on the camera with --identity FILE (and check the address)."
+        return 1
     fi
+    ui_good "  SSH with $CAM_KEY works. Reading the camera's name and its APP partition (/dev/mtd7) ..."
+    reg_out=$("${CAM_SSH[@]}" 'echo "REG_HOSTNAME=$(hostname)"; echo "REG_MTD7_MD5=$(dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum | cut -d" " -f1)"' 2>/dev/null) || reg_out=""
+    reg_md5=$(printf '%s\n' "$reg_out" | sed -n 's/^REG_MTD7_MD5=//p' | tail -n 1 | tr -d '[:space:]')
+    reg_host=$(printf '%s\n' "$reg_out" | sed -n 's/^REG_HOSTNAME=//p' | tail -n 1 | tr -cd 'A-Za-z0-9._-')
+    case $reg_md5 in
+        *[!0-9a-f]* | '') reg_md5="" ;;
+    esac
+    if [ "${#reg_md5}" != 32 ] || [ "$reg_md5" = d41d8cd98f00b204e9800998ecf8427e ]; then
+        ui_fail "could not read /dev/mtd7 back from the camera, so it cannot be told that it runs Akam: nothing was recorded." \
+            "check that the camera has finished booting and that SSH gives a root shell, then try again."
+        return 1
+    fi
+    ui_say "  Camera network name: ${reg_host:-unknown}. APP partition (mtd7) md5: $reg_md5"
     state_set camera_ip "$CAM_IP"
+    state_set flash_md5 "$reg_md5"
+    state_set camera_hostname "${reg_host:-unknown}"
     state_set camera_kind akam
     state_set camera_telnet 0
     state_set camera_registered 1
