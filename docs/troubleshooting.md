@@ -151,6 +151,10 @@ Newer OpenSSH versions print this when the server (Dropbear on the camera) does 
 post-quantum key exchange. The connection still works and is still encrypted. It is harmless on a
 LAN; ignore it.
 
+## A player cannot connect right after another one
+
+The camera serves one client at a time. A client that stays silent before PLAY is dropped after 20 s (60 s at most to reach PLAY); wait that long, or close the other player.
+
 ## Still stuck
 
 Run `./akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the

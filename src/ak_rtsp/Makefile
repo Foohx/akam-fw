@@ -49,6 +49,7 @@ SRCS    = main.c \
           rtp_clock.c \
           net_tx.c \
           rtsp_in.c \
+          rtsp_idle.c \
           md5.c \
           rtsp_auth.c \
           ircut.c \
