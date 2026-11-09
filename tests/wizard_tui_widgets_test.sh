@@ -54,10 +54,15 @@ plain() { sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$1" | tr -d '\r'; }
 frame_rows() {
     sed -E 's/\x1b\[J/\x01/g' "$1" | tr '\n\001' '\002\n' | tail -n2 | head -n1 | tr -cd '\002' | wc -c | tr -d ' '
 }
-# max_width FILE: the widest visible line (escape sequences removed, split at carriage returns).
-max_width() {
-    sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$1" | tr '\r' '\n' | awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }'
+# line_widths FILE: the visible width of every line (escape sequences removed, split at carriage
+# returns), counted by bash itself (mawk and old awks count bytes, not characters).
+line_widths() {
+    local l
+    while IFS= read -r l; do printf '%s\n' "${#l}"; done < <(sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$1" | tr '\r' '\n')
 }
+max_width() { line_widths "$1" | sort -n | tail -n1; }
+# distinct_widths FILE: how many different line widths there are (1 = a clean rectangle).
+distinct_widths() { line_widths "$1" | sort -u | wc -l | tr -d ' '; }
 
 # ---------------------------------------------------------------- key reader
 rk() { # KEYS -> the key name of the first key
@@ -383,10 +388,11 @@ TUI_ON=1
 
 # ---------------------------------------------------------------- boxes and rules
 tui_box "$TUI_G" "Title" "first line" "a second, much longer line that has to be wrapped inside the box because it is long" >"$T/box" 2>&1
-check "box: every row has the same visible width" bash -c 'n=$(sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" "$1" | awk "{ print length(\$0) }" | sort -u | wc -l); [ "$n" = 1 ]' _ "$T/box"
+eq "box: every row has the same visible width" 1 "$(distinct_widths "$T/box")"
 check "box: long text is wrapped (more than 3 rows)" bash -c '[ "$(wc -l <"$1")" -gt 4 ]' _ "$T/box"
 tui_rule "Step 1/9 - Check this computer" >"$T/rule"
-check "rule: one line that fits" bash -c '[ "$(wc -l <"$1")" = 1 ] && [ "$(sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" "$1" | awk "{print length(\$0)}")" -le 79 ]' _ "$T/rule"
+eq "rule: one line" 1 "$(wc -l <"$T/rule" | tr -d ' ')"
+check "rule: ... that fits the terminal (width $(max_width "$T/rule"))" test "$(max_width "$T/rule")" -le 79
 
 # ---------------------------------------------------------------- helpers: fit, bar, progress
 tui_fit "abc" 6

@@ -84,6 +84,9 @@ f = f.replace("\x1b[K", "").replace("\r", "")
 print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", f))
 EOF
 }
+frame_width() { # FILE: widest line in characters
+    python3 -I -c 'import sys; print(max(len(l.rstrip("\n")) for l in open(sys.argv[1], encoding="utf-8")))' "$1"
+}
 terminal_restored() { # NAME: alternate screen left as often as entered, cursor shown last, tty sane
     python3 -I - "$T/$1.raw" "$T/$1.res" <<'EOF'
 import sys
@@ -116,7 +119,7 @@ if [ -n "$UTF" ]; then
     check "menu: UTF-8 status icons (done, todo, blocked) and the selection marker" bash -c 'grep -q "●" "$1" && grep -q "✖" "$1" && grep -q "▸" "$1"' _ "$T/menu.txt"
 fi
 last_frame menu >"$T/menu.frame"
-check "menu: fits 80x24 (frame rows: $(wc -l <"$T/menu.frame"))" bash -c '[ "$(grep -c "" "$1")" -le 24 ] && [ "$(awk "{ if (length(\$0) > m) m = length(\$0) } END { print m }" "$1")" -le 80 ]' _ "$T/menu.frame"
+check "menu: fits 80x24 (frame rows: $(grep -c "" "$T/menu.frame"), widest: $(frame_width "$T/menu.frame"))" bash -c '[ "$(grep -c "" "$1")" -le 24 ] && [ "$2" -le 80 ]' _ "$T/menu.frame" "$(frame_width "$T/menu.frame")"
 
 # ---------------------------------------------------------------- blocked, then run a step from the menu
 new_state
