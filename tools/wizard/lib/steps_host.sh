@@ -66,6 +66,7 @@ run_cmd() {
     ui_say "  Running: $SHOWN"
     "$@" || rc=$?
     log_line "RC $rc"
+    ui_note_cmd "$SHOWN" "$rc"
     return "$rc"
 }
 
@@ -78,6 +79,26 @@ run_ro() {
     ui_say "  Running (read-only): $SHOWN"
     "$@" || rc=$?
     log_line "RC $rc"
+    ui_note_cmd "$SHOWN" "$rc"
+    return "$rc"
+}
+
+# run_task LABEL CMD...: like run_cmd for a non-interactive command that may take a while (the
+# image build). On a terminal: spinner with elapsed time (and a progress bar when the output shows
+# a percentage); the output is kept in CAPTURED and shown only when the command fails. Otherwise
+# exactly run_cmd (same lines, output streamed, rehearsals only show it). The command is shown and
+# logged first.
+run_task() {
+    local label=$1 rc=0
+    shift
+    if [ "${TUI_ON:-0}" != 1 ] || [ "$UI_DRY" = 1 ]; then run_cmd "$@"; return; fi
+    _show_cmd "$@"
+    if _refuse_sudo "$@"; then return 1; fi
+    log_line "CMD $SHOWN"
+    ui_say "  Running: $SHOWN"
+    tui_task "$label" "$@" || rc=$?
+    log_line "RC $rc"
+    ui_note_cmd "$SHOWN" "$rc"
     return "$rc"
 }
 
@@ -89,6 +110,7 @@ run_ro_cap() {
     ui_say "  Running (read-only): $SHOWN"
     CAPTURED=$("$@" 2>&1) || rc=$?
     log_line "RC $rc"
+    ui_note_cmd "$SHOWN" "$rc"
     return "$rc"
 }
 
@@ -134,6 +156,25 @@ step_why() {
         prepare-flash-sd) echo "Why: carries the image and your SSH key. Risk: ERASES the microSD card." ;;
         flash) echo "Why: installs Akam. Risk: WRITES the camera flash; a power cut can brick it." ;;
         verify) echo "Why: proves SSH and video work before you remove the card. Risk: none." ;;
+    esac
+}
+
+# step_what NAME: what the step does, in plain words (the ? help of the menu).
+step_what() {
+    case $1 in
+        doctor) echo "Checks that the tools this wizard needs are installed (read-only) and tells you the exact install command for your system if one is missing." ;;
+        get-kit) echo "Downloads the prebuilt Akam kit from the GitHub release and checks its checksum and signature. Nothing is compiled on your PC." ;;
+        prepare-backup-sd) echo "Writes a small rescue payload on a microSD card. Booted in the camera, it opens a temporary maintenance shell so the original firmware can be copied." ;;
+        find-camera) echo "Asks the camera's IP address (see your router's client list, maker 'AltoBeam') and checks which ports answer." ;;
+        backup) echo "Reads the 8 flash partitions of the camera twice through the rescue shell, compares the two reads, and copies them to a folder on this PC." ;;
+        image) echo "Builds your own Akam image from the kit and YOUR backup (the stock APP partition). Files stay on this PC; the image is exactly 5 MiB." ;;
+        prepare-flash-sd) echo "Writes the image, the flash tool and your SSH public key on a microSD card that the camera will read." ;;
+        flash) echo "Writes the image to the camera's flash over SSH (when Akam already runs) or through the maintenance shell, then reads it back and compares." ;;
+        verify) echo "Checks SSH, the open ports and the hardware, powers nothing off, then repeats the check without the card." ;;
+        rtsp-auth) echo "Adds or removes a user name and password (Digest login) on the video stream. Off by default." ;;
+        update) echo "Flashes a newer image over SSH. No card and no maintenance shell needed once Akam runs." ;;
+        restore) echo "Puts the original APP partition from your backup back on the camera." ;;
+        wipe-sd) echo "Zero-fills a microSD card that holds your Wi-Fi password in clear text (or a dump). The typed phrase ERASE <device> is required." ;;
     esac
 }
 
@@ -344,6 +385,16 @@ kit_format_ok() {
 
 # download_file URL OUT: HTTPS only (also for redirects). Returns curl's exit code (22 = HTTP error).
 download_file() {
+    if [ "${TUI_ON:-0}" = 1 ] && [ "$UI_DRY" != 1 ]; then
+        # -# makes curl print a percentage, which the task line turns into a progress bar.
+        _show_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -# -o "$2" "$1"
+        log_line "CMD $SHOWN"
+        local rc=0
+        tui_task "Downloading ${1##*/}" curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -# -o "$2" "$1" || rc=$?
+        log_line "RC $rc"
+        ui_note_cmd "$SHOWN" "$rc"
+        return "$rc"
+    fi
     run_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -o "$2" "$1"
 }
 
@@ -513,6 +564,22 @@ sd_need_cli() {
     fi
 }
 
+# sd_pick_device TSV: terminal only. A list to pick the card from (the TSV of list-candidates);
+# sets SD_DEV. The typed ERASE confirmation still follows, whatever is picked here.
+sd_pick_device() {
+    local tsv=$1 dev size model tr mounts items=() devs=() gb
+    while IFS=$'\t' read -r dev size model tr mounts; do
+        [ -n "$dev" ] || continue
+        gb="?"
+        case $size in '' | *[!0-9]*) ;; *) gb="$((size / 1000000000)).$((size / 100000000 % 10)) GB" ;; esac
+        devs+=("$dev")
+        items+=("$dev  $gb  ${model:-unknown model}  (${tr:-?})${mounts:+  mounted: $mounts}")
+    done <<<"$tsv"
+    [ "${#devs[@]}" -gt 0 ] || return 1
+    tui_choose "Which disk is your microSD card?" "${items[@]}" || return 1
+    SD_DEV=${devs[TUI_INDEX]}
+}
+
 # sd_choose_device: set SD_DEV (whole disk). Lists the eligible cards, then asks.
 sd_choose_device() {
     local cand="" rc=0 line found=0
@@ -525,6 +592,9 @@ sd_choose_device() {
         if [ -z "$cand" ] && [ "$UI_DRY" != 1 ]; then
             { ui_fail "no microSD card found." "insert the card (USB reader or built-in SD slot), wait a few seconds, then run this step again."; return 1; }
         fi
+    fi
+    if [ -z "$SD_DEV" ] && [ "${TUI_ON:-0}" = 1 ] && [ "$UI_DRY" != 1 ] && [ -n "$cand" ]; then
+        sd_pick_device "$cand" || { ui_fail "no card chosen." "run this step again and pick your microSD card, or pass --device /dev/sdX."; return 1; }
     fi
     if [ -z "$SD_DEV" ]; then
         if [ "$UI_DRY" = 1 ]; then
@@ -565,7 +635,7 @@ sd_get_wifi() {
         SD_SSID=$ANSWER
     fi
     if [ -z "$SD_PASS" ]; then
-        ui_secret "  Wi-Fi password (typed without echo, never saved by the wizard):" || return 1
+        ui_secret_ask "  Wi-Fi password (never saved by the wizard):" || return 1
         SD_PASS=$SECRET
     fi
     if [ -z "$SD_SSID" ] || [ -z "$SD_PASS" ]; then
@@ -811,7 +881,7 @@ cmd_image() {
         run_cmd bash -c "d=\$(mktemp -d) && unsquashfs -d \"\$d/app\" '$bdir/mtdblock7.bin' && APP_EXTRACTED=\"\$d/app\" FW_DIR='$out' bash '$ROOT/src/ak_rtsp/build_firmware.sh' --backup-dir '$bdir'" || rc=$?
     else
         [ "$UI_DRY" = 1 ] || [ -e "$kit" ] || { ui_fail "kit not found: $kit" "run ./akam get-kit again."; return 1; }
-        run_cmd bash "$(wiz_tool assemble)" --backup-dir "$bdir" --kit "${kit:-<kit>}" --out "$out" ${pass[@]+"${pass[@]}"} || rc=$?
+        run_task "Building the image" bash "$(wiz_tool assemble)" --backup-dir "$bdir" --kit "${kit:-<kit>}" --out "$out" ${pass[@]+"${pass[@]}"} || rc=$?
     fi
     [ "$rc" -eq 0 ] || { ui_fail "building the image failed (see the message above)." "nothing was written to the camera."; return 1; }
 
