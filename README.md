@@ -12,8 +12,8 @@ small local firmware:
 - only the APP partition is rewritten, from **your own** backup. U-Boot, kernel and ROOTFS are never
   written.
 
-A guided program, `./akam`, does the whole installation on a Linux PC: back up, build the image from
-your backup, flash, check. No compiling.
+A guided program, `./akam`, does the whole installation from a Linux PC: back up, build the image
+from your backup, flash, check. No compiling.
 
 > **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
 > [risks](#important-disclaimer-and-risks). The wizard makes you take a full backup first.
@@ -56,18 +56,15 @@ explicit yes, and a different flash layout is refused.
 3. **Follow the menu**, one step after the other. Arrow keys (or `j`/`k`) and Enter to run a step, `?`
    to read what it does and what it risks, `q` to quit (your progress is kept).
 
-That is all. The first run asks for a short name for your camera (for example `salon`). `./akam doctor`
-runs the PC check alone, and `./akam help` lists every command; add `--dry-run` to rehearse without
-changing anything.
-
-What the menu looks like (the real one is in colour; without a terminal, or with `--plain`, you get
-line-by-line prompts):
+That is all. The first run asks for a short name for your camera (for example `salon`). `./akam help`
+lists every command; add `--dry-run` to rehearse without changing anything. The menu (in colour on a
+real terminal; `--plain` or no terminal gives line-by-line prompts):
 
 ```text
 ╭─ Akam · guided setup ───────────────────────────────── v1.0.0-dev  3/9 done ╮
-│ Host    Arch Linux x86_64             Camera  salon · no address yet · c ... │
-│ Kit     akam 1.0.0                    Image   not built yet                  │
-╰──────────────────────────────────────────────────────────────────────────────╯
+│ Host  Arch Linux x86_64        Camera  salon · no address yet · c to change │
+│ Kit   akam 1.0.0               Image   not built yet                        │
+╰─────────────────────────────────────────────────────────────────────────────╯
    ✔  1  Check this computer                                          done
    ●  2  Get the Akam kit                                             todo
    ✔  3  Prepare the backup microSD card                              done
@@ -77,10 +74,10 @@ line-by-line prompts):
    ✖  7  Prepare the flash microSD card                               blocked
    ✖  8  Flash the image to the camera                                blocked
    ✖  9  Verify the result                                            blocked
-  ── Maintenance ──────────────────────────────────────────────────────────────
  ↑↓ move  ⏎ run  ? help  r pick several  a run all  c camera  q quit
 ```
 
+Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`.
 Before a step starts, the wizard shows what it does and asks **Start this step? [Y/n]**. Anything
 irreversible (erasing a card, writing the camera's flash) shows a **red box** that says exactly what
 will happen and asks one yes/no whose **default is No** (Enter, Esc and `q` mean No). Nothing has to be
@@ -104,10 +101,8 @@ Good to know:
 
 - The wizard never runs `sudo` itself, shows every command before running it, never stores your Wi-Fi
   password and never reboots the camera: you unplug and replug the power yourself.
-- **SSH key:** it uses `~/.ssh/akam`; if that is missing it lists your ed25519 keys to choose from, or
-  creates a dedicated one.
-- **Wi-Fi:** a camera never paired with the vendor app has no saved Wi-Fi. `flash` and `verify` save it
-  on the camera from the card, and never ask you to remove the card before that is done
+- **SSH key:** `~/.ssh/akam`, or you pick one of your ed25519 keys, or the wizard creates one.
+- **Wi-Fi:** `flash` and `verify` save it on the camera and never ask you to remove the card before
   ([if it fails](docs/troubleshooting.md#the-camera-has-no-network-after-removing-the-card)).
 - Keep your backup (two copies, on two media) and never publish it: it holds your Wi-Fi credentials.
   The cards hold your Wi-Fi password in clear text: erase them with `./akam wipe-sd` when done.
@@ -159,43 +154,39 @@ changes are lost at the next boot ([details](docs/akam_v1_install.md#4-the-8091-
 - [Troubleshooting](docs/troubleshooting.md): no network after removing the card, card reader problems,
   VLC, 401 errors, router names, SSH warnings. Start with `./akam status` and the log in
   `~/.local/state/akam/`.
-- **Camera does not answer after a flash:** do not unplug anything while a flash is running. After that,
-  [recovery](docs/akam_v1_flash_and_restore.md#5-restore): maintenance card, UART, or your backup.
-- Prefer to do things by hand, or want to understand each step? The
-  [manual procedures](docs/README.md#manual-procedures-advanced-without-the-wizard) are listed in the docs index.
+- **Camera does not come back after a flash:** [recovery](docs/akam_v1_flash_and_restore.md#5-restore)
+  (maintenance card, UART, your backup). Never unplug anything while a flash runs.
+- Want to do it by hand, or understand each step? See the
+  [manual procedures](docs/README.md#manual-procedures-advanced-without-the-wizard).
 
 ## Status and limits
 
 **Validated on real hardware** (two cameras, 2026-11-07 to 11-09): backup through the wizard, image
-built from the kit, flash through the maintenance telnet and through SSH (no card), Wi-Fi saved on the
-camera, boot without a card, only ports 22, 554 and 8091 listening (Telnet and FTP off), SSH with an
-ed25519 key, H.264 1080p with a fast start plus L16 audio, a 25-minute VLC run without a drop, stable IR
-night mode, about 1% CPU for `ak_rtsp`, hostname announced to the router (`akam-01`).
+from the kit, flash through the maintenance telnet and through SSH (no card), Wi-Fi saved on the camera,
+boot without a card, only ports 22, 554 and 8091 listening, SSH with an ed25519 key, H.264 1080p with a
+fast start plus L16 audio, a 25-minute VLC run without a drop, stable IR night mode, about 1% CPU,
+hostname announced to the router (`akam-01`).
 
 **Still to check:** microphone audibility, Telnet staying off after a Wi-Fi reconnect, day/night over a
-long run ([test plan](docs/akam_v1_test_plan.md)).
-
-**Known limits:** the image is grainier than the stock firmware's (improvement planned); one RTSP
-client at a time; no two-way audio; port 8091 has no password. Please report what you see on your
-camera.
+long run ([test plan](docs/akam_v1_test_plan.md)). **Known limits:** the image is grainier than the stock
+firmware's (improvement planned); one RTSP client at a time; no two-way audio. Please report what you
+see on your camera.
 
 ## Security notes
 
 - **Never expose ports 554, 8091 or 22 to the Internet:** no port forwarding, UPnP or DMZ. Use a VPN into
   your LAN ([network hardening](docs/akam_v1_install.md#5-network-hardening)).
-- The stream is open unless you set a password; the password does not stop anyone on your network from
-  occupying the single client slot. Keep untrusted devices (guest Wi-Fi, IoT) off the camera's network.
+- The stream is open unless you set a password, and anyone on your network can occupy its single client
+  slot: keep untrusted devices (guest Wi-Fi, IoT) off the camera's network.
 - A card with a file named `AKAM_MAINTENANCE` is root access to the camera
-  ([details](docs/akam_v1_ssh_and_lockdown.md#7-maintenance-flag)).
-- Never publish your backup, your images or your keys.
+  ([details](docs/akam_v1_ssh_and_lockdown.md#7-maintenance-flag)). Never publish your backup, images or keys.
 
 ## Important disclaimer and risks
 
 > **FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
 >
-> - **Experimental:** upstream is the public release of a larger private reverse-engineering project,
->   organised with AI assistance; Akam's additions were written with AI assistance and validated on two
->   cameras so far.
+> - **Experimental:** upstream comes from a private reverse-engineering project organised with AI
+>   assistance; Akam's additions were written with AI assistance and validated on two cameras so far.
 > - **Risk of permanent bricking:** writing to the SPI NOR flash can brick the camera. In the worst case
 >   only an external SPI programmer (for example a CH341A) recovers it. **Restoring your backup is not
 >   guaranteed to work.**
@@ -207,9 +198,9 @@ camera.
 
 ## Learn more
 
-Everything else is listed in the [documentation index](docs/README.md): manual procedures, build from
-source, hardware and UART, upstream background, changelog. Contributors: design notes live in `specs/`
-(French, working documents) and `tools/ci/local_check.sh` runs the checks.
+The [documentation index](docs/README.md) lists everything else: manual procedures, build from source,
+hardware and UART, upstream background, [changelog](CHANGELOG.md). For contributors: design notes live in
+`specs/` (French, internal) and `tools/ci/local_check.sh` runs the checks.
 
 ## Credits and license
 
@@ -220,9 +211,9 @@ Akam is a fork of
 the reverse-engineered `ak_rtsp` and `flash_tool` code, the hardware documentation and the images are the
 upstream author's.
 
-- **Anyka community:** [VGerris's Anyka Hacking Journey](https://github.com/VGerris/Anyka_ak3918_hacking_journey)
-  and [Lawliet95's ANYKA Tuya Journey](https://github.com/Lawliet95/ANYKA-Tuya-Hacking-Journey-AK3918v200EN080-v200):
-  earlier-generation SoCs, but valuable for ioctl naming and orientation.
+- **Anyka community:** [VGerris](https://github.com/VGerris/Anyka_ak3918_hacking_journey) and
+  [Lawliet95](https://github.com/Lawliet95/ANYKA-Tuya-Hacking-Journey-AK3918v200EN080-v200): earlier SoCs, but
+  valuable for ioctl naming and orientation.
 - **SmolRTSP (OpenIPC):** the RTSP library, [OpenIPC/smolrtsp](https://github.com/OpenIPC/smolrtsp).
 - **Action-Smart-Connect-Flasher (4ddict):** the four `ak_rtsp` fixes ported into this tree
   ([MIT](THIRD_PARTY_NOTICES.md)) come from [4ddict/Action-Smart-Connect-Flasher](https://github.com/4ddict/Action-Smart-Connect-Flasher).
