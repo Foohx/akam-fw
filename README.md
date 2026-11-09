@@ -90,6 +90,7 @@ No compiling is needed: the default path uses a **prebuilt kit**.
 | `flash` | writes the APP partition (over SSH when Akam already runs, else the maintenance telnet and the card); you type `YES` yourself | **can brick the camera** |
 | `verify` | checks over SSH that the camera behaves as expected | none |
 | `update` | later: flashes a new image over SSH, no card needed (`--image FILE`); you type `YES` | **can brick the camera** |
+| `rtsp-auth` | optional: sets, shows or removes a password on the video stream, over SSH (see below) | none |
 | `restore` | puts the original APP back from your backup; you type `YES` | **can brick the camera** |
 | `wipe-sd` | erases a card that holds your Wi-Fi password | erases that card |
 

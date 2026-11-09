@@ -36,6 +36,7 @@ the map; each step has its own guide.
 ./akam flash             # write the image: SSH if Akam already runs, else the maintenance telnet + card
 ./akam verify            # SSH + akam_hwcheck.sh + ports, then the same again without the card
 ./akam update            # later: flash a new image over SSH (--image FILE)
+./akam rtsp-auth [set|disable|status]   # optional password on the video stream, over SSH
 ./akam restore           # put the original APP back from your backup
 ./akam wipe-sd           # erase a card that holds your Wi-Fi password (offered again at the end)
 ./akam step NAME         # run one step again (doctor, get-kit, ..., flash, verify)
