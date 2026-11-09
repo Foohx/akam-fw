@@ -11,7 +11,9 @@
 #   fake_camera.sh init ROOT [--flash-card IMAGE FLASH_TOOL] [--no-card]
 #   fake_camera.sh start ROOT PORT       start the server (pid in ROOT/ctl/pid)
 #   fake_camera.sh stop ROOT
-# Environment: AKAM_BUSYBOX (default: the pinned one), FAKE_STOCK_VERSION to change /proc/version.
+# Environment: AKAM_BUSYBOX (default: the pinned one), FAKE_STOCK_VERSION to change /proc/version,
+# FAKE_WIFI_SSID / FAKE_WIFI_PASS (the card's custom/configs/wifi.conf with --flash-card; the camera
+# starts WITHOUT /etc/config/wpa_supplicant.conf, like one never paired with the vendor app).
 #
 # What the shell looks like (reconstructed from docs/akam_v1_backup_sd.md, NOT recorded on a camera):
 #   - IAC negotiation bytes at connect, CRLF line endings on the echo of the typed line, "# " prompt;
@@ -62,7 +64,8 @@ cmd_init() {
         done
     } >"$R/proc/mtd"
     echo "Linux version ${FAKE_STOCK_VERSION:-4.4.302-cip94} (fake@build) (gcc) #1 Fri Nov 14 19:06:55 CST 2025" >"$R/proc/version"
-    echo "fake config" >"$R/etc/config"
+    mkdir -p "$R/etc/config"
+    echo "fake config" >"$R/etc/config/fake"
     for i in 0 1 2 3 4 5 6; do
         # Distinct, deterministic content, exact size.
         { yes "fake mtd$i content" | head -c "${MTD_SIZES[$i]}"; } >"$R/dev/mtdblock$i" 2>/dev/null
@@ -109,6 +112,12 @@ EOF
         cp "$img" "$R/tmp/sd/custom_firmware/$(basename "$img")"
         cp "$ft" "$R/tmp/sd/flash_tool"
         echo "#!/bin/sh" >"$R/tmp/sd/flash_guard.sh"
+        # What the toolkit card carries: the real preflight_check.sh and the Wi-Fi settings (the card is
+        # the only place that holds them on a camera never paired with the app: no wpa_supplicant.conf).
+        cp "$REPO/tools/flash_scripts/preflight_check.sh" "$R/tmp/sd/preflight_check.sh"
+        mkdir -p "$R/tmp/sd/custom/configs"
+        printf "MODE=sta\nSSID='%s'\nPASS='%s'\nSECURITY=3\nDHCP=1\n" "${FAKE_WIFI_SSID:-Fake Net}" "${FAKE_WIFI_PASS:-fake-wifi-pass}" \
+            >"$R/tmp/sd/custom/configs/wifi.conf"
         cat >"$R/tmp/sd/install_with_flash_tool.sh" <<'EOF'
 #!/bin/sh
 # fake of tools/flash_scripts/install_with_flash_tool.sh (same prompts and messages)
@@ -135,9 +144,25 @@ if [ "$CONFIRM" != "YES" ]; then
     echo "Aborted."
     exit 1
 fi
+MODE=ok
+[ -f "$FAKE_ROOT/ctl/flash_mode" ] && MODE=$(cat "$FAKE_ROOT/ctl/flash_mode")
+# flash_tool draws its bars with a carriage return and no newline: about 200 KB on the real camera
+i=0
+while [ $i -le 3000 ]; do
+    printf '\rWriting: [====>                                   ] %3d%% (%d/5242880)' $((i / 30)) $((i * 1747))
+    i=$((i + 1))
+done
+printf '\n'
+if [ "$MODE" = fail ]; then
+    echo "ERROR: Flashing/Verification failed with code 1!"
+    exit 1
+fi
 cp "$IMG" "$DEV"
+# badwrite: the script says success but the partition is not the image (the read-back must catch it)
+[ "$MODE" = badwrite ] && printf 'Z' | dd of="$DEV" bs=1 count=1 conv=notrunc 2>/dev/null
 echo "FAULT SUMMARY: 0 retries"
-echo "Flashing and verification completed successfully!"
+# noline: the write is good, the success line is missing (the read-back must still pass)
+[ "$MODE" = noline ] || echo "Flashing and verification completed successfully!"
 echo "Disconnect and reconnect USB-C power to power cycle."
 EOF
         chmod +x "$R/tmp/sd/flash_tool"
@@ -178,7 +203,7 @@ flip_byte() { # file: change the first byte
 cmd_session() {
     R=$1
     local line cmd target tmp
-    export PATH="$R/.bin" FAKE_ROOT="$R"
+    export PATH="$R/.bin" FAKE_ROOT="$R" AKAM_ROOT="$R"
     printf '\377\375\042\377\373\001'
     printf '# '
     while IFS= read -r line; do

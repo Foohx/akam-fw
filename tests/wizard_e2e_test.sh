@@ -8,7 +8,7 @@
 #                           compiling for real is covered by tests/build_firmware_test.sh
 #   (c) update over SSH   : fake ssh and fake reflash tool
 #   (d) restore           : the stock APP put back over the maintenance telnet
-#   (e) cross-checks      : every destructive command refuses without a typed human answer
+#   (e) cross-checks      : every destructive command refuses without a human yes (default No)
 # Nothing real is touched: fake camera (tools/wizard/fake_camera.sh) on localhost, the real
 # tools/sd/sd_card.sh in --dry-run --stage-dir mode over a fake lsblk, stub kit/assemble/ssh/reflash.
 # The camera transcripts are reconstructed from the docs, not recorded on hardware.
@@ -158,6 +158,8 @@ case $cmd in
     true) exit 0 ;;
     "cat > /tmp/akam_hwcheck.sh") cat >"$STUB_DIR/hwcheck.copy"; exit 0 ;;
     "sh /tmp/akam_hwcheck.sh") echo "PASS port 22 listening"; echo "PASS port 554 listening"; exit 0 ;;
+    "cat > /tmp/akam_preflight.sh") cat >"$STUB_DIR/preflight.copy"; exit 0 ;;
+    "sh /tmp/akam_preflight.sh --ensure-wifi") echo "WIFI=PRESENT"; exit 0 ;;
 esac
 exit 0
 EOF
@@ -230,9 +232,9 @@ check "a2 get-kit (local kit): succeeds" bash -c '[ "$1" -eq 0 ]' _ $?
 check "a2 get-kit: mode=kit and the kit hash recorded" bash -c '[ "$(grep -m1 ^mode= "$1/state" | cut -d= -f2)" = kit ] && grep -q "^kit_sha=" "$1/state"' _ "$SA"
 
 AKAM_WIFI_PASS=$SENTINEL a "$SA" prepare-backup-sd --device /dev/sdb --ssid E2ENet </dev/null >"$T/a3x.out" 2>&1
-check "a3 prepare-backup-sd: without a human typing ERASE nothing is erased" bash -c '[ "$1" -ne 0 ] && ! grep -q "^sd prepare" "$2"' _ $? "$STUB_LOG"
-printf 'ERASE /dev/sdb\n' | AKAM_WIFI_PASS=$SENTINEL a "$SA" prepare-backup-sd --device /dev/sdb --ssid E2ENet >"$T/a3.out" 2>&1
-check "a3 prepare-backup-sd: succeeds after the typed ERASE phrase" bash -c '[ "$1" -eq 0 ]' _ $?
+check "a3 prepare-backup-sd: without a human answering yes nothing is erased" bash -c '[ "$1" -ne 0 ] && ! grep -q "^sd prepare" "$2"' _ $? "$STUB_LOG"
+printf 'y\n' | AKAM_WIFI_PASS=$SENTINEL a "$SA" prepare-backup-sd --device /dev/sdb --ssid E2ENet >"$T/a3.out" 2>&1
+check "a3 prepare-backup-sd: succeeds after an explicit yes" bash -c '[ "$1" -eq 0 ]' _ $?
 check "a3 prepare-backup-sd: step recorded" done_step "$SA" prepare_backup_sd
 check "a3 prepare-backup-sd: the card tool got the Wi-Fi password (delivery proven)" has "$CARD/backup/custom/configs/wifi.conf" "$SENTINEL"
 
@@ -250,13 +252,13 @@ check "a5 backup: eight files equal to the camera partitions, SHA256SUMS verifie
 check "a5 backup: step recorded, camera never rebooted" bash -c 'grep -q "^step_backup_done=" "$1/state" && [ ! -s "$2/ctl/events" ]' _ "$SA" "$CAM_A"
 
 a "$SA" image --out "$T/img_a" >"$T/a6x.out" 2>&1 </dev/null
-check "a6 image: validated hardware needs no typed phrase" bash -c '[ "$1" -eq 0 ]' _ $?
+check "a6 image: validated hardware needs no confirmation" bash -c '[ "$1" -eq 0 ]' _ $?
 check "a6 image: assembled from the kit and the backup, image recorded" bash -c '[ "$(grep -m1 ^image_sha= "$1/state" | cut -d= -f2)" = "$2" ] && grep -q "^assemble .*--backup-dir $3 " "$4"' _ "$SA" "$IMG_SHA" "$BKDIR" "$STUB_LOG"
 check "a6 image: step recorded" done_step "$SA" image
 
 a "$SA" prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid E2ENet </dev/null >"$T/a7x.out" 2>&1
-check "a7 prepare-flash-sd: refused without a typed ERASE" bash -c '[ "$1" -ne 0 ]' _ $?
-printf 'ERASE /dev/sdb\n' | AKAM_WIFI_PASS=$SENTINEL a "$SA" prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid E2ENet >"$T/a7.out" 2>&1
+check "a7 prepare-flash-sd: refused without a terminal" bash -c '[ "$1" -ne 0 ]' _ $?
+printf 'y\n' | AKAM_WIFI_PASS=$SENTINEL a "$SA" prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid E2ENet >"$T/a7.out" 2>&1
 check "a7 prepare-flash-sd: succeeds, card made for this image" bash -c '[ "$1" -eq 0 ] && [ "$(grep -m1 ^flash_sd_image_sha= "$2/state" | cut -d= -f2)" = "$3" ]' _ $? "$SA" "$IMG_SHA"
 check "a7 prepare-flash-sd: image, flash_tool and backup are on the staged card" bash -c '[ -f "$1/flash-files/custom_firmware/$2" ] && [ -f "$1/flash-files/flash_tool" ] && [ -f "$1/flash-files/original_firmware/mtdblock7.bin" ]' _ "$CARD" "$IMG_NAME"
 
@@ -265,18 +267,18 @@ fc_stop
 fc_start --flash-card "$IMG" "$T/flash_tool" || { echo "cannot start fake camera B"; exit 1; }
 CAM_B=$FC_ROOT
 mkdir -p "$T/scripts"
-cp "$CAM_B/tmp/sd/install_with_flash_tool.sh" "$CAM_B/tmp/sd/flash_guard.sh" "$T/scripts/"
+cp "$CAM_B/tmp/sd/install_with_flash_tool.sh" "$CAM_B/tmp/sd/flash_guard.sh" "$CAM_B/tmp/sd/preflight_check.sh" "$T/scripts/"
 export AKAM_FLASH_SCRIPTS_DIR=$T/scripts AKAM_FLASH_TOOL=$T/flash_tool
 STOCK_B_MD5=$(host_md5 "$CAM_B/dev/mtd7")
 CLOSED_TEL=$(fc_free_port)
 
 : >"$CAM_B/ctl/confirm.log"
-printf 'y\n' | a "$SA" flash >"$T/a8x.out" 2>&1
-check "a8 flash: a human who types anything but YES flashes nothing" bash -c '[ "$1" -ne 0 ] && ! grep -q "CONFIRM=YES" "$2" && [ "$(md5sum <"$3" | cut -d" " -f1)" = "$4" ]' _ $? "$CAM_B/ctl/confirm.log" "$CAM_B/dev/mtd7" "$STOCK_B_MD5"
+printf 'n\n' | a "$SA" flash >"$T/a8x.out" 2>&1
+check "a8 flash: a human who answers no (the default) flashes nothing" bash -c '[ "$1" -ne 0 ] && ! grep -q "CONFIRM=YES" "$2" && [ "$(md5sum <"$3" | cut -d" " -f1)" = "$4" ]' _ $? "$CAM_B/ctl/confirm.log" "$CAM_B/dev/mtd7" "$STOCK_B_MD5"
 check "a8 flash: ... and the step stays undone" bash -c '! grep -q "^step_flash_done=" "$1/state"' _ "$SA"
-printf 'YES\n' | a "$SA" flash >"$T/a8.out" 2>&1
-check "a8 flash: succeeds over the maintenance telnet after a typed YES" bash -c '[ "$1" -eq 0 ]' _ $?
-check "a8 flash: YES reached the camera exactly once, typed by the human" bash -c '[ "$(grep -c "CONFIRM=YES" "$1")" = 1 ]' _ "$CAM_B/ctl/confirm.log"
+printf 'y\n' | a "$SA" flash >"$T/a8.out" 2>&1
+check "a8 flash: succeeds over the maintenance telnet after an explicit yes" bash -c '[ "$1" -eq 0 ]' _ $?
+check "a8 flash: the wizard answered YES to the camera script exactly once, after the human yes" bash -c '[ "$(grep -c "CONFIRM=YES" "$1")" = 1 ]' _ "$CAM_B/ctl/confirm.log"
 check "a8 flash: /dev/mtd7 equals the image, md5 recorded" bash -c 'cmp -s "$1" "$2" && grep -q "^flash_md5=$3$" "$4/state"' _ "$CAM_B/dev/mtd7" "$IMG" "$IMG_MD5" "$SA"
 check "a8 flash: the camera was never rebooted by the wizard" test ! -s "$CAM_B/ctl/events"
 
@@ -331,11 +333,11 @@ NEWIMG=$T/new_image.squashfs
 head -c 5242880 /dev/urandom >"$NEWIMG"
 NEW_MD5=$(host_md5 "$NEWIMG")
 : >"$STUBS/reflash.log"
-printf 'y\n' | a "$SC" --identity "$T/key" --image "$NEWIMG" update >"$T/c1.out" 2>&1
-check "c update: a typed 'y' is not a YES, the flash is never started" bash -c '[ "$1" -ne 0 ] && ! grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUBS/reflash.log"
+printf 'n\n' | a "$SC" --identity "$T/key" --image "$NEWIMG" update >"$T/c1.out" 2>&1
+check "c update: answering no never starts the flash" bash -c '[ "$1" -ne 0 ] && ! grep -q -e "--i-understand-no-uart" "$2"' _ $? "$STUBS/reflash.log"
 : >"$STUBS/reflash.log"
-printf 'YES\n' | a "$SC" --identity "$T/key" --image "$NEWIMG" update >"$T/c2.out" 2>&1
-check "c update: reflash over SSH after a typed YES (precheck first)" bash -c '[ "$1" -eq 0 ] && sed -n 1p "$2" | grep -q -e "--precheck-only" && sed -n 2p "$2" | grep -q -e "--i-understand-no-uart"' _ $? "$STUBS/reflash.log"
+printf 'y\n' | a "$SC" --identity "$T/key" --image "$NEWIMG" update >"$T/c2.out" 2>&1
+check "c update: reflash over SSH after an explicit yes (precheck first)" bash -c '[ "$1" -eq 0 ] && sed -n 1p "$2" | grep -q -e "--precheck-only" && sed -n 2p "$2" | grep -q -e "--i-understand-no-uart"' _ $? "$STUBS/reflash.log"
 check "c update: host, key and the md5 of the new image were passed" bash -c 'grep -q -e "--host 127.0.0.1" "$1" && grep -q -e "--md5 $2" "$1"' _ "$STUBS/reflash.log" "$NEW_MD5"
 check "c update: the camera's read-back verdict is relayed" has "$T/c2.out" "read-back md5 verified"
 check "c update: never rebooted by the wizard, no telnet used (no flash script on the card)" bash -c '[ ! -s "$1/ctl/events" ]' _ "$CAM_B"
@@ -355,13 +357,13 @@ SD=$(new_state d)
     echo "flash_sd_image_sha=$IMG_SHA"
 } >"$SD/state"
 : >"$CAM_B/ctl/confirm.log"
-printf 'y\ny\ny\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d1.out" 2>&1
-check "d restore: without the typed YES the APP is not touched" bash -c '[ "$1" -ne 0 ] && cmp -s "$2" "$3" && ! grep -q "CONFIRM=YES" "$4"' _ $? "$CAM_B/dev/mtd7" "$IMG" "$CAM_B/ctl/confirm.log"
+printf 'y\nn\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d1.out" 2>&1
+check "d restore: answering no at the flash question leaves the APP untouched" bash -c '[ "$1" -ne 0 ] && cmp -s "$2" "$3" && ! grep -q "CONFIRM=YES" "$4"' _ $? "$CAM_B/dev/mtd7" "$IMG" "$CAM_B/ctl/confirm.log"
 # (the stock APP is already on the card after the refused try above: no replace question this time)
-printf 'YES\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d2.out" 2>&1
-check "d restore: succeeds after a typed YES" bash -c '[ "$1" -eq 0 ]' _ $?
+printf 'y\n' | AKAM_PORT_TELNET=$FC_PORT a "$SD" restore --backup-dir "$BKDIR" >"$T/d2.out" 2>&1
+check "d restore: succeeds after an explicit yes" bash -c '[ "$1" -eq 0 ]' _ $?
 check "d restore: /dev/mtd7 equals the backed up stock APP" bash -c 'cmp -s "$1" "$2"' _ "$CAM_B/dev/mtd7" "$BKDIR/mtdblock7.bin"
-check "d restore: CONFIG untouched (said so), camera not rebooted, YES typed once" bash -c 'grep -q "CONFIG was not touched" "$1" && [ ! -s "$2/ctl/events" ] && [ "$(grep -c "CONFIRM=YES" "$2/ctl/confirm.log")" = 1 ]' _ "$T/d2.out" "$CAM_B"
+check "d restore: CONFIG untouched (said so), camera not rebooted, YES sent once" bash -c 'grep -q "CONFIG was not touched" "$1" && [ ! -s "$2/ctl/events" ] && [ "$(grep -c "CONFIRM=YES" "$2/ctl/confirm.log")" = 1 ]' _ "$T/d2.out" "$CAM_B"
 
 # ================================================================== (e) cross-checks
 # Every destructive step refuses without a human: empty stdin and no terminal.
@@ -381,7 +383,7 @@ bash "$AKAM" --no-color --state-dir "$SE" wipe-sd --device /dev/sdb </dev/null >
 check "e wipe-sd without a terminal: refused" test $? -ne 0
 check "e none of them wrote anything: no YES at the camera, no SD erase/wipe, no new reflash" bash -c '
     ! grep -q "CONFIRM=YES" "$1" && ! grep -q -e "^sd prepare" -e "^sd wipe" "$2" && [ "$(grep -c -e "--i-understand-no-uart" "$3")" = 1 ]' _ "$CAM_B/ctl/confirm.log" "$STUB_LOG" "$STUBS/reflash.log"
-# the wizard source never sends a YES by itself: it only ever forwards what the human typed
+# the wizard source never pipes a YES into anything: it sends YES to the flash script prompt only after the human's yes
 check "e the wizard code has no literal YES sent to a camera or a reflash tool" bash -c '
     ! grep -rn -E "(printf|echo)[^|]*YES[^|]*\|" "$1"/tools/wizard/lib/*.sh "$1"/akam' _ "$ROOT"
 # nothing ever ran sudo (the SD tool is stubbed to its dry-run form, but the wizard must not call it)

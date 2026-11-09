@@ -267,62 +267,52 @@ check "secret: visible mode shows it while typing" has "$ERR" "$SEC"
 check "secret: ... but the collapsed final line hides it" bash -c '! grep -qF -- "$2" <<<"$1"' _ "$(last_line "$ERR")" "$SEC"
 eq "secret: visible mode returns it too" "$SEC" "$TUI_RESULT"
 
-# ---------------------------------------------------------------- typed confirmation
-tconf() { # KEYS PHRASE -> rc
+# ---------------------------------------------------------------- red confirmation box (ui_danger): one yes/no, default No
+UI_DRY=0
+export AKAM_FORCE_TTY=1
+danger() { # KEYS -> rc
     K "$1"
-    tui_typed "Erase $2?" "$2" 2>"$ERR"
+    ui_danger "ERASE /dev/sdb" "Erase /dev/sdb now?" "Everything on /dev/sdb will be ERASED." "Device: /dev/sdb" "Model: Card Reader  |  Size: 3.9 GB" 2>"$ERR"
 }
-tconf 'ERASE /dev/sdb\r' "ERASE /dev/sdb"
-eq "typed: the exact phrase passes" 0 $?
-tconf 'erase /dev/sdb\r' "ERASE /dev/sdb"
-eq "typed: case matters" 1 $?
-tconf 'ERASE /dev/sdb \r' "ERASE /dev/sdb"
-eq "typed: a trailing space fails" 1 $?
-tconf 'ERASE /dev/sda\r' "ERASE /dev/sdb"
-eq "typed: another device fails" 1 $?
-tconf '\r' YES
-eq "typed: Enter alone fails (no default)" 1 $?
-tconf 'y\r' YES
-eq "typed: y is not YES" 1 $?
-tconf 'Y\r' YES
-eq "typed: Y is not YES" 1 $?
-tconf 'yes\r' YES
-eq "typed: yes is not YES" 1 $?
-tconf 'YES\r' YES
-eq "typed: YES passes" 0 $?
-tconf 'YES\e' YES
-eq "typed: Esc cancels even after the right text" 1 $?
-tconf 'YES' YES
-eq "typed: end of input without Enter fails" 1 $?
-tconf '' YES
-eq "typed: empty input fails" 1 $?
-tconf 'q\r' YES
-eq "typed: q is typed, not a quit shortcut" 1 $?
-check "typed: ... and the q shows in the buffer" has "$ERR" "q"
-tconf 'jjj\r?\r' YES
-eq "typed: menu keys are plain characters" 1 $?
-tconf '\x03' YES
-eq "typed: the Ctrl-C key fails" 1 $?
-tconf 'YES\x7f\x7f\x7fYES\r' YES
-eq "typed: Backspace edits before Enter" 0 $?
-tconf 'ERASE /dev/sdb\r' "ERASE /dev/sdb"
-check "typed: the red box names the phrase" has "$ERR" "Type exactly:  ERASE /dev/sdb"
-check "typed: the box says nothing happens unless it matches" has "$ERR" "Nothing happens unless it matches"
+danger 'y'
+eq "danger: y is a yes" 0 $?
+danger 'Y'
+eq "danger: Y is a yes" 0 $?
+danger '\r'
+eq "danger: Enter alone is No (the default)" 1 $?
+danger 'n'
+eq "danger: n is No" 1 $?
+danger '\e'
+eq "danger: Esc is No" 1 $?
+danger 'q'
+eq "danger: q is No" 1 $?
+danger ''
+eq "danger: end of input is No" 1 $?
+danger '\x03'
+eq "danger: Ctrl-C is No" 1 $?
+danger 'x\r'
+eq "danger: another key then Enter keeps the default No" 1 $?
+danger '\e[C\r'
+eq "danger: arrow right moves to Yes, Enter takes it" 0 $?
+danger '\e[C\e[D\r'
+eq "danger: right then left is back on No" 1 $?
+danger '\t\r'
+eq "danger: Tab toggles to Yes" 0 $?
+danger 'n'
+check "danger: the box names the device, model and size and says what happens" bash -c 'grep -q "Everything on /dev/sdb will be ERASED" "$1" && grep -q "Device: /dev/sdb" "$1" && grep -q "Model: Card Reader" "$1" && grep -q "Size: 3.9 GB" "$1"' _ "$ERR"
+check "danger: the question shows the default [y/N]" has "$ERR" "[y/N]"
+check "danger: no phrase to type" bash -c '! grep -q -e "Type exactly" -e "type " "$1"' _ "$ERR"
+unset AKAM_FORCE_TTY
+danger 'y' </dev/null 2>/dev/null
+eq "danger: without a terminal it refuses (returns 2) whatever the keys" 2 $?
+UI_DRY=1
+out=$(ui_danger "ERASE /dev/sdb" "Erase /dev/sdb now?" "line" 2>"$ERR")
+rc=$?
+UI_DRY=0
+check "danger in a rehearsal only shows the question (and reads no key)" bash -c '[ "$1" = 0 ] && [[ "$2" == *"WOULD ask: Erase /dev/sdb now? [y/N] (default: No)"* ]]' _ "$rc" "$out"
 
 # ---------------------------------------------------------------- ui.sh in terminal mode
 UI_DRY=0
-K 'ERASE /dev/sdb\r'
-ui_confirm_typed "Erase /dev/sdb?" "ERASE /dev/sdb" 2>"$ERR"
-eq "ui_confirm_typed (terminal mode): exact phrase" 0 $?
-K 'nope\r'
-ui_confirm_typed "Erase /dev/sdb?" "ERASE /dev/sdb" 2>"$ERR"
-eq "ui_confirm_typed (terminal mode): wrong phrase" 1 $?
-K 'ERASE /dev/sdb\r'
-UI_DRY=1
-out=$(ui_confirm_typed "Erase /dev/sdb?" "ERASE /dev/sdb" 2>"$ERR")
-rc=$?
-UI_DRY=0
-check "ui_confirm_typed in a rehearsal only shows the question (and reads no key)" bash -c '[ "$1" = 0 ] && [[ "$2" == *"WOULD ask"*"type: ERASE /dev/sdb"* ]]' _ "$rc" "$out"
 K 'y'
 UI_DRY=1
 out=$(ui_confirm "Go on?" 2>"$ERR")

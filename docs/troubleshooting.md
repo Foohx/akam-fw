@@ -24,12 +24,48 @@ Cheap readers often fail like this. Unplug and replug the reader, try another US
 reader (or a built-in SD slot). Check with `lsblk` that the card shows a size before going on. The SD
 tool only accepts whole removable USB or SD disks, never a partition or a system disk.
 
-## A multi-line paste ate the `YES` prompt
+## A multi-line paste ate a prompt
 
-Pasting several lines into a terminal can feed the next line to a prompt (a `YES` or `ERASE <device>`
-question) before you read it. Paste **one command at a time**. The wizard refuses destructive actions
-without a real terminal and wants `YES` or `ERASE <device>` typed by you, so a failed prompt means
-nothing was written: run the step again. On the camera, type `YES` alone on its line.
+Pasting several lines into a terminal can feed the next line to a prompt before you read it. Paste
+**one command at a time**. The wizard's confirmations are a red yes/no whose default is No, and it
+refuses destructive actions without a real terminal, so a wrong or missing answer means nothing was
+written: run the step again. When you run `tools/sd/sd_card.sh` by hand it still asks for a typed
+`ERASE <device>`, and on the camera `install_with_flash_tool.sh` asks for `YES` alone on its line.
+
+## The camera has no network after removing the card
+
+A camera that was never paired with the vendor app has no `/etc/config/wpa_supplicant.conf`. With the
+toolkit card in, the card brings the Wi-Fi up; without it the camera boots with no network, and
+`./akam step verify` times out after the power cycle ("the camera is not on the network"). The
+wizard creates that file from the card's Wi-Fi settings during `flash` and `verify` (and never asks you
+to remove the card before), so this mostly happens after a manual install or when the card holds a
+password the wizard cannot copy (it contains a `"`, a `\` or a line break, or is not 8 to 63 characters).
+
+Fix: put the card back, power-cycle, wait two minutes, and either run `./akam step verify` again, or on
+the camera (telnet 24, or SSH) run the same script the wizard uses:
+
+```sh
+sh /tmp/sd/preflight_check.sh --ensure-wifi     # or /mnt/preflight_check.sh; prints WIFI=CREATED or the reason
+```
+
+By hand (replace the two values; the file must be only readable by root):
+
+```sh
+umask 077
+cat > /etc/config/wpa_supplicant.conf <<'EOF'
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+    ssid="YOUR_WIFI_NAME"
+    psk="YOUR_WIFI_PASSWORD"
+    key_mgmt=WPA-PSK
+}
+EOF
+chmod 600 /etc/config/wpa_supplicant.conf
+sync
+```
+
+Then power-cycle without the card. Also check your router: the camera's address may have changed.
 
 ## VLC shows a black screen
 
@@ -157,7 +193,8 @@ A CONFIG wipe also removes your key from the camera, so you need the first-boot 
 
 Newer OpenSSH versions print this when the server (Dropbear on the camera) does not offer a
 post-quantum key exchange. The connection still works and is still encrypted. It is harmless on a
-LAN; ignore it.
+LAN; ignore it. The wizard hides it (`ssh -o LogLevel=ERROR`, real errors are still shown); to hide it in
+your own ssh commands add `-o LogLevel=ERROR`.
 
 ## A player cannot connect right after another one
 

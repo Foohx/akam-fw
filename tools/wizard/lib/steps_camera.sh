@@ -5,8 +5,10 @@
 #
 # Rules kept everywhere in this file
 #   - the PC always connects OUT to the camera;
-#   - the typed YES (flash) and the typed confirmations are asked from the human; nothing here
-#     ever sends "YES" by itself, and an empty stdin or a missing terminal fails the step;
+#   - an irreversible action (the flash write, untested hardware) is confirmed by the human in a red
+#     box with ONE yes/no choice whose default is No (no terminal, Esc, q or an empty answer = No).
+#     Only after that explicit yes does the wizard answer "YES" to the camera's own flash script
+#     prompt (maintenance telnet) or pass --i-understand-no-uart to the SSH reflash;
 #   - nothing here ever reboots or power-cycles the camera: the user does it BY HAND;
 #   - a flash is gated on image size, md5 on the PC, md5 on the camera and, after the write, the
 #     md5 of /dev/mtd7 read back.
@@ -27,7 +29,6 @@ mtd5: 000fc000 00001000 "ROOTFS"
 mtd6: 00040000 00001000 "CONFIG"
 mtd7: 00500000 00001000 "APP"'
 CAM_MTD_SIZES="204800 4096 4096 65536 1572864 1032192 262144 5242880"
-CAM_UNTESTED_PHRASE="I UNDERSTAND THIS IS UNTESTED"
 
 cam_port() {
     case $1 in
@@ -64,16 +65,18 @@ cam_need_ip() {
 cam_key() {
     local pub
     if [ -n "$OPT_IDENTITY" ]; then CAM_KEY=$OPT_IDENTITY; return 0; fi
-    pub=${OPT_PUBKEY:-$HOME/.ssh/akam.pub}
+    pub=${OPT_PUBKEY:-$(state_get ssh_pubkey)}
+    pub=${pub:-$HOME/.ssh/akam.pub}
     CAM_KEY=${pub%.pub}
 }
 
 # cam_ssh_setup: build CAM_SSH. The host key is remembered the first time (accept-new) under the
-# alias <ip>, the same alias reflash_over_ssh.sh uses.
+# alias <ip>, the same alias reflash_over_ssh.sh uses. LogLevel=ERROR hides OpenSSH's warnings
+# (for example "not using a post-quantum key exchange"); real errors are still printed.
 cam_ssh_setup() {
     cam_key
     CAM_SSH=("${AKAM_SSH:-ssh}" -i "$CAM_KEY" -p "$(cam_port ssh)" -o BatchMode=yes -o ConnectTimeout=10
-        -o StrictHostKeyChecking=accept-new -o "HostKeyAlias=$CAM_IP" -o IdentitiesOnly=yes "root@$CAM_IP")
+        -o StrictHostKeyChecking=accept-new -o "HostKeyAlias=$CAM_IP" -o IdentitiesOnly=yes -o LogLevel=ERROR "root@$CAM_IP")
 }
 
 cam_ssh_ok() {
@@ -99,7 +102,7 @@ cam_show_fingerprint() {
 # cam_flash_tool: path of the ARM flash_tool binary (kit or source build).
 cam_flash_tool() {
     if [ -n "${AKAM_FLASH_TOOL:-}" ]; then printf '%s\n' "$AKAM_FLASH_TOOL"; return 0; fi
-    if [ "$(state_get mode)" = source ]; then printf '%s\n' "$ROOT/src/ak_rtsp/flash_tool"; else printf '%s\n' "$STATE_DIR/kit/bin/flash_tool"; fi
+    if [ "$(state_get mode)" = source ]; then printf '%s\n' "$ROOT/src/ak_rtsp/flash_tool"; else printf '%s\n' "$BASE_DIR/kit/bin/flash_tool"; fi
 }
 
 # cam_session_open: open the telnet session (or enter manual mode). Prints the hint on failure.
@@ -111,7 +114,7 @@ cam_session_open() {
     return 1
 }
 
-# cam_confirm_untested APPSHA WHAT: refuse silently-untested hardware (typed phrase).
+# cam_confirm_untested APPSHA WHAT: untested hardware needs an explicit yes (red box, default No).
 cam_confirm_untested() {
     local verdict vstat vdev
     verdict=$(hw_verdict "$1")
@@ -120,9 +123,9 @@ cam_confirm_untested() {
     ui_say "  Hardware verdict for this stock APP: $vstat - $vdev"
     ui_say "  Stock APP sha256: $1"
     [ "$vstat" = validated ] && return 0
-    ui_warn "this firmware is NOT on the validated list. Akam may not work and the camera may need a restore."
-    ui_require_tty "confirming an untested firmware" || return 1
-    ui_confirm_typed "$2" "$CAM_UNTESTED_PHRASE" ||
+    ui_danger "Untested firmware" "$2" \
+        "This stock firmware is NOT on the validated list: Akam may not work and the camera may need a restore." \
+        "Hardware verdict: $vstat - $vdev" "Stock APP sha256: $1" ||
         { ui_fail "untested firmware not confirmed." "nothing was changed."; return 1; }
 }
 
@@ -362,10 +365,10 @@ bk_fingerprint() {
     fi
 }
 
-# bk_pc_dir: a new folder ~/akam-backup-<date>[-N].
+# bk_pc_dir: a new folder ~/akam-backup-<name>-<date>[-N] (no name part for the camera "default").
 bk_pc_dir() {
     local base d n=1
-    base=${AKAM_BACKUP_ROOT:-$HOME}/akam-backup-$(date +%Y%m%d)
+    base=${AKAM_BACKUP_ROOT:-$HOME}/akam-backup-$(cams_slug)$(date +%Y%m%d)
     d=$base
     while [ -e "$d" ]; do n=$((n + 1)); d="$base-$n"; done
     printf '%s\n' "$d"
@@ -461,9 +464,9 @@ cmd_backup() {
         ui_say "  WOULD open the telnet shell on the camera and: check /proc/mtd is the 8-partition layout (refuse otherwise),"
         ui_say "  read the kernel version, find the card and its free space, dd the 8 partitions twice,"
         ui_say "  check the 16 sizes, hash both runs on the camera and compare them (READS_IDENTICAL),"
-        ui_say "  copy dump1 to ~/akam-backup-<date>/ over nc with size+hash checks (3 tries each),"
+        ui_say "  copy dump1 to ~/akam-backup-<name>-<date>/ over nc with size+hash checks (3 tries each),"
         ui_say "  write SHA256SUMS, compare the stock APP hash with tools/release/supported_hardware.txt"
-        ui_say "  (typed '$CAM_UNTESTED_PHRASE' unless validated) and ask for a second copy on another medium."
+        ui_say "  (a yes/no in a red box, default No, unless validated) and ask for a second copy on another medium."
         state_set backup_dir "<backup-dir>"
         state_set backup_sha dry-run
         state_mark_done backup
@@ -472,10 +475,38 @@ cmd_backup() {
     backup_camera
 }
 
+# cam_flash_confirm LABEL MD5 ROUTE: the one confirmation before the camera's flash is written: a red box that
+# says exactly what will happen, then a yes/no with the default No. Needs a real terminal.
+cam_flash_confirm() {
+    local label=$1 md5=$2 route=$3 what
+    case $label in
+        Restoring) what="put the ORIGINAL (stock) APP back on the camera" ;;
+        Updating) what="write the new Akam image to the camera" ;;
+        *) what="write the Akam image to the camera" ;;
+    esac
+    ui_danger "$label: WRITES THE CAMERA FLASH" "Write the camera flash now?" \
+        "Camera: $CAM_IP (route: $route)" \
+        "This will $what: it erases and rewrites the APP partition (/dev/mtd7)." \
+        "Image md5 (checked on this PC and on the camera): $md5" \
+        "Do NOT unplug the camera or the network until the wizard says it is finished: a power cut during the write can leave the camera dead (only a UART cable recovers it)."
+}
+
 # ------------------------------------------------------------------ SSH reflash (flash, update, restore)
 # cam_filter_flash_output: drop the progress bars (about 80 KB) and keep what matters.
+CAM_FLASH_KEEP_RE='^reflash_over_ssh:|error|fail|mismatch|md5|verif|retry|retries|fault|success|complete|refus'
 cam_filter_flash_output() {
-    tr '\r' '\n' | grep --line-buffered -i -E '^reflash_over_ssh:|error|fail|mismatch|md5|verif|retry|retries|fault|success|complete|refus' || true
+    local l
+    shopt -s nocasematch
+    tr '\r' '\n' | while IFS= read -r l; do
+        l=${l#camera: }
+        if [[ $l =~ $CAMSH_PROG_RE ]]; then
+            ui_progress "${BASH_REMATCH[1]}" "$((10#${BASH_REMATCH[2]}))"
+        elif [[ $l =~ $CAM_FLASH_KEEP_RE ]]; then
+            ui_progress_close
+            printf '    | %s\n' "$l"
+        fi
+    done
+    ui_progress_close
 }
 
 # cam_run_flash_script LOGFILE CMD...: run it, show a filtered output, keep the full output in LOGFILE.
@@ -488,22 +519,22 @@ cam_run_flash_script() {
     ui_say "  (full output: $logf)"
     rcf=$(mktemp)
     (umask 077 && : >"$logf")
-    { "$@" 2>&1; echo "$?" >"$rcf"; } | tee -a "$logf" | cam_filter_flash_output | sed 's/^/    | /'
+    { "$@" 2>&1; echo "$?" >"$rcf"; } | tee -a "$logf" | cam_filter_flash_output
     rc=$(cat "$rcf")
     rm -f "$rcf"
     log_line "RC $rc"
     return "${rc:-1}"
 }
 
-# flash_ssh IMG MD5 LABEL: the validated no-card path. Precheck (writes nothing), typed YES, flash.
+# flash_ssh IMG MD5 LABEL: the validated no-card path. Precheck (writes nothing), yes/no (default No), flash.
 flash_ssh() {
     local img=$1 md5=$2 label=$3 ft args
     ft=$(cam_flash_tool)
     if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD run the precheck of the SSH reflash (writes nothing), ask for a typed YES, then:"
+        ui_say "  WOULD run the precheck of the SSH reflash (writes nothing), ask a yes/no (default No), then:"
         ui_say "    $(wiz_tool reflash) --host $CAM_IP --identity ${CAM_KEY:-<key>} --image <image> --md5 <md5> --flash-tool <flash_tool> --i-understand-no-uart"
         ui_say "  and relay its progress (the progress bars are filtered out). It never reboots the camera."
-        ui_confirm_typed "Write the camera flash now?" YES
+        ui_danger "Write the camera flash" "Write the camera flash now?" "<camera ip>" "<image md5>"
         return 0
     fi
     [ -f "$(wiz_tool reflash)" ] || { ui_fail "the SSH reflash tool is missing: $(wiz_tool reflash)" ""; return 1; }
@@ -524,9 +555,8 @@ flash_ssh() {
     ui_warn "$label over SSH has NO UART safety net. If the power is cut or the write is interrupted, the APP partition"
     ui_warn "is half written and only a UART cable can recover it. Keep the camera powered and do not touch it."
     ui_say "  Image md5 (checked on this PC): $md5"
-    ui_require_tty "writing the camera flash" || return 1
-    ui_confirm_typed "Write the camera flash now?" YES ||
-        { ui_fail "not confirmed (YES must be typed by you)." "nothing was written."; return 1; }
+    cam_flash_confirm "$label" "$md5" "SSH" ||
+        { ui_fail "not confirmed." "nothing was written."; return 1; }
     cam_run_flash_script "$STATE_DIR/reflash.log" bash "$(wiz_tool reflash)" "${args[@]}" --i-understand-no-uart ||
         { ui_fail "the SSH reflash failed or could not be verified." \
             "DO NOT power-cycle yet. Read $STATE_DIR/reflash.log and docs/akam_v1_flash_and_restore.md (Reflashing over SSH)."; return 1; }
@@ -578,19 +608,25 @@ ft_ensure_file() {
 
 # ft_ensure_image IMG MD5: exactly one image on the card and it is IMG.
 ft_ensure_image() {
-    local img=$1 md5=$2 name list n
-    camsh_ok 'ls -1 /mnt/custom_firmware' || { ui_fail "cannot list /mnt/custom_firmware." ""; return 1; }
+    local img=$1 md5=$2 name list n why
+    # A shell loop, not `ls -1`: the camera's ls colours its names (the escape codes are also
+    # stripped by camsh, but a plain list of names needs no ls at all).
+    # shellcheck disable=SC2016  # expanded by the camera's shell
+    camsh_ok 'for f in /mnt/custom_firmware/*; do if [ -e "$f" ]; then echo "${f##*/}"; fi; done' ||
+        { ui_fail "cannot list /mnt/custom_firmware." ""; return 1; }
     list=$CAMSH_OUT
     n=$(printf '%s\n' "$list" | grep -c . || true)
     name=$(printf '%s\n' "$list" | grep -E '^ak_rtsp_firmware_[0-9]{8}_[0-9]{6}\.squashfs$' | tail -1 || true)
+    why="found: $(printf '%s' "$list" | tr '\n' ' ')"
     if [ "$n" = 1 ] && [ -n "$name" ]; then
         ft_remote_md5 "/mnt/custom_firmware/$name" || return 1
         if [ "$FT_RMD5" = "$md5" ]; then
             ui_say "  Image on the card: $name, md5 $md5 (same as this PC)."
             return 0
         fi
+        why="$name has md5 ${FT_RMD5:-unreadable} on the card, this PC's image has $md5"
     fi
-    ui_warn "the card does not carry exactly the image you want to flash (found: $(printf '%s' "$list" | tr '\n' ' '))."
+    ui_warn "the card does not carry exactly the image you want to flash ($why)."
     ui_confirm "  Replace the image on the card with this PC's image?" ||
         { ui_fail "the image on the card does not match." "prepare the flash card again (./akam step prepare-flash-sd)."; return 1; }
     name=$(basename "$img")
@@ -600,6 +636,76 @@ ft_ensure_image() {
     esac
     camsh_ok 'rm -f /mnt/custom_firmware/ak_rtsp_firmware_*.squashfs' || { ui_fail "cannot clear the old image on the card." ""; return 1; }
     xfer_put "$img" "/mnt/custom_firmware/$name" || return 1
+}
+
+# ------------------------------------------------------------------ Wi-Fi must survive the card
+# A camera that was never paired with the vendor app has no /etc/config/wpa_supplicant.conf: with the
+# toolkit card the toolkit brings Wi-Fi up from the card, but the camera has NO network once the card
+# is removed. tools/flash_scripts/preflight_check.sh --ensure-wifi (run ON the camera) writes the
+# file from the card's custom/configs/wifi.conf, so the password never passes through this PC (not
+# in a command line, not in the log). Hard gate: nothing tells the user to remove the card while the
+# file is missing.
+
+# cam_wifi_verdict OUTPUT: read the WIFI= line of preflight_check.sh --ensure-wifi; 0 = the file holds a network.
+cam_wifi_verdict() {
+    local code
+    code=$(printf '%s\n' "$1" | sed -n 's/^WIFI=\([A-Z_]*\).*/\1/p' | tail -1)
+    case $code in
+        PRESENT)
+            ui_say "  /etc/config/wpa_supplicant.conf holds a Wi-Fi network: the camera keeps its network without the card."
+            ;;
+        CREATED)
+            ui_good "  /etc/config/wpa_supplicant.conf was missing (the camera was never paired with the app): it was created ON the camera from the card's Wi-Fi settings."
+            ui_say "  (the password never passed through this PC's command lines or logs.)"
+            ;;
+        NO_CARD_CONFIG)
+            ui_fail "the camera has no saved Wi-Fi (/etc/config/wpa_supplicant.conf) and the card holds no usable custom/configs/wifi.conf to create it from." \
+                "without it the camera has NO network once the card is removed. Prepare the flash card again (./akam step prepare-flash-sd), or create the file by hand: docs/akam_v1_install.md (Troubleshooting: no network after removing the card)."
+            ;;
+        BAD_CHARS)
+            ui_fail "the Wi-Fi name or password on the card holds a double quote, a backslash or a line break: the camera's wpa_supplicant.conf cannot be written safely from it." \
+                "create /etc/config/wpa_supplicant.conf by hand (docs/akam_v1_install.md, Troubleshooting), or use a Wi-Fi password without those characters."
+            ;;
+        BAD_PSK_LENGTH)
+            ui_fail "the Wi-Fi password on the card is not 8 to 63 characters long, so it is not a WPA password." \
+                "check the password, then prepare the card again (./akam step prepare-flash-sd)."
+            ;;
+        UNSUPPORTED_SECURITY)
+            ui_fail "the card's Wi-Fi settings use a security type other than WPA/WPA2-PSK (SECURITY=3) or open (SECURITY=1)." \
+                "create /etc/config/wpa_supplicant.conf by hand for your network (docs/akam_v1_install.md, Troubleshooting)."
+            ;;
+        WRITE_FAILED)
+            ui_fail "the camera could not write /etc/config/wpa_supplicant.conf." \
+                "do not remove the card. Create the file by hand (docs/akam_v1_install.md, Troubleshooting)."
+            ;;
+        *)
+            ui_fail "could not check the camera's saved Wi-Fi (no answer from preflight_check.sh --ensure-wifi)." \
+                "do not remove the card; run this step again."
+            ;;
+    esac
+}
+
+# cam_wifi_gate_telnet: through the maintenance shell (the card is on /mnt, preflight_check.sh was just verified there).
+cam_wifi_gate_telnet() {
+    ui_say "  Checking that the camera will keep its Wi-Fi after the card is removed ..."
+    camsh_exec 'sh /mnt/preflight_check.sh --ensure-wifi' 60 ||
+        { ui_fail "cannot run preflight_check.sh on the camera." "check the telnet session."; return 1; }
+    cam_wifi_verdict "$CAMSH_OUT"
+}
+
+# cam_wifi_gate_ssh: over SSH (verify, card still in). The script is sent through stdin into /tmp (RAM).
+cam_wifi_gate_ssh() {
+    local pf out rc=0
+    pf="$(cam_scripts_dir)/preflight_check.sh"
+    [ -f "$pf" ] || { ui_fail "preflight_check.sh not found: $pf" ""; return 1; }
+    cam_ssh_setup
+    ui_say "  Checking that the camera will keep its Wi-Fi after the card is removed ..."
+    log_line "CMD ssh root@$CAM_IP 'cat > /tmp/akam_preflight.sh' < preflight_check.sh"
+    "${CAM_SSH[@]}" 'cat > /tmp/akam_preflight.sh' <"$pf" ||
+        { ui_fail "cannot copy preflight_check.sh over SSH." "do not remove the card yet."; return 1; }
+    log_line "CMD ssh root@$CAM_IP 'sh /tmp/akam_preflight.sh --ensure-wifi'"
+    out=$("${CAM_SSH[@]}" 'sh /tmp/akam_preflight.sh --ensure-wifi' 2>&1) || rc=$?
+    cam_wifi_verdict "$out"
 }
 
 # Lines of the flash output that are not worth showing.
@@ -612,9 +718,11 @@ flash_telnet() {
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD open the telnet shell, bind the card on /mnt if it is on /tmp/sd, check that exactly one image is in"
         ui_say "  /mnt/custom_firmware with the same md5 as this PC (pushing files over nc only after your yes), then run"
-        ui_say "  'sh /mnt/install_with_flash_tool.sh', show its md5 line and its prompt, and ask YOU to type YES (relayed as typed)."
+        ui_say "  'sh /mnt/install_with_flash_tool.sh', show its md5 line and its prompt, and ask YOU a yes/no (default No); only after your yes does the wizard answer the script."
+        ui_say "  When flashing it also runs 'sh /mnt/preflight_check.sh --ensure-wifi' on the camera: if /etc/config/wpa_supplicant.conf has no"
+        ui_say "  network it is created from the card's wifi.conf (on the camera; the password never passes through this PC)."
         ui_say "  After the write: dd if=/dev/mtd7 bs=64k | md5sum on the camera must equal the image md5. No reboot is ever sent."
-        ui_confirm_typed "Write the camera flash now?" YES
+        ui_danger "Write the camera flash" "Write the camera flash now?" "<camera ip>" "<image md5>"
         return 0
     fi
     [ -s "$ft" ] || { ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."; return 1; }
@@ -626,6 +734,11 @@ flash_telnet() {
     ft_ensure_file "$ft" /mnt/flash_tool exec "flash_tool" || { camsh_close; return 1; }
     ft_ensure_file "$(cam_scripts_dir)/install_with_flash_tool.sh" /mnt/install_with_flash_tool.sh plain "install_with_flash_tool.sh" || { camsh_close; return 1; }
     ft_ensure_file "$(cam_scripts_dir)/flash_guard.sh" /mnt/flash_guard.sh plain "flash_guard.sh" || { camsh_close; return 1; }
+    if [ "$label" = Flashing ]; then
+        # Akam does not bring Wi-Fi up by itself: the saved network must exist before the write (hard gate).
+        ft_ensure_file "$(cam_scripts_dir)/preflight_check.sh" /mnt/preflight_check.sh plain "preflight_check.sh" || { camsh_close; return 1; }
+        cam_wifi_gate_telnet || { camsh_close; ui_say "  Nothing was written to the camera."; return 1; }
+    fi
     ui_blank
     ui_warn "$label writes the camera's flash. If the power is cut while it writes, only a UART cable can recover the camera."
     ui_warn "Keep the camera powered and do not unplug anything until this step says it is finished."
@@ -653,15 +766,15 @@ flash_telnet() {
             camsh_close
             return 1
         fi
-        ui_say "  The camera shows the same md5 as this PC. It now waits for YES."
-        if ! { ui_require_tty "writing the camera flash" && ui_confirm_typed "Write the camera flash now?" YES; }; then
-            ui_err "not confirmed: YES must be typed by you. Aborting; nothing was written."
+        ui_say "  The camera shows the same md5 as this PC. Its script now waits for a confirmation."
+        if ! cam_flash_confirm "$label" "$md5" "the maintenance telnet"; then
+            ui_err "not confirmed. Aborting; nothing was written."
             camsh_send_line "NO"
             camsh_finish 15 || true
             camsh_close
             return 1
         fi
-        # The only place where text goes to the flash script's prompt: what the human just typed.
+        # The only place where text goes to the flash script's prompt: "YES", sent only after the explicit yes above.
         camsh_send_line "YES" || { ui_fail "lost the camera session." "DO NOT power-cycle; check the camera."; return 1; }
         camsh_stream_set 1 "$FT_SKIP_RE"
         rc=0
@@ -672,8 +785,9 @@ flash_telnet() {
         trap - INT HUP TERM
         tui_rearm_traps
         camsh_stream_set 0
-        if [ "$rc" -ne 0 ] || [ "$CAMSH_RC" != 0 ] || ! printf '%s\n' "$CAMSH_OUT" | grep -q 'completed successfully'; then
-            ui_fail "the flash did not report success." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
+        ui_progress_close
+        if [ "$rc" -ne 0 ]; then
+            ui_fail "the flash script did not finish (no end of output, code $rc)." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
             if [ "$rc" -eq 1 ]; then
                 ui_warn "no output for a long time: the write may STILL be running. The session is left open and nothing is sent again;"
                 ui_warn "wait several minutes, then read the partition back by hand: dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum (must be $md5)."
@@ -682,7 +796,9 @@ flash_telnet() {
             fi
             return 1
         fi
+        ft_note_script_result
     fi
+    # The authoritative check is the partition itself, never the wording of the script's last line.
     ui_say "  Reading the partition back to check it ..."
     camsh_exec 'dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum' 600 || { ui_fail "cannot read /dev/mtd7 back." "DO NOT power-cycle."; camsh_close; return 1; }
     sums=$(camsh_line 1 | awk '{print $1}')
@@ -695,17 +811,26 @@ flash_telnet() {
     ui_good "  Read-back md5 of /dev/mtd7 = image md5 ($md5)."
 }
 
+# ft_note_script_result: tell what the flash script itself said (secondary information, the
+# read-back md5 decides). CAMSH_OUT and CAMSH_RC are those of the script.
+ft_note_script_result() {
+    if camsh_out_has 'completed successfully' && [ "$CAMSH_RC" = 0 ]; then
+        ui_say "  The flash script reported: completed successfully."
+    elif [ "$CAMSH_RC" = 0 ]; then
+        ui_warn "the flash script ended without its success line; the read-back below decides."
+    else
+        ui_warn "the flash script exited with code $CAMSH_RC; the read-back below decides."
+    fi
+}
+
 # flash_telnet_manual MD5 LABEL: manual mode: the user runs the script and types YES in their own window.
 flash_telnet_manual() {
     ui_say "  MANUAL: in your telnet window run the command above, compare the md5 it prints with this one:"
     ui_say "      $1"
-    ui_say "  If it matches, type YES yourself at its prompt. Wait until it says 'completed successfully'."
+    ui_say "  If it matches, type YES yourself at its prompt (in your own window). Wait until it says 'completed successfully'."
     ui_say "  Do NOT unplug anything. Then come back and paste its last lines."
     camsh_finish 900 || return 1
-    if [ "$CAMSH_RC" != 0 ] || ! printf '%s\n' "$CAMSH_OUT" | grep -q 'completed successfully'; then
-        ui_fail "the flash did not report success." "DO NOT power-cycle yet; docs/akam_v1_flash_and_restore.md (Recovery)."
-        return 1
-    fi
+    ft_note_script_result
 }
 
 # ------------------------------------------------------------------ flash
@@ -738,7 +863,7 @@ cmd_flash() {
         cam_need_ip || return 1
         cam_key
         ui_say "  WOULD check the image (size $APP_PARTITION_BYTES, md5) and the stock APP hardware verdict (typed"
-        ui_say "  '$CAM_UNTESTED_PHRASE' unless validated), then choose the route:"
+        ui_say "  a yes/no in a red box unless validated), then choose the route:"
         ui_say "    - SSH reflash when Akam already runs and your key works (no card needed), or"
         ui_say "    - the maintenance telnet with the flash card (stock firmware, or Akam with the maintenance card)."
         flash_telnet dry-run dry-run Flashing || return 1
@@ -782,14 +907,35 @@ cmd_flash() {
 }
 
 # ------------------------------------------------------------------ verify
-cam_wait_port() { # port secs
-    local p=$1 max=${2:-${AKAM_WAIT_SECS:-240}} t=0
-    while [ "$t" -lt "$max" ]; do
-        if net_port_open "$CAM_IP" "$p" 3; then return 0; fi
-        t=$((t + 5))
-        sleep 2
+# cam_wait_port PORT [SECS [WHAT]]: wait until the camera answers on PORT. Shows what it waits for
+# and the elapsed time: a spinner on a terminal, one line every 15 s otherwise. 0 = answered,
+# 1 = still silent after SECS (the caller explains what that probably means).
+cam_wait_port() {
+    local p=$1 max=${2:-${AKAM_WAIT_SECS:-240}} what=${3:-the camera} t0=$SECONDS el frame=0 lastp=-100 spin=""
+    ui_say "  Waiting for $what: $CAM_IP port $p (up to $max seconds) ..."
+    while :; do
+        el=$((SECONDS - t0))
+        if [ "${TUI_ON:-0}" = 1 ]; then
+            tui_elapsed "$el"
+            spin=${TUI_SPIN[frame % ${#TUI_SPIN[@]}]}
+            printf '\r\e[K  %s%s%s waiting for %s  %s%s of %ss%s' "$TUI_C" "$spin" "$TUI_RST" "$what" "$TUI_D" "$REPLY" "$max" "$TUI_RST" >&2
+            frame=$((frame + 1))
+        elif [ $((el - lastp)) -ge 15 ]; then
+            if [ "$el" -gt 0 ]; then printf '  ... still waiting for %s (%s of %s s)\n' "$what" "$el" "$max"; fi
+            lastp=$el
+        fi
+        if net_port_open "$CAM_IP" "$p" 2; then
+            if [ "${TUI_ON:-0}" = 1 ]; then printf '\r\e[K' >&2; fi
+            ui_say "  Port $p answered after $((SECONDS - t0)) s."
+            return 0
+        fi
+        if [ "$el" -ge "$max" ]; then
+            if [ "${TUI_ON:-0}" = 1 ]; then printf '\r\e[K' >&2; fi
+            ui_say "  No answer on port $p within $max s."
+            return 1
+        fi
+        sleep 1
     done
-    return 1
 }
 
 # cam_hwcheck: copy akam_hwcheck.sh to the camera's RAM and run it. Shows PASS/FAIL/WARN lines.
@@ -828,23 +974,35 @@ cam_ports_check() {
     return "$bad"
 }
 
+# verify_hostname: after a good verify, give the camera the network name chosen for it (never fails the step).
+verify_hostname() {
+    if [ "$CAM_NAME" = default ]; then
+        if [ "$UI_DRY" = 1 ]; then ui_say "  WOULD also set the camera's network name over SSH when you gave the camera a name (./akam --camera NAME)."; fi
+        return 0
+    fi
+    cam_hostname_apply "$CAM_NAME" || ui_say "  You can try again later with: ./akam hostname $CAM_NAME"
+}
+
 cmd_verify() {
     step_need verify || return 1
     step_banner verify
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD wait for the camera, check SSH with your key, copy and run akam_hwcheck.sh (expecting no FAIL),"
-        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in), then ask you to"
+        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in), make sure the camera has a saved"
+        ui_say "  Wi-Fi network (preflight_check.sh --ensure-wifi on the camera; it is created from the card's wifi.conf when missing,"
+        ui_say "  and you are never asked to remove the card before that is done), then ask you to"
         ui_say "  unplug the power, take the card out and plug the power back in BY HAND, and repeat the checks:"
         ui_say "  telnet 24 and FTP 21 must then be closed. Only then is the step marked done."
         state_mark_done verify
+        verify_hostname
         rtsp_auth_offer
         wipe_offer
         return 0
     fi
     cam_need_ip || return 1
     cam_key
-    ui_say "  Waiting for the camera to answer on SSH (up to ${AKAM_WAIT_SECS:-240} seconds) ..."
-    cam_wait_port "$(cam_port ssh)" || { ui_fail "the camera does not answer on SSH." "wait, check the address, see docs/akam_v1_flash_and_restore.md (Recovery). The step is NOT done."; return 1; }
+    cam_wait_port "$(cam_port ssh)" "${AKAM_WAIT_SECS:-240}" "the camera to answer on SSH" ||
+        { ui_fail "the camera does not answer on SSH." "it may still be starting (wait a minute and run this step again), the address may have changed (check your router), or the camera may have no network: see docs/akam_v1_flash_and_restore.md (Recovery). The step is NOT done."; return 1; }
     cam_ssh_setup
     cam_show_fingerprint
     cam_ssh_ok || { ui_fail "SSH with $CAM_KEY was refused." "is this the key you put on the flash card (--identity FILE)? The step is NOT done: do not remove the card."; return 1; }
@@ -852,18 +1010,87 @@ cmd_verify() {
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure (lines above)." "do not remove the card yet; read docs/akam_v1_test_plan.md."; return 1; }
     cam_ports_check card || { ui_fail "unexpected port state." "do not remove the card yet."; return 1; }
     ui_good "  Checks passed with the card in."
+    # Hard gate: never invite the user to remove the card while the camera has no saved Wi-Fi.
+    cam_wifi_gate_ssh || { ui_say "  The step is NOT done: do not remove the card."; return 1; }
     ui_blank
     ui_say "  Now the real test: without the card. By hand:"
     ui_say "    1. unplug the camera's USB-C power  2. take the microSD card out  3. plug the power back in."
     ui_prompt "  Press Enter when the camera is powered again (or q to stop):" "" || { ui_fail "no input." "run ./akam step verify again."; return 1; }
     if [ "$ANSWER" = q ]; then ui_fail "stopped." "run ./akam step verify again when ready."; return 1; fi
-    cam_wait_port "$(cam_port ssh)" || { ui_fail "the camera does not answer on SSH without the card." "put the card back and look at docs/akam_v1_flash_and_restore.md (Recovery)."; return 1; }
+    cam_wait_port "$(cam_port ssh)" "${AKAM_WAIT_SECS:-240}" "the camera to boot without the card and answer on SSH" ||
+        { ui_fail "the camera is not on the network ${AKAM_WAIT_SECS:-240} seconds after the power-up without the card." \
+            "most likely its Wi-Fi is not saved on the camera (no /etc/config/wpa_supplicant.conf): put the card back, power-cycle, run this step again (it creates the file) and see docs/akam_v1_install.md (Troubleshooting: no network after removing the card). Also check the address in your router: it may have changed."; return 1; }
     cam_ports_check closed || { ui_fail "port check failed without the card." "see docs/akam_v1_ssh_and_lockdown.md."; return 1; }
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure without the card." ""; return 1; }
     state_mark_done verify
     ui_good "  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off."
+    verify_hostname
     rtsp_auth_offer
     wipe_offer
+}
+
+# ------------------------------------------------------------------ host name
+# The camera's network name (what the router lists) comes from the name given to the camera here. The
+# camera-side command /usr/sbin/akam_hostname.sh set|show|status NAME stores it in /etc/config/akam/hostname
+# and DHCP announces it at the next boot. An older firmware does not have it: that is only a note.
+HOSTNAME_CMD=/usr/sbin/akam_hostname.sh
+HOSTNAME_MAX=32
+
+# cam_hostname_valid NAME: a lowercase RFC 1123 label, at most 32 characters.
+cam_hostname_valid() {
+    case $1 in
+        '' | -* | *- | *[!a-z0-9-]*) return 1 ;;
+    esac
+    [ "${#1}" -le "$HOSTNAME_MAX" ]
+}
+
+# cam_hostname_apply NAME: over SSH. Returns 0 also when the firmware lacks the command (a note is shown).
+cam_hostname_apply() {
+    local name=$1 out
+    cam_hostname_valid "$name" || { ui_warn "'$name' is not a valid network name (lowercase letters, digits and '-', at most $HOSTNAME_MAX)."; return 1; }
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH: test -x $HOSTNAME_CMD, then $HOSTNAME_CMD set $name (applies after the next power cycle)."
+        return 0
+    fi
+    cam_ssh_setup
+    log_line "CMD ssh root@$CAM_IP test -x $HOSTNAME_CMD"
+    if ! "${CAM_SSH[@]}" "test -x $HOSTNAME_CMD" >/dev/null 2>&1; then
+        ui_say "  Note: this firmware does not have $HOSTNAME_CMD yet, so the camera keeps its default network name."
+        ui_say "  Update to a newer Akam image, then run: ./akam hostname $name"
+        return 0
+    fi
+    log_line "CMD ssh root@$CAM_IP $HOSTNAME_CMD set $name"
+    if ! out=$("${CAM_SSH[@]}" "$HOSTNAME_CMD set $name" 2>&1); then
+        ui_warn "setting the network name failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"
+        return 1
+    fi
+    ui_good "  The camera's network name is set to '$name'. It applies after the next power cycle (unplug, wait 5 seconds, plug back)."
+}
+
+# cmd_hostname [NAME]: ./akam hostname [NAME]; NAME defaults to the camera's name.
+cmd_hostname() {
+    local name=${1:-}
+    step_banner_free "Set the camera's network name"
+    ui_say "  Why: your router will list the camera under this name instead of a number. Risk: none (a small file on the camera)."
+    if [ -z "$name" ] && [ "$CAM_NAME" != default ]; then name=$CAM_NAME; fi
+    if [ -z "$name" ]; then
+        if [ "$UI_DRY" = 1 ]; then
+            name="<name>"
+        else
+            ui_prompt "  Network name for the camera (lowercase letters, digits, '-'):" "" || { ui_fail "no input." "run ./akam hostname NAME"; return 1; }
+            name=$ANSWER
+        fi
+    fi
+    if [ "$UI_DRY" != 1 ] && ! cam_hostname_valid "$name"; then
+        ui_fail "'$name' is not a valid network name." "use lowercase letters, digits and '-' (at most $HOSTNAME_MAX, not starting or ending with '-')."
+        return 1
+    fi
+    cam_need_ip || return 1
+    cam_key
+    if [ "$UI_DRY" != 1 ]; then
+        cam_ssh_ok || { ui_fail "SSH to root@$CAM_IP with the key $CAM_KEY does not work." "the camera must run Akam and be on the network (--identity FILE, --ip ADDRESS)."; return 1; }
+    fi
+    cam_hostname_apply "$name" || return 1
 }
 
 # ------------------------------------------------------------------ rtsp-auth
@@ -1055,7 +1282,7 @@ cmd_restore() {
     bk=${OPT_BACKUP_DIR:-$(state_get backup_dir)}
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD check $bk/mtdblock7.bin (size $APP_PARTITION_BYTES, sha256 and md5), choose SSH (Akam running) or the"
-        ui_say "  maintenance telnet, and ask for a typed YES. Same gates as flash; no reboot is ever sent."
+        ui_say "  maintenance telnet, and ask a yes/no (default No). Same gates as flash; no reboot is ever sent."
         flash_telnet dry-run dry-run Restoring || return 1
         return 0
     fi

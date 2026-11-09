@@ -146,7 +146,7 @@ that the camera boots stock and opens `telnet CAMERA_IP 24`). Add, on the PC, in
 | `install_with_flash_tool.sh`, `flash_guard.sh` | from `tools/flash_scripts/`; `flash_guard.sh` is mandatory, a missing file makes the script refuse |
 | `original_firmware/mtdblock7.bin` | your stock APP backup, **in this subdirectory only** (section 3) |
 | `restore.sh` | optional, from `tools/flash_scripts/` |
-| `preflight_check.sh` | from `tools/flash_scripts/`: read-only Wi-Fi / AP-mode gates (step 3) |
+| `preflight_check.sh` | from `tools/flash_scripts/`: read-only Wi-Fi / AP-mode gates (step 3); `--ensure-wifi` creates `/etc/config/wpa_supplicant.conf` from the card's `wifi.conf` when it is missing |
 
 **Never leave any `*.bin` at the top level of the card**: the stock boot runs `system_upgrade` on it
 (see the warning in the SD backup guide).
@@ -168,6 +168,7 @@ is no UART to fix it afterwards):
 
 ```sh
 sh /mnt/preflight_check.sh      # read-only; prints presence and counts, never the SSID or the key
+sh /mnt/preflight_check.sh --ensure-wifi   # no saved Wi-Fi? creates it from the card (see troubleshooting)
 ls -l /etc/config/wpa_supplicant.conf /etc/config/passwd
 ```
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016
 # ./akam on a real (pseudo) terminal: the full-screen menu, running a step from it, the card picker,
-# typed confirmations, the Wi-Fi password choice, Ctrl-C, resizing, NO_COLOR and the ASCII fallback.
+# red yes/no confirmations, the Wi-Fi password choice, Ctrl-C, resizing, NO_COLOR and the ASCII fallback.
 # The pseudo-terminal is driven by tests/fixtures/pty_drive.py (Python 3 standard library only);
 # without Python 3 the whole test is skipped with a "skip:" line. No camera, no card, no network:
 # the SD tool and check_host are stubs.
@@ -72,7 +72,7 @@ run() {
     python3 -I "$DRIVE" --out "$T/$name.raw" "$@" >"$T/$name.res" 2>&1
     sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$T/$name.raw" | tr -d '\r' >"$T/$name.txt"
 }
-new_state() { rm -rf "$T/st"; mkdir -p "$T/st"; : >"$STUB_LOG"; }
+new_state() { rm -rf "$T/st"; mkdir -p "$T/st"; printf "default\n" >"$T/st/current_camera"; : >"$STUB_LOG"; }
 # last_frame NAME: the last full menu frame (text only).
 last_frame() {
     python3 -I - "$T/$1.raw" <<'EOF'
@@ -127,14 +127,24 @@ run blocked 'expect:Check this computer' 'send:j' 'send:\r' 'expect:Waiting for:
 check "menu: Enter on a blocked step explains and stays in the menu" has "$T/blocked.txt" "Waiting for: doctor"
 check "menu: ... and does not start the step" hasnt "$T/blocked.txt" "Step 2/9"
 new_state
-run step 'expect:Check this computer' 'send:\r' 'expect:Press any key' 'send:x' 'expect:Get the Akam kit' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+run step 'expect:Check this computer' 'send:\r' 'expect:Start this step?' 'send:\r' 'expect:Press any key' 'send:x' 'expect:Get the Akam kit' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
 check "menu: Enter runs the step (section rule shown)" has "$T/step.txt" "Step 1/9"
+check "menu: entering a step shows what it does, what it touches and asks Start this step?" bash -c 'grep -q "What it does:" "$1" && grep -q "What it touches:" "$1" && grep -q "Start this step?" "$1"' _ "$T/step.txt"
+check "menu: Enter takes the default (Yes) and the step runs" bash -c 'grep -q "Start this step? .*Yes" "$1"' _ "$T/step.txt"
 check "menu: the command is shown before it runs" has "$T/step.txt" "Running (read-only): $T/check_host.sh --profile kit"
 check "menu: the step's result is announced" has "$T/step.txt" "Check this computer: finished"
 check "menu: the step is recorded as done" bash -c 'grep -q "^step_doctor_done=" "$1/state"' _ "$T/st"
 check "menu: back in the menu, the next step is no longer blocked" bash -c '! grep -q "Waiting for" <(sed -n "/Press any key to return/,\$p" "$1")' _ "$T/step.txt"
 check "menu: terminal restored after running a step and quitting" terminal_restored step
 check "menu: the first todo step is preselected after a run (Get the Akam kit described)" has "$T/step.txt" "Downloads the prebuilt Akam kit"
+
+# the start question: No / Esc go back to the menu and the step is not run
+new_state
+run startno 'expect:Check this computer' 'send:\r' 'expect:Start this step?' 'send:n' 'expect:not started' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "menu: answering n to 'Start this step?' returns to the menu without running it" bash -c 'grep -q "not started" "$1" && ! grep -q "Step 1/9" "$1" && ! grep -q "^step_doctor_done=" "$2/state"' _ "$T/startno.txt" "$T/st"
+new_state
+run startesc 'expect:Check this computer' 'send:\r' 'expect:Start this step?' 'send:\x1b' 'expect:not started' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "menu: Esc at 'Start this step?' means No" bash -c '! grep -q "Step 1/9" "$1" && ! grep -q "^step_doctor_done=" "$2/state"' _ "$T/startesc.txt" "$T/st"
 
 # ---------------------------------------------------------------- Ctrl-C
 new_state
@@ -146,22 +156,33 @@ new_state
 run sigterm 'expect:Check this computer' 'sigint' -- "$AKAM" --state-dir "$T/st"
 check "SIGINT to the process group also restores the terminal" terminal_restored sigterm
 
-# ---------------------------------------------------------------- the card picker and typed confirmation
+# ---------------------------------------------------------------- the card picker and the red yes/no confirmation
 new_state
-run wipe_ok 'expect:Which disk is your microSD card?' 'send:j' 'send:k' 'send:\r' 'expect:Type exactly:  ERASE /dev/sdb' 'send:ERASE /dev/sdb\r' 'expect:Card wiped' -- "$AKAM" --state-dir "$T/st" wipe-sd
+run wipe_ok 'expect:Which disk is your microSD card?' 'send:j' 'send:k' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:y' 'expect:Card wiped' -- "$AKAM" --state-dir "$T/st" wipe-sd
 check "picker: lists the candidate disks with size and model" bash -c 'grep -q "/dev/sdb" "$1" && grep -q "3.9 GB" "$1" && grep -q "Ultra microSD" "$1" && grep -q "/dev/sdc" "$1"' _ "$T/wipe_ok.txt"
-check "picker + typed phrase: the SD tool is called for the picked disk" has "$STUB_LOG" "stub sd wipe wipe --device /dev/sdb"
-check "typed confirmation: the box names the exact phrase" has "$T/wipe_ok.txt" "Type exactly:  ERASE /dev/sdb"
-check "typed confirmation run ends cleanly" has "$T/wipe_ok.res" "EXIT=0"
+check "picker + yes: the SD tool is called for the picked disk, with --yes-i-confirmed for the same device" has "$STUB_LOG" "stub sd wipe wipe --device /dev/sdb --yes-i-confirmed /dev/sdb"
+check "red box: names the device, its model and size and what happens" bash -c 'grep -q "Device: /dev/sdb" "$1" && grep -q "Model: Card Reader" "$1" && grep -q "Size: 4.0 GB\|Size: 3.9 GB" "$1" && grep -q "overwritten with zeros" "$1"' _ "$T/wipe_ok.txt"
+check "red box: drawn in red" bash -c 'grep -qaP "\x1b\[3[01]m" "$1"' _ "$T/wipe_ok.raw"
+check "red box: nothing to type" hasnt "$T/wipe_ok.txt" "Type exactly"
+check "red box run ends cleanly" has "$T/wipe_ok.res" "EXIT=0"
 new_state
-run wipe_bad 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Type exactly:' 'send:y\r' 'expect:erase not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
-check "typed confirmation: y does not confirm, nothing is wiped" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
-check "typed confirmation: failure explains that nothing changed" has "$T/wipe_bad.txt" "nothing was changed"
-check "typed confirmation: the failure is an error panel" has "$T/wipe_bad.txt" "Something went wrong"
-check "typed confirmation: the run reports failure (exit 1)" has "$T/wipe_bad.res" "EXIT=1"
+run wipe_bad 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:\r' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: Enter takes the default (No), nothing is wiped" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+check "red box: No explains that nothing changed" has "$T/wipe_bad.txt" "nothing was changed"
+check "red box: the refusal is an error panel" has "$T/wipe_bad.txt" "Something went wrong"
+check "red box: the run reports failure (exit 1)" has "$T/wipe_bad.res" "EXIT=1"
 new_state
-run wipe_q 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Type exactly:' 'send:q\r' 'expect:erase not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
-check "typed confirmation: q is typed text, not a shortcut" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+run wipe_ahead 'expect:Which disk is your microSD card?' 'send:\ry' 'expect:Zero-fill /dev/sdb now?' 'wait:1' 'send:\x1b' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: a key typed ahead (before the box was on screen) is thrown away, it never answers yes" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+new_state
+run wipe_q 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:q' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: q means No" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+new_state
+run wipe_escb 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:\x1b' 'expect:not confirmed' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: Esc means No" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
+new_state
+run wipe_arrow 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Zero-fill /dev/sdb now?' 'send:\x1b[C' 'send:\r' 'expect:Card wiped' -- "$AKAM" --state-dir "$T/st" wipe-sd
+check "red box: arrow right then Enter selects Yes" has "$STUB_LOG" "wipe --device /dev/sdb --yes-i-confirmed /dev/sdb"
 new_state
 run wipe_esc 'expect:Which disk is your microSD card?' 'send:\x1b' 'expect:no card chosen' -- "$AKAM" --state-dir "$T/st" wipe-sd
 check "picker: Esc cancels, nothing is wiped" bash -c '! grep -q "wipe --device" "$1"' _ "$STUB_LOG"
@@ -171,17 +192,17 @@ check "picker: cancelling leaves a clean terminal" has "$T/wipe_esc.res" "TTY=sa
 SEC="Wifi-S3cret-Pw"
 new_state
 printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st/state"
-run wifi_show 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:\r' "send:$SEC" 'expect:Type exactly:  ERASE /dev/sdb' 'send:\x03' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
+run wifi_show 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:\r' "send:$SEC" 'expect:Erase /dev/sdb now?' 'send:\x03' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
 check "wifi: asks 'Show the password while typing?' with Y as the default" bash -c 'grep -q "Show the password while typing?" "$1" && grep -q "\[Y/n\]" "$1"' _ "$T/wifi_show.txt"
 check "wifi: the password is visible while typing when the user said yes" has "$T/wifi_show.txt" "$SEC"
 new_state
 printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st/state"
-run wifi_hide 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:n' "send:$SEC\r" 'expect:Type exactly:  ERASE /dev/sdb' 'send:ERASE /dev/sdb\r' 'expect:Backup card ready' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
+run wifi_hide 'expect:Which disk is your microSD card?' 'send:\r' 'expect:Wi-Fi network name' 'send:MyNet\r' 'expect:Show the password while typing?' 'send:n' "send:$SEC\r" 'expect:Erase /dev/sdb now?' 'send:y' 'expect:Backup card ready' -- "$AKAM" --state-dir "$T/st" prepare-backup-sd
 check "wifi: with 'n' the password never appears on the terminal" hasnt "$T/wifi_hide.raw" "$SEC"
 check "wifi: the card tool got the password through its environment" has "$STUB_LOG" "stub sd prepare"
 check "wifi: ... as pass=set, not on the command line" bash -c 'grep -q "pass=set" "$1" && ! grep -q "$2" "$1"' _ "$STUB_LOG" "$SEC"
 check "wifi: no secret in the state file or the log" bash -c '! grep -rq "$2" "$1"' _ "$T/st" "$SEC"
-check "wifi: the flow completes (typed ERASE accepted)" has "$T/wifi_hide.res" "EXIT=0"
+check "wifi: the flow completes (the yes was accepted)" has "$T/wifi_hide.res" "EXIT=0"
 
 # ---------------------------------------------------------------- resize, colours, ASCII
 new_state
@@ -224,6 +245,35 @@ check "AKAM_PLAIN=1 on a terminal: the line-based menu" bash -c '! grep -qa "104
 new_state
 run dry 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --dry-run --state-dir "$T/st"
 check "--dry-run on a terminal: menu with the rehearsal badge" has "$T/dry.txt" "REHEARSAL"
+
+# ---------------------------------------------------------------- cameras: name asked on the first run, shown in the header, c switches
+rm -rf "$T/st"
+mkdir -p "$T/st"
+run camname 'expect:Camera name' 'send:salon\r' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: the first terminal run asks for the camera's name" has "$T/camname.txt" "Camera name"
+check "cameras: the menu header shows the camera" has "$T/camname.txt" "salon"
+check "cameras: its state lives in cameras/salon" bash -c '[ -f "$1/cameras/salon/state" ] && [ "$(cat "$1/current_camera")" = salon ]' _ "$T/st"
+run camsw 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:\r' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: the c key offers the known cameras and a new one" bash -c 'grep -q "salon" "$1" && grep -q "+ New camera" "$1"' _ "$T/camsw.txt"
+
+# the camera list: several cameras, each with its own progress; Enter switches and redraws the menu
+rm -rf "$T/st"
+mkdir -p "$T/st/cameras/other" "$T/st/cameras/salon"
+printf 'step_doctor_done=2026-01-01T00:00:00Z\ncamera_ip=192.0.2.9\n' >"$T/st/cameras/other/state"
+printf 'camera_ip=192.0.2.5\n' >"$T/st/cameras/salon/state"
+printf 'salon\n' >"$T/st/current_camera"
+run camlist 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:k' 'send:\r' 'expect:Camera: other' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: the header says how to change camera (c to change)" has "$T/camlist.txt" "c to change"
+check "cameras: the list shows each camera with its address and progress" bash -c 'grep -q "other  1/9 steps done  192.0.2.9  last: doctor" "$1" && grep -q "salon  0/9 steps done  192.0.2.5" "$1"' _ "$T/camlist.txt"
+check "cameras: the list ends with + New camera and Register an existing Akam camera" bash -c 'grep -q "+ New camera" "$1" && grep -q "Register an existing Akam camera" "$1"' _ "$T/camlist.txt"
+check "cameras: Enter on another camera switches to it and remembers it" bash -c '[ "$(cat "$1/current_camera")" = other ]' _ "$T/st"
+last_frame camlist >"$T/camlist.frame"
+check "cameras: the redrawn menu shows that camera's name and address in the header" bash -c 'grep -q "other" "$1" && grep -q "192.0.2.9" "$1" && grep -q "1/9 done\|1/9" "$1"' _ "$T/camlist.frame"
+printf 'salon\n' >"$T/st/current_camera"
+run camreg 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:j' 'send:j' 'send:\r' 'expect:ALREADY runs Akam' 'send:regcam\r' 'expect:IP address' 'send:127.0.0.1\r' 'expect:backup of the original firmware' 'send:\r' 'expect:Press any key' 'send:x' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: Register an existing Akam camera asks a name, an address and the backup folder" bash -c '[ "$(cat "$1/current_camera")" = regcam ]' _ "$T/st"
+check "cameras: register checks the camera and refuses an address that does not answer like Akam" has "$T/camreg.txt" "does not look like a camera running Akam"
+check "cameras: a refused registration marks nothing done" bash -c '! grep -q "step_" "$1/cameras/regcam/state"' _ "$T/st"
 
 echo
 echo "wizard_tui_pty_test: $PASS passed, $FAIL failed"

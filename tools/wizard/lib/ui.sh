@@ -140,12 +140,72 @@ ui_pick_route() {
     [ "$TUI_INDEX" -eq 0 ]
 }
 
-# ui_confirm_typed PROMPT EXPECTED: exact typed text, never skipped, never defaulted.
-# A rehearsal only shows the question; it never passes a real confirmation.
-ui_confirm_typed() {
-    if [ "$UI_DRY" = 1 ]; then ui_say "WOULD ask: $1 (type: $2)"; return 0; fi
-    if [ "${TUI_ON:-0}" = 1 ]; then tui_typed "$1" "$2"; return; fi
-    host_confirm_typed "$1" "$2"
+# ui_choose TITLE ITEM...: pick one item. Sets CHOICE_INDEX (0-based). Returns 1 on cancel or EOF.
+# Terminal: the arrow-key list. Plain mode: a numbered list and a prompt (Enter = the first item).
+# shellcheck disable=SC2034  # CHOICE_INDEX is read by the callers
+ui_choose() {
+    local title=$1 i=0 it
+    shift
+    CHOICE_INDEX=-1
+    if [ "${TUI_ON:-0}" = 1 ] && [ "$UI_DRY" != 1 ]; then
+        tui_choose "$title" "$@" || return 1
+        CHOICE_INDEX=$TUI_INDEX
+        return 0
+    fi
+    ui_say "  $title"
+    for it in "$@"; do
+        i=$((i + 1))
+        ui_say "    $i) $it"
+    done
+    while :; do
+        printf '  Number [1]: ' >&2
+        IFS= read -r ANSWER || return 1
+        ANSWER=${ANSWER:-1}
+        case $ANSWER in
+            '' | *[!0-9]*) ;;
+            *) if [ "$ANSWER" -ge 1 ] && [ "$ANSWER" -le "$#" ]; then CHOICE_INDEX=$((ANSWER - 1)); return 0; fi ;;
+        esac
+        ui_say "  Please type a number between 1 and $#."
+    done
+}
+
+# ui_drain_input: throw away what was typed ahead on the real terminal (a key pressed during a long
+# command or a sudo prompt must never answer a question that was not on screen yet). Piped input
+# (tests, AKAM_FORCE_TTY) is not a terminal and is left alone.
+ui_drain_input() {
+    local saved k
+    [ -t 0 ] || return 0
+    saved=$(stty -g 2>/dev/null) || return 0
+    stty -icanon -echo min 0 time 1 2>/dev/null || return 0
+    # shellcheck disable=SC2034  # the key is discarded
+    while IFS= read -r -s -n 1 -t 0.1 k; do :; done
+    stty "$saved" 2>/dev/null || true
+}
+
+# ui_danger TITLE QUESTION LINE...: the confirmation of an action that cannot be undone (erasing a card,
+# writing the camera flash, untested hardware). A red warning box states exactly what will happen, then ONE
+# yes/no choice whose default is No (arrow keys or y/N; Esc, q, an empty answer or the end of the input mean
+# No). It needs a real terminal (returns 2 and refuses without one). A rehearsal only shows the question and
+# never asks. Returns 0 only for an explicit yes. Nothing is typed: after a yes the wizard itself passes the
+# answers on to the tool that asks again (the SD tool, the camera's flash script).
+ui_danger() {
+    local title=$1 question=$2 l
+    shift 2
+    if [ "$UI_DRY" = 1 ]; then ui_say "WOULD ask: $question [y/N] (default: No) -- $title: $*"; return 0; fi
+    ui_require_tty "$title" || return 2
+    if [ "${TUI_ON:-0}" = 1 ]; then
+        TUI_BUF=()
+        tui_box_build "$TUI_R" "$TUI_I_WARN $title" "$@"
+        for l in "${TUI_BUF[@]}"; do printf '%s\n' "$l" >&2; done
+        ui_drain_input
+        tui_yesno "$question" n
+        return
+    fi
+    ui_blank
+    ui_warn "$title"
+    for l in "$@"; do ui_say "  $l"; done
+    ui_drain_input
+    host_confirm "  $question"
 }
 
 # ui_banner N TOTAL TITLE
@@ -156,5 +216,47 @@ ui_banner() {
         tui_rule "Step $1/$2 $TUI_I_DOT $3"
     else
         ui_bold "Step $1/$2 - $3"
+    fi
+}
+
+# ui_progress LABEL PERCENT: one progress bar for a long camera command (flash_tool prints about
+# 200 KB of carriage-return bars). On a terminal widget screen the bar is redrawn in place; in
+# plain mode only one line per 10 % is printed, so a log or a pipe never floods.
+UI_PROG_LABEL=""
+UI_PROG_LAST=-1
+UI_PROG_OPEN=0
+ui_progress() {
+    local label=$1 pct=$2 bar
+    if [ "$label" != "$UI_PROG_LABEL" ]; then
+        ui_progress_close
+        UI_PROG_LABEL=$label
+        UI_PROG_LAST=-1
+    fi
+    if [ "$pct" -gt 100 ]; then pct=100; fi
+    if [ "${TUI_ON:-0}" = 1 ]; then
+        if [ "$pct" -eq "$UI_PROG_LAST" ]; then return 0; fi
+        UI_PROG_LAST=$pct
+        tui_bar "$pct" 24
+        bar=$REPLY
+        printf '\r\e[K    | %s  %s' "$label" "$bar" >&2
+        UI_PROG_OPEN=1
+        if [ "$pct" -ge 100 ]; then ui_progress_close; fi
+        return 0
+    fi
+    # plain mode: the first value, then every 10 %, then 100 %
+    if [ "$UI_PROG_LAST" -lt 0 ] || [ "$pct" -ge $((UI_PROG_LAST + 10)) ] || { [ "$pct" -ge 100 ] && [ "$UI_PROG_LAST" -lt 100 ]; }; then
+        UI_PROG_LAST=$pct
+        printf '    | %s: %s%%\n' "$label" "$pct"
+    fi
+}
+
+# ui_progress_close: end the bar line (a bar redrawn in place has no newline yet) and forget a
+# finished bar so that the next phase starts from 0.
+ui_progress_close() {
+    if [ "$UI_PROG_OPEN" = 1 ]; then printf '\n' >&2; fi
+    UI_PROG_OPEN=0
+    if [ "$UI_PROG_LAST" -ge 100 ]; then
+        UI_PROG_LABEL=""
+        UI_PROG_LAST=-1
     fi
 }

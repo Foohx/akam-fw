@@ -15,7 +15,7 @@
 #                    preflight_check.sh, restore.sh, akam_hwcheck.sh, original_firmware/mtdblock7.bin
 #                    (needs --image IMG --flash-tool FILE --backup-dir DIR)
 #       backup and first-boot WIPE the card: they refuse without a terminal and need the typed
-#       confirmation "ERASE <device>".
+#       confirmation "ERASE <device>" (or --yes-i-confirmed DEVICE, see below).
 #       Other options: --toolkit DIR (default ~/akam-sdprep/toolkit, cloned if absent; commit and
 #       sd_card tree hash are verified), --hidden (read the Wi-Fi password without echo),
 #       --dry-run --stage-dir DIR (touch no device: build the card tree in DIR; with --device the
@@ -24,7 +24,7 @@
 #       Read-only check of a prepared card (flags, hooks, hashes against --toolkit when given, sizes,
 #       no *.bin at the card root). Prints "ok:" / "FAIL:" lines and a final "VERIFY: OK|FAILED".
 #   wipe --device DEV [--dry-run]
-#       Zero-fill the whole card with dd (typed "ERASE <device>"), to erase cards holding a Wi-Fi
+#       Zero-fill the whole card with dd (typed "ERASE <device>", or --yes-i-confirmed), to erase cards holding a Wi-Fi
 #       password or a dump.
 #
 # Safety: only whole removable USB disks or SD readers (mmcblk) of 128 MiB .. 128 GiB. Refused: partitions,
@@ -33,6 +33,11 @@
 # device-mapper/md holders. /dev/disk/by-* links are resolved first. The disk (size, model, serial, wwn,
 # partition table) is re-checked after the typed "ERASE <device>" and right before wipefs, sfdisk, mkfs and dd.
 # AKAM_FORCE_TTY (test hook) does not unlock an erase: a real terminal is required.
+#
+# --yes-i-confirmed DEVICE (prepare backup|first-boot, wipe): for the ./akam wizard, which has already asked the
+# user a yes/no naming this very device. It replaces ONLY the typed phrase: it is accepted only when DEVICE is
+# exactly the --device given (or the disk it resolves to), a real terminal is still required, every guard above
+# still runs and the disk is re-checked before anything is written. Used by hand, the tool still asks the phrase.
 #
 # Wi-Fi: AKAM_WIFI_SSID / AKAM_WIFI_PASS from the environment, otherwise asked (visible input by
 # default, --hidden to hide). They are never printed, logged or passed on a command line, and are
@@ -289,16 +294,19 @@ STAGE=
 HIDDEN=0
 HUMAN=0
 MOUNTDIR=
+YES_DEV=
+DEV_GIVEN=
 
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            --mode | --device | --pubkey | --image | --flash-tool | --backup-dir | --toolkit | --stage-dir | --mount)
+            --mode | --device | --pubkey | --image | --flash-tool | --backup-dir | --toolkit | --stage-dir | --mount | --yes-i-confirmed)
                 [ $# -ge 2 ] || usage_die "$1 needs a value" ;;
         esac
         case "$1" in
             --mode) MODE=$2; shift 2 ;;
-            --device) DEV=$2; shift 2 ;;
+            --device) DEV=$2; DEV_GIVEN=$2; shift 2 ;;
+            --yes-i-confirmed) YES_DEV=$2; shift 2 ;;
             --pubkey) PUBKEY=$2; shift 2 ;;
             --image) IMAGE=$2; shift 2 ;;
             --flash-tool) FLASHTOOL=$2; shift 2 ;;
@@ -309,10 +317,13 @@ parse_args() {
             --dry-run) DRY=1; shift ;;
             --hidden) HIDDEN=1; shift ;;
             --human) HUMAN=1; shift ;;
-            -h | --help) sed -n 2,41p "$SELF"; exit 0 ;;
+            -h | --help) sed -n 2,46p "$SELF"; exit 0 ;;
             *) usage_die "unknown argument: $1" ;;
         esac
     done
+    if [ -n "$YES_DEV" ] && [ "$YES_DEV" != "$DEV_GIVEN" ]; then
+        usage_die "--yes-i-confirmed must name exactly the --device given (${DEV_GIVEN:-none}), not '$YES_DEV'"
+    fi
 }
 
 guard_device() { # DEV: refuse anything that is not an eligible card; resolves /dev/disk/by-* links
@@ -352,6 +363,15 @@ show_device() { # DEV (after guard_device)
 
 confirm_erase() { # DEV
     local rc=0
+    if [ -n "$YES_DEV" ]; then
+        # The wizard asked the yes/no for this device. The name must be the one given with --device (or the
+        # disk it resolves to): never a different disk than the one that was shown.
+        if [ -z "$DEV_GIVEN" ] || { [ "$YES_DEV" != "$DEV_GIVEN" ] && [ "$YES_DEV" != "$1" ]; }; then
+            die "--yes-i-confirmed must name exactly the --device given ($DEV_GIVEN), not '$YES_DEV': refusing, nothing was written"
+        fi
+        log "erase of $1 confirmed by the caller (--yes-i-confirmed $YES_DEV)"
+        return 0
+    fi
     host_confirm_typed "ALL DATA ON $1 WILL BE ERASED." "ERASE $1" || rc=$?
     echo >&2
     case $rc in
@@ -565,10 +585,10 @@ cmd_wipe() {
 
 main() {
     local cmd=${1:-}
-    [ $# -gt 0 ] || { sed -n 2,41p "$SELF"; exit 2; }
+    [ $# -gt 0 ] || { sed -n 2,46p "$SELF"; exit 2; }
     shift
     case "$cmd" in
-        -h | --help | help) sed -n 2,41p "$SELF"; exit 0 ;;
+        -h | --help | help) sed -n 2,46p "$SELF"; exit 0 ;;
         list-candidates | prepare | verify | wipe) ;;
         *) usage_die "unknown subcommand: $cmd" ;;
     esac

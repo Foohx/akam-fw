@@ -7,6 +7,7 @@
 #   Up/Down, j/k   move            Enter  run the selected step
 #   1-9            jump to a step   ?      what / why / risk of the selected step
 #   r              pick several steps to run (checkboxes)     a  run every step that is not done
+#   c              choose the camera (list with its progress), start a new one, or register one that already runs Akam
 #   q              quit (progress is kept; ./akam resumes)
 
 MENU_NAMES=()
@@ -18,11 +19,12 @@ MENU_MSG=""
 MENU_MSG_KIND=""
 MENU_TOP=0
 MENU_SEL=0
-MENU_TOOLS="rtsp-auth update restore wipe-sd"
+MENU_TOOLS="rtsp-auth hostname update restore wipe-sd"
 
 tool_title() {
     case $1 in
         rtsp-auth) echo "Password on the video stream" ;;
+        hostname) echo "Network name of the camera (from its name)" ;;
         update) echo "Update the image over SSH (no card)" ;;
         restore) echo "Restore the original firmware from your backup" ;;
         wipe-sd) echo "Erase a microSD card (it holds your Wi-Fi password)" ;;
@@ -117,7 +119,7 @@ tui_menu_draw() {
     w=$((TUI_COLS - 1))
     if [ "$w" -gt 100 ]; then w=100; fi
     inner=$((w - 4))
-    lw=$((inner / 2))
+    lw=$((inner * 2 / 5))
     rw=$((inner - lw))
     for ((i = 0; i < n; i++)); do
         if [ "${MENU_ST[i]}" = "done" ]; then done_n=$((done_n + 1)); fi
@@ -134,7 +136,7 @@ tui_menu_draw() {
     out+="$TUI_C$TUI_I_TL$TUI_I_H $TUI_B$title_l$TUI_RST$TUI_C $fill ${TUI_RST}${TUI_D}${title_r}${TUI_RST}${TUI_C} $TUI_I_TR$TUI_RST"$'\e[K\n'
     os=$(tui_menu_os)
     cam=${OPT_IP:-$(state_get camera_ip)}
-    [ -n "$cam" ] || cam="not set yet"
+    cam="$CAM_NAME $TUI_I_DOT ${cam:-no address yet} $TUI_I_DOT c to change"
     kit=$(tui_menu_kit)
     img=$(tui_menu_image)
     local pair
@@ -220,7 +222,7 @@ tui_menu_draw() {
     else
         out+=$'\e[K\n'
     fi
-    tui_clip "$TUI_I_UP$TUI_I_DN move  $TUI_I_ENTER run  ? help  r pick several  a run all  q quit" $((w - 2))
+    tui_clip "$TUI_I_UP$TUI_I_DN move  $TUI_I_ENTER run  ? help  r pick several  a run all  c camera  q quit" $((w - 2))
     out+=" $TUI_B$REPLY$TUI_RST"$'\e[K\e[J'
     printf '\e[H%s' "$out" >&2
 }
@@ -258,6 +260,12 @@ tui_menu_run() {
     name=${MENU_NAMES[i]}
     tui_screen_leave
     printf '\n' >&2
+    if ! step_confirm_start "$name" "${MENU_TITLE[i]}"; then
+        MENU_MSG="${MENU_TITLE[i]}: not started" MENU_MSG_KIND=warn
+        tui_screen_enter
+        tui_menu_refresh
+        return 0
+    fi
     if [ "${MENU_KIND[i]}" = step ]; then
         step_run "$name" || rc=$?
     else
@@ -272,6 +280,7 @@ tui_menu_run() {
                     esac
                 fi
                 ;;
+            hostname) cmd_hostname || rc=$? ;;
             update) cmd_update || rc=$? ;;
             restore) cmd_restore || rc=$? ;;
             wipe-sd) cmd_wipe_sd || rc=$? ;;
@@ -291,6 +300,63 @@ tui_menu_run() {
     # after a success, the cursor goes to the next thing to do
     if [ "$rc" -eq 0 ] && [ "${MENU_KIND[i]}" = step ]; then MENU_SEL=$(tui_menu_first_todo); fi
     return 0
+}
+
+# tui_menu_register_camera: ask a name and the address of a camera that already runs Akam, switch to it and
+# run register (which checks it over SSH before recording anything).
+tui_menu_register_camera() {
+    local name ip bk=""
+    ui_say "  Register a camera that ALREADY runs Akam (no backup, image or flash is redone)."
+    cams_ask_name || return 1
+    name=$CAM_ASKED
+    ui_prompt "  The camera's IP address (from your router's list):" "" || return 1
+    ip=$ANSWER
+    if [ -z "$ip" ]; then
+        ui_say "  No address: nothing registered."
+        return 1
+    fi
+    ui_prompt "  Folder of your backup of the original firmware (empty = none yet):" "" || return 1
+    bk=$ANSWER
+    cams_switch "$name" || return 1
+    OPT_IP=$ip
+    # shellcheck disable=SC2034  # read by cmd_register
+    OPT_BACKUP_DIR=$bk
+    cmd_register || true
+    MENU_MSG="Camera: $CAM_NAME" MENU_MSG_KIND=ok
+    tui_pause "Press any key to return to the menu..."
+}
+
+# tui_menu_camera: choose the camera to work on. An arrow-key list of the known cameras (name, address,
+# progress, last step done), then "+ New camera" and "Register an existing Akam camera". Enter switches the
+# current camera; the menu is redrawn with that camera's step statuses.
+tui_menu_camera() {
+    local names=() items=() n i=0 cur new="" pick
+    while IFS= read -r n; do
+        names+=("$n")
+        items+=("$n  $(cams_summary "$n")$([ "$n" = "$CAM_NAME" ] && echo '  (current)')")
+        [ "$n" = "$CAM_NAME" ] && cur=$i
+        i=$((i + 1))
+    done < <(cams_known)
+    items+=("+ New camera" "Register an existing Akam camera")
+    tui_screen_leave
+    printf '\n' >&2
+    if tui_choose -d "${cur:-0}" "Which camera do you want to work on?" "${items[@]}"; then
+        pick=$TUI_INDEX
+        if [ "$pick" -lt "${#names[@]}" ]; then
+            new=${names[pick]}
+        elif [ "$pick" -eq "${#names[@]}" ]; then
+            if cams_ask_name; then new=$CAM_ASKED; fi
+        else
+            tui_menu_register_camera || true
+        fi
+        if [ -n "$new" ] && [ "$new" != "$CAM_NAME" ]; then
+            cams_switch "$new"
+            MENU_MSG="Camera: $CAM_NAME" MENU_MSG_KIND=ok
+        fi
+    fi
+    tui_screen_enter
+    tui_menu_refresh
+    MENU_SEL=$(tui_menu_first_todo)
 }
 
 # tui_menu_pick: checkboxes over the steps that can run now; they run in order, stopping at the
@@ -314,6 +380,7 @@ tui_menu_pick() {
     if tui_multi -i "$init" "Which steps do you want to run now (in this order)?" "${items[@]}"; then
         for s in ${TUI_SELECTED[@]+"${TUI_SELECTED[@]}"}; do
             printf '\n' >&2
+            if ! step_confirm_start "${MENU_NAMES[${idx[s]}]}" "${MENU_TITLE[${idx[s]}]}"; then rc=1; break; fi
             step_run "${MENU_NAMES[${idx[s]}]}" || { rc=$?; break; }
         done
         if [ "$rc" -ne 0 ]; then
@@ -368,6 +435,7 @@ tui_main_menu() {
                 ;;
             '?' | h) tui_menu_help "$MENU_SEL" ;;
             r) tui_menu_pick ;;
+            c) tui_menu_camera ;;
             a)
                 tui_screen_leave
                 printf '\n' >&2

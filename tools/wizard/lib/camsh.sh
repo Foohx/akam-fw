@@ -47,6 +47,10 @@ CAMSH_STREAM_SKIP=""
 CAMSH_ECHO_SKIP=""
 CAMSH_MAX_OUT=1048576
 CAMSH_MAX_CMD=350
+# A progress bar of flash_tool: "Writing: [====>   ]  45% (n/total)". These segments end with a
+# carriage return (no newline): they never go to CAMSH_OUT, they only feed ui_progress.
+CAMSH_PROG_RE='^[[:space:]]*([A-Za-z][A-Za-z +/-]*): \[[=> ]*\][[:space:]]*([0-9]{1,3})%'
+CAMSH_ESC=$'\033'
 
 # ------------------------------------------------------------------ plain network helpers
 # net_port_open HOST PORT [SECS]: true when a TCP connection succeeds within SECS (default 3).
@@ -136,13 +140,44 @@ camsh_stream_set() {
 camsh_show_line() { # line: shown to the user when streaming
     [ "$CAMSH_STREAM" = 1 ] || return 0
     if [ -n "$CAMSH_STREAM_SKIP" ] && [[ $1 =~ $CAMSH_STREAM_SKIP ]]; then return 0; fi
+    ui_progress_close
     printf '    | %s\n' "$1"
+}
+
+# camsh_strip_ansi TEXT: set REPLY to TEXT without terminal escape sequences. BusyBox's ls colours
+# its names even over telnet (ESC[1;32m name ESC[m), which broke every comparison of a name.
+camsh_strip_ansi() {
+    REPLY=$1
+    case $1 in
+        *"$CAMSH_ESC"*)
+            REPLY=$(printf '%s' "$1" | LC_ALL=C sed -E "s#${CAMSH_ESC}\\[[0-9;?]*[ -/]*[@-~]##g; s#${CAMSH_ESC}[()][A-Za-z0-9]##g")
+            ;;
+    esac
+}
+
+# _camsh_progress LINE: true (and shown as a progress bar when streaming) when LINE is one.
+_camsh_progress() {
+    [[ $1 =~ $CAMSH_PROG_RE ]] || return 1
+    if [ "$CAMSH_STREAM" = 1 ]; then ui_progress "${BASH_REMATCH[1]}" "$((10#${BASH_REMATCH[2]}))"; fi
+    return 0
+}
+
+# camsh_out_has TEXT: true when the output of the last command contains TEXT. A case pattern, not
+# "printf | grep -q": with pipefail the printf of a big output dies of SIGPIPE when grep -q exits at
+# the first match, and the pipeline then reports failure (this hid a real flash success).
+camsh_out_has() {
+    case $CAMSH_OUT in
+        *"$1"*) return 0 ;;
+    esac
+    return 1
 }
 
 # _camsh_line LINE: handle one completed line. Returns 0 when it is the end marker.
 # Lines before the BEG marker (echo of the typed command, prompt, terminal queries) are dropped.
 _camsh_line() {
     local line=$1 pre
+    camsh_strip_ansi "$line"
+    line=$REPLY
     if [ -n "$CAMSH_RE" ] && [[ $line =~ $CAMSH_RE ]]; then
         CAMSH_RC=${BASH_REMATCH[1]}
         CAMSH_RE=""
@@ -160,6 +195,7 @@ _camsh_line() {
         esac
         return 1
     fi
+    if _camsh_progress "$line"; then return 1; fi
     if [ -n "$CAMSH_ECHO_SKIP" ]; then
         local e=$CAMSH_ECHO_SKIP
         CAMSH_ECHO_SKIP=""
@@ -193,7 +229,10 @@ _camsh_read() {
                 0)
                     case $c in
                         $'\377') iac=1 ;;
-                        $'\r') ;;
+                        $'\r')
+                            # flash_tool redraws its bar with \r: a segment that is a bar is consumed now
+                            if [ -n "$CAMSH_BEG_SEEN" ] && [[ $line == *"%"* ]] && _camsh_progress "$line"; then line=""; fi
+                            ;;
                         *) line="$line$c" ;;
                     esac
                     ;;

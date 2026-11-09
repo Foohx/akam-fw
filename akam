@@ -18,6 +18,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT/tools/wizard/lib/tui.sh"
 # shellcheck source=tools/wizard/lib/steps_host.sh
 . "$ROOT/tools/wizard/lib/steps_host.sh"
+# shellcheck source=tools/wizard/lib/cameras.sh
+. "$ROOT/tools/wizard/lib/cameras.sh"
 # shellcheck source=tools/wizard/lib/camsh.sh
 . "$ROOT/tools/wizard/lib/camsh.sh"
 # shellcheck source=tools/wizard/lib/transfer.sh
@@ -44,13 +46,15 @@ Commands:
   build              build from source instead (optional, needs more tools)
   prepare-backup-sd  prepare the microSD card used to back up the camera
   find-camera        find the camera (asks its IP address, checks the ports)
-  backup             back up the camera (double read, checked, copied to ~/akam-backup-<date>/),
+  backup             back up the camera (double read, checked, copied to ~/akam-backup-<name>-<date>/),
                      or accept a backup folder you made by hand (--backup-dir DIR)
   image              build the Akam image from your backup
   prepare-flash-sd   prepare the microSD card used to flash the camera
   flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
   verify             check SSH, ports and hardware, then the same without the card
   update             flash a new image over SSH (no card)
+  hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
+                     applied at the next power cycle (needs a firmware that has akam_hostname.sh)
   rtsp-auth [set|disable|status]
                      password (Digest login) on the video stream, over SSH; off by default
                      (typed here, never shown, sent to the camera only as a hash); default: status
@@ -59,6 +63,10 @@ Commands:
   step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
                      find-camera, backup, image, prepare-flash-sd, flash, verify)
   status             show every step: done / todo / blocked
+  cameras            list the cameras you set up (one progress each); switch with --camera NAME
+  rename-camera NEW  give the current camera another name (its progress moves with it)
+  register           record a camera that ALREADY runs Akam, without redoing backup, image or flash:
+                     ./akam --camera NAME --ip ADDRESS [--backup-dir DIR] register
   help               this text
 
 Options:
@@ -74,7 +82,7 @@ Options:
   --image FILE       image for update (default: the one built by the image step)
   --manual-telnet    never drive the camera's telnet shell: the wizard prints each command and
                      you paste it in your own telnet window (also automatic after 2 failures)
-  --out DIR          where the image is written (default ~/akam-image-<date>)
+  --out DIR          where the image is written (default ~/akam-image-<name>-<date>)
   --comp xz|gzip     override the stock APP compression (not recommended)
   --allow-unknown-stock-comp
                      allow a stock APP compression other than xz/gzip (expert)
@@ -82,7 +90,11 @@ Options:
   --pubkey FILE      SSH public key for the flash card (default ~/.ssh/akam.pub)
   --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
   --profile P        doctor profile: kit | build | all
-  --state-dir DIR    where progress and the log are kept
+  --camera NAME      the camera to work on (a short name such as salon: a-z, 0-9, '-', at most 20).
+                     Each camera has its own progress and log; a new name starts a new camera. The
+                     name is used in the backup and image folders. The first menu run asks for it;
+                     progress made before this existed is the camera called "default".
+  --state-dir DIR    where progress and the logs are kept
                      (default ${XDG_STATE_HOME:-~/.local/state}/akam)
   --no-color         no colours (NO_COLOR works too)
   --plain            line-based output and prompts, no full-screen menu or widgets
@@ -90,15 +102,16 @@ Options:
 
 Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
 for the disk work), shows every command before it runs, refuses destructive actions without a
-terminal, and never stores your Wi-Fi password. Erasing a card needs a typed ERASE <device>;
-flashing needs a typed YES, always typed by you. It never reboots or power-cycles the camera.
+terminal, and never stores your Wi-Fi password. Erasing a card and writing the camera's flash
+each need your explicit yes in a red box (one yes/no, default No: Enter, Esc or q mean No).
+It never reboots or power-cycles the camera.
 EOF
 }
 
 OPT_KIT="" OPT_VERSION="" OPT_ALLOW_UNSIGNED="" OPT_EXPECT_SHA256="" OPT_BACKUP_DIR=""
 OPT_OUT="" OPT_COMP="" OPT_ALLOW_UNKNOWN_COMP="" OPT_DEVICE="" OPT_PUBKEY="" OPT_SSID=""
 OPT_PROFILE="" OPT_BUILD=0
-OPT_IP="" OPT_IDENTITY="" OPT_IMAGE="" OPT_BACKUP_COPY="" OPT_MANUAL_TELNET=0 OPT_PLAIN=0
+OPT_CAMERA="" OPT_IP="" OPT_IDENTITY="" OPT_IMAGE="" OPT_BACKUP_COPY="" OPT_MANUAL_TELNET=0 OPT_PLAIN=0
 DRY=0
 STATE_OVERRIDE=""
 ARGS=()
@@ -126,6 +139,12 @@ while [ $# -gt 0 ]; do
         --ssid) need_val "$1" $#; OPT_SSID=$2; shift ;;
         --profile) need_val "$1" $#; OPT_PROFILE=$2; shift ;;
         --state-dir) need_val "$1" $#; STATE_OVERRIDE=$2; shift ;;
+        --camera)
+            need_val "$1" $#
+            if [ -z "$2" ]; then echo "akam: --camera needs a short name (see ./akam help)" >&2; exit 2; fi
+            OPT_CAMERA=$2
+            shift
+            ;;
         -h | --help) ARGS+=(help) ;;
         -*) echo "akam: unknown option $1 (see ./akam help)" >&2; exit 2 ;;
         *) ARGS+=("$1") ;;
@@ -143,9 +162,18 @@ case $OPT_COMP in "" | xz | gzip) ;; *) echo "akam: --comp must be xz or gzip" >
 
 UI_DRY=$DRY
 tui_init "$OPT_PLAIN"
-SD_DIR=${STATE_OVERRIDE:-$(state_default_dir)}
-state_init "$SD_DIR" "$DRY"
-log_init "$SD_DIR"
+if [ -n "$OPT_CAMERA" ] && ! cams_name_valid "$OPT_CAMERA"; then
+    echo "akam: --camera needs a short name: lowercase letters, digits and '-', at most $CAM_NAME_MAX, not starting or ending with '-'" >&2
+    exit 2
+fi
+cams_init "${STATE_OVERRIDE:-$(state_default_dir)}" "$OPT_CAMERA"
+# The very first run of the menu asks for the camera's name before any state exists.
+CAMS_ASKED=0
+if [ -z "$CMD" ]; then
+    if cams_first_run_name || cams_first_run_legacy; then CAMS_ASKED=1; fi
+fi
+cams_open
+if [ -n "$OPT_CAMERA" ] || [ "$CAMS_ASKED" = 1 ]; then cams_remember "$CAM_NAME"; fi
 # The Wi-Fi settings are read once from the environment and removed from it, so that no tool
 # started by the wizard inherits them (only the SD tool gets them, explicitly).
 ENV_WIFI_SSID=${AKAM_WIFI_SSID:-${AKAM_SD_SSID:-}}
@@ -161,6 +189,12 @@ if [ "$DRY" = 1 ]; then
 fi
 
 rc=0
+# ./akam --camera NAME --ip ADDRESS on a camera without progress: offer to record it as already installed.
+if [ -z "$CMD" ] && [ -n "$OPT_CAMERA" ] && [ -n "$OPT_IP" ] && [ "$DRY" != 1 ] && [ -z "$(state_get camera_kind)" ] && host_is_tty; then
+    if ui_ask_yn "Camera '$CAM_NAME' has no progress yet. Is it a camera that ALREADY runs Akam at $OPT_IP (register it, no backup or flash)?"; then
+        cmd_register || rc=$?
+    fi
+fi
 case $CMD in
     "")
         if [ "$TUI_ON" = 1 ]; then
@@ -176,6 +210,12 @@ case $CMD in
         fi
         ;;
     status) status_table ;;
+    cameras) cmd_cameras ;;
+    rename-camera)
+        if [ -z "${ARGS[1]:-}" ]; then echo "akam: rename-camera needs the new name" >&2; exit 2; fi
+        cmd_rename_camera "${ARGS[1]}" || rc=$?
+        ;;
+    register) cmd_register || rc=$? ;;
     doctor) cmd_doctor || rc=$? ;;
     get-kit) cmd_get_kit || rc=$? ;;
     build) cmd_build || rc=$? ;;
@@ -188,6 +228,7 @@ case $CMD in
     flash) cmd_flash || rc=$? ;;
     verify) cmd_verify || rc=$? ;;
     update) cmd_update || rc=$? ;;
+    hostname) cmd_hostname "${ARGS[1]:-}" || rc=$? ;;
     rtsp-auth) cmd_rtsp_auth "${ARGS[1]:-status}" || rc=$? ;;
     restore) cmd_restore || rc=$? ;;
     step)

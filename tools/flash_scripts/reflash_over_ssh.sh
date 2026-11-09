@@ -102,7 +102,7 @@ fi
 
 # ---------------------------------------------------------------- ssh plumbing
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3
-    -o "HostKeyAlias=$host")
+    -o "HostKeyAlias=$host" -o LogLevel=ERROR)
 [ -n "$ident" ] && ssh_opts+=(-i "$ident")
 # rssh PORT COMMAND: run COMMAND (one string, interpreted by the camera's /bin/sh)
 rssh() {
@@ -115,6 +115,25 @@ upload() {
 }
 cam_sh() { # run the camera script on the normal port (before the flash)
     rssh "$port" "sh '$rdir/akam_reflash_ssh.sh' $*"
+}
+# show_camera TEXT: print a chunk of the camera's flash.log. flash_tool redraws its progress bar with
+# a carriage return (about 200 KB per flash): each bar is folded to one line per 10 percent.
+prog_label="" prog_last=-1
+prog_re='^[[:space:]]*([A-Za-z][A-Za-z +/-]*): \[[=> ]*\][[:space:]]*([0-9]{1,3})%'
+show_camera() {
+    local l p lab
+    while IFS= read -r l; do
+        if [[ $l =~ $prog_re ]]; then
+            lab="${BASH_REMATCH[1]}" p=$((10#${BASH_REMATCH[2]}))
+            if [ "$lab" != "$prog_label" ]; then prog_label=$lab prog_last=-1; fi
+            if [ "$prog_last" -lt 0 ] || [ "$p" -ge $((prog_last + 10)) ] || { [ "$p" -ge 100 ] && [ "$prog_last" -lt 100 ]; }; then
+                prog_last=$p
+                printf 'camera: %s: %s%%\n' "$lab" "$p"
+            fi
+        elif [ -n "$l" ]; then
+            printf 'camera: %s\n' "$l"
+        fi
+    done < <(printf '%s\n' "$1" | tr '\r' '\n')
 }
 RBB="$rdir/bin/busybox"
 
@@ -191,7 +210,7 @@ while [ "$waited" -le "$tmo" ]; do
         wline="$(printf '%s\n' "$out" | grep '^worker=' | tail -n 1 || true)"
         new="$(printf '%s\n' "$out" | grep -v '^worker=' || true)"
         if [ -n "$new" ]; then
-            printf '%s\n' "$new" | sed 's/^/camera: /'
+            show_camera "$new"
             printed=$((printed + $(printf '%s\n' "$new" | wc -l)))
         fi
         if grep -q 'RESULT: ' <<<"$new"; then

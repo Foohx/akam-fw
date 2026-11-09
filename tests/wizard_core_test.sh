@@ -205,7 +205,7 @@ a --dry-run >"$T/dry.out" 2>&1
 check "full dry-run succeeds without camera or card" test $? -eq 0
 check "dry-run shows WOULD run lines" has "$T/dry.out" "WOULD run:"
 check "dry-run walks all nine steps" has "$T/dry.out" "Step 9/9"
-check "dry-run asks nothing real (typed prompts only shown)" has "$T/dry.out" "WOULD ask: Erase"
+check "dry-run asks nothing real (confirmations only shown)" has "$T/dry.out" "WOULD ask: Erase"
 check "dry-run executed no stub tool" bash -c '! grep -q -e "^assemble" -e "^sd prepare" -e "^sd verify" -e "SUDO" "$1"' _ "$STUB_LOG"
 check "dry-run never writes the real state" bash -c '! grep -q step_ "$1" 2>/dev/null' _ "$T/st/state"
 check "dry-run keeps its own state file" test -s "$T/st/state.dry"
@@ -245,8 +245,8 @@ a doctor >/dev/null 2>&1
 STUB_VK_RC=3 a get-kit --kit "$KIT" >"$T/g3.out" 2>&1
 check "unsigned kit without a terminal is refused" test $? -ne 0
 check "unsigned kit leaves no state" test -z "$(state_get step_get_kit_done)"
-STUB_VK_RC=3 at "USE UNSIGNED KIT" get-kit --kit "$KIT" >"$T/g4.out" 2>&1
-check "unsigned kit accepted after the typed phrase" test $? -eq 0
+STUB_VK_RC=3 at "y" get-kit --kit "$KIT" >"$T/g4.out" 2>&1
+check "unsigned kit accepted after an explicit yes (red box)" test $? -eq 0
 new_state
 a doctor >/dev/null 2>&1
 STUB_KIT_FORMAT=9 a get-kit --kit "$KIT" >"$T/g5.out" 2>&1
@@ -288,8 +288,8 @@ rm -f "$SRC/SHA256SUMS.sig"
 STUB_VK_RC=3 STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC a get-kit --version 1.0.0-test >"$T/dl6.out" 2>&1
 check "an unsigned release is refused without a terminal" test $? -ne 0
 check "  ... with a warning about the missing signature" has "$T/dl6.out" "no signature file"
-STUB_VK_RC=3 STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC at "USE UNSIGNED KIT" get-kit --version 1.0.0-test >"$T/dl7.out" 2>&1
-check "an unsigned release is accepted after the typed phrase" test $? -eq 0
+STUB_VK_RC=3 STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC at "y" get-kit --version 1.0.0-test >"$T/dl7.out" 2>&1
+check "an unsigned release is accepted after an explicit yes" test $? -eq 0
 check "the unsigned decision is remembered" test "$(state_get kit_unsigned_ok)" = 1
 at "y" backup --backup-dir "$BK" >/dev/null 2>&1
 : >"$STUB_LOG"
@@ -325,12 +325,12 @@ OUT1=$T/img1
 AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a image --out "$OUT1" >"$T/i1.out" 2>&1
 check "untested firmware without a terminal is refused" test $? -ne 0
 check "assemble not run for refused image" bash -c '! grep -q "^assemble" "$1"' _ "$STUB_LOG"
-AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" at "nope" image --out "$OUT1" >"$T/i2.out" 2>&1
-check "wrong typed phrase is refused" test $? -ne 0
+AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" at "n" image --out "$OUT1" >"$T/i2.out" 2>&1
+check "answering no to untested firmware is refused" test $? -ne 0
 check "untested warning is explicit" has "$T/i2.out" "NOT on the validated list"
 check "compression of the stock APP is shown" has "$T/i2.out" "Stock APP compression: xz"
-AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" at "I UNDERSTAND THIS IS UNTESTED" image --out "$OUT1" >"$T/i3.out" 2>&1
-check "untested firmware accepted after the exact phrase" test $? -eq 0
+AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" at "y" image --out "$OUT1" >"$T/i3.out" 2>&1
+check "untested firmware accepted after an explicit yes" test $? -eq 0
 check "assemble got --i-understand-untested" has "$STUB_LOG" "--i-understand-untested"
 check "image state recorded" test "$(state_get image_sha)" = "$(sha256sum "$OUT1/ak_rtsp_firmware_20260101_000000.squashfs" | cut -d' ' -f1)"
 new_state
@@ -389,18 +389,18 @@ a doctor >/dev/null 2>&1
 AKAM_WIFI_PASS=$SENTINEL a prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p1.out" 2>&1
 check "erasing a card without a terminal is refused" test $? -ne 0
 check "the SD tool was not called" bash -c '! grep -q "^sd " "$1"' _ "$STUB_LOG"
-AKAM_WIFI_PASS=$SENTINEL at "ERASE /dev/sdc" prepare-backup-sd --device /dev/sdc --ssid MyNet >"$T/p1b.out" 2>&1
+AKAM_WIFI_PASS=$SENTINEL at "y" prepare-backup-sd --device /dev/sdc --ssid MyNet >"$T/p1b.out" 2>&1
 check "a device that is not a listed card is refused" test $? -ne 0
 check "  ... with an explanation" has "$T/p1b.out" "not in the list of usable cards"
-AKAM_WIFI_PASS=$SENTINEL at "ERASE /dev/sda" prepare-backup-sd --device /dev/sda --ssid MyNet >"$T/p1c.out" 2>&1
+AKAM_WIFI_PASS=$SENTINEL at "y" prepare-backup-sd --device /dev/sda --ssid MyNet >"$T/p1c.out" 2>&1
 check "the system disk is refused (never listed)" test $? -ne 0
 check "no prepare was attempted on refused devices" bash -c '! grep -q "^sd prepare" "$1"' _ "$STUB_LOG"
-AKAM_WIFI_PASS=$SENTINEL at "ERASE sdb" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p2.out" 2>&1
-check "wrong ERASE phrase is refused (the disk name alone is not enough)" test $? -ne 0
-check "the SD tool did not prepare after a wrong phrase" bash -c '! grep -q "^sd prepare" "$1"' _ "$STUB_LOG"
-AKAM_WIFI_PASS=$SENTINEL at "ERASE /dev/sdb" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p3.out" 2>&1
-check "backup card prepared after the typed ERASE phrase" test $? -eq 0
-check "SD tool received prepare --mode backup --device --toolkit" has "$STUB_LOG" "sd prepare --mode backup --device /dev/sdb --toolkit $TK"
+AKAM_WIFI_PASS=$SENTINEL at "n" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p2.out" 2>&1
+check "answering no to the erase question is refused" test $? -ne 0
+check "the SD tool did not prepare after a no" bash -c '! grep -q "^sd prepare" "$1"' _ "$STUB_LOG"
+AKAM_WIFI_PASS=$SENTINEL at "y" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p3.out" 2>&1
+check "backup card prepared after an explicit yes" test $? -eq 0
+check "SD tool received prepare --mode backup --device --toolkit" has "$STUB_LOG" "sd prepare --mode backup --device /dev/sdb --yes-i-confirmed /dev/sdb --toolkit $TK"
 check "SD tool received verify --mode backup" has "$STUB_LOG" "sd verify --mode backup --device /dev/sdb --toolkit $TK"
 check "list-candidates --human and the TSV form were both used" bash -c 'grep -q "^sd list-candidates --human" "$1" && grep -q "^sd list-candidates $" "$1"' _ "$STUB_LOG"
 check "the SD tool got the Wi-Fi settings through the environment" has "$STUB_LOG" "sd env: ssid=set pass=set"
@@ -414,10 +414,24 @@ check "log records commands" has "$T/st/akam.log" "CMD"
 check "state dir is private (700)" bash -c '[ "$(stat -c %a "$1")" = 700 ]' _ "$T/st"
 check "state file is private (600)" bash -c '[ "$(stat -c %a "$1")" = 600 ]' _ "$T/st/state"
 check "log file is private (600)" bash -c '[ "$(stat -c %a "$1")" = 600 ]' _ "$T/st/akam.log"
+# the erase confirmation: a red box naming the device, model and size, ONE yes/no, default No
+: >"$STUB_LOG"
+AKAM_WIFI_PASS=$SENTINEL at "" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p5.out" 2>&1
+check "erase: an empty answer means No (default No): nothing prepared" bash -c '[ "$1" -ne 0 ] && ! grep -q "^sd prepare" "$2"' _ $? "$STUB_LOG"
+check "erase: the warning names the device, its model and size and says what happens" bash -c 'grep -q "Everything on /dev/sdb will be ERASED" "$1" && grep -q "Model: Card Reader" "$1" && grep -q "Size: 3.9 GB" "$1" && grep -q "Erase /dev/sdb now? \[y/N\]" "$1"' _ "$T/p5.out"
+check "erase: nothing has to be typed any more (no phrase is asked)" bash -c '! grep -q "type ERASE" "$1"' _ "$T/p5.out"
+printf '' | AKAM_WIFI_PASS=$SENTINEL AKAM_FORCE_TTY=1 "$AKAM" --state-dir "$T/st" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p6.out" 2>&1
+check "erase: the end of the input (no answer) is No" bash -c '[ "$1" -ne 0 ] && ! grep -q "^sd prepare" "$2"' _ $? "$STUB_LOG"
+AKAM_WIFI_PASS=$SENTINEL a prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p7.out" 2>&1
+check "erase: without a terminal it refuses (no yes can be given)" bash -c '[ "$1" -ne 0 ] && ! grep -q "^sd prepare" "$2"' _ $? "$STUB_LOG"
+AKAM_WIFI_PASS=$SENTINEL at "yes" prepare-backup-sd --device /dev/sdb --ssid MyNet >"$T/p8.out" 2>&1
+check "erase: 'yes' is accepted like 'y'" test $? -eq 0
+new_state
+a doctor >/dev/null 2>&1
 # password typed at the prompt (no env): also never stored
 new_state
 a doctor >/dev/null 2>&1
-printf 'MyNet\n%s\nERASE /dev/sdb\n' "$SENTINEL" | AKAM_FORCE_TTY=1 "$AKAM" --state-dir "$T/st" prepare-backup-sd --device /dev/sdb >"$T/p4.out" 2>&1
+printf 'MyNet\n%s\ny\n' "$SENTINEL" | AKAM_FORCE_TTY=1 "$AKAM" --state-dir "$T/st" prepare-backup-sd --device /dev/sdb >"$T/p4.out" 2>&1
 check "password typed at the prompt reaches the SD tool" has "$CARD/backup/custom/configs/wifi.conf" "$SENTINEL"
 check "typed password not in state or log" bash -c '! grep -rq "$2" "$1"' _ "$T/st" "$SENTINEL"
 check "typed password not echoed" bash -c '! grep -q "$2" "$1"' _ "$T/p4.out" "$SENTINEL"
@@ -441,15 +455,15 @@ a get-kit --kit "$KIT" >/dev/null 2>&1
 at "y" backup --backup-dir "$BK" >/dev/null 2>&1
 AKAM_HW_LIST=$HWV a image --out "$T/img6" >/dev/null 2>&1
 : >"$STUB_LOG"
-at "ERASE /dev/sdb" prepare-flash-sd --device /dev/sdb --pubkey "$PRIV" --ssid N >"$T/f1.out" 2>&1
+at "y" prepare-flash-sd --device /dev/sdb --pubkey "$PRIV" --ssid N >"$T/f1.out" 2>&1
 check "a private key is never accepted for the card" test $? -ne 0
 check "private key refusal is explicit" has "$T/f1.out" "PRIVATE key"
 AKAM_WIFI_PASS=$SENTINEL a prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid N >"$T/f2.out" 2>&1
 check "flash card without a terminal is refused" test $? -ne 0
 check "SD tool untouched when refused" bash -c '! grep -q "^sd " "$1"' _ "$STUB_LOG"
-AKAM_WIFI_PASS=$SENTINEL at "ERASE /dev/sdb" prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid N >"$T/f3.out" 2>&1
+AKAM_WIFI_PASS=$SENTINEL at "y" prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid N >"$T/f3.out" 2>&1
 check "flash card prepared" test $? -eq 0
-check "first-boot prepare got the public key and toolkit" has "$STUB_LOG" "sd prepare --mode first-boot --device /dev/sdb --pubkey $PUB --toolkit $TK"
+check "first-boot prepare got the public key and toolkit" has "$STUB_LOG" "sd prepare --mode first-boot --device /dev/sdb --yes-i-confirmed /dev/sdb --pubkey $PUB --toolkit $TK"
 check "flash-files prepare got image, flash_tool and backup dir" bash -c 'grep -q "sd prepare --mode flash-files --device /dev/sdb --image .*ak_rtsp_firmware_20260101_000000.squashfs --flash-tool .*/kit/bin/flash_tool --backup-dir " "$1"' _ "$STUB_LOG"
 check "first-boot prepare came before flash-files, verifies came last" bash -c '
     l=$(grep -n -e "^sd prepare --mode first-boot" -e "^sd prepare --mode flash-files" -e "^sd verify --mode first-boot" -e "^sd verify --mode flash-files" "$1" | sed "s/^[0-9]*://" | cut -d" " -f1-4 | tr "\n" ";")
@@ -462,6 +476,31 @@ check "both verifies passed" bash -c '[ "$(grep -c "VERIFY: OK" "$1")" -ge 2 ]' 
 check "no secret in the flash card run" bash -c '! grep -rq "$2" "$1" "$3" "$4"' _ "$T/f3.out" "$SENTINEL" "$T/st/state" "$T/st/akam.log"
 check "flash card recorded for this image" test "$(state_get flash_sd_image_sha)" = "$(state_get image_sha)"
 check "flash card device recorded (for the wipe offer)" test "$(state_get flash_sd_device)" = /dev/sdb
+# ---- SSH key choice: no ~/.ssh/akam.pub, but other ed25519 keys exist
+state_unset_key() { grep -v "^$1=" "$T/st/state" >"$T/st/state.n"; mv "$T/st/state.n" "$T/st/state"; }
+KH=$T/home_keys
+mkdir -p "$KH/.ssh"
+cp "$PUB" "$KH/.ssh/id_work.pub"
+echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ rsa-ignored' >"$KH/.ssh/id_rsa.pub"
+echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ other' >"$KH/.ssh/id_other.pub"
+state_unset_key ssh_pubkey
+: >"$STUB_LOG"
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'1\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k1.out" 2>&1
+check "ssh key: with no akam.pub the existing ed25519 keys are listed" bash -c 'grep -q "id_work.pub" "$1" && grep -q "id_other.pub" "$1" && grep -q "Create a new dedicated key" "$1"' _ "$T/k1.out"
+check "ssh key: an rsa key is not offered" hasnt "$T/k1.out" id_rsa.pub
+check "ssh key: the chosen key goes to the card and is remembered in the state" bash -c 'grep -q "sd prepare --mode first-boot --device /dev/sdb --yes-i-confirmed /dev/sdb --pubkey '"$KH"'/.ssh/id_other.pub\|sd prepare --mode first-boot --device /dev/sdb --yes-i-confirmed /dev/sdb --pubkey '"$KH"'/.ssh/id_work.pub" "$1" && grep -q "^ssh_pubkey='"$KH"'/.ssh/id_" "$2"' _ "$STUB_LOG" "$T/st/state"
+REMEMBERED=$(state_get ssh_pubkey)
+: >"$STUB_LOG"
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k2.out" 2>&1
+check "ssh key: the choice is remembered (not asked again)" bash -c '! grep -q "Which SSH key" "$1" && grep -q "chosen before" "$1" && grep -q "pubkey $2" "$3"' _ "$T/k2.out" "$REMEMBERED" "$STUB_LOG"
+state_unset_key ssh_pubkey
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'3\nn' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k3.out" 2>&1
+check "ssh key: choosing 'create a new key' asks before creating it, and stops on no" bash -c '[ "$1" -ne 0 ] && grep -q "no SSH key" "$2"' _ $? "$T/k3.out"
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'9\n1\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k4.out" 2>&1
+check "ssh key: a number out of range is asked again" has "$T/k4.out" "Please type a number between 1 and 3"
+state_unset_key ssh_pubkey
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid N >"$T/k5.out" 2>&1
+check "ssh key: --pubkey wins over everything and needs no question" bash -c '! grep -q "Which SSH key" "$1"' _ "$T/k5.out"
 echo changed >>"$T/img6/ak_rtsp_firmware_20260101_000000.squashfs"
 a status >"$T/f4.out" 2>&1
 check "a changed image makes the prepared flash card stale" has "$T/f4.out" "the image file changed after it was built"
@@ -472,10 +511,10 @@ check "  ... and the flash card step with it" has "$T/f4.out" "the card was made
 a wipe-sd --device /dev/sdb >"$T/w1.out" 2>&1
 check "wipe without a terminal is refused" test $? -ne 0
 check "  ... and the SD tool was not asked to wipe" bash -c '! grep -q "^sd wipe" "$1"' _ "$STUB_LOG"
-at "ERASE nope" wipe-sd --device /dev/sdb >"$T/w2.out" 2>&1
-check "wipe with a wrong phrase is refused" test $? -ne 0
-at "ERASE /dev/sdb" wipe-sd --device /dev/sdb >"$T/w3.out" 2>&1
-check "wipe after the typed phrase calls the SD tool" has "$STUB_LOG" "sd wipe --device /dev/sdb"
+at "n" wipe-sd --device /dev/sdb >"$T/w2.out" 2>&1
+check "wipe answered no is refused" test $? -ne 0
+at "y" wipe-sd --device /dev/sdb >"$T/w3.out" 2>&1
+check "wipe after an explicit yes calls the SD tool with --yes-i-confirmed for that device" has "$STUB_LOG" "sd wipe --device /dev/sdb --yes-i-confirmed /dev/sdb"
 check "wiping a recorded card forgets it" test -z "$(state_get flash_sd_device)"
 a wipe-sd --device /dev/sda --dry-run >"$T/w4.out" 2>&1
 check "wipe rehearsal only shows the command" has "$T/w4.out" "WOULD run:"
@@ -494,6 +533,95 @@ check "state_set refuses a registered secret and a bad key" bash -c '
     ROOT=$1; . "$ROOT/tools/wizard/lib/log.sh"; . "$ROOT/tools/wizard/lib/state.sh"
     state_init "$2/sl" 0; log_add_secret "hunter2hunter2"
     ! state_set k "x hunter2hunter2 y" 2>/dev/null && ! state_set "Bad-Key" v 2>/dev/null && state_set ok_key v' _ "$ROOT" "$T"
+
+# ---------------------------------------------------------------- entering a step from the plain menu asks first
+new_state
+printf 'default\n' >"$T/st/current_camera"
+printf '\nn\nq\n' | AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st" >"$T/m1.out" 2>&1
+check "menu: a step shows what it does, what it touches and asks 'Start this step? [Y/n]'" bash -c 'grep -q "What it does:" "$1" && grep -q "What it touches:" "$1" && grep -q "Start this step? \[Y/n\]" "$1"' _ "$T/m1.out"
+check "menu: answering n returns to the menu and the step is not run" bash -c 'grep -q "Not started" "$1" && ! grep -q "stub check_host" "$1" && ! grep -q "^step_doctor_done=" "$2/state"' _ "$T/m1.out" "$T/st"
+printf '\n\nq\n' | AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st" >"$T/m2.out" 2>&1
+check "menu: Enter at the question means yes: the step runs" bash -c 'grep -q "^step_doctor_done=" "$1/state"' _ "$T/st"
+printf '2\nn\nq\n' | AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st" >"$T/m3.out" 2>&1
+check "menu: a step chosen by number asks as well" bash -c 'grep -q "Start this step?" "$1" && ! grep -q "^step_get_kit_done=" "$2/state"' _ "$T/m3.out" "$T/st"
+new_state
+a step doctor >"$T/m4.out" 2>&1
+check "a step started by name (./akam step NAME) is not asked again" bash -c '! grep -q "Start this step?" "$1"' _ "$T/m4.out"
+
+# ---------------------------------------------------------------- several cameras (names, one state each)
+HC=$T/home_cam
+mkdir -p "$HC"
+new_state
+printf 'step_doctor_done=2026-01-01T00:00:00Z\ncamera_ip=192.0.2.10\n' >"$T/st/state"   # the state of earlier versions = camera "default"
+HOME=$HC a --camera salon doctor >"$T/c1.out" 2>&1
+check "camera: --camera NAME keeps its own state under cameras/NAME" bash -c '[ -f "$1/cameras/salon/state" ] && grep -q "^step_doctor_done=" "$1/cameras/salon/state" && [ -f "$1/cameras/salon/akam.log" ]' _ "$T/st"
+check "camera: the old state is untouched (it is the camera called default)" bash -c 'grep -q "^camera_ip=192.0.2.10$" "$1/state" && [ "$(grep -c . "$1/state")" -ge 2 ]' _ "$T/st"
+HOME=$HC a --camera salon status >"$T/c2.out" 2>&1
+check "camera: status shows the camera name" has "$T/c2.out" "camera: salon"
+HOME=$HC a status >"$T/c3.out" 2>&1
+check "camera: the camera used last is remembered" bash -c 'grep -q "camera: salon" "$1" && [ "$(cat "$2/current_camera")" = salon ]' _ "$T/c3.out" "$T/st"
+HOME=$HC a --camera default status >"$T/c4.out" 2>&1
+check "camera: --camera default selects the legacy state" has "$T/c4.out" "camera: default"
+HOME=$HC a cameras >"$T/c5.out" 2>&1
+check "camera: cameras lists default and salon with their progress and marks the current one" bash -c 'grep -q "^  \* default .*1/9 steps done  192.0.2.10" "$1" && grep -q "^    salon .*1/9 steps done" "$1"' _ "$T/c5.out"
+for bad in Salon 'my room' -x '' abcdefghijklmnopqrstu 'a_b' 'trail-'; do
+    HOME=$HC "$AKAM" --state-dir "$T/st" --camera "$bad" status </dev/null >"$T/c6.out" 2>&1
+    check "camera: the name '$bad' is refused (exit 2)" test $? -eq 2
+done
+HOME=$HC "$AKAM" --state-dir "$T/st" --camera abcdefghijklmnopqrst status </dev/null >"$T/c6.out" 2>&1
+check "camera: a name of exactly 20 characters is accepted" test $? -eq 0
+HOME=$HC a --camera salon get-kit --kit "$KIT" >"$T/c7.out" 2>&1
+check "camera: the kit is shared (BASE/kit), not copied per camera" bash -c '[ -d "$1/kit" ] && [ ! -d "$1/cameras/salon/kit" ]' _ "$T/st"
+HOME=$HC at "y" --camera salon backup --backup-dir "$BK" >/dev/null 2>&1
+HOME=$HC AKAM_HW_LIST=$HWV a --camera salon image >"$T/c8.out" 2>&1
+check "camera: the image folder carries the camera name" bash -c 'grep -q "^assemble .*--out '"$HC"'/akam-image-salon-[0-9]*-[0-9]*" "$1"' _ "$STUB_LOG"
+check "camera: the other camera's progress is not changed" bash -c '! grep -q "^step_image_done" "$1/state"' _ "$T/st"
+HOME=$HC "$AKAM" --state-dir "$T/st" --camera salon --dry-run status </dev/null >/dev/null 2>&1
+printf 'default\n' >"$T/st/current_camera"
+HOME=$HC "$AKAM" --state-dir "$T/st" --camera salon --dry-run status </dev/null >/dev/null 2>&1
+check "camera: a rehearsal never changes the remembered camera" test "$(cat "$T/st/current_camera")" = default
+# first run of the menu: asks for the name before creating any state
+rm -rf "$T/st2"
+mkdir -p "$T/st2"
+printf 'bad name\nsalon\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st2" >"$T/c9.out" 2>&1
+check "camera: the first menu run asks for a name, refuses a bad one and asks again" bash -c 'grep -q "Camera name \[default\]" "$1" && grep -q "is not valid" "$1"' _ "$T/c9.out"
+check "camera: ...then works in cameras/<name> and remembers it" bash -c '[ -f "$1/cameras/salon/state" ] && [ "$(cat "$1/current_camera")" = salon ] && [ ! -e "$1/state" ]' _ "$T/st2"
+printf 'q\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st2" >"$T/c10.out" 2>&1
+check "camera: the second menu run does not ask again" bash -c '! grep -q "Camera name" "$1" && grep -q "camera: salon" "$1"' _ "$T/c10.out"
+rm -rf "$T/st3"
+mkdir -p "$T/st3"
+printf '\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st3" >"$T/c11.out" 2>&1
+check "camera: Enter at the name question means default" bash -c 'grep -q "camera: default" "$1" && [ -f "$2/state" ]' _ "$T/c11.out" "$T/st3"
+rm -rf "$T/st4"
+mkdir -p "$T/st4"
+HOME=$HC "$AKAM" --plain --state-dir "$T/st4" </dev/null >"$T/c12.out" 2>&1
+check "camera: nothing is asked without a terminal" bash -c '! grep -q "Camera name" "$1"' _ "$T/c12.out"
+
+# migration: the progress of an earlier version is one camera; the first menu run asks what to call it
+rm -rf "$T/st5"
+mkdir -p "$T/st5/kit"
+printf 'step_doctor_done=2026-01-01T00:00:00Z\ncamera_ip=192.0.2.2\n' >"$T/st5/state"
+printf 'old log\n' >"$T/st5/akam.log"
+printf 'akam-02\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st5" >"$T/g1.out" 2>&1
+check "migration: the first menu run asks what to call the existing progress" has "$T/g1.out" "progress saved by an earlier version belongs to one camera"
+check "migration: the existing state moves to cameras/akam-02 (address and steps kept)" bash -c 'grep -q "^camera_ip=192.0.2.2$" "$1/cameras/akam-02/state" && grep -q "^step_doctor_done=" "$1/cameras/akam-02/state" && grep -q "old log" "$1/cameras/akam-02/akam.log" && [ ! -e "$1/state" ]' _ "$T/st5"
+check "migration: the shared kit folder stays at the base and the name is remembered" bash -c '[ -d "$1/kit" ] && [ "$(cat "$1/current_camera")" = akam-02 ]' _ "$T/st5"
+check "migration: the menu now shows the new name" has "$T/g1.out" "camera: akam-02"
+check "migration: an untouched backup copy of the old state is kept" bash -c 'grep -q "^camera_ip=192.0.2.2$" "$1/state.before-rename.bak" && grep -q "^step_doctor_done=" "$1/state.before-rename.bak"' _ "$T/st5"
+rm -rf "$T/st6"
+mkdir -p "$T/st6"
+printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st6/state"
+printf '\nq\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st6" >"$T/g2.out" 2>&1
+check "migration: Enter keeps the name default and leaves the files where they are" bash -c 'grep -q "^step_doctor_done=" "$1/state" && [ "$(cat "$1/current_camera")" = default ] && [ ! -d "$1/cameras" ]' _ "$T/st6"
+printf 'q\n' | HOME=$HC AKAM_FORCE_TTY=1 "$AKAM" --plain --state-dir "$T/st6" >"$T/g3.out" 2>&1
+check "migration: it is asked only once" bash -c '! grep -q "earlier version" "$1"' _ "$T/g3.out"
+HOME=$HC "$AKAM" --state-dir "$T/st6" rename-camera akam-01 </dev/null >"$T/g4.out" 2>&1
+check "rename-camera: moves the progress to the new name and remembers it" bash -c '[ "$1" -eq 0 ] && grep -q "^step_doctor_done=" "$2/cameras/akam-01/state" && [ ! -e "$2/state" ] && [ "$(cat "$2/current_camera")" = akam-01 ]' _ $? "$T/st6"
+HOME=$HC "$AKAM" --state-dir "$T/st6" rename-camera Bad_Name </dev/null >"$T/g5.out" 2>&1
+check "rename-camera: a bad name is refused" bash -c '[ "$1" -ne 0 ] && [ -f "$2/cameras/akam-01/state" ]' _ $? "$T/st6"
+HOME=$HC "$AKAM" --state-dir "$T/st5" --camera akam-01 doctor </dev/null >/dev/null 2>&1
+HOME=$HC "$AKAM" --state-dir "$T/st5" --camera akam-01 rename-camera akam-02 </dev/null >"$T/g6.out" 2>&1
+check "rename-camera: refuses a name that is already used" bash -c '[ "$1" -ne 0 ] && grep -q "already exists" "$2"' _ $? "$T/g6.out"
 
 echo
 echo "wizard_core_test: $PASS passed, $FAIL failed"

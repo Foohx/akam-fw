@@ -46,8 +46,8 @@ planned for V1.1). Only one unit was tested: please report what you see on yours
 
 **Check your camera:** read the label under the camera (model `3215672.x` and the `SI ...` code). The
 wizard also compares the camera's kernel, flash layout and APP with the list in
-`tools/release/supported_hardware.txt`: a match continues, anything else shows a warning and needs a
-typed confirmation, and a different flash layout is refused.
+`tools/release/supported_hardware.txt`: a match continues, anything else shows a warning and needs an explicit
+yes in a red box (default No), and a different flash layout is refused.
 
 ## What you need
 
@@ -99,9 +99,18 @@ No compiling is needed: the default path uses a **prebuilt kit**.
    Move with the arrow keys (or `j`/`k`), press Enter to run the highlighted step, `?` to read what
    it does and what it risks, `q` to quit (your progress is kept). Steps that cannot run yet are
    marked blocked, and a step whose inputs changed is marked stale. Questions are asked with the
-   same keyboard-driven widgets (lists, checkboxes, yes/no, hidden or visible text); anything
-   destructive still needs a phrase you type yourself. Without a terminal, or with `--plain`, the
-   wizard falls back to the plain line-by-line prompts; `NO_COLOR=1` turns colours off.
+   same keyboard-driven widgets (lists, checkboxes, yes/no, hidden or visible text). Before a step
+   starts, the menu shows what it does, what it touches and its risk and asks **Start this step?
+   [Y/n]** (No goes back to the menu). Anything irreversible (erasing a card, writing the camera
+   flash, untested hardware) shows a **red box** that says exactly what will happen (the card's
+   device, model and size; the camera, the image md5 and "do not unplug") and asks one yes/no whose
+   **default is No** (Esc, `q` or Enter mean No); nothing has to be typed. Without a terminal, or with
+   `--plain`, the wizard falls back to the plain line-by-line prompts (destructive steps then
+   refuse to run); `NO_COLOR=1` turns colours off.
+   The first run asks for a **short name** for the camera (for example `salon`). Each camera has its
+   own progress (`./akam --camera NAME`, key `c` in the menu opens a list of your cameras with their progress, plus "+ New camera" and "Register an existing Akam camera", `./akam cameras` lists them); the name
+   is used in the backup and image folders and as the camera's network name. Progress saved by an
+   earlier version is kept: the wizard asks what to call that camera.
 4. Follow the prompts, one step after the other. `./akam help` lists every command, and `--dry-run`
    rehearses without changing anything.
 
@@ -116,16 +125,25 @@ No compiling is needed: the default path uses a **prebuilt kit**.
 | `backup` | copies the 8 flash partitions twice, compares them, stores them on your PC | none (read only) |
 | `image` | builds the Akam image from your backup and shows the hardware verdict | none |
 | `prepare-flash-sd` | writes the image, your SSH key and the Wi-Fi settings to a card | erases that card |
-| `flash` | writes the APP partition (over SSH when Akam already runs, else the maintenance telnet and the card); you type `YES` yourself | **can brick the camera** |
-| `verify` | checks over SSH that the camera behaves as expected | none |
-| `update` | later: flashes a new image over SSH, no card needed (`--image FILE`); you type `YES` | **can brick the camera** |
+| `flash` | writes the APP partition (over SSH when Akam already runs, else the maintenance telnet and the card); one red yes/no (default No) first. It also makes sure the camera has a saved Wi-Fi network (see below) | **can brick the camera** |
+| `verify` | checks over SSH that the camera behaves as expected, makes sure the Wi-Fi is saved before you remove the card, then checks the boot without the card and sets the camera's network name | none |
+| `update` | later: flashes a new image over SSH, no card needed (`--image FILE`); one red yes/no (default No) | **can brick the camera** |
+| `register` | a camera that already runs Akam: `./akam --camera NAME --ip IP [--backup-dir DIR] register` logs in over SSH, reads /dev/mtd7 back and records it without redoing backup, image or flash | none |
+| `hostname` | gives the camera its network name (the name of the camera), over SSH; applied at the next power cycle | none |
 | `rtsp-auth` | optional: sets, shows or removes a password on the video stream, over SSH (see below) | none |
-| `restore` | puts the original APP back from your backup; you type `YES` | **can brick the camera** |
+| `restore` | puts the original APP back from your backup; one red yes/no (default No) | **can brick the camera** |
 | `wipe-sd` | erases a card that holds your Wi-Fi password | erases that card |
 
 The wizard never runs `sudo` itself, shows every command before running it, and never stores your
-Wi-Fi password. Erasing a card needs a typed `ERASE <device>`. Keep your backup (two copies, on two
-media) and never publish it: it contains your Wi-Fi credentials.
+Wi-Fi password. Keep your backup (two copies, on two media) and never publish it: it contains your
+Wi-Fi credentials.
+
+**Wi-Fi after the card is removed.** A camera that was never paired with the vendor app has no saved
+Wi-Fi (`/etc/config/wpa_supplicant.conf`): the toolkit card brings the network up, and without the
+card the camera would have no network at all. `flash` and `verify` check this ON the camera and, when
+the file is missing, create it from the card's `wifi.conf` (the password never goes through your PC).
+The wizard never asks you to remove the card while that file is missing. If it cannot, see
+[troubleshooting](docs/troubleshooting.md#the-camera-has-no-network-after-removing-the-card).
 
 Prefer to do it by hand, or want to understand each step? See the
 [manual procedure](docs/akam_v1_install.md). To compile everything yourself, see the

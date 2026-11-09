@@ -251,6 +251,17 @@ check "YES is not enough" refused confirm "YES"
 check "ERASE without device is not enough" refused confirm "ERASE"
 check "wrong device refused" refused confirm "ERASE /dev/sdc"
 check "no TTY refused by confirm" refused bash -c ". '$SCRIPT'; confirm_erase /dev/sdb" </dev/null >/dev/null 2>&1
+# --yes-i-confirmed DEVICE (the wizard asked a yes/no for this device): replaces only the typed phrase
+yconfirm() { # <yes-device> <--device given> <device checked>
+    AKAM_FORCE_TTY=1 bash -c ". '$SCRIPT'; YES_DEV='$1' DEV_GIVEN='$2' confirm_erase '$3'" </dev/null >/dev/null 2>&1
+}
+check "--yes-i-confirmed with the same device: no typed phrase needed" yconfirm /dev/sdb /dev/sdb /dev/sdb
+check "--yes-i-confirmed naming another device is refused" refused yconfirm /dev/sdc /dev/sdb /dev/sdb
+check "--yes-i-confirmed without --device is refused" refused yconfirm /dev/sdb "" /dev/sdb
+check "--yes-i-confirmed for the by-id link given as --device, device resolved" yconfirm /dev/disk/by-id/x /dev/disk/by-id/x /dev/sdb
+check "usage: --yes-i-confirmed with a different --device exits 2 before anything else" bash -c "bash '$SCRIPT' wipe --device /dev/sdb --yes-i-confirmed /dev/sdc >/dev/null 2>&1; [ \$? = 2 ]"
+check "usage: --yes-i-confirmed alone exits 2" bash -c "bash '$SCRIPT' wipe --yes-i-confirmed /dev/sdb >/dev/null 2>&1; [ \$? = 2 ]"
+check "--yes-i-confirmed still needs a real terminal to erase (no tty: refused)" bash -c "bash '$SCRIPT' wipe --device /dev/sdb --yes-i-confirmed /dev/sdb </dev/null >'$WORK/yc.out' 2>&1; [ \$? != 0 ] && grep -q 'without a terminal' '$WORK/yc.out'"
 check "partition naming sdX / mmcblkN" bash -c ". '$SCRIPT'; [ \"\$(be_part_path /dev/sdb)\" = /dev/sdb1 ] && [ \"\$(be_part_path /dev/mmcblk0)\" = /dev/mmcblk0p1 ]"
 
 # ------------------------------------------------------------ backup card (dry-run)
