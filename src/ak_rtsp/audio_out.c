@@ -733,6 +733,11 @@ void audio_out_emergency_off(void)
         int32_t v = 0;
         ioctl(fd, AKPCM_IOC_SET_SPEAKER, &v);
     }
+    /* A stop request is not a kernel crash: if it lands inside the first
+     * seconds of playback (reboot, restart by hand) the marker must not
+     * disable audio out on the next start. A real crash never gets here. */
+    if (g_ao.guard_active)
+        unlink(g_ao.guard_path);
 }
 
 size_t audio_out_push(const int16_t *pcm, size_t n) { return ao_push(single(), pcm, n); }
