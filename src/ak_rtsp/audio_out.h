@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include "audio_jitter.h"
+
 /* Speaker output through /dev/pcmC0D0p (specs/05-spec-audio-out.md, step A).
  *
  * ak_rtsp already owns the playback device for its whole life (the driver
@@ -31,7 +33,6 @@
 #define AO_PRELOAD_PERIODS 2      /* silence written after the amp turns on (64 ms >= 60 ms) */
 #define AO_GUARD_CLEAR_MS  5000   /* crash guard removed after this much clean playback */
 #define AO_MAX_FAILS       5      /* consecutive write failures before the thread stops */
-#define AO_RING_SAMPLES    4096   /* push ring, mono s16 (512 ms); power of two */
 #define AO_VOL_RAMP        80     /* volume smoothing: 10 ms at 8 kHz */
 
 #define AO_BEEP_SAMPLES    8000   /* 3 x 200 ms tones, 200 ms gaps: exactly 1 s */
@@ -97,9 +98,9 @@ typedef struct audio_out {
     int      guard_blocked;     /* marker found at open */
     unsigned long periods_written;
 
-    /* push ring (single producer, single consumer) */
-    int16_t           ring[AO_RING_SAMPLES];
-    volatile uint32_t ring_w, ring_r;
+    /* pushed audio: jitter buffer (120 ms pre-fill, 400 ms cap), one producer
+     * (talk server) and this module's playback thread as consumer */
+    audio_jitter_t    jit;
 
     /* thread */
     volatile int thread_running;
@@ -138,9 +139,12 @@ void   ao_set_source(audio_out_t *ao, int s);   /* 4 or 6, else ignored */
 void   ao_set_amp_mode(audio_out_t *ao, int m);
 void   ao_play_test(audio_out_t *ao);           /* queue the beep */
 int    ao_test_active(const audio_out_t *ao);   /* queued or playing */
-/* Non-blocking; mono s16 8 kHz. Returns samples accepted (rest dropped). */
+/* Non-blocking; mono s16 8 kHz. Goes through the jitter buffer: nothing is
+ * played until 120 ms are queued, an underrun re-arms the pre-fill, and an
+ * overrun drops the oldest audio. Returns n_samples (never short). */
 size_t ao_push(audio_out_t *ao, const int16_t *pcm, size_t n_samples);
-size_t ao_ring_level(const audio_out_t *ao);
+/* Samples waiting in the jitter buffer. */
+size_t ao_queued(audio_out_t *ao);
 const char *ao_state_name(int state);
 int    ao_amp_is_on(const audio_out_t *ao);
 int    ao_device_open(const audio_out_t *ao);
@@ -171,7 +175,8 @@ int  audio_out_start(void);
 void audio_out_stop(void);
 /* Async-signal-safe amp off (SIGTERM path). */
 void audio_out_emergency_off(void);
-/* Non-blocking push of mono s16 8 kHz samples, for the talk server (T3). */
+/* Non-blocking push of mono s16 8 kHz samples, for the talk server (T3);
+ * same semantics as ao_push(). */
 size_t audio_out_push(const int16_t *pcm, size_t n_samples);
 int  audio_out_ctl_get(const char *key, char *out, size_t cap);
 int  audio_out_ctl_set(const char *key, const char *val, char *msg, size_t cap);

@@ -446,6 +446,15 @@ static void test_writes(void)
     free(ao);
 }
 
+/* Pushed audio only plays once the jitter buffer holds its 120 ms pre-fill:
+ * queue the block, then enough silence behind it to get past that threshold. */
+static void push_ready(audio_out_t *ao, const int16_t *pcm, size_t n)
+{
+    static const int16_t zeros[JITTER_PREFILL_SAMPLES];
+    ao_push(ao, pcm, n);
+    ao_push(ao, zeros, JITTER_PREFILL_SAMPLES);
+}
+
 static void test_volume_and_push(void)
 {
     printf("# volume and push\n");
@@ -467,6 +476,12 @@ static void test_volume_and_push(void)
     step(ao); /* let the smoothing settle at the target (already unity) */
     CHECK(ao_push(ao, in, AO_FRAMES) == AO_FRAMES, "push accepted");
     step(ao);
+    CHECK(ao->state == AO_IDLE && !ao_amp_is_on(ao), "below the pre-fill nothing is played: idle, amp off");
+    ao_close(ao);
+    new_case(ao); ao_open(ao); ao_set_volume(ao, 100);
+    step(ao); /* settle the smoothing at unity */
+    push_ready(ao, in, AO_FRAMES);
+    step(ao);
     int same = 1;
     for (int i = 0; i < AO_FRAMES; i++) if (wl(F.nw - 1, i) != in[i] || wr(F.nw - 1, i) != in[i]) same = 0;
     CHECK(same, "volume 100: exact identity, L = R, no 16-bit overflow");
@@ -475,16 +490,16 @@ static void test_volume_and_push(void)
 
     /* volume 50 */
     new_case(ao); ao_open(ao); ao_set_volume(ao, 50); ao->cur_gain_q15 = ao_volume_gain_q15(50);
-    ao_push(ao, in, AO_FRAMES); step(ao);
+    push_ready(ao, in, AO_FRAMES); step(ao);
     int ok50 = 1;
     for (int i = 0; i < AO_FRAMES; i++) if (wl(F.nw - 1, i) != (int16_t)(((int)in[i] * 8192) >> 15)) ok50 = 0;
     CHECK(ok50, "volume 50: samples scaled by 1/4");
 
     /* volume 0 exact silence */
     new_case(ao); ao_open(ao); ao_set_volume(ao, 0); ao->cur_gain_q15 = 0;
-    ao_push(ao, in, AO_FRAMES); step(ao);
+    push_ready(ao, in, AO_FRAMES); step(ao);
     CHECK(period_is_zero(F.nw - 1), "volume 0: exact silence for pushed data");
-    CHECK(ao_ring_level(ao) == 0, "data still consumed at volume 0");
+    CHECK(ao_queued(ao) == JITTER_PREFILL_SAMPLES, "data still consumed at volume 0");
 
     /* smoothing: 100 -> 0 with a constant input must ramp without a jump */
     new_case(ao); ao_open(ao); ao_set_volume(ao, 100);
@@ -492,10 +507,12 @@ static void test_volume_and_push(void)
     step(ao); /* settle the smoothing at unity */
     int16_t dc[AO_FRAMES];
     for (int i = 0; i < AO_FRAMES; i++) dc[i] = 10000;
-    ao_push(ao, dc, AO_FRAMES); step(ao);
+    ao_push(ao, dc, AO_FRAMES); ao_push(ao, dc, AO_FRAMES);
+    ao_push(ao, dc, AO_FRAMES); ao_push(ao, dc, AO_FRAMES); /* 1024 >= pre-fill */
+    step(ao);
     CHECK(wl(F.nw - 1, 10) == 10000, "unity before the change");
     ao_set_volume(ao, 0);
-    ao_push(ao, dc, AO_FRAMES); step(ao);
+    step(ao);
     int maxjump = 0, decreasing = 1;
     for (int i = 1; i < AO_FRAMES; i++) {
         int d = wl(F.nw - 1, i - 1) - wl(F.nw - 1, i);
@@ -506,20 +523,30 @@ static void test_volume_and_push(void)
     CHECK(decreasing && maxjump < 200, "volume change is smoothed (no step)");
     CHECK(wl(F.nw - 1, 100) == 0 && wl(F.nw - 1, 255) == 0, "reaches 0 within about 10 ms");
 
-    /* ring */
+    /* jitter buffer behind the push API */
     new_case(ao); ao_open(ao);
-    static int16_t big[AO_RING_SAMPLES + 500];
-    CHECK(ao_push(ao, big, AO_RING_SAMPLES + 500) == AO_RING_SAMPLES, "push is capped at the ring size and never blocks");
-    CHECK(ao_push(ao, big, 10) == 0, "full ring accepts nothing");
+    static int16_t big[JITTER_MAX_SAMPLES + 800];
+    CHECK(ao_push(ao, big, JITTER_MAX_SAMPLES + 800) == JITTER_MAX_SAMPLES + 800,
+          "push never blocks and never reports a short count");
+    CHECK(ao_queued(ao) <= JITTER_MAX_SAMPLES, "overrun: the queue stays within the 400 ms cap");
     for (int i = 0; i < 16; i++) step(ao);
-    CHECK(ao_ring_level(ao) == 0, "ring drained 256 samples per period");
-    int16_t part[100];
-    for (int i = 0; i < 100; i++) part[i] = 1000;
-    ao_set_volume(ao, 100);
-    for (int i = 0; i < 3; i++) step(ao);
-    ao_push(ao, part, 100);
+    CHECK(ao_queued(ao) == 0, "queue drained 256 samples per period");
+
+    new_case(ao); ao_open(ao); ao_set_volume(ao, 100);
+    int16_t part[JITTER_PREFILL_SAMPLES + 100];
+    for (int i = 0; i < JITTER_PREFILL_SAMPLES + 100; i++) part[i] = 1000;
+    ao_push(ao, part, JITTER_PREFILL_SAMPLES + 100);
+    for (int i = 0; i < 4; i++) step(ao);
     step(ao);
-    CHECK(wl(F.nw - 1, 99) == 1000 && wl(F.nw - 1, 100) == 0, "partial data then zero padding (underrun = silence)");
+    CHECK(wl(F.nw - 1, 35) == 1000 && wl(F.nw - 1, 36) == 0, "partial data then zero padding (underrun = silence)");
+    CHECK(audio_jitter_underruns(&ao->jit) == 1, "the underrun is counted");
+
+    /* disabled: nothing queued survives, nothing is played */
+    new_case(ao); ao_open(ao);
+    push_ready(ao, in, AO_FRAMES);
+    ao->enabled = 0;
+    step(ao);
+    CHECK(ao_queued(ao) == 0 && period_is_zero(F.nw - 1), "disabled: queue flushed, silence written");
     ao_close(ao);
     free(ao);
 }

@@ -14,10 +14,6 @@
 #include "ak_ioctls.h"
 #include "audio_out.h"
 
-/* Single-core ARM926 without atomics: a compiler barrier orders the ring
- * accesses against the indices (same approach as audio.c). */
-#define RING_BARRIER() __asm__ __volatile__("" ::: "memory")
-
 #define AO_MIN_PERIOD_US 28800L /* 90% of 32 ms: pacing floor if write() does not block */
 
 static void ao_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -109,6 +105,7 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     ao->fd       = -1;
     ao->beep_pos = -1;
     ao->cur_gain_q15 = ao_volume_gain_q15(ao->volume);
+    audio_jitter_init(&ao->jit);
 }
 
 void ao_set_volume(audio_out_t *ao, int v)
@@ -300,7 +297,7 @@ int ao_open(audio_out_t *ao)
     ao->test_req = 0;
     ao->amp_on = 0;
     ao->periods_written = 0;
-    ao->ring_r = ao->ring_w = 0;
+    audio_jitter_reset(&ao->jit);
     ao->last_audible_ms = -(int64_t)AO_AMP_HOLD_MS - 1;
     ao->cur_gain_q15 = ao_volume_gain_q15(ao->volume);
 
@@ -454,18 +451,13 @@ int ao_step(audio_out_t *ao)
             if (ao->beep_pos >= AO_BEEP_SAMPLES) ao->beep_pos = -1;
             test = audible = 1;
         } else {
-            uint32_t r = ao->ring_r;
-            RING_BARRIER();
-            uint32_t avail = ao->ring_w - r;
-            size_t n = avail < AO_FRAMES ? avail : AO_FRAMES;
-            for (size_t i = 0; i < n; i++) mono[i] = ao->ring[(r + i) & (AO_RING_SAMPLES - 1)];
-            RING_BARRIER();
-            ao->ring_r = r + (uint32_t)n;
-            if (n) talking = audible = 1;
+            /* pads with silence; the result is the real sample count (0 while pre-filling) */
+            if (audio_jitter_pull(&ao->jit, mono, AO_FRAMES) > 0) talking = audible = 1;
         }
     } else {
         ao->beep_pos = -1;
         ao->test_req = 0;
+        audio_jitter_reset(&ao->jit); /* nothing queued survives a disable */
     }
     if (ao->volume == 0) audible = 0; /* volume 0 = mute: amp stays off */
 
@@ -509,17 +501,10 @@ int ao_step(audio_out_t *ao)
 
 size_t ao_push(audio_out_t *ao, const int16_t *pcm, size_t n)
 {
-    uint32_t w = ao->ring_w;
-    uint32_t used = w - ao->ring_r;
-    size_t room = used >= AO_RING_SAMPLES ? 0 : AO_RING_SAMPLES - used;
-    if (n > room) n = room;
-    for (size_t i = 0; i < n; i++) ao->ring[(w + i) & (AO_RING_SAMPLES - 1)] = pcm[i];
-    RING_BARRIER();
-    ao->ring_w = w + (uint32_t)n;
-    return n;
+    return audio_jitter_push(&ao->jit, pcm, n);
 }
 
-size_t ao_ring_level(const audio_out_t *ao) { return ao->ring_w - ao->ring_r; }
+size_t ao_queued(audio_out_t *ao) { return audio_jitter_level(&ao->jit); }
 
 /* ------------------------------------------------------------------------
  * Thread
