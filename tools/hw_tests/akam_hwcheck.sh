@@ -389,6 +389,37 @@ check_modes() {
     fi
 }
 
+# RTSP Digest authentication (src/ak_rtsp/rtsp_auth.h): information only, never a FAIL. The
+# credentials file is "user:akam:HA1"; only the user name is shown, never the hash.
+check_rtsp_auth() {
+    section "RTSP authentication (optional)"
+    f=${AKAM_RTSP_AUTH_FILE:-$ROOT/etc/config/akam/rtsp_auth}
+    if [ ! -e "$f" ]; then
+        info "RTSP auth: disabled (no credentials file): the video stream is open to anyone who can reach port 554"
+        return 0
+    fi
+    line=
+    IFS= read -r line < "$f" 2>/dev/null
+    line=${line%"$(printf '\r')"}
+    ra_u=${line%%:*}
+    ra_rest=${line#*:}
+    ra_r=${ra_rest%%:*}
+    ra_h=${ra_rest#*:}
+    if [ "$ra_rest" = "$line" ] || [ -z "$ra_u" ] || [ "$ra_r" != akam ] || [ "${#ra_h}" -ne 32 ]; then
+        warn "RTSP auth: INVALID credentials file: ak_rtsp refuses every protected request (run akam_rtsp_auth.sh set USER, or disable)"
+        return 0
+    fi
+    case $ra_h in
+        *[!0-9a-f]*) warn "RTSP auth: INVALID credentials file (hash is not 32 lowercase hex characters): ak_rtsp refuses every protected request"; return 0 ;;
+    esac
+    info "RTSP auth: enabled (user $ra_u, Digest)"
+    ra_m=$(mode_of "$f")
+    case ${ra_m%% *} in
+        *00) ;;
+        *) warn "RTSP auth: $f mode $ra_m is readable by group/others (expected 600)" ;;
+    esac
+}
+
 # Night mode/state through 8091, plus a short flap check: sample night.state a
 # few times and WARN if it changed more than once (a day/night flap).
 night_get() { # prints the value of GET $1 ("night.state=night" -> night)
@@ -580,6 +611,7 @@ check_procs
 check_cpu
 check_modes
 check_misc
+check_rtsp_auth
 check_facts
 section "manual tests still to do (not automated)"
 cat <<'MSG'

@@ -11,6 +11,7 @@ full walkthrough. Listed here individually so the diff against stock is easy to 
 | `ak_rtsp_wrapper.sh` | `sbin/ak_rtsp_wrapper.sh` | Starts the Akam helpers in the background, Wi-Fi, then `ak_rtsp` |
 | `akam_ssh.sh` | `sbin/akam_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/akam_v1_ssh_and_lockdown.md` |
 | `akam_lockdown.sh` | `sbin/akam_lockdown.sh` | Runtime safety net that kills telnet/FTP daemons |
+| `akam_rtsp_auth.sh` | `sbin/akam_rtsp_auth.sh` | Run over SSH: turns the optional RTSP Digest login on or off (`status`, `set`, `disable`); see the README |
 | `patch_service_sh.sh` | host tool, not installed | Build-time patch of `sbin/service.sh` (telnet/FTP launch lines, SD hook guard) |
 
 The two sections below describe the first two files. The Akam scripts document themselves in their

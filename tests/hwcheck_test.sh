@@ -134,6 +134,24 @@ has "cpuinfo fact" 'ARM926EJ-S' "$WORK/t1.out"
 has "mtd fact" 'mtd7: 00500000' "$WORK/t1.out"
 if [ "$RC" -eq 0 ]; then ok "healthy: exit 0"; else ko "healthy: exit $RC"; grep -E '^FAIL' "$WORK/t1.out"; fi
 
+# 1b. RTSP authentication line (info only, never a FAIL, never the hash) ---
+has "rtsp auth: disabled by default" '^INFO +RTSP auth: disabled' "$WORK/t1.out"
+R1B=$WORK/r1b; mkroot "$R1B"
+mkdir -p "$R1B/etc/config/akam"
+printf 'viewer:akam:0123456789abcdef0123456789abcdef\n' > "$R1B/etc/config/akam/rtsp_auth"
+chmod 600 "$R1B/etc/config/akam/rtsp_auth"
+run t1b "$R1B" "$S1"
+has "rtsp auth: enabled, user shown" '^INFO +RTSP auth: enabled \(user viewer' "$WORK/t1b.out"
+hasnt "rtsp auth: hash never printed" '0123456789abcdef0123456789abcdef' "$WORK/t1b.out"
+hasnt "rtsp auth: enabled is not a failure" '^FAIL.*RTSP' "$WORK/t1b.out"
+chmod 644 "$R1B/etc/config/akam/rtsp_auth"
+run t1c "$R1B" "$S1"
+has "rtsp auth: world-readable file warned" '^WARN +RTSP auth:.*readable by group/others' "$WORK/t1c.out"
+printf 'garbage\n' > "$R1B/etc/config/akam/rtsp_auth"
+run t1d "$R1B" "$S1"
+has "rtsp auth: invalid file warned" '^WARN +RTSP auth: INVALID' "$WORK/t1d.out"
+if [ "$RC" -eq 0 ]; then ok "rtsp auth: an invalid file does not fail the check"; else ko "rtsp auth: invalid file made hwcheck fail (rc $RC)"; fi
+
 # 2. no ss/netstat -> /proc/net/tcp hex parsing; no nc; no stat ---------------
 R2=$WORK/r2; mkroot "$R2"
 tcp_line 0100007F 23 >> "$R2/proc/net/tcp"      # telnet on loopback
