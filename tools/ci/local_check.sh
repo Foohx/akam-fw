@@ -96,7 +96,21 @@ if [ "$T_RUN" -eq 0 ]; then
     note_fail "no tests found"
 fi
 
-# ---------------------------------------------------------------- 3. tracked-file hygiene
+# ---------------------------------------------------------------- 3. wizard smoke runs
+host_say bold "== wizard smoke"
+SMOKE_STATE=$(mktemp -d)
+for smoke in "doctor" "--dry-run status"; do
+    # shellcheck disable=SC2086  # $smoke is a fixed word list
+    if bash "$REPO/akam" --no-color --state-dir "$SMOKE_STATE" $smoke >"$LOGDIR/smoke.log" 2>&1 </dev/null; then
+        host_say green "PASS  ./akam $smoke"
+    else
+        tail -n 15 "$LOGDIR/smoke.log" | sed 's/^/      | /'
+        note_fail "./akam $smoke"
+    fi
+done
+rm -rf "$SMOKE_STATE"
+
+# ---------------------------------------------------------------- 4. tracked-file hygiene
 host_say bold "== tracked files"
 bad=0
 while IFS= read -r f; do
