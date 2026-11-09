@@ -64,7 +64,8 @@ cam_need_ip() {
 cam_key() {
     local pub
     if [ -n "$OPT_IDENTITY" ]; then CAM_KEY=$OPT_IDENTITY; return 0; fi
-    pub=${OPT_PUBKEY:-$HOME/.ssh/akam.pub}
+    pub=${OPT_PUBKEY:-$(state_get ssh_pubkey)}
+    pub=${pub:-$HOME/.ssh/akam.pub}
     CAM_KEY=${pub%.pub}
 }
 

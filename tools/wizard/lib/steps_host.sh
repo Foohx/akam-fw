@@ -928,20 +928,58 @@ pubkey_check() {
     esac
 }
 
+# ssh_choose_pubkey: sets SSH_PUB, the public key for the flash card, and remembers it in the state.
+# Order: --pubkey, the key chosen before (state), ~/.ssh/akam.pub, else the existing ed25519 keys of
+# ~/.ssh to choose from, else a new dedicated key (ssh-keygen). Returns 1 when no key can be had.
+ssh_choose_pubkey() {
+    local def=$HOME/.ssh/akam.pub cur f kind cands=() items=() n
+    SSH_PUB=""
+    if [ -n "$OPT_PUBKEY" ]; then SSH_PUB=$OPT_PUBKEY; return 0; fi
+    cur=$(state_get ssh_pubkey)
+    if [ -n "$cur" ] && [ -f "$cur" ]; then
+        SSH_PUB=$cur
+        ui_say "  SSH key (chosen before): $cur"
+        return 0
+    fi
+    if [ -f "$def" ]; then SSH_PUB=$def; return 0; fi
+    if [ "$UI_DRY" != 1 ]; then
+        for f in "$HOME"/.ssh/*.pub; do
+            [ -f "$f" ] || continue
+            kind=$(cut -d' ' -f1 "$f" 2>/dev/null | head -1)
+            if [ "$kind" = ssh-ed25519 ] && [ "$(grep -c '' "$f")" = 1 ]; then cands+=("$f"); fi
+        done
+    fi
+    if [ "${#cands[@]}" -gt 0 ]; then
+        items=("${cands[@]}")
+        items+=("Create a new dedicated key ($def)")
+        ui_say "  There is no $def. These ed25519 public keys exist in ~/.ssh:"
+        ui_choose "Which SSH key should open the camera?" "${items[@]}" || { ui_fail "no key chosen." "run this step again, or pass --pubkey FILE."; return 1; }
+        n=$CHOICE_INDEX
+        if [ "$n" -lt "${#cands[@]}" ]; then
+            SSH_PUB=${cands[n]}
+            ui_say "  Using $SSH_PUB (its private key stays on this PC; only the .pub goes on the card)."
+            return 0
+        fi
+    else
+        ui_say "  No SSH key at $def. Akam uses a dedicated key. The command to create it:"
+    fi
+    SSH_PUB=$def
+    if [ "$UI_DRY" = 1 ]; then
+        run_cmd ssh-keygen -t ed25519 -f "${def%.pub}" -C akam
+    else
+        ui_confirm "  Create it now (you will be asked for a passphrase)?" || { ui_fail "no SSH key." "create one, then pass --pubkey FILE."; return 1; }
+        run_cmd ssh-keygen -t ed25519 -f "${def%.pub}" -C akam || return 1
+    fi
+}
+
 cmd_prepare_flash_sd() {
-    local pub=${OPT_PUBKEY:-$HOME/.ssh/akam.pub} ft img bk tk
+    local pub ft img bk tk
     step_need prepare-flash-sd || return 1
     step_banner prepare-flash-sd
-    if [ ! -f "$pub" ]; then
-        ui_say "  No SSH key at $pub. Akam uses a dedicated key. The command to create it:"
-        if [ "$UI_DRY" = 1 ]; then
-            run_cmd ssh-keygen -t ed25519 -f "${pub%.pub}" -C akam
-        else
-            ui_confirm "  Create it now (you will be asked for a passphrase)?" || { ui_fail "no SSH key." "create one, then pass --pubkey FILE."; return 1; }
-            run_cmd ssh-keygen -t ed25519 -f "${pub%.pub}" -C akam || return 1
-        fi
-    fi
+    ssh_choose_pubkey || return 1
+    pub=$SSH_PUB
     if [ -f "$pub" ] || [ "$UI_DRY" != 1 ]; then pubkey_check "$pub" || return 1; fi
+    if [ "$UI_DRY" != 1 ]; then state_set ssh_pubkey "$pub"; fi
     sd_need_cli "prepare the card by hand: see docs/akam_v1_ssh_and_lockdown.md and tools/sd/prepare_first_boot_sd.sh" || return 1
     ui_require_tty "preparing the flash card" || return 1
     if [ "$(state_get mode)" = source ]; then ft=$ROOT/src/ak_rtsp/flash_tool; else ft=$STATE_DIR/kit/bin/flash_tool; fi

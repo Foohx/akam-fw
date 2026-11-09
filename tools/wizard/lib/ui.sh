@@ -140,6 +140,35 @@ ui_pick_route() {
     [ "$TUI_INDEX" -eq 0 ]
 }
 
+# ui_choose TITLE ITEM...: pick one item. Sets CHOICE_INDEX (0-based). Returns 1 on cancel or EOF.
+# Terminal: the arrow-key list. Plain mode: a numbered list and a prompt (Enter = the first item).
+# shellcheck disable=SC2034  # CHOICE_INDEX is read by the callers
+ui_choose() {
+    local title=$1 i=0 it
+    shift
+    CHOICE_INDEX=-1
+    if [ "${TUI_ON:-0}" = 1 ] && [ "$UI_DRY" != 1 ]; then
+        tui_choose "$title" "$@" || return 1
+        CHOICE_INDEX=$TUI_INDEX
+        return 0
+    fi
+    ui_say "  $title"
+    for it in "$@"; do
+        i=$((i + 1))
+        ui_say "    $i) $it"
+    done
+    while :; do
+        printf '  Number [1]: ' >&2
+        IFS= read -r ANSWER || return 1
+        ANSWER=${ANSWER:-1}
+        case $ANSWER in
+            '' | *[!0-9]*) ;;
+            *) if [ "$ANSWER" -ge 1 ] && [ "$ANSWER" -le "$#" ]; then CHOICE_INDEX=$((ANSWER - 1)); return 0; fi ;;
+        esac
+        ui_say "  Please type a number between 1 and $#."
+    done
+}
+
 # ui_confirm_typed PROMPT EXPECTED: exact typed text, never skipped, never defaulted.
 # A rehearsal only shows the question; it never passes a real confirmation.
 ui_confirm_typed() {
