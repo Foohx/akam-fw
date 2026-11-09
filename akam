@@ -14,6 +14,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT/tools/wizard/lib/state.sh"
 # shellcheck source=tools/wizard/lib/ui.sh
 . "$ROOT/tools/wizard/lib/ui.sh"
+# shellcheck source=tools/wizard/lib/tui.sh
+. "$ROOT/tools/wizard/lib/tui.sh"
 # shellcheck source=tools/wizard/lib/steps_host.sh
 . "$ROOT/tools/wizard/lib/steps_host.sh"
 # shellcheck source=tools/wizard/lib/camsh.sh
@@ -22,6 +24,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT/tools/wizard/lib/transfer.sh"
 # shellcheck source=tools/wizard/lib/steps_camera.sh
 . "$ROOT/tools/wizard/lib/steps_camera.sh"
+# shellcheck source=tools/wizard/lib/tui_menu.sh
+. "$ROOT/tools/wizard/lib/tui_menu.sh"
 
 # Never leak secrets through shell tracing.
 set +x
@@ -34,6 +38,7 @@ Usage: ./akam [options] [command]
 
 Commands:
   (none)             step menu with status; resumes where you stopped
+                     (on a terminal: a full-screen menu, keys: arrows or j/k, Enter, ? help, q)
   doctor             check this computer (tools); changes nothing
   get-kit            download and verify the prebuilt kit (no compiling)
   build              build from source instead (optional, needs more tools)
@@ -79,7 +84,9 @@ Options:
   --profile P        doctor profile: kit | build | all
   --state-dir DIR    where progress and the log are kept
                      (default ${XDG_STATE_HOME:-~/.local/state}/akam)
-  --no-color         plain output (also automatic when not on a terminal)
+  --no-color         no colours (NO_COLOR works too)
+  --plain            line-based output and prompts, no full-screen menu or widgets
+                     (also automatic when not on a terminal; AKAM_PLAIN=1 does the same)
 
 Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
 for the disk work), shows every command before it runs, refuses destructive actions without a
@@ -91,7 +98,7 @@ EOF
 OPT_KIT="" OPT_VERSION="" OPT_ALLOW_UNSIGNED="" OPT_EXPECT_SHA256="" OPT_BACKUP_DIR=""
 OPT_OUT="" OPT_COMP="" OPT_ALLOW_UNKNOWN_COMP="" OPT_DEVICE="" OPT_PUBKEY="" OPT_SSID=""
 OPT_PROFILE="" OPT_BUILD=0
-OPT_IP="" OPT_IDENTITY="" OPT_IMAGE="" OPT_BACKUP_COPY="" OPT_MANUAL_TELNET=0
+OPT_IP="" OPT_IDENTITY="" OPT_IMAGE="" OPT_BACKUP_COPY="" OPT_MANUAL_TELNET=0 OPT_PLAIN=0
 DRY=0
 STATE_OVERRIDE=""
 ARGS=()
@@ -100,6 +107,7 @@ while [ $# -gt 0 ]; do
     case $1 in
         --dry-run) DRY=1 ;;
         --no-color) export NO_COLOR=1 ;;
+        --plain) OPT_PLAIN=1 ;;
         --allow-unsigned) OPT_ALLOW_UNSIGNED=1 ;;
         --allow-unknown-stock-comp) OPT_ALLOW_UNKNOWN_COMP=1 ;;
         --kit) need_val "$1" $#; OPT_KIT=$2; shift ;;
@@ -134,6 +142,7 @@ esac
 case $OPT_COMP in "" | xz | gzip) ;; *) echo "akam: --comp must be xz or gzip" >&2; exit 2 ;; esac
 
 UI_DRY=$DRY
+tui_init "$OPT_PLAIN"
 SD_DIR=${STATE_OVERRIDE:-$(state_default_dir)}
 state_init "$SD_DIR" "$DRY"
 log_init "$SD_DIR"
@@ -154,7 +163,9 @@ fi
 rc=0
 case $CMD in
     "")
-        if [ "$DRY" = 1 ]; then
+        if [ "$TUI_ON" = 1 ]; then
+            tui_main_menu || rc=$?
+        elif [ "$DRY" = 1 ]; then
             wizard_walk || rc=$?
         elif host_is_tty; then
             wizard_menu || rc=$?
