@@ -38,8 +38,13 @@ the map; each step has its own guide.
 ./akam update            # later: flash a new image over SSH (--image FILE)
 ./akam restore           # put the original APP back from your backup
 ./akam wipe-sd           # erase a card that holds your Wi-Fi password (offered again at the end)
+./akam step NAME         # run one step again (doctor, get-kit, ..., flash, verify)
 ./akam status            # every step: done / todo / blocked
 ```
+
+The same commands cover the whole life of the camera: `find-camera`, `backup`, `flash` and `verify` for
+the first install, `update` for every later image (over SSH, no card), `restore` to go back to the
+original firmware. Each one that writes to the camera asks you to type `YES` yourself.
 
 `get-kit` downloads from the project's GitHub Releases over HTTPS and checks the checksum and the
 signature (`tools/release/verify_kit.sh`) before anything from the download is used. If no release has
