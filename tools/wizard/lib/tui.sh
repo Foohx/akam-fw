@@ -32,6 +32,7 @@ TUI_ALT=0
 TUI_CURSOR_HIDDEN=0
 TUI_RESIZED=0
 TUI_TASK_PID=""
+TUI_PENDING_SIG=""
 TUI_REGION=0
 TUI_BUF=()
 TUI_ABOVE=()
@@ -170,7 +171,7 @@ tui_cleanup() {
     if [ "$TUI_ALT" = 1 ]; then printf '\e[?1049l' >&2; fi
     TUI_ALT=0
     tui_raw_off
-    printf '\e[0m' >&2
+    if [ -n "$TUI_RST" ]; then printf '%s' "$TUI_RST" >&2; fi
     return 0
 }
 
@@ -182,11 +183,23 @@ tui_on_signal() { # NAME NUMBER
 
 tui_on_winch() { TUI_RESIZED=1; }
 
+# tui_sig_handler NAME NUMBER: while the keyboard is being read (raw mode), only note the signal:
+# exiting from inside bash's read would let read put its own saved (raw) terminal modes back after
+# our cleanup. tui_readkey notices it as soon as read returns (at most half a second later).
+# Outside a read (a step is running, a spinner is drawn) it ends the program at once.
+tui_sig_handler() {
+    if [ "$TUI_RAW" = 1 ]; then
+        TUI_PENDING_SIG="$1 $2"
+    else
+        tui_on_signal "$1" "$2"
+    fi
+}
+
 tui_install_traps() {
     trap tui_cleanup EXIT
-    trap 'tui_on_signal INT 2' INT
-    trap 'tui_on_signal HUP 1' HUP
-    trap 'tui_on_signal TERM 15' TERM
+    trap 'tui_sig_handler INT 2' INT
+    trap 'tui_sig_handler HUP 1' HUP
+    trap 'tui_sig_handler TERM 15' TERM
     trap tui_on_winch WINCH
 }
 
@@ -201,17 +214,23 @@ tui_rearm_traps() {
 #   up down left right home end pgup pgdn enter esc tab space backspace delete
 #   ctrl-a ctrl-c ctrl-e ctrl-k ctrl-u ctrl-w eof timeout unknown, or the typed character.
 tui_readkey() {
-    local k="" k2="" c="" seq="" rc=0
+    local k="" k2="" c="" seq="" rc=0 t=${1:-0.5}
     TUI_KEY=""
-    if [ -n "${1:-}" ]; then
-        IFS= read -rsn1 -t "$1" k <&"$TUI_FD" || rc=$?
-    else
-        IFS= read -rsn1 k <&"$TUI_FD" || rc=$?
-    fi
-    if [ "$rc" -ne 0 ]; then
-        if [ "$rc" -gt 128 ]; then TUI_KEY=timeout; else TUI_KEY=eof; fi
+    while true; do
+        rc=0
+        IFS= read -rsn1 -t "$t" k <&"$TUI_FD" || rc=$?
+        if [ -n "$TUI_PENDING_SIG" ]; then
+            # shellcheck disable=SC2086  # "NAME NUMBER", two words on purpose
+            tui_on_signal $TUI_PENDING_SIG
+        fi
+        if [ "$rc" -eq 0 ]; then break; fi
+        if [ "$rc" -gt 128 ]; then
+            if [ -n "${1:-}" ]; then TUI_KEY=timeout; return 0; fi
+            continue
+        fi
+        TUI_KEY=eof
         return 0
-    fi
+    done
     case $k in
         "" | $'\r') TUI_KEY=enter ;;
         " ") TUI_KEY=space ;;

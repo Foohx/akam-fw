@@ -17,6 +17,7 @@ MENU_NOTE=()
 MENU_MSG=""
 MENU_MSG_KIND=""
 MENU_TOP=0
+MENU_SEL=0
 MENU_TOOLS="rtsp-auth update restore wipe-sd"
 
 tool_title() {
@@ -153,7 +154,7 @@ tui_menu_draw() {
         if [ "${MENU_KIND[i]}" = tool ] && [ "$first" = 1 ]; then entries+=(-1); first=0; fi
         entries+=("$i")
     done
-    rows_avail=$((TUI_ROWS - 8))
+    rows_avail=$((TUI_ROWS - 9))
     if [ "$rows_avail" -lt 3 ]; then rows_avail=3; fi
     vis_rows=${#entries[@]}
     if [ "$vis_rows" -gt "$rows_avail" ]; then vis_rows=$rows_avail; fi
@@ -287,6 +288,8 @@ tui_menu_run() {
     tui_pause "Press any key to return to the menu..."
     tui_screen_enter
     tui_menu_refresh
+    # after a success, the cursor goes to the next thing to do
+    if [ "$rc" -eq 0 ] && [ "${MENU_KIND[i]}" = step ]; then MENU_SEL=$(tui_menu_first_todo); fi
     return 0
 }
 
@@ -327,11 +330,11 @@ tui_menu_pick() {
 
 # tui_main_menu: the event loop. Returns 0 when the user quits.
 tui_main_menu() {
-    local sel n k
+    local n k
     tui_menu_load
     tui_menu_refresh
     n=${#MENU_NAMES[@]}
-    sel=$(tui_menu_first_todo)
+    MENU_SEL=$(tui_menu_first_todo)
     MENU_MSG="" MENU_MSG_KIND="" MENU_TOP=0
     tui_size
     tui_screen_enter
@@ -346,24 +349,24 @@ tui_main_menu() {
             case $TUI_KEY in q | ctrl-c | eof) break ;; esac
             continue
         fi
-        tui_menu_draw "$sel"
+        tui_menu_draw "$MENU_SEL"
         tui_readkey 1
         case $TUI_KEY in
             timeout | unknown) continue ;;
         esac
         MENU_MSG="" MENU_MSG_KIND=""
         case $TUI_KEY in
-            up | k) sel=$(((sel + n - 1) % n)) ;;
-            down | j | tab) sel=$(((sel + 1) % n)) ;;
-            home | g) sel=0 ;;
-            end | G) sel=$((n - 1)) ;;
-            pgup) sel=$((sel > 5 ? sel - 5 : 0)) ;;
-            pgdn) sel=$((sel + 5 < n ? sel + 5 : n - 1)) ;;
+            up | k) MENU_SEL=$(((MENU_SEL + n - 1) % n)) ;;
+            down | j | tab) MENU_SEL=$(((MENU_SEL + 1) % n)) ;;
+            home | g) MENU_SEL=0 ;;
+            end | G) MENU_SEL=$((n - 1)) ;;
+            pgup) MENU_SEL=$((MENU_SEL > 5 ? MENU_SEL - 5 : 0)) ;;
+            pgdn) MENU_SEL=$((MENU_SEL + 5 < n ? MENU_SEL + 5 : n - 1)) ;;
             [1-9])
                 k=$((TUI_KEY - 1))
-                if [ "$k" -lt "$n" ] && [ "${MENU_KIND[k]}" = step ]; then sel=$k; fi
+                if [ "$k" -lt "$n" ] && [ "${MENU_KIND[k]}" = step ]; then MENU_SEL=$k; fi
                 ;;
-            '?' | h) tui_menu_help "$sel" ;;
+            '?' | h) tui_menu_help "$MENU_SEL" ;;
             r) tui_menu_pick ;;
             a)
                 tui_screen_leave
@@ -374,10 +377,10 @@ tui_main_menu() {
                 tui_menu_refresh
                 ;;
             enter)
-                if [ "${MENU_ST[sel]}" = blocked ]; then
-                    MENU_MSG="${MENU_NOTE[sel]}  (run those steps first)" MENU_MSG_KIND=warn
+                if [ "${MENU_ST[MENU_SEL]}" = blocked ]; then
+                    MENU_MSG="${MENU_NOTE[MENU_SEL]}  (run those steps first)" MENU_MSG_KIND=warn
                 else
-                    tui_menu_run "$sel"
+                    tui_menu_run "$MENU_SEL"
                 fi
                 ;;
             q | ctrl-c | eof | esc) break ;;
