@@ -44,6 +44,7 @@ SRCS    = main.c \
           vi.c \
           venc.c \
           audio.c \
+          audio_out.c \
           rtsp.c \
           h264_params.c \
           rtp_clock.c \
