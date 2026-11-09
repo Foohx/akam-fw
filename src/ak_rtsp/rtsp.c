@@ -28,6 +28,7 @@
 #include "rtp_clock.h"
 #include "net_tx.h"
 #include "rtsp_in.h"
+#include "rtsp_idle.h"
 #include "rtsp_auth.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
@@ -935,6 +936,7 @@ typedef struct {
     Client *client;
     SmolRTSP_Controller *controller;
     SmolRTSP_Writer *writer;
+    rtsp_idle_t *idle;
 } InCtx;
 
 /* Error response written without the controller (request not parsed, or too
@@ -956,6 +958,7 @@ static void send_error_reply(Client *client, int code, const char *reason,
 static int in_on_message(void *user, const char *data, size_t len)
 {
     InCtx *c = user;
+    rtsp_idle_request(c->idle, rtp_mono_us()); /* a complete request: progress */
     SmolRTSP_Request req = SmolRTSP_Request_uninit();
     SmolRTSP_ParseResult res = SmolRTSP_Request_parse(&req, CharSlice99_new((char *)data, len));
     bool ok = false;
@@ -1073,7 +1076,9 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
 
     rtsp_in_t in;
     rtsp_in_init(&in);
-    InCtx in_ctx = { &client, &controller, &writer };
+    rtsp_idle_t idle;
+    rtsp_idle_init(&idle, rtp_mono_us());
+    InCtx in_ctx = { &client, &controller, &writer, &idle };
     const rtsp_in_ops_t in_ops = { &in_ctx, in_on_message, in_on_interleaved };
     bool video_idle = false;
 
@@ -1100,7 +1105,8 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
          * GET_STREAM and wakes at once on an RTSP request); poll again with
          * no delay right after a frame, in case the next one is queued. */
         int poll_ret = poll(&pfd, 1,
-                            client.is_playing ? (video_idle ? PLAY_IDLE_POLL_MS : 0) : 5000);
+                            client.is_playing ? (video_idle ? PLAY_IDLE_POLL_MS : 0)
+                                              : rtsp_idle_wait_ms(&idle, 0, rtp_mono_us(), 5000));
 
         if (poll_ret < 0) {
             if (errno == EINTR) continue;
@@ -1149,6 +1155,16 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             if (client.tx_fail && !client.drop_reason)
                 client.drop_reason = "TCP write failed or stalled";
             if (client.drop_reason) break;
+        }
+
+        /* Before PLAY the single slot must not be held by a silent or stuck
+         * client. While playing there is no idleness drop (see rtsp_idle.h). */
+        if (!client.is_playing) {
+            const char *why = rtsp_idle_check(&idle, 0, rtp_mono_us());
+            if (why) {
+                client.drop_reason = why;
+                break;
+            }
         }
 
         if (client.is_playing) {
