@@ -10,6 +10,16 @@
 # APP squashfs tree.
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin
 
+# --- Network hostname ---
+# Applied first, synchronously (it only reads two tiny files and calls hostname),
+# so the kernel name is right before anything networked starts. Never fatal.
+if [ -x /usr/sbin/akam_hostname.sh ]; then
+    /usr/sbin/akam_hostname.sh apply </dev/null >/dev/null 2>&1
+fi
+# DHCP hostname: effective name, "akam" if the helper is missing or fails.
+AKAM_DHCP_HOSTNAME=$(/usr/sbin/akam_hostname.sh show 2>/dev/null)
+[ -n "$AKAM_DHCP_HOSTNAME" ] || AKAM_DHCP_HOSTNAME=akam
+
 # --- Akam background helpers (SSH, lockdown) ---
 # Fire and forget: detached, output discarded, exit status ignored, so a
 # missing or failing helper can never delay or affect ak_rtsp below. Each
@@ -35,7 +45,7 @@ WPA_CONF=/etc/config/wpa_supplicant.conf
 if [ -f "$WPA_CONF" ] && ! ps | grep -v grep | grep -q wpa_supplicant; then
     echo "ak_rtsp_wrapper: starting wpa_supplicant + udhcpc"
     wpa_supplicant -Dnl80211 -i wlan0 -c "$WPA_CONF" -B
-    udhcpc -i wlan0 -x hostname:IPCamera &
+    udhcpc -i wlan0 -x "hostname:$AKAM_DHCP_HOSTNAME" &
     touch /tmp/connect_type_wifi
 fi
 

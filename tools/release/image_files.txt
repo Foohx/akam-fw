@@ -12,9 +12,11 @@
 file 755 overlay/sbin/ak_rtsp_wrapper.sh sbin/ak_rtsp_wrapper.sh tools/firmware_patch_templates/ak_rtsp_wrapper.sh
 file 755 overlay/sbin/akam_ssh.sh sbin/akam_ssh.sh tools/firmware_patch_templates/akam_ssh.sh
 file 755 overlay/sbin/akam_lockdown.sh sbin/akam_lockdown.sh tools/firmware_patch_templates/akam_lockdown.sh
+file 755 overlay/sbin/akam_hostname.sh sbin/akam_hostname.sh tools/firmware_patch_templates/akam_hostname.sh
 file 755 overlay/sbin/akam_rtsp_auth.sh sbin/akam_rtsp_auth.sh tools/firmware_patch_templates/akam_rtsp_auth.sh
 file 644 overlay/local/_ht_process.ini local/_ht_process.ini tools/firmware_patch_templates/_ht_process.ini
 file 755 patches/patch_service_sh.sh - tools/firmware_patch_templates/patch_service_sh.sh
+file 755 patches/patch_ethernet_hostname.sh - tools/firmware_patch_templates/patch_ethernet_hostname.sh
 file 755 scripts/hwcheck/akam_hwcheck.sh - tools/hw_tests/akam_hwcheck.sh
 link dropbearmulti overlay/bin/dropbear bin/dropbear
 link dropbearmulti overlay/bin/dropbearkey bin/dropbearkey
