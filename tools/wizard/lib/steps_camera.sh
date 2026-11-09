@@ -890,14 +890,35 @@ cmd_flash() {
 }
 
 # ------------------------------------------------------------------ verify
-cam_wait_port() { # port secs
-    local p=$1 max=${2:-${AKAM_WAIT_SECS:-240}} t=0
-    while [ "$t" -lt "$max" ]; do
-        if net_port_open "$CAM_IP" "$p" 3; then return 0; fi
-        t=$((t + 5))
-        sleep 2
+# cam_wait_port PORT [SECS [WHAT]]: wait until the camera answers on PORT. Shows what it waits for
+# and the elapsed time: a spinner on a terminal, one line every 15 s otherwise. 0 = answered,
+# 1 = still silent after SECS (the caller explains what that probably means).
+cam_wait_port() {
+    local p=$1 max=${2:-${AKAM_WAIT_SECS:-240}} what=${3:-the camera} t0=$SECONDS el frame=0 lastp=-100 spin=""
+    ui_say "  Waiting for $what: $CAM_IP port $p (up to $max seconds) ..."
+    while :; do
+        el=$((SECONDS - t0))
+        if [ "${TUI_ON:-0}" = 1 ]; then
+            tui_elapsed "$el"
+            spin=${TUI_SPIN[frame % ${#TUI_SPIN[@]}]}
+            printf '\r\e[K  %s%s%s waiting for %s  %s%s of %ss%s' "$TUI_C" "$spin" "$TUI_RST" "$what" "$TUI_D" "$REPLY" "$max" "$TUI_RST" >&2
+            frame=$((frame + 1))
+        elif [ $((el - lastp)) -ge 15 ]; then
+            if [ "$el" -gt 0 ]; then printf '  ... still waiting for %s (%s of %s s)\n' "$what" "$el" "$max"; fi
+            lastp=$el
+        fi
+        if net_port_open "$CAM_IP" "$p" 2; then
+            if [ "${TUI_ON:-0}" = 1 ]; then printf '\r\e[K' >&2; fi
+            ui_say "  Port $p answered after $((SECONDS - t0)) s."
+            return 0
+        fi
+        if [ "$el" -ge "$max" ]; then
+            if [ "${TUI_ON:-0}" = 1 ]; then printf '\r\e[K' >&2; fi
+            ui_say "  No answer on port $p within $max s."
+            return 1
+        fi
+        sleep 1
     done
-    return 1
 }
 
 # cam_hwcheck: copy akam_hwcheck.sh to the camera's RAM and run it. Shows PASS/FAIL/WARN lines.
@@ -953,8 +974,8 @@ cmd_verify() {
     fi
     cam_need_ip || return 1
     cam_key
-    ui_say "  Waiting for the camera to answer on SSH (up to ${AKAM_WAIT_SECS:-240} seconds) ..."
-    cam_wait_port "$(cam_port ssh)" || { ui_fail "the camera does not answer on SSH." "wait, check the address, see docs/akam_v1_flash_and_restore.md (Recovery). The step is NOT done."; return 1; }
+    cam_wait_port "$(cam_port ssh)" "${AKAM_WAIT_SECS:-240}" "the camera to answer on SSH" ||
+        { ui_fail "the camera does not answer on SSH." "it may still be starting (wait a minute and run this step again), the address may have changed (check your router), or the camera may have no network: see docs/akam_v1_flash_and_restore.md (Recovery). The step is NOT done."; return 1; }
     cam_ssh_setup
     cam_show_fingerprint
     cam_ssh_ok || { ui_fail "SSH with $CAM_KEY was refused." "is this the key you put on the flash card (--identity FILE)? The step is NOT done: do not remove the card."; return 1; }
@@ -969,7 +990,9 @@ cmd_verify() {
     ui_say "    1. unplug the camera's USB-C power  2. take the microSD card out  3. plug the power back in."
     ui_prompt "  Press Enter when the camera is powered again (or q to stop):" "" || { ui_fail "no input." "run ./akam step verify again."; return 1; }
     if [ "$ANSWER" = q ]; then ui_fail "stopped." "run ./akam step verify again when ready."; return 1; fi
-    cam_wait_port "$(cam_port ssh)" || { ui_fail "the camera does not answer on SSH without the card." "put the card back and look at docs/akam_v1_flash_and_restore.md (Recovery)."; return 1; }
+    cam_wait_port "$(cam_port ssh)" "${AKAM_WAIT_SECS:-240}" "the camera to boot without the card and answer on SSH" ||
+        { ui_fail "the camera is not on the network ${AKAM_WAIT_SECS:-240} seconds after the power-up without the card." \
+            "most likely its Wi-Fi is not saved on the camera (no /etc/config/wpa_supplicant.conf): put the card back, power-cycle, run this step again (it creates the file) and see docs/akam_v1_install.md (Troubleshooting: no network after removing the card). Also check the address in your router: it may have changed."; return 1; }
     cam_ports_check closed || { ui_fail "port check failed without the card." "see docs/akam_v1_ssh_and_lockdown.md."; return 1; }
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure without the card." ""; return 1; }
     state_mark_done verify

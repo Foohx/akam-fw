@@ -519,6 +519,20 @@ check "verify: no saved Wi-Fi and no card config: refused, never invites to remo
 check "verify: ...and the step stays undone" hasnt "$S/state" step_verify_done
 mv "$STUB_DIR/wpa.saved" "$CR/etc/config/wpa_supplicant.conf"
 
+# verify: after the power cycle without the card the camera never comes back (no Wi-Fi saved): says what it waits for, then why it probably failed
+P_SSH2=$(fc_free_port)
+"$BB" nc -lk -p "$P_SSH2" -e true >/dev/null 2>&1 &
+LPID=$!
+sleep 0.5
+S=$(new_state ver_timeout)
+seed_verify_state "$S"
+( sleep 5; kill "$LPID" 2>/dev/null; sleep 0.3; printf '\n' ) | AKAM_PORT_SSH=$P_SSH2 AKAM_WAIT_SECS=4 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_timeout.out" 2>&1
+rc=$?
+check "verify: the first wait says what it waits for and that it answered" bash -c 'grep -q "Waiting for the camera to answer on SSH: 127.0.0.1 port $1 (up to 4 seconds)" "$2" && grep -q "answered after" "$2"' _ "$P_SSH2" "$T/ver_timeout.out"
+check "verify: the wait after the power cycle says what it waits for" has "$T/ver_timeout.out" "Waiting for the camera to boot without the card and answer on SSH"
+check "verify: a camera that does not come back gets a clear message about the Wi-Fi and the card" bash -c '[ "$1" -ne 0 ] && grep -q "is not on the network 4 seconds after the power-up without the card" "$2" && grep -q "wpa_supplicant.conf" "$2" && grep -q "put the card back" "$2"' _ "$rc" "$T/ver_timeout.out"
+check "verify: ...and the step stays undone" hasnt "$S/state" step_verify_done
+
 S=$(new_state ver_empty)
 seed_verify_state "$S"
 AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify </dev/null >"$T/ver_empty.out" 2>&1
