@@ -12,6 +12,8 @@ full walkthrough. Listed here individually so the diff against stock is easy to 
 | `akam_ssh.sh` | `sbin/akam_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/akam_v1_ssh_and_lockdown.md` |
 | `akam_lockdown.sh` | `sbin/akam_lockdown.sh` | Runtime safety net that kills telnet/FTP daemons |
 | `akam_rtsp_auth.sh` | `sbin/akam_rtsp_auth.sh` | Run over SSH: turns the optional RTSP Digest login on or off (`status`, `set`, `disable`); see the README |
+| `akam_hostname.sh` | `sbin/akam_hostname.sh` | Network hostname (`set`, `show`, `status`, `reset`, `apply`); default `akam-XXXX` from the wlan0 MAC; stored in `/etc/config/akam/hostname` |
+| `patch_ethernet_hostname.sh` | host tool, not installed | Build-time patch of `sbin/ethernet.sh`: the DHCP hostname comes from `akam_hostname.sh show` (fallback `akam`) |
 | `patch_service_sh.sh` | host tool, not installed | Build-time patch of `sbin/service.sh` (telnet/FTP launch lines, SD hook guard) |
 
 The two sections below describe the first two files. The Akam scripts document themselves in their
