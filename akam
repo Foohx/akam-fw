@@ -102,8 +102,9 @@ Options:
 
 Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
 for the disk work), shows every command before it runs, refuses destructive actions without a
-terminal, and never stores your Wi-Fi password. Erasing a card needs a typed ERASE <device>;
-flashing needs a typed YES, always typed by you. It never reboots or power-cycles the camera.
+terminal, and never stores your Wi-Fi password. Erasing a card and writing the camera's flash
+each need your explicit yes in a red box (one yes/no, default No: Enter, Esc or q mean No).
+It never reboots or power-cycles the camera.
 EOF
 }
 

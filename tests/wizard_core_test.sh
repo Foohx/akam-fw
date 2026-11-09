@@ -607,6 +607,7 @@ check "migration: the first menu run asks what to call the existing progress" ha
 check "migration: the existing state moves to cameras/akam-02 (address and steps kept)" bash -c 'grep -q "^camera_ip=192.0.2.2$" "$1/cameras/akam-02/state" && grep -q "^step_doctor_done=" "$1/cameras/akam-02/state" && grep -q "old log" "$1/cameras/akam-02/akam.log" && [ ! -e "$1/state" ]' _ "$T/st5"
 check "migration: the shared kit folder stays at the base and the name is remembered" bash -c '[ -d "$1/kit" ] && [ "$(cat "$1/current_camera")" = akam-02 ]' _ "$T/st5"
 check "migration: the menu now shows the new name" has "$T/g1.out" "camera: akam-02"
+check "migration: an untouched backup copy of the old state is kept" bash -c 'grep -q "^camera_ip=192.0.2.2$" "$1/state.before-rename.bak" && grep -q "^step_doctor_done=" "$1/state.before-rename.bak"' _ "$T/st5"
 rm -rf "$T/st6"
 mkdir -p "$T/st6"
 printf 'step_doctor_done=2026-01-01T00:00:00Z\n' >"$T/st6/state"
