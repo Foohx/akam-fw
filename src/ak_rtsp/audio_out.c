@@ -28,7 +28,8 @@ static void ao_log(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    fprintf(stderr, "[audio_out] %s\n", buf);
+    /* stdout, not stderr: only stdout is tee'd to the LOG lines of port 8091. */
+    printf("[audio_out] %s\n", buf);
 }
 
 /* ------------------------------------------------------------------------
