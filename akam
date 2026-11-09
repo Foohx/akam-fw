@@ -46,6 +46,9 @@ Commands:
   flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
   verify             check SSH, ports and hardware, then the same without the card
   update             flash a new image over SSH (no card)
+  rtsp-auth [set|disable|status]
+                     password (Digest login) on the video stream, over SSH; off by default
+                     (typed here, never shown, sent to the camera only as a hash); default: status
   restore            put the original APP back from your backup
   wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
   step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
@@ -174,6 +177,7 @@ case $CMD in
     flash) cmd_flash || rc=$? ;;
     verify) cmd_verify || rc=$? ;;
     update) cmd_update || rc=$? ;;
+    rtsp-auth) cmd_rtsp_auth "${ARGS[1]:-status}" || rc=$? ;;
     restore) cmd_restore || rc=$? ;;
     step)
         if [ "${#ARGS[@]}" -lt 2 ] || ! step_valid_name "${ARGS[1]}"; then
