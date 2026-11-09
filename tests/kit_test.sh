@@ -84,7 +84,7 @@ check "kit holds only our top-level directories" bash -c "
 check "no image, squashfs or dump in the kit" bash -c "! find '$K' -iname '*.squashfs' -o -iname '*.img' -o -iname 'app_*' | grep -q ."
 check "wrapper, akam_*.sh, hwcheck and flash scripts present" bash -c "
     cd '$K' && test -x overlay/sbin/ak_rtsp_wrapper.sh && test -x overlay/sbin/akam_ssh.sh &&
-    test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
+    test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x overlay/sbin/akam_hostname.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
     test -x scripts/flash/flash_guard.sh && test -x patches/patch_service_sh.sh"
 
 echo "== licences cover THIRD_PARTY_NOTICES.md"
@@ -324,6 +324,7 @@ drift_check() {
     done
     # every Akam-owned path of the image (new or changed against the stock tree) is in the list
     echo sbin/service.sh >>"$want"
+    echo sbin/ethernet.sh >>"$want"
     echo local/akam/MANIFEST.txt >>"$want"
     (cd "$P" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort) |
         while IFS= read -r f; do

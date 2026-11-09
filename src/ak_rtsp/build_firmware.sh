@@ -12,7 +12,7 @@
 #      KEEP_PATCHED=1; the Akam install/patch steps below run in both cases)
 #   2. de-Tuyafication: remove anyka_ipc, install ak_rtsp + wrapper + ini
 #   3. Akam: install dropbearmulti (+ dropbear/dropbearkey symlinks),
-#      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, LICENSE.dropbear, MANIFEST.txt;
+#      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, akam_hostname.sh, LICENSE.dropbear, MANIFEST.txt;
 #      patch sbin/service.sh (telnet/ftp off)
 #   4. safety checks (modes, no private key), mksquashfs, round-trip verify,
 #      size guard (BEFORE padding), pad to exactly 5242880 bytes, report,
@@ -261,6 +261,8 @@ if [ "$MODE" = kit ]; then
     KIT_EXTRA="$(LC_ALL=C comm -13 "$TMP/listed.paths" "$TMP/kit.paths" | tr '\n' ' ')"
     [ -z "$KIT_EXTRA" ] || die "the kit has files this script does not install (kit newer than the scripts? update Akam): $KIT_EXTRA"
 fi
+PATCH_ETH="$(list_src patches/patch_ethernet_hostname.sh)" || die "image_files.txt has no patches/patch_ethernet_hostname.sh entry"
+[ -f "$PATCH_ETH" ] || die "ethernet.sh patch script $PATCH_ETH missing"
 PATCH_SERVICE="$(list_src patches/patch_service_sh.sh)" || die "image_files.txt has no patches/patch_service_sh.sh entry"
 [ -f "$PATCH_SERVICE" ] || die "service.sh patch script $PATCH_SERVICE missing"
 while read -r kind a b c d; do
@@ -501,6 +503,9 @@ case "$SVC_RC" in
     *) die "patch_service_sh.sh failed (exit $SVC_RC)" ;;
 esac
 
+echo "Patching sbin/ethernet.sh (DHCP hostname from akam_hostname.sh)..."
+bash "$PATCH_ETH" "$PATCHED" || die "patch_ethernet_hostname.sh failed: the DHCP hostname of ethernet.sh would stay hard-coded"
+
 AUDIT_OUT=""
 if [ -f "$TEMPLATES/audit_remote_services.sh" ]; then
     (cd "$FW_DIR" && bash "$TEMPLATES/audit_remote_services.sh" "$PATCHED") || warn "audit_remote_services.sh failed"
@@ -560,12 +565,12 @@ BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null 
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh; do
     [ "$(stat -c %a "$PATCHED/$f")" = 755 ] || die "$f is not mode 755"
 done
 BADW="$(find "$PATCHED/local/akam" \( -type f -o -type d \) -perm /022 2>/dev/null)"
 [ -z "$BADW" ] || die "group/other-writable files in local/akam: $BADW"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/service.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/service.sh; do
     if [ ! -e "$PATCHED/$f" ] || [ -n "$(find "$PATCHED/$f" -perm /022)" ]; then
         die "$f is group/other-writable or missing"
     fi
@@ -658,7 +663,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
+    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
     echo "ak_rtsp sha256:     $SHA_AK"
