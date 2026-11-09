@@ -71,7 +71,7 @@ shared); progress saved by an earlier version is one camera that you are asked t
 `~/akam-backup-<name>-<date>`, `~/akam-image-<name>-<date>` and, after a good `verify`, as the camera's
 network name through the camera command `/usr/sbin/akam_hostname.sh set NAME` (applied at the next power
 cycle; an older firmware without that command only gets a note). To use `update`, the video password or
-`hostname` on a camera that already runs Akam, register it: `./akam --camera akam-01 --ip 192.168.1.51
+`hostname` on a camera that already runs Akam, register it: `./akam --camera akam-01 --ip 192.168.1.50
 --backup-dir DIR register`.
 
 **SSH key.** The wizard uses `~/.ssh/akam` (`--pubkey`/`--identity` override it). If `~/.ssh/akam.pub` does not

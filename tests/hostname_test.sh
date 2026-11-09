@@ -135,7 +135,7 @@ patch "$WORK/r7"; eq "two lines both patched" "$PRC" "0"
 check "two lines: none left" bash -c "! grep -q IPCamera '$WORK/r7/sbin/ethernet.sh'"
 
 echo "== real stock ethernet.sh (copy, skipped without a dump)"
-REAL=${APP_EXTRACTED:-/home/foohx/camyn-work/app}/sbin/ethernet.sh
+REAL=${APP_EXTRACTED:-}/sbin/ethernet.sh
 if [ -f "$REAL" ]; then
     mkdir -p "$WORK/real/sbin"
     cp "$REAL" "$WORK/real/sbin/ethernet.sh"
