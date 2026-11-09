@@ -172,6 +172,9 @@ if [ "\$mode" = failonce ] && [ ! -e "$CAM/failed_once" ]; then
     echo "fake flash_tool: simulated failure"
     exit 1
 fi
+i=0
+while [ \$i -le 100 ]; do printf '\\rWriting: [====>      ] %3d%% (%d/100)' \$i \$i; i=\$((i + 1)); done
+printf '\\n'
 cat "\$img" >"\$dev"
 if [ "\$mode" = corrupt ]; then printf 'XXXXXXXX' | dd of="\$dev" bs=1 seek=100 conv=notrunc 2>/dev/null; fi
 echo "fake flash_tool: wrote"
@@ -461,6 +464,8 @@ has "host: sha256 verified for the image" 'sha256 OK for image\.squashfs' "$WORK
 has "host: sha256 verified for flash_tool" 'sha256 OK for flash_tool' "$WORK/h_ok.out"
 has "host: second session checked" 'port 2222 session works' "$WORK/h_ok.out"
 has "host: log lines relayed while the flash runs" 'camera: .*attempt 1/3' "$WORK/h_ok.out"
+[ "$(grep -c '^camera: Writing: ' "$WORK/h_ok.out")" -le 12 ] && has "host: the progress bar is folded to a few lines" 'camera: Writing: 100%' "$WORK/h_ok.out" || ko "host: the progress bar is folded to a few lines"
+! grep -q '====>' "$WORK/h_ok.out" && ok "host: no raw progress bar in the output" || ko "host: no raw progress bar in the output"
 has "host: result relayed" 'camera: .*RESULT: OK' "$WORK/h_ok.out"
 has "host: independent read-back" 'read-back md5 of /dev/mtd7 = '"$IMD5" "$WORK/h_ok.out"
 has "host: tells the user to power cycle by hand" 'power-cycle BY HAND' "$WORK/h_ok.out"
