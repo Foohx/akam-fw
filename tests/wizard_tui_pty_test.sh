@@ -254,7 +254,26 @@ check "cameras: the first terminal run asks for the camera's name" has "$T/camna
 check "cameras: the menu header shows the camera" has "$T/camname.txt" "salon"
 check "cameras: its state lives in cameras/salon" bash -c '[ -f "$1/cameras/salon/state" ] && [ "$(cat "$1/current_camera")" = salon ]' _ "$T/st"
 run camsw 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:\r' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
-check "cameras: the c key offers the known cameras and a new one" bash -c 'grep -q "salon" "$1" && grep -q "A new camera" "$1"' _ "$T/camsw.txt"
+check "cameras: the c key offers the known cameras and a new one" bash -c 'grep -q "salon" "$1" && grep -q "+ New camera" "$1"' _ "$T/camsw.txt"
+
+# the camera list: several cameras, each with its own progress; Enter switches and redraws the menu
+rm -rf "$T/st"
+mkdir -p "$T/st/cameras/other" "$T/st/cameras/salon"
+printf 'step_doctor_done=2026-01-01T00:00:00Z\ncamera_ip=192.0.2.9\n' >"$T/st/cameras/other/state"
+printf 'camera_ip=192.0.2.5\n' >"$T/st/cameras/salon/state"
+printf 'salon\n' >"$T/st/current_camera"
+run camlist 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:k' 'send:\r' 'expect:Camera: other' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: the header says how to change camera (c to change)" has "$T/camlist.txt" "c to change"
+check "cameras: the list shows each camera with its address and progress" bash -c 'grep -q "other  1/9 steps done  192.0.2.9  last: doctor" "$1" && grep -q "salon  0/9 steps done  192.0.2.5" "$1"' _ "$T/camlist.txt"
+check "cameras: the list ends with + New camera and Register an existing Akam camera" bash -c 'grep -q "+ New camera" "$1" && grep -q "Register an existing Akam camera" "$1"' _ "$T/camlist.txt"
+check "cameras: Enter on another camera switches to it and remembers it" bash -c '[ "$(cat "$1/current_camera")" = other ]' _ "$T/st"
+last_frame camlist >"$T/camlist.frame"
+check "cameras: the redrawn menu shows that camera's name and address in the header" bash -c 'grep -q "other" "$1" && grep -q "192.0.2.9" "$1" && grep -q "1/9 done\|1/9" "$1"' _ "$T/camlist.frame"
+printf 'salon\n' >"$T/st/current_camera"
+run camreg 'expect:Check this computer' 'send:c' 'expect:Which camera do you want to work on?' 'send:j' 'send:j' 'send:\r' 'expect:ALREADY runs Akam' 'send:regcam\r' 'expect:IP address' 'send:127.0.0.1\r' 'expect:backup of the original firmware' 'send:\r' 'expect:Press any key' 'send:x' 'expect:Check this computer' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
+check "cameras: Register an existing Akam camera asks a name, an address and the backup folder" bash -c '[ "$(cat "$1/current_camera")" = regcam ]' _ "$T/st"
+check "cameras: register checks the camera and refuses an address that does not answer like Akam" has "$T/camreg.txt" "does not look like a camera running Akam"
+check "cameras: a refused registration marks nothing done" bash -c '! grep -q "step_" "$1/cameras/regcam/state"' _ "$T/st"
 
 echo
 echo "wizard_tui_pty_test: $PASS passed, $FAIL failed"

@@ -50,7 +50,7 @@ cams_known() {
 
 # cams_summary NAME: "3/9 steps done  192.168.1.50" read from the camera's state file.
 cams_summary() {
-    local f n ip
+    local f n ip last st
     f=$(cams_dir "$1")/state
     n=0
     ip=""
@@ -58,7 +58,13 @@ cams_summary() {
         n=$(grep -c '^step_[a-z_]*_done=' "$f" || true)
         ip=$({ grep -m1 '^camera_ip=' "$f" || true; } | cut -d= -f2-)
     fi
-    printf '%s/%s steps done%s\n' "$n" "$(step_count)" "${ip:+  $ip}"
+    last=""
+    if [ -f "$f" ]; then
+        for st in $WIZ_STEPS; do
+            if grep -q "^step_${st//-/_}_done=" "$f"; then last=$st; fi
+        done
+    fi
+    printf '%s/%s steps done%s%s\n' "$n" "$(step_count)" "${ip:+  $ip}" "${last:+  last: $last}"
 }
 
 # cams_current_read: the name stored by the last run ("" when none).

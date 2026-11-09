@@ -108,7 +108,7 @@ No compiling is needed: the default path uses a **prebuilt kit**.
    `--plain`, the wizard falls back to the plain line-by-line prompts (destructive steps then
    refuse to run); `NO_COLOR=1` turns colours off.
    The first run asks for a **short name** for the camera (for example `salon`). Each camera has its
-   own progress (`./akam --camera NAME`, key `c` in the menu, `./akam cameras` lists them); the name
+   own progress (`./akam --camera NAME`, key `c` in the menu opens a list of your cameras with their progress, plus "+ New camera" and "Register an existing Akam camera", `./akam cameras` lists them); the name
    is used in the backup and image folders and as the camera's network name. Progress saved by an
    earlier version is kept: the wizard asks what to call that camera.
 4. Follow the prompts, one step after the other. `./akam help` lists every command, and `--dry-run`
