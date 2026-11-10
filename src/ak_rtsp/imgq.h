@@ -5,8 +5,8 @@
  * Every switch defaults to the previous behaviour; a switch is flipped for good only after the hardware
  * comparison of the spec's section 7.
  *
- * Start-up options come from the environment, then from /etc/config/akam/image (key=value lines, '#'
- * comments), then from the defaults:
+ * Start-up options come from the environment, then from /tmp/akam_image (RAM, gone at reboot), then from
+ * /etc/config/akam/image (saved; key=value lines, '#' comments), then from the defaults:
  *   venc_rc  = legacy | stock   AKAM_VENC_RC   CREATE_ENC rate-control sub-struct: legacy = the values ak_rtsp
  *                                               always sent, stock = exactly what the stock application sends
  *   wb       = manual | conf    AKAM_IMG_WB     manual = hand-made manual white-balance block at start-up,
@@ -22,10 +22,12 @@
  *                                    /tmp/isp_live/isp_blocks.bin */
 
 #define IMGQ_CONF_FILE "/etc/config/akam/image"
+#define IMGQ_RAM_FILE  "/tmp/akam_image"  /* same format, RAM only, read after the file above */
 #define IMGQ_DUMP_DIR  "/tmp/isp_live"
 
-/* (Re)reads the environment and `conf_file` (NULL = none). Called lazily by the getters below. */
-void imgq_load(const char *conf_file);
+/* (Re)reads `conf_file`, then `ram_file`, then the environment (NULL = no such file). Called lazily with the
+ * two default paths by the getters below. */
+void imgq_load(const char *conf_file, const char *ram_file);
 
 int imgq_venc_rc_stock(void);
 int imgq_wb_conf(void);

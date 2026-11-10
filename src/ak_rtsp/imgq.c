@@ -51,31 +51,34 @@ static void trim(char *s)
     while (n && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = '\0';
 }
 
-void imgq_load(const char *conf_file)
+static void load_file(const char *path)
+{
+    FILE *f = path ? fopen(path, "r") : NULL;
+    if (!f) return;
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        trim(line);
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\0') continue;
+        char *eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        trim(p);
+        char *v = eq + 1;
+        while (*v == ' ' || *v == '\t') v++;
+        apply_option(p, v);
+    }
+    fclose(f);
+}
+
+void imgq_load(const char *conf_file, const char *ram_file)
 {
     g_venc_rc_stock = 0;
     g_wb_conf = 0;
     g_poll = 0;
-    if (conf_file) {
-        FILE *f = fopen(conf_file, "r");
-        if (f) {
-            char line[128];
-            while (fgets(line, sizeof(line), f)) {
-                trim(line);
-                char *p = line;
-                while (*p == ' ' || *p == '\t') p++;
-                if (*p == '#' || *p == '\0') continue;
-                char *eq = strchr(p, '=');
-                if (!eq) continue;
-                *eq = '\0';
-                trim(p);
-                char *v = eq + 1;
-                while (*v == ' ' || *v == '\t') v++;
-                apply_option(p, v);
-            }
-            fclose(f);
-        }
-    }
+    load_file(conf_file);
+    load_file(ram_file);
     const char *e;
     if ((e = getenv("AKAM_VENC_RC")) != NULL) apply_option("venc_rc", e);
     if ((e = getenv("AKAM_IMG_WB")) != NULL) apply_option("wb", e);
@@ -85,7 +88,7 @@ void imgq_load(const char *conf_file)
 
 static void ensure_loaded(void)
 {
-    if (!g_loaded) imgq_load(IMGQ_CONF_FILE);
+    if (!g_loaded) imgq_load(IMGQ_CONF_FILE, IMGQ_RAM_FILE);
 }
 
 int imgq_venc_rc_stock(void) { ensure_loaded(); return g_venc_rc_stock; }
@@ -192,7 +195,7 @@ int imgq_ctl_set(const char *key, const char *val, char *msg, size_t cap)
 
     if (!strcmp(key, "img.venc_rc")) {
         snprintf(msg, cap, "ERR img.venc_rc is decided when the encoder is created: start ak_rtsp with "
-                           "AKAM_VENC_RC=stock, or put venc_rc=stock in " IMGQ_CONF_FILE);
+                           "AKAM_VENC_RC=stock, or put venc_rc=stock in " IMGQ_RAM_FILE " (RAM) or " IMGQ_CONF_FILE);
         return 1;
     }
     if (!strcmp(key, "img.wb")) {

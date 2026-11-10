@@ -74,34 +74,45 @@ int main(void)
 
     /* defaults */
     clear_env();
-    imgq_load(NULL);
+    imgq_load(NULL, NULL);
     CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
-    imgq_load("/nonexistent/image");
+    imgq_load("/nonexistent/image", "/nonexistent/ram");
     CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
 
     /* file: comments, blanks, spaces, unknown keys and bad values ignored */
     write_conf(path,
                "# comment\n\n  venc_rc = stock\nwb=conf\npoll=on\nunknown=1\nvenc_rc_x=stock\n   # indented comment\n");
-    imgq_load(path);
+    imgq_load(path, NULL);
     CHECK(imgq_venc_rc_stock() && imgq_wb_conf() && imgq_poll_stats());
     write_conf(path, "venc_rc=bogus\nwb=\npoll=maybe\n");
-    imgq_load(path);
+    imgq_load(path, NULL);
     CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
+
+    /* the RAM file is read after the saved file and wins over it */
+    char ram[] = "/tmp/imgq_test_ram_XXXXXX";
+    int rfd = mkstemp(ram);
+    assert(rfd >= 0);
+    close(rfd);
+    write_conf(path, "venc_rc=stock\nwb=conf\npoll=1\n");
+    write_conf(ram, "wb=manual\nvenc_rc=legacy\n");
+    imgq_load(path, ram);
+    CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && imgq_poll_stats());
+    unlink(ram);
 
     /* environment wins over the file */
     write_conf(path, "venc_rc=stock\nwb=conf\npoll=1\n");
     setenv("AKAM_VENC_RC", "legacy", 1);
     setenv("AKAM_IMG_WB", "manual", 1);
     setenv("AKAM_IMG_POLL", "0", 1);
-    imgq_load(path);
+    imgq_load(path, NULL);
     CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
     setenv("AKAM_VENC_RC", "stock", 1);
     clear_env();
     setenv("AKAM_VENC_RC", "stock", 1);
-    imgq_load(NULL);
+    imgq_load(NULL, NULL);
     CHECK(imgq_venc_rc_stock());
     clear_env();
-    imgq_load(NULL);
+    imgq_load(NULL, NULL);
 
     /* keys */
     CHECK(imgq_ctl_get("ae.speed", out, sizeof(out)) == -1);
