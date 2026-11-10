@@ -15,6 +15,7 @@
 #include "night.h"
 #include "isp.h"
 #include "audio_out.h"
+#include "talk.h"
 #include "leds.h"
 #include "control.h"
 
@@ -153,6 +154,7 @@ static void do_list(int fd)
     reply(fd, "venc.maxqp=43 (read-only)");
     ledsys_ctl_list(audio_list_emit, &fd);
     audio_out_ctl_list(audio_list_emit, &fd);
+    talk_ctl_list(audio_list_emit, &fd);
     reply(fd, ".");
 }
 
@@ -182,6 +184,7 @@ static void do_get(int fd, const char *param)
         char line[96];
         if (ledsys_ctl_get(param, line, sizeof(line)) == 0)         reply(fd, "%s", line);
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(fd, "%s", line);
+        else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(fd, "%s", line);
         else                                                   reply(fd, "ERR unknown param %s", param);
     }
 }
@@ -267,6 +270,7 @@ static void do_set(int fd, const char *param, const char *value)
         char msg[160];
         if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)         reply(fd, "%s", msg);
         else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) reply(fd, "%s", msg);
+        else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      reply(fd, "%s", msg);
         else                                                        reply(fd, "ERR unknown param %s", param);
     }
 }

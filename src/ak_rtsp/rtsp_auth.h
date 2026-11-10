@@ -16,7 +16,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef RTSP_AUTH_PATH /* tests point it at a temporary file */
 #define RTSP_AUTH_PATH "/etc/config/akam/rtsp_auth"
+#endif
 #define RTSP_AUTH_REALM "akam"
 #define RTSP_AUTH_USER_MAX 32
 #define RTSP_AUTH_NONCE_HEX 32

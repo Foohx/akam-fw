@@ -53,6 +53,9 @@ SRCS    = main.c \
           rtsp_in.c \
           rtsp_idle.c \
           rtsp_sdp.c \
+          rtp_in.c \
+          audio_vad.c \
+          talk.c \
           md5.c \
           rtsp_auth.c \
           ircut.c \
