@@ -16,7 +16,7 @@
 > day/night prompts, a per-second heartbeat, logs that survive a reboot, `--detach`, `status`, `watch`,
 > `note`) are tested on the host only (fake camera root, ARM hook built and checked, the older hook
 > loaded into the real `anyka_ipc` under `qemu-arm`, the `system()` / `popen()` forwarding run against the
-> vendor uClibc with a small test program); the detached mode has **not yet been run on a camera**. The
+> vendor uClibc with a small test program; the script tests also ran once with the camera's own BusyBox 1.30.1 `ash` under `qemu-arm`); the `run --detach` command itself has **not yet been run on a camera**, but the same thing done by hand (`busybox setsid sh stock_capture.sh run --daynight </dev/null >console.txt 2>&1 &`) ran to the end on the real camera (BusyBox 1.30.1, `rc=0`). The
 > `dd conv=fsync` of the camera's BusyBox 1.30.1 is also unverified (the script falls back and says so).
 
 ## What you get
@@ -32,7 +32,7 @@ A folder `stock_capture/runNN/` on the card with:
 | `console.txt` | What the script printed, for a detached run (`--detach`): the steps, the progress line every 5 s, the prompts (COVER / UNCOVER) as banners, the restore. Read it with `watch` / `status`, or on the PC. |
 | `dmesg_live.txt`, `anyka_debug_live.txt`, `ps_live.txt` | Rolling snapshots every 10 s (last kernel lines, the stock debug log, the process list): the last ones before a reboot are on the card. |
 | `stock_audio.raw` | The first 64 KiB of audio written to the playback device. Vendor content: keep it private, never publish it. |
-| `run.meta` | Facts about the run, and `status=running` until the run ends (`finished`, `signal` = the script was told to stop, for instance by a lost telnet session or by `restore`; a run left `running` is one the script did not survive, for instance a camera that really rebooted). |
+| `run.meta` | Facts about the run, and `status=running` until the run ends (`finished`, `signal` = the script was told to stop, for instance by a lost telnet session or by `restore`; a run left `running` is one the script did not survive: killed with `SIGKILL`, or a camera that really rebooted; the file alone does not say which, `timeline.log` and the uptime do). |
 | `dmesg.txt`, `messages_tail.txt`, `anyka_debug_tail.txt`, `fd_*.txt`, `maps_end.txt`, `proc_*.txt`, `debug_gpio.txt` | State of the camera during the run (kernel messages of `ak_pcm.ko` such as `SPEAKER @69`, open descriptors, the stock debug log). |
 | `config_before.txt`, `config_after.txt`, `config_diff.txt` | Proof that `/etc/config` did not change. |
 
@@ -97,12 +97,15 @@ a place that is not `system()`/`popen()` (the `reboot` system call itself, the s
   run (`--detach`) lives in its own session (`busybox setsid`), without a terminal, ignores `SIGHUP`
   and restores on `SIGTERM`; that is what `restore` run from another shell sends to it (BusyBox ash
   starts a background job with `SIGINT` ignored and cannot trap it again, so a stray `SIGINT` does
-  nothing to a detached run). Ctrl-C in `watch` only stops the watching. `restore` is idempotent, and the
+  nothing to a detached run: only `restore` / `SIGTERM` stops it). `restore` itself, and the start
+  of a run, ignore `SIGHUP`: they restart `anyka_ipc`, which hangs up the telnet session that typed
+  them, and a restore cut in the middle would leave a stale state. Ctrl-C in `watch` only stops the watching. `restore` is idempotent, and the
   whole run is safe to repeat (each run gets its own `runNN` folder). If a bind cannot be unmounted,
   `restore` keeps the wrapper and its state and says so: run it again, or power-cycle. After a
   `SIGKILL` of the script itself, run `restore` by hand (`check` and `status` tell that a state is
   stale: the script's pid is gone, or the pid now belongs to another program, which is never
-  signalled).
+  signalled; the pid is checked in `/proc/PID/cmdline`, so a pid recycled by another program is never
+  taken for the run).
 * **If the watchdog does not bring `anyka_ipc` back** within 60 s, the script gives up and restores.
   The camera may then reboot by itself (the stock watchdog is in charge of that); a reboot only
   returns it to the stock state with the toolkit card, which is what we want anyway.
@@ -187,7 +190,9 @@ and look at it with `watch` / `status`, and record what you see with `note`.
    Enter.** About 10 to 40 s later the stock `anyka_ipc` is restarted with the hook, kills `telnetd`, and
    **this telnet session drops: that is expected and harmless** (the camera does not reboot, the
    capture goes on). The camera may speak loudly (the factory prompts are un-muted on purpose). A run
-   is 10 to 3600 s.
+   is 10 to 3600 s. The telnet session will drop **again at the end of the run** (and after any
+   `restore`): the restore restarts `anyka_ipc` once more, and the stock app kills `telnetd` each time
+   it starts.
 6. Wait a few seconds and telnet in again (`telnet CAMERA_IP 24`; if it is refused, wait and retry:
    `telnetd` is being relaunched). Then, one command at a time:
 
@@ -196,7 +201,8 @@ and look at it with `watch` / `status`, and record what you see with `note`.
    ```
 
    `watch` shows the state, then one short line every 2 s (time `t`, whether `anyka_ipc` is alive, the
-   next prompt), shows each prompt as a banner, and ends when the run ends. **Ctrl-C only stops the
+   next prompt), shows each prompt as a banner, and ends when the run ends (if the session drops at
+   the end, see step 8: reconnect and run `status`). **Ctrl-C only stops the
    watching**: the run is in another session and does not notice. Run `watch` again at any time.
    `status` is the one-shot version (elapsed `t`, the prompts due or done with the seconds left,
    `anyka_ipc` alive, the last lines of `console.txt`):
@@ -222,7 +228,13 @@ and look at it with `watch` / `status`, and record what you see with `note`.
    sh /tmp/sd/stock_capture/stock_capture.sh restore
    ```
 
-8. When `status` says `finished rc=0` (the script has flushed the files itself), power the camera off,
+   It asks the run to stop and waits for it. Restarting `anyka_ipc` makes the stock app kill `telnetd`
+   once more, so this session probably drops a few seconds in; the restore carries on without it.
+   Telnet in again and run `status`: it says `signal` when the run was stopped this way.
+
+8. At the end of the run the script restores everything (the last restart of `anyka_ipc`, so the
+   telnet session drops once more). Reconnect and run `status`. When it says `finished rc=0` (the
+   script has flushed the files itself), power the camera off,
    take the card, copy `stock_capture/runNN/` to the PC and summarise it:
 
    ```bash
@@ -290,10 +302,16 @@ checking it.
 3. After a real reboot nothing has to be restored: the bind mounts, the wrapper and the state were in
    RAM. `stock_capture.sh restore` says "nothing to restore" and is harmless. Write down **how long
    after the start** it happened.
-4. Take the card and run the summary on that `runNN`. It says "RUN INTERRUPTED", the last heartbeat
-   (camera uptime, whether `anyka_ipc` was alive, load, free RAM, the start counter), whether a
+4. Take the card and run the summary on that `runNN`. It says "RUN DID NOT FINISH CLEANLY" (it does
+   not guess a reboot: a `SIGKILL` leaves the same trace), the last heartbeat
+   (camera uptime, whether `anyka_ipc` was alive, load, free RAM, the start counter; `timeline.log`
+   has one line per second), whether a
    `reboot` / `recover_cfg` process was started by `anyka_ipc` (`CHILD` line), and the last 60 kernel
-   lines and the stock debug log are in `dmesg_live.txt` / `anyka_debug_live.txt`.
+   lines and the stock debug log are in `dmesg_live.txt` / `anyka_debug_live.txt`. A real reboot is
+   recognised by the camera uptime going backwards: on the camera `status` says "the camera REBOOTED"
+   when its uptime is below the last heartbeat; on the PC the summary says it when a later run on the
+   same card starts at a lower uptime than this run's last heartbeat (without a later run it says
+   it cannot tell).
 5. The next `check` or `run` also reports the run that never finished and marks it
    (`status=interrupted`). Do not repeat the run after a real reboot until the cause is understood.
 
@@ -307,7 +325,7 @@ or just power-cycle the camera: everything the script mounts lives in RAM.
 
 ## Reading the summary
 
-`parse_stock_capture.py` starts with the **state of the run** (finished, or interrupted with the last
+`parse_stock_capture.py` starts with the **state of the run** (finished, or not finished cleanly with the last
 heartbeat) and the processes `anyka_ipc` started, then prints the ordered ioctl sequence on the PCM devices with decoded arguments
 (`PREPARE` = rate, channels, bits, period bytes, periods; `SET_SOURCES`; `SET_GAIN`; `SET_SPEAKER`;
 `RESUME`). **Every** ioctl on a PCM descriptor is listed with its raw request number (`req=`) and
@@ -328,6 +346,6 @@ plus the ARM build checked warning-free and free of undefined symbols), `tests/s
 a run killed in the middle, a typed note through a pseudo-terminal, `--detach` with a stub `busybox setsid`
 (own session, stdin `/dev/null`, `SIGHUP` ignored, the run survives and finishes, refusal when `setsid` is missing),
 `status`, `watch` (Ctrl-C leaves the run alone), `note`, `restore` stopping a detached run, a stale state
-after `SIGKILL`),
+after `SIGKILL`, a `restore` hung up in the middle, a recycled pid of another program, the uptime check),
 `tests/stock_capture_parse_test.sh` (including a synthetic interrupted day/night capture),
 `tests/stock_capture_pack_test.sh`.
