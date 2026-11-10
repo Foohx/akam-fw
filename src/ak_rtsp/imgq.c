@@ -28,6 +28,8 @@ static volatile int g_venc_rc_stock;
 static volatile int g_wb_conf = 1;
 static volatile int g_poll;
 static volatile int g_loaded;
+static volatile int g_persist = 1;  /* control.c clears it for a network SET: RAM only */
+void imgq_set_persist(int on) { g_persist = on ? 1 : 0; }
 static char g_conf_path[256] = IMGQ_CONF_FILE;  /* where img.wb is saved (the file imgq_load() read) */
 /* ensure_loaded() runs from main(), the AE thread and the 8091 thread: the first one in loads, the others wait. */
 static pthread_mutex_t g_load_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -288,7 +290,7 @@ static int set_wb(const char *val, char *msg, size_t cap)
     }
     snprintf(msg, cap, "OK img.wb=%s", g_wb_conf ? "conf" : "manual");
     /* Saved only when the value changed (flash wear); the answer says so if it could not be. */
-    if (g_wb_conf != was_conf && save_wb(g_wb_conf) < 0)
+    if (g_persist && g_wb_conf != was_conf && save_wb(g_wb_conf) < 0)
         snprintf(msg, cap, "OK img.wb=%s (not saved: %s)", g_wb_conf ? "conf" : "manual", strerror(errno));
     return 0;
 }

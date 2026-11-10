@@ -26,8 +26,7 @@ int cfg_write_atomic(const char *path, const char *data, size_t len)
         if (n <= 0) { int e = errno; close(fd); unlink(tmp); errno = e; return -1; }
         off += (size_t)n;
     }
-    fsync(fd);
-    close(fd);
+    if (fsync(fd) < 0 || close(fd) < 0) { int e = errno; unlink(tmp); errno = e; return -1; }
     if (rename(tmp, path) < 0) { int e = errno; unlink(tmp); errno = e; return -1; }
     return 0;
 }

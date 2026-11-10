@@ -366,8 +366,9 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
             return;
         }
         n.override = m;
-        night_set_tuning(&n);
-        setmsg(resp, cap, "OK night.mode=%s", night_mode_name(m));
+        int e = night_set_tuning(&n);
+        setmsg(resp, cap, "OK night.mode=%s%s%s%s", night_mode_name(m), e ? " (not saved: " : "", e ? strerror(e) : "",
+               e ? ")" : "");
     } else if (!strcmp(param, "night.trigger_hw_exp")) {
         n.trigger_hw_exp = (uint32_t)strtoul(value, NULL, 10);
         night_set_tuning(&n);
@@ -438,6 +439,8 @@ static void do_set(cli_t *c, const char *param, const char *value)
     resp[0] = '\0';
     pthread_mutex_lock(&g_set_lock);
     g_persist_isp = c->loopback;
+    night_set_persist(c->loopback);
+    imgq_set_persist(c->loopback);
     do_set_locked(resp, sizeof(resp), param, value);
     pthread_mutex_unlock(&g_set_lock);
     reply(c, "%s", resp);

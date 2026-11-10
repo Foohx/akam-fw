@@ -55,7 +55,10 @@ typedef struct {
 } night_tuning_t;
 
 void night_get_tuning(night_tuning_t *out);
-void night_set_tuning(const night_tuning_t *in);
+/* Returns 0, or errno when a changed night.mode could not be saved (the mode is applied anyway). The save happens
+ * outside the night lock. night_set_persist(0) makes the next calls RAM only (network SET); default on. */
+int  night_set_tuning(const night_tuning_t *in);
+void night_set_persist(int on);
 
 /* Current actual day/night state (1=night, 0=day) — distinct from
  * night_tuning_t.override, which is the requested mode, not the applied one. */

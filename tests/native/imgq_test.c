@@ -248,6 +248,27 @@ int main(void)
         CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0);
         CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "poll=1\nwb=manual\n"));
 
+        /* no trailing newline, CRLF and a duplicate wb line (the last one wins at load, one line is written) */
+        write_conf(sp, "poll=1");
+        imgq_load(sp, NULL);
+        CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0);
+        CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "poll=1\nwb=manual\n"));
+        write_conf(sp, "poll=1\r\nwb=manual\r\nwb=conf\r\n");
+        imgq_load(sp, NULL);
+        CHECK(imgq_wb_conf());
+        CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0);
+        CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "poll=1\r\nwb=manual\n"));
+        imgq_load(sp, NULL);
+        CHECK(!imgq_wb_conf() && imgq_poll_stats());
+
+        /* a network SET (persist off) applies the value but never writes the file */
+        write_conf(sp, "poll=1\n");
+        imgq_load(sp, NULL);
+        imgq_set_persist(0);
+        CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0 && !strcmp(msg, "OK img.wb=manual"));
+        imgq_set_persist(1);
+        CHECK(!imgq_wb_conf() && read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "poll=1\n"));
+
         /* an invalid saved value is ignored: default conf */
         write_conf(sp, "wb=purple\n");
         imgq_load(sp, NULL);
