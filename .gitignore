@@ -55,7 +55,7 @@ obj/
 # Local SmolRTSP checkout & firmware build workspace (see README prerequisites)
 # NOTE: smolrtsp must live at src/smolrtsp (sibling of src/ak_rtsp), not the repo root --
 # the Makefile's "../smolrtsp" include paths are relative to src/ak_rtsp/.
-/src/smolrtsp/
+/src/smolrtsp
 /src/ak_rtsp/app_extracted/
 /src/ak_rtsp/app_patched/
 /src/ak_rtsp/new_app_gzip.squashfs
@@ -70,7 +70,7 @@ obj/
 Thumbs.db
 
 # Native build: pinned toolchain/download cache and build outputs
-/tools/.toolchain/
+/tools/.toolchain
 /tools/.cache/
 /build/
 /dist/
