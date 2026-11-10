@@ -66,5 +66,6 @@ int isp_set_sharpness(int value);
 /* Forget cached picture-control baselines — call after any full pipeline
  * reload (isp_pipeline_init()/isp_pipeline_init_night()) so a subsequent
  * slider move computes its delta against the freshly-loaded calibration,
- * not a stale one captured before the reload. See isp.c for detail. */
+ * not a stale one captured before the reload. The reload also drops the applied values, so the non-zero ones are
+ * applied again here. See isp.c for detail. */
 void isp_reset_picture_baselines(void);

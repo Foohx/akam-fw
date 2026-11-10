@@ -73,8 +73,8 @@ int isp_tune_save(const char *path, const isp_tune_t *t)
         if (n <= 0) { int e = errno; close(fd); unlink(tmp); errno = e; return -1; }
         off += (size_t)n;
     }
-    fsync(fd);
-    close(fd);
+    if (fsync(fd) < 0) { int e = errno; close(fd); unlink(tmp); errno = e; return -1; }
+    if (close(fd) < 0) { int e = errno; unlink(tmp); errno = e; return -1; }
     if (rename(tmp, path) < 0) { int e = errno; unlink(tmp); errno = e; return -1; }
     return 0;
 }

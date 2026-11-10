@@ -95,11 +95,16 @@ static int g_isp_sharpness  = 0;
 
 /* Saved with the same four values after every successful isp.* SET (8091 SET only; the values come back at the
  * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at 0
- * removes the file: that is the default. Called with g_set_lock held. */
+ * removes the file: that is the default. Only for a local SET (loopback);
+ * a network SET changes the picture in RAM only. Called with g_set_lock held. */
+static int g_persist_isp;  /* set by do_set() under g_set_lock: only a local (SSH) SET writes flash */
+
 static const char *isp_persist_note(char *note, size_t cap)
 {
     isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
     note[0] = '\0';
+    /* a slider dragged by the PC tool over the network (DEBUG) would write flash at every step: RAM only */
+    if (!g_persist_isp) return note;
     if (isp_tune_save(ISP_TUNE_FILE, &t) < 0) snprintf(note, cap, " (not saved: %s)", strerror(errno));
     return note;
 }
@@ -432,6 +437,7 @@ static void do_set(cli_t *c, const char *param, const char *value)
     char resp[256];
     resp[0] = '\0';
     pthread_mutex_lock(&g_set_lock);
+    g_persist_isp = c->loopback;
     do_set_locked(resp, sizeof(resp), param, value);
     pthread_mutex_unlock(&g_set_lock);
     reply(c, "%s", resp);
