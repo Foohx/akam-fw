@@ -60,6 +60,8 @@ SRCS    = main.c \
           talk.c \
           md5.c \
           rtsp_auth.c \
+          http_srv.c \
+          soap.c \
           ircut.c \
           leds.c \
           ledsys.c \
