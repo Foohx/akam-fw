@@ -204,14 +204,20 @@ rssh "$port2" "$RBB sh '$rdir/akam_reflash_ssh.sh' start --md5 '$md5' --i-unders
 
 # ------------------------------------------------------------- stage 5: poll
 printed=0 result="" fails=0 waited=0 dead=0
+eol_mark='=== akam-end-of-log'
 while [ "$waited" -le "$tmo" ]; do
-    if out="$(rssh "$port2" "$RBB tail -n +$((printed + 1)) '$rdir/flash.log'; $RBB sh '$rdir/akam_reflash_ssh.sh' status | $RBB grep '^worker='" 2>/dev/null)"; then
+    # Poll by byte offset and only consume COMPLETE lines. flash_tool redraws its progress bar with
+    # carriage returns on one very long line; a line still being written must be read again later,
+    # not counted as done (that lost the end of the bar, and glued the status line to the partial text).
+    if out="$(rssh "$port2" "$RBB tail -c +$((printed + 1)) '$rdir/flash.log'; printf '\\n$eol_mark\\n'; $RBB sh '$rdir/akam_reflash_ssh.sh' status | $RBB grep '^worker='" 2>/dev/null)" \
+        && [[ "$out" == *"$eol_mark"* ]]; then
         fails=0
-        wline="$(printf '%s\n' "$out" | grep '^worker=' | tail -n 1 || true)"
-        new="$(printf '%s\n' "$out" | grep -v '^worker=' || true)"
+        wline="$(printf '%s\n' "${out##*"$eol_mark"}" | grep '^worker=' | tail -n 1 || true)"
+        chunk="${out%%$'\n'"$eol_mark"*}"
+        new="${chunk%"${chunk##*$'\n'}"}" # up to and including the last newline
         if [ -n "$new" ]; then
             show_camera "$new"
-            printed=$((printed + $(printf '%s\n' "$new" | wc -l)))
+            printed=$((printed + $(printf '%s' "$new" | wc -c)))
         fi
         if grep -q 'RESULT: ' <<<"$new"; then
             result="$(grep 'RESULT: ' <<<"$new" | tail -n 1)"
