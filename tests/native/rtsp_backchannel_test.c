@@ -18,6 +18,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -656,6 +657,95 @@ static void test_busy_speaker(void)
     sp_claimed = 0;
 }
 
+
+/* ======================================================================
+ * The host client tools/akam-talk against the same server
+ * ====================================================================== */
+static int run_talk(const char *args, const char *pw, const char *stdin_file)
+{
+    const char *bin = getenv("AKAM_TALK_BIN");
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "%s%s%s %s rtsp://alice@127.0.0.1:%d/live %s < %s 2>/dev/null",
+             pw ? "AKAM_RTSP_PASSWORD='" : "env -u AKAM_RTSP_PASSWORD ", pw ? pw : "", pw ? "'" : "", bin, srv_port, args,
+             stdin_file ? stdin_file : "/dev/null");
+    int st = system(cmd);
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+
+static void write_file(const char *path, const void *p, size_t n)
+{
+    FILE *f = fopen(path, "wb");
+    fwrite(p, 1, n, f);
+    fclose(f);
+}
+
+static void test_akam_talk(void)
+{
+    const char *bin = getenv("AKAM_TALK_BIN");
+    if (!bin) { printf("  skip - AKAM_TALK_BIN not set\n"); return; }
+    printf("# akam-talk (host client) against the server\n");
+    set_auth(1);
+    sp_available = 1;
+    unsigned long p0 = sp_pushed;
+    int rc = run_talk("--tone 1", PASS, NULL);
+    CHECK(rc == 0, "--tone 1: exit 0");
+    CHECK(sp_pushed - p0 == 8000 && sp_nonzero, "1 s tone = 8000 decoded samples at the speaker");
+    WAIT_FOR(!sp_claimed, 1000);
+    CHECK(!sp_claimed, "speaker released after the client ended (TEARDOWN)");
+
+    p0 = sp_pushed;
+    CHECK(run_talk("--tone 0.5 --codec pcma", PASS, NULL) == 0 && sp_pushed - p0 == 4000, "--codec pcma works");
+
+    /* raw s16le on stdin, 0.3 s */
+    static int16_t pcm[2400];
+    static const int k[8] = { 0, 3673, 5194, 3673, 0, -3673, -5194, -3673 };
+    for (int i = 0; i < 2400; i++) pcm[i] = (int16_t)k[i & 7];
+    char raw[128], wav[128], mu[128];
+    snprintf(raw, sizeof(raw), "/tmp/akam_talk_raw_%d.pcm", (int)getpid());
+    snprintf(wav, sizeof(wav), "/tmp/akam_talk_wav_%d.wav", (int)getpid());
+    snprintf(mu, sizeof(mu), "/tmp/akam_talk_mu_%d.ul", (int)getpid());
+    write_file(raw, pcm, sizeof(pcm));
+    p0 = sp_pushed;
+    CHECK(run_talk("--realtime-off", PASS, raw) == 0 && sp_pushed - p0 == 2400, "raw 8 kHz s16le from stdin (2400 samples)");
+
+    uint8_t w[44 + sizeof(pcm)] = { 'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0,
+                                    1, 0, 1, 0, 0x40, 0x1f, 0, 0, 0x80, 0x3e, 0, 0, 2, 0, 16, 0, 'd', 'a', 't', 'a' };
+    uint32_t dl = sizeof(pcm), rl = 36 + dl;
+    memcpy(w + 4, &rl, 4); memcpy(w + 40, &dl, 4); memcpy(w + 44, pcm, sizeof(pcm));
+    write_file(wav, w, sizeof(w));
+    p0 = sp_pushed;
+    {
+        char a[200]; snprintf(a, sizeof(a), "--realtime-off --input %s", wav);
+        CHECK(run_talk(a, PASS, NULL) == 0 && sp_pushed - p0 == 2400, "WAV file (8 kHz mono 16-bit): header skipped, 2400 samples");
+    }
+    w[24] = 0x44; w[25] = 0xac; /* 44100 Hz */
+    write_file(wav, w, sizeof(w));
+    {
+        char a[200]; snprintf(a, sizeof(a), "--input %s", wav);
+        CHECK(run_talk(a, PASS, NULL) == 1, "WAV at another sample rate: refused with a usage error (exit 1)");
+    }
+
+    uint8_t ul[1600];
+    for (int i = 0; i < 1600; i++) ul[i] = g711_ulaw_encode((int16_t)k[i & 7]);
+    write_file(mu, ul, sizeof(ul));
+    p0 = sp_pushed;
+    CHECK(run_talk("--realtime-off --format mulaw", PASS, mu) == 0 && sp_pushed - p0 == 1600, "already-G.711 input (--format mulaw)");
+    unlink(raw); unlink(wav); unlink(mu);
+
+    CHECK(run_talk("--tone 1", "wrong-password", NULL) == 4, "wrong password: exit 4");
+    CHECK(run_talk("--tone 1", NULL, NULL) == 4, "no password given: exit 4");
+    sp_available = 0;
+    CHECK(run_talk("--tone 1", PASS, NULL) == 3, "talk not available on the camera: exit 3 (551)");
+    sp_available = 1;
+    set_auth(0);
+    CHECK(run_talk("--tone 1", PASS, NULL) == 3, "RTSP password off: exit 3 (551), nothing played");
+    set_auth(1);
+    sp_claimed = 1;
+    CHECK(run_talk("--tone 1", PASS, NULL) != 0, "speaker busy: failure");
+    sp_claimed = 0;
+    CHECK(run_talk("--tone 1 --bogus", PASS, NULL) == 1, "unknown option: exit 1");
+}
+
 int main(void)
 {
     md5_hex_cat(HA1, USER, ":" RTSP_AUTH_REALM ":", PASS, (char *)NULL);
@@ -676,6 +766,7 @@ int main(void)
     test_mic_and_talk_together();
     test_udp();
     test_busy_speaker();
+    test_akam_talk();
 
     unlink(AUTH_FILE);
     printf(fails ? "\nFAILED: %d\n" : "\nrtsp_backchannel_test: all passed\n", fails);

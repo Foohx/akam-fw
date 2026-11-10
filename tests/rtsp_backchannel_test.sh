@@ -46,4 +46,9 @@ done
     "$SRC/net_tx.c" "$SRC/rtp_clock.c" "$SRC/h264_params.c" "$SRC/talk.c" "$SRC/rtp_in.c" \
     "$SRC/audio_vad.c" "$SRC/g711.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
 
+# The host client (tools/akam-talk) is built here too and run against the same server.
+"$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+    -I"$SRC" -o "$WORK/akam-talk" "$REPO/tools/akam-talk/akam_talk.c" "$SRC/md5.c" "$SRC/g711.c"
+export AKAM_TALK_BIN="$WORK/akam-talk"
+
 "$WORK/rtsp_backchannel_test" | grep -v '^\[ak_rtsp\]\|^\[audio_out\]'
