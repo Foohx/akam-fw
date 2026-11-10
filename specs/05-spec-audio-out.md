@@ -21,7 +21,7 @@ Hors périmètre : annulation d'écho acoustique, AAC/MP3/Opus, 16 kHz, TLS, ré
 - Inconnu à vérifier : l'écriture de silence actuelle réussit-elle ? (le thread se tait après 5 échecs ; chercher `[audio] playback write` dans le journal série/`LOG` 8091.)
 - `aec_custom.c` n'a rien à voir : c'est de l'**auto-exposition** (AE), pas de l'annulation d'écho.
 
-### 1.2 Pilote `ak_pcm.ko` et firmware d'origine (`/home/foohx/camyn-work/app`, propriétaire, lecture seule)
+### 1.2 Pilote `ak_pcm.ko` et firmware d'origine (copie locale propriétaire, lecture seule, hors dépôt)
 
 Chaînes de `modules/ak_pcm.ko` et de `bin/anyka_ipc`, croisées avec `aoplay.c` du projet de référence ([berobloom/LSC-1080p-Anyka-Decloud](https://github.com/berobloom/LSC-1080p-Anyka-Decloud), même SoC AK3918AV130L, noyau 4.4.302) :
 

@@ -591,7 +591,9 @@ struct akpcm_pars {
 #define AKPCM_IOC_SET_PERIODS   0x80045030  /* _IOW('P',0x30,4) */
 #define AKPCM_IOC_GET_PERIODS   0x40045030  /* _IOR('P',0x30,4) */
 
-/* Best-guess name "CAPS" — nr=0x81, GET only, observed value 1. */
+/* Best-guess name "CAPS" — nr=0x81, observed value 1. On the playback fd the
+ * same number is the speaker enable and 0x40045081 is its real SET (see the
+ * playback-side names below); kept as is for the capture side. */
 #define AKPCM_IOC_GET_CAPS      0x40045081  /* _IOR('P',0x81,4) */
 
 /* dir=NONE (no size in the request itself) — the 3rd ioctl() arg is used
