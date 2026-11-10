@@ -13,6 +13,7 @@ LDFLAGS = -pthread -static
 TARGET     = ak_rtsp
 TARGET_DBG = isp_dump
 TARGET_HOOK = isp_hook.so
+TARGET_STOCK = stock_hook.so
 TARGET_TOOL = flash_tool
 TARGET_DIV0 = patch_div0
 .DEFAULT_GOAL := all
@@ -65,7 +66,7 @@ SRCS    = main.c \
           ../smolrtsp/src/nal/h264.c
 OBJS    = $(SRCS:.c=.o) $(ASM_SRCS:.S=.o) $(SHIM)
 
-all: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
+all: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0)
 
 # -----------------------------------------------------------------------
 # debug-dump — builds ak_rtsp with DEBUG_IOCTL_DUMP defined, so venc.c logs
@@ -105,6 +106,17 @@ $(TARGET_HOOK): isp_hook.c
 	$(CC) -std=gnu99 -mfloat-abi=soft -O1 -fPIC -shared -nostdlib -ffreestanding \
 	      -mcpu=arm926ej_s -o $@ $<
 
+# stock_hook.so: capture of the stock anyka_ipc (speaker, GPIO, ISP), see docs/stock_capture.md.
+# Includes isp_hook.c, needs no libc and no compiler-rt (no division by a variable,
+# no memcpy), exports only the hooked libc symbols, so the only undefined symbol left
+# is the weak __errno_location (checked by tests/stock_hook_test.sh).
+STOCK_FLAGS = -std=gnu99 -mfloat-abi=soft -O1 -Wall -Wextra -fPIC -shared -nostdlib \
+              -ffreestanding -fno-builtin -fno-stack-protector -fvisibility=hidden \
+              -fno-unwind-tables -fno-asynchronous-unwind-tables -rtlib=none -g0 \
+              -mcpu=arm926ej_s
+$(TARGET_STOCK): stock_hook.c isp_hook.c
+	$(CC) $(STOCK_FLAGS) -o $@ stock_hook.c
+
 $(TARGET_DBG): isp_dump.c $(SHIM)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -131,7 +143,7 @@ version.o: version.c FORCE
 
 clean:
 	rm -f *.o ../common/*.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
-	rm -f $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
+	rm -f $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
 
 # -----------------------------------------------------------------------
 # firmware — builds the flashable, timestamped APP squashfs image
