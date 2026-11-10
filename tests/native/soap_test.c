@@ -153,6 +153,19 @@ static void test_entities_attrs(void)
     soap_span_t hr = { h, strlen(h) };
     CHECK(soap_find(hr, "a", &e) == SOAP_MALFORMED);
     free(h);
+    /* a raw NUL in text or CDATA is an error, never a silently shortened value */
+    {
+        const char nul1[] = "<a>adm\0in</a>", nul2[] = "<a><![CDATA[adm\0in]]></a>", nul3[] = "<a q='x\0y'/>";
+        const char *nuls[] = { nul1, nul2, nul3 };
+        size_t nl[] = { sizeof nul1 - 1, sizeof nul2 - 1, sizeof nul3 - 1 };
+        for (int i = 0; i < 3; i++) {
+            char *nb = dup_exact(nuls[i], nl[i]);
+            soap_span_t nr = { nb, nl[i] };
+            CHECK(soap_find(nr, "a", &e) == SOAP_OK);
+            CHECK(i < 2 ? soap_text(&e, o, sizeof o, 0) == SOAP_MALFORMED : soap_attr(&e, "q", o, sizeof o) == SOAP_MALFORMED);
+            free(nb);
+        }
+    }
     /* DTD / entity declarations are refused */
     CHECK(text_of("x", o, sizeof o) == 1);
     {

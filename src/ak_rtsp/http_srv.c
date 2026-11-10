@@ -25,6 +25,7 @@
 #define HTTP_STACK_BYTES      (64 * 1024)
 #define HTTP_NICE             10      /* the video path comes first on this single core */
 #define HTTP_RBUF_INIT        1024
+#define HTTP_ACCEPT_PAUSE_MS  200
 
 enum { S_READ, S_WRITE, S_LINGER };
 
@@ -185,6 +186,7 @@ static int parse_head(conn_t *c, size_t hl)
     long long cl = -1;
     int te = 0;
     c->off_path = c->off_query = c->off_auth = c->off_ctype = -1;
+    if (memchr(b, 0, hl)) return 400;       /* a NUL would hide the rest of its line from the C-string parsing below */
     b[hl] = 0;
     size_t pos = 0;
     int first = 1;
@@ -429,6 +431,7 @@ static int pump(conn_t *c)
 
 static int on_readable(conn_t *c)
 {
+    if (c->state == S_WRITE) return -1;      /* only reached by POLLHUP while a reply is pending: the peer is gone */
     if (c->state == S_LINGER) {
         char tmp[256];
         ssize_t n = recv(c->fd, tmp, sizeof(tmp), MSG_DONTWAIT);
@@ -469,13 +472,20 @@ static long long deadline(const conn_t *c)
     }
 }
 
+static long long g_accept_pause;     /* ms: do not poll the listen socket before this time */
+
 static void accept_all(void)
 {
     for (;;) {
         struct sockaddr_in pa;
         socklen_t pl = sizeof(pa);
         int fd = accept4(g.listen_fd, (struct sockaddr *)&pa, &pl, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (fd < 0) return;           /* EAGAIN, or a transient error: poll again */
+        if (fd < 0) {
+            /* out of descriptors or memory: the listen socket stays readable, so polling it would spin the CPU */
+            if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM)
+                g_accept_pause = now_ms() + HTTP_ACCEPT_PAUSE_MS;
+            return;                   /* EAGAIN, or a transient error: poll again */
+        }
         conn_t *c = NULL;
         for (int i = 0; i < HTTP_MAX_CONNS; i++)
             if (g.conns[i].fd < 0) { c = &g.conns[i]; break; }
@@ -505,7 +515,9 @@ static void *server_thread(void *arg)
     while (!g.stop) {
         long long now = now_ms(), next = -1;
         pfd[0] = (struct pollfd){ g.wake_r, POLLIN, 0 };
-        pfd[1] = (struct pollfd){ g.listen_fd, POLLIN, 0 };
+        int paused = now < g_accept_pause;
+        pfd[1] = (struct pollfd){ g.listen_fd, paused ? 0 : POLLIN, 0 };
+        if (paused) next = g_accept_pause;
         for (int i = 0; i < HTTP_MAX_CONNS; i++) {
             conn_t *c = &g.conns[i];
             pfd[2 + i] = (struct pollfd){ c->fd, 0, 0 };
@@ -551,7 +563,7 @@ static void teardown(void)
     if (g.wake_r >= 0) close(g.wake_r);
     if (g.wake_w >= 0) close(g.wake_w);
     g.listen_fd = g.wake_r = g.wake_w = -1;
-    g.port = 0;
+    __atomic_store_n(&g.port, 0, __ATOMIC_RELEASE);
 }
 
 int http_srv_start(int port)
@@ -590,7 +602,7 @@ int http_srv_start(int port)
         errno = e;
         goto out;
     }
-    g.port = ntohs(a.sin_port);
+    __atomic_store_n(&g.port, ntohs(a.sin_port), __ATOMIC_RELEASE);
     g.stop = 0;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -622,10 +634,8 @@ void http_srv_stop(void)
 
 int http_srv_port(void)
 {
-    pthread_mutex_lock(&g.lock);
-    int p = g.running ? g.port : 0;
-    pthread_mutex_unlock(&g.lock);
-    return p;
+    /* No lock: a handler (server thread) may call this while http_srv_stop holds the lock and joins that thread. */
+    return __atomic_load_n(&g.port, __ATOMIC_ACQUIRE);
 }
 
 void http_srv_set_timeouts(int req_ms, int idle_ms)

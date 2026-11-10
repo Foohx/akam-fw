@@ -203,10 +203,11 @@ int soap_body_op(const char *xml, size_t len, soap_elem_t *op)
 
 /* ------------------------------------------------------------------ text and attributes */
 
-typedef struct { char *out; size_t cap, n; int over; } sink_t;
+typedef struct { char *out; size_t cap, n; int over, nul; } sink_t;
 
 static void put(sink_t *s, char c)
 {
+    if (!c) { s->nul = 1; return; }      /* a raw NUL (text, CDATA) would silently cut the value short as a C string */
     if (s->n + 1 < s->cap) s->out[s->n++] = c;
     else s->over = 1;
 }
@@ -263,6 +264,7 @@ static size_t entity(const char *p, const char *end, sink_t *s)
 
 static int finish_sink(sink_t *s, int flags)
 {
+    if (s->nul) { s->out[0] = 0; return SOAP_MALFORMED; }
     if (s->over) { s->out[s->cap - 1] = 0; return SOAP_TRUNC; }
     s->out[s->n] = 0;
     if (flags & SOAP_TRIM) {
@@ -279,7 +281,7 @@ static int finish_sink(sink_t *s, int flags)
 int soap_text(const soap_elem_t *e, char *out, size_t cap, int flags)
 {
     if (!cap) return SOAP_TRUNC;
-    sink_t s = { out, cap, 0, 0 };
+    sink_t s = { out, cap, 0, 0, 0 };
     const char *p = e->inner.p, *end = e->inner.p + e->inner.n;
     while (p < end) {
         char c = *p;
@@ -325,7 +327,7 @@ int soap_attr(const soap_elem_t *e, const char *name, char *out, size_t cap)
         const char *ve = p++;
         if (an.n >= 5 && memcmp(an.p, "xmlns", 5) == 0 && (an.n == 5 || an.p[5] == ':')) continue;
         if (!span_is(local_of(an), name)) continue;
-        sink_t s = { out, cap, 0, 0 };
+        sink_t s = { out, cap, 0, 0, 0 };
         while (vs < ve) {
             if (*vs == '&') {
                 size_t k = entity(vs + 1, ve, &s);

@@ -12,6 +12,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 
 #include "http_srv.h"
@@ -70,6 +71,14 @@ static void h_big(const http_req_t *q, http_resp_t *r, void *u)
     size_t *off = http_resp_alloc(r, sizeof(*off));
     http_resp_set(r, 200, "application/octet-stream");
     http_resp_body_stream(r, BIG_LEN, big_produce, off);
+}
+
+static size_t zero_produce(void *ctx, char *buf, size_t cap) { (void)ctx; (void)buf; (void)cap; return 0; }
+static void h_stall(const http_req_t *q, http_resp_t *r, void *u)
+{
+    (void)q; (void)u;
+    http_resp_set(r, 200, "text/plain");
+    http_resp_body_stream(r, 500, zero_produce, NULL);   /* promises 500 bytes, delivers none */
 }
 
 static void h_auth(const http_req_t *q, http_resp_t *r, void *u)
@@ -319,6 +328,10 @@ static void test_errors(int port)
         "GET addr HTTP/1.1\r\n\r\n",
         "GET /addr HTTP/1.1 extra\r\n\r\n",
         "GET /addr HTTPS/1.1\r\n\r\n",
+        "POST /echo HTTP/1.1\r\nContent-Length: +3\r\n\r\nabc",
+        "POST /echo HTTP/1.1\r\nContent-Length: -3\r\n\r\nabc",
+        "POST /echo HTTP/1.1\r\nContent-Length: 4294967299\r\n\r\nabc",
+        "POST /echo HTTP/1.1\r\nContent-Length: 3, 3\r\n\r\nabc",
     };
     for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
         fd = dial(port);
@@ -328,6 +341,31 @@ static void test_errors(int port)
         free(r.body);
         close(fd);
     }
+    /* a NUL byte in the head (strlen-based senders cannot carry it, so send by length) */
+    {
+        static const char n1[] = "GET /addr HTTP/1.1\r\nX-A: b\0c\r\n\r\n", n2[] = "GET /ad\0dr HTTP/1.1\r\n\r\n";
+        const char *nr[] = { n1, n2 };
+        size_t nn[] = { sizeof n1 - 1, sizeof n2 - 1 };
+        for (int i = 0; i < 2; i++) {
+            fd = dial(port);
+            send_all(fd, nr[i], nn[i]);
+            char carry[8];
+            size_t cl = 0;
+            CHECK(read_resp(fd, &r, carry, &cl, 3000, 65536) == 0 && r.status == 400);
+            free(r.body);
+            close(fd);
+        }
+    }
+    /* Content-Length together with Transfer-Encoding is refused (request smuggling) */
+    fd = dial(port);
+    CHECK(simple(fd, "POST /echo HTTP/1.1\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\nabc", &r) == 0 && r.status == 411);
+    free(r.body);
+    close(fd);
+    /* a producer that returns 0 before the declared length: the connection is dropped, no busy loop */
+    fd = dial(port);
+    sendstr(fd, "GET /stall HTTP/1.1\r\n\r\n");
+    CHECK(expect_closed(fd, 2000));
+    close(fd);
     fd = dial(port);
     CHECK(simple(fd, "GET /addr HTTP/2.0\r\n\r\n", &r) == 0 && r.status == 505);
     free(r.body);
@@ -357,6 +395,40 @@ static void test_errors(int port)
     CHECK(read_resp(fd, &r, carry, &cl, 3000, 262000) == 0 && r.status == 200 && memcmp(r.body, "abc", 3) == 0);
     free(r.body);
     close(fd);
+}
+
+static double cpu_s(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+/* accept() failing with EMFILE must not turn the poll loop into a busy loop */
+static void test_emfile(int port)
+{
+    struct rlimit old, lim;
+    getrlimit(RLIMIT_NOFILE, &old);
+    lim = old;
+    lim.rlim_cur = 128;
+    if (lim.rlim_cur > old.rlim_max) { printf("  emfile test skipped\n"); return; }
+    setrlimit(RLIMIT_NOFILE, &lim);
+    int *extra = malloc(sizeof(int) * 128);
+    int n = 0, fd;
+    while (n < 128 && (fd = dup(0)) >= 0) extra[n++] = fd;
+    close(extra[--n]);                                      /* one free descriptor for the client */
+    int cl = dial(port);
+    CHECK(cl >= 0);
+    double t0 = cpu_s();
+    usleep(600000);
+    CHECK(cpu_s() - t0 < 0.25);                             /* a spin would burn ~0.6 s */
+    while (n > 0) close(extra[--n]);
+    free(extra);
+    resp_t r;
+    CHECK(simple(cl, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);   /* served once fds are back */
+    free(r.body);
+    close(cl);
+    setrlimit(RLIMIT_NOFILE, &old);
 }
 
 static void test_pipeline_and_stream(int port)
@@ -497,6 +569,7 @@ int main(void)
 
     CHECK(http_srv_route("/echo", HTTP_M_POST, h_echo, NULL) == 0);
     CHECK(http_srv_route("/big", HTTP_M_GET, h_big, NULL) == 0);
+    CHECK(http_srv_route("/stall", HTTP_M_GET, h_stall, NULL) == 0);
     CHECK(http_srv_route("/auth", HTTP_M_GET, h_auth, NULL) == 0);
     CHECK(http_srv_route("/addr", HTTP_M_GET, h_addr, NULL) == 0);
     CHECK(http_srv_route("/onvif/device_service", HTTP_M_POST, h_soap, NULL) == 0);
@@ -530,6 +603,7 @@ int main(void)
     port = http_srv_port();
     test_timeouts_short(port);
     test_conn_cap(port);
+    test_emfile(port);
     for (int i = 0; i < 3; i++) {                           /* start/stop cycling with open clients */
         int fd = dial(port);
         resp_t r;
