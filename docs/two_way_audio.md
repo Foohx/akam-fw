@@ -139,7 +139,7 @@ arrived), `audio.talk_sessions`, `audio.talk_mic_muted`, and for the speaker buf
   section). Then watch `audio.talk_packets` rise while you speak.
 - **Choppy voice:** `audio.out_underruns` rises: the Wi-Fi link drops packets or is late. Talk is carried
   in the RTSP TCP connection, so nothing is lost, but it can arrive late.
-- **Voice too quiet:** raise `audio.out_volume` (default 50) or the hardware `audio.out_gain`.
+- **Voice too quiet:** raise `audio.out_volume` (default 100, the maximum) or the hardware `audio.out_gain`.
 
 ## Security
 

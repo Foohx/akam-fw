@@ -32,9 +32,9 @@ static void ao_log(const char *fmt, ...)
  * Pure helpers
  * ------------------------------------------------------------------------ */
 
-/* 1 kHz at 8 kHz repeats every 8 samples: sin(k * 45 deg) at -16 dBFS
- * (32767 * 10^(-16/20) = 5194; 5194 * sqrt(1/2) = 3673). */
-static const int16_t k_sine8[8] = { 0, 3673, 5194, 3673, 0, -3673, -5194, -3673 };
+/* 1 kHz at 8 kHz repeats every 8 samples: sin(k * 45 deg) at -28 dBFS
+ * (32767 * 10^(-28/20) = 1305; 1305 * sqrt(1/2) = 923); tuned by ear at the default volume 100, the same loudness as -16 dBFS at volume 50. */
+static const int16_t k_sine8[8] = { 0, 923, 1305, 923, 0, -923, -1305, -923 };
 
 #define BEEP_TONE_SAMPLES 1600 /* 200 ms */
 #define BEEP_RAMP         80   /* 10 ms */
@@ -102,7 +102,7 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     snprintf(ao->conf_path, sizeof(ao->conf_path), "%s/%s", ao->conf_dir, AO_CONF_FILE);
     snprintf(ao->guard_path, sizeof(ao->guard_path), "%s/%s", ao->conf_dir, AO_GUARD_FILE);
     ao->enabled  = 1;
-    ao->volume   = 50;
+    ao->volume   = 100;
     ao->gain     = 2;   /* stock value */
     ao->source   = 4;   /* stock playback route */
     ao->amp_mode = AO_AMP_AUTO;
