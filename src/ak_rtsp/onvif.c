@@ -14,6 +14,8 @@
 #include "cred.h"
 #include "onvif.h"
 #include "onvif_device.h"
+#include "onvif_imaging.h"
+#include "onvif_media.h"
 #include "sha1.h"
 
 /* ------------------------------------------------------------------------ services */
@@ -242,7 +244,7 @@ static void handler(const http_req_t *req, http_resp_t *resp, void *user)
 int onvif_start(int port)
 {
     if (!g_registered) {
-        if (onvif_device_register() != 0) return -1;
+        if (onvif_device_register() != 0 || onvif_media_register() != 0 || onvif_imaging_register() != 0) return -1;
         for (int i = 0; i < g_nsvc; i++)
             if (http_srv_route(g_svc[i].path, HTTP_M_POST, handler, &g_svc[i]) != 0) return -1;
         g_registered = 1;
