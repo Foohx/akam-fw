@@ -42,8 +42,10 @@ log() {
     return 0
 }
 
-# ps|grep with a bracket so the grep line itself never matches (no pgrep on the camera).
+# ps|grep with a bracket so the grep line itself never matches (no pgrep on the camera: SC2009 is deliberate).
+# shellcheck disable=SC2009
 wpa_running() { ps 2>/dev/null | grep -q "[w]pa_supplicant.*$IFACE"; }
+# shellcheck disable=SC2009
 dhcp_running() { ps 2>/dev/null | grep -q "[u]dhcpc.*$IFACE"; }
 
 has_ipv4() {
@@ -55,6 +57,7 @@ has_ipv4() {
 }
 
 kill_daemon() { # $1 = process name pattern ([x]yz form)
+    # shellcheck disable=SC2009
     ps 2>/dev/null | grep "$1.*$IFACE" | while read -r _pid _rest; do
         $KILL "$_pid" 2>/dev/null
     done

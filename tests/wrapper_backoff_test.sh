@@ -108,7 +108,7 @@ new_env cap
 for i in $(seq 1 130); do echo "old $i" >>"$E/tmp/akam_wrapper.log"; done
 run_wrap FAKE_RUN=1 FAKE_RC=1
 n=$(wc -l <"$E/tmp/akam_wrapper.log")
-[ "$n" -le 101 ] && ok "wrapper log capped ($n lines)" || ko "wrapper log not capped ($n lines)"
+if [ "$n" -le 101 ]; then ok "wrapper log capped ($n lines)"; else ko "wrapper log not capped ($n lines)"; fi
 
 # 7. corrupted state is treated as zero, never breaks the start
 new_env corrupt
@@ -131,11 +131,12 @@ eq "missing uptime: exit code kept" "$rc" 5
 case $(state) in "count=1 total=1 last_rc=5 last_run=0 "*) ok "missing uptime: run counted as 0 s" ;; *) ko "missing uptime ($(state))" ;; esac
 
 # 9. the first start stays fast: the block before ak_rtsp forks nothing when count is 0
-"${SHCMD[@]}" -n "$WRAP" && ok "sh -n" || ko "sh -n"
+if "${SHCMD[@]}" -n "$WRAP"; then ok "sh -n"; else ko "sh -n"; fi
 before=$(awk '/^CRASH_N=0/{f=1} /^# --- Network hostname/{f=0} f' "$WRAP")
+# shellcheck disable=SC2016 # the patterns are literal on purpose
 case $before in *'$('* | *'`'*) ko "backoff block forks a subshell" ;; *) ok "backoff block has no command substitution (state read with builtins)" ;; esac
-grep -q 'akam_net.sh start' "$WRAP" && ok "wrapper launches akam_net.sh detached" || ko "wrapper launches akam_net.sh"
-grep -Fq '( /usr/sbin/akam_net.sh start </dev/null >/dev/null 2>&1 & )' "$WRAP" && ok "akam_net.sh detached like akam_ssh.sh" || ko "akam_net.sh not detached the same way"
+if grep -q 'akam_net.sh start' "$WRAP"; then ok "wrapper launches akam_net.sh detached"; else ko "wrapper launches akam_net.sh"; fi
+if grep -Fq '( /usr/sbin/akam_net.sh start </dev/null >/dev/null 2>&1 & )' "$WRAP"; then ok "akam_net.sh detached like akam_ssh.sh"; else ko "akam_net.sh not detached the same way"; fi
 
 echo "wrapper_backoff_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -197,14 +197,14 @@ echo $$ >"$E/tmp/akam_net.lock/pid"
 printf 'bash\0' >"$E/proc/$$/cmdline"
 run_net 2 AKAM_PROC_DIR="$E/proc" >/dev/null
 eq "stale lock (pid reused by another program): takes over" "$(count '^sleep 30$')" 2
-[ ! -d "$E/tmp/akam_net.lock" ] && ok "lock removed on exit" || ko "lock removed on exit"
+if [ ! -d "$E/tmp/akam_net.lock" ]; then ok "lock removed on exit"; else ko "lock removed on exit"; fi
 
 # 12. log cap
 new_env logcap
 for i in $(seq 1 130); do echo "old line $i" >>"$E/tmp/akam_net.log"; done
 run_net 1 >/dev/null
 n=$(wc -l <"$E/tmp/akam_net.log")
-[ "$n" -le 101 ] && ok "log capped ($n lines)" || ko "log not capped ($n lines)"
+if [ "$n" -le 101 ]; then ok "log capped ($n lines)"; else ko "log not capped ($n lines)"; fi
 
 # 13. no logger: file only, nothing fails
 new_env nologger
@@ -220,7 +220,7 @@ out=$(env AKAM_ROOT="$E" AKAM_TMP_DIR="$E/tmp" "${SHCMD[@]}" "$NET" bogus 2>&1);
 eq "bad usage: exit 2" "$rc" 2
 
 # 15. syntax under the pinned shell, and BusyBox-only applets
-"${SHCMD[@]}" -n "$NET" && ok "sh -n" || ko "sh -n"
+if "${SHCMD[@]}" -n "$NET"; then ok "sh -n"; else ko "sh -n"; fi
 if grep -nE '(^|[^a-z_])(pgrep|pkill|mktemp|tr )([^a-z_]|$)' "$NET" | grep -v '^[0-9]*:#' | grep -v 'no pgrep' >/dev/null; then
     ko "uses an applet missing on the camera"
 else ok "no pgrep/pkill/mktemp/tr"; fi
