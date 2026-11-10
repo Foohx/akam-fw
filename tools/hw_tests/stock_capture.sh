@@ -19,7 +19,10 @@
 #     the factory prompts). For a faithful capture the pristine files of the APP partition are
 #     bind-mounted on top (RAM copies) and the muted prompts are un-muted; restore pops all of it.
 #   * Restore: remove the wrapper bind, pop the config binds, re-mute, kill anyka_ipc again
-#     (clean respawn without the hook). A power cycle also restores everything.
+#     (clean respawn without the hook). A power cycle also restores everything. INT, TERM and
+#     HUP (lost telnet) run the restore; after a SIGKILL of the script, run "restore".
+#   * If the watchdog does not respawn anyka_ipc, the script gives up after 60 s and restores;
+#     the stock watchdog may then reboot the board, which just returns it to the stock state.
 #
 # Paths are prefixed by $AKAM_ROOT (empty on the camera) so the host test can use a fake root.
 
@@ -46,6 +49,14 @@ warn() { echo "WARN    $*"; }
 fail() { N_FAIL=$((N_FAIL + 1)); echo "FAIL    $*"; }
 die()  { echo "FAIL    $*" >&2; exit "${2:-1}"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# need_cmds NAME...: every applet the script relies on, checked up front (BusyBox 1.30.1 has no
+# tr, mktemp, nohup, flock, gzip, wget, dirname or cut and this script uses none of them).
+need_cmds() {
+    for need in "$@"; do
+        have "$need" || { fail "missing command: $need"; return 1; }
+    done
+    return 0
+}
 
 mounts_file() { echo "$ROOT/proc/mounts"; }
 # number of mounts whose target is exactly $1 (logical path)
@@ -62,6 +73,7 @@ find_sd() {
 }
 
 verify_stock() {
+    need_cmds awk pidof grep || return 1
     if [ ! -x "$ROOT$IPC" ]; then fail "$IPC missing: not the stock firmware"; return 1; fi
     ok "$IPC present"
     if [ -n "$(first_pid ak_rtsp)" ] || [ -e "$ROOT/usr/bin/ak_rtsp" ] || [ -e "$ROOT/usr/sbin/akam_ssh.sh" ]; then
@@ -109,9 +121,7 @@ check_sd() {
         *) if [ "$free" -lt "$MIN_FREE_KB" ]; then fail "only $free KiB free on the card (need $MIN_FREE_KB)"; return 1; fi
            ok "$free KiB free on the card" ;;
     esac
-    for need in awk grep sed cp dd df find md5sum mount umount sleep kill pidof; do
-        have "$need" || { fail "missing command: $need"; return 1; }
-    done
+    need_cmds awk grep sed cp dd df find md5sum mount umount sleep kill pidof ls rm rmdir ln wc tail date sync || return 1
     return 0
 }
 
@@ -127,10 +137,14 @@ do_bind() {
     return 1
 }
 
+# Returns 1 when a bind we added is still mounted (the caller then keeps the wrapper, the hook
+# and the state so that "restore" can be run again).
 pop_binds() {
     [ -f "$STATE/state" ] || return 0
-    # undo in reverse order
-    sed -n '1!G;h;$p' "$STATE/state" | while read -r kind target before; do
+    left=0
+    # undo in reverse order; read from a file, not a pipe, so that $left survives the loop
+    sed -n '1!G;h;$p' "$STATE/state" >"$STATE/state.rev" || return 1
+    while read -r kind target before; do
         [ "$kind" = bind ] || continue
         tries=0
         while [ "$(mcount "$target")" -gt "$before" ] && [ "$tries" -lt 3 ]; do
@@ -139,8 +153,11 @@ pop_binds() {
         done
         if [ "$(mcount "$target")" -gt "$before" ]; then
             echo "WARN    could not unmount $target (a power cycle clears it)"
+            left=1
         fi
-    done
+    done <"$STATE/state.rev"
+    rm -f "$STATE/state.rev"
+    return "$left"
 }
 
 snap_config() { # $1 = output file; skips the files that are bind mounts (SD files, they change)
@@ -163,7 +180,12 @@ restore() {
         return 0
     fi
     echo "== restore =="
-    pop_binds
+    need_cmds awk sed mount umount rm kill sleep || { echo "WARN    restore needs those applets; power-cycle the camera instead"; return 1; }
+    if ! pop_binds; then
+        echo "WARN    some binds are still mounted: nothing else is removed, run restore again or power-cycle"
+        RESTORED=0
+        return 1
+    fi
     if [ -f "$STATE/muted" ]; then
         sil=${SD:-$ROOT/tmp/sd}/custom/audio/silent.mp3
         while read -r f; do
@@ -191,7 +213,7 @@ restore() {
         done
         if [ -n "$new" ]; then echo "OK      anyka_ipc respawned by the watchdog without the hook (pid $new)"; else echo "WARN    anyka_ipc not seen again after ${WAIT_RESPAWN}s: check with ps, a power cycle fixes it"; fi
     fi
-    rm -f "$STATE/out" "$STATE/state" "$STATE/muted" "$STATE/anyka_ipc_wrap" "$STATE/stock_hook.so" \
+    rm -f "$STATE/out" "$STATE/state" "$STATE/state.rev" "$STATE/muted" "$STATE/anyka_ipc_wrap" "$STATE/stock_hook.so" \
           "$STATE/cfg/_ht_hw_settings.ini" "$STATE/cfg/_ht_sw_settings.ini" "$STATE/active"
     rmdir "$STATE/cfg" "$STATE/app" "$STATE" 2>/dev/null
     ACTIVE=0
@@ -237,8 +259,11 @@ do_run() {
     # pristine settings, RAM copies on top of whatever (toolkit or not) is there now
     for f in _ht_hw_settings.ini _ht_sw_settings.ini; do
         if [ -f "$STATE/app/local/$f" ] && [ -e "$ROOT/etc/config/$f" ]; then
-            cp "$STATE/app/local/$f" "$STATE/cfg/$f" && do_bind "$STATE/cfg/$f" "$ROOT/etc/config/$f" \
-                && ok "pristine $f of the APP partition mounted over /etc/config/$f (RAM copy)"
+            if cp "$STATE/app/local/$f" "$STATE/cfg/$f" && do_bind "$STATE/cfg/$f" "$ROOT/etc/config/$f"; then
+                ok "pristine $f of the APP partition mounted over /etc/config/$f (RAM copy)"
+            else
+                warn "could not mount the pristine $f: the settings in place stay as they are"
+            fi
         else
             warn "no pristine $f available: the settings in place stay as they are"
         fi
@@ -359,7 +384,7 @@ finish() {
         echo
         echo "Logs are on the card: $RUNDIR"
         ls -l "$RUNDIR" 2>/dev/null
-        echo "Power the camera off, take the card, copy the folder $(basename "$SD")/stock_capture/$(basename "$RUNDIR") to the PC."
+        echo "Power the camera off, take the card, copy the folder stock_capture/${RUNDIR##*/} to the PC."
     fi
     exit "$rc"
 }

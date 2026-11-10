@@ -21,6 +21,7 @@ FAKEPIDS=()
 cleanup() {
     for p in "${FAKEPIDS[@]}"; do kill "$p" 2>/dev/null; done
     pkill -f "$WORK/respawn.sh" 2>/dev/null
+    [ -s "$WORK/root/tmp/ipc.pid" ] && kill "$(cat "$WORK/root/tmp/ipc.pid")" 2>/dev/null
     rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -34,8 +35,9 @@ hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1";
 # --- PATH: only what the camera has ------------------------------------------------------
 BIN=$WORK/bin
 mkdir -p "$BIN"
-for a in awk cat cp cut date df diff dd find grep head ln ls md5sum mkdir rm rmdir sed sha256sum \
-         sleep sort sync tail touch wc dirname basename uname; do
+# (no cut, dirname, basename, tr, mktemp, nohup, flock, gzip, wget: the script must not need them)
+for a in awk cat cp date df diff dd find grep ln ls md5sum mkdir rm rmdir sed sha256sum \
+         sleep sync tail wc; do
     ln -s "$BB" "$BIN/$a"
 done
 # host tools for the stubs and the fake watchdog only (not on the script's PATH)
@@ -91,6 +93,7 @@ cat >"$BIN/umount" <<'EOF'
 PATH=/usr/bin:/bin
 [ "$1" = "-l" ] && shift
 dst=$1; lp=${dst#"$AKAM_ROOT"}
+[ -e "$AKAM_ROOT/tmp/umount.fail" ] && [ "$lp" = /usr/bin/anyka_ipc ] && exit 1
 echo "umount $lp" >>"$AKAM_ROOT/tmp/mount.log"
 key=$(echo "$lp" | sed 's,/,_,g')
 grep -v "^[^ ]* $lp " "$AKAM_ROOT/proc/mounts" >"$AKAM_ROOT/proc/mounts.new" || true
@@ -121,7 +124,7 @@ EOF
 chmod +x "$BIN/mount" "$BIN/umount" "$BIN/pidof" "$BIN/dmesg"
 
 # fake watchdog: a process that must survive, plus a respawner for anyka_ipc
-PATH=$HOSTBIN sleep 600 & WDPID=$!
+PATH=$HOSTBIN sleep 600 >/dev/null 2>&1 & WDPID=$!
 FAKEPIDS+=("$WDPID")
 echo "$WDPID" >"$R/tmp/wd.pid"
 cat >"$WORK/respawn.sh" <<'EOF'
@@ -133,7 +136,7 @@ R=$AKAM_ROOT
 while :; do
     pid=$(cat "$R/tmp/ipc.pid" 2>/dev/null)
     if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-        sleep 600 & new=$!
+        sleep 600 >/dev/null 2>&1 & new=$!
         echo "$new" >"$R/tmp/ipc.pid"
         mkdir -p "$R/proc/$new"
         if head -n 1 "$R/usr/bin/anyka_ipc" | grep -q '^#!/bin/sh'; then
@@ -233,13 +236,29 @@ has "SIGTERM triggers the restore" 'signal received: restoring' "$WORK/sig.txt"
 if diff "$WORK/mounts.initial" "$R/proc/mounts" >/dev/null; then ok "mount table restored after a signal"; else ko "mounts not restored after a signal"; fi
 if kill -0 "$WDPID" 2>/dev/null; then ok "watchdog still alive after the signal"; else ko "watchdog killed"; fi
 
+# a wrapper that cannot be unmounted: nothing else is removed, a second restore finishes the job
+touch "$R/tmp/umount.fail"
+env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
+    STOCK_CAPTURE_MIN_FREE_KB=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/sig2.txt" 2>&1 &
+SP=$!
+for _ in $(seq 1 40); do grep -q 'Capturing for' "$WORK/sig2.txt" 2>/dev/null && break; sleep 0.5; done
+kill -TERM "$SP" 2>/dev/null
+wait "$SP" 2>/dev/null
+has "a stuck bind is reported" 'could not unmount /usr/bin/anyka_ipc' "$WORK/sig2.txt"
+if [ -f "$STATE/anyka_ipc_wrap" ] && [ -f "$STATE/stock_hook.so" ] && [ -f "$STATE/state" ]; then ok "wrapper, hook and state are kept while a bind is still mounted"; else ko "state removed although the wrapper is still bound"; fi
+rm -f "$R/tmp/umount.fail"
+runscript restore; rc=$?
+if [ "$rc" -eq 0 ]; then ok "restore run again exits 0"; else ko "second restore exit $rc"; fi
+if diff "$WORK/mounts.initial" "$R/proc/mounts" >/dev/null; then ok "mount table restored by the second restore"; else ko "mounts not restored by the second restore"; fi
+if ls "$STATE" >/dev/null 2>&1; then ko "state left after the second restore"; else ok "state removed by the second restore"; fi
+
 # explicit restore with nothing to do
 runscript restore; rc=$?
 if [ "$rc" -eq 0 ]; then ok "restore with nothing to undo exits 0"; else ko "restore exit $rc"; fi
 has "restore reports nothing to do" 'nothing to restore' "$WORK/out.txt"
 
 # --- only camera applets used ---------------------------------------------------------------------------
-if grep -v '^ *#' "$SCRIPT" | grep -Eq '(^|[|;&( ])(tr|mktemp|nohup) '; then ko "script uses tr/mktemp/nohup"; else ok "script uses neither tr, mktemp nor nohup"; fi
+if grep -v '^ *#' "$SCRIPT" | grep -Eq '(^|[|;&( ])(tr|mktemp|nohup|flock|gzip|wget|dirname|basename|cut) '; then ko "script uses an applet the camera's BusyBox lacks"; else ok "script uses none of tr, mktemp, nohup, flock, gzip, wget, dirname, cut"; fi
 
 echo
 echo "stock_capture_script_test: $PASS passed, $FAIL failed"
