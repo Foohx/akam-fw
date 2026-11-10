@@ -2,6 +2,11 @@
 
 Statut : rédigée le 2026-11-09 (agent SPEC, branche `docs/spec-control-api`, partie de `dev`). Cible : V1.1. Seule cette spec est en français ; protocole, messages, code, README et docs sont en anglais.
 
+> **Mise à jour du 2026-11-10 (spec 07, `specs/07-spec-standard-protocols.md`, décision utilisateur D1 étape 4) : le port 8091 devient un port de débogage et de métriques, en lecture seule par défaut.**
+> - **Remplacé (ne pas implémenter)** : l'authentification HMAC-SHA256 (§0 décisions 2 et 3, §9 entier, §10 entier, `akam_ctl_auth.sh`, `./akam ctl-auth`, fichier `ctl_key`, §12 tests d'auth), les tâches **T1** (SHA-256/HMAC), **T5**, **T6** et la partie auth de **T9** (§14), les décisions D1, D5 et D7 (§15) et la ligne « `SET` en v1, auth ON » de §11. Les écritures ne sont plus protégées par un secret réseau : elles sont refusées à distance (`ERR read_only`), acceptées depuis la boucle locale (SSH) et, à distance, seulement quand le drapeau de débogage RAM est activé par SSH (spec 07 §4).
+> - **Reste valable** : §1 à §8 (grammaire, clés lues §3, JSON §4, persistance `ctl_store` §5 utilisée par SSH/MQTT/ONVIF, nom d'hôte §6, connexions §7, erreurs §8), §11 pour les lectures, et les tâches T2, T3, T4, T7 (sans auth), T8, T10, T11. Nouveau code d'erreur : `read_only`.
+> - Les clés lisibles du §3.1 sont les métriques de la spec 07 §4.2.
+
 ## 0. Décisions actées (utilisateur)
 
 - Le port 8091 devient une vraie API de lecture et de configuration, **compatible** avec l'existant : `LIST` / `GET` / `SET` ne changent pas pour un client qui ne connaît pas la v2.
@@ -233,7 +238,7 @@ Aujourd'hui un sondeur d'état éjecterait l'outil de réglage, et inversement. 
 
 En v1 les messages restent ceux d'aujourd'hui (sans code) ; seule ligne nouvelle : `ERR auth required (use AUTH-CHALLENGE then AUTH)`.
 
-## 9. Authentification HMAC-SHA256
+## 9. Authentification HMAC-SHA256 (REMPLACÉ par la spec 07 §4 : non implémenté)
 
 ### 9.1 Principe
 
@@ -285,7 +290,7 @@ Compteur global au processus, remis à zéro après 60 s sans échec ; un échec
 
 `sha256.c` (domaine public ; FIPS 180-4 / RFC 2104) ~150 lignes, ~2,5 Ko de code ARM, état de 108 octets, sans allocation. API : `sha256_init/update/final`, `hmac_sha256(key,klen,msg,mlen,out32)`, `ct_equal(a,b,n)`. Vecteurs : FIPS 180-4 (`""`, `"abc"`, 448 bits, un million de `a`) et RFC 4231 cas 1-7.
 
-## 10. Gestion de l'authentification
+## 10. Gestion de l'authentification (REMPLACÉ par la spec 07 §4 : non implémenté)
 
 ### 10.1 Commande caméra `/usr/sbin/akam_ctl_auth.sh` (POSIX sh, BusyBox 1.30.1, sans `tr` ni `mktemp`)
 
@@ -350,12 +355,12 @@ Chaque tâche rédige et fige les en-têtes `ctl_*.h` de son module (relus à la
 
 | Vague | Tâche | Fichiers | Dépend de |
 |---|---|---|---|
-| 1 | **T1** SHA-256 + HMAC + `ct_equal` + tests vecteurs | `src/ak_rtsp/sha256.[ch]`, `tests/sha256_test.sh`, `tests/native/sha256_test.c` | — |
+| 1 | **T1 (ABANDONNÉE, spec 07)** SHA-256 + HMAC + `ct_equal` + tests vecteurs | `src/ak_rtsp/sha256.[ch]`, `tests/sha256_test.sh`, `tests/native/sha256_test.c` | — |
 | 1 | **T2** `ctl_sys` : lecteurs `/proc`, `statvfs`, `ioctl`, cache 1 s, CPU ; racine factice | `src/ak_rtsp/ctl_sys.[ch]`, tests + fixtures | — |
 | 2 | **T3** `ctl_proto` : grammaire, `HELLO`/`INFO`/`HELP`, table de clés (types, bornes), erreurs, `STATUS`/`LIST` texte et JSON, framing, backend à pointeurs de fonctions ; golden v1 capturé d'abord | `src/ak_rtsp/ctl_proto.[ch]`, `ctl_json.[ch]`, tests | T2 |
 | 2 | **T4** `ctl_store` (fichier `settings`, `SAVE`/`RESET`, chargement au boot, limite `SAVE`) + `akam_hostname.sh` + patch `ethernet.sh`/wrapper dans `build_firmware.sh` + `image_files.txt` | `src/ak_rtsp/ctl_store.[ch]`, `tools/firmware_patch_templates/akam_hostname.sh`, `ak_rtsp_wrapper.sh`, `src/ak_rtsp/build_firmware.sh`, tests | — |
-| 3 | **T5** `ctl_auth` : états, nonce, défi/réponse, backoff, session, relecture du fichier | `src/ak_rtsp/ctl_auth.[ch]`, tests | T1, T3 |
-| 3 | **T6** `akam_ctl_auth.sh` + test BusyBox + `image_files.txt` | `tools/firmware_patch_templates/akam_ctl_auth.sh`, `tests/ctl_auth_cmd_test.sh` | — |
+| 3 | **T5 (ABANDONNÉE, spec 07)** `ctl_auth` : états, nonce, défi/réponse, backoff, session, relecture du fichier | `src/ak_rtsp/ctl_auth.[ch]`, tests | T1, T3 |
+| 3 | **T6 (ABANDONNÉE, spec 07)** `akam_ctl_auth.sh` + test BusyBox + `image_files.txt` | `tools/firmware_patch_templates/akam_ctl_auth.sh`, `tests/ctl_auth_cmd_test.sh` | — |
 | 4 | **T7** `control.c` : boucle `poll`, 4 places, éviction, v1/v2, `SUBSCRIBE`, `LOG` non bloquants, délais, `main.c` charge les réglages ; test d'intégration | `src/ak_rtsp/control.[ch]`, `main.c`, `tests/native/ctl_server_test.c` | T3, T4, T5 |
 | 4 | **T8** compteurs RTSP (`stats` : état, client, fps, débit) branchés dans `rtsp.c`, exposition de `rtsp.auth` ; test hôte | `src/ak_rtsp/stats.[ch]`, `rtsp.c` | T2 |
 | 5 | **T9** wizard : `./akam ctl-auth`, `ctl` optionnel, bibliothèque HMAC hôte, question dans `verify`, fausse caméra, ligne `hwcheck` | `tools/wizard/**`, `akam`, `tools/hw_tests/akam_hwcheck.sh`, tests | T6 |
