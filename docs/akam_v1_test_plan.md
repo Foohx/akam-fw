@@ -63,7 +63,7 @@ Still to check:
 - **telnet is never re-enabled after a Wi-Fi reconnect** (restart the router, then check 23 and 24);
 - a restore (`./akam restore`) has not been rehearsed on a camera.
 
-Known, not a test failure: the image is grainier than the stock firmware's (improvement planned).
+Known, not a test failure: the image is grainier than the stock firmware's (improvement planned; analysis, A/B switches and the side-by-side test plan are in [specs/08-spec-image-quality.md](../specs/08-spec-image-quality.md)).
 
 ### To test on the camera (V1 acceptance criteria)
 
