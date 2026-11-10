@@ -618,31 +618,42 @@ struct akpcm_pars {
 #define AKPCM_IOC_RESET_BUF     0x000050e3  /* _IO('P',0xe3) */
 
 /* -------------------------------------------------------------------------
- * Playback-side names (spec 05, section 1.2). Cross-reading ak_pcm.ko's
- * strings and the aoplay reference player shows that several names above
- * describe the CAPTURE fd only and are misleading on /dev/pcmC0D0p. The
- * numeric values are unchanged and the old names stay (capture still uses
- * them, replayed byte for byte); these aliases give the same numbers the
- * names the driver uses on the playback fd:
+ * Playback-side names (spec 05, section 1.2). The names and numbers above
+ * describe the CAPTURE fd only; capture keeps replaying them byte for byte.
+ * On /dev/pcmC0D0p the driver uses the same nr values under other names, and
+ * the direction bits are the standard asm-generic ones:
  *
- *   0xE0 (GET_PARS)    = IOC_PREPARE: copy_FROM_user of struct akpcm_pars,
- *                        allocates the hardware buffer; must succeed first.
- *   0xE1 (SET_MODE)    = IOC_RESUME: starts the DMA. Issuing it without a
- *                        successful PREPARE is the likely cause of the old
- *                        "SET_MODE crashes the kernel" observation.
- *   0x10 (SET_STATE)   = IOC_SET_SOURCES: mixer routing. 4 = DAC (muted on
- *                        this board), 6 = DAC + LINEIN (audible).
- *   0x30 (SET_PERIODS) = IOC_SET_GAIN: hardware headphone/speaker gain 0..5.
- *   0x81 (GET_CAPS)    = IOC_SET_SPEAKER: only the _IOW form exists. It
- *                        enables the amplifier (GPIO 69, driven by the
- *                        driver itself, never by sysfs).
- * Hypotheses from strings and a reference project, to be confirmed on
- * hardware (specs/05-spec-audio-out.md, step A).
+ *   0x4004xxxx = _IOW (SET: the driver copies the int from user space)
+ *   0x8004xxxx = _IOR (GET: the driver returns the current value)
+ *
+ * Ground truth: an LD_PRELOAD capture of the stock vendor application on a
+ * stock camera (docs/stock_capture.md). The "_IOW"/"_IOR" letters in the
+ * capture-side comments above are inverted for nr 0x10 and 0x30, and
+ * AKPCM_IOC_SET_STATE (0x80045010) / AKPCM_IOC_SET_PERIODS (0x80045030) are
+ * really GETs: stock calls them to read the current value. The real SETs
+ * are 0x40045010 and 0x40045030. Likewise 0x40045081 is the SET of nr 0x81.
+ *
+ *   0xE0 = IOC_PREPARE: copy_FROM_user of struct akpcm_pars, allocates the
+ *          hardware buffer; must succeed first (stock: format 0, 8000 Hz,
+ *          1 channel, 16 bit, 1024-byte periods, 16 periods).
+ *   0xE1 = IOC_RESUME: starts the DMA, arg 0. Issuing it without a
+ *          successful PREPARE is the likely cause of the old "SET_MODE
+ *          crashes the kernel" observation.
+ *   0x10 = SOURCES: mixer route. Stock sets 4 to play and 0 when idle
+ *          (route off). 4 is the audible playback route on the tested
+ *          board; 6 is an unverified experiment value from a reference
+ *          project.
+ *   0x30 = GAIN: hardware gain, stock uses 2 (once 3).
+ *   0x81 = SPEAKER: amplifier enable, stock sets 1 right after SOURCES. The
+ *          driver drives GPIO 69 itself, never by sysfs. The old 0x80045081
+ *          is the GET direction and returns EINVAL on the hardware.
+ *   0xEA = RATE: stock reads it back after RESUME (8000).
  * ------------------------------------------------------------------------- */
 #define AKPCM_IOC_PREPARE       AKPCM_IOC_GET_PARS     /* 0x401c50e0, 28-byte struct akpcm_pars */
 #define AKPCM_IOC_RESUME        AKPCM_IOC_SET_MODE     /* 0x000050e1, no argument */
-#define AKPCM_IOC_SET_SOURCES   AKPCM_IOC_SET_STATE    /* 0x80045010, int32 */
-#define AKPCM_IOC_GET_SOURCES   AKPCM_IOC_GET_STATE    /* 0x40045010 */
-#define AKPCM_IOC_SET_GAIN      AKPCM_IOC_SET_PERIODS  /* 0x80045030, int32 */
-#define AKPCM_IOC_GET_GAIN      AKPCM_IOC_GET_PERIODS  /* 0x40045030 */
-#define AKPCM_IOC_SET_SPEAKER   0x80045081             /* _IOW('P',0x81,4), int32 0/1 */
+#define AKPCM_IOC_SET_SOURCES   0x40045010             /* _IOW('P',0x10,4), int32 (stock: 4 play, 0 idle) */
+#define AKPCM_IOC_GET_SOURCES   0x80045010             /* _IOR('P',0x10,4) */
+#define AKPCM_IOC_SET_GAIN      0x40045030             /* _IOW('P',0x30,4), int32 (stock: 2) */
+#define AKPCM_IOC_GET_GAIN      0x80045030             /* _IOR('P',0x30,4) */
+#define AKPCM_IOC_SET_SPEAKER   0x40045081             /* _IOW('P',0x81,4), int32 0/1 (stock: 1) */
+#define AKPCM_IOC_GET_RATE      0x800450ea             /* _IOR('P',0xea,4), 8000 after PREPARE */
