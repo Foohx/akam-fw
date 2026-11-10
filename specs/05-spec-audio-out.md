@@ -96,7 +96,7 @@ write(fd, 1024 octets) en boucle
 
 ### 3.1 Livrable
 
-Sans réseau : un bip de 1 s généré dans le code (sinus 1 kHz, 8 kHz, rampes de 10 ms, amplitude −12 dBFS) déclenché par la commande 8091 :
+Sans réseau : un bip de 1 s généré dans le code (sinus 1 kHz, 8 kHz, rampes de 10 ms, amplitude −16 dBFS) déclenché par la commande 8091 :
 
 ```
 printf 'SET audio.out_test 1\n' | nc <cam> 8091      # joue le bip puis revient à 0

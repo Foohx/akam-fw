@@ -344,7 +344,7 @@ static void test_silence_and_beep(void)
             if (abs(l) > peak) peak = abs(l);
         }
     CHECK(ok_val, "written samples equal the synthesized beep at volume 100 (mono, 512 frames per period)");
-    CHECK(peak == 8231, "peak amplitude -12 dBFS (8231)");
+    CHECK(peak == 5194, "peak amplitude -16 dBFS (5194)");
     CHECK(ao->state == AO_IDLE || ao->state == AO_TEST, "state returns to idle after the beep");
 
     /* beep structure */
@@ -358,10 +358,10 @@ static void test_silence_and_beep(void)
     CHECK(tone_nonzero[0] > 1000 && tone_nonzero[1] > 1000 && tone_nonzero[2] > 1000, "three 200 ms tones");
     CHECK(ao_beep_sample(0) == 0 && ao_beep_sample(1599) == 0 && ao_beep_sample(3200) == 0 && ao_beep_sample(7999) == 0,
           "tones start and end at zero (10 ms ramps)");
-    CHECK(abs(ao_beep_sample(42)) < 8231 && abs(ao_beep_sample(42)) > 0, "ramp: 10 ms fade-in");
+    CHECK(abs(ao_beep_sample(42)) < 5194 && abs(ao_beep_sample(42)) > 0, "ramp: 10 ms fade-in");
     int pk = 0;
     for (unsigned i = 800; i < 900; i++) if (abs(ao_beep_sample(i)) > pk) pk = abs(ao_beep_sample(i));
-    CHECK(pk == 8231, "plateau reaches 8231");
+    CHECK(pk == 5194, "plateau reaches 5194");
     CHECK(ao_beep_sample(AO_BEEP_SAMPLES) == 0 && ao_beep_sample(100000) == 0, "outside the buffer: 0");
     /* 1 kHz: period of 8 samples */
     CHECK(ao_beep_sample(808) == ao_beep_sample(800) && ao_beep_sample(813) == ao_beep_sample(805), "1 kHz at 8 kHz");

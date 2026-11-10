@@ -32,9 +32,9 @@ static void ao_log(const char *fmt, ...)
  * Pure helpers
  * ------------------------------------------------------------------------ */
 
-/* 1 kHz at 8 kHz repeats every 8 samples: sin(k * 45 deg) at -12 dBFS
- * (32767 * 10^(-12/20) = 8231; 8231 * sqrt(1/2) = 5820). */
-static const int16_t k_sine8[8] = { 0, 5820, 8231, 5820, 0, -5820, -8231, -5820 };
+/* 1 kHz at 8 kHz repeats every 8 samples: sin(k * 45 deg) at -16 dBFS
+ * (32767 * 10^(-16/20) = 5194; 5194 * sqrt(1/2) = 3673). */
+static const int16_t k_sine8[8] = { 0, 3673, 5194, 3673, 0, -3673, -5194, -3673 };
 
 #define BEEP_TONE_SAMPLES 1600 /* 200 ms */
 #define BEEP_RAMP         80   /* 10 ms */
