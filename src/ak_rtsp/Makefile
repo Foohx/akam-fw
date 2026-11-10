@@ -42,6 +42,7 @@ SHIM    = ../common/time32_shim.o
 ASM_SRCS = arm_atomics.S
 SRCS    = main.c \
           isp.c \
+          isp_blocks.c \
           vi.c \
           venc.c \
           audio.c \
@@ -122,7 +123,7 @@ STOCK_FLAGS = -std=gnu99 -mfloat-abi=soft -O1 -Wall -Wextra -fPIC -shared -nostd
 $(TARGET_STOCK): stock_hook.c isp_hook.c
 	$(CC) $(STOCK_FLAGS) -o $@ stock_hook.c
 
-$(TARGET_DBG): isp_dump.c $(SHIM)
+$(TARGET_DBG): isp_dump.c isp_blocks.c $(SHIM)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET_TOOL): flash_tool.c arm_atomics.S $(SHIM)
