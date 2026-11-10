@@ -70,6 +70,7 @@ SRCS    = main.c \
           g711.c \
           audio_jitter.c \
           control.c \
+          ctl_gate.c \
           version.c \
           $(wildcard ../smolrtsp/src/*.c) \
           $(wildcard ../smolrtsp/src/types/*.c) \

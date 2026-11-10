@@ -2,10 +2,14 @@
 
 /* TCP tuning/debug control server (port 8091).
  *
- * Text protocol (newline-delimited), one client at a time:
+ * Text protocol (newline-delimited), up to 4 clients at once (a 5th gets "ERR busy"):
  *   LIST                  -> one "name=value" line per known param, then "."
  *   GET <param>           -> "<param>=<value>" or "ERR ..."
  *   SET <param> <value>   -> "OK <param>=<value>" or "ERR ..."
+ *   DEBUG on [min]|off|status  (loopback only) -> remote writes allowed for min minutes
+ * Read-only by default: SET (and SAVE/RESET) from a non-loopback peer answer
+ * "ERR read-only mode, see akam_debug.sh" unless DEBUG is on (RAM-only flag, off at start,
+ * auto-off after 60 min by default). Loopback peers always may write.
  * Async log lines (tee'd from stdout) are pushed on the same connection
  * prefixed "LOG " whenever they occur, interleaved with command responses —
  * a client tells them apart by the "LOG " prefix, not by strict

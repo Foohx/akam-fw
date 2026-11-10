@@ -22,6 +22,7 @@
 #endif
 #include "night.h"
 #include "control.h"
+#include "ctl_gate.h"
 #include "vi.h"
 #include "venc.h"
 #include "audio.h"
@@ -204,6 +205,9 @@ static void close_devices(void)
 
 int main(int argc, char **argv)
 {
+    if (argc >= 3 && strcmp(argv[1], "ctl") == 0)
+        return ctl_client_run(8091, argc - 2, argv + 2, stdout);
+
     /* Very first thing: tees stdout so the TCP tuning server's debug log
      * view gets the FULL boot log (ISP/VI/VENC init, not just ae/night's
      * own printf calls). See control.c for why this is a stdout tee rather
