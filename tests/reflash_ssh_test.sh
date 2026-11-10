@@ -155,7 +155,7 @@ EOF
 chmod +x "$CAM/usr/bin/dropbear"
 cat >"$WORK/flash_tool" <<EOF
 #!/bin/sh
-# fake flash_tool IMAGE DEV; behaviour from $CAM/tool_mode (ok|corrupt|failonce|slow)
+# fake flash_tool IMAGE DEV; behaviour from $CAM/tool_mode (ok|corrupt|failonce|slow: stalls mid-bar)
 img=\$1; dev=\$2
 mode=\$(cat "$CAM/tool_mode" 2>/dev/null)
 echo "SSH env: [\${SSH_CONNECTION:-}\${SSH_CLIENT:-}\${SSH_TTY:-}]" >>"$CAM/tool_info"
@@ -164,16 +164,19 @@ st=\${st##*) }
 set -- \$st
 echo "parent=\$PPID parent_sid=\$4 argv=\$*" >>"$CAM/tool_info"
 echo "stdin=\$(readlink /proc/\$\$/fd/0)" >>"$CAM/tool_info"
-case "\$mode" in
-    slow) sleep 3 ;;
-esac
 if [ "\$mode" = failonce ] && [ ! -e "$CAM/failed_once" ]; then
     : >"$CAM/failed_once"
     echo "fake flash_tool: simulated failure"
     exit 1
 fi
 i=0
-while [ \$i -le 100 ]; do printf '\\rWriting: [====>      ] %3d%% (%d/100)' \$i \$i; i=\$((i + 1)); done
+while [ \$i -le 100 ]; do
+    printf '\\rWriting: [====>      ] %3d%% (%d/100)' \$i \$i
+    # slow: stall in the middle of the progress line (it has no newline yet), so the host poll
+    # sees a partial line: the rest of the bar must still be relayed afterwards.
+    if [ "\$mode" = slow ] && [ \$i -eq 50 ]; then sleep 3; fi
+    i=\$((i + 1))
+done
 printf '\\n'
 cat "\$img" >"\$dev"
 if [ "\$mode" = corrupt ]; then printf 'XXXXXXXX' | dd of="\$dev" bs=1 seek=100 conv=notrunc 2>/dev/null; fi
@@ -403,7 +406,7 @@ cmd="\$*"
 echo "\$port: \$cmd" >>"$WORK/ssh.log"
 if [ "\$port" = 2222 ] && [ -e "$WORK/no_second" ]; then exit 255; fi
 case "\$cmd" in
-    *"tail -n +"*)
+    *"tail -c +"*)
         n=\$(cat "$WORK/polls" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n >"$WORK/polls"
         if [ -e "$WORK/flaky" ] && [ \$n -le 2 ]; then exit 255; fi ;;
     *" verify "*)
@@ -474,7 +477,7 @@ up_ssh=$(grep -c '^22: .*cat >' "$WORK/ssh.log")
 [ "$up_ssh" -ge 4 ] && ok "host: uploads go through port 22 ($up_ssh)" || ko "host: uploads through port 22 ($up_ssh)"
 grep -q '^2222: .* start --md5' "$WORK/ssh.log" && ok "host: start is issued on port 2222" || ko "host: start is issued on port 2222"
 grep -q '^22: .* start --md5' "$WORK/ssh.log" && ko "host: start must not use port 22" || ok "host: start does not use port 22"
-grep -q '^2222: .*tail -n' "$WORK/ssh.log" && ok "host: log polled on port 2222" || ko "host: log polled on port 2222"
+grep -q '^2222: .*tail -[nc]' "$WORK/ssh.log" && ok "host: log polled on port 2222" || ko "host: log polled on port 2222"
 grep -Eq 'reboot|poweroff|halt|shutdown' "$WORK/ssh.log" && ko "host: never reboots the camera" || ok "host: never reboots the camera"
 has "host: flash ran detached from RAM tools" "argv=" "$CAM/tool_info"
 # --- C5. flaky polling is tolerated ----------------------------------------------------------

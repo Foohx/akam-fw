@@ -61,6 +61,9 @@ static int f_ioctl(void *u, int fd, unsigned long req, void *arg)
     if (req == AKPCM_IOC_PREPARE) {
         memcpy(&F.pars, arg, sizeof(F.pars));
         F.have_pars = 1;
+    } else if (req == AKPCM_IOC_GET_RATE) {
+        *(int32_t *)arg = 8000;
+        a = 8000;
     } else if (arg) {
         a = *(int32_t *)arg;
     }
@@ -124,11 +127,27 @@ static int idx_of(unsigned long req)
 }
 static int file_exists(const char *p) { struct stat st; return stat(p, &st) == 0; }
 
-/* One 32 ms step on the fake clock. */
+/* One 64 ms step (one 512-frame period) on the fake clock. */
 static int step(audio_out_t *ao)
 {
-    F.clock_us += 32000;
+    F.clock_us += 64000;
     return ao_step(ao);
+}
+
+/* Open, then step until the auto-mode amp has idled off (it starts on like
+ * the stock sequence and turns off AO_AMP_HOLD_MS after open). */
+static int open_quiet(audio_out_t *ao)
+{
+    int rc = ao_open(ao);
+    for (int i = 0; rc == 0 && ao_amp_is_on(ao) && i < 100; i++) step(ao);
+    return rc;
+}
+
+/* Index of the last event matching req and arg, or -1. */
+static int last_idx(unsigned long req, int arg)
+{
+    for (int i = F.n - 1; i >= 0; i--) if (F.req[i] == req && F.arg[i] == arg) return i;
+    return -1;
 }
 
 static int period_is_zero(int i)
@@ -136,8 +155,7 @@ static int period_is_zero(int i)
     for (int k = 0; k < AO_PERIOD_BYTES; k++) if (F.w[i][k]) return 0;
     return 1;
 }
-static int16_t wl(int p, int frame) { int16_t s; memcpy(&s, &F.w[p][frame * 4], 2); return s; }
-static int16_t wr(int p, int frame) { int16_t s; memcpy(&s, &F.w[p][frame * 4 + 2], 2); return s; }
+static int16_t wl(int p, int frame) { int16_t s; memcpy(&s, &F.w[p][frame * 2], 2); return s; }
 
 /* Whatever happened, RESUME must never precede a successful PREPARE. */
 static int resume_rule_ok(void)
@@ -150,37 +168,53 @@ static int resume_rule_ok(void)
 
 static void test_constants(void)
 {
-    printf("# ioctl aliases\n");
+    printf("# ioctl aliases (numbers from the stock capture)\n");
     CHECK(AKPCM_IOC_PREPARE == 0x401c50e0u && AKPCM_IOC_PREPARE == AKPCM_IOC_GET_PARS, "PREPARE = 0xE0 (old GET_PARS)");
     CHECK(AKPCM_IOC_RESUME == 0x50e1 && AKPCM_IOC_RESUME == AKPCM_IOC_SET_MODE, "RESUME = 0xE1 (old SET_MODE)");
-    CHECK(AKPCM_IOC_SET_SOURCES == AKPCM_IOC_SET_STATE && (AKPCM_IOC_SET_SOURCES & 0xff00) == 0x5000
-          && (AKPCM_IOC_SET_SOURCES & 0xff) == 0x10, "SET_SOURCES = 0x10 (old SET_STATE)");
-    CHECK(AKPCM_IOC_SET_GAIN == AKPCM_IOC_SET_PERIODS && (AKPCM_IOC_SET_GAIN & 0xff) == 0x30, "SET_GAIN = 0x30 (old SET_PERIODS)");
-    CHECK(AKPCM_IOC_SET_SPEAKER == 0x80045081u, "SET_SPEAKER is the _IOW form 0x80045081");
-    CHECK(AKPCM_IOC_GET_CAPS == 0x40045081u, "old GET_CAPS kept");
+    CHECK(AKPCM_IOC_SET_SOURCES == 0x40045010u && AKPCM_IOC_GET_SOURCES == 0x80045010u, "SOURCES: SET 0x40045010, GET 0x80045010");
+    CHECK(AKPCM_IOC_SET_GAIN == 0x40045030u && AKPCM_IOC_GET_GAIN == 0x80045030u, "GAIN: SET 0x40045030, GET 0x80045030");
+    CHECK(AKPCM_IOC_SET_SPEAKER == 0x40045081u, "SET_SPEAKER is 0x40045081 (0x80045081 is EINVAL on the hardware)");
+    CHECK(AKPCM_IOC_GET_RATE == 0x800450eau, "GET_RATE 0x800450ea");
+    CHECK(AKPCM_IOC_SET_SOURCES != AKPCM_IOC_SET_STATE && AKPCM_IOC_SET_STATE == 0x80045010u, "old capture-side SET_STATE number untouched");
+    CHECK(AKPCM_IOC_SET_PERIODS == 0x80045030u && AKPCM_IOC_GET_CAPS == 0x40045081u, "old capture-side names kept");
+    CHECK(AO_CHANNELS == 1 && AO_PERIOD_BYTES == 1024 && AO_FRAMES == 512 && AO_DRV_PERIODS == 16, "mono, 1024-byte periods, 16 driver periods");
 }
 
 static void test_sequence(void)
 {
-    printf("# device sequence\n");
+    printf("# device sequence (stock order)\n");
     audio_out_t *ao = calloc(1, sizeof(*ao));
     new_case(ao);
     CHECK(ao_open(ao) == 0, "open succeeds");
     CHECK(file_exists(ao->guard_path), "guard marker written before the device sequence");
     CHECK(ao->state == AO_IDLE, "state idle");
-    int i_open = idx_of(EV_OPEN), i_spk = idx_of(AKPCM_IOC_SET_SPEAKER), i_gain = idx_of(AKPCM_IOC_SET_GAIN),
-        i_prep = idx_of(AKPCM_IOC_PREPARE), i_src = idx_of(AKPCM_IOC_SET_SOURCES), i_res = idx_of(AKPCM_IOC_RESUME);
-    CHECK(i_open == 0 && i_spk == 1 && i_gain == 2 && i_prep == 3 && i_src == 4 && i_res == 5 && F.n == 6,
-          "order: open, SET_SPEAKER, SET_GAIN, PREPARE, SET_SOURCES, RESUME (nothing else)");
-    CHECK(F.arg[i_spk] == 0, "amp starts off in auto mode");
-    CHECK(F.arg[i_gain] == 3 && F.arg[i_src] == 6, "default gain 3, source 6");
-    CHECK(F.have_pars && F.pars.format == 0 && F.pars.rate == 8000 && F.pars.channels == 2 && F.pars.bits == 16
-          && F.pars.period_size == 1024 && F.pars.period_count == 8, "PREPARE: 8 kHz stereo 16-bit 1024 x 8");
+    int i_open = idx_of(EV_OPEN), i_src = idx_of(AKPCM_IOC_SET_SOURCES), i_spk = idx_of(AKPCM_IOC_SET_SPEAKER),
+        i_prep = idx_of(AKPCM_IOC_PREPARE), i_res = idx_of(AKPCM_IOC_RESUME), i_rate = idx_of(AKPCM_IOC_GET_RATE),
+        i_gain = idx_of(AKPCM_IOC_SET_GAIN);
+    CHECK(i_open == 0 && i_src == 1 && i_spk == 2 && i_prep == 3 && i_res == 4 && i_rate == 5 && i_gain == 6 && F.n == 7,
+          "order: open, SET_SOURCES, SET_SPEAKER, PREPARE, RESUME, GET_RATE, SET_GAIN (nothing else)");
+    CHECK(F.arg[i_src] == 4 && F.arg[i_spk] == 1 && F.arg[i_gain] == 2, "default source 4, speaker 1, gain 2");
+    CHECK(F.have_pars && F.pars.format == 0 && F.pars.rate == 8000 && F.pars.channels == 1 && F.pars.bits == 16
+          && F.pars.period_size == 1024 && F.pars.period_count == 16, "PREPARE: 8 kHz mono 16-bit 1024 x 16");
     CHECK(resume_rule_ok(), "RESUME after PREPARE");
+    CHECK(ao_amp_is_on(ao), "auto: amp on after open, like stock");
 
     ao_close(ao);
     CHECK(!file_exists(ao->guard_path), "clean close removes the guard");
     CHECK(F.req[F.n - 1] == EV_CLOSE, "device closed");
+    int i_off = last_idx(AKPCM_IOC_SET_SPEAKER, 0), i_mute = last_idx(AKPCM_IOC_SET_SOURCES, 0);
+    CHECK(i_off > 0 && i_mute > i_off && i_mute < F.n - 1, "close: SET_SPEAKER 0, SET_SOURCES 0, then close");
+    free(ao);
+
+    /* amp=off opens with the route and speaker off */
+    ao = calloc(1, sizeof(*ao));
+    new_case(ao);
+    ao_set_amp_mode(ao, AO_AMP_OFF);
+    CHECK(ao_open(ao) == 0 && !ao_amp_is_on(ao), "amp off: open succeeds, amp off");
+    CHECK(F.arg[idx_of(AKPCM_IOC_SET_SOURCES)] == 0 && F.arg[idx_of(AKPCM_IOC_SET_SPEAKER)] == 0
+          && count_req(AKPCM_IOC_SET_GAIN) == 0, "amp off: route 0, speaker 0, no gain call");
+    ao_close(ao);
+    CHECK(count_req(AKPCM_IOC_SET_SPEAKER) == 1, "amp off: nothing to switch off at close");
     free(ao);
 }
 
@@ -192,13 +226,15 @@ static void test_failures(void)
     new_case(ao); F.fail_req = AKPCM_IOC_PREPARE;
     CHECK(ao_open(ao) == -1, "PREPARE failure: open fails");
     CHECK(count_req(AKPCM_IOC_RESUME) == 0, "RESUME never issued after a failed PREPARE");
-    CHECK(count_req(AKPCM_IOC_SET_SOURCES) == 0, "SET_SOURCES not issued either");
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 1 && count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 1,
+          "route and speaker switched off again on the failure path");
     CHECK(F.req[F.n - 1] == EV_CLOSE && ao->fd < 0, "fd closed");
     CHECK(ao->state == AO_ERROR, "state error");
     CHECK(!file_exists(ao->guard_path), "graceful failure removes the guard (not a crash)");
 
     new_case(ao); F.fail_req = AKPCM_IOC_SET_SOURCES;
-    CHECK(ao_open(ao) == -1 && count_req(AKPCM_IOC_RESUME) == 0, "SET_SOURCES failure: no RESUME");
+    CHECK(ao_open(ao) == -1 && count_req(AKPCM_IOC_PREPARE) == 0 && count_req(AKPCM_IOC_RESUME) == 0,
+          "SET_SOURCES failure: no PREPARE, no RESUME");
 
     new_case(ao); F.fail_req = AKPCM_IOC_RESUME;
     CHECK(ao_open(ao) == -1 && ao->fd < 0, "RESUME failure: open fails, fd closed");
@@ -219,6 +255,7 @@ static void test_failures(void)
     ao_open(ao);
     CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 1 && F.arg[idx_of(AKPCM_IOC_SET_SPEAKER)] == 1,
           "amp on at open, switched off on the failure path");
+    CHECK(count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 1, "and the route muted");
     CHECK(resume_rule_ok(), "rule holds in every failure case");
     free(ao);
 }
@@ -237,9 +274,9 @@ static void test_guard(void)
 
     new_case(ao);
     CHECK(ao_open(ao) == 0, "no marker: open");
-    for (int i = 0; i < 100; i++) step(ao);   /* 3.2 s */
+    for (int i = 0; i < 60; i++) step(ao);    /* 3.8 s */
     CHECK(file_exists(ao->guard_path), "marker kept before 5 s of clean playback");
-    for (int i = 0; i < 70; i++) step(ao);    /* 5.4 s */
+    for (int i = 0; i < 30; i++) step(ao);    /* 5.8 s */
     CHECK(!file_exists(ao->guard_path), "marker removed after 5 s of clean playback");
     ao_close(ao);
 
@@ -271,11 +308,15 @@ static void test_silence_and_beep(void)
     new_case(ao);
     ao_open(ao);
     ao_set_volume(ao, 100);
-    int n0 = F.n;
+    CHECK(ao_amp_is_on(ao), "amp on at open (stock sequence)");
+    for (int i = 0; i < 100 && ao_amp_is_on(ao); i++) step(ao);
+    CHECK(!ao_amp_is_on(ao) && ao->state == AO_IDLE, "idle for 2 s: amp off");
+    int i_spk0 = last_idx(AKPCM_IOC_SET_SPEAKER, 0), i_src0 = last_idx(AKPCM_IOC_SET_SOURCES, 0);
+    CHECK(i_spk0 > 0 && i_src0 > i_spk0, "amp off: SET_SPEAKER 0 then SET_SOURCES 0");
+    int n0 = F.n, nw0 = F.nw;
     for (int i = 0; i < 5; i++) CHECK(step(ao) == 0, "idle step ok");
-    CHECK(F.nw == 5 && period_is_zero(0) && period_is_zero(4), "idle: 1024-byte periods of silence");
+    CHECK(F.nw - nw0 == 5 && period_is_zero(nw0) && period_is_zero(nw0 + 4), "idle: 1024-byte periods of silence");
     CHECK(F.n - n0 == 5, "idle: nothing but writes (amp stays off)");
-    CHECK(ao->state == AO_IDLE && !ao_amp_is_on(ao), "idle, amp off");
 
     ao_set_gain(ao, 3);
     ao_play_test(ao);
@@ -283,27 +324,27 @@ static void test_silence_and_beep(void)
     int w0 = F.nw;
     int steps = 0;
     while (ao_test_active(ao) && steps < 100) { step(ao); steps++; }
-    CHECK(steps == 32, "beep lasts 32 periods (1 s)");
+    CHECK(steps == 16, "beep lasts 16 periods (1 s)");
     CHECK(ao_amp_is_on(ao), "amp turned on for the session");
-    int i_on = -1;
-    for (int i = n0; i < F.n; i++) if (F.req[i] == AKPCM_IOC_SET_SPEAKER && F.arg[i] == 1) { i_on = i; break; }
-    CHECK(i_on >= 0, "SET_SPEAKER 1 issued");
-    CHECK(period_is_zero(w0) && period_is_zero(w0 + 1), "two preload periods of silence (64 ms) after the amp turns on");
-    CHECK(F.nw - w0 == 2 + 32, "2 preload + 32 beep periods written");
+    int i_on = last_idx(AKPCM_IOC_SET_SPEAKER, 1);
+    CHECK(i_on > n0, "SET_SPEAKER 1 issued");
+    CHECK(F.req[i_on - 1] == AKPCM_IOC_SET_SOURCES && F.arg[i_on - 1] == 4
+          && F.req[i_on + 1] == AKPCM_IOC_SET_GAIN && F.arg[i_on + 1] == 3 && F.req[i_on + 2] == EV_WRITE,
+          "turn-on order: SET_SOURCES 4, SET_SPEAKER 1, SET_GAIN, then audio");
+    CHECK(period_is_zero(w0), "one preload period of silence (64 ms) after the amp turns on");
+    CHECK(F.nw - w0 == 1 + 16, "1 preload + 16 beep periods written");
 
-    /* content of the beep periods: L == R == ao_beep_sample(idx) at volume 100 */
-    int ok_lr = 1, ok_val = 1, peak = 0;
-    for (int p = 0; p < 32; p++)
+    /* content of the beep periods: mono, equal to ao_beep_sample(idx) at volume 100 */
+    int ok_val = 1, peak = 0;
+    for (int p = 0; p < 16; p++)
         for (int fr = 0; fr < AO_FRAMES; fr++) {
             int idx = p * AO_FRAMES + fr;
-            int16_t l = wl(w0 + 2 + p, fr), r = wr(w0 + 2 + p, fr);
-            if (l != r) ok_lr = 0;
+            int16_t l = wl(w0 + 1 + p, fr);
             if (l != ao_beep_sample((unsigned)idx)) ok_val = 0;
             if (abs(l) > peak) peak = abs(l);
         }
-    CHECK(ok_lr, "stereo: L = R");
-    CHECK(ok_val, "written samples equal the synthesized beep at volume 100");
-    CHECK(peak == 8231, "peak amplitude -12 dBFS (8231)");
+    CHECK(ok_val, "written samples equal the synthesized beep at volume 100 (mono, 512 frames per period)");
+    CHECK(peak == 5194, "peak amplitude -16 dBFS (5194)");
     CHECK(ao->state == AO_IDLE || ao->state == AO_TEST, "state returns to idle after the beep");
 
     /* beep structure */
@@ -317,10 +358,10 @@ static void test_silence_and_beep(void)
     CHECK(tone_nonzero[0] > 1000 && tone_nonzero[1] > 1000 && tone_nonzero[2] > 1000, "three 200 ms tones");
     CHECK(ao_beep_sample(0) == 0 && ao_beep_sample(1599) == 0 && ao_beep_sample(3200) == 0 && ao_beep_sample(7999) == 0,
           "tones start and end at zero (10 ms ramps)");
-    CHECK(abs(ao_beep_sample(42)) < 8231 && abs(ao_beep_sample(42)) > 0, "ramp: 10 ms fade-in");
+    CHECK(abs(ao_beep_sample(42)) < 5194 && abs(ao_beep_sample(42)) > 0, "ramp: 10 ms fade-in");
     int pk = 0;
     for (unsigned i = 800; i < 900; i++) if (abs(ao_beep_sample(i)) > pk) pk = abs(ao_beep_sample(i));
-    CHECK(pk == 8231, "plateau reaches 8231");
+    CHECK(pk == 5194, "plateau reaches 5194");
     CHECK(ao_beep_sample(AO_BEEP_SAMPLES) == 0 && ao_beep_sample(100000) == 0, "outside the buffer: 0");
     /* 1 kHz: period of 8 samples */
     CHECK(ao_beep_sample(808) == ao_beep_sample(800) && ao_beep_sample(813) == ao_beep_sample(805), "1 kHz at 8 kHz");
@@ -333,8 +374,10 @@ static void test_amp_policy(void)
     printf("# amp policy\n");
     audio_out_t *ao = calloc(1, sizeof(*ao));
     new_case(ao);
-    ao_open(ao);
+    open_quiet(ao);
     ao_set_volume(ao, 100);
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 1 && count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 1
+          && count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 1, "after open: on once (stock), off once (idle)");
     ao_play_test(ao);
     while (ao_test_active(ao)) step(ao);
     int64_t end_ms = F.clock_us / 1000;            /* last beep period finished */
@@ -346,62 +389,96 @@ static void test_amp_policy(void)
     int64_t off_ms = F.clock_us / 1000 - end_ms;
     CHECK(off_at >= 0, "amp goes off after the session");
     CHECK(off_ms >= 1900 && off_ms <= 2100, "amp off about 2 s after the last audible period");
-    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 1 && count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 2, "one on, one off (+ the initial 0)");
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 2 && count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 2
+          && count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 2, "session: speaker on/off and route on/off once each");
+    int i_off = last_idx(AKPCM_IOC_SET_SPEAKER, 0), i_mute = last_idx(AKPCM_IOC_SET_SOURCES, 0);
+    CHECK(i_mute == i_off + 1, "off: SET_SPEAKER 0 then SET_SOURCES 0");
 
-    /* second session within the hold window: no toggling */
+    /* a SET_SPEAKER(0) that the driver refuses is not retried every period */
     new_case(ao);
-    ao_open(ao);
+    open_quiet(ao);
+    F.fail_req = AKPCM_IOC_SET_SPEAKER;
     ao_set_volume(ao, 100);
     ao_play_test(ao);
     while (ao_test_active(ao)) step(ao);
-    for (int i = 0; i < 30; i++) step(ao);         /* ~1 s of idle */
+    for (int i = 0; i < 60; i++) step(ao);
+    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 2 && ao->spk_off_warned,
+          "SET_SPEAKER(0) failure: amp state still off, one attempt per off transition");
+    for (int i = 0; i < 40; i++) step(ao);
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 2, "no retry while idle");
+    ao_close(ao);
+
+    /* second session within the hold window: no toggling */
+    new_case(ao);
+    open_quiet(ao);
+    ao_set_volume(ao, 100);
     ao_play_test(ao);
     while (ao_test_active(ao)) step(ao);
-    for (int i = 0; i < 20; i++) step(ao);
+    for (int i = 0; i < 10; i++) step(ao);         /* ~0.6 s of idle */
+    ao_play_test(ao);
+    while (ao_test_active(ao)) step(ao);
+    for (int i = 0; i < 10; i++) step(ao);
     CHECK(ao_amp_is_on(ao), "still on within the 2 s hold");
-    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 1, "second session within 2 s does not toggle the amp");
-    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 1, "(only the initial off so far)");
-    for (int i = 0; i < 70; i++) step(ao);
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 2, "second session within 2 s does not toggle the amp");
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 1, "(only the idle-after-open off so far)");
+    for (int i = 0; i < 40; i++) step(ao);
     CHECK(!ao_amp_is_on(ao), "off once the hold expires");
 
     /* modes */
     new_case(ao);
     ao_set_amp_mode(ao, AO_AMP_ON);
     ao_open(ao);
-    CHECK(ao_amp_is_on(ao) && F.arg[idx_of(AKPCM_IOC_SET_SPEAKER)] == 1, "amp on mode: on from the start");
+    CHECK(ao_amp_is_on(ao) && F.arg[idx_of(AKPCM_IOC_SET_SPEAKER)] == 1 && F.arg[idx_of(AKPCM_IOC_SET_SOURCES)] == 4,
+          "amp on mode: route and speaker on from the start");
     for (int i = 0; i < 100; i++) step(ao);
-    CHECK(ao_amp_is_on(ao), "amp on mode: stays on while idle");
+    CHECK(ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 0 && count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 0,
+          "amp on mode: stays on while idle (route never muted)");
     ao_set_amp_mode(ao, AO_AMP_OFF);
     step(ao);
-    CHECK(!ao_amp_is_on(ao), "switch to off at runtime");
+    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 1 && count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 1,
+          "switch to off at runtime: speaker and route off");
     ao_set_volume(ao, 100);
     ao_play_test(ao);
     int on_before = count_req_arg(AKPCM_IOC_SET_SPEAKER, 1);
+    int src_before = count_req_arg(AKPCM_IOC_SET_SOURCES, 4);
     while (ao_test_active(ao)) step(ao);
-    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == on_before, "amp off mode: never on, even during a beep");
+    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == on_before
+          && count_req_arg(AKPCM_IOC_SET_SOURCES, 4) == src_before, "amp off mode: never on, even during a beep");
     ao_set_amp_mode(ao, AO_AMP_AUTO);
     step(ao);
     CHECK(!ao_amp_is_on(ao), "auto: off at rest");
     ao_close(ao);
 
+    /* amp=off from the start */
+    new_case(ao);
+    ao_set_amp_mode(ao, AO_AMP_OFF);
+    ao_open(ao);
+    ao_set_volume(ao, 100);
+    ao_play_test(ao);
+    while (ao_test_active(ao)) step(ao);
+    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 0 && count_req_arg(AKPCM_IOC_SET_SOURCES, 4) == 0
+          && count_req(AKPCM_IOC_SET_GAIN) == 0, "amp off from open: never on, no gain call");
+    ao_close(ao);
+
     /* volume 0 keeps the amp off */
     new_case(ao);
-    ao_open(ao);
+    open_quiet(ao);
     ao_set_volume(ao, 0);
     step(ao); /* let the 10 ms smoothing reach 0 */
     ao_play_test(ao);
     while (ao_test_active(ao)) step(ao);
-    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 0, "volume 0: amp stays off");
+    CHECK(!ao_amp_is_on(ao) && count_req_arg(AKPCM_IOC_SET_SPEAKER, 1) == 1, "volume 0: amp stays off (only the open-time on)");
     int allzero = 1;
     for (int i = 0; i < F.nw; i++) if (!period_is_zero(i)) allzero = 0;
     CHECK(allzero, "volume 0: exact silence");
 
     /* amp off on every exit path */
     new_case(ao);
-    ao_open(ao); ao_set_volume(ao, 100); ao_play_test(ao); step(ao);
+    open_quiet(ao); ao_set_volume(ao, 100); ao_play_test(ao); step(ao);
     CHECK(ao_amp_is_on(ao), "amp on during a session");
     ao_close(ao);
-    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 2 && !ao_amp_is_on(ao), "close: SET_SPEAKER 0");
+    CHECK(count_req_arg(AKPCM_IOC_SET_SPEAKER, 0) == 2 && count_req_arg(AKPCM_IOC_SET_SOURCES, 0) == 2 && !ao_amp_is_on(ao),
+          "close: SET_SPEAKER 0 and SET_SOURCES 0");
 
     new_case(ao);
     ao_open(ao); ao_set_volume(ao, 100); ao_play_test(ao); step(ao);
@@ -467,9 +544,9 @@ static void test_volume_and_push(void)
 
     audio_out_t *ao = calloc(1, sizeof(*ao));
     new_case(ao);
-    ao_open(ao);
+    open_quiet(ao);
     int16_t in[AO_FRAMES];
-    for (int i = 0; i < AO_FRAMES; i++) in[i] = (int16_t)(i * 100 - 12800);
+    for (int i = 0; i < AO_FRAMES; i++) in[i] = (int16_t)(i * 100 - 25600);
     in[0] = -32768; in[1] = 32767;
 
     ao_set_volume(ao, 100);
@@ -478,13 +555,13 @@ static void test_volume_and_push(void)
     step(ao);
     CHECK(ao->state == AO_IDLE && !ao_amp_is_on(ao), "below the pre-fill nothing is played: idle, amp off");
     ao_close(ao);
-    new_case(ao); ao_open(ao); ao_set_volume(ao, 100);
+    new_case(ao); open_quiet(ao); ao_set_volume(ao, 100);
     step(ao); /* settle the smoothing at unity */
     push_ready(ao, in, AO_FRAMES);
     step(ao);
     int same = 1;
-    for (int i = 0; i < AO_FRAMES; i++) if (wl(F.nw - 1, i) != in[i] || wr(F.nw - 1, i) != in[i]) same = 0;
-    CHECK(same, "volume 100: exact identity, L = R, no 16-bit overflow");
+    for (int i = 0; i < AO_FRAMES; i++) if (wl(F.nw - 1, i) != in[i]) same = 0;
+    CHECK(same, "volume 100: exact identity, no 16-bit overflow");
     CHECK(ao->state == AO_TALKING, "pushed audio: state talking");
     CHECK(ao_amp_is_on(ao), "pushed audio turns the amp on");
 
@@ -521,7 +598,7 @@ static void test_volume_and_push(void)
     }
     CHECK(wl(F.nw - 1, 0) > 9000, "ramp starts near the old level");
     CHECK(decreasing && maxjump < 200, "volume change is smoothed (no step)");
-    CHECK(wl(F.nw - 1, 100) == 0 && wl(F.nw - 1, 255) == 0, "reaches 0 within about 10 ms");
+    CHECK(wl(F.nw - 1, 100) == 0 && wl(F.nw - 1, AO_FRAMES - 1) == 0, "reaches 0 within about 10 ms");
 
     /* jitter buffer behind the push API */
     new_case(ao); ao_open(ao);
@@ -530,13 +607,13 @@ static void test_volume_and_push(void)
           "push never blocks and never reports a short count");
     CHECK(ao_queued(ao) <= JITTER_MAX_SAMPLES, "overrun: the queue stays within the 400 ms cap");
     for (int i = 0; i < 16; i++) step(ao);
-    CHECK(ao_queued(ao) == 0, "queue drained 256 samples per period");
+    CHECK(ao_queued(ao) == 0, "queue drained 512 samples per period");
 
     new_case(ao); ao_open(ao); ao_set_volume(ao, 100);
     int16_t part[JITTER_PREFILL_SAMPLES + 100];
     for (int i = 0; i < JITTER_PREFILL_SAMPLES + 100; i++) part[i] = 1000;
     ao_push(ao, part, JITTER_PREFILL_SAMPLES + 100);
-    for (int i = 0; i < 4; i++) step(ao);
+    for (int i = 0; i < 2; i++) step(ao); /* 2 x 512 of the 1060 samples */
     step(ao);
     CHECK(wl(F.nw - 1, 35) == 1000 && wl(F.nw - 1, 36) == 0, "partial data then zero padding (underrun = silence)");
     CHECK(audio_jitter_underruns(&ao->jit) == 1, "the underrun is counted");
@@ -561,16 +638,33 @@ static void test_live_settings(void)
     step(ao);
     CHECK(F.n - n0 == 1, "no spurious ioctl when nothing changed");
     ao_set_gain(ao, 5);
-    ao_set_source(ao, 4);
+    ao_set_source(ao, 6);
     step(ao);
     CHECK(count_req_arg(AKPCM_IOC_SET_GAIN, 5) == 1, "gain applied by the playback thread");
-    CHECK(count_req_arg(AKPCM_IOC_SET_SOURCES, 4) == 1, "source applied by the playback thread");
+    CHECK(count_req_arg(AKPCM_IOC_SET_SOURCES, 6) == 1, "source applied by the playback thread");
     step(ao);
     CHECK(count_req_arg(AKPCM_IOC_SET_GAIN, 5) == 1, "applied once");
     ao_set_source(ao, 5);
-    CHECK(ao->source == 4, "invalid source ignored");
+    CHECK(ao->source == 6, "invalid source ignored");
+    ao_set_source(ao, 0);
+    CHECK(ao->source == 6, "source 0 (route off) is not a configurable value");
     ao_set_gain(ao, 99);
     CHECK(ao->gain == 5, "gain clamped");
+    ao_close(ao);
+
+    /* amp off: the route stays muted, new values are applied at the next turn-on */
+    new_case(ao);
+    open_quiet(ao);
+    ao_set_volume(ao, 100);
+    ao_set_gain(ao, 1);
+    ao_set_source(ao, 6);
+    step(ao);
+    CHECK(count_req_arg(AKPCM_IOC_SET_GAIN, 1) == 0 && count_req_arg(AKPCM_IOC_SET_SOURCES, 6) == 0,
+          "amp off: gain and source changes do not unmute the route");
+    ao_play_test(ao);
+    step(ao);
+    CHECK(count_req_arg(AKPCM_IOC_SET_SOURCES, 6) == 1 && count_req_arg(AKPCM_IOC_SET_GAIN, 1) == 1,
+          "applied when the amp turns on");
     ao_close(ao);
     free(ao);
 }
@@ -580,15 +674,15 @@ static void test_config(void)
     printf("# config file\n");
     audio_out_t *ao = calloc(1, sizeof(*ao));
     new_case(ao);
-    CHECK(ao_load_config(ao) == 0 && ao->enabled == 1 && ao->volume == 50 && ao->gain == 3 && ao->source == 6
-          && ao->amp_mode == AO_AMP_AUTO, "no file: defaults, audio out enabled");
+    CHECK(ao_load_config(ao) == 0 && ao->enabled == 1 && ao->volume == 50 && ao->gain == 2 && ao->source == 4
+          && ao->amp_mode == AO_AMP_AUTO, "no file: defaults (gain 2, source 4), audio out enabled");
 
     mkdir(ao->conf_dir, 0700);
     FILE *f = fopen(ao->conf_path, "w");
-    fputs("enable=0\nvolume=20\r\ngain=9\nsource=4\nchime=1\njunk\nvolume=abc\n", f);
+    fputs("enable=0\nvolume=20\r\ngain=9\nsource=6\nchime=1\njunk\nvolume=abc\n", f);
     fclose(f);
     CHECK(ao_load_config(ao) == 1, "file read");
-    CHECK(ao->enabled == 0 && ao->volume == 20 && ao->gain == 3 && ao->source == 4, "valid keys applied, bad ones ignored");
+    CHECK(ao->enabled == 0 && ao->volume == 20 && ao->gain == 2 && ao->source == 6, "valid keys applied, bad ones ignored");
 
     ao->enabled = 1; ao->volume = 77;
     CHECK(ao_save_config(ao) == 0, "save");
@@ -640,8 +734,8 @@ static void test_ctl(void)
     ao_ctl_get(ao, "audio.out_enable", out, sizeof(out));
     CHECK(!strcmp(out, "audio.out_enable=1"), "enable default 1");
     ao_ctl_get(ao, "audio.out_volume", out, sizeof(out)); CHECK(!strcmp(out, "audio.out_volume=50"), "volume default 50");
-    ao_ctl_get(ao, "audio.out_gain", out, sizeof(out));   CHECK(!strcmp(out, "audio.out_gain=3"), "gain default 3");
-    ao_ctl_get(ao, "audio.out_source", out, sizeof(out)); CHECK(!strcmp(out, "audio.out_source=6"), "source default 6");
+    ao_ctl_get(ao, "audio.out_gain", out, sizeof(out));   CHECK(!strcmp(out, "audio.out_gain=2"), "gain default 2");
+    ao_ctl_get(ao, "audio.out_source", out, sizeof(out)); CHECK(!strcmp(out, "audio.out_source=4"), "source default 4");
     ao_ctl_get(ao, "audio.out_amp", out, sizeof(out));    CHECK(!strcmp(out, "audio.out_amp=auto"), "amp default auto");
     ao_ctl_get(ao, "audio.out_test", out, sizeof(out));   CHECK(!strcmp(out, "audio.out_test=0"), "test default 0");
     ao_ctl_get(ao, "audio.out_state", out, sizeof(out));  CHECK(!strcmp(out, "audio.out_state=off"), "state off before open");
@@ -653,21 +747,24 @@ static void test_ctl(void)
     CHECK(ao_ctl_set(ao, "audio.out_volume", "5x", out, sizeof(out)) == 1, "volume garbage refused");
     CHECK(ao_ctl_set(ao, "audio.out_gain", "5", out, sizeof(out)) == 0 && ao->gain == 5, "set gain 5");
     CHECK(ao_ctl_set(ao, "audio.out_gain", "6", out, sizeof(out)) == 1 && ao->gain == 5, "gain 6 refused");
-    CHECK(ao_ctl_set(ao, "audio.out_source", "4", out, sizeof(out)) == 0 && ao->source == 4, "set source 4");
-    CHECK(ao_ctl_set(ao, "audio.out_source", "5", out, sizeof(out)) == 1 && ao->source == 4, "source 5 refused");
+    CHECK(ao_ctl_set(ao, "audio.out_source", "6", out, sizeof(out)) == 0 && ao->source == 6, "set source 6 (experiment)");
+    CHECK(ao_ctl_set(ao, "audio.out_source", "5", out, sizeof(out)) == 1 && ao->source == 6, "source 5 refused");
     CHECK(ao_ctl_set(ao, "audio.out_source", "7", out, sizeof(out)) == 1, "source 7 refused");
+    CHECK(ao_ctl_set(ao, "audio.out_source", "0", out, sizeof(out)) == 1 && ao->source == 6, "source 0 refused");
+    CHECK(ao_ctl_set(ao, "audio.out_source", "4", out, sizeof(out)) == 0 && ao->source == 4, "set source 4 (default)");
+    CHECK(ao_ctl_set(ao, "audio.out_source", "6", out, sizeof(out)) == 0 && ao->source == 6, "back to 6");
     {
         char pbuf[256] = "";
         FILE *pf = fopen(ao->conf_path, "r");
         size_t pn = pf ? fread(pbuf, 1, sizeof(pbuf) - 1, pf) : 0;
         if (pf) fclose(pf);
         pbuf[pn] = 0;
-        CHECK(strstr(pbuf, "volume=30\n") && strstr(pbuf, "gain=5\n") && strstr(pbuf, "source=4\n"),
+        CHECK(strstr(pbuf, "volume=30\n") && strstr(pbuf, "gain=5\n") && strstr(pbuf, "source=6\n"),
               "volume, gain and source are persisted when they change");
         unlink(ao->conf_path);
         ao_ctl_set(ao, "audio.out_volume", "30", out, sizeof(out));
         ao_ctl_set(ao, "audio.out_gain", "5", out, sizeof(out));
-        ao_ctl_set(ao, "audio.out_source", "4", out, sizeof(out));
+        ao_ctl_set(ao, "audio.out_source", "6", out, sizeof(out));
         CHECK(!file_exists(ao->conf_path), "same-value SET does not write the flash");
         ao_ctl_set(ao, "audio.out_volume", "31", out, sizeof(out));
         CHECK(file_exists(ao->conf_path), "a changed value is written");
@@ -726,7 +823,7 @@ static void test_thread(void)
     for (int i = 0; i < 4000 && file_exists(ao->guard_path); i++) usleep(1000);
     CHECK(!file_exists(ao->guard_path), "thread runs: guard cleared after 5 s of (virtual) playback");
     ao_thread_stop(ao);
-    CHECK(F.nw > 100, "periods were written by the thread");
+    CHECK(F.nw > 80, "periods were written by the thread");
     int nw = F.nw;
     usleep(20000);
     CHECK(F.nw == nw, "no write after stop");
