@@ -19,6 +19,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int failures;
@@ -245,6 +246,22 @@ int main(int argc, char **argv)
     if (getenv("HOOK_DRIVER_CHILD")) {
         int rc = system("cat /dev/null; : reboot-marker");
         CHECK(rc == 0, "child process runs normally under the inherited hook");
+        /* system() / popen() of anyka_ipc itself are logged by the hook and forwarded to libc:
+         * the return values, the output and errno are the real ones */
+        errno = 0;
+        rc = system("exit 3");
+        CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 3, "system() status is the real one");
+        CHECK(system(NULL) != 0, "system(NULL) still says a shell exists");
+        FILE *pf = popen("echo popen-marker-out", "r");
+        char pb[64] = "";
+        CHECK(pf != NULL && fgets(pb, sizeof pb, pf) != NULL && strncmp(pb, "popen-marker-out", 16) == 0,
+              "popen() output is the real one");
+        CHECK(pf != NULL && pclose(pf) == 0, "pclose() of a popen() under the hook");
+        FILE *pw = popen("cat >/dev/null; : popen-marker-w", "w");
+        CHECK(pw != NULL && pclose(pw) == 0, "popen() for writing");
+        /* a command that does not exist: the shell says 127 exactly like without the hook */
+        rc = system("/nonexistent/akam-test-command 2>/dev/null");
+        CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 127, "system() of a missing command gives 127");
     }
 
     /* --- unrelated file: untouched and unlogged */

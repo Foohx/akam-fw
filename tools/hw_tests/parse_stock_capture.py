@@ -554,7 +554,7 @@ def summarize(d, events, bad):
                 out.append("      anyka_ipc RESTARTED at up=%.2f: pid %s -> %s" % (x["up"], x["kv"].get("old"), x["kv"].get("new")))
     # child processes of anyka_ipc (system(), popen()): a "reboot -f" would show here
     kids = [e for e in events if e["ev"] == "CHILD"]
-    section(out, "processes started by anyka_ipc (system / popen), from the CHILD lines")
+    section(out, "commands run by anyka_ipc (system() / popen() calls and children that loaded the hook), from the CHILD lines")
     for e in kids[:80]:
         k = e["kv"]
         try:
@@ -562,11 +562,15 @@ def summarize(d, events, bad):
         except ValueError:
             rel = None
         flag = "   <== REBOOT/RESET" if re.search(r"reboot|recover_cfg|poweroff|halt", k.get("cmd", "")) else ""
-        out.append("  T=%s pid=%s ppid=%s %s%s" % (fmt_t(rel), e["tid"], k.get("ppid"), k.get("cmd"), flag))
+        if "via" in k:      # logged by anyka_ipc itself, from its system() / popen() call
+            out.append("  T=%s %s() by thread %s: %s%s" % (fmt_t(rel), k["via"], e["tid"], k.get("cmd"), flag))
+        else:               # a process that loaded the preloaded hook (dynamically linked child)
+            out.append("  T=%s pid=%s ppid=%s %s%s" % (fmt_t(rel), e["tid"], k.get("ppid"), k.get("cmd"), flag))
     if len(kids) > 80:
         out.append("  ... %d more" % (len(kids) - 80))
     if not kids:
-        out.append("  none seen (children only show up when the hook is v2)")
+        out.append("  none seen (only the system() / popen() calls of anyka_ipc are visible, hook version 2 or later;")
+        out.append("  a command started some other way, e.g. by another process, is not)")
 
     # ---- devices
     section(out, "devices opened (cls pcm / gpio / mem / audio files / config)")

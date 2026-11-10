@@ -484,6 +484,13 @@ static int isp_catchall_ok(uint32_t cmd, const void *payload)
     return 1;
 }
 
+/* Does this command line (NUL separated or not) look like one that restarts or resets the board? */
+static int cmd_is_fatal(const char *c)
+{
+    return has(c, "reboot") || has(c, "recover") || has(c, "poweroff") || has(c, "halt") ||
+           has(c, "reset") || has(c, "killall") || has(c, "kill ");
+}
+
 /* A process started by anyka_ipc (system(), popen()) inherits LD_PRELOAD, loads this library
  * and lands here: one CHILD line with its command line, nothing else, then it stays silent.
  * This is how a "reboot -f" or "sh recover_cfg.sh" launched by the stock app shows up (the
@@ -512,13 +519,38 @@ __attribute__((noinline)) static void child_note(const char *exe, unsigned exele
     emit(&l);
     /* A reboot / reset command is the last thing this system does: its line must not stay in the
      * page cache. Only these (rare, short-lived) children fsync; nothing else in the hook does. */
-    const char *c = (const char *)cl;
-    if (g_logfd >= 0 && (has(c, "reboot") || has(c, "recover") || has(c, "poweroff") || has(c, "halt") ||
-                         has(c, "reset") || has(c, "killall") || has(c, "kill ")))
-        _sc2(SYS_FSYNC, g_logfd, 0);
+    if (g_logfd >= 0 && cmd_is_fatal((const char *)cl)) _sc2(SYS_FSYNC, g_logfd, 0);
 }
 
-static void hook_init(void)
+/* The stock app starts its helpers with system() and popen(): "reboot -f", "sh recover_cfg.sh &",
+ * "echo N > /tmp/camera_start_times". On the camera /bin/sh is a STATIC BusyBox (checked in the
+ * vendor rootfs), which ignores LD_PRELOAD, so the CHILD path above never sees those. They are
+ * therefore logged from inside anyka_ipc, by the exported system() and popen() below: one CHILD
+ * line with via=system|popen and the command, written BEFORE the real call runs (it forwards
+ * everything to libc's function, found with dlsym(RTLD_NEXT); the arguments, the return value and
+ * errno are the real ones). A command that may reboot the board is fsync'd first (the only fsync
+ * of the hook; such a command is rare and nothing is flushed after a reboot). */
+#define CMD_MAX 200u
+__attribute__((noinline)) static void cmd_note(const char *via, const char *cmd)
+{
+    struct lb l; l.n = 0;
+    head(&l, "CHILD");
+    lb_s(&l, " abs_ms="); lb_u(&l, g_t0 + now_ms());
+    lb_s(&l, " via="); lb_s(&l, via);
+    lb_s(&l, " exe=\"/bin/sh\" cmd=");
+    unsigned n = 0;
+    if (cmd) {
+        while (n < CMD_MAX && cmd[n]) n++;
+        lb_text(&l, (const uint8_t *)cmd, n);
+        if (cmd[n]) lb_s(&l, "...");
+    } else {
+        lb_s(&l, "\"(null)\"");
+    }
+    emit(&l);
+    if (cmd && g_logfd >= 0 && cmd_is_fatal(cmd)) _sc2(SYS_FSYNC, g_logfd, 0);
+}
+
+__attribute__((noinline)) static void hook_init(void)
 {
     char exe[160];
     long n = _sc3(SYS_READLINK, (long)"/proc/self/exe", (long)exe, sizeof exe - 1);
@@ -569,11 +601,11 @@ static int hook_on(void)
 }
 
 static void isp_stats_flush(void);
-static void alive(void)
+/* Every function that owns a 512-byte line buffer is a leaf of the call chain (noinline, and
+ * the caller keeps no buffer of its own while it runs): the hook's stack use is the frame of
+ * the hooked function plus ONE buffer, never two. */
+__attribute__((noinline)) static void alive_line(void)
 {
-    unsigned long t = now_ms();
-    if (t - g_alive_ms < ALIVE_MS) return;
-    g_alive_ms = (uint32_t)t;
     struct lb l; l.n = 0;
     head(&l, "ALIVE"); lb_s(&l, " events="); lb_u(&l, g_events);
     lb_s(&l, " dropped="); lb_u(&l, g_drop);
@@ -584,6 +616,13 @@ static void alive(void)
     lb_s(&l, " bin_bytes="); lb_u(&l, g_bin_bytes);
     lb_s(&l, " log_bytes="); lb_u(&l, g_main_bytes);
     emit(&l);
+}
+static void alive(void)
+{
+    unsigned long t = now_ms();
+    if (t - g_alive_ms < ALIVE_MS) return;
+    g_alive_ms = (uint32_t)t;
+    alive_line();
     isp_stats_flush();
 }
 
@@ -722,7 +761,7 @@ static void analyze(struct fdi *f, const uint8_t *b, unsigned n)
     }
 }
 
-static void stats_flush(int fd, struct fdi *f, unsigned long t, const char *why)
+__attribute__((noinline)) static void stats_flush(int fd, struct fdi *f, unsigned long t, const char *why)
 {
     if (!f->w_calls) return;
     struct lb l; l.n = 0;
@@ -771,7 +810,7 @@ static void win_update(int fd, struct fdi *f, char op, unsigned bytes, const uin
 }
 
 /* ---- events: open / close ----------------------------------------------------- */
-static void on_open(const char *path, int flags, int mode, long r)
+__attribute__((noinline)) static void on_open(const char *path, int flags, int mode, long r)
 {
     if (!hook_on()) return;
     int cls = classify(path);
@@ -793,6 +832,7 @@ static void on_open(const char *path, int flags, int mode, long r)
     alive();
 }
 
+static void close_line(int fd, struct fdi *f, long r);
 static void on_close(int fd, long r)
 {
     struct fdi *f = fdi_get(fd);
@@ -800,6 +840,12 @@ static void on_close(int fd, long r)
     if (f->quiet) { f->cls = 0; thr_clear(fd); return; }
     unsigned long t = now_ms();
     stats_flush(fd, f, t, "close");
+    close_line(fd, f, r);
+    f->cls = 0;
+    thr_clear(fd);
+}
+__attribute__((noinline)) static void close_line(int fd, struct fdi *f, long r)
+{
     struct lb l; l.n = 0;
     head(&l, "CLOSE");
     lb_s(&l, " fd="); lb_u(&l, (unsigned long)fd);
@@ -811,12 +857,10 @@ static void on_close(int fd, long r)
     lb_s(&l, " rd_bytes="); lb_u(&l, f->rd_bytes);
     lb_s(&l, " errs="); lb_u(&l, f->errs);
     emit(&l);
-    f->cls = 0;
-    thr_clear(fd);
 }
 
 /* ---- events: read / write ---------------------------------------------------------- */
-static void io_event(const char *ev, int fd, struct fdi *f, const uint8_t *buf,
+__attribute__((noinline)) static void io_event(const char *ev, int fd, struct fdi *f, const uint8_t *buf,
                      unsigned long count, long r, int full)
 {
     struct lb l; l.n = 0;
@@ -838,6 +882,14 @@ static void io_event(const char *ev, int fd, struct fdi *f, const uint8_t *buf,
     emit(&l);
 }
 
+__attribute__((noinline)) static void audio_dump_line(int fd)
+{
+    struct lb l; l.n = 0;
+    head(&l, "AUDIO_DUMP"); lb_s(&l, " fd="); lb_u(&l, (unsigned long)fd);
+    lb_s(&l, " file=stock_audio.raw raw_offset="); lb_u(&l, g_raw_bytes);
+    emit(&l);
+}
+
 static void on_write(int fd, const void *buf, unsigned long count, long r)
 {
     struct fdi *f = fdi_get(fd);
@@ -852,10 +904,7 @@ static void on_write(int fd, const void *buf, unsigned long count, long r)
             if (f->last == 'p') {
                 if (!f->raw_on && g_raw_bytes < RAW_CAP) {
                     f->raw_on = 1;
-                    struct lb l; l.n = 0;
-                    head(&l, "AUDIO_DUMP"); lb_s(&l, " fd="); lb_u(&l, (unsigned long)fd);
-                    lb_s(&l, " file=stock_audio.raw raw_offset="); lb_u(&l, g_raw_bytes);
-                    emit(&l);
+                    audio_dump_line(fd);
                 }
                 if (f->raw_on) raw_audio((const uint8_t *)buf, (unsigned)r);
             }
@@ -901,7 +950,7 @@ static void on_read(int fd, const void *buf, unsigned long count, long r)
 }
 
 /* ---- events: ioctl --------------------------------------------------------------------- */
-static void on_ioctl_tracked(int fd, struct fdi *f, unsigned req, void *arg,
+__attribute__((noinline)) static void on_ioctl_tracked(int fd, struct fdi *f, unsigned req, void *arg,
                              const uint8_t *pre, unsigned npre, long r)
 {
     unsigned sz = (req >> 16) & 0x3fffu;
@@ -1018,7 +1067,7 @@ __attribute__((noinline)) static void isp_stats_flush(void)       /* called from
     }
 }
 
-static void isp_block_log(void *arg, long r)
+__attribute__((noinline)) static void isp_block_log(void *arg, long r)
 {
     const struct isp_wrapper *w = (const struct isp_wrapper *)arg;
     uint32_t cmd = w->inner_cmd;
@@ -1197,6 +1246,27 @@ HOOK_EXPORT void *mmap(void *addr, unsigned long len, int prot, int flags, int f
         emit(&l);
     }
     return (void *)fixret(r);
+}
+
+#define RTLD_NEXT ((void *)-1L)
+extern void *dlsym(void *, const char *) __attribute__((weak));   /* in libc.so.0 of the camera */
+
+HOOK_EXPORT int system(const char *cmd)
+{
+    static int (*real)(const char *);
+    if (hook_on()) cmd_note("system", cmd);
+    if (!real && dlsym) real = (int (*)(const char *))dlsym(RTLD_NEXT, "system");
+    if (!real) { if (__errno_location) *__errno_location() = 38 /* ENOSYS */; return -1; }
+    return real(cmd);
+}
+
+HOOK_EXPORT void *popen(const char *cmd, const char *mode)       /* returns a FILE * */
+{
+    static void *(*real)(const char *, const char *);
+    if (hook_on()) cmd_note("popen", cmd);
+    if (!real && dlsym) real = (void *(*)(const char *, const char *))dlsym(RTLD_NEXT, "popen");
+    if (!real) { if (__errno_location) *__errno_location() = 38 /* ENOSYS */; return (void *)0; }
+    return real(cmd, mode);
 }
 
 HOOK_EXPORT int ioctl(int fd, unsigned int req, void *arg)

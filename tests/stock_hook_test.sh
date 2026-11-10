@@ -5,7 +5,7 @@
 # which plays anyka_ipc on a fake device tree. Checks: what is logged, that the real libc
 # results (values, errno) never change, size caps, a missing card, a non-anyka_ipc process.
 # Also checks that the ARM build (zig) is warning-free and has no undefined symbol except
-# the weak __errno_location. Needs a host C compiler; touches no hardware.
+# the weak __errno_location and dlsym. Needs a host C compiler; touches no hardware.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -228,7 +228,9 @@ HOOK_DRIVER_CHILD=1 LD_PRELOAD="$WORK/hook_a.so" "$WORK/hook_driver" "$R" >"$WOR
 rc=$?
 if [ "$rc" -eq 0 ]; then ok "system() of a child under the inherited hook: the driver passes"; else ko "child run exit $rc"; cat "$WORK/f.out"; fi
 has "child of anyka_ipc logged with its command line" 'CHILD abs_ms=[0-9]+ ppid=[0-9]+ exe="[^"]*" cmd="[^"]*reboot-marker' "$WORK/card_f/stock_hook.log"
-if [ "$(grep -c ' CHILD ' "$WORK/card_f/stock_hook.log")" -le 3 ]; then ok "one CHILD line per child process"; else ko "too many CHILD lines"; fi
+has "system() of anyka_ipc itself is logged (the camera's sh is a static BusyBox, no inherited hook)" 'CHILD abs_ms=[0-9]+ via=system exe="/bin/sh" cmd="exit 3"' "$WORK/card_f/stock_hook.log"
+has "popen() of anyka_ipc itself is logged" 'CHILD abs_ms=[0-9]+ via=popen exe="/bin/sh" cmd="echo popen-marker-out"' "$WORK/card_f/stock_hook.log"
+has "system(NULL) is logged without crashing" 'via=system exe="/bin/sh" cmd="\(null\)"' "$WORK/card_f/stock_hook.log"
 
 # --- parser smoke on the real hook output (when the parser exists) -------------------------------------
 if [ -f "$PARSER" ] && command -v python3 >/dev/null 2>&1; then
@@ -245,10 +247,10 @@ if command -v zig >/dev/null 2>&1 && command -v readelf >/dev/null 2>&1; then
     if (cd "$SRC" && make -s stock_hook.so >"$WORK/arm.log" 2>&1); then
         ok "ARM stock_hook.so builds"
         if [ -s "$WORK/arm.log" ]; then ko "ARM build printed warnings"; head -n 20 "$WORK/arm.log"; else ok "ARM build prints no warning"; fi
-        und=$(readelf --dyn-syms -W "$SRC/stock_hook.so" | awk '$7=="UND" && $8!="" {print $8}' | grep -v '^__errno_location$' || true)
-        if [ -z "$und" ]; then ok "ARM hook: only the weak __errno_location is undefined (no libc/compiler-rt dependency)"; else ko "unexpected undefined symbols: $und"; fi
+        und=$(readelf --dyn-syms -W "$SRC/stock_hook.so" | awk '$7=="UND" && $8!="" {print $8}' | grep -v -E '^(__errno_location|dlsym)$' || true)
+        if [ -z "$und" ]; then ok "ARM hook: only the weak __errno_location and dlsym are undefined (no libc/compiler-rt dependency)"; else ko "unexpected undefined symbols: $und"; fi
         exp=$(readelf --dyn-syms -W "$SRC/stock_hook.so" | awk '$7!="UND" && $5=="GLOBAL" {print $8}' | sort | tr '\n' ' ')
-        if [ "$exp" = "close dup dup2 ioctl mmap open read write writev " ]; then ok "ARM hook exports only the hooked libc functions"; else ko "unexpected exports: $exp"; fi
+        if [ "$exp" = "close dup dup2 ioctl mmap open popen read system write writev " ]; then ok "ARM hook exports only the hooked libc functions"; else ko "unexpected exports: $exp"; fi
         rm -f "$SRC/stock_hook.so"
     else
         ko "ARM stock_hook.so does not build"; head -n 30 "$WORK/arm.log"

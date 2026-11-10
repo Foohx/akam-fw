@@ -107,6 +107,7 @@ T=25.000 tid=100 WRITE fd=40 dev=/sys/devices/platform/leds/leds/fill_light_led/
 T=25.100 tid=100 READ fd=41 dev=/sys/bus/iio/devices/iio:device0/in_voltage0_raw count=16 ret=4 text="812\x0a"
 T=9.000 tid=100 ISP_STAT name=CCM cmd=0x40044912 size=16 calls=5 changes=2 dumps=3
 T=12.000 tid=100 ALIVE events=40 dropped=0 isp_calls=900 isp_dumps=7 isp_skipped=11 gpio_skipped=30 bin_bytes=412 log_bytes=2000
+T=14.400 tid=100 CHILD abs_ms=500014400 via=system exe="/bin/sh" cmd="echo 3 > /tmp/camera_start_times; reboot -f"
 T=14.500 tid=200 CHILD abs_ms=500014500 ppid=100 exe="/bin/busybox" cmd="sh -c reboot -f"
 T=14.600 tid=100 ISP_BLOCK name=CCM cmd=0x40044912 flag=1 ret=0 size=16 hash=0x1 calls=1 changes=0 dump=1 stored=bin head=00
 EOF
@@ -147,6 +148,7 @@ has "anyka_ipc GONE counted" 'anyka_ipc GONE in 1 of' "$WORK/out2.txt"
 has "start counter history" 'camera_start_times over the run: t=8s:0, t=21s:1' "$WORK/out2.txt"
 has "free RAM trend" 'free RAM: first 9000 kB, last 8000 kB, min 8000 kB' "$WORK/out2.txt"
 has "child process flagged as reboot with its time" 'T=  14.500 pid=200 ppid=100 sh -c reboot -f +<== REBOOT/RESET' "$WORK/out2.txt"
+has "system() call of anyka_ipc listed with its thread and flagged" 'T=  14.400 system\(\) by thread 100: echo 3 > /tmp/camera_start_times; reboot -f +<== REBOOT/RESET' "$WORK/out2.txt"
 has "ALIVE counters" 'ISP calls=900 dumped=7 skipped=11, sysfs events skipped=30, bin=412 bytes' "$WORK/out2.txt"
 has "full ISP section with the damaged record skipped" 'FULL \(isp_blocks.bin: 9 dumps, [0-9]+ bytes, 1 damaged record' "$WORK/out2.txt"
 has "block size and kind" 'CCM +cmd=0x40044912 size=16 +written \(SET\) dumps=3' "$WORK/out2.txt"
