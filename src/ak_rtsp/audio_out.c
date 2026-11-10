@@ -14,7 +14,7 @@
 #include "ak_ioctls.h"
 #include "audio_out.h"
 
-#define AO_MIN_PERIOD_US 28800L /* 90% of 32 ms: pacing floor if write() does not block */
+#define AO_MIN_PERIOD_US 57600L /* 90% of 64 ms: pacing floor if write() does not block */
 
 static void ao_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void ao_log(const char *fmt, ...)
@@ -98,8 +98,8 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     snprintf(ao->guard_path, sizeof(ao->guard_path), "%s/%s", ao->conf_dir, AO_GUARD_FILE);
     ao->enabled  = 1;
     ao->volume   = 50;
-    ao->gain     = 3;
-    ao->source   = 6;
+    ao->gain     = 2;   /* stock value */
+    ao->source   = 4;   /* stock playback route */
     ao->amp_mode = AO_AMP_AUTO;
     ao->state    = AO_OFF;
     ao->fd       = -1;
@@ -260,21 +260,55 @@ static void guard_remove(audio_out_t *ao)
  * Device sequence
  * ------------------------------------------------------------------------ */
 
-static int dev_ioctl_i32(audio_out_t *ao, const char *name, unsigned long req, int value)
+/* Raw int32 ioctl: 0 or -1 with errno from the driver, nothing logged. */
+static int dev_ioctl_quiet(audio_out_t *ao, unsigned long req, int value)
 {
     int32_t v = value;
-    if (ao->ops.ioctl(ao->ops.user, ao->fd, req, &v) < 0) {
+    return ao->ops.ioctl(ao->ops.user, ao->fd, req, &v);
+}
+
+static int dev_ioctl_i32(audio_out_t *ao, const char *name, unsigned long req, int value)
+{
+    if (dev_ioctl_quiet(ao, req, value) < 0) {
         ao_log("%s(%d) failed: %s (errno=%d)", name, value, strerror(errno), errno);
         return -1;
     }
     return 0;
 }
 
+/* SET_SPEAKER failures are logged and never retried every period; never fall
+ * back to sysfs GPIO 69, the driver owns that line (spec 05, 3.2). Turning
+ * the speaker off is not in the stock sequence (stock only mutes the route),
+ * so a failure there is logged once only. */
+static void speaker_set(audio_out_t *ao, int on)
+{
+    if (dev_ioctl_quiet(ao, AKPCM_IOC_SET_SPEAKER, on) < 0) {
+        if (on || !ao->spk_off_warned) {
+            ao_log("SET_SPEAKER(%d) failed: %s (errno=%d)%s", on, strerror(errno), errno,
+                   on ? "" : " (not logged again)");
+            if (!on) ao->spk_off_warned = 1;
+        }
+    }
+}
+
+/* Amplifier on: the stock per-prompt sequence SET_SOURCES(route),
+ * SET_SPEAKER(1), SET_GAIN. Off: speaker off, then the route muted
+ * (SET_SOURCES 0). Neither is fatal. */
 static void amp_set(audio_out_t *ao, int on)
 {
-    /* Failure is logged and not retried every period; never fall back to
-     * sysfs GPIO 69, the driver owns that line (spec 05, 3.2). */
-    dev_ioctl_i32(ao, "SET_SPEAKER", AKPCM_IOC_SET_SPEAKER, on);
+    if (on) {
+        /* One snapshot of the settings (the 8091 thread may change them at any
+         * time), so that what is applied is what is recorded as applied. */
+        int src = ao->source, gain = ao->gain;
+        ao->applied_source = src;
+        ao->applied_gain = gain;
+        dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, src);
+        speaker_set(ao, 1);
+        dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, gain);
+    } else {
+        speaker_set(ao, 0);
+        dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, 0);
+    }
     ao->amp_on = on;
 }
 
@@ -323,12 +357,16 @@ int ao_open(audio_out_t *ao)
         goto fail;
     }
 
-    int amp_initial = (ao->amp_mode == AO_AMP_ON);
-    /* SET_SPEAKER and SET_GAIN are not fatal: log and carry on so a bring-up
-     * can still reach PREPARE and learn which ones the driver accepts. */
-    amp_set(ao, amp_initial);
+    /* Same order as the stock application: route, speaker, PREPARE, RESUME,
+     * read the rate back. amp=off opens with the route and speaker off. In
+     * auto the amp starts on like stock and the idle timer turns it off. */
+    int amp_initial = (ao->amp_mode != AO_AMP_OFF);
+    int init_src = amp_initial ? ao->source : 0;
+    if (dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, init_src) < 0) goto fail;
+    speaker_set(ao, amp_initial); /* not fatal: a bring-up can still learn what the driver accepts */
+    ao->amp_on = amp_initial;     /* so that a failure below switches it off again */
+    ao->applied_source = ao->source;
     ao->applied_gain = ao->gain;
-    dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, ao->gain);
 
     struct akpcm_pars pars;
     memset(&pars, 0, sizeof(pars));
@@ -342,18 +380,21 @@ int ao_open(audio_out_t *ao)
         ao_log("PREPARE failed: %s (errno=%d)", strerror(errno), errno);
         goto fail; /* RESUME is never issued without a successful PREPARE */
     }
-
-    ao->applied_source = ao->source;
-    if (dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, ao->source) < 0) goto fail;
-
     if (ao->ops.ioctl(ao->ops.user, ao->fd, AKPCM_IOC_RESUME, NULL) < 0) {
         ao_log("RESUME failed: %s (errno=%d)", strerror(errno), errno);
         goto fail;
     }
+    int32_t rate = 0;
+    if (ao->ops.ioctl(ao->ops.user, ao->fd, AKPCM_IOC_GET_RATE, &rate) < 0)
+        ao_log("GET_RATE failed: %s (errno=%d)", strerror(errno), errno);
+    else if (rate != AO_RATE)
+        ao_log("driver reports rate %d, expected %d", (int)rate, AO_RATE);
+    if (amp_initial) dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, ao->gain);
 
     ao->open_ms = ao->ops.now_us(ao->ops.user) / 1000;
+    ao->last_audible_ms = ao->open_ms; /* auto: the amp idles off AO_AMP_HOLD_MS after open */
     ao->state = AO_IDLE;
-    printf("[ak_rtsp] audio_out: %s ready (%d Hz stereo, %d x %d bytes, source %d, gain %d, amp %s)\n",
+    printf("[ak_rtsp] audio_out: %s ready (%d Hz mono, %d x %d bytes, source %d, gain %d, amp %s)\n",
            ao->dev_path, AO_RATE, AO_DRV_PERIODS, AO_PERIOD_BYTES, ao->source, ao->gain,
            amp_mode_name(ao->amp_mode));
     return 0;
@@ -430,14 +471,19 @@ int ao_step(audio_out_t *ao)
     if (ao->fd < 0) return -1;
     int64_t now = ao->ops.now_us(ao->ops.user) / 1000;
 
-    /* Live settings: only this thread talks to the device. */
-    if (ao->gain != ao->applied_gain) {
-        ao->applied_gain = ao->gain;
-        dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, ao->gain);
-    }
-    if (ao->source != ao->applied_source) {
-        ao->applied_source = ao->source;
-        dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, ao->source);
+    /* Live settings: only this thread talks to the device. While the amp is
+     * off the route stays muted and the new values are applied when it turns
+     * on (amp_set). */
+    if (ao->amp_on) {
+        int gain = ao->gain, src = ao->source;
+        if (gain != ao->applied_gain) {
+            ao->applied_gain = gain;
+            dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, gain);
+        }
+        if (src != ao->applied_source) {
+            ao->applied_source = src;
+            dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, src);
+        }
     }
 
     int16_t mono[AO_FRAMES];
@@ -461,7 +507,7 @@ int ao_step(audio_out_t *ao)
     }
     if (ao->volume == 0) audible = 0; /* volume 0 = mute: amp stays off */
 
-    /* Amplifier policy (spec 05, 3.2). */
+    /* Amplifier policy (spec 05, 3.2): auto = on while audible, off after AO_AMP_HOLD_MS idle. */
     if (audible) ao->last_audible_ms = now;
     int want;
     switch (ao->amp_mode) {
@@ -474,7 +520,7 @@ int ao_step(audio_out_t *ao)
     if (want && !ao->amp_on) {
         amp_set(ao, 1);
         if (audible) {
-            int16_t zero[AO_FRAMES * AO_CHANNELS];
+            int16_t zero[AO_FRAMES];
             memset(zero, 0, sizeof(zero));
             for (int i = 0; i < AO_PRELOAD_PERIODS; i++)
                 if (write_period(ao, zero) < 0) return step_failed(ao);
@@ -484,10 +530,7 @@ int ao_step(audio_out_t *ao)
     }
 
     apply_volume(ao, mono, AO_FRAMES);
-    int16_t stereo[AO_FRAMES * AO_CHANNELS];
-    for (int i = 0; i < AO_FRAMES; i++) stereo[2 * i] = stereo[2 * i + 1] = mono[i];
-
-    if (write_period(ao, stereo) < 0) return step_failed(ao);
+    if (write_period(ao, mono) < 0) return step_failed(ao);
     ao->fails = 0;
 
     ao->state = !en ? AO_OFF : test ? AO_TEST : talking ? AO_TALKING : AO_IDLE;
@@ -717,6 +760,8 @@ void audio_out_emergency_off(void)
     if (g_ao_started && fd >= 0) {
         int32_t v = 0;
         ioctl(fd, AKPCM_IOC_SET_SPEAKER, &v);
+        v = 0;
+        ioctl(fd, AKPCM_IOC_SET_SOURCES, &v); /* route off, as stock does when idle */
     }
     /* A stop request is not a kernel crash: if it lands inside the first
      * seconds of playback (reboot, restart by hand) the marker must not

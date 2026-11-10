@@ -10,10 +10,13 @@
  *
  * ak_rtsp already owns the playback device for its whole life (the driver
  * refuses a second open) and used to write silence to it. When audio out is
- * enabled this module replaces that silence loop: it runs the device
- * sequence PREPARE -> SOURCES -> RESUME (never RESUME before a successful
- * PREPARE), then a playback thread writes 1024-byte stereo periods that are
- * silence, a synthesized beep, or samples pushed with audio_out_push().
+ * enabled this module replaces that silence loop: it runs the stock vendor
+ * device sequence SET_SOURCES -> SET_SPEAKER -> PREPARE -> RESUME -> GET_RATE
+ * (never RESUME before a successful PREPARE), then a playback thread writes
+ * 1024-byte mono periods that are silence, a synthesized beep, or samples
+ * pushed with audio_out_push(). The amplifier route (SET_SOURCES + SET_SPEAKER
+ * + SET_GAIN) is switched on when audio becomes audible and off again after
+ * AO_AMP_HOLD_MS of silence (amp mode auto).
  * When disabled (or when the sequence fails) nothing here touches the device
  * and audio.c keeps its legacy silence loop unchanged.
  *
@@ -22,15 +25,16 @@
  * audio_out_* functions are the process-wide singleton used by audio.c,
  * control.c and (later) the talk server. */
 
-/* Device format: 8 kHz, 16-bit, stereo (L = R), periods of 1024 bytes. */
+/* Device format (same as the stock application): 8 kHz, 16-bit, mono,
+ * periods of 1024 bytes = 512 frames = 64 ms, 16 driver periods (~1 s). */
 #define AO_RATE            8000
-#define AO_CHANNELS        2
-#define AO_FRAMES          256                          /* frames per period (32 ms) */
+#define AO_CHANNELS        1
+#define AO_FRAMES          512                          /* frames per period (64 ms) */
 #define AO_PERIOD_BYTES    (AO_FRAMES * AO_CHANNELS * 2)
-#define AO_DRV_PERIODS     8                            /* driver periods (~256 ms) */
+#define AO_DRV_PERIODS     16                           /* driver periods */
 
 #define AO_AMP_HOLD_MS     2000   /* amp stays on this long after the last audible period */
-#define AO_PRELOAD_PERIODS 2      /* silence written after the amp turns on (64 ms >= 60 ms) */
+#define AO_PRELOAD_PERIODS 1      /* silence written after the amp turns on (64 ms >= 60 ms) */
 #define AO_GUARD_CLEAR_MS  5000   /* crash guard removed after this much clean playback */
 #define AO_MAX_FAILS       5      /* consecutive write failures before the thread stops */
 #define AO_VOL_RAMP        80     /* volume smoothing: 10 ms at 8 kHz */
@@ -79,14 +83,15 @@ typedef struct audio_out {
     volatile int enabled;       /* 0/1 */
     volatile int volume;        /* 0..100 */
     volatile int gain;          /* 0..5 */
-    volatile int source;        /* 4 or 6 */
+    volatile int source;        /* 4 (default, stock) or 6 (experiment) */
     volatile int amp_mode;      /* enum ao_amp_mode */
     volatile int test_req;      /* beep requested */
 
     /* playback thread state */
     volatile int state;         /* enum ao_state */
     volatile int fd;
-    int      amp_on;
+    int      amp_on;            /* route (SET_SOURCES) + speaker commanded on */
+    int      spk_off_warned;    /* SET_SPEAKER(0) failure already logged */
     int      applied_gain, applied_source;
     int64_t  last_audible_ms;
     int64_t  open_ms;
@@ -110,7 +115,7 @@ typedef struct audio_out {
 
 /* ---- engine (instance) -------------------------------------------------- */
 
-/* Defaults: enabled, volume 50, gain 3, source 6, amp auto. */
+/* Defaults: enabled, volume 50, gain 2, source 4, amp auto. */
 void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg);
 /* Reads <conf_dir>/audio_out (lines key=value: enable, volume, gain, source).
  * Absent file or bad lines keep the defaults. Returns 1 if the file was read. */
@@ -135,7 +140,7 @@ void ao_thread_stop(audio_out_t *ao);    /* joins; does not close */
 
 void   ao_set_volume(audio_out_t *ao, int v);   /* clamped 0..100 */
 void   ao_set_gain(audio_out_t *ao, int g);     /* clamped 0..5 */
-void   ao_set_source(audio_out_t *ao, int s);   /* 4 or 6, else ignored */
+void   ao_set_source(audio_out_t *ao, int s);   /* 4 or 6, else ignored (0 = route off is internal) */
 void   ao_set_amp_mode(audio_out_t *ao, int m);
 void   ao_play_test(audio_out_t *ao);           /* queue the beep */
 int    ao_test_active(const audio_out_t *ao);   /* queued or playing */
