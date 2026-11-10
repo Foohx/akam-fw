@@ -28,10 +28,17 @@ P_NAMES = {
     0xE6: ("TIMESTAMP?", "raw"),
     0xEA: ("SET_RATE", "u32"),
 }
+# Request numbers of src/ak_rtsp/ak_ioctls.h. The number actually issued by the stock app is
+# always printed (req=...); it is flagged when it differs from the one ak_rtsp uses.
+KNOWN_REQ = {
+    0xE0: 0x401c50e0, 0xE1: 0x000050e1, 0x10: 0x80045010, 0x30: 0x80045030,
+    0x81: 0x80045081, 0xEA: 0x800450ea, 0xE3: 0x000050e3,
+}
 PARS_FIELDS = ("format", "rate", "channels", "bits", "period_bytes", "periods", "reserved")
 NOTE = {
     0x10: "playback: 4 = DAC, 6 = DAC+LINEIN (reference project)",
-    0x81: "amplifier enable, GPIO 69 is driven by the driver",
+    0x81: "amplifier enable, GPIO 69 is driven by the driver; 0x80045081 of ak_ioctls.h is "
+          "KNOWN WRONG (EINVAL on the hardware): the req shown is the one stock really uses",
 }
 
 LINE_RE = re.compile(r"^T=(\d+\.\d{3}) tid=(\d+) (\S+)(?: (.*))?$")
@@ -59,10 +66,17 @@ def u32s(hexstr):
 
 
 def tag_of(dev):
-    base = os.path.basename(dev or "")
-    if base.startswith(("pcm", "akpcm")) and base[-1:] in ("c", "p", "l"):
-        return {"c": "capture", "p": "playback", "l": "loopback"}[base[-1]]
-    return "dev"
+    """'playback' / 'capture' / 'loopback' for the PCM devices, 'dev' for everything else.
+    Handles /dev/pcmC0D0p style names and /dev/akpcm_* ones (anything with 'pcm' or under
+    /dev/snd/); an unrecognised suffix is shown as plain 'pcm' rather than dropped."""
+    d = dev or ""
+    base = os.path.basename(d)
+    if not (base.startswith(("pcm", "akpcm")) or "/dev/snd/" in d or "pcm" in base):
+        return "dev"
+    for suffix, name in (("c", "capture"), ("p", "playback"), ("l", "loopback")):
+        if base.endswith(suffix) or base.endswith("_%sdev1" % suffix) or ("_%sdev" % suffix) in base:
+            return name
+    return "pcm"
 
 
 def decode_ioctl(ev):
@@ -101,11 +115,23 @@ def decode_ioctl(ev):
         if "arg" in kv:
             desc = "arg=%s" % kv["arg"]
         elif inb:
-            desc = "in=%s" % inb[:64]
+            desc = "in=%s" % inb
         if outb and outb != "same":
-            desc += " out=%s" % outb[:64]
+            desc += " out=%s" % outb
+    req = kv.get("req", "?")
+    if layout != "raw" and (inb or outb) and desc:
+        desc += " raw=%s" % (inb or "-")
+        if outb and outb != "same":
+            desc += " out=%s" % outb
+    if typ == 0x50 and nr in KNOWN_REQ:
+        try:
+            if int(req, 16) != KNOWN_REQ[nr] and nr != 0x81:
+                desc += " [req differs from ak_ioctls.h 0x%08x]" % KNOWN_REQ[nr]
+        except ValueError:
+            pass
     if nr in NOTE and typ == 0x50:
         desc += "   [%s]" % NOTE[nr]
+    desc = ("req=%s " % req) + desc
     ret = "ret=%s" % kv.get("ret", "?")
     if "errno" in kv:
         ret += " errno=%s" % kv["errno"]
@@ -191,7 +217,7 @@ def summarize(d, events, bad):
         else:
             rep = 0
             prev = key
-            out.append("  T=%8.3f fd=%-3s %-8s %-26s %-60s %s" % (e["t"], k.get("fd"), tag, name, desc, ret))
+            out.append("  T=%8.3f fd=%-3s %-8s %-26s %s %s" % (e["t"], k.get("fd"), tag, name, desc, ret))
             prev_idx = len(out) - 1
             base_line = out[prev_idx].rstrip()
         nr = int(k.get("nr", "0x0"), 16)
@@ -293,8 +319,8 @@ def summarize(d, events, bad):
 
     # ---- GPIO
     section(out, "GPIO (sysfs)")
-    gp = [e for e in events if e["kv"].get("dev", e["kv"].get("path", "")).find("/sys/class/gpio") >= 0
-          and e["ev"] in ("OPEN", "WRITE", "READ")]
+    gp = [e for e in events if "gpio" in e["kv"].get("dev", e["kv"].get("path", ""))
+          and e["ev"] in ("OPEN", "WRITE", "READ", "WRITEV", "MMAP")]
     for e in gp:
         k = e["kv"]
         what = k.get("text", k.get("path", ""))
@@ -302,6 +328,13 @@ def summarize(d, events, bad):
                    ("errno=%s" % k["errno"]) if "errno" in k else ""))
     if not gp:
         out.append("  no sysfs GPIO access by anyka_ipc (the amplifier GPIO is driven by the driver, per the spec)")
+    other = [e for e in events if e["ev"] == "IOCTL" and tag_of(e["kv"].get("dev")) == "dev"]
+    section(out, "ioctls on the other tracked descriptors (GPIO, /dev/mem), raw")
+    for e in other:
+        name, desc, ret = decode_ioctl(e)
+        out.append("  T=%8.3f fd=%-3s %-40s %s %s" % (e["t"], e["kv"].get("fd"), e["kv"].get("dev"), desc, ret))
+    if not other:
+        out.append("  none")
 
     # ---- other files and mmap
     section(out, "audio files and config files")

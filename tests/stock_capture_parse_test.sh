@@ -35,6 +35,10 @@ T=1.511 tid=100 IOCTL fd=7 dev=/dev/pcmC0D0p req=0x80045030 dir=2 type=0x50 nr=0
 T=1.512 tid=100 IOCTL fd=7 dev=/dev/pcmC0D0p req=0x401c50e0 dir=1 type=0x50 nr=0xe0 size=28 in=00000000401f00000200000010000000000400000800000000000000 out=same ret=0
 T=1.513 tid=100 IOCTL fd=7 dev=/dev/pcmC0D0p req=0x80045010 dir=2 type=0x50 nr=0x10 size=4 in=06000000 out=same ret=0
 T=1.514 tid=100 IOCTL fd=7 dev=/dev/pcmC0D0p req=0x50e1 dir=0 type=0x50 nr=0xe1 size=0 arg=0x0 ret=0
+T=1.515 tid=100 IOCTL fd=7 dev=/dev/pcmC0D0p req=0x40045099 dir=1 type=0x50 nr=0x99 size=4 in=2a000000 out=07000000 ret=0
+T=1.516 tid=100 IOCTL fd=7 dev=/dev/pcmC0D0p req=0xc0045a01 dir=3 type=0x5a nr=0x01 size=4 in=01000000 out=same ret=-1 errno=22
+T=1.517 tid=100 IOCTL fd=12 dev=/dev/akpcm_pdev1 req=0x40045030 dir=1 type=0x50 nr=0x30 size=4 in=02000000 out=same ret=0
+T=1.518 tid=100 IOCTL fd=9 dev=/sys/class/gpio/gpio69/value req=0x5401 dir=0 type=0x54 nr=0x01 size=0 arg=0x0 ret=-1 errno=25
 T=1.520 tid=100 WRITE fd=7 dev=/dev/pcmC0D0p count=1024 ret=1024 head=00000000ffff0100ffff0100
 T=1.552 tid=100 WRITE fd=7 dev=/dev/pcmC0D0p count=1024 ret=-1 errno=11
 T=3.600 tid=100 AUDIO_STATS fd=7 dev=/dev/pcmC0D0p op=w why=window win_ms=2000 calls=62 bytes=63488 gap_ms_min=31 gap_ms_max=33 an_bytes=2048 samples=1024 peak=900 sumabs=204800 zero16=10 pairs=512 lr_eq=512 b00=100 bff=0 baw=0
@@ -62,6 +66,13 @@ if [ "$rc" -eq 0 ]; then ok "parser exits 0"; else ko "parser exit $rc"; cat "$W
 has "run meta shown" 'stock_firmware=yes' "$WORK/out.txt"
 has "ordered sequence: speaker enable first, with its note" 'SET_SPEAKER.*value=1.*GPIO 69 is driven by the driver' "$WORK/out.txt"
 has "PREPARE decoded" 'PREPARE.*format=0 rate=8000 channels=2 bits=16 period_bytes=1024 periods=8' "$WORK/out.txt"
+has "every ioctl shows its raw request number" 'req=0x80045081 ' "$WORK/out.txt"
+has "an unknown 'P' ioctl on the playback fd is listed raw with its bytes" 'req=0x40045099 .*in=2a000000 out=07000000' "$WORK/out.txt"
+has "a foreign ioctl type on the playback fd is listed raw" 'type=0x5a nr=0x01 req=0xc0045a01|req=0xc0045a01 .*in=01000000' "$WORK/out.txt"
+has "the known-wrong SET_SPEAKER number is flagged" 'KNOWN WRONG' "$WORK/out.txt"
+has "a request that differs from ak_ioctls.h is flagged" 'req=0x40045030 .*req differs from ak_ioctls.h 0x80045030' "$WORK/out.txt"
+has "/dev/akpcm_pdev1 is treated as a playback device" 'playback +SET_GAIN.*req=0x40045030|fd=12 +playback' "$WORK/out.txt"
+has "ioctl on a GPIO descriptor is listed" 'gpio69/value .*req=0x5401.*errno=25' "$WORK/out.txt"
 has "gain value" 'SET_GAIN \(nr 0x30\): playback:3@1\.51s' "$WORK/out.txt"
 has "source value" 'SET_SOURCES \(nr 0x10\): playback:6' "$WORK/out.txt"
 has "period in milliseconds" 'period = 256 frames = 32\.0 ms, ring = 8192 bytes' "$WORK/out.txt"
