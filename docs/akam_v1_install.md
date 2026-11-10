@@ -71,6 +71,26 @@ password. Therefore:
 - keep the camera on the LAN only;
 - **never expose 8091 (or 554, or 22) to the Internet**: no port forwarding, no UPnP, no DMZ host.
 
+Most keys are lost at the next boot. Two LED keys are saved on the camera and applied at start-up:
+
+| Key | Values | Default | Effect |
+|---|---|---|---|
+| `led.status` | `on`, `off`, `auto` | `on` | Front blue LED. `on`: left as the system sets it. `off`: dark. `auto`: blinks (1 Hz) while the camera starts or has no Wi-Fi, blinks slowly (0.5 Hz) while an RTSP client is playing, solid otherwise |
+| `led.state` | `system`, `on`, `off`, `blink_wifi`, `blink_stream` | | Read-only: what the LED does now |
+| `night.ir_led` | `auto`, `off` | `auto` | `off`: the IR-cut filter and the night image still switch, but the IR LEDs never light |
+
+They are stored in `/etc/config/akam/leds`. A `SET` answers `OK key=value`, or `ERR ...` and changes nothing
+for a value that is not listed; if the file cannot be written the answer ends with `(not saved: ...)`.
+From the PC use `./akam led` (see the [README](../README.md#update-change-the-name-add-a-video-password));
+by hand: `printf 'SET led.status off\n' | nc -w 2 127.0.0.1 8091` on the camera. Full description:
+`specs/06-spec-leds.md`.
+
+### LED settings
+
+The front LED is the kernel LED `state_led` (`/sys/class/leds/state_led`, on or off only) and the IR LEDs
+are GPIO 70. In `auto` the "Wi-Fi connected" test is an IPv4 address on `wlan0` whose link state is not
+down; the "someone is watching" test is an RTSP client in the PLAY state.
+
 ## 5. Network hardening
 
 - **No port forwarding** from your router to the camera, for any port. Reach it remotely, if you must,

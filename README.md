@@ -127,7 +127,13 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | flash a newer image | `./akam update` (`--image FILE` for a specific one) |
 | change the camera's network name (what your router lists) | `./akam hostname [NAME]` (default: the camera's name), applied at the next power cycle |
 | ask for a user and password on the stream (off by default) | `./akam rtsp-auth set` (also `status`, `disable`) |
+| turn the front LED off or make it a status light, or keep the infrared LEDs dark at night | `./akam led` shows both; `./akam led status on\|off\|auto`, `./akam led ir auto\|off` |
 | go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](#important-disclaimer-and-risks)) |
+
+The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
+has no Wi-Fi, blink slowly while someone watches the video, and stay solid otherwise; the default `on`
+leaves the LED as it always was. `ir off` still switches the image to night mode but never lights the
+infrared LEDs ([details](docs/akam_v1_install.md#led-settings)).
 
 `update` and `restore` write the camera's flash and ask the same red yes/no. The video password is a
 Digest login (works with VLC, ffmpeg, go2rtc and Frigate); only a hash is stored on the camera, and it
@@ -146,8 +152,8 @@ watch together, put [go2rtc](https://github.com/AlexxIT/go2rtc) or
 use `vlc --rtsp-tcp --avcodec-hw=none rtsp://<camera-ip>:554/`; a VLC window on a hidden Wayland
 workspace pauses the stream ([why and what to do](docs/troubleshooting.md#vlc-goes-black-or-stops-when-its-window-is-on-another-workspace)).
 
-Port 8091 (`LIST`, `GET`, `SET`: exposure, day/night, image) is a plain text protocol with no password;
-changes are lost at the next boot ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
+Port 8091 (`LIST`, `GET`, `SET`: exposure, day/night, image, LEDs) is a plain text protocol with no password;
+changes are lost at the next boot, except the LED settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
 
 ## If something goes wrong
 

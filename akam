@@ -58,6 +58,11 @@ Commands:
   rtsp-auth [set|disable|status]
                      password (Digest login) on the video stream, over SSH; off by default
                      (typed here, never shown, sent to the camera only as a hash); default: status
+  led [show | status on|off|auto] [ir auto|off]
+                     the front LED and the infrared night LEDs, over SSH; saved on the camera. Default: show.
+                       status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
+                       slowly while someone watches the video, solid otherwise)
+                       ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
   restore            put the original APP back from your backup
   wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
   step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
@@ -230,6 +235,9 @@ case $CMD in
     update) cmd_update || rc=$? ;;
     hostname) cmd_hostname "${ARGS[1]:-}" || rc=$? ;;
     rtsp-auth) cmd_rtsp_auth "${ARGS[1]:-status}" || rc=$? ;;
+    led)
+        cmd_led ${ARGS[@]+"${ARGS[@]:1}"} || rc=$?
+        ;;
     restore) cmd_restore || rc=$? ;;
     step)
         if [ "${#ARGS[@]}" -lt 2 ] || ! step_valid_name "${ARGS[1]}"; then

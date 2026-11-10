@@ -30,6 +30,7 @@
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
 #include "rtsp_auth.h"
+#include "leds.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
  * 60 s is also the protocol default). Clients refresh the session at about
@@ -83,6 +84,9 @@ typedef struct {
 
     uint64_t session_id;
     bool is_playing;
+    /* is_playing is mirrored in the status LED's client count (privacy
+     * indicator): only client_set_playing() changes it, so every exit path
+     * leaves the count right. */
     /* Set when a write to an RTSP/TCP client failed (peer gone or stalled
      * past SO_SNDTIMEO): the interleaved stream is no longer valid, so the
      * client loop drops the connection instead of blocking on it again. */
@@ -159,6 +163,12 @@ static const char *client_ip(const Client *c, char *buf, size_t cap)
 }
 
 declImpl(SmolRTSP_Controller, Client);
+
+static void client_set_playing(Client *c, bool playing) {
+    if (c->is_playing == playing) return;
+    c->is_playing = playing;
+    ledsys_stream_delta(playing ? 1 : -1);
+}
 
 static void Client_drop(VSelf) {
     VSELF(Client);
@@ -378,7 +388,7 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
 static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
     (void)req;
-    self->is_playing = true;
+    client_set_playing(self, true);
     if (self->nal_transport) {
         self->need_idr = true;
         self->idr_wait_frames = 0;
@@ -393,7 +403,7 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
 static void Client_teardown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
     (void)req;
-    self->is_playing = false;
+    client_set_playing(self, false);
     respond_session_header(self, ctx);
     smolrtsp_respond_ok(ctx);
     if (!self->drop_reason) self->drop_reason = "TEARDOWN";
@@ -1205,6 +1215,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
 
     printf("[ak_rtsp] Dropping client: %s\n",
            client.drop_reason ? client.drop_reason : "loop ended");
+    client_set_playing(&client, false);
     VCALL(DYN(Client, SmolRTSP_Droppable, &client), drop);
     close(client_fd);
     printf("[ak_rtsp] Client connection closed\n");
