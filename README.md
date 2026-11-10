@@ -128,6 +128,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | change the camera's network name (what your router lists) | `./akam hostname [NAME]` (default: the camera's name), applied at the next power cycle |
 | ask for a user and password on the stream (off by default) | `./akam rtsp-auth set` (also `status`, `disable`) |
 | turn the front LED off or make it a status light, or keep the infrared LEDs dark at night | `./akam led` shows both; `./akam led status on\|off\|auto`, `./akam led ir auto\|off` |
+| talk through the camera speaker from this computer, or play a sound file on it | `./akam talk` (microphone, Ctrl-C stops), `./akam talk test`, `./akam say FILE`; needs the video password ([two-way audio](docs/two_way_audio.md)) |
 | go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](#important-disclaimer-and-risks)) |
 
 The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
@@ -152,6 +153,11 @@ watch together, put [go2rtc](https://github.com/AlexxIT/go2rtc) or
 use `vlc --rtsp-tcp --avcodec-hw=none rtsp://<camera-ip>:554/`; a VLC window on a hidden Wayland
 workspace pauses the stream ([why and what to do](docs/troubleshooting.md#vlc-goes-black-or-stops-when-its-window-is-on-another-workspace)).
 
+**Two-way audio:** the RTSP port also accepts the standard ONVIF audio backchannel, so go2rtc, Frigate
+and Home Assistant's WebRTC card can talk through the camera speaker, as can `./akam talk`. It is offered
+only when the video password is on. See [two-way audio](docs/two_way_audio.md) (including configuration
+examples and the one-client limit).
+
 Port 8091 (`LIST`, `GET`, `SET`: exposure, day/night, image, LEDs) is a plain text protocol with no password;
 changes are lost at the next boot, except the LED settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
 
@@ -175,8 +181,8 @@ hostname announced to the router (`akam-01`).
 
 **Still to check:** microphone audibility, Telnet staying off after a Wi-Fi reconnect, day/night over a
 long run ([test plan](docs/akam_v1_test_plan.md)). **Known limits:** the image is grainier than the stock
-firmware's (improvement planned); one RTSP client at a time; no two-way audio. Please report what you
-see on your camera.
+firmware's (improvement planned); one RTSP client at a time; two-way audio (talk) is new, tested on the PC only, and needs the video
+password. Please report what you see on your camera.
 
 ## Security notes
 
