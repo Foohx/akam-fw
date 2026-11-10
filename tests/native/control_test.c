@@ -95,7 +95,7 @@ static void test_pure(void)
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a4) == 1);
     inet_pton(AF_INET, "127.5.6.7", &a4.sin_addr);
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a4) == 1);
-    inet_pton(AF_INET, "192.168.1.20", &a4.sin_addr);
+    inet_pton(AF_INET, "192.0.2.20", &a4.sin_addr);
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a4) == 0);
     inet_pton(AF_INET, "128.0.0.1", &a4.sin_addr);
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a4) == 0);
@@ -107,7 +107,7 @@ static void test_pure(void)
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a6) == 1);
     inet_pton(AF_INET6, "::ffff:127.0.0.1", &a6.sin6_addr);
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a6) == 1);
-    inet_pton(AF_INET6, "::ffff:192.168.1.2", &a6.sin6_addr);
+    inet_pton(AF_INET6, "::ffff:192.0.2.2", &a6.sin6_addr);
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a6) == 0);
     inet_pton(AF_INET6, "fe80::1", &a6.sin6_addr);
     CHECK(ctl_peer_is_loopback((struct sockaddr *)&a6) == 0);
