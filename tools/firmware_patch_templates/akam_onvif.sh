@@ -2,7 +2,7 @@
 # akam_onvif.sh -- switch the ONVIF service of ak_rtsp (Profile S: discovery, device, media) on or off.
 #
 # Installed as /usr/sbin/akam_onvif.sh (mode 755). Run it over SSH, as root:
-#   akam_onvif.sh enable [PORT]   turn ONVIF on (HTTP port PORT, 1 to 65535; default: the port already
+#   akam_onvif.sh enable [PORT]   turn ONVIF on (HTTP port PORT, 1 to 65535 except 21-24, 554, 8091; default: the port already
 #                                 saved, else 80). Refused unless a stream password is set
 #                                 (./akam rtsp-auth set): ONVIF logins are checked against it
 #   akam_onvif.sh disable         turn ONVIF off (the HTTP port and UDP 3702 are closed again)
@@ -145,6 +145,9 @@ do_enable() {
     port=
     if [ "$#" -ge 1 ]; then
         valid_port "$1" || { echo "akam_onvif: PORT must be a whole number from 1 to 65535" >&2; exit 2; }
+        case $1 in
+            21 | 22 | 23 | 24 | 554 | 8091) echo "akam_onvif: port $1 is used by another Akam service: choose another" >&2; exit 2 ;;
+        esac
         port=$1
     fi
     creds_state || {

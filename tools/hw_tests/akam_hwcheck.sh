@@ -191,8 +191,13 @@ check_onvif_ports() {
         fi
     else
         a=$(port_addrs 80)
-        if [ -z "$a" ]; then pass "port 80 closed (ONVIF off)"; else fail "port 80 listening ($a): must be closed while ONVIF is off (akam_onvif.sh enable opens it)"; fi
-        if onvif_udp_listening 3702; then fail "UDP 3702 bound while ONVIF is off"; fi
+        if [ -z "$a" ]; then pass "port 80 closed (ONVIF off)"
+        elif [ "$maint" = 1 ]; then warn "port 80 listening ($a) while the maintenance flag is present"
+        else fail "port 80 listening ($a): must be closed while ONVIF is off (akam_onvif.sh enable opens it)"; fi
+        if onvif_udp_listening 3702; then
+            if [ "$maint" = 1 ]; then warn "UDP 3702 bound while ONVIF is off, with the maintenance flag present"
+            else fail "UDP 3702 bound while ONVIF is off"; fi
+        fi
     fi
 }
 

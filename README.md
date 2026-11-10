@@ -165,8 +165,7 @@ service and the media service of Profile S, so the camera shows up in those apps
   and 8091 are open.
 - **In your app:** let it search, or add the camera by hand with its address (`<camera-ip>`, port 80) and the
   video user name and password. If it is not found, see [troubleshooting](docs/troubleshooting.md#an-onvif-app-does-not-find-the-camera).
-- The setting is a small file on the camera that survives reboots; the camera applies it at once, without a restart
-  (an older firmware says "reboot to apply").
+- The setting is a small file on the camera that survives reboots; an older image says to reboot the camera to apply it.
 
 ## Watching the stream
 

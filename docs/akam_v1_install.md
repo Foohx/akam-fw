@@ -65,8 +65,7 @@ been tested yet (criterion 14 of the [test plan](akam_v1_test_plan.md)).
 ### ONVIF flag file
 
 `./akam onvif enable | disable` (camera helper `akam_onvif.sh`, over SSH) writes `/etc/config/akam/onvif`, which
-`ak_rtsp` reads at start and again on `ONVIF reload` (a line on 8091 from the camera itself; the helper sends it
-with `ak_rtsp ctl ONVIF reload`). Format: two lines, LF, in a 0700 directory, mode 0600, replaced atomically:
+survives reboots; the camera applies the change by itself (an older image says to reboot). Format: two lines, LF, in a 0700 directory, mode 0600, replaced atomically:
 
 ```
 enabled=1
@@ -76,7 +75,7 @@ port=80
 `enabled` is `1` or `0`; `port` is the HTTP port, 1 to 65535 (default 80; UDP 3702 is fixed). **An absent file
 means ONVIF is off**; any other content is invalid and counts as off. `enable` is refused unless
 `/etc/config/akam/credentials` (written by `./akam rtsp-auth set`) exists and looks valid. This feature ships
-in the same release as the firmware side; an older `ak_rtsp` ignores the file.
+in the same release as the ONVIF firmware; an older image ignores the file.
 
 ## 4. The 8091 control port
 

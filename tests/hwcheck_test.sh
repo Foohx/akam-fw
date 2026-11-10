@@ -407,6 +407,13 @@ tcp_line 00000000 80 >> "$R25/proc/net/tcp"
 mkdir -p "$R25/etc/config/akam"; printf 'enabled=0\nport=80\n' > "$R25/etc/config/akam/onvif"
 run t25 "$R25" "$WORK/s20"
 has "onvif flag 0 with port 80 open: FAIL" '^FAIL +port 80 listening' "$WORK/t25.out"
+R26=$WORK/r26; mkroot "$R26"; mkudp "$R26" 3702
+tcp_line 00000000 80 >> "$R26/proc/net/tcp"
+: > "$R26/mnt/AKAM_MAINTENANCE"
+run t26 "$R26" "$WORK/s20"
+has "maintenance, onvif off, 80 open: WARN" '^WARN +port 80 listening' "$WORK/t26.out"
+has "maintenance, onvif off, 3702 bound: WARN" '^WARN +UDP 3702 bound' "$WORK/t26.out"
+hasnt "maintenance, onvif off: no FAIL on 80/3702" '^FAIL +(port 80|UDP 3702)' "$WORK/t26.out"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
