@@ -223,7 +223,7 @@ static int rx_take_response(conn_t *c, char *out, size_t cap)
                 bl = (size_t)strtoul(c->rx + i + 15, NULL, 10);
                 break;
             }
-        if (hl + bl > sizeof(c->rx)) return -1;
+        if (bl > sizeof(c->rx) || hl + bl > sizeof(c->rx)) return -1; /* a huge Content-Length must not wrap */
         if (c->rxn < hl + bl) return 0;
         size_t total = hl + bl < cap - 1 ? hl + bl : cap - 1;
         memcpy(out, c->rx, total);
@@ -712,7 +712,13 @@ int main(int argc, char **argv)
     int rtp_ch = 0, rtcp_ch = 1;
     if (header(resp, "Transport", v, sizeof(v))) {
         const char *il = strstr(v, "interleaved=");
-        if (il) sscanf(il + 12, "%d-%d", &rtp_ch, &rtcp_ch);
+        if (il) {
+            int got = sscanf(il + 12, "%d-%d", &rtp_ch, &rtcp_ch);
+            if (got == 1) rtcp_ch = rtp_ch + 1; /* "interleaved=4" means 4-5 */
+            else if (got != 2) rtp_ch = rtcp_ch = -1;
+        }
+        if (rtp_ch < 0 || rtp_ch > 255 || rtcp_ch < 0 || rtcp_ch > 255 || rtp_ch == rtcp_ch)
+            return fail(EXIT_PROTO, "SETUP answered an invalid interleaved channel pair");
     }
     if (!header(resp, "Session", v, sizeof(v))) return fail(EXIT_PROTO, "SETUP gave no Session");
     v[strcspn(v, ";")] = '\0';
