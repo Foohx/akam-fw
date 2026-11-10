@@ -22,9 +22,17 @@
  * system()/popen() commands. The stock binary imports open/write/ioctl directly.
  *
  * Log placement (first directory that works): /tmp/stock_capture/out (symlink made by
- * stock_capture.sh to the SD card run folder), /tmp/sd/stock_capture, /mnt/stock_capture,
- * then /tmp (RAM, small cap). Size caps per file; a missing or removed card never
- * crashes anything (events are dropped, the real syscall result is always returned).
+ * stock_capture.sh to the SD card run folder), /tmp/sd/stock_capture (only when that folder
+ * already exists: never created, so it cannot silently become a RAM directory), then /tmp
+ * (RAM, 1 MiB cap per file). Nothing is ever created on the root filesystem or in flash.
+ * Size caps per file; a missing or removed card never crashes anything (events are dropped,
+ * the real syscall result is always returned).
+ *
+ * Threads: no lock and no allocation (a lock taken in a hooked call could deadlock against a
+ * signal handler or the stock code). Every event is built on the caller's stack and written
+ * with ONE write() on an O_APPEND descriptor, so lines of different threads never mix; the
+ * shared counters and tables are racy on purpose and can only blur a statistic, never the
+ * result of the call that is being observed.
  *
  * The hook only activates in a process whose /proc/self/exe is called anyka_ipc
  * (STOCK_HOOK_COMM), so children spawned by system()/popen() inherit LD_PRELOAD but
@@ -63,7 +71,6 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
 #define SYS_OPEN        5
 #define SYS_CLOSE       6
 #define SYS_LSEEK      19
-#define SYS_MKDIR      39
 #define SYS_DUP        41
 #define SYS_IOCTL      54
 #define SYS_FCNTL      55
@@ -99,7 +106,6 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
 #define SYS_DUP        32
 #define SYS_DUP2       33
 #define SYS_FCNTL      72
-#define SYS_MKDIR      83
 #define SYS_READLINK   89
 #define SYS_GETTID    186
 #define SYS_CLOCK_GETTIME 228
@@ -207,10 +213,10 @@ static int g_full;
 static uint32_t g_drop, g_events, g_alive_ms, g_log_fail;
 
 #ifdef STOCK_HOOK_DIRS_TEST
-static const char *const k_dirs[] = { STOCK_HOOK_DIRS_TEST };   /* host test: 4 entries */
+static const char *const k_dirs[] = { STOCK_HOOK_DIRS_TEST };   /* host test: 3 or more entries */
 #else
 static const char *const k_dirs[] = {
-    "/tmp/stock_capture/out", "/tmp/sd/stock_capture", "/mnt/stock_capture", "/tmp"
+    "/tmp/stock_capture/out", "/tmp/sd/stock_capture", "/tmp"
 };
 #endif
 #define NDIRS ((int)(sizeof k_dirs / sizeof k_dirs[0]))
@@ -286,14 +292,10 @@ static int sink_open(int idx, const char *name, int fdbase)
     const char *s = name;
     while (*s && n < sizeof p - 1) p[n++] = *s++;
     p[n] = 0;
-    long fd = _sc3(SYS_OPEN, (long)p, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd < 0 && idx != 0 && idx != NDIRS - 1) {          /* card folder may not exist yet */
-        char dir[80]; unsigned m = 0; d = k_dirs[idx];
-        while (*d && m < sizeof dir - 1) dir[m++] = *d++;
-        dir[m] = 0;
-        _sc2(SYS_MKDIR, (long)dir, 0755);
-        fd = _sc3(SYS_OPEN, (long)p, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    }
+    /* O_CLOEXEC: if the move above 900 fails (low RLIMIT_NOFILE) the descriptor must still not
+     * leak into children. The directory is never created here: it is either the card folder
+     * made by stock_capture.sh or /tmp. */
+    long fd = _sc3(SYS_OPEN, (long)p, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0) return -1;
     long hi = sc6(SYS_FCNTL, fd, F_DUPFD_CLOEXEC, fdbase, 0, 0, 0);
     if (hi >= 0) { _sc2(SYS_CLOSE, fd, 0); fd = hi; }
@@ -330,6 +332,7 @@ static void emit(struct lb *l)
     if (g_logfd < 0 && !log_pick()) { g_drop++; return; }
     long w = _sc3(SYS_WRITE, g_logfd, (long)l->b, l->n);
     if (w < 0) {                                      /* stock closed it, card removed ... */
+        if (w != -EBADF) _sc2(SYS_CLOSE, g_logfd, 0);   /* EIO of a pulled card: do not leak it */
         g_logfd = -1;
         if (log_pick()) w = _sc3(SYS_WRITE, g_logfd, (long)l->b, l->n);
     }
@@ -477,7 +480,7 @@ static int classify(const char *p)
 {
     if (!p) return C_NONE;
     if (has(p, "/dev/pcm") || has(p, "/dev/akpcm") || has(p, "/dev/snd/")) return C_PCM;
-    if (has(p, "/sys/class/gpio")) return C_GPIO;
+    if (has(p, "/sys/class/gpio") || has(p, "/dev/gpio") || has(p, "/dev/ak_gpio")) return C_GPIO;
     if (has(p, "/dev/mem")) return C_MEM;
     if (ends_with(p, ".mp3") || ends_with(p, ".wav") || ends_with(p, ".pcm") ||
         ends_with(p, ".aac") || ends_with(p, ".amr") || ends_with(p, ".opus") ||

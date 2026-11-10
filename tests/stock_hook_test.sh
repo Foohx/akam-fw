@@ -35,7 +35,7 @@ HOOKFLAGS=(-std=gnu99 -O1 -Wall -Wextra -Werror -fPIC -shared -nostdlib -ffreest
     -fno-builtin -fno-stack-protector -fvisibility=hidden -fno-tree-loop-distribute-patterns
     -I"$SRC" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u)
 dirs_macro() { # $1 = base dir
-    printf '"%s/out","%s/nosuch/sd","%s/nosuch/mnt","%s/tmp"' "$1" "$1" "$1" "$1"
+    printf '"%s/out","%s/nosuch/sd","%s/tmp"' "$1" "$1" "$1"
 }
 mkdir -p "$WORK/a" "$WORK/b" "$WORK/c" "$WORK/d"
 if ! "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/a")" \
@@ -49,7 +49,7 @@ fi
 "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/c")" \
     -DCAP_MAIN_SD=3000u -DCAP_ISP_SD=600u -DCAP_TMP=3000u \
     -o "$WORK/hook_c.so" "$SRC/stock_hook.c" || ko "build variant c"
-"$CC" -std=gnu99 -O1 -Wall -Wextra -Werror -o "$WORK/hook_driver" \
+"$CC" -std=gnu99 -O1 -Wall -Wextra -Werror -pthread -o "$WORK/hook_driver" \
     "$HERE/native/stock_hook_driver.c" || ko "build the driver"
 
 # --- fake device tree ---------------------------------------------------------------
@@ -117,6 +117,9 @@ LD_PRELOAD="$WORK/hook_b.so" "$WORK/hook_driver" "$R" >"$WORK/b2.out" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then ok "fallback directory present: driver passes"; else ko "fallback run exit $rc"; fi
 if [ -s "$WORK/b/tmp/stock_hook.log" ]; then ok "without the card the log falls back to the RAM directory"; else ko "no fallback log"; fi
+if [ ! -e "$WORK/b/nosuch" ]; then ok "a missing fallback folder is never created"; else ko "the hook created a fallback folder"; fi
+bsz=$(stat -c %s "$WORK/b/tmp/stock_hook.log")
+if [ "$bsz" -le 1048576 ]; then ok "RAM fallback log is under its 1 MiB cap ($bsz bytes)"; else ko "RAM fallback too big: $bsz"; fi
 
 # --- run C: size caps ------------------------------------------------------------------------------
 mkdir -p "$WORK/card_c"
@@ -129,6 +132,16 @@ sz=$(stat -c %s "$WORK/card_c/stock_hook.log")
 if [ "$sz" -le 4600 ]; then ok "stock_hook.log stays near its cap ($sz bytes for a 3000 cap)"; else ko "cap not enforced: $sz bytes"; fi
 isz=$(stat -c %s "$WORK/card_c/isp_hook.log" 2>/dev/null || echo 0)
 if [ "$isz" -le 1400 ]; then ok "isp_hook.log stays near its cap ($isz bytes for a 600 cap)"; else ko "isp cap not enforced: $isz bytes"; fi
+
+# --- run E: several threads on the same descriptors (no crash, no hang, results unchanged) -----------
+mkdir -p "$WORK/card_e"
+rm -f "$WORK/a/out"; ln -s "$WORK/card_e" "$WORK/a/out"
+timeout 120 env LD_PRELOAD="$WORK/hook_a.so" "$WORK/hook_driver" "$R" threads >"$WORK/e.out" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then ok "6 threads hammering the hook: results and errno unchanged, no hang"; else ko "thread run exit $rc"; cat "$WORK/e.out"; fi
+has "thread run reached its end" 'THREADS DONE bad=0' "$WORK/e.out"
+has "thread run logged events" 'IOCTL fd=' "$WORK/card_e/stock_hook.log"
+if awk '!/^(T=[0-9]+\.[0-9]{3} tid=[0-9]+ [A-Z_]+( |$)|LOG_CAP)/ { bad++ } END { exit bad ? 1 : 0 }' "$WORK/card_e/stock_hook.log"; then ok "no log line of any thread is torn or mixed"; else ko "malformed lines in the multi-thread log"; fi
 
 # --- run D: another process name: LD_PRELOAD inherited by a child must stay silent ------------------
 cp "$WORK/hook_driver" "$WORK/other_prog"

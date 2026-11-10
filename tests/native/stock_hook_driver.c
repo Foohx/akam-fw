@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -29,10 +30,63 @@ static void pcmpath(char *out, size_t n, const char *root, const char *rel)
     snprintf(out, n, "%s%s", root, rel);
 }
 
+/* ---- "threads" mode: anyka_ipc is multithreaded; hammer the hook from several threads on
+ * one shared playback fd and on private fds, and check that no call result or errno changes. */
+struct tctx { const char *root; int shared_fd; int id; int bad; };
+
+static void *worker(void *arg)
+{
+    struct tctx *t = arg;
+    char p[512];
+    int16_t pcm[256];
+    for (int i = 0; i < 256; i++) pcm[i] = (int16_t)(i * 37 - 4000);
+    for (int it = 0; it < 400; it++) {
+        uint32_t v = (uint32_t)(it % 7);
+        errno = 0;
+        if (ioctl(t->shared_fd, 0x80045030, &v) != -1 || errno != ENOTTY) t->bad++;
+        errno = 0;
+        if (ioctl(t->shared_fd, 0x401c50e0, (void *)0x10) != -1 || errno != ENOTTY) t->bad++;
+        if (write(t->shared_fd, pcm, sizeof pcm) != (ssize_t)sizeof pcm) t->bad++;
+        snprintf(p, sizeof p, "%s/dev/pcmC0D0p", t->root);
+        int fd = open(p, O_WRONLY);
+        if (fd < 0) { t->bad++; continue; }
+        if (write(fd, pcm, 100) != 100) t->bad++;
+        errno = 0;
+        if (ioctl(fd, 0x000050e1, (void *)0) != -1 || errno != ENOTTY) t->bad++;
+        if (close(fd) != 0) t->bad++;
+        snprintf(p, sizeof p, "%s/sys/class/gpio/gpio69/value", t->root);
+        fd = open(p, O_WRONLY);
+        if (fd < 0 || write(fd, "1", 1) != 1) t->bad++;
+        if (fd >= 0) close(fd);
+    }
+    return NULL;
+}
+
+static int threads_mode(const char *root)
+{
+    char p[512];
+    pcmpath(p, sizeof p, root, "/dev/pcmC0D0p");
+    int sfd = open(p, O_WRONLY);
+    if (sfd < 0) { printf("SELFCHECK FAIL: shared open\n"); return 1; }
+    enum { NT = 6 };
+    pthread_t th[NT];
+    struct tctx cx[NT];
+    for (int i = 0; i < NT; i++) {
+        cx[i].root = root; cx[i].shared_fd = sfd; cx[i].id = i; cx[i].bad = 0;
+        if (pthread_create(&th[i], NULL, worker, &cx[i]) != 0) { printf("SELFCHECK FAIL: pthread_create\n"); return 1; }
+    }
+    int bad = 0;
+    for (int i = 0; i < NT; i++) { pthread_join(th[i], NULL); bad += cx[i].bad; }
+    close(sfd);
+    printf("THREADS DONE bad=%d\n", bad);
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 2) { fprintf(stderr, "usage: %s ROOT\n", argv[0]); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: %s ROOT [threads]\n", argv[0]); return 2; }
     const char *root = argv[1];
+    if (argc > 2 && !strcmp(argv[2], "threads")) return threads_mode(root);
     char p[512];
     int r;
 
