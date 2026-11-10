@@ -21,6 +21,7 @@ q_ratio) on the same scene. Nothing here is a quality score: it is one more colu
 Exit status 0, or 1 when a source cannot be decoded.
 """
 import math
+import re
 import shutil
 import statistics
 import subprocess
@@ -28,6 +29,13 @@ import sys
 
 DEFAULT_ROI = (640, 360, 320, 180)
 SAMPLE_STRIDE = 2
+TOOL_TIMEOUT = 180  # seconds: a stalled RTSP source must not hang the test run
+CRED_RE = re.compile(r"(://)[^/@\s]+@")
+
+
+def mask(text):
+    """Hide user:password@ of URLs in anything that is printed."""
+    return CRED_RE.sub(r"\1***@", text)
 
 
 def parse_args(argv):
@@ -51,8 +59,10 @@ def parse_args(argv):
             raise ValueError("unknown option " + a)
         else:
             sources.append(a); i += 1
-    if frames < 3:
-        raise ValueError("--frames must be at least 3")
+    if frames < 3 or frames > 600:
+        raise ValueError("--frames must be between 3 and 600")
+    if skip < 0 or skip > 600:
+        raise ValueError("--skip must be between 0 and 600")
     if not sources:
         raise ValueError("no source given")
     return frames, roi, skip, sources
@@ -62,7 +72,7 @@ def split_label(src):
     if "=" in src and not src.startswith(("rtsp://", "http://", "/", ".")) and "://" not in src.split("=", 1)[0]:
         label, path = src.split("=", 1)
         return label, path
-    return src.rsplit("/", 1)[-1][:24] or src, src
+    return mask(src).rstrip("/").rsplit("/", 1)[-1][:24] or "source", src
 
 
 def decode_gray(src, frames, skip, roi):
@@ -73,12 +83,21 @@ def decode_gray(src, frames, skip, roi):
         cmd += ["-rtsp_transport", "tcp"]
     cmd += ["-i", src, "-vf", "crop=%d:%d:%d:%d,format=gray" % (w, h, x, y),
             "-frames:v", str(frames + skip), "-f", "rawvideo", "-"]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    res = run_tool(cmd)
     data, size = res.stdout, w * h
     n = len(data) // size
     if n < 3 + skip:
-        raise RuntimeError("only %d frame(s) decoded from %s: %s" % (n, src, res.stderr.decode("utf-8", "replace").strip()[:200]))
+        raise RuntimeError("only %d frame(s) decoded from %s: %s"
+                           % (n, mask(src), mask(res.stderr.decode("utf-8", "replace").strip()[:200])))
     return [data[i * size:(i + 1) * size] for i in range(skip, n)]
+
+
+def run_tool(cmd):
+    """Run ffmpeg / ffprobe; subprocess.run kills the child when the timeout expires."""
+    try:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=TOOL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("%s timed out after %d s (source stalled?)" % (cmd[0], TOOL_TIMEOUT))
 
 
 def mad_sigma(values):
@@ -114,7 +133,7 @@ def bitrate_stats(src, frames, skip):
         cmd += ["-rtsp_transport", "tcp"]
     cmd += ["-select_streams", "v:0", "-show_entries", "packet=size,flags,pts_time", "-of", "csv=p=0",
             "-read_intervals", "%%+#%d" % (frames + skip), src]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    res = run_tool(cmd)
     sizes_i, sizes_p, first, last = [], [], None, None
     for line in res.stdout.decode("utf-8", "replace").splitlines():
         parts = line.split(",")
@@ -182,7 +201,7 @@ def main(argv):
         try:
             rows.append((label, measure(path, frames, skip, roi)))
         except (RuntimeError, OSError) as exc:
-            sys.stderr.write("image_noise: %s: %s\n" % (label, exc))
+            sys.stderr.write("image_noise: %s: %s\n" % (label, mask(str(exc))))
             failed += 1
     if rows:
         sys.stdout.write("ROI x=%d y=%d w=%d h=%d, %d frame(s) after %d skipped\n" % (roi + (frames, skip)))

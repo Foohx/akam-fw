@@ -3,6 +3,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -22,7 +23,9 @@
 static volatile int g_venc_rc_stock;
 static volatile int g_wb_conf;
 static volatile int g_poll;
-static int          g_loaded;
+static volatile int g_loaded;
+/* ensure_loaded() runs from main(), the AE thread and the 8091 thread: the first one in loads, the others wait. */
+static pthread_mutex_t g_load_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int parse_flag(const char *v)
 {
@@ -78,17 +81,25 @@ void imgq_load(const char *conf_file, const char *ram_file)
     g_wb_conf = 0;
     g_poll = 0;
     load_file(conf_file);
+    if (g_venc_rc_stock)
+        printf("[imgq] WARNING: venc_rc=stock is saved in %s: if the encoder oopses, the camera reboots into the "
+               "same crash. Use %s (RAM, gone at reboot) for the first tests.\n", conf_file, IMGQ_RAM_FILE);
     load_file(ram_file);
     const char *e;
     if ((e = getenv("AKAM_VENC_RC")) != NULL) apply_option("venc_rc", e);
     if ((e = getenv("AKAM_IMG_WB")) != NULL) apply_option("wb", e);
     if ((e = getenv("AKAM_IMG_POLL")) != NULL) apply_option("poll", e);
+    printf("[imgq] options: venc_rc=%s wb=%s poll=%d\n", g_venc_rc_stock ? "stock" : "legacy",
+           g_wb_conf ? "conf" : "manual", g_poll);
     g_loaded = 1;
 }
 
 static void ensure_loaded(void)
 {
+    if (g_loaded) return;
+    pthread_mutex_lock(&g_load_lock);
     if (!g_loaded) imgq_load(IMGQ_CONF_FILE, IMGQ_RAM_FILE);
+    pthread_mutex_unlock(&g_load_lock);
 }
 
 int imgq_venc_rc_stock(void) { ensure_loaded(); return g_venc_rc_stock; }
@@ -188,6 +199,39 @@ static int do_reload(char *msg, size_t cap)
     return 0;
 }
 
+static int not_ready(char *msg, size_t cap)
+{
+    snprintf(msg, cap, "ERR ISP not initialised yet (start-up in progress), retry in a few seconds");
+    return 1;
+}
+
+/* img.wb: called with the ISP configuration lock held (the night thread cannot switch mode meanwhile). */
+static int set_wb(const char *val, char *msg, size_t cap)
+{
+    if (!strcmp(val, "conf")) {
+        if (isp_reapply_wb_conf(night_is_night()) != 0) {
+            snprintf(msg, cap, "ERR img.wb: the WB block could not be re-sent");
+            return 1;
+        }
+        g_wb_conf = 1;
+    } else if (!strcmp(val, "manual")) {
+        if (night_is_night()) {
+            snprintf(msg, cap, "ERR img.wb=manual is a day setting: the night calibration keeps its own WB");
+            return 1;
+        }
+        if (isp_set_wb_manual(WB_MANUAL_R, WB_MANUAL_G, WB_MANUAL_B) != 0) {
+            snprintf(msg, cap, "ERR img.wb: the manual WB block could not be sent");
+            return 1;
+        }
+        g_wb_conf = 0;
+    } else {
+        snprintf(msg, cap, "ERR invalid img.wb value %s (want manual|conf)", val);
+        return 1;
+    }
+    snprintf(msg, cap, "OK img.wb=%s", g_wb_conf ? "conf" : "manual");
+    return 0;
+}
+
 int imgq_ctl_set(const char *key, const char *val, char *msg, size_t cap)
 {
     if (!is_ours(key)) return -1;
@@ -199,28 +243,11 @@ int imgq_ctl_set(const char *key, const char *val, char *msg, size_t cap)
         return 1;
     }
     if (!strcmp(key, "img.wb")) {
-        if (!strcmp(val, "conf")) {
-            if (isp_reapply_wb_conf(night_is_night()) != 0) {
-                snprintf(msg, cap, "ERR img.wb: the WB block could not be re-sent");
-                return 1;
-            }
-            g_wb_conf = 1;
-        } else if (!strcmp(val, "manual")) {
-            if (night_is_night()) {
-                snprintf(msg, cap, "ERR img.wb=manual is a day setting: the night calibration keeps its own WB");
-                return 1;
-            }
-            if (isp_set_wb_manual(WB_MANUAL_R, WB_MANUAL_G, WB_MANUAL_B) != 0) {
-                snprintf(msg, cap, "ERR img.wb: the manual WB block could not be sent");
-                return 1;
-            }
-            g_wb_conf = 0;
-        } else {
-            snprintf(msg, cap, "ERR invalid img.wb value %s (want manual|conf)", val);
-            return 1;
-        }
-        snprintf(msg, cap, "OK img.wb=%s", g_wb_conf ? "conf" : "manual");
-        return 0;
+        if (!isp_pipeline_ready()) return not_ready(msg, cap);
+        isp_cfg_lock();
+        int rc = set_wb(val, msg, cap);
+        isp_cfg_unlock();
+        return rc;
     }
     if (!strcmp(key, "img.poll")) {
         int f = parse_flag(val);
@@ -237,7 +264,15 @@ int imgq_ctl_set(const char *key, const char *val, char *msg, size_t cap)
             snprintf(msg, cap, "ERR invalid img.reload value %s (want 1)", val);
             return 1;
         }
-        return do_reload(msg, cap);
+        if (!isp_pipeline_ready()) return not_ready(msg, cap);
+        isp_cfg_lock();
+        int rc = do_reload(msg, cap);
+        isp_cfg_unlock();
+        return rc;
     }
-    return do_dump(val, msg, cap);
+    if (!isp_pipeline_ready()) return not_ready(msg, cap);
+    isp_cfg_lock();
+    int rc = do_dump(val, msg, cap);
+    isp_cfg_unlock();
+    return rc;
 }

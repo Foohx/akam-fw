@@ -155,7 +155,7 @@ A change is worth keeping when, with equal luma, `sigma_t` and the bit rate drop
 
 | Risk | Mitigation |
 |---|---|
-| `venc_rc=stock` raises a kernel oops (the encoder crashed twice with other `rc` words) | start-up option only, default off, from RAM; UART attached for the first try; the struct is the stock one and keeps the MMA flag the DMA pool was sized for |
+| `venc_rc=stock` raises a kernel oops (the encoder crashed twice with other `rc` words) | start-up option only, default off; put it in `/tmp/akam_image` (RAM: a crash self-heals at the reboot), never in the saved file before a test has passed (a warning is logged if it is); UART attached for the first try; the struct is the stock one of channel 0 and keeps the MMA flag the DMA pool was sized for. Still a hypothesis: minqp = maxqp = 0 (suspected once of a zero divisor) and the stock sub-stream sends `rc.flag = 0` without crashing |
 | `img.wb=conf` brings back the blue cast the manual block was meant to fix (the file's block carries the same gains) | live and reversible (`SET img.wb manual`); default unchanged |
 | `img.dump all` sends a guessed getter that is not one | only reads are tried; an unknown command returns an error; `confirmed` is the default |
 | `img.reload` re-sends every block: a visible flicker, picture settings lost | documented; for tests only |
@@ -165,3 +165,9 @@ A change is worth keeping when, with equal luma, `sigma_t` and the bit rate drop
 ## 9. Files
 
 `src/ak_rtsp/imgq.c`, `imgq.h` (switches, 8091 keys), `isp_blocks.c`, `isp_blocks.h` (block table, conf loader, comparison), `isp.c` (`isp_reapply_wb_conf`), `ae.c` (WB option, statistics poll), `venc.c` (rc sub-struct), `isp_dump.c` (`--blocks`), `control.c` (3 lines), `tools/hw_tests/image_noise.py`, `tools/hw_tests/isp_block_diff.py`, tests `isp_blocks_test.sh`, `imgq_test.sh`, `image_noise_test.sh`, `isp_block_diff_test.sh`.
+
+## 10. Concurrency and 8091 model
+
+- The `img.*` SETs are debug keys. Spec 07 makes 8091 read-only remotely (loopback writes only): `img.wb`, `img.poll`, `img.reload`, `img.dump` follow whatever rule that step applies to SET (they stay usable from the loopback, i.e. from `./akam` over SSH).
+- `img.wb`, `img.reload` and `img.dump` send several ioctls: they run under `isp_cfg_lock()`, the lock the night thread takes for a whole day / night switch (`g_is_night` changes before it is released), so they never interleave with one. They refuse (`ERR ISP not initialised yet`) until the first `isp_pipeline_init()` has completed, because the 8091 server starts before the ISP is set up. Single-ioctl reads (AE thread, `img.poll`) stay lock-free like the existing ones.
+- Nothing here writes to flash: `/etc/config/akam/image` is only read (it is edited by hand); `img.dump` writes at most about 110 KiB to `/tmp/isp_live/isp_blocks.bin` (RAM), the dump buffer is on the heap (64 KiB, the largest block is 46584 bytes), the conf file (282 KB) is read into the heap, twice during `img.dump` (day and night), under 1 MiB at the peak, freed before the key returns.

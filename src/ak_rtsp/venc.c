@@ -287,7 +287,15 @@ int venc_create_encoder(void)
          * rc_flag=1, rc.flag=1 and every other rc word zero. The two crashes recorded above both
          * had rc.flag=0, i.e. MMA off while QUERY_DMA had sized the ring pool for MMA on (it sets
          * bEnableMMA=1): the same pool shortfall that dma_pool_alloc_obj trips over. With rc.flag=1
-         * the pool matches, as it does in the stock application. Not hardware-tested on ak_rtsp. */
+         * the pool matches, as it does in the stock application. Not hardware-tested on ak_rtsp.
+         *
+         * CRASH RISK, opt-in only: this is a hypothesis, not a proof. Two doubts remain. (1) minqp and maxqp
+         * are both 0 here, which the first crash note above suspected of a zero divisor (stock does send 0 / 0
+         * for channel 0, so the library must cope, but only with its own surrounding state). (2) the stock
+         * application's second channel sends rc.flag=0 and works, so the pool size depends on more than this
+         * flag (QUERY_DMA input). If this oopses, the camera reboots into the flashed firmware: run it from
+         * RAM (/tmp/akam_image) with the UART attached, never save it in /etc/config/akam/image before it
+         * has survived a test. */
         req.rc.cub_size      = 0;
         req.rc.minqp         = 0;
         req.rc.maxqp         = 0;

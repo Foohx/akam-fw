@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
 #include <sys/ioctl.h>
 
 #include "ak_rtsp.h"
@@ -197,6 +198,16 @@ static int isp_send_modules(FILE *f, const char *log_prefix)
     return (ret == 0) ? mod : -1;
 }
 
+/* Serialises the multi-ioctl ISP re-configurations (day/night switch, img.reload, img.wb, img.dump) between
+ * the night thread and the 8091 control thread. Taken only by those callers, never inside isp_tunnel(): the
+ * AE thread's single-ioctl reads stay lock-free as before. */
+static pthread_mutex_t g_isp_cfg_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile int    g_pipeline_ready;
+
+void isp_cfg_lock(void)       { pthread_mutex_lock(&g_isp_cfg_lock); }
+void isp_cfg_unlock(void)     { pthread_mutex_unlock(&g_isp_cfg_lock); }
+int  isp_pipeline_ready(void) { return g_pipeline_ready; }
+
 int isp_pipeline_init(void)
 {
     FILE *f = fopen(SENSOR_ISP_CONF, "rb");
@@ -210,6 +221,7 @@ int isp_pipeline_init(void)
     fclose(f);
     if (mods_sent < 0) return -1;
     printf("[ak_rtsp] ISP pipeline init OK (%d modules)\n", mods_sent);
+    g_pipeline_ready = 1;
     return 0;
 }
 

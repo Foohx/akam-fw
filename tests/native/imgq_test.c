@@ -20,6 +20,10 @@ static int g_wb_conf_calls, g_wb_conf_night, g_wb_manual_calls, g_init_day, g_in
 static int g_fail_wb_conf, g_fail_init;
 static int g_tunnel_cmds[64], g_tunnel_n;
 
+static int g_lock_depth, g_lock_total, g_ready = 1;
+void isp_cfg_lock(void)   { CHECK(g_lock_depth == 0); g_lock_depth++; g_lock_total++; }
+void isp_cfg_unlock(void) { CHECK(g_lock_depth == 1); g_lock_depth--; }
+int  isp_pipeline_ready(void) { return g_ready; }
 int  night_is_night(void) { return g_night; }
 int  isp_reapply_wb_conf(int night) { g_wb_conf_calls++; g_wb_conf_night = night; return g_fail_wb_conf ? -1 : 0; }
 int  isp_set_wb_manual(uint16_t r, uint16_t g, uint16_t b)
@@ -135,6 +139,14 @@ int main(void)
     CHECK(imgq_poll_stats());
     CHECK(imgq_ctl_set("img.poll", "off", msg, sizeof(msg)) == 0 && !imgq_poll_stats());
 
+    /* ISP not initialised yet (the 8091 server starts first): the ISP keys refuse, nothing is sent */
+    g_ready = 0;
+    CHECK(imgq_ctl_set("img.wb", "conf", msg, sizeof(msg)) == 1 && strstr(msg, "not initialised"));
+    CHECK(imgq_ctl_set("img.reload", "1", msg, sizeof(msg)) == 1 && strstr(msg, "not initialised"));
+    CHECK(imgq_ctl_set("img.dump", "all", msg, sizeof(msg)) == 1 && strstr(msg, "not initialised"));
+    CHECK(g_wb_conf_calls == 0 && g_init_day == 0 && g_tunnel_n == 0 && g_lock_total == 0);
+    g_ready = 1;
+
     /* img.wb */
     g_night = 0;
     CHECK(imgq_ctl_set("img.wb", "conf", msg, sizeof(msg)) == 0 && !strcmp(msg, "OK img.wb=conf"));
@@ -175,6 +187,7 @@ int main(void)
     CHECK(imgq_ctl_set("img.dump", "all", msg, sizeof(msg)) == 1);
     CHECK(g_tunnel_n == 28);                                /* the guessed ones too */
 
+    CHECK(g_lock_depth == 0 && g_lock_total > 0);            /* every ISP key took and released the lock */
     unlink(path);
     if (g_failed) { printf("imgq_test: %d failure(s)\n", g_failed); return 1; }
     printf("imgq_test: OK\n");

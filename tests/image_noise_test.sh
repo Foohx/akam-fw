@@ -58,6 +58,13 @@ expect "luma of the grey test pattern is about 128" gt "$(col clean 2)" 100
 
 expect "no source: exit 2" exit_is 2 python3 -I "$TOOL"
 expect "bad --roi: exit 2" exit_is 2 python3 -I "$TOOL" --roi 1,2,3 "$WORK/n0.mkv"
+expect "--frames 2: exit 2" exit_is 2 python3 -I "$TOOL" --frames 2 "$WORK/n0.mkv"
+expect "--skip -1: exit 2" exit_is 2 python3 -I "$TOOL" --skip -1 "$WORK/n0.mkv"
+err=$(python3 -I "$TOOL" "rtsp://user:s3cretpw@127.0.0.1:1/x" 2>&1 || true)
+if printf '%s' "$err" | grep -q s3cretpw; then
+    echo "FAIL: the RTSP password reached the output"
+    fail=1
+fi
 expect "unreadable source: exit 1" exit_is 1 python3 -I "$TOOL" "$WORK/missing.mkv"
 
 if [ "$fail" -eq 0 ]; then echo "image_noise_test: OK"; fi

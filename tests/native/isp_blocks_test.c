@@ -152,6 +152,49 @@ int main(void)
     conf[0] = 7;
     write_file(path, conf, len);
 
+    /* robustness (ASan): every truncation and a few thousand corrupted headers must either be refused or
+     * yield payload pointers that stay inside the file; nothing may read out of bounds */
+    {
+        unsigned seed = 12345u;
+        for (size_t cut = 0; cut < len; cut += (cut < 1200 ? 1 : 97)) {
+            write_file(path, conf, cut);
+            for (int m = 0; m < 2; m++) {
+                isp_conf_t f;
+                if (isp_conf_load(path, m, &f) == 0) {
+                    for (size_t i = 0; i < n; i++) {
+                        const uint8_t *p = isp_conf_payload(&f, &t[i]);
+                        if (p) CHECK(p >= f.data && p + t[i].size <= f.data + cut);
+                    }
+                    isp_conf_free(&f);
+                }
+            }
+        }
+        uint8_t *mut = malloc(len);
+        assert(mut);
+        for (int round = 0; round < 3000; round++) {
+            memcpy(mut, conf, len);
+            for (int k = 0; k < 3; k++) {
+                seed = seed * 1103515245u + 12345u;
+                size_t pos = (seed >> 8) % len;
+                seed = seed * 1103515245u + 12345u;
+                mut[pos] = (uint8_t)(seed >> 16);
+            }
+            write_file(path, mut, len);
+            for (int m = 0; m < 2; m++) {
+                isp_conf_t f;
+                if (isp_conf_load(path, m, &f) == 0) {
+                    for (size_t i = 0; i < n; i++) {
+                        const uint8_t *p = isp_conf_payload(&f, &t[i]);
+                        if (p) CHECK(p >= f.data && p + t[i].size <= f.data + len);
+                    }
+                    isp_conf_free(&f);
+                }
+            }
+        }
+        free(mut);
+        write_file(path, conf, len);
+    }
+
     /* comparison */
     uint8_t a[11] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }, b[11];
     memcpy(b, a, sizeof(a));

@@ -34,6 +34,13 @@ int isp_tunnel(uint32_t inner_cmd, void *payload);
  * color is meaningless under IR illumination). */
 int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain);
 
+/* Lock for the multi-ioctl ISP re-configurations (night switch, img.* keys of the 8091 server). Not
+ * recursive; not taken by isp_tunnel() or by the single-ioctl getters/setters. */
+void isp_cfg_lock(void);
+void isp_cfg_unlock(void);
+/* 1 once the first isp_pipeline_init() has completed (the 8091 server starts before it). */
+int  isp_pipeline_ready(void);
+
 /* Re-send the WB block of the day (0) or night (1) subfile of sensor_isp.conf as it is in the file
  * (the stock behaviour), instead of the hand-made manual block of isp_set_wb_manual(). */
 int isp_reapply_wb_conf(int night);
