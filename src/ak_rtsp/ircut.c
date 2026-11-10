@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "ircut.h"
 
@@ -129,13 +130,38 @@ int ircut_init(void)
     return 0;
 }
 
+/* IR LED policy (night.ir_led, see leds.h). g_ir_lock orders the night
+ * thread's ircut_switch() against the control thread's setting change, so the
+ * GPIO never ends up lit while the policy says off. */
+static pthread_mutex_t g_ir_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_ir_allowed = 1;  /* night.ir_led=auto */
+static int g_ir_night   = 0;  /* last requested day/night position */
+
+void ircut_set_ir_led_allowed(int allowed)
+{
+    pthread_mutex_lock(&g_ir_lock);
+    g_ir_allowed = allowed ? 1 : 0;
+    /* Only touch the GPIO once it is set up (ircut_init() exports GPIO 70 and
+     * drives it low); before that the stored policy is all that is needed. */
+    char path[64];
+    snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", IR_LED_GPIO);
+    if (g_ir_night && access(path, F_OK) == 0)
+        gpio_set(IR_LED_GPIO, g_ir_allowed);
+    pthread_mutex_unlock(&g_ir_lock);
+}
+
 /* Runtime day/night switch — filter position + IR LED together, matching
  * stock anyka_ipc's coordinated switch (night_mode_def=0 = NIGHT_MODE_IRLED
- * in _ht_hw_settings.ini: IR LED is part of night mode on this hardware). */
+ * in _ht_hw_settings.ini: IR LED is part of night mode on this hardware).
+ * With night.ir_led=off the filter still moves but the IR LED stays off. */
 void ircut_switch(int night)
 {
     ircut_set_state(night);
-    gpio_set(IR_LED_GPIO, night ? 1 : 0);
+    pthread_mutex_lock(&g_ir_lock);
+    g_ir_night = night ? 1 : 0;
+    int led = night && g_ir_allowed;
+    gpio_set(IR_LED_GPIO, led);
+    pthread_mutex_unlock(&g_ir_lock);
     printf("[ak_rtsp] ircut: switched to %s mode (IR LED %s)\n",
-           night ? "NIGHT" : "DAY", night ? "on" : "off");
+           night ? "NIGHT" : "DAY", led ? "on" : "off");
 }

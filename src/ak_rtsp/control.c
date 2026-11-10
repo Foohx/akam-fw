@@ -15,6 +15,7 @@
 #include "night.h"
 #include "isp.h"
 #include "audio_out.h"
+#include "leds.h"
 #include "control.h"
 
 #define CONTROL_PORT 8091
@@ -150,6 +151,7 @@ static void do_list(int fd)
      * cycle. Reported for visibility only. */
     reply(fd, "venc.minqp=28 (read-only)");
     reply(fd, "venc.maxqp=43 (read-only)");
+    ledsys_ctl_list(audio_list_emit, &fd);
     audio_out_ctl_list(audio_list_emit, &fd);
     reply(fd, ".");
 }
@@ -178,7 +180,8 @@ static void do_get(int fd, const char *param)
     else if (!strcmp(param, "venc.maxqp"))            reply(fd, "venc.maxqp=43 (read-only)");
     else {
         char line[96];
-        if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(fd, "%s", line);
+        if (ledsys_ctl_get(param, line, sizeof(line)) == 0)         reply(fd, "%s", line);
+        else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(fd, "%s", line);
         else                                                   reply(fd, "ERR unknown param %s", param);
     }
 }
@@ -262,7 +265,8 @@ static void do_set(int fd, const char *param, const char *value)
                   "(requires an encoder restart, not yet implemented)", param);
     } else {
         char msg[160];
-        if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) reply(fd, "%s", msg);
+        if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)         reply(fd, "%s", msg);
+        else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) reply(fd, "%s", msg);
         else                                                        reply(fd, "ERR unknown param %s", param);
     }
 }

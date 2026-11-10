@@ -55,6 +55,8 @@ SRCS    = main.c \
           md5.c \
           rtsp_auth.c \
           ircut.c \
+          leds.c \
+          ledsys.c \
           ae.c \
           aec_custom.c \
           night.c \

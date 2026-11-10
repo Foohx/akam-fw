@@ -26,6 +26,7 @@
 #include "venc.h"
 #include "audio.h"
 #include "audio_out.h"
+#include "leds.h"
 #include "rtsp.h"
 #include "version.h"
 
@@ -227,6 +228,10 @@ int main(int argc, char **argv)
     /* A client closing mid-write must yield EPIPE, not kill the stream. */
     signal(SIGPIPE, SIG_IGN);
 
+    /* Status LED and IR LED policy: the saved settings are applied now, so
+     * that in auto mode the LED blinks during the whole start-up. */
+    ledsys_start();
+
     venc_reset_stale_channel();
 
     /* Step 1: Open and configure the ISP and Video Input (VI) devices.
@@ -325,6 +330,7 @@ int main(int argc, char **argv)
     }
 
     printf("[ak_rtsp] Listening on port %d...\n", RTSP_SERVER_PORT);
+    ledsys_boot_done();
 
     for (;;) {
         struct pollfd pfd;
@@ -368,6 +374,7 @@ int main(int argc, char **argv)
     close(server_fd);
 
 err:
+    ledsys_stop();
     night_stop();
 #ifdef AEC_CUSTOM
     aec_custom_stop();

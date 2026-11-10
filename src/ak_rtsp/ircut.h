@@ -12,3 +12,9 @@ int ircut_init(void);
  * position at runtime. Called by night.c's auto day/night monitor after
  * ircut_init() has already run. */
 void ircut_switch(int night);
+
+/* night.ir_led policy: allowed=1 (auto) lets the IR LED follow night mode,
+ * allowed=0 (off) keeps it dark in night mode too (the filter still moves).
+ * Takes effect at once, also in the middle of a night. Thread safe; may be
+ * called before ircut_init(). */
+void ircut_set_ir_led_allowed(int allowed);
