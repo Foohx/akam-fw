@@ -25,9 +25,10 @@ PASS=0
 FAIL=0
 cleanup() {
     local p
-    for p in "$WORK"/pids/*; do
-        [ -f "$p" ] && kill -9 "$(cat "$p")" 2>/dev/null
-    done
+    # every sleeper ever spawned, not only the last one of each name (new_ld_root clears pids/)
+    if [ -f "$WORK/pids.all" ]; then
+        while read -r p; do kill -9 "$p" 2>/dev/null; done <"$WORK/pids.all"
+    fi
     rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -255,6 +256,7 @@ spawn() {
     fi
     pid=$!
     echo "$pid" >"$WORK/pids/$1"
+    echo "$pid" >>"$WORK/pids.all"
     printf '%5d root      1234 S    %s\n' "$pid" "$2" >>"$REG"
 }
 pid_of() { cat "$WORK/pids/$1"; }
