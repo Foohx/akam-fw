@@ -17,6 +17,7 @@
 #include "isp.h"
 #include "audio_out.h"
 #include "imgq.h"
+#include "isp_tune.h"
 #include "talk.h"
 #include "leds.h"
 #include "control.h"
@@ -91,6 +92,17 @@ static int g_isp_saturation = 0;
 static int g_isp_contrast   = 0;
 static int g_isp_brightness = 0;
 static int g_isp_sharpness  = 0;
+
+/* Saved with the same four values after every successful isp.* SET (8091 SET only; the values come back at the
+ * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at 0
+ * removes the file: that is the default. Called with g_set_lock held. */
+static const char *isp_persist_note(char *note, size_t cap)
+{
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
+    note[0] = '\0';
+    if (isp_tune_save(ISP_TUNE_FILE, &t) < 0) snprintf(note, cap, " (not saved: %s)", strerror(errno));
+    return note;
+}
 
 /* One LOG line to every connected client, never blocking: a slot whose socket
  * is busy or full simply misses the line. */
@@ -372,25 +384,29 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.saturation range [-50,50]"); return; }
         if (isp_set_saturation(v) != 0) { setmsg(resp, cap, "ERR isp_set_saturation failed"); return; }
         g_isp_saturation = v;
-        setmsg(resp, cap, "OK isp.saturation=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.saturation=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.contrast")) {
         int v = atoi(value);
         if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.contrast range [-50,50]"); return; }
         if (isp_set_contrast(v) != 0) { setmsg(resp, cap, "ERR isp_set_contrast failed"); return; }
         g_isp_contrast = v;
-        setmsg(resp, cap, "OK isp.contrast=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.contrast=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.brightness")) {
         int v = atoi(value);
         if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.brightness range [-50,50]"); return; }
         if (isp_set_brightness(v) != 0) { setmsg(resp, cap, "ERR isp_set_brightness failed"); return; }
         g_isp_brightness = v;
-        setmsg(resp, cap, "OK isp.brightness=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.brightness=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.sharpness")) {
         int v = atoi(value);
         if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.sharpness range [-50,50]"); return; }
         if (isp_set_sharpness(v) != 0) { setmsg(resp, cap, "ERR isp_set_sharpness failed"); return; }
         g_isp_sharpness = v;
-        setmsg(resp, cap, "OK isp.sharpness=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.sharpness=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "venc.minqp") || !strcmp(param, "venc.maxqp")) {
         setmsg(resp, cap, "ERR %s is read-only in this version "
                   "(requires an encoder restart, not yet implemented)", param);
@@ -419,6 +435,23 @@ static void do_set(cli_t *c, const char *param, const char *value)
     do_set_locked(resp, sizeof(resp), param, value);
     pthread_mutex_unlock(&g_set_lock);
     reply(c, "%s", resp);
+}
+
+/* Called once from main() after the ISP runs: applies the saved picture settings (absent file = nothing to do,
+ * nothing is written). Values are validated by isp_tune_load(). A value the ISP refuses is logged and the
+ * others still apply; the statics keep what was really applied. */
+void control_apply_saved_isp(void)
+{
+    isp_tune_t t;
+    if (!isp_tune_load(ISP_TUNE_FILE, &t)) return;
+    pthread_mutex_lock(&g_set_lock);
+    if (t.saturation && isp_set_saturation(t.saturation) == 0) g_isp_saturation = t.saturation;
+    if (t.contrast   && isp_set_contrast(t.contrast) == 0)     g_isp_contrast = t.contrast;
+    if (t.brightness && isp_set_brightness(t.brightness) == 0) g_isp_brightness = t.brightness;
+    if (t.sharpness  && isp_set_sharpness(t.sharpness) == 0)   g_isp_sharpness = t.sharpness;
+    pthread_mutex_unlock(&g_set_lock);
+    printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d\n",
+           g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness);
 }
 
 /* Blocking byte-at-a-time line reader — traffic on this protocol is tiny
