@@ -454,6 +454,7 @@ if [ -n "$CPID" ] && kill -0 "$CPID" 2>/dev/null; then ok "the detached run is a
 if [ "$(awk '{ print $6 }' "/proc/$CPID/stat" 2>/dev/null)" = "$CPID" ]; then ok "it is the leader of its own session (setsid)"; else ko "not a session leader"; fi
 if [ "$(readlink "/proc/$CPID/fd/0" 2>/dev/null)" = /dev/null ]; then ok "its stdin is /dev/null"; else ko "stdin: $(readlink "/proc/$CPID/fd/0")"; fi
 if [ "$(readlink "/proc/$CPID/fd/1" 2>/dev/null)" = "$DRUN/console.txt" ]; then ok "its output goes to runNN/console.txt"; else ko "stdout: $(readlink "/proc/$CPID/fd/1")"; fi
+wait_for "$DRUN/run.meta" '^status=running$'   # the detached run rewrites its facts once it has started
 has "run.meta says detached" '^detached=1$' "$DRUN/run.meta"
 has "run.meta names its folder" "^rundir=${DRUN##*/}\$" "$DRUN/run.meta"
 wait_for "$DRUN/timeline.log" 'ev=TICK'
@@ -553,11 +554,28 @@ runscript status
 has "status says STALE" 'state     : STALE' "$WORK/out.txt"
 runscript note anything; rc=$?
 if [ "$rc" -eq 1 ]; then ok "note on a dead run is refused"; else ko "note on a dead run: exit $rc"; fi
-runscript restore; rc=$?
-if [ "$rc" -eq 0 ]; then ok "restore after the SIGKILL of a detached run exits 0"; else ko "restore exit $rc"; fi
+# a pid file whose pid was recycled by an unrelated program (here the fake watchdog): still stale, and never signalled
+echo "$WDPID" >"$STATE/pid"
+runscript status
+has "a recycled pid of another program is still STALE" 'state     : STALE' "$WORK/out.txt"
+# restore must survive the hang-up of the session that typed it: it restarts anyka_ipc, and the stock
+# app then kills telnetd (a half-done restore would leave the stale state, and the next one hangs up again)
+env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
+    STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" restore >"$WORK/out.txt" 2>&1 &
+SP=$!
+sleep 0.4
+kill -HUP "$SP" 2>/dev/null
+wait "$SP"; rc=$?
+if [ "$rc" -eq 0 ]; then ok "restore after the SIGKILL of a detached run exits 0 (even hung up in the middle)"; else ko "restore exit $rc"; fi
 if mounts_ok && [ ! -e "$STATE" ]; then ok "mounts and state restored after the SIGKILL"; else ko "SIGKILL left mounts or state"; fi
 runscript status
+if kill -0 "$WDPID" 2>/dev/null; then ok "the unrelated process of the recycled pid was not signalled"; else ko "restore killed the unrelated process of a recycled pid"; fi
 has "status then says INTERRUPTED" 'state     : INTERRUPTED' "$WORK/out.txt"
+has "...and does not claim a reboot while the uptime kept growing" 'did not finish cleanly' "$WORK/out.txt"
+echo "5.00 1.00" >"$R/proc/uptime"
+runscript status
+has "status says the camera REBOOTED when its uptime is below the last heartbeat" 'state     : INTERRUPTED: the camera REBOOTED' "$WORK/out.txt"
+echo "12.34 5.67" >"$R/proc/uptime"
 
 # a lost telnet session in a FOREGROUND run: HUP still restores (that is the failure --detach avoids)
 env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \

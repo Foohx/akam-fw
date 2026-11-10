@@ -145,7 +145,7 @@ scan_interrupted() {
         [ "$st" = running ] || continue
         d=${m%/run.meta}
         last=$(tail -n 1 "$d/timeline.log" 2>/dev/null)
-        warn "${d##*/} never finished (the camera rebooted or the script was killed during it)"
+        warn "${d##*/} never finished (script killed, session lost without --detach, or camera rebooted; see its timeline.log)"
         info "   its logs are complete up to the last fsync; last heartbeat: ${last:-none}"
         echo "status=interrupted" >>"$m"
     done
@@ -153,9 +153,10 @@ scan_interrupted() {
 
 # ----------------------------------------------------------------------------- finding a run
 # pid_is_run PID: PID is alive AND is this script (a stale pid file must never make us signal an
-# unrelated process whose pid was reused; /proc is the real one, not $ROOT/proc)
+# unrelated process whose pid was reused; /proc is the real one, not $ROOT/proc). Not this very
+# process either: a "status" that got the recycled pid of a dead run must not call itself a run.
 pid_is_run() {
-    [ -n "$1" ] && kill -0 "$1" 2>/dev/null && grep -q stock_capture "/proc/$1/cmdline" 2>/dev/null
+    [ -n "$1" ] && [ "$1" != "$$" ] && kill -0 "$1" 2>/dev/null && grep -q 'stock_capture\.sh' "/proc/$1/cmdline" 2>/dev/null
 }
 # state_pid: the pid recorded by the run that owns $STATE (empty when none or when it is gone)
 state_pid() {
@@ -205,7 +206,11 @@ read_run() {
         R_LABEL="STALE: the script is gone but its state is still mounted (run: restore)"
     else
         case $R_ST in
-            running) R_LABEL="INTERRUPTED: the camera rebooted or the script was killed" ;;
+            running)
+                R_LABEL="INTERRUPTED: it did not finish cleanly (script killed, or camera rebooted; see timeline.log)"
+                if [ -n "$R_UP" ] && awk -v a="$(up_now)" -v b="$R_UP" 'BEGIN { exit (a < int(b)) ? 0 : 1 }'; then
+                    R_LABEL="INTERRUPTED: the camera REBOOTED (its uptime, $(up_now) s, is below the last heartbeat, $R_UP s)"
+                fi ;;
             starting) R_LABEL="FAILED TO START (see console.txt)" ;;
             '') R_LABEL="unknown" ;;
             *) R_LABEL=$R_ST ;;
@@ -631,8 +636,8 @@ do_run() {
     if [ "$DETACHED_CHILD" = 1 ]; then trap on_signal INT TERM; trap '' HUP; else trap on_signal INT TERM HUP; fi
     trap on_exit EXIT
     ACTIVE=1
+    echo "$$" >"$STATE/pid"           # pid first: whoever sees "active" also finds the pid
     echo "active" >"$STATE/active"
-    echo "$$" >"$STATE/pid"
 
     cp "$(mounts_file)" "$RUNDIR/mounts_before.txt" 2>/dev/null
     snap_config "$RUNDIR/config_before.txt"
@@ -684,9 +689,11 @@ do_run() {
     old=$(first_pid anyka_ipc)
     SC=$ROOT/tmp/camera_start_times
     sc_before=$(cat "$SC" 2>/dev/null)
+    # appended (>>), never truncated: a detached run's run.meta already has its first lines, and a
+    # "note" made in the first seconds must not be lost; the last "status=" line is the status
     {
         echo "script=stock_capture.sh"
-        echo "rundir=${RUNDIR##*/}"
+        [ "$DETACHED_CHILD" = 1 ] || echo "rundir=${RUNDIR##*/}"
         echo "detached=$DETACHED_CHILD"
         echo "status=running"
         echo "start_times_before=${sc_before:-absent}"
@@ -701,7 +708,7 @@ do_run() {
         echo "keep_mute=$KEEP_MUTE"
         echo "old_pid=$old"
         echo "sd=$SD"
-    } >"$RUNDIR/run.meta"
+    } >>"$RUNDIR/run.meta"
 
     # anyka_ipc counts its starts in /tmp/camera_start_times (RAM; the stock service.sh writes 0 there
     # at every boot) and its start-up code can run "sh recover_cfg.sh; reboot -f". That was a suspect for
@@ -907,6 +914,11 @@ parse_args "$@"
 # a day/night run needs the time to cover and uncover the lens
 case $PHASES in *COVER_THE_LENS_NOW*) [ "$SECS_GIVEN" = 1 ] || SECS=300 ;; esac
 [ "$DETACH" = 0 ] || [ "$CMD" = run ] || die "--detach only goes with run" 2
+# restore / stop and the start of a run kill and respawn anyka_ipc, which makes the stock app kill
+# telnetd: the session that typed the command is hung up a few seconds later and must not take the
+# restore down with it (a half-done restore leaves a stale state, and repeating it would hang up
+# again). A foreground run replaces this by its own trap once it has started; watch keeps default HUP.
+case $CMD in restore | stop | run) trap '' HUP ;; esac
 
 case $CMD in
     check)
