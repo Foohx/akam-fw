@@ -150,12 +150,14 @@ if [ "$RC" -eq 0 ]; then ok "healthy: exit 0"; else ko "healthy: exit $RC"; grep
 
 # 1b. RTSP authentication line (info only, never a FAIL, never the hash) ---
 has "rtsp auth: disabled by default" '^INFO +RTSP auth: disabled' "$WORK/t1.out"
+has "talk: not offered without the password" '^INFO +talk: not offered' "$WORK/t1.out"
 R1B=$WORK/r1b; mkroot "$R1B"
 mkdir -p "$R1B/etc/config/akam"
 printf 'viewer:akam:0123456789abcdef0123456789abcdef\n' > "$R1B/etc/config/akam/rtsp_auth"
 chmod 600 "$R1B/etc/config/akam/rtsp_auth"
 run t1b "$R1B" "$S1"
 has "rtsp auth: enabled, user shown" '^INFO +RTSP auth: enabled \(user viewer' "$WORK/t1b.out"
+has "talk: offered with the password" '^INFO +talk: offered' "$WORK/t1b.out"
 hasnt "rtsp auth: hash never printed" '0123456789abcdef0123456789abcdef' "$WORK/t1b.out"
 hasnt "rtsp auth: enabled is not a failure" '^FAIL.*RTSP' "$WORK/t1b.out"
 chmod 644 "$R1B/etc/config/akam/rtsp_auth"

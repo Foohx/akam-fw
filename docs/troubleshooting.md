@@ -108,6 +108,15 @@ To watch from several places, or to record and watch together, put a relay in fr
 (go2rtc or MediaMTX): the relay is the only client of the camera and serves as many viewers as you
 need.
 
+## Talk (two-way audio) does not work
+
+`./akam talk` and the go2rtc / Home Assistant microphone button use the ONVIF audio backchannel on port 554.
+The camera offers it only with the video password on (`./akam rtsp-auth status`), audio out enabled and
+`audio.talk_enable=1`; otherwise it answers `551 Option not supported` and clients fall back to plain
+video. A second client waits while another one is connected (the same single-client limit as above: let
+go2rtc be the only client). The full list of causes, the counters to read (`audio.talk_*`) and the
+configuration examples are in [two-way audio](two_way_audio.md).
+
 ## VLC cannot open the stream, or hardware decoding fails
 
 - Missing plugins (seen on Arch): install `vlc-plugin-live555` (RTSP) and `vlc-plugin-ffmpeg`
@@ -210,7 +219,7 @@ silence, and on during a beep and for 2 seconds after. Replace `<cam>` by the ca
 command is one line to `nc` on port 8091; the answer starts with `OK` or `ERR`.
 
 ```bash
-# 1. Is it running?  (expect audio.out_state=idle; also the six other audio.out_* lines)
+# 1. Is it running?  (expect audio.out_state=idle; also the other audio.out_* lines: underruns, drops, buf_ms)
 printf 'GET audio.out_state\n' | nc -w 2 <cam> 8091
 printf 'LIST\n' | nc -w 2 <cam> 8091 | grep audio.out_
 
@@ -253,6 +262,9 @@ console: lines starting with `[audio_out]` show the device calls and every error
   saved in `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `SET audio.out_enable 1`
   turns it back on; the answer says `restart to apply` when `ak_rtsp` started with it off.
 - **`ERR audio out is not running`:** it was disabled or failed at boot; see `audio.out_state`.
+- **Sound over the network:** `./akam talk test`, `./akam talk` and `./akam say FILE` send sound to this speaker
+  through the RTSP port ([two-way audio](two_way_audio.md)). A client that streams G.711 silence does not
+  switch the amplifier on: the amp follows sound above about -56 dBFS.
 
 ## Still stuck
 

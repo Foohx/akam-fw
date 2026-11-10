@@ -77,7 +77,9 @@ for a in "$@"; do
     prev=$a
 done
 echo "$*" >>"$(dirname "$pf")/dropbear_launches"
-( sh -c 'sleep 300; :' dropbear </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
+# The sleeper stops its own sleep on TERM/INT/HUP: killing only the wrapper
+# shell (what the code under test does with the pidfile) must not orphan it.
+( sh -c 'p=; trap '"'"'[ -n "$p" ] && kill "$p" 2>/dev/null; exit 0'"'"' TERM INT HUP; sleep 300 & p=$!; wait' dropbear "$pf" </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
 exit 0
 EOF
     chmod 755 "$R/usr/bin/dropbear" "$R/usr/bin/dropbearkey"

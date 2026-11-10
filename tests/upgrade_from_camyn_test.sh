@@ -33,9 +33,10 @@ PASS=0
 FAIL=0
 cleanup() {
     local p
-    for p in "$WORK"/pids/*; do
-        [ -f "$p" ] && kill -9 "$(cat "$p")" 2>/dev/null
-    done
+    # every sleeper ever spawned, not only the last one of each name (spawn reuses names)
+    if [ -f "$WORK/pids.all" ]; then
+        while read -r p; do kill -9 "$p" 2>/dev/null; done <"$WORK/pids.all"
+    fi
     for p in "$WORK"/*/tmp/dropbear.pid; do
         [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null
     done
@@ -107,7 +108,9 @@ for a in "$@"; do
     prev=$a
 done
 echo "$*" >>"$(dirname "$pf")/dropbear_launches"
-( sh -c 'sleep 300; :' dropbear </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
+# The sleeper stops its own sleep on TERM/INT/HUP: killing only the wrapper
+# shell (what the code under test does with the pidfile) must not orphan it.
+( sh -c 'p=; trap '"'"'[ -n "$p" ] && kill "$p" 2>/dev/null; exit 0'"'"' TERM INT HUP; sleep 300 & p=$!; wait' dropbear "$pf" </dev/null >/dev/null 2>&1 & echo $! >"$pf" )
 exit 0
 EOF
     chmod 755 "$R/usr/bin/dropbear" "$R/usr/bin/dropbearkey"
@@ -126,6 +129,7 @@ spawn() { # spawn <name> <ps-line>
     sleep 600 >/dev/null 2>&1 &
     pid=$!
     echo "$pid" >"$WORK/pids/$1"
+    echo "$pid" >>"$WORK/pids.all"
     printf '%5d root      1234 S    %s\n' "$pid" "$2" >>"$REG"
 }
 pid_of() { cat "$WORK/pids/$1"; }

@@ -2,6 +2,8 @@
 
 Status: written 2026-11-10 (SPEC agent, branch `docs/spec-standard-protocols`, from `dev`). English, like the code. Nothing here is validated on hardware: every "to verify" is an unknown that the HW test of its step must settle. Sizes and timings are **estimates** (no measurement was made); each step has a measured budget gate (see 0.4).
 
+**Implementation status (2026-11-10): step 1 is implemented on branch `feature/rtsp-backchannel` (see 1.10); steps 2 to 4 are not started. Step 1 is tested on the host only, no hardware test yet (H1 to H9 of 1.8 are open).**
+
 Reads: specs 03 (RTSP Digest), 04 (control API), 05 (audio out), 06 (LEDs, branch `feature/led-controls`), `src/ak_rtsp/{rtsp,rtsp_in,rtsp_auth,control,audio_out}.c`.
 
 ## 0. Decisions, principles, budgets
@@ -91,7 +93,7 @@ Server rules:
 
 ### 1.3 Transport scope
 
-TCP interleaved is mandatory in step 1 (go2rtc uses RTSP/TCP; simplest and firewall-friendly). UDP (`client_port`) for the backchannel answers `461 Unsupported transport` in the first cut; if a tested NVR needs it, a follow-up task (T7) adds one UDP receive socket pair. Decision recorded as a test question in 1.8.
+TCP interleaved is mandatory in step 1 (go2rtc uses RTSP/TCP; simplest and firewall-friendly). UDP (`client_port`) turned out to be cheap and **is implemented** (T7 done early, see 1.10); H7 still records whether a tested NVR needs it.
 
 ### 1.4 Half-duplex (spec 05 4.3, re-evaluated)
 
@@ -168,6 +170,33 @@ Hardware (user, with the listed software; each point is an unknown):
 | **T7** | Optional, only if H7 needs it: UDP backchannel; if U4 decided: second RTSP slot | `rtsp.c` |
 
 Order: T2, T1 (parallel), T3, T4/T5 (parallel), T6.
+
+### 1.10 Implementation status of step 1
+
+Done, with host tests (tests/*.sh; `rtsp_backchannel_test.sh` runs the real `rtsp.c` loop over loopback):
+
+| Task | State | Where |
+|---|---|---|
+| T1 RTP unpacker and VAD gate | done | `rtp_in.[ch]`, `audio_vad.[ch]`, `tests/rtp_in_test.sh`, `tests/audio_vad_test.sh` |
+| T2 SDP builder, golden test | done | `rtsp_sdp.[ch]`, `tests/rtsp_sdp_test.sh` |
+| T3 `Require`, 551, SETUP/PLAY, routing, talk-only session and idle close, mic gate, keys | done | `rtsp.c`, `talk.[ch]`, `rtsp_idle.[ch]`, `audio_out.[ch]`, `control.c`, `tests/talk_test.sh`, `tests/rtsp_idle_test.sh`, `tests/audio_out_test.sh`, `tests/rtsp_backchannel_test.sh` |
+| T4 `akam-talk` host client, zig cross builds | done; **kit packaging and signing not done** (the wizard uses a prebuilt `tools/akam-talk/bin/<os>-<cpu>/akam-talk` when present, else builds from source) | `tools/akam-talk/`, `tests/akam_talk_test.sh` |
+| T5 wizard `./akam talk`, `./akam say` | done; **`./akam audio ...` over SSH not done** (8091 stays open until step 4, so the remote `nc` commands of docs/troubleshooting.md still work) | `tools/wizard/lib/steps_camera.sh`, `tests/wizard_talk_test.sh` |
+| T6 hardware validation H1 to H9 and budget gate | **open** (needs a camera); size delta measured: stripped `ak_rtsp` +13 KB | `docs/two_way_audio.md` (check list) |
+| T7 UDP backchannel | done early (one RTP socket, RTCP socket bound and ignored, source address checked against the RTSP peer; IPv4 only) | `rtsp.c` |
+
+Choices made while implementing, where the spec left room:
+
+- The 551 rule covers DESCRIBE, SETUP and the PLAY of a talk-only session (speaker held by another feeder, talk switched off between DESCRIBE and PLAY). A SETUP of `streamid=2` without the Require header is served when talk is available and answered 404 when it is not. A PLAY with no SETUP at all is answered 455 (it used to start a loop that dereferenced a missing video transport).
+- A talk-only session does not count as a playing stream: the privacy LED (spec 06) does not blink for it, no video frame is fetched (the encoder ring is drained), and it has its own idle clock (`RTSP_IDLE_TALK_MS`, 30 s without an RTP packet, RTSP requests and RTCP do not count). While a video or microphone track plays, there is no idle rule, as before.
+- `rtsp_auth` is re-checked every second while talking, and a talk session also ends when the password is switched off.
+- The speech gate keeps the microphone muted for the hold (300 ms) **plus** the audio already queued in the jitter buffer in front of the new samples (it has not been heard yet). The hold also outlives the session (the last speech is still playing).
+- The amplifier follows sound, not samples: a period whose loudest sample is below `AO_AUDIBLE_PEAK` (48, about -56 dBFS) keeps the amp off, so a client that streams G.711 silence (go2rtc does) causes no hiss.
+- The tail of an utterance shorter than the 120 ms pre-fill is topped up with silence 250 ms after the last packet (and at the end of the session) so that it is heard now and does not replay at the next talk.
+- Keys: `audio.talk_enable` and `audio.talk_duplex` live in `audio_out.c` (same `audio_out` file, so one place saves them); the read-only counters live in `talk.c`.
+- One RTSP slot (U4): unchanged. A talk track inside the connection of the video client works; the go2rtc/Frigate implication is written in `docs/two_way_audio.md`. H3 decides whether a second slot is needed.
+
+Open points for the hardware test: whether go2rtc adds the backchannel to its live connection or opens a second one (H3); that VLC and ffprobe see the unchanged SDP on a real camera (H1); the audible quality and the amplifier switching without a pop (H2, H5); CPU while talking.
 
 ## 2. Step 2: MQTT client with Home Assistant discovery (optional, off by default)
 

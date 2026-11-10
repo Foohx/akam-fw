@@ -30,6 +30,9 @@
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
 #include "rtsp_auth.h"
+#include "rtsp_sdp.h"
+#include "talk.h"
+#include "audio_out.h"
 #include "leds.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
@@ -145,6 +148,18 @@ typedef struct {
 
     /* Digest authentication state of this connection (see rtsp_auth.h). */
     rtsp_auth_conn_t auth;
+
+    /* ONVIF audio backchannel (streamid=2, specs/07 section 1): the client
+     * sends G.711 RTP to the camera. Set up by SETUP, started by PLAY, ended by
+     * TEARDOWN, RTCP BYE or the end of the connection. Interleaved (TCP) or UDP. */
+    bool bc_setup;
+    bool bc_tcp;
+    bool bc_playing;      /* a talk session is running (talk_begin() succeeded) */
+    bool bc_noted;        /* the idle clock knows about bc_playing */
+    uint8_t bc_rtp_ch;
+    uint8_t bc_rtcp_ch;
+    int bc_rtp_fd;        /* UDP: where the client's RTP arrives; -1 for TCP */
+    int bc_rtcp_fd;       /* UDP: bound only so that the client's RTCP is not refused */
 } Client;
 
 /* RTSP credentials (file on the CONFIG partition); absent = no authentication. */
@@ -184,6 +199,8 @@ static void Client_drop(VSelf) {
         VTABLE(SmolRTSP_RtpTransport, SmolRTSP_Droppable).drop(self->audio_rtp_transport);
     if (self->audio_rtp_udp_fd >= 0) close(self->audio_rtp_udp_fd);
     if (self->audio_rtcp_udp_fd >= 0) close(self->audio_rtcp_udp_fd);
+    if (self->bc_rtp_fd >= 0) close(self->bc_rtp_fd);
+    if (self->bc_rtcp_fd >= 0) close(self->bc_rtcp_fd);
 }
 
 impl(SmolRTSP_Droppable, Client);
@@ -323,10 +340,178 @@ static void Client_options(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request 
     smolrtsp_respond_ok(ctx);
 }
 
+/* A request header, found whatever the case of its name (header names are
+ * case-insensitive, RFC 2326; SmolRTSP_HeaderMap_find compares them exactly). */
+static bool find_header_ci(const SmolRTSP_HeaderMap *m, const char *name, CharSlice99 *out) {
+    size_t nl = strlen(name);
+    for (size_t i = 0; i < m->len; i++) {
+        CharSlice99 k = m->headers[i].key;
+        if (k.len == nl && strncasecmp(k.ptr, name, nl) == 0) {
+            *out = m->headers[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ------------------------------------------------------------------------
+ * ONVIF audio backchannel (specs/07 section 1)
+ * ------------------------------------------------------------------------ */
+
+/* The request carries "Require: www.onvif.org/ver20/backchannel". */
+static bool request_requires_backchannel(const SmolRTSP_Request *req) {
+    CharSlice99 v;
+    return find_header_ci(&req->header_map, "Require", &v) &&
+           rtsp_require_has(v.ptr, v.len, RTSP_BACKCHANNEL_TAG);
+}
+
+/* Talk is offered only with the RTSP password on (Digest, valid credentials):
+ * there is no open talk mode. The speaker side must be usable as well. */
+static bool backchannel_available(void) {
+    return g_auth.mode == RTSP_AUTH_ON && audio_out_talk_available();
+}
+
+/* 551 (RFC 2326 section 11.3.12): the option the client requires is not
+ * supported; clients that always send Require (go2rtc) retry without it. */
+static void respond_backchannel_unsupported(SmolRTSP_Context *ctx) {
+    smolrtsp_header(ctx, SMOLRTSP_HEADER_UNSUPPORTED, "%s", RTSP_BACKCHANNEL_TAG);
+    smolrtsp_respond(ctx, SMOLRTSP_STATUS_OPTION_NOT_SUPPORTED, "Option not supported");
+}
+
+static void bc_close_udp(Client *self) {
+    if (self->bc_rtp_fd >= 0) { close(self->bc_rtp_fd); self->bc_rtp_fd = -1; }
+    if (self->bc_rtcp_fd >= 0) { close(self->bc_rtcp_fd); self->bc_rtcp_fd = -1; }
+}
+
+/* Ends the talk session (the speaker plays what is queued, then the amp idles
+ * off). The SETUP stays: the connection may still stream video. */
+static void bc_stop(Client *self) {
+    if (self->bc_playing) {
+        talk_end(talk_global());
+        self->bc_playing = false;
+        self->bc_noted = false;
+    }
+}
+
+/* UDP backchannel: the client's RTP arrives on a socket of ours. The source
+ * address is checked against the RTSP peer on every packet (see
+ * bc_udp_receive()); the port is not, some clients send from another one. */
+static int setup_bc_udp(Client *self, SmolRTSP_Context *ctx, uint16_t cl_rtp, uint16_t cl_rtcp) {
+    if (self->addr.ss_family != AF_INET) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_UNSUPPORTED_TRANSPORT, "Unsupported Transport");
+        return -1;
+    }
+    bc_close_udp(self);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0 || bind(fd, (struct sockaddr *)&a, sizeof(a)) < 0) {
+        if (fd >= 0) close(fd);
+        smolrtsp_respond_internal_error(ctx);
+        return -1;
+    }
+    socklen_t al = sizeof(a);
+    uint16_t port = 0;
+    if (getsockname(fd, (struct sockaddr *)&a, &al) == 0) port = ntohs(a.sin_port);
+    self->bc_rtp_fd = fd;
+    /* The RTCP socket is only here so that the client's reports do not bounce
+     * (ICMP port unreachable); nothing is read from it. */
+    int rfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (rfd >= 0) {
+        a.sin_port = htons((uint16_t)(port + 1));
+        if (bind(rfd, (struct sockaddr *)&a, sizeof(a)) < 0) { close(rfd); rfd = -1; }
+    }
+    self->bc_rtcp_fd = rfd;
+    self->bc_tcp = false;
+    printf("[ak_rtsp] Transport (backchannel): UDP client RTP:%u RTCP:%u, local RTP:%u\n",
+           cl_rtp, cl_rtcp, port);
+    smolrtsp_header(ctx, SMOLRTSP_HEADER_TRANSPORT,
+        "RTP/AVP/UDP;unicast;client_port=%u-%u;server_port=%u-%u",
+        cl_rtp, cl_rtcp, port, port + 1);
+    return 0;
+}
+
+static int setup_backchannel(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
+    if (!backchannel_available()) {
+        if (request_requires_backchannel(req)) respond_backchannel_unsupported(ctx);
+        else smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_FOUND, "Not Found");
+        return -1;
+    }
+    CharSlice99 transport_val;
+    if (!SmolRTSP_HeaderMap_find(&req->header_map, SMOLRTSP_HEADER_TRANSPORT, &transport_val)) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Transport not present");
+        return -1;
+    }
+    SmolRTSP_TransportConfig config;
+    if (smolrtsp_parse_transport(&config, transport_val) == -1) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Malformed Transport");
+        return -1;
+    }
+
+    if (config.lower == SmolRTSP_LowerTransport_TCP) {
+        ifLet(config.interleaved, SmolRTSP_ChannelPair_Some, interleaved) {
+            if (interleaved->rtp_channel == interleaved->rtcp_channel) {
+                smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Bad interleaved channels");
+                return -1;
+            }
+            bc_close_udp(self);
+            self->bc_tcp = true;
+            self->bc_rtp_ch = interleaved->rtp_channel;
+            self->bc_rtcp_ch = interleaved->rtcp_channel;
+            printf("[ak_rtsp] Transport (backchannel): TCP interleaved (RTP ch %d, RTCP ch %d)\n",
+                   (int)interleaved->rtp_channel, (int)interleaved->rtcp_channel);
+            smolrtsp_header(ctx, SMOLRTSP_HEADER_TRANSPORT,
+                "RTP/AVP/TCP;unicast;interleaved=%d-%d",
+                (int)interleaved->rtp_channel, (int)interleaved->rtcp_channel);
+            self->bc_setup = true;
+            return 0;
+        }
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "interleaved not found");
+        return -1;
+    }
+    ifLet(config.client_port, SmolRTSP_PortPair_Some, client_port) {
+        if (setup_bc_udp(self, ctx, client_port->rtp_port, client_port->rtcp_port) < 0) return -1;
+        self->bc_setup = true;
+        return 0;
+    }
+    smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "client_port not found");
+    return -1;
+}
+
+/* The client's UDP datagrams of the backchannel, if any: bounded, from the
+ * RTSP peer's address only. */
+static void bc_udp_receive(Client *client, rtsp_idle_t *idle) {
+    uint8_t buf[RTP_IN_MAX_PACKET + 1]; /* one byte more: an oversized datagram is seen as such */
+    for (int i = 0; i < 8; i++) {
+        struct sockaddr_in from;
+        socklen_t fl = sizeof(from);
+        ssize_t n = recvfrom(client->bc_rtp_fd, buf, sizeof(buf), MSG_DONTWAIT,
+                             (struct sockaddr *)&from, &fl);
+        if (n < 0) break;
+        const struct sockaddr_in *peer = (const struct sockaddr_in *)&client->addr;
+        if (from.sin_family != AF_INET || from.sin_addr.s_addr != peer->sin_addr.s_addr)
+            continue; /* not the RTSP client */
+        if (!client->bc_playing) continue;
+        int64_t now = rtp_mono_us();
+        talk_rtp(talk_global(), buf, (size_t)n, now);
+        rtsp_idle_talk_activity(idle, now);
+    }
+}
+
 static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
-    (void)self; (void)req;
-    char sdp_buf[1024];
+    (void)self;
+    /* ONVIF backchannel: only for a client that asks for it (Require header). */
+    rtsp_bc_decision_t bc = rtsp_backchannel_decide(request_requires_backchannel(req),
+                                                    g_auth.mode == RTSP_AUTH_ON,
+                                                    audio_out_talk_available());
+    if (bc == RTSP_BC_REFUSE) {
+        respond_backchannel_unsupported(ctx);
+        return;
+    }
+    char sdp_buf[1280];
     /* sprop-parameter-sets lets a player decode from the very first frame it
      * gets instead of waiting for in-band SPS/PPS. The cache is filled from
      * the encoder's I-frames (also while no client is connected), so it is
@@ -335,27 +520,17 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     char fmtp[320];
     if (!h264_fmtp_build(&g_params, fmtp, sizeof(fmtp)))
         snprintf(fmtp, sizeof(fmtp), "packetization-mode=1");
-    /* Audio track uses payload type 97 with L16 (linear PCM): anyka_ipc's own
-     * capture stream is raw 8kHz/mono/16-bit, not G.711, so RFC 3551 L16
-     * needs no fmtp at all. PT 97 (dynamic) matches the convention anyka_ipc's
-     * own RTSP SDP builder uses for all of its audio codec options ("Session 3"
-     * correction), even though it's not required for L16 specifically. */
-    snprintf(sdp_buf, sizeof(sdp_buf),
-        "v=0\r\n"
-        "o=- %llu %llu IN IP4 0.0.0.0\r\n"
-        "s=ak_rtsp\r\n"
-        "t=0 0\r\n"
-        "m=video 0 RTP/AVP 96\r\n"
-        "c=IN IP4 0.0.0.0\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 %s\r\n"
-        "a=control:streamid=0\r\n"
-        "m=audio 0 RTP/AVP 97\r\n"
-        "c=IN IP4 0.0.0.0\r\n"
-        "a=rtpmap:97 L16/%d/%d\r\n"
-        "a=control:streamid=1\r\n",
-        (unsigned long long)time(NULL), (unsigned long long)time(NULL),
-        fmtp, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS);
+    rtsp_sdp_params_t sp = {
+        .session_time = (unsigned long long)time(NULL),
+        .fmtp = fmtp,
+        .audio_rate = AUDIO_SAMPLE_RATE,
+        .audio_channels = AUDIO_CHANNELS,
+        .backchannel = (bc == RTSP_BC_OFFER),
+    };
+    if (rtsp_sdp_build(sdp_buf, sizeof(sdp_buf), &sp) == 0) {
+        smolrtsp_respond_internal_error(ctx);
+        return;
+    }
 
     smolrtsp_header(ctx, SMOLRTSP_HEADER_CONTENT_TYPE, "application/sdp");
     smolrtsp_body(ctx, CharSlice99_from_str(sdp_buf));
@@ -369,12 +544,16 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
      * the "a=control:streamid=N" values handed out in Client_describe above
      * (clients build the SETUP URI as <base>/<control-value>). */
     const char *uri = CharSlice99_alloca_c_str(req->start_line.uri);
-    bool is_audio = strstr(uri, "streamid=1") != NULL;
-
-    if (is_audio) {
+    switch (rtsp_track_from_uri(uri)) {
+    case RTSP_TRACK_BACKCHANNEL:
+        if (setup_backchannel(self, ctx, req) < 0) return;
+        break;
+    case RTSP_TRACK_AUDIO:
         if (setup_audio_transport(self, ctx, req) < 0) return;
-    } else {
+        break;
+    default:
         if (setup_video_transport(self, ctx, req) < 0) return;
+        break;
     }
 
     /* Session ID must stay the same across both tracks' SETUP calls within
@@ -388,13 +567,36 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
 static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
     (void)req;
-    client_set_playing(self, true);
-    if (self->nal_transport) {
-        self->need_idr = true;
-        self->idr_wait_frames = 0;
-        rtp_astart_arm(&self->audio_start); /* released at the first sent frame */
-    } else {
-        rtp_astart_release(&self->audio_start, rtp_mono_us());
+    bool media = self->nal_transport || self->audio_rtp_transport;
+    if (!media && !self->bc_setup) {
+        /* Nothing was SETUP: there is nothing to play (the loop would have no
+         * transport to write to). */
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_METHOD_NOT_VALID_IN_THIS_STATE,
+                         "Method Not Valid in This State");
+        return;
+    }
+    if (self->bc_setup && !self->bc_playing) {
+        char ip[INET6_ADDRSTRLEN];
+        if (backchannel_available() &&
+            talk_begin(talk_global(), client_ip(self, ip, sizeof(ip))) == 0) {
+            self->bc_playing = true;
+        } else {
+            printf("[ak_rtsp] backchannel: not started (no longer available or the speaker is busy)\n");
+            if (!media) { /* a talk-only session has nothing else to offer */
+                respond_backchannel_unsupported(ctx);
+                return;
+            }
+        }
+    }
+    if (media) {
+        client_set_playing(self, true);
+        if (self->nal_transport) {
+            self->need_idr = true;
+            self->idr_wait_frames = 0;
+            rtp_astart_arm(&self->audio_start); /* released at the first sent frame */
+        } else {
+            rtp_astart_release(&self->audio_start, rtp_mono_us());
+        }
     }
     smolrtsp_header(ctx, SMOLRTSP_HEADER_RANGE, "npt=now-");
     smolrtsp_respond_ok(ctx);
@@ -404,6 +606,7 @@ static void Client_teardown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     VSELF(Client);
     (void)req;
     client_set_playing(self, false);
+    bc_stop(self);
     respond_session_header(self, ctx);
     smolrtsp_respond_ok(ctx);
     if (!self->drop_reason) self->drop_reason = "TEARDOWN";
@@ -453,15 +656,7 @@ static void Client_unknown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request 
  * so "authorization:" would count as "no credentials" and a client that sends
  * it could never log in). */
 static bool find_authorization(const SmolRTSP_HeaderMap *m, CharSlice99 *out) {
-    static const char name[] = "Authorization";
-    for (size_t i = 0; i < m->len; i++) {
-        CharSlice99 k = m->headers[i].key;
-        if (k.len == sizeof(name) - 1 && strncasecmp(k.ptr, name, k.len) == 0) {
-            *out = m->headers[i].value;
-            return true;
-        }
-    }
-    return false;
+    return find_header_ci(m, "Authorization", out);
 }
 
 /* Logs the request (the URI without any user:password@ a client may have put
@@ -777,6 +972,11 @@ static void send_audio_frame(Client *client)
         if (got <= 0) return; /* 0 = nothing new yet, -1 = audio not running */
     } while (rtp_astart_stale(&client->audio_start, t_end_us)); /* backlog */
 
+    /* Half duplex (specs/07 section 1.4): while speech from the backchannel
+     * plays on the speaker the microphone goes out as silence. Only the samples
+     * change; packets, lengths and timestamps stay exactly as without talk. */
+    (void)talk_gate_mic(talk_global(), pcm, n_samples, rtp_mono_us());
+
     static uint16_t net_pcm[AUDIO_PERIOD_SAMPLES];
     for (size_t i = 0; i < n_samples; i++)
         net_pcm[i] = htons((uint16_t)pcm[i]);
@@ -989,6 +1189,10 @@ static int in_on_message(void *user, const char *data, size_t len)
 
     if (ok) {
         smolrtsp_dispatch(*c->writer, *c->controller, &req);
+        if (c->client->bc_playing && !c->client->bc_noted) {
+            c->client->bc_noted = true; /* PLAY of the backchannel: start of its idle clock */
+            rtsp_idle_talk_activity(c->idle, rtp_mono_us());
+        }
     } else {
         printf("[ak_rtsp] Request parse failed (%zu bytes), answering 400\n", len);
         send_error_reply(c->client, 400, "Bad Request", data, len);
@@ -1003,6 +1207,28 @@ static int in_on_interleaved(void *user, uint8_t channel, const uint8_t *data, s
 {
     InCtx *c = user;
     Client *client = c->client;
+    if (client->bc_setup && client->bc_tcp) {
+        /* The backchannel's channel pair is routed first: its RTP is audio for
+         * the speaker, its RTCP is only watched for a BYE. */
+        if (channel == client->bc_rtp_ch) {
+            if (client->bc_playing) {
+                int64_t now = rtp_mono_us();
+                talk_rtp(talk_global(), data, len, now);
+                rtsp_idle_talk_activity(c->idle, now);
+            }
+            return 0;
+        }
+        if (channel == client->bc_rtcp_ch) {
+            if (rtsp_rtcp_scan(data, len, NULL)) {
+                bc_stop(client);
+                if (!client->is_playing) {
+                    client->drop_reason = "RTCP BYE from client";
+                    return 1;
+                }
+            }
+            return 0;
+        }
+    }
     bool rtcp_ch = client->is_tcp &&
         ((client->rtp_transport && channel == client->video_rtcp_ch) ||
          (client->audio_rtp_transport && channel == client->audio_rtcp_ch));
@@ -1071,6 +1297,8 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     client.rtcp_udp_fd = -1;
     client.audio_rtp_udp_fd = -1;
     client.audio_rtcp_udp_fd = -1;
+    client.bc_rtp_fd = -1;
+    client.bc_rtcp_fd = -1;
     net_tx_init(&client.tx, client_fd, TX_STALL_BUDGET_MS);
 
     /* rand() feeds the SSRCs, session id and RTP timestamp origins: seed it
@@ -1107,16 +1335,27 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     }
 
     while (client_fd >= 0) {
-        struct pollfd pfd;
-        pfd.fd = client_fd;
-        pfd.events = POLLIN;
+        struct pollfd pfds[2];
+        pfds[0].fd = client_fd;
+        pfds[0].events = POLLIN;
+        pfds[0].revents = 0;
+        pfds[1].fd = client.bc_playing ? client.bc_rtp_fd : -1; /* UDP backchannel; -1 is ignored */
+        pfds[1].events = POLLIN;
+        pfds[1].revents = 0;
         /* While playing, wait PLAY_IDLE_POLL_MS in poll() when the last pass
          * found no video frame (this replaces a usleep(2000) after every empty
          * GET_STREAM and wakes at once on an RTSP request); poll again with
-         * no delay right after a frame, in case the next one is queued. */
-        int poll_ret = poll(&pfd, 1,
-                            client.is_playing ? (video_idle ? PLAY_IDLE_POLL_MS : 0)
-                                              : rtsp_idle_wait_ms(&idle, 0, rtp_mono_us(), 5000));
+         * no delay right after a frame, in case the next one is queued.
+         * A talk-only session (nothing streams to the client) wakes at least
+         * every 100 ms for the tail flush and its own idle clock. */
+        int wait_ms;
+        if (client.is_playing)
+            wait_ms = video_idle ? PLAY_IDLE_POLL_MS : 0;
+        else if (client.bc_playing)
+            wait_ms = rtsp_idle_talk_wait_ms(&idle, rtp_mono_us(), 100);
+        else
+            wait_ms = rtsp_idle_wait_ms(&idle, 0, rtp_mono_us(), 5000);
+        int poll_ret = poll(pfds, 2, wait_ms);
 
         if (poll_ret < 0) {
             if (errno == EINTR) continue;
@@ -1124,7 +1363,9 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             break;
         }
 
-        if (poll_ret > 0) {
+        if (poll_ret > 0 && (pfds[1].revents & POLLIN)) bc_udp_receive(&client, &idle);
+
+        if (poll_ret > 0 && (pfds[0].revents != 0)) {
             /* rtsp_in guarantees room for at least one byte here: a request
              * that fills the buffer is answered/dropped below, '$' frames are
              * consumed as they complete. recv() is never asked for 0 bytes
@@ -1170,25 +1411,56 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         /* Before PLAY the single slot must not be held by a silent or stuck
          * client. While playing there is no idleness drop (see rtsp_idle.h). */
         if (!client.is_playing) {
-            const char *why = rtsp_idle_check(&idle, 0, rtp_mono_us());
+            /* A talk-only session has its own clock: 30 s without audio. */
+            const char *why = client.bc_playing ? rtsp_idle_check_talk(&idle, rtp_mono_us())
+                                                : rtsp_idle_check(&idle, 0, rtp_mono_us());
             if (why) {
                 client.drop_reason = why;
                 break;
             }
         }
 
-        if (client.is_playing) {
+        if (client.is_playing || client.bc_playing) {
             /* Authentication switched on, or other credentials: a stream that
-             * started before must log in again (it reconnects and is asked). */
+             * started before must log in again (it reconnects and is asked).
+             * Talk needs the password on, so switching it off ends it too. */
             int64_t now_us = rtp_mono_us();
             if (now_us >= next_auth_check_us) {
                 next_auth_check_us = now_us + 1000000;
-                if (!rtsp_auth_session_ok(&g_auth, &client.auth)) {
+                if (!rtsp_auth_session_ok(&g_auth, &client.auth) ||
+                    (client.bc_playing && g_auth.mode != RTSP_AUTH_ON)) {
                     client.drop_reason = "RTSP credentials changed or authentication enabled";
                     break;
                 }
+                /* audio.talk_enable=0 (or audio out disabled, or the speaker
+                 * device failed) ends a running talk: the switch is the way to
+                 * cut off a talker. A video stream in the same connection stays. */
+                if (client.bc_playing && !audio_out_talk_available()) {
+                    printf("[ak_rtsp] backchannel: talk switched off or speaker unavailable, ending it\n");
+                    bc_stop(&client);
+                    if (!client.is_playing) {
+                        client.drop_reason = "talk is no longer available";
+                        break;
+                    }
+                }
             }
-            int vret = send_video_frame(&client);
+        }
+        if (client.bc_playing) talk_tick(talk_global(), rtp_mono_us());
+        /* A talk-only session fetches no video, but the encoder ring must not
+         * wrap (and the SPS/PPS cache and the capture clock must stay current)
+         * for the next viewer, exactly as while no client is connected. */
+        if (client.bc_playing && !client.is_playing) drain_venc_ring();
+
+        if (client.is_playing) {
+            /* A session without a video track (microphone only) must not touch
+             * the video transport: keep the encoder ring drained instead. */
+            int vret;
+            if (client.nal_transport) {
+                vret = send_video_frame(&client);
+            } else {
+                drain_venc_ring();
+                vret = 0;
+            }
             if (vret < 0) {
                 client.drop_reason = "error sending video frame";
                 break;
@@ -1216,6 +1488,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     printf("[ak_rtsp] Dropping client: %s\n",
            client.drop_reason ? client.drop_reason : "loop ended");
     client_set_playing(&client, false);
+    bc_stop(&client);
     VCALL(DYN(Client, SmolRTSP_Droppable, &client), drop);
     close(client_fd);
     printf("[ak_rtsp] Client connection closed\n");

@@ -51,7 +51,7 @@ single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` 
 
 | Port | Service | Target state |
 |---|---|---|
-| 554/tcp | RTSP (`ak_rtsp`) | Open, LAN |
+| 554/tcp | RTSP (`ak_rtsp`), with the ONVIF audio backchannel (talk) when the video password is on ([two-way audio](two_way_audio.md)) | Open, LAN |
 | 8091/tcp | `ak_rtsp` tuning/control port | Open, LAN only (section 4) |
 | 22/tcp | SSH (Dropbear), public key only | Open, LAN only |
 | 23/tcp, 24/tcp | Telnet | Closed, never re-enabled |
