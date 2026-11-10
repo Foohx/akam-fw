@@ -369,7 +369,7 @@ case $cmd in
         exit $? ;;
     *REG_MTD7_MD5*) echo "REG_HOSTNAME=${STUB_REG_HOST:-akam-stub}"; echo "REG_MTD7_MD5=${STUB_REG_MD5-0123456789abcdef0123456789abcdef}"; exit 0 ;;
     "/usr/sbin/akam_rtsp_auth.sh status") echo "${STUB_RTSP_STATUS:-disabled}"; exit 0 ;;
-    "/usr/sbin/akam_rtsp_auth.sh set-hash") cat >"$STUB_DIR/rtsp_auth.stdin"; exit 0 ;;
+    "/usr/sbin/akam_rtsp_auth.sh set-creds") cat >"$STUB_DIR/rtsp_auth.stdin"; exit 0 ;;
     "sh /tmp/akam_hwcheck.sh")
         echo "PASS port 22 listening"
         echo "PASS port 554 listening"
@@ -644,7 +644,7 @@ seed_verify_state "$S"
 printf '\ny\nviewer\nS3NTINEL-pw-1\nS3NTINEL-pw-1\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_rtsp_yes.out" 2>&1
 check "verify: answering y sets the password" test $? -eq 0
 EXPECT_HA1=$(printf '%s' 'viewer:akam:S3NTINEL-pw-1' | md5sum | cut -d' ' -f1)
-check "verify: only user:akam:HA1 is sent, on stdin" test "$(cat "$STUB_DIR/rtsp_auth.stdin" 2>/dev/null)" = "viewer:akam:$EXPECT_HA1"
+check "verify: user and password are sent as two lines, on stdin" test "$(cat "$STUB_DIR/rtsp_auth.stdin" 2>/dev/null)" = "$(printf 'viewer\nS3NTINEL-pw-1')"
 check "verify: the password never reaches ssh's command line" bash -c '! grep -q -e S3NTINEL -e "$2" "$1"' _ "$STUB_DIR/ssh.log" "$EXPECT_HA1"
 check "verify: the password is not in the output" hasnt "$T/ver_rtsp_yes.out" S3NTINEL
 check "verify: the HA1 is not in the output" hasnt "$T/ver_rtsp_yes.out" "$EXPECT_HA1"
@@ -673,7 +673,7 @@ check "dry-run restore: succeeds" test $? -eq 0
 check "dry-run: shows WOULD lines for the camera steps" bash -c 'for s in find-camera backup flash verify update restore; do grep -q "WOULD" "$1/dry_$s.out" || exit 1; done' _ "$T"
 check "dry-run: the camera received nothing" bash -c '[ "$(wc -l <"$1")" = "$2" ]' _ "$CAM_B_ROOT/ctl/commands.log" "$before"
 check "dry-run: the reflash tool was not called" bash -c '[ "$(wc -l <"$1/reflash.log")" = "$2" ]' _ "$STUB_DIR" "$rf_before"
-check "dry-run verify: shows the password question and sends nothing" bash -c 'grep -q "WOULD ask: Protect the video stream with a username/password? \[y/N\] (default: No)" "$1" && grep -q "WOULD run: ssh root@[^ ]* /usr/sbin/akam_rtsp_auth.sh set-hash" "$1"' _ "$T/dry_verify.out"
+check "dry-run verify: shows the password question and sends nothing" bash -c 'grep -q "WOULD ask: Protect the video stream with a username/password? \[y/N\] (default: No)" "$1" && grep -q "WOULD run: ssh root@[^ ]* /usr/sbin/akam_rtsp_auth.sh set-creds" "$1"' _ "$T/dry_verify.out"
 check "dry-run flash: asks the yes/no (shown, never answered)" has "$T/dry_flash.out" "WOULD ask: Write the camera flash now? [y/N] (default: No)"
 
 echo "wizard_camera_test: $PASS passed, $FAIL failed"

@@ -181,7 +181,7 @@ check "set-creds: plain file is user=/pass= lines" test "$(cat "$PLAIN")" = "use
 pass=$PW"
 check "set-creds: plain file mode 0600" test "$(mode_of "$PLAIN")" = 600
 check "set-creds: htdigest file mode 0600" test "$(mode_of "$FILE")" = 600
-check "set-creds: exactly the two files" test "$(ls -A "$CONF/akam" | wc -l)" = 2
+check "set-creds: exactly the two files" test "$(find "$CONF/akam" -type f | wc -l)" = 2
 check "set-creds: output states that ONVIF needs the stored password" has 'so that ONVIF can verify'
 check "set-creds: the password is not in the output" hasnt S3NTINEL
 run "$EMPTY" status
