@@ -13,6 +13,9 @@
  * request buffer (headers + body) stays valid until the response is fully written, so a producer may point into
  * the request. Request buffers are allocated per request and freed while a connection is idle.
  *
+ * http_resp_defer postpones a response by up to HTTP_DEFER_MAX_MS without a sleep: other connections keep being
+ * served, and the 5 s request/write timeouts do not run while it waits.
+ *
  * Handlers run in the server thread: they must be quick and must not block. */
 #pragma once
 #include <netinet/in.h>
@@ -27,6 +30,7 @@
 #define HTTP_IDLE_TIMEOUT_MS  30000
 #define HTTP_MAX_ROUTES   8
 #define HTTP_EXTRA_MAX    384
+#define HTTP_DEFER_MAX_MS 5000
 
 #define HTTP_M_GET  1
 #define HTTP_M_POST 2
@@ -56,6 +60,7 @@ typedef struct http_resp {
     int         close;          /* force "Connection: close" */
     char        extra[HTTP_EXTRA_MAX]; /* extra header lines, "Name: value\r\n" each */
     size_t      extra_len;
+    unsigned    defer_ms;       /* set with http_resp_defer */
     /* internal */
     const char *mem;
     size_t      mem_off;
@@ -68,6 +73,11 @@ typedef void (*http_handler_t)(const http_req_t *req, http_resp_t *resp, void *u
 void http_resp_set(http_resp_t *r, int status, const char *content_type);
 /* Add "name: value" (e.g. WWW-Authenticate). 0, or -1 when the 384-byte header budget is exhausted. */
 int  http_resp_header(http_resp_t *r, const char *name, const char *value);
+/* Hold the finished response back for `ms` (capped to HTTP_DEFER_MAX_MS) without blocking the server loop: the
+ * connection waits in its own state while the others are served (used for the failed-login delay of the shared
+ * limiter, never a sleep). Call after the status, headers and body are set. The request buffer and any
+ * http_resp_alloc memory stay valid meanwhile. A peer that hangs up during the wait drops the connection. */
+void http_resp_defer(http_resp_t *r, unsigned ms);
 /* Body from memory that stays valid until the response is sent (static data or the request body). */
 void http_resp_body_mem(http_resp_t *r, const void *data, size_t len);
 /* Body of exactly `len` bytes produced on demand. */

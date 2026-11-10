@@ -19,6 +19,7 @@
 #include "soap.h"
 
 static int g_failed;
+static void test_defer(int port);
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); g_failed++; } } while (0)
 
 static int count_fds(void)
@@ -121,6 +122,15 @@ static void h_soap(const http_req_t *q, http_resp_t *r, void *u)
         http_resp_set(r, 200, SOAP_CONTENT_TYPE);
     }
     http_resp_body_stream(r, soap_tpl_len(t), soap_tpl_read, t);
+}
+
+static void h_defer(const http_req_t *q, http_resp_t *r, void *u)
+{
+    (void)u;
+    unsigned ms = q->query && !strncmp(q->query, "ms=", 3) ? (unsigned)atoi(q->query + 3) : 0;
+    http_resp_set(r, 200, "text/plain");
+    http_resp_body_mem(r, "deferred", 8);
+    http_resp_defer(r, ms);
 }
 
 /* ---- client ---- */
@@ -563,6 +573,55 @@ static void test_conn_cap(int port)
     usleep(100000);
 }
 
+/* http_resp_defer: the answer is held back without blocking the loop. */
+static void test_defer(int port)
+{
+    resp_t r;
+    int fd = dial(port);
+    long long t0 = now_ms();
+    CHECK(simple(fd, "GET /defer?ms=400 HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200 && !strcmp(r.body, "deferred"));
+    CHECK(now_ms() - t0 >= 380 && now_ms() - t0 < 1500);
+    free(r.body);
+    CHECK(simple(fd, "GET /defer?ms=0 HTTP/1.1\r\n\r\n", &r) == 0 && now_ms() - t0 < 1500);   /* keep-alive still works */
+    free(r.body);
+
+    /* a deferred response does not block the other connections */
+    int a = dial(port), b = dial(port);
+    char carry[8] = "";
+    size_t cl = 0;
+    t0 = now_ms();
+    sendstr(a, "GET /defer?ms=600 HTTP/1.1\r\n\r\n");
+    usleep(50000);
+    long long t1 = now_ms();
+    CHECK(simple(b, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
+    CHECK(now_ms() - t1 < 300);          /* served while A waits */
+    free(r.body);
+    CHECK(read_resp(a, &r, carry, &cl, 3000, 65536) == 0 && r.status == 200);
+    CHECK(now_ms() - t0 >= 580);
+    free(r.body);
+
+    /* pipelined requests behind a deferred one keep their order */
+    char carry2[8192] = "";
+    size_t cl2 = 0;
+    sendstr(b, "GET /defer?ms=200 HTTP/1.1\r\n\r\nGET /addr HTTP/1.1\r\n\r\n");
+    CHECK(read_resp(b, &r, carry2, &cl2, 3000, 65536) == 0 && !strcmp(r.body, "deferred"));
+    free(r.body);
+    CHECK(read_resp(b, &r, carry2, &cl2, 3000, 65536) == 0 && strstr(r.body, "peer=") != NULL);
+    free(r.body);
+
+    /* a client that leaves during the wait costs nothing afterwards */
+    int c = dial(port);
+    sendstr(c, "GET /defer?ms=300 HTTP/1.1\r\n\r\n");
+    usleep(30000);
+    close(c);
+    usleep(700000);
+    CHECK(simple(a, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
+    free(r.body);
+    close(a);
+    close(b);
+    close(fd);
+}
+
 int main(void)
 {
     int base_fds = count_fds(), base_thr = count_threads();
@@ -572,6 +631,7 @@ int main(void)
     CHECK(http_srv_route("/stall", HTTP_M_GET, h_stall, NULL) == 0);
     CHECK(http_srv_route("/auth", HTTP_M_GET, h_auth, NULL) == 0);
     CHECK(http_srv_route("/addr", HTTP_M_GET, h_addr, NULL) == 0);
+    CHECK(http_srv_route("/defer", HTTP_M_GET, h_defer, NULL) == 0);
     CHECK(http_srv_route("/onvif/device_service", HTTP_M_POST, h_soap, NULL) == 0);
     CHECK(http_srv_route("relative", HTTP_M_GET, h_addr, NULL) == -1);
 
@@ -590,6 +650,7 @@ int main(void)
     test_dormant_and_basic(port);
     test_errors(port);
     test_pipeline_and_stream(port);
+    test_defer(port);
     test_slowloris_default(port);
 
     http_srv_stop();
