@@ -76,6 +76,11 @@ static const char *amp_mode_name(int m)
     return m == AO_AMP_ON ? "on" : m == AO_AMP_OFF ? "off" : "auto";
 }
 
+static const char *duplex_name(int d)
+{
+    return d == AO_DUPLEX_FULL ? "full" : "half";
+}
+
 /* ------------------------------------------------------------------------
  * Instance setup, settings
  * ------------------------------------------------------------------------ */
@@ -101,6 +106,8 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     ao->gain     = 2;   /* stock value */
     ao->source   = 4;   /* stock playback route */
     ao->amp_mode = AO_AMP_AUTO;
+    ao->talk_enable = 1;
+    ao->talk_duplex = AO_DUPLEX_HALF;
     ao->state    = AO_OFF;
     ao->fd       = -1;
     ao->beep_pos = -1;
@@ -128,6 +135,25 @@ void ao_play_test(audio_out_t *ao) { ao->test_req = 1; }
 int  ao_test_active(const audio_out_t *ao) { return ao->test_req || ao->beep_pos >= 0; }
 int  ao_amp_is_on(const audio_out_t *ao) { return ao->amp_on; }
 int  ao_device_open(const audio_out_t *ao) { return ao->fd >= 0; }
+
+int ao_talk_available(const audio_out_t *ao)
+{
+    return ao->enabled && ao->talk_enable && ao->fd >= 0 &&
+           ao->state != AO_ERROR && ao->state != AO_DISABLED_CRASH;
+}
+
+int ao_talk_half_duplex(const audio_out_t *ao) { return ao->talk_duplex != AO_DUPLEX_FULL; }
+
+/* Single core, and the claim comes from the RTSP thread only: a plain flag is
+ * enough (the release may come from another thread at shutdown). */
+int ao_feeder_claim(audio_out_t *ao)
+{
+    if (ao->feeder) return -1;
+    ao->feeder = 1;
+    return 0;
+}
+
+void ao_feeder_release(audio_out_t *ao) { ao->feeder = 0; }
 
 /* ------------------------------------------------------------------------
  * Persistent settings file (key=value lines)
@@ -167,6 +193,11 @@ int ao_load_config(audio_out_t *ao)
         else if (!strcmp(k, "volume") && !parse_int(v, 0, 100, &x))  ao->volume = (int)x;
         else if (!strcmp(k, "gain")   && !parse_int(v, 0, 5, &x))    ao->gain = (int)x;
         else if (!strcmp(k, "source") && !parse_int(v, 4, 6, &x))    ao_set_source(ao, (int)x);
+        else if (!strcmp(k, "talk_enable") && !parse_int(v, 0, 1, &x)) ao->talk_enable = (int)x;
+        else if (!strcmp(k, "talk_duplex")) {
+            if (!strcmp(v, "half")) ao->talk_duplex = AO_DUPLEX_HALF;
+            else if (!strcmp(v, "full")) ao->talk_duplex = AO_DUPLEX_FULL;
+        }
     }
     ao->cur_gain_q15 = ao_volume_gain_q15(ao->volume);
     return 1;
@@ -174,7 +205,8 @@ int ao_load_config(audio_out_t *ao)
 
 static int key_is_ours(const char *line)
 {
-    static const char *const keys[] = { "enable=", "volume=", "gain=", "source=" };
+    static const char *const keys[] = { "enable=", "volume=", "gain=", "source=",
+                                        "talk_enable=", "talk_duplex=" };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
         if (!strncmp(line, keys[i], strlen(keys[i]))) return 1;
     return 0;
@@ -202,8 +234,10 @@ int ao_save_config(audio_out_t *ao)
         outn += (size_t)w;
     }
     int w = snprintf(out + outn, sizeof(out) - outn,
-                     "enable=%d\nvolume=%d\ngain=%d\nsource=%d\n",
-                     ao->enabled, ao->volume, ao->gain, ao->source);
+                     "enable=%d\nvolume=%d\ngain=%d\nsource=%d\n"
+                     "talk_enable=%d\ntalk_duplex=%s\n",
+                     ao->enabled, ao->volume, ao->gain, ao->source,
+                     ao->talk_enable, duplex_name(ao->talk_duplex));
     if (w < 0 || (size_t)w >= sizeof(out) - outn) { errno = ENOSPC; return -1; }
     outn += (size_t)w;
 
@@ -497,8 +531,17 @@ int ao_step(audio_out_t *ao)
             if (ao->beep_pos >= AO_BEEP_SAMPLES) ao->beep_pos = -1;
             test = audible = 1;
         } else {
-            /* pads with silence; the result is the real sample count (0 while pre-filling) */
-            if (audio_jitter_pull(&ao->jit, mono, AO_FRAMES) > 0) talking = audible = 1;
+            /* pads with silence; the result is the real sample count (0 while pre-filling).
+             * Real samples are "talking"; only a loud enough period is "audible" (keeps
+             * the amp on): a stream of G.711 silence must not light the amplifier. */
+            size_t real = audio_jitter_pull(&ao->jit, mono, AO_FRAMES);
+            if (real > 0) {
+                talking = 1;
+                for (size_t i = 0; i < real; i++) {
+                    int a = mono[i] < 0 ? -(int)mono[i] : mono[i];
+                    if (a >= AO_AUDIBLE_PEAK) { audible = 1; break; }
+                }
+            }
         }
     } else {
         ao->beep_pos = -1;
@@ -595,8 +638,17 @@ void ao_thread_stop(audio_out_t *ao)
 
 static int is_audio_key(const char *key) { return !strncmp(key, "audio.out_", 10); }
 
+static int is_talk_key(const char *key) { return !strncmp(key, "audio.talk_", 11); }
+
 int ao_ctl_get(audio_out_t *ao, const char *key, char *out, size_t cap)
 {
+    if (is_talk_key(key)) {
+        const char *t = key + 11;
+        if      (!strcmp(t, "enable")) snprintf(out, cap, "audio.talk_enable=%d", ao->talk_enable);
+        else if (!strcmp(t, "duplex")) snprintf(out, cap, "audio.talk_duplex=%s", duplex_name(ao->talk_duplex));
+        else return -1; /* the read-only talk counters belong to talk.c */
+        return 0;
+    }
     if (!is_audio_key(key)) return -1;
     const char *k = key + 10;
     if      (!strcmp(k, "enable")) snprintf(out, cap, "audio.out_enable=%d", ao->enabled);
@@ -606,6 +658,9 @@ int ao_ctl_get(audio_out_t *ao, const char *key, char *out, size_t cap)
     else if (!strcmp(k, "amp"))    snprintf(out, cap, "audio.out_amp=%s", amp_mode_name(ao->amp_mode));
     else if (!strcmp(k, "test"))   snprintf(out, cap, "audio.out_test=%d", ao_test_active(ao) ? 1 : 0);
     else if (!strcmp(k, "state"))  snprintf(out, cap, "audio.out_state=%s", ao_state_name(ao->state));
+    else if (!strcmp(k, "underruns")) snprintf(out, cap, "audio.out_underruns=%lu", (unsigned long)audio_jitter_underruns(&ao->jit));
+    else if (!strcmp(k, "drops"))  snprintf(out, cap, "audio.out_drops=%lu", (unsigned long)audio_jitter_drops(&ao->jit));
+    else if (!strcmp(k, "buf_ms")) snprintf(out, cap, "audio.out_buf_ms=%lu", (unsigned long)audio_jitter_level_ms(&ao->jit));
     else snprintf(out, cap, "ERR unknown param %s", key);
     return 0;
 }
@@ -614,7 +669,9 @@ void ao_ctl_list(audio_out_t *ao, void (*emit)(void *arg, const char *line), voi
 {
     static const char *const keys[] = {
         "audio.out_enable", "audio.out_volume", "audio.out_gain", "audio.out_source",
-        "audio.out_amp", "audio.out_test", "audio.out_state"
+        "audio.out_amp", "audio.out_test", "audio.out_state",
+        "audio.out_underruns", "audio.out_drops", "audio.out_buf_ms",
+        "audio.talk_enable", "audio.talk_duplex"
     };
     char line[80];
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
@@ -634,9 +691,28 @@ static void persist_note(audio_out_t *ao, char *note, size_t cap)
 
 int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, size_t cap)
 {
+    long x;
+    if (is_talk_key(key)) {
+        const char *t = key + 11;
+        char note[64] = "";
+        if (!strcmp(t, "enable")) {
+            if (parse_int(val, 0, 1, &x) < 0) { snprintf(msg, cap, "ERR audio.talk_enable range [0,1]"); return 1; }
+            if (ao->talk_enable != (int)x) { ao->talk_enable = (int)x; persist_note(ao, note, sizeof(note)); }
+            snprintf(msg, cap, "OK audio.talk_enable=%ld%s", x, note);
+        } else if (!strcmp(t, "duplex")) {
+            int d;
+            if      (!strcmp(val, "half")) d = AO_DUPLEX_HALF;
+            else if (!strcmp(val, "full")) d = AO_DUPLEX_FULL;
+            else { snprintf(msg, cap, "ERR invalid audio.talk_duplex value %s (want half|full)", val); return 1; }
+            if (ao->talk_duplex != d) { ao->talk_duplex = d; persist_note(ao, note, sizeof(note)); }
+            snprintf(msg, cap, "OK audio.talk_duplex=%s%s", duplex_name(d), note);
+        } else {
+            return -1; /* talk.c: read-only state and counters */
+        }
+        return 0;
+    }
     if (!is_audio_key(key)) return -1;
     const char *k = key + 10;
-    long x;
 
     if (!strcmp(k, "enable")) {
         if (parse_int(val, 0, 1, &x) < 0) { snprintf(msg, cap, "ERR audio.out_enable range [0,1]"); return 1; }
@@ -679,8 +755,8 @@ int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, siz
             ao_play_test(ao);
         }
         snprintf(msg, cap, "OK audio.out_test=%ld", x);
-    } else if (!strcmp(k, "state")) {
-        snprintf(msg, cap, "ERR audio.out_state is read-only");
+    } else if (!strcmp(k, "state") || !strcmp(k, "underruns") || !strcmp(k, "drops") || !strcmp(k, "buf_ms")) {
+        snprintf(msg, cap, "ERR audio.out_%s is read-only", k);
     } else {
         snprintf(msg, cap, "ERR unknown param %s", key);
     }
@@ -771,6 +847,11 @@ void audio_out_emergency_off(void)
 }
 
 size_t audio_out_push(const int16_t *pcm, size_t n) { return ao_push(single(), pcm, n); }
+size_t audio_out_queued(void) { return ao_queued(single()); }
+int  audio_out_talk_available(void) { return ao_talk_available(single()); }
+int  audio_out_talk_half_duplex(void) { return ao_talk_half_duplex(single()); }
+int  audio_out_feeder_claim(void) { return ao_feeder_claim(single()); }
+void audio_out_feeder_release(void) { ao_feeder_release(single()); }
 
 int audio_out_ctl_get(const char *key, char *out, size_t cap) { return ao_ctl_get(single(), key, out, cap); }
 int audio_out_ctl_set(const char *key, const char *val, char *msg, size_t cap)

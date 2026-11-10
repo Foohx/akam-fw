@@ -806,7 +806,102 @@ static void test_ctl(void)
     CHECK(ao_ctl_set(ao, "audio.out_test", "0", out, sizeof(out)) == 0, "test 0 accepted (no-op)");
     int n = 0;
     ao_ctl_list(ao, collect, &n);
-    CHECK(n == 7, "LIST emits the seven audio.out_ lines");
+    CHECK(n == 12, "LIST emits the seven audio.out_ lines, the three counters and the two talk settings");
+    ao_close(ao);
+    free(ao);
+}
+
+/* Backchannel support (specs/07 section 1): availability, one feeder, silence does
+ * not light the amp, talk settings and counters on 8091 keys. */
+static void test_talk_support(void)
+{
+    printf("# talk support\n");
+    audio_out_t *ao = calloc(1, sizeof(*ao));
+    new_case(ao);
+    CHECK(!ao_talk_available(ao), "before ao_open: not available (no device)");
+    open_quiet(ao);
+    CHECK(ao_talk_available(ao), "device running, enabled, soft switch on: available");
+    ao->talk_enable = 0;
+    CHECK(!ao_talk_available(ao), "talk_enable=0: not available");
+    ao->talk_enable = 1;
+    ao->enabled = 0;
+    CHECK(!ao_talk_available(ao), "audio.out_enable=0: not available");
+    ao->enabled = 1;
+    ao->state = AO_ERROR;
+    CHECK(!ao_talk_available(ao), "device in error: not available");
+    ao->state = AO_IDLE;
+
+    CHECK(ao_feeder_claim(ao) == 0, "first feeder gets the push side");
+    CHECK(ao_feeder_claim(ao) == -1, "a second feeder is refused");
+    ao_feeder_release(ao);
+    CHECK(ao_feeder_claim(ao) == 0, "free again after release");
+    ao_feeder_release(ao);
+
+    /* G.711 silence (a client that streams all day) must not light the amp */
+    ao_set_volume(ao, 100);
+    step(ao);
+    static int16_t quiet[JITTER_PREFILL_SAMPLES + AO_FRAMES];
+    for (size_t i = 0; i < sizeof(quiet) / sizeof(quiet[0]); i++) quiet[i] = (i & 1) ? 8 : -8; /* A-law idle */
+    for (int k = 0; k < 8; k++) {
+        ao_push(ao, quiet, sizeof(quiet) / sizeof(quiet[0]));
+        step(ao);
+    }
+    CHECK(ao->state == AO_TALKING, "silent samples are still played (state talking)");
+    CHECK(!ao_amp_is_on(ao), "...but never switch the amplifier on");
+    ao_close(ao);
+
+    new_case(ao); open_quiet(ao); ao_set_volume(ao, 100);
+    int16_t soft[JITTER_PREFILL_SAMPLES + AO_FRAMES];
+    for (size_t i = 0; i < sizeof(soft) / sizeof(soft[0]); i++) soft[i] = 100;
+    ao_push(ao, soft, sizeof(soft) / sizeof(soft[0]));
+    step(ao);
+    CHECK(ao_amp_is_on(ao), "audio above the audible peak switches the amp on");
+    ao_close(ao);
+
+    /* settings and counters on the keys */
+    new_case(ao); open_quiet(ao);
+    char out[128];
+    ao_ctl_get(ao, "audio.talk_enable", out, sizeof(out));
+    CHECK(!strcmp(out, "audio.talk_enable=1"), "talk_enable defaults to 1");
+    ao_ctl_get(ao, "audio.talk_duplex", out, sizeof(out));
+    CHECK(!strcmp(out, "audio.talk_duplex=half"), "talk_duplex defaults to half");
+    CHECK(ao_ctl_set(ao, "audio.talk_enable", "0", out, sizeof(out)) == 0 && !strcmp(out, "OK audio.talk_enable=0"), "set talk_enable 0");
+    CHECK(ao_ctl_set(ao, "audio.talk_enable", "2", out, sizeof(out)) == 1, "talk_enable range checked");
+    CHECK(ao_ctl_set(ao, "audio.talk_duplex", "full", out, sizeof(out)) == 0 && !strcmp(out, "OK audio.talk_duplex=full"), "set talk_duplex full");
+    CHECK(ao_ctl_set(ao, "audio.talk_duplex", "both", out, sizeof(out)) == 1, "talk_duplex value checked");
+    CHECK(!ao_talk_available(ao) && !ao_talk_half_duplex(ao), "settings take effect");
+    CHECK(ao_ctl_set(ao, "audio.talk_state", "1", out, sizeof(out)) == -1, "talk counters are not ours (-1)");
+    CHECK(ao_ctl_get(ao, "audio.talk_packets", out, sizeof(out)) == -1, "talk counters are not ours on get either");
+
+    audio_out_t *ao2 = calloc(1, sizeof(*ao2));
+    ao_cfg_t cfg = { "/dev/fake", ao->conf_dir };
+    ao_init(ao2, &OPS, &cfg);
+    CHECK(ao_load_config(ao2) == 1 && ao2->talk_enable == 0 && ao2->talk_duplex == AO_DUPLEX_FULL, "talk settings are persisted and reloaded");
+    char buf[512] = "";
+    FILE *f = fopen(ao->conf_path, "r"); size_t nn = fread(buf, 1, sizeof(buf) - 1, f); buf[nn] = 0; fclose(f);
+    CHECK(strstr(buf, "talk_enable=0\n") && strstr(buf, "talk_duplex=full\n") && strstr(buf, "enable=1\n"), "file has the talk lines next to the device keys");
+    ao_set_amp_mode(ao2, AO_AMP_AUTO);
+    ao_save_config(ao2);
+    f = fopen(ao->conf_path, "r"); nn = fread(buf, 1, sizeof(buf) - 1, f); buf[nn] = 0; fclose(f);
+    int cnt = 0; for (const char *q = buf; (q = strstr(q, "talk_duplex=")); q++) cnt++;
+    CHECK(cnt == 1, "saving twice does not duplicate the talk lines");
+    free(ao2);
+
+    /* counters */
+    new_case(ao); open_quiet(ao);
+    int16_t part[JITTER_PREFILL_SAMPLES + 100];
+    for (size_t i = 0; i < sizeof(part) / sizeof(part[0]); i++) part[i] = 1000;
+    ao_push(ao, part, sizeof(part) / sizeof(part[0]));
+    ao_ctl_get(ao, "audio.out_buf_ms", out, sizeof(out));
+    CHECK(!strcmp(out, "audio.out_buf_ms=132"), "buf_ms reports the queued milliseconds (1060 samples = 132 ms)");
+    for (int i = 0; i < 3; i++) step(ao);
+    ao_ctl_get(ao, "audio.out_underruns", out, sizeof(out));
+    CHECK(!strcmp(out, "audio.out_underruns=1"), "underruns counter");
+    static int16_t big[JITTER_MAX_SAMPLES + 800];
+    ao_push(ao, big, sizeof(big) / sizeof(big[0]));
+    ao_ctl_get(ao, "audio.out_drops", out, sizeof(out));
+    CHECK(strcmp(out, "audio.out_drops=0") != 0, "drops counter counts the overrun");
+    CHECK(ao_ctl_set(ao, "audio.out_drops", "0", out, sizeof(out)) == 1 && strstr(out, "read-only"), "counters are read-only");
     ao_close(ao);
     free(ao);
 }
@@ -865,6 +960,7 @@ int main(void)
     test_live_settings();
     test_config();
     test_ctl();
+    test_talk_support();
     test_thread();
 
     char cmd[300];

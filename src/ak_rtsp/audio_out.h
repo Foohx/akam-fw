@@ -53,6 +53,16 @@ enum ao_state {
 
 enum ao_amp_mode { AO_AMP_AUTO = 0, AO_AMP_ON, AO_AMP_OFF };
 
+/* Half-duplex rule of the backchannel (specs/07 section 1.4): half = the
+ * microphone is replaced by silence while speech plays on the speaker, full =
+ * never muted. */
+enum ao_duplex { AO_DUPLEX_HALF = 0, AO_DUPLEX_FULL };
+
+/* Pushed audio whose loudest sample stays below this (about -56 dBFS) does not
+ * count as audible: a client that streams G.711 silence all day (go2rtc does)
+ * must not keep the amplifier on and hissing. */
+#define AO_AUDIBLE_PEAK    48
+
 typedef struct ao_ops {
     int     (*open)(void *user, const char *path);                  /* fd or -1 (errno) */
     int     (*ioctl)(void *user, int fd, unsigned long req, void *arg);
@@ -86,6 +96,9 @@ typedef struct audio_out {
     volatile int source;        /* 4 (default, stock) or 6 (experiment) */
     volatile int amp_mode;      /* enum ao_amp_mode */
     volatile int test_req;      /* beep requested */
+    volatile int talk_enable;   /* 0/1: soft switch of the RTSP backchannel (audio.talk_enable) */
+    volatile int talk_duplex;   /* enum ao_duplex (audio.talk_duplex) */
+    volatile int feeder;        /* a talker holds the push side (one at a time) */
 
     /* playback thread state */
     volatile int state;         /* enum ao_state */
@@ -150,6 +163,14 @@ int    ao_test_active(const audio_out_t *ao);   /* queued or playing */
 size_t ao_push(audio_out_t *ao, const int16_t *pcm, size_t n_samples);
 /* Samples waiting in the jitter buffer. */
 size_t ao_queued(audio_out_t *ao);
+/* Backchannel support. ao_talk_available(): talk could be served right now
+ * (audio out enabled, device running, soft switch on). One talker at a time:
+ * ao_feeder_claim() returns 0 when it got the push side, -1 when another
+ * talker holds it; ao_feeder_release() frees it. */
+int    ao_talk_available(const audio_out_t *ao);
+int    ao_talk_half_duplex(const audio_out_t *ao);
+int    ao_feeder_claim(audio_out_t *ao);
+void   ao_feeder_release(audio_out_t *ao);
 const char *ao_state_name(int state);
 int    ao_amp_is_on(const audio_out_t *ao);
 int    ao_device_open(const audio_out_t *ao);
@@ -161,10 +182,13 @@ int     ao_volume_gain_q15(int volume);         /* (v/100)^2 in Q15; 100 -> 3276
 /* ---- 8091 keys ---------------------------------------------------------- */
 
 /* All three work on any instance; the audio_out_ctl_* ones on the singleton.
- * get: writes the value into out, returns 0, or -1 when key is not an
- *      audio.out_* key.
+ * Keys: audio.out_* (device, volume, gain, source, amp, test, state and the
+ * read-only counters underruns, drops, buf_ms) and audio.talk_enable /
+ * audio.talk_duplex (the settings of the RTSP backchannel; its read-only state
+ * and counters are in talk.c).
+ * get: writes the value into out, returns 0, or -1 when key is not one of ours.
  * set: returns 0 and writes the "OK ..." line into msg, or 1 with an "ERR ..."
- *      line; -1 when key is not an audio.out_* key (msg untouched).
+ *      line; -1 when key is not one of ours (msg untouched).
  * list: calls emit(arg, "audio.out_x=v") for each key. */
 int  ao_ctl_get(audio_out_t *ao, const char *key, char *out, size_t cap);
 int  ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, size_t cap);
@@ -180,9 +204,14 @@ int  audio_out_start(void);
 void audio_out_stop(void);
 /* Async-signal-safe amp off (SIGTERM path). */
 void audio_out_emergency_off(void);
-/* Non-blocking push of mono s16 8 kHz samples, for the talk server (T3);
+/* Non-blocking push of mono s16 8 kHz samples, for the RTSP backchannel (talk.c);
  * same semantics as ao_push(). */
 size_t audio_out_push(const int16_t *pcm, size_t n_samples);
+size_t audio_out_queued(void);
+int  audio_out_talk_available(void);
+int  audio_out_talk_half_duplex(void);
+int  audio_out_feeder_claim(void);
+void audio_out_feeder_release(void);
 int  audio_out_ctl_get(const char *key, char *out, size_t cap);
 int  audio_out_ctl_set(const char *key, const char *val, char *msg, size_t cap);
 void audio_out_ctl_list(void (*emit)(void *arg, const char *line), void *arg);
