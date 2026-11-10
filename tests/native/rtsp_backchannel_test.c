@@ -408,6 +408,22 @@ static void test_auth_gating(void)
     sp_available = 1;
     conn_close(&c);
 
+    /* no login at all: no talk track, no PLAY, no audio, whatever the Require tag says */
+    CHECK(tcp_connect(&c) == 0, "connect");
+    unsigned long p0 = sp_pushed;
+    CHECK(rtsp(&c, "SETUP", "x/streamid=2", REQ_BC_LIT "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", 0, r, sizeof(r)) == 401,
+          "SETUP of the backchannel without login: 401");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=2", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", 0, r, sizeof(r)) == 401,
+          "same without the Require tag: 401");
+    CHECK(rtsp(&c, "PLAY", "x", "", 0, r, sizeof(r)) == 401, "PLAY without login: 401");
+    {
+        uint8_t pkt0[172];
+        send_frame(c.fd, 0, pkt0, mk_rtp(pkt0, 0, 1, 6000));
+        wait_ms(100);
+        CHECK(sp_pushed == p0 && !sp_claimed, "an interleaved RTP frame before the login queues nothing and claims nothing");
+    }
+    conn_close(&c);
+
     /* wrong password: never reaches the offer */
     CHECK(tcp_connect(&c) == 0, "connect");
     rtsp(&c, "DESCRIBE", "x", REQ_BC, 1, r, sizeof(r));
@@ -637,6 +653,21 @@ static void test_udp(void)
     }
     WAIT_FOR(sp_pushed - p0 >= 3200, 2000);
     CHECK(sp_pushed - p0 == 3200, "20 UDP packets reach the speaker");
+    {   /* the same packets from another address (127.0.0.2) are not from the RTSP client */
+        int fs = socket(AF_INET, SOCK_DGRAM, 0);
+        struct sockaddr_in other = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK + 1) };
+        if (fs >= 0 && bind(fs, (struct sockaddr *)&other, sizeof(other)) == 0) {
+            for (int i = 0; i < 20; i++) {
+                size_t n = mk_rtp(pkt, 0, (uint16_t)(500 + i), 6000);
+                sendto(fs, pkt, n, 0, (struct sockaddr *)&to, sizeof(to));
+            }
+            wait_ms(150);
+            CHECK(sp_pushed - p0 == 3200, "UDP audio from another address is dropped");
+        } else {
+            printf("  skip - cannot bind 127.0.0.2 here\n");
+        }
+        if (fs >= 0) close(fs);
+    }
     CHECK(rtsp(&c, "TEARDOWN", "x", "", 1, r, sizeof(r)) == 200, "TEARDOWN");
     conn_close(&c);
     close(us);
@@ -657,6 +688,58 @@ static void test_busy_speaker(void)
     sp_claimed = 0;
 }
 
+
+/* A talk-only session that is playing: 0 = ready, -1 = something refused. */
+static int open_talk_only(conn_t *c)
+{
+    char r[2048];
+    if (tcp_connect(c) != 0) return -1;
+    if (rtsp_login(c, "DESCRIBE", "x", REQ_BC, r, sizeof(r)) != 200) return -1;
+    if (rtsp(c, "SETUP", "x/streamid=2", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", 1, r, sizeof(r)) != 200) return -1;
+    if (rtsp(c, "PLAY", "x", "", 1, r, sizeof(r)) != 200) return -1;
+    return 0;
+}
+
+/* What makes a running talk end without the talker's consent: the talk switch,
+ * the end of the password, another password. The check runs once a second. */
+static void test_revocation(void)
+{
+    printf("# revocation while talking\n");
+    uint8_t pkt[172];
+    conn_t c;
+
+    set_auth(1); sp_available = 1;
+    CHECK(open_talk_only(&c) == 0, "talk-only session playing");
+    send_frame(c.fd, 0, pkt, mk_rtp(pkt, 0, 1, 6000));
+    sp_available = 0; /* audio.talk_enable=0 (or audio out off, or the speaker broke) */
+    CHECK(server_closed(&c, 3500), "talk switched off: the session is ended");
+    WAIT_FOR(!sp_claimed, 1000);
+    CHECK(!sp_claimed, "talk switched off: the speaker is released");
+    conn_close(&c);
+    sp_available = 1;
+
+    CHECK(open_talk_only(&c) == 0, "second talk-only session playing");
+    set_auth(0);
+    CHECK(server_closed(&c, 3500), "password removed: the session is ended");
+    WAIT_FOR(!sp_claimed, 1000);
+    CHECK(!sp_claimed, "password removed: the speaker is released");
+    conn_close(&c);
+
+    set_auth(1);
+    CHECK(open_talk_only(&c) == 0, "third talk-only session playing");
+    {
+        char other[33];
+        md5_hex_cat(other, USER, ":" RTSP_AUTH_REALM ":", "another-password", (char *)NULL);
+        FILE *f = fopen(AUTH_FILE, "w");
+        fprintf(f, "%s:akam:%s\n", USER, other);
+        fclose(f);
+    }
+    CHECK(server_closed(&c, 3500), "password changed: the session is ended");
+    WAIT_FOR(!sp_claimed, 1000);
+    CHECK(!sp_claimed, "password changed: the speaker is released");
+    conn_close(&c);
+    set_auth(1);
+}
 
 /* ======================================================================
  * The host client tools/akam-talk against the same server
@@ -766,6 +849,7 @@ int main(void)
     test_mic_and_talk_together();
     test_udp();
     test_busy_speaker();
+    test_revocation();
     test_akam_talk();
 
     unlink(AUTH_FILE);

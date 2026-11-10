@@ -113,7 +113,7 @@ Settings (port 8091 from the camera itself, over SSH; saved in `/etc/config/akam
 
 | Key | Values | Meaning |
 |---|---|---|
-| `audio.talk_enable` | `1` (default), `0` | soft switch of talk (`0`: the camera refuses the backchannel with 551) |
+| `audio.talk_enable` | `1` (default), `0` | soft switch of talk (`0`: the camera refuses the backchannel with 551, and ends a talk in progress within a second) |
 | `audio.talk_duplex` | `half` (default), `full` | `full` never mutes the microphone (use it with headphones elsewhere, or to hear the echo) |
 | `audio.out_volume`, `audio.out_gain`, `audio.out_amp` | see [speaker output](troubleshooting.md#speaker-output-test-the-camera-speaker-by-ear-step-a) | volume and amplifier |
 
@@ -146,7 +146,8 @@ arrived), `audio.talk_sessions`, `audio.talk_mic_muted`, and for the speaker buf
 The password is a Digest login (as for the video): the audio itself is **not encrypted**, so someone on
 the same network who can capture packets hears what is said. Do not expose port 554 to the Internet; use a
 VPN. Failed logins are slowed down and the connection is closed after five. Talk follows the video
-password: switching the password off ends a talk in progress within a second.
+password: switching the password off, or choosing another one, ends a talk in progress within a second. So does
+`audio.talk_enable=0`. UDP audio is accepted only from the address of the RTSP client.
 
 ## Cost on the camera
 

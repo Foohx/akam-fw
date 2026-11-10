@@ -1432,9 +1432,24 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                     client.drop_reason = "RTSP credentials changed or authentication enabled";
                     break;
                 }
+                /* audio.talk_enable=0 (or audio out disabled, or the speaker
+                 * device failed) ends a running talk: the switch is the way to
+                 * cut off a talker. A video stream in the same connection stays. */
+                if (client.bc_playing && !audio_out_talk_available()) {
+                    printf("[ak_rtsp] backchannel: talk switched off or speaker unavailable, ending it\n");
+                    bc_stop(&client);
+                    if (!client.is_playing) {
+                        client.drop_reason = "talk is no longer available";
+                        break;
+                    }
+                }
             }
         }
         if (client.bc_playing) talk_tick(talk_global(), rtp_mono_us());
+        /* A talk-only session fetches no video, but the encoder ring must not
+         * wrap (and the SPS/PPS cache and the capture clock must stay current)
+         * for the next viewer, exactly as while no client is connected. */
+        if (client.bc_playing && !client.is_playing) drain_venc_ring();
 
         if (client.is_playing) {
             /* A session without a video track (microphone only) must not touch
