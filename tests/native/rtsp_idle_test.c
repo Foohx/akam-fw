@@ -47,6 +47,24 @@ int main(void)
     CHECK(rtsp_idle_wait_ms(&s, 0, S(30), 5000) == 1, "overdue: wait is 1 ms");
     CHECK(rtsp_idle_wait_ms(&s, 1, S(30), 4) == 4, "playing: wait unchanged");
 
+    /* talk-only session: 30 s without RTP */
+    rtsp_idle_init(&s, S(1000));
+    rtsp_idle_talk_activity(&s, S(1002)); /* PLAY of the backchannel */
+    CHECK(rtsp_idle_check_talk(&s, S(1002) + S(29)) == NULL, "talker kept before 30 s of silence");
+    r = rtsp_idle_check_talk(&s, S(1002) + S(30));
+    CHECK(r && !strcmp(r, "no audio from the talker"), "silent talker dropped at 30 s");
+    rtsp_idle_talk_activity(&s, S(1002) + S(29));
+    CHECK(rtsp_idle_check_talk(&s, S(1002) + S(58)) == NULL, "an RTP packet restarts the 30 s");
+    rtsp_idle_request(&s, S(1002) + S(40));
+    CHECK(rtsp_idle_check_talk(&s, S(1002) + S(59)) != NULL && rtsp_idle_check_talk(&s, S(1002) + S(58)) == NULL,
+          "an RTSP request is not talk activity");
+    CHECK(rtsp_idle_talk_wait_ms(&s, S(1002) + S(29), 5000) == 5000, "talk wait capped at max");
+    CHECK(rtsp_idle_talk_wait_ms(&s, S(1002) + S(29) + S(30) - 1500, 5000) == 2, "talk wait shrinks to the deadline");
+    CHECK(rtsp_idle_talk_wait_ms(&s, S(1002) + S(100), 5000) == 1, "talk overdue: wait is 1 ms");
+    rtsp_idle_init(&s, S(7));
+    CHECK(rtsp_idle_check_talk(&s, S(7) + S(29)) == NULL && rtsp_idle_check_talk(&s, S(7) + S(30)) != NULL,
+          "from init the talk clock starts at the connection");
+
     printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }
