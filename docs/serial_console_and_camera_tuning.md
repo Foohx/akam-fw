@@ -28,6 +28,7 @@ The repository includes a dedicated Windows desktop application located in `tool
   - `night.mode` (`auto`, `day`, `night`)
   - `night.trigger_hw_exp` / `night.day_hw_exp` (Day ↔ Night switching thresholds)
   - `night.lock_ms` (Anti-flap hysteresis lock duration)
+  - `night.gain_pct`, `night.day_confirm_samples`, `night.min_night_ms`, `night.probe_ms`, `night.probe_settle_ms` (day/night decision: the camera goes to night only when the AE is saturated, and back to day after an IR-off probe of the ambient light) and the read-only `night.ae` / `night.logic` (live AE values, decision state). See `specs/08-spec-image-quality.md` section 11.
   - `night.ir_led` (`auto`, `off`: never light the IR LEDs; saved on the camera) and `led.status` (`on`, `off`, `auto`: front LED; saved on the camera), plus the read-only `led.state`. See `specs/06-spec-leds.md`.
 - **Live Video Preview:** Embedded low-latency RTSP video stream powered by LibVLC, allowing you to see the immediate effect of ISP parameter adjustments.
 - **Live Kernel & ISP Log Feed:** Streams real-time diagnostic output and AE window calculations from the camera.

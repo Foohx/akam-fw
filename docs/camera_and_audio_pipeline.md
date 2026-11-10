@@ -82,3 +82,5 @@ The camera features an electromechanical IR-cut filter switched via dual GPIO so
 - **Night Mode:** IR-cut filter disengaged + IR LED illuminator on.
 
 At boot, a two-click polarity reset pulse initializes the physical solenoid to a known state.
+
+`night.c` decides the mode with the pure state machine of `night_logic.c`: day to night only when the AE is saturated (exposure at its ceiling and total gain at the AE's own maximum, for 3 s); night to day after a probe that switches the IR LEDs off for 2 to 3 s and reads the exposure in the ambient light (the IR LEDs light the scene themselves, so the exposure with them on says nothing about the room). The 8091 keys `night.*` and the reasoning are in `specs/08-spec-image-quality.md` section 11.
