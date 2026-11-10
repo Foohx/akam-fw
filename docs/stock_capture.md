@@ -36,8 +36,10 @@ through a `/dev/mem` mapping (the mapping itself is logged).
 * The hook only activates inside a process whose `/proc/self/exe` is `anyka_ipc` (children started
   with `system()` inherit `LD_PRELOAD` and stay silent), keeps its own descriptors at 900 and above,
   sets `errno` like libc, never changes a return value, and drops events when the card is missing
-  (log placement: `/tmp/stock_capture/out` which links to the card folder, then `/tmp/sd/stock_capture`,
-  `/mnt/stock_capture`, then RAM with a 1 MiB cap; SD caps are 12 MiB per log).
+  (log placement: `/tmp/stock_capture/out` which links to the card folder, then
+  `/tmp/sd/stock_capture` if that folder already exists, then RAM `/tmp` with a 1 MiB cap per file; the
+  hook never creates a folder; SD caps are 12 MiB per log, so a run needs about 25 MiB on the card).
+  It takes no lock and allocates nothing, so a busy multi-threaded `anyka_ipc` cannot deadlock on it.
 * **Faithful settings.** The toolkit overrides `/etc/config/_ht_hw_settings.ini` and
   `_ht_sw_settings.ini` with files of another model (different speaker GPIO, no `[audio]` section)
   and mutes the factory prompts. For the capture the script stacks RAM copies of the pristine files of
@@ -50,12 +52,21 @@ through a `/dev/mem` mapping (the mapping itself is logged).
   the known stock APP image `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294`
   (`--force` overrides a mismatch).
 * A `SIGINT`, `SIGTERM` or `SIGHUP` (lost telnet) runs the restore. `restore` is idempotent, and the
-  whole run is safe to repeat (each run gets its own `runNN` folder).
+  whole run is safe to repeat (each run gets its own `runNN` folder). If a bind cannot be unmounted,
+  `restore` keeps the wrapper and its state and says so: run it again, or power-cycle. After a
+  `SIGKILL` of the script itself, run `restore` by hand.
+* **If the watchdog does not bring `anyka_ipc` back** within 60 s, the script gives up and restores.
+  The camera may then reboot by itself (the stock watchdog is in charge of that); a reboot only
+  returns it to the stock state with the toolkit card, which is what we want anyway.
+* The stock `anyka_ipc` still does what it always does while it runs (including its own log files
+  under `/etc/config`, if it writes any); the script writes nothing there, and `config_diff.txt` shows
+  whether anything changed.
 
 ## Procedure
 
-1. Prepare the toolkit card as usual: `./akam prepare-backup-sd` (do not leave any `*.bin` at the top
-   of the card).
+1. Prepare the toolkit card as usual: `./akam prepare-backup-sd`. There must be no `*.bin` file at the
+   top of the card (the stock firmware would try to flash it); the packer in step 2 refuses to run if
+   there is one, in any letter case.
 2. With the card mounted on the PC, build and copy the kit:
 
    ```bash
@@ -80,14 +91,23 @@ through a `/dev/mem` mapping (the mapping itself is logged).
    python3 -I tools/hw_tests/parse_stock_capture.py /path/to/run01
    ```
 
-If something goes wrong: `sh /tmp/sd/stock_capture/stock_capture.sh restore`, or just power-cycle.
+If something goes wrong (or the telnet session was lost and killed hard):
+
+```sh
+sh /tmp/sd/stock_capture/stock_capture.sh restore
+```
+
+or just power-cycle the camera: everything the script mounts lives in RAM.
 
 ## Reading the summary
 
 `parse_stock_capture.py` prints the ordered ioctl sequence on the PCM devices with decoded arguments
 (`PREPARE` = rate, channels, bits, period bytes, periods; `SET_SOURCES`; `SET_GAIN`; `SET_SPEAKER`;
-`RESUME`), the values of gain, source and speaker, the PCM format and period length, byte rate and
-content statistics of the audio written (and what format they suggest), GPIO activity, audio files
+`RESUME`). **Every** ioctl on a PCM descriptor is listed with its raw request number (`req=`) and
+argument bytes, known or not: `0x80045081` for `SET_SPEAKER` is known to be wrong on the hardware, so
+read the `req=` the stock app really sends. A call repeated with the same argument is logged 24 times,
+then again whenever its argument changes and every 200th time. The summary also gives the values of
+gain, source and speaker, the PCM format and period length, byte rate and content statistics of the audio written (and what format they suggest), GPIO activity, audio files
 read, `mmap` windows, ISP parameter blocks, everything that failed, and the kernel lines about the
 speaker. Names of the `'P'` ioctls come from the spec (two names are shown where the spec is unsure);
 the numbers and bytes are the facts.

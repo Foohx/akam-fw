@@ -28,7 +28,7 @@ if [ ! -d "$CARD/custom" ] || [ ! -f "$CARD/hack.sh" ]; then
     echo "error: $CARD does not look like a toolkit card (no hack.sh and custom/); prepare it with ./akam prepare-backup-sd" >&2
     exit 1
 fi
-if find "$CARD" -maxdepth 1 -name '*.bin' | grep -q .; then
+if find "$CARD" -maxdepth 1 -iname '*.bin' | grep -q .; then
     echo "error: a .bin file sits at the top of the card; the stock firmware would try to flash it. Move it into a folder first." >&2
     exit 1
 fi

@@ -30,6 +30,9 @@ if bash "$PACK" "$WORK/notcard" --hook "$WORK/hook.so" >/dev/null 2>&1; then ko 
 : >"$CARD/firmware.bin"
 if bash "$PACK" "$CARD" --hook "$WORK/hook.so" >/dev/null 2>&1; then ko "a top-level .bin is accepted"; else ok "a top-level .bin on the card is refused"; fi
 
+rm -f "$CARD/firmware.bin"; : >"$CARD/UPDATE.BIN"
+if bash "$PACK" "$CARD" --hook "$WORK/hook.so" >/dev/null 2>&1; then ko "an upper-case .BIN (FAT) is accepted"; else ok "an upper-case .BIN on the card is refused"; fi
+
 echo
 echo "stock_capture_pack_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
