@@ -45,7 +45,7 @@ procedures behind it are in the [documentation index](README.md#manual-procedure
 
 Inside the APP image: `anyka_ipc` (Tuya) removed; `ak_rtsp` started through `ak_rtsp_wrapper.sh` from a
 single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` links; `akam_ssh.sh`,
-`akam_lockdown.sh`, `akam_hostname.sh` and `akam_rtsp_auth.sh`; `sbin/service.sh` and `sbin/ethernet.sh` patched; Dropbear license and a `MANIFEST.txt`.
+`akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh` and `akam_onvif.sh`; `sbin/service.sh` and `sbin/ethernet.sh` patched; Dropbear license and a `MANIFEST.txt`.
 
 ## 3. Services after Akam
 
@@ -56,10 +56,27 @@ single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` 
 | 22/tcp | SSH (Dropbear), public key only | Open, LAN only |
 | 23/tcp, 24/tcp | Telnet | Closed, never re-enabled |
 | 21/tcp | FTP | Closed |
-| 80/tcp | HTTP | No Akam service |
+| 80/tcp (or the chosen port) | ONVIF device and media service of `ak_rtsp` | **Closed by default.** Open, LAN only, after `./akam onvif enable` (needs the video password) |
+| 3702/udp | ONVIF WS-Discovery (multicast `239.255.255.250`) | Closed by default; open with ONVIF, LAN only |
 
 No cloud endpoint is needed: the Tuya client is removed. Running with no Internet route at all has not
 been tested yet (criterion 14 of the [test plan](akam_v1_test_plan.md)).
+
+### ONVIF flag file
+
+`./akam onvif enable | disable` (camera helper `akam_onvif.sh`, over SSH) writes `/etc/config/akam/onvif`, which
+`ak_rtsp` reads at start and again on `ONVIF reload` (a line on 8091 from the camera itself; the helper sends it
+with `ak_rtsp ctl ONVIF reload`). Format: two lines, LF, in a 0700 directory, mode 0600, replaced atomically:
+
+```
+enabled=1
+port=80
+```
+
+`enabled` is `1` or `0`; `port` is the HTTP port, 1 to 65535 (default 80; UDP 3702 is fixed). **An absent file
+means ONVIF is off**; any other content is invalid and counts as off. `enable` is refused unless
+`/etc/config/akam/credentials` (written by `./akam rtsp-auth set`) exists and looks valid. This feature ships
+in the same release as the firmware side; an older `ak_rtsp` ignores the file.
 
 ## 4. The 8091 control port
 

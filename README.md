@@ -131,6 +131,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | talk through the camera speaker from this computer, or play a sound file on it | `./akam talk` (microphone, Ctrl-C stops), `./akam talk test`, `./akam say FILE`; needs the video password ([two-way audio](docs/two_way_audio.md)) |
 | check or change the speaker volume, play a beep, switch the speaker or talk on or off | `./akam audio` shows the settings; `./akam audio volume 0-100`, `beep`, `on`, `off`, `talk on\|off` (volume and switches are saved on the camera) |
 | change brightness, contrast, saturation, sharpness, white balance or day/night mode | `./akam picture` shows them; `./akam picture brightness N` (also `contrast`, `saturation`, `sharpness`, N from -50 to 50), `wb conf\|manual`, `night auto\|day\|night`, `reset` (all of them are saved on the camera) |
+| make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager); off by default | `./akam onvif enable [PORT]` (asks first; needs the video password), `./akam onvif status`, `./akam onvif disable` ([ONVIF](#onvif-nvrs-and-onvif-apps)) |
 | go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](#important-disclaimer-and-risks)) |
 
 The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
@@ -144,6 +145,28 @@ rtsp-auth set` stores the password on the camera twice: as a hash for the Digest
 a file only root can read (`/etc/config/akam/credentials`), because the ONVIF login (a later step) cannot work
 from a hash. `./akam rtsp-auth status` says `ONVIF-ready` when that copy is there; `disable` removes both. Put it in the address: `rtsp://<user>:<password>@<camera-ip>:554/`, with
 special characters URL-encoded ([401 errors](docs/troubleshooting.md#401-unauthorized-or-a-password-prompt-on-the-stream)).
+
+## ONVIF: NVRs and ONVIF apps
+
+ONVIF is the standard that NVRs, ONVIF Device Manager, Synology Surveillance Station and Home Assistant use to
+find a camera on the network and pull its video. Akam implements the discovery (WS-Discovery), the device
+service and the media service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
+**This is part of the same release as the `onvif` command: an image built before it has no ONVIF at all
+(`./akam update` first), and `./akam onvif status` then says it does not know.**
+
+- **Off by default.** Nothing listens on the ONVIF ports until you ask: `./akam onvif enable` (it asks a
+  yes/no, default No; `verify` also offers it at the end). `./akam onvif disable` closes them again.
+- **A password is required.** ONVIF logins are checked against the video password, so run
+  `./akam rtsp-auth set` first; `enable` refuses without it and says so. The wizard's `verify` offers to set it
+  when you say yes to ONVIF. While the password is off, state-changing ONVIF calls (reboot, set the time,
+  set the name) are refused anyway.
+- **Ports:** TCP 80 for the ONVIF service (or `./akam onvif enable 8080`, any port from 1 to 65535) and UDP 3702
+  (multicast discovery), on your LAN only: never forward them to the Internet. Without ONVIF, only 22, 554
+  and 8091 are open.
+- **In your app:** let it search, or add the camera by hand with its address (`<camera-ip>`, port 80) and the
+  video user name and password. If it is not found, see [troubleshooting](docs/troubleshooting.md#an-onvif-app-does-not-find-the-camera).
+- The setting is a small file on the camera that survives reboots; the camera applies it at once, without a restart
+  (an older firmware says "reboot to apply").
 
 ## Watching the stream
 
@@ -184,7 +207,7 @@ settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-
 
 **Validated on real hardware** (two cameras, 2026-11-07 to 11-09): backup through the wizard, image
 from the kit, flash through the maintenance telnet and through SSH (no card), Wi-Fi saved on the camera,
-boot without a card, only ports 22, 554 and 8091 listening, SSH with an ed25519 key, H.264 1080p with a
+boot without a card, only ports 22, 554 and 8091 listening (80 and UDP 3702 only after `./akam onvif enable`), SSH with an ed25519 key, H.264 1080p with a
 fast start plus L16 audio, a 25-minute VLC run without a drop, stable IR night mode, about 1% CPU,
 hostname announced to the router (`akam-01`).
 
