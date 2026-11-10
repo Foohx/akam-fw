@@ -1262,6 +1262,24 @@ static int in_on_interleaved(void *user, uint8_t channel, const uint8_t *data, s
  * whose references were overwritten. */
 #define TX_RESYNC_STALL_MS 1000
 
+/* Credentials state for rtsp.auth (8091 metrics): set up once at server start, then
+ * re-read at most every 5 s while no client is connected (the idle loop of main()
+ * calls this; a connected client refreshes it itself). One open() of a small file. */
+void rtsp_auth_tick(bool force)
+{
+    static bool ready;
+    static int64_t next_us;
+    int64_t now = rtp_mono_us();
+    if (!ready) {
+        ready = true;
+        rtsp_auth_db_init(&g_auth, RTSP_AUTH_PATH);
+        force = true;
+    }
+    if (!force && now < next_us) return;
+    next_us = now + 5000000;
+    ctl_sys_note_rtsp_auth((int)rtsp_auth_db_refresh(&g_auth));
+}
+
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
@@ -1324,11 +1342,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     const rtsp_in_ops_t in_ops = { &in_ctx, in_on_message, in_on_interleaved };
     bool video_idle = false;
 
-    static bool auth_ready;
-    if (!auth_ready) {
-        auth_ready = true;
-        rtsp_auth_db_init(&g_auth, RTSP_AUTH_PATH);
-    }
+    rtsp_auth_tick(true);
     rtsp_auth_conn_init(&client.auth);
     ctl_sys_note_rtsp_client(1);
     int64_t next_auth_check_us = 0;

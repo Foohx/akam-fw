@@ -334,6 +334,7 @@ int main(int argc, char **argv)
     }
 
     printf("[ak_rtsp] Listening on port %d...\n", RTSP_SERVER_PORT);
+    rtsp_auth_tick(true);
     ledsys_boot_done();
 
     for (;;) {
@@ -365,6 +366,7 @@ int main(int argc, char **argv)
         }
         if (p == 0) {
             drain_venc_ring();
+            rtsp_auth_tick(false);
             continue;
         }
 
