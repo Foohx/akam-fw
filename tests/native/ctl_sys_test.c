@@ -109,6 +109,7 @@ int main(void)
         "Inter-| sta-|   Quality        |   Discarded packets               | Missing\n"
         " face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon\n"
         "nosuch0: 0000   70.  -58.  -256        0      0      0      0      0        0\n");
+    ctl_sys_set_root(g_root);  /* a sensor that appears later is only probed every 30 s: restart the probe */
     g_now = 20000;  /* the cache of the empty run is older than 1 s */
     CHECK(IS("sys.uptime", "86400"));
     CHECK(IS("sys.load", "0.12 0.10 0.05"));
@@ -159,11 +160,24 @@ int main(void)
     del("/sys/class/hwmon/hwmon1/temp1_input");
     g_now = 29000;
     CHECK(IS("sys.temp", "unknown"));
+    /* no sensor: the probe is not repeated every second */
     put("/sys/class/thermal/thermal_zone0/temp", "999999\n");
     g_now = 30000;
     CHECK(IS("sys.temp", "unknown"));
     put("/sys/class/thermal/thermal_zone0/temp", "-5000\n");
     g_now = 31000;
+    CHECK(IS("sys.temp", "unknown"));
+    g_now = 59500;
+    CHECK(IS("sys.temp", "-5.0"));
+    /* remembered sensor keeps being read, and a vanished one is probed again */
+    put("/sys/class/thermal/thermal_zone0/temp", "40000\n");
+    g_now = 60600;
+    CHECK(IS("sys.temp", "40.0"));
+    del("/sys/class/thermal/thermal_zone0/temp");
+    g_now = 61700;
+    CHECK(IS("sys.temp", "unknown"));
+    put("/sys/class/thermal/thermal_zone0/temp", "-5000\n");
+    g_now = 92000;
     CHECK(IS("sys.temp", "-5.0"));
 
     /* --- wireless: level that is not certainly dBm is not taken --- */

@@ -51,6 +51,7 @@ static const char *const g_keys[K_COUNT] = {
 #define CACHE_MS 1000
 #define WINDOW_MS 5000
 #define SNAPS 8
+#define TEMP_RESCAN_MS 30000
 
 typedef struct { int64_t t_ms; uint32_t frames, bytes; } snap_t;
 
@@ -61,6 +62,8 @@ static int64_t (*g_clock)(void);
 static char     g_val[K_COUNT][VAL_MAX];
 static int      g_have;                 /* cache holds a collection */
 static int64_t  g_last_ms;
+static char     g_temp_path[96];        /* sensor found by the last probe */
+static int64_t  g_temp_rescan_ms;       /* no sensor: next probe at this time */
 static int      g_cpu_have;             /* previous /proc/stat sample exists */
 static uint64_t g_cpu_total, g_cpu_busy;
 static snap_t   g_snap[SNAPS];
@@ -112,28 +115,45 @@ static long long meminfo_kb(const char *txt, const char *key)
     return -1;
 }
 
-AK_SMALL static void collect_temp(void)
+/* Tenths of a degree from a millidegree file, 1 when valid. */
+static int temp_read(const char *rel)
+{
+    char t[32], *e;
+    if (read_file(rel, t, sizeof(t)) <= 0) return 0;
+    long mc = strtol(t, &e, 10);
+    if (e == t || mc < -50000 || mc > 150000) return 0;
+    long d = (mc >= 0 ? mc + 50 : mc - 50) / 100;
+    snprintf(g_val[K_TEMP], VAL_MAX, "%s%ld.%ld", (d < 0 && d > -10) ? "-" : "", d / 10, labs(d % 10));
+    return 1;
+}
+
+/* The sensor path is remembered; with no sensor the probe (up to 40 opens)
+ * is retried only every TEMP_RESCAN_MS, not once a second. */
+AK_SMALL static void collect_temp(int64_t t)
 {
     unk(K_TEMP);
+    if (g_temp_path[0]) {
+        if (temp_read(g_temp_path)) return;
+        g_temp_path[0] = 0;
+    } else if (g_temp_rescan_ms && t >= g_temp_rescan_ms - TEMP_RESCAN_MS && t < g_temp_rescan_ms) {
+        return;
+    }
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < 8; i++) {
             for (int j = (pass ? 1 : 0); j < (pass ? 5 : 1); j++) {
-                char rel[96], t[32];
+                char rel[96];
                 if (pass == 0) snprintf(rel, sizeof(rel), "/sys/class/thermal/thermal_zone%d/temp", i);
                 else snprintf(rel, sizeof(rel), "/sys/class/hwmon/hwmon%d/temp%d_input", i, j);
-                if (read_file(rel, t, sizeof(t)) <= 0) continue;
-                char *e;
-                long mc = strtol(t, &e, 10);
-                if (e == t || mc < -50000 || mc > 150000) continue;
-                long d = (mc >= 0 ? mc + 50 : mc - 50) / 100; /* tenths of a degree */
-                snprintf(g_val[K_TEMP], VAL_MAX, "%s%ld.%ld", (d < 0 && d > -10) ? "-" : "", d / 10, labs(d % 10));
+                if (!temp_read(rel)) continue;
+                snprintf(g_temp_path, sizeof(g_temp_path), "%s", rel);
                 return;
             }
         }
     }
+    g_temp_rescan_ms = t + TEMP_RESCAN_MS;
 }
 
-AK_SMALL static void collect_proc(void)
+AK_SMALL static void collect_proc(int64_t t)
 {
     char b[1024];
 
@@ -188,7 +208,7 @@ AK_SMALL static void collect_proc(void)
         }
     }
 
-    collect_temp();
+    collect_temp(t);
 }
 
 static const char *wifi_if(void) { return g_ifname[0] ? g_ifname : "wlan0"; }
@@ -331,7 +351,7 @@ AK_SMALL static void refresh(void)
 {
     int64_t t = now_ms();
     if (g_have && t >= g_last_ms && t - g_last_ms < CACHE_MS) return;
-    collect_proc();
+    collect_proc(t);
     collect_net();
     collect_stream(t);
     g_have = 1;
@@ -377,7 +397,7 @@ void ctl_sys_set_root(const char *root)
 {
     pthread_mutex_lock(&g_mu);
     snprintf(g_root, sizeof(g_root), "%s", root ? root : "");
-    g_have = 0;
+    g_have = 0; g_temp_path[0] = 0; g_temp_rescan_ms = 0;
     pthread_mutex_unlock(&g_mu);
 }
 void ctl_sys_set_ifname(const char *ifname)
@@ -397,7 +417,7 @@ void ctl_sys_set_clock(int64_t (*fn)(void))
 void ctl_sys_reset(void)
 {
     pthread_mutex_lock(&g_mu);
-    g_have = 0; g_cpu_have = 0; g_nsnap = 0; g_snap_head = 0;
+    g_have = 0; g_temp_path[0] = 0; g_temp_rescan_ms = 0; g_cpu_have = 0; g_nsnap = 0; g_snap_head = 0;
     g_frames = 0; g_bytes = 0; g_clients = 0; g_playing = 0; g_play_edge = 0; g_auth = -1;
     pthread_mutex_unlock(&g_mu);
 }
