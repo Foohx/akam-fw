@@ -415,3 +415,9 @@ Specs 04 and 05 carry a banner pointing here and mark the superseded sections (d
 - **U14. Snapshot.** **Recommend defer** (`GetSnapshotUri`, hardware JPEG): HA/Frigate/NVRs work from RTSP.
 - **U15. Supersession.** **Recommend** that spec 04 HMAC auth (sections 9, 10, T1, T5, T6, ctl-auth) and spec 05 port 8092 (sections 4.1, 5, 8, T3, T5) are formally dropped as written in the banners; confirm.
 - **U16. Release grouping.** Recommend the grouping of 5.1 (V1.1 = step 1 + read-only 8091, V1.2 = MQTT, V1.3 = ONVIF).
+
+## 7. User decisions (2026-11-10)
+
+- **U1:** write our own ONVIF server under MIT. No GPL code (onvif_simple_server is not used).
+- **U2:** store the clear-text password in `/etc/config/akam/credentials`, mode 0600, for ONVIF WS-Security and MQTT.
+- **U3 to U16:** all recommendations accepted as written in section 6. This includes dropping HMAC (spec 04) and the 8092 talk port (spec 05), and the release grouping V1.1 = step 1 + read-only 8091, V1.2 = MQTT, V1.3 = ONVIF.
