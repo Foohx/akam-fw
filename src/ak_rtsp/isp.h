@@ -34,6 +34,10 @@ int isp_tunnel(uint32_t inner_cmd, void *payload);
  * color is meaningless under IR illumination). */
 int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain);
 
+/* Re-send the WB block of the day (0) or night (1) subfile of sensor_isp.conf as it is in the file
+ * (the stock behaviour), instead of the hand-made manual block of isp_set_wb_manual(). */
+int isp_reapply_wb_conf(int night);
+
 /* Live-tunable picture controls (-50..50, matching anyka_ipc's own UI
  * slider range). All GET-modify-SET against real hardware, verified via
  * Ghidra disassembly (not just decompiled C, which proved unreliable for
