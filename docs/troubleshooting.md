@@ -199,6 +199,54 @@ post-quantum key exchange. The connection still works and is still encrypted. It
 LAN; ignore it. The wizard hides it (`ssh -o LogLevel=ERROR`, real errors are still shown); to hide it in
 your own ssh commands add `-o LogLevel=ERROR`.
 
+## Speaker output: test the camera speaker by ear (step A)
+
+Work in progress (specs/05-spec-audio-out.md): this image makes `ak_rtsp` drive the camera speaker, with a
+built-in beep to check it. It is **not validated on hardware yet**. It is on by default; the amplifier is
+only switched on during a beep and for 2 seconds after. Replace `<cam>` by the camera address. Every
+command is one line to `nc` on port 8091; the answer starts with `OK` or `ERR`.
+
+```bash
+# 1. Is it running?  (expect audio.out_state=idle; also the six other audio.out_* lines)
+printf 'GET audio.out_state\n' | nc -w 2 <cam> 8091
+printf 'LIST\n' | nc -w 2 <cam> 8091 | grep audio.out_
+
+# 2. Beep: volume 30, gain 2, then three short 1 kHz tones (about 1 s)
+printf 'SET audio.out_volume 30\nSET audio.out_gain 2\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
+
+# 3. Silence or a click only? Try the other routing, a higher gain, then replay
+printf 'SET audio.out_source 4\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091   # 6 is the default
+printf 'SET audio.out_source 6\nSET audio.out_gain 5\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
+
+# 4. Levels: hardware gain 0..5 at volume 100, then software volume 100, 50, 25, 10, 0
+for g in 0 1 2 3 4 5; do printf 'SET audio.out_volume 100\nSET audio.out_gain %s\nSET audio.out_test 1\n' "$g" | nc -w 2 <cam> 8091; sleep 3; done
+for v in 100 50 25 10 0; do printf 'SET audio.out_gain 3\nSET audio.out_volume %s\nSET audio.out_test 1\n' "$v" | nc -w 2 <cam> 8091; sleep 3; done
+
+# 5. Amplifier hiss: hold your ear near the speaker in a quiet room
+printf 'SET audio.out_amp on\n'   | nc -w 2 <cam> 8091   # amplifier always on: listen for hiss
+printf 'SET audio.out_amp auto\n' | nc -w 2 <cam> 8091   # default: silent between beeps
+```
+
+What to note: the combination that is audible (source, gain), the comfortable gain and volume, hiss with
+`on`, any pop when the amplifier switches, and whether the video and microphone of the RTSP stream stay
+normal while a beep plays (the beep itself is heard on the stream, about a second late).
+
+To see what the camera did, read the log lines on the same port (`nc <cam> 8091` and wait) or the serial
+console: lines starting with `[audio_out]` show the device calls and every error.
+
+- **`audio.out_state=disabled_crash`:** the previous start crashed while opening the speaker, so audio out
+  stays off to avoid a reboot loop. Over SSH: `rm /etc/config/akam/audio_out.trying`, then restart `ak_rtsp`
+  (or reboot) to try again. Send the log lines to the project if it happens twice.
+- **`audio.out_state=error`:** a device call failed; the `[audio_out]` lines say which. Video and microphone
+  carry on. If it failed at start, the old silence path is used; if it failed later, the speaker stays
+  silent until `ak_rtsp` restarts.
+- **Saved settings:** `audio.out_volume`, `audio.out_gain` and `audio.out_source` are saved like `enable`
+  (only when the value changes), so the last tuning survives a restart. `audio.out_amp` is not saved.
+- **Turn it off:** `printf 'SET audio.out_enable 0\n' | nc -w 2 <cam> 8091` silences it at once and the choice is
+  saved in `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `SET audio.out_enable 1`
+  turns it back on; the answer says `restart to apply` when `ak_rtsp` started with it off.
+- **`ERR audio out is not running`:** it was disabled or failed at boot; see `audio.out_state`.
+
 ## Still stuck
 
 Run `./akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the

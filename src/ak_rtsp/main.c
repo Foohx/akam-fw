@@ -25,6 +25,7 @@
 #include "vi.h"
 #include "venc.h"
 #include "audio.h"
+#include "audio_out.h"
 #include "rtsp.h"
 #include "version.h"
 
@@ -38,6 +39,15 @@ static volatile sig_atomic_t g_grab_request = 0;
 static int                   g_grab_counter = 0;
 
 static void sigusr1_handler(int sig) { (void)sig; g_grab_request = 1; }
+
+/* SIGTERM/SIGINT: switch the speaker amplifier off (async-signal-safe ioctl),
+ * then die by the same signal exactly as before the handler existed. */
+static void term_handler(int sig)
+{
+    audio_out_emergency_off();
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
 
 /* -------------------------------------------------------------------------
  * Global state definitions (declared extern in ak_rtsp.h)
@@ -212,6 +222,8 @@ int main(int argc, char **argv)
 
     print_build_info();
     signal(SIGUSR1, sigusr1_handler);
+    signal(SIGTERM, term_handler);
+    signal(SIGINT, term_handler);
     /* A client closing mid-write must yield EPIPE, not kill the stream. */
     signal(SIGPIPE, SIG_IGN);
 

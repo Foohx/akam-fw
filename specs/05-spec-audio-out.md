@@ -6,7 +6,7 @@ Statut : rédigée le 2026-11-10 (agent SPEC, branche `docs/spec-audio-out`, par
 
 Parler depuis un PC (puis un téléphone / Home Assistant) dans le haut-parleur intégré de la caméra, en push-to-talk, le plus simplement possible.
 
-Principe retenu : **intégrer la lecture dans `ak_rtsp`** (le processus qui possède déjà micro et lecteur), pas d'outil de lecture séparé. Un flux **G.711 µ-law 8 kHz** arrive sur un **port TCP dédié (8092, opt-in)**, passe dans un petit tampon de gigue, est décodé et écrit à la place du silence que `ak_rtsp` écrit déjà sur le chemin de lecture. Côté PC, `./akam talk` capture le micro avec `ffmpeg` et envoie le flux.
+Principe retenu : **intégrer la lecture dans `ak_rtsp`** (le processus qui possède déjà micro et lecteur), pas d'outil de lecture séparé. Un flux **G.711 µ-law 8 kHz** arrive sur un **port TCP dédié (8092, ouvert par défaut avec la sortie audio ; authentification HMAC obligatoire, voir les décisions utilisateur)**, passe dans un petit tampon de gigue, est décodé et écrit à la place du silence que `ak_rtsp` écrit déjà sur le chemin de lecture. Côté PC, `./akam talk` capture le micro avec `ffmpeg` et envoie le flux.
 
 Hors périmètre : annulation d'écho acoustique, AAC/MP3/Opus, 16 kHz, TLS, rétrocanal RTSP/ONVIF (étape D, §5.4, reportée), mixage de plusieurs locuteurs.
 
@@ -56,10 +56,10 @@ PC : ffmpeg (micro -> µ-law 8 kHz) -- TCP 8092 --> talk.c ──push──> aud
 8091  SET audio.out_*  ──> audio_out_set_*()     (volume, gain, source, enable, test)
 ```
 
-- `audio_out.[ch]` **remplace** `audio_playback_loop` quand `audio.out_enable=1` ; sinon le chemin actuel (silence, séquence actuelle) reste **strictement inchangé** (aucune régression par défaut).
+- `audio_out.[ch]` **remplace** `audio_playback_loop` quand `audio.out_enable=1` (**valeur par défaut**, décision utilisateur) ; avec `enable=0`, ou si la garde anti-boucle ou la séquence matérielle échouent, le chemin actuel (silence, séquence actuelle) reste **strictement inchangé**.
 - `talk.[ch]` : un thread `poll()` unique (accept + un seul client), jamais un thread par client.
 - `g711.[ch]`, `audio_jitter.[ch]` : code pur sans matériel ni socket, testable sur l'hôte.
-- Les en-têtes `audio_out.h`, `audio_jitter.h`, `g711.h` sont figés par la première tâche qui les écrit. API de référence : `int audio_out_push(const uint8_t *data, size_t n, enum codec c)` (appelée par `talk.c`, jamais bloquante, retourne les octets acceptés), `void audio_out_set_talker(const char *ip_or_null)`, `int audio_out_mic_muted(void)` (consulté par le chemin d'envoi du micro, §4.3).
+- Les en-têtes `audio_out.h`, `audio_jitter.h`, `g711.h` sont figés par la première tâche qui les écrit. API de référence (figée par T2) : `size_t audio_out_push(const int16_t *pcm, size_t n_samples)` (PCM mono 8 kHz déjà décodé par `talk.c` via `g711.h` ; appelée par `talk.c`, jamais bloquante ; passe par le tampon de gigue `audio_jitter`, retourne `n_samples`), `void audio_out_set_talker(const char *ip_or_null)`, `int audio_out_mic_muted(void)` (consulté par le chemin d'envoi du micro, §4.3).
 - RAM : ring 3,2 Ko (400 ms de G.711) + 1 période (1 Ko) + pile du thread ≈ < 40 Ko. CPU : décodage par table de 256 entrées, négligeable (8 000 octets/s).
 
 ### 2.1 Séquence matérielle (à partir de `aoplay`, réputée fonctionnelle sur la carte de référence)
@@ -91,7 +91,7 @@ Sans réseau : un bip de 1 s généré dans le code (sinus 1 kHz, 8 kHz, rampes 
 printf 'SET audio.out_test 1\n' | nc <cam> 8091      # joue le bip puis revient à 0
 ```
 
-`audio.out_test` fonctionne dès que `audio.out_enable=1` (ou la caméra a été démarrée avec le fichier d'activation, §7). Aucun fichier son, aucun outil sur la caméra. Variantes de mise au point **en direct, sans reflasher** : `audio.out_source` (4 ou 6), `audio.out_gain` (0..5), `audio.out_volume` (0..100), `audio.out_amp` (`auto`/`on`/`off`, pour mesurer le souffle).
+`audio.out_test` fonctionne dès que `audio.out_enable=1` (défaut). Aucun fichier son, aucun outil sur la caméra. Variantes de mise au point **en direct, sans reflasher** : `audio.out_source` (4 ou 6), `audio.out_gain` (0..5), `audio.out_volume` (0..100), `audio.out_amp` (`auto`/`on`/`off`, pour mesurer le souffle).
 
 Raisonnement : une seule image flashée suffit pour toute la mise au point (source, gain, périodes), c'est le coût réel du matériel ici.
 
@@ -129,7 +129,7 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 
 ### 4.1 Protocole du port 8092 (v1)
 
-Écoute `INADDR_ANY` **seulement si `audio.out_enable=1`** (sinon le port est fermé, aucune écoute). `listen` avec backlog 1.
+Écoute `INADDR_ANY` **seulement si `audio.out_enable=1`** (la valeur par défaut ; avec `enable=0` le port est fermé, aucune écoute). `listen` avec backlog 1.
 
 ```
 -> TALK <codec> [client=<jeton ≤32 car. A-Za-z0-9._-/>] LF          codec = pcmu | pcma | l16   (8000 Hz, mono ; l16 = s16 petit-boutiste)
@@ -201,7 +201,7 @@ Au moins : `DESCRIBE` avec `Require: www.onvif.org/ver20/backchannel` renvoie un
 
 | Clé | Type / bornes | Défaut | Persistant (§7) |
 |---|---|---|---|
-| `audio.out_enable` | 0/1 | **0** | oui |
+| `audio.out_enable` | 0/1 | **1** (décision utilisateur) | oui |
 | `audio.out_volume` | int 0..100 (logiciel, courbe quadratique : `(v/100)²` en Q15) ; 0 = muet (ampli éteint) | 50 | oui |
 | `audio.out_gain` | int 0..5 (matériel, `IOC_SET_GAIN`) | 3 | oui |
 | `audio.out_source` | enum 4 / 6 (routage, réglage d'expert) | 6 | oui |
@@ -225,14 +225,14 @@ Deux sons synthétisés (880 Hz 120 ms puis 1175 Hz 160 ms, rampes 10 ms, −18 
 
 ## 7. Persistance et activation
 
-- Version autonome (sans spec 04 fusionnée) : fichier `/etc/config/akam/audio_out`, `0600`, dossier `0700`, lignes `clé=valeur` (`enable`, `volume`, `gain`, `source`, `mute_mic`, `chime`), écriture atomique tmp+`mv`, lu au démarrage. Absent = tous les défauts, donc **sortie audio désactivée**. Géré par `/usr/sbin/akam_audio_out.sh` (POSIX sh, BusyBox 1.30.1, sans `tr` ni `mktemp`) : `status | enable | disable | set <clé> <valeur> | clear-guard`.
+- Version autonome (sans spec 04 fusionnée) : fichier `/etc/config/akam/audio_out`, `0600`, dossier `0700`, lignes `clé=valeur` (`enable`, `volume`, `gain`, `source`, `mute_mic`, `chime`), écriture atomique tmp+`mv`, lu au démarrage. Absent = tous les défauts, donc **sortie audio activée** (décision utilisateur ; `enable=0` dans le fichier la désactive). Géré par `/usr/sbin/akam_audio_out.sh` (POSIX sh, BusyBox 1.30.1, sans `tr` ni `mktemp`) : `status | enable | disable | set <clé> <valeur> | clear-guard`.
 - Quand le magasin `ctl_store` de la spec 04 existe : les clés `audio.out_*` persistantes y migrent (`SAVE`) et le fichier devient une migration à la première lecture ; une seule source de vérité (décision D4).
-- Le wizard **propose** l'activation à `verify`, défaut « non » (comme RTSP auth). `./akam talk --enable` pour plus tard.
+- La sortie audio étant activée par défaut, le wizard n'a rien à activer ; `./akam talk --disable` (`enable=0`) la coupe, `--enable` la rétablit.
 
 ## 8. Sécurité
 
 - LAN uniquement ; jamais de redirection de port/UPnP vers 8092 (README). Pas de TLS : écoute passive possible (le flux sonore est audible en clair) ; chiffrement : tunnel SSH (§4 dernière ligne).
-- **Désactivé par défaut** : sans activation, aucun port ouvert. Activé sans auth : n'importe quel client du LAN peut parler dans la pièce où se trouve la caméra ; le README le dit sans détour et recommande d'activer l'auth HMAC (spec 04) en même temps. Avec l'auth ON : MAC par session de parole, nonce à usage unique, échecs limités comme 04 §9.5.
+- **Activé par défaut** (décision utilisateur) : le port 8092 est ouvert dès que la sortie audio l'est, mais exige toujours l'auth HMAC (décision « Auth talk » en bas) : sans clé provisionnée, aucune session n'est acceptée. Avec `enable=0`, aucun port ouvert. Le README le dit sans détour. MAC par session de parole, nonce à usage unique, échecs limités comme 04 §9.5.
 - Un seul locuteur, durée de session non bornée tant que des données arrivent (idle 3 s) : un client verrouille la caméra tant qu'il parle ; accepté (déni de service LAN possible, comme 03/04). Volume maximal par défaut 50 : pas de cri surprise.
 - Le port ne lit que 128 octets d'en-tête puis des octets bruts décodés par table : aucune allocation dynamique, aucun analyseur complexe. Fuzz hôte du décodeur d'en-tête (§9).
 - Les journaux ne contiennent ni audio ni secret.
@@ -254,7 +254,7 @@ Deux sons synthétisés (880 Hz 120 ms puis 1175 Hz 160 ms, rampes 10 ms, −18 
 
 | # | Point | Critère |
 |---|---|---|
-| B1 | Port 8092 fermé par défaut ; ouvert avec `enable=1` | `nc -zv` |
+| B1 | Port 8092 ouvert par défaut (`enable=1`) ; fermé avec `enable=0` | `nc -zv` |
 | B2 | `./akam talk` 30 s au micro du PC | voix intelligible, pas de saccades (underruns ≈ 0 dans `audio.out_underruns`), latence ≈ 0,3 s (battement de mains, enregistrement du PC si possible) |
 | B3 | Wi-Fi faible (éloigner la caméra) | coupures gérées sans claquement, `drops`/`underruns` croissent, reprise propre |
 | B4 | Deux terminaux `talk` en même temps | le second reçoit `ERR busy` ; l'autre continue |
@@ -285,7 +285,7 @@ Chaque tâche fige les en-têtes de ses modules (relus à la fusion). Les ajouts
 
 ## 11. Décisions ouvertes (recommandations)
 
-- **D1 — Activation.** Recommandé : `enable=0` par défaut, port fermé ; le wizard propose (défaut « non »). Alternative : activée par défaut dès l'installation du wizard sur le LAN domestique (plus simple, mais caméra « bavarde » ouverte).
+- **D1 — Activation.** **Tranché par l'utilisateur (2026-11-10) : activée par défaut** (`enable=1`, fichier absent = activé), port 8092 ouvert mais toujours protégé par l'auth HMAC. Alternative écartée : `enable=0` par défaut avec proposition du wizard.
 - **D2 — Politique d'ampli.** Recommandé : `auto`, maintien 2 s, jamais allumé au repos. À arbitrer par la mesure A6.
 - **D3 — Protocole.** Recommandé : TCP 8092 + G.711 (µ-law, A-law, l16) ; rétrocanal RTSP/ONVIF en étape D. Alternative : commencer directement par ONVIF (plus de clients natifs, plus de risque sur le cœur RTSP).
 - **D4 — Persistance.** Recommandé : `ctl_store` de la spec 04 si fusionné avant T4 (clés `audio.out_*`), sinon le fichier `akam/audio_out` décrit en §7.

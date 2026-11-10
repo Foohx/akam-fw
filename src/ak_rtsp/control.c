@@ -14,6 +14,7 @@
 #include "ae.h"
 #include "night.h"
 #include "isp.h"
+#include "audio_out.h"
 #include "control.h"
 
 #define CONTROL_PORT 8091
@@ -118,6 +119,11 @@ static int night_mode_parse(const char *s, night_override_t *out)
     return -1;
 }
 
+static void audio_list_emit(void *arg, const char *line)
+{
+    reply(*(int *)arg, "%s", line);
+}
+
 static void do_list(int fd)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
@@ -144,6 +150,7 @@ static void do_list(int fd)
      * cycle. Reported for visibility only. */
     reply(fd, "venc.minqp=28 (read-only)");
     reply(fd, "venc.maxqp=43 (read-only)");
+    audio_out_ctl_list(audio_list_emit, &fd);
     reply(fd, ".");
 }
 
@@ -169,7 +176,11 @@ static void do_get(int fd, const char *param)
     else if (!strcmp(param, "isp.sharpness"))         reply(fd, "isp.sharpness=%d", g_isp_sharpness);
     else if (!strcmp(param, "venc.minqp"))            reply(fd, "venc.minqp=28 (read-only)");
     else if (!strcmp(param, "venc.maxqp"))            reply(fd, "venc.maxqp=43 (read-only)");
-    else                                              reply(fd, "ERR unknown param %s", param);
+    else {
+        char line[96];
+        if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(fd, "%s", line);
+        else                                                   reply(fd, "ERR unknown param %s", param);
+    }
 }
 
 static void do_set(int fd, const char *param, const char *value)
@@ -250,7 +261,9 @@ static void do_set(int fd, const char *param, const char *value)
         reply(fd, "ERR %s is read-only in this version "
                   "(requires an encoder restart, not yet implemented)", param);
     } else {
-        reply(fd, "ERR unknown param %s", param);
+        char msg[160];
+        if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) reply(fd, "%s", msg);
+        else                                                        reply(fd, "ERR unknown param %s", param);
     }
 }
 
