@@ -78,6 +78,7 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
 #define SYS_READLINK   85
 #define SYS_WRITEV    146
 #define SYS_MMAP      192   /* mmap2: offset in 4096-byte pages */
+#define SYS_FSYNC     118
 #define SYS_GETPPID    64
 #define SYS_MINCORE   219
 #define SYS_GETTID    224
@@ -109,6 +110,7 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
 #define SYS_DUP2       33
 #define SYS_FCNTL      72
 #define SYS_READLINK   89
+#define SYS_FSYNC      74
 #define SYS_GETPPID   110
 #define SYS_MINCORE    27
 #define SYS_GETTID    186
@@ -490,7 +492,7 @@ static int isp_catchall_ok(uint32_t cmd, const void *payload)
  * abs_ms= is given, the parser subtracts mono_ms of HOOK_START. */
 __attribute__((noinline)) static void child_note(const char *exe, unsigned exelen)
 {
-    uint8_t cl[128];
+    uint8_t cl[129];
     long n = 0;
     long fd = _sc3(SYS_OPEN, (long)"/proc/self/cmdline", 0 /* O_RDONLY */, 0);
     if (fd >= 0) {
@@ -500,6 +502,7 @@ __attribute__((noinline)) static void child_note(const char *exe, unsigned exele
     if (n < 0) n = 0;
     for (long i = 0; i < n; i++) if (cl[i] == 0) cl[i] = ' ';
     while (n > 0 && cl[n - 1] == ' ') n--;
+    cl[n] = 0;
     struct lb l; l.n = 0;
     head(&l, "CHILD");
     lb_s(&l, " abs_ms="); lb_u(&l, now_ms());
@@ -507,6 +510,12 @@ __attribute__((noinline)) static void child_note(const char *exe, unsigned exele
     lb_s(&l, " exe="); lb_text(&l, (const uint8_t *)exe, exelen > 48 ? 48 : exelen);
     lb_s(&l, " cmd="); lb_text(&l, cl, (unsigned)n);
     emit(&l);
+    /* A reboot / reset command is the last thing this system does: its line must not stay in the
+     * page cache. Only these (rare, short-lived) children fsync; nothing else in the hook does. */
+    const char *c = (const char *)cl;
+    if (g_logfd >= 0 && (has(c, "reboot") || has(c, "recover") || has(c, "poweroff") || has(c, "halt") ||
+                         has(c, "reset") || has(c, "killall") || has(c, "kill ")))
+        _sc2(SYS_FSYNC, g_logfd, 0);
 }
 
 static void hook_init(void)

@@ -330,7 +330,7 @@ sys.stdout.write(out.decode("utf-8", "replace"))
 PYEOF
     has "a terminal run offers notes" 'type a note and press Enter' "$WORK/pty.txt"
     has "a typed note is acknowledged" 'note saved at t=[0-9]+s' "$WORK/pty.txt"
-    LASTRUN=$(ls -d "$R"/tmp/sd/stock_capture/run* | tail -n 1)
+    LASTRUN=$(find "$R/tmp/sd/stock_capture" -maxdepth 1 -name "run*" -type d | sort | tail -n 1)
     has "the note is in the timeline with its time" 'up=12.34 t=[0-9]+ ev=NOTE text=room is dark now' "$LASTRUN/timeline.log"
     has "...and in run.meta" '^note_t[0-9]+=room is dark now$' "$LASTRUN/run.meta"
     has "the run still ends normally after a note" '^status=finished rc=0$' "$LASTRUN/run.meta"

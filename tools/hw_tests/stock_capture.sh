@@ -106,6 +106,7 @@ sync_files() {
 # runs left behind by a camera that rebooted (or a script that was killed) during a capture
 scan_interrupted() {
     [ -n "$SD" ] || return 0
+    [ -f "$STATE/active" ] && return 0      # a capture is going on in another shell: not an orphan
     for m in "$SD"/stock_capture/run*/run.meta; do
         [ -f "$m" ] || continue
         st=$(sed -n 's/^status=//p' "$m" | tail -n 1)

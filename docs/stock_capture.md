@@ -33,7 +33,8 @@ A folder `stock_capture/runNN/` on the card with:
 Not captured: `fopen()`/`fwrite()` (stdio uses the libc-internal `open`; the stock binary imports
 `open`, `write` and `ioctl` directly, which are caught), the `system()` / `popen()` calls themselves
 (the processes they start are logged: a `CHILD` line with the command line, because they inherit the
-hook), and register writes made through a `/dev/mem` mapping (the mapping itself is logged).
+hook; a child whose command line has `reboot`, `recover`, `reset`, `kill` ... fsyncs its line, the only
+fsync the hook ever does, because nothing is flushed after a reboot), and register writes made through a `/dev/mem` mapping (the mapping itself is logged).
 
 ## How it stays safe
 
@@ -51,7 +52,8 @@ hook), and register writes made through a `/dev/mem` mapping (the mapping itself
   hook never creates a folder; caps below).
   It takes no lock and allocates nothing, so a busy multi-threaded `anyka_ipc` cannot deadlock on it.
 * **Small footprint on the application's threads** (reworked after the first reboot): the deepest hook
-  path uses about 0.7 KiB of the caller's stack (it was about 1.8 KiB: a 1400-byte line buffer), polled
+  path uses about 0.7 KiB of the caller's stack (it was about 1.8 KiB: a 1400-byte line buffer; measured
+  with `-fstack-usage` on the host build, ARM is of the same order), polled
   ISP blocks are hashed and written at most once per second (written ones 10 per second), the payload
   goes to the card with one `writev()` straight from the application's memory (no copy, no big frame),
   an unmapped payload is never touched (`mincore`), identical sysfs writes and light-sensor polls are
@@ -82,6 +84,8 @@ hook), and register writes made through a `/dev/mem` mapping (the mapping itself
   state live in RAM and are gone with the reboot. The logs written so far stay on the card and are
   fsync'd file by file (`dd conv=fsync`, never a global `sync`, which would also touch the flash file
   systems) every 2 s, so at most the last ~2 s are missing. See "If the camera reboots during a run".
+  That the camera's BusyBox 1.30.1 `dd` honours `conv=fsync` is assumed, not verified on the camera; if
+  `dd` fails twice the script says so and stops syncing.
 * **The start counter.** The stock app counts its own starts in `/tmp/camera_start_times` (RAM). The
   script records its value (`run.meta`, every `timeline.log` line) and resets it to 0 (what the stock
   boot script writes at every boot) just before it restarts `anyka_ipc`; `--keep-start-counter` skips
