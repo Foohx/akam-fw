@@ -1360,6 +1360,194 @@ cmd_led() {
     led_show
 }
 
+# ------------------------------------------------------------------ audio and picture
+# Speaker settings and picture settings, set over SSH through the camera's own control port (like ./akam led:
+# the lines go to 127.0.0.1:8091 on the camera, which accepts writes from itself only). Small reversible
+# settings, so no confirmation is asked (same as ./akam led). One SET per ssh call.
+
+# ctl_set KEY VALUE: SET one key; 0 when the camera answered OK (a note such as "restart to apply" or
+# "not saved" is kept in CTL_NOTE and warned about), 1 otherwise with the reason shown.
+CTL_NOTE=""
+ctl_set() {
+    local out line
+    CTL_NOTE=""
+    out=$(led_remote "SET $1 $2")
+    line=$(printf '%s\n' "$out" | grep -m1 -E '^(OK|ERR) ' || true)
+    case $line in
+        OK*)
+            case $line in
+                *"not saved"*) ui_warn "$1 is $2 now, but the camera could not save it: it will be lost at the next reboot ($line)." ;;
+                *"restart to apply"*) CTL_NOTE=restart ;;
+            esac
+            return 0
+            ;;
+        ERR*) ui_fail "the camera refused $1 $2: ${line#ERR }" "this image may not have that setting (./akam update)."; return 1 ;;
+    esac
+    ui_fail "the camera did not confirm $1 $2." "it may run an older Akam image (./akam update), or its control port may be busy; try again."
+    return 1
+}
+
+# ctl_onoff VALUE: 1 -> on, 0 -> off.
+ctl_onoff() { case $1 in 1) printf on ;; 0) printf off ;; *) printf '%s' "${1:-unknown}" ;; esac; }
+
+audio_show() {
+    local out vol en talk state under drops
+    out=$(led_remote "GET audio.out_volume" "GET audio.out_enable" "GET audio.talk_enable" "GET audio.out_state" \
+        "GET audio.out_underruns" "GET audio.out_drops")
+    vol=$(led_get audio.out_volume "$out")
+    en=$(led_get audio.out_enable "$out")
+    talk=$(led_get audio.talk_enable "$out")
+    state=$(led_get audio.out_state "$out")
+    under=$(led_get audio.out_underruns "$out")
+    drops=$(led_get audio.out_drops "$out")
+    if [ -z "$vol" ] || [ -z "$en" ]; then
+        ui_fail "the camera did not answer the audio settings." "it may run an older Akam image without audio output (./akam update), or its control port may be busy; try again."
+        return 1
+    fi
+    ui_say "  Speaker output: $(ctl_onoff "$en") (state: ${state:-unknown}); the on/off choice is read at start-up."
+    ui_say "  Volume: $vol (0 to 100)."
+    ui_say "  Talk (RTSP audio backchannel): $(ctl_onoff "${talk:-}")."
+    [ -z "$under$drops" ] || ui_say "  Playback counters: underruns ${under:-?}, drops ${drops:-?}."
+    ui_say "  Volume, speaker and talk switches are saved on the camera and kept after a reboot."
+}
+
+cmd_audio() {
+    local action=show value="" key="" val=""
+    if [ $# -gt 0 ]; then
+        action=$1
+        case $action in
+            show | beep | on | off) [ $# -eq 1 ] || { echo "akam: audio $action takes no more words (see ./akam help)" >&2; return 2; } ;;
+            volume)
+                [ $# -eq 2 ] || { echo "akam: audio volume needs a number from 0 to 100 (see ./akam help)" >&2; return 2; }
+                case $2 in
+                    "" | *[!0-9]* | ????*) echo "akam: audio volume needs a number from 0 to 100 (see ./akam help)" >&2; return 2 ;;
+                esac
+                [ "$2" -le 100 ] || { echo "akam: audio volume needs a number from 0 to 100 (see ./akam help)" >&2; return 2; }
+                value=$((10#$2))
+                ;;
+            talk)
+                [ $# -eq 2 ] || { echo "akam: audio talk needs on or off (see ./akam help)" >&2; return 2; }
+                case $2 in on | off) value=$2 ;; *) echo "akam: audio talk needs on or off (see ./akam help)" >&2; return 2 ;; esac
+                ;;
+            *) echo "akam: audio: unknown word '$1' (see ./akam help)" >&2; return 2 ;;
+        esac
+    fi
+    case $action in
+        volume) key=audio.out_volume; val=$value ;;
+        beep) key=audio.out_test; val=1 ;;
+        on) key=audio.out_enable; val=1 ;;
+        off) key=audio.out_enable; val=0 ;;
+        talk) key=audio.talk_enable; val=$([ "$value" = on ] && echo 1 || echo 0) ;;
+    esac
+    step_banner_free "Camera speaker"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 $LED_PORT"
+        if [ -n "$key" ]; then ui_say "  WOULD send: SET $key $val"; else ui_say "  WOULD send (read-only): GET audio.out_volume, audio.out_enable, audio.talk_enable, audio.out_state, audio.out_underruns, audio.out_drops"; fi
+        return 0
+    fi
+    rtsp_connect || return 1
+    if [ -n "$key" ]; then
+        ctl_set "$key" "$val" || return 1
+        case $action in
+            beep) ui_good "  Done. A short beep plays on the speaker (if you heard nothing: volume, docs/troubleshooting.md, audio output)." ;;
+            on)
+                if [ "$CTL_NOTE" = restart ]; then
+                    ui_warn "the speaker is enabled and saved, but it only starts after the camera application restarts: reboot the camera (power cycle) to apply."
+                else
+                    ui_good "  Done. The speaker is enabled."
+                fi
+                ;;
+            off) ui_good "  Done. The speaker is off now and stays off after a reboot (./akam audio on to enable it again)." ;;
+            *) ui_good "  Done." ;;
+        esac
+    fi
+    audio_show
+}
+
+# picture: isp.brightness/contrast/saturation/sharpness are saved on the camera and applied at start-up;
+# img.wb (conf | manual) and night.mode (auto | day | night) are RAM-only: they go back at the next reboot.
+picture_show() {
+    local out br co sa sh wb nm
+    out=$(led_remote "GET isp.brightness" "GET isp.contrast" "GET isp.saturation" "GET isp.sharpness" "GET img.wb" "GET night.mode")
+    br=$(led_get isp.brightness "$out")
+    co=$(led_get isp.contrast "$out")
+    sa=$(led_get isp.saturation "$out")
+    sh=$(led_get isp.sharpness "$out")
+    wb=$(led_get img.wb "$out")
+    nm=$(led_get night.mode "$out")
+    if [ -z "$br" ] || [ -z "$co" ] || [ -z "$sa" ] || [ -z "$sh" ]; then
+        ui_fail "the camera did not answer the picture settings." "its control port may be busy; try again."
+        return 1
+    fi
+    ui_say "  Brightness $br, contrast $co, saturation $sa, sharpness $sh (each -50 to 50, 0 = unchanged). Saved on the camera."
+    ui_say "  White balance: ${wb:-unknown} (conf = the camera's calibration, manual = Akam's own block). Not saved: back to the default at a reboot."
+    ui_say "  Day/night: ${nm:-unknown} (auto, day or night). Not saved: back to auto at a reboot."
+}
+
+picture_num() { # WORD: a whole number from -50 to 50
+    case $1 in
+        "" | - | *[!0-9-]* | ?*-*) return 1 ;;
+    esac
+    local n=${1#-}
+    [ -n "$n" ] && [ "${#n}" -le 3 ] && [ "$((10#$n))" -le 50 ]
+}
+
+picture_norm() { # WORD (already valid): no leading zeros, no "-0"
+    local n=$((10#${1#-}))
+    if [ "${1#-}" != "$1" ] && [ "$n" != 0 ]; then printf -- '-%s' "$n"; else printf '%s' "$n"; fi
+}
+
+cmd_picture() {
+    local keys=() vals=() reset=0 show=0 k
+    while [ $# -gt 0 ]; do
+        case $1 in
+            show) show=1; shift ;;
+            reset) reset=1; shift ;;
+            brightness | contrast | saturation | sharpness)
+                picture_num "${2:-}" || { echo "akam: picture $1 needs a whole number from -50 to 50 (see ./akam help)" >&2; return 2; }
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != "isp.$1" ] || { echo "akam: picture $1 given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=("isp.$1"); vals+=("$(picture_norm "$2")")
+                shift 2
+                ;;
+            wb)
+                case ${2:-} in conf | manual) ;; *) echo "akam: picture wb needs conf or manual (see ./akam help)" >&2; return 2 ;; esac
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != img.wb ] || { echo "akam: picture wb given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=(img.wb); vals+=("$2"); shift 2
+                ;;
+            night)
+                case ${2:-} in auto | day | night) ;; *) echo "akam: picture night needs auto, day or night (see ./akam help)" >&2; return 2 ;; esac
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != night.mode ] || { echo "akam: picture night given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=(night.mode); vals+=("$2"); shift 2
+                ;;
+            *) echo "akam: picture: unknown word '$1' (see ./akam help)" >&2; return 2 ;;
+        esac
+    done
+    if [ "$((show + reset))" -gt 0 ] && { [ "$((show + reset))" -gt 1 ] || [ "${#keys[@]}" -gt 0 ]; }; then
+        echo "akam: picture: show and reset take no other word (see ./akam help)" >&2
+        return 2
+    fi
+    if [ "$reset" = 1 ]; then
+        keys=(isp.brightness isp.contrast isp.saturation isp.sharpness); vals=(0 0 0 0)
+    fi
+    step_banner_free "Picture settings"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 $LED_PORT"
+        local i
+        for i in "${!keys[@]}"; do ui_say "  WOULD send: SET ${keys[$i]} ${vals[$i]}"; done
+        [ "${#keys[@]}" -gt 0 ] || ui_say "  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, img.wb, night.mode"
+        return 0
+    fi
+    rtsp_connect || return 1
+    if [ "${#keys[@]}" -gt 0 ]; then
+        local i
+        for i in "${!keys[@]}"; do ctl_set "${keys[$i]}" "${vals[$i]}" || return 1; done
+        if [ "$reset" = 1 ]; then ui_good "  Done. Brightness, contrast, saturation and sharpness are back to 0 and the saved file is removed."; else ui_good "  Done."; fi
+    fi
+    picture_show
+}
+
 # ------------------------------------------------------------------ debug
 # Port 8091 is read-only for the network: reads (LIST, GET, metrics) work, SET/SAVE/RESET are refused
 # unless the command comes from the camera itself (SSH helpers such as ./akam led) or the debug flag
@@ -1692,7 +1880,7 @@ cmd_talk() {
     if [ "$test" = 1 ]; then
         ui_say "  Sending a 2 second test tone to the speaker ..."
         talk_run_client --tone 2 || return 1
-        ui_good "  Done. Heard it? If not: volume, ./akam audio (docs/troubleshooting.md, audio output)."
+        ui_good "  Done. Heard it? If not: ./akam audio (volume, beep) and docs/troubleshooting.md, audio output."
         return 0
     fi
     talk_capture "$secs" || return 1
