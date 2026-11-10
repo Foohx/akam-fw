@@ -43,7 +43,7 @@ done
     -o "$WORK/rtsp_backchannel_test" \
     "$REPO/tests/native/rtsp_backchannel_test.c" \
     "$SRC/rtsp.c" "$SRC/rtsp_in.c" "$SRC/rtsp_idle.c" "$SRC/rtsp_sdp.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" \
-    "$SRC/net_tx.c" "$SRC/rtp_clock.c" "$SRC/h264_params.c" "$SRC/talk.c" "$SRC/rtp_in.c" \
+    "$SRC/net_tx.c" "$SRC/rtp_clock.c" "$SRC/h264_params.c" "$SRC/talk.c" "$SRC/ctl_sys.c" "$SRC/rtp_in.c" \
     "$SRC/audio_vad.c" "$SRC/g711.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
 
 # The host client (tools/akam-talk) is built here too and run against the same server.

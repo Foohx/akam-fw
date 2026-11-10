@@ -71,6 +71,7 @@ SRCS    = main.c \
           audio_jitter.c \
           control.c \
           ctl_gate.c \
+          ctl_sys.c \
           version.c \
           $(wildcard ../smolrtsp/src/*.c) \
           $(wildcard ../smolrtsp/src/types/*.c) \

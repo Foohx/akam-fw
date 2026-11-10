@@ -34,6 +34,7 @@
 #include "talk.h"
 #include "audio_out.h"
 #include "leds.h"
+#include "ctl_sys.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
  * 60 s is also the protocol default). Clients refresh the session at about
@@ -182,6 +183,7 @@ declImpl(SmolRTSP_Controller, Client);
 static void client_set_playing(Client *c, bool playing) {
     if (c->is_playing == playing) return;
     c->is_playing = playing;
+    ctl_sys_note_rtsp_play(playing);
     ledsys_stream_delta(playing ? 1 : -1);
 }
 
@@ -927,8 +929,10 @@ static int send_video_frame(Client *client)
         if (rtp_astart_holding(&client->audio_start))
             rtp_astart_release(&client->audio_start, capture_us);
     }
-    if (send_it)
+    if (send_it) {
         send_frame_nalus(client, (uint8_t *)data, req.len, rtp_ts);
+        ctl_sys_note_video_frame(req.len);
+    }
 
     if (ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req) < 0) {
         perror("VENC_IOCTL_RELEASE_STREAM");
@@ -1326,12 +1330,14 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         rtsp_auth_db_init(&g_auth, RTSP_AUTH_PATH);
     }
     rtsp_auth_conn_init(&client.auth);
+    ctl_sys_note_rtsp_client(1);
     int64_t next_auth_check_us = 0;
     {
         static const char *const names[] = { "disabled", "enabled (Digest)",
                                              "INVALID credentials file, refusing all" };
         printf("[ak_rtsp] Client connected, RTSP authentication %s\n",
                names[rtsp_auth_db_refresh(&g_auth)]);
+        ctl_sys_note_rtsp_auth((int)g_auth.mode);
     }
 
     while (client_fd >= 0) {
@@ -1427,6 +1433,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             int64_t now_us = rtp_mono_us();
             if (now_us >= next_auth_check_us) {
                 next_auth_check_us = now_us + 1000000;
+                ctl_sys_note_rtsp_auth((int)g_auth.mode);
                 if (!rtsp_auth_session_ok(&g_auth, &client.auth) ||
                     (client.bc_playing && g_auth.mode != RTSP_AUTH_ON)) {
                     client.drop_reason = "RTSP credentials changed or authentication enabled";
@@ -1488,6 +1495,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     printf("[ak_rtsp] Dropping client: %s\n",
            client.drop_reason ? client.drop_reason : "loop ended");
     client_set_playing(&client, false);
+    ctl_sys_note_rtsp_client(-1);
     bc_stop(&client);
     VCALL(DYN(Client, SmolRTSP_Droppable, &client), drop);
     close(client_fd);
