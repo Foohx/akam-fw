@@ -18,3 +18,10 @@ void ircut_switch(int night);
  * Takes effect at once, also in the middle of a night. Thread safe; may be
  * called before ircut_init(). */
 void ircut_set_ir_led_allowed(int allowed);
+
+/* 1 when the IR LEDs light in night mode (night.ir_led=auto), 0 when the policy keeps them dark. */
+int ircut_ir_led_allowed(void);
+
+/* Ambient light probe of night.c: off=1 darkens the IR LEDs while the filter stays in the night position, off=0
+ * gives them back. ircut_switch() ends any probe by itself. No effect in day mode. */
+void ircut_ir_led_probe(int off);

@@ -93,7 +93,7 @@ static void *log_pump(void *arg)
  * interleave mid-line on the socket. */
 static void reply(int fd, const char *fmt, ...)
 {
-    char buf[256];
+    char buf[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -153,6 +153,7 @@ static void do_list(int fd)
      * cycle. Reported for visibility only. */
     reply(fd, "venc.minqp=28 (read-only)");
     reply(fd, "venc.maxqp=43 (read-only)");
+    night_ctl_list(audio_list_emit, &fd);
     ledsys_ctl_list(audio_list_emit, &fd);
     audio_out_ctl_list(audio_list_emit, &fd);
     imgq_ctl_list(audio_list_emit, &fd);
@@ -183,8 +184,9 @@ static void do_get(int fd, const char *param)
     else if (!strcmp(param, "venc.minqp"))            reply(fd, "venc.minqp=28 (read-only)");
     else if (!strcmp(param, "venc.maxqp"))            reply(fd, "venc.maxqp=43 (read-only)");
     else {
-        char line[96];
-        if (ledsys_ctl_get(param, line, sizeof(line)) == 0)         reply(fd, "%s", line);
+        char line[320];
+        if (night_ctl_get(param, line, sizeof(line)) == 0)          reply(fd, "%s", line);
+        else if (ledsys_ctl_get(param, line, sizeof(line)) == 0)    reply(fd, "%s", line);
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(fd, "%s", line);
         else if (imgq_ctl_get(param, line, sizeof(line)) == 0)      reply(fd, "%s", line);
         else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(fd, "%s", line);
@@ -271,7 +273,8 @@ static void do_set(int fd, const char *param, const char *value)
                   "(requires an encoder restart, not yet implemented)", param);
     } else {
         char msg[160];
-        if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)         reply(fd, "%s", msg);
+        if (night_ctl_set(param, value, msg, sizeof(msg)) >= 0)          reply(fd, "%s", msg);
+        else if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)    reply(fd, "%s", msg);
         else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) reply(fd, "%s", msg);
         else if (imgq_ctl_set(param, value, msg, sizeof(msg)) >= 0)      reply(fd, "%s", msg);
         else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      reply(fd, "%s", msg);

@@ -58,6 +58,7 @@ static volatile int      g_last_lum      = -1;
 static volatile uint32_t g_last_hw_exp   = 0;
 static volatile uint32_t g_last_hw_sgain = 0;
 static volatile uint32_t g_last_hw_isp   = 0;
+static volatile uint32_t g_stats_seq     = 0;  /* bumped by every ae_report_stats(): lets night.c tell a stale sample */
 
 int ae_get_last_stats(int *lum, uint32_t *hw_exp, uint32_t *hw_sgain, uint32_t *hw_isp)
 {
@@ -75,7 +76,10 @@ void ae_report_stats(int lum, uint32_t hw_exp, uint32_t hw_sgain, uint32_t hw_is
     g_last_hw_exp   = hw_exp;
     g_last_hw_sgain = hw_sgain;
     g_last_hw_isp   = hw_isp;
+    g_stats_seq++;
 }
+
+uint32_t ae_stats_seq(void) { return g_stats_seq; }
 
 /* Live-tunable AE parameters, exposed for control.c. Plain (non-volatile)
  * struct: written wholesale by ae_set_tuning() (control thread) and read
@@ -94,6 +98,18 @@ static ae_tuning_t g_tuning = { .stable_range = 4, .hold_range = 4, .speed = 7,
 
 void ae_get_tuning(ae_tuning_t *out) { *out = g_tuning; }
 
+/* The AE's own gain ceilings (public part of the exposure block: sensor_gain_max pub[3], isp_gain_max pub[5], Q8),
+ * refreshed at every ae_set_tuning(), which night.c calls after every mode switch (the night subfile raises the
+ * ISP ceiling from 1.5x to 3.0x). night_logic.c derives its "AE saturated" gain test from them. 0 = not read yet. */
+static volatile uint32_t g_sgain_max;
+static volatile uint32_t g_isp_gain_max;
+
+void ae_get_limits(uint32_t *sgain_max, uint32_t *isp_gain_max)
+{
+    *sgain_max    = g_sgain_max;
+    *isp_gain_max = g_isp_gain_max;
+}
+
 int ae_set_tuning(const ae_tuning_t *in)
 {
     g_tuning = *in;
@@ -106,6 +122,8 @@ int ae_set_tuning(const ae_tuning_t *in)
     pub[9]  = g_tuning.stable_range;
     pub[10] = g_tuning.hold_range;
     pub[11] = g_tuning.speed;
+    g_sgain_max    = pub[3];
+    g_isp_gain_max = pub[5];
     return isp_tunnel(ISP_INNER_SET_EXPOSURE, expo);
 }
 

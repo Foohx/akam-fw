@@ -136,6 +136,7 @@ int ircut_init(void)
 static pthread_mutex_t g_ir_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_ir_allowed = 1;  /* night.ir_led=auto */
 static int g_ir_night   = 0;  /* last requested day/night position */
+static int g_ir_probe   = 0;  /* night.c is probing the ambient light: the IR LEDs are dark for a moment */
 
 void ircut_set_ir_led_allowed(int allowed)
 {
@@ -149,7 +150,7 @@ void ircut_set_ir_led_allowed(int allowed)
     char path[64];
     snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", IR_LED_GPIO);
     if ((!g_ir_allowed || g_ir_night) && access(path, F_OK) == 0)
-        gpio_set(IR_LED_GPIO, g_ir_allowed && g_ir_night);
+        gpio_set(IR_LED_GPIO, g_ir_allowed && g_ir_night && !g_ir_probe);
     pthread_mutex_unlock(&g_ir_lock);
 }
 
@@ -162,9 +163,34 @@ void ircut_switch(int night)
     ircut_set_state(night);
     pthread_mutex_lock(&g_ir_lock);
     g_ir_night = night ? 1 : 0;
+    g_ir_probe = 0;  /* a switch ends any probe: the LED follows the new position */
     int led = night && g_ir_allowed;
     gpio_set(IR_LED_GPIO, led);
     pthread_mutex_unlock(&g_ir_lock);
     printf("[ak_rtsp] ircut: switched to %s mode (IR LED %s)\n",
            night ? "NIGHT" : "DAY", led ? "on" : "off");
+}
+
+/* 1 when the IR LEDs light in night mode (night.ir_led=auto). */
+int ircut_ir_led_allowed(void)
+{
+    pthread_mutex_lock(&g_ir_lock);
+    int a = g_ir_allowed;
+    pthread_mutex_unlock(&g_ir_lock);
+    return a;
+}
+
+/* night.c's ambient light probe (see night_logic.h): off=1 darkens the IR LEDs while the filter stays in the night
+ * position, off=0 gives them back (they light only in night mode with night.ir_led=auto, as ircut_switch()
+ * decides). ircut_switch() clears the probe, so a switch during a probe needs no restore. */
+void ircut_ir_led_probe(int off)
+{
+    pthread_mutex_lock(&g_ir_lock);
+    g_ir_probe = off ? 1 : 0;
+    if (g_ir_night) {
+        gpio_set(IR_LED_GPIO, g_ir_allowed && !g_ir_probe);
+        printf("[ak_rtsp] ircut: IR LED probe %s (IR LED %s)\n", off ? "start" : "end",
+               (g_ir_allowed && !g_ir_probe) ? "on" : "off");
+    }
+    pthread_mutex_unlock(&g_ir_lock);
 }
