@@ -430,6 +430,11 @@ static void test_server(void)
             CHECK_STR(out, "OK ae.speed=9\n");
             ask(c, "GET ae.speed", out, sizeof(out));
             CHECK_STR(out, "ae.speed=9\n");
+            /* a picture value set from the network (DEBUG) is applied but never written to flash */
+            ask(r, "SET isp.sharpness 5", out, sizeof(out));
+            CHECK_STR(out, "OK isp.sharpness=5\n");
+            CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+            ask(r, "SET isp.sharpness 0", out, sizeof(out));
             ask(c, "SET ae.speed 7", out, sizeof(out));
             ask(r, "DEBUG off", out, sizeof(out));
             CHECK(!strncmp(out, "ERR DEBUG is loopback-only", 26));
