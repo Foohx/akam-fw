@@ -1246,6 +1246,120 @@ cmd_rtsp_auth() {
     esac
 }
 
+# ------------------------------------------------------------------ led
+# The front status LED and the infrared (night) LEDs, set over SSH through the camera's own control
+# port (8091, reached from the camera itself: 127.0.0.1) with the keys led.status and night.ir_led
+# (specs/06-spec-leds.md). The camera saves them, so they survive a reboot. Nothing secret, nothing
+# destructive: no confirmation is asked.
+#   ./akam led                      show both settings
+#   ./akam led status on|off|auto   front LED (auto: blinks while starting or without Wi-Fi, slowly
+#                                   while someone watches the video, solid otherwise)
+#   ./akam led ir auto|off          IR LEDs at night (off: the image still switches to night mode)
+LED_PORT=8091
+
+# led_remote LINE...: send the control-port lines (one SET/GET each) from the camera to its own
+# port; prints the answers without the LOG lines the port pushes by itself.
+led_remote() {
+    local line script=""
+    for line in "$@"; do script="$script$line\\n"; done
+    log_line "CMD ssh root@$CAM_IP printf <$#> | nc -w 2 127.0.0.1 $LED_PORT"
+    "${CAM_SSH[@]}" "printf '$script' | nc -w 2 127.0.0.1 $LED_PORT" 2>&1 | grep -v '^LOG ' || true
+}
+
+# led_get KEY OUT: the value of KEY in the answers in OUT (empty when absent).
+led_get() {
+    local l v=""
+    while IFS= read -r l; do
+        case $l in "$1="*) v=${l#*=}; v=${v%% *} ;; esac
+    done <<<"$2"
+    printf '%s' "$v"
+}
+
+led_show() {
+    local out st state ir
+    out=$(led_remote "GET led.status" "GET led.state" "GET night.ir_led")
+    st=$(led_get led.status "$out")
+    state=$(led_get led.state "$out")
+    ir=$(led_get night.ir_led "$out")
+    if [ -z "$st" ] || [ -z "$ir" ]; then
+        ui_fail "the camera did not answer the LED settings." "it may run an older Akam image without them (./akam update), or its control port may be busy; try again."
+        return 1
+    fi
+    case $st in
+        on) ui_say "  Front LED: on (left as the camera sets it)." ;;
+        off) ui_say "  Front LED: off." ;;
+        auto) ui_say "  Front LED: auto (now: ${state:-unknown}). Blinks while the camera starts or has no Wi-Fi, blinks slowly while someone watches the video, solid otherwise." ;;
+        *) ui_say "  Front LED: $st." ;;
+    esac
+    case $ir in
+        auto) ui_say "  IR LEDs at night: auto (they light in night mode)." ;;
+        off) ui_say "  IR LEDs at night: off (never lit; the night image still switches on)." ;;
+        *) ui_say "  IR LEDs at night: $ir." ;;
+    esac
+    ui_say "  Both settings are saved on the camera and kept after a reboot."
+}
+
+# led_check_set KEY VALUE ANSWERS: 0 when the camera answered "OK KEY=VALUE"; warns when it could not save.
+led_check_set() {
+    local line
+    line=$(printf '%s\n' "$3" | grep -m1 -E "^(OK $1=$2|ERR .*$1)" || true)
+    case $line in
+        "OK $1=$2"*)
+            case $line in
+                *"not saved"*) ui_warn "$1 is $2 now, but the camera could not save it: it will be lost at the next reboot ($line)." ;;
+            esac
+            return 0
+            ;;
+        ERR*) ui_fail "the camera refused $1 $2: ${line#ERR }" "this image may not have the LED settings (./akam update)."; return 1 ;;
+    esac
+    ui_fail "the camera did not confirm $1 $2." "it may run an older Akam image without the LED settings (./akam update), or its control port may be busy; try again."
+    return 1
+}
+
+cmd_led() {
+    local status="" ir="" show=0 out
+    while [ $# -gt 0 ]; do
+        case $1 in
+            show) show=1; shift ;;
+            status)
+                case ${2:-} in on | off | auto) ;; *) echo "akam: led status needs on, off or auto (see ./akam help)" >&2; return 2 ;; esac
+                [ -z "$status" ] || { echo "akam: led status given twice (see ./akam help)" >&2; return 2; }
+                status=$2; shift 2
+                ;;
+            ir)
+                case ${2:-} in auto | off) ;; *) echo "akam: led ir needs auto or off (see ./akam help)" >&2; return 2 ;; esac
+                [ -z "$ir" ] || { echo "akam: led ir given twice (see ./akam help)" >&2; return 2; }
+                ir=$2; shift 2
+                ;;
+            *) echo "akam: led: unknown word '$1' (see ./akam help)" >&2; return 2 ;;
+        esac
+    done
+    if [ "$show" = 1 ] && { [ -n "$status" ] || [ -n "$ir" ]; }; then
+        echo "akam: led: show cannot be combined with status or ir (see ./akam help)" >&2
+        return 2
+    fi
+    step_banner_free "Front LED and IR LEDs"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 $LED_PORT"
+        [ -z "$status" ] || ui_say "  WOULD send: SET led.status $status"
+        [ -z "$ir" ] || ui_say "  WOULD send: SET night.ir_led $ir"
+        [ -n "$status$ir" ] || ui_say "  WOULD send (read-only): GET led.status, GET led.state, GET night.ir_led"
+        return 0
+    fi
+    rtsp_connect || return 1
+    if [ -n "$status$ir" ]; then
+        local lines=()
+        [ -z "$status" ] || lines+=("SET led.status $status")
+        [ -z "$ir" ] || lines+=("SET night.ir_led $ir")
+        out=$(led_remote "${lines[@]}")
+        [ -z "$status" ] || led_check_set led.status "$status" "$out" || return 1
+        [ -z "$ir" ] || led_check_set night.ir_led "$ir" "$out" || return 1
+        ui_good "  Done."
+    fi
+    led_show
+}
+
 # ------------------------------------------------------------------ update
 cmd_update() {
     local img md5 rc=0
