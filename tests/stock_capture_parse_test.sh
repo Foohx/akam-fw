@@ -88,6 +88,88 @@ has "legacy isp log summarised" 'AE windows: 1; SETREG: 1' "$WORK/out.txt"
 has "kernel lines filtered" 'SPEAKER @69' "$WORK/out.txt"
 if grep -q 'unrelated line' "$WORK/out.txt"; then ko "dmesg filter keeps unrelated lines"; else ok "dmesg filter drops unrelated lines"; fi
 
+# --- a v2 capture: full ISP blocks, timeline, a run cut short by a reboot ------------------------------------------
+E=$WORK/run02
+mkdir -p "$E"
+cat >"$E/run.meta" <<'EOF'
+script=stock_capture.sh
+status=running
+start_times_before=3
+start_times_reset=yes
+phases= 20:COVER_THE_LENS 40:UNCOVER_THE_LENS
+EOF
+cat >"$E/stock_hook.log" <<'EOF'
+T=0.000 tid=100 HOOK_START version=2 arch=arm comm=anyka_ipc pid=100 wall=1700000000 mono_ms=500000000
+T=3.600 tid=100 OPEN path="/sys/class/gpio/gpio65/value" flags=0x1 mode=0x0 cls=gpio fd=38
+T=3.601 tid=100 WRITE fd=38 dev=/sys/class/gpio/gpio65/value count=1 ret=1 text="1"
+T=3.700 tid=100 WRITE fd=38 dev=/sys/class/gpio/gpio65/value count=1 ret=1 text="0"
+T=25.000 tid=100 WRITE fd=40 dev=/sys/devices/platform/leds/leds/fill_light_led/brightness count=3 ret=3 text="100"
+T=25.100 tid=100 READ fd=41 dev=/sys/bus/iio/devices/iio:device0/in_voltage0_raw count=16 ret=4 text="812\x0a"
+T=9.000 tid=100 ISP_STAT name=CCM cmd=0x40044912 size=16 calls=5 changes=2 dumps=3
+T=12.000 tid=100 ALIVE events=40 dropped=0 isp_calls=900 isp_dumps=7 isp_skipped=11 gpio_skipped=30 bin_bytes=412 log_bytes=2000
+T=14.500 tid=200 CHILD abs_ms=500014500 ppid=100 exe="/bin/busybox" cmd="sh -c reboot -f"
+T=14.600 tid=100 ISP_BLOCK name=CCM cmd=0x40044912 flag=1 ret=0 size=16 hash=0x1 calls=1 changes=0 dump=1 stored=bin head=00
+EOF
+python3 -I - "$E" <<'PYEOF'
+import struct, sys
+d = sys.argv[1]
+H = struct.Struct("<4sIIIII")
+def rec(t, cmd, data):
+    return H.pack(b"ISPB", int(t * 1000), cmd, len(data), 0x1000 + len(data), 7) + data
+blob = b""
+ccm_day = struct.pack("<4I", 1, 256, 0, 256)
+ccm_night = struct.pack("<4I", 1, 256, 77, 256)
+blob += rec(2.0, 0x40044912, ccm_day)
+for i, lum in enumerate((120, 118, 20, 15, 18)):               # AE_RUN_INFO: lum, hw_exp, sgain, ispgain
+    blob += rec(10 + i * 10, 0x80044952, bytes([lum, 0, 0, 0]) + struct.pack("<3I", 1000 * (i + 1), 256, 256) + b"\0" * 20)
+blob += b"GARBAGE-BETWEEN-RECORDS"                            # a damaged spot: the parser resyncs
+blob += rec(26.0, 0x40044912, ccm_night)                      # written after the lens was covered (t=20)
+blob += rec(46.0, 0x40044912, ccm_day)                        # ... and back after t=40
+blob += rec(30.0, 0x40044925, bytes(range(32)))
+open(d + "/isp_blocks.bin", "wb").write(blob)
+PYEOF
+cat >"$E/timeline.log" <<'EOF'
+up=500002.00 t=0 ev=START pid=100 hook=yes
+up=500010.00 t=8 ev=TICK ipc=alive pid=100 load=0.50 memfree_kb=9000 start_times=0
+up=500020.50 t=20 ev=PHASE text=COVER THE LENS
+up=500021.00 t=21 ev=TICK ipc=alive pid=100 load=0.70 memfree_kb=8800 start_times=1
+up=500030.00 t=28 ev=NOTE text=IR LEDs on
+up=500040.20 t=40 ev=PHASE text=UNCOVER THE LENS
+up=500048.00 t=46 ev=TICK ipc=GONE pid=100 load=1.50 memfree_kb=8000 start_times=1
+EOF
+python3 -I "$PARSER" "$E" --export-isp "$WORK/export" >"$WORK/out2.txt" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then ok "parser reads a v2 capture"; else ko "v2 parse exit $rc"; cat "$WORK/out2.txt"; fi
+has "interrupted run announced" 'RUN INTERRUPTED: run.meta says status=running' "$WORK/out2.txt"
+has "last heartbeat shown on the hook clock" 'last heartbeat: up=500048.00 \(T=48.00\) t=46s ipc=GONE load=1.50 memfree_kb=8000 start_times=1' "$WORK/out2.txt"
+has "the reboot time is declared unknown" 'exact reboot time is not recorded' "$WORK/out2.txt"
+has "anyka_ipc GONE counted" 'anyka_ipc GONE in 1 of' "$WORK/out2.txt"
+has "start counter history" 'camera_start_times over the run: t=8s:0, t=21s:1' "$WORK/out2.txt"
+has "free RAM trend" 'free RAM: first 9000 kB, last 8000 kB, min 8000 kB' "$WORK/out2.txt"
+has "child process flagged as reboot with its time" 'T=  14.500 pid=200 ppid=100 sh -c reboot -f +<== REBOOT/RESET' "$WORK/out2.txt"
+has "ALIVE counters" 'ISP calls=900 dumped=7 skipped=11, sysfs events skipped=30, bin=412 bytes' "$WORK/out2.txt"
+has "full ISP section with the damaged record skipped" 'FULL \(isp_blocks.bin: 9 dumps, [0-9]+ bytes, 1 damaged record' "$WORK/out2.txt"
+has "block size and kind" 'CCM +cmd=0x40044912 size=16 +written \(SET\) dumps=3' "$WORK/out2.txt"
+has "word diff between the dumps (day -> night)" 'T=  26.000 1 word\(s\) changed: \[2\] 0->77' "$WORK/out2.txt"
+has "AE ranges" 'lum 15..120, hw_exposure 1000..5000' "$WORK/out2.txt"
+has "phase windows listed" 'phase 20..40 s: after "COVER THE LENS"' "$WORK/out2.txt"
+has "CCM differs between the phases" 'CCM +differs between phase 0 and 1: 1 word\(s\): \[2\] 0->77' "$WORK/out2.txt"
+has "and back" 'CCM +differs between phase 1 and 2: 1 word\(s\): \[2\] 77->0' "$WORK/out2.txt"
+has "time line: prompt" 'T=  20.500  >>> PROMPT: COVER THE LENS' "$WORK/out2.txt"
+has "time line: note" '>>> NOTE: IR LEDs on' "$WORK/out2.txt"
+has "time line: GPIO pulse" 'T=   3.601  WRITE class/gpio/gpio65/value = 1' "$WORK/out2.txt"
+has "time line: IR LED brightness" 'WRITE devices/platform/leds/leds/fill_light_led/brightness = 100' "$WORK/out2.txt"
+has "time line: light sensor value" 'read  bus/iio/devices/iio:device0/in_voltage0_raw = 812' "$WORK/out2.txt"
+has "time line: AE state" 'AE   lum=20 hw_exposure=3000' "$WORK/out2.txt"
+has "time line: ISP write with its diff" 'ISP  CCM \(16 bytes\) 1 word\(s\) changed: \[2\] 0->77' "$WORK/out2.txt"
+has "time line: the camera reboot command" '!!! CHILD PROCESS: sh -c reboot -f' "$WORK/out2.txt"
+if [ "$(find "$WORK/export" -type f | wc -l)" -eq 9 ] && [ -f "$WORK/export/CCM_0x40044912_0003_T0046.000.bin" ]; then ok "--export-isp writes one file per dump"; else ko "export: $(ls "$WORK/export")"; fi
+# the same run, finished: no interruption notice
+sed -i 's/^status=running$/status=finished rc=0/' "$E/run.meta"
+python3 -I "$PARSER" "$E" >"$WORK/out3.txt" 2>&1
+if grep -q 'RUN INTERRUPTED' "$WORK/out3.txt"; then ko "finished run reported as interrupted"; else ok "a finished run is not reported as interrupted"; fi
+has "its status is shown" 'run status: finished' "$WORK/out3.txt"
+
 # a log file path works as well, and an empty log does not crash
 if python3 -I "$PARSER" "$D/stock_hook.log" >/dev/null 2>&1; then ok "accepts the log file path"; else ko "log file path"; fi
 mkdir "$WORK/empty"; : >"$WORK/empty/stock_hook.log"

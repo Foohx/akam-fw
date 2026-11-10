@@ -1,20 +1,46 @@
 #!/usr/bin/env python3
 """parse_stock_capture.py - readable summary of a stock_capture.sh run (host side, stdlib only).
 
-usage: python3 -I parse_stock_capture.py RUN_DIR_OR_stock_hook.log
+usage: python3 -I parse_stock_capture.py RUN_DIR_OR_stock_hook.log [--export-isp OUTDIR]
 
-Reads stock_hook.log (and, next to it when present: isp_hook.log, run.meta, dmesg.txt,
-fd_*.txt) written by src/ak_rtsp/stock_hook.c and tools/hw_tests/stock_capture.sh, and
-prints: the ordered speaker ioctl sequence with decoded arguments, PCM format / period
-sizes, gain / source / speaker values, GPIO activity, audio files, mmap windows, ISP
-parameter blocks and anything that failed. Names of the 'P' (0x50) ioctls follow
-specs/05-spec-audio-out.md section 1.2; both candidate names are shown where the spec is
-unsure (the numbers are the facts, the names are hypotheses).
+Reads stock_hook.log (and, next to it when present: isp_blocks.bin, isp_hook.log, timeline.log,
+run.meta, dmesg.txt, fd_*.txt) written by src/ak_rtsp/stock_hook.c and
+tools/hw_tests/stock_capture.sh, and prints: the state of the run (finished, or interrupted by a
+reboot, with the last heartbeat), the ordered speaker ioctl sequence with decoded arguments, PCM
+format / period sizes, gain / source / speaker values, GPIO / PWM / LED / light sensor activity,
+audio files, mmap windows, the ISP parameter blocks IN FULL (isp_blocks.bin: which blocks exist,
+how often they changed, which words changed and when, which differ between the phases of a
+day/night run), one time line of everything that matters for the day/night switch (prompts and
+notes, GPIO writes, AE state, ISP block changes) and anything that failed. --export-isp writes
+every dumped block as a file (vendor data: keep it private).
+Names of the 'P' (0x50) ioctls follow specs/05-spec-audio-out.md section 1.2; both candidate
+names are shown where the spec is unsure (the numbers are the facts, the names are hypotheses).
 """
 import os
 import re
 import struct
 import sys
+
+# ISP tunnel inner commands: names of isp_hook.c / ak_ioctls.h (keep in sync); the hook prints
+# "UNKNOWN" for the ones its own table lacks.
+ISP_NAMES = {
+    0x40044902: "BLC", 0x40044904: "LSC", 0x4004490a: "RAW_LUT", 0x4004490c: "NR1",
+    0x4004492b: "NR2", 0x4004497d: "UVNR", 0x4004492f: "3D_NR", 0x40044906: "GB",
+    0x4004490e: "DEMO", 0x4004491a: "RGB_GAMMA", 0x40044912: "CCM", 0x40044936: "FCS",
+    0x4004491b: "WDR", 0x40044925: "SHARP", 0x40044927: "SHARP_EX", 0x4004493b: "SATURATION",
+    0x40044939: "CONTRAST", 0x4004493f: "RGB2YUV", 0x40044941: "EFFECT", 0x40044910: "DPC",
+    0x8004498e: "LCE", 0x40044960: "AF", 0x40044973: "AWB_EX", 0x80044988: "AWB_CALIB",
+    0x4004496e: "MISC", 0x40044975: "Y_GAMMA", 0x40044977: "HUE", 0x40044981: "GET_SENSOR_AE",
+    0x80044984: "AE_SUSPEND", 0x40044979: "FLIP_MIRROR", 0x4004496b: "SENSOR_SETREG",
+    0x8004496c: "SENSOR_GETREG", 0x4004497a: "SET_SENSOR_FPS", 0x8004497b: "GET_SENSOR_FPS",
+    0x80044952: "GET_AE_RUN_INFO", 0x8004498b: "GET_EXPOSURE", 0x8004498a: "SET_EXPOSURE",
+    0x80044986: "SET_WB", 0x80044987: "GET_WB", 0x4004494e: "SET_FRAME_RATE",
+    0x8004494f: "GET_FRAME_RATE", 0x80044970: "GET_3D_NR_STAT", 0x80044991: "GET_AE_STAT_INFO",
+    0x40044967: "3D_NR_REF", 0x4004496d: "OSD_USER_PARAMS",
+}
+GET_AE_RUN_INFO = 0x80044952
+ISPB_MAGIC = b"ISPB"
+ISPB_HDR = struct.Struct("<4sIIIII")      # magic t_ms cmd len hash tid
 
 # nr of the akpcm 'P' ioctl family -> (name, argument layout)
 P_NAMES = {
@@ -138,6 +164,293 @@ def decode_ioctl(ev):
     return name, desc.strip(), ret
 
 
+# ----------------------------------------------------------------------------- isp_blocks.bin
+def read_isp_blocks(d):
+    """Records of isp_blocks.bin: [{'t','cmd','hash','tid','data'}]. A damaged record (short write,
+    cap hit in the middle) is skipped by searching for the next magic."""
+    p = os.path.join(d, "isp_blocks.bin")
+    if not os.path.isfile(p):
+        return [], 0
+    with open(p, "rb") as fh:
+        raw = fh.read()
+    recs, off, skipped = [], 0, 0
+    while off + ISPB_HDR.size <= len(raw):
+        magic, t_ms, cmd, n, h, tid = ISPB_HDR.unpack_from(raw, off)
+        if magic != ISPB_MAGIC or n > 1 << 20 or off + ISPB_HDR.size + n > len(raw):
+            nxt = raw.find(ISPB_MAGIC, off + 1)
+            skipped += 1
+            if nxt < 0:
+                break
+            off = nxt
+            continue
+        recs.append({"t": t_ms / 1000.0, "cmd": cmd, "hash": h, "tid": tid,
+                     "data": raw[off + ISPB_HDR.size: off + ISPB_HDR.size + n]})
+        off += ISPB_HDR.size + n
+    return recs, skipped
+
+
+def isp_name(cmd, fallback=None):
+    return ISP_NAMES.get(cmd) or (fallback if fallback and fallback != "UNKNOWN" else "UNKNOWN")
+
+
+def words_of(b):
+    return list(struct.unpack("<%dI" % (len(b) // 4), b[: len(b) // 4 * 4]))
+
+
+def diff_blocks(a, b):
+    """[(word index, old, new)] between two dumps (a changed length is reported as such)."""
+    out = []
+    wa, wb = words_of(a), words_of(b)
+    for i in range(min(len(wa), len(wb))):
+        if wa[i] != wb[i]:
+            out.append((i, wa[i], wb[i]))
+    if len(a) != len(b):
+        out.append(("len", len(a), len(b)))
+    tail_a, tail_b = a[len(a) // 4 * 4:], b[len(b) // 4 * 4:]
+    if len(a) == len(b) and tail_a != tail_b:
+        out.append(("tail", tail_a.hex(), tail_b.hex()))
+    return out
+
+
+def fmt_diff(diffs, limit=6):
+    parts = []
+    for i, x, y in diffs[:limit]:
+        if i in ("len", "tail"):
+            parts.append("%s %s->%s" % (i, x, y))
+        else:
+            parts.append("[%d] %d->%d" % (i, x, y))
+    if len(diffs) > limit:
+        parts.append("... +%d" % (len(diffs) - limit))
+    return " ".join(parts)
+
+
+def distinct_dumps(recs):
+    """Per cmd, the dumps in time order (the hook already dropped repeats of the same content)."""
+    by = {}
+    for r in recs:
+        by.setdefault(r["cmd"], []).append(r)
+    return by
+
+
+def ae_run_info(data):
+    """GET_AE_RUN_INFO layout used by isp_hook.c: u8 lum, u32 hw_exposure @4, sensor gain @8, isp gain @12."""
+    if len(data) < 16:
+        return None
+    return data[0], struct.unpack_from("<I", data, 4)[0], struct.unpack_from("<I", data, 8)[0], \
+        struct.unpack_from("<I", data, 12)[0]
+
+
+# ----------------------------------------------------------------------------- timeline.log
+TL_RE = re.compile(r"^up=(\S+) t=(\d+) ev=(\S+)(?: (.*))?$")
+
+
+def load_timeline(d):
+    p = os.path.join(d, "timeline.log")
+    out = []
+    if not os.path.isfile(p):
+        return out
+    with open(p, "r", errors="replace") as fh:
+        for line in fh:
+            m = TL_RE.match(line.rstrip("\n"))
+            if not m:
+                continue
+            up, t, ev, rest = m.groups()
+            try:
+                upf = float(up)
+            except ValueError:
+                continue
+            kv = {}
+            if ev in ("PHASE", "NOTE"):
+                kv["text"] = (rest or "")[5:] if (rest or "").startswith("text=") else (rest or "")
+            else:
+                kv = dict(KV_RE.findall(rest or ""))
+            out.append({"up": upf, "t": int(t), "ev": ev, "kv": kv})
+    return out
+
+
+def meta_status(meta):
+    st = None
+    for line in (meta or "").splitlines():
+        if line.startswith("status="):
+            st = line[len("status="):].split()[0]
+    return st
+
+
+def fmt_t(t):
+    return "%8.3f" % t if t is not None else "       ?"
+
+
+def legacy_isp_section(out, events):
+    """ISP blocks of a v1 hook (hex in the log, truncated at 256 bytes) or a v2 log without
+    isp_blocks.bin: what the text lines say."""
+    section(out, "ISP parameter blocks (first dump of each; no isp_blocks.bin: data is what the log line shows)")
+    seen = {}
+    for e in events:
+        if e["ev"] == "ISP_BLOCK":
+            seen.setdefault(e["kv"].get("cmd"), []).append(e)
+    for cmd, lst in sorted(seen.items(), key=lambda x: x[1][0]["t"]):
+        k = lst[0]["kv"]
+        changed = len({x["kv"].get("data") or x["kv"].get("hash") for x in lst})
+        out.append("  %-12s cmd=%s dumps=%d distinct=%d  first@%.3fs len=%s" % (
+            k.get("name"), cmd, len(lst), changed, lst[0]["t"], k.get("len", k.get("size"))))
+        w = u32s(k.get("data", k.get("head", "")))[:8]
+        out.append("      u32[0..7]=%s" % " ".join("%d" % v for v in w))
+    if not seen:
+        out.append("  none captured")
+
+
+def phase_windows(tl):
+    """[(T_start, T_end, label)] on the hook clock, split at the prompts of the run."""
+    marks = [(x["T"], x["kv"].get("text", "")) for x in tl if x["ev"] == "PHASE" and x["T"] is not None]
+    if not marks:
+        return []
+    ends = [m[0] for m in marks[1:]] + [1e9]
+    wins = [(0.0, marks[0][0], "start (before the first prompt)")]
+    for (t0, label), t1 in zip(marks, ends):
+        wins.append((t0, t1, 'after "%s"' % label))
+    return wins
+
+
+def isp_full_section(out, events, recs, skipped, tl, mono0):
+    by = distinct_dumps(recs)
+    stat = {}
+    for e in events:
+        if e["ev"] == "ISP_STAT":
+            stat[e["kv"].get("cmd")] = e["kv"]
+    names = {}
+    for e in events:
+        if e["ev"] == "ISP_BLOCK":
+            names[int(e["kv"].get("cmd", "0x0"), 16)] = e["kv"].get("name")
+    total = sum(len(r["data"]) for r in recs)
+    section(out, "ISP parameter blocks, FULL (isp_blocks.bin: %d dumps, %d bytes%s)" % (
+        len(recs), total, ", %d damaged record(s) skipped" % skipped if skipped else ""))
+    out.append("  one dump per distinct content; polled blocks (dir=read) at most 1 per second, written ones 10 per second")
+    for cmd, lst in sorted(by.items(), key=lambda x: x[1][0]["t"]):
+        name = isp_name(cmd, names.get(cmd))
+        kind = "polled/read" if (cmd >> 30) == 2 else "written (SET)"
+        st = stat.get("0x%08x" % cmd) or stat.get(hex(cmd)) or {}
+        extra = ""
+        if st:
+            extra = " calls=%s changes=%s" % (st.get("calls"), st.get("changes"))
+        out.append("  %-16s cmd=0x%08x size=%-5d %-13s dumps=%-3d first@%.3fs last@%.3fs%s" % (
+            name, cmd, len(lst[0]["data"]), kind, len(lst), lst[0]["t"], lst[-1]["t"], extra))
+        w = words_of(lst[0]["data"])[:8]
+        out.append("      first u32[0..7]=%s" % " ".join("%d" % v for v in w))
+        if cmd == GET_AE_RUN_INFO:
+            rows = [(r["t"], ae_run_info(r["data"])) for r in lst if ae_run_info(r["data"])]
+            if rows:
+                out.append("      lum %d..%d, hw_exposure %d..%d, sensor gain %d..%d, isp gain %d..%d" % (
+                    min(x[1][0] for x in rows), max(x[1][0] for x in rows), min(x[1][1] for x in rows),
+                    max(x[1][1] for x in rows), min(x[1][2] for x in rows), max(x[1][2] for x in rows),
+                    min(x[1][3] for x in rows), max(x[1][3] for x in rows)))
+            continue
+        shown = 0
+        for prev, cur in zip(lst, lst[1:]):
+            dd = diff_blocks(prev["data"], cur["data"])
+            if shown < 8 or (cmd >> 30) == 1:
+                out.append("      T=%8.3f %d word(s) changed: %s" % (cur["t"], len(dd), fmt_diff(dd, 5)))
+            shown += 1
+            if shown >= 24:
+                out.append("      ... %d more changes (use --export-isp to diff them all)" % (len(lst) - 1 - shown))
+                break
+        # polled statistics: which words never change / always change
+        if (cmd >> 30) == 2 and len(lst) >= 4:
+            ws = [words_of(r["data"]) for r in lst]
+            n = min(len(w) for w in ws)
+            var = [i for i in range(n) if len({w[i] for w in ws}) > 1]
+            out.append("      %d of %d words vary over the run (statistics), the other %d never change" % (len(var), n, n - len(var)))
+    # state at the end of each phase of a day/night run
+    wins = phase_windows(tl)
+    if wins and mono0 is not None:
+        section(out, "ISP blocks that differ between the phases of the run (state at the end of each phase)")
+        for t0, t1, label in wins:
+            out.append("  phase %.0f..%.0f s: %s" % (t0, min(t1, max(r["t"] for r in recs)), label))
+        def state_at(cmd, t):
+            last = None
+            for r in by[cmd]:
+                if r["t"] <= t:
+                    last = r
+            return last
+        for cmd in sorted(by):
+            if (cmd >> 30) != 1 and cmd not in (0x80044986, 0x80044987, 0x8004498a, 0x8004498b):
+                continue                                      # polled statistics always differ: only the parameters
+            sts = [state_at(cmd, w[1] - 1e-6) for w in wins]
+            for i in range(len(sts) - 1):
+                if sts[i] and sts[i + 1] and sts[i]["data"] != sts[i + 1]["data"]:
+                    dd = diff_blocks(sts[i]["data"], sts[i + 1]["data"])
+                    out.append("  %-16s differs between phase %d and %d: %d word(s): %s" % (
+                        isp_name(cmd, names.get(cmd)), i, i + 1, len(dd), fmt_diff(dd, 8)))
+                elif sts[i] is None and sts[i + 1] is not None:
+                    out.append("  %-16s first seen in phase %d (size %d)" % (isp_name(cmd, names.get(cmd)), i + 1, len(sts[i + 1]["data"])))
+
+
+def daynight_section(out, events, recs, tl, mono0):
+    """One time line of what matters for the day/night switch."""
+    items = []
+    for x in tl:
+        if x["T"] is None:
+            continue
+        if x["ev"] == "PHASE":
+            items.append((x["T"], 0, ">>> PROMPT: %s" % x["kv"].get("text", "")))
+        elif x["ev"] == "NOTE":
+            items.append((x["T"], 0, ">>> NOTE: %s" % x["kv"].get("text", "")))
+        elif x["ev"] == "IPC_RESTART":
+            items.append((x["T"], 0, "!!! anyka_ipc restarted (pid %s -> %s)" % (x["kv"].get("old"), x["kv"].get("new"))))
+    sysfs = ("gpio", "pwm", "leds", "iio")
+    last_read = {}
+    for e in events:
+        k = e["kv"]
+        dev = k.get("dev", k.get("path", ""))
+        if e["ev"] in ("WRITE", "READ") and "text" in k and any(m in dev for m in ("/sys/class/gpio", "/sys/class/pwm", "/sys/class/leds", "/sys/devices/platform/leds", "/sys/bus/iio/")):
+            label = "WRITE" if e["ev"] == "WRITE" else "read "
+            text = k["text"].replace("\\x0a", "").replace("\\x00", "")
+            if e["ev"] == "READ" and last_read.get(dev) == text:
+                continue
+            if e["ev"] == "READ":
+                last_read[dev] = text
+            items.append((e["t"], 1, "%s %s = %s%s" % (label, dev.split("/sys/")[-1] if "/sys/" in dev else dev, text,
+                                                      ("  (seen %s)" % k["seen"]) if "seen" in k else "")))
+        elif e["ev"] == "CHILD" and re.search(r"reboot|recover_cfg|poweroff|halt", k.get("cmd", "")) and mono0 is not None:
+            try:
+                items.append((int(k["abs_ms"]) / 1000.0 - mono0, 0, "!!! CHILD PROCESS: %s" % k.get("cmd")))
+            except (KeyError, ValueError):
+                pass
+    prev_by_cmd = {}
+    ae_last_t, ae_last_lum = -99.0, None
+    for r in recs:
+        cmd = r["cmd"]
+        if cmd == GET_AE_RUN_INFO:
+            v = ae_run_info(r["data"])
+            if v and (r["t"] - ae_last_t >= 5 or (ae_last_lum is not None and abs(v[0] - ae_last_lum) >= 10)):
+                items.append((r["t"], 2, "AE   lum=%d hw_exposure=%d sensor_gain=%d isp_gain=%d" % v))
+                ae_last_t, ae_last_lum = r["t"], v[0]
+            continue
+        if (cmd >> 30) != 1 and cmd not in (0x80044986, 0x8004498a):
+            continue
+        prev = prev_by_cmd.get(cmd)
+        what = "first dump" if prev is None else "%d word(s) changed: %s" % (
+            len(diff_blocks(prev, r["data"])), fmt_diff(diff_blocks(prev, r["data"]), 4))
+        prev_by_cmd[cmd] = r["data"]
+        items.append((r["t"], 3, "ISP  %s (%d bytes) %s" % (isp_name(cmd), len(r["data"]), what)))
+    section(out, "day/night time line (prompts, notes, sysfs GPIO/PWM/LED/ADC, AE state, ISP parameter writes)")
+    if not items:
+        out.append("  nothing captured")
+        return
+    items.sort(key=lambda x: (x[0], x[1]))
+    shown, prev_text, rep, prev_idx, base = 0, None, 0, -1, ""
+    for i, (t, _, text) in enumerate(items):
+        if text == prev_text:                       # identical consecutive lines: fold
+            rep += 1
+            out[prev_idx] = base + "  x%d" % (rep + 1)
+            continue
+        out.append("  T=%8.3f  %s" % (t, text))
+        prev_text, rep, prev_idx, base = text, 0, len(out) - 1, out[-1]
+        shown += 1
+        if shown >= 400:
+            out.append("  ... %d more events (the log has them all)" % (len(items) - i - 1))
+            break
+
+
 def load(path):
     if os.path.isdir(path):
         d = path
@@ -180,17 +493,80 @@ def summarize(d, events, bad):
     meta = read_text(d, "run.meta")
     if meta:
         out.extend("  " + l for l in meta.strip().splitlines())
+    mono0 = None
     for e in events:
         if e["ev"] in ("HOOK_START", "HOOK_SINK"):
             out.append("  %s %s" % (e["ev"], " ".join("%s=%s" % kv for kv in e["kv"].items())))
+        if e["ev"] == "HOOK_START" and "mono_ms" in e["kv"] and mono0 is None:
+            try:
+                mono0 = int(e["kv"]["mono_ms"]) / 1000.0
+            except ValueError:
+                pass
+    tl = load_timeline(d)
+    for x in tl:                                    # heartbeat time on the hook's clock
+        x["T"] = x["up"] - mono0 if mono0 is not None else None
+    recs, skipped = read_isp_blocks(d)
     n_ev = len(events)
     out.append("  events parsed: %d, unparsable lines: %d" % (n_ev, bad))
     if any(e["ev"] == "LOG_CAP" for e in events):
         out.append("  WARNING: the size cap was reached, later events are missing")
     alive = [e for e in events if e["ev"] == "ALIVE"]
     if alive:
-        out.append("  last ALIVE at T=%.3f: events=%s dropped=%s" % (
-            alive[-1]["t"], alive[-1]["kv"].get("events"), alive[-1]["kv"].get("dropped")))
+        k = alive[-1]["kv"]
+        out.append("  last ALIVE at T=%.3f: events=%s dropped=%s" % (alive[-1]["t"], k.get("events"), k.get("dropped")))
+        if "isp_calls" in k:
+            out.append("      ISP calls=%s dumped=%s skipped=%s, sysfs events skipped=%s, bin=%s bytes, log=%s bytes" % (
+                k.get("isp_calls"), k.get("isp_dumps"), k.get("isp_skipped"), k.get("gpio_skipped"),
+                k.get("bin_bytes"), k.get("log_bytes")))
+    last_ev_t = max([e["t"] for e in events if e["ev"] != "CHILD"] or [0])
+    st = meta_status(meta)
+    if st in ("running", "interrupted"):
+        out.append("  *** RUN INTERRUPTED: run.meta says status=%s, the script never reached its end. The camera" % st)
+        out.append("      most likely rebooted (or the script was killed). Logs are complete up to the last fsync (2 s).")
+        ticks = [x for x in tl if x["ev"] == "TICK"]
+        if ticks:
+            x = ticks[-1]
+            out.append("      last heartbeat: up=%.2f (T=%s) t=%ds ipc=%s load=%s memfree_kb=%s start_times=%s" % (
+                x["up"], ("%.2f" % x["T"]) if x["T"] is not None else "?", x["t"], x["kv"].get("ipc"),
+                x["kv"].get("load"), x["kv"].get("memfree_kb"), x["kv"].get("start_times")))
+        out.append("      last hook event: T=%.3f. The camera stayed up at least until the last heartbeat;" % last_ev_t)
+        out.append("      the exact reboot time is not recorded (ask whoever watched the telnet session).")
+    elif st:
+        out.append("  run status: %s" % st)
+    if tl:
+        ticks = [x for x in tl if x["ev"] == "TICK"]
+        gone = [x for x in ticks if x["kv"].get("ipc") == "GONE"]
+        out.append("  timeline.log: %d heartbeats, anyka_ipc GONE in %d of them" % (len(ticks), len(gone)))
+        if gone:
+            out.append("      first GONE at up=%.2f (T=%s)" % (gone[0]["up"], ("%.2f" % gone[0]["T"]) if gone[0]["T"] is not None else "?"))
+        sts = []
+        for x in ticks:
+            v = x["kv"].get("start_times")
+            if not sts or sts[-1][1] != v:
+                sts.append((x["t"], v))
+        if sts:
+            out.append("      /tmp/camera_start_times over the run: %s" % ", ".join("t=%ds:%s" % a for a in sts[:12]))
+        mem = [int(x["kv"]["memfree_kb"]) for x in ticks if x["kv"].get("memfree_kb", "?").isdigit()]
+        if mem:
+            out.append("      free RAM: first %d kB, last %d kB, min %d kB" % (mem[0], mem[-1], min(mem)))
+        for x in tl:
+            if x["ev"] == "IPC_RESTART":
+                out.append("      anyka_ipc RESTARTED at up=%.2f: pid %s -> %s" % (x["up"], x["kv"].get("old"), x["kv"].get("new")))
+    # child processes of anyka_ipc (system(), popen()): a "reboot -f" would show here
+    kids = [e for e in events if e["ev"] == "CHILD"]
+    section(out, "processes started by anyka_ipc (system / popen), from the CHILD lines")
+    for e in kids[:80]:
+        k = e["kv"]
+        try:
+            rel = int(k.get("abs_ms", "0")) / 1000.0 - mono0 if mono0 is not None else None
+        except ValueError:
+            rel = None
+        flag = "   <== REBOOT/RESET" if re.search(r"reboot|recover_cfg|poweroff|halt", k.get("cmd", "")) else ""
+        out.append("  T=%s pid=%s ppid=%s %s%s" % (fmt_t(rel), e["tid"], k.get("ppid"), k.get("cmd"), flag))
+    if len(kids) > 80:
+        out.append("  ... %d more" % (len(kids) - 80))
+    if not kids:
+        out.append("  none seen (children only show up when the hook is v2)")
 
     # ---- devices
     section(out, "devices opened (cls pcm / gpio / mem / audio files / config)")
@@ -351,19 +727,11 @@ def summarize(d, events, bad):
         out.append("  none")
 
     # ---- ISP
-    section(out, "ISP parameter blocks (first dump of each; data is truncated at 256 bytes)")
-    seen = {}
-    for e in events:
-        if e["ev"] == "ISP_BLOCK":
-            seen.setdefault(e["kv"].get("cmd"), []).append(e)
-    for cmd, lst in sorted(seen.items(), key=lambda x: x[1][0]["t"]):
-        k = lst[0]["kv"]
-        changed = len({x["kv"].get("data") for x in lst})
-        out.append("  %-12s cmd=%s dumps=%d distinct=%d  first@%.3fs len=%s" % (k.get("name"), cmd, len(lst), changed, lst[0]["t"], k.get("len")))
-        w = u32s(k.get("data", ""))[:8]
-        out.append("      u32[0..7]=%s" % " ".join("%d" % v for v in w))
-    if not seen:
-        out.append("  none captured")
+    if recs:
+        isp_full_section(out, events, recs, skipped, tl, mono0)
+    else:
+        legacy_isp_section(out, events)
+    daynight_section(out, events, recs, tl, mono0)
     isp = read_text(d, "isp_hook.log")
     if isp:
         lines = isp.splitlines()
@@ -407,16 +775,41 @@ def summarize(d, events, bad):
     return "\n".join(out) + "\n"
 
 
+def export_isp(d, outdir):
+    """Write every dumped ISP block as NAME_0xCMD_NNNN_T<seconds>.bin (vendor data: keep it private)."""
+    recs, _ = read_isp_blocks(d)
+    os.makedirs(outdir, exist_ok=True)
+    counts = {}
+    for r in recs:
+        n = counts[r["cmd"]] = counts.get(r["cmd"], 0) + 1
+        name = "%s_0x%08x_%04d_T%08.3f.bin" % (isp_name(r["cmd"]), r["cmd"], n, r["t"])
+        with open(os.path.join(outdir, name), "wb") as fh:
+            fh.write(r["data"])
+    return len(recs)
+
+
 def main(argv):
-    if len(argv) != 2 or argv[1] in ("-h", "--help"):
+    args = argv[1:]
+    export = None
+    if "--export-isp" in args:
+        i = args.index("--export-isp")
+        if i + 1 >= len(args):
+            sys.stderr.write(__doc__)
+            return 2
+        export = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 1 or args[0] in ("-h", "--help"):
         sys.stderr.write(__doc__)
         return 2
     try:
-        d, events, bad = load(argv[1])
+        d, events, bad = load(args[0])
     except OSError as exc:
         sys.stderr.write("parse_stock_capture: %s\n" % exc)
         return 1
     sys.stdout.write(summarize(d, events, bad))
+    if export:
+        n = export_isp(d, export)
+        sys.stdout.write("\nexported %d ISP block dump(s) to %s\n" % (n, export))
     return 0
 
 
