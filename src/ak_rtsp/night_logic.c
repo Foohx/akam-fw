@@ -44,9 +44,10 @@ static uint32_t probe_interval_polls(const nl_state_t *st, const night_tuning_t 
 
 static void schedule_first_probe(nl_state_t *st, const night_tuning_t *t)
 {
-    uint32_t first = min_night_polls(st, t);
-    uint32_t p = polls(t->probe_ms);
-    st->next_probe = st->tick + (first > p ? first : p);
+    /* First probe as soon as the minimum dwell is over (tested on HW: with the lens covered the IR
+     * lights the cover, so the lamp detector cannot see the light come back and the return to day
+     * waited for the 5 min periodic probe). Later probes use probe_ms with the failure backoff. */
+    st->next_probe = st->tick + min_night_polls(st, t);
     st->lamp_ok_at = st->tick;
 }
 
