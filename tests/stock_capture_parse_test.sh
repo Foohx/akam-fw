@@ -18,6 +18,7 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); echo "ok   - $1"; }
 ko() { FAIL=$((FAIL + 1)); echo "FAIL - $1"; }
 has() { if grep -Eq -- "$2" "$3"; then ok "$1"; else ko "$1 (no match: $2)"; sed 's/^/      | /' "$3" | head -n 40; fi; }
+hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1"; fi; }
 
 D=$WORK/run01
 mkdir -p "$D"
@@ -141,9 +142,11 @@ EOF
 python3 -I "$PARSER" "$E" --export-isp "$WORK/export" >"$WORK/out2.txt" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then ok "parser reads a v2 capture"; else ko "v2 parse exit $rc"; cat "$WORK/out2.txt"; fi
-has "interrupted run announced" 'RUN INTERRUPTED: run.meta says status=running' "$WORK/out2.txt"
+has "unfinished run announced" 'RUN DID NOT FINISH CLEANLY: run.meta says status=running' "$WORK/out2.txt"
+hasnt "no 'most likely rebooted' guess" 'most likely rebooted' "$WORK/out2.txt"
+has "unfinished run points to timeline.log" 'See timeline.log' "$WORK/out2.txt"
 has "last heartbeat shown on the hook clock" 'last heartbeat: up=500048.00 \(T=48.00\) t=46s ipc=GONE load=1.50 memfree_kb=8000 start_times=1' "$WORK/out2.txt"
-has "the reboot time is declared unknown" 'exact reboot time is not recorded' "$WORK/out2.txt"
+has "a real reboot is recognised by the uptime going backwards" 'uptime going backwards' "$WORK/out2.txt"
 has "anyka_ipc GONE counted" 'anyka_ipc GONE in 1 of' "$WORK/out2.txt"
 has "start counter history" 'camera_start_times over the run: t=8s:0, t=21s:1' "$WORK/out2.txt"
 has "free RAM trend" 'free RAM: first 9000 kB, last 8000 kB, min 8000 kB' "$WORK/out2.txt"
@@ -166,10 +169,18 @@ has "time line: AE state" 'AE   lum=20 hw_exposure=3000' "$WORK/out2.txt"
 has "time line: ISP write with its diff" 'ISP  CCM \(16 bytes\) 1 word\(s\) changed: \[2\] 0->77' "$WORK/out2.txt"
 has "time line: the camera reboot command" '!!! CHILD PROCESS: sh -c reboot -f' "$WORK/out2.txt"
 if [ "$(find "$WORK/export" -type f | wc -l)" -eq 9 ] && [ -f "$WORK/export/CCM_0x40044912_0003_T0046.000.bin" ]; then ok "--export-isp writes one file per dump"; else ko "export: $(ls "$WORK/export")"; fi
+# a later run on the same card tells whether the camera rebooted in between (uptime going backwards)
+mkdir "$WORK/run03"; printf 'status=finished rc=0\nuptime=100.5\n' >"$WORK/run03/run.meta"
+python3 -I "$PARSER" "$E" >"$WORK/out2b.txt" 2>&1
+has "later run with a lower uptime: the camera rebooted" 'run03 started at uptime 100 s, below the last heartbeat .*REBOOTED' "$WORK/out2b.txt"
+printf 'status=finished rc=0\nuptime=900000.5\n' >"$WORK/run03/run.meta"
+python3 -I "$PARSER" "$E" >"$WORK/out2c.txt" 2>&1
+has "later run with a higher uptime: no reboot" 'did not reboot in between' "$WORK/out2c.txt"
+rm -rf "$WORK/run03"
 # the same run, finished: no interruption notice
 sed -i 's/^status=running$/status=finished rc=0/' "$E/run.meta"
 python3 -I "$PARSER" "$E" >"$WORK/out3.txt" 2>&1
-if grep -q 'RUN INTERRUPTED' "$WORK/out3.txt"; then ko "finished run reported as interrupted"; else ok "a finished run is not reported as interrupted"; fi
+if grep -q 'DID NOT FINISH' "$WORK/out3.txt"; then ko "finished run reported as interrupted"; else ok "a finished run is not reported as interrupted"; fi
 has "its status is shown" 'run status: finished' "$WORK/out3.txt"
 
 # a log file path works as well, and an empty log does not crash
