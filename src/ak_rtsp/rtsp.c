@@ -1280,6 +1280,15 @@ void rtsp_auth_tick(bool force)
     ctl_sys_note_rtsp_auth((int)rtsp_auth_db_refresh(&g_auth));
 }
 
+/* The process-wide credentials state, for cred_init(): ONVIF shares the RTSP
+ * failure limiter and its htdigest data. Not thread safe: the caller must run
+ * on the thread that serves RTSP, or serialise with it. */
+rtsp_auth_db_t *rtsp_auth_shared_db(void)
+{
+    rtsp_auth_tick(false);
+    return &g_auth;
+}
+
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {

@@ -255,18 +255,24 @@ static unsigned penalty_ms(unsigned fails)
     return 2000;
 }
 
-/* Keep the connection's nonce while it is usable, else draw a new one. */
-static int ensure_nonce(rtsp_auth_conn_t *c, int64_t now_us)
+int rtsp_auth_new_nonce(char out[RTSP_AUTH_NONCE_HEX + 1])
 {
     static const char hex[] = "0123456789abcdef";
-    if (c->has_nonce && now_us - c->nonce_us <= RTSP_AUTH_NONCE_LIFETIME_US) return 0;
     uint8_t r[RTSP_AUTH_NONCE_HEX / 2];
     if (!rtsp_auth_rng || rtsp_auth_rng(r, sizeof(r)) != 0) return -1;
     for (size_t i = 0; i < sizeof(r); i++) {
-        c->nonce[2 * i] = hex[r[i] >> 4];
-        c->nonce[2 * i + 1] = hex[r[i] & 15];
+        out[2 * i] = hex[r[i] >> 4];
+        out[2 * i + 1] = hex[r[i] & 15];
     }
-    c->nonce[RTSP_AUTH_NONCE_HEX] = '\0';
+    out[RTSP_AUTH_NONCE_HEX] = '\0';
+    return 0;
+}
+
+/* Keep the connection's nonce while it is usable, else draw a new one. */
+static int ensure_nonce(rtsp_auth_conn_t *c, int64_t now_us)
+{
+    if (c->has_nonce && now_us - c->nonce_us <= RTSP_AUTH_NONCE_LIFETIME_US) return 0;
+    if (rtsp_auth_new_nonce(c->nonce) != 0) return -1;
     c->has_nonce = true;
     c->nonce_us = now_us;
     c->last_nc = 0;
@@ -287,6 +293,16 @@ static void deny(rtsp_auth_conn_t *c, int64_t now_us, bool stale, rtsp_auth_resu
              stale ? ", stale=true" : "");
 }
 
+unsigned rtsp_auth_note_failure(rtsp_auth_db_t *db, int64_t now_us)
+{
+    if (db->global_fails && now_us - db->last_fail_us > RTSP_AUTH_FAIL_WINDOW_US) db->global_fails = 0;
+    db->global_fails++;
+    db->last_fail_us = now_us;
+    return penalty_ms(db->global_fails);
+}
+
+void rtsp_auth_note_success(rtsp_auth_db_t *db) { db->global_fails = 0; }
+
 /* A failed attempt: count it (connection and process), slow the answer down,
  * close the connection after too many. */
 static void fail(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, int64_t now_us, const char *why,
@@ -294,10 +310,7 @@ static void fail(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, int64_t now_us, const 
 {
     c->authed = false;
     c->fails++;
-    if (db->global_fails && now_us - db->last_fail_us > RTSP_AUTH_FAIL_WINDOW_US) db->global_fails = 0;
-    db->global_fails++;
-    db->last_fail_us = now_us;
-    out->delay_ms = penalty_ms(db->global_fails);
+    out->delay_ms = rtsp_auth_note_failure(db, now_us);
     if (c->fails >= RTSP_AUTH_CONN_MAX_FAILS) {
         out->verdict = RTSP_AUTH_DROP;
         out->challenge[0] = '\0';
@@ -309,6 +322,43 @@ static void fail(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, int64_t now_us, const 
     if (out->verdict == RTSP_AUTH_DENY)
         snprintf(out->log, sizeof(out->log), "auth failed: %s (attempt %u of %u on this connection, delay %u ms)",
                  why, c->fails, (unsigned)RTSP_AUTH_CONN_MAX_FAILS, out->delay_ms);
+}
+
+/* User, realm, algorithm and response, all evaluated whatever the user name is,
+ * and the comparisons do not stop at the first different byte. */
+static bool creds_good(const rtsp_auth_db_t *db, const char *method, const dparams_t *p, bool qop)
+{
+    char ub_client[RTSP_AUTH_USER_MAX + 1] = "", ub_db[RTSP_AUTH_USER_MAX + 1] = "";
+    size_t ul = strlen(p->username);
+    memcpy(ub_client, p->username, ul <= RTSP_AUTH_USER_MAX ? ul : RTSP_AUTH_USER_MAX);
+    memcpy(ub_db, db->user, strlen(db->user));
+    int good = ul <= RTSP_AUTH_USER_MAX && ct_eq(ub_client, ub_db, sizeof(ub_db));
+    good &= (p->realm[0] == '\0' || strcmp(p->realm, RTSP_AUTH_REALM) == 0);
+    good &= (p->algorithm[0] == '\0' || ieq(p->algorithm, strlen(p->algorithm), "MD5"));
+
+    char expect[33], got[33] = "";
+    rtsp_auth_response(expect, db->ha1, p->nonce, qop ? p->nc : NULL, p->cnonce, method, p->uri);
+    size_t rl = strlen(p->response);
+    for (size_t i = 0; i < rl && i < 32; i++) got[i] = lower(p->response[i]);
+    good &= (rl == 32) && ct_eq(got, expect, 32);
+    return good != 0;
+}
+
+int rtsp_auth_digest_verify(const rtsp_auth_db_t *db, const char *method, const char *hdr,
+                            size_t hdr_len, rtsp_auth_digest_t *out)
+{
+    dparams_t p;
+    memset(out, 0, sizeof(*out));
+    if (db->mode != RTSP_AUTH_ON || parse_digest(hdr, hdr_len, &p) != 0) return 0;
+    bool qop = p.qop[0] != '\0';
+    if (qop && (!ieq(p.qop, strlen(p.qop), "auth") || !p.nc[0] || !p.cnonce[0])) return 0;
+    if (!creds_good(db, method, &p, qop)) return 0;
+    memcpy(out->nonce, p.nonce, sizeof(out->nonce));
+    memcpy(out->nc, p.nc, sizeof(out->nc));
+    memcpy(out->cnonce, p.cnonce, sizeof(out->cnonce));
+    memcpy(out->uri, p.uri, sizeof(out->uri));
+    out->qop = qop;
+    return 1;
 }
 
 void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method,
@@ -351,22 +401,7 @@ void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method
         return;
     }
 
-    /* Everything below is evaluated whatever the user name is, and the
-     * comparisons do not stop at the first different byte. */
-    char ub_client[RTSP_AUTH_USER_MAX + 1] = "", ub_db[RTSP_AUTH_USER_MAX + 1] = "";
-    size_t ul = strlen(p.username);
-    memcpy(ub_client, p.username, ul <= RTSP_AUTH_USER_MAX ? ul : RTSP_AUTH_USER_MAX);
-    memcpy(ub_db, db->user, strlen(db->user));
-    int good = ul <= RTSP_AUTH_USER_MAX && ct_eq(ub_client, ub_db, sizeof(ub_db));
-    good &= (p.realm[0] == '\0' || strcmp(p.realm, RTSP_AUTH_REALM) == 0);
-    good &= (p.algorithm[0] == '\0' || ieq(p.algorithm, strlen(p.algorithm), "MD5"));
-
-    char expect[33], got[33] = "";
-    rtsp_auth_response(expect, db->ha1, p.nonce, qop ? p.nc : NULL, p.cnonce, method, p.uri);
-    size_t rl = strlen(p.response);
-    for (size_t i = 0; i < rl && i < 32; i++) got[i] = lower(p.response[i]);
-    good &= (rl == 32) && ct_eq(got, expect, 32);
-    if (!good) {
+    if (!creds_good(db, method, &p, qop)) {
         fail(db, c, now_us, "bad credentials", out);
         return;
     }
@@ -396,7 +431,7 @@ void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method
     c->authed = true;
     c->gen = db->generation;
     c->fails = 0;
-    db->global_fails = 0;
+    rtsp_auth_note_success(db);
 }
 
 bool rtsp_auth_session_ok(rtsp_auth_db_t *db, const rtsp_auth_conn_t *c)

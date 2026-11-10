@@ -104,3 +104,36 @@ void rtsp_auth_redact_uri(const char *uri, char *out, size_t cap);
 void rtsp_auth_response(char out[33], const char *ha1, const char *nonce,
                         const char *nc, const char *cnonce, const char *method,
                         const char *uri);
+
+/* ---- Reuse by other protocols (ONVIF over HTTP, see cred.h) --------------
+ * The same credentials file, the same HA1, the same process-wide failure
+ * counter. The caller owns the nonce (issue it with rtsp_auth_new_nonce and
+ * keep it per connection) and the HTTP framing. */
+
+/* Fill out with a fresh random nonce (RTSP_AUTH_NONCE_HEX lowercase hex
+ * characters + NUL). 0 = ok, -1 = no random source. */
+int rtsp_auth_new_nonce(char out[RTSP_AUTH_NONCE_HEX + 1]);
+
+/* What a verified Digest header carried, for the caller's nonce checks. */
+typedef struct {
+    char nonce[64];
+    char nc[16];             /* "" when the client sent no qop */
+    char cnonce[128];
+    char uri[512];
+    bool qop;                /* qop=auth was used */
+} rtsp_auth_digest_t;
+
+/* Verify the value of an Authorization header (`Digest ...`, not NUL
+ * terminated) against the credentials of db (already refreshed by the caller;
+ * mode must be RTSP_AUTH_ON). Checks user, realm, algorithm and the response
+ * for method (the request's HTTP method) in constant time. Does NOT judge the
+ * nonce, nc or uri: that is the caller's job with out. 1 = credentials good,
+ * 0 = anything else (malformed, wrong user, wrong password, mode not ON). */
+int rtsp_auth_digest_verify(const rtsp_auth_db_t *db, const char *method, const char *hdr,
+                            size_t hdr_len, rtsp_auth_digest_t *out);
+
+/* Process-wide failure limiter shared by every protocol: count a failed
+ * attempt and return the delay (ms) to wait before answering it; and reset
+ * the counter after a good login. */
+unsigned rtsp_auth_note_failure(rtsp_auth_db_t *db, int64_t now_us);
+void rtsp_auth_note_success(rtsp_auth_db_t *db);
