@@ -418,6 +418,7 @@ check_rtsp_auth() {
     f=${AKAM_RTSP_AUTH_FILE:-$ROOT/etc/config/akam/rtsp_auth}
     if [ ! -e "$f" ]; then
         info "RTSP auth: disabled (no credentials file): the video stream is open to anyone who can reach port 554"
+        info "talk: not offered (two-way audio needs the RTSP password)"
         return 0
     fi
     line=
@@ -435,6 +436,7 @@ check_rtsp_auth() {
         *[!0-9a-f]*) warn "RTSP auth: INVALID credentials file (hash is not 32 lowercase hex characters): ak_rtsp refuses every protected request"; return 0 ;;
     esac
     info "RTSP auth: enabled (user $ra_u, Digest)"
+    info "talk: offered on port 554 to ONVIF backchannel clients (audio.talk_enable and audio out permitting)"
     ra_m=$(mode_of "$f")
     case ${ra_m%% *} in
         *00) ;;
