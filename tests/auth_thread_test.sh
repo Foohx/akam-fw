@@ -21,7 +21,7 @@ if "$CC" -fsanitize=thread -o "$WORK/probe" "$WORK/probe.c" -pthread 2>/dev/null
     FLAGS=(-fsanitize=thread -O1 -g)
 else
     SAN=address
-    FLAGS=(-fsanitize=address,undefined -fno-sanitize-recover=undefined -O1 -g)
+    FLAGS=("-fsanitize=address,undefined" -fno-sanitize-recover=undefined -O1 -g)
 fi
 echo "sanitizer: $SAN"
 "$CC" -std=gnu99 -Wall -Wextra -Werror "${FLAGS[@]}" -I"$SRC" -o "$WORK/auth_thread_test" \

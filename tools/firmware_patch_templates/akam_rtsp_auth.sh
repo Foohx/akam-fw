@@ -99,21 +99,39 @@ prepare_dir() {
     chmod 700 "$AUTH_DIR" 2>/dev/null
 }
 
+# Staged files are ours alone (.new.PID): remove them on any exit, including INT/TERM/HUP, so a killed run
+# leaves no half-written copy of a secret next to the real files. Leftovers of a run that was SIGKILLed are
+# swept at the start of the next one.
+tmp_guard_on() {
+    rm -f "$AUTH_FILE".new.* "$PLAIN_FILE".new.* 2>/dev/null
+    trap 'rm -f "$AUTH_FILE.new.$$" "$PLAIN_FILE.new.$$"' EXIT
+    trap 'rm -f "$AUTH_FILE.new.$$" "$PLAIN_FILE.new.$$"; exit 1' INT TERM HUP
+}
+tmp_guard_off() {
+    trap - EXIT INT TERM HUP
+}
+
 # Write "USER:akam:HA1" atomically, 0600, directory 0700. The plain-text copy, which this
 # line cannot vouch for, is removed.
 install_line() {
     prepare_dir
+    tmp_guard_on
     stage "$AUTH_FILE" "$1"
     _t1=$_tmp
     sync
     mv -f "$_t1" "$AUTH_FILE" 2>/dev/null || { rm -f "$_t1"; die "cannot replace $AUTH_FILE"; }
     rm -f "$PLAIN_FILE"
     sync
+    tmp_guard_off
 }
 
-# install_both USER HA1 PASSWORD: stage both files, then move both into place.
+# install_both USER HA1 PASSWORD: stage both files, then move them into place, htdigest FIRST and the plain-text
+# copy second. If the first move fails nothing has changed. If the second fails the new htdigest file is in place
+# and the old plain-text copy no longer matches it: that copy is removed, so ONVIF WS-Security fails closed (no
+# plain credentials) instead of accepting the old password; RTSP already uses the new one.
 install_both() {
     prepare_dir
+    tmp_guard_on
     stage "$AUTH_FILE" "$1:$REALM:$2"
     _t1=$_tmp
     _tmp=$PLAIN_FILE.new.$$
@@ -122,9 +140,14 @@ install_both() {
     chmod 600 "$_tmp" 2>/dev/null
     _t2=$_tmp
     sync
-    mv -f "$_t2" "$PLAIN_FILE" 2>/dev/null || { rm -f "$_t1" "$_t2"; die "cannot replace $PLAIN_FILE"; }
-    mv -f "$_t1" "$AUTH_FILE" 2>/dev/null || { rm -f "$_t1"; die "cannot replace $AUTH_FILE"; }
+    mv -f "$_t1" "$AUTH_FILE" 2>/dev/null || { rm -f "$_t1" "$_t2"; die "cannot replace $AUTH_FILE; nothing changed"; }
+    if ! mv -f "$_t2" "$PLAIN_FILE" 2>/dev/null; then
+        rm -f "$_t2" "$PLAIN_FILE"
+        sync
+        die "cannot replace $PLAIN_FILE: the RTSP password is changed but ONVIF has no plain-text copy (ONVIF refuses logins); run set again"
+    fi
     sync
+    tmp_guard_off
 }
 
 # Read the current file: sets CUR_USER and returns 0 (valid), 1 (absent), 3 (invalid).
