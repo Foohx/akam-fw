@@ -23,6 +23,10 @@ void ae_stop(void);
  * sample has been taken yet (AE thread not started or hasn't ticked once). */
 int ae_get_last_stats(int *lum, uint32_t *hw_exp, uint32_t *hw_sgain, uint32_t *hw_isp);
 
+/* The AE's own maximum sensor gain and ISP gain (Q8, 256 = 1.0x) from the exposure block, refreshed by every
+ * ae_set_tuning(). Both 0 until the first one succeeded. */
+void ae_get_limits(uint32_t *sgain_max, uint32_t *isp_gain_max);
+
 /* Updates the same last-known-stats globals ae_get_last_stats() reads. Called by ae_loop()
  * normally; also called by aec_custom.c's loop when built with AEC_CUSTOM, so night.c/control.c
  * keep working unchanged regardless of which tick loop is actually driving exposure. */
