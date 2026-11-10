@@ -45,6 +45,7 @@ SRCS    = main.c \
           vi.c \
           venc.c \
           audio.c \
+          audio_out.c \
           rtsp.c \
           h264_params.c \
           rtp_clock.c \
@@ -57,6 +58,8 @@ SRCS    = main.c \
           ae.c \
           aec_custom.c \
           night.c \
+          g711.c \
+          audio_jitter.c \
           control.c \
           version.c \
           $(wildcard ../smolrtsp/src/*.c) \
