@@ -6,7 +6,13 @@
 #   sh /tmp/sd/stock_capture/stock_capture.sh check          read-only verification, changes nothing
 #   sh /tmp/sd/stock_capture/stock_capture.sh run [SECONDS]  capture (default 120 s), then restore
 #   sh /tmp/sd/stock_capture/stock_capture.sh restore        undo everything (safe to repeat)
-#   options (before the command): --force (ignore a stock-check mismatch)  --keep-mute
+#   options: --force (ignore a stock-check mismatch)  --keep-mute
+#            --daynight          image / day-night run (default 300 s) with two prompts: cover the lens
+#                                at t=60 s, uncover it at t=180 s
+#            --phase SEC:TEXT    a prompt of your own at SEC seconds (repeatable; "_" shows as a space)
+#            --keep-start-counter  do not reset /tmp/camera_start_times (RAM) before the restart
+#            --no-sync           do not fsync the logs on the card once every 2 s
+#   While a run is going on, a line you type (then Enter) is recorded as a note with its time.
 #
 # How it works, and why it is safe:
 #   * Nothing is written to flash or /etc/config. Everything is RAM (tmpfs /tmp) or the SD card.
@@ -23,6 +29,11 @@
 #     HUP (lost telnet) run the restore; after a SIGKILL of the script, run "restore".
 #   * If the watchdog does not respawn anyka_ipc, the script gives up after 60 s and restores;
 #     the stock watchdog may then reboot the board, which just returns it to the stock state.
+#   * If the camera reboots DURING a run (the first real run did, ~15 s after the restart), nothing
+#     has to be undone: the binds, the wrapper and the state live in RAM and are gone. The logs
+#     written so far stay on the card, fsync'd every 2 s, and timeline.log has a line per second
+#     (uptime, anyka_ipc alive or not, load, free RAM, /tmp/camera_start_times) so the last moment
+#     is known. run.meta says "status=running" until the run ends; the next check/run reports it.
 #
 # Paths are prefixed by $AKAM_ROOT (empty on the camera) so the host test can use a fake root.
 
@@ -35,7 +46,15 @@ IPC=/usr/bin/anyka_ipc
 MTDDEV=$ROOT/dev/mtdblock7
 FORCE=0
 KEEP_MUTE=0
-MIN_FREE_KB=${STOCK_CAPTURE_MIN_FREE_KB:-30000}
+MIN_FREE_KB=${STOCK_CAPTURE_MIN_FREE_KB:-80000}   # caps: 12 + 12 + 24 MiB of logs + small files
+FSYNC_EVERY=${STOCK_CAPTURE_FSYNC:-2}   # seconds between fsyncs of the logs on the card (0 = never)
+MAX_SECS=3600
+MIN_SECS=${STOCK_CAPTURE_MIN_SECS:-10}
+PHASES=
+FIRED=
+KEEP_COUNTER=0
+INTERACTIVE=0
+SECS_GIVEN=0
 WAIT_RESPAWN=${STOCK_CAPTURE_WAIT:-60}
 ACTIVE=0
 RESTORED=0
@@ -56,6 +75,47 @@ need_cmds() {
         have "$need" || { fail "missing command: $need"; return 1; }
     done
     return 0
+}
+
+# ----------------------------------------------------------------------------- run record
+# meta LINE: append to run.meta (SD card). The status line is the last "status=" one.
+meta() { [ -n "$RUNDIR" ] && echo "$*" >>"$RUNDIR/run.meta"; }
+# stamp: "up=<uptime of the camera> t=<seconds since the capture began>" (up is the same clock as
+# mono_ms of HOOK_START in stock_hook.log, so the parser can line the two up)
+stamp() {
+    up=
+    read -r up _ 2>/dev/null <"$ROOT/proc/uptime"
+    echo "up=${up:-0} t=${T_NOW:-0}"
+}
+# tl EVENT [TEXT...]: one line in timeline.log (SD card)
+tl() {
+    ev=$1; shift
+    [ -n "$RUNDIR" ] && echo "$(stamp) ev=$ev $*" >>"$RUNDIR/timeline.log"
+}
+# sync_files FILE...: fsync those files of the run (file by file: dd conv=fsync on an empty read;
+# the global sync would also flush the flash file systems). A hard reboot then loses ~2 s at most.
+FSYNC_FAILS=0
+sync_files() {
+    [ "$FSYNC_EVERY" -gt 0 ] && [ "$FSYNC_FAILS" -lt 2 ] || return 0
+    for f in "$@"; do
+        [ -f "$RUNDIR/$f" ] || continue
+        dd if=/dev/null of="$RUNDIR/$f" conv=notrunc,fsync >/dev/null 2>&1 || FSYNC_FAILS=$((FSYNC_FAILS + 1))
+    done
+    if [ "$FSYNC_FAILS" -ge 2 ]; then warn "dd conv=fsync does not work here: logs are no longer fsync'd"; fi
+}
+# runs left behind by a camera that rebooted (or a script that was killed) during a capture
+scan_interrupted() {
+    [ -n "$SD" ] || return 0
+    for m in "$SD"/stock_capture/run*/run.meta; do
+        [ -f "$m" ] || continue
+        st=$(sed -n 's/^status=//p' "$m" | tail -n 1)
+        [ "$st" = running ] || continue
+        d=${m%/run.meta}
+        last=$(tail -n 1 "$d/timeline.log" 2>/dev/null)
+        warn "${d##*/} never finished (the camera rebooted or the script was killed during it)"
+        info "   its logs are complete up to the last fsync; last heartbeat: ${last:-none}"
+        echo "status=interrupted" >>"$m"
+    done
 }
 
 mounts_file() { echo "$ROOT/proc/mounts"; }
@@ -121,7 +181,7 @@ check_sd() {
         *) if [ "$free" -lt "$MIN_FREE_KB" ]; then fail "only $free KiB free on the card (need $MIN_FREE_KB)"; return 1; fi
            ok "$free KiB free on the card" ;;
     esac
-    need_cmds awk grep sed cp dd df find md5sum mount umount sleep kill pidof ls rm rmdir ln wc tail date sync || return 1
+    need_cmds awk chmod grep sed cp dd df find md5sum mount umount sleep kill pidof ls rm rmdir ln wc tail date sync || return 1
     return 0
 }
 
@@ -219,13 +279,51 @@ restore() {
     ACTIVE=0
 }
 
-on_signal() { echo "signal received: restoring"; restore; exit 130; }
+on_signal() {
+    echo "signal received: restoring"
+    meta "status=signal"
+    restore
+    exit 130
+}
 on_exit()   { [ "$ACTIVE" = 1 ] && restore; }
 
 # ----------------------------------------------------------------------------- run
+# wait_tick: one second. With a terminal, a typed line (Enter) is recorded as a note. busybox ash
+# has "read -t"; it returns 1 on a timeout (like on end of input), so an immediate return (the
+# clock second did not change) three times in a row means there is no usable terminal after all:
+# plain sleep from then on. A quick return is always padded with sleep so a tick stays ~1 s.
+QUICK=0
+wait_tick() {
+    if [ "$INTERACTIVE" != 1 ]; then
+        sleep 1
+        return
+    fi
+    note=
+    t_a=$(date +%s)
+    # shellcheck disable=SC3045
+    read -r -t 1 note 2>/dev/null
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$note" ]; then
+        tl NOTE "text=$note"
+        echo "note_t${T_NOW}=$note" >>"$RUNDIR/run.meta"
+        echo "  (note saved at t=${T_NOW}s)"
+    fi
+    if [ "$rc" -ne 0 ] && [ "$(date +%s)" = "$t_a" ]; then
+        QUICK=$((QUICK + 1))
+        [ "$QUICK" -ge 3 ] && INTERACTIVE=0
+        sleep 1
+    else
+        QUICK=0
+    fi
+}
+
 do_run() {
     secs=$1
     case $secs in '' | *[!0-9]*) die "SECONDS must be a number" 2 ;; esac
+    [ "$secs" -ge "$MIN_SECS" ] && [ "$secs" -le "$MAX_SECS" ] || die "SECONDS must be between $MIN_SECS and $MAX_SECS" 2
+    for ph in $PHASES; do
+        [ "${ph%%:*}" -lt "$secs" ] || die "phase $ph is not before the end of the run (${secs}s)" 2
+    done
     if [ -f "$STATE/active" ]; then
         info "a previous run left its state behind: restoring it first"
         find_sd
@@ -234,6 +332,7 @@ do_run() {
     fi
     verify_stock || exit 2
     check_sd || exit 2
+    scan_interrupted
     n=1
     while :; do
         RUNDIR=$SD/stock_capture/run$(printf '%02d' "$n")
@@ -297,8 +396,14 @@ do_run() {
     ok "wrapper bound over $IPC (the watchdog is untouched)"
 
     old=$(first_pid anyka_ipc)
+    SC=$ROOT/tmp/camera_start_times
+    sc_before=$(cat "$SC" 2>/dev/null)
     {
         echo "script=stock_capture.sh"
+        echo "status=running"
+        echo "start_times_before=${sc_before:-absent}"
+        echo "phases=${PHASES:-none}"
+        echo "fsync_every=$FSYNC_EVERY"
         echo "date=$(date 2>/dev/null)"
         echo "uptime=$(awk '{ print $1 }' "$ROOT/proc/uptime" 2>/dev/null)"
         echo "kernel=$(cat "$ROOT/proc/version" 2>/dev/null)"
@@ -310,6 +415,16 @@ do_run() {
         echo "sd=$SD"
     } >"$RUNDIR/run.meta"
 
+    # anyka_ipc counts its starts in /tmp/camera_start_times (RAM; the stock service.sh writes 0 there
+    # at every boot) and its signal handler / start-up code can run "sh recover_cfg.sh; reboot -f".
+    # Whether that played a part in the reboot of the first run is NOT proven; the value is recorded
+    # (here, after the respawn and in every timeline line) and reset to what a fresh boot has.
+    if [ "$KEEP_COUNTER" = 0 ] && [ -n "$sc_before" ]; then
+        echo 0 >"$SC" 2>/dev/null && info "start counter /tmp/camera_start_times was $sc_before, reset to 0 (RAM only; --keep-start-counter skips this)"
+        echo "start_times_reset=yes" >>"$RUNDIR/run.meta"
+    else
+        info "start counter /tmp/camera_start_times: ${sc_before:-absent}, left as it is"
+    fi
     info "killing only anyka_ipc (pid $old); the watchdog respawns it with the hook"
     kill -TERM "$old" 2>/dev/null
     i=0
@@ -327,6 +442,7 @@ do_run() {
     [ -n "$new" ] || { fail "anyka_ipc did not come back within ${WAIT_RESPAWN}s"; return 1; }
     ok "anyka_ipc respawned, pid $new"
     echo "new_pid=$new" >>"$RUNDIR/run.meta"
+    echo "start_times_after_respawn=$(cat "$SC" 2>/dev/null)" >>"$RUNDIR/run.meta"
     i=0
     while [ "$i" -lt 30 ]; do
         if grep -q stock_hook.so "$ROOT/proc/$new/maps" 2>/dev/null; then break; fi
@@ -341,19 +457,77 @@ do_run() {
     ok "stock_hook.so is loaded in anyka_ipc"
     echo "hook_loaded=yes" >>"$RUNDIR/run.meta"
     echo "Listen now: the camera may speak (factory prompts are un-muted). Capturing for ${secs}s."
+    if [ -n "$PHASES" ]; then
+        echo "Prompts that will appear (then do what they say, nothing else):"
+        for ph in $PHASES; do echo "    t=${ph%%:*}s  $(echo "${ph#*:}" | sed 's/_/ /g')"; done
+    fi
+    if [ -t 0 ]; then
+        INTERACTIVE=1
+        echo "You can type a note and press Enter at any time; it is saved with its time (e.g. \"room dark now\")."
+    fi
+    echo "If the camera reboots during the run, nothing needs undoing: power-cycle is not even needed,"
+    echo "wait for it, then see docs/stock_capture.md (logs on the card are fsync'd every ${FSYNC_EVERY}s)."
+    echo
 
+    T_NOW=0
+    tl START "pid=$new hook=yes"
     t=0
     snapped=0
+    cur=$new
     while [ "$t" -lt "$secs" ]; do
-        sleep "$TICK"
-        t=$((t + TICK))
+        wait_tick
+        t=$((t + 1))
+        T_NOW=$t
+        # one heartbeat per second: this is what tells the last moment alive after a reboot
+        mem=
+        while read -r k v _; do [ "$k" = MemFree: ] && { mem=$v; break; }; done 2>/dev/null <"$ROOT/proc/meminfo"
+        read -r load _ 2>/dev/null <"$ROOT/proc/loadavg"
+        st=
+        read -r st 2>/dev/null <"$SC"
+        if kill -0 "$cur" 2>/dev/null; then alive_s=alive; else alive_s=GONE; fi
+        tl TICK "ipc=$alive_s pid=$cur load=${load:-?} memfree_kb=${mem:-?} start_times=${st:-absent}"
+        for ph in $PHASES; do
+            case " $FIRED " in *" $ph "*) continue ;; esac
+            if [ "$t" -ge "${ph%%:*}" ]; then
+                FIRED="$FIRED $ph"
+                txt=$(echo "${ph#*:}" | sed 's/_/ /g')
+                echo
+                echo ">>>>>>>>>> t=${t}s: $txt <<<<<<<<<<"
+                echo
+                tl PHASE "text=$txt"
+                echo "phase_${ph%%:*}=$txt (really at t=$t)" >>"$RUNDIR/run.meta"
+            fi
+        done
+        if [ $((t % 5)) -eq 0 ]; then       # a restart of anyka_ipc in the middle of a run = it crashed
+            now=$(first_pid anyka_ipc)
+            if [ -n "$now" ] && [ "$now" != "$cur" ]; then
+                warn "anyka_ipc restarted: pid $cur -> $now (it crashed or was killed); the hook keeps capturing"
+                tl IPC_RESTART "old=$cur new=$now"
+                cur=$now
+                alive_s=alive
+            fi
+        fi
+        if [ "$FSYNC_EVERY" -gt 0 ] && [ $((t % FSYNC_EVERY)) -eq 0 ]; then
+            sync_files stock_hook.log isp_hook.log isp_blocks.bin timeline.log
+        fi
+        if [ $((t % 10)) -eq 0 ]; then     # small rolling snapshots, overwritten, kept after a reboot
+            dmesg 2>/dev/null | tail -n 60 >"$RUNDIR/dmesg_live.txt"
+            tail -n 30 "$ROOT/etc/config/log_debug" >"$RUNDIR/anyka_debug_live.txt" 2>/dev/null
+            # shellcheck disable=SC2009
+            if have ps; then { echo "== $(stamp)"; ps 2>/dev/null | grep -v '\['; } >>"$RUNDIR/ps_live.txt"; fi
+            sync_files run.meta dmesg_live.txt anyka_debug_live.txt ps_live.txt
+        fi
         if [ "$snapped" = 0 ] && [ "$t" -ge 20 ]; then
-            ls -l "$ROOT/proc/$new/fd" >"$RUNDIR/fd_start.txt" 2>&1
+            ls -l "$ROOT/proc/$cur/fd" >"$RUNDIR/fd_start.txt" 2>&1
             snapped=1
         fi
-        sz=$(wc -c <"$RUNDIR/stock_hook.log" 2>/dev/null)
-        echo "  t=${t}s stock_hook.log=${sz:-0} bytes, anyka_ipc $(kill -0 "$new" 2>/dev/null && echo alive || echo GONE)"
+        if [ $((t % TICK)) -eq 0 ]; then
+            sz=$(wc -c <"$RUNDIR/stock_hook.log" 2>/dev/null)
+            echo "  t=${t}s stock_hook.log=${sz:-0} bytes, anyka_ipc $alive_s (pid $cur), start_times=${st:-absent}, free=${mem:-?} kB"
+        fi
     done
+    tl END "t=$t"
+    new=$cur
     ls -l "$ROOT/proc/$new/fd" >"$RUNDIR/fd_end.txt" 2>&1
     cp "$ROOT/proc/$new/maps" "$RUNDIR/maps_end.txt" 2>/dev/null
 
@@ -372,6 +546,7 @@ do_run() {
 finish() {
     rc=$1
     restore
+    meta "status=finished rc=$rc"
     if [ -n "$RUNDIR" ] && [ -d "$RUNDIR" ]; then
         cp "$(mounts_file)" "$RUNDIR/mounts_after.txt" 2>/dev/null
         snap_config "$RUNDIR/config_after.txt"
@@ -396,18 +571,30 @@ while [ $# -gt 0 ]; do
     case $1 in
         --force) FORCE=1 ;;
         --keep-mute) KEEP_MUTE=1 ;;
-        -h | --help | help) sed -n '2,12p' "$0"; exit 0 ;;
+        --keep-start-counter) KEEP_COUNTER=1 ;;
+        --no-sync) FSYNC_EVERY=0 ;;
+        --daynight) PHASES="$PHASES 60:COVER_THE_LENS_NOW_(and_keep_the_room_dark) 180:UNCOVER_THE_LENS_NOW" ;;
+        --phase)
+            [ $# -ge 2 ] || die "--phase needs SEC:TEXT" 2
+            shift
+            case $1 in [0-9]*:?*) ;; *) die "--phase needs SEC:TEXT, got: $1" 2 ;; esac
+            case ${1%%:*} in *[!0-9]*) die "--phase needs SEC:TEXT, got: $1" 2 ;; esac
+            PHASES="$PHASES $(echo "$1" | sed 's/[[:space:]][[:space:]]*/_/g')"
+            ;;
+        -h | --help | help) sed -n '2,20p' "$0"; exit 0 ;;
         check | run | restore | status) CMD=$1 ;;
-        *) if [ "$CMD" = run ]; then SECS=$1; else die "unknown argument: $1" 2; fi ;;
+        *) if [ "$CMD" = run ]; then SECS=$1; SECS_GIVEN=1; else die "unknown argument: $1" 2; fi ;;
     esac
     shift
 done
-[ -n "$CMD" ] || { sed -n '2,12p' "$0"; exit 2; }
+[ -n "$CMD" ] || { sed -n '2,20p' "$0"; exit 2; }
+# a day/night run needs the time to cover and uncover the lens
+case $PHASES in *COVER_THE_LENS_NOW*) [ "$SECS_GIVEN" = 1 ] || SECS=300 ;; esac
 
 case $CMD in
     check)
         verify_stock
-        check_sd
+        check_sd && scan_interrupted
         if [ "$N_FAIL" -eq 0 ]; then echo "CHECK: OK, nothing was changed"; exit 0; fi
         echo "CHECK: $N_FAIL problem(s)"
         exit 1

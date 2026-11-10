@@ -36,7 +36,7 @@ hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1";
 BIN=$WORK/bin
 mkdir -p "$BIN"
 # (no cut, dirname, basename, tr, mktemp, nohup, flock, gzip, wget: the script must not need them)
-for a in awk cat cp date df diff dd find grep ln ls md5sum mkdir rm rmdir sed sha256sum \
+for a in awk cat chmod cp date df diff dd find grep ln ls md5sum mkdir rm rmdir sed sha256sum \
          sleep sync tail wc; do
     ln -s "$BB" "$BIN/$a"
 done
@@ -62,6 +62,9 @@ printf 'mtd7: 00500000 00001000 "APP"\n' >"$R/proc/mtd"
 printf 'fake-app-partition' >"$R/dev/mtdblock7"
 SHA=$(sha256sum "$R/dev/mtdblock7" | cut -d' ' -f1)
 echo "12.34 5.67" >"$R/proc/uptime"
+printf '0.52 0.40 0.30 1/80 1234\n' >"$R/proc/loadavg"
+printf 'MemTotal:       22000 kB\nMemFree:         9000 kB\n' >"$R/proc/meminfo"
+echo 3 >"$R/tmp/camera_start_times"
 cat >"$R/proc/mounts" <<'EOF'
 /dev/mtdblock7 /usr squashfs ro 0 0
 /dev/mmcblk0p1 /tmp/sd vfat rw 0 0
@@ -160,7 +163,7 @@ IPC0=$(cat "$R/tmp/ipc.pid")
 
 runscript() { # args -> script args; output in $WORK/out.txt
     env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 \
-        STOCK_CAPTURE_WAIT=15 STOCK_CAPTURE_MIN_FREE_KB=1 "${SHCMD[@]}" "$SCRIPT" "$@" >"$WORK/out.txt" 2>&1
+        STOCK_CAPTURE_WAIT=15 STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" "$@" >"$WORK/out.txt" 2>&1
 }
 
 cfg_sum() { ( cd "$R/etc/config" && sha256sum _ht_hw_settings.ini _ht_sw_settings.ini keep.txt | sort ); }
@@ -199,6 +202,9 @@ has "only anyka_ipc killed and respawned" 'anyka_ipc respawned, pid [0-9]+' "$WO
 has "hook loaded check" 'stock_hook.so is loaded in anyka_ipc' "$WORK/out.txt"
 has "restore re-mutes" 're-muted /usr/share/boot.mp3' "$WORK/out.txt"
 has "restore respawns without the hook" 'respawned by the watchdog without the hook' "$WORK/out.txt"
+has "the start counter is reported and reset" 'start counter /tmp/camera_start_times was 3, reset to 0' "$WORK/out.txt"
+has "a reboot hint is printed before the capture starts" 'If the camera reboots during the run' "$WORK/out.txt"
+has "progress line shows the heartbeat data" 't=2s stock_hook.log=[0-9]+ bytes, anyka_ipc alive \(pid [0-9]+\), start_times=0, free=9000 kB' "$WORK/out.txt"
 has "config unchanged verdict" '/etc/config unchanged during the capture' "$WORK/out.txt"
 RUN=$R/tmp/sd/stock_capture/run01
 if [ -d "$RUN" ]; then ok "capture folder run01 created on the card"; else ko "no run01"; fi
@@ -206,6 +212,17 @@ has "wrapper preloads the RAM copy of the hook" '^LD_PRELOAD=/tmp/stock_capture/
 has "wrapper execs the real binary through the /usr bind" '^exec /tmp/stock_capture/app/bin/anyka_ipc "\$@"$' "$R/tmp/wrapper.seen"
 has "run.meta records the hook" 'hook_loaded=yes' "$RUN/run.meta"
 has "run.meta records the stock hash" "mtd7_sha256=$SHA" "$RUN/run.meta"
+has "run.meta status is finished at the end" '^status=finished rc=0$' "$RUN/run.meta"
+has "run.meta says the run was in progress first" '^status=running$' "$RUN/run.meta"
+has "run.meta: start counter before the restart" '^start_times_before=3$' "$RUN/run.meta"
+has "run.meta: start counter reset" '^start_times_reset=yes$' "$RUN/run.meta"
+has "run.meta: fsync interval" '^fsync_every=2$' "$RUN/run.meta"
+if [ "$(cat "$R/tmp/camera_start_times")" = 0 ]; then ok "RAM start counter file reset to 0"; else ko "start counter file: $(cat "$R/tmp/camera_start_times")"; fi
+has "timeline: a start line" 'up=12.34 t=0 ev=START pid=[0-9]+ hook=yes' "$RUN/timeline.log"
+has "timeline: one heartbeat per second with uptime, load, free RAM and the start counter" 'up=12.34 t=1 ev=TICK ipc=alive pid=[0-9]+ load=0.52 memfree_kb=9000 start_times=0' "$RUN/timeline.log"
+has "timeline: an end line" 'ev=END t=2' "$RUN/timeline.log"
+has "the fsync helper (dd conv=notrunc) did not truncate the hook log" 'HOOK_START' "$RUN/stock_hook.log"
+if [ -s "$RUN/dmesg_live.txt" ] || [ "$(wc -l <"$RUN/timeline.log")" -ge 3 ]; then ok "rolling snapshots or timeline present"; else ko "no live data"; fi
 if [ -s "$RUN/stock_hook.log" ]; then ok "log written through the card symlink"; else ko "no log in run01"; fi
 if [ -s "$RUN/dmesg.txt" ]; then ok "dmesg saved"; else ko "no dmesg"; fi
 if [ -f "$RUN/fd_end.txt" ]; then ok "descriptor listing saved"; else ko "no fd_end.txt"; fi
@@ -220,14 +237,108 @@ if grep -q 'umount /usr/bin/anyka_ipc' "$R/tmp/mount.log"; then ok "wrapper unmo
 if head -n 1 "$R/usr/bin/anyka_ipc" | grep -q REAL-ANYKA; then ok "the real anyka_ipc is visible again"; else ko "wrapper content still on /usr/bin/anyka_ipc"; fi
 
 # --- second run (safe to repeat) -------------------------------------------------------------------
-runscript run 2; rc=$?
-if [ "$rc" -eq 0 ]; then ok "second run exits 0"; else ko "second run exit $rc"; cat "$WORK/out.txt"; fi
+echo 5 >"$R/tmp/camera_start_times"
+runscript run 5 --phase 2:COVER_THE_LENS --phase 4:uncover --keep-start-counter --no-sync; rc=$?
+if [ "$rc" -eq 0 ]; then ok "second run (with phases) exits 0"; else ko "second run exit $rc"; cat "$WORK/out.txt"; fi
 if [ -d "$R/tmp/sd/stock_capture/run02" ]; then ok "second run gets its own folder run02"; else ko "no run02"; fi
+RUN2=$R/tmp/sd/stock_capture/run02
+has "the prompts are announced before the capture" 't=2s  COVER THE LENS' "$WORK/out.txt"
+has "a prompt is shown at its time" '>>>>>>>>>> t=2s: COVER THE LENS <<<<<<<<<<' "$WORK/out.txt"
+has "the second prompt too" '>>>>>>>>>> t=4s: uncover <<<<<<<<<<' "$WORK/out.txt"
+has "timeline records the prompt with the uptime" 'up=12.34 t=2 ev=PHASE text=COVER THE LENS' "$RUN2/timeline.log"
+has "run.meta records the prompts" '^phase_4=uncover \(really at t=4\)$' "$RUN2/run.meta"
+has "--keep-start-counter: no reset" '^start_times_before=5$' "$RUN2/run.meta"
+hasnt "--keep-start-counter: no reset line in run.meta" 'start_times_reset' "$RUN2/run.meta"
+if [ "$(cat "$R/tmp/camera_start_times")" = 5 ]; then ok "--keep-start-counter leaves the file alone"; else ko "counter changed: $(cat "$R/tmp/camera_start_times")"; fi
+has "--no-sync is recorded" '^fsync_every=0$' "$RUN2/run.meta"
 if diff "$WORK/mounts.initial" "$R/proc/mounts" >/dev/null; then ok "mount table identical after the second run"; else ko "mount table differs after run 2"; fi
+
+# --- argument checks ---------------------------------------------------------------------------------
+runscript run 6 --daynight; rc=$?
+if [ "$rc" -eq 2 ]; then ok "a prompt after the end of the run is refused"; else ko "late prompt accepted (exit $rc)"; fi
+has "...with a clear message" 'phase 60:COVER.* is not before the end of the run \(6s\)' "$WORK/out.txt"
+runscript run 99999; rc=$?
+if [ "$rc" -eq 2 ]; then ok "an absurd duration is refused"; else ko "99999 s accepted"; fi
+runscript run 5 --phase abc; rc=$?
+if [ "$rc" -eq 2 ]; then ok "a malformed --phase is refused"; else ko "--phase abc accepted"; fi
+if [ ! -d "$R/tmp/sd/stock_capture/run03" ]; then ok "refused runs create no folder"; else ko "a refused run made run03"; fi
+
+# --- a day/night run: default 300 s, prompts at 60 s and 180 s listed up front; then SIGTERM -----------------
+env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
+    STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" run --daynight >"$WORK/dn.txt" 2>&1 &
+SP=$!
+for _ in $(seq 1 40); do grep -q 'Capturing for' "$WORK/dn.txt" 2>/dev/null && break; sleep 0.5; done
+has "--daynight defaults to 300 s" 'Capturing for 300s' "$WORK/dn.txt"
+has "--daynight announces the cover prompt at 60 s" 't=60s  COVER THE LENS NOW' "$WORK/dn.txt"
+has "--daynight announces the uncover prompt at 180 s" 't=180s  UNCOVER THE LENS NOW' "$WORK/dn.txt"
+kill -TERM "$SP" 2>/dev/null
+wait "$SP" 2>/dev/null
+has "SIGTERM ends a day/night run with a restore" 'signal received: restoring' "$WORK/dn.txt"
+RUN3=$R/tmp/sd/stock_capture/run03
+has "a signal is recorded in run.meta" '^status=signal$' "$RUN3/run.meta"
+
+# --- the camera reboots DURING a run: simulated by SIGKILL of the script (no restore, no status) ------------
+env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
+    STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/kill.txt" 2>&1 &
+SP=$!
+for _ in $(seq 1 40); do grep -q 't=3s' "$WORK/kill.txt" 2>/dev/null && break; sleep 0.5; done
+kill -KILL "$SP" 2>/dev/null
+wait "$SP" 2>/dev/null
+RUN4=$R/tmp/sd/stock_capture/run04
+has "after the kill the card has the heartbeat up to the last second" 'ev=TICK ipc=alive' "$RUN4/timeline.log"
+has "after the kill run.meta still says running" '^status=running$' "$RUN4/run.meta"
+if [ -f "$STATE/active" ]; then ok "RAM state is still there (a real reboot would have cleared it)"; else ko "no state after SIGKILL"; fi
+runscript restore; rc=$?
+if [ "$rc" -eq 0 ]; then ok "restore after the kill exits 0"; else ko "restore after the kill exit $rc"; fi
+runscript check; rc=$?
+if [ "$rc" -eq 0 ]; then ok "check still passes"; else ko "check exit $rc"; fi
+has "the interrupted run is reported by the next check" 'run04 never finished' "$WORK/out.txt"
+has "...with its last heartbeat" 'last heartbeat: up=12.34 t=[0-9]+ ev=TICK' "$WORK/out.txt"
+has "...and marked in run.meta" '^status=interrupted$' "$RUN4/run.meta"
+runscript check; rc=$?
+hasnt "an interrupted run is reported once" 'run04 never finished' "$WORK/out.txt"
+if diff "$WORK/mounts.initial" "$R/proc/mounts" >/dev/null; then ok "mount table restored after the kill"; else ko "mounts not restored after the kill"; fi
+
+# --- a typed note is saved with its time (needs a terminal: python3 pty) ---------------------------------------------
+if command -v python3 >/dev/null 2>&1; then
+    python3 -I - "$BB" "$SCRIPT" "$BIN" "$R" "$SHA" >"$WORK/pty.txt" 2>&1 <<'PYEOF'
+import os, pty, sys, time, select
+bb, script, binp, root, sha = sys.argv[1:6]
+env = {"PATH": binp, "AKAM_ROOT": root, "STOCK_CAPTURE_SHA": sha, "STOCK_CAPTURE_TICK": "1",
+       "STOCK_CAPTURE_WAIT": "15", "STOCK_CAPTURE_MIN_FREE_KB": "1", "STOCK_CAPTURE_MIN_SECS": "1"}
+pid, fd = pty.fork()
+if pid == 0:
+    os.execve(bb, [bb, "sh", script, "run", "8"], env)
+out = b""
+sent = False
+deadline = time.time() + 60
+while time.time() < deadline:
+    r, _, _ = select.select([fd], [], [], 0.5)
+    if r:
+        try:
+            d = os.read(fd, 4096)
+        except OSError:
+            break
+        if not d:
+            break
+        out += d
+        if not sent and b"Capturing for" in out:
+            time.sleep(1.2)
+            os.write(fd, b"room is dark now\n")
+            sent = True
+sys.stdout.write(out.decode("utf-8", "replace"))
+PYEOF
+    has "a terminal run offers notes" 'type a note and press Enter' "$WORK/pty.txt"
+    has "a typed note is acknowledged" 'note saved at t=[0-9]+s' "$WORK/pty.txt"
+    LASTRUN=$(ls -d "$R"/tmp/sd/stock_capture/run* | tail -n 1)
+    has "the note is in the timeline with its time" 'up=12.34 t=[0-9]+ ev=NOTE text=room is dark now' "$LASTRUN/timeline.log"
+    has "...and in run.meta" '^note_t[0-9]+=room is dark now$' "$LASTRUN/run.meta"
+    has "the run still ends normally after a note" '^status=finished rc=0$' "$LASTRUN/run.meta"
+fi
 
 # --- restore on a signal ----------------------------------------------------------------------------
 env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
-    STOCK_CAPTURE_MIN_FREE_KB=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/sig.txt" 2>&1 &
+    STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/sig.txt" 2>&1 &
 SP=$!
 for _ in $(seq 1 40); do grep -q 'Capturing for' "$WORK/sig.txt" 2>/dev/null && break; sleep 0.5; done
 kill -TERM "$SP" 2>/dev/null
@@ -239,7 +350,7 @@ if kill -0 "$WDPID" 2>/dev/null; then ok "watchdog still alive after the signal"
 # a wrapper that cannot be unmounted: nothing else is removed, a second restore finishes the job
 touch "$R/tmp/umount.fail"
 env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
-    STOCK_CAPTURE_MIN_FREE_KB=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/sig2.txt" 2>&1 &
+    STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/sig2.txt" 2>&1 &
 SP=$!
 for _ in $(seq 1 40); do grep -q 'Capturing for' "$WORK/sig2.txt" 2>/dev/null && break; sleep 0.5; done
 kill -TERM "$SP" 2>/dev/null
