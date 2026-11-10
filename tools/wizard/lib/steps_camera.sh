@@ -1360,6 +1360,56 @@ cmd_led() {
     led_show
 }
 
+# ------------------------------------------------------------------ debug
+# Port 8091 is read-only for the network: reads (LIST, GET, metrics) work, SET/SAVE/RESET are refused
+# unless the command comes from the camera itself (SSH helpers such as ./akam led) or the debug flag
+# is on (specs/07-spec-standard-protocols.md section 4). This command turns that RAM-only flag on or
+# off over SSH with akam_debug.sh, for example to use the PC tuning tool. Off at every reboot.
+#   ./akam debug status        is it on, and for how long
+#   ./akam debug on [MINUTES]  allow writes from the network (default 60 minutes, 1 to 1440)
+#   ./akam debug off           read-only again
+DEBUG_CMD=/usr/sbin/akam_debug.sh
+
+cmd_debug() {
+    local action=${1:-status} min=""
+    case $action in
+        on)
+            [ $# -le 2 ] || { echo "akam: debug on takes at most one number of minutes (see ./akam help)" >&2; return 2; }
+            min=${2:-}
+            if [ $# -eq 2 ]; then
+                case $min in '' | *[!0-9]*) echo "akam: debug on: MINUTES must be a whole number from 1 to 1440 (see ./akam help)" >&2; return 2 ;; esac
+                if [ "$min" -lt 1 ] || [ "$min" -gt 1440 ]; then
+                    echo "akam: debug on: MINUTES must be a whole number from 1 to 1440 (see ./akam help)" >&2
+                    return 2
+                fi
+            fi
+            ;;
+        off | status) [ $# -le 1 ] || { echo "akam: debug $action takes no argument (see ./akam help)" >&2; return 2; } ;;
+        *) echo "akam: debug needs on [MINUTES], off or status (see ./akam help)" >&2; return 2 ;;
+    esac
+    local remote="$DEBUG_CMD $action${min:+ $min}" out rc
+    step_banner_free "Debug mode of the control port: $action"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH on the camera: $remote"
+        return 0
+    fi
+    rtsp_connect || return 1
+    log_line "CMD ssh root@$CAM_IP $remote"
+    out=$("${CAM_SSH[@]}" "$remote" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        [ -z "$out" ] || ui_say "  $out"
+        ui_fail "the camera did not run $DEBUG_CMD $action." "it may run an older Akam image without the debug command (./akam update), or ak_rtsp may not be running."
+        return 1
+    fi
+    ui_say "  $out"
+    case $action in
+        on) ui_warn "anyone on your network can now change the camera settings through port 8091 until it is switched off: ./akam debug off." ;;
+        off) ui_good "  Port 8091 is read-only for the network again." ;;
+    esac
+    return 0
+}
+
 # ------------------------------------------------------------------ talk, say
 # Speak to the camera's speaker from this computer, with the ONVIF audio backchannel on the RTSP
 # port (specs/07-spec-standard-protocols.md section 1). The audio is captured or converted here

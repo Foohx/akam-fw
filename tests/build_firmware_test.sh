@@ -84,6 +84,7 @@ check "sbin/akam_ssh.sh 755" test "$(stat -c %a "$X/sbin/akam_ssh.sh")" = 755
 check "sbin/akam_lockdown.sh 755" test "$(stat -c %a "$X/sbin/akam_lockdown.sh")" = 755
 check "sbin/akam_rtsp_auth.sh 755" test "$(stat -c %a "$X/sbin/akam_rtsp_auth.sh")" = 755
 check "sbin/akam_hostname.sh 755" test "$(stat -c %a "$X/sbin/akam_hostname.sh")" = 755
+check "sbin/akam_debug.sh 755" test "$(stat -c %a "$X/sbin/akam_debug.sh")" = 755
 check "ethernet.sh: DHCP hostname patched, valid shell" bash -c "grep -q 'akam_hostname.sh show' '$X/sbin/ethernet.sh' && ! grep -q IPCamera '$X/sbin/ethernet.sh' && sh -n '$X/sbin/ethernet.sh'"
 check "sbin/ak_rtsp_wrapper.sh 755" test "$(stat -c %a "$X/sbin/ak_rtsp_wrapper.sh")" = 755
 check "LICENSE.dropbear shipped" test -s "$X/local/akam/LICENSE.dropbear"

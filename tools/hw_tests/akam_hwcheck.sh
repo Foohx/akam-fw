@@ -37,8 +37,8 @@
 # Other knobs: HWCHECK_CPU_WINDOW (default 2) is the ak_rtsp CPU sampling
 # window in seconds; HWCHECK_NIGHT_SAMPLES (default 4, 0 disables) and
 # HWCHECK_NIGHT_INTERVAL (default 6) drive the day/night flap check, which
-# opens a short connection to 8091 per sample (the control port is single
-# client: a sample briefly replaces any other connected client).
+# opens a short connection to 8091 per sample (the control port serves up
+# to 4 clients at once, so a sample does not disturb the others).
 
 ROOT=${AKAM_ROOT:-}
 INTERVAL=${HWCHECK_INTERVAL:-1}
@@ -454,6 +454,16 @@ night_get() { # prints the value of GET $1 ("night.state=night" -> night)
     done < "$WORK/night"
     return 1
 }
+# Debug flag of the control port (writes from the network, akam_debug.sh): information only.
+check_debug() {
+    dbg_v=$(night_get ctl.debug 2>/dev/null)
+    case $dbg_v in
+        0) info "debug: off (8091 is read-only for the network; writes only from the camera itself)" ;;
+        1) dbg_r=$(night_get ctl.debug_remaining 2>/dev/null)
+           warn "debug: ON, the network may write to 8091 (${dbg_r:-?} s left); akam_debug.sh off to close it" ;;
+        *) info "debug: not reported (image without the 8091 read-only mode, akam_debug.sh)" ;;
+    esac
+}
 check_night() {
     section "night mode and day/night flap check"
     if [ "$NIGHT_SAMPLES" -le 0 ] 2>/dev/null; then info "night check disabled (HWCHECK_NIGHT_SAMPLES=0)"; return; fi
@@ -503,6 +513,7 @@ check_misc() {
         printf 'LIST\n' | $tmo nc -w 3 127.0.0.1 8091 2>&1 | head -n 50 > "$WORK/list"
         if [ -s "$WORK/list" ]; then pass "8091 answered LIST ($(wc -l < "$WORK/list") line(s))"; show_file "$WORK/list" 8
         else fail "8091 gave no answer to LIST"; fi
+        check_debug
     fi
     check_night
     section "entropy and Dropbear re-exec"
@@ -641,7 +652,7 @@ check_facts
 section "manual tests still to do (not automated)"
 cat <<'MSG'
     - microphone audible, night mode/IR cut, H.264 1080p stream in a player
-    - 8091: LIST / GET / SET against the real client
+    - 8091: LIST / GET from the PC (read-only), SET refused, SET after akam_debug.sh on
     - SSH login by key from another machine, and persistence across a power cut
     - boot without microSD, Wi-Fi auto-reconnect, Telnet never reachable
     - run with --boot-window right after power-on (see header)
