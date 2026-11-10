@@ -3,7 +3,7 @@
 # GPIOs and the ISP, on a still-stock camera booted from the microSD toolkit (POSIX sh,
 # BusyBox 1.30.1: no tr, mktemp, nohup). Run it from the toolkit telnet shell (port 24).
 #
-#   sh /tmp/sd/stock_capture/stock_capture.sh check          read-only verification, changes nothing
+#   sh /tmp/sd/stock_capture/stock_capture.sh check          verification, changes nothing on the camera
 #   sh /tmp/sd/stock_capture/stock_capture.sh run [SECONDS]  capture (default 120 s), then restore
 #   sh /tmp/sd/stock_capture/stock_capture.sh restore        undo everything (safe to repeat)
 #   options: --force (ignore a stock-check mismatch)  --keep-mute

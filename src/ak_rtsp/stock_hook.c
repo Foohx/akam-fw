@@ -18,8 +18,10 @@
  *   - ISP parameter blocks (BLC, CCM, gamma, sharpness, ...): bounded hex dump of the
  *     payload of each ISP ioctl, plus everything isp_hook.c already captured (AE
  *     windows, sensor registers, VENC CREATE_ENC ...) in isp_hook.log
- * Not captured: fopen()/fwrite() (stdio calls the libc-internal open, not ours) and
- * system()/popen() commands. The stock binary imports open/write/ioctl directly.
+ *   - the commands the stock app runs with system() and popen() ("reboot -f", "sh recover_cfg.sh &",
+ *     "echo N > /tmp/camera_start_times"): one CHILD line each, see cmd_note() below
+ * Not captured: fopen()/fwrite() (stdio calls the libc-internal open, not ours). The stock binary
+ * imports open/write/ioctl/system/popen directly.
  *
  * Log placement (first directory that works): /tmp/stock_capture/out (symlink made by
  * stock_capture.sh to the SD card run folder), /tmp/sd/stock_capture (only when that folder
@@ -35,8 +37,10 @@
  * result of the call that is being observed.
  *
  * The hook only activates in a process whose /proc/self/exe is called anyka_ipc
- * (STOCK_HOOK_COMM), so children spawned by system()/popen() inherit LD_PRELOAD but
- * stay silent. errno is set like libc does (the raw syscalls bypass libc).
+ * (STOCK_HOOK_COMM); a dynamically linked child that inherits LD_PRELOAD writes one CHILD line
+ * (child_note) and stays silent (the camera's /bin/sh is a static BusyBox, which does not load
+ * the hook at all: system() and popen() are therefore logged by anyka_ipc itself). errno is set
+ * like libc does (the raw syscalls bypass libc).
  *
  * No libc dependency, no division by a variable, no compiler-rt: raw syscalls
  * (ARM EABI on the camera, x86_64 only for the host test).

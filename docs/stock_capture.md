@@ -12,7 +12,9 @@
 > "The first run rebooted the camera" below). The tools were reworked for that: a lighter hook, full
 > ISP blocks, day/night prompts, a per-second heartbeat and logs that survive a reboot. The reworked
 > version is tested on the host only (fake camera root, ARM hook built and checked, the older hook
-> loaded into the real `anyka_ipc` under `qemu-arm`); it has **not yet been run on a camera**.
+> loaded into the real `anyka_ipc` under `qemu-arm`, the `system()` / `popen()` forwarding run against the
+> vendor uClibc with a small test program); it has **not yet been run on a camera**. The `dd conv=fsync`
+> of the camera's BusyBox 1.30.1 is also unverified (the script falls back and says so).
 
 ## What you get
 
@@ -20,7 +22,7 @@ A folder `stock_capture/runNN/` on the card with:
 
 | File | Content |
 |---|---|
-| `stock_hook.log` | One line per event: open/close of `/dev/pcm*`, `/sys/class/gpio/**`, the light sensor (`/sys/bus/iio/**`), PWM and LED sysfs files, `/dev/mem`, audio files; every ioctl on those fds with its number, decoded dir/type/nr/size, argument bytes before and after, return value and errno; write/read sizes; first bytes and 2 s statistics of the audio data; `mmap` of those fds; one short `ISP_BLOCK` line per distinct ISP parameter block and `ISP_STAT` counters every 10 s; `CHILD` lines for processes `anyka_ipc` starts (`system()`, `popen()`). All with a timestamp (seconds since the hook started) and the thread id. |
+| `stock_hook.log` | One line per event: open/close of `/dev/pcm*`, `/sys/class/gpio/**`, the light sensor (`/sys/bus/iio/**`), PWM and LED sysfs files, `/dev/mem`, audio files; every ioctl on those fds with its number, decoded dir/type/nr/size, argument bytes before and after, return value and errno; write/read sizes; first bytes and 2 s statistics of the audio data; `mmap` of those fds; one short `ISP_BLOCK` line per distinct ISP parameter block and `ISP_STAT` counters every 10 s; `CHILD` lines for the commands `anyka_ipc` runs with `system()` and `popen()` (`via=system` / `via=popen`, with the command text). All with a timestamp (seconds since the hook started) and the thread id. |
 | `isp_blocks.bin` | Every ISP parameter block IN FULL (real struct size, up to 46584 bytes for the sharpness block), once per distinct content: day/night changes of noise reduction, sharpness, CCM, gamma, AE, white balance. Binary, vendor data: keep it private. Read it with `parse_stock_capture.py` (diffs, `--export-isp`). |
 | `isp_hook.log` | The older `isp_hook.c` decoders (AE windows, white balance, sensor registers, VENC `CREATE_ENC`), now with a time stamp on each line. |
 | `timeline.log` | Written by the script: one line per second (camera uptime, anyka_ipc alive or GONE, load, free RAM, `/tmp/camera_start_times`), the prompts and the notes you typed, each with its time. It is what tells the last moment alive after a reboot. |
@@ -31,10 +33,20 @@ A folder `stock_capture/runNN/` on the card with:
 | `config_before.txt`, `config_after.txt`, `config_diff.txt` | Proof that `/etc/config` did not change. |
 
 Not captured: `fopen()`/`fwrite()` (stdio uses the libc-internal `open`; the stock binary imports
-`open`, `write` and `ioctl` directly, which are caught), the `system()` / `popen()` calls themselves
-(the processes they start are logged: a `CHILD` line with the command line, because they inherit the
-hook; a child whose command line has `reboot`, `recover`, `reset`, `kill` ... fsyncs its line, the only
-fsync the hook ever does, because nothing is flushed after a reboot), and register writes made through a `/dev/mem` mapping (the mapping itself is logged).
+`open`, `write` and `ioctl` directly, which are caught), and register writes made through a `/dev/mem`
+mapping (the mapping itself is logged).
+
+The commands of `system()` and `popen()` (the stock binary imports both: `echo N > /tmp/camera_start_times`,
+`sh /usr/sbin/recover_cfg.sh &`, `reboot -f` are in its strings) are logged by the hook from inside
+`anyka_ipc`: it exports `system()` and `popen()`, writes one `CHILD` line with the command **before**
+the call, and forwards to libc's function (found with `dlsym(RTLD_NEXT)`), so arguments, result and `errno` are
+libc's. A command whose text has `reboot`, `recover`, `reset`, `poweroff`, `halt` or `kill` gets its line
+fsync'd first, the only fsync the hook ever does, because nothing is flushed after a reboot. This
+is **not** done through `LD_PRELOAD` inheritance: the camera's `/bin/sh` is a static BusyBox, which
+ignores `LD_PRELOAD`, so a shell started by `anyka_ipc` never loads the hook. (A dynamically linked
+child does load it and writes its own `CHILD` line with its command line; none was ever seen.) What is
+not seen: a command run by something other than `anyka_ipc`, and a reboot started from
+a place that is not `system()`/`popen()` (the `reboot` system call itself, the stock watchdog).
 
 ## How it stays safe
 
@@ -44,20 +56,24 @@ fsync the hook ever does, because nothing is flushed after a reboot), and regist
   `/usr/bin/anyka_ipc`; it sets `LD_PRELOAD=/tmp/stock_capture/stock_hook.so` and `exec`s the real
   binary, which is reached through a second, non-recursive bind of `/usr`. Only `anyka_ipc` is
   killed (TERM); the watchdog respawns it, now with the hook.
-* The hook only activates inside a process whose `/proc/self/exe` is `anyka_ipc` (children started
-  with `system()` inherit `LD_PRELOAD` and stay silent), keeps its own descriptors at 900 and above,
+* The hook only activates inside a process whose `/proc/self/exe` is `anyka_ipc` (a dynamically linked
+  child that inherits `LD_PRELOAD` writes one `CHILD` line and stays silent), keeps its own descriptors at 900 and above,
   sets `errno` like libc, never changes a return value, and drops events when the card is missing
   (log placement: `/tmp/stock_capture/out` which links to the card folder, then
   `/tmp/sd/stock_capture` if that folder already exists, then RAM `/tmp` with a 1 MiB cap per file; the
   hook never creates a folder; caps below).
   It takes no lock and allocates nothing, so a busy multi-threaded `anyka_ipc` cannot deadlock on it.
-* **Small footprint on the application's threads** (reworked after the first reboot): the deepest hook
-  path uses about 0.7 KiB of the caller's stack (it was about 1.8 KiB: a 1400-byte line buffer; measured
-  with `-fstack-usage` on the host build, ARM is of the same order), polled
+* **Small footprint on the application's threads** (reworked after the first reboot): every hooked call
+  owns at most ONE 512-byte line buffer, in a leaf function (the hooked entry points keep a frame of
+  about 100 bytes). Measured on the ARM build (frame sizes from the generated code): about 0.8 KiB of
+  the caller's stack in the steady state, about 1 KiB at most (the log file has to be reopened), about
+  1.4 KiB once, at the very first call (the start banner); the first run's hook used up to about 1.8 KiB
+  (a 1400-byte buffer). Polled
   ISP blocks are hashed and written at most once per second (written ones 10 per second), the payload
   goes to the card with one `writev()` straight from the application's memory (no copy, no big frame),
   an unmapped payload is never touched (`mincore`), identical sysfs writes and light-sensor polls are
-  counted, not logged. No `fsync` is ever done inside `anyka_ipc`; the script does it from outside.
+  counted, not logged. The only `fsync` inside `anyka_ipc` is the one before a `system()` / `popen()`
+  command that looks like a reboot or reset; the script fsyncs everything else from outside.
 * **Size caps** on the card: `stock_hook.log` and `isp_hook.log` 12 MiB each, `isp_blocks.bin` 24 MiB
   (2 MiB per command), audio 64 KiB, so a run needs about 50 MiB (the script wants 80 MB free). The RAM
   fallback (no card) is 1 MiB per file; `/tmp` (about 22 MB of RAM) only holds the 80 KB hook and the
@@ -83,13 +99,15 @@ fsync the hook ever does, because nothing is flushed after a reboot), and regist
 * **If the camera reboots during the run**, nothing has to be undone: the binds, the wrapper and the
   state live in RAM and are gone with the reboot. The logs written so far stay on the card and are
   fsync'd file by file (`dd conv=fsync`, never a global `sync`, which would also touch the flash file
-  systems) every 2 s, so at most the last ~2 s are missing. See "If the camera reboots during a run".
+  systems; the end of a run flushes the run folder the same way) every 2 s, so at most the last ~2 s are missing. See "If the camera reboots during a run".
   That the camera's BusyBox 1.30.1 `dd` honours `conv=fsync` is assumed, not verified on the camera; if
   `dd` fails twice the script says so and stops syncing.
 * **The start counter.** The stock app counts its own starts in `/tmp/camera_start_times` (RAM). The
   script records its value (`run.meta`, every `timeline.log` line) and resets it to 0 (what the stock
   boot script writes at every boot) just before it restarts `anyka_ipc`; `--keep-start-counter` skips
-  the reset. This is a precaution for an unproven hypothesis, not a known fix.
+  the reset. This is a precaution for an unproven hypothesis, not a known fix. The file is only written
+  when it is a regular file and `/tmp` is a `tmpfs` mount (`/etc/config` is jffs2, flash): otherwise the
+  script leaves it alone and says so (`start_times_reset=refused`).
 * The stock `anyka_ipc` still does what it always does while it runs (including its own log files
   under `/etc/config`, if it writes any); the script writes nothing there, and `config_diff.txt` shows
   whether anything changed.
@@ -114,11 +132,14 @@ What was seen: the audio capture was fine, then the camera rebooted about 15 s a
 * From the strings and imports of the stock binaries (no disassembly, so these are leads, not
   findings): the stock `watchdog` has a software watchdog per registered process (a timeout ends in
   `reboot`); `anyka_ipc` has a start counter in `/tmp/camera_start_times`, a signal handler that logs
-  "do ipc reset", and `sh /usr/sbin/recover_cfg.sh &` / `reboot -f` calls through `system()`. Our
-  restart adds one start; the stock boot script only resets the counter at boot.
+  "do ipc reset", and `sh /usr/sbin/recover_cfg.sh &` / `reboot -f` calls through `system()`. In the
+  binary the strings of that signal handler, of the counter (`camera start times %d read failed`,
+  `echo %d > /tmp/camera_start_times`) and of `reboot -f` sit next to each other, which suggests (does not
+  show) that the `TERM` the script sends to the old `anyka_ipc`, or the restart count, can lead to a
+  reboot. Our restart adds one start; the stock boot script only resets the counter at boot.
 
 What was changed for the next run: the lighter hook (stack, rate limits), the start counter recorded
-and reset, `CHILD` lines (a `reboot -f` started by `anyka_ipc` is then visible with its command line),
+and reset, `CHILD` lines (a `reboot -f` run by `anyka_ipc` through `system()` / `popen()` is then visible with its command line),
 the per-second heartbeat and the fsync'd logs (the exact last second alive is known). **If it reboots
 again**, the summary tells which of these it was; if `anyka_ipc` shows GONE or RESTARTED before the
 last heartbeat, it was a crash; if a `reboot` child appears, the stock app asked for it; if neither,
@@ -141,14 +162,21 @@ suspect the stock watchdog or the kernel. Do not widen the capture before that i
 4. In the telnet shell, one command at a time:
 
    ```sh
-   sh /tmp/sd/stock_capture/stock_capture.sh check        # read-only: stock check, kit check, free space
-   sh /tmp/sd/stock_capture/stock_capture.sh run 120      # capture 120 s, then restore
+   sh /tmp/sd/stock_capture/stock_capture.sh check
    ```
 
-   The camera may speak loudly while it runs (the factory prompts are un-muted on purpose). The script
+   It changes nothing on the camera (stock check, kit check, free space); on the card it only marks
+   an earlier run that never finished. Read the lines it prints: it must end with `CHECK: OK`. Then:
+
+   ```sh
+   sh /tmp/sd/stock_capture/stock_capture.sh run 120
+   ```
+
+   This captures 120 s, then restores. The camera may speak loudly while it runs (the factory prompts are un-muted on purpose). The script
    prints each step, the capture progress (one line per 5 s: log size, anyka_ipc alive, start counter,
    free RAM) and, at the end, the folder with the logs. A run is 10 to 3600 s.
-5. `sync`, power the camera off, take the card, copy `stock_capture/runNN/` to the PC and summarise it:
+5. When the script says "Logs are on the card" (it has flushed the files itself), power the camera off,
+   take the card, copy `stock_capture/runNN/` to the PC and summarise it:
 
    ```bash
    python3 -I tools/hw_tests/parse_stock_capture.py /path/to/run01
@@ -157,10 +185,15 @@ suspect the stock watchdog or the kernel. Do not widen the capture before that i
 ### An image / day-night run (grain, IR cut, IR LEDs)
 
 Do this only after a plain `run 120` finished without a reboot. Same steps 1 to 3, then, one command at
-a time:
+a time. First, and it must end with `CHECK: OK`:
 
 ```sh
 sh /tmp/sd/stock_capture/stock_capture.sh check
+```
+
+Then:
+
+```sh
 sh /tmp/sd/stock_capture/stock_capture.sh run --daynight
 ```
 
@@ -230,7 +263,7 @@ the numbers and bytes are the facts.
 ## Tests
 
 `tests/stock_hook_test.sh` (hook, built for the host with an x86_64 syscall branch: full and rate
-limited ISP blocks, partly mapped and unmapped payloads, sysfs throttling, `CHILD` lines, caps, threads;
+limited ISP blocks, partly mapped and unmapped payloads, sysfs throttling, `CHILD` lines, `system()` / `popen()` forwarding, caps, threads;
 plus the ARM build checked warning-free and free of undefined symbols), `tests/stock_capture_script_test.sh`
 (script on a fake root under BusyBox: prompts, heartbeat, fsync that does not truncate, start counter,
 a run killed in the middle like a reboot, a typed note through a pseudo-terminal),
