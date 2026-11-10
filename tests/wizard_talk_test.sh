@@ -227,6 +227,17 @@ check "cleanup, SIGTERM: the wizard ends" test $? -eq 143
 check "cleanup, SIGTERM: the capture is gone" gone "$(cat "$CAPPID")"
 check "cleanup, SIGTERM: so is its child" gone "$(cat "$CAPCHILD")"
 
+# SIGKILL to the wizard while it talks: nothing of the wizard can run any more, a watchdog stops the capture
+# (akam-talk keeps reading the fifo, so the capture would never get a SIGPIPE by itself)
+rm -f "$CAPPID" "$CAPCHILD"; reset
+AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a "$S" talk </dev/null >"$T/c3k.out" 2>&1 &
+wpid=$!
+for _ in $(seq 1 50); do [ -s "$CAPCHILD" ] && break; sleep 0.1; done
+kill -KILL "$wpid" 2>/dev/null
+wait "$wpid" 2>/dev/null
+check "cleanup, SIGKILL of the wizard: the capture is gone (watchdog)" gone "$(cat "$CAPPID")"
+check "cleanup, SIGKILL of the wizard: so is its child" gone "$(cat "$CAPCHILD")"
+
 # SIGINT needs a process that does not ignore it at entry (a background job of a script does): python3
 if command -v python3 >/dev/null 2>&1; then
     rm -f "$CAPPID" "$CAPCHILD"; reset

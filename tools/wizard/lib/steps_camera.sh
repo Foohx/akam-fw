@@ -1504,12 +1504,14 @@ talk_run_client() {
 # The capture (or conversion) tool runs as a tracked background job in its own session (setsid when
 # available), feeding akam-talk through a fifo, and is stopped on EVERY way out: normal end, akam-talk
 # failure, Ctrl-C, TERM, HUP (TERM, then KILL, on the whole group). Nothing may keep recording the
-# microphone after the wizard returned. If the wizard itself is killed with SIGKILL, the tool dies at its
-# next write (no reader on the fifo: SIGPIPE).
+# microphone after the wizard returned. If the wizard itself is killed with SIGKILL nothing of it can
+# run, so a small watchdog process notices that the wizard is gone (within a second) and stops the
+# capture: the fifo alone would not do it, its reader (akam-talk) is still alive and still reading.
 TALK_CAP_PID=""
 TALK_CAP_GROUP=0
 TALK_SIGNALED=""
 TALK_CLIENT_PID=""
+TALK_WATCHDOG_PID=""
 
 talk_capture_stop() {
     local pid=$TALK_CAP_PID target
@@ -1517,12 +1519,43 @@ talk_capture_stop() {
     TALK_CAP_PID=""
     target=$pid
     [ "$TALK_CAP_GROUP" = 1 ] && target=-$pid
+    # The group, and the process itself: before setsid has run (or while it is still blocked opening
+    # the fifo) the group does not exist yet, and the wait below would never return.
     kill -TERM -- "$target" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.1
     done
     kill -KILL -- "$target" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
+# The watchdog outlives nothing: it ends with the wizard (normally, or killed) and stops the capture
+# when the wizard is gone without having done it. talk_watchdog_stop ends it on the normal paths.
+talk_watchdog_start() {
+    local wiz=$$ cap=$TALK_CAP_PID grp=$TALK_CAP_GROUP
+    (
+        s=""
+        trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM INT HUP
+        while kill -0 "$wiz" 2>/dev/null; do
+            sleep 1 &
+            s=$!
+            wait "$s" 2>/dev/null
+        done
+        [ "$grp" = 1 ] && kill -TERM -- "-$cap" 2>/dev/null
+        kill -TERM "$cap" 2>/dev/null
+        exit 0
+    ) </dev/null >/dev/null 2>&1 &
+    TALK_WATCHDOG_PID=$!
+}
+
+talk_watchdog_stop() {
+    local pid=$TALK_WATCHDOG_PID
+    [ -n "$pid" ] || return 0
+    TALK_WATCHDOG_PID=""
+    kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
 }
 
@@ -1559,6 +1592,7 @@ talk_pipe_capture() {
         "${TALK_CAP[@]}" >"$fifo" &
     fi
     TALK_CAP_PID=$!
+    talk_watchdog_start
     talk_run_client "$@" <"$fifo" &
     TALK_CLIENT_PID=$!
     wait "$TALK_CLIENT_PID" || rc=$?
@@ -1566,6 +1600,7 @@ talk_pipe_capture() {
     while kill -0 "$TALK_CLIENT_PID" 2>/dev/null; do wait "$TALK_CLIENT_PID" || rc=$?; done
     TALK_CLIENT_PID=""
     talk_capture_stop
+    talk_watchdog_stop
     trap - INT TERM HUP
     tui_rearm_traps
     rm -rf "$dir"
