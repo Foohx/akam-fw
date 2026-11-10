@@ -480,7 +480,7 @@ int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain)
 static int     g_saturation_baseline_valid = 0;
 static int16_t g_saturation_baseline = 0;
 
-int isp_set_saturation(int value /* -50..50 */)
+static int apply_saturation(int value /* -50..50 */)
 {
     uint8_t buf[EFFECT_BUF_SIZE];
     memset(buf, 0, sizeof(buf));
@@ -502,7 +502,7 @@ static int      g_contrast_baseline_valid = 0;
 static uint16_t g_contrast_baseline_lo = 0; /* offset+0, unsigned per the decompile's uVar26 */
 static int16_t  g_contrast_baseline_hi = 0; /* offset+2, signed per the decompile's iVar8 */
 
-int isp_set_contrast(int value /* -50..50 */)
+static int apply_contrast(int value /* -50..50 */)
 {
     uint8_t buf[EFFECT_BUF_SIZE];
     memset(buf, 0, sizeof(buf));
@@ -590,7 +590,7 @@ static int32_t g_brightness_table_baseline[BRIGHTNESS_TABLE_COUNT];
 
 static int32_t clamp_nonneg(int32_t v) { return v < 0 ? 0 : v; }
 
-int isp_set_brightness(int value /* -50..50 */)
+static int apply_brightness(int value /* -50..50 */)
 {
     uint8_t buf[EXPO_BUF_SIZE];
     memset(buf, 0, sizeof(buf));
@@ -679,7 +679,7 @@ static uint16_t sharp_field_scale(uint16_t baseline, int32_t factor, int shift, 
     return (uint16_t)(v > max ? max : v);
 }
 
-int isp_set_sharpness(int value /* -50..50 */)
+static int apply_sharpness(int value /* -50..50 */)
 {
     if (!g_sharp_baseline_valid) {
         g_sharp_baseline = calloc(1, SHARP_BUF_SIZE);
@@ -734,6 +734,15 @@ int isp_set_sharpness(int value /* -50..50 */)
     return ret;
 }
 
+/* Last value each picture control was successfully applied with (0 = neutral). A pipeline reload resends the
+ * file's raw calibration and silently drops them: isp_reset_picture_baselines() puts them back. */
+static int g_applied_sat, g_applied_con, g_applied_bri, g_applied_sha;
+
+int isp_set_saturation(int v) { int r = apply_saturation(v); if (r == 0) g_applied_sat = v; return r; }
+int isp_set_contrast(int v)   { int r = apply_contrast(v);   if (r == 0) g_applied_con = v; return r; }
+int isp_set_brightness(int v) { int r = apply_brightness(v); if (r == 0) g_applied_bri = v; return r; }
+int isp_set_sharpness(int v)  { int r = apply_sharpness(v);  if (r == 0) g_applied_sha = v; return r; }
+
 /* Forget all cached picture-control baselines (saturation/contrast/
  * brightness/sharpness). Call this after any full ISP pipeline reload
  * (isp_pipeline_init()/isp_pipeline_init_night()) — those resend the
@@ -741,9 +750,9 @@ int isp_set_sharpness(int value /* -50..50 */)
  * untouched value" each isp_set_*() cached on its first call. Without this,
  * a day/night transition after the user has touched a Picture slider would
  * compute new deltas against a stale baseline instead of the freshly
- * reloaded one. Doesn't undo any currently-applied slider value — the next
- * isp_set_*() call for a given control will just re-cache its baseline and
- * carry on from there. */
+ * reloaded one. The reload also dropped the applied slider values (and the
+ * values saved with ./akam picture), so the non-zero ones are applied again
+ * here, against the fresh baselines. Called with the ISP lock held. */
 void isp_reset_picture_baselines(void)
 {
     g_saturation_baseline_valid = 0;
@@ -752,4 +761,8 @@ void isp_reset_picture_baselines(void)
     g_sharp_baseline_valid      = 0;
     free(g_sharp_baseline);
     g_sharp_baseline = NULL;
+    if (g_applied_sat) isp_set_saturation(g_applied_sat);
+    if (g_applied_con) isp_set_contrast(g_applied_con);
+    if (g_applied_bri) isp_set_brightness(g_applied_bri);
+    if (g_applied_sha) isp_set_sharpness(g_applied_sha);
 }

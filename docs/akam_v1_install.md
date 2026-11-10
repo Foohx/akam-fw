@@ -69,7 +69,7 @@ parameters; its grammar is unchanged from upstream. It has no authentication and
 
 - `LIST`, `GET` and the state and metrics work for every client (up to 4 at once; a fifth gets `ERR busy`).
 - `SET` (and `SAVE`, `RESET`) from another machine is refused with `ERR read-only mode, see akam_debug.sh`.
-- `SET` from the camera itself (127.0.0.1: SSH helpers such as `./akam led`) always works.
+- `SET` from the camera itself (127.0.0.1: SSH helpers such as `./akam led`, `./akam audio`, `./akam picture`) always works.
 - **Debug mode** lets the network write too, for a while: `./akam debug on [MINUTES]` (or `akam_debug.sh on`
   over SSH). It lasts 60 minutes by default (1 to 1440), is kept in RAM only, and is off at every reboot and
   every restart of `ak_rtsp`. `./akam debug off` closes it; `./akam debug status` shows it (`GET ctl.debug`

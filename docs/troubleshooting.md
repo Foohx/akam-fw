@@ -215,41 +215,48 @@ built-in beep to check it. It is on by default and follows the sequence of the s
 route 4, gain 2, taken from a capture of the stock application). It is **not validated end to end on
 hardware yet**: an earlier build used a wrong ioctl number for the amplifier and stayed silent, this one
 should be audible. The route and amplifier are switched on at start, then off again after 2 seconds of
-silence, and on during a beep and for 2 seconds after. Replace `<cam>` by the camera address (`127.0.0.1` in an SSH session on the camera). Every
-command is one line sent to port 8091 **from the camera itself**: port 8091 is read-only from the network, so
-the `SET` lines below are refused (`ERR read-only mode, see akam_debug.sh`) when sent from your PC. Open an
-SSH session (`ssh root@<cam>`) and run them there, with `127.0.0.1` as the address; or run `./akam debug on`
-first (it allows writes from the network for 60 minutes) and keep `<cam>` as the address. Reads (`GET`,
-`LIST`) work from the PC as they are. The answer starts with `OK` or `ERR`.
+silence, and on during a beep and for 2 seconds after.
+
+From your PC the wizard does it over SSH (port 8091 is read-only from the network; the wizard sends the
+lines from the camera itself, as `./akam led` does). No confirmation is asked:
 
 ```bash
-# 1. Is it running?  (expect audio.out_state=idle; also the other audio.out_* lines: underruns, drops, buf_ms)
-printf 'GET audio.out_state\n' | nc -w 2 <cam> 8091
-printf 'LIST\n' | nc -w 2 <cam> 8091 | grep audio.out_
+./akam audio                  # 1. Is it running? volume, speaker on/off, talk on/off, underruns and drops
+./akam audio volume 30        # 2. Volume 0 to 100 (saved on the camera)
+./akam audio beep             #    A short 1 kHz tone (about 1 s); fails with "audio out is not running" when the speaker is off
+./akam audio off              # 3. Speaker off (at once, and it stays off after a reboot)
+./akam audio on               #    Speaker on; the camera says when it only starts after a reboot
+./akam audio talk off         #    Soft switch of the network talk (ONVIF backchannel); `on` to allow it again
+```
 
-# 2. Beep: volume 30, gain 2, then three short 1 kHz tones (about 1 s)
-printf 'SET audio.out_volume 30\nSET audio.out_gain 2\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
+The hardware gain, the route (source), the amplifier mode and the volume sweeps below are developer
+experiments with no wizard command. Run them over SSH on the camera (`ssh root@<cam>`), where port 8091
+accepts writes; reads (`GET`, `LIST`) also work from the PC with `nc`. The answer starts with `OK` or `ERR`.
 
-# 3. Silence or a click only? Check the [audio_out] log lines for "failed", raise the gain, then replay.
+```bash
+# On the camera, in an SSH session:
+printf 'LIST\n' | nc -w 2 127.0.0.1 8091 | grep audio.out_
+
+# Silence or a click only? Check the [audio_out] log lines for "failed", raise the gain, then replay.
 #    Source 4 is the stock route and the default; 6 is an experiment, put 4 back if it changes nothing.
-printf 'SET audio.out_gain 5\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
-printf 'SET audio.out_source 6\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
+printf 'SET audio.out_gain 5\nSET audio.out_test 1\n' | nc -w 3 127.0.0.1 8091
+printf 'SET audio.out_source 6\nSET audio.out_test 1\n' | nc -w 3 127.0.0.1 8091
 
-# 4. Levels: hardware gain 0..5 at volume 100, then software volume 100, 50, 25, 10, 0
-for g in 0 1 2 3 4 5; do printf 'SET audio.out_volume 100\nSET audio.out_gain %s\nSET audio.out_test 1\n' "$g" | nc -w 2 <cam> 8091; sleep 3; done
-for v in 100 50 25 10 0; do printf 'SET audio.out_gain 2\nSET audio.out_volume %s\nSET audio.out_test 1\n' "$v" | nc -w 2 <cam> 8091; sleep 3; done
+# Levels: hardware gain 0..5 at volume 100, then software volume 100, 50, 25, 10, 0
+for g in 0 1 2 3 4 5; do printf 'SET audio.out_volume 100\nSET audio.out_gain %s\nSET audio.out_test 1\n' "$g" | nc -w 2 127.0.0.1 8091; sleep 3; done
+for v in 100 50 25 10 0; do printf 'SET audio.out_gain 2\nSET audio.out_volume %s\nSET audio.out_test 1\n' "$v" | nc -w 2 127.0.0.1 8091; sleep 3; done
 
-# 5. Amplifier hiss: hold your ear near the speaker in a quiet room
-printf 'SET audio.out_amp on\n'   | nc -w 2 <cam> 8091   # amplifier always on: listen for hiss
-printf 'SET audio.out_amp auto\n' | nc -w 2 <cam> 8091   # default: route and amplifier off 2 s after the last sound
+# Amplifier hiss: hold your ear near the speaker in a quiet room
+printf 'SET audio.out_amp on\n'   | nc -w 2 127.0.0.1 8091   # amplifier always on: listen for hiss
+printf 'SET audio.out_amp auto\n' | nc -w 2 127.0.0.1 8091   # default: route and amplifier off 2 s after the last sound
 ```
 
 What to note: the combination that is audible (source, gain), the comfortable gain and volume, hiss with
 `on`, any pop when the amplifier switches, and whether the video and microphone of the RTSP stream stay
 normal while a beep plays (the beep itself is heard on the stream, about a second late).
 
-To see what the camera did, read the log lines on the same port (`nc <cam> 8091` and wait) or the serial
-console: lines starting with `[audio_out]` show the device calls and every error.
+To see what the camera did, read the log lines on port 8091 (`nc <cam> 8091` from the PC and wait; reads
+need no permission) or the serial console: lines starting with `[audio_out]` show the device calls and every error.
 
 - **`audio.out_state=disabled_crash`:** the previous start crashed while opening the speaker, so audio out
   stays off to avoid a reboot loop. Over SSH: `rm /etc/config/akam/audio_out.trying`, then restart `ak_rtsp`
@@ -262,10 +269,11 @@ console: lines starting with `[audio_out]` show the device calls and every error
   silent until `ak_rtsp` restarts.
 - **Saved settings:** `audio.out_volume`, `audio.out_gain` and `audio.out_source` are saved like `enable`
   (only when the value changes), so the last tuning survives a restart. `audio.out_amp` is not saved.
-- **Turn it off:** `printf 'SET audio.out_enable 0\n' | nc -w 2 <cam> 8091` silences it at once and the choice is
-  saved in `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `SET audio.out_enable 1`
-  turns it back on; the answer says `restart to apply` when `ak_rtsp` started with it off.
-- **`ERR audio out is not running`:** it was disabled or failed at boot; see `audio.out_state`.
+- **Turn it off:** `./akam audio off` silences it at once and the choice is saved in
+  `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `./akam audio on` turns it back
+  on; when `ak_rtsp` started with it off, the wizard says the speaker only starts after the camera is rebooted.
+- **`audio out is not running`** (from `./akam audio beep`): it was disabled or failed at boot; see
+  `./akam audio` (state) and the `[audio_out]` log lines.
 - **Sound over the network:** `./akam talk test`, `./akam talk` and `./akam say FILE` send sound to this speaker
   through the RTSP port ([two-way audio](two_way_audio.md)). A client that streams G.711 silence does not
   switch the amplifier on: the amp follows sound above about -56 dBFS.

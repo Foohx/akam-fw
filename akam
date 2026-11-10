@@ -63,6 +63,15 @@ Commands:
                        status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
                        slowly while someone watches the video, solid otherwise)
                        ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
+  audio [show | volume 0-100 | beep | on | off | talk on|off]
+                     the camera's speaker, over SSH. Default: show (volume, speaker on/off, talk on/off,
+                     playback underruns and drops). volume and talk are saved on the camera; beep plays a
+                     short tone; off silences the speaker and keeps it off after a reboot; on may need a
+                     reboot of the camera to start the speaker. No confirmation is asked.
+  picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]
+                     the picture, over SSH. N is -50 to 50 (0 = unchanged); the four numbers are saved on the
+                     camera and applied at every start. wb and night are not saved (back to the default at a
+                     reboot). reset puts the four numbers back to 0. Several words can be combined. Default: show.
   debug [on [MINUTES] | off | status]
                      port 8091 is read-only for the network: 'on' lets the network change settings
                      too (for the PC tuning tool) for MINUTES (default 60, up to 1440) or until
@@ -160,6 +169,8 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h | --help) ARGS+=(help) ;;
+        # a negative number after the command is a value (./akam picture contrast -20), not an option
+        -[0-9]*) if [ "${#ARGS[@]}" -gt 0 ]; then ARGS+=("$1"); else echo "akam: unknown option $1 (see ./akam help)" >&2; exit 2; fi ;;
         -*) echo "akam: unknown option $1 (see ./akam help)" >&2; exit 2 ;;
         *) ARGS+=("$1") ;;
     esac
@@ -248,6 +259,8 @@ case $CMD in
         cmd_led ${ARGS[@]+"${ARGS[@]:1}"} || rc=$?
         ;;
     debug) cmd_debug ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    audio) cmd_audio ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    picture) cmd_picture ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     talk) cmd_talk ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     say) cmd_say ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     restore) cmd_restore || rc=$? ;;

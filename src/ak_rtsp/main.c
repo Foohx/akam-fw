@@ -297,6 +297,7 @@ int main(int argc, char **argv)
     if (venc_activate()          < 0) goto err;
 
     night_start();  /* needs AE samples flowing, so start after ae_start() */
+    control_apply_saved_isp();  /* saved picture settings; the ISP and AE run now */
 
     /* Non-fatal: video streaming must keep working even if mic capture
      * fails to init (e.g. an audio device race — a supervisor-respawned

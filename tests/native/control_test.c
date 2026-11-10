@@ -23,6 +23,7 @@
 #include "ctl_gate.h"
 #include "ctl_sys.h"
 #include "control.h"
+#include "isp_tune.h"
 
 static int g_failed;
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); g_failed++; } } while (0)
@@ -353,6 +354,30 @@ static void test_server(void)
     CHECK_STR(out, "OK led.stub=9\n");
     ask(c, "SET isp.saturation 99", out, sizeof(out));
     CHECK_STR(out, "ERR isp.saturation range [-50,50]\n");
+    /* picture settings are saved after a change (ISP_TUNE_FILE is a temp file here) and removed at all zero */
+    ask(c, "SET isp.sharpness 12", out, sizeof(out));
+    CHECK_STR(out, "OK isp.sharpness=12\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.sharpness == 12 && t.contrast == 0);
+    }
+    ask(c, "SET isp.sharpness 0", out, sizeof(out));
+    CHECK_STR(out, "OK isp.sharpness=0\n");
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    ask(c, "SET isp.sharpness 99", out, sizeof(out));
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    {
+        FILE *f = fopen(ISP_TUNE_FILE, "w");
+        CHECK(f != NULL);
+        if (f) { fputs("contrast=7\nbrightness=99\nsaturation=x\n", f); fclose(f); }
+        control_apply_saved_isp();
+        ask(c, "GET isp.contrast", out, sizeof(out));
+        CHECK_STR(out, "isp.contrast=7\n");
+        ask(c, "GET isp.brightness", out, sizeof(out));
+        CHECK_STR(out, "isp.brightness=0\n");
+        ask(c, "SET isp.contrast 0", out, sizeof(out));
+        CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    }
     ask(c, "SET venc.minqp 1", out, sizeof(out));
     CHECK(!strncmp(out, "ERR venc.minqp is read-only in this version", 43));
 
@@ -405,6 +430,11 @@ static void test_server(void)
             CHECK_STR(out, "OK ae.speed=9\n");
             ask(c, "GET ae.speed", out, sizeof(out));
             CHECK_STR(out, "ae.speed=9\n");
+            /* a picture value set from the network (DEBUG) is applied but never written to flash */
+            ask(r, "SET isp.sharpness 5", out, sizeof(out));
+            CHECK_STR(out, "OK isp.sharpness=5\n");
+            CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+            ask(r, "SET isp.sharpness 0", out, sizeof(out));
             ask(c, "SET ae.speed 7", out, sizeof(out));
             ask(r, "DEBUG off", out, sizeof(out));
             CHECK(!strncmp(out, "ERR DEBUG is loopback-only", 26));

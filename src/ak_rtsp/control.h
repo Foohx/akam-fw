@@ -25,3 +25,6 @@
 
 int  control_start(void);
 void control_stop(void);
+
+/* After the ISP is up (once, from main): apply the saved isp.* picture settings (isp_tune.h). */
+void control_apply_saved_isp(void);
