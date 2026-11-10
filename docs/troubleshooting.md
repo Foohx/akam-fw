@@ -202,8 +202,11 @@ your own ssh commands add `-o LogLevel=ERROR`.
 ## Speaker output: test the camera speaker by ear (step A)
 
 Work in progress (specs/05-spec-audio-out.md): this image makes `ak_rtsp` drive the camera speaker, with a
-built-in beep to check it. It is **not validated on hardware yet**. It is on by default; the amplifier is
-only switched on during a beep and for 2 seconds after. Replace `<cam>` by the camera address. Every
+built-in beep to check it. It is on by default and follows the sequence of the stock firmware (mono, 8 kHz,
+route 4, gain 2, taken from a capture of the stock application). It is **not validated end to end on
+hardware yet**: an earlier build used a wrong ioctl number for the amplifier and stayed silent, this one
+should be audible. The route and amplifier are switched on at start, then off again after 2 seconds of
+silence, and on during a beep and for 2 seconds after. Replace `<cam>` by the camera address. Every
 command is one line to `nc` on port 8091; the answer starts with `OK` or `ERR`.
 
 ```bash
@@ -214,17 +217,18 @@ printf 'LIST\n' | nc -w 2 <cam> 8091 | grep audio.out_
 # 2. Beep: volume 30, gain 2, then three short 1 kHz tones (about 1 s)
 printf 'SET audio.out_volume 30\nSET audio.out_gain 2\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
 
-# 3. Silence or a click only? Try the other routing, a higher gain, then replay
-printf 'SET audio.out_source 4\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091   # 6 is the default
-printf 'SET audio.out_source 6\nSET audio.out_gain 5\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
+# 3. Silence or a click only? Check the [audio_out] log lines for "failed", raise the gain, then replay.
+#    Source 4 is the stock route and the default; 6 is an experiment, put 4 back if it changes nothing.
+printf 'SET audio.out_gain 5\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
+printf 'SET audio.out_source 6\nSET audio.out_test 1\n' | nc -w 3 <cam> 8091
 
 # 4. Levels: hardware gain 0..5 at volume 100, then software volume 100, 50, 25, 10, 0
 for g in 0 1 2 3 4 5; do printf 'SET audio.out_volume 100\nSET audio.out_gain %s\nSET audio.out_test 1\n' "$g" | nc -w 2 <cam> 8091; sleep 3; done
-for v in 100 50 25 10 0; do printf 'SET audio.out_gain 3\nSET audio.out_volume %s\nSET audio.out_test 1\n' "$v" | nc -w 2 <cam> 8091; sleep 3; done
+for v in 100 50 25 10 0; do printf 'SET audio.out_gain 2\nSET audio.out_volume %s\nSET audio.out_test 1\n' "$v" | nc -w 2 <cam> 8091; sleep 3; done
 
 # 5. Amplifier hiss: hold your ear near the speaker in a quiet room
 printf 'SET audio.out_amp on\n'   | nc -w 2 <cam> 8091   # amplifier always on: listen for hiss
-printf 'SET audio.out_amp auto\n' | nc -w 2 <cam> 8091   # default: silent between beeps
+printf 'SET audio.out_amp auto\n' | nc -w 2 <cam> 8091   # default: route and amplifier off 2 s after the last sound
 ```
 
 What to note: the combination that is audible (source, gain), the comfortable gain and volume, hiss with
@@ -237,6 +241,9 @@ console: lines starting with `[audio_out]` show the device calls and every error
 - **`audio.out_state=disabled_crash`:** the previous start crashed while opening the speaker, so audio out
   stays off to avoid a reboot loop. Over SSH: `rm /etc/config/akam/audio_out.trying`, then restart `ak_rtsp`
   (or reboot) to try again. Send the log lines to the project if it happens twice.
+- **A `SET_SPEAKER(0)` line in the log:** the stock firmware never switches the speaker off, only the route
+  (`SET_SOURCES 0`), so a refused `SET_SPEAKER(0)` is logged once and is harmless; the muted route is
+  what silences the speaker.
 - **`audio.out_state=error`:** a device call failed; the `[audio_out]` lines say which. Video and microphone
   carry on. If it failed at start, the old silence path is used; if it failed later, the speaker stays
   silent until `ak_rtsp` restarts.
