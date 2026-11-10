@@ -45,11 +45,11 @@ Evaluated every 500 ms tick (the LED thread wakes twice a second in `auto`, four
 
 ## 4. `night.ir_led`
 
-`ircut_switch(night)` (called by `night.c` on every day/night change) moves the IR-cut filter as before, then drives GPIO 70 to `night && allowed`. `allowed` is 1 for `auto` and 0 for `off`. Changing the setting while it is night lights or darkens the IR LEDs at once. A mutex orders the night thread and the control thread so the GPIO never stays lit against the policy. `night.state` and `night.mode` are not affected.
+`ircut_switch(night)` (called by `night.c` on every day/night change) moves the IR-cut filter as before, then drives GPIO 70 to `night && allowed`. `allowed` is 1 for `auto` and 0 for `off`. Changing the setting while it is night lights or darkens the IR LEDs at once. A mutex orders the night thread and the control thread so the GPIO never stays lit against the policy. Applying `off` at start-up also drives GPIO 70 low if it was left exported and lit by an earlier run, before `ircut_init()`. `night.state` and `night.mode` are not affected.
 
 ## 5. 8091 keys
 
-Same line protocol as the other keys (`LIST`, `GET`, `SET`); no authentication yet (HMAC is planned for V1.1), like every other key.
+Same line protocol as the other keys (`LIST`, `GET`, `SET`). Spec 07 (standard protocols) makes port 8091 read-only for remote clients (writes only from loopback, or from a remote client while a RAM-only debug flag is on) and drops the planned HMAC; until that lands, 8091 has no authentication, like every other key. `./akam led` is unaffected: it sets the keys from the camera itself (`127.0.0.1`), which stays allowed.
 
 | Key | Values | Writable | Notes |
 |---|---|---|---|
@@ -72,7 +72,7 @@ Written only when a value changes (a `SET` with the current value does not touch
 
 ## 7. Wizard command
 
-`./akam led [show | status on|off|auto] [ir auto|off]` (default `show`). The wizard connects over SSH and, on the camera, sends `GET`/`SET` lines to `127.0.0.1:8091` with the camera's `nc` (the same method as `akam_hwcheck.sh`). Words are validated on the PC before anything is sent; no confirmation is asked (nothing destructive, nothing secret). The 8091 port is single-client: the command briefly replaces any other connected client, for example the tuning tab. Messages are English.
+`./akam led [show | status on|off|auto] [ir auto|off]` (default `show`). The wizard connects over SSH and, on the camera, sends `GET`/`SET` lines to `127.0.0.1:8091` with the camera's `nc` (the same method as `akam_hwcheck.sh`). Because the connection comes from loopback on the camera, it keeps working when 8091 becomes read-only for remote clients (spec 07, section 4). Words are validated on the PC before anything is sent; no confirmation is asked (nothing destructive, nothing secret). The 8091 port is single-client: the command briefly replaces any other connected client, for example the tuning tab. Messages are English.
 
 ## 8. Tests
 

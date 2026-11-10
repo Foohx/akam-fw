@@ -141,12 +141,15 @@ void ircut_set_ir_led_allowed(int allowed)
 {
     pthread_mutex_lock(&g_ir_lock);
     g_ir_allowed = allowed ? 1 : 0;
-    /* Only touch the GPIO once it is set up (ircut_init() exports GPIO 70 and
-     * drives it low); before that the stored policy is all that is needed. */
+    /* Only touch the GPIO once it exists (ircut_init() exports GPIO 70 and
+     * drives it low; a previous run may have left it exported). "off" always
+     * drives it low, so an IR LED left lit by an earlier ak_rtsp that stopped
+     * during a night is darkened at start-up, before ircut_init() runs. "auto"
+     * lights it only in night mode. */
     char path[64];
     snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", IR_LED_GPIO);
-    if (g_ir_night && access(path, F_OK) == 0)
-        gpio_set(IR_LED_GPIO, g_ir_allowed);
+    if ((!g_ir_allowed || g_ir_night) && access(path, F_OK) == 0)
+        gpio_set(IR_LED_GPIO, g_ir_allowed && g_ir_night);
     pthread_mutex_unlock(&g_ir_lock);
 }
 
