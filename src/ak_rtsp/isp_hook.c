@@ -62,6 +62,20 @@
 #include <stdint.h>
 #include <stdarg.h>
 
+/* ---- embedding mode (stock_hook.c) ---------------------------------------
+ * stock_hook.c #includes this file with ISP_HOOK_EMBED defined so the ISP/VENC/
+ * AKPCM decoders below stay byte-for-byte the ones validated on hardware, while
+ * stock_hook.c supplies the raw syscall layer (also x86_64 for host tests), the
+ * log sink (SD card with size caps) and the exported open/read/write/ioctl entry
+ * points. In that mode the four hooks are renamed isp_hook_open/read/write/ioctl,
+ * the first-call marker file is not written and ISP_LOG_OPEN/ISP_LOG_CLOSE come
+ * from the embedder. Without the macro (make isp_hook.so) nothing changes. */
+#ifdef ISP_HOOK_EMBED
+#define open  isp_hook_open
+#define read  isp_hook_read
+#define write isp_hook_write
+#define ioctl isp_hook_ioctl
+#else
 /* ---- raw ARM EABI syscalls -------------------------------------------- */
 static long _sc3(long n, long a, long b, long c)
 {
@@ -88,6 +102,12 @@ static long _sc2(long n, long a, long b)
 #define O_WRONLY    1
 #define O_CREAT   0100
 #define O_APPEND 02000
+
+/* Log sink of the legacy decoders: one open/close per line, as always. */
+#define ISP_LOG_OPEN()   ((int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log", \
+                                    O_WRONLY|O_CREAT|O_APPEND, 0644))
+#define ISP_LOG_CLOSE(f) _sc2(SYS_CLOSE, (f), 0)
+#endif /* ISP_HOOK_EMBED */
 
 /* ---- ISP inner commands ----------------------------------------------- */
 #define ISP_IOCTL_CMD      0xc0cc5616U
@@ -214,7 +234,7 @@ static void w_frac(int fd, uint32_t v, uint32_t d)  /* v/d with 1 decimal */
 /* ---- throttle for high-frequency calls -------------------------------- */
 static unsigned g_expo_cnt  = 0;
 static unsigned g_3dnr_cnt  = 0;
-static unsigned g_other_cnt = 0;
+static unsigned g_other_cnt __attribute__((unused)) = 0;
 #define NR_EVERY   30   /* log get_3d_nr_stat every N calls */
 #define EXPO_EVERY  1   /* log every set/get_exposure_attr (infrequent) */
 
@@ -284,8 +304,7 @@ int open(const char *path, int flags, ...)
             g_pcm_tag[g_pcm_fd_n] = tag;
             g_pcm_fd_n++;
         }
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             char tstr[2] = { tag, 0 };
             w_str(f, "PCM_OPEN path="); w_str(f, path);
@@ -293,7 +312,7 @@ int open(const char *path, int flags, ...)
             w_str(f, " flags=");        w_hex(f, (uint32_t)flags);
             w_str(f, " -> fd=");        w_u32(f, (uint32_t)fd);
             w_str(f, "\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
     }
     return fd;
@@ -304,8 +323,7 @@ long read(int fd, void *buf, unsigned long count)
     long ret = _sc3(SYS_READ, fd, (long)buf, (long)count);
     char tag = pcm_tag_of_fd(fd);
     if (tag) {
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             char tstr[2] = { tag, 0 };
             w_str(f, "PCM_READ fd=");  w_u32(f, (uint32_t)fd);
@@ -315,7 +333,7 @@ long read(int fd, void *buf, unsigned long count)
             if (ret < 0) { w_str(f, "-"); w_u32(f, (uint32_t)(-ret)); }
             else w_u32(f, (uint32_t)ret);
             w_str(f, "\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
     }
     return ret;
@@ -326,8 +344,7 @@ long write(int fd, const void *buf, unsigned long count)
     long ret = _sc3(SYS_WRITE, fd, (long)buf, (long)count);
     char tag = pcm_tag_of_fd(fd);
     if (tag) {
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             char tstr[2] = { tag, 0 };
             w_str(f, "PCM_WRITE fd="); w_u32(f, (uint32_t)fd);
@@ -337,24 +354,28 @@ long write(int fd, const void *buf, unsigned long count)
             if (ret < 0) { w_str(f, "-"); w_u32(f, (uint32_t)(-ret)); }
             else w_u32(f, (uint32_t)ret);
             w_str(f, "\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
     }
     return ret;
 }
 
 /* ---- hook ------------------------------------------------------------- */
+#ifndef ISP_HOOK_EMBED
 static volatile int _g_init = 0;
+#endif
 
 int ioctl(int fd, unsigned int req, void *arg)
 {
     /* First-call marker: if /tmp/isp_hook_loaded appears, the hook loaded. */
+#ifndef ISP_HOOK_EMBED
     if (!_g_init) {
         _g_init = 1;
         int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.pid",
                           O_WRONLY|O_CREAT|4, 0644);  /* 4 = O_TRUNC */
-        if (f >= 0) { w_str(f, "ok\n"); _sc2(SYS_CLOSE, f, 0); }
+        if (f >= 0) { w_str(f, "ok\n"); ISP_LOG_CLOSE(f); }
     }
+#endif
 
     int ret = (int)_sc3(SYS_IOCTL, fd, (long)req, (long)arg);
 
@@ -374,8 +395,7 @@ int ioctl(int fd, unsigned int req, void *arg)
 #define RD32(off) (*(const uint32_t*)(b+(off)))
 #define RD16(off) (*(const uint16_t*)(b+(off)))
 #define RD8(off)  (*(const uint8_t *)(b+(off)))
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f,"#"); w_u32(f, g_create_enc_seen);
             w_str(f," STOCK CREATE_ENC chn_id=");   w_u32(f, RD32(0x00));
@@ -408,7 +428,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             for (int i = 0; i < 24; i++) { w_str(f," "); w_hex(f, RD32(i*4)); }
             w_str(f," ret="); w_u32(f, (uint32_t)ret);
             w_str(f,"\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
 #undef RD32
 #undef RD16
@@ -430,8 +450,7 @@ int ioctl(int fd, unsigned int req, void *arg)
         uint32_t dir = (req >> 30) & 0x3U;
         uint32_t sz  = (req >> 16) & 0x3fffU;
         uint32_t nr  = req & 0xffU;
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             char tag = pcm_tag_of_fd(fd);
             char tstr[2] = { tag ? tag : '?', 0 };
@@ -452,7 +471,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             }
             w_str(f, " ret="); w_u32(f, (uint32_t)ret);
             w_str(f, "\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
         return ret;
     }
@@ -469,8 +488,7 @@ int ioctl(int fd, unsigned int req, void *arg)
         uint32_t dir = (req >> 30) & 0x3U;
         uint32_t sz  = (req >> 16) & 0x3fffU;
         uint32_t nr  = req & 0xffU;
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f, "ALSA fd="); w_u32(f, (uint32_t)fd);
             w_str(f, " req=");    w_hex(f, req);
@@ -488,7 +506,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             }
             w_str(f, " ret="); w_u32(f, (uint32_t)ret);
             w_str(f, "\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
         return ret;
     }
@@ -510,15 +528,14 @@ int ioctl(int fd, unsigned int req, void *arg)
          * swallowed every ISP_IOCTL_CMD call before the detailed AE/WB/
          * SETREG decoders below ever saw it. */
         if (fd >= 6 && fd <= 10) {
-            int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                              O_WRONLY|O_CREAT|O_APPEND, 0644);
+            int f = ISP_LOG_OPEN();
             if (f >= 0) {
                 w_str(f, "FD6-10 fd="); w_u32(f, (uint32_t)fd);
                 w_str(f, " req=");      w_hex(f, req);
                 w_str(f, " arg=");      w_hex(f, (uint32_t)(long)arg);
                 w_str(f, " ret=");      w_u32(f, (uint32_t)ret);
                 w_str(f, "\n");
-                _sc2(SYS_CLOSE, f, 0);
+                ISP_LOG_CLOSE(f);
             }
         }
         return ret;
@@ -550,8 +567,7 @@ int ioctl(int fd, unsigned int req, void *arg)
 
         if (g_win_n < AE_WINDOW_N) return ret;
 
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f,"AE window n="); w_u32(f, (uint32_t)g_win_n);
             w_str(f," lum[min="); w_u32(f, (uint32_t)g_lum_min);
@@ -564,7 +580,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             w_str(f," ispgain=");  w_frac(f, g_last_ispgain, 256); w_str(f,"x");
             if (g_reversals >= 4 || g_lum_max - g_lum_min >= 100) w_str(f, "  <-- HUNTING");
             w_str(f,"\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
 
         g_win_n = 0; g_lum_min = 256; g_lum_max = -1; g_lum_prev = -1;
@@ -578,8 +594,7 @@ int ioctl(int fd, unsigned int req, void *arg)
         const uint32_t *priv = (const uint32_t *)w->payload;
         const uint32_t *pub  = (const uint32_t *)((const uint8_t*)w->payload + 0x1c);
         const char *dir = (w->inner_cmd == SET_EXPOSURE) ? "SET_EXPO" : "GET_EXPO";
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f, dir);
             w_str(f," priv[exp=");    w_u32(f,priv[1]);
@@ -592,7 +607,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             w_str(f," smax=");        w_frac(f,pub[3],256); w_str(f,"x");
             w_str(f," imin=");        w_frac(f,pub[4],256); w_str(f,"x");
             w_str(f," imax=");        w_frac(f,pub[5],256); w_str(f,"x]\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
         return ret;
     }
@@ -602,26 +617,24 @@ int ioctl(int fd, unsigned int req, void *arg)
      * This shows us the exact register addresses and values anyka_ipc uses. */
     if (w->inner_cmd == SENSOR_SETREG) {
         const struct sensor_reg *r = (const struct sensor_reg *)w->payload;
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f,"SETREG addr="); w_hex(f,r->addr);
             w_str(f," val=");        w_hex(f,r->val);
             w_str(f," ("); w_u32(f,r->val); w_str(f,")\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
     }
 
     /* -- SENSOR_GETREG: log reads too (less frequent) -- */
     if (w->inner_cmd == SENSOR_GETREG && ret == 0) {
         const struct sensor_reg *r = (const struct sensor_reg *)w->payload;
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f,"GETREG addr="); w_hex(f,r->addr);
             w_str(f," val=");        w_hex(f,r->val);
             w_str(f," ("); w_u32(f,r->val); w_str(f,")\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
         return ret;
     }
@@ -631,8 +644,7 @@ int ioctl(int fd, unsigned int req, void *arg)
     if (w->inner_cmd == GET_3D_NR_STAT && ret == 0) {
         if ((g_3dnr_cnt++ % NR_EVERY) == 0) {
             const uint8_t *p = (const uint8_t *)w->payload;
-            int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                              O_WRONLY|O_CREAT|O_APPEND, 0644);
+            int f = ISP_LOG_OPEN();
             if (f >= 0) {
                 /* log first 8 u32s of the 0x608-byte stat struct */
                 const uint32_t *v = (const uint32_t *)p;
@@ -641,7 +653,7 @@ int ioctl(int fd, unsigned int req, void *arg)
                     w_str(f," "); w_u32(f, v[i]);
                 }
                 w_str(f,"\n");
-                _sc2(SYS_CLOSE, f, 0);
+                ISP_LOG_CLOSE(f);
             }
         }
         return ret;
@@ -649,11 +661,10 @@ int ioctl(int fd, unsigned int req, void *arg)
 
     /* -- get_ae_stat_info (0x80044991) -- */
     if (w->inner_cmd == GET_AE_STAT_INFO && ret == 0) {
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f,"AE_STAT_INFO ret=0\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
         return ret;
     }
@@ -661,8 +672,7 @@ int ioctl(int fd, unsigned int req, void *arg)
     /* -- set/get WB attr — log 32 u32s to see full struct --- */
     if (w->inner_cmd == SET_WB_ATTR || w->inner_cmd == GET_WB_ATTR) {
         const uint32_t *v = (const uint32_t *)w->payload;
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             w_str(f, w->inner_cmd == SET_WB_ATTR ? "SET_WB" : "GET_WB");
             w_str(f," [0..15]:");
@@ -671,7 +681,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             w_str(f,"       [16..31]:");
             for (int i = 16; i < 32; i++) { w_str(f," "); w_u32(f, v[i]); }
             w_str(f,"\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
         return ret;
     }
@@ -682,8 +692,7 @@ int ioctl(int fd, unsigned int req, void *arg)
         uint32_t cmd = w->inner_cmd;
         if (cmd >= 0x100 && cmd <= 0x10f) return ret;
         /* Log every unknown cmd (not throttled — they're infrequent) */
-        int f = (int)_sc3(SYS_OPEN, (long)"/tmp/isp_hook.log",
-                          O_WRONLY|O_CREAT|O_APPEND, 0644);
+        int f = ISP_LOG_OPEN();
         if (f >= 0) {
             const uint32_t *pay = (const uint32_t *)w->payload;
             const char *name = isp_cmd_name(cmd);
@@ -694,7 +703,7 @@ int ioctl(int fd, unsigned int req, void *arg)
             for (int i = 0; i < 4; i++) { w_str(f," "); w_hex(f, pay[i]); }
             w_str(f," ret="); w_u32(f, (uint32_t)ret);
             w_str(f,"\n");
-            _sc2(SYS_CLOSE, f, 0);
+            ISP_LOG_CLOSE(f);
         }
     }
 
