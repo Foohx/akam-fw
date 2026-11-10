@@ -63,6 +63,11 @@ Commands:
                        status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
                        slowly while someone watches the video, solid otherwise)
                        ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
+  talk [SECONDS | test]
+                     speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
+                     'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
+                     ffmpeg or arecord; uses the ONVIF audio backchannel on port 554
+  say FILE           play an audio file on the camera's speaker (ffmpeg converts it)
   restore            put the original APP back from your backup
   wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
   step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
@@ -238,6 +243,8 @@ case $CMD in
     led)
         cmd_led ${ARGS[@]+"${ARGS[@]:1}"} || rc=$?
         ;;
+    talk) cmd_talk ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    say) cmd_say ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     restore) cmd_restore || rc=$? ;;
     step)
         if [ "${#ARGS[@]}" -lt 2 ] || ! step_valid_name "${ARGS[1]}"; then

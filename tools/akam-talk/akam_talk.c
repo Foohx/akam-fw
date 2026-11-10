@@ -15,7 +15,7 @@
  * Portable C99 (Linux, macOS, Windows through winsock); MIT licence like the rest of
  * Akam; reuses md5.c and g711.c of the camera code. Exit codes: 0 done, 1 usage,
  * 2 network, 3 the camera refuses talk (551 or no backchannel in the SDP),
- * 4 login refused, 5 protocol error. */
+ * 4 login refused, 5 protocol error, 6 the input held no audio. */
 #define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
 #include <errno.h>
@@ -75,7 +75,7 @@ static int64_t now_ms(void)
 #define KEEPALIVE_MS 25000
 #define RX_CAP 16384
 
-enum { EXIT_OK = 0, EXIT_USAGE = 1, EXIT_NET = 2, EXIT_REFUSED = 3, EXIT_LOGIN = 4, EXIT_PROTO = 5 };
+enum { EXIT_OK = 0, EXIT_USAGE = 1, EXIT_NET = 2, EXIT_REFUSED = 3, EXIT_LOGIN = 4, EXIT_PROTO = 5, EXIT_NOAUDIO = 6 };
 
 static volatile sig_atomic_t g_stop;
 static int g_verbose;
@@ -783,6 +783,7 @@ int main(int argc, char **argv)
         (void)request(&c, "TEARDOWN", base, extra, resp, sizeof(resp));
     }
     vlog("sent %ld samples in %ld packets", sent, packets);
+    if (rc == EXIT_OK && packets == 0 && !g_stop) rc = fail(EXIT_NOAUDIO, "no audio was read from the input");
     sock_close(c.fd);
     if (src.f && src.f != stdin) fclose(src.f);
     return rc;

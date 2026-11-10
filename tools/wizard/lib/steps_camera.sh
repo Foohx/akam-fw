@@ -1360,6 +1360,229 @@ cmd_led() {
     led_show
 }
 
+# ------------------------------------------------------------------ talk, say
+# Speak to the camera's speaker from this computer, with the ONVIF audio backchannel on the RTSP
+# port (specs/07-spec-standard-protocols.md section 1). The audio is captured or converted here
+# (ffmpeg, or arecord on Linux) as 8 kHz mono and sent by akam-talk (tools/akam-talk), which logs
+# in with Digest. Talk needs the RTSP password: the camera never offers it without one. The
+# password is typed here (not shown) or taken from AKAM_RTSP_PASSWORD, and reaches akam-talk only
+# through its environment: never a command line, the state file or the log.
+#   ./akam talk            microphone of this computer until Ctrl-C
+#   ./akam talk 30         the same, at most 30 seconds
+#   ./akam talk test       a 2 second test tone (no microphone needed)
+#   ./akam say FILE        play an audio file (any format ffmpeg reads; a WAV 8 kHz mono needs no ffmpeg)
+# Test hooks: AKAM_TALK (akam-talk to run), AKAM_TALK_CAPTURE_CMD (shell command that writes raw
+# 8 kHz mono signed 16-bit little-endian audio on stdout, instead of ffmpeg or arecord).
+TALK_URL_PORT=554
+
+# talk_find_bin: TALK_BIN = an akam-talk that runs here. Order: $AKAM_TALK, a binary shipped next to
+# the wizard (tools/akam-talk/bin/<os>-<cpu>/akam-talk), one built earlier in the state folder, then a
+# build from tools/akam-talk with the C compiler or the pinned Zig.
+talk_find_bin() {
+    local os cpu src cache cc="" f
+    TALK_BIN=""
+    if [ -n "${AKAM_TALK:-}" ]; then
+        [ -x "$AKAM_TALK" ] || { ui_fail "AKAM_TALK is set but is not executable: $AKAM_TALK" ""; return 1; }
+        TALK_BIN=$AKAM_TALK
+        return 0
+    fi
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    cpu=$(host_arch)
+    f="$ROOT/tools/akam-talk/bin/$os-$cpu/akam-talk"
+    if [ -x "$f" ]; then TALK_BIN=$f; return 0; fi
+    src="$ROOT/tools/akam-talk/akam_talk.c"
+    cache="$STATE_DIR/akam-talk"
+    if [ -x "$cache" ] && [ "$cache" -nt "$src" ] && [ "$cache" -nt "$ROOT/src/ak_rtsp/md5.c" ] && [ "$cache" -nt "$ROOT/src/ak_rtsp/g711.c" ]; then
+        TALK_BIN=$cache
+        return 0
+    fi
+    [ -f "$src" ] || { ui_fail "akam-talk is not part of this copy of Akam." "get a kit that has it, or set AKAM_TALK to a built akam-talk."; return 1; }
+    if host_have cc; then
+        cc=cc
+    elif host_have gcc; then
+        cc=gcc
+    elif host_have clang; then
+        cc=clang
+    elif [ -f "$ROOT/tools/build/env.sh" ] && { . "$ROOT/tools/build/env.sh" >/dev/null 2>&1 || true; [ -n "${ZIG:-}" ]; }; then
+        cc="$ZIG cc"
+    fi
+    [ -n "$cc" ] || { ui_fail "no C compiler to build akam-talk, and no prebuilt one for $os-$cpu." "$(host_pkg_install_hint gcc), or run tools/build/bootstrap.sh for the pinned Zig."; return 1; }
+    ui_say "  Building akam-talk (once) ..."
+    log_line "CMD $cc -o $cache akam_talk.c md5.c g711.c"
+    # shellcheck disable=SC2086  # $cc may be "zig cc"
+    if ! $cc -std=gnu99 -O2 -I"$ROOT/src/ak_rtsp" -o "$cache" "$src" "$ROOT/src/ak_rtsp/md5.c" "$ROOT/src/ak_rtsp/g711.c" 2>"$STATE_DIR/akam-talk.err"; then
+        ui_fail "building akam-talk failed: $(head -n 3 "$STATE_DIR/akam-talk.err" | tr '\n' ' ')" "set AKAM_TALK to a prebuilt akam-talk."
+        return 1
+    fi
+    TALK_BIN=$cache
+}
+
+# talk_login: the RTSP password must be on; sets TALK_USER and TALK_PASS.
+talk_login() {
+    local out
+    rtsp_connect || return 1
+    rtsp_status
+    if [ "$RTSP_STATE" = disabled ]; then
+        ui_say "  Talk needs the video stream password: the camera never offers talk without one."
+        ui_say "  (Anyone on your network could otherwise speak through the camera.)"
+        if host_is_tty && ui_ask_yn "  Set a password now?"; then
+            rtsp_auth_set || return 1
+            rtsp_status
+        else
+            ui_fail "no stream password, no talk." "run ./akam rtsp-auth set, then try again."
+            return 1
+        fi
+    fi
+    case $RTSP_STATE in
+        enabled) ;;
+        invalid) ui_fail "the camera's credentials file is invalid." "run ./akam rtsp-auth set or disable."; return 1 ;;
+        *) ui_fail "the camera did not answer like Akam ($RTSP_AUTH_CMD missing?)." "update the image (./akam update)."; return 1 ;;
+    esac
+    out=$(rtsp_remote show 2>/dev/null || true)
+    TALK_USER=${out#user: }
+    TALK_USER=${TALK_USER%%[[:space:]]*}
+    rtsp_user_valid "$TALK_USER" || { ui_fail "could not read the stream user name from the camera." "check ./akam rtsp-auth status."; return 1; }
+    TALK_PASS=${AKAM_RTSP_PASSWORD:-}
+    if [ -z "$TALK_PASS" ]; then
+        ui_secret "  Stream password of user $TALK_USER (not shown):" || { ui_fail "no input." ""; return 1; }
+        TALK_PASS=$SECRET
+        SECRET=""
+    fi
+    log_add_secret "$TALK_PASS"
+}
+
+# talk_capture SECONDS: TALK_CAP = the command that writes the microphone as raw 8 kHz mono s16le.
+talk_capture() {
+    local secs=$1 os
+    TALK_CAP=()
+    if [ -n "${AKAM_TALK_CAPTURE_CMD:-}" ]; then
+        TALK_CAP=(bash -c "$AKAM_TALK_CAPTURE_CMD")
+        return 0
+    fi
+    os=$(uname -s)
+    case $os in
+        Linux)
+            if host_have ffmpeg && host_have pactl && pactl info >/dev/null 2>&1; then
+                TALK_CAP=(ffmpeg -hide_banner -loglevel error -f pulse -i default)
+            elif host_have arecord; then
+                TALK_CAP=(arecord -q -t raw -f S16_LE -r 8000 -c 1)
+                [ "$secs" = 0 ] || TALK_CAP+=(-d "$secs")
+                return 0
+            elif host_have ffmpeg; then
+                TALK_CAP=(ffmpeg -hide_banner -loglevel error -f alsa -i default)
+            fi
+            ;;
+        Darwin)
+            if host_have ffmpeg; then TALK_CAP=(ffmpeg -hide_banner -loglevel error -f avfoundation -i ":default"); fi
+            ;;
+    esac
+    if [ "${#TALK_CAP[@]}" -eq 0 ]; then
+        ui_fail "no way to read the microphone here (ffmpeg or arecord not found)." "$(host_pkg_install_hint ffmpeg); or set AKAM_TALK_CAPTURE_CMD to a command that writes raw 8 kHz mono s16le on stdout. ./akam talk test and ./akam say FILE do not need a microphone."
+        return 1
+    fi
+    [ "$secs" = 0 ] || TALK_CAP+=(-t "$secs")
+    TALK_CAP+=(-ar 8000 -ac 1 -f s16le -)
+}
+
+# talk_run_client ARGS...: run akam-talk with the password in its environment only, input on stdin.
+# Exit codes of akam-talk: 0 done, 2 network, 3 the camera refuses talk, 4 login refused, 6 no audio.
+talk_run_client() {
+    local rc=0
+    log_line "CMD akam-talk --user $TALK_USER $* rtsp://$CAM_IP:$TALK_URL_PORT  (password in the environment)"
+    AKAM_RTSP_PASSWORD=$TALK_PASS "$TALK_BIN" --user "$TALK_USER" "$@" "rtsp://$CAM_IP:$TALK_URL_PORT" || rc=$?
+    case $rc in
+        0) return 0 ;;
+        2) ui_fail "the camera did not answer on port $TALK_URL_PORT." "check ./akam status and the network." ;;
+        3) ui_fail "the camera does not offer talk." "it needs the stream password (it is on), audio out enabled (audio.out_enable=1) and audio.talk_enable=1; see docs/troubleshooting.md (Talk)." ;;
+        4) ui_fail "the camera refused the user name or password." "check ./akam rtsp-auth status; run ./akam rtsp-auth set to choose a new one." ;;
+        6) ui_fail "no audio was read from the input." "for a file: ffmpeg could not decode it; for the microphone: check that it is not muted and is the default input." ;;
+        *) ui_fail "akam-talk stopped with status $rc." "run it with -v for details: set AKAM_TALK to a wrapper, or see docs/troubleshooting.md (Talk)." ;;
+    esac
+    return 1
+}
+
+cmd_talk() {
+    local arg=${1:-} secs=0 test=0
+    case $arg in
+        "") ;;
+        test) test=1 ;;
+        *[!0-9]* | 0*) echo "akam: talk needs nothing, a number of seconds (1 to 3600) or 'test' (see ./akam help)" >&2; return 2 ;;
+        *) secs=$arg; [ "$secs" -le 3600 ] || { echo "akam: talk: at most 3600 seconds" >&2; return 2; } ;;
+    esac
+    [ $# -le 1 ] || { echo "akam: talk takes at most one word (see ./akam help)" >&2; return 2; }
+    step_banner_free "Talk to the camera"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD check over SSH that the stream password is on ($RTSP_AUTH_CMD status) and read the user name (show)."
+        ui_say "  WOULD ask the stream password (not shown) unless AKAM_RTSP_PASSWORD is set."
+        if [ "$test" = 1 ]; then
+            ui_say "  WOULD run: akam-talk --user <user> --tone 2 rtsp://$CAM_IP:$TALK_URL_PORT   (password in the environment)"
+        else
+            ui_say "  WOULD run: <microphone as 8 kHz mono s16le> | akam-talk --user <user> --format s16le rtsp://$CAM_IP:$TALK_URL_PORT"
+        fi
+        return 0
+    fi
+    talk_find_bin || return 1
+    talk_login || return 1
+    if [ "$test" = 1 ]; then
+        ui_say "  Sending a 2 second test tone to the speaker ..."
+        talk_run_client --tone 2 || return 1
+        ui_good "  Done. Heard it? If not: volume, ./akam audio (docs/troubleshooting.md, audio output)."
+        return 0
+    fi
+    talk_capture "$secs" || return 1
+    if [ "$secs" = 0 ]; then
+        ui_say "  Speak now. The camera plays your voice; its own microphone is muted while you speak."
+        ui_say "  Press Ctrl-C to stop."
+    else
+        ui_say "  Speak now, for at most $secs seconds."
+    fi
+    # The capture and the client are one pipeline; Ctrl-C reaches both, akam-talk ends the session cleanly.
+    # (process substitution: the status is the client's, not the capture tool's, which Ctrl-C kills)
+    # Ctrl-C must end the talk, not the wizard: a no-op handler here (children keep the default and die),
+    # the wizard's own trap comes back afterwards.
+    log_line "CMD ${TALK_CAP[0]} ... | akam-talk"
+    local rc=0
+    trap 'true' INT
+    talk_run_client --format s16le < <("${TALK_CAP[@]}") || rc=$?
+    trap - INT
+    tui_rearm_traps
+    [ "$rc" -eq 0 ] || return 1
+    ui_good "  Talk ended."
+}
+
+cmd_say() {
+    local file=${1:-}
+    [ -n "$file" ] && [ $# -eq 1 ] || { echo "akam: say needs one audio file (see ./akam help)" >&2; return 2; }
+    step_banner_free "Play a file on the camera"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD convert $file to 8 kHz mono (ffmpeg) and send it with akam-talk to rtsp://$CAM_IP:$TALK_URL_PORT (stream password needed)."
+        return 0
+    fi
+    [ -f "$file" ] && [ -r "$file" ] || { ui_fail "cannot read $file." "give the path of an audio file."; return 1; }
+    talk_find_bin || return 1
+    local conv=()
+    if host_have ffmpeg; then
+        conv=(ffmpeg -hide_banner -loglevel error -i "$file" -ar 8000 -ac 1 -f s16le -)
+    elif [ "$(head -c 4 "$file" 2>/dev/null)" = RIFF ]; then
+        conv=()  # akam-talk reads a WAV 8 kHz mono 16-bit itself
+    else
+        ui_fail "ffmpeg is needed to convert $file." "$(host_pkg_install_hint ffmpeg); or give a WAV file at 8000 Hz, mono, 16-bit."
+        return 1
+    fi
+    talk_login || return 1
+    ui_say "  Playing $file on the camera ..."
+    if [ "${#conv[@]}" -gt 0 ]; then
+        log_line "CMD ffmpeg -i <file> ... | akam-talk"
+        talk_run_client --format s16le < <("${conv[@]}") || return 1
+    else
+        log_line "CMD akam-talk --input <file>"
+        talk_run_client --input "$file" || return 1
+    fi
+    ui_good "  Done."
+}
+
 # ------------------------------------------------------------------ update
 cmd_update() {
     local img md5 rc=0
