@@ -21,7 +21,9 @@
 #define WB_MANUAL_B 504
 
 static volatile int g_venc_rc_stock;
-static volatile int g_wb_conf;
+/* Default: the sensor_isp.conf WB block, as the stock firmware sends it (user's choice after a side by side
+ * look on 2026-11-10: the colours are better than with the hand-made manual block). */
+static volatile int g_wb_conf = 1;
 static volatile int g_poll;
 static volatile int g_loaded;
 /* ensure_loaded() runs from main(), the AE thread and the 8091 thread: the first one in loads, the others wait. */
@@ -78,7 +80,7 @@ static void load_file(const char *path)
 void imgq_load(const char *conf_file, const char *ram_file)
 {
     g_venc_rc_stock = 0;
-    g_wb_conf = 0;
+    g_wb_conf = 1;
     g_poll = 0;
     load_file(conf_file);
     if (g_venc_rc_stock)
@@ -197,6 +199,17 @@ static int do_reload(char *msg, size_t cap)
     snprintf(msg, cap, "OK img.reload=1 (%s calibration re-sent, AE tuning re-applied%s)", night ? "night" : "day",
              (!night && !g_wb_conf) ? ", manual WB re-applied" : "");
     return 0;
+}
+
+/* Called by night.c at the end of every day / night switch, with the ISP configuration lock held. The reload of
+ * the day subfile has just sent the file's WB block, which is what wb=conf wants (and the night subfile carries its
+ * own). With wb=manual the hand-made block has to follow the reload, as img.reload does, or it would be lost at
+ * the first night -> day switch. */
+void imgq_after_mode_switch(int night)
+{
+    ensure_loaded();
+    if (!night && !g_wb_conf && isp_set_wb_manual(WB_MANUAL_R, WB_MANUAL_G, WB_MANUAL_B) == 0)
+        printf("[imgq] manual WB re-applied after the switch to day (img.wb=manual)\n");
 }
 
 static int not_ready(char *msg, size_t cap)

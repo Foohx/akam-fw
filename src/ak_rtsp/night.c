@@ -9,6 +9,7 @@
 #include "ircut.h"
 #include "ae.h"
 #include "night.h"
+#include "imgq.h"
 
 /* -------------------------------------------------------------------------
  * Auto day/night mode.
@@ -213,6 +214,8 @@ static void switch_to_day_locked(void)
         ae_get_tuning(&t);
         ae_set_tuning(&t);
     }
+    /* The day reload sent the file's WB block; img.wb=manual puts its own back. */
+    imgq_after_mode_switch(0);
 }
 
 /* The whole switch runs under the ISP configuration lock, and g_is_night changes before it is released, so an

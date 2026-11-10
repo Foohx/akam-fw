@@ -2,15 +2,15 @@
 #include <stddef.h>
 
 /* Image-quality switches for A/B tests against the stock firmware (specs/08-spec-image-quality.md).
- * Every switch defaults to the previous behaviour; a switch is flipped for good only after the hardware
- * comparison of the spec's section 7.
+ * Every switch defaults to the previous behaviour, except `wb`, which defaults to `conf` (the stock behaviour)
+ * since 2026-11-10 on the user's choice; `venc_rc` stays `legacy` (no noise gain with `stock` on hardware).
  *
  * Start-up options come from the environment, then from /tmp/akam_image (RAM, gone at reboot), then from
  * /etc/config/akam/image (saved; key=value lines, '#' comments), then from the defaults:
  *   venc_rc  = legacy | stock   AKAM_VENC_RC   CREATE_ENC rate-control sub-struct: legacy = the values ak_rtsp
  *                                               always sent, stock = exactly what the stock application sends
- *   wb       = manual | conf    AKAM_IMG_WB     manual = hand-made manual white-balance block at start-up,
- *                                               conf = keep the sensor_isp.conf block (stock)
+ *   wb       = conf | manual    AKAM_IMG_WB     conf (default) = keep the sensor_isp.conf block, as stock; manual =
+ *                                               the hand-made manual white-balance block ae.c used to send
  *   poll     = 0 | 1            AKAM_IMG_POLL   1 = poll the ISP statistics the stock application polls
  *                                               (3D-NR statistics about 1.2 Hz, sensor fps about 2 Hz)
  * venc_rc=stock has crashed the kernel with other rc words before (see venc.c): keep it in /tmp/akam_image (a crash
@@ -19,8 +19,9 @@
  * img.* SETs follow whatever rule the 8091 read-only step applies to SET. They never write to flash:
 
  *   img.venc_rc    read-only (decided when the encoder is created)
- *   img.wb         manual | conf     applies at once (day only for manual; a night -> day switch re-sends the
- *                                    file's block, so the manual block lasts until the next switch)
+ *   img.wb         conf | manual     applies at once (day only for manual). Every night -> day switch re-sends the
+ *                                    file's block (conf) or, for manual, re-applies the manual block afterwards
+ *                                    (imgq_after_mode_switch())
  *   img.poll       0 | 1             applies at once
  *   img.reload     1 (write only)    re-send the whole conf of the current mode, then the AE tuning
  *   img.dump       confirmed | all   (write only) log the live ISP blocks against the file and write
@@ -36,6 +37,10 @@
 /* (Re)reads `conf_file`, then `ram_file`, then the environment (NULL = no such file). Called lazily with the
  * two default paths by the getters below. */
 void imgq_load(const char *conf_file, const char *ram_file);
+
+/* night.c calls this at the end of every day / night switch (ISP configuration lock held): with wb=manual the
+ * manual block follows the day reload; with wb=conf the reload has already sent the file's block. */
+void imgq_after_mode_switch(int night);
 
 int imgq_venc_rc_stock(void);
 int imgq_wb_conf(void);

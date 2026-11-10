@@ -79,9 +79,9 @@ int main(void)
     /* defaults */
     clear_env();
     imgq_load(NULL, NULL);
-    CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
+    CHECK(!imgq_venc_rc_stock() && imgq_wb_conf() && !imgq_poll_stats());   /* wb=conf is the default */
     imgq_load("/nonexistent/image", "/nonexistent/ram");
-    CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
+    CHECK(!imgq_venc_rc_stock() && imgq_wb_conf() && !imgq_poll_stats());
 
     /* file: comments, blanks, spaces, unknown keys and bad values ignored */
     write_conf(path,
@@ -90,7 +90,7 @@ int main(void)
     CHECK(imgq_venc_rc_stock() && imgq_wb_conf() && imgq_poll_stats());
     write_conf(path, "venc_rc=bogus\nwb=\npoll=maybe\n");
     imgq_load(path, NULL);
-    CHECK(!imgq_venc_rc_stock() && !imgq_wb_conf() && !imgq_poll_stats());
+    CHECK(!imgq_venc_rc_stock() && imgq_wb_conf() && !imgq_poll_stats());
 
     /* the RAM file is read after the saved file and wins over it */
     char ram[] = "/tmp/imgq_test_ram_XXXXXX";
@@ -122,7 +122,7 @@ int main(void)
     CHECK(imgq_ctl_get("ae.speed", out, sizeof(out)) == -1);
     CHECK(imgq_ctl_set("ae.speed", "1", msg, sizeof(msg)) == -1);
     CHECK(imgq_ctl_get("img.venc_rc", out, sizeof(out)) == 0 && strstr(out, "img.venc_rc=legacy"));
-    CHECK(imgq_ctl_get("img.wb", out, sizeof(out)) == 0 && !strcmp(out, "img.wb=manual"));
+    CHECK(imgq_ctl_get("img.wb", out, sizeof(out)) == 0 && !strcmp(out, "img.wb=conf"));
     CHECK(imgq_ctl_get("img.poll", out, sizeof(out)) == 0 && !strcmp(out, "img.poll=0"));
     CHECK(imgq_ctl_get("img.dump", out, sizeof(out)) == 0 && strstr(out, "write only"));
     g_lines = 0;
@@ -186,6 +186,20 @@ int main(void)
     g_tunnel_n = 0;
     CHECK(imgq_ctl_set("img.dump", "all", msg, sizeof(msg)) == 1);
     CHECK(g_tunnel_n == 28);                                /* the guessed ones too */
+
+    /* after a day / night switch (night.c): wb=manual puts the manual block back after the day reload, wb=conf
+     * and the night reload leave the file's block alone */
+    int manual_before = g_wb_manual_calls;
+    CHECK(!imgq_wb_conf());                                  /* the img.wb sequence above ended on manual */
+    imgq_after_mode_switch(1);
+    CHECK(g_wb_manual_calls == manual_before);
+    imgq_after_mode_switch(0);
+    CHECK(g_wb_manual_calls == manual_before + 1);
+    g_night = 0;
+    CHECK(imgq_ctl_set("img.wb", "conf", msg, sizeof(msg)) == 0 && imgq_wb_conf());
+    imgq_after_mode_switch(0);
+    imgq_after_mode_switch(1);
+    CHECK(g_wb_manual_calls == manual_before + 1);
 
     CHECK(g_lock_depth == 0 && g_lock_total > 0);            /* every ISP key took and released the lock */
     unlink(path);
