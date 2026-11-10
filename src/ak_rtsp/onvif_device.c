@@ -434,6 +434,8 @@ static void default_reboot(void)
     once = 1;
     pthread_mutex_unlock(&mu);
     if (already) return;
+    printf("[onvif] SystemReboot requested, rebooting in 1 s\n");
+    fflush(stdout);
     pthread_t th;
     pthread_attr_t at;
     pthread_attr_init(&at);

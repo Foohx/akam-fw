@@ -279,6 +279,13 @@ static void test_wsse(void)
     good_wsse(h, sizeof(h), PASS);
     CHECK(devc(h, NULL, OPX("GetUsers"), &r) == 0 && r.status == 200 && has(&r, "<tt:Username>" USER "</tt:Username>") &&
           has(&r, "Administrator"), "GetUsers returns the one user, Administrator");
+    good_wsse(h, sizeof(h), PASS);
+    {   /* a valid-looking token inside the Body (an argument named UsernameToken) is not a login */
+        char b[4096], inner[2048];
+        snprintf(inner, sizeof(inner), "<tds:GetDeviceInformation " TDS ">%s</tds:GetDeviceInformation>", h);
+        envelope(b, sizeof(b), NULL, inner);
+        CHECK(request("POST", DEV, NULL, b, &r) == 0 && r.status == 401, "a UsernameToken in the Body is not a login");
+    }
     /* state changes with a good token */
     good_wsse(h, sizeof(h), PASS);
     CHECK(devc(h, NULL, "<tds:SetHostname " TDS "><tds:Name>Cam-Salon</tds:Name></tds:SetHostname>", &r) == 0 && r.status == 200, "SetHostname with a token");
@@ -346,6 +353,26 @@ static void test_digest(void)
     char body[1024];
     envelope(body, sizeof(body), NULL, OPX("GetDeviceInformation"));
     CHECK(request("POST", target, h, body, &r) == 0 && r.status == 200, "uri with a query matches the target when it is the same");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000006", "http://192.168.1.77:8080" DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "absolute-URI form of uri accepted (host not compared)");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000007", "HTTP://cam.local" DEV "?x=1");
+    CHECK(request("POST", target, h, body, &r) == 0 && r.status == 200, "absolute URI with a query matches the target");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://192.168.1.77" "/onvif/media_service");
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "absolute URI with another path refused");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://192.168.1.77" DEV "x");
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "absolute URI with a longer path refused");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://" DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "absolute URI without a host refused");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "https://h" DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "https absolute URI refused");
+    {   /* RFC 2069 style (no qop): nothing counts the uses, so a captured request could be replayed: refused */
+        char ha1[33], resp[33];
+        md5_hex_cat(ha1, USER, ":akam:", PASS, (char *)NULL);
+        rtsp_auth_response(resp, ha1, nonce, NULL, "", "POST", DEV);
+        snprintf(h, sizeof(h), "Authorization: Digest username=\"%s\", realm=\"akam\", nonce=\"%s\", uri=\"%s\", response=\"%s\"\r\n",
+                 USER, nonce, DEV, resp);
+        CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "qop=\"auth\""), "Digest without qop refused with a new challenge");
+    }
     digest_hdr(h, sizeof(h), PASS, "0123456789abcdef0123456789abcdef", "00000001", DEV);
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "stale=true"), "nonce we never issued: 401 stale=true");
     digest_hdr(h, sizeof(h), "wrong-password", nonce, "00000009", DEV);
@@ -358,7 +385,7 @@ static void test_digest(void)
     CHECK(devc(NULL, "Authorization: Basic dmlld2VyOnB3\r\n", OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "Basic refused");
     CHECK(devc(NULL, "Authorization: Digest garbage\r\n", OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "malformed Digest refused");
 
-    /* the table is bounded: the 9th outstanding nonce evicts the oldest */
+    /* the table is bounded: one more than ONVIF_NONCES outstanding nonces evicts the oldest */
     char first[40], cur[40];
     CHECK(devc(NULL, NULL, OPX("GetDeviceInformation"), &c) == 0 && nonce_from(&c, first) == 0, "first of many nonces");
     for (int i = 0; i < ONVIF_NONCES; i++) {
