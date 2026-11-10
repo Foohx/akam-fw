@@ -129,6 +129,8 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | ask for a user and password on the stream (off by default) | `./akam rtsp-auth set` (also `status`, `disable`) |
 | turn the front LED off or make it a status light, or keep the infrared LEDs dark at night | `./akam led` shows both; `./akam led status on\|off\|auto`, `./akam led ir auto\|off` |
 | talk through the camera speaker from this computer, or play a sound file on it | `./akam talk` (microphone, Ctrl-C stops), `./akam talk test`, `./akam say FILE`; needs the video password ([two-way audio](docs/two_way_audio.md)) |
+| check or change the speaker volume, play a beep, switch the speaker or talk on or off | `./akam audio` shows the settings; `./akam audio volume 0-100`, `beep`, `on`, `off`, `talk on\|off` (volume and switches are saved on the camera) |
+| change brightness, contrast, saturation, sharpness, white balance or day/night mode | `./akam picture` shows them; `./akam picture brightness N` (also `contrast`, `saturation`, `sharpness`, N from -50 to 50), `wb conf\|manual`, `night auto\|day\|night`, `reset` (the four numbers are saved on the camera; `wb` and `night` go back to the default at a reboot) |
 | go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](#important-disclaimer-and-risks)) |
 
 The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
