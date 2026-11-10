@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -41,6 +42,13 @@ static int default_rng(void *buf, size_t n)
 }
 
 int (*rtsp_auth_rng)(void *buf, size_t n) = default_rng;
+
+/* One mutex guards every rtsp_auth_db_t (the RTSP thread and the ONVIF HTTP thread share the process-wide one) and
+ * the limiter counters. Public entry points take it; the *_l functions below assume it is held. Nothing in here
+ * sleeps or does I/O other than the small credentials file read: the limiter delay is returned, never slept. */
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+#define LOCK()   pthread_mutex_lock(&g_mu)
+#define UNLOCK() pthread_mutex_unlock(&g_mu)
 
 /* ------------------------------------------------------------------------
  * Small helpers
@@ -119,7 +127,7 @@ void rtsp_auth_db_init(rtsp_auth_db_t *db, const char *path)
     db->mode = RTSP_AUTH_OFF;
 }
 
-rtsp_auth_mode_t rtsp_auth_db_refresh(rtsp_auth_db_t *db)
+static rtsp_auth_mode_t db_refresh_l(rtsp_auth_db_t *db)
 {
     rtsp_auth_mode_t mode = RTSP_AUTH_BROKEN;
     char user[RTSP_AUTH_USER_MAX + 1] = "", ha1[33] = "";
@@ -149,6 +157,22 @@ rtsp_auth_mode_t rtsp_auth_db_refresh(rtsp_auth_db_t *db)
         memcpy(db->ha1, ha1, sizeof(db->ha1));
     }
     return mode;
+}
+
+rtsp_auth_mode_t rtsp_auth_db_refresh(rtsp_auth_db_t *db)
+{
+    LOCK();
+    rtsp_auth_mode_t m = db_refresh_l(db);
+    UNLOCK();
+    return m;
+}
+
+rtsp_auth_mode_t rtsp_auth_db_mode(rtsp_auth_db_t *db)
+{
+    LOCK();
+    rtsp_auth_mode_t m = db->mode;
+    UNLOCK();
+    return m;
 }
 
 /* ------------------------------------------------------------------------
@@ -293,7 +317,7 @@ static void deny(rtsp_auth_conn_t *c, int64_t now_us, bool stale, rtsp_auth_resu
              stale ? ", stale=true" : "");
 }
 
-unsigned rtsp_auth_note_failure(rtsp_auth_db_t *db, int64_t now_us)
+static unsigned note_failure_l(rtsp_auth_db_t *db, int64_t now_us)
 {
     if (db->global_fails && now_us - db->last_fail_us > RTSP_AUTH_FAIL_WINDOW_US) db->global_fails = 0;
     db->global_fails++;
@@ -301,7 +325,20 @@ unsigned rtsp_auth_note_failure(rtsp_auth_db_t *db, int64_t now_us)
     return penalty_ms(db->global_fails);
 }
 
-void rtsp_auth_note_success(rtsp_auth_db_t *db) { db->global_fails = 0; }
+unsigned rtsp_auth_note_failure(rtsp_auth_db_t *db, int64_t now_us)
+{
+    LOCK();
+    unsigned d = note_failure_l(db, now_us);
+    UNLOCK();
+    return d;
+}
+
+void rtsp_auth_note_success(rtsp_auth_db_t *db)
+{
+    LOCK();
+    db->global_fails = 0;
+    UNLOCK();
+}
 
 /* A failed attempt: count it (connection and process), slow the answer down,
  * close the connection after too many. */
@@ -310,7 +347,7 @@ static void fail(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, int64_t now_us, const 
 {
     c->authed = false;
     c->fails++;
-    out->delay_ms = rtsp_auth_note_failure(db, now_us);
+    out->delay_ms = note_failure_l(db, now_us);
     if (c->fails >= RTSP_AUTH_CONN_MAX_FAILS) {
         out->verdict = RTSP_AUTH_DROP;
         out->challenge[0] = '\0';
@@ -344,8 +381,8 @@ static bool creds_good(const rtsp_auth_db_t *db, const char *method, const dpara
     return good != 0;
 }
 
-int rtsp_auth_digest_verify(const rtsp_auth_db_t *db, const char *method, const char *hdr,
-                            size_t hdr_len, rtsp_auth_digest_t *out)
+static int digest_verify_l(const rtsp_auth_db_t *db, const char *method, const char *hdr,
+                           size_t hdr_len, rtsp_auth_digest_t *out)
 {
     dparams_t p;
     memset(out, 0, sizeof(*out));
@@ -361,15 +398,24 @@ int rtsp_auth_digest_verify(const rtsp_auth_db_t *db, const char *method, const 
     return 1;
 }
 
-void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method,
-                     const char *hdr, size_t hdr_len, int64_t now_us,
-                     rtsp_auth_result_t *out)
+int rtsp_auth_digest_verify(const rtsp_auth_db_t *db, const char *method, const char *hdr,
+                            size_t hdr_len, rtsp_auth_digest_t *out)
+{
+    LOCK();
+    int r = digest_verify_l(db, method, hdr, hdr_len, out);
+    UNLOCK();
+    return r;
+}
+
+static void check_l(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method,
+                    const char *hdr, size_t hdr_len, int64_t now_us,
+                    rtsp_auth_result_t *out)
 {
     memset(out, 0, sizeof(*out));
     out->verdict = RTSP_AUTH_ALLOW;
     if (!rtsp_auth_method_protected(method)) return;
 
-    rtsp_auth_mode_t mode = rtsp_auth_db_refresh(db);
+    rtsp_auth_mode_t mode = db_refresh_l(db);
     if (mode == RTSP_AUTH_OFF) {
         c->authed = false;
         return;
@@ -431,15 +477,25 @@ void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method
     c->authed = true;
     c->gen = db->generation;
     c->fails = 0;
-    rtsp_auth_note_success(db);
+    db->global_fails = 0;
+}
+
+void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method,
+                     const char *hdr, size_t hdr_len, int64_t now_us,
+                     rtsp_auth_result_t *out)
+{
+    LOCK();
+    check_l(db, c, method, hdr, hdr_len, now_us, out);
+    UNLOCK();
 }
 
 bool rtsp_auth_session_ok(rtsp_auth_db_t *db, const rtsp_auth_conn_t *c)
 {
-    rtsp_auth_mode_t mode = rtsp_auth_db_refresh(db);
-    if (mode == RTSP_AUTH_OFF) return true;
-    if (mode == RTSP_AUTH_BROKEN) return false;
-    return c->authed && c->gen == db->generation;
+    LOCK();
+    rtsp_auth_mode_t mode = db_refresh_l(db);
+    bool ok = mode == RTSP_AUTH_OFF || (mode == RTSP_AUTH_ON && c->authed && c->gen == db->generation);
+    UNLOCK();
+    return ok;
 }
 
 void rtsp_auth_redact_uri(const char *uri, char *out, size_t cap)

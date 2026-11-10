@@ -19,7 +19,7 @@ trap cleanup EXIT
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -I"$REPO/src/ak_rtsp" \
     -o "$WORK/rtsp_auth_test" \
-    "$REPO/tests/native/rtsp_auth_test.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c"
+    "$REPO/tests/native/rtsp_auth_test.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread
 "$WORK/rtsp_auth_test"
 
 # The journal line of rtsp.c must print only what rtsp_auth.c hands out (r.log),
@@ -40,7 +40,7 @@ if ! command -v ffprobe >/dev/null 2>&1; then
 fi
 "$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" \
     -o "$WORK/rtsp_auth_server" \
-    "$REPO/tests/native/rtsp_auth_server.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c"
+    "$REPO/tests/native/rtsp_auth_server.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread
 
 AUTHFILE=$WORK/rtsp_auth
 USERNAME=viewer

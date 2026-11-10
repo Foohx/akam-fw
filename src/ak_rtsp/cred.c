@@ -3,6 +3,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -37,10 +38,18 @@ typedef struct {
     uid_t uid;
 } sig_t;
 
+/* A verified nonce, remembered as its SHA-1 until its token can no longer pass the Created check. */
 typedef struct {
-    uint8_t raw[CRED_NONCE_RAW_MAX];
-    size_t len;
+    uint8_t h[SHA1_DIGEST_LEN];
+    int64_t expire_us;               /* cred_mono_us() time after which the entry is free */
+    bool used;
 } nonce_t;
+
+/* One mutex around every public entry point (the RTSP thread and the ONVIF HTTP thread both come here). Lock
+ * order: cred, then rtsp_auth. Nothing below sleeps: the limiter delay is returned to the caller. */
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+#define LOCK()   pthread_mutex_lock(&g_mu)
+#define UNLOCK() pthread_mutex_unlock(&g_mu)
 
 static struct {
     const char *path;
@@ -54,9 +63,7 @@ static struct {
     sig_t sig;
     char user[CRED_USER_MAX + 1];
     char pass[CRED_PASS_MAX + 1];
-    nonce_t cache[CRED_NONCE_CACHE]; /* ring of the last verified nonces */
-    unsigned cache_n;                /* entries in use */
-    unsigned cache_next;
+    nonce_t cache[CRED_NONCE_CACHE]; /* verified nonces with their expiry */
 } S;
 
 static void wipe(void *p, size_t n)
@@ -73,7 +80,7 @@ static int ct_eq(const void *a, const void *b, size_t n)
     return d == 0;
 }
 
-void cred_init(const char *path, rtsp_auth_db_t *limiter)
+static void init_l(const char *path, rtsp_auth_db_t *limiter)
 {
     wipe(&S, sizeof(S));
     S.path = path ? path : CRED_PATH;
@@ -82,6 +89,13 @@ void cred_init(const char *path, rtsp_auth_db_t *limiter)
     S.inited = true;
     S.state = CRED_ABSENT;
     S.problem = "";
+}
+
+void cred_init(const char *path, rtsp_auth_db_t *limiter)
+{
+    LOCK();
+    init_l(path, limiter);
+    UNLOCK();
 }
 
 /* ------------------------------------------------------------------------
@@ -220,9 +234,9 @@ static void load(void)
     close(fd);
 }
 
-cred_state_t cred_refresh(bool force)
+static cred_state_t refresh_l(bool force)
 {
-    if (!S.inited) cred_init(NULL, NULL);
+    if (!S.inited) init_l(NULL, NULL);
     int64_t now = cred_mono_us();
     if (S.loaded && !force && now < S.next_check_us) return S.state;
     S.next_check_us = now + CRED_RECHECK_US;
@@ -240,10 +254,43 @@ cred_state_t cred_refresh(bool force)
     return S.state;
 }
 
-const char *cred_problem(void) { return S.problem ? S.problem : ""; }
+cred_state_t cred_refresh(bool force)
+{
+    LOCK();
+    cred_state_t st = refresh_l(force);
+    UNLOCK();
+    return st;
+}
 
-const char *cred_get_user(void) { return cred_refresh(false) == CRED_OK ? S.user : NULL; }
-bool cred_have_plain(void) { return cred_refresh(false) == CRED_OK; }
+const char *cred_problem(void)
+{
+    LOCK();
+    const char *p = S.problem ? S.problem : ""; /* always a string literal */
+    UNLOCK();
+    return p;
+}
+
+bool cred_get_user(char *out, size_t cap)
+{
+    bool ok = false;
+    LOCK();
+    if (refresh_l(false) == CRED_OK && cap > strlen(S.user)) {
+        memcpy(out, S.user, strlen(S.user) + 1);
+        ok = true;
+    } else if (cap) {
+        out[0] = '\0';
+    }
+    UNLOCK();
+    return ok;
+}
+
+bool cred_have_plain(void)
+{
+    LOCK();
+    bool ok = refresh_l(false) == CRED_OK;
+    UNLOCK();
+    return ok;
+}
 
 /* ------------------------------------------------------------------------
  * xsd:dateTime -> Unix seconds
@@ -316,7 +363,7 @@ static bool parse_created(const char *s, int64_t *out)
 static bool wsse_verify(const char *username, const char *nonce_b64, const char *created, const char *digest_b64)
 {
     if (!username || !nonce_b64 || !created || !digest_b64) return false;
-    if (cred_refresh(false) != CRED_OK) return false;
+    if (refresh_l(false) != CRED_OK) return false;
 
     size_t nl = strlen(nonce_b64), cl = strlen(created), dl = strlen(digest_b64);
     if (nl == 0 || nl > B64_ENCODED_LEN(CRED_NONCE_RAW_MAX) || cl == 0 || cl > CRED_CREATED_MAX ||
@@ -353,12 +400,34 @@ static bool wsse_verify(const char *username, const char *nonce_b64, const char 
         int64_t d = wall - t;
         if (d > CRED_CLOCK_WINDOW_S || d < -CRED_CLOCK_WINDOW_S) return false;
     }
-    for (unsigned i = 0; i < S.cache_n; i++)
-        if (S.cache[i].len == (size_t)nn && ct_eq(S.cache[i].raw, nonce, (size_t)nn)) return false;
-    memcpy(S.cache[S.cache_next].raw, nonce, (size_t)nn);
-    S.cache[S.cache_next].len = (size_t)nn;
-    S.cache_next = (S.cache_next + 1) % CRED_NONCE_CACHE;
-    if (S.cache_n < CRED_NONCE_CACHE) S.cache_n++;
+    /* Replay: the nonce is remembered until its token could no longer pass the Created check (Created + window),
+     * or receive time + window when the clock is not set (no Created check then). Only expired entries are
+     * reused; when every slot still holds a live nonce the request is refused (fail closed) rather than
+     * forgetting one that could still be replayed. */
+    int64_t now = cred_mono_us(), expire = now + (int64_t)CRED_CLOCK_WINDOW_S * 1000000;
+    if (wall >= CRED_CLOCK_MIN_YEAR_S) {
+        int64_t t;
+        parse_created(created, &t); /* already known good above */
+        expire = now + (t + CRED_CLOCK_WINDOW_S - wall) * 1000000;
+    }
+    uint8_t h[SHA1_DIGEST_LEN];
+    sha1_init(&c);
+    sha1_update(&c, nonce, (size_t)nn);
+    sha1_final(&c, h);
+    nonce_t *slot = NULL;
+    for (unsigned i = 0; i < CRED_NONCE_CACHE; i++) {
+        nonce_t *e = &S.cache[i];
+        if (e->used && now >= e->expire_us) e->used = false;
+        if (e->used) {
+            if (ct_eq(e->h, h, sizeof(h))) return false;
+        } else if (!slot) {
+            slot = e;
+        }
+    }
+    if (!slot) return false;
+    memcpy(slot->h, h, sizeof(h));
+    slot->expire_us = expire;
+    slot->used = true;
     return true;
 }
 
@@ -377,8 +446,19 @@ static int finish(bool ok, unsigned *delay_ms)
 int cred_check_wsse(const char *username, const char *nonce_b64, const char *created,
                     const char *digest_b64, unsigned *delay_ms)
 {
-    if (!S.inited) cred_init(NULL, NULL);
-    return finish(wsse_verify(username, nonce_b64, created, digest_b64), delay_ms);
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
+    int r = finish(wsse_verify(username, nonce_b64, created, digest_b64), delay_ms);
+    UNLOCK();
+    return r;
+}
+
+void cred_note_failure(unsigned *delay_ms)
+{
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
+    finish(false, delay_ms);
+    UNLOCK();
 }
 
 /* ------------------------------------------------------------------------
@@ -387,13 +467,21 @@ int cred_check_wsse(const char *username, const char *nonce_b64, const char *cre
 int cred_check_http_digest(const char *method, const char *hdr, size_t hdr_len,
                            rtsp_auth_digest_t *d, unsigned *delay_ms)
 {
-    if (!S.inited) cred_init(NULL, NULL);
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
     rtsp_auth_db_refresh(S.limiter);
-    return finish(rtsp_auth_digest_verify(S.limiter, method, hdr, hdr_len, d) == 1, delay_ms);
+    int r = finish(rtsp_auth_digest_verify(S.limiter, method, hdr, hdr_len, d) == 1, delay_ms);
+    UNLOCK();
+    return r;
 }
 
-bool cred_auth_enabled(void)
+rtsp_auth_mode_t cred_auth_mode(void)
 {
-    if (!S.inited) cred_init(NULL, NULL);
-    return rtsp_auth_db_refresh(S.limiter) != RTSP_AUTH_OFF;
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
+    rtsp_auth_mode_t m = rtsp_auth_db_refresh(S.limiter);
+    UNLOCK();
+    return m;
 }
+
+bool cred_auth_enabled(void) { return cred_auth_mode() != RTSP_AUTH_OFF; }
