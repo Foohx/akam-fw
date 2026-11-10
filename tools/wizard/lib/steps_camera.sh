@@ -1481,7 +1481,10 @@ talk_capture() {
         return 1
     fi
     [ "$secs" = 0 ] || TALK_CAP+=(-t "$secs")
-    TALK_CAP+=(-ar 8000 -ac 1 -f s16le -)
+    # Speech normaliser: a headset microphone is far quieter than the test tone. speechnorm raises
+    # the voice in real time without look-ahead delay; p=0.6 (peak target) was tuned by ear on the
+    # camera speaker at audio.out_volume 100. Not available with arecord (raw ALSA capture).
+    TALK_CAP+=(-af "speechnorm=e=12.5:r=0.0001:l=1:p=0.6" -ar 8000 -ac 1 -f s16le -)
 }
 
 # talk_run_client ARGS...: run akam-talk with the password in its environment only, input on stdin.
