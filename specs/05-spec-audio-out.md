@@ -103,7 +103,7 @@ write(fd, 1024 octets) en boucle
 
 ### 3.1 Livrable
 
-Sans réseau : un bip de 1 s généré dans le code (sinus 1 kHz, 8 kHz, rampes de 10 ms, amplitude −16 dBFS) déclenché par la commande 8091 :
+Sans réseau : un bip de 1 s généré dans le code (sinus 1 kHz, 8 kHz, rampes de 10 ms, amplitude −28 dBFS, même niveau perçu que −16 dBFS au volume 50) déclenché par la commande 8091 :
 
 ```
 printf 'SET audio.out_test 1\n' | nc <cam> 8091      # joue le bip puis revient à 0
@@ -221,7 +221,7 @@ Au moins : `DESCRIBE` avec `Require: www.onvif.org/ver20/backchannel` renvoie un
 | Clé | Type / bornes | Défaut | Persistant (§7) |
 |---|---|---|---|
 | `audio.out_enable` | 0/1 | **1** (décision utilisateur) | oui |
-| `audio.out_volume` | int 0..100 (logiciel, courbe quadratique : `(v/100)²` en Q15) ; 0 = muet (ampli éteint) | 50 | oui |
+| `audio.out_volume` | int 0..100 (logiciel, courbe quadratique : `(v/100)²` en Q15) ; 0 = muet (ampli éteint) | 100 | oui |
 | `audio.out_gain` | int 0..5 (matériel, `IOC_SET_GAIN`) | 2 | oui |
 | `audio.out_source` | enum 4 / 6 (route ; 4 = stock, 6 = expérience) | 4 | oui |
 | `audio.out_amp` | enum `auto`/`on`/`off` | `auto` | non |

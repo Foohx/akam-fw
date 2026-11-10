@@ -344,7 +344,7 @@ static void test_silence_and_beep(void)
             if (abs(l) > peak) peak = abs(l);
         }
     CHECK(ok_val, "written samples equal the synthesized beep at volume 100 (mono, 512 frames per period)");
-    CHECK(peak == 5194, "peak amplitude -16 dBFS (5194)");
+    CHECK(peak == 1305, "peak amplitude -28 dBFS (1305)");
     CHECK(ao->state == AO_IDLE || ao->state == AO_TEST, "state returns to idle after the beep");
 
     /* beep structure */
@@ -358,10 +358,10 @@ static void test_silence_and_beep(void)
     CHECK(tone_nonzero[0] > 1000 && tone_nonzero[1] > 1000 && tone_nonzero[2] > 1000, "three 200 ms tones");
     CHECK(ao_beep_sample(0) == 0 && ao_beep_sample(1599) == 0 && ao_beep_sample(3200) == 0 && ao_beep_sample(7999) == 0,
           "tones start and end at zero (10 ms ramps)");
-    CHECK(abs(ao_beep_sample(42)) < 5194 && abs(ao_beep_sample(42)) > 0, "ramp: 10 ms fade-in");
+    CHECK(abs(ao_beep_sample(42)) < 1305 && abs(ao_beep_sample(42)) > 0, "ramp: 10 ms fade-in");
     int pk = 0;
     for (unsigned i = 800; i < 900; i++) if (abs(ao_beep_sample(i)) > pk) pk = abs(ao_beep_sample(i));
-    CHECK(pk == 5194, "plateau reaches 5194");
+    CHECK(pk == 1305, "plateau reaches 1305");
     CHECK(ao_beep_sample(AO_BEEP_SAMPLES) == 0 && ao_beep_sample(100000) == 0, "outside the buffer: 0");
     /* 1 kHz: period of 8 samples */
     CHECK(ao_beep_sample(808) == ao_beep_sample(800) && ao_beep_sample(813) == ao_beep_sample(805), "1 kHz at 8 kHz");
@@ -674,7 +674,7 @@ static void test_config(void)
     printf("# config file\n");
     audio_out_t *ao = calloc(1, sizeof(*ao));
     new_case(ao);
-    CHECK(ao_load_config(ao) == 0 && ao->enabled == 1 && ao->volume == 50 && ao->gain == 2 && ao->source == 4
+    CHECK(ao_load_config(ao) == 0 && ao->enabled == 1 && ao->volume == 100 && ao->gain == 2 && ao->source == 4
           && ao->amp_mode == AO_AMP_AUTO, "no file: defaults (gain 2, source 4), audio out enabled");
 
     mkdir(ao->conf_dir, 0700);
@@ -733,7 +733,7 @@ static void test_ctl(void)
 
     ao_ctl_get(ao, "audio.out_enable", out, sizeof(out));
     CHECK(!strcmp(out, "audio.out_enable=1"), "enable default 1");
-    ao_ctl_get(ao, "audio.out_volume", out, sizeof(out)); CHECK(!strcmp(out, "audio.out_volume=50"), "volume default 50");
+    ao_ctl_get(ao, "audio.out_volume", out, sizeof(out)); CHECK(!strcmp(out, "audio.out_volume=100"), "volume default 100");
     ao_ctl_get(ao, "audio.out_gain", out, sizeof(out));   CHECK(!strcmp(out, "audio.out_gain=2"), "gain default 2");
     ao_ctl_get(ao, "audio.out_source", out, sizeof(out)); CHECK(!strcmp(out, "audio.out_source=4"), "source default 4");
     ao_ctl_get(ao, "audio.out_amp", out, sizeof(out));    CHECK(!strcmp(out, "audio.out_amp=auto"), "amp default auto");
