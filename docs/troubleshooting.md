@@ -147,8 +147,11 @@ login. Check it:
   (`./akam rtsp-auth set`). The user name takes letters, digits and `. _ @ + -`.
 - **Several wrong tries in a row:** the camera slows the answers down (up to 2 seconds) and closes the
   connection after 5 failures; wait a minute, then try again with the right password.
-- **Forgot the password:** it cannot be read back (only a hash is stored). Over SSH,
-  `./akam rtsp-auth disable` removes it, `./akam rtsp-auth set` sets a new one.
+- **Forgot the password:** the wizard cannot show it (root can read `/etc/config/akam/credentials` over
+  SSH, but do not rely on it). `./akam rtsp-auth disable` removes it (and the stored copy),
+  `./akam rtsp-auth set` sets a new one.
+- **`not ONVIF-ready` in `status`:** the camera has the RTSP login but not the clear-text copy that ONVIF needs
+  (set by an older image or by hand); run `./akam rtsp-auth set` again.
 - **`INVALID` in `status`:** the credentials file is damaged. The camera then refuses every request
   until you run `./akam rtsp-auth set` or `disable`.
 - **A player that was working stops after you changed the password:** expected; it is disconnected and

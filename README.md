@@ -139,8 +139,10 @@ leaves the LED as it always was. `ir off` still switches the image to night mode
 infrared LEDs ([details](docs/akam_v1_install.md#led-settings)).
 
 `update` and `restore` write the camera's flash and ask the same red yes/no. The video password is a
-Digest login (works with VLC, ffmpeg, go2rtc and Frigate); only a hash is stored on the camera, and it
-does not encrypt the video. Put it in the address: `rtsp://<user>:<password>@<camera-ip>:554/`, with
+Digest login (works with VLC, ffmpeg, go2rtc and Frigate); it does not encrypt the video. `./akam
+rtsp-auth set` stores the password on the camera twice: as a hash for the Digest login, and in clear text in
+a file only root can read (`/etc/config/akam/credentials`), because the ONVIF login (a later step) cannot work
+from a hash. `./akam rtsp-auth status` says `ONVIF-ready` when that copy is there; `disable` removes both. Put it in the address: `rtsp://<user>:<password>@<camera-ip>:554/`, with
 special characters URL-encoded ([401 errors](docs/troubleshooting.md#401-unauthorized-or-a-password-prompt-on-the-stream)).
 
 ## Watching the stream

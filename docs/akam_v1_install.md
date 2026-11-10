@@ -40,7 +40,7 @@ procedures behind it are in the [documentation index](README.md#manual-procedure
 | Partition | Akam V1 |
 |---|---|
 | UBOOT, ENV, ENVBK, DTB, KERNEL, ROOTFS (`mtd0` to `mtd5`) | Never written |
-| CONFIG (`mtd6`, JFFS2, `/etc/config`) | Written at runtime: Dropbear host key and `authorized_keys` under `/etc/config/dropbear/`, the optional network name and stream password hash under `/etc/config/akam/`, and `wpa_supplicant.conf` when the wizard saves your Wi-Fi (all kept across APP reflashes) |
+| CONFIG (`mtd6`, JFFS2, `/etc/config`) | Written at runtime: Dropbear host key and `authorized_keys` under `/etc/config/dropbear/`, the optional network name, the stream password hash (`rtsp_auth`) and its clear-text copy for ONVIF (`credentials`, mode 0600, root only) under `/etc/config/akam/`, and `wpa_supplicant.conf` when the wizard saves your Wi-Fi (all kept across APP reflashes) |
 | APP (`mtd7`, SquashFS, `/usr`, 5 242 880 bytes) | Replaced by the image from `build_firmware.sh` |
 
 Inside the APP image: `anyka_ipc` (Tuya) removed; `ak_rtsp` started through `ak_rtsp_wrapper.sh` from a
