@@ -2,8 +2,9 @@
 
 /* TCP tuning/debug control server (port 8091).
  *
- * Text protocol (newline-delimited), up to 4 clients at once (a 5th gets "ERR busy"):
- *   LIST                  -> one "name=value" line per known param, then "."
+ * Text protocol (newline-delimited), up to 4 clients at once, one slot kept for loopback peers
+ * (a remote peer gets at most 3, dropped after 120 s idle; otherwise "ERR busy"):
+ *   LIST                  -> one "name=value" line per known param (then metrics, ctl.clients, ctl.debug), then "."
  *   GET <param>           -> "<param>=<value>" or "ERR ..."
  *   SET <param> <value>   -> "OK <param>=<value>" or "ERR ..."
  *   DEBUG on [min]|off|status  (loopback only) -> remote writes allowed for min minutes

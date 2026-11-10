@@ -21,6 +21,7 @@
 #include "leds.h"
 #include "control.h"
 #include "ctl_gate.h"
+#include "ctl_sys.h"
 
 #ifndef CONTROL_PORT
 #define CONTROL_PORT 8091   /* the host test builds with another port */
@@ -33,10 +34,14 @@ static int             g_server_fd = -1;
 
 /* Up to CTL_MAX_CLIENTS concurrent clients, one small thread each (a remote
  * metrics reader must not kick the SSH helper that runs a command on the
- * loopback). A client that finds every slot busy gets "ERR busy" and is
- * closed. g_slot_lock protects the table and the fds in it. */
+ * loopback). One slot is reserved for loopback peers (remote peers get at most
+ * CTL_MAX_REMOTE) so idle LAN connections cannot lock out the SSH helpers. A
+ * client that finds no slot for it gets "ERR busy" and is closed. g_slot_lock
+ * protects the table and the fds in it. */
 #define CTL_STACK_BYTES 65536
-#define CTL_IDLE_S      900   /* no byte received for this long: the client is dropped */
+#ifndef CTL_IDLE_TICK_S
+#define CTL_IDLE_TICK_S 10    /* recv wakes this often to check the idle limit (it depends on the DEBUG flag) */
+#endif
 #define CTL_SNDTIMEO_S  2     /* a reply to a stuck client gives up after this */
 
 typedef struct {
@@ -148,6 +153,16 @@ static void *log_pump(void *arg)
  * ------------------------------------------------------------------------- */
 /* Per-client write lock: LOG lines (log_forward) use the same lock, so a line
  * is never cut in the middle by a reply. The send timeout bounds a stuck client. */
+static void send_locked(cli_t *c, const char *buf, size_t len)
+{
+    pthread_mutex_lock(&c->wlock);
+    if (c->need_nl) { (void)send(c->fd, "\n", 1, MSG_NOSIGNAL); c->need_nl = 0; }
+    (void)send(c->fd, buf, len, MSG_NOSIGNAL);
+    pthread_mutex_unlock(&c->wlock);
+}
+
+/* Every reply is one line: a CR or LF inside a value (an SSID, say) becomes '?' so it
+ * can never forge a second line. */
 static void reply(cli_t *c, const char *fmt, ...)
 {
     char buf[512];
@@ -156,11 +171,10 @@ static void reply(cli_t *c, const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     size_t len = strlen(buf);
+    for (size_t i = 0; i < len; i++)
+        if (buf[i] == '\r' || buf[i] == '\n') buf[i] = '?';
     if (len < sizeof(buf) - 1) { buf[len] = '\n'; len++; }
-    pthread_mutex_lock(&c->wlock);
-    if (c->need_nl) { (void)send(c->fd, "\n", 1, MSG_NOSIGNAL); c->need_nl = 0; }
-    (void)send(c->fd, buf, len, MSG_NOSIGNAL);
-    pthread_mutex_unlock(&c->wlock);
+    send_locked(c, buf, len);
 }
 
 static const char *night_mode_name(night_override_t m)
@@ -183,6 +197,32 @@ static int night_mode_parse(const char *s, night_override_t *out)
 static void audio_list_emit(void *arg, const char *line)
 {
     reply((cli_t *)arg, "%s", line);
+}
+
+/* Metric lines are collected under the ctl_sys lock and sent after it is released. */
+typedef struct { char buf[2048]; size_t len; } metric_buf_t;
+
+static void metric_emit(const char *key, const char *value, void *u)
+{
+    metric_buf_t *m = (metric_buf_t *)u;
+    size_t kl = strlen(key), vl = strlen(value);
+    if (m->len + kl + vl + 2 > sizeof(m->buf)) return;
+    memcpy(m->buf + m->len, key, kl);
+    m->len += kl;
+    m->buf[m->len++] = '=';
+    for (size_t i = 0; i < vl; i++) {
+        unsigned char ch = (unsigned char)value[i];
+        m->buf[m->len++] = (ch < 0x20 || ch == 0x7f) ? '?' : (char)ch;
+    }
+    m->buf[m->len++] = '\n';
+}
+
+static int clients_connected(void)
+{
+    pthread_mutex_lock(&g_slot_lock);
+    int n = ctl_slots_count(&g_slots);
+    pthread_mutex_unlock(&g_slot_lock);
+    return n;
 }
 
 static void do_list(cli_t *c)
@@ -216,6 +256,15 @@ static void do_list(cli_t *c)
     audio_out_ctl_list(audio_list_emit, c);
     imgq_ctl_list(audio_list_emit, c);
     talk_ctl_list(audio_list_emit, c);
+    metric_buf_t *m = malloc(sizeof(*m));   /* 2 KB: not on the 64 KB client stack */
+    if (m) {
+        m->len = 0;
+        ctl_sys_list(metric_emit, m);
+        if (m->len) send_locked(c, m->buf, m->len);
+        free(m);
+    }
+    reply(c, "ctl.clients=%d", clients_connected());
+    reply(c, "ctl.debug=%d",   debug_active());
     reply(c, ".");
 }
 
@@ -242,23 +291,33 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "venc.minqp"))            reply(c, "venc.minqp=28 (read-only)");
     else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=43 (read-only)");
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
+    else if (!strcmp(param, "ctl.clients"))           reply(c, "ctl.clients=%d", clients_connected());
     else if (!strcmp(param, "ctl.debug_remaining")) {
         pthread_mutex_lock(&g_dbg_lock);
         int r = ctl_debug_remaining_s(&g_dbg, mono_ms());
         pthread_mutex_unlock(&g_dbg_lock);
         reply(c, "ctl.debug_remaining=%d", r);
     } else {
-        char line[320];
+        char line[320], val[64];
         if (night_ctl_get(param, line, sizeof(line)) == 0)          reply(c, "%s", line);
         else if (ledsys_ctl_get(param, line, sizeof(line)) == 0)    reply(c, "%s", line);
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(c, "%s", line);
         else if (imgq_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
         else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
+        else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, val);
         else                                                   reply(c, "ERR unknown param %s", param);
     }
 }
 
-static void do_set(cli_t *c, const char *param, const char *value)
+static void setmsg(char *resp, size_t cap, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(resp, cap, fmt, ap);
+    va_end(ap);
+}
+
+static void do_set_locked(char *resp, size_t cap, const char *param, const char *value)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
     night_tuning_t n; night_get_tuning(&n);
@@ -266,99 +325,126 @@ static void do_set(cli_t *c, const char *param, const char *value)
     if (!strcmp(param, "ae.stable_range")) {
         a.stable_range = atoi(value);
         ae_set_tuning(&a);
-        reply(c, "OK ae.stable_range=%d", a.stable_range);
+        setmsg(resp, cap, "OK ae.stable_range=%d", a.stable_range);
     } else if (!strcmp(param, "ae.hold_range")) {
         a.hold_range = atoi(value);
         ae_set_tuning(&a);
-        reply(c, "OK ae.hold_range=%d", a.hold_range);
+        setmsg(resp, cap, "OK ae.hold_range=%d", a.hold_range);
     } else if (!strcmp(param, "ae.speed")) {
         a.speed = atoi(value);
         ae_set_tuning(&a);
-        reply(c, "OK ae.speed=%d", a.speed);
+        setmsg(resp, cap, "OK ae.speed=%d", a.speed);
     } else if (!strcmp(param, "ae.exp_max")) {
         a.exp_max = atoi(value);
         ae_set_tuning(&a);
-        reply(c, "OK ae.exp_max=%d", a.exp_max);
+        setmsg(resp, cap, "OK ae.exp_max=%d", a.exp_max);
     } else if (!strcmp(param, "ae.enabled")) {
         a.enabled = atoi(value) ? 1 : 0;
         ae_set_tuning(&a);
-        reply(c, "OK ae.enabled=%d", a.enabled);
+        setmsg(resp, cap, "OK ae.enabled=%d", a.enabled);
     } else if (!strcmp(param, "night.mode")) {
         night_override_t m;
         if (night_mode_parse(value, &m) != 0) {
-            reply(c, "ERR invalid night.mode value %s (want auto|day|night)", value);
+            setmsg(resp, cap, "ERR invalid night.mode value %s (want auto|day|night)", value);
             return;
         }
         n.override = m;
         night_set_tuning(&n);
-        reply(c, "OK night.mode=%s", night_mode_name(m));
+        setmsg(resp, cap, "OK night.mode=%s", night_mode_name(m));
     } else if (!strcmp(param, "night.trigger_hw_exp")) {
         n.trigger_hw_exp = (uint32_t)strtoul(value, NULL, 10);
         night_set_tuning(&n);
-        reply(c, "OK night.trigger_hw_exp=%u", n.trigger_hw_exp);
+        setmsg(resp, cap, "OK night.trigger_hw_exp=%u", n.trigger_hw_exp);
     } else if (!strcmp(param, "night.day_hw_exp")) {
         n.day_hw_exp = (uint32_t)strtoul(value, NULL, 10);
         night_set_tuning(&n);
-        reply(c, "OK night.day_hw_exp=%u", n.day_hw_exp);
+        setmsg(resp, cap, "OK night.day_hw_exp=%u", n.day_hw_exp);
     } else if (!strcmp(param, "night.confirm_samples")) {
         n.confirm_samples = atoi(value);
         night_set_tuning(&n);
-        reply(c, "OK night.confirm_samples=%d", n.confirm_samples);
+        setmsg(resp, cap, "OK night.confirm_samples=%d", n.confirm_samples);
     } else if (!strcmp(param, "night.lock_ms")) {
         n.lock_ms = atoi(value);
         night_set_tuning(&n);
-        reply(c, "OK night.lock_ms=%d", n.lock_ms);
+        setmsg(resp, cap, "OK night.lock_ms=%d", n.lock_ms);
     } else if (!strcmp(param, "isp.saturation")) {
         int v = atoi(value);
-        if (v < -50 || v > 50) { reply(c, "ERR isp.saturation range [-50,50]"); return; }
-        if (isp_set_saturation(v) != 0) { reply(c, "ERR isp_set_saturation failed"); return; }
+        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.saturation range [-50,50]"); return; }
+        if (isp_set_saturation(v) != 0) { setmsg(resp, cap, "ERR isp_set_saturation failed"); return; }
         g_isp_saturation = v;
-        reply(c, "OK isp.saturation=%d", v);
+        setmsg(resp, cap, "OK isp.saturation=%d", v);
     } else if (!strcmp(param, "isp.contrast")) {
         int v = atoi(value);
-        if (v < -50 || v > 50) { reply(c, "ERR isp.contrast range [-50,50]"); return; }
-        if (isp_set_contrast(v) != 0) { reply(c, "ERR isp_set_contrast failed"); return; }
+        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.contrast range [-50,50]"); return; }
+        if (isp_set_contrast(v) != 0) { setmsg(resp, cap, "ERR isp_set_contrast failed"); return; }
         g_isp_contrast = v;
-        reply(c, "OK isp.contrast=%d", v);
+        setmsg(resp, cap, "OK isp.contrast=%d", v);
     } else if (!strcmp(param, "isp.brightness")) {
         int v = atoi(value);
-        if (v < -50 || v > 50) { reply(c, "ERR isp.brightness range [-50,50]"); return; }
-        if (isp_set_brightness(v) != 0) { reply(c, "ERR isp_set_brightness failed"); return; }
+        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.brightness range [-50,50]"); return; }
+        if (isp_set_brightness(v) != 0) { setmsg(resp, cap, "ERR isp_set_brightness failed"); return; }
         g_isp_brightness = v;
-        reply(c, "OK isp.brightness=%d", v);
+        setmsg(resp, cap, "OK isp.brightness=%d", v);
     } else if (!strcmp(param, "isp.sharpness")) {
         int v = atoi(value);
-        if (v < -50 || v > 50) { reply(c, "ERR isp.sharpness range [-50,50]"); return; }
-        if (isp_set_sharpness(v) != 0) { reply(c, "ERR isp_set_sharpness failed"); return; }
+        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.sharpness range [-50,50]"); return; }
+        if (isp_set_sharpness(v) != 0) { setmsg(resp, cap, "ERR isp_set_sharpness failed"); return; }
         g_isp_sharpness = v;
-        reply(c, "OK isp.sharpness=%d", v);
+        setmsg(resp, cap, "OK isp.sharpness=%d", v);
     } else if (!strcmp(param, "venc.minqp") || !strcmp(param, "venc.maxqp")) {
-        reply(c, "ERR %s is read-only in this version "
+        setmsg(resp, cap, "ERR %s is read-only in this version "
                   "(requires an encoder restart, not yet implemented)", param);
     } else {
         char msg[160];
-        if (night_ctl_set(param, value, msg, sizeof(msg)) >= 0)          reply(c, "%s", msg);
-        else if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)    reply(c, "%s", msg);
-        else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) reply(c, "%s", msg);
-        else if (imgq_ctl_set(param, value, msg, sizeof(msg)) >= 0)      reply(c, "%s", msg);
-        else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      reply(c, "%s", msg);
-        else                                                        reply(c, "ERR unknown param %s", param);
+        if (night_ctl_set(param, value, msg, sizeof(msg)) >= 0)          setmsg(resp, cap, "%s", msg);
+        else if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)    setmsg(resp, cap, "%s", msg);
+        else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) setmsg(resp, cap, "%s", msg);
+        else if (imgq_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
+        else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
+        else                                                        setmsg(resp, cap, "ERR unknown param %s", param);
     }
+}
+
+/* One mutex for every SET: isp.c keeps an unlocked baseline and the ae/night
+ * get-modify-set below must be atomic. SET is rare. Nothing under this lock calls
+ * back into control.c, and the LOG pump never takes it. The reply is sent after
+ * the unlock so a stuck client cannot hold it. */
+static pthread_mutex_t g_set_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void do_set(cli_t *c, const char *param, const char *value)
+{
+    char resp[256];
+    resp[0] = '\0';
+    pthread_mutex_lock(&g_set_lock);
+    do_set_locked(resp, sizeof(resp), param, value);
+    pthread_mutex_unlock(&g_set_lock);
+    reply(c, "%s", resp);
 }
 
 /* Blocking byte-at-a-time line reader — traffic on this protocol is tiny
  * (a human moving sliders), so simplicity wins over buffered-recv efficiency.
- * The socket has SO_RCVTIMEO = CTL_IDLE_S: an idle client ends the read. */
-static int read_line(int fd, char *buf, size_t cap)
+ * The socket wakes every CTL_IDLE_TICK_S (SO_RCVTIMEO); the client is dropped
+ * once it sent nothing for ctl_idle_limit_s(): long for loopback or while DEBUG
+ * is on, short for a remote peer (it would otherwise hold a slot for 15 min). */
+static int read_line(cli_t *c, char *buf, size_t cap)
 {
-    size_t i = 0;
+    size_t  i = 0;
+    int64_t last = mono_ms();
     for (;;) {
-        char c;
-        ssize_t n = recv(fd, &c, 1, 0);
-        if (n <= 0) return -1;  /* EOF, error or idle timeout */
-        if (c == '\r') continue;
-        if (c == '\n') { buf[i] = '\0'; return (int)i; }
-        if (i < cap - 1) buf[i++] = c;
+        char c1;
+        ssize_t n = recv(c->fd, &c1, 1, 0);
+        if (n == 0) return -1;  /* EOF */
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) &&
+                mono_ms() - last < 1000LL * ctl_idle_limit_s(c->loopback, debug_active()))
+                continue;
+            return -1;          /* error or idle timeout */
+        }
+        last = mono_ms();
+        if (c1 == '\r') continue;
+        if (c1 == '\n') { buf[i] = '\0'; return (int)i; }
+        if (i < cap - 1) buf[i++] = c1;
     }
 }
 
@@ -366,7 +452,7 @@ static void handle_control_client(cli_t *c)
 {
     char line[256];
     for (;;) {
-        int n = read_line(c->fd, line, sizeof(line));
+        int n = read_line(c, line, sizeof(line));
         if (n < 0) return;
         if (n == 0) continue;
 
@@ -459,14 +545,15 @@ static void *control_accept_loop(void *arg)
         }
 
         pthread_mutex_lock(&g_slot_lock);
-        int idx = ctl_slots_acquire(&g_slots);
+        int lo  = ctl_peer_is_loopback((struct sockaddr *)&client_addr);
+        int idx = ctl_slots_acquire(&g_slots, lo);
         if (idx >= 0) {
             cli_t *c = &g_cli[idx];
-            struct timeval rt = { CTL_IDLE_S, 0 }, st = { CTL_SNDTIMEO_S, 0 };
+            struct timeval rt = { CTL_IDLE_TICK_S, 0 }, st = { CTL_SNDTIMEO_S, 0 };
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rt, sizeof(rt));
             setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &st, sizeof(st));
             c->fd       = fd;
-            c->loopback = ctl_peer_is_loopback((struct sockaddr *)&client_addr);
+            c->loopback = lo;
             c->need_nl  = 0;
             pthread_t t;
             if (pthread_create(&t, &attr, control_client_thread, (void *)(intptr_t)idx) != 0) {

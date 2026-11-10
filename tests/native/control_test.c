@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,6 +21,7 @@
 #include "ae.h"
 #include "night.h"
 #include "ctl_gate.h"
+#include "ctl_sys.h"
 #include "control.h"
 
 static int g_failed;
@@ -67,6 +69,20 @@ int  ledsys_ctl_set(const char *k, const char *v, char *m, size_t c)
     return 0;
 }
 void ledsys_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "led.stub=5"); }
+
+/* ctl_sys stub: two metrics, one of them hostile (an SSID with a quote, '=', a space and CR/LF). */
+static const char *const k_stub_keys[] = { "sys.stub", "net.ssid" };
+static const char *const k_stub_vals[] = { "6", "my \"net\"=x\r\ny" };
+int ctl_sys_get(const char *k, char *o, size_t c)
+{
+    for (int i = 0; i < 2; i++)
+        if (!strcmp(k, k_stub_keys[i])) { snprintf(o, c, "%s", k_stub_vals[i]); return 0; }
+    return -1;
+}
+void ctl_sys_list(void (*e)(const char *, const char *, void *), void *u)
+{
+    for (int i = 0; i < 2; i++) e(k_stub_keys[i], k_stub_vals[i], u);
+}
 
 /* ------------------------------------------------------------------ part 1: pure logic */
 static void test_pure(void)
@@ -158,19 +174,36 @@ static void test_pure(void)
     ctl_debug_command(&d, t, 0, "status", NULL, out, sizeof(out));
     CHECK(!strncmp(out, "ERR ", 4));
 
-    /* slots */
+    /* slots: loopback may use all of them, a remote peer at most CTL_MAX_REMOTE */
     ctl_slots_t s;
     memset(&s, 0, sizeof(s));
     int idx[CTL_MAX_CLIENTS];
-    for (int i = 0; i < CTL_MAX_CLIENTS; i++) { idx[i] = ctl_slots_acquire(&s); CHECK(idx[i] == i); }
+    for (int i = 0; i < CTL_MAX_CLIENTS; i++) { idx[i] = ctl_slots_acquire(&s, 1); CHECK(idx[i] == i); }
     CHECK(ctl_slots_count(&s) == CTL_MAX_CLIENTS);
-    CHECK(ctl_slots_acquire(&s) == -1);
+    CHECK(ctl_slots_acquire(&s, 1) == -1);
+    CHECK(ctl_slots_acquire(&s, 0) == -1);
     ctl_slots_release(&s, 2);
     CHECK(ctl_slots_count(&s) == CTL_MAX_CLIENTS - 1);
-    CHECK(ctl_slots_acquire(&s) == 2);
+    CHECK(ctl_slots_acquire(&s, 0) == 2);   /* a remote takes the freed one while it is the only remote */
     ctl_slots_release(&s, -1);
     ctl_slots_release(&s, CTL_MAX_CLIENTS);
     CHECK(ctl_slots_count(&s) == CTL_MAX_CLIENTS);
+    memset(&s, 0, sizeof(s));
+    for (int i = 0; i < CTL_MAX_REMOTE; i++) CHECK(ctl_slots_acquire(&s, 0) == i);
+    CHECK(ctl_slots_acquire(&s, 0) == -1);                 /* a 4th remote is refused ... */
+    CHECK(ctl_slots_acquire(&s, 1) == CTL_MAX_REMOTE);     /* ... the last slot is for loopback */
+    CHECK(ctl_slots_acquire(&s, 1) == -1);
+    ctl_slots_release(&s, 0);
+    CHECK(ctl_slots_acquire(&s, 0) == 0);
+    memset(&s, 0, sizeof(s));
+    CHECK(ctl_slots_acquire(&s, 1) == 0 && ctl_slots_acquire(&s, 1) == 1);   /* loopback does not eat the remote quota */
+    for (int i = 0; i < CTL_MAX_CLIENTS - 2; i++) CHECK(ctl_slots_acquire(&s, 0) >= 0);
+
+    /* idle limits: short for remote, long for loopback or while DEBUG is on */
+    CHECK(ctl_idle_limit_s(1, 0) == CTL_IDLE_LOCAL_S);
+    CHECK(ctl_idle_limit_s(0, 1) == CTL_IDLE_LOCAL_S);
+    CHECK(ctl_idle_limit_s(0, 0) == CTL_IDLE_REMOTE_S);
+    CHECK(CTL_IDLE_REMOTE_S < CTL_IDLE_LOCAL_S);
 }
 
 /* ------------------------------------------------------------------ part 2: the real server */
@@ -204,6 +237,31 @@ static int slurp(int fd, char *buf, size_t cap, int idle_ms, const char *want)
         if (n >= cap - 1) break;
     }
     return (int)n;
+}
+
+static long ms_since(const struct timespec *t0)
+{
+    struct timespec t1;
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    return (long)(t1.tv_sec - t0->tv_sec) * 1000 + (t1.tv_nsec - t0->tv_nsec) / 1000000;
+}
+
+/* A fake server for ctl_client_run: sends the 3 lines of `script` 150 ms apart, then stays silent. */
+static void *slow_server(void *arg)
+{
+    int ls = *(int *)arg;
+    int fd = accept(ls, NULL, NULL);
+    if (fd < 0) return NULL;
+    char buf[64];
+    (void)!read(fd, buf, sizeof(buf));
+    (void)!write(fd, "LOG noise\nline1\n", 16);
+    usleep(150000);
+    (void)!write(fd, "line2\n", 6);
+    usleep(150000);
+    (void)!write(fd, "line3\n", 6);
+    usleep(1500000);
+    close(fd);
+    return NULL;
 }
 
 /* Send one line, return the reply (LOG lines removed). */
@@ -252,7 +310,14 @@ static void test_server(void)
         "night.confirm_samples=0\nnight.lock_ms=0\n"
         "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
-        "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\n.\n");
+        "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\n"
+        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\n.\n");
+    ask(c, "GET sys.stub", out, sizeof(out));
+    CHECK_STR(out, "sys.stub=6\n");
+    ask(c, "GET net.ssid", out, sizeof(out));      /* CR/LF in a value never splits the reply */
+    CHECK_STR(out, "net.ssid=my \"net\"=x??y\n");
+    ask(c, "GET ctl.clients", out, sizeof(out));
+    CHECK_STR(out, "ctl.clients=1\n");
     ask(c, "GET ae.speed", out, sizeof(out));
     CHECK_STR(out, "ae.speed=4\n");
     ask(c, "GET night.mode", out, sizeof(out));
@@ -340,6 +405,28 @@ static void test_server(void)
             CHECK_STR(out, "ae.speed=7\n");
             close(r);
         }
+
+        /* an idle remote peer is dropped after CTL_IDLE_REMOTE_S (the test build shortens it);
+         * loopback is not, and neither is a remote peer while DEBUG is on */
+        int r1 = dial(remote_ip);
+        CHECK(r1 >= 0);
+        sleep(CTL_IDLE_REMOTE_S + 2);
+        {   /* LOG lines may precede the EOF */
+            ssize_t rn = 1;
+            struct pollfd pp = { r1, POLLIN, 0 };
+            while (rn > 0 && poll(&pp, 1, 100) == 1) rn = read(r1, out, sizeof(out));
+            CHECK(rn == 0);
+        }
+        close(r1);
+        ask(c, "GET ae.speed", out, sizeof(out));
+        CHECK_STR(out, "ae.speed=7\n");
+        ask(c, "DEBUG on 5", out, sizeof(out));
+        int r2 = dial(remote_ip);
+        sleep(CTL_IDLE_REMOTE_S + 2);
+        ask(r2, "GET ae.speed", out, sizeof(out));
+        CHECK_STR(out, "ae.speed=7\n");
+        ask(c, "DEBUG off", out, sizeof(out));
+        close(r2);
     } else {
         fprintf(stderr, "skip: no non-loopback IPv4 address on this host, remote gating over TCP not exercised\n");
     }
@@ -357,13 +444,54 @@ static void test_server(void)
         CHECK(ctl_client_run(PORT, 3, av3, f) == 0);
         char *av4[] = { "DEBUG", "off" };
         CHECK(ctl_client_run(PORT, 2, av4, f) == 0);
+        struct timespec tt;
+        clock_gettime(CLOCK_MONOTONIC, &tt);
+        char *av5[] = { "GET", "ae.speed" };
+        CHECK(ctl_client_run(PORT, 2, av5, f) == 0);
+        CHECK(ms_since(&tt) < 700);            /* 250 ms of silence, not 1 s */
+        clock_gettime(CLOCK_MONOTONIC, &tt);
+        char *av6[] = { "LIST" };
+        CHECK(ctl_client_run(PORT, 1, av6, f) == 0);
+        CHECK(ms_since(&tt) < 700);            /* ends at the "." line */
         rewind(f);
         char all[512] = "";
         size_t n = fread(all, 1, sizeof(all) - 1, f);
         all[n] = '\0';
-        CHECK_STR(all, "ae.speed=7\nERR unknown param nope\nOK ctl.debug=1 minutes=2\nOK ctl.debug=0\n");
+        CHECK(!strncmp(all, "ae.speed=7\nERR unknown param nope\nOK ctl.debug=1 minutes=2\nOK ctl.debug=0\nae.speed=7\nae.stable_range=", 99));
         fclose(f);
         unlink(tmpl);
+    }
+
+    /* a reply with gaps (150 ms) between lines is delivered whole, LOG lines are dropped, and the
+     * alias stops ~250 ms after the last line (well before the old 1 s) */
+    {
+        int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+        struct sockaddr_in a;
+        memset(&a, 0, sizeof(a));
+        a.sin_family = AF_INET;
+        a.sin_port = htons(PORT + 1);
+        inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+        setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        CHECK(bind(ls, (struct sockaddr *)&a, sizeof(a)) == 0 && listen(ls, 1) == 0);
+        pthread_t th;
+        pthread_create(&th, NULL, slow_server, &ls);
+        char tmpl[] = "/tmp/ctl_test2_XXXXXX";
+        FILE *f = fdopen(mkstemp(tmpl), "w+");
+        char *av[] = { "SLOW" };
+        struct timespec tt;
+        clock_gettime(CLOCK_MONOTONIC, &tt);
+        CHECK(ctl_client_run(PORT + 1, 1, av, f) == 0);
+        long ms = ms_since(&tt);
+        CHECK(ms >= 300 && ms < 900);
+        rewind(f);
+        char all[128] = "";
+        size_t n = fread(all, 1, sizeof(all) - 1, f);
+        all[n] = '\0';
+        CHECK_STR(all, "line1\nline2\nline3\n");
+        fclose(f);
+        unlink(tmpl);
+        pthread_join(th, NULL);
+        close(ls);
     }
 
     /* slots: 4 clients at once, the 5th is refused, nobody is kicked */
@@ -423,6 +551,36 @@ static void test_server(void)
 
     for (int i = 0; i < CTL_MAX_CLIENTS - 1; i++) close(cl[i]);
     close(again);
+
+    /* slot reservation: three remote peers fit, a fourth is refused, loopback still gets in */
+    if (remote_ip[0]) {
+        int rr[CTL_MAX_REMOTE];
+        for (int i = 0; i < CTL_MAX_REMOTE; i++) {
+            rr[i] = -1;
+            for (int t = 0; t < 60 && rr[i] < 0; t++) {   /* the closed loopback clients free their slots asynchronously */
+                int fd = dial(remote_ip);
+                if (fd >= 0) {
+                    ask(fd, "GET ae.speed", out, sizeof(out));
+                    if (!strcmp(out, "ae.speed=7\n")) rr[i] = fd; else close(fd);
+                }
+                if (rr[i] < 0) usleep(50000);
+            }
+            CHECK(rr[i] >= 0);
+        }
+        int busy = dial(remote_ip);
+        CHECK(busy >= 0);
+        slurp(busy, out, sizeof(out), 500, "\n");
+        CHECK_STR(out, "ERR busy\n");
+        close(busy);
+        int lo = dial("127.0.0.1");
+        CHECK(lo >= 0);
+        ask(lo, "GET ae.speed", out, sizeof(out));
+        CHECK_STR(out, "ae.speed=7\n");
+        ask(lo, "GET ctl.clients", out, sizeof(out));
+        CHECK_STR(out, "ctl.clients=4\n");
+        close(lo);
+        for (int i = 0; i < CTL_MAX_REMOTE; i++) if (rr[i] >= 0) close(rr[i]);
+    }
     control_stop();
 }
 
