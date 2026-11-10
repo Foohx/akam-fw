@@ -1481,8 +1481,8 @@ picture_show() {
         return 1
     fi
     ui_say "  Brightness $br, contrast $co, saturation $sa, sharpness $sh (each -50 to 50, 0 = unchanged). Saved on the camera."
-    ui_say "  White balance: ${wb:-unknown} (conf = the camera's calibration, manual = Akam's own block). Not saved: back to the default at a reboot."
-    ui_say "  Day/night: ${nm:-unknown} (auto, day or night). Not saved: back to auto at a reboot."
+    ui_say "  White balance: ${wb:-unknown} (conf = the camera's calibration, manual = Akam's own block). Saved on the camera."
+    ui_say "  Day/night: ${nm:-unknown} (auto, day or night). Saved on the camera."
 }
 
 picture_num() { # WORD: a whole number from -50 to 50

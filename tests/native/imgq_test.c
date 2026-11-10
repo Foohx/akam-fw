@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "ae.h"
@@ -58,6 +59,16 @@ static void write_conf(const char *path, const char *text)
     assert(f);
     fputs(text, f);
     fclose(f);
+}
+
+static int read_conf(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    size_t n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return 1;
 }
 
 static int g_lines;
@@ -200,6 +211,55 @@ int main(void)
     imgq_after_mode_switch(0);
     imgq_after_mode_switch(1);
     CHECK(g_wb_manual_calls == manual_before + 1);
+
+    /* img.wb is saved in the conf file (other lines kept), only when the value changes */
+    {
+        char sp[] = "/tmp/imgq_test_save_XXXXXX";
+        int sfd = mkstemp(sp);
+        assert(sfd >= 0);
+        close(sfd);
+        char buf[512];
+        struct stat st;
+
+        clear_env();
+        unlink(sp);                                                      /* absent file = defaults */
+        imgq_load(sp, NULL);
+        CHECK(imgq_wb_conf() && stat(sp, &st) != 0);
+        CHECK(imgq_ctl_set("img.wb", "conf", msg, sizeof(msg)) == 0 && stat(sp, &st) != 0);  /* no change: no file */
+        CHECK(imgq_ctl_set("img.wb", "auto", msg, sizeof(msg)) == 1 && stat(sp, &st) != 0);  /* refused: no file */
+        CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0 && !strcmp(msg, "OK img.wb=manual"));
+        CHECK(stat(sp, &st) == 0 && (st.st_mode & 0777) == 0600);
+        CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "wb=manual\n"));
+        imgq_load(sp, NULL);                                             /* survives a restart */
+        CHECK(!imgq_wb_conf());
+
+        write_conf(sp, "# mine\nvenc_rc=legacy\n  wb = manual\npoll=1\n");   /* other lines kept, wb replaced in place */
+        imgq_load(sp, NULL);
+        CHECK(!imgq_wb_conf());
+        CHECK(imgq_ctl_set("img.wb", "conf", msg, sizeof(msg)) == 0 && imgq_wb_conf());
+        CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "# mine\nvenc_rc=legacy\nwb=conf\npoll=1\n"));
+        imgq_load(sp, NULL);
+        CHECK(imgq_wb_conf() && imgq_poll_stats());
+
+        write_conf(sp, "poll=1\n");                                      /* appended; conf alone adds nothing */
+        imgq_load(sp, NULL);
+        CHECK(imgq_ctl_set("img.wb", "conf", msg, sizeof(msg)) == 0);
+        CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "poll=1\n"));
+        CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0);
+        CHECK(read_conf(sp, buf, sizeof(buf)) && !strcmp(buf, "poll=1\nwb=manual\n"));
+
+        /* an invalid saved value is ignored: default conf */
+        write_conf(sp, "wb=purple\n");
+        imgq_load(sp, NULL);
+        CHECK(imgq_wb_conf());
+
+        /* a failed save is reported in the answer, the value still applies */
+        imgq_load("/nonexistent_dir_imgq/sub/image", NULL);
+        CHECK(imgq_ctl_set("img.wb", "manual", msg, sizeof(msg)) == 0 && strstr(msg, "OK img.wb=manual (not saved:") &&
+              !imgq_wb_conf());
+        imgq_load(NULL, NULL);
+        unlink(sp);
+    }
 
     CHECK(g_lock_depth == 0 && g_lock_total > 0);            /* every ISP key took and released the lock */
     unlink(path);

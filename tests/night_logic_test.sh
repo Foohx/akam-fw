@@ -11,5 +11,5 @@ trap 'rm -rf "$WORK"' EXIT
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -I"$REPO/src/ak_rtsp" \
     -o "$WORK/night_logic_test" \
-    "$REPO/tests/native/night_logic_test.c" "$REPO/src/ak_rtsp/night_logic.c" -lm
+    "$REPO/tests/native/night_logic_test.c" "$REPO/src/ak_rtsp/night_logic.c" "$REPO/src/ak_rtsp/cfg_file.c" -lm
 "$WORK/night_logic_test"

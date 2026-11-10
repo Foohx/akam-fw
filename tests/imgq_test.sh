@@ -12,5 +12,5 @@ trap 'rm -rf "$WORK"' EXIT
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -I"$REPO/src/ak_rtsp" \
     -o "$WORK/imgq_test" \
-    "$REPO/tests/native/imgq_test.c" "$REPO/src/ak_rtsp/imgq.c" "$REPO/src/ak_rtsp/isp_blocks.c"
+    "$REPO/tests/native/imgq_test.c" "$REPO/src/ak_rtsp/imgq.c" "$REPO/src/ak_rtsp/isp_blocks.c" "$REPO/src/ak_rtsp/cfg_file.c"
 "$WORK/imgq_test" | grep -v -e "^\[isp.dump\]" -e "^\[imgq\]"

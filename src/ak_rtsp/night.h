@@ -13,6 +13,8 @@
  * Call night_start() after ae_start() (needs AE samples to already be
  * flowing). night_stop() on shutdown. */
 
+#define NIGHT_CONF_FILE "/etc/config/akam/night"  /* saved night.mode (day / night); absent = auto */
+
 int  night_start(void);
 void night_stop(void);
 

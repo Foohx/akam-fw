@@ -97,3 +97,10 @@ int nl_saturated(const night_tuning_t *t, const nl_sample_t *s, const nl_limits_
 void nl_status(const nl_state_t *st, const night_tuning_t *t, char *out, size_t cap);
 
 const char *nl_mode_name(nl_mode_t m);
+
+/* Saved manual mode (NIGHT_CONF_FILE, line "mode=day|night"; no file = auto, nothing is written until the user
+ * changes the mode). _load returns 1 and sets *out for a valid forced mode, else 0 (no file, auto, or an invalid
+ * line: logged, ignored). _save writes the file atomically for day / night and removes it for auto (the
+ * default); 0 on success, -1 with errno set. */
+int night_mode_load(const char *path, night_override_t *out);
+int night_mode_save(const char *path, night_override_t m);
