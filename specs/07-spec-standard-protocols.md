@@ -216,6 +216,7 @@ Names follow spec 04 keys, so the same getters/setters are used.
 | select | IR LEDs | `night.ir_led` | auto, off |
 | select | Day/night mode | `night.mode` | auto, day, night |
 | number (slider) | Speaker volume | `audio.out_volume` | 0 to 100 |
+| number (slider) | Brightness, Contrast, Saturation, Sharpness | `isp.brightness`, `isp.contrast`, `isp.saturation`, `isp.sharpness` | -50 to 50, step 1 (user decision 2026-11-10: "everything in Home Assistant"); persisted like the other image keys |
 | switch | Talk enabled | `audio.talk_enable` | ON/OFF (soft switch of step 1; not the device-open `audio.out_enable`, which needs a restart) |
 | button | Beep | `audio.out_test` | PRESS |
 | sensor | Day/night state | `night.state` | day, night |
