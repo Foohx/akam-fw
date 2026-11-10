@@ -79,10 +79,18 @@ void ctl_debug_command(ctl_debug_t *d, int64_t now_ms, int is_loopback,
     }
 }
 
-int ctl_slots_acquire(ctl_slots_t *s)
+int ctl_idle_limit_s(int is_loopback, int debug_on)
 {
+    return (is_loopback || debug_on) ? CTL_IDLE_LOCAL_S : CTL_IDLE_REMOTE_S;
+}
+
+int ctl_slots_acquire(ctl_slots_t *s, int is_loopback)
+{
+    int remote = 0;
+    for (int i = 0; i < CTL_MAX_CLIENTS; i++) remote += s->used[i] == 2;
+    if (!is_loopback && remote >= CTL_MAX_REMOTE) return -1;
     for (int i = 0; i < CTL_MAX_CLIENTS; i++)
-        if (!s->used[i]) { s->used[i] = 1; return i; }
+        if (!s->used[i]) { s->used[i] = is_loopback ? 1 : 2; return i; }
     return -1;
 }
 
@@ -102,7 +110,8 @@ int ctl_slots_count(const ctl_slots_t *s)
  * answer (without the LOG lines the port pushes by itself). Used by akam_debug.sh and the
  * other helper scripts, so they do not depend on the BusyBox nc. Runs before any hardware
  * init. Exit 0 when the first reply line is not an ERR, 1 otherwise (also: no connection,
- * no reply). Ends 1 s after the last data, 3 s at most. */
+ * no reply). Ends at the "." of a LIST, or 250 ms after the last data once a reply line
+ * arrived (1 s while none did), 3 s at most. */
 int ctl_client_run(unsigned short port, int argc, char **argv, FILE *out)
 {
     char line[512];
@@ -128,7 +137,7 @@ int ctl_client_run(unsigned short port, int argc, char **argv, FILE *out)
 
     char   buf[1024], pend[1024];
     size_t plen = 0;
-    int    first = 1, rc = 1;
+    int    first = 1, rc = 1, got_line = 0, done = 0;
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (;;) {
@@ -137,7 +146,8 @@ int ctl_client_run(unsigned short port, int argc, char **argv, FILE *out)
         long left = 3000 - ((long)(t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
         if (left <= 0) break;
         struct pollfd p = { fd, POLLIN, 0 };
-        if (poll(&p, 1, left > 1000 ? 1000 : (int)left) <= 0) break;
+        long gap = got_line ? 250 : 1000;
+        if (poll(&p, 1, left > gap ? (int)gap : (int)left) <= 0) break;
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n <= 0) break;
         for (ssize_t i = 0; i < n; i++) {
@@ -146,8 +156,11 @@ int ctl_client_run(unsigned short port, int argc, char **argv, FILE *out)
             plen = 0;
             if (!strncmp(pend, "LOG ", 4)) continue;
             if (first) { rc = strncmp(pend, "ERR", 3) ? 0 : 1; first = 0; }
+            got_line = 1;
             fputs(pend, out), fputc('\n', out);
+            if (!strcmp(pend, ".")) done = 1;   /* end of a LIST */
         }
+        if (done) break;
     }
     close(fd);
     return rc;

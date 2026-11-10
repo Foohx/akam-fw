@@ -10,7 +10,7 @@ CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT=18091 \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT=18091 -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 \
     -I"$REPO/src/ak_rtsp" \
     -o "$WORK/control_test" \
     "$REPO/tests/native/control_test.c" "$REPO/src/ak_rtsp/control.c" "$REPO/src/ak_rtsp/ctl_gate.c"

@@ -147,7 +147,7 @@ special characters URL-encoded ([401 errors](docs/troubleshooting.md#401-unautho
 ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
 ```
 
-Any path works. The camera serves **one client at a time**: to serve several viewers or to record and
+Any path works. The camera serves **one RTSP client at a time** (port 554; port 8091 is separate and takes up to 4, see below): to serve several viewers or to record and
 watch together, put [go2rtc](https://github.com/AlexxIT/go2rtc) or
 [MediaMTX](https://github.com/bluenviron/mediamtx) in front of it. In VLC, if hardware decoding fails,
 use `vlc --rtsp-tcp --avcodec-hw=none rtsp://<camera-ip>:554/`; a VLC window on a hidden Wayland
@@ -158,8 +158,10 @@ and Home Assistant's WebRTC card can talk through the camera speaker, as can `./
 only when the video password is on. See [two-way audio](docs/two_way_audio.md) (including configuration
 examples and the one-client limit).
 
-Port 8091 (`LIST`, `GET`: exposure, day/night, image, LEDs, state) is a plain text protocol with no password
-and is **read-only from the network**: anyone on your LAN can read the state, nobody can change it. Changes
+Port 8091 (`LIST`, `GET`: exposure, day/night, image, LEDs, state, system and stream metrics) is a plain text
+protocol with no password. It accepts up to **4 clients at once**, one of them reserved for the camera itself (so
+the SSH helpers always get in; a LAN peer can use 3 and is dropped after 2 minutes of silence), and is
+**read-only from the network**: anyone on your LAN can read the state, nobody can change it. Changes
 (`SET`) are accepted from the camera itself (over SSH, as `./akam led` does) or, for a limited time, after
 `./akam debug on`, which the PC tuning tool needs. Changes are lost at the next boot, except the LED
 settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
@@ -191,7 +193,7 @@ password. Please report what you see on your camera.
 
 - **Never expose ports 554, 8091 or 22 to the Internet:** no port forwarding, UPnP or DMZ. Use a VPN into
   your LAN ([network hardening](docs/akam_v1_install.md#5-network-hardening)).
-- The stream is open unless you set a password, and anyone on your network can occupy its single client
+- The stream is open unless you set a password, and anyone on your network can occupy its single RTSP client
   slot: keep untrusted devices (guest Wi-Fi, IoT) off the camera's network.
 - A card with a file named `AKAM_MAINTENANCE` is root access to the camera
   ([details](docs/akam_v1_ssh_and_lockdown.md#7-maintenance-flag)). Never publish your backup, images or keys.
