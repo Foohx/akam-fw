@@ -27,6 +27,11 @@ static int64_t wall, mono = 1000000000LL;
 static int64_t fake_wall(void) { return wall; }
 static int64_t fake_mono(void) { return mono; }
 static rtsp_auth_db_t limiter;
+static const char *gu(void)
+{
+    static char u[64];
+    return cred_get_user(u, sizeof(u)) ? u : NULL;
+}
 
 static void put(const char *path, const char *content, mode_t mode)
 {
@@ -150,27 +155,27 @@ static void test_file(void)
 {
     printf("credentials file on disk, permissions, reload\n");
     fresh();
-    CHECK(cred_refresh(true) == CRED_ABSENT && !cred_have_plain() && cred_get_user() == NULL, "absent file: no plain credentials");
+    CHECK(cred_refresh(true) == CRED_ABSENT && !cred_have_plain() && gu() == NULL, "absent file: no plain credentials");
     put_creds("viewer", "Correct-Horse-9");
-    CHECK(cred_refresh(true) == CRED_OK && cred_have_plain() && !strcmp(cred_get_user(), "viewer"), "valid 0600 file");
+    CHECK(cred_refresh(true) == CRED_OK && cred_have_plain() && !strcmp(gu(), "viewer"), "valid 0600 file");
     CHECK(cred_problem()[0] == '\0', "no problem reported");
 
     /* cheap polling: a change inside the recheck interval is not seen */
     put_creds("other", "Correct-Horse-9");
     mono += 1000000;
-    CHECK(!strcmp(cred_get_user(), "viewer"), "no look at the disk within 3 s");
+    CHECK(!strcmp(gu(), "viewer"), "no look at the disk within 3 s");
     later();
-    CHECK(!strcmp(cred_get_user(), "other"), "change seen after the interval (atomic rename, same size)");
+    CHECK(!strcmp(gu(), "other"), "change seen after the interval (atomic rename, same size)");
 
     put_creds("other", "A-much-longer-password-1");
     later();
     CHECK(cred_have_plain(), "new password loaded");
     unlink(cpath);
     later();
-    CHECK(cred_refresh(false) == CRED_ABSENT && cred_get_user() == NULL, "removal seen: no plain credentials");
+    CHECK(cred_refresh(false) == CRED_ABSENT && gu() == NULL, "removal seen: no plain credentials");
     put_creds("back", "Correct-Horse-9");
     later();
-    CHECK(!strcmp(cred_get_user(), "back"), "file back");
+    CHECK(!strcmp(gu(), "back"), "file back");
 
     /* in-place edit that keeps size and inode: mtime must tell */
     FILE *f = fopen(cpath, "r+");
@@ -180,7 +185,7 @@ static void test_file(void)
     struct timespec ts[2] = { { 1700000000, 0 }, { 1700000123, 0 } };
     utimensat(AT_FDCWD, cpath, ts, 0);
     later();
-    CHECK(!strcmp(cred_get_user(), "BACK"), "in-place edit seen through the mtime");
+    CHECK(!strcmp(gu(), "BACK"), "in-place edit seen through the mtime");
 
     /* permissions */
     put("x", "", 0600);
@@ -192,7 +197,7 @@ static void test_file(void)
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         put(cpath, buf, bad[i]);
         later();
-        if (cred_refresh(true) != CRED_INVALID || cred_have_plain() || cred_get_user() != NULL) {
+        if (cred_refresh(true) != CRED_INVALID || cred_have_plain() || gu() != NULL) {
             printf("    mode %o accepted\n", (unsigned)bad[i]);
             ok = 0;
         }
@@ -306,28 +311,61 @@ static void test_wsse(void)
     CHECK(cred_check_wsse("user", n1, "2010-09-16T07:50:46Z", dg, NULL) == 0, "created changed after signing");
     CHECK(cred_check_wsse("user", n1, SPEC_CREATED, dg, NULL) == 1, "the genuine message passes after all the junk");
 
-    /* replay cache: 32 entries */
+    /* replay cache: CRED_NONCE_CACHE slots, each kept until its expiry (clock unset here: receive time + 300 s) */
     fresh();
     put_creds("user", SPEC_PASS);
+    wall = 0;
     char n[32];
     int ok = 1;
     for (int i = 1; i <= CRED_NONCE_CACHE; i++) {
         nonce_n(i, n);
         if (wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) != 1) ok = 0;
     }
-    CHECK(ok, "32 distinct nonces accepted");
+    CHECK(ok, "CRED_NONCE_CACHE distinct nonces accepted");
     ok = 1;
     for (int i = 1; i <= CRED_NONCE_CACHE; i++) {
         nonce_n(i, n);
         if (wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) != 0) ok = 0;
     }
-    CHECK(ok, "each of the 32 is refused as a replay");
-    nonce_n(33, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "a 33rd nonce is accepted (evicts the oldest)");
+    CHECK(ok, "each of them is refused as a replay (none was evicted)");
+    unsigned dl = 0;
+    nonce_n(CRED_NONCE_CACHE + 1, n);
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, &dl) == 0, "table full of live nonces: a new request is refused (fail closed)");
     nonce_n(1, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "the evicted nonce is accepted again (the documented bound)");
-    nonce_n(3, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "... while the others are still remembered");
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "... and the first nonce is still remembered");
+    mono += (int64_t)CRED_CLOCK_WINDOW_S * 1000000 - 1000000;
+    nonce_n(CRED_NONCE_CACHE + 1, n);
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "1 s before the expiry: still full");
+    mono += 2000000;
+    nonce_n(CRED_NONCE_CACHE + 1, n);
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "after the expiry the slots are reusable");
+    nonce_n(2, n);
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "an expired nonce is forgotten (clock unset: nothing else to judge it by)");
+
+    /* clock set: a nonce lives until Created + 300 s, so a token created in the past frees its slot sooner, and
+     * a replay after that is stopped by the Created window itself */
+    fresh();
+    put_creds("user", SPEC_PASS);
+    wall = utc(2026, 11, 10, 12, 0, 0);
+    ok = 1;
+    for (int i = 1; i <= CRED_NONCE_CACHE; i++) {
+        nonce_n(i, n);
+        if (wsse("user", n, "2026-11-10T11:58:20Z", SPEC_PASS, NULL) != 1) ok = 0; /* 100 s old: 200 s left */
+    }
+    CHECK(ok, "128 tokens created 100 s ago accepted");
+    nonce_n(500, n);
+    CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 0, "full while they live");
+    mono += 199LL * 1000000;
+    wall += 199;
+    nonce_n(500, n);
+    CHECK(wsse("user", n, "2026-11-10T12:03:19Z", SPEC_PASS, NULL) == 0, "199 s later: still full");
+    mono += 2LL * 1000000;
+    wall += 2;
+    nonce_n(500, n);
+    CHECK(wsse("user", n, "2026-11-10T12:03:21Z", SPEC_PASS, NULL) == 1, "201 s later: expired slots reused");
+    nonce_n(1, n);
+    CHECK(wsse("user", n, "2026-11-10T11:58:20Z", SPEC_PASS, NULL) == 0, "replay of an expired token: stopped by the Created window");
+    wall = 0;
 
     /* new credentials file: the old password stops working */
     put_creds("user", "A-brand-new-pass");

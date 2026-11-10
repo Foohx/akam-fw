@@ -6,3 +6,11 @@ void print_build_info(void)
     printf("[ak_rtsp] build #%d | %s | git:%s\n",
            BUILD_NUMBER, BUILD_TIMESTAMP, GIT_HASH);
 }
+
+/* "b<build>-<git>" for ONVIF FirmwareVersion. */
+const char *firmware_version(void)
+{
+    static char v[48];
+    if (!v[0]) snprintf(v, sizeof(v), "b%d-%s", BUILD_NUMBER, GIT_HASH);
+    return v;
+}

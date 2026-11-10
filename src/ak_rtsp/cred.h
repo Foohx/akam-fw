@@ -17,7 +17,9 @@
  * checked at most every CRED_RECHECK_US. The password is never logged: this
  * module prints nothing at all.
  *
- * Single-threaded use (the ONVIF thread); state is process-global.
+ * Thread safety: state is process-global, one mutex guards every cred_* entry point (lock order: cred, then
+ * rtsp_auth). cred_init is called once from main() before the threads start (lazy init under the lock also works).
+ * Nothing here sleeps: a failure returns the limiter delay and the CALLER waits or defers the answer.
  */
 #pragma once
 #include <stdbool.h>
@@ -33,7 +35,7 @@
 #define CRED_FILE_MAX 512
 #define CRED_RECHECK_US (3LL * 1000000)
 /* WS-Security */
-#define CRED_NONCE_CACHE 32
+#define CRED_NONCE_CACHE 128
 #define CRED_NONCE_RAW_MAX 64            /* decoded nonce, bytes */
 #define CRED_CREATED_MAX 40              /* xsd:dateTime text, characters */
 #define CRED_CLOCK_WINDOW_S 300          /* Created must be within +/- 5 min ... */
@@ -61,9 +63,8 @@ cred_state_t cred_refresh(bool force);
 /* Why CRED_INVALID, a fixed text without any secret ("" otherwise). */
 const char *cred_problem(void);
 
-/* The user name, or NULL when there are no valid plain credentials. Valid
- * until the next refresh. */
-const char *cred_get_user(void);
+/* Copy the user name into out (cap >= 1); false (out empty) when there are no valid plain credentials. */
+bool cred_get_user(char *out, size_t cap);
 bool cred_have_plain(void);
 
 /* Parse a file's content (exposed for tests): 0 = valid. user and pass receive
@@ -73,7 +74,9 @@ int cred_parse(const char *text, size_t len, char *user, char *pass);
 /* WS-Security UsernameToken, PasswordDigest = Base64(SHA1(nonce + created +
  * password)) with nonce the decoded Nonce. All four arguments are the element
  * texts as received (NUL-terminated, nothing trimmed). Constant-time compare;
- * nonce reuse refused (last CRED_NONCE_CACHE verified nonces); Created checked
+ * nonce reuse refused: each verified nonce is kept until Created + 5 min (receive
+ * time + 5 min when the wall clock is unset), in CRED_NONCE_CACHE slots; only expired entries are reused and a
+ * full table of live nonces refuses the request (fail closed). Created checked
  * within +/- 5 minutes only when the wall clock is >= 2024. Every failure
  * (unknown user, no plain credentials, malformed input, bad digest, replay, old
  * Created) counts in the shared limiter and sets *delay_ms to the time to wait
@@ -94,7 +97,13 @@ int cred_check_wsse(const char *username, const char *nonce_b64, const char *cre
 int cred_check_http_digest(const char *method, const char *hdr, size_t hdr_len,
                            rtsp_auth_digest_t *d, unsigned *delay_ms);
 
+/* Count one failed attempt in the shared limiter (for callers that reject a request after the credentials passed,
+ * e.g. a replayed Digest nonce count or a wrong URI); *delay_ms as in cred_check_wsse (may be NULL). */
+void cred_note_failure(unsigned *delay_ms);
+
 /* False only when the RTSP password is off (no htdigest file): ONVIF reads are
  * then open and changes refused (spec 3.3). True for a valid file AND for an
  * invalid one (fail closed: authentication is required and nobody passes). */
 bool cred_auth_enabled(void);
+/* The mode behind it (the htdigest file, re-read): OFF, ON or BROKEN. */
+rtsp_auth_mode_t cred_auth_mode(void);

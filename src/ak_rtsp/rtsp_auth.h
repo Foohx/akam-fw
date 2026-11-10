@@ -31,6 +31,11 @@
 
 typedef enum { RTSP_AUTH_OFF, RTSP_AUTH_ON, RTSP_AUTH_BROKEN } rtsp_auth_mode_t;
 
+/* Thread safety: one mutex inside rtsp_auth.c guards every db and the limiter counters; db_refresh, check,
+ * session_ok, db_mode, digest_verify, note_failure and note_success may be called from several threads (RTSP and
+ * the ONVIF HTTP server). They never sleep: the limiter delay is returned and the CALLER waits (the HTTP server
+ * defers the response instead of blocking its poll loop). rtsp_auth_conn_t is the caller's own. rtsp_auth_db_init
+ * must run before other threads start. */
 /* Credentials, shared by all connections (one per process). */
 typedef struct {
     const char *path;
@@ -74,6 +79,8 @@ extern int (*rtsp_auth_rng)(void *buf, size_t n);
 void rtsp_auth_db_init(rtsp_auth_db_t *db, const char *path);
 /* Re-read the credentials file; returns the current mode. */
 rtsp_auth_mode_t rtsp_auth_db_refresh(rtsp_auth_db_t *db);
+/* Current mode without re-reading the file (locked read). */
+rtsp_auth_mode_t rtsp_auth_db_mode(rtsp_auth_db_t *db);
 /* Parse the content of a credentials file (exposed for tests): 0 = valid. */
 int rtsp_auth_parse_file(const char *text, size_t len, char *user, char *ha1);
 

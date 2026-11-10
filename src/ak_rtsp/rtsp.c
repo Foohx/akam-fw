@@ -370,7 +370,7 @@ static bool request_requires_backchannel(const SmolRTSP_Request *req) {
 /* Talk is offered only with the RTSP password on (Digest, valid credentials):
  * there is no open talk mode. The speaker side must be usable as well. */
 static bool backchannel_available(void) {
-    return g_auth.mode == RTSP_AUTH_ON && audio_out_talk_available();
+    return rtsp_auth_db_mode(&g_auth) == RTSP_AUTH_ON && audio_out_talk_available();
 }
 
 /* 551 (RFC 2326 section 11.3.12): the option the client requires is not
@@ -507,7 +507,7 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     (void)self;
     /* ONVIF backchannel: only for a client that asks for it (Require header). */
     rtsp_bc_decision_t bc = rtsp_backchannel_decide(request_requires_backchannel(req),
-                                                    g_auth.mode == RTSP_AUTH_ON,
+                                                    rtsp_auth_db_mode(&g_auth) == RTSP_AUTH_ON,
                                                     audio_out_talk_available());
     if (bc == RTSP_BC_REFUSE) {
         respond_backchannel_unsupported(ctx);
@@ -1262,30 +1262,33 @@ static int in_on_interleaved(void *user, uint8_t channel, const uint8_t *data, s
  * whose references were overwritten. */
 #define TX_RESYNC_STALL_MS 1000
 
-/* Credentials state for rtsp.auth (8091 metrics): set up once at server start, then
- * re-read at most every 5 s while no client is connected (the idle loop of main()
- * calls this; a connected client refreshes it itself). One open() of a small file. */
-void rtsp_auth_tick(bool force)
+/* Set the process-wide credentials state up. Called ONCE from main() before any thread starts (the RTSP loop,
+ * the control port and the ONVIF HTTP server all use it afterwards under rtsp_auth.c's mutex); idempotent. */
+void rtsp_auth_shared_init(void)
 {
     static bool ready;
+    if (ready) return;
+    ready = true;
+    rtsp_auth_db_init(&g_auth, RTSP_AUTH_PATH);
+}
+
+/* Credentials state for rtsp.auth (8091 metrics): re-read at most every 5 s while no client is connected (the
+ * idle loop of main() calls this; a connected client refreshes it itself). One open() of a small file. */
+void rtsp_auth_tick(bool force)
+{
     static int64_t next_us;
     int64_t now = rtp_mono_us();
-    if (!ready) {
-        ready = true;
-        rtsp_auth_db_init(&g_auth, RTSP_AUTH_PATH);
-        force = true;
-    }
+    rtsp_auth_shared_init();
     if (!force && now < next_us) return;
     next_us = now + 5000000;
     ctl_sys_note_rtsp_auth((int)rtsp_auth_db_refresh(&g_auth));
 }
 
-/* The process-wide credentials state, for cred_init(): ONVIF shares the RTSP
- * failure limiter and its htdigest data. Not thread safe: the caller must run
- * on the thread that serves RTSP, or serialise with it. */
+/* The process-wide credentials state, for cred_init(): ONVIF shares the RTSP failure limiter and its htdigest
+ * data. rtsp_auth_shared_init() must have run (main does it first); every access is under rtsp_auth.c's mutex. */
 rtsp_auth_db_t *rtsp_auth_shared_db(void)
 {
-    rtsp_auth_tick(false);
+    rtsp_auth_shared_init();
     return &g_auth;
 }
 
@@ -1360,7 +1363,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                                              "INVALID credentials file, refusing all" };
         printf("[ak_rtsp] Client connected, RTSP authentication %s\n",
                names[rtsp_auth_db_refresh(&g_auth)]);
-        ctl_sys_note_rtsp_auth((int)g_auth.mode);
+        ctl_sys_note_rtsp_auth((int)rtsp_auth_db_mode(&g_auth));
     }
 
     while (client_fd >= 0) {
@@ -1456,9 +1459,9 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             int64_t now_us = rtp_mono_us();
             if (now_us >= next_auth_check_us) {
                 next_auth_check_us = now_us + 1000000;
-                ctl_sys_note_rtsp_auth((int)g_auth.mode);
+                ctl_sys_note_rtsp_auth((int)rtsp_auth_db_mode(&g_auth));
                 if (!rtsp_auth_session_ok(&g_auth, &client.auth) ||
-                    (client.bc_playing && g_auth.mode != RTSP_AUTH_ON)) {
+                    (client.bc_playing && rtsp_auth_db_mode(&g_auth) != RTSP_AUTH_ON)) {
                     client.drop_reason = "RTSP credentials changed or authentication enabled";
                     break;
                 }
