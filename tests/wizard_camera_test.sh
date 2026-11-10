@@ -70,7 +70,9 @@ check "find-camera: records ip and kind in the state" bash -c 'grep -q "^camera_
 S=$(new_state find2)
 mark doctor prepare_backup_sd >"$S/state"
 CLOSED=$(fc_free_port)
-AKAM_PORT_TELNET=$CLOSED a "$S" --ip 127.0.0.1 find-camera </dev/null >"$T/find2.out" 2>&1
+# all four probed ports closed: 22, 554 and 8091 may well be open on the machine running the tests
+CLOSED2=$(fc_free_port); CLOSED3=$(fc_free_port); CLOSED4=$(fc_free_port)
+AKAM_PORT_TELNET=$CLOSED AKAM_PORT_SSH=$CLOSED2 AKAM_PORT_RTSP=$CLOSED3 AKAM_PORT_CTL=$CLOSED4 a "$S" --ip 127.0.0.1 find-camera </dev/null >"$T/find2.out" 2>&1
 check "find-camera: a camera that does not answer fails with advice" bash -c '[ "$1" -ne 0 ] && grep -q "does not answer on any expected port" "$2"' _ $? "$T/find2.out"
 check "find-camera: a failed probe does not mark the step" hasnt "$S/state" step_find_camera_done
 
