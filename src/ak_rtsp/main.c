@@ -29,6 +29,7 @@
 #include "audio_out.h"
 #include "leds.h"
 #include "rtsp.h"
+#include "cred.h"
 #include "version.h"
 
 /* -------------------------------------------------------------------------
@@ -207,6 +208,11 @@ int main(int argc, char **argv)
 {
     if (argc >= 3 && strcmp(argv[1], "ctl") == 0)
         return ctl_client_run(8091, argc - 2, argv + 2, stdout);
+
+    /* Before any thread exists: the credentials state (htdigest db + failure limiter) and the plain-credential
+     * store are shared by the RTSP loop and the ONVIF HTTP thread, so both are set up once, here. */
+    rtsp_auth_shared_init();
+    cred_init(NULL, rtsp_auth_shared_db());
 
     /* Very first thing: tees stdout so the TCP tuning server's debug log
      * view gets the FULL boot log (ISP/VI/VENC init, not just ae/night's

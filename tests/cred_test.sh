@@ -19,7 +19,7 @@ SRC=$REPO/src/ak_rtsp
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -fno-sanitize-recover=undefined -I"$SRC" \
     -o "$WORK/cred_test" \
-    "$REPO/tests/native/cred_test.c" "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c"
+    "$REPO/tests/native/cred_test.c" "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
 mkdir "$WORK/d"
 "$WORK/cred_test" "$WORK/d"
 

@@ -27,7 +27,7 @@
 #define HTTP_RBUF_INIT        1024
 #define HTTP_ACCEPT_PAUSE_MS  200
 
-enum { S_READ, S_WRITE, S_LINGER };
+enum { S_READ, S_WRITE, S_LINGER, S_DEFER };
 
 typedef struct {
     int    fd;
@@ -37,6 +37,7 @@ typedef struct {
     size_t head_len, body_len;      /* head_len == 0: request head not complete yet */
     int    off_path, off_query, off_auth, off_ctype;
     int    is_post, is_get, http10, want_close, expect, sent100;
+    long long defer_until;          /* ms: S_DEFER ends here */
     long long t_start, t_act;       /* ms: first byte of the request in progress (0 = none) / last progress */
     http_resp_t resp;
     char   obuf[HTTP_OBUF];
@@ -100,6 +101,11 @@ void http_resp_body_stream(http_resp_t *r, size_t len, http_produce_fn fn, void 
     r->body_len = len;
     r->produce = len ? fn : NULL;
     r->ctx = ctx;
+}
+
+void http_resp_defer(http_resp_t *r, unsigned ms)
+{
+    r->defer_ms = ms > HTTP_DEFER_MAX_MS ? HTTP_DEFER_MAX_MS : ms;
 }
 
 void *http_resp_alloc(http_resp_t *r, size_t size)
@@ -366,6 +372,11 @@ static int try_parse(conn_t *c)
         return 0;
     }
     dispatch(c);
+    if (c->resp.defer_ms) {
+        c->defer_until = now_ms() + c->resp.defer_ms;
+        c->state = S_DEFER;
+        return 0;
+    }
     return begin_resp(c);
 }
 
@@ -431,7 +442,7 @@ static int pump(conn_t *c)
 
 static int on_readable(conn_t *c)
 {
-    if (c->state == S_WRITE) return -1;      /* only reached by POLLHUP while a reply is pending: the peer is gone */
+    if (c->state == S_WRITE || c->state == S_DEFER) return -1;      /* only reached by POLLHUP while a reply is pending: the peer is gone */
     if (c->state == S_LINGER) {
         char tmp[256];
         ssize_t n = recv(c->fd, tmp, sizeof(tmp), MSG_DONTWAIT);
@@ -468,6 +479,7 @@ static long long deadline(const conn_t *c)
     switch (c->state) {
     case S_WRITE:  return c->t_act + HTTP_WRITE_TIMEOUT_MS;
     case S_LINGER: return c->t_act + HTTP_LINGER_MS;
+    case S_DEFER:  return c->defer_until;
     default:       return c->t_start ? c->t_start + g.req_ms : c->t_act + g.idle_ms;
     }
 }
@@ -522,7 +534,7 @@ static void *server_thread(void *arg)
             conn_t *c = &g.conns[i];
             pfd[2 + i] = (struct pollfd){ c->fd, 0, 0 };
             if (c->fd < 0) continue;
-            pfd[2 + i].events = c->state == S_WRITE ? POLLOUT : POLLIN;
+            pfd[2 + i].events = c->state == S_WRITE ? POLLOUT : c->state == S_DEFER ? 0 : POLLIN;
             long long d = deadline(c);
             if (next < 0 || d < next) next = d;
         }
@@ -540,7 +552,10 @@ static void *server_thread(void *arg)
             else if (ev & POLLOUT) bad = write_step(c) < 0 || pump(c) < 0;
             else if (ev & (POLLIN | POLLHUP)) bad = on_readable(c) < 0;
             if (!bad && now_ms() >= deadline(c)) {
-                if (c->state == S_READ && c->t_start) bad = send_error(c, 408) < 0 || pump(c) < 0;
+                if (c->state == S_DEFER) {
+                    c->resp.defer_ms = 0;
+                    bad = begin_resp(c) < 0 || pump(c) < 0;
+                } else if (c->state == S_READ && c->t_start) bad = send_error(c, 408) < 0 || pump(c) < 0;
                 else bad = 1;
             }
             if (bad) conn_close(c);

@@ -5,6 +5,8 @@
 
 /* Accept a client connection and run the full RTSP session loop until the
  * client disconnects or teardown is received. Blocks until session ends. */
+/* Initialise the process-wide credentials state; main() calls it once before any thread starts. Idempotent. */
+void rtsp_auth_shared_init(void);
 /* Refresh the credential state shown as rtsp.auth; force = now, else at most every 5 s. */
 void rtsp_auth_tick(bool force);
 

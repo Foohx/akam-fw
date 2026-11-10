@@ -322,6 +322,73 @@ check "set-creds: spy md5sum used and the password was not in any argv" bash -c 
 rm -f "$PLAIN"
 rm -f "$FILE"
 
+# --- 7b. interrupted or failing installs leave a consistent state ---------------
+# A spy `mv` that refuses to move onto a chosen target, and a spy `sync` that blocks so a signal can land while the
+# files are staged.
+FAILBIN=$WORK/failbin
+mkdir -p "$FAILBIN"
+cat >"$FAILBIN/mv" <<EOF2
+#!/bin/sh
+for last in "\$@"; do :; done
+case \$last in *"/\$AKAM_TEST_FAIL_MV") exit 1 ;; esac
+exec "$BIN/mv" "\$@"
+EOF2
+chmod +x "$FAILBIN/mv"
+for a in md5sum sync chmod mkdir rm stty cat ls; do ln -sf "$BIN/$a" "$FAILBIN/$a"; done
+has_tmp() { compgen -G "$CONF/akam/*.new.*" >/dev/null; }
+fresh_pair() {  # the old pair: user old, password OldPassw0rd
+    feed "old
+OldPassw0rd
+"
+    run "$WORK/in" set-creds
+}
+fresh_pair
+OLD_AUTH=$(cat "$FILE")
+feed "new
+NewPassw0rd
+"
+env -i PATH="$FAILBIN" AKAM_ROOT="$ROOT" AKAM_TEST_FAIL_MV=credentials "${SHCMD[@]}" "$SCRIPT" set-creds <"$WORK/in" >"$OUT" 2>&1
+RC=$?
+check "second move fails: exit 1" test "$RC" = 1
+check "second move fails: explicit message" has 'cannot replace'
+check "second move fails: the htdigest file is the new one (RTSP consistent)" test "$(cat "$FILE")" = "new:akam:$(ha1_of 'new:akam:NewPassw0rd')"
+check "second move fails: the stale plain-text copy is removed (ONVIF fails closed)" test ! -e "$PLAIN"
+check "second move fails: no temporary file left" bash -c "! compgen -G '$CONF/akam/*.new.*'"
+fresh_pair
+OLD_AUTH=$(cat "$FILE")
+OLD_PLAIN=$(cat "$PLAIN")
+env -i PATH="$FAILBIN" AKAM_ROOT="$ROOT" AKAM_TEST_FAIL_MV=rtsp_auth "${SHCMD[@]}" "$SCRIPT" set-creds <"$WORK/in" >"$OUT" 2>&1
+RC=$?
+check "first move fails: exit 1" test "$RC" = 1
+check "first move fails: both files untouched" test "$(cat "$FILE")" = "$OLD_AUTH" -a "$(cat "$PLAIN")" = "$OLD_PLAIN"
+check "first move fails: no temporary file left" bash -c "! compgen -G '$CONF/akam/*.new.*'"
+
+SLOWBIN=$WORK/slowbin
+mkdir -p "$SLOWBIN"
+cat >"$SLOWBIN/sync" <<EOF2
+#!/bin/sh
+echo staged >"$WORK/staged.marker"
+exec sleep 30
+EOF2
+chmod +x "$SLOWBIN/sync"
+for a in md5sum mv chmod mkdir rm stty cat ls; do ln -sf "$BIN/$a" "$SLOWBIN/$a"; done
+ln -sf "$(command -v sleep)" "$SLOWBIN/sleep"
+for sig in TERM INT HUP; do
+    rm -f "$WORK/staged.marker"
+    env -i PATH="$SLOWBIN" AKAM_ROOT="$ROOT" "${SHCMD[@]}" "$SCRIPT" set-creds <"$WORK/in" >"$OUT" 2>&1 &
+    SPID=$!
+    for _ in $(seq 1 100); do [ -e "$WORK/staged.marker" ] && break; sleep 0.05; done
+    has_tmp_now=0
+    has_tmp && has_tmp_now=1
+    kill -"$sig" "$SPID" 2>/dev/null
+    pkill -TERM -P "$SPID" 2>/dev/null
+    wait "$SPID" 2>/dev/null
+    tmp_cleaned() { [ "$has_tmp_now" = 1 ] && ! has_tmp; }
+    check "SIG$sig while staged: the temporary files existed, and are removed" tmp_cleaned
+    check "SIG$sig while staged: the old pair is untouched" test "$(cat "$FILE")" = "$OLD_AUTH" -a "$(cat "$PLAIN")" = "$OLD_PLAIN"
+done
+rm -f "$PLAIN" "$FILE"
+
 # --- 8. read-only CONFIG: a clear error, no partial file ----------------------
 if [ "$(id -u)" != 0 ]; then
     rm -rf "$CONF/akam"
@@ -337,7 +404,7 @@ fi
 # --- 9. the file is what ak_rtsp reads: end-to-end with ffprobe ----------------
 if command -v ffprobe >/dev/null 2>&1 && command -v cc >/dev/null 2>&1; then
     cc -std=gnu99 -I"$REPO/src/ak_rtsp" -o "$WORK/srv" "$REPO/tests/native/rtsp_auth_server.c" \
-        "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" 2>/dev/null
+        "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread 2>/dev/null
     E2E='n0t:S3NTINEL@p/ss w0rd'
     ENC='n0t%3AS3NTINEL%40p%2Fss%20w0rd'
     feed "$E2E
