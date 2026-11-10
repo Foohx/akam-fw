@@ -281,6 +281,33 @@ need no permission) or the serial console: lines starting with `[audio_out]` sho
   through the RTSP port ([two-way audio](two_way_audio.md)). A client that streams G.711 silence does not
   switch the amplifier on: the amp follows sound above about -56 dBFS.
 
+## The camera restarted itself, or the stream came back after a gap
+
+Over SSH (`ssh root@<camera>`):
+
+```sh
+cat /tmp/akam_respawn        # count=<short runs in a row> total=<exits since boot> last_rc=<code> last_run=<s>
+cat /tmp/akam_wrapper.log    # one line per exit of ak_rtsp (also in syslog: logread | grep akam_wrapper)
+```
+
+`total` is how many times `ak_rtsp` ended since the camera booted (the files are in RAM, they restart at 0 after a
+reboot). `count` is the number of runs shorter than 10 minutes in a row: it sets the wait before the next start
+(0, 2, 5, 10, then 30 seconds), and a run of 10 minutes or more resets it. A camera stuck in a loop therefore shows a
+large `count` and the wrapper log gives the exit code of each run. Exit code 70 means the software watchdog stopped
+`ak_rtsp` because the encoder produced no frame for 30 s or one of its threads stopped answering; the line it wrote
+is on the serial console (`[swdog] ...`). Other codes are crashes or start-up failures (read the log above it).
+
+Lines lost by the console tee (a console that cannot keep up): `ak_rtsp ctl GET log.dropped` on the camera, or
+`GET log.dropped` on port 8091. It only counts lost log lines; a growing number is harmless for the video.
+
+## The camera falls off the Wi-Fi and does not come back
+
+`akam_net.sh` checks `wpa_supplicant`, `udhcpc` and the IPv4 address of `wlan0` every 30 seconds and restarts what is
+missing, waiting longer between attempts (30 s up to 5 min). Its log: `cat /tmp/akam_net.log` (also in syslog). It
+does nothing at all if `/etc/config/wpa_supplicant.conf` does not exist. `/usr/sbin/akam_net.sh status` says whether
+it runs. If the router was off for a while the camera should be back within about five minutes after the router is
+up; if not, send that log.
+
 ## Still stuck
 
 Run `./akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the
