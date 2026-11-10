@@ -22,6 +22,8 @@
 #define WSD_MAX_PENDING  8
 #define WSD_RATE_PER_SEC 20
 #define WSD_MAX_DELAY_MS 500
+#define WSD_SRC_RATE     5      /* matching requests per second per source IP (burst 5) */
+#define WSD_SRC_SLOTS    8
 #define WSD_ID_MAX       96
 #define WSD_SCOPES_MAX   1024
 #define WSD_TYPES_MAX    128

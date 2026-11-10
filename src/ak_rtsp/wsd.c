@@ -23,7 +23,7 @@
 #define WSD_OBUF        4096
 #define WSD_TICK_FAST   5000   /* retry join / Hello */
 #define WSD_TICK_SLOW   30000  /* membership refresh */
-#define WSD_URI_ANON    "http://www.w3.org/2005/08/addressing/anonymous"
+#define WSD_URI_ANON    "http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous" /* matches the 2004/08 wsa */
 #define WSD_URI_DISC    "urn:schemas-xmlsoap-org:ws:2005:04:discovery"
 #define WSD_ACT         "http://schemas.xmlsoap.org/ws/2005/04/discovery/"
 
@@ -297,7 +297,8 @@ static int send_msg(int kind, const struct sockaddr_in *dst, const char *relates
     char xa[WSD_XADDR_MAX] = "";
     if (kind != WSD_B_BYE) {
         struct in_addr la;
-        if (local_for(dst, &la) < 0) {
+        if (IN_MULTICAST(ntohl(dst->sin_addr.s_addr)) && g.info.mcast_if) la.s_addr = g.info.mcast_if;
+        else if (local_for(dst, &la) < 0) {
             if (!g.info.mcast_if) return -1;
             la.s_addr = g.info.mcast_if;
         }
@@ -329,6 +330,35 @@ static int enqueue(int kind, const struct sockaddr_in *dst, const char *relates,
     return 1;
 }
 
+/* Per-source limit (reflection to a spoofed victim): WSD_SRC_RATE requests/s per IP, small LRU table. Wsd thread only. */
+static struct { uint32_t ip; long long t_ms; int tokens_x1000; } srcs[WSD_SRC_SLOTS];
+
+static int src_ok(uint32_t ip, long long now)
+{
+    int k = -1, old = 0;
+    for (int i = 0; i < WSD_SRC_SLOTS; i++) {
+        if (srcs[i].ip == ip) { k = i; break; }
+        if (srcs[i].t_ms < srcs[old].t_ms) old = i;
+    }
+    if (k < 0) { k = old; srcs[k].ip = ip; srcs[k].t_ms = now; srcs[k].tokens_x1000 = WSD_SRC_RATE * 1000; }
+    long long dt = now - srcs[k].t_ms;
+    if (dt < 0) dt = 0;
+    long long tk = srcs[k].tokens_x1000 + dt * WSD_SRC_RATE;
+    if (tk > WSD_SRC_RATE * 1000) tk = WSD_SRC_RATE * 1000;
+    srcs[k].t_ms = now;
+    if (tk < 1000) { srcs[k].tokens_x1000 = (int)tk; return 0; }
+    srcs[k].tokens_x1000 = (int)(tk - 1000);
+    return 1;
+}
+
+/* A reply is only sent to a plausible unicast source. */
+static int src_valid(const struct sockaddr_in *a)
+{
+    uint32_t h = ntohl(a->sin_addr.s_addr);
+    return a->sin_family == AF_INET && a->sin_port != 0 && h != 0 && h != 0xffffffffu && !IN_MULTICAST(h) &&
+           (h >> 24) != 0 && (h >> 28) != 0xf;
+}
+
 /* 0 failed, 1 joined (already), 2 newly joined */
 static int join_group(void)
 {
@@ -353,7 +383,10 @@ static void *wsd_thread(void *arg)
             if (g.jobs[i].due <= now) {
                 job_t j = g.jobs[i];
                 g.jobs[i] = g.jobs[--g.njobs];
-                if (send_msg(j.kind, &j.dst, j.relates) < 0 && j.kind == WSD_B_HELLO) need_hello = 1;
+                if (send_msg(j.kind, &j.dst, j.relates) < 0 && j.kind == WSD_B_HELLO) {
+                    need_hello = 1;
+                    next_tick = now + WSD_TICK_FAST;
+                }
             } else {
                 i++;
             }
@@ -379,7 +412,7 @@ static void *wsd_thread(void *arg)
             if (n > WSD_MAX_DGRAM || fl != sizeof(from)) continue;
             wsd_msg_t m;
             int kd = wsd_parse(rx, (size_t)n, &m);
-            if (kd > 0 && wsd_match(&g.info, &m))
+            if (kd > 0 && src_valid(&from) && wsd_match(&g.info, &m) && src_ok(from.sin_addr.s_addr, now_ms()))
                 enqueue(kd == WSD_K_PROBE ? WSD_B_PROBEMATCH : WSD_B_RESOLVEMATCH, &from, m.msgid, now_ms());
         }
     }

@@ -105,7 +105,7 @@ static void test_build(void)
     CHECK(strstr(o, "<d:MetadataVersion>7</d:MetadataVersion>"));
     CHECK(strstr(o, "<a:Address>" UUID "</a:Address>"));
     CHECK(strstr(o, "discovery/ProbeMatches</a:Action>"));
-    CHECK(strstr(o, "anonymous</a:To>"));
+    CHECK(strstr(o, "<a:To>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:To>"));
     CHECK(count_of(o, "<d:ProbeMatch>") == 1);
     wsd_msg_t m;
     CHECK(wsd_parse(o, n, &m) == WSD_K_NONE);   /* our own reply is well-formed and ignored */
@@ -251,7 +251,7 @@ static void test_socket(void)
     for (int i = 0; i < 200; i++) tx(client, port, probe, strlen(probe));
     int got = 0;
     while (rx(client, b, sizeof(b), 900) > 0) got++;
-    CHECK(got >= 1 && got <= WSD_RATE_PER_SEC);
+    CHECK(got >= 1 && got <= WSD_SRC_RATE + 1);   /* per-source bucket */
 
     wsd_stop();
     n = rx(notify, b, sizeof(b), 500);
