@@ -36,6 +36,7 @@ Written by the upstream author, with Akam notes where behaviour differs.
 - [Camera, ISP and audio pipeline](camera_and_audio_pipeline.md): ISP registers, audio capture.
 - [Serial console and tuning app](serial_console_and_camera_tuning.md): Windows .NET tool (upstream).
 - [Building your own firmware](building_your_own_firmware.md): short pointer to the build guide.
+- [Stock speaker/ISP capture](stock_capture.md): developer procedure to record how the stock `anyka_ipc` drives the speaker, without writing to the camera.
 
 Project history: [CHANGELOG](../CHANGELOG.md). For contributors: design notes are in `specs/` (French,
 internal).
