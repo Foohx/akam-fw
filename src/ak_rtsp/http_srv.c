@@ -53,8 +53,7 @@ static struct {
     pthread_t       tid;
     int             running;
     volatile int    stop;
-    int             listen_fd, wake_r, wake_w;
-    volatile int    port;   /* one aligned word: read without the lock (see http_srv_port) */
+    int             listen_fd, wake_r, wake_w, port;
     conn_t         *conns;
     route_t         routes[HTTP_MAX_ROUTES];
     int             nroutes;
@@ -579,7 +578,7 @@ static void teardown(void)
     if (g.wake_r >= 0) close(g.wake_r);
     if (g.wake_w >= 0) close(g.wake_w);
     g.listen_fd = g.wake_r = g.wake_w = -1;
-    g.port = 0;
+    __atomic_store_n(&g.port, 0, __ATOMIC_RELEASE);
 }
 
 int http_srv_start(int port)
@@ -618,7 +617,7 @@ int http_srv_start(int port)
         errno = e;
         goto out;
     }
-    g.port = ntohs(a.sin_port);
+    __atomic_store_n(&g.port, ntohs(a.sin_port), __ATOMIC_RELEASE);
     g.stop = 0;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -651,7 +650,7 @@ void http_srv_stop(void)
 int http_srv_port(void)
 {
     /* No lock: a handler (server thread) may call this while http_srv_stop holds the lock and joins that thread. */
-    return g.port;
+    return __atomic_load_n(&g.port, __ATOMIC_ACQUIRE);
 }
 
 void http_srv_set_timeouts(int req_ms, int idle_ms)

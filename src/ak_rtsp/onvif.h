@@ -10,13 +10,13 @@
  *                GetScopes, GetHostname (the ONVIF pre-auth list of spec 3.1)
  *   ONVIF_READ   needs a login when the RTSP password is ON, open when it is OFF
  *   ONVIF_WRITE  needs a login when ON, REFUSED (ter:NotAuthorized) when OFF
- * A login is a valid WS-Security UsernameToken (PasswordDigest) anywhere in the request, or a valid HTTP Digest
+ * A login is a valid WS-Security UsernameToken (PasswordDigest) in the SOAP Header, or a valid HTTP Digest
  * Authorization header. WS-Security failure: Sender fault ter:NotAuthorized, HTTP 400. No token and no or a bad
  * Digest: HTTP 401 with a fresh challenge (realm akam, qop auth). When the htdigest file is invalid every
  * protected request is refused (fail closed). Failures go through the shared limiter (cred.h) and the answer is
  * DEFERRED by the returned delay with http_resp_defer: the poll loop is never blocked.
  *
- * HTTP Digest checks beyond rtsp_auth_digest_verify: the uri must equal the request target (path[?query]); the
+ * HTTP Digest checks beyond rtsp_auth_digest_verify: the uri must equal the request target (path[?query]) or be that target as an absolute http:// URI (host not compared); qop=auth is required; the
  * nonce must be one this module issued (table of ONVIF_NONCES, ONVIF_NONCE_LIFETIME_US each; an unknown or old
  * nonce gets a new challenge with stale=true, no penalty); with qop=auth, nc must increase per nonce. */
 #pragma once
@@ -26,7 +26,7 @@
 #include "soap.h"
 
 #define ONVIF_MAX_SERVICES 4
-#define ONVIF_NONCES 8
+#define ONVIF_NONCES 32
 #define ONVIF_NONCE_LIFETIME_US (120LL * 1000000)
 #define ONVIF_SCRATCH 768
 

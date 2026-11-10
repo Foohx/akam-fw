@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -140,12 +141,19 @@ static void not_authorized(onvif_call_t *c, unsigned delay_ms)
 
 /* ------------------------------------------------------------------------ authentication gate */
 
-/* WS-Security UsernameToken anywhere in the request. 0 = none, 1 = valid, -1 = present and refused. */
+/* The UsernameToken of the SOAP Header (never one inside the Body, where an operation argument could be named so). */
+static int find_token(const onvif_call_t *c, soap_elem_t *ut)
+{
+    soap_elem_t h;
+    soap_span_t doc = { c->req->body, c->req->body_len };
+    return soap_find(doc, "Header", &h) == SOAP_OK && soap_find(h.inner, "UsernameToken", ut) == SOAP_OK;
+}
+
+/* WS-Security UsernameToken of the Header. 0 = none, 1 = valid, -1 = present and refused. */
 static int wsse_check(onvif_call_t *c, unsigned *delay)
 {
-    soap_span_t doc = { c->req->body, c->req->body_len };
     soap_elem_t ut, u, p, n, cr;
-    if (soap_find(doc, "UsernameToken", &ut) != SOAP_OK) return 0;
+    if (!find_token(c, &ut)) return 0;
     char user[CRED_USER_MAX + 2] = "", nonce[B64_ENCODED_LEN(CRED_NONCE_RAW_MAX) + 2] = "", created[CRED_CREATED_MAX + 2] = "",
          digest[48] = "", type[128] = "";
     int ok = 1;
@@ -173,6 +181,18 @@ static int target_of(const http_req_t *r, char *out, size_t cap)
     return n > 0 && (size_t)n < cap;
 }
 
+/* The digest uri is the request target, or the same as an absolute URI (http://host[:port]target): the host part is
+ * not compared (the client may use any name or address of the camera). */
+static int uri_matches(const char *uri, const char *target)
+{
+    if (strcmp(uri, target) == 0) return 1;
+    if (strncasecmp(uri, "http://", 7) != 0) return 0;
+    const char *p = uri + 7;
+    size_t a = strcspn(p, "/?#@ ");
+    if (a == 0 || p[a] != '/') return 0;
+    return strcmp(p + a, target) == 0;
+}
+
 int onvif_gate(onvif_call_t *c, onvif_class_t cls)
 {
     if (cls == ONVIF_PRE) return 1;
@@ -184,7 +204,7 @@ int onvif_gate(onvif_call_t *c, onvif_class_t cls)
     }
     unsigned delay = 0;
     soap_elem_t probe;
-    int has_token = soap_find((soap_span_t){ c->req->body, c->req->body_len }, "UsernameToken", &probe) == SOAP_OK;
+    int has_token = find_token(c, &probe);
     if (mode == RTSP_AUTH_BROKEN) {         /* fail closed */
         if (has_token) not_authorized(c, 0); else challenge(c, 0, 0);
         return 0;
@@ -200,9 +220,13 @@ int onvif_gate(onvif_call_t *c, onvif_class_t cls)
     rtsp_auth_digest_t d;
     if (!cred_check_http_digest(c->req->method, hdr, strlen(hdr), &d, &delay)) { challenge(c, 0, delay); return 0; }
     char target[512];
-    if (!target_of(c->req, target, sizeof(target)) || strcmp(d.uri, target) != 0) {
+    if (!target_of(c->req, target, sizeof(target)) || !uri_matches(d.uri, target)) {
         cred_note_failure(&delay);          /* right credentials for another URI: replay or confusion */
         challenge(c, 0, delay);
+        return 0;
+    }
+    if (!d.qop) {                           /* no nc to count: a captured request could be replayed, ask again with qop */
+        challenge(c, 0, 0);
         return 0;
     }
     switch (nonce_use(&d)) {
