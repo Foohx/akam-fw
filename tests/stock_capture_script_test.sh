@@ -67,6 +67,7 @@ printf 'MemTotal:       22000 kB\nMemFree:         9000 kB\n' >"$R/proc/meminfo"
 echo 3 >"$R/tmp/camera_start_times"
 cat >"$R/proc/mounts" <<'EOF'
 /dev/mtdblock7 /usr squashfs ro 0 0
+tmpfs /tmp tmpfs rw 0 0
 /dev/mmcblk0p1 /tmp/sd vfat rw 0 0
 /dev/mmcblk0p1 /etc/config/_ht_sw_settings.ini vfat rw 0 0
 /dev/mmcblk0p1 /usr/share/boot.mp3 vfat rw 0 0
@@ -367,6 +368,27 @@ if ls "$STATE" >/dev/null 2>&1; then ko "state left after the second restore"; e
 runscript restore; rc=$?
 if [ "$rc" -eq 0 ]; then ok "restore with nothing to undo exits 0"; else ko "restore exit $rc"; fi
 has "restore reports nothing to do" 'nothing to restore' "$WORK/out.txt"
+
+# the start counter is only ever reset when it is a plain file on a RAM file system: a symlink
+# (which could lead into /etc/config, flash) is left alone
+printf 'precious\n' >"$R/etc/config/flash_file.txt"
+rm -f "$R/tmp/camera_start_times"
+ln -s "$R/etc/config/flash_file.txt" "$R/tmp/camera_start_times"
+runscript run 3; rc=$?
+if [ "$rc" -eq 0 ]; then ok "run with a symlinked start counter exits 0"; else ko "symlink run exit $rc"; cat "$WORK/out.txt"; fi
+has "a symlinked start counter is refused" 'NOT touched \(flash must never be written\)' "$WORK/out.txt"
+if [ "$(cat "$R/etc/config/flash_file.txt")" = precious ]; then ok "the file behind the symlink was not written"; else ko "symlink target overwritten"; fi
+rm -f "$R/tmp/camera_start_times" "$R/etc/config/flash_file.txt"
+echo 3 >"$R/tmp/camera_start_times"
+cp "$R/proc/mounts" "$WORK/mounts.save"
+grep -v ' /tmp tmpfs ' "$WORK/mounts.save" >"$R/proc/mounts"
+runscript run 3; rc=$?
+has "/tmp not being a RAM file system refuses the reset" 'NOT touched \(flash must never be written\)' "$WORK/out.txt"
+if [ "$(cat "$R/tmp/camera_start_times")" = 3 ]; then ok "the counter is untouched when /tmp is not tmpfs"; else ko "counter changed on a non-tmpfs /tmp"; fi
+cp "$WORK/mounts.save" "$R/proc/mounts"
+# the end-of-run flush never needs a global sync
+LASTRUN=$(find "$R/tmp/sd/stock_capture" -maxdepth 1 -name "run*" -type d | sort | tail -n 1)
+if [ -s "$LASTRUN/stock_hook.log" ]; then ok "the run folder is complete after the final per-file flush"; else ko "empty log after the final flush"; fi
 
 # --- only camera applets used ---------------------------------------------------------------------------
 if grep -v '^ *#' "$SCRIPT" | grep -Eq '(^|[|;&( ])(tr|mktemp|nohup|flock|gzip|wget|dirname|basename|cut) '; then ko "script uses an applet the camera's BusyBox lacks"; else ok "script uses none of tr, mktemp, nohup, flock, gzip, wget, dirname, cut"; fi

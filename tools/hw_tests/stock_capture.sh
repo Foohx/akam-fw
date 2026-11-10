@@ -103,6 +103,20 @@ sync_files() {
     done
     if [ "$FSYNC_FAILS" -ge 2 ]; then warn "dd conv=fsync does not work here: logs are no longer fsync'd"; fi
 }
+# flush_run: fsync every file of the run folder, whatever --no-sync says (a global "sync" would also
+# push the flash file systems, which this tool never wants). When dd cannot fsync here, fall back to
+# one global sync (the only way to get the card's files out before it is removed) and say so.
+flush_run() {
+    bad=0
+    for f in "$RUNDIR"/*; do
+        [ -f "$f" ] || continue
+        dd if=/dev/null of="$f" conv=notrunc,fsync >/dev/null 2>&1 || bad=1
+    done
+    if [ "$bad" = 1 ]; then
+        warn "dd conv=fsync failed: using a global sync to flush the card"
+        sync
+    fi
+}
 # runs left behind by a camera that rebooted (or a script that was killed) during a capture
 scan_interrupted() {
     [ -n "$SD" ] || return 0
@@ -120,6 +134,12 @@ scan_interrupted() {
 }
 
 mounts_file() { echo "$ROOT/proc/mounts"; }
+# ram_plain_file FILE: FILE is a regular file (not a symlink) and /tmp is a tmpfs/ramfs mount, so
+# writing it cannot reach the flash (/etc/config is jffs2 on the camera)
+ram_plain_file() {
+    [ -f "$1" ] && [ ! -L "$1" ] || return 1
+    awk '$2 == "/tmp" { t = $3 } END { exit (t == "tmpfs" || t == "ramfs") ? 0 : 1 }' "$(mounts_file)" 2>/dev/null
+}
 # number of mounts whose target is exactly $1 (logical path)
 mcount() { awk -v p="$1" '$2 == p { n++ } END { print n + 0 }' "$(mounts_file)" 2>/dev/null; }
 
@@ -281,6 +301,7 @@ restore() {
 }
 
 on_signal() {
+    trap '' INT TERM HUP         # ignore a second signal: it must not interrupt the restore
     echo "signal received: restoring"
     meta "status=signal"
     restore
@@ -420,7 +441,10 @@ do_run() {
     # at every boot) and its signal handler / start-up code can run "sh recover_cfg.sh; reboot -f".
     # Whether that played a part in the reboot of the first run is NOT proven; the value is recorded
     # (here, after the respawn and in every timeline line) and reset to what a fresh boot has.
-    if [ "$KEEP_COUNTER" = 0 ] && [ -n "$sc_before" ]; then
+    if [ "$KEEP_COUNTER" = 0 ] && [ -n "$sc_before" ] && ! ram_plain_file "$SC"; then
+        warn "/tmp/camera_start_times is not a plain file on a RAM file system: NOT touched (flash must never be written)"
+        echo "start_times_reset=refused" >>"$RUNDIR/run.meta"
+    elif [ "$KEEP_COUNTER" = 0 ] && [ -n "$sc_before" ]; then
         echo 0 >"$SC" 2>/dev/null && info "start counter /tmp/camera_start_times was $sc_before, reset to 0 (RAM only; --keep-start-counter skips this)"
         echo "start_times_reset=yes" >>"$RUNDIR/run.meta"
     else
@@ -556,7 +580,7 @@ finish() {
         else
             warn "/etc/config differs before/after (see config_diff.txt); a stock process may have saved a setting"
         fi
-        sync
+        flush_run
         echo
         echo "Logs are on the card: $RUNDIR"
         ls -l "$RUNDIR" 2>/dev/null
