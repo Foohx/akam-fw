@@ -2,6 +2,12 @@
 
 Statut : **mise à jour après la capture du firmware d'origine (§1.3, qui prime sur tout ce qui contredit en §1.2, §2.1, §3 et §11)**. Rédigée le 2026-11-10 (agent SPEC, branche `docs/spec-audio-out`, partie de `dev`). Cible : V1.1 (brief §« Audio sortant »). Seule cette spec est en français ; code, messages, README et docs sont en anglais. **Rien ici n'est validé sur matériel** : chaque point marqué « à vérifier » est une inconnue à lever par les tests de §10.
 
+> **Mise à jour du 2026-11-10 (spec 07, `specs/07-spec-standard-protocols.md`, décision utilisateur D1 étape 1) : l'entrée réseau devient le rétrocanal audio ONVIF sur le port RTSP 554** (`Require: www.onvif.org/ver20/backchannel`, piste SDP `a=sendonly` PCMU/PCMA 8 kHz). Il **remplace** le port de parole 8092 et l'exigence HMAC pour l'audio ; la parole exige le **mot de passe RTSP Digest** (sans mot de passe, la piste n'est pas proposée).
+> - **Remplacé (ne pas implémenter)** : §0 (port 8092), §4 et §4.1 (protocole `TALK`/`AUTH`, verrou 8092), §5 (`./akam talk|say` par 8092 et HMAC ; remplacés par le client hôte `akam-talk` + les commandes `./akam audio`, spec 07 §1.5), §5.3 et §5.4 (étape D devient l'étape 1), §8 (sécurité du port 8092), les tests §9.1 « Protocole `talk` » et B1/B4/B6, les tâches **T3** et **T5** (§10), les décisions D3, D6 et D10 (§11), et la décision « Auth talk (option 2) » en fin de fichier.
+> - **Réévalué** : le half-duplex du §4.3 (micro coupé tant qu'un locuteur est connecté) devient un silence du micro seulement pendant la parole réellement jouée (détection d'énergie, maintien 300 ms), réglage `audio.talk_duplex` (spec 07 §1.4).
+> - **Reste valable** : §1 à §3 (matériel, séquence stock, étape A), §4.2 (tampon de gigue), §6 (clés `audio.out_*`, écrites par SSH/MQTT/ONVIF et non plus par le port 8091 distant, spec 07 §4.5), §7 (persistance, via `ctl_store`), §9.1 pour G.711/gigue/périphérique factice/volume, T1, T2, T4, T6 (adaptées), D1, D2, D4, D5, D7 à D9, D11.
+> - Clés ajoutées par la spec 07 : `audio.talk_enable` (interrupteur logiciel de la parole, distinct de `audio.out_enable` qui ouvre le périphérique au démarrage), `audio.talk_duplex`.
+
 ## 0. Objectif et principe
 
 Parler depuis un PC (puis un téléphone / Home Assistant) dans le haut-parleur intégré de la caméra, en push-to-talk, le plus simplement possible.
@@ -128,7 +134,7 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 | A8 | 20 bips de suite, `top`, `free` | pas de fuite mémoire, CPU de `ak_rtsp` inchangé à +1 % près, aucune erreur `[audio] playback write` |
 | A9 | Même test avec `audio.out_enable=0` (image précédente) | comportement strictement identique à aujourd'hui |
 
-## 4. Étape B — entrée réseau : comparaison
+## 4. Étape B — entrée réseau : comparaison (REMPLACÉ par le rétrocanal ONVIF, spec 07 §1 : le port 8092 n'est pas construit)
 
 | Option | Verdict |
 |---|---|
@@ -139,7 +145,7 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 | Texte du port 8091 | Écartée : flux binaire dans un protocole ligne à ligne partagé avec les journaux. |
 | Tube nommé + SSH (`ssh cam 'cat > /tmp/talk'`) | Écartée comme chemin principal (démarrage SSH ≈ 1 s sur ARM926, pas de verrou). **Chiffrement possible avec la solution retenue** : `ssh -N -L 8092:127.0.0.1:8092 root@cam` (Dropbear est déjà là). |
 
-### 4.1 Protocole du port 8092 (v1)
+### 4.1 Protocole du port 8092 (v1) (REMPLACÉ, spec 07 §1.2)
 
 Écoute `INADDR_ANY` **seulement si `audio.out_enable=1`** (la valeur par défaut ; avec `enable=0` le port est fermé, aucune écoute). `listen` avec backlog 1.
 
@@ -167,7 +173,7 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 
 Le micro de la caméra capte son propre haut-parleur. Deux effets : (1) le spectateur RTSP entend sa propre voix retardée de ~1 s (écho de bout en bout) ; (2) un retour de boucle (Larsen) est possible si le PC joue l'audio de la caméra près de son micro. Il n'y a **pas** d'annulation d'écho (hors périmètre). Retenu : **half-duplex** : pendant qu'un locuteur est actif (et 300 ms après), `audio_get_frame_ts()` renvoie du **silence** au lieu du micro (`audio.out_mute_mic=1` par défaut). Les paquets RTP audio continuent donc de partir avec les bons horodatages (le lecteur reste synchronisé), mais plus d'écho ni de Larsen. `0` laisse le micro ouvert (pour tester l'écho à l'oreille).
 
-## 5. Étape C — côté PC
+## 5. Étape C — côté PC (REMPLACÉ, spec 07 §1.5)
 
 ### 5.1 Commandes `./akam` (dans `akam` et `tools/wizard/**`, mêmes conventions que `rtsp-auth`)
 
@@ -203,7 +209,7 @@ streams:
 
 C'est pourquoi `pcma` est dans le protocole (go2rtc fournit de l'A-law). Les cartes Home Assistant (WebRTC Camera, go2rtc intégré) s'appuient sur ce flux ; à valider en T6. Le jour où l'étape D (rétrocanal RTSP/ONVIF) existe, la source `rtsp` de go2rtc fera la même chose directement, sans `exec`.
 
-### 5.4 Étape D (reportée) : rétrocanal RTSP/ONVIF
+### 5.4 Étape D : rétrocanal RTSP/ONVIF (devenu l'étape 1, spec 07 §1)
 
 Au moins : `DESCRIBE` avec `Require: www.onvif.org/ver20/backchannel` renvoie une piste audio `a=sendonly` PCMU/8000 ; `SETUP` de la piste ; RTP entrant (interleaved `$`) dépaqueté vers `audio_out_push()`. Prérequis : étude de faisabilité SmolRTSP + `rtsp_in.c` ; non engagée par cette spec.
 
@@ -241,7 +247,7 @@ Deux sons synthétisés (880 Hz 120 ms puis 1175 Hz 160 ms, rampes 10 ms, −18 
 - Quand le magasin `ctl_store` de la spec 04 existe : les clés `audio.out_*` persistantes y migrent (`SAVE`) et le fichier devient une migration à la première lecture ; une seule source de vérité (décision D4).
 - La sortie audio étant activée par défaut, le wizard n'a rien à activer ; `./akam talk --disable` (`enable=0`) la coupe, `--enable` la rétablit.
 
-## 8. Sécurité
+## 8. Sécurité (port 8092 REMPLACÉ ; modèle de sécurité de la parole : spec 07 §1.6)
 
 - LAN uniquement ; jamais de redirection de port/UPnP vers 8092 (README). Pas de TLS : écoute passive possible (le flux sonore est audible en clair) ; chiffrement : tunnel SSH (§4 dernière ligne).
 - **Activé par défaut** (décision utilisateur) : le port 8092 est ouvert dès que la sortie audio l'est, mais exige toujours l'auth HMAC (décision « Auth talk » en bas) : sans clé provisionnée, aucune session n'est acceptée. Avec `enable=0`, aucun port ouvert. Le README le dit sans détour. MAC par session de parole, nonce à usage unique, échecs limités comme 04 §9.5.
@@ -286,9 +292,9 @@ Chaque tâche fige les en-têtes de ses modules (relus à la fusion). Les ajouts
 | Vague | Tâche | Fichiers | Dépend de |
 |---|---|---|---|
 | 1 | **T1** G.711 (µ-law, A-law, l16) + tampon de gigue + tests | `src/ak_rtsp/g711.[ch]`, `audio_jitter.[ch]`, `tests/g711_test.sh`, `tests/jitter_test.sh`, `tests/native/g711_test.c`, `jitter_test.c`, fixtures | — |
-| 1 | **T5** CLI `./akam talk|say` + bibliothèque PC + fausse caméra | `akam`, `tools/wizard/**`, `tests/talk_test.sh`, `tests/fixtures/fake_talk_cam.sh` | spec 04 T9 (HMAC hôte) ou stub |
+| 1 | **T5 (REMPLACÉE, spec 07 T4/T5)** CLI `./akam talk|say` + bibliothèque PC + fausse caméra | `akam`, `tools/wizard/**`, `tests/talk_test.sh`, `tests/fixtures/fake_talk_cam.sh` | spec 04 T9 (HMAC hôte) ou stub |
 | 2 | **T2** `audio_out` : séquence périphérique (§2.1), garde, ampli (§3.2), volume, bip, thread de lecture remplaçant le silence, clés 8091 d'étape A (`enable`, `volume`, `gain`, `source`, `amp`, `test`, `state`), câblage `main.c`, correction des noms dans `ak_ioctls.h` (alias, sans changer les valeurs ni la séquence de capture) | `src/ak_rtsp/audio_out.[ch]`, `audio.c`, `audio.h`, `ak_ioctls.h`, `control.c`, `main.c`, `Makefile`, `tests/audio_out_test.sh`, `tests/native/audio_out_test.c` | T1 |
-| 2 | **T3** serveur `talk` : port 8092, en-tête, verrou, auth (module 04 ou, à défaut, repli « auth OFF » + point d'accroche), poussée dans le tampon, `audio.out_client/underruns/drops/buf_ms` | `src/ak_rtsp/talk.[ch]`, `tests/talk_proto_test.sh`, `tests/native/talk_test.c` | T1 (API `audio_out_push` figée dès T1) |
+| 2 | **T3 (REMPLACÉE, spec 07 T3)** serveur `talk` : port 8092, en-tête, verrou, auth (module 04 ou, à défaut, repli « auth OFF » + point d'accroche), poussée dans le tampon, `audio.out_client/underruns/drops/buf_ms` | `src/ak_rtsp/talk.[ch]`, `tests/talk_proto_test.sh`, `tests/native/talk_test.c` | T1 (API `audio_out_push` figée dès T1) |
 | 3 | **T4** persistance et activation : `akam_audio_out.sh`, patch `build_firmware.sh`/`image_files.txt`, carillon, `audio.out_mute_mic` dans `audio_get_frame_ts`, intégration wizard (`verify`), README (port 8092, risque LAN) | `tools/firmware_patch_templates/akam_audio_out.sh`, `src/ak_rtsp/build_firmware.sh`, `audio.c` (muet micro), `README.md`, `docs/**`, `CHANGELOG.md`, tests | T2, T3 |
 | 4 | **T6** validation matériel A (§3.3) puis B/C (§9.2), correctifs ciblés (source, gain, périodes, `period_bytes`) ; confirmation des hypothèses de §1.2 | rapport + correctifs | T2 (A), tout (B) |
 | opt. | **T7** go2rtc/Home Assistant (§5.3) et étude de faisabilité de l'étape D | `docs/` | T6 |
