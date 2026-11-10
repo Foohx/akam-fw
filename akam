@@ -76,6 +76,10 @@ Commands:
                      port 8091 is read-only for the network: 'on' lets the network change settings
                      too (for the PC tuning tool) for MINUTES (default 60, up to 1440) or until
                      'off' or a reboot; over SSH. Default: status
+  onvif [enable [PORT] | disable | status]
+                     ONVIF for NVRs and apps (ONVIF Device Manager, Frigate, Home Assistant): off by default.
+                     'enable' (asks first, needs the stream password: rtsp-auth set) opens TCP PORT (default 80)
+                     and UDP 3702 on your network; 'disable' closes them. Over SSH. Default: status
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
                      'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
@@ -259,6 +263,7 @@ case $CMD in
         cmd_led ${ARGS[@]+"${ARGS[@]:1}"} || rc=$?
         ;;
     debug) cmd_debug ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    onvif) cmd_onvif ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     audio) cmd_audio ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     picture) cmd_picture ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     talk) cmd_talk ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;

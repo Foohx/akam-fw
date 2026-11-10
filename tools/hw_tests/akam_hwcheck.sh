@@ -150,6 +150,52 @@ port_addrs() { # addresses listening on port $1, space separated
     echo "${out# }"
 }
 
+# ONVIF (akam_onvif.sh): the flag /etc/config/akam/onvif holds "enabled=1|0" and "port=N" (absent = off).
+# Off: 80/tcp and 3702/udp must be closed. On: the HTTP port (80 by default) must listen, 3702/udp should
+# (multicast WS-Discovery), and port 80 stays closed when another port was chosen.
+onvif_udp_listening() { # is UDP port $1 bound? (/proc/net/udp: local_address is HEXIP:HEXPORT)
+    _hx=$(printf '%04X' "$1")
+    [ -r "$ROOT/proc/net/udp" ] || return 2
+    while read -r _sl la _rest; do
+        case $la in *:"$_hx") return 0 ;; esac
+    done < "$ROOT/proc/net/udp"
+    return 1
+}
+check_onvif_ports() {
+    of=${AKAM_ONVIF_FILE:-$ROOT/etc/config/akam/onvif}
+    on=0
+    op=80
+    if [ -r "$of" ]; then
+        while IFS= read -r ol || [ -n "$ol" ]; do
+            case $ol in
+                enabled=1) on=1 ;;
+                port=*)
+                    ov=${ol#port=}
+                    case $ov in ''|*[!0-9]*) ;; *) [ "${#ov}" -le 5 ] && [ "$ov" -ge 1 ] && [ "$ov" -le 65535 ] && op=$ov ;; esac
+                    ;;
+            esac
+        done < "$of"
+    fi
+    if [ "$on" = 1 ]; then
+        a=$(port_addrs "$op")
+        if [ -n "$a" ]; then pass "ONVIF is on: port $op listening ($a)"; else fail "ONVIF is on but port $op is not listening"; fi
+        onvif_udp_listening 3702; ur=$?
+        case $ur in
+            0) pass "ONVIF is on: UDP 3702 (WS-Discovery) bound" ;;
+            1) warn "ONVIF is on but UDP 3702 is not bound (discovery will not find the camera; add it by address)" ;;
+            *) unk "UDP sockets not readable: 3702 not checked" ;;
+        esac
+        if [ "$op" != 80 ]; then
+            a=$(port_addrs 80)
+            if [ -z "$a" ]; then pass "port 80 closed"; else fail "port 80 listening ($a): ONVIF uses port $op"; fi
+        fi
+    else
+        a=$(port_addrs 80)
+        if [ -z "$a" ]; then pass "port 80 closed (ONVIF off)"; else fail "port 80 listening ($a): must be closed while ONVIF is off (akam_onvif.sh enable opens it)"; fi
+        if onvif_udp_listening 3702; then fail "UDP 3702 bound while ONVIF is off"; fi
+    fi
+}
+
 check_ports() {
     section "listening sockets"
     if ! collect_listen; then
@@ -168,8 +214,7 @@ check_ports() {
         elif [ "$maint" = 1 ]; then warn "port $p listening ($a) while the maintenance flag is present"
         else fail "port $p listening ($a): must be closed"; fi
     done
-    a=$(port_addrs 80)
-    if [ -z "$a" ]; then pass "port 80 closed"; else warn "port 80 listening ($a): no Akam service uses it"; fi
+    check_onvif_ports
     a=$(port_addrs 8091)
     [ -n "$a" ] && info "8091 listen address: $a (must be LAN only)"
     return 0
@@ -652,6 +697,7 @@ check_facts
 section "manual tests still to do (not automated)"
 cat <<'MSG'
     - microphone audible, night mode/IR cut, H.264 1080p stream in a player
+    - 80/tcp and 3702/udp: closed by default; open only after ./akam onvif enable
     - 8091: LIST / GET from the PC (read-only), SET refused, SET after akam_debug.sh on
     - SSH login by key from another machine, and persistence across a power cut
     - boot without microSD, Wi-Fi auto-reconnect, Telnet never reachable

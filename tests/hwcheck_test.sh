@@ -179,7 +179,7 @@ has "proc: port 22 on 0.0.0.0" '^PASS +port 22 listening \(0\.0\.0\.0\)' "$WORK/
 has "proc: ESTABLISHED socket ignored" '^PASS +port 24 closed' "$WORK/t2.out"
 hasnt "proc: state 01 socket not listed" '^ +192\.168\.0\.1 5555' "$WORK/t2.out"
 has "proc: telnet 23 is FAIL" '^FAIL +port 23 listening' "$WORK/t2.out"
-has "proc: port 80 is WARN" '^WARN +port 80 listening' "$WORK/t2.out"
+has "proc: port 80 is FAIL while ONVIF is off" '^FAIL +port 80 listening.*ONVIF is off' "$WORK/t2.out"
 has "missing nc: UNKNOWN" '^UNKNOWN +nc not available' "$WORK/t2.out"
 has "missing applet reported" '^WARN +applet nc: MISSING' "$WORK/t2.out"
 has "missing stat reported" '^WARN +applet stat: MISSING' "$WORK/t2.out"
@@ -372,6 +372,41 @@ EXTRA_ENV=(HWCHECK_NIGHT_SAMPLES=0)
 run t19 "$R1" "$S18"
 has "night: disabled" 'night check disabled' "$WORK/t19.out"
 EXTRA_ENV=(HWCHECK_X=1)
+
+# 20. ONVIF ports: 80/tcp and 3702/udp closed by default, accepted only when the flag says on ---------------
+udp_line() { printf '  1: %s:%04X 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 1 2 0\n' "$1" "$2"; }
+mkudp() { { echo "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops"; [ "$2" != "" ] && udp_line 00000000 "$2"; } > "$1/proc/net/udp"; }
+R20=$WORK/r20; mkroot "$R20"; mkudp "$R20" ""
+run t20 "$R20" "$WORK/s20"
+has "onvif off: port 80 closed passes" '^PASS +port 80 closed \(ONVIF off\)' "$WORK/t20.out"
+hasnt "onvif off: nothing says UDP 3702 is bound" 'UDP 3702' "$WORK/t20.out"
+R21=$WORK/r21; mkroot "$R21"; mkudp "$R21" 3702
+run t21 "$R21" "$WORK/s20"
+has "onvif off: UDP 3702 bound is FAIL" '^FAIL +UDP 3702 bound while ONVIF is off' "$WORK/t21.out"
+R22=$WORK/r22; mkroot "$R22"; mkudp "$R22" 3702
+tcp_line 00000000 80 >> "$R22/proc/net/tcp"
+mkdir -p "$R22/etc/config/akam"; printf 'enabled=1\nport=80\n' > "$R22/etc/config/akam/onvif"
+run t22 "$R22" "$WORK/s20"
+has "onvif on: port 80 listening passes" '^PASS +ONVIF is on: port 80 listening' "$WORK/t22.out"
+has "onvif on: UDP 3702 bound passes" '^PASS +ONVIF is on: UDP 3702' "$WORK/t22.out"
+hasnt "onvif on: no FAIL about 80" '^FAIL +port 80' "$WORK/t22.out"
+if [ "$RC" -eq 0 ]; then ok "onvif on with 80 and 3702: exit 0"; else ko "onvif on with 80 and 3702: exit $RC"; fi
+R23=$WORK/r23; mkroot "$R23"; mkudp "$R23" ""
+mkdir -p "$R23/etc/config/akam"; printf 'enabled=1\nport=80\n' > "$R23/etc/config/akam/onvif"
+run t23 "$R23" "$WORK/s20"
+has "onvif on but 80 not listening: FAIL" '^FAIL +ONVIF is on but port 80 is not listening' "$WORK/t23.out"
+has "onvif on but 3702 not bound: WARN" '^WARN +ONVIF is on but UDP 3702 is not bound' "$WORK/t23.out"
+R24=$WORK/r24; mkroot "$R24"; mkudp "$R24" 3702
+tcp_line 00000000 8080 >> "$R24/proc/net/tcp"
+mkdir -p "$R24/etc/config/akam"; printf 'enabled=1\nport=8080\n' > "$R24/etc/config/akam/onvif"
+run t24 "$R24" "$WORK/s20"
+has "onvif on, port 8080: listening passes" '^PASS +ONVIF is on: port 8080 listening' "$WORK/t24.out"
+has "onvif on, port 8080: port 80 closed passes" '^PASS +port 80 closed$' "$WORK/t24.out"
+R25=$WORK/r25; mkroot "$R25"; mkudp "$R25" ""
+tcp_line 00000000 80 >> "$R25/proc/net/tcp"
+mkdir -p "$R25/etc/config/akam"; printf 'enabled=0\nport=80\n' > "$R25/etc/config/akam/onvif"
+run t25 "$R25" "$WORK/s20"
+has "onvif flag 0 with port 80 open: FAIL" '^FAIL +port 80 listening' "$WORK/t25.out"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
