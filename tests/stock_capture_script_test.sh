@@ -125,7 +125,14 @@ cat >"$BIN/dmesg" <<'EOF'
 #!/bin/sh
 echo "[    1.0] ak_pcm: SPEAKER @69(lv 1)"
 EOF
-chmod +x "$BIN/mount" "$BIN/umount" "$BIN/pidof" "$BIN/dmesg"
+# the camera's "busybox": the script calls "busybox setsid" and "busybox sh"; this stub logs the call
+# and runs the pinned test BusyBox (the camera's BusyBox 1.30.1 has the setsid applet)
+cat >"$BIN/busybox" <<EOF
+#!/bin/sh
+echo "\$*" >>"$WORK/busybox.log"
+exec "$BB" "\$@"
+EOF
+chmod +x "$BIN/mount" "$BIN/umount" "$BIN/pidof" "$BIN/dmesg" "$BIN/busybox"
 
 # fake watchdog: a process that must survive, plus a respawner for anyka_ipc
 PATH=$HOSTBIN sleep 600 >/dev/null 2>&1 & WDPID=$!
@@ -162,8 +169,9 @@ FAKEPIDS+=($!)
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$R/tmp/ipc.pid" ] && break; sleep 0.3; done
 IPC0=$(cat "$R/tmp/ipc.pid")
 
+XENV=()    # extra environment for runscript (name=value ...)
 runscript() { # args -> script args; output in $WORK/out.txt
-    env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 \
+    env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 "${XENV[@]+${XENV[@]}}" \
         STOCK_CAPTURE_WAIT=15 STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" "$@" >"$WORK/out.txt" 2>&1
 }
 
@@ -204,7 +212,7 @@ has "hook loaded check" 'stock_hook.so is loaded in anyka_ipc' "$WORK/out.txt"
 has "restore re-mutes" 're-muted /usr/share/boot.mp3' "$WORK/out.txt"
 has "restore respawns without the hook" 'respawned by the watchdog without the hook' "$WORK/out.txt"
 has "the start counter is reported and reset" 'start counter /tmp/camera_start_times was 3, reset to 0' "$WORK/out.txt"
-has "a reboot hint is printed before the capture starts" 'If the camera reboots during the run' "$WORK/out.txt"
+has "a foreground run says what to do when telnet drops" 'Use .run --detach. to avoid that' "$WORK/out.txt"
 has "progress line shows the heartbeat data" 't=2s stock_hook.log=[0-9]+ bytes, anyka_ipc alive \(pid [0-9]+\), start_times=0, free=9000 kB' "$WORK/out.txt"
 has "config unchanged verdict" '/etc/config unchanged during the capture' "$WORK/out.txt"
 RUN=$R/tmp/sd/stock_capture/run01
@@ -389,6 +397,178 @@ cp "$WORK/mounts.save" "$R/proc/mounts"
 # the end-of-run flush never needs a global sync
 LASTRUN=$(find "$R/tmp/sd/stock_capture" -maxdepth 1 -name "run*" -type d | sort | tail -n 1)
 if [ -s "$LASTRUN/stock_hook.log" ]; then ok "the run folder is complete after the final per-file flush"; else ko "empty log after the final flush"; fi
+
+# --- detached runs (--detach, the documented way to run it) ----------------------------------------------
+# The stock anyka_ipc kills telnetd when it starts, so the telnet session (and a foreground script) dies
+# a few seconds later. A detached run lives in its own session, ignores HUP, writes runNN/console.txt.
+wait_for() { # FILE REGEX [HALF-SECONDS]
+    for _ in $(seq 1 "${3:-60}"); do grep -Eq -- "$2" "$1" 2>/dev/null && return 0; sleep 0.5; done
+    return 1
+}
+newest_run() { find "$R/tmp/sd/stock_capture" -maxdepth 1 -name "run*" -type d | sort | tail -n 1; }
+wait_state_gone() { for _ in $(seq 1 80); do [ -e "$STATE/active" ] || return 0; sleep 0.5; done; return 1; }
+mounts_ok() { diff "$WORK/mounts.initial" "$R/proc/mounts" >/dev/null; }
+
+runscript note "nothing runs"; rc=$?
+if [ "$rc" -eq 1 ]; then ok "note without a run in progress is refused"; else ko "note without a run: exit $rc"; fi
+has "...with a clear message" 'no capture is running' "$WORK/out.txt"
+runscript note; rc=$?
+if [ "$rc" -eq 2 ]; then ok "note without a text is refused"; else ko "empty note: exit $rc"; fi
+
+# no usable busybox setsid: a clear error, nothing created, nothing mounted
+NRUNS=$(find "$R/tmp/sd/stock_capture" -maxdepth 1 -name "run*" -type d | wc -l)
+XENV=(STOCK_CAPTURE_BUSYBOX=/nonexistent/busybox)
+runscript run 5 --detach; rc=$?
+XENV=()
+if [ "$rc" -eq 2 ]; then ok "--detach without busybox setsid is refused (exit 2)"; else ko "--detach without busybox: exit $rc"; fi
+has "...with a clear error" 'cannot detach' "$WORK/out.txt"
+if [ "$(find "$R/tmp/sd/stock_capture" -maxdepth 1 -name "run*" -type d | wc -l)" = "$NRUNS" ]; then ok "...before any run folder is created"; else ko "a folder was created"; fi
+if [ ! -e "$STATE" ] && mounts_ok; then ok "...and nothing mounted"; else ko "state or mounts left after the refused --detach"; fi
+# busybox is there but has no setsid applet
+printf '#!/bin/sh\nexit 127\n' >"$WORK/busybox_nosetsid"; chmod +x "$WORK/busybox_nosetsid"
+XENV=(STOCK_CAPTURE_BUSYBOX="$WORK/busybox_nosetsid")
+runscript run 5 --detach; rc=$?
+XENV=()
+if [ "$rc" -eq 2 ]; then ok "a busybox without the setsid applet is refused (exit 2)"; else ko "no-setsid busybox: exit $rc"; fi
+has "...saying setsid does not work" 'setsid. does not work here' "$WORK/out.txt"
+runscript status --detach; rc=$?
+if [ "$rc" -eq 2 ]; then ok "--detach only goes with run"; else ko "status --detach: exit $rc"; fi
+
+# the detached run itself: 14 s, a prompt at 8 s
+: >"$WORK/busybox.log"
+T_A=$(date +%s)
+runscript run 14 --detach --phase 8:COVER_NOW --keep-start-counter; rc=$?
+T_B=$(date +%s)
+if [ "$rc" -eq 0 ]; then ok "run --detach returns 0"; else ko "run --detach exit $rc"; cat "$WORK/out.txt"; fi
+if [ $((T_B - T_A)) -le 6 ]; then ok "...at once (before the capture is over)"; else ko "run --detach took $((T_B - T_A)) s"; fi
+has "it says the run is in the background" 'started in the background' "$WORK/out.txt"
+has "it says how to follow it" 'stock_capture.sh watch' "$WORK/out.txt"
+has "it says how to note an event" 'stock_capture.sh note' "$WORK/out.txt"
+has "it says where the console is" 'console.txt' "$WORK/out.txt"
+has "it warns that telnet will probably drop" 'telnet session will probably' "$WORK/out.txt"
+has "the script re-executed itself under busybox setsid" '^setsid .*sh .*stock_capture.sh --detached-child run 14' "$WORK/busybox.log"
+hasnt "the detach flag is not passed on" 'setsid .* --detach( |$)' "$WORK/busybox.log"
+DRUN=$(newest_run)
+CPID=$(cat "$STATE/pid" 2>/dev/null)
+if [ -n "$CPID" ] && kill -0 "$CPID" 2>/dev/null; then ok "the detached run is alive after run --detach returned (pid $CPID)"; else ko "no live detached run"; fi
+if [ "$(awk '{ print $6 }' "/proc/$CPID/stat" 2>/dev/null)" = "$CPID" ]; then ok "it is the leader of its own session (setsid)"; else ko "not a session leader"; fi
+if [ "$(readlink "/proc/$CPID/fd/0" 2>/dev/null)" = /dev/null ]; then ok "its stdin is /dev/null"; else ko "stdin: $(readlink "/proc/$CPID/fd/0")"; fi
+if [ "$(readlink "/proc/$CPID/fd/1" 2>/dev/null)" = "$DRUN/console.txt" ]; then ok "its output goes to runNN/console.txt"; else ko "stdout: $(readlink "/proc/$CPID/fd/1")"; fi
+has "run.meta says detached" '^detached=1$' "$DRUN/run.meta"
+has "run.meta names its folder" "^rundir=${DRUN##*/}\$" "$DRUN/run.meta"
+wait_for "$DRUN/timeline.log" 'ev=TICK'
+runscript status; rc=$?
+if [ "$rc" -eq 0 ]; then ok "status exits 0"; else ko "status exit $rc"; fi
+has "status says it is running" 'state     : RUNNING \(script pid [0-9]+\)' "$WORK/out.txt"
+has "status shows the elapsed time" 'elapsed   : t=[0-9]+ s of 14 s' "$WORK/out.txt"
+has "status shows anyka_ipc" 'anyka_ipc : alive, pid [0-9]+' "$WORK/out.txt"
+has "status lists the prompt and when it is due" 't=8s  COVER NOW  -> (DUE in [0-9]+ s|DONE)' "$WORK/out.txt"
+has "status shows the console tail" "last lines of ${DRUN##*/}/console.txt" "$WORK/out.txt"
+has "status says how the stopwatch relates to t" 'clock     : t=0 came [0-9]+ s after you pressed Enter' "$WORK/out.txt"
+runscript check; rc=$?
+has "check says a capture is running" 'a capture is running right now' "$WORK/out.txt"
+runscript run 5 --detach; rc=$?
+if [ "$rc" -eq 2 ]; then ok "a second run is refused while one is going"; else ko "second run exit $rc"; fi
+has "...and says how to follow or stop it" 'already running \(pid [0-9]+\).*status or watch.*restore' "$WORK/out.txt"
+runscript note lens is "covered" now; rc=$?
+if [ "$rc" -eq 0 ]; then ok "note from another shell exits 0"; else ko "note exit $rc"; fi
+has "note acknowledges with the time" 'note saved at t=[0-9]+s in run' "$WORK/out.txt"
+has "the note is in the timeline with its time" 'up=12.34 t=[0-9]+ ev=NOTE text=lens is covered now' "$DRUN/timeline.log"
+has "...and in run.meta" '^note_t[0-9]+=lens is covered now$' "$DRUN/run.meta"
+# the HUP of a lost telnet session must not touch it
+kill -HUP "$CPID" 2>/dev/null
+sleep 1.5
+if kill -0 "$CPID" 2>/dev/null; then ok "SIGHUP is ignored by the detached run"; else ko "the detached run died of SIGHUP"; fi
+hasnt "...and it did not start restoring" 'signal received' "$DRUN/console.txt"
+# a stray Ctrl-C (SIGINT) cannot reach it from a terminal; the shell also starts background jobs with
+# SIGINT ignored, so it stays up. TERM (what "restore" sends) is the way to stop it, tested below.
+kill -INT "$CPID" 2>/dev/null
+sleep 1
+if kill -0 "$CPID" 2>/dev/null; then ok "a stray SIGINT does not kill the detached run"; else ko "the detached run died of SIGINT"; fi
+# watch: follows the run to its end, shows the prompt as a banner
+timeout 90 env -i PATH="$BIN" AKAM_ROOT="$R" "${SHCMD[@]}" "$SCRIPT" watch >"$WORK/watch.txt" 2>&1; rc=$?
+if [ "$rc" -eq 0 ]; then ok "watch ends with the run (exit 0)"; else ko "watch exit $rc"; fi
+has "watch prints short progress lines" '^  t=[0-9]+/14 s  anyka_ipc alive' "$WORK/watch.txt"
+has "watch shows the prompt as a banner" '>>>>>>>>>> t=[0-9]+s: COVER NOW <<<<<<<<<<' "$WORK/watch.txt"
+has "watch ends with the final state" 'state     : finished rc=0' "$WORK/watch.txt"
+has "the run finished normally although the session was 'hung up'" '^status=finished rc=0$' "$DRUN/run.meta"
+has "console.txt has the prompt" '>>>>>>>>>> t=8s: COVER NOW <<<<<<<<<<' "$DRUN/console.txt"
+has "console.txt has the restore" 'respawned by the watchdog without the hook' "$DRUN/console.txt"
+has "console.txt says it is a detached run" 'Detached run: the prompts appear here' "$DRUN/console.txt"
+has "run.meta records the gap between Enter and t=0" '^t0_after_launch=[0-9]+$' "$DRUN/run.meta"
+has "--keep-start-counter passed on to the detached run" '^start_times_before=' "$DRUN/run.meta"
+hasnt "...no reset" 'start_times_reset' "$DRUN/run.meta"
+if mounts_ok && [ ! -e "$STATE" ]; then ok "mounts and state restored after the detached run"; else ko "detached run left mounts or state"; fi
+runscript status; rc=$?
+has "status after the end says finished" 'state     : finished rc=0' "$WORK/out.txt"
+runscript note too late; rc=$?
+if [ "$rc" -eq 1 ]; then ok "note after the end is refused"; else ko "late note exit $rc"; fi
+if [ -f "$DRUN/console.txt" ] && [ -s "$DRUN/console.txt" ]; then ok "console.txt is on the card"; else ko "no console.txt"; fi
+
+# restore from another shell stops a detached run; Ctrl-C of watch does not touch it
+if command -v python3 >/dev/null 2>&1; then
+    runscript run 60 --detach; rc=$?
+    DRUN2=$(newest_run)
+    wait_for "$DRUN2/timeline.log" 'ev=TICK'
+    python3 -I - "$BB" "$SCRIPT" "$BIN" "$R" >"$WORK/ctrlc.txt" 2>&1 <<'PYEOF'
+import os, signal, subprocess, sys, time
+bb, script, binp, root = sys.argv[1:5]
+env = {"PATH": binp, "AKAM_ROOT": root}
+p = subprocess.Popen([bb, "sh", script, "watch"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+time.sleep(3.5)
+p.send_signal(signal.SIGINT)
+try:
+    out, _ = p.communicate(timeout=20)
+except subprocess.TimeoutExpired:
+    p.kill()
+    out, _ = p.communicate()
+sys.stdout.write(out.decode("utf-8", "replace"))
+print("RC=%s" % p.returncode)
+PYEOF
+    has "Ctrl-C of watch says the run is not affected" 'watch stopped; the run itself is not affected' "$WORK/ctrlc.txt"
+    has "...and watch exits 0" '^RC=0$' "$WORK/ctrlc.txt"
+    CPID2=$(cat "$STATE/pid" 2>/dev/null)
+    if [ -n "$CPID2" ] && kill -0 "$CPID2" 2>/dev/null; then ok "the detached run survived the Ctrl-C of watch"; else ko "the run died with the watch"; fi
+    runscript restore; rc=$?
+    if [ "$rc" -eq 0 ]; then ok "restore from another shell exits 0"; else ko "restore exit $rc"; fi
+    has "restore says it stops the running capture" 'a capture is running \(pid [0-9]+\): stopping it' "$WORK/out.txt"
+    has "...and that it stopped" 'OK      the capture stopped' "$WORK/out.txt"
+    has "the stopped run recorded the signal" '^status=signal$' "$DRUN2/run.meta"
+    has "...and restored in its console" 'signal received: restoring' "$DRUN2/console.txt"
+    if mounts_ok && [ ! -e "$STATE" ]; then ok "mounts and state restored after a restore from another shell"; else ko "restore from another shell left mounts or state"; fi
+    if kill -0 "$WDPID" 2>/dev/null; then ok "the watchdog survived the stopped detached run"; else ko "watchdog killed"; fi
+fi
+
+# a detached run that is killed hard (SIGKILL) leaves a stale state: check and status say so
+runscript run 60 --detach; rc=$?
+DRUN3=$(newest_run)
+wait_for "$DRUN3/timeline.log" 'ev=TICK'
+CPID3=$(cat "$STATE/pid" 2>/dev/null)
+kill -KILL "$CPID3" 2>/dev/null
+for _ in $(seq 1 20); do kill -0 "$CPID3" 2>/dev/null || break; sleep 0.2; done
+runscript check; rc=$?
+has "check detects the stale state of a dead run" 'stale state of a capture that did not finish' "$WORK/out.txt"
+runscript status
+has "status says STALE" 'state     : STALE' "$WORK/out.txt"
+runscript note anything; rc=$?
+if [ "$rc" -eq 1 ]; then ok "note on a dead run is refused"; else ko "note on a dead run: exit $rc"; fi
+runscript restore; rc=$?
+if [ "$rc" -eq 0 ]; then ok "restore after the SIGKILL of a detached run exits 0"; else ko "restore exit $rc"; fi
+if mounts_ok && [ ! -e "$STATE" ]; then ok "mounts and state restored after the SIGKILL"; else ko "SIGKILL left mounts or state"; fi
+runscript status
+has "status then says INTERRUPTED" 'state     : INTERRUPTED' "$WORK/out.txt"
+
+# a lost telnet session in a FOREGROUND run: HUP still restores (that is the failure --detach avoids)
+env -i PATH="$BIN" AKAM_ROOT="$R" STOCK_CAPTURE_SHA="$SHA" STOCK_CAPTURE_TICK=1 STOCK_CAPTURE_WAIT=15 \
+    STOCK_CAPTURE_MIN_FREE_KB=1 STOCK_CAPTURE_MIN_SECS=1 "${SHCMD[@]}" "$SCRIPT" run 60 >"$WORK/hup.txt" 2>&1 &
+SP=$!
+wait_for "$WORK/hup.txt" 'Capturing for'
+kill -HUP "$SP" 2>/dev/null
+wait "$SP" 2>/dev/null
+has "a foreground run restores on SIGHUP (the lost telnet)" 'signal received: restoring' "$WORK/hup.txt"
+has "...and records status=signal" '^status=signal$' "$(newest_run)/run.meta"
+if mounts_ok; then ok "mounts restored after SIGHUP"; else ko "mounts left after SIGHUP"; fi
 
 # --- only camera applets used ---------------------------------------------------------------------------
 if grep -v '^ *#' "$SCRIPT" | grep -Eq '(^|[|;&( ])(tr|mktemp|nohup|flock|gzip|wget|dirname|basename|cut) '; then ko "script uses an applet the camera's BusyBox lacks"; else ok "script uses none of tr, mktemp, nohup, flock, gzip, wget, dirname, cut"; fi
