@@ -1501,6 +1501,78 @@ talk_run_client() {
     return 1
 }
 
+# The capture (or conversion) tool runs as a tracked background job in its own session (setsid when
+# available), feeding akam-talk through a fifo, and is stopped on EVERY way out: normal end, akam-talk
+# failure, Ctrl-C, TERM, HUP (TERM, then KILL, on the whole group). Nothing may keep recording the
+# microphone after the wizard returned. If the wizard itself is killed with SIGKILL, the tool dies at its
+# next write (no reader on the fifo: SIGPIPE).
+TALK_CAP_PID=""
+TALK_CAP_GROUP=0
+TALK_SIGNALED=""
+TALK_CLIENT_PID=""
+
+talk_capture_stop() {
+    local pid=$TALK_CAP_PID target
+    [ -n "$pid" ] || return 0
+    TALK_CAP_PID=""
+    target=$pid
+    [ "$TALK_CAP_GROUP" = 1 ] && target=-$pid
+    kill -TERM -- "$target" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -KILL -- "$target" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
+# A trap only runs between commands, so the client runs in the background and the wizard waits for it:
+# `wait` returns as soon as a trapped signal arrives. INT: the terminal also sent it to akam-talk, which
+# ends cleanly; the capture is stopped here, and akam-talk then sees the end of its input anyway.
+talk_on_signal() {
+    case $1 in
+        INT) ;;
+        *)
+            TALK_SIGNALED=$1
+            [ -z "$TALK_CLIENT_PID" ] || kill -TERM "$TALK_CLIENT_PID" 2>/dev/null || true
+            ;;
+    esac
+    talk_capture_stop
+}
+
+# talk_pipe_capture ARGS...: run TALK_CAP and feed its output to akam-talk ARGS... Returns akam-talk's status.
+talk_pipe_capture() {
+    local dir fifo rc=0
+    dir=$(mktemp -d "${STATE_DIR:-${TMPDIR:-/tmp}}/talk.XXXXXX") || { ui_fail "cannot create a temporary folder." ""; return 1; }
+    fifo=$dir/audio
+    mkfifo "$fifo" || { rm -rf "$dir"; ui_fail "cannot create a fifo." ""; return 1; }
+    TALK_SIGNALED=""
+    # Ctrl-C ends the talk, not the wizard; TERM and HUP end both (after the cleanup below).
+    trap 'talk_on_signal INT' INT
+    trap 'talk_on_signal TERM' TERM
+    trap 'talk_on_signal HUP' HUP
+    TALK_CAP_GROUP=0
+    if host_have setsid; then
+        setsid "${TALK_CAP[@]}" >"$fifo" &
+        TALK_CAP_GROUP=1
+    else
+        "${TALK_CAP[@]}" >"$fifo" &
+    fi
+    TALK_CAP_PID=$!
+    talk_run_client "$@" <"$fifo" &
+    TALK_CLIENT_PID=$!
+    wait "$TALK_CLIENT_PID" || rc=$?
+    # interrupted by a trapped signal: the client is still ending (TEARDOWN); wait for it for real
+    while kill -0 "$TALK_CLIENT_PID" 2>/dev/null; do wait "$TALK_CLIENT_PID" || rc=$?; done
+    TALK_CLIENT_PID=""
+    talk_capture_stop
+    trap - INT TERM HUP
+    tui_rearm_traps
+    rm -rf "$dir"
+    case $TALK_SIGNALED in TERM) exit 143 ;; HUP) exit 129 ;; esac
+    return "$rc"
+}
+
 cmd_talk() {
     local arg=${1:-} secs=0 test=0
     case $arg in
@@ -1537,17 +1609,8 @@ cmd_talk() {
     else
         ui_say "  Speak now, for at most $secs seconds."
     fi
-    # The capture and the client are one pipeline; Ctrl-C reaches both, akam-talk ends the session cleanly.
-    # (process substitution: the status is the client's, not the capture tool's, which Ctrl-C kills)
-    # Ctrl-C must end the talk, not the wizard: a no-op handler here (children keep the default and die),
-    # the wizard's own trap comes back afterwards.
     log_line "CMD ${TALK_CAP[0]} ... | akam-talk"
-    local rc=0
-    trap 'true' INT
-    talk_run_client --format s16le < <("${TALK_CAP[@]}") || rc=$?
-    trap - INT
-    tui_rearm_traps
-    [ "$rc" -eq 0 ] || return 1
+    talk_pipe_capture --format s16le || return 1
     ui_good "  Talk ended."
 }
 
@@ -1575,7 +1638,8 @@ cmd_say() {
     ui_say "  Playing $file on the camera ..."
     if [ "${#conv[@]}" -gt 0 ]; then
         log_line "CMD ffmpeg -i <file> ... | akam-talk"
-        talk_run_client --format s16le < <("${conv[@]}") || return 1
+        TALK_CAP=("${conv[@]}")
+        talk_pipe_capture --format s16le || return 1
     else
         log_line "CMD akam-talk --input <file>"
         talk_run_client --input "$file" || return 1

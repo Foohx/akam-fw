@@ -57,7 +57,7 @@ cat >"$STUB_DIR/akam-talk" <<'EOF'
     printf 'ARGS %s\n' "$*"
     printf 'PWENV %s\n' "${AKAM_RTSP_PASSWORD:-}"
 } >>"$STUB_DIR/talk.log"
-if [ -t 0 ]; then n=tty; else n=$(wc -c)  ; fi
+if [ -n "${STUB_TALK_NOREAD:-}" ]; then n=unread; elif [ -t 0 ]; then n=tty; else n=$(wc -c)  ; fi
 printf 'STDIN %s\n' "$(echo $n)" >>"$STUB_DIR/talk.log"
 exit "${STUB_TALK_RC:-0}"
 EOF
@@ -83,9 +83,15 @@ for d in /usr/bin /bin; do
     done
 done
 
+for tool in ffmpeg arecord pactl parecord; do
+    if PATH="$T/minbin" command -v "$tool" >/dev/null 2>&1; then echo "FATAL: $tool is reachable from the test PATH"; exit 2; fi
+done
+
 printf 'fake key\n' >"$T/key"
 new_state() { rm -rf "$T/st_$1"; mkdir -p "$T/st_$1"; chmod 700 "$T/st_$1"; echo "$T/st_$1"; }
-a() { local st=$1; shift; PATH="$STUB_DIR/bin:$PATH" bash "$AKAM" --no-color --state-dir "$st" --ip 127.0.0.1 --identity "$T/key" "$@"; }
+# SAFETY: every case runs with a PATH of the stubs plus $T/minbin, which has NO ffmpeg, arecord or pactl:
+# a test can never reach the real microphone.
+a() { local st=$1; shift; PATH="$STUB_DIR/bin:$T/minbin" bash "$AKAM" --no-color --state-dir "$st" --ip 127.0.0.1 --identity "$T/key" "$@"; }
 reset() { : >"$STUB_DIR/ssh.log"; : >"$STUB_DIR/talk.log"; }
 PW='Tr0ub4dor&3-sentinel'
 
@@ -183,6 +189,82 @@ check "no audio tool: talk test still works" test $? -eq 0
 reset
 PATH="$T/minbin" AKAM_RTSP_PASSWORD=$PW bash "$AKAM" --no-color --state-dir "$S" --ip 127.0.0.1 --identity "$T/key" say "$T/clip.mp3" </dev/null >"$T/nm3.out" 2>&1
 check "no ffmpeg: say of an mp3 fails with a hint" bash -c '[ "$1" -ne 0 ] && grep -q "ffmpeg is needed" "$2"' _ $? "$T/nm3.out"
+
+# ---- no capture process is ever left behind -----------------------------------------------------
+# The capture command writes its pid (and the pid of a child it spawns) and then sleeps: if the wizard
+# does not stop it, it would still be there afterwards.
+gone() { # pid: wait up to 3 s for it to disappear
+
+    for _ in $(seq 1 30); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done
+    kill -KILL "$1" 2>/dev/null || true
+    return 1
+}
+export CAPPID=$T/cap.pid CAPCHILD=$T/cap.child
+CAPCMD='echo $$ >"$CAPPID"; sleep 300 & echo $! >"$CAPCHILD"; wait'
+
+rm -f "$CAPPID" "$CAPCHILD"; reset
+STUB_TALK_NOREAD=1 AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a "$S" talk </dev/null >"$T/c1.out" 2>&1
+check "cleanup, normal end of akam-talk: the wizard returns 0" test $? -eq 0
+check "cleanup, normal end: the capture command was started" test -s "$CAPPID"
+check "cleanup, normal end: the capture is gone" gone "$(cat "$CAPPID")"
+check "cleanup, normal end: so is its child" gone "$(cat "$CAPCHILD")"
+
+rm -f "$CAPPID" "$CAPCHILD"; reset
+STUB_TALK_NOREAD=1 STUB_TALK_RC=3 AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a "$S" talk </dev/null >"$T/c2.out" 2>&1
+check "cleanup, akam-talk failure: the wizard fails" test $? -ne 0
+check "cleanup, akam-talk failure: the capture is gone" gone "$(cat "$CAPPID")"
+check "cleanup, akam-talk failure: so is its child" gone "$(cat "$CAPCHILD")"
+check "cleanup: no fifo folder left in the state folder" bash -c '! ls -d "$1"/talk.* >/dev/null 2>&1' _ "$S"
+
+# SIGTERM to the wizard while it talks (akam-talk keeps reading, the capture sleeps)
+rm -f "$CAPPID" "$CAPCHILD"; reset
+AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a "$S" talk </dev/null >"$T/c3.out" 2>&1 &
+wpid=$!
+for _ in $(seq 1 50); do [ -s "$CAPCHILD" ] && break; sleep 0.1; done
+kill -TERM "$wpid" 2>/dev/null
+wait "$wpid" 2>/dev/null
+check "cleanup, SIGTERM: the wizard ends" test $? -eq 143
+check "cleanup, SIGTERM: the capture is gone" gone "$(cat "$CAPPID")"
+check "cleanup, SIGTERM: so is its child" gone "$(cat "$CAPCHILD")"
+
+# SIGINT needs a process that does not ignore it at entry (a background job of a script does): python3
+if command -v python3 >/dev/null 2>&1; then
+    rm -f "$CAPPID" "$CAPCHILD"; reset
+    AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD PATH="$STUB_DIR/bin:$T/minbin" python3 -I - "$AKAM" "$S" "$T/key" "$CAPCHILD" >"$T/c4.out" 2>&1 <<'PY'
+import os, signal, subprocess, sys, time
+akam, state, key, child = sys.argv[1:5]
+p = subprocess.Popen(["bash", akam, "--no-color", "--state-dir", state, "--ip", "127.0.0.1", "--identity", key, "talk"],
+                     stdin=subprocess.DEVNULL, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+for _ in range(100):
+    if os.path.exists(child) and os.path.getsize(child) > 0:
+        break
+    time.sleep(0.1)
+time.sleep(0.3)
+p.send_signal(signal.SIGINT)
+try:
+    p.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    p.kill()
+    sys.exit(99)
+sys.exit(p.returncode)
+PY
+    rc=$?
+    check "cleanup, SIGINT: the wizard ends the talk and returns (status $rc, not killed)" test "$rc" -ne 99 -a "$rc" -ne 130
+    check "cleanup, SIGINT: the capture is gone" gone "$(cat "$CAPPID")"
+    check "cleanup, SIGINT: so is its child" gone "$(cat "$CAPCHILD")"
+else
+    echo "SKIP  SIGINT cleanup case (python3 not installed)"
+fi
+
+# say: the conversion tool is cleaned up the same way
+rm -f "$CAPPID" "$CAPCHILD"; reset
+cat >"$STUB_DIR/bin/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+echo $$ >"$CAPPID"; sleep 300 & echo $! >"$CAPCHILD"; wait
+EOF
+STUB_TALK_NOREAD=1 AKAM_RTSP_PASSWORD=$PW a "$S" say "$T/clip.mp3" </dev/null >"$T/c5.out" 2>&1
+check "cleanup, say: the conversion tool is gone" gone "$(cat "$CAPPID")"
+check "cleanup, say: so is its child" gone "$(cat "$CAPCHILD")"
 
 # ---- dry run ----------------------------------------------------------------------------------------------
 reset
