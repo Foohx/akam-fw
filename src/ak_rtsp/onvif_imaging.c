@@ -61,6 +61,20 @@ int onvif_imaging_poll(void)
     return 1;
 }
 
+int onvif_imaging_flush_pending(void)
+{
+    pthread_mutex_lock(&g_mu);
+    if (!g_pending) {
+        pthread_mutex_unlock(&g_mu);
+        return 0;
+    }
+    g_pending = 0;
+    g_flushes++;
+    pthread_mutex_unlock(&g_mu);
+    flush_now();
+    return 1;
+}
+
 static void *flush_thread(void *arg)
 {
     (void)arg;

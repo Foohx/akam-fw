@@ -318,6 +318,16 @@ static void test_wsse(void)
               "<tds:UTCDateTime><tt:Time><tt:Hour>12</tt:Hour><tt:Minute>34</tt:Minute><tt:Second>56</tt:Second></tt:Time>"
               "<tt:Date><tt:Year>2026</tt:Year><tt:Month>2</tt:Month><tt:Day>30</tt:Day></tt:Date></tds:UTCDateTime></tds:SetSystemDateAndTime>", &r) == 0 &&
           r.status == 400 && has(&r, "ter:InvalidDateTime") && g_settime == -1, "30 February refused");
+    for (int yy = 0; yy < 3; yy++) {
+        static const int yrs[] = { 2023, 2038, 2099 };
+        char body[640];
+        snprintf(body, sizeof(body), "<tds:SetSystemDateAndTime " TDS " xmlns:tt=\"x\"><tds:DateTimeType>Manual</tds:DateTimeType>"
+                 "<tds:UTCDateTime><tt:Time><tt:Hour>1</tt:Hour><tt:Minute>2</tt:Minute><tt:Second>3</tt:Second></tt:Time>"
+                 "<tt:Date><tt:Year>%d</tt:Year><tt:Month>5</tt:Month><tt:Day>6</tt:Day></tt:Date></tds:UTCDateTime></tds:SetSystemDateAndTime>", yrs[yy]);
+        good_wsse(h, sizeof(h), PASS);
+        CHECK(devc(h, NULL, body, &r) == 0 && r.status == 400 && has(&r, "ter:InvalidArgVal") && g_settime == -1,
+              "a year outside 2024..2037 is refused (the clock cannot be set back to reopen the WSSE window)");
+    }
     good_wsse(h, sizeof(h), PASS);
     CHECK(devc(h, NULL, OPX("SetSystemDateAndTime"), &r) == 0 && r.status == 400 && g_settime == -1, "no DateTimeType refused");
     good_wsse(h, sizeof(h), PASS);

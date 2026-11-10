@@ -195,6 +195,9 @@ static void golden(const char *name, const char *path, const char *op, int expec
 
 /* ---------------------------------------------------------------- tests */
 
+static int g_reboots;
+static void fake_reboot(void) { g_reboots++; }
+
 static void reset_stub(void)
 {
     g_stub_talk = 0;
@@ -415,6 +418,14 @@ static void test_imaging(void)
           g_stub_persist_calls == pc + 1, "ForcePersistence=true writes at once");
     CHECK(onvif_imaging_poll() == 0, "... and leaves nothing pending");
 
+    /* SystemReboot flushes a pending debounced picture write first */
+    CHECK(call("127.0.0.1", IMG, 1, SETIMG("<tt:Brightness>-3</tt:Brightness>"), &r) == 0 && r.status == 200, "a change is pending");
+    pc = g_stub_persist_calls;
+    int rb = g_reboots;
+    CHECK(call("127.0.0.1", "/onvif/device_service", 1, "<tds:SystemReboot xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\"/>", &r) == 0 &&
+          r.status == 200 && g_stub_persist_calls == pc + 1 && g_reboots == rb + 1, "SystemReboot writes the pending picture values, then reboots");
+    CHECK(onvif_imaging_poll() == 0, "... nothing left pending");
+
     /* decimals */
     CHECK(call("127.0.0.1", IMG, 1, SETIMG("<tt:Brightness>12.5</tt:Brightness><tt:Sharpness>-0.4</tt:Sharpness>"), &r) == 0 && r.status == 200 &&
           g_stub_isp[0] == 13 && g_stub_isp[3] == 0, "decimals round to the nearest integer (12.5 -> 13, -0.4 -> 0)");
@@ -477,6 +488,7 @@ int main(int argc, char **argv)
     rtsp_auth_db_init(&limiter, apath);
     cred_init(cpath, &limiter);
     onvif_ifname = "lo";
+    onvif_reboot_fn = fake_reboot;
     CHECK(onvif_start(0) == 0, "onvif_start on a free port");
     g_port = http_srv_port();
     test_classes();

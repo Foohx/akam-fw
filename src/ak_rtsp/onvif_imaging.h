@@ -19,7 +19,8 @@
  *    request with ForcePersistence=true writes at once.
  *  - IrCutFilter is a discrete choice, not a slider: it is persisted at once, and only when it actually changed
  *    (night_set_tuning), exactly like a loopback SET night.mode.
- *  - A reboot inside the debounce window loses the last picture change (it is a picture tweak, not data).
+ *  - SystemReboot (onvif_device.c) flushes a pending write first (onvif_imaging_flush_pending); a power cut inside
+ *    the window still loses the last picture change.
  * Access: Get* READ, SetImagingSettings WRITE (refused when the RTSP password is off). GetServiceCapabilities
  * is open (pre-auth list). Move/Stop/GetMoveOptions/GetStatus: ter:ActionNotSupported (no focus motor). */
 #pragma once
@@ -37,5 +38,7 @@ extern int64_t (*onvif_imaging_now_ms)(void);
 extern int onvif_imaging_thread;
 /* Write the pending picture values if the quiet time has elapsed. 1 when it wrote (or tried), else 0. */
 int onvif_imaging_poll(void);
+/* Write the pending picture values now, quiet time or not (SystemReboot). 1 when it wrote, else 0. */
+int onvif_imaging_flush_pending(void);
 /* Number of writes done by the debounce / ForcePersistence (statistics and tests). */
 unsigned onvif_imaging_flushes(void);
