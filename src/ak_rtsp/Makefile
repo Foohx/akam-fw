@@ -65,6 +65,7 @@ SRCS    = main.c \
           cred.c \
           http_srv.c \
           soap.c \
+          wsd.c \
           ircut.c \
           leds.c \
           ledsys.c \
