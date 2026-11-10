@@ -157,7 +157,7 @@ static void set_frame_rate(int fps, int vts)
     ae_set_tuning(&t);
 }
 
-static void switch_to_night(void)
+static void switch_to_night_locked(void)
 {
     printf("[night] hw_exp sustained high -> switching to NIGHT mode\n");
     ircut_switch(1);
@@ -194,7 +194,7 @@ static void switch_to_night(void)
     }
 }
 
-static void switch_to_day(void)
+static void switch_to_day_locked(void)
 {
     printf("[night] hw_exp sustained low -> switching to DAY mode\n");
     ircut_switch(0);
@@ -213,6 +213,24 @@ static void switch_to_day(void)
         ae_get_tuning(&t);
         ae_set_tuning(&t);
     }
+}
+
+/* The whole switch runs under the ISP configuration lock, and g_is_night changes before it is released, so an
+ * 8091 img.reload / img.wb / img.dump (isp_cfg_lock) never sees a half-switched ISP or a stale mode. */
+static void switch_to_night(void)
+{
+    isp_cfg_lock();
+    switch_to_night_locked();
+    g_is_night = 1;
+    isp_cfg_unlock();
+}
+
+static void switch_to_day(void)
+{
+    isp_cfg_lock();
+    switch_to_day_locked();
+    g_is_night = 0;
+    isp_cfg_unlock();
 }
 
 static void *night_loop(void *arg)

@@ -2,11 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
 #include <sys/ioctl.h>
 
 #include "ak_rtsp.h"
 #include "ak_ioctls.h"
 #include "isp.h"
+#include "isp_blocks.h"
 
 /* -------------------------------------------------------------------------
  * ISP sensor init — parse /tmp/sensor_isp.conf, program GC20C3 via I2C
@@ -196,6 +198,16 @@ static int isp_send_modules(FILE *f, const char *log_prefix)
     return (ret == 0) ? mod : -1;
 }
 
+/* Serialises the multi-ioctl ISP re-configurations (day/night switch, img.reload, img.wb, img.dump) between
+ * the night thread and the 8091 control thread. Taken only by those callers, never inside isp_tunnel(): the
+ * AE thread's single-ioctl reads stay lock-free as before. */
+static pthread_mutex_t g_isp_cfg_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile int    g_pipeline_ready;
+
+void isp_cfg_lock(void)       { pthread_mutex_lock(&g_isp_cfg_lock); }
+void isp_cfg_unlock(void)     { pthread_mutex_unlock(&g_isp_cfg_lock); }
+int  isp_pipeline_ready(void) { return g_pipeline_ready; }
+
 int isp_pipeline_init(void)
 {
     FILE *f = fopen(SENSOR_ISP_CONF, "rb");
@@ -209,6 +221,7 @@ int isp_pipeline_init(void)
     fclose(f);
     if (mods_sent < 0) return -1;
     printf("[ak_rtsp] ISP pipeline init OK (%d modules)\n", mods_sent);
+    g_pipeline_ready = 1;
     return 0;
 }
 
@@ -362,6 +375,37 @@ int isp_tunnel(uint32_t inner_cmd, void *payload)
     w.inner_cmd = inner_cmd;
     w.payload   = payload;
     return ioctl(g_isp_fd, ISP_IOCTL_CMD, &w);
+}
+
+/* Send the WB block (module 0x13, SET_WB) of the day (night=0) or night (night=1) subfile of
+ * sensor_isp.conf, exactly as the vendor application does at start-up and at every day/night switch.
+ * isp_set_wb_manual() builds a block from scratch (type and three gains, everything else zero); this
+ * keeps the file's full block, colour-temperature tables included. */
+int isp_reapply_wb_conf(int night)
+{
+    isp_conf_t conf;
+    if (isp_conf_load(SENSOR_ISP_CONF, night ? 1 : 0, &conf) != 0) {
+        fprintf(stderr, "isp_reapply_wb_conf: cannot load the %s subfile of %s\n",
+                night ? "night" : "day", SENSOR_ISP_CONF);
+        return -1;
+    }
+    size_t n;
+    const isp_block_t *t = isp_blocks_table(&n);
+    int ret = -1;
+    for (size_t i = 0; i < n; i++) {
+        if (t[i].set_cmd != ISP_INNER_WB) continue;
+        const uint8_t *payload = isp_conf_payload(&conf, &t[i]);
+        if (!payload) break;
+        ret = isp_tunnel(ISP_INNER_WB, (void *)payload);
+        if (ret < 0)
+            fprintf(stderr, "isp_reapply_wb_conf: ioctl failed: %s\n", strerror(errno));
+        else
+            printf("[isp] WB block re-sent from the %s subfile of sensor_isp.conf (%u bytes)\n",
+                   night ? "night" : "day", t[i].size);
+        break;
+    }
+    isp_conf_free(&conf);
+    return ret;
 }
 
 int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain)

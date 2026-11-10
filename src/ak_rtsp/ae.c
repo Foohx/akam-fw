@@ -7,6 +7,7 @@
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ae.h"
+#include "imgq.h"
 
 /* -------------------------------------------------------------------------
  * AE init — kernel-driven, ticked from userspace.
@@ -40,7 +41,13 @@
 
 #define AE_TICK_US        66000 /* ~15Hz — matches anyka_ipc's GET_EXPOSURE tick rate */
 #define AE_WINDOW_TICKS       15 /* ~1s window (15 ticks @ ~66ms) for min/max/peak stats */
-#define AE_EXP_MAX        32767 /* exp_time_max ceiling (isp_pipeline_init default is a broken 2) */
+/* NOTE (stock capture, specs/08): pub[0] is the longest exposure (= the sensor VTS, 2284 day / 3426 night) and
+ * pub[1] the SHORTEST (2 lines in the file): what ae_tuning_t calls exp_max is really exp_time_min; its
+ * default 2 is the stock value, a larger one only raises the shortest exposure (brighter, never grainier). */
+#define AE_EXP_MAX        32767 /* unused */
+#define AE_POLL_BUF        4096 /* >= the 0x608 bytes of GET_3D_NR_STAT */
+#define AE_POLL_3DNR_TICKS   12 /* img.poll: ~0.8 s at the 66 ms tick (stock: 401 reads in 330 s) */
+#define AE_POLL_FPS_TICKS     8 /* img.poll: ~0.5 s (stock: 636 reads in 335 s) */
 
 static volatile int g_ae_running;
 static pthread_t    g_ae_tid;
@@ -189,8 +196,13 @@ int ae_init_isp_params(void)
 
     /* Manual WB — fixes blue cast. Day gains; night.c switches to neutral
      * gains when it engages night mode. */
-    if (isp_set_wb_manual(460, 256, 504) == 0)
+    if (imgq_wb_conf()) {
+        /* Stock never builds a WB block: it sends the one of sensor_isp.conf, colour-temperature
+         * tables included, which isp_pipeline_init() has just done. Keep it (img.wb=conf). */
+        printf("[ae] WB: keeping the sensor_isp.conf block (img.wb=conf)\n");
+    } else if (isp_set_wb_manual(460, 256, 504) == 0) {
         printf("[ae] SET_WB OK\n");
+    }
 
     /* Frame timing — tells ISP AE the sensor's VTS (2284 lines per frame).
      * This is the DAY config; night.c reconfigures to {10fps, vts=3426}
@@ -229,6 +241,7 @@ static void *ae_loop(void *arg)
     uint8_t  run_info[36];
     static uint8_t expo[0x720];
     int      tick = 0;
+    unsigned poll_n = 0;
 
     int      win_n = 0;
     int      lum_min = 256, lum_max = -1, lum_last = -1, lum_prev = -1;
@@ -263,6 +276,21 @@ static void *ae_loop(void *arg)
         uint32_t hw_isp   = *(uint32_t *)(run_info + 12);
 
         ae_report_stats(lum, hw_exp, hw_sgain, hw_isp);
+
+        /* img.poll=1: the two statistics the stock application also reads while it streams (stock capture:
+         * 3D-NR statistics about every 0.8 s, sensor fps about every 0.5 s). The data is not used here. */
+        if (imgq_poll_stats()) {
+            static uint8_t stat[AE_POLL_BUF];
+            poll_n++;
+            if (poll_n % AE_POLL_3DNR_TICKS == 0) {
+                memset(stat, 0, sizeof(stat));
+                isp_tunnel(ISP_INNER_GET_3D_NR_STAT, stat);
+            }
+            if (poll_n % AE_POLL_FPS_TICKS == 0) {
+                memset(stat, 0, 256);
+                isp_tunnel(ISP_INNER_GET_SENSOR_FPS, stat);
+            }
+        }
 
         if (lum < lum_min) lum_min = lum;
         if (lum > lum_max) lum_max = lum;
