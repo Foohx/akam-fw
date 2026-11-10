@@ -1391,10 +1391,15 @@ cmd_debug() {
     step_banner_free "Debug mode of the control port: $action"
     cam_need_ip || return 1
     if [ "$UI_DRY" = 1 ]; then
+        [ "$action" != on ] || ui_say "  WOULD ask: Let anyone on your network change the camera settings through port 8091? [y/N]"
         ui_say "  WOULD run over SSH on the camera: $remote"
         return 0
     fi
     rtsp_connect || return 1
+    if [ "$action" = on ]; then
+        ui_require_tty "allowing writes on the control port" || return 1
+        ui_ask_yn "  Let anyone on your network change the camera settings through port 8091 for a while?" || { ui_say "  Left as it was (read-only)."; return 0; }
+    fi
     log_line "CMD ssh root@$CAM_IP $remote"
     out=$("${CAM_SSH[@]}" "$remote" 2>&1) && rc=0 || rc=$?
     if [ "$rc" -ne 0 ]; then

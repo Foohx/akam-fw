@@ -61,19 +61,20 @@ printf 'fake key\n' >"$T/key"
 
 new_state() { rm -rf "$T/st_$1"; mkdir -p "$T/st_$1"; chmod 700 "$T/st_$1"; echo "$T/st_$1"; }
 a() { local st=$1; shift; bash "$AKAM" --no-color --state-dir "$st" --ip 127.0.0.1 --identity "$T/key" "$@"; }
+a_tty() { local st=$1; shift; AKAM_FORCE_TTY=1 bash "$AKAM" --no-color --state-dir "$st" --ip 127.0.0.1 --identity "$T/key" "$@"; }
 S=$(new_state d)
 
 a "$S" debug </dev/null >"$T/o1" 2>&1
 check "debug (default status): off" bash -c '[ "$1" -eq 0 ] && grep -q "debug off" "$2"' _ $? "$T/o1"
 a "$S" debug status </dev/null >"$T/o2" 2>&1
 check "debug status: off" has "$T/o2" "debug off"
-a "$S" debug on </dev/null >"$T/o3" 2>&1
+printf 'y\n' | a_tty "$S" debug on >"$T/o3" 2>&1
 check "debug on: default 60 minutes" bash -c '[ "$1" -eq 0 ] && grep -q "60 minutes" "$2"' _ $? "$T/o3"
 check "debug on: warns the network can write" has "$T/o3" "can now change the camera settings"
 check "debug on: flag set on the camera" test "$(cat "$CAM/state")" = 1
 a "$S" debug status </dev/null >"$T/o4" 2>&1
 check "debug status: on with time left" has "$T/o4" "debug on, 3600 s left"
-a "$S" debug on 5 </dev/null >"$T/o5" 2>&1
+printf 'y\n' | a_tty "$S" debug on 5 >"$T/o5" 2>&1
 check "debug on 5: sent 5" bash -c '[ "$1" -eq 0 ] && grep -q "5 minutes" "$2" && [ "$(cat "$3")" = 5 ]' _ $? "$T/o5" "$CAM/min"
 a "$S" debug off </dev/null >"$T/o6" 2>&1
 check "debug off: ok, flag cleared" bash -c '[ "$1" -eq 0 ] && [ "$(cat "$2")" = 0 ]' _ $? "$CAM/state"
@@ -87,7 +88,7 @@ for bad in "on 0" "on 1441" "on abc" "on 5 6" "on -1" "off 3" "status 1" "maybe"
 done
 check "refusals: the camera was never contacted" test ! -s "$STUB_DIR/ssh.log"
 
-STUB_OLD=1 a "$S" debug on </dev/null >"$T/old" 2>&1
+printf 'y\n' | STUB_OLD=1 a_tty "$S" debug on >"$T/old" 2>&1
 check "old image: fails and says to update" bash -c '[ "$1" -ne 0 ] && grep -q "./akam update" "$2"' _ $? "$T/old"
 STUB_SSH_RC=255 a "$S" debug off </dev/null >"$T/down" 2>&1
 check "camera unreachable: fails with a clear message" bash -c '[ "$1" -ne 0 ] && grep -q "cannot log in" "$2"' _ $? "$T/down"
@@ -95,6 +96,17 @@ check "camera unreachable: fails with a clear message" bash -c '[ "$1" -ne 0 ] &
 : >"$STUB_DIR/ssh.log"
 a "$S" --dry-run debug on 7 </dev/null >"$T/dry" 2>&1
 check "dry-run: WOULD line, camera untouched" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD run over SSH on the camera: /usr/sbin/akam_debug.sh on 7" "$2" && [ ! -s "$3" ]' _ $? "$T/dry" "$STUB_DIR/ssh.log"
+
+# confirmation: default No, no terminal = refused, the camera is not touched
+a "$S" debug off </dev/null >/dev/null 2>&1
+: >"$STUB_DIR/ssh.log"
+printf 'n\n' | a_tty "$S" debug on 9 >"$T/n1" 2>&1
+check "debug on: answering n leaves it read-only" bash -c '[ "$1" -eq 0 ] && [ "$(cat "$2")" = 0 ] && grep -q "Left as it was" "$3"' _ $? "$CAM/state" "$T/n1"
+printf '\n' | a_tty "$S" debug on 9 >"$T/n2" 2>&1
+check "debug on: empty answer is No" test "$(cat "$CAM/state")" = 0
+a "$S" debug on </dev/null >"$T/n3" 2>&1
+check "debug on: refused without a terminal" bash -c '[ "$1" -ne 0 ] && [ "$(cat "$2")" = 0 ]' _ $? "$CAM/state"
+check "debug on declined: no akam_debug.sh call" bash -c '! grep -q "akam_debug.sh on" "$1"' _ "$STUB_DIR/ssh.log"
 
 a "$S" help >"$T/help" 2>&1
 check "help lists debug" has "$T/help" "debug [on [MINUTES] | off | status]"
