@@ -18,7 +18,8 @@ SRC=$REPO/src/ak_rtsp
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
     -I"$SRC" -o "$WORK/onvif_test" \
-    "$REPO/tests/native/onvif_test.c" "$SRC/onvif.c" "$SRC/onvif_device.c" "$SRC/http_srv.c" "$SRC/soap.c" \
+    "$REPO/tests/native/onvif_test.c" "$SRC/onvif.c" "$SRC/onvif_device.c" "$SRC/onvif_media.c" "$SRC/onvif_imaging.c" \
+    "$REPO/tests/native/onvif_stubs.c" "$SRC/http_srv.c" "$SRC/soap.c" \
     "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
 mkdir "$WORK/d"
 "$WORK/onvif_test" "$WORK/d" "$REPO/tests/fixtures/onvif"
