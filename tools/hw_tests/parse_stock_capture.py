@@ -5,8 +5,8 @@ usage: python3 -I parse_stock_capture.py RUN_DIR_OR_stock_hook.log [--export-isp
 
 Reads stock_hook.log (and, next to it when present: isp_blocks.bin, isp_hook.log, timeline.log,
 run.meta, dmesg.txt, fd_*.txt) written by src/ak_rtsp/stock_hook.c and
-tools/hw_tests/stock_capture.sh, and prints: the state of the run (finished, or interrupted by a
-reboot, with the last heartbeat), the ordered speaker ioctl sequence with decoded arguments, PCM
+tools/hw_tests/stock_capture.sh, and prints: the state of the run (finished, or not finished cleanly,
+with the last heartbeat and, when a later run exists, whether the camera rebooted), the ordered speaker ioctl sequence with decoded arguments, PCM
 format / period sizes, gain / source / speaker values, GPIO / PWM / LED / light sensor activity,
 audio files, mmap windows, the ISP parameter blocks IN FULL (isp_blocks.bin: which blocks exist,
 how often they changed, which words changed and when, which differ between the phases of a
@@ -487,6 +487,37 @@ def section(out, title):
     out.append("== %s ==" % title)
 
 
+def later_boot_verdict(d, last_up):
+    """Compare the last heartbeat of run `d` with the uptime recorded at the start of the next
+    runs on the same card: a lower uptime means the camera rebooted in between. None if unknown."""
+    m = re.match(r"^(.*?)run(\d+)$", os.path.basename(os.path.normpath(d)))
+    if not m or last_up is None:
+        return None
+    parent = os.path.dirname(os.path.normpath(d))
+    n = int(m.group(2))
+    try:
+        names = sorted(os.listdir(parent))
+    except OSError:
+        return None
+    for name in names:
+        m2 = re.match(r"^run(\d+)$", name)
+        if not m2 or int(m2.group(1)) <= n:
+            continue
+        meta = read_text(os.path.join(parent, name), "run.meta") or ""
+        for line in meta.splitlines():
+            if line.startswith("uptime="):
+                try:
+                    up = float(line.split("=", 1)[1].split()[0])
+                except (ValueError, IndexError):
+                    break
+                if up < last_up:
+                    return ("The camera uptime went backwards: %s started at uptime %.0f s, below the last heartbeat "
+                            "(%.0f s): the camera REBOOTED after this run." % (name, up, last_up))
+                return ("%s started at uptime %.0f s, after the last heartbeat (%.0f s): the camera did not reboot in "
+                        "between." % (name, up, last_up))
+    return None
+
+
 def summarize(d, events, bad):
     out = []
     section(out, "run")
@@ -521,16 +552,24 @@ def summarize(d, events, bad):
     last_ev_t = max([e["t"] for e in events if e["ev"] != "CHILD"] or [0])
     st = meta_status(meta)
     if st in ("running", "interrupted"):
-        out.append("  *** RUN INTERRUPTED: run.meta says status=%s, the script never reached its end. The camera" % st)
-        out.append("      most likely rebooted (or the script was killed). Logs are complete up to the last fsync (2 s).")
+        out.append("  *** RUN DID NOT FINISH CLEANLY: run.meta says status=%s, the script never reached its end." % st)
+        out.append("      That alone does not mean the camera rebooted: the script is also stopped by SIGKILL, or by")
+        out.append("      a lost telnet session when it was not started with --detach (that ends as status=signal).")
+        out.append("      See timeline.log (one line per second) for the last moment of the run. Logs are complete")
+        out.append("      up to the last fsync (2 s).")
         ticks = [x for x in tl if x["ev"] == "TICK"]
         if ticks:
             x = ticks[-1]
             out.append("      last heartbeat: up=%.2f (T=%s) t=%ds ipc=%s load=%s memfree_kb=%s start_times=%s" % (
                 x["up"], ("%.2f" % x["T"]) if x["T"] is not None else "?", x["t"], x["kv"].get("ipc"),
                 x["kv"].get("load"), x["kv"].get("memfree_kb"), x["kv"].get("start_times")))
-        out.append("      last hook event: T=%.3f. The camera stayed up at least until the last heartbeat;" % last_ev_t)
-        out.append("      the exact reboot time is not recorded (ask whoever watched the telnet session).")
+        out.append("      last hook event: T=%.3f." % last_ev_t)
+        verdict = later_boot_verdict(d, ticks[-1]["up"] if ticks else None)
+        if verdict:
+            out.append("      " + verdict)
+        else:
+            out.append("      A real reboot shows as the camera uptime going backwards (up= in timeline.log, or uptime=")
+            out.append("      in the run.meta of a later run); no later run here to compare with.")
     elif st:
         out.append("  run status: %s" % st)
     if tl:
