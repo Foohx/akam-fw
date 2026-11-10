@@ -52,7 +52,7 @@ single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` 
 | Port | Service | Target state |
 |---|---|---|
 | 554/tcp | RTSP (`ak_rtsp`), with the ONVIF audio backchannel (talk) when the video password is on ([two-way audio](two_way_audio.md)) | Open, LAN |
-| 8091/tcp | `ak_rtsp` tuning/control port | Open, LAN only (section 4) |
+| 8091/tcp | `ak_rtsp` metrics and control port, read-only from the network | Open, LAN only (section 4) |
 | 22/tcp | SSH (Dropbear), public key only | Open, LAN only |
 | 23/tcp, 24/tcp | Telnet | Closed, never re-enabled |
 | 21/tcp | FTP | Closed |
@@ -64,9 +64,18 @@ been tested yet (criterion 14 of the [test plan](akam_v1_test_plan.md)).
 ## 4. The 8091 control port
 
 Port 8091 is `ak_rtsp`'s line protocol (`LIST`, `GET`, `SET`) for exposure, day/night and image
-parameters. **Its protocol is unchanged from upstream.** It has no authentication and, in the source
-(`src/ak_rtsp/control.c`), binds to all interfaces. The same holds for RTSP on 554, which has no
-password. Therefore:
+parameters; its grammar is unchanged from upstream. It has no authentication and, in the source
+(`src/ak_rtsp/control.c`), binds to all interfaces, but it is **read-only for the network**:
+
+- `LIST`, `GET` and the state and metrics work for every client (up to 4 at once; a fifth gets `ERR busy`).
+- `SET` (and `SAVE`, `RESET`) from another machine is refused with `ERR read-only mode, see akam_debug.sh`.
+- `SET` from the camera itself (127.0.0.1: SSH helpers such as `./akam led`) always works.
+- **Debug mode** lets the network write too, for a while: `./akam debug on [MINUTES]` (or `akam_debug.sh on`
+  over SSH). It lasts 60 minutes by default (1 to 1440), is kept in RAM only, and is off at every reboot and
+  every restart of `ak_rtsp`. `./akam debug off` closes it; `./akam debug status` shows it (`GET ctl.debug`
+  reads it too). Use it for the PC tuning tool, then switch it off.
+
+No secret is ever exposed on this port. RTSP on 554 has no password unless you set one. Therefore:
 
 - keep the camera on the LAN only;
 - **never expose 8091 (or 554, or 22) to the Internet**: no port forwarding, no UPnP, no DMZ host.
@@ -82,7 +91,8 @@ Most keys are lost at the next boot. Two LED keys are saved on the camera and ap
 They are stored in `/etc/config/akam/leds`. A `SET` answers `OK key=value`, or `ERR ...` and changes nothing
 for a value that is not listed; if the file cannot be written the answer ends with `(not saved: ...)`.
 From the PC use `./akam led` (see the [README](../README.md#update-change-the-name-add-a-video-password));
-by hand: `printf 'SET led.status off\n' | nc -w 2 127.0.0.1 8091` on the camera. Full description:
+by hand: `printf 'SET led.status off\n' | nc -w 2 127.0.0.1 8091` on the camera (a write from the camera itself is
+always allowed). Full description:
 `specs/06-spec-leds.md`.
 
 ### LED settings
@@ -98,7 +108,8 @@ down; the "someone is watching" test is an RTSP client in the PLAY state.
 - **DHCP reservation** for the camera so that its address is stable for your recorder and your SSH
   configuration. (This repository does not store any address; use `<camera-ip>`.)
 - **IoT VLAN or isolated SSID** if your equipment supports it: allow your recorder/viewer to reach
-  554 (and your admin PC to reach 22 and 8091), nothing else into the VLAN.
+  554 (and your admin PC to reach 22 and 8091), nothing else into the VLAN. 8091 only reads from the network
+  unless you switched debug mode on.
 - **Block outbound traffic** from the camera at the router or firewall (it needs only DHCP, and NTP
   if you configure it): the camera has no RTC, so the clock is meaningless without NTP, and it should
   not talk to any cloud.

@@ -158,8 +158,11 @@ and Home Assistant's WebRTC card can talk through the camera speaker, as can `./
 only when the video password is on. See [two-way audio](docs/two_way_audio.md) (including configuration
 examples and the one-client limit).
 
-Port 8091 (`LIST`, `GET`, `SET`: exposure, day/night, image, LEDs) is a plain text protocol with no password;
-changes are lost at the next boot, except the LED settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
+Port 8091 (`LIST`, `GET`: exposure, day/night, image, LEDs, state) is a plain text protocol with no password
+and is **read-only from the network**: anyone on your LAN can read the state, nobody can change it. Changes
+(`SET`) are accepted from the camera itself (over SSH, as `./akam led` does) or, for a limited time, after
+`./akam debug on`, which the PC tuning tool needs. Changes are lost at the next boot, except the LED
+settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
 
 ## If something goes wrong
 

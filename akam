@@ -63,6 +63,10 @@ Commands:
                        status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
                        slowly while someone watches the video, solid otherwise)
                        ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
+  debug [on [MINUTES] | off | status]
+                     port 8091 is read-only for the network: 'on' lets the network change settings
+                     too (for the PC tuning tool) for MINUTES (default 60, up to 1440) or until
+                     'off' or a reboot; over SSH. Default: status
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
                      'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
@@ -243,6 +247,7 @@ case $CMD in
     led)
         cmd_led ${ARGS[@]+"${ARGS[@]:1}"} || rc=$?
         ;;
+    debug) cmd_debug ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     talk) cmd_talk ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     say) cmd_say ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     restore) cmd_restore || rc=$? ;;

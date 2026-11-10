@@ -215,8 +215,12 @@ built-in beep to check it. It is on by default and follows the sequence of the s
 route 4, gain 2, taken from a capture of the stock application). It is **not validated end to end on
 hardware yet**: an earlier build used a wrong ioctl number for the amplifier and stayed silent, this one
 should be audible. The route and amplifier are switched on at start, then off again after 2 seconds of
-silence, and on during a beep and for 2 seconds after. Replace `<cam>` by the camera address. Every
-command is one line to `nc` on port 8091; the answer starts with `OK` or `ERR`.
+silence, and on during a beep and for 2 seconds after. Replace `<cam>` by the camera address (`127.0.0.1` in an SSH session on the camera). Every
+command is one line sent to port 8091 **from the camera itself**: port 8091 is read-only from the network, so
+the `SET` lines below are refused (`ERR read-only mode, see akam_debug.sh`) when sent from your PC. Open an
+SSH session (`ssh root@<cam>`) and run them there, with `127.0.0.1` as the address; or run `./akam debug on`
+first (it allows writes from the network for 60 minutes) and keep `<cam>` as the address. Reads (`GET`,
+`LIST`) work from the PC as they are. The answer starts with `OK` or `ERR`.
 
 ```bash
 # 1. Is it running?  (expect audio.out_state=idle; also the other audio.out_* lines: underruns, drops, buf_ms)

@@ -40,7 +40,7 @@ over SSH of the [flash guide](akam_v1_flash_and_restore.md)):
 - Wi-Fi connects by itself (station mode);
 - H.264 1080p video and an **L16 audio track** in the RTSP stream (`ffprobe`);
 - the **IR night image** is delivered;
-- port 8091: `GET` and `SET` work;
+- port 8091: `GET` works from the PC, `SET` from the PC is refused (`ERR read-only mode`), `SET` over SSH from the camera works, and after `./akam debug on` a `SET` from the PC works until `./akam debug off`, the timeout or a reboot;
 - **Dropbear starts by itself** at boot;
 - **SSH as root by ed25519 key** works;
 - SSH still works **after a power cycle**, with the host key persisted (same fingerprint);
@@ -76,7 +76,7 @@ Known, not a test failure: the image is grainier than the stock firmware's (impr
 | 5 | H.264 1080p stream | `ffprobe rtsp://<camera-ip>:554/` and a viewer, 1920x1080 | [x] 2026-11-08 |
 | 6 | Microphone audible (the L16 track exists; listening still to do) | Listen to the stream audio | [ ] |
 | 7 | Night mode works | Cover the lens / darken the room: IR-cut switches, image stays usable | [x] 2026-11-08 (IR image; flapping over time still to check) |
-| 8 | Port 8091 works | `akam_hwcheck.sh` LIST check, then manual `GET` / `SET` | [x] 2026-11-08 |
+| 8 | Port 8091 works (read-only from the network) | `akam_hwcheck.sh` LIST check and `debug:` line, `nc <camera-ip> 8091` `GET` from the PC works and `SET` is refused, `./akam led` still works, `./akam debug on` then a PC `SET` works and stops after `off` | [x] 2026-11-08 (before the read-only mode; the read-only checks are still to do) |
 | 9 | Dropbear starts by itself | `dropbear` PASS and port 22 PASS in `akam_hwcheck.sh`; `/tmp/akam_ssh.log` | [x] 2026-11-08 |
 | 10 | SSH root by key | `ssh -i ~/.ssh/akam root@<camera-ip>`; a password attempt must fail | [x] 2026-11-08 |
 | 11 | Persists after a power cut | Cut power, reconnect: same key accepted, same host fingerprint | [x] 2026-11-08 |
@@ -107,14 +107,14 @@ It checks, in sections: listening sockets (22, 554 and 8091 expected; 21, 23, 24
 reported as WARN if open), processes (`ak_rtsp`, `dropbear`, `wpa_supplicant`, `udhcpc` present;
 `anyka_ipc`, `telnetd`, `tcpsvd`, `ftpd` absent), resident memory, mounts and `/proc/mtd`, Dropbear
 files and modes, whether root's shell is in `/etc/shells`, the maintenance flag, a `LIST` to port 8091,
-entropy, the Akam logs, and system facts.
+the debug flag of 8091 (`debug:` info line, WARN while it is on), entropy, the Akam logs, and system facts.
 
 Details worth knowing: the Dropbear key path is judged from **root's HOME in `/etc/passwd` as seen at
 runtime** (`akam_ssh.sh` moves it to the private `/tmp/akam_home`), so `/` and `/etc` being 0775 is
 only `INFO`; a group/other-writable HOME or key file is a `FAIL`. The `ak_rtsp` CPU use is the delta of
 `/proc/PID/stat` over ~2 s (no `top`). The night check reads `night.mode` and samples `night.state` four
-times over ~20 s through 8091 (each sample is a short connection, which briefly replaces any other
-8091 client) and WARNs if it changed more than once; `HWCHECK_NIGHT_SAMPLES=0` disables it.
+times over ~20 s through 8091 (each sample is a short connection; 8091 serves 4 clients at once, so
+no other client is disturbed) and WARNs if it changed more than once; `HWCHECK_NIGHT_SAMPLES=0` disables it.
 
 Run order (the first run is expected to WARN about the maintenance flag if you left it in place):
 
@@ -131,7 +131,7 @@ Run order (the first run is expected to WARN about the maintenance flag if you l
    Ports 21, 23 and 24 must be closed.
 4. Power-cut test, then repeat step 3 without the card inserted.
 5. Reconnect test: restart your router or Wi-Fi and run the port check again to see that nothing reopens.
-6. Manual checks the script only reminds you of: microphone, night mode, 8091 `LIST` / `GET` / `SET`,
+6. Manual checks the script only reminds you of: microphone, night mode, 8091 `LIST` / `GET` from the PC, `SET` refused from the PC, `SET` after `./akam debug on`,
    a stream viewer for 1080p.
 
 Compare the port check from outside too: `nmap -p 21,22,23,24,80,554,8091 <camera-ip>`.
