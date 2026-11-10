@@ -19,7 +19,9 @@ The repository includes a dedicated Windows desktop application located in `tool
 - **Integrated FTP Support:** Collapsible panel for full FTP transfers when networking is active.
 
 ### 1.3 Live Camera Tuning & Embedded RTSP Preview
-- Connects directly to `ak_rtsp`'s TCP control server on port **8091**.
+- Connects directly to `ak_rtsp`'s TCP control server on port **8091**. That port is read-only from the network:
+  reading values works at once, but changing a slider needs **debug mode** (`./akam debug on`, or `akam_debug.sh on`
+  over SSH; 60 minutes by default, off at reboot). Without it the tool shows "The camera is in read-only mode".
 - **Live Parameter Controls:** Real-time sliders and toggles for:
   - `ae.stable_range` / `ae.hold_range` (AE dead-band widths)
   - `ae.speed` (Convergence aggressiveness)
@@ -68,5 +70,7 @@ dotnet run -c Release
 The control server uses a simple ASCII text protocol:
 - `LIST` — Lists all current parameters and values (`name=value`).
 - `GET <param>` — Queries a single parameter value.
-- `SET <param> <value>` — Updates a parameter live without requiring a camera restart.
+- `SET <param> <value>` — Updates a parameter live without requiring a camera restart. Refused with
+  `ERR read-only mode, see akam_debug.sh` from the network unless debug mode is on (always allowed from the camera itself).
+- `DEBUG on [minutes]` / `DEBUG off` / `DEBUG status` — debug mode; accepted only from the camera itself (use `./akam debug`).
 - `LOG <message>` — Real-time asynchronous stdout logs pushed from the firmware to the desktop app.

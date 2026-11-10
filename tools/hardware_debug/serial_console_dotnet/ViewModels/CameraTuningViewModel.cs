@@ -225,6 +225,15 @@ namespace serial_console_dotnet.ViewModels
                 return;
             }
 
+            if (line.StartsWith("ERR read-only"))
+            {
+                // Port 8091 is read-only for the network by default: writes need debug mode.
+                SpecialLineReceived?.Invoke(
+                    "The camera is in read-only mode: changes are refused. Run \"./akam debug on\" " +
+                    "(or akam_debug.sh on, over SSH) and try again. (" + line + ")", "error");
+                return;
+            }
+
             if (line.StartsWith("ERR"))
             {
                 SpecialLineReceived?.Invoke(line, "error");
