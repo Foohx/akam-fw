@@ -297,11 +297,14 @@ static void speaker_set(audio_out_t *ao, int on)
 static void amp_set(audio_out_t *ao, int on)
 {
     if (on) {
-        ao->applied_source = ao->source;
-        ao->applied_gain = ao->gain;
-        dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, ao->source);
+        /* One snapshot of the settings (the 8091 thread may change them at any
+         * time), so that what is applied is what is recorded as applied. */
+        int src = ao->source, gain = ao->gain;
+        ao->applied_source = src;
+        ao->applied_gain = gain;
+        dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, src);
         speaker_set(ao, 1);
-        dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, ao->gain);
+        dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, gain);
     } else {
         speaker_set(ao, 0);
         dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, 0);
@@ -472,13 +475,14 @@ int ao_step(audio_out_t *ao)
      * off the route stays muted and the new values are applied when it turns
      * on (amp_set). */
     if (ao->amp_on) {
-        if (ao->gain != ao->applied_gain) {
-            ao->applied_gain = ao->gain;
-            dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, ao->gain);
+        int gain = ao->gain, src = ao->source;
+        if (gain != ao->applied_gain) {
+            ao->applied_gain = gain;
+            dev_ioctl_i32(ao, "SET_GAIN", AKPCM_IOC_SET_GAIN, gain);
         }
-        if (ao->source != ao->applied_source) {
-            ao->applied_source = ao->source;
-            dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, ao->source);
+        if (src != ao->applied_source) {
+            ao->applied_source = src;
+            dev_ioctl_i32(ao, "SET_SOURCES", AKPCM_IOC_SET_SOURCES, src);
         }
     }
 
