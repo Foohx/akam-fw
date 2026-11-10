@@ -11,7 +11,7 @@ full walkthrough. Listed here individually so the diff against stock is easy to 
 | `ak_rtsp_wrapper.sh` | `sbin/ak_rtsp_wrapper.sh` | Starts the Akam helpers in the background, Wi-Fi, then `ak_rtsp` |
 | `akam_ssh.sh` | `sbin/akam_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/akam_v1_ssh_and_lockdown.md` |
 | `akam_lockdown.sh` | `sbin/akam_lockdown.sh` | Runtime safety net that kills telnet/FTP daemons |
-| `akam_rtsp_auth.sh` | `sbin/akam_rtsp_auth.sh` | Run over SSH: turns the optional RTSP Digest login on or off (`status`, `set`, `disable`); see the README |
+| `akam_rtsp_auth.sh` | `sbin/akam_rtsp_auth.sh` | Run over SSH: turns the optional RTSP Digest login on or off (`status`, `set`, `set-creds`, `disable`; also keeps the clear-text copy ONVIF needs in `/etc/config/akam/credentials`); see the README |
 | `akam_hostname.sh` | `sbin/akam_hostname.sh` | Network hostname (`set`, `show`, `status`, `reset`, `apply`); default `akam-XXXX` from the wlan0 MAC; stored in `/etc/config/akam/hostname` |
 | `akam_debug.sh` | `sbin/akam_debug.sh` | Run over SSH: debug mode of the control port 8091 (`on [MINUTES]`, `off`, `status`); lets the network write for a while, RAM-only; uses `ak_rtsp ctl` |
 | `patch_ethernet_hostname.sh` | host tool, not installed | Build-time patch of `sbin/ethernet.sh`: the DHCP hostname comes from `akam_hostname.sh show` (fallback `akam`) |

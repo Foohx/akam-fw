@@ -32,8 +32,9 @@ unset AKAM_STATE_DIR AKAM_SSH
 # Fake camera root and the applets of the camera's BusyBox only.
 export STUB_DIR=$T/stub FAKE_ROOT=$T/camroot FAKE_BB=$BB FAKE_CMD=$CAMCMD
 mkdir -p "$STUB_DIR" "$FAKE_ROOT/etc/config" "$STUB_DIR/bin"
-for x in md5sum sync mv chmod mkdir rm stty cat; do ln -s "$BB" "$STUB_DIR/bin/$x"; done
+for x in md5sum sync mv chmod mkdir rm stty cat ls; do ln -s "$BB" "$STUB_DIR/bin/$x"; done
 AUTHFILE=$FAKE_ROOT/etc/config/akam/rtsp_auth
+PLAINFILE=$FAKE_ROOT/etc/config/akam/credentials
 
 cat >"$STUB_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
@@ -85,6 +86,12 @@ printf 'viewer\n%s\n%s\n' "$PW" "$PW" | a "$S" rtsp-auth set >"$T/set1.out" 2>&1
 check "set: succeeds" test $? -eq 0
 check "set: the camera file holds user:akam:HA1" test "$(cat "$AUTHFILE" 2>/dev/null)" = "viewer:akam:$HA1"
 check "set: the file is 0600" test "$(stat -c %a "$AUTHFILE")" = 600
+check "set: the camera also holds the plain-text copy (user=/pass=)" test "$(cat "$PLAINFILE" 2>/dev/null)" = "user=viewer
+pass=$PW"
+check "set: the plain-text copy is 0600" test "$(stat -c %a "$PLAINFILE")" = 600
+check "set: the wizard tells the password is stored on the camera for ONVIF" has "$T/set1.out" "also stored on the camera"
+check "set: the wizard names ONVIF" has "$T/set1.out" "ONVIF can verify it"
+check "set: the camera command was set-creds" has "$STUB_DIR/ssh.log" "set-creds"
 check "set: the password is not in any ssh command line" bash -c '! grep -q -e S3NTINEL -e "$2" "$1"' _ "$STUB_DIR/ssh.log" "$HA1"
 check "set: the password is not in the output" hasnt "$T/set1.out" S3NTINEL
 check "set: the HA1 is not in the output" hasnt "$T/set1.out" "$HA1"
@@ -93,16 +100,19 @@ check "set: the password is not in the state directory at all" bash -c '! grep -
 check "set: the URL hint has a placeholder, not the password" has "$T/set1.out" "rtsp://viewer:PASSWORD@127.0.0.1:554/"
 check "set: URL-encoding is explained" has "$T/set1.out" "URL-encoded"
 a "$S" rtsp-auth status </dev/null >"$T/set1s.out" 2>&1
-check "status: enabled with the user" has "$T/set1s.out" "enabled (user viewer)"
+check "status: enabled with the user, ONVIF-ready" has "$T/set1s.out" "enabled (user viewer, ONVIF-ready)"
 
 # Awkward password characters are hashed byte for byte.
 PW2=' a\b"c$d:e f@g/h#i?j%k'
 S=$(new_state set2)
 printf 'bob.1\n%s\n%s\n' "$PW2" "$PW2" | a "$S" rtsp-auth set >"$T/set2.out" 2>&1
 check "set: special characters accepted" test "$(cat "$AUTHFILE")" = "bob.1:akam:$(ha1_of "bob.1:akam:$PW2")"
+check "set: special characters stored byte for byte in the plain copy" test "$(cat "$PLAINFILE")" = "user=bob.1
+pass=$PW2"
 
 # Refusals change nothing and never reach the camera.
 cp "$AUTHFILE" "$T/before"
+cp "$PLAINFILE" "$T/before_plain"
 : >"$STUB_DIR/ssh.log"
 S=$(new_state set3)
 printf 'bob.1\nS3NTINEL-one\nS3NTINEL-two\n' | a "$S" rtsp-auth set >"$T/set3.out" 2>&1
@@ -114,7 +124,13 @@ check "set: a user name with a space refused" bash -c '[ "$1" -ne 0 ] && grep -q
 printf 'a:b\nS3NTINEL-pass1\nS3NTINEL-pass1\n' | a "$S" rtsp-auth set >/dev/null 2>&1
 check "set: a user name with a colon refused" test $? -ne 0
 check "set: refusals left the camera file unchanged" cmp -s "$AUTHFILE" "$T/before"
-check "set: no set-hash call was made for a refusal" bash -c '! grep -q set-hash "$1"' _ "$STUB_DIR/ssh.log"
+LONGPW=$(printf 'x%.0s' $(seq 1 129))
+printf 'bob.1\n%s\n%s\n' "$LONGPW" "$LONGPW" | a "$S" rtsp-auth set >"$T/set3d.out" 2>&1
+check "set: 129 characters refused" bash -c '[ "$1" -ne 0 ] && grep -q "too long" "$2"' _ $? "$T/set3d.out"
+printf 'bob.1\nS3NTINEL\tpass1\nS3NTINEL\tpass1\n' | a "$S" rtsp-auth set >"$T/set3e.out" 2>&1
+check "set: a control character in the password refused" bash -c '[ "$1" -ne 0 ] && grep -q "control character" "$2"' _ $? "$T/set3e.out"
+check "set: refusals left the plain-text copy unchanged" cmp -s "$PLAINFILE" "$T/before_plain"
+check "set: no set-creds call was made for a refusal" bash -c '! grep -q set-creds "$1"' _ "$STUB_DIR/ssh.log"
 check "set: nothing secret in the output of refusals" bash -c '! grep -q S3NTINEL "$1" "$2" "$3"' _ "$T/set3.out" "$T/set3b.out" "$T/set3c.out"
 
 S=$(new_state set4)
@@ -129,6 +145,7 @@ a_notty "$S" rtsp-auth disable </dev/null >"$T/dis1b.out" 2>&1
 check "disable: refuses without a terminal" bash -c '[ "$1" -ne 0 ] && test -e "$2"' _ $? "$AUTHFILE"
 printf 'y\n' | a "$S" rtsp-auth disable >"$T/dis1c.out" 2>&1
 check "disable: answering y removes the file" bash -c '[ "$1" -eq 0 ] && ! test -e "$2"' _ $? "$AUTHFILE"
+check "disable: removes the plain-text copy too" test ! -e "$PLAINFILE"
 check "disable: tells the stream is open again" has "$T/dis1c.out" "open again"
 
 # ---- dry-run: nothing is sent --------------------------------------------------------
@@ -141,6 +158,8 @@ for act in status set disable; do
 done
 check "dry-run: the camera was not contacted" test ! -s "$STUB_DIR/ssh.log"
 check "dry-run: the file was not created" test ! -e "$AUTHFILE"
+check "dry-run set: says the password will be stored for ONVIF" has "$T/dry_set.out" "ONVIF can verify it"
+check "dry-run: no plain-text copy was created" test ! -e "$PLAINFILE"
 
 echo "wizard_rtsp_auth_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

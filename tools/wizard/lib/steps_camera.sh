@@ -1096,12 +1096,14 @@ cmd_hostname() {
 # ------------------------------------------------------------------ rtsp-auth
 # Optional Digest login on the video stream (RTSP, port 554), managed over SSH with the camera
 # command akam_rtsp_auth.sh (specs/03-spec-rtsp-auth.md). The password is typed here, without
-# echo, and hashed here: only the line "user:akam:HA1" (HA1 = md5 of "user:akam:password",
-# the password-equivalent of Digest) travels, through the stdin of ssh. Neither the password
-# nor the HA1 is ever in a command line, in the state file or in the log.
+# echo, and sent as two lines (user, password) on the stdin of ssh to `akam_rtsp_auth.sh
+# set-creds`: the camera hashes it for the RTSP Digest login and keeps a plain-text copy
+# (/etc/config/akam/credentials, root only) because ONVIF WS-Security cannot work from the
+# hash (specs/07 section 3.3). The password is never in a command line, in the state file
+# or in the log.
 RTSP_AUTH_CMD=/usr/sbin/akam_rtsp_auth.sh
-RTSP_AUTH_REALM=akam
 RTSP_AUTH_MIN_PASS=8
+RTSP_AUTH_MAX_PASS=128
 
 rtsp_user_valid() {
     case $1 in '' | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
@@ -1139,38 +1141,41 @@ rtsp_stream_hint() {
 }
 
 rtsp_auth_set() {
-    local user pw pw2 ha1 err
+    local user pw pw2 err
     if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD ask a user name and a password (twice, not shown, at least $RTSP_AUTH_MIN_PASS characters)."
-        ui_say "  WOULD compute md5(user:$RTSP_AUTH_REALM:password) here and send ONLY the line user:$RTSP_AUTH_REALM:HA1 on stdin:"
-        ui_say "  WOULD run: ssh root@${CAM_IP:-<camera-ip>} $RTSP_AUTH_CMD set-hash"
+        ui_say "  WOULD ask a user name and a password (twice, not shown, $RTSP_AUTH_MIN_PASS to $RTSP_AUTH_MAX_PASS characters)."
+        ui_say "  WOULD send the user name and the password (two lines, on stdin, never in a command line) to the camera:"
+        ui_say "  WOULD run: ssh root@${CAM_IP:-<camera-ip>} $RTSP_AUTH_CMD set-creds"
+        ui_say "  WOULD tell you that the password is now also stored on the camera so that ONVIF can verify it."
         return 0
     fi
-    host_have md5sum || { ui_fail "md5sum is not installed on this computer." "install coreutils."; return 1; }
     rtsp_connect || return 1
     ui_prompt "  User name for the video stream [viewer]:" viewer || { ui_fail "no input." ""; return 1; }
     user=$ANSWER
     rtsp_user_valid "$user" || { ui_fail "invalid user name." "use 1 to 32 letters, digits or . _ @ + - (no spaces, no colon)."; return 1; }
-    ui_secret "  Password (at least $RTSP_AUTH_MIN_PASS characters, not shown):" || { ui_fail "no input." ""; return 1; }
+    ui_secret "  Password ($RTSP_AUTH_MIN_PASS to $RTSP_AUTH_MAX_PASS characters, not shown):" || { ui_fail "no input." ""; return 1; }
     pw=$SECRET
     ui_secret "  Type it again:" || { ui_fail "no input." ""; return 1; }
     pw2=$SECRET
     SECRET=""
     if [ "$pw" != "$pw2" ]; then ui_fail "the two passwords differ." "nothing was changed; try again."; return 1; fi
     if [ "${#pw}" -lt "$RTSP_AUTH_MIN_PASS" ]; then ui_fail "the password is too short." "use at least $RTSP_AUTH_MIN_PASS characters; nothing was changed."; return 1; fi
-    # printf is a bash builtin and md5sum reads a pipe: the password is in no command line.
-    ha1=$(printf '%s' "$user:$RTSP_AUTH_REALM:$pw" | md5sum | cut -d' ' -f1)
-    log_add_secret "$ha1"
-    pw="" pw2=""
-    ui_say "  Sending the login (as a hash, over SSH) ..."
+    if [ "${#pw}" -gt "$RTSP_AUTH_MAX_PASS" ]; then ui_fail "the password is too long." "use at most $RTSP_AUTH_MAX_PASS characters; nothing was changed."; return 1; fi
+    case $pw in *[[:cntrl:]]*) ui_fail "the password contains a control character (tab, ...)." "use printable characters only; nothing was changed."; return 1 ;; esac
+    log_add_secret "$pw"
+    ui_say "  Sending the login over SSH ..."
     err="$STATE_DIR/rtsp_auth.err"
-    if ! printf '%s\n' "$user:$RTSP_AUTH_REALM:$ha1" | rtsp_remote set-hash >/dev/null 2>"$err"; then
-        ui_fail "the camera refused it: $(head -n 3 "$err" | tr '\n' ' ')" "does this image have $RTSP_AUTH_CMD? Build and flash a current image (./akam update)."
+    # printf is a bash builtin: the password is in no command line.
+    if ! printf '%s\n%s\n' "$user" "$pw" | rtsp_remote set-creds >/dev/null 2>"$err"; then
+        pw="" pw2=""
+        ui_fail "the camera refused it: $(head -n 3 "$err" | tr '\n' ' ')" "does this image have $RTSP_AUTH_CMD set-creds? Build and flash a current image (./akam update)."
         rm -f "$err"
         return 1
     fi
+    pw="" pw2=""
     rm -f "$err"
     ui_good "  The video stream now asks for a user name and password (user: $user)."
+    ui_say "  This password is now also stored on the camera (a file only root can read) so that ONVIF can verify it."
     ui_say "  Players that are watching are disconnected within a second and ask again."
     rtsp_stream_hint "$user"
 }
@@ -1178,14 +1183,14 @@ rtsp_auth_set() {
 rtsp_auth_disable() {
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD ask: Switch the password off? Anyone on your network could then watch the camera. [y/N]"
-        ui_say "  WOULD run: ssh root@${CAM_IP:-<camera-ip>} $RTSP_AUTH_CMD disable"
+        ui_say "  WOULD run: ssh root@${CAM_IP:-<camera-ip>} $RTSP_AUTH_CMD disable (removes the RTSP login and the stored password copy)"
         return 0
     fi
     rtsp_connect || return 1
     ui_require_tty "switching the stream password off" || return 1
     ui_ask_yn "  Switch the video stream password off (anyone on your network could watch the camera)?" || { ui_say "  Left as it was."; return 0; }
     rtsp_remote disable || { ui_fail "the camera could not remove the credentials." "does this image have $RTSP_AUTH_CMD? (./akam update)"; return 1; }
-    ui_good "  The video stream is open again (no password)."
+    ui_good "  The video stream is open again (no password; the copy stored for ONVIF is removed too)."
 }
 
 # rtsp_auth_offer: the question at the end of verify. Never fatal, default No.
@@ -1235,7 +1240,10 @@ cmd_rtsp_auth() {
             rtsp_connect || return 1
             rtsp_status
             case $RTSP_STATE in
-                enabled) ui_say "  RTSP password: $RTSP_TEXT. Players must log in (Digest)." ;;
+                enabled)
+                    ui_say "  RTSP password: $RTSP_TEXT. Players must log in (Digest)."
+                    case $RTSP_TEXT in *"not ONVIF-ready"*) ui_say "  No stored copy of the password for ONVIF: run ./akam rtsp-auth set again to make it ONVIF-ready." ;; esac
+                    ;;
                 disabled) ui_say "  RTSP password: disabled. The stream is open to anyone on your network." ;;
                 invalid) ui_warn "the credentials file is invalid: the camera refuses every protected request. Run ./akam rtsp-auth set or disable."; return 1 ;;
                 *) ui_fail "the camera did not answer like Akam ($RTSP_AUTH_CMD missing?)." "update the image (./akam update) to get the RTSP password command."; return 1 ;;
