@@ -58,7 +58,7 @@ hook), and register writes made through a `/dev/mem` mapping (the mapping itself
   counted, not logged. No `fsync` is ever done inside `anyka_ipc`; the script does it from outside.
 * **Size caps** on the card: `stock_hook.log` and `isp_hook.log` 12 MiB each, `isp_blocks.bin` 24 MiB
   (2 MiB per command), audio 64 KiB, so a run needs about 50 MiB (the script wants 80 MB free). The RAM
-  fallback (no card) is 1 MiB per file; `/tmp` (about 22 MB of RAM) only holds the 30 KiB hook and the
+  fallback (no card) is 1 MiB per file; `/tmp` (about 22 MB of RAM) only holds the 80 KB hook and the
   state files.
 * **Faithful settings.** The toolkit overrides `/etc/config/_ht_hw_settings.ini` and
   `_ht_sw_settings.ini` with files of another model (different speaker GPIO, no `[audio]` section)
