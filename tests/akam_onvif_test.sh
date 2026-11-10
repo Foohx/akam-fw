@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2012  # ls -ld is what the camera script uses too (no stat on BusyBox): the test mirrors it
 # Host tests for akam_onvif.sh (camera script, run under busybox sh when available) in a fake root
 # ($AKAM_ROOT). A fake `ak_rtsp` plays "ak_rtsp ctl <line>". Nothing touches hardware.
 set -uo pipefail
