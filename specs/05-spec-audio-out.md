@@ -1,6 +1,6 @@
 # Akam — Spécification : sortie audio (parler par le haut-parleur de la caméra)
 
-Statut : rédigée le 2026-11-10 (agent SPEC, branche `docs/spec-audio-out`, partie de `dev`). Cible : V1.1 (brief §« Audio sortant »). Seule cette spec est en français ; code, messages, README et docs sont en anglais. **Rien ici n'est validé sur matériel** : chaque point marqué « à vérifier » est une inconnue à lever par les tests de §10.
+Statut : **mise à jour après la capture du firmware d'origine (§1.3, qui prime sur tout ce qui contredit en §1.2, §2.1, §3 et §11)**. Rédigée le 2026-11-10 (agent SPEC, branche `docs/spec-audio-out`, partie de `dev`). Cible : V1.1 (brief §« Audio sortant »). Seule cette spec est en français ; code, messages, README et docs sont en anglais. **Rien ici n'est validé sur matériel** : chaque point marqué « à vérifier » est une inconnue à lever par les tests de §10.
 
 ## 0. Objectif et principe
 
@@ -30,28 +30,38 @@ Chaînes de `modules/ak_pcm.ko` et de `bin/anyka_ipc`, croisées avec `aoplay.c`
 | `0xE0` | `GET_PARS` (déjà noté « mal nommé ») | `IOC_PREPARE` (`copy_from_user`, 28 o) | **alloue** tampon matériel + cache ; valide `periods`, `period_bytes`, `rate` |
 | `0xE1` | `SET_MODE` | `IOC_RESUME` (« start again ») | démarre le DMA |
 | `0xE3` | `RESET_BUF` | `IOC_RSTBUF` | vide |
-| `0x10` | `SET_STATE` / `GET_STATE` | `IOC_SET_SOURCES` / `GET_SOURCES` (« playback source:%d -> %d ») | routage du mixeur : 4 = DAC, **6 = DAC+LINEIN** |
+| `0x10` | `SET_STATE` / `GET_STATE` | `IOC_SET_SOURCES` / `GET_SOURCES` (« playback source:%d -> %d ») | routage du mixeur : **4 = route de lecture audible (capture stock, §1.3)**, 0 = route coupée ; 6 (référence) non vérifié |
 | `0x30` | `SET_PERIODS` / `GET_PERIODS` | `IOC_SET_GAIN` / `GET_GAIN` (« playback HP gain ») ; sur le fd capture : gain micro / linein | gain matériel 0..5 (à vérifier) |
-| `0x81` | `GET_CAPS` (`_IOR`) | `IOC_SET_SPEAKER` (**`_IOW`**, `0x80045081`) | **active l'ampli** (« SPEAKER @%d(lv %d) ») |
+| `0x81` | `GET_CAPS` | `IOC_SET_SPEAKER` (**`_IOW`, `0x40045081`**, voir §1.3 : le `0x80045081` supposé ici renvoie `EINVAL`) | **active l'ampli** (« SPEAKER @%d(lv %d) ») |
 
 Conséquences (hypothèses fortes, à confirmer sur matériel ou par Ghidra de `ak_pcm.ko`) :
 
-1. Le `GET_CAPS` (`0x40045081`, `_IOR`) qui renvoyait `ENOTTY` côté capture s'explique : seule la forme `_IOW` (`0x80045081`) existe, et c'est `SET_SPEAKER`.
+1. ~~Seule la forme `0x80045081` existe~~ : **faux**, corrigé en §1.3. C'est `0x40045081` (`_IOW` standard) qui est `SET_SPEAKER`.
 2. **Le crash de `SET_MODE` sur le fd de lecture est très probablement `IOC_RESUME` sans `IOC_PREPARE` préalable** : `ak_rtsp` n'a jamais committé les paramètres de lecture (le pilote vérifie `play_rt is NULL` à certains endroits, pas forcément ici). `aoplay` fait `PREPARE` puis `SOURCES` puis `RESUME`. La séquence actuelle (`SET_STATE(4)` = source DAC, `SET_PERIODS(4)` = gain 4) est donc probablement une source DAC valide mais **muette** sur cette carte (« plain DAC=4 is silent » dans la référence).
 3. Les noms de `ak_ioctls.h` côté capture (`SET_STATE(2)`, `SET_PERIODS(2)`) sont probablement « source 2 » et « gain micro 2 ». **Ne pas toucher à la séquence de capture** : elle marche par rejeu fidèle.
 4. **L'ampli (GPIO 69) est piloté par le pilote lui-même** : propriétés device-tree `speak-gpios` / `speak-gpios-en` dans `ak_pcm.ko`, appliquées par `IOC_SET_SPEAKER`. Le firmware d'origine confirme : `/usr/local/_ht_hw_settings.ini` `[audio]` `speak_en_gpio = 69`, `speak_gpio_effective_level = 1` ; `anyka_ipc` journalise « enbale/disable audio speaker », `ht_audio_codec_ao_speaker(%d)`, `AoSetSrcAndSpk`, `dac ioctl IOC_SET_SPEAKER failed`. La référence note aussi « 69 = speaker amp enable, also driven by the audio driver ». **Aucun script du firmware (`sbin/*.sh`, `main.sh`, `service.sh`) ne touche le GPIO 69** (seuls Wi-Fi et capteur de température). Donc : **pas de sysfs GPIO 69 côté `ak_rtsp`** (le pilote l'a déjà réservé : `export` échouerait en `EBUSY`, et on risquerait un double pilotage).
 5. Volume d'origine : `_ht_sw_settings.ini` `speak_vol = 100`, `mic_vol = 100` (côté `anyka_ipc`, via sa bibliothèque AO/VQE, que la référence dit inutilisable hors `anyka_ipc` : écho/VQE `_SD_Echo_GetDacStream … not true` → clic sans son). On contourne la bibliothèque, comme `aoplay`.
 6. Le firmware d'origine décode du **PCM µ-law** (`sub_decode_type = 18`) et du MP3 (`main_decode_type = 2`) pour son propre « talk » : G.711 µ-law est donc aussi le codec natif de la plateforme.
 7. Fichiers sonores d'origine : `/usr/share/*.mp3` (`dingdong.mp3`, `ding_ding_ding.mp3`, `sdcard_*.mp3`, invites chinoises…), lus par `anyka_ipc` (décodeur interne). **Propriétaires, jamais redistribués ni utilisés** : le carillon Akam est synthétisé (§6.2). `bin/beep` n'est qu'un applet BusyBox (haut-parleur PC via evdev) sans rapport.
-8. Format côté DAC (à vérifier) : la référence exige du **stéréo entrelacé s16le** ; la période de lecture d'origine capturée est **1024 octets** (= 256 trames stéréo = 32 ms à 8 kHz, même cadence que la capture). On convertira donc mono → stéréo (L = R) et on écrira des périodes de 1024 octets. La référence utilise `period_bytes=16384 × 16` (512 ms par période : inacceptable pour du push-to-talk).
+8. ~~Format côté DAC~~ (remplacé par §1.3 : mono, 512 trames de 64 ms) : la référence exigeait du **stéréo entrelacé s16le** ; la période de lecture d'origine capturée est **1024 octets** (= 256 trames stéréo = 32 ms à 8 kHz, même cadence que la capture). On convertira donc mono → stéréo (L = R) et on écrira des périodes de 1024 octets. La référence utilise `period_bytes=16384 × 16` (512 ms par période : inacceptable pour du push-to-talk).
+
+### 1.3 Capture du firmware d'origine (2026-11-10, vérité terrain)
+
+Une capture `LD_PRELOAD` de l'application d'origine sur une caméra d'origine (outil `docs/stock_capture.md` ; les journaux bruts sont propriétaires et **ne sont pas dans le dépôt**) a levé les hypothèses de §1.2. Premier essai matériel d'Akam : `PREPARE` + `RESUME` fonctionnent (pas de plantage noyau), mais `SET_SPEAKER 0x80045081` renvoyait `EINVAL`, l'ampli ne s'allumait jamais, rien n'était audible.
+
+- **Codage des directions : asm-generic standard.** `0x4004xxxx` = `_IOW` (SET, `copy_from_user`), `0x8004xxxx` = `_IOR` (GET, la valeur est renvoyée). Les anciens alias de lecture de `ak_ioctls.h` étaient à l'envers : `0x80045010` et `0x80045030` sont des **GET** (stock les appelle et lit 0 / 2), les SET sont **`0x40045010`** (`SET_SOURCES`) et **`0x40045030`** (`SET_GAIN`), et **`SET_SPEAKER = 0x40045081`**. Le GET du débit est `0x800450ea` (renvoie 8000). Les anciens noms côté capture ne changent pas (la capture rejoue des octets qui marchent).
+- **Séquence d'ouverture stock** (fd `/dev/pcmC0D0p`, `O_WRONLY`) : `SET_SOURCES = 4`, `SET_SPEAKER = 1`, `PREPARE {format 0, 8000 Hz, 1 canal (MONO), 16 bits, period_bytes 1024, periods 16}`, `RESUME` (arg 0), lecture du débit (`0x800450ea` -> 8000).
+- **Chaque invite jouée** : `GET_SOURCES`, `SET_SOURCES = 4`, `SET_SPEAKER = 1`, `SET_GAIN = 2` (une fois 3), écritures de PCM mono s16le 8 kHz, puis `SET_SOURCES = 0` à la fin (**route coupée au repos**). `SET_SPEAKER = 0` n'a jamais été observé (14 s de capture).
+- **Source 4 = route de lecture audible** sur cette carte. L'ancien commentaire « 4 = DAC muet, 6 = DAC+LINEIN audible » était faux/non vérifié. 6 reste proposé comme réglage d'expérience.
+- **Format** : **mono**, période de 1024 octets = 512 trames = **64 ms**, 16 périodes pilote (même format que la boucle d'écho `/dev/pcmC0D0l`). La conversion mono -> stéréo prévue en §1.2 point 8 est abandonnée.
 
 ## 2. Architecture
 
 ```
 PC : ffmpeg (micro -> µ-law 8 kHz) -- TCP 8092 --> talk.c ──push──> audio_jitter (ring d'octets G.711, 400 ms max)
                                                                          │  (SPSC, sans verrou, RING_BARRIER comme audio.c)
-                                         audio_out.c (thread lecture, seul écrivain du fd) <── tirage 1 période (256 trames)
-                                           décode G.711 -> s16 -> volume -> mono vers stéréo -> write(fd, 1024 o)
+                                         audio_out.c (thread lecture, seul écrivain du fd) <── tirage 1 période (512 trames)
+                                           décode G.711 -> s16 -> volume -> write(fd, 1024 o, mono)
                                            silence si le tampon est vide (le flux frère reste actif)
 8091  SET audio.out_*  ──> audio_out_set_*()     (volume, gain, source, enable, test)
 ```
@@ -62,24 +72,25 @@ PC : ffmpeg (micro -> µ-law 8 kHz) -- TCP 8092 --> talk.c ──push──> aud
 - Les en-têtes `audio_out.h`, `audio_jitter.h`, `g711.h` sont figés par la première tâche qui les écrit. API de référence (figée par T2) : `size_t audio_out_push(const int16_t *pcm, size_t n_samples)` (PCM mono 8 kHz déjà décodé par `talk.c` via `g711.h` ; appelée par `talk.c`, jamais bloquante ; passe par le tampon de gigue `audio_jitter`, retourne `n_samples`), `void audio_out_set_talker(const char *ip_or_null)`, `int audio_out_mic_muted(void)` (consulté par le chemin d'envoi du micro, §4.3).
 - RAM : ring 3,2 Ko (400 ms de G.711) + 1 période (1 Ko) + pile du thread ≈ < 40 Ko. CPU : décodage par table de 256 entrées, négligeable (8 000 octets/s).
 
-### 2.1 Séquence matérielle (à partir de `aoplay`, réputée fonctionnelle sur la carte de référence)
+### 2.1 Séquence matérielle (identique à celle de l'application d'origine, §1.3)
 
 Au démarrage, **si `audio.out_enable=1`**, et seulement après le démarrage de la capture (comme aujourd'hui) :
 
 ```
 open("/dev/pcmC0D0p", O_WRONLY)
-IOC_SET_SPEAKER  <- 1          (version de bring-up : comme aoplay ; production : §3.2)
-IOC_SET_GAIN     <- audio.out_gain
-IOC_PREPARE      <- { id=0, rate=8000, channels=2, bits=16, period_bytes=1024, periods=8 }   (0xE0)
-IOC_SET_SOURCES  <- audio.out_source   (6 par défaut)
+IOC_SET_SOURCES  <- audio.out_source   (4 par défaut ; 0 si audio.out_amp=off)   (0x40045010)
+IOC_SET_SPEAKER  <- 1                  (0 si audio.out_amp=off)                  (0x40045081)
+IOC_PREPARE      <- { id=0, rate=8000, channels=1, bits=16, period_bytes=1024, periods=16 }   (0xE0)
 IOC_RESUME                              (0xE1, jamais appelé avant un PREPARE réussi)
+GET_RATE                                (0x800450ea, doit renvoyer 8000 ; journalisé sinon)
+IOC_SET_GAIN     <- audio.out_gain      (2 par défaut)                           (0x40045030)
 write(fd, 1024 octets) en boucle
 ```
 
 - **Règle de sûreté (test hôte obligatoire, §9)** : `RESUME` n'est jamais émis si `PREPARE` n'a pas réussi ; en cas d'échec d'une étape, on referme le fd et on retombe sur le chemin actuel, journalisé.
-- `periods=8` (≈ 256 ms de tampon pilote) est un point de départ ; valeurs acceptées par le pilote à vérifier (capture : `period_bytes % 64 == 0`, `periods` ∈ [1, 0x50]). Repli : `4096 × 4`.
+- `periods=16` (≈ 1 s de tampon pilote) est la valeur du firmware d'origine ; le pilote valide `period_bytes % 64 == 0` et `periods` ∈ [1, 0x50]. L'écriture bloque tant que le tampon pilote est plein, la cadence est donc celle du DAC (plancher de pas : 90 % de 64 ms).
 - **Garde anti-boucle de reboot** : une panique noyau au démarrage est le pire cas (la caméra redémarre `ak_rtsp` et replante). Avant la nouvelle séquence, `ak_rtsp` écrit le marqueur `/etc/config/akam/audio_out.trying` ; il l'efface après 5 s de lecture sans erreur. Si le marqueur existe déjà au démarrage : la séquence est **sautée**, `audio.out_state=disabled_crash` et un message est journalisé ; `akam_audio_out.sh clear-guard` (ou `./akam talk --reset-guard`) le retire. Une écriture jffs2 par démarrage avec `enable=1` : acceptable.
-- Ne jamais fermer ni rouvrir le fd de lecture pendant le fonctionnement pour couper le son (le flux frère doit rester actif) : on coupe l'**ampli** (`SET_SPEAKER 0`) et on continue d'écrire du silence.
+- Ne jamais fermer ni rouvrir le fd de lecture pendant le fonctionnement pour couper le son (le flux frère doit rester actif) : on coupe la **route et l'ampli** (`SET_SOURCES 0`, `SET_SPEAKER 0`) et on continue d'écrire du silence.
 
 ## 3. Étape A — preuve de lecture locale
 
@@ -97,10 +108,11 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 
 ### 3.2 Politique de l'ampli (GPIO 69, via le pilote)
 
-- `audio.out_amp=auto` (défaut) : ampli **éteint au repos**. Allumage (`SET_SPEAKER 1`) à l'arrivée du premier octet d'une session (parleur, bip, carillon), écriture d'une pré-charge de silence de 60 ms, puis audio. Extinction **2 s après le dernier octet audible** (maintien, pour ne pas enchaîner clics et pops entre deux phrases), précédée de 100 ms de silence écrit.
+- `audio.out_amp=auto` (défaut) : comme le firmware d'origine, la route et l'ampli sont allumés à l'ouverture, puis **coupés au repos** : 2 s après l'ouverture sans son, ou **2 s après le dernier octet audible** (maintien, pour ne pas enchaîner clics et pops entre deux phrases). Allumage à l'arrivée du premier octet d'une session (parleur, bip, carillon) : `SET_SOURCES <source>`, `SET_SPEAKER 1`, `SET_GAIN <gain>`, puis une pré-charge d'une période de silence (64 ms, >= 60 ms), puis audio. Extinction : `SET_SPEAKER 0` puis `SET_SOURCES 0`. `SET_SPEAKER 0` n'a jamais été vu dans la capture stock : s'il échoue, l'échec est journalisé **une fois** et n'est pas rejoué à chaque période (la route coupée suffit à rendre muet).
+- `audio.out_amp=on` garde route et ampli allumés en permanence ; `off` les garde éteints (ouverture avec `SET_SOURCES 0`, `SET_SPEAKER 0`, aucun gain émis).
 - Risques d'un ampli laissé allumé en permanence : souffle audible en pièce calme (le bruit de fond de l'ampli, à mesurer), consommation et échauffement de la carte ajoutés (faibles sur un ampli de petite puissance mais non nuls dans un boîtier fermé), usure du haut-parleur sans intérêt. D'où `auto` ; `on` n'existe que pour la mesure.
 - Extinction obligatoire sur tous les chemins : arrêt normal (`audio_stop`), signal, échec d'écriture, désactivation par `SET audio.out_enable 0`. Si `ak_rtsp` est tué par `kill -9`, la fermeture du fd par le noyau doit couper l'ampli (« close hp channel ») : **à vérifier** (T6, point B10).
-- `IOC_SET_SPEAKER` échoue (`ENOTTY`/autre) : journaliser, **ne pas** basculer sur sysfs GPIO 69 (§1.2 point 4). Diagnostic manuel possible : `cat /sys/kernel/debug/gpio` (si debugfs) pour voir l'état de la ligne 69.
+- `IOC_SET_SPEAKER` échoue (`EINVAL`/`ENOTTY`/autre) : journaliser, **ne pas** basculer sur sysfs GPIO 69 (§1.2 point 4). Diagnostic manuel possible : `cat /sys/kernel/debug/gpio` (si debugfs) pour voir l'état de la ligne 69.
 
 ### 3.3 Test matériel A (l'utilisateur, par SSH ; critères à l'oreille)
 
@@ -108,7 +120,7 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 |---|---|---|
 | A1 | Image avec `audio.out_enable=1` ; `dmesg`/journal série au démarrage | séquence §2.1 sans erreur ; pas de panique ; marqueur `audio_out.trying` effacé après 5 s ; vidéo et micro RTSP normaux |
 | A2 | `SET audio.out_volume 30`, `SET audio.out_gain 2`, `SET audio.out_test 1` | un bip net de 1 s (sinon : voir A3) |
-| A3 | Si silence ou clic seul : `SET audio.out_source 6` puis `4` ; gain 5 ; rejouer | trouver la combinaison audible (attendu : source 6 comme la référence) |
+| A3 | Si silence ou clic seul : vérifier les lignes `[audio_out]` (aucun `failed`), monter `SET audio.out_gain` ; en dernier recours `SET audio.out_source 6` (expérience) puis rejouer | audible avec la source 4 et le gain 2 d'origine (capture stock) |
 | A4 | Gains 0, 1, 2, 3, 4, 5 à volume 100 | monotone croissant ; noter le niveau « confortable » (sert au défaut D8) ; pas de saturation/craquement |
 | A5 | Volume 100, 50, 25, 10, 0 à gain fixe | monotone ; 0 = silence complet ; pas de pop notable à l'allumage/extinction de l'ampli |
 | A6 | `SET audio.out_amp on`, oreille près du haut-parleur en pièce calme, puis `auto` | mesurer le souffle d'ampli au repos (justifie `auto`) ; avec `auto`, silence total entre deux bips |
@@ -148,7 +160,7 @@ Raisonnement : une seule image flashée suffit pour toute la mise au point (sour
 ### 4.2 Tampon de gigue, latence, dérive
 
 - Préremplissage **120 ms** (960 octets) avant le premier tirage ; si le tampon se vide (sous-alimentation) : silence, compteur `underruns`, retour à l'état de préremplissage. Plafond **400 ms** : au-delà, on jette les plus anciens jusqu'à 120 ms (compteur `drops`) ; c'est aussi la correction de dérive d'horloge (± 100 ppm = 1 ms/10 s : négligeable pour des tirades de quelques minutes).
-- Latence bouche-haut-parleur estimée : capture PC 20-40 ms + réseau Wi-Fi 5-30 ms + 120 ms + tampon pilote (≈ 2 à 3 périodes de 32 ms) ≈ **250-350 ms** : acceptable pour un push-to-talk, pas pour une conversation. À mesurer (T6).
+- Latence bouche-haut-parleur estimée : capture PC 20-40 ms + réseau Wi-Fi 5-30 ms + 120 ms + tampon pilote (≈ 2 à 3 périodes de 64 ms) ≈ **250-350 ms** : acceptable pour un push-to-talk, pas pour une conversation. À mesurer (T6).
 - Ces constantes (`JITTER_PREFILL_MS`, `JITTER_MAX_MS`) sont des `#define`, pas des réglages utilisateur.
 
 ### 4.3 Half-duplex et écho
@@ -203,8 +215,8 @@ Au moins : `DESCRIBE` avec `Require: www.onvif.org/ver20/backchannel` renvoie un
 |---|---|---|---|
 | `audio.out_enable` | 0/1 | **1** (décision utilisateur) | oui |
 | `audio.out_volume` | int 0..100 (logiciel, courbe quadratique : `(v/100)²` en Q15) ; 0 = muet (ampli éteint) | 50 | oui |
-| `audio.out_gain` | int 0..5 (matériel, `IOC_SET_GAIN`) | 3 | oui |
-| `audio.out_source` | enum 4 / 6 (routage, réglage d'expert) | 6 | oui |
+| `audio.out_gain` | int 0..5 (matériel, `IOC_SET_GAIN`) | 2 | oui |
+| `audio.out_source` | enum 4 / 6 (route ; 4 = stock, 6 = expérience) | 4 | oui |
 | `audio.out_amp` | enum `auto`/`on`/`off` | `auto` | non |
 | `audio.out_mute_mic` | 0/1 (§4.3) | 1 | oui |
 | `audio.out_chime` | 0/1 carillon au démarrage (§6.2) | **0** | oui |
@@ -244,7 +256,7 @@ Deux sons synthétisés (880 Hz 120 ms puis 1175 Hz 160 ms, rampes 10 ms, −18 
 - **G.711** : vecteurs ITU (µ-law : `0xFF` → 0, `0x7F` → −0, `0x80` → +32124, `0x00` → −32124 ; A-law : `0xD5` → +8, `0x55` → −8) comparés à une table de référence générée une fois par `ffmpeg`/`sox` et figée dans `tests/fixtures/` ; aller-retour encode/décode avec erreur ≤ pas de quantification ; les 256 codes décodés ; `l16` avec octets impairs.
 - **Tampon de gigue** : préremplissage, tirage périodique, sous-alimentation (silence + compteur + ré-amorçage), dépassement (jet des plus anciens jusqu'à 120 ms), arrivée par paquets de 1 à 1400 octets, taille exactement une période, séquence aléatoire à graine fixe contre un modèle naïf, aucun accès hors bornes (compilation `-fsanitize=address,undefined` en natif).
 - **Protocole `talk`** (via `socketpair`/boucle locale, sans caméra) : en-tête valide ×3 codecs ; codec inconnu, ligne trop longue, pas de LF dans les 3 s ; `busy` pour un second client et libération sur idle/fermeture ; `auth` OFF/ON/BROKEN, MAC juste/faux/rejoué/nonce périmé, `ct_equal`, limitation d'échecs ; flux qui s'arrête en cours d'octet impair.
-- **Périphérique factice** (`audio_out` compilé avec un `struct dev_ops` à pointeurs de fonction : `open/ioctl/write/close`) qui **enregistre la séquence d'appels** et injecte des échecs : (a) `PREPARE` avant `SOURCES` avant `RESUME` ; (b) **`RESUME` jamais appelé si `PREPARE` a échoué** ; (c) `SET_SPEAKER 0` sur chaque chemin de sortie (arrêt, échec d'`ioctl`, échec d'écriture) ; (d) écriture toujours de 1024 octets, stéréo L = R, silence quand le tampon est vide ; (e) maintien d'ampli 2 s simulé avec une horloge injectée, une session dans les 2 s ne bascule pas l'ampli ; (f) garde `audio_out.trying` : présente au démarrage → séquence sautée.
+- **Périphérique factice** (`audio_out` compilé avec un `struct dev_ops` à pointeurs de fonction : `open/ioctl/write/close`) qui **enregistre la séquence d'appels** et injecte des échecs : (a) ordre stock `SET_SOURCES`, `SET_SPEAKER`, `PREPARE`, `RESUME`, `GET_RATE` ; (b) **`RESUME` jamais appelé si `PREPARE` a échoué** ; (c) `SET_SPEAKER 0` et `SET_SOURCES 0` sur chaque chemin de sortie (arrêt, échec d'`ioctl`, échec d'écriture) ; (d) écriture toujours de 1024 octets, mono, silence quand le tampon est vide ; (e) maintien d'ampli 2 s simulé avec une horloge injectée, une session dans les 2 s ne bascule pas l'ampli ; (f) garde `audio_out.trying` : présente au démarrage → séquence sautée.
 - **Volume** : 0 = silence exact, 100 = identité, courbe monotone, pas de dépassement 16 bits (saturation), lissage 10 ms sans pop.
 - **Contrôle** (`control.c`) : golden de la grammaire v1 inchangé ; clés `audio.out_*` : bornes, `enable` « restart to apply », `out_test` retombe à 0.
 - **CLI** (`tests/talk_test.sh`) : fausse caméra TCP (script) vérifiant le trafic exact (`TALK pcmu …`, octets µ-law d'un fichier connu, HMAC correct avec la clé de test), `ERR busy`, port fermé, `ffmpeg` absent, `--stdin`, `shellcheck` propre.
@@ -291,13 +303,20 @@ Chaque tâche fige les en-têtes de ses modules (relus à la fusion). Les ajouts
 - **D4 — Persistance.** Recommandé : `ctl_store` de la spec 04 si fusionné avant T4 (clés `audio.out_*`), sinon le fichier `akam/audio_out` décrit en §7.
 - **D5 — Micro coupé pendant la parole.** Recommandé : oui (`mute_mic=1`), seule parade à l'écho sans AEC.
 - **D6 — Port.** `8092` proposé (à vérifier libre dans l'image : `netstat -tln`). Alternative : réutiliser 8091 avec une commande `TALK` qui bascule la connexion en mode binaire (un port de moins, mais mélange le texte et le binaire et casse le clivage « 8091 = réglages »).
-- **D7 — Format DAC.** Stéréo 16 bits 8 kHz, périodes 1024 × 8 (à confirmer en A1, repli 4096 × 4) ; mono si le pilote l'accepte (A1).
-- **D8 — Défauts de niveau.** Volume 50, gain 3, à ajuster après A4/A5 (le but : audible mais jamais agressif).
+- **D7 — Format DAC.** **Mono** 16 bits 8 kHz, périodes 1024 octets × 16 (64 ms), comme le firmware d'origine (capture, §1.3). Remplace l'ancienne décision « stéréo 1024 × 8 ».
+- **D8 — Défauts de niveau.** Volume 50, **gain 2 et source 4 (valeurs du firmware d'origine)**, à ajuster après A4/A5 (le but : audible mais jamais agressif).
 - **D9 — Carillon.** Synthétisé, désactivé par défaut, jamais les mp3 d'origine.
 - **D10 — Entrée SSH/FIFO.** Écartée (tunnel SSH `-L 8092` suffit pour le chiffrement) ; à rouvrir si l'authentification HMAC paraît trop lourde.
-- **D11 — Source des constantes matérielles.** Les noms/valeurs de `ak_ioctls.h` côté lecture sont corrigés par alias (`AKPCM_IOC_PREPARE`, `RESUME`, `SET_SOURCES`, `SET_GAIN`, `SET_SPEAKER`) ; confirmation par Ghidra de `ak_pcm.ko` (qui a déjà servi pour la capture) en parallèle de T2 si l'utilisateur le souhaite.
+- **D11 — Source des constantes matérielles.** Les noms/valeurs de `ak_ioctls.h` côté lecture sont corrigés par alias (`AKPCM_IOC_PREPARE`, `RESUME`, `SET_SOURCES` `0x40045010`, `SET_GAIN` `0x40045030`, `SET_SPEAKER` `0x40045081`, `GET_RATE`, plus les GET `0x8004...`), **numéros confirmés par la capture du firmware d'origine (§1.3)** ; confirmation par Ghidra de `ak_pcm.ko` (qui a déjà servi pour la capture) en parallèle de T2 si l'utilisateur le souhaite.
 
 ---
+
+## Décisions issues de la capture stock (2026-11-10) — priment sur ce qui précède
+
+- Lecture **mono** 8 kHz 16 bits, périodes de 1024 octets (512 trames, 64 ms), 16 périodes pilote.
+- **Source 4** par défaut (route audible), gain 2 ; 6 conservé comme expérience ; 0 = route coupée (interne, repos).
+- Numéros d'ioctl de lecture pris sur la capture : `SET_SOURCES 0x40045010`, `SET_GAIN 0x40045030`, `SET_SPEAKER 0x40045081`, `GET_RATE 0x800450ea`.
+- Séquence d'ouverture comme le firmware d'origine ; ampli `auto` : allumage au premier son, route (`SET_SOURCES 0`) et ampli (`SET_SPEAKER 0`) coupés après 2 s de silence.
 
 ## Décisions utilisateur (2026-11-10) — font foi
 
