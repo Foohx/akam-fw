@@ -213,6 +213,16 @@ AK_SMALL static void collect_proc(int64_t t)
 
 static const char *wifi_if(void) { return g_ifname[0] ? g_ifname : "wlan0"; }
 
+/* ESSID from SIOCGIWESSID: some old WEXT drivers count the trailing NUL in the length, so stop
+ * at the first NUL; control bytes become '?'. out holds at least 33 bytes. */
+void ctl_sys_essid_copy(const char *essid, size_t len, char *out)
+{
+    size_t o = 0;
+    for (size_t i = 0; i < len && i < 32 && essid[i]; i++)
+        out[o++] = ((unsigned char)essid[i] < 0x20 || essid[i] == 0x7f) ? '?' : essid[i];
+    out[o] = 0;
+}
+
 static int iw_call(int s, unsigned long req, struct ak_iwreq *r, const char *ifn)
 {
     snprintf(r->iw_name, IFNAMSIZ, "%s", ifn);
@@ -262,12 +272,8 @@ AK_SMALL static void collect_net(void)
     char essid[40];
     memset(essid, 0, sizeof(essid));
     r.u.data.pointer = essid; r.u.data.length = 33;
-    if (iw_call(s, AK_SIOCGIWESSID, &r, wif) == 0 && r.u.data.flags && r.u.data.length > 0 && r.u.data.length <= 32) {
-        size_t o = 0;
-        for (size_t i = 0; i < r.u.data.length; i++)
-            g_val[K_SSID][o++] = ((unsigned char)essid[i] < 0x20 || essid[i] == 0x7f) ? '?' : essid[i];
-        g_val[K_SSID][o] = 0;
-    }
+    if (iw_call(s, AK_SIOCGIWESSID, &r, wif) == 0 && r.u.data.flags && r.u.data.length > 0 && r.u.data.length <= 33)
+        ctl_sys_essid_copy(essid, r.u.data.length, g_val[K_SSID]);
 
     if (!have_rssi) {
         unsigned char st[64];

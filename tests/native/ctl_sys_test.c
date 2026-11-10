@@ -62,8 +62,20 @@ static void emit(const char *k, const char *v, void *u)
     if (!strcmp(v, "unknown")) g_emit_unknown++;
 }
 
+static int essid_is(const char *raw, size_t len, const char *want)
+{
+    char o[48];
+    ctl_sys_essid_copy(raw, len, o);
+    return strcmp(o, want) == 0;
+}
+
 int main(void)
 {
+    CHECK(essid_is("O_o\0", 4, "O_o"));            /* length counts the NUL (old WEXT driver) */
+    CHECK(essid_is("O_o", 3, "O_o"));
+    CHECK(essid_is("a\nb", 3, "a?b"));
+    CHECK(essid_is("x\0yz", 4, "x"));
+
     char tmpl[] = "/tmp/ctl_sys_test.XXXXXX";
     if (!mkdtemp(tmpl)) return 2;
     snprintf(g_root, sizeof(g_root), "%s", tmpl);

@@ -476,6 +476,9 @@ static void handle_control_client(cli_t *c)
             char *value = strtok(NULL, " ");
             if (!param || !value) { reply(c, "ERR SET requires param and value"); continue; }
             do_set(c, param, value);
+        } else if (!strcasecmp(cmd, "QUIT")) {
+            reply(c, "OK bye");
+            return;
         } else if (!strcasecmp(cmd, "DEBUG")) {
             char *a1 = strtok(NULL, " ");
             char *a2 = strtok(NULL, " ");

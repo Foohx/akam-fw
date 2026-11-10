@@ -320,6 +320,17 @@ static void test_server(void)
     CHECK_STR(out, "ctl.clients=1\n");
     ask(c, "GET ae.speed", out, sizeof(out));
     CHECK_STR(out, "ae.speed=4\n");
+    {   /* QUIT: "OK bye", then the server closes the connection */
+        int q = dial("127.0.0.1");
+        CHECK(q >= 0);
+        if (q >= 0) {
+            ask(q, "QUIT", out, sizeof(out));
+            CHECK_STR(out, "OK bye\n");
+            char b;
+            CHECK(recv(q, &b, 1, 0) == 0);
+            close(q);
+        }
+    }
     ask(c, "GET night.mode", out, sizeof(out));
     CHECK_STR(out, "night.mode=auto\n");
     ask(c, "GET venc.minqp", out, sizeof(out));

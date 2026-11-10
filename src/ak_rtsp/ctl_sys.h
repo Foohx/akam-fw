@@ -29,6 +29,7 @@ void ctl_sys_list(void (*emit)(const char *key, const char *value, void *u), voi
 
 /* Number of metric keys and the key at index i (NULL out of range). */
 size_t      ctl_sys_count(void);
+void        ctl_sys_essid_copy(const char *essid, size_t len, char *out);  /* out >= 33 bytes */
 const char *ctl_sys_key(size_t i);
 
 /* ---- feed from the RTSP thread (rtsp.c) ---- */
