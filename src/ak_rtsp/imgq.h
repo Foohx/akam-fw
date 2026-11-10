@@ -49,5 +49,7 @@ int imgq_poll_stats(void);
 /* Same contract as ledsys_ctl_*: _get returns 0 and fills `out` for a key it owns, else -1; _set returns
  * -1 for a key it does not own, else 0 (done) or 1 (refused) with the answer in `msg`; _list emits one line per key. */
 int  imgq_ctl_get(const char *key, char *out, size_t cap);
+/* imgq_set_persist(0): img.wb is not written to flash by the next SETs (network peer); default on. */
+void imgq_set_persist(int on);
 int  imgq_ctl_set(const char *key, const char *val, char *msg, size_t cap);
 void imgq_ctl_list(void (*emit)(void *arg, const char *line), void *arg);

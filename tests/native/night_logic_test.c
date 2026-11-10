@@ -4,7 +4,9 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "night_logic.h"
 
@@ -288,8 +290,71 @@ static void test_no_sample_and_reset(void)
     CHECK(strstr(line, "mode=night") != NULL);
 }
 
+/* ---- saved manual mode (night.mode) ---- */
+static int slurp(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    size_t n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return 1;
+}
+
+static void put(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "w");
+    if (f) { fputs(text, f); fclose(f); }
+}
+
+static void test_saved_mode(void)
+{
+    char dir[] = "/tmp/night_mode_test_XXXXXX";
+    if (!mkdtemp(dir)) { CHECK(0); return; }
+    char path[256], sub[256], tmp[300], buf[64];
+    snprintf(path, sizeof(path), "%s/night", dir);
+    night_override_t m = NIGHT_MODE_AUTO;
+    struct stat st;
+
+    CHECK(night_mode_load(path, &m) == 0 && m == NIGHT_MODE_AUTO);               /* absent file = auto */
+    CHECK(night_mode_save(path, NIGHT_MODE_AUTO) == 0 && stat(path, &st) != 0);  /* nothing written for auto */
+
+    CHECK(night_mode_save(path, NIGHT_MODE_FORCE_NIGHT) == 0);
+    CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+    CHECK(slurp(path, buf, sizeof(buf)) && !strcmp(buf, "mode=night\n"));
+    CHECK(night_mode_load(path, &m) == 1 && m == NIGHT_MODE_FORCE_NIGHT);
+    CHECK(night_mode_save(path, NIGHT_MODE_FORCE_DAY) == 0);
+    CHECK(night_mode_load(path, &m) == 1 && m == NIGHT_MODE_FORCE_DAY);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    CHECK(stat(tmp, &st) != 0);                                                  /* no temporary file left */
+    CHECK(night_mode_save(path, NIGHT_MODE_AUTO) == 0 && stat(path, &st) != 0);  /* back to auto: file removed */
+
+    m = NIGHT_MODE_AUTO;                                                         /* validation */
+    put(path, "mode=sunset\n");
+    CHECK(night_mode_load(path, &m) == 0 && m == NIGHT_MODE_AUTO);
+    put(path, "garbage\nmode=\nmode=Night\nother=day\n");
+    CHECK(night_mode_load(path, &m) == 0 && m == NIGHT_MODE_AUTO);
+    put(path, "mode=sunset\nmode=day\r\n");                                      /* bad line ignored, good one kept */
+    CHECK(night_mode_load(path, &m) == 1 && m == NIGHT_MODE_FORCE_DAY);
+    put(path, "mode=auto\n");
+    CHECK(night_mode_load(path, &m) == 0);
+    put(path, "");
+    CHECK(night_mode_load(path, &m) == 0);
+
+    snprintf(sub, sizeof(sub), "%s/new/night", dir);                             /* parent directory created 0700 */
+    CHECK(night_mode_save(sub, NIGHT_MODE_FORCE_DAY) == 0);
+    snprintf(tmp, sizeof(tmp), "%s/new", dir);
+    CHECK(stat(tmp, &st) == 0 && (st.st_mode & 0777) == 0700);
+    CHECK(night_mode_save("/nonexistent_dir_night/x/night", NIGHT_MODE_FORCE_DAY) == -1);
+
+    char cmd[300];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+    if (system(cmd)) CHECK(0);
+}
+
 int main(void)
 {
+    test_saved_mode();
     test_saturation_test();
     test_lit_room();
     test_dark_room();

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "ak_ioctls.h"
 #include "isp.h"
@@ -85,13 +86,25 @@ void night_get_tuning(night_tuning_t *out)
     (void)night_get_snapshot(out);
 }
 
-void night_set_tuning(const night_tuning_t *in)
+static volatile int g_persist = 1;  /* control.c clears it for a network SET: RAM only, no flash write */
+void night_set_persist(int on) { g_persist = on ? 1 : 0; }
+
+int night_set_tuning(const night_tuning_t *in)
 {
+    int changed;
     pthread_mutex_lock(&g_night_lock);
-    if (g_tuning.override != in->override)
+    changed = g_tuning.override != in->override;
+    if (changed)
         ++g_mode_generation;
     g_tuning = *in;
     pthread_mutex_unlock(&g_night_lock);
+    /* Saved only when the mode really changed (flash wear), like the picture settings. */
+    if (changed && g_persist && night_mode_save(NIGHT_CONF_FILE, in->override) < 0) {
+        int e = errno;
+        printf("[night] cannot save night.mode (lost at the next reboot): %s\n", strerror(e));
+        return e;
+    }
+    return 0;
 }
 int  night_is_night(void) { return g_is_night; }
 
@@ -296,6 +309,15 @@ static void *night_loop(void *arg)
 
 int night_start(void)
 {
+    /* Saved manual mode, applied before the monitor thread exists so its first decision already honours it
+     * (a forced mode never flips at boot). Skipped if a SET already changed the mode. */
+    night_override_t saved;
+    pthread_mutex_lock(&g_night_lock);
+    if (g_mode_generation == 0 && night_mode_load(NIGHT_CONF_FILE, &saved)) {
+        g_tuning.override = saved;
+        printf("[night] saved mode: %s\n", saved == NIGHT_MODE_FORCE_DAY ? "day" : "night");
+    }
+    pthread_mutex_unlock(&g_night_lock);
     g_night_running = 1;
     if (pthread_create(&g_night_tid, NULL, night_loop, NULL) != 0) {
         perror("[night] pthread_create");

@@ -38,7 +38,11 @@ static int            g_stub_val = 5;
 void ae_get_tuning(ae_tuning_t *o) { *o = g_ae; }
 int  ae_set_tuning(const ae_tuning_t *i) { g_ae = *i; return 0; }
 void night_get_tuning(night_tuning_t *o) { *o = g_nt; }
-void night_set_tuning(const night_tuning_t *i) { g_nt = *i; }
+int  g_night_persist = -1, g_night_err;
+int  night_set_tuning(const night_tuning_t *i) { g_nt = *i; return g_night_err; }
+void night_set_persist(int on) { g_night_persist = on; }
+int  g_imgq_persist = -1;
+void imgq_set_persist(int on) { g_imgq_persist = on; }
 int  night_is_night(void) { return 0; }
 int  isp_set_saturation(int v) { (void)v; return 0; }
 int  isp_set_contrast(int v) { (void)v; return 0; }
@@ -378,6 +382,16 @@ static void test_server(void)
         ask(c, "SET isp.contrast 0", out, sizeof(out));
         CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     }
+    /* night.mode / img.wb are saved by their modules: a loopback SET allows it, and a failure is reported */
+    ask(c, "SET night.mode day", out, sizeof(out));
+    CHECK_STR(out, "OK night.mode=day\n");
+    CHECK(g_night_persist == 1 && g_imgq_persist == 1);
+    g_night_err = ENOSPC;
+    ask(c, "SET night.mode night", out, sizeof(out));
+    CHECK(!strncmp(out, "OK night.mode=night (not saved: ", 32));
+    g_night_err = 0;
+    ask(c, "SET night.mode auto", out, sizeof(out));
+    CHECK_STR(out, "OK night.mode=auto\n");
     ask(c, "SET venc.minqp 1", out, sizeof(out));
     CHECK(!strncmp(out, "ERR venc.minqp is read-only in this version", 43));
 
@@ -434,6 +448,9 @@ static void test_server(void)
             ask(r, "SET isp.sharpness 5", out, sizeof(out));
             CHECK_STR(out, "OK isp.sharpness=5\n");
             CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+            ask(r, "SET night.mode day", out, sizeof(out));
+            CHECK(g_night_persist == 0 && g_imgq_persist == 0);   /* RAM only from the network */
+            ask(r, "SET night.mode auto", out, sizeof(out));
             ask(r, "SET isp.sharpness 0", out, sizeof(out));
             ask(c, "SET ae.speed 7", out, sizeof(out));
             ask(r, "DEBUG off", out, sizeof(out));

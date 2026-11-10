@@ -239,3 +239,48 @@ void nl_status(const nl_state_t *st, const night_tuning_t *t, char *out, size_t 
              nl_mode_name(st->mode), st->confirm, lock, st->probes, st->fails, st->flap, next, st->switches,
              st->last[0] ? st->last : "-");
 }
+
+/* ---- saved manual mode ---- */
+
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include "cfg_file.h"
+
+int night_mode_load(const char *path, night_override_t *out)
+{
+    char buf[128];
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    int found = 0;
+    char *save = NULL;
+    for (char *line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *v = eq + 1;
+        size_t vl = strlen(v);
+        while (vl && (v[vl - 1] == '\r' || v[vl - 1] == ' ' || v[vl - 1] == '\t')) v[--vl] = '\0';
+        if (strcmp(line, "mode")) continue;
+        if (!strcmp(v, "day"))        { *out = NIGHT_MODE_FORCE_DAY;   found = 1; }
+        else if (!strcmp(v, "night")) { *out = NIGHT_MODE_FORCE_NIGHT; found = 1; }
+        else if (strcmp(v, "auto"))
+            printf("[night] %s: invalid mode \"%s\" ignored (want auto|day|night)\n", path, v);
+    }
+    return found;
+}
+
+int night_mode_save(const char *path, night_override_t m)
+{
+    if (m == NIGHT_MODE_AUTO) {
+        if (unlink(path) < 0 && errno != ENOENT) return -1;
+        return 0;
+    }
+    const char *s = m == NIGHT_MODE_FORCE_DAY ? "mode=day\n" : "mode=night\n";
+    return cfg_write_atomic(path, s, strlen(s));
+}

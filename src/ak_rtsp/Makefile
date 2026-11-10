@@ -67,6 +67,7 @@ SRCS    = main.c \
           aec_custom.c \
           night.c \
           night_logic.c \
+          cfg_file.c \
           g711.c \
           audio_jitter.c \
           control.c \

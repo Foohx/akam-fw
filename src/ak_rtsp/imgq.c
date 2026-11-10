@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <strings.h>
 #include <time.h>
 #include <pthread.h>
@@ -13,6 +14,7 @@
 #include "isp_blocks.h"
 #include "night.h"
 #include "imgq.h"
+#include "cfg_file.h"
 
 /* Day white-balance gains of the hand-made manual block (R, G, B; 256 = 1.0x): the values the sensor_isp.conf
  * day block itself carries. */
@@ -26,6 +28,9 @@ static volatile int g_venc_rc_stock;
 static volatile int g_wb_conf = 1;
 static volatile int g_poll;
 static volatile int g_loaded;
+static volatile int g_persist = 1;  /* control.c clears it for a network SET: RAM only */
+void imgq_set_persist(int on) { g_persist = on ? 1 : 0; }
+static char g_conf_path[256] = IMGQ_CONF_FILE;  /* where img.wb is saved (the file imgq_load() read) */
 /* ensure_loaded() runs from main(), the AE thread and the 8091 thread: the first one in loads, the others wait. */
 static pthread_mutex_t g_load_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -44,6 +49,7 @@ static void apply_option(const char *key, const char *val)
     } else if (!strcmp(key, "wb")) {
         if (!strcmp(val, "conf")) g_wb_conf = 1;
         else if (!strcmp(val, "manual")) g_wb_conf = 0;
+        else printf("[imgq] invalid wb \"%s\" ignored (want conf|manual)\n", val);
     } else if (!strcmp(key, "poll")) {
         int f = parse_flag(val);
         if (f >= 0) g_poll = f;
@@ -82,6 +88,7 @@ void imgq_load(const char *conf_file, const char *ram_file)
     g_venc_rc_stock = 0;
     g_wb_conf = 1;
     g_poll = 0;
+    snprintf(g_conf_path, sizeof(g_conf_path), "%s", conf_file ? conf_file : "");  /* "" = never saved (tests) */
     load_file(conf_file);
     if (g_venc_rc_stock)
         printf("[imgq] WARNING: venc_rc=stock is saved in %s: if the encoder oopses, the camera reboots into the "
@@ -218,9 +225,49 @@ static int not_ready(char *msg, size_t cap)
     return 1;
 }
 
+/* Saves wb=conf|manual in the conf file, keeping its other lines (venc_rc, poll, comments) as they are: the line is
+ * replaced in place, or appended. Nothing is written when the file has no wb line and the value is the default
+ * (conf). Returns 0, or -1 with errno set. */
+static int save_wb(int conf)
+{
+    char old[2048], out[2200];
+    size_t n = 0, w = 0;
+    if (!g_conf_path[0]) return 0;
+    int found = 0;
+    FILE *f = fopen(g_conf_path, "r");
+    if (f) {
+        n = fread(old, 1, sizeof(old) - 1, f);
+        fclose(f);
+    }
+    old[n] = '\0';
+    if (n == sizeof(old) - 1) { errno = EFBIG; return -1; }  /* never truncate a hand-edited file */
+    for (char *p = old; *p;) {
+        char *nl = strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        const char *q = p;
+        while (q < p + len && (*q == ' ' || *q == '\t')) q++;
+        int is_wb = !strncmp(q, "wb", 2) && (q[2] == '=' || q[2] == ' ' || q[2] == '\t');
+        if (is_wb) {
+            if (!found) w += (size_t)snprintf(out + w, sizeof(out) - w, "wb=%s\n", conf ? "conf" : "manual");
+            found = 1;
+        } else if (len || nl) {
+            memcpy(out + w, p, len);
+            w += len;
+            out[w++] = '\n';
+        }
+        p += len + (nl ? 1 : 0);
+    }
+    if (!found) {
+        if (conf) return 0;
+        w += (size_t)snprintf(out + w, sizeof(out) - w, "wb=manual\n");
+    }
+    return cfg_write_atomic(g_conf_path, out, w);
+}
+
 /* img.wb: called with the ISP configuration lock held (the night thread cannot switch mode meanwhile). */
 static int set_wb(const char *val, char *msg, size_t cap)
 {
+    int was_conf = g_wb_conf;
     if (!strcmp(val, "conf")) {
         if (isp_reapply_wb_conf(night_is_night()) != 0) {
             snprintf(msg, cap, "ERR img.wb: the WB block could not be re-sent");
@@ -242,6 +289,9 @@ static int set_wb(const char *val, char *msg, size_t cap)
         return 1;
     }
     snprintf(msg, cap, "OK img.wb=%s", g_wb_conf ? "conf" : "manual");
+    /* Saved only when the value changed (flash wear); the answer says so if it could not be. */
+    if (g_persist && g_wb_conf != was_conf && save_wb(g_wb_conf) < 0)
+        snprintf(msg, cap, "OK img.wb=%s (not saved: %s)", g_wb_conf ? "conf" : "manual", strerror(errno));
     return 0;
 }
 

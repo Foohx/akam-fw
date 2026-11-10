@@ -104,7 +104,8 @@ check "picture: succeeds" test $? -eq 0
 check "picture: the four numbers" has "$T/show.out" "Brightness 0, contrast 0, saturation 0, sharpness 0"
 check "picture: white balance" has "$T/show.out" "White balance: conf"
 check "picture: night" has "$T/show.out" "Day/night: auto"
-check "picture: says what is not saved" has "$T/show.out" "Not saved"
+check "picture: says wb is saved" has "$T/show.out" "own block). Saved on the camera."
+check "picture: says night is saved" has "$T/show.out" "day or night). Saved on the camera."
 check "picture: LOG lines are not shown" hasnt "$T/show.out" "noise before"
 a "$S" picture show </dev/null >"$T/show2.out" 2>&1
 check "picture show: same" has "$T/show2.out" "Brightness 0"
