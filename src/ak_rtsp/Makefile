@@ -65,6 +65,8 @@ SRCS    = main.c \
           cred.c \
           http_srv.c \
           soap.c \
+          onvif.c \
+          onvif_device.c \
           ircut.c \
           leds.c \
           ledsys.c \
