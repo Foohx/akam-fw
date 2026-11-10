@@ -30,6 +30,7 @@
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
 #include "rtsp_auth.h"
+#include "rtsp_sdp.h"
 #include "leds.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
@@ -326,7 +327,7 @@ static void Client_options(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request 
 static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
     (void)self; (void)req;
-    char sdp_buf[1024];
+    char sdp_buf[1280];
     /* sprop-parameter-sets lets a player decode from the very first frame it
      * gets instead of waiting for in-band SPS/PPS. The cache is filled from
      * the encoder's I-frames (also while no client is connected), so it is
@@ -335,27 +336,17 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     char fmtp[320];
     if (!h264_fmtp_build(&g_params, fmtp, sizeof(fmtp)))
         snprintf(fmtp, sizeof(fmtp), "packetization-mode=1");
-    /* Audio track uses payload type 97 with L16 (linear PCM): anyka_ipc's own
-     * capture stream is raw 8kHz/mono/16-bit, not G.711, so RFC 3551 L16
-     * needs no fmtp at all. PT 97 (dynamic) matches the convention anyka_ipc's
-     * own RTSP SDP builder uses for all of its audio codec options ("Session 3"
-     * correction), even though it's not required for L16 specifically. */
-    snprintf(sdp_buf, sizeof(sdp_buf),
-        "v=0\r\n"
-        "o=- %llu %llu IN IP4 0.0.0.0\r\n"
-        "s=ak_rtsp\r\n"
-        "t=0 0\r\n"
-        "m=video 0 RTP/AVP 96\r\n"
-        "c=IN IP4 0.0.0.0\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 %s\r\n"
-        "a=control:streamid=0\r\n"
-        "m=audio 0 RTP/AVP 97\r\n"
-        "c=IN IP4 0.0.0.0\r\n"
-        "a=rtpmap:97 L16/%d/%d\r\n"
-        "a=control:streamid=1\r\n",
-        (unsigned long long)time(NULL), (unsigned long long)time(NULL),
-        fmtp, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS);
+    rtsp_sdp_params_t sp = {
+        .session_time = (unsigned long long)time(NULL),
+        .fmtp = fmtp,
+        .audio_rate = AUDIO_SAMPLE_RATE,
+        .audio_channels = AUDIO_CHANNELS,
+        .backchannel = 0,
+    };
+    if (rtsp_sdp_build(sdp_buf, sizeof(sdp_buf), &sp) == 0) {
+        smolrtsp_respond_internal_error(ctx);
+        return;
+    }
 
     smolrtsp_header(ctx, SMOLRTSP_HEADER_CONTENT_TYPE, "application/sdp");
     smolrtsp_body(ctx, CharSlice99_from_str(sdp_buf));
