@@ -691,6 +691,12 @@ int ioctl(int fd, unsigned int req, void *arg)
     {
         uint32_t cmd = w->inner_cmd;
         if (cmd >= 0x100 && cmd <= 0x10f) return ret;
+#ifdef ISP_CATCHALL_OK
+        /* stock_hook.c: polled commands would otherwise fill the log, it dumps the full
+         * blocks itself (ISP_BLOCK / isp_blocks.bin), and it checks that the 4 words read
+         * below are mapped. isp_hook.so does not define this. */
+        if (!ISP_CATCHALL_OK(cmd, w->payload)) return ret;
+#endif
         /* Log every unknown cmd (not throttled — they're infrequent) */
         int f = ISP_LOG_OPEN();
         if (f >= 0) {

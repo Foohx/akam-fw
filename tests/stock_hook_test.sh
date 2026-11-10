@@ -33,7 +33,7 @@ hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1";
 # --- builds -------------------------------------------------------------------
 HOOKFLAGS=(-std=gnu99 -O1 -Wall -Wextra -Werror -fPIC -shared -nostdlib -ffreestanding
     -fno-builtin -fno-stack-protector -fvisibility=hidden -fno-tree-loop-distribute-patterns
-    -I"$SRC" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u)
+    -I"$SRC" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u -DALIVE_MS=100u)
 dirs_macro() { # $1 = base dir
     printf '"%s/out","%s/nosuch/sd","%s/tmp"' "$1" "$1" "$1"
 }
@@ -47,7 +47,7 @@ fi
 "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/b")" \
     -o "$WORK/hook_b.so" "$SRC/stock_hook.c" || ko "build variant b"
 "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/c")" \
-    -DCAP_MAIN_SD=3000u -DCAP_ISP_SD=600u -DCAP_TMP=3000u \
+    -DCAP_MAIN_SD=3000u -DCAP_ISP_SD=600u -DCAP_TMP=3000u -DCAP_BIN_SD=1000u \
     -o "$WORK/hook_c.so" "$SRC/stock_hook.c" || ko "build variant c"
 "$CC" -std=gnu99 -O1 -Wall -Wextra -Werror -pthread -o "$WORK/hook_driver" \
     "$HERE/native/stock_hook_driver.c" || ko "build the driver"
@@ -62,6 +62,9 @@ head -c 1024 /dev/zero > "$R/dev/pcmC0D0c"
 { printf 'M'; head -c 4095 /dev/zero; } > "$R/dev/mem"
 head -c 300 /dev/zero > "$R/usr/share/prompt.mp3"
 : > "$R/dev/isp-param-0"
+mkdir -p "$R/sys/bus/iio/devices/iio:device0" "$R/sys/class/pwm/pwmchip0/pwm0"
+printf '1234\n' > "$R/sys/bus/iio/devices/iio:device0/in_voltage0_raw"
+: > "$R/sys/class/pwm/pwmchip0/pwm0/duty_cycle"
 
 # --- run A: card present (out -> card folder) ---------------------------------------------
 mkdir -p "$WORK/card/run1"
@@ -71,7 +74,7 @@ rc=$?
 if [ "$rc" -eq 0 ]; then ok "driver self-checks pass under the hook (return values and errno unchanged)"; else ko "driver exit $rc"; cat "$WORK/a.out"; fi
 LOG=$WORK/card/run1/stock_hook.log
 if [ -f "$LOG" ]; then ok "log written to the card folder"; else ko "no log on the card folder"; find "$WORK/a" "$WORK/card" | head; fi
-has "HOOK_START banner" '^T=[0-9]+\.[0-9]{3} tid=[0-9]+ HOOK_START version=1 arch=x86_64 comm=hook_driver' "$LOG"
+has "HOOK_START banner (version 2, with the monotonic clock at T=0)" '^T=[0-9]+\.[0-9]{3} tid=[0-9]+ HOOK_START version=2 arch=x86_64 comm=hook_driver pid=[0-9]+ wall=[0-9]+ mono_ms=[0-9]+$' "$LOG"
 has "sink line names the card directory" 'HOOK_SINK dir=.*/a/out' "$LOG"
 has "failed open of a missing pcm device logged with errno 2" 'OPEN path="[^"]*/dev/pcmC9D9p" .*cls=pcm ret=-1 errno=2' "$LOG"
 has "playback open" 'OPEN path="[^"]*/dev/pcmC0D0p" flags=0x1 mode=0x0 cls=pcm fd=[0-9]+' "$LOG"
@@ -99,11 +102,74 @@ has "audio file open classified" 'OPEN path="[^"]*prompt.mp3" .*cls=audiofile fd
 has "audio file read bytes counted at close" 'CLOSE fd=[0-9]+ dev=.*prompt.mp3 ret=0 wr_calls=0 wr_bytes=0 rd_calls=1 rd_bytes=100' "$LOG"
 has "writev logged" 'WRITEV fd=[0-9]+ dev=.*pcmC0D0p iovcnt=2 ret=512' "$LOG"
 has "dup of a tracked fd followed" 'DUP fd=[0-9]+ newfd=[0-9]+ dev=.*pcmC0D0p' "$LOG"
-has "ISP parameter block dumped" 'ISP_BLOCK name=CCM cmd=0x40044912 flag=1 ret=-1 seen=1 len=256 data=07000000' "$LOG"
-has "changed ISP block logged again" 'ISP_BLOCK name=CCM .* seen=2 .*efbeadde' "$LOG"
+has "ISP block logged with its real size (CCM = 324 bytes), hash and counters" 'ISP_BLOCK name=CCM cmd=0x40044912 flag=1 ret=-1 size=324 hash=0x[0-9a-f]+ calls=1 changes=0 dump=1 stored=bin head=07000000' "$LOG"
+has "changed ISP block logged again (3rd call, 2nd distinct content)" 'ISP_BLOCK name=CCM .* calls=3 changes=1 dump=2 stored=bin' "$LOG"
+n=$(grep -c 'ISP_BLOCK name=CCM ' "$LOG")
+if [ "$n" -eq 2 ]; then ok "an identical block is not logged twice (3 calls, 2 dumps)"; else ko "CCM dumps: $n"; fi
+n=$(grep -c 'ISP_BLOCK name=UNKNOWN cmd=0x80044959 ' "$LOG")
+if [ "$n" -ge 1 ] && [ "$n" -le 3 ]; then ok "a polled block that changes at every call is rate limited (300 calls, $n dump lines)"; else ko "0x80044959 dumps: $n"; fi
+has "size of an unknown command: 256-byte probe" 'ISP_BLOCK name=UNKNOWN cmd=0x80044959 .* size=256 ' "$LOG"
+has "big block (SHARP) logged with its full size" 'ISP_BLOCK name=SHARP cmd=0x40044925 .* size=46584 ' "$LOG"
+has "partly mapped payload: only the mapped bytes" 'ISP_BLOCK name=UNKNOWN cmd=0x80044999 .* size=100 ' "$LOG"
+hasnt "payload in unmapped memory: nothing logged" 'cmd=0x80044998' "$LOG"
+hasnt "VI scalar tunnel call ignored" 'cmd=0x00000103|cmd=0x103 ' "$LOG"
+has "ALIVE carries the ISP and sysfs counters" 'ALIVE events=[0-9]+ dropped=[0-9]+ isp_calls=[0-9]+ isp_dumps=[0-9]+ isp_skipped=[0-9]+ gpio_skipped=[0-9]+ bin_bytes=[0-9]+ log_bytes=[0-9]+' "$LOG"
+has "ISP_STAT counters per command" 'ISP_STAT name=CCM cmd=0x40044912 size=324 calls=3 changes=1 dumps=2' "$LOG"
+# sysfs light sensor and IR LED: bounded
+n=$(grep -c 'READ .*in_voltage0_raw' "$LOG")
+if [ "$n" -ge 1 ] && [ "$n" -le 8 ]; then ok "60 ADC reads of the light sensor: $n lines"; else ko "ADC READ lines: $n"; fi
+has "light sensor value shown" 'READ fd=[0-9]+ dev=.*in_voltage0_raw count=16 ret=5 text="1234\\x0a"' "$LOG"
+n=$(grep -c 'WRITE .*pwm0/duty_cycle' "$LOG")
+if [ "$n" -ge 8 ] && [ "$n" -le 12 ]; then ok "60 identical PWM writes: $n lines"; else ko "PWM WRITE lines: $n"; fi
+has "the PWM write that changes is logged" 'WRITE fd=[0-9]+ dev=.*pwm0/duty_cycle count=1 ret=1 text="0"' "$LOG"
+n=$(grep -c 'OPEN path=".*pwm0/duty_cycle' "$LOG")
+if [ "$n" -le 10 ]; then ok "OPEN of a polled sysfs file is bounded ($n)"; else ko "PWM OPEN lines: $n"; fi
+# the binary dump
+BIN=$WORK/card/run1/isp_blocks.bin
+if [ -s "$BIN" ] && command -v python3 >/dev/null 2>&1; then
+    python3 -I - "$BIN" >"$WORK/bin.out" 2>&1 <<'PYEOF'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+off, recs = 0, []
+while off + 24 <= len(d):
+    m, t, cmd, n, h, tid = struct.unpack_from("<4sIIIII", d, off)
+    if m != b"ISPB":
+        print("BAD MAGIC at", off); break
+    recs.append((cmd, t, bytes(d[off + 24: off + 24 + n]), h))
+    off += 24 + n
+print("RECORDS", len(recs), "TRAILING", len(d) - off)
+ccm = [r for r in recs if r[0] == 0x40044912]
+print("CCM", len(ccm), [len(r[2]) for r in ccm])
+if len(ccm) == 2:
+    a, b = ccm[0][2], ccm[1][2]
+    print("CCM_FIRST_WORD", struct.unpack_from("<I", a, 0)[0], "CCM_LAST_OLD", hex(struct.unpack_from("<I", a, 320)[0]),
+          "CCM_LAST_NEW", hex(struct.unpack_from("<I", b, 320)[0]))
+sh = [r for r in recs if r[0] == 0x40044925]
+print("SHARP", len(sh), [len(r[2]) for r in sh])
+if sh:
+    ok = all(sh[0][2][i] == (i * 7 + 3) & 255 for i in range(46584))
+    print("SHARP_CONTENT", "exact" if ok else "WRONG")
+print("POLL", len([r for r in recs if r[0] == 0x80044959]))
+part = [r for r in recs if r[0] == 0x80044999]
+print("PARTIAL", [len(r[2]) for r in part], all(x == 0x5a for r in part for x in r[2]))
+print("UNMAPPED", len([r for r in recs if r[0] == 0x80044998]))
+PYEOF
+    has "isp_blocks.bin: well-formed records, nothing left over" '^RECORDS [0-9]+ TRAILING 0$' "$WORK/bin.out"
+    has "isp_blocks.bin: two CCM dumps of 324 bytes" '^CCM 2 \[324, 324\]$' "$WORK/bin.out"
+    has "isp_blocks.bin: the LAST word of the full block is captured and differs between the dumps" 'CCM_LAST_OLD 0x[0-9a-f]+ CCM_LAST_NEW 0xdeadbeef' "$WORK/bin.out"
+    has "isp_blocks.bin: the 46584-byte SHARP block is stored whole and exact" '^SHARP_CONTENT exact$' "$WORK/bin.out"
+    has "isp_blocks.bin: partly mapped payload stored with its mapped bytes only" '^PARTIAL \[100\] True$' "$WORK/bin.out"
+    has "isp_blocks.bin: nothing for the unmapped payload" '^UNMAPPED 0$' "$WORK/bin.out"
+    np=$(sed -n 's/^POLL //p' "$WORK/bin.out")
+    if [ "${np:-99}" -le 3 ]; then ok "isp_blocks.bin: polled block rate limited ($np records)"; else ko "polled block records: $np"; fi
+else
+    ko "isp_blocks.bin missing or python3 absent"
+fi
 hasnt "unrelated files are not logged" 'tmp_plain' "$LOG"
 if [ -s "$WORK/card/run1/stock_audio.raw" ] && [ "$(stat -c %s "$WORK/card/run1/stock_audio.raw")" -le 65536 ]; then ok "first playback bytes dumped to stock_audio.raw (<= 64 KiB)"; else ko "stock_audio.raw missing or too big"; fi
-has "legacy decoders still run (isp_hook.log, CCM with its name)" '^CCM cmd=0x40044912 payload\[0\.\.3\]=' "$WORK/card/run1/isp_hook.log"
+has "legacy decoders still run (isp_hook.log, CCM with its name, time stamped)" '^T=[0-9]+\.[0-9]{3} CCM cmd=0x40044912 payload\[0\.\.3\]=' "$WORK/card/run1/isp_hook.log"
+n=$(grep -c 'cmd=0x80044959' "$WORK/card/run1/isp_hook.log")
+if [ "$n" -le 3 ]; then ok "isp_hook.log: a polled unknown command is not repeated for every call ($n of 300)"; else ko "isp_hook.log repeats the polled command: $n lines"; fi
 # our own descriptors stay far above the ones the app sees
 hasnt "no stray descriptors: the driver sees the same fd numbers (fd<20) for its own files" 'fd=9[0-9][0-9]' "$LOG"
 
@@ -130,6 +196,8 @@ if [ "$rc" -eq 0 ]; then ok "tiny caps: the driver still passes"; else ko "cappe
 has "cap notice written" 'LOG_CAP reached' "$WORK/card_c/stock_hook.log"
 sz=$(stat -c %s "$WORK/card_c/stock_hook.log")
 if [ "$sz" -le 4600 ]; then ok "stock_hook.log stays near its cap ($sz bytes for a 3000 cap)"; else ko "cap not enforced: $sz bytes"; fi
+bsz2=$(stat -c %s "$WORK/card_c/isp_blocks.bin" 2>/dev/null || echo 0)
+if [ "$bsz2" -le 1000 ]; then ok "isp_blocks.bin stays under its cap ($bsz2 bytes for a 1000 cap)"; else ko "bin cap not enforced: $bsz2 bytes"; fi
 isz=$(stat -c %s "$WORK/card_c/isp_hook.log" 2>/dev/null || echo 0)
 if [ "$isz" -le 1400 ]; then ok "isp_hook.log stays near its cap ($isz bytes for a 600 cap)"; else ko "isp cap not enforced: $isz bytes"; fi
 
@@ -150,7 +218,17 @@ rm -f "$WORK/a/out"; ln -s "$WORK/card_d" "$WORK/a/out"
 LD_PRELOAD="$WORK/hook_a.so" "$WORK/other_prog" "$R" >"$WORK/d.out" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then ok "other process: self-checks pass"; else ko "other process exit $rc"; fi
-if [ -z "$(ls -A "$WORK/card_d")" ]; then ok "a process that is not anyka_ipc writes no log"; else ko "unexpected files for a foreign process"; fi
+if [ "$(ls "$WORK/card_d")" = "stock_hook.log" ] && [ "$(wc -l <"$WORK/card_d/stock_hook.log")" -eq 1 ]; then ok "a process that is not anyka_ipc writes one CHILD line and nothing else"; else ko "unexpected files for a foreign process: $(ls "$WORK/card_d")"; fi
+has "CHILD line: parent, executable, command line, absolute clock" 'CHILD abs_ms=[0-9]+ ppid=[0-9]+ exe="[^"]*other_prog" cmd="[^"]*other_prog [^"]*"' "$WORK/card_d/stock_hook.log"
+
+# --- run F: anyka_ipc starts a child with system(): the child's command line is logged -----------------
+mkdir -p "$WORK/card_f"
+rm -f "$WORK/a/out"; ln -s "$WORK/card_f" "$WORK/a/out"
+HOOK_DRIVER_CHILD=1 LD_PRELOAD="$WORK/hook_a.so" "$WORK/hook_driver" "$R" >"$WORK/f.out" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then ok "system() of a child under the inherited hook: the driver passes"; else ko "child run exit $rc"; cat "$WORK/f.out"; fi
+has "child of anyka_ipc logged with its command line" 'CHILD abs_ms=[0-9]+ ppid=[0-9]+ exe="[^"]*" cmd="[^"]*reboot-marker' "$WORK/card_f/stock_hook.log"
+if [ "$(grep -c ' CHILD ' "$WORK/card_f/stock_hook.log")" -le 3 ]; then ok "one CHILD line per child process"; else ko "too many CHILD lines"; fi
 
 # --- parser smoke on the real hook output (when the parser exists) -------------------------------------
 if [ -f "$PARSER" ] && command -v python3 >/dev/null 2>&1; then

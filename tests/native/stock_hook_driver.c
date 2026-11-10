@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -186,16 +187,65 @@ int main(int argc, char **argv)
     close(pfd2);
     close(pfd);
 
-    /* --- ISP tunnel ioctl with a parameter block */
+    /* --- ISP tunnel ioctl with parameter blocks (the fake device is a plain file: the ioctl
+     * fails with ENOTTY, the hook still sees the call and the payload) */
     pcmpath(p, sizeof p, root, "/dev/isp-param-0");
     int ifd = open(p, O_RDWR);
-    uint32_t ccm[24];
-    for (int i = 0; i < 24; i++) ccm[i] = 0x100u * (uint32_t)i + 7;
+    uint32_t ccm[81];                                           /* CCM is 324 bytes */
+    for (int i = 0; i < 81; i++) ccm[i] = 0x100u * (uint32_t)i + 7;
     struct isp_wrapper w = { 1, 0x40044912u /* CCM */, ccm };
     ioctl(ifd, 0xc0cc5616u, &w);
-    ccm[3] = 0xdeadbeef;
-    ioctl(ifd, 0xc0cc5616u, &w);                                /* changed block logged again */
+    ioctl(ifd, 0xc0cc5616u, &w);                                /* same content: not dumped again */
+    usleep(150000);                                             /* > the 100 ms rate limit of SET blocks */
+    ccm[80] = 0xdeadbeef;                                       /* LAST word of the full block */
+    ioctl(ifd, 0xc0cc5616u, &w);                                /* changed block dumped again */
+    /* a polled GET block changing at every call: rate limited to one dump per second */
+    uint32_t stat[64];
+    struct isp_wrapper ws = { 1, 0x80044959u /* unknown size: 256-byte probe */, stat };
+    for (int i = 0; i < 300; i++) {
+        for (int k = 0; k < 64; k++) stat[k] = (uint32_t)(i * 64 + k);
+        ioctl(ifd, 0xc0cc5616u, &ws);
+    }
+    /* a big block (SHARP, 46584 bytes) must be dumped whole */
+    uint8_t *big = malloc(46584);
+    for (int i = 0; i < 46584; i++) big[i] = (uint8_t)(i * 7 + 3);
+    struct isp_wrapper wb = { 1, 0x40044925u /* SHARP */, big };
+    ioctl(ifd, 0xc0cc5616u, &wb);
+    free(big);
+    /* payload that is only partly mapped (probe of an unknown command): no crash, shorter dump */
+    uint8_t *two2 = mmap(NULL, 2 * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(two2 != MAP_FAILED, "anonymous mmap");
+    memset(two2, 0x5a, 2 * pg);
+    munmap(two2 + pg, pg);
+    struct isp_wrapper wp = { 1, 0x80044999u, two2 + pg - 100 };
+    ioctl(ifd, 0xc0cc5616u, &wp);
+    /* a payload pointer into unmapped memory: nothing dumped, nothing crashes */
+    struct isp_wrapper wu = { 1, 0x80044998u, two2 + pg + 64 };
+    ioctl(ifd, 0xc0cc5616u, &wu);
+    /* VI scalar tunnel (the "pointer" is a number): ignored */
+    struct isp_wrapper wv = { 1, 0x103u, (void *)1 };
+    ioctl(ifd, 0xc0cc5616u, &wv);
     close(ifd);
+
+    /* --- day/night sysfs: ADC light sensor polled many times, IR LED PWM written */
+    for (int i = 0; i < 60; i++) {
+        pcmpath(p, sizeof p, root, "/sys/bus/iio/devices/iio:device0/in_voltage0_raw");
+        int afd2 = open(p, O_RDONLY);
+        if (afd2 >= 0) { char t[16]; if (read(afd2, t, sizeof t) < 0) failures++; close(afd2); }
+    }
+    pcmpath(p, sizeof p, root, "/sys/class/pwm/pwmchip0/pwm0/duty_cycle");
+    for (int i = 0; i < 60; i++) {
+        int pw = open(p, O_WRONLY);
+        if (pw >= 0) { if (write(pw, "500000", 6) != 6) failures++; close(pw); }
+    }
+    int pw = open(p, O_WRONLY);
+    if (pw >= 0) { if (write(pw, "0", 1) != 1) failures++; close(pw); }
+
+    /* --- a child process (system()) inherits LD_PRELOAD: it must log one CHILD line only */
+    if (getenv("HOOK_DRIVER_CHILD")) {
+        int rc = system("cat /dev/null; : reboot-marker");
+        CHECK(rc == 0, "child process runs normally under the inherited hook");
+    }
 
     /* --- unrelated file: untouched and unlogged */
     pcmpath(p, sizeof p, root, "/tmp_plain.txt");
