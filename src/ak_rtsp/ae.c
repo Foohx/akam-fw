@@ -58,6 +58,7 @@ static volatile int      g_last_lum      = -1;
 static volatile uint32_t g_last_hw_exp   = 0;
 static volatile uint32_t g_last_hw_sgain = 0;
 static volatile uint32_t g_last_hw_isp   = 0;
+static volatile uint32_t g_stats_seq     = 0;  /* bumped by every ae_report_stats(): lets night.c tell a stale sample */
 
 int ae_get_last_stats(int *lum, uint32_t *hw_exp, uint32_t *hw_sgain, uint32_t *hw_isp)
 {
@@ -75,7 +76,10 @@ void ae_report_stats(int lum, uint32_t hw_exp, uint32_t hw_sgain, uint32_t hw_is
     g_last_hw_exp   = hw_exp;
     g_last_hw_sgain = hw_sgain;
     g_last_hw_isp   = hw_isp;
+    g_stats_seq++;
 }
+
+uint32_t ae_stats_seq(void) { return g_stats_seq; }
 
 /* Live-tunable AE parameters, exposed for control.c. Plain (non-volatile)
  * struct: written wholesale by ae_set_tuning() (control thread) and read

@@ -42,6 +42,7 @@
 #define NIGHT_VTS        3426
 
 #define POLL_US        (NL_POLL_MS * 1000)  /* 100 ms, matches stock's ht_night_mode_auto_th cadence */
+#define STALE_POLLS    10                   /* no new AE sample for 1 s (it ticks at 15 Hz): treat as no sample */
 
 static volatile int g_night_running;
 static pthread_t    g_night_tid;
@@ -208,6 +209,8 @@ static void *night_loop(void *arg)
     unsigned   seen_mode_generation = 0;
     int        have_mode_generation = 0;
     unsigned   n = 0;
+    uint32_t   seen_seq = ae_stats_seq();
+    unsigned   stale = 0;
     night_tuning_t t;
 
     printf("[night] auto day/night monitor started (poll=%dms)\n", NL_POLL_MS);
@@ -227,6 +230,7 @@ static void *night_loop(void *arg)
             if (nl.mode == NL_PROBING)
                 ircut_ir_led_probe(0);
             nl_reset(&nl, &t, g_is_night);
+            publish_status(&nl, &t);
             printf("[night] mode changed -> reset confirm/lock/probe state\n");
         }
 
@@ -246,6 +250,12 @@ static void *night_loop(void *arg)
         nl_limits_t lim;
         int         have = 0, lum = 0;
         have = ae_get_last_stats(&lum, &s.hw_exp, &s.sgain, &s.isp) == 0;
+        /* A sample that stopped being refreshed (AE frozen by ae.enabled=0, ioctl failing) says nothing about the
+         * light: in particular a probe must not end as "lit room" on the last IR lit value. */
+        uint32_t seq = ae_stats_seq();
+        if (seq != seen_seq) { seen_seq = seq; stale = 0; }
+        else if (stale < STALE_POLLS) stale++;
+        if (stale >= STALE_POLLS) have = 0;
         s.lum = lum;
         ae_get_limits(&lim.sgain_max, &lim.isp_max);
 

@@ -23,6 +23,10 @@ void ae_stop(void);
  * sample has been taken yet (AE thread not started or hasn't ticked once). */
 int ae_get_last_stats(int *lum, uint32_t *hw_exp, uint32_t *hw_sgain, uint32_t *hw_isp);
 
+/* Counter bumped by every new AE sample (ae_report_stats()). night.c uses it to notice that the samples stopped
+ * (AE thread frozen with ae.enabled=0, ioctl failing): the stale values must not decide anything. */
+uint32_t ae_stats_seq(void);
+
 /* The AE's own maximum sensor gain and ISP gain (Q8, 256 = 1.0x) from the exposure block, refreshed by every
  * ae_set_tuning(). Both 0 until the first one succeeded. */
 void ae_get_limits(uint32_t *sgain_max, uint32_t *isp_gain_max);
