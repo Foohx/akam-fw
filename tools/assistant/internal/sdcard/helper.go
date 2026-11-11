@@ -122,21 +122,30 @@ func (h Helper) open(req Request) (*target, error) {
 	if err := op.CheckNode(req.Device); err != nil {
 		return nil, err
 	}
+	// an opener that keeps volumes locked (Windows) lets go of them on every error path
+	release := func() {
+		if r, ok := op.(interface{ release() error }); ok {
+			_ = r.release()
+		}
+	}
 	for _, m := range c.Mounts {
 		un := h.Unmount
 		if un == nil {
 			un = op.Unmount
 		}
 		if err := un(m.Point); err != nil {
+			release()
 			return nil, fmt.Errorf("cannot unmount %s: %v", m.Point, err)
 		}
 	}
 	// the card was unmounted: it must still be the same one, right before the first write
 	if _, err := recheckDevice(inv, req.Device, req.Token, ctx); err != nil {
+		release()
 		return nil, fmt.Errorf("refusing: %w (nothing was written)", err)
 	}
 	d, err := op.Open(req.Device, c)
 	if err != nil {
+		release()
 		return nil, err
 	}
 	if h.Rescan != nil {
