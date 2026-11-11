@@ -103,6 +103,9 @@ check() { # description, condition command...
     if "$@"; then echo "  ok   - $desc"; else echo "FAIL: $desc"; fail=1; fi
 }
 
+failed_with() { [ "$RC" -eq 1 ] && has "$1"; }
+has() { grep -q -- "$1" "$WORK/out"; }
+hasnt() { ! grep -q -- "$1" "$WORK/out"; }
 start() { # mode -> sets PORT
     [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null || true
     rm -f "$WORK/port"
@@ -125,14 +128,14 @@ check "SOAP fault is the expected refusal" grep -q "unknown action (GetRelayOutp
 check "authenticated call answered 200" grep -q "ok   GetNetworkInterfaces" "$WORK/out"
 check "RTSP Digest DESCRIBE with H264 passes" grep -q "RTSP DESCRIBE with the password: 200, H264" "$WORK/out"
 check "imaging set and restore ran" grep -q "restored to 50.0" "$WORK/out"
-check "no clock note when the clock is right" bash -c '! grep -q "NOTE: the camera clock" "$1"' _ "$WORK/out"
+check "no clock note when the clock is right" hasnt "NOTE: the camera clock"
 
 run --no-imaging
-check "--no-imaging skips the brightness change" bash -c '! grep -q "SetImagingSettings" "$1"' _ "$WORK/out"
+check "--no-imaging skips the brightness change" hasnt "SetImagingSettings"
 
 RC=0
 OCT_PW=wrong python3 -I "$TOOL" "127.0.0.1:$PORT" viewer --password-env OCT_PW --no-discovery --rtsp --no-imaging >"$WORK/out" 2>&1 || RC=$?
-check "wrong password: RTSP DESCRIBE fails, exit 1" bash -c '[ "$1" -eq 1 ] && grep -q "FAIL RTSP DESCRIBE with the password: RTSP/1.0 401" "$2"' _ "$RC" "$WORK/out"
+check "wrong password: RTSP DESCRIBE fails, exit 1" failed_with "FAIL RTSP DESCRIBE with the password: RTSP/1.0 401"
 
 start oldclock
 run --no-imaging
@@ -140,7 +143,7 @@ check "clock far off: the note suggests ./akam ntp set" grep -q "akam ntp set" "
 
 start acceptall
 run --no-imaging
-check "a request accepted without password fails the run" bash -c '[ "$1" -eq 1 ] && grep -q "accepted, a refusal was expected" "$2"' _ "$RC" "$WORK/out"
+check "a request accepted without password fails the run" failed_with "accepted, a refusal was expected"
 
 [ "$fail" -eq 0 ] || exit 1
 echo "onvif_check_test: all passed"
