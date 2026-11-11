@@ -33,6 +33,7 @@ static int g_pending;           /* picture values changed in RAM, not yet writte
 static int64_t g_deadline_ms;   /* write when the clock reaches this */
 static int g_running;           /* the flush thread exists */
 static unsigned g_flushes;
+static int64_t g_last_force_ms = -1000000;   /* last write made for ForcePersistence */
 
 unsigned onvif_imaging_flushes(void)
 {
@@ -96,9 +97,12 @@ static void *flush_thread(void *arg)
 static void picture_changed(int force)
 {
     pthread_mutex_lock(&g_mu);
-    if (force) {
+    /* ForcePersistence writes at once, but a slider sends one such request per step: at most one forced write per
+     * ONVIF_IMAGING_FORCE_MIN_MS, the others fall back to the quiet-time write (the last value is never lost). */
+    if (force && onvif_imaging_now_ms() - g_last_force_ms >= ONVIF_IMAGING_FORCE_MIN_MS) {
         g_pending = 0;
         g_flushes++;
+        g_last_force_ms = onvif_imaging_now_ms();
         pthread_mutex_unlock(&g_mu);
         flush_now();
         return;
@@ -185,9 +189,7 @@ static const char *ircut_of(const char *mode)
 
 static void op_service_caps(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
-        "<timg:GetServiceCapabilitiesResponse><timg:Capabilities ImageStabilization=\"false\" Presets=\"false\""
-        " AdaptablePreset=\"false\"/></timg:GetServiceCapabilitiesResponse>" ENV_CLOSE);
+    onvif_reply(c, ENV_OPEN "<timg:GetServiceCapabilitiesResponse>" ONVIF_IMAGING_CAPS "</timg:GetServiceCapabilitiesResponse>" ENV_CLOSE);
     onvif_send(c);
 }
 
@@ -298,11 +300,37 @@ static void op_set_settings(onvif_call_t *c)
     onvif_send(c);
 }
 
+/* No focus motor: empty (schema-valid, every child is optional) answers, so that a client that asks for them
+ * (ONVIF Device Manager does when it opens the imaging page) is not given a fault. */
+static void op_get_move_options(onvif_call_t *c)
+{
+    if (!need_source(c)) return;
+    onvif_reply(c, ENV_OPEN "<timg:GetMoveOptionsResponse><timg:MoveOptions/></timg:GetMoveOptionsResponse>" ENV_CLOSE);
+    onvif_send(c);
+}
+
+static void op_get_status(onvif_call_t *c)
+{
+    if (!need_source(c)) return;
+    onvif_reply(c, ENV_OPEN "<timg:GetStatusResponse><timg:Status/></timg:GetStatusResponse>" ENV_CLOSE);
+    onvif_send(c);
+}
+
+static void op_no_motor(onvif_call_t *c)
+{
+    if (!need_source(c)) return;
+    onvif_fault(c, 1, "ter:Action", "ter:ActionNotSupported", "The camera has no focus motor");
+}
+
 static const onvif_op_t k_ops[] = {
     { "GetServiceCapabilities", ONVIF_PRE, op_service_caps },
     { "GetImagingSettings", ONVIF_READ, op_get_settings },
     { "GetOptions", ONVIF_READ, op_get_options },
+    { "GetMoveOptions", ONVIF_READ, op_get_move_options },
+    { "GetStatus", ONVIF_READ, op_get_status },
     { "SetImagingSettings", ONVIF_WRITE, op_set_settings },
+    { "Move", ONVIF_WRITE, op_no_motor },
+    { "Stop", ONVIF_WRITE, op_no_motor },
 };
 
 int onvif_imaging_register(void)

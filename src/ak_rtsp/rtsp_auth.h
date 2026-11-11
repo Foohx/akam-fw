@@ -46,6 +46,13 @@ typedef struct {
     bool loaded;
     unsigned global_fails;   /* failed attempts in the current window */
     int64_t last_fail_us;
+    /* what the file looked like when it was last read: while stat() shows the same, the file is not opened again
+     * (every ONVIF request and RTSP request asks for a refresh) */
+    bool sig_valid;
+    unsigned long long sig_ino, sig_size;
+    long long sig_mtime_s;
+    long sig_mtime_ns;
+    int sig_errno;           /* 0, or the errno of a stat() that failed */
 } rtsp_auth_db_t;
 
 /* State of one RTSP connection. */
@@ -77,7 +84,8 @@ typedef struct {
 extern int (*rtsp_auth_rng)(void *buf, size_t n);
 
 void rtsp_auth_db_init(rtsp_auth_db_t *db, const char *path);
-/* Re-read the credentials file; returns the current mode. */
+/* Re-read the credentials file if it changed (inode, size or mtime; a file modified within the last 2 seconds is
+ * always read again, for file systems with a coarse mtime); returns the current mode. */
 rtsp_auth_mode_t rtsp_auth_db_refresh(rtsp_auth_db_t *db);
 /* Current mode without re-reading the file (locked read). */
 rtsp_auth_mode_t rtsp_auth_db_mode(rtsp_auth_db_t *db);

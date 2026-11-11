@@ -16,17 +16,20 @@
  *  - the picture values (isp.*) are applied in RAM at once and written to flash ONCE, ONVIF_IMAGING_PERSIST_MS
  *    after the last change (debounce), by a short-lived thread that exists only while a write is pending; the
  *    4-value file of isp_tune is written by control_persist_picture(), the same write a loopback SET does. A
- *    request with ForcePersistence=true writes at once.
+ *    request with ForcePersistence=true writes at once, but at most once per ONVIF_IMAGING_FORCE_MIN_MS (a slider
+ *    sends one per step); the ones in between are debounced like the others.
  *  - IrCutFilter is a discrete choice, not a slider: it is persisted at once, and only when it actually changed
  *    (night_set_tuning), exactly like a loopback SET night.mode.
  *  - SystemReboot (onvif_device.c) flushes a pending write first (onvif_imaging_flush_pending); a power cut inside
  *    the window still loses the last picture change.
  * Access: Get* READ, SetImagingSettings WRITE (refused when the RTSP password is off). GetServiceCapabilities
- * is open (pre-auth list). Move/Stop/GetMoveOptions/GetStatus: ter:ActionNotSupported (no focus motor). */
+ * is open (pre-auth list). GetMoveOptions and GetStatus answer with empty (schema-valid) MoveOptions / Status; Move and Stop: Receiver fault
+ * ter:ActionNotSupported (no focus motor). */
 #pragma once
 #include <stdint.h>
 
 #define ONVIF_IMAGING_PERSIST_MS 5000
+#define ONVIF_IMAGING_FORCE_MIN_MS 2000   /* ForcePersistence: at most one immediate write per this time */
 
 /* Called by onvif_start. 0 or -1. */
 int onvif_imaging_register(void);

@@ -2,7 +2,7 @@
  *
  * One thread, one poll() loop, non-blocking sockets, no thread per connection. DORMANT until http_srv_start():
  * no socket, no thread, no allocation. Limits: request line + headers 4 KB, body 16 KB (Content-Length required
- * for POST, chunked request bodies refused), at most 4 connections (the 5th gets 503 and is closed), 5 s to
+ * for POST, chunked request bodies refused), at most 4 connections (when all are busy the 5th gets 503 and is closed; when one is merely idle with nothing buffered, the longest-idle one is closed to make room; a connection that has not completed a request yet is held to the 5 s request deadline, not the 30 s keep-alive one), 5 s to
  * receive a request once its first byte arrived (an absolute deadline: a slow trickle does not extend it),
  * idle keep-alive connections closed after 30 s, 5 s without write progress. Only GET and POST, exact-path routes
  * registered by the caller; any other path is 404, a route used with a method it does not accept is 405.

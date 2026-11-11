@@ -22,6 +22,8 @@
 
 const char *onvif_hostname_path = ONVIF_HOSTNAME_FILE;
 const char *onvif_resolv_path = ONVIF_RESOLV_FILE;
+const char *onvif_ntp_path = ONVIF_NTP_FILE;
+const char *onvif_route_path = ONVIF_ROUTE_FILE;
 
 static int64_t default_time(void) { return (int64_t)time(NULL); }
 static int default_settime(int64_t sec)
@@ -159,7 +161,7 @@ static void op_capabilities(onvif_call_t *c)
         "<tt:Device><tt:XAddr>{{base}}/onvif/device_service</tt:XAddr>"
         "<tt:Network><tt:IPFilter>false</tt:IPFilter><tt:ZeroConfiguration>false</tt:ZeroConfiguration>"
         "<tt:IPVersion6>false</tt:IPVersion6><tt:DynDNS>false</tt:DynDNS></tt:Network>"
-        "<tt:System><tt:DiscoveryResolve>false</tt:DiscoveryResolve><tt:DiscoveryBye>true</tt:DiscoveryBye>"
+        "<tt:System><tt:DiscoveryResolve>true</tt:DiscoveryResolve><tt:DiscoveryBye>true</tt:DiscoveryBye>"
         "<tt:RemoteDiscovery>false</tt:RemoteDiscovery><tt:SystemBackup>false</tt:SystemBackup>"
         "<tt:SystemLogging>false</tt:SystemLogging><tt:FirmwareUpgrade>false</tt:FirmwareUpgrade>"
         "<tt:SupportedVersions><tt:Major>2</tt:Major><tt:Minor>5</tt:Minor></tt:SupportedVersions></tt:System>"
@@ -169,47 +171,100 @@ static void op_capabilities(onvif_call_t *c)
         "<tt:KerberosToken>false</tt:KerberosToken><tt:RELToken>false</tt:RELToken></tt:Security></tt:Device>"
         "<tt:Imaging><tt:XAddr>{{base}}/onvif/imaging_service</tt:XAddr></tt:Imaging>"
         "<tt:Media><tt:XAddr>{{base}}/onvif/media_service</tt:XAddr><tt:StreamingCapabilities>"
-        "<tt:RTPMulticast>false</tt:RTPMulticast><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP>"
+        "<tt:RTPMulticast>false</tt:RTPMulticast><tt:RTP_TCP>false</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP>"
         "</tt:StreamingCapabilities></tt:Media>"
         "</tds:Capabilities></tds:GetCapabilitiesResponse>" ENV_CLOSE);
     soap_tpl_set(t, "base", base);
     onvif_send(c);
 }
 
+/* The servers akam_ntp.sh was given (file of `server=NAME` lines, at most 3; 0 when it is off). With out, the
+ * <tt:NTPManual> elements for them are written there (cap >= ONVIF_SCRATCH). Names are re-validated here: the file is
+ * root-owned but this goes into XML and nothing but a host name or an IPv4 address may. */
+static int ntp_servers(char *out, size_t cap)
+{
+    int n = 0;
+    size_t used = 0;
+    FILE *f = fopen(onvif_ntp_path, "re");
+    if (out && cap) out[0] = '\0';
+    if (!f) return 0;
+    char line[96];
+    while (n < 3 && fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "server=", 7) != 0) continue;
+        char *v = line + 7;
+        v[strcspn(v, "\r\n")] = '\0';
+        size_t l = strlen(v);
+        int ok = l >= 1 && l <= 63 && v[0] != '-';
+        for (size_t i = 0; ok && i < l; i++) {
+            char ch = v[i];
+            ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '-';
+        }
+        if (!ok) continue;
+        struct in_addr a;
+        int ip4 = inet_pton(AF_INET, v, &a) == 1;
+        if (out) {
+            int w = snprintf(out + used, cap - used, "<tt:NTPManual><tt:Type>%s</tt:Type><tt:%s>%s</tt:%s></tt:NTPManual>",
+                             ip4 ? "IPv4" : "DNS", ip4 ? "IPv4Address" : "DNSname", v, ip4 ? "IPv4Address" : "DNSname");
+            if (w < 0 || (size_t)w >= cap - used) { out[used] = '\0'; break; }
+            used += (size_t)w;
+        }
+        n++;
+    }
+    fclose(f);
+    return n;
+}
+
+#define DEV_CAPS_HEAD \
+    "<tds:Capabilities>" \
+    "<tds:Network IPFilter=\"false\" ZeroConfiguration=\"false\" IPVersion6=\"false\" DynDNS=\"false\"" \
+    " Dot11Configuration=\"false\" Dot1XConfigurations=\"0\" HostnameFromDHCP=\"false\" NTP=\""
+#define DEV_CAPS_TAIL \
+    "\" DHCPv6=\"false\"/>" \
+    "<tds:Security TLS1.0=\"false\" TLS1.1=\"false\" TLS1.2=\"false\" OnboardKeyGeneration=\"false\"" \
+    " AccessPolicyConfig=\"false\" DefaultAccessPolicy=\"false\" Dot1X=\"false\" RemoteUserHandling=\"false\"" \
+    " X.509Token=\"false\" SAMLToken=\"false\" KerberosToken=\"false\" UsernameToken=\"true\" HttpDigest=\"true\"" \
+    " RELToken=\"false\" MaxUsers=\"1\" MaxUserNameLength=\"32\" MaxPasswordLength=\"128\"/>" \
+    "<tds:System DiscoveryResolve=\"true\" DiscoveryBye=\"true\" RemoteDiscovery=\"false\" SystemBackup=\"false\"" \
+    " SystemLogging=\"false\" FirmwareUpgrade=\"false\" HttpFirmwareUpgrade=\"false\" HttpSystemBackup=\"false\"" \
+    " HttpSystemLogging=\"false\" HttpSupportInformation=\"false\" StorageConfiguration=\"false\"/>" \
+    "</tds:Capabilities>"
+
 static void op_services(onvif_call_t *c)
 {
-    char base[64];
+    char base[64], inc[8] = "";
     onvif_base_url(c->req, base, sizeof(base));
+    soap_elem_t e;
+    if (soap_find(c->op.inner, "IncludeCapability", &e) == SOAP_OK) (void)soap_text(&e, inc, sizeof(inc), SOAP_TRIM);
+    int with = !strcmp(inc, "true") || !strcmp(inc, "1");
     soap_tpl_t *t = onvif_reply(c, ENV_OPEN
         "<tds:GetServicesResponse>"
         "<tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>"
-        "<tds:XAddr>{{base}}/onvif/device_service</tds:XAddr>"
+        "<tds:XAddr>{{base}}/onvif/device_service</tds:XAddr>{{cd}}"
         "<tds:Version><tt:Major>2</tt:Major><tt:Minor>5</tt:Minor></tds:Version></tds:Service>"
         "<tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace>"
-        "<tds:XAddr>{{base}}/onvif/media_service</tds:XAddr>"
+        "<tds:XAddr>{{base}}/onvif/media_service</tds:XAddr>{{cm}}"
         "<tds:Version><tt:Major>2</tt:Major><tt:Minor>5</tt:Minor></tds:Version></tds:Service>"
         "<tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace>"
-        "<tds:XAddr>{{base}}/onvif/imaging_service</tds:XAddr>"
+        "<tds:XAddr>{{base}}/onvif/imaging_service</tds:XAddr>{{ci}}"
         "<tds:Version><tt:Major>2</tt:Major><tt:Minor>5</tt:Minor></tds:Version></tds:Service>"
         "</tds:GetServicesResponse>" ENV_CLOSE);
     soap_tpl_set(t, "base", base);
+    /* Service/Capabilities wraps the very element GetServiceCapabilities of that service returns */
+    static const char dev_off[] = "<tds:Capabilities>" DEV_CAPS_HEAD "0" DEV_CAPS_TAIL "</tds:Capabilities>";
+    static const char dev_ntp[] = "<tds:Capabilities>" DEV_CAPS_HEAD "3" DEV_CAPS_TAIL "</tds:Capabilities>";
+    static const char med[] = "<tds:Capabilities>" ONVIF_MEDIA_CAPS "</tds:Capabilities>";
+    static const char img[] = "<tds:Capabilities>" ONVIF_IMAGING_CAPS "</tds:Capabilities>";
+    soap_tpl_set_raw(t, "cd", with ? (ntp_servers(NULL, 0) > 0 ? dev_ntp : dev_off) : "");
+    soap_tpl_set_raw(t, "cm", with ? med : "");
+    soap_tpl_set_raw(t, "ci", with ? img : "");
     onvif_send(c);
 }
 
 static void op_service_capabilities(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
-        "<tds:GetServiceCapabilitiesResponse><tds:Capabilities>"
-        "<tds:Network IPFilter=\"false\" ZeroConfiguration=\"false\" IPVersion6=\"false\" DynDNS=\"false\""
-        " Dot11Configuration=\"false\" Dot1XConfigurations=\"0\" HostnameFromDHCP=\"false\" NTP=\"0\" DHCPv6=\"false\"/>"
-        "<tds:Security TLS1.0=\"false\" TLS1.1=\"false\" TLS1.2=\"false\" OnboardKeyGeneration=\"false\""
-        " AccessPolicyConfig=\"false\" DefaultAccessPolicy=\"false\" Dot1X=\"false\" RemoteUserHandling=\"false\""
-        " X.509Token=\"false\" SAMLToken=\"false\" KerberosToken=\"false\" UsernameToken=\"true\" HttpDigest=\"true\""
-        " RELToken=\"false\" MaxUsers=\"1\" MaxUserNameLength=\"32\" MaxPasswordLength=\"128\"/>"
-        "<tds:System DiscoveryResolve=\"false\" DiscoveryBye=\"true\" RemoteDiscovery=\"false\" SystemBackup=\"false\""
-        " SystemLogging=\"false\" FirmwareUpgrade=\"false\" HttpFirmwareUpgrade=\"false\" HttpSystemBackup=\"false\""
-        " HttpSystemLogging=\"false\" HttpSupportInformation=\"false\" StorageConfiguration=\"false\"/>"
-        "</tds:Capabilities></tds:GetServiceCapabilitiesResponse>" ENV_CLOSE);
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN "<tds:GetServiceCapabilitiesResponse>" DEV_CAPS_HEAD "{{ntp}}" DEV_CAPS_TAIL
+                                "</tds:GetServiceCapabilitiesResponse>" ENV_CLOSE);
+    soap_tpl_ref(t, "ntp", ntp_servers(NULL, 0) > 0 ? "3" : "0");
     onvif_send(c);
 }
 
@@ -243,9 +298,10 @@ static void op_get_time(onvif_call_t *c)
     int n = dt_block(s, ONVIF_SCRATCH, "UTCDateTime", &u);
     dt_block(s + n, (size_t)ONVIF_SCRATCH - (size_t)n, "LocalDateTime", &l);
     soap_tpl_t *t = onvif_reply(c, ENV_OPEN
-        "<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:DateTimeType>Manual</tt:DateTimeType>"
+        "<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:DateTimeType>{{type}}</tt:DateTimeType>"
         "<tt:DaylightSavings>{{dst}}</tt:DaylightSavings><tt:TimeZone><tt:TZ>{{tz}}</tt:TZ></tt:TimeZone>"
         "{{times}}</tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>" ENV_CLOSE);
+    soap_tpl_ref(t, "type", ntp_servers(NULL, 0) > 0 ? "NTP" : "Manual");
     soap_tpl_ref(t, "dst", l.tm_isdst > 0 ? "true" : "false");
     soap_tpl_set(t, "tz", tz);
     soap_tpl_set_raw(t, "times", s);
@@ -313,7 +369,13 @@ static void op_set_hostname(onvif_call_t *c)
         return;
     }
     lower(name);
-    if (hostname_store(name) != 0) {
+    char cur[64] = "";
+    FILE *hf = fopen(onvif_hostname_path, "re");
+    if (hf) {
+        if (fgets(cur, sizeof(cur), hf)) cur[strcspn(cur, "\r\n")] = '\0';
+        fclose(hf);
+    }
+    if (strcmp(cur, name) != 0 && hostname_store(name) != 0) {     /* unchanged: no flash write */
         onvif_fault(c, 1, "ter:Action", NULL, "Cannot store the hostname");
         return;
     }
@@ -364,15 +426,17 @@ static void op_scopes(onvif_call_t *c)
 
 static void op_get_ntp(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
-        "<tds:GetNTPResponse><tds:NTPInformation><tt:FromDHCP>false</tt:FromDHCP></tds:NTPInformation></tds:GetNTPResponse>"
+    ntp_servers(c->out->scratch, ONVIF_SCRATCH);
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
+        "<tds:GetNTPResponse><tds:NTPInformation><tt:FromDHCP>false</tt:FromDHCP>{{ntp}}</tds:NTPInformation></tds:GetNTPResponse>"
         ENV_CLOSE);
+    soap_tpl_set_raw(t, "ntp", c->out->scratch);
     onvif_send(c);
 }
 
 static void op_set_ntp(onvif_call_t *c)
 {
-    onvif_fault(c, 0, "ter:InvalidArgs", "ter:InvalidArgVal", "NTP is not supported (no NTP client in the image)");
+    onvif_fault(c, 0, "ter:InvalidArgs", "ter:InvalidArgVal", "NTP servers are set with akam_ntp.sh over SSH");
 }
 
 static void op_get_dns(onvif_call_t *c)
@@ -400,6 +464,69 @@ static void op_get_dns(onvif_call_t *c)
         "<tds:GetDNSResponse><tds:DNSInformation><tt:FromDHCP>true</tt:FromDHCP>{{dns}}</tds:DNSInformation></tds:GetDNSResponse>"
         ENV_CLOSE);
     soap_tpl_set_raw(t, "dns", s);
+    onvif_send(c);
+}
+
+/* The default gateway: the first /proc/net/route line with destination 0.0.0.0 and the gateway flag. */
+static int default_gateway(char *out, size_t cap)
+{
+    FILE *f = fopen(onvif_route_path, "re");
+    if (!f) return -1;
+    char line[160];
+    int found = -1;
+    while (found < 0 && fgets(line, sizeof(line), f)) {
+        unsigned dest, gw, flags;
+        char ifn[24];
+        if (sscanf(line, "%23s %x %x %x", ifn, &dest, &gw, &flags) != 4 || dest != 0 || !(flags & 2) || gw == 0) continue;
+        struct in_addr a;
+        a.s_addr = gw;                  /* /proc prints the raw network-order word in host order */
+        if (inet_ntop(AF_INET, &a, out, (socklen_t)cap)) found = 0;
+    }
+    fclose(f);
+    return found;
+}
+
+static void op_get_gateway(onvif_call_t *c)
+{
+    char gw[16];
+    if (default_gateway(gw, sizeof(gw)) != 0) {
+        onvif_reply(c, ENV_OPEN "<tds:GetNetworkDefaultGatewayResponse><tds:NetworkGateway/></tds:GetNetworkDefaultGatewayResponse>" ENV_CLOSE);
+    } else {
+        soap_tpl_t *t = onvif_reply(c, ENV_OPEN
+            "<tds:GetNetworkDefaultGatewayResponse><tds:NetworkGateway><tt:IPv4Address>{{gw}}</tt:IPv4Address></tds:NetworkGateway>"
+            "</tds:GetNetworkDefaultGatewayResponse>" ENV_CLOSE);
+        soap_tpl_set(t, "gw", gw);
+    }
+    onvif_send(c);
+}
+
+static void op_get_protocols(onvif_call_t *c)
+{
+    char hp[8], rp[8];
+    snprintf(hp, sizeof(hp), "%d", http_srv_port() > 0 ? http_srv_port() : 80);
+    snprintf(rp, sizeof(rp), "%d", ONVIF_RTSP_PORT);
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
+        "<tds:GetNetworkProtocolsResponse>"
+        "<tds:NetworkProtocols><tt:Name>HTTP</tt:Name><tt:Enabled>true</tt:Enabled><tt:Port>{{hp}}</tt:Port></tds:NetworkProtocols>"
+        "<tds:NetworkProtocols><tt:Name>RTSP</tt:Name><tt:Enabled>true</tt:Enabled><tt:Port>{{rp}}</tt:Port></tds:NetworkProtocols>"
+        "</tds:GetNetworkProtocolsResponse>" ENV_CLOSE);
+    soap_tpl_set(t, "hp", hp);
+    soap_tpl_set(t, "rp", rp);
+    onvif_send(c);
+}
+
+static void op_get_discovery_mode(onvif_call_t *c)
+{
+    onvif_reply(c, ENV_OPEN "<tds:GetDiscoveryModeResponse><tds:DiscoveryMode>Discoverable</tds:DiscoveryMode></tds:GetDiscoveryModeResponse>" ENV_CLOSE);
+    onvif_send(c);
+}
+
+static void op_get_zeroconf(onvif_call_t *c)
+{
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
+        "<tds:GetZeroConfigurationResponse><tds:ZeroConfiguration><tt:InterfaceToken>{{ifn}}</tt:InterfaceToken>"
+        "<tt:Enabled>false</tt:Enabled></tds:ZeroConfiguration></tds:GetZeroConfigurationResponse>" ENV_CLOSE);
+    soap_tpl_set(t, "ifn", onvif_if_name());
     onvif_send(c);
 }
 
@@ -480,6 +607,10 @@ static const onvif_op_t k_ops[] = {
     { "GetNTP", ONVIF_READ, op_get_ntp },
     { "GetDNS", ONVIF_READ, op_get_dns },
     { "GetUsers", ONVIF_READ, op_get_users },
+    { "GetNetworkProtocols", ONVIF_READ, op_get_protocols },
+    { "GetNetworkDefaultGateway", ONVIF_READ, op_get_gateway },
+    { "GetDiscoveryMode", ONVIF_READ, op_get_discovery_mode },
+    { "GetZeroConfiguration", ONVIF_READ, op_get_zeroconf },
     { "SetSystemDateAndTime", ONVIF_WRITE, op_set_time },
     { "SetHostname", ONVIF_WRITE, op_set_hostname },
     { "SetNTP", ONVIF_WRITE, op_set_ntp },

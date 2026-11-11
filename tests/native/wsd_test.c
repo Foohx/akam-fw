@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "wsd.h"
@@ -146,6 +148,13 @@ static void test_rl(void)
     CHECK(ok == WSD_RATE_PER_SEC);  /* burst is capped */
 }
 
+static long long now_ms_t(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 static int count_dir(const char *d)
 {
     int n = 0;
@@ -196,6 +205,73 @@ static unsigned num_after(const char *b, const char *key)
     return p ? (unsigned)strtoul(p + strlen(key), NULL, 10) : 0;
 }
 
+/* Per-source limiter with an injected clock: deterministic, no sleeping. */
+static void test_src_limit(void)
+{
+    const uint32_t A = 0x0100007f, B = 0x0200007f;
+    long long t = 1000000;
+    int ok = 0;
+    for (int i = 0; i < 50; i++) ok += wsd_src_ok(A, t);
+    CHECK(ok == WSD_SRC_RATE);                       /* the burst, nothing more at one instant */
+    CHECK(wsd_src_ok(B, t) == 1);                    /* another address has its own bucket */
+    t += 1000;
+    ok = 0;
+    for (int i = 0; i < 50; i++) ok += wsd_src_ok(A, t);
+    CHECK(ok == WSD_SRC_RATE);                       /* one second refills one burst */
+    t += 200;
+    ok = 0;
+    for (int i = 0; i < 50; i++) ok += wsd_src_ok(A, t);
+    CHECK(ok == 1);                                  /* 200 ms: one token */
+    t += 60000;
+    ok = 0;
+    for (int i = 0; i < 50; i++) ok += wsd_src_ok(A, t);
+    CHECK(ok == WSD_SRC_RATE);                       /* the bucket never exceeds the burst */
+}
+
+/* AppSequence InstanceId: grows at every start, with or without a usable clock. */
+static void test_instance(void)
+{
+    char path[] = "/tmp/wsd_inst_XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    close(fd);
+    unlink(path);
+    unsigned a = wsd_next_instance(path, 0);
+    unsigned b = wsd_next_instance(path, 0);
+    unsigned c = wsd_next_instance(path, 0);
+    CHECK(a == 1 && b == 2 && c == 3);               /* clock unset (1970) on every boot: still increasing */
+    unsigned d = wsd_next_instance(path, 1794314096LL);
+    CHECK(d == 1794314096u);                         /* a valid clock is used when it is ahead */
+    unsigned e = wsd_next_instance(path, 100);       /* then the clock is lost again at the next boot */
+    CHECK(e == d + 1);
+    unsigned f = wsd_next_instance(path, 1794314090LL);   /* clock set a little earlier than before: never backwards */
+    CHECK(f == e + 1);
+    FILE *fp = fopen(path, "r");
+    char buf[32] = "";
+    CHECK(fp && fgets(buf, sizeof(buf), fp) && strtoul(buf, NULL, 10) == f);
+    if (fp) fclose(fp);
+    struct stat st;
+    CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0644);
+    unlink(path);
+    char junk[300];
+    snprintf(junk, sizeof(junk), "%s", path);
+    fp = fopen(junk, "w");
+    fputs("not a number\n", fp);
+    fclose(fp);
+    CHECK(wsd_next_instance(junk, 0) == 1);          /* garbage counts as 0 */
+    fp = fopen(junk, "w");
+    fputs("99999999999999999999\n", fp);
+    fclose(fp);
+    CHECK(wsd_next_instance(junk, 0) == 1);          /* overflowing counter is treated as garbage, not wrapped to 0 */
+    unlink(junk);
+    char nope[] = "/nonexistent-dir/wsd_instance";
+    CHECK(wsd_next_instance(nope, 0) == 1);          /* an unwritable path does not break the start */
+    CHECK(wsd_next_instance(NULL, 0) == 1 && wsd_next_instance(NULL, 1794314096LL) == 1794314096u);
+    char tmp[310];
+    snprintf(tmp, sizeof(tmp), "%s.new", path);
+    CHECK(access(tmp, F_OK) != 0);                   /* no temp file left behind */
+}
+
 static void test_socket(void)
 {
     int fds0 = count_dir("/proc/self/fd"), thr0 = count_dir("/proc/self/task");
@@ -220,6 +296,7 @@ static void test_socket(void)
 
     /* matching probe: unicast reply to the sender, RelatesTo = MessageID */
     const char *probe = ENVP("urn:uuid:probe-1", "<d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe>");
+    long long t_first = now_ms_t();
     tx(client, port, probe, strlen(probe));
     n = rx(client, b, sizeof(b), 1500);
     CHECK(n > 0 && strstr(b, "<d:ProbeMatches>") && strstr(b, "<a:RelatesTo>urn:uuid:probe-1</a:RelatesTo>"));
@@ -247,11 +324,15 @@ static void test_socket(void)
     n = rx(client, b, sizeof(b), 1500);
     CHECK(n > 0 && strstr(b, "<d:ResolveMatches>") && strstr(b, "<a:RelatesTo>urn:uuid:r1</a:RelatesTo>"));
 
-    /* flood: replies are bounded (queue of 8, 20 tokens/s) */
+    /* flood: replies are bounded (queue of 8, 20 tokens/s, WSD_SRC_RATE per source and second). The bucket refills
+     * with real time, so the bound is the burst plus what the elapsed time since the first probe of this client
+     * can have refilled (not a fixed number: a slow host would make that flaky). */
     for (int i = 0; i < 200; i++) tx(client, port, probe, strlen(probe));
     int got = 0;
     while (rx(client, b, sizeof(b), 900) > 0) got++;
-    CHECK(got >= 1 && got <= WSD_SRC_RATE + 1);   /* per-source bucket */
+    long long elapsed_ms = now_ms_t() - t_first;
+    CHECK(got >= 1 && got <= WSD_SRC_RATE + (WSD_SRC_RATE * elapsed_ms) / 1000 + 1);
+    CHECK(got <= 2 * WSD_SRC_RATE + 1 || elapsed_ms > 1000);   /* and a fast run really is cut off near the burst */
 
     wsd_stop();
     n = rx(notify, b, sizeof(b), 500);
@@ -260,7 +341,10 @@ static void test_socket(void)
     close(notify);
     close(client);
     CHECK(count_dir("/proc/self/fd") == fds0);
-    CHECK(count_dir("/proc/self/task") == thr0);
+    /* the joined thread can take a moment to leave /proc/self/task */
+    int thr_ok = 0;
+    for (int i = 0; i < 200 && !(thr_ok = count_dir("/proc/self/task") == thr0); i++) usleep(10000);
+    CHECK(thr_ok);
 
     CHECK(wsd_start(&info) == 0);   /* restart */
     wsd_stop();
@@ -275,6 +359,8 @@ int main(void)
     test_match();
     test_build();
     test_rl();
+    test_src_limit();
+    test_instance();
     test_socket();
     if (g_failed) { printf("%d check(s) failed\n", g_failed); return 1; }
     printf("wsd_test: all passed\n");

@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include "md5.h"
 #include "rtsp_auth.h"
@@ -437,6 +440,26 @@ static void test_reload(void)
     put_creds(USER, PASSWORD);
     CHECK(rtsp_auth_db_refresh(&db) == RTSP_AUTH_ON, "repaired file -> ON again");
 
+    {   /* an unchanged old file is not opened again: a content change that leaves inode, size and mtime alone is not seen */
+        struct stat st;
+        CHECK(stat(path, &st) == 0, "stat");
+        struct timeval old[2] = { { st.st_mtime - 3600, 0 }, { st.st_mtime - 3600, 0 } };
+        CHECK(utimes(path, old) == 0, "age the file");
+        CHECK(rtsp_auth_db_refresh(&db) == RTSP_AUTH_ON, "aged file read");
+        int fd = open(path, O_WRONLY);
+        CHECK(fd >= 0 && write(fd, "!!!!!!!", 7) == 7, "overwrite in place");
+        close(fd);
+        CHECK(utimes(path, old) == 0, "restore the old mtime");
+        CHECK(rtsp_auth_db_refresh(&db) == RTSP_AUTH_ON, "same inode, size and mtime: the cached answer, no re-read");
+        struct timeval old2[2] = { { st.st_mtime - 1800, 0 }, { st.st_mtime - 1800, 0 } };
+        CHECK(utimes(path, old2) == 0, "touch the file");
+        CHECK(rtsp_auth_db_refresh(&db) == RTSP_AUTH_BROKEN, "a changed mtime makes it read again");
+        put_creds(USER, PASSWORD);
+        CHECK(rtsp_auth_db_refresh(&db) == RTSP_AUTH_ON, "a file modified within the last 2 s is always read again");
+        put_file("");
+        CHECK(rtsp_auth_db_refresh(&db) == RTSP_AUTH_BROKEN, "...even when the size changes at once");
+        put_creds(USER, PASSWORD);
+    }
     unlink(path);
     rtsp_auth_conn_init(&d);
     req(&d, "DESCRIBE", NULL);
