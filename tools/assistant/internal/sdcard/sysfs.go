@@ -148,6 +148,26 @@ func (s Sys) holders(name string, nodes []string) string {
 	return ""
 }
 
+// loopBacked reports a loop device whose backing file is one of the nodes of the disk.
+func (s Sys) loopBacked(nodes []string) string {
+	es, _ := os.ReadDir(filepath.Join(s.SysRoot, "class", "block"))
+	for _, e := range es {
+		if !strings.HasPrefix(e.Name(), "loop") {
+			continue
+		}
+		bf := readStr(filepath.Join(s.SysRoot, "class", "block", e.Name(), "loop", "backing_file"))
+		if !strings.HasPrefix(bf, "/dev/") {
+			continue
+		}
+		for _, n := range nodes {
+			if filepath.Base(bf) == n {
+				return fmt.Sprintf("%s is the backing device of %s", n, e.Name())
+			}
+		}
+	}
+	return ""
+}
+
 func (s Sys) onDisk(m mountEnt, nodes []string, majmins map[string]bool) bool {
 	if strings.HasPrefix(m.source, "/dev/") {
 		b := filepath.Base(m.source)
@@ -156,7 +176,7 @@ func (s Sys) onDisk(m mountEnt, nodes []string, majmins map[string]bool) bool {
 				return true
 			}
 		}
-		return false
+		// a source named by a link (/dev/disk/by-uuid/...) is caught by its device number below
 	}
 	return m.majmin != "" && !strings.HasPrefix(m.majmin, "0:") && majmins[m.majmin]
 }
@@ -217,6 +237,9 @@ func (s Sys) Check(dev string) (*Candidate, error) {
 		f.Close()
 	}
 	if why := s.holders(name, nodes); why != "" {
+		return nil, fmt.Errorf("%s is part of a storage stack (%s)", dev, why)
+	}
+	if why := s.loopBacked(nodes); why != "" {
 		return nil, fmt.Errorf("%s is part of a storage stack (%s)", dev, why)
 	}
 	// the repository, home, working and temp directories must not live on this disk

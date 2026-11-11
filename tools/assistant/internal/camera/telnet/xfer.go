@@ -271,7 +271,7 @@ func (x *Xfer) getOnce(part, q string, port int, size int64, hash string) error 
 			return err
 		}
 	}
-	if err := x.recv(port, part); err != nil {
+	if err := x.recv(port, part, size); err != nil {
 		x.warn(fmt.Sprintf("could not read the file from the camera on port %d.", port))
 		x.S.Close()
 		return err
@@ -289,7 +289,8 @@ func (x *Xfer) getOnce(part, q string, port int, size int64, hash string) error 
 	return nil
 }
 
-func (x *Xfer) recv(port int, out string) error {
+// recv reads until the camera closes; more than max bytes is refused (a stray sender cannot fill the disk).
+func (x *Xfer) recv(port int, out string, max int64) error {
 	c, err := x.dial(port)
 	if err != nil {
 		return err
@@ -301,10 +302,14 @@ func (x *Xfer) recv(port int, out string) error {
 	}
 	defer f.Close()
 	buf := make([]byte, 64*1024)
+	var total int64
 	for {
 		_ = c.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, err := c.Read(buf)
 		if n > 0 {
+			if total += int64(n); total > max {
+				return errors.New("the camera sent more than the expected size")
+			}
 			if _, werr := f.Write(buf[:n]); werr != nil {
 				return werr
 			}

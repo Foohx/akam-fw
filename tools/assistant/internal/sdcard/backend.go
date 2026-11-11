@@ -91,7 +91,7 @@ func (s *System) elevator() ([]string, error) {
 // password is in the request only: never in argv, never in the environment).
 func (s *System) call(c *Candidate, req Request) (Response, error) {
 	if !s.NeedsElevation(c) {
-		return Helper{Sys: s.Sys}.Handle(req), nil
+		return Helper{Sys: s.Sys, Progress: s.Stderr}.Handle(req), nil
 	}
 	pre, err := s.elevator()
 	if err != nil {
@@ -103,6 +103,7 @@ func (s *System) call(c *Candidate, req Request) (Response, error) {
 			return Response{}, err
 		}
 	}
+	req.GuardPaths = s.Sys.GuardPaths
 	body, err := json.Marshal(req)
 	if err != nil {
 		return Response{}, err

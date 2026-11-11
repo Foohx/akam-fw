@@ -31,7 +31,7 @@ func makeUI(o *cli.Options, st cli.Streams, log *state.Log, secrets *state.Secre
 func main() {
 	// The privileged card helper: nothing else runs in this mode (no state directory, no lock, no UI).
 	if len(os.Args) == 2 && os.Args[1] == "sd-helper" {
-		os.Exit(sdcard.HelperMain(os.Stdin, os.Stdout, sdcard.Helper{Sys: sdcard.RealSys()}))
+		os.Exit(sdcard.HelperMain(os.Stdin, os.Stdout, sdcard.Helper{Sys: sdcard.RealSys(), Progress: os.Stderr}))
 	}
 	os.Exit(cli.Run(os.Args[1:], cli.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, version, cli.Hooks{UI: makeUI}))
 }

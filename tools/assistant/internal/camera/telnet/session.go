@@ -18,6 +18,8 @@
 package telnet
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -31,6 +33,7 @@ import (
 const (
 	MaxCmd     = 350
 	MaxOut     = 1 << 20
+	MaxLine    = 64 << 10 // longest line kept (the rest of a longer one is dropped)
 	DefTimeout = 30 * time.Second
 )
 
@@ -63,8 +66,11 @@ type Config struct {
 	Manual ManualHandler
 	// ForceManual starts in manual mode (--manual-telnet).
 	ForceManual bool
-	// NoNegotiate drops IAC negotiation bytes silently (no reply), as the bash version does.
-	NoNegotiate bool
+	// Negotiate answers RFC 854 negotiation requests (refuse everything except ECHO and SGA). The default
+	// is false: negotiation bytes are dropped silently and nothing is answered, which is what the bash
+	// wizard does and what was validated on hardware. Only the hidden --telnet-negotiate option (or
+	// AKAM_TELNET_NEGOTIATE=1 in a test build) turns it on.
+	Negotiate bool
 	// Warn shows a warning to the user; Log writes a line to the log.
 	Warn func(string)
 	Log  func(format string, a ...any)
@@ -129,6 +135,16 @@ func (s *Session) warn(m string) {
 	}
 }
 
+// newNonce is the unguessable part of the end markers: the camera's output must not be able to
+// forge a marker for a command that is still running.
+func newNonce() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	return strconv.FormatUint(100000000000000+binary.BigEndian.Uint64(b[:])%900000000000000, 10) // 15 digits, like the bash nonce
+}
+
 // Host and Port are the camera's address.
 func (s *Session) Host() string { return s.cfg.Host }
 func (s *Session) Port() int    { return s.cfg.Port }
@@ -143,7 +159,7 @@ func (s *Session) IsOpen() bool { return s.open }
 func (s *Session) Open() error {
 	s.Close()
 	s.part, s.rx, s.iac = "", nil, 0
-	s.nonce = strconv.Itoa(int(time.Now().UnixNano()%900000) + 100000)
+	s.nonce = newNonce()
 	if s.manual {
 		return nil
 	}
@@ -291,7 +307,7 @@ const (
 // reply answers a negotiation request (RFC 854): everything is refused except what a BusyBox telnetd
 // needs: it may echo and suppress go-ahead. Each answer is sent once.
 func (s *Session) reply(verb, opt byte) {
-	if s.cfg.NoNegotiate || s.conn == nil {
+	if !s.cfg.Negotiate || s.conn == nil {
 		return
 	}
 	var out byte
@@ -376,7 +392,10 @@ func (s *Session) read(tmo time.Duration, prompt string) readStatus {
 				}
 				line = ""
 			default:
-				line += string([]byte{c})
+				// a camera that never ends a line must not grow this without bound
+				if len(line) < MaxLine {
+					line += string([]byte{c})
+				}
 			}
 		case 1:
 			switch c {

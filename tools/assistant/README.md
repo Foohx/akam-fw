@@ -85,9 +85,11 @@ after two failed commands the session switches to manual mode on its own.
 (at most 350 bytes, one line), wrapped as `echo "__AKAM_BEG_<nonce>_<n>_"x; CMD; echo "__AKAM_DONE_<nonce>_<n>:"$?"__"`
 so that the echo of the typed line never matches a marker; everything before the BEG marker is dropped; CR and
 terminal escapes (BusyBox `ls` colours, `ESC[6n`) are stripped; progress bars of `flash_tool` feed the progress line;
-the inactivity timeout is 30 s. RFC 854 negotiation: every request is refused (WONT/DONT) except echo and
-suppress-go-ahead, each answer once; the bash version never answered, so if a real camera behaves differently
-this has to be seen on hardware (`AKAM_TELNET_SILENT=1` in a test build restores the silent behaviour). Manual mode
+the inactivity timeout is 30 s. RFC 854 negotiation: by default every request is dropped silently and never
+answered, exactly like the bash wizard (validated on hardware). The refuse-everything-except-echo/SGA behaviour
+(WONT/DONT, each answer once) exists only behind the hidden `--telnet-negotiate` option (or `AKAM_TELNET_NEGOTIATE=1`
+in a test build) until it has been seen to work on a real camera. The marker nonce comes from `crypto/rand`, a line
+is kept up to 64 KiB, and a transfer from the camera is cut off at the announced size. Manual mode
 shows the exact command and takes the pasted output: the program never invents an output, and `YES` is only sent
 through `sendYES`, which needs the `flash.Confirmation` of an explicit yes for that image's md5 (tested: any other
 answer makes the script receive `NO`, a missing terminal sends nothing).

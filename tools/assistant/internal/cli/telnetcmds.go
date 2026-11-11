@@ -97,8 +97,8 @@ func (a *App) newTelnet(ip string) *telnet.Session {
 	return telnet.New(telnet.Config{
 		Host: ip, Port: a.Env.PortTelnet, Timeout: a.camshTimeout(),
 		Manual: manualUI{a}, ForceManual: a.Opt.ManualTelnet,
-		NoNegotiate: testhook.Env("AKAM_TELNET_SILENT") == "1",
-		Warn:        a.UI.Warn, Log: a.Log.Line,
+		Negotiate: a.Opt.TelnetNegotiate || testhook.Env("AKAM_TELNET_NEGOTIATE") == "1",
+		Warn:      a.UI.Warn, Log: a.Log.Line,
 	})
 }
 

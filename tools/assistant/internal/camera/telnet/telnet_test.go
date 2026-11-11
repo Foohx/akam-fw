@@ -146,6 +146,15 @@ func TestClosedSession(t *testing.T) {
 }
 
 func TestNegotiationRefusedExceptEchoAndSGA(t *testing.T) {
+	negotiationReplies(t, true)
+}
+
+// The default is what the bash wizard does on hardware: never answer a negotiation request.
+func TestNegotiationSilentByDefault(t *testing.T) {
+	negotiationReplies(t, false)
+}
+
+func negotiationReplies(t *testing.T, negotiate bool) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +178,7 @@ func TestNegotiationRefusedExceptEchoAndSGA(t *testing.T) {
 		}
 		got <- all
 	}()
-	s := telnet.New(telnet.Config{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, Timeout: 400 * time.Millisecond})
+	s := telnet.New(telnet.Config{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, Timeout: 400 * time.Millisecond, Negotiate: negotiate})
 	if err := s.Open(); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +187,12 @@ func TestNegotiationRefusedExceptEchoAndSGA(t *testing.T) {
 	_ = s.Finish(400 * time.Millisecond) // the fake never answers: only the replies matter
 	b := <-got
 	want := []byte{255, 252, 1, 255, 252, 31, 255, 253, 1, 255, 253, 3, 255, 254, 24}
+	if !negotiate {
+		if strings.Contains(string(b), "\xff") {
+			t.Errorf("default must stay silent, got % x", b)
+		}
+		return
+	}
 	if !strings.Contains(string(b), string(want)) {
 		t.Errorf("replies % x, want % x inside", b, want)
 	}

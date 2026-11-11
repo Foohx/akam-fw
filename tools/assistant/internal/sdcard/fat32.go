@@ -277,7 +277,14 @@ func FormatMBR(dev Device, size int64) (off, psize int64, err error) {
 	binary.LittleEndian.PutUint32(e[8:], partStartLBA)
 	binary.LittleEndian.PutUint32(e[12:], uint32(psecs))
 	mbr[510], mbr[511] = 0x55, 0xAA
-	if _, err := dev.WriteAt(mbr, 0); err != nil {
+	// Like `wipefs -a`: the first MiB (an old GPT header and entries, other signatures) and the last
+	// 64 KiB (the backup GPT) must not survive under the new partition table.
+	head := make([]byte, partStartLBA*sectorSize)
+	copy(head, mbr)
+	if _, err := dev.WriteAt(head, 0); err != nil {
+		return 0, 0, err
+	}
+	if _, err := dev.WriteAt(make([]byte, 64<<10), total*sectorSize-64<<10); err != nil {
 		return 0, 0, err
 	}
 	return partStartLBA * sectorSize, psecs * sectorSize, nil

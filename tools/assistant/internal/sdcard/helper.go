@@ -36,6 +36,9 @@ type Request struct {
 	Token  string      `json:"token,omitempty"` // Candidate.Ident of the confirmed disk
 	Files  []File      `json:"files,omitempty"` // prepare: the whole tree
 	Verify *VerifySpec `json:"verify,omitempty"`
+	// GuardPaths are the caller's home, working and temp directories: under sudo or pkexec the helper's
+	// own environment names root's, so the caller's are passed along and must not sit on the card.
+	GuardPaths []string `json:"guard_paths,omitempty"`
 	// ImageFile: Device is a regular file (tests only; refused unless built with -tags akamtest).
 	ImageFile bool `json:"image_file,omitempty"`
 }
@@ -55,6 +58,8 @@ type Helper struct {
 	Unmount func(point string) error
 	// Rescan asks the kernel to re-read the partition table (nil: BLKRRPART).
 	Rescan func(f *os.File)
+	// Progress receives the progress lines of a wipe (nil: silent).
+	Progress io.Writer
 }
 
 func fail(format string, a ...any) Response { return Response{Error: fmt.Sprintf(format, a...)} }
@@ -137,6 +142,7 @@ func (h Helper) Handle(req Request) Response {
 	if req.Device == "" {
 		return fail("no device")
 	}
+	h.Sys.GuardPaths = append(append([]string{}, h.Sys.GuardPaths...), req.GuardPaths...)
 	t, err := h.open(req)
 	if err != nil {
 		return fail("%v", err)
@@ -149,6 +155,12 @@ func (h Helper) Handle(req Request) Response {
 		return h.verify(t, req)
 	}
 	return h.wipe(t)
+}
+
+func (h Helper) say(format string, a ...any) {
+	if h.Progress != nil {
+		fmt.Fprintf(h.Progress, format+"\n", a...)
+	}
 }
 
 func (h Helper) prepare(t *target, req Request) Response {
@@ -204,7 +216,18 @@ func (h Helper) verify(t *target, req Request) Response {
 func (h Helper) wipe(t *target) Response {
 	const blk = 4 << 20
 	zero := make([]byte, blk)
+	last := -1
 	for off := int64(0); off < t.size; off += blk {
+		// progress every 5 %, and a sync every 256 MiB so that the figure is what reached the card
+		if pct := int(off * 100 / t.size); pct/5 != last {
+			last = pct / 5
+			h.say("wipe: %d%%", pct)
+		}
+		if off > 0 && off%(256<<20) == 0 {
+			if err := t.f.Sync(); err != nil {
+				return fail("sync failed at %d: %v", off, err)
+			}
+		}
 		n := int64(blk)
 		if t.size-off < n {
 			n = t.size - off
@@ -244,7 +267,10 @@ func max64(a, b int64) int64 {
 func HelperMain(in io.Reader, out io.Writer, h Helper) int {
 	var req Request
 	lr := &io.LimitedReader{R: in, N: MaxRequest + 1}
-	if err := json.NewDecoder(lr).Decode(&req); err != nil || lr.N <= 0 {
+	dec := json.NewDecoder(lr)
+	dec.DisallowUnknownFields()
+	// exactly one document: an unknown field, a second document or anything after it is refused
+	if err := dec.Decode(&req); err != nil || lr.N <= 0 || dec.More() {
 		_ = json.NewEncoder(out).Encode(fail("bad request"))
 		return 2
 	}
