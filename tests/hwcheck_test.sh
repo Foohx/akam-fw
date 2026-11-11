@@ -464,6 +464,23 @@ hasnt "allow-list: syslogd, klogd, watchdog, wrapper, akam_*, drop_caches, sleep
 hasnt "allow-list: msgserver/cmdserver are not FAIL" '^FAIL +.*(msgserver|cmdserver)' "$WORK/t35.out"
 has "allow-list: summary counts what needs review" 'processes, 3 to review' "$WORK/t35.out"
 
+# process allow-list without strings/paste (the camera's BusyBox may lack them): tr is the fallback; with no tool
+# at all the check must not pass vacuously
+BASEBIN_FULL=$BASEBIN
+BASEBIN=$WORK/basebin_notools
+mkdir -p "$BASEBIN"
+for t in cat head tail sed cut grep wc ls rm cp mkdir uname sh; do
+    p=$(command -v "$t") && ln -s "$p" "$BASEBIN/$t"
+done
+run t35n "$R35" "$WORK/s35n"
+has "allow-list: no strings/paste/tr: not a vacuous PASS" '^FAIL +process allow-list could not be checked' "$WORK/t35n.out"
+hasnt "allow-list: no tool: no 'all 0 processes' pass" 'all 0 processes' "$WORK/t35n.out"
+p=$(command -v tr) && ln -s "$p" "$BASEBIN/tr"
+run t35t "$R35" "$WORK/s35n"
+has "allow-list: tr fallback still finds the strangers" '^WARN +unexpected process: mdnsd \(pid 142\)' "$WORK/t35t.out"
+has "allow-list: tr fallback names the script (argv1)" 'processes, 3 to review' "$WORK/t35t.out"
+BASEBIN=$BASEBIN_FULL
+
 # 31b. wakeups per second from the threads' voluntary context switches (G10)
 R36=$WORK/r36; mkroot "$R36"
 for tid in 201 202 203; do

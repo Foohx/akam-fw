@@ -109,6 +109,18 @@ int main(int argc, char **argv)
     CHECK(video_ctl_set("video.gop_cfg", "3", msg, sizeof(msg)) == 0, "SET gop 3");
     video_cfg_read(&c);
     CHECK(c.bitrate == 800 && c.fps == 10 && c.gop_s == 3, "the three keys are in the file together");
+    {
+        /* the same value again must not rewrite the file (atomic write = new inode) */
+        struct stat s1, s2;
+        stat(VIDEO_CFG_PATH, &s1);
+        CHECK(video_ctl_set("video.gop_cfg", "3", msg, sizeof(msg)) == 0 && !strncmp(msg, "OK ", 3), "SET to the same value: OK");
+        stat(VIDEO_CFG_PATH, &s2);
+        CHECK(s1.st_ino == s2.st_ino && s1.st_mtime == s2.st_mtime, "an unchanged SET does not write the flash");
+        CHECK(video_ctl_set("video.gop_cfg", "2", msg, sizeof(msg)) == 0, "a changed SET writes");
+        stat(VIDEO_CFG_PATH, &s2);
+        CHECK(s1.st_ino != s2.st_ino, "a changed value is a new file");
+        CHECK(video_ctl_set("video.gop_cfg", "3", msg, sizeof(msg)) == 0, "back to 3");
+    }
     CHECK(video_ctl_set("video.fps_cfg", "12", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4), "SET fps 12 refused");
     CHECK(video_ctl_set("video.bitrate_cfg", "100", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4), "SET bitrate 100 refused");
     CHECK(video_ctl_set("video.bitrate_cfg", "9e2", msg, sizeof(msg)) == 1, "SET bitrate 9e2 refused");

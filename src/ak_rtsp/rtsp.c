@@ -30,6 +30,7 @@
 #include "net_tx.h"
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
+#include "control.h"
 #include "rtsp_busy.h"
 #include "rtsp_auth.h"
 #include "rtsp_sdp.h"
@@ -848,8 +849,9 @@ static int send_video_frame(Client *client)
                                         VIDEO_CLOCK_RATE);
 
     static int frame_count = 0;
-    /* Always log I-frames; log a heartbeat every ~10s (150 frames at 15fps) */
-    if (req.frame_type_raw == FRAME_TYPE_I || frame_count % 150 == 0)
+    /* Per-frame lines only while the 8091 DEBUG mode is on (about 2 lines per 2 s otherwise, for ever):
+     * every I-frame, and a heartbeat every ~10s (150 frames at 15fps) */
+    if ((req.frame_type_raw == FRAME_TYPE_I || frame_count % 150 == 0) && control_debug_on())
         printf("[ak_rtsp] frame#%d type=%s len=%d ts=%u\n",
                frame_count,
                req.frame_type_raw == FRAME_TYPE_I ? "I" :
@@ -860,7 +862,7 @@ static int send_video_frame(Client *client)
     static int64_t prev_cap_us;
     static unsigned prev_cap_frames;
     if (g_vclock.frames - prev_cap_frames >= 150) {
-        if (prev_cap_us != 0)
+        if (prev_cap_us != 0 && control_debug_on())
             printf("[ak_rtsp] vclock: %.3f fps over the last %u frames, "
                    "capture estimate trails the fetch by %lld us\n",
                    (g_vclock.frames - prev_cap_frames) * 1e6 /
@@ -1417,8 +1419,6 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             break;
         }
 
-        rtsp_busy_service(&busy, g_busy_listen_fd, &pfds[2], rtp_mono_us() / 1000);
-
         if (poll_ret > 0 && (pfds[1].revents & POLLIN)) bc_udp_receive(&client, &idle);
 
         if (poll_ret > 0 && (pfds[0].revents != 0)) {
@@ -1463,6 +1463,12 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                 client.drop_reason = "TCP write failed or stalled";
             if (client.drop_reason) break;
         }
+
+        /* Second clients: only after the current client's socket was handled, and never in a round where
+         * the session ends. A newcomer that connects right after this client closed stays in the listen
+         * backlog for main()'s accept(); serving it here would put it in a busy slot that the end of
+         * the session closes without a word. */
+        rtsp_busy_service(&busy, g_busy_listen_fd, &pfds[2], rtp_mono_us() / 1000);
 
         /* Before PLAY the single slot must not be held by a silent or stuck
          * client. While playing there is no idleness drop (see rtsp_idle.h). */

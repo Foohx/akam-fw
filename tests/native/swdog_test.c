@@ -1,5 +1,8 @@
 /* Host test of the decision logic of src/ak_rtsp/swdog.c on an injected clock. Build/run: tests/swdog_test.sh */
+#include <signal.h>
 #include <stdio.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "swdog.h"
 
 static int fails;
@@ -74,6 +77,27 @@ int main(void)
     swdog_st_frame(&s, t0 + S(1));
     CHECK(swdog_decide(&s, t0 + S(20), NULL) == SWDOG_OK, "across the 2^32 ms wrap: 19 s since a frame is ok");
     CHECK(swdog_decide(&s, t0 + S(32), NULL) == SWDOG_VIDEO_STALL, "across the wrap: 31 s since a frame stalls");
+
+    /* M9: init deadline. A child that never reaches swdog_start() is killed by SIGALRM; one that does is not. */
+    {
+        pid_t p = fork();
+        if (p == 0) { swdog_init_deadline(1); for (;;) pause(); }
+        int st = 0;
+        waitpid(p, &st, 0);
+        CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGALRM, "init deadline expires: the process is killed by SIGALRM");
+
+        p = fork();
+        if (p == 0) {
+            swdog_init_deadline(1);
+            swdog_start(NULL);   /* cancels the alarm; the first frame is allowed 60 s after arming */
+            sleep(3);
+            _exit(0);
+        }
+        waitpid(p, &st, 0);
+        CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "swdog_start() cancels the init deadline");
+        CHECK(SWDOG_INIT_DEADLINE_S >= 60 && SWDOG_INIT_DEADLINE_S < SWDOG_START_GRACE_MS / 1000 * 4,
+              "the deadline is far above a normal init yet bounded");
+    }
 
     printf("%s\n", fails ? "swdog_test: FAILED" : "swdog_test: all passed");
     return fails ? 1 : 0;

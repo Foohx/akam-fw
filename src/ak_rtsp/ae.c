@@ -7,6 +7,7 @@
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ae.h"
+#include "control.h"
 #include "swdog.h"
 #include "video_cfg.h"
 #include "imgq.h"
@@ -43,6 +44,8 @@
 
 #define AE_TICK_US        66000 /* ~15Hz — matches anyka_ipc's GET_EXPOSURE tick rate */
 #define AE_WINDOW_TICKS       15 /* ~1s window (15 ticks @ ~66ms) for min/max/peak stats */
+#define AE_QUIET_SUMMARY_WINDOWS 60 /* without DEBUG: one [ae] window line per this many windows */
+#define AE_QUIET_HUNTING_WINDOWS 10 /* ... or a HUNTING one, at most this often */
 /* NOTE (stock capture, specs/08): pub[0] is the longest exposure (= the sensor VTS, 2284 day / 3426 night) and
  * pub[1] the SHORTEST (2 lines in the file): what ae_tuning_t calls exp_max is really exp_time_min; its
  * default 2 is the stock value, a larger one only raises the shortest exposure (brighter, never grainier). */
@@ -269,6 +272,7 @@ static void *ae_loop(void *arg)
     uint32_t exp_min = 0xffffffffu, exp_max = 0;
     int      reversals = 0;
     int      dir = 0; /* -1 falling, 0 unknown/flat, +1 rising */
+    int      since_log = AE_QUIET_SUMMARY_WINDOWS; /* the first window is logged */
 
     (void)arg;
     printf("[ae] hardware AE tick started (~15Hz GET_EXPOSURE, no writes, no suspend — "
@@ -333,11 +337,20 @@ static void *ae_loop(void *arg)
 
         uint32_t priv_exp = ((uint32_t *)expo)[1];
 
-        printf("[ae] window n=%2d  lum[min=%3d max=%3d last=%3d]  "
-               "hw_exp[min=%5u max=%5u]  reversals=%d  sgain=%.1fx isp=%.1fx priv_exp=%u%s\n",
-               win_n, lum_min, lum_max, lum_last, exp_min, exp_max, reversals,
-               hw_sgain/256.0f, hw_isp/256.0f, priv_exp,
-               (reversals >= 4 || lum_max - lum_min >= 100) ? "  <-- HUNTING" : "");
+        /* Log volume (the serial console and the log pipe cost CPU and wakeups): one line per ~1 s window only
+         * while the 8091 DEBUG mode is on (tuning); otherwise one summary every 60 windows, and a HUNTING window
+         * at most every 10 s. */
+        int hunting = reversals >= 4 || lum_max - lum_min >= 100;
+        since_log++;
+        if (control_debug_on() || since_log >= AE_QUIET_SUMMARY_WINDOWS ||
+            (hunting && since_log >= AE_QUIET_HUNTING_WINDOWS)) {
+            since_log = 0;
+            printf("[ae] window n=%2d  lum[min=%3d max=%3d last=%3d]  "
+                   "hw_exp[min=%5u max=%5u]  reversals=%d  sgain=%.1fx isp=%.1fx priv_exp=%u%s\n",
+                   win_n, lum_min, lum_max, lum_last, exp_min, exp_max, reversals,
+                   hw_sgain/256.0f, hw_isp/256.0f, priv_exp,
+                   hunting ? "  <-- HUNTING" : "");
+        }
 
         win_n = 0; lum_min = 256; lum_max = -1; lum_prev = -1;
         exp_min = 0xffffffffu; exp_max = 0; reversals = 0; dir = 0;

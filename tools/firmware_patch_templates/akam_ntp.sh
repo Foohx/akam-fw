@@ -107,6 +107,7 @@ clock_set() {
 # helper_pid: sets HPID to the pid of a running `run` (from the lock), empty when none.
 helper_pid() {
     HPID=
+    _lp= # a failed read (no pid file) must not leave a stale value from an earlier call
     read -r _lp 2>/dev/null <"$LOCKDIR/pid"
     case "$_lp" in '' | *[!0-9]*) return 1 ;; esac
     kill -0 "$_lp" 2>/dev/null || return 1
@@ -133,8 +134,14 @@ sync_once() {
     _pre=
     command -v nice >/dev/null 2>&1 && _pre="nice -n 10"
     if command -v "$TIMEOUT_BIN" >/dev/null 2>&1; then
+        # In the background and waited for: a TERM interrupts `wait` at once and on_term() can stop the child.
         # shellcheck disable=SC2086  # word list on purpose: no server name contains a space or starts with -
-        $_pre "$TIMEOUT_BIN" "$SYNC_TIMEOUT" "$NTPD" -n -q $_args >/dev/null 2>&1
+        $_pre "$TIMEOUT_BIN" "$SYNC_TIMEOUT" "$NTPD" -n -q $_args >/dev/null 2>&1 &
+        _np=$!
+        wait "$_np"
+        _rc=$?
+        _np=
+        return "$_rc"
     else
         # No `timeout` applet (BusyBox 1.30.1 may lack it): ntpd -q can wait forever on an unreachable server
         # (or a name that does not resolve), so a shell watchdog kills it after SYNC_TIMEOUT seconds.
@@ -146,13 +153,27 @@ sync_once() {
             if [ "$_t" -ge "$SYNC_TIMEOUT" ]; then
                 kill "$_np" 2>/dev/null
                 wait "$_np" 2>/dev/null
+                _np=
                 return 1
             fi
             sleep 1
             _t=$((_t + 1))
         done
         wait "$_np"
+        _rc=$?
+        _np=
+        return "$_rc"
     fi
+}
+
+# on_term: TERM/INT/HUP while a pass or the 6 h wait runs. The children (ntpd, sleep) would otherwise outlive us:
+# an `ntpd -n -q` against an unreachable server never ends by itself.
+_np=
+_slp=
+on_term() {
+    [ -z "$_np" ] || kill "$_np" 2>/dev/null
+    [ -z "$_slp" ] || kill "$_slp" 2>/dev/null
+    exit 0
 }
 
 # retry_wait N: seconds to wait after the Nth consecutive failed pass (1-based).
@@ -183,7 +204,7 @@ do_run() {
     take_lock || exit 0
     # remove the lock only while it is still ours (stop_helper may have removed it and a new helper taken it)
     trap release_lock EXIT
-    trap 'exit 0' INT TERM HUP
+    trap on_term INT TERM HUP
     log "start (pid $$), servers: $SERVERS"
     _fails=0
     _n=0
@@ -206,7 +227,9 @@ do_run() {
         # sleep in the background and wait for it: a TERM from `off`/`set` interrupts `wait` at once, while a
         # foreground sleep would delay the trap by up to 6 hours
         sleep "$WAIT" &
-        wait $!
+        _slp=$!
+        wait "$_slp"
+        _slp=
     done
     return 0
 }

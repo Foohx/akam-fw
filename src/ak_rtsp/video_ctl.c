@@ -25,6 +25,14 @@ static int pending(const video_cfg_t *saved)
     return saved->bitrate != a->bitrate || saved->fps != a->fps || saved->gop_s != a->gop_s;
 }
 
+static void fmt_key(const video_cfg_t *c, const char *key, char *out, size_t cap)
+{
+    if (!strcmp(key, "video.bitrate_cfg")) snprintf(out, cap, "%s=%d", key, c->bitrate);
+    else if (!strcmp(key, "video.fps_cfg")) snprintf(out, cap, "%s=%d", key, c->fps);
+    else if (!strcmp(key, "video.gop_cfg")) snprintf(out, cap, "%s=%d", key, c->gop_s);
+    else snprintf(out, cap, "%s=%d", key, pending(c));
+}
+
 int video_ctl_get(const char *key, char *out, size_t cap)
 {
     if (!is_ours(key)) return -1;
@@ -32,10 +40,7 @@ int video_ctl_get(const char *key, char *out, size_t cap)
     pthread_mutex_lock(&g_lock);
     video_cfg_read(&c);
     pthread_mutex_unlock(&g_lock);
-    if (!strcmp(key, "video.bitrate_cfg")) snprintf(out, cap, "%s=%d", key, c.bitrate);
-    else if (!strcmp(key, "video.fps_cfg")) snprintf(out, cap, "%s=%d", key, c.fps);
-    else if (!strcmp(key, "video.gop_cfg")) snprintf(out, cap, "%s=%d", key, c.gop_s);
-    else snprintf(out, cap, "%s=%d", key, pending(&c));
+    fmt_key(&c, key, out, cap);
     return 0;
 }
 
@@ -54,6 +59,8 @@ int video_ctl_set(const char *key, const char *val, char *msg, size_t cap)
     video_cfg_t c;
     pthread_mutex_lock(&g_lock);
     video_cfg_read(&c);
+    char old[VIDEO_CFG_MAX];
+    int n_old = video_cfg_format(&c, old, sizeof(old));
     if (video_cfg_set_key(&c, want, val) != 0) {
         pthread_mutex_unlock(&g_lock);
         if (!strcmp(want, "bitrate"))
@@ -67,7 +74,9 @@ int video_ctl_set(const char *key, const char *val, char *msg, size_t cap)
     char buf[VIDEO_CFG_MAX];
     int n = video_cfg_format(&c, buf, sizeof(buf));
     int rc = 0, err = 0;
-    if (n < 0) {
+    if (n >= 0 && n == n_old && memcmp(buf, old, (size_t)n) == 0) {
+        /* unchanged: no flash write (the flash wears, and a slider may repeat a value) */
+    } else if (n < 0) {
         rc = -1;
         err = ENOSPC;
     } else if (n == 0) {
@@ -90,6 +99,12 @@ void video_ctl_list(void (*emit)(void *arg, const char *line), void *arg)
 {
     static const char *const keys[] = { "video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.cfg_pending" };
     char line[64];
-    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
-        if (video_ctl_get(keys[i], line, sizeof(line)) == 0) emit(arg, line);
+    video_cfg_t c;
+    pthread_mutex_lock(&g_lock);
+    video_cfg_read(&c); /* once: a malformed file is logged once per LIST, not four times */
+    pthread_mutex_unlock(&g_lock);
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        fmt_key(&c, keys[i], line, sizeof(line));
+        emit(arg, line);
+    }
 }

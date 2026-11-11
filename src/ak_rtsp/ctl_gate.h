@@ -16,6 +16,9 @@
 #ifndef CTL_IDLE_REMOTE_S
 #define CTL_IDLE_REMOTE_S    120   /* remote peer, DEBUG off */
 #endif
+#ifndef CTL_SESSION_REMOTE_S
+#define CTL_SESSION_REMOTE_S 3600  /* remote peer, DEBUG off */
+#endif
 #define CTL_DEBUG_DEF_MIN    60
 #define CTL_DEBUG_MAX_MIN    1440
 #define CTL_READONLY_MSG     "ERR read-only mode, see akam_debug.sh"
@@ -48,6 +51,10 @@ void ctl_debug_command(ctl_debug_t *d, int64_t now_ms, int is_loopback,
 
 /* Seconds without a received byte after which a client is dropped. */
 int ctl_idle_limit_s(int is_loopback, int debug_on);
+
+/* Absolute session length in seconds, 0 = none. A remote peer (DEBUG off) is cut after CTL_SESSION_REMOTE_S even if it
+ * keeps sending a byte now and then, so it cannot hold one of the CTL_MAX_REMOTE slots for ever. */
+int ctl_session_limit_s(int is_loopback, int debug_on);
 
 /* Client slots (the caller serialises access). used[i]: 0 free, 1 loopback peer, 2 remote peer. */
 typedef struct {
