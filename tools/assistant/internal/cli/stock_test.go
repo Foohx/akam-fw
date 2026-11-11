@@ -215,12 +215,14 @@ func TestBackupRefusesWhenTheCardHasNoRoom(t *testing.T) {
 	}
 }
 
-func TestBackupRefusesAnAkamCamera(t *testing.T) {
+// An Akam camera takes the SSH route (T11.11), never the telnet one: the maintenance telnet is not
+// contacted and the stock backup state stays as it was.
+func TestBackupAnAkamCameraTakesTheSSHRoute(t *testing.T) {
 	w := newStockWorld(t, testfake.StockOptions{})
 	w.writeState(strings.Replace(stockSteps, "camera_kind=stock", "camera_kind=akam", 1))
 	r := w.run("", "backup")
-	expectRC(t, r, 1)
-	contains(t, r.out+r.err, "this camera already runs Akam: its flash no longer holds the original firmware.")
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "This camera runs Akam: this saves what is on the camera now.")
 	if len(w.st.Commands()) != 0 {
 		t.Error("the camera was contacted")
 	}
