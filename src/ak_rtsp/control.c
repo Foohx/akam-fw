@@ -671,7 +671,11 @@ static void *control_accept_loop(void *arg)
         socklen_t alen = sizeof(client_addr);
         swdog_beat(SWDOG_BEAT_CONTROL); /* G01 heartbeat: wake at least every 5 s */
         struct pollfd apf = { .fd = server_fd, .events = POLLIN, .revents = 0 };
-        if (poll(&apf, 1, 5000) == 0) continue;
+        int pr = poll(&apf, 1, 5000);
+        /* Never fall through to a blocking accept() on EINTR (SIGUSR1 may land on this thread): the beat
+         * would go stale and the stall watchdog would restart a healthy camera. */
+        if (pr < 0 && errno != EINTR) usleep(100000);
+        if (pr <= 0) continue;
         int fd = accept(server_fd, (struct sockaddr *)&client_addr, &alen);
         if (fd < 0) {
             if (errno == EINTR) continue;
