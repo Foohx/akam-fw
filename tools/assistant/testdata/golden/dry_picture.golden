@@ -1,0 +1,10 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Picture settings
+  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 8091
+  WOULD send: SET isp.contrast -20
+  WOULD send: SET img.wb manual
+  WOULD send: SET night.mode day
+--- stderr ---

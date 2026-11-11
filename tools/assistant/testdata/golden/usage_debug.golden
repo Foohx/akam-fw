@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: debug on: MINUTES must be a whole number from 1 to 1440 (see ./akam help)

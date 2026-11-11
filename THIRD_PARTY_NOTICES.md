@@ -84,3 +84,36 @@ downloaded by `tools/build/bootstrap.sh`, is not part of this repository, and
 the compiler itself is not distributed with the firmware. The musl libc and the
 compiler-rt that Zig links statically into the binaries are MIT licensed; their
 notices ship in the image (`LICENSE.musl`, `LICENSE.zig`).
+
+## Go assistant (`tools/assistant`)
+
+The native assistant binary links the Go modules below, downloaded unchanged by
+`tools/build/bootstrap.sh` into `tools/.toolchain/go/mod` (not stored in git; each module has its
+licence file in its directory there) and pinned by the checksums of `tools/assistant/go.sum`. Only MIT and BSD-3-Clause code is linked; GPL tools are never linked or
+embedded (`ffmpeg` is only run when the user has it). Test-only code adds no module.
+
+| Module | Version | Licence | Used for |
+|---|---|---|---|
+| golang.org/x/crypto | v0.58.0 | BSD-3-Clause | SSH client, ed25519 keys, known_hosts, ssh-agent |
+| golang.org/x/sys | v0.50.0 | BSD-3-Clause | system calls (file locks, terminals) |
+| golang.org/x/term | v0.48.0 | BSD-3-Clause | hidden password input, terminal detection |
+| golang.org/x/text | v0.43.0 | BSD-3-Clause | width tables used by the terminal libraries |
+| github.com/charmbracelet/bubbletea | v1.3.10 | MIT | full-screen menu and widgets |
+| github.com/charmbracelet/lipgloss | v1.1.0 | MIT | terminal styling |
+| github.com/charmbracelet/colorprofile | v0.2.3-0.20250311203215-f60798e515dc | MIT | colour support detection (lipgloss) |
+| github.com/charmbracelet/x/ansi | v0.10.1 | MIT | ANSI sequences (bubbletea, lipgloss) |
+| github.com/charmbracelet/x/cellbuf | v0.0.13-0.20250311204145-2c3ea96c31dd | MIT | cell buffer (bubbletea) |
+| github.com/charmbracelet/x/term | v0.2.1 | MIT | terminal helpers (bubbletea) |
+| github.com/muesli/termenv | v0.16.0 | MIT | terminal environment (lipgloss) |
+| github.com/muesli/ansi | v0.0.0-20230316100256-276c6243b2f6 | MIT | ANSI text helpers (bubbletea) |
+| github.com/muesli/cancelreader | v0.2.2 | MIT | cancellable terminal input (bubbletea) |
+| github.com/aymanbagabas/go-osc52/v2 | v2.0.1 | MIT | clipboard escape sequences (termenv) |
+| github.com/erikgeiser/coninput | v0.0.0-20211004153227-1c3628e74d0f | MIT | Windows console input (bubbletea) |
+| github.com/lucasb-eyer/go-colorful | v1.2.0 | MIT | colour maths (lipgloss) |
+| github.com/mattn/go-isatty | v0.0.20 | MIT | terminal detection |
+| github.com/mattn/go-localereader | v0.0.1 | MIT (stated in its README; the module has no licence file; linked only in Windows builds, `key_windows.go` of bubbletea) | locale-aware input (bubbletea) |
+| github.com/mattn/go-runewidth | v0.0.16 | MIT | character widths |
+| github.com/rivo/uniseg | v0.4.7 | MIT | Unicode segmentation |
+| github.com/xo/terminfo | v0.0.0-20220910002029-abceb7e1c41e | MIT | terminfo database (bubbletea) |
+
+The Go standard library and runtime (BSD-3-Clause, The Go Authors) are linked into every binary.

@@ -1,0 +1,9 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Talk to the camera
+  WOULD check over SSH that the stream password is on (/usr/sbin/akam_rtsp_auth.sh status) and read the user name (show).
+  WOULD ask the stream password (not shown) unless AKAM_RTSP_PASSWORD is set.
+  WOULD run: akam-talk --user <user> --tone 2 rtsp://<camera-ip>:554   (password in the environment)
+--- stderr ---

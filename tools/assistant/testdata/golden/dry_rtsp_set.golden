@@ -1,0 +1,10 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+RTSP password: set
+  WOULD ask a user name and a password (twice, not shown, 8 to 128 characters).
+  WOULD send the user name and the password (two lines, on stdin, never in a command line) to the camera:
+  WOULD run: ssh root@<camera-ip> /usr/sbin/akam_rtsp_auth.sh set-creds
+  WOULD tell you that the password is now also stored on the camera so that ONVIF can verify it.
+--- stderr ---

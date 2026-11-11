@@ -6,6 +6,17 @@ set -euo pipefail
 AKAM_WIZARD_VERSION=${AKAM_WIZARD_VERSION:-1.0.0-dev}
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Experimental native binary (tools/assistant): AKAM_USE_BIN=1 ./akam ARGS... runs it with the same
+# arguments, to compare it with this script (both use the same state files; never run both at once).
+if [ "${AKAM_USE_BIN:-}" = 1 ]; then
+    AKAM_NATIVE=${AKAM_BIN:-$ROOT/tools/assistant/bin/akam}
+    if [ ! -x "$AKAM_NATIVE" ]; then
+        echo "akam: the native binary is not built: $AKAM_NATIVE (build it with tools/assistant/build.sh, or set AKAM_BIN)" >&2
+        exit 1
+    fi
+    exec "$AKAM_NATIVE" "$@"
+fi
+
 # shellcheck source=tools/lib/host.sh
 . "$ROOT/tools/lib/host.sh"
 # shellcheck source=tools/wizard/lib/log.sh
@@ -126,6 +137,9 @@ Options:
   --no-color         no colours (NO_COLOR works too)
   --plain            line-based output and prompts, no full-screen menu or widgets
                      (also automatic when not on a terminal; AKAM_PLAIN=1 does the same)
+
+A native binary (experimental) exists: see the releases. From a source checkout, build it with
+tools/assistant/build.sh and run it with AKAM_USE_BIN=1 ./akam ... (same arguments, same state files).
 
 Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
 for the disk work), shows every command before it runs, refuses destructive actions without a

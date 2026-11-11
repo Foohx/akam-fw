@@ -1,0 +1,18 @@
+status|status
+cameras|cameras
+dry_led|--dry-run led status on ir off
+dry_audio|--dry-run audio volume 30
+dry_picture|--dry-run picture contrast -20 wb manual night day
+dry_debug_on|--dry-run debug on 30
+dry_rtsp_set|--dry-run rtsp-auth set
+dry_rtsp_status|--dry-run rtsp-auth status
+dry_hostname|--dry-run hostname salon
+dry_talk_test|--dry-run talk test
+dry_find_camera|--dry-run find-camera
+no_address_led|led
+usage_led|led foo
+usage_picture|picture brightness 99
+usage_debug|debug on 5000
+usage_audio|audio volume 101
+unknown_command|frobnicate
+unknown_option|--frob status
