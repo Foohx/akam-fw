@@ -366,7 +366,7 @@ func (w *fw) backupDir(t *testing.T, sums bool) string {
 		name := fmt.Sprintf("mtdblock%d.bin", i)
 		data := []byte(fmt.Sprintf("partition %d\n", i))
 		if i == 7 {
-			data = bytes.Repeat([]byte("stock APP"), 5242880/9+1)[:5242880]
+			data = validImage(t)
 		}
 		if err := os.WriteFile(filepath.Join(d, name), data, 0o600); err != nil {
 			t.Fatal(err)

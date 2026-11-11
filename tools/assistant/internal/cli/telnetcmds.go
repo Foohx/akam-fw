@@ -1018,6 +1018,9 @@ func (a *App) cmdFlash() error {
 	if a.St.Get("image_sha") != fileSHA(img) {
 		return a.UI.Fail("the image changed since it was built.", fmt.Sprintf("run %s step image again.", Prog))
 	}
+	if err := a.imageSquashCheck(img); err != nil {
+		return err
+	}
 	bk := a.St.Get("backup_dir")
 	app := fileSHA(filepath.Join(bk, "mtdblock7.bin"))
 	if app == "" {

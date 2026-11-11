@@ -247,6 +247,9 @@ func (a *App) cmdUpdate() error {
 	if err != nil {
 		return err
 	}
+	if err := a.imageSquashCheck(img); err != nil {
+		return err
+	}
 	// the backup gate, for the command as for the flow: re-hashed now, before anything is sent
 	if dir, why := a.backupGate(); dir == "" {
 		return a.UI.Fail("no verified backup: "+why+".", fmt.Sprintf("make one first (%s backup, or Back up / restore); nothing was written.", Prog))
@@ -291,6 +294,9 @@ func (a *App) cmdRestore() error {
 	// Akam camera (kind=akam) is refused, it holds the Akam APP
 	if p := stockBackupProblem(bk); p != "" {
 		return a.UI.Fail("the backup does not verify: "+p+".", "restore needs the backup of the stock firmware (made with the card): use it or your second copy. Nothing was written.")
+	}
+	if err := a.imageSquashCheck(app); err != nil {
+		return err
 	}
 	a.UI.Say("  Stock APP sha256: " + fileSHA(app))
 	route := "telnet"

@@ -12,7 +12,6 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/testfake"
 )
 
 // The SD card commands run against a regular file that plays the card (the helper's image-file mode,
@@ -240,7 +239,7 @@ func TestWipeSDZeroFillsAndForgetsTheDevice(t *testing.T) {
 func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	w := newSDWorld(t)
 	dir := t.TempDir()
-	img := bytes.Repeat([]byte("akam image block 0123456789abcdef"), 5242880/33+1)[:5242880]
+	img := validImage(t)
 	imgPath := filepath.Join(dir, "ak_rtsp_firmware_20261111_101010.squashfs")
 	os.WriteFile(imgPath, img, 0o600)
 	tool := filepath.Join(dir, "flash_tool")
@@ -250,11 +249,11 @@ func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	os.MkdirAll(bk, 0o755)
 	var sums strings.Builder
 	for i := 0; i < 8; i++ {
-		os.WriteFile(filepath.Join(bk, fmt.Sprintf("mtdblock%d.bin", i)), testfake.StockMtdContent(i), 0o600)
-		fmt.Fprintf(&sums, "%s  mtdblock%d.bin\n", shaOf(testfake.StockMtdContent(i)), i)
+		os.WriteFile(filepath.Join(bk, fmt.Sprintf("mtdblock%d.bin", i)), stockMtd(t, i), 0o600)
+		fmt.Fprintf(&sums, "%s  mtdblock%d.bin\n", shaOf(stockMtd(t, i)), i)
 	}
 	os.WriteFile(filepath.Join(bk, "SHA256SUMS"), []byte(sums.String()), 0o600)
-	app, isha := shaOf(testfake.StockMtdContent(7)), shaOf(img)
+	app, isha := shaOf(validImage(t)), shaOf(img)
 	st := "mode=source\nimage_path=" + imgPath + "\nimage_sha=" + isha + "\nimage_kit_sha=source\nimage_backup_sha=" + app + "\nbackup_dir=" + bk + "\nbackup_sha=" + app + "\n"
 	for _, s := range []string{"doctor", "get_kit", "prepare_backup_sd", "find_camera", "backup", "image"} {
 		st += "step_" + s + "_done=2026-01-01T00:00:00Z\n"
@@ -280,7 +279,7 @@ func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	if !bytes.Equal(got, img) {
 		t.Error("image differs on the card")
 	}
-	if b, _ := card.ReadFile("original_firmware/mtdblock7.bin"); !bytes.Equal(b, testfake.StockMtdContent(7)) {
+	if b, _ := card.ReadFile("original_firmware/mtdblock7.bin"); !bytes.Equal(b, validImage(t)) {
 		t.Error("stock APP differs on the card")
 	}
 	if k, _ := card.ReadFile("akam/authorized_keys"); !bytes.Equal(k, pub) {

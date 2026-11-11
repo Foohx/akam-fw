@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"os"
@@ -72,6 +73,35 @@ func TestRestoreRefusesUnverifiableBackups(t *testing.T) {
 	r = w.run("y\ny\n", "restore", "--backup-dir", bk)
 	expectRC(t, r, 1)
 	contains(t, r.out+r.err, "does not list mtdblock7.bin")
+	w.unchanged(t)
+}
+
+// The direct commands refuse an APP-sized file that is not a squashfs, before any byte is sent.
+func TestDirectCommandsRefuseANonSquashfsImage(t *testing.T) {
+	junk := bytes.Repeat([]byte("not a squashfs "), 5242880/15+1)[:5242880]
+	w := newFlashWorld(t, testfake.FlashOptions{})
+	if err := os.WriteFile(w.img, junk, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := w.update("y\ny\n")
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "this file is not a valid squashfs image", "do not flash it")
+	notContains(t, r.err, "WRITES THE CAMERA FLASH")
+	w.unchanged(t)
+
+	bk := w.backupDir(t, true)
+	if err := os.WriteFile(filepath.Join(bk, "mtdblock7.bin"), junk, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256Of(t, filepath.Join(bk, "mtdblock7.bin"))
+	if err := os.WriteFile(filepath.Join(bk, "SHA256SUMS"), []byte(sum+"  mtdblock7.bin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.writeState("camera_kind=akam\n")
+	r = w.run("y\ny\n", "restore", "--backup-dir", bk)
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "this file is not a valid squashfs image")
+	notContains(t, r.err, "WRITES THE CAMERA FLASH")
 	w.unchanged(t)
 }
 

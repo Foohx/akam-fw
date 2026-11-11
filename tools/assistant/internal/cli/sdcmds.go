@@ -387,6 +387,12 @@ func (a *App) cmdPrepareFlashSD() error {
 		_ = a.St.MarkDone("prepare-flash-sd")
 		return nil
 	}
+	if err := a.imageSquashCheck(img); err != nil {
+		return err
+	}
+	if err := a.imageSquashCheck(filepath.Join(bk, "mtdblock7.bin")); err != nil {
+		return err
+	}
 	pk, _ := os.ReadFile(pub)
 	toolkit, err := a.loadToolkit(tk)
 	if err != nil {
