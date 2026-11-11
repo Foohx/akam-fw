@@ -39,12 +39,13 @@ struct ak_iwreq {
 
 enum {
     K_UPTIME, K_LOAD, K_CPU, K_MEM_TOTAL, K_MEM_FREE, K_TEMP, K_SSID, K_RSSI, K_RATE, K_IP, K_MAC,
-    K_FPS, K_BITRATE, K_CLIENTS, K_AUTH, K_TIME_SET, K_COUNT
+    K_FPS, K_BITRATE, K_CLIENTS, K_AUTH, K_TIME_SET, K_SKIPPED, K_COUNT
 };
 static const char *const g_keys[K_COUNT] = {
     "sys.uptime", "sys.load", "sys.cpu", "sys.mem_total", "sys.mem_free", "sys.temp",
     "net.ssid", "net.wifi_rssi", "net.wifi_rate", "net.ip", "net.mac",
-    "video.fps_actual", "video.bitrate", "rtsp.clients", "rtsp.auth", "sys.time_set"
+    "video.fps_actual", "video.bitrate", "rtsp.clients", "rtsp.auth", "sys.time_set",
+    "rtsp.skipped_frames"
 };
 
 #define VAL_MAX 48
@@ -71,7 +72,7 @@ static snap_t   g_snap[SNAPS];
 static int      g_nsnap, g_snap_head;
 
 /* Written by the RTSP thread, read under g_mu. */
-static volatile uint32_t g_frames, g_bytes;
+static volatile uint32_t g_frames, g_bytes, g_skipped;
 static volatile int32_t  g_clients;
 static volatile int      g_playing, g_play_edge, g_auth = -1;
 
@@ -364,6 +365,7 @@ AK_SMALL static void refresh(void)
     /* sys.time_set: the wall clock is believable (the camera has no RTC: it boots in the past until NTP or a
      * manual set). 1 from 2024-01-01 UTC on, the same threshold as the WS-Security window in cred.c. */
     snprintf(g_val[K_TIME_SET], VAL_MAX, "%d", (g_wall ? g_wall() : time(NULL)) >= 1704067200 ? 1 : 0);
+    snprintf(g_val[K_SKIPPED], VAL_MAX, "%u", (unsigned)g_skipped);
     g_have = 1;
     g_last_ms = t;
 }
@@ -394,6 +396,7 @@ size_t ctl_sys_count(void) { return K_COUNT; }
 const char *ctl_sys_key(size_t i) { return i < K_COUNT ? g_keys[i] : NULL; }
 
 void ctl_sys_note_video_frame(size_t bytes) { g_frames = g_frames + 1; g_bytes = g_bytes + (uint32_t)bytes; }
+void ctl_sys_note_video_skipped(void) { g_skipped = g_skipped + 1; }
 void ctl_sys_note_rtsp_client(int delta) { g_clients = g_clients + delta; }
 void ctl_sys_note_rtsp_play(int playing)
 {
@@ -435,6 +438,6 @@ void ctl_sys_reset(void)
 {
     pthread_mutex_lock(&g_mu);
     g_have = 0; g_temp_path[0] = 0; g_temp_rescan_ms = 0; g_cpu_have = 0; g_nsnap = 0; g_snap_head = 0;
-    g_frames = 0; g_bytes = 0; g_clients = 0; g_playing = 0; g_play_edge = 0; g_auth = -1;
+    g_frames = 0; g_bytes = 0; g_skipped = 0; g_clients = 0; g_playing = 0; g_play_edge = 0; g_auth = -1;
     pthread_mutex_unlock(&g_mu);
 }

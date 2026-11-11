@@ -12,7 +12,8 @@
  * net.wifi_rate (Mb/s), net.ip, net.mac, video.fps_actual (tenths of a frame
  * per second: 199 = 19.9), video.bitrate (kbit/s), rtsp.clients,
  * rtsp.auth (off|on|broken), sys.time_set (1 when the wall clock is 2024 or later, else 0:
- * the camera has no RTC, see akam_ntp.sh).
+ * the camera has no RTC, see akam_ntp.sh), rtsp.skipped_frames (cumulative video frames dropped for an
+ * RTSP/TCP client whose link was backed up, see tx_pace.h; no identity data).
  * The audio.talk_* counters stay in talk.c (talk_ctl_get) and ctl.clients in
  * control.c.
  *
@@ -36,6 +37,7 @@ const char *ctl_sys_key(size_t i);
 
 /* ---- feed from the RTSP thread (rtsp.c) ---- */
 void ctl_sys_note_video_frame(size_t bytes); /* one encoded frame handed to the client */
+void ctl_sys_note_video_skipped(void);       /* one frame dropped by the TCP backpressure pacing */
 void ctl_sys_note_rtsp_client(int delta);    /* +1 on connect, -1 on disconnect */
 void ctl_sys_note_rtsp_play(int playing);    /* 1 while a client is playing video */
 void ctl_sys_note_rtsp_auth(int mode);       /* 0 off, 1 on, 2 broken (rtsp_auth_mode_t) */

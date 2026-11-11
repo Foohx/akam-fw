@@ -28,6 +28,7 @@
 #include "h264_params.h"
 #include "rtp_clock.h"
 #include "net_tx.h"
+#include "tx_pace.h"
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
 #include "control.h"
@@ -105,6 +106,9 @@ typedef struct {
     /* Bounded, stall-tolerant writer for the RTSP/TCP socket (shared by the
      * RTSP responses, interleaved RTP and interleaved RTCP). */
     net_tx_t tx;
+    /* RTSP/TCP backpressure (tx_pace.h): frames are dropped for this client
+     * while its socket backlog is high, so the encoder keeps being drained. */
+    tx_pace_t pace;
 
     bool is_tcp;
     uint8_t rtp_channel;
@@ -817,6 +821,8 @@ void drain_venc_ring(void)
     }
 }
 
+static int64_t ms_ts_now(void) { return rtp_mono_us() / 1000; }
+
 /* Returns 1 when a frame was sent, 0 when none was ready, -1 on a fatal
  * error (the caller drops the client). */
 static int send_video_frame(Client *client)
@@ -919,7 +925,26 @@ static int send_video_frame(Client *client)
      * missing SPS/PPS/reference picture. If the encoder never reports an
      * I-frame within two GOPs, stop waiting rather than send nothing. */
     bool send_it = true;
-    if (client->need_idr) {
+    /* RTSP/TCP backpressure: never let a slow link hold the encoder. A
+     * dropped frame is released below like any other; P-frames stay dropped
+     * until a keyframe finds the socket drained (tx_pace.h). UDP has no such
+     * backlog and is not paced. */
+    if (client->is_tcp) {
+        tx_pace_event_t ev;
+        size_t backlog = tx_pace_backlog(client->tx.fd);
+        if (tx_pace_decide(&client->pace, backlog, (size_t)req.len,
+                           req.frame_type_raw == FRAME_TYPE_I,
+                           tx_pace_base(video_kbps()), ms_ts_now(), &ev) == TX_PACE_SKIP) {
+            send_it = false;
+            ctl_sys_note_video_skipped();
+        }
+        if (ev.log_it && ev.entered)
+            printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
+                   backlog);
+        if (ev.log_it && ev.left)
+            printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", ev.run_skipped);
+    }
+    if (send_it && client->need_idr) {
         if (req.frame_type_raw == FRAME_TYPE_I) {
             client->need_idr = false;
             /* Some encoders emit SPS/PPS only once at start-up: if this
@@ -1001,6 +1026,11 @@ static void send_audio_frame(Client *client)
     rtp_aclock_observe(&client->audio_clock, first_sample + n_samples,
                        t_end_us, AUDIO_SAMPLE_RATE);
     uint32_t audio_rtp_ts = client->audio_ts_base + (uint32_t)first_sample;
+
+    /* RTSP/TCP client whose link is backed up (video is being dropped): drop the
+     * audio period too instead of adding to the queue. The period was consumed
+     * and the RTP timestamp is the sample index, so the stream keeps its place. */
+    if (client->is_tcp && client->pace.skipping) return;
 
     U8Slice99 payload = U8Slice99_new((uint8_t *)net_pcm, n_samples * sizeof(uint16_t));
     if (SmolRTSP_RtpTransport_send_packet(

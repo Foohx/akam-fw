@@ -104,6 +104,7 @@ int main(void)
     CHECK(IS("video.bitrate", "0"));
     CHECK(IS("rtsp.clients", "0"));
     CHECK(IS("rtsp.auth", "unknown"));
+    CHECK(IS("rtsp.skipped_frames", "0"));
 
     /* --- unknown keys --- */
     char b[64];
@@ -227,9 +228,12 @@ int main(void)
     ctl_sys_note_rtsp_auth(0);
     g_now = 38000;
     CHECK(IS("rtsp.auth", "off"));
+    ctl_sys_note_video_skipped();
+    ctl_sys_note_video_skipped();
     ctl_sys_note_rtsp_client(-1);
     g_now = 39000;
     CHECK(IS("rtsp.clients", "0"));
+    CHECK(IS("rtsp.skipped_frames", "2"));
 
     ctl_sys_note_video_frame(1000);               /* before play: ignored by the window (edge resets it) */
     ctl_sys_note_rtsp_play(1);
@@ -266,10 +270,11 @@ int main(void)
     g_now = 60000;
     ctl_sys_list(emit, NULL);
     CHECK(g_emitted == (int)ctl_sys_count());
-    CHECK(ctl_sys_count() == 16);
+    CHECK(ctl_sys_count() == 17);
     CHECK(ctl_sys_key(0) && !strcmp(ctl_sys_key(0), "sys.uptime"));
     CHECK(ctl_sys_key(15) && !strcmp(ctl_sys_key(15), "sys.time_set"));
-    CHECK(ctl_sys_key(16) == NULL);
+    CHECK(ctl_sys_key(16) && !strcmp(ctl_sys_key(16), "rtsp.skipped_frames"));
+    CHECK(ctl_sys_key(17) == NULL);
     CHECK(g_emit_unknown >= 1);
 
     /* --- small output buffer truncates, does not overflow --- */
