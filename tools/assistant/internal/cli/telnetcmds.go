@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/backuploc"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/flash"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -406,21 +408,19 @@ func (a *App) bkFingerprint() string {
 	return kfp
 }
 
-// bkPCDir is bk_pc_dir: a new folder ~/akam-backup-<name>-<date>[-N].
+// bkPCDir is bk_pc_dir: a new folder <Documents>/Akam backups/<camera>-<date>[-N] (spec 11, 3.2).
+// With AKAM_BACKUP_ROOT (test hook) it is <root>/akam-backup-<name>-<date>[-N], the legacy layout.
 func (a *App) bkPCDir() string {
-	root := testhook.Env("AKAM_BACKUP_ROOT")
-	if root == "" {
-		root, _ = os.UserHomeDir()
+	base, cloud, fold := a.backupBase(time.Now())
+	if cloud != "" {
+		a.UI.Warn(fmt.Sprintf("your Documents folder is inside %s, which copies files to the cloud and the backup holds your Wi-Fi password.", cloud))
+		a.UI.Say("  The suggested folder is in your home folder instead.")
 	}
-	base := filepath.Join(root, "akam-backup-"+a.Cams.Slug()+time.Now().Format("20060102"))
-	d := base
-	for n := 1; ; {
-		if _, err := os.Stat(d); err != nil {
-			return d
-		}
-		n++
-		d = base + "-" + strconv.Itoa(n)
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	if fold {
+		exists = backuploc.FoldedSet(backupNames(filepath.Dir(base)))
 	}
+	return backuploc.NextFree(base, exists)
 }
 
 func (a *App) bkWritePCFiles(dir, ip, kernel, ht string, configDiffers bool) {
@@ -429,12 +429,12 @@ func (a *App) bkWritePCFiles(dir, ip, kernel, ht string, configDiffers bool) {
 		f := fmt.Sprintf("mtdblock%d.bin", n)
 		fmt.Fprintf(&sums, "%s  %s\n", fileSHA(filepath.Join(dir, f)), f)
 	}
-	_ = os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o600)
 	readme := fmt.Sprintf("Akam backup of the camera at %s, made %s by %s backup.\n"+
 		"mtdblock0..7.bin are the 8 flash partitions of the ORIGINAL firmware. This is the only way back.\n"+
 		"Keep a second copy on a different medium. NEVER publish these files: they hold proprietary firmware.\n"+
 		"Check them with: sha256sum -c SHA256SUMS\n", ip, time.Now().UTC().Format("2006-01-02T15:04:05Z"), Prog)
-	_ = os.WriteFile(filepath.Join(dir, "README.txt"), []byte(readme), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "README.txt"), []byte(readme), 0o600)
 	if kernel == "" {
 		kernel = "unknown"
 	}
@@ -443,7 +443,8 @@ func (a *App) bkWritePCFiles(dir, ip, kernel, ht string, configDiffers bool) {
 		diff = "1"
 	}
 	info := fmt.Sprintf("camera: %s\nkernel: %s\ncamera_hash_tool: %s\nconfig_partition_differs_between_reads: %s\n--- /proc/mtd\n%s\n", ip, kernel, ht, diff, camLayout)
-	_ = os.WriteFile(filepath.Join(dir, "camera_info.txt"), []byte(info), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "camera_info.txt"), []byte(info), 0o600)
+	a.backupSecure(dir, true)
 }
 
 func (a *App) bkManualFallbackHint() {
@@ -504,8 +505,18 @@ func (a *App) backupCamera() error {
 	}
 	pcdir := a.bkPCDir()
 	a.UI.Say("  Copying the verified dump to this PC: " + pcdir)
-	if err := os.MkdirAll(pcdir, 0o755); err != nil {
+	if probs := a.backupValidate(pcdir); len(probs) > 0 {
+		return a.UI.Fail("cannot use "+pcdir+": "+strings.Join(probs, "; ")+".", "free some space or choose another folder: "+Prog+" backup --backup-dir DIR after a manual copy.")
+	}
+	if err := fsutil.PrivateMkdir(pcdir); err != nil {
 		return a.UI.Fail("cannot create "+pcdir+": "+err.Error(), "")
+	}
+	if !a.backupSecure(pcdir, false) {
+		a.UI.Say("  Private: no (this medium has no permissions)")
+		if !a.confirm("  The backup holds your Wi-Fi password. Keep it on this medium anyway?") {
+			_ = os.Remove(pcdir)
+			return a.UI.Fail("the backup folder cannot be made private.", "choose a folder on a disk that has permissions.")
+		}
 	}
 	for n := 0; n < 8; n++ {
 		if err := x.Get(fmt.Sprintf("%s/dump1/mtdblock%d.bin", sd, n), filepath.Join(pcdir, fmt.Sprintf("mtdblock%d.bin", n)), camMtdSizes[n], h[1][n]); err != nil {
@@ -534,6 +545,8 @@ func (a *App) backupAccept(d string) error {
 	if !a.backupCheck(d) {
 		return ui.ErrFailed
 	}
+	private := a.backupSecure(d, false)
+	a.backupSecretsWarning(d, private)
 	a.UI.Warn("COPY THIS FOLDER TO A SECOND MEDIUM (another disk or USB stick) BEFORE continuing.")
 	a.UI.Warn("It is the only way back to the original firmware. Never publish it: it holds proprietary firmware.")
 	if cp := a.Opt.BackupCopy; cp != "" {
@@ -562,7 +575,9 @@ func (a *App) backupCopyTo(src, dest string) error {
 		a.UI.Say(fmt.Sprintf("  WOULD copy mtdblock0..7.bin and SHA256SUMS to %s", dest))
 		return nil
 	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	_, derr := os.Stat(dest)
+	pre := derr == nil
+	if err := fsutil.PrivateMkdir(dest); err != nil {
 		return a.UI.Fail("copying the backup failed.", "")
 	}
 	names := []string{"SHA256SUMS"}
@@ -571,13 +586,14 @@ func (a *App) backupCopyTo(src, dest string) error {
 	}
 	for _, n := range names {
 		b, err := os.ReadFile(filepath.Join(src, n))
-		if err != nil || os.WriteFile(filepath.Join(dest, n), b, 0o644) != nil {
+		if err != nil || os.WriteFile(filepath.Join(dest, n), b, 0o600) != nil {
 			return a.UI.Fail("copying the backup failed.", "")
 		}
 	}
 	if !sha256sumCheck(dest, filepath.Join(dest, "SHA256SUMS")) {
 		return a.UI.Fail(fmt.Sprintf("the copy in %s does not match SHA256SUMS.", dest), "copy it again to a different medium.")
 	}
+	a.backupSecure(dest, pre)
 	a.UI.Good(fmt.Sprintf("  Copy checked: %s matches SHA256SUMS.", dest))
 	return nil
 }
@@ -597,7 +613,7 @@ func (a *App) cmdBackup() error {
 			"  WOULD open the telnet shell on the camera and: check /proc/mtd is the 8-partition layout (refuse otherwise),",
 			"  read the kernel version, find the card and its free space, dd the 8 partitions twice,",
 			"  check the 16 sizes, hash both runs on the camera and compare them (READS_IDENTICAL),",
-			"  copy dump1 to ~/akam-backup-<name>-<date>/ over nc with size+hash checks (3 tries each),",
+			"  copy dump1 to <Documents>/Akam backups/<name>-<date>/ over nc with size+hash checks (3 tries each),",
 			"  write SHA256SUMS, compare the stock APP hash with tools/release/supported_hardware.txt",
 			"  (a yes/no in a red box, default No, unless validated) and ask for a second copy on another medium."} {
 			a.UI.Say(l)
