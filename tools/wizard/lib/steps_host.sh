@@ -821,6 +821,21 @@ backup_check() {
     fi
 }
 
+# backup_secure DIR: the CONFIG partition holds the Wi-Fi password (wpa_supplicant.conf), the ONVIF password
+# in clear text and the RTSP digest hash (G19): the folder is private to this user (0700, files 0600).
+backup_secure() {
+    local d=$1 f
+    [ "$UI_DRY" = 1 ] && return 0
+    if [ "${2:-}" != files-only ]; then
+        chmod 700 "$d" 2>/dev/null || ui_warn "  could not restrict $d to your user (chmod 700): do it by hand."
+    fi
+    # only the backup's own files: the folder may be an existing one (USB stick root) holding other things
+    for f in "$d"/mtdblock[0-7].bin "$d"/SHA256SUMS "$d"/README.txt "$d"/camera_info.txt; do
+        if [ -f "$f" ]; then chmod 600 "$f" 2>/dev/null || true; fi
+    done
+    return 0
+}
+
 # backup_accept DIR: final checks and the second-copy gate for a backup folder, then record it.
 # Used for a folder made by the camera steps and for an imported one (--backup-dir).
 backup_accept() {
@@ -828,6 +843,10 @@ backup_accept() {
     [ -d "$d" ] || { ui_fail "not a folder: $d" ""; return 1; }
     d="$(cd "$d" && pwd)"
     backup_check "$d" || return 1
+    backup_secure "$d"
+    ui_warn "THIS BACKUP CONTAINS SECRETS: your Wi-Fi password, the ONVIF password (clear text) and the RTSP hash are"
+    ui_warn "inside the CONFIG partition. The folder is now private to your user (0700); keep the copy private too,"
+    ui_warn "never upload it or put it in a shared or cloud-synced folder."
     ui_warn "COPY THIS FOLDER TO A SECOND MEDIUM (another disk or USB stick) BEFORE continuing."
     ui_warn "It is the only way back to the original firmware. Never publish it: it holds proprietary firmware."
     if [ -n "${OPT_BACKUP_COPY:-}" ]; then
@@ -848,13 +867,16 @@ backup_accept() {
 backup_copy_to() {
     local src=$1 dest=$2
     case $dest in "$src" | "$src"/*) { ui_fail "the copy must be outside $src" ""; return 1; } ;; esac
-    run_cmd mkdir -p "$dest" || return 1
+    local pre=0
+    if [ -d "$dest" ]; then pre=1; fi
+    (umask 077 && run_cmd mkdir -p "$dest") || return 1
     run_cmd cp -p "$src"/mtdblock[0-7].bin "$src"/SHA256SUMS "$dest"/ || { ui_fail "copying the backup failed." ""; return 1; }
     if [ "$UI_DRY" = 1 ]; then return 0; fi
     if ! (cd "$dest" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
         ui_fail "the copy in $dest does not match SHA256SUMS." "copy it again to a different medium."
         return 1
     fi
+    if [ "$pre" = 1 ]; then backup_secure "$dest" files-only; else backup_secure "$dest"; fi
     ui_good "  Copy checked: $dest matches SHA256SUMS."
 }
 

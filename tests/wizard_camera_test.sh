@@ -128,6 +128,7 @@ BKDIR=$(sed -n 's/^backup_dir=//p' "$S/state")
 check "backup: the folder is ~/akam-backup-<date> under the chosen root" bash -c '[[ "$1" == "$2"/akam-backup-* ]]' _ "$BKDIR" "$AKAM_BACKUP_ROOT"
 check "backup: the 8 files equal the camera partitions" bash -c '
     for i in 0 1 2 3 4 5 6 7; do cmp -s "$1/mtdblock$i.bin" "$2/dev/mtdblock$i" || exit 1; done' _ "$BKDIR" "$CAM_A_ROOT"
+check "backup (G19): folder 0700, files 0600, secrets warning shown" bash -c '[ "$(stat -c %a "$1")" = 700 ] && [ -z "$(find "$1" -type f ! -perm 600)" ]' _ "$BKDIR"
 check "backup: SHA256SUMS verifies" bash -c 'cd "$1" && sha256sum -c SHA256SUMS >/dev/null 2>&1 && [ "$(grep -c . SHA256SUMS)" = 8 ]' _ "$BKDIR"
 check "backup: the two reads on the card are identical (READS_IDENTICAL)" has "$T/bk.out" "READS_IDENTICAL"
 check "backup: both dumps exist on the camera's card" bash -c '
@@ -160,6 +161,13 @@ S=$(new_state bk_copy)
 { mark doctor prepare_backup_sd; } >"$S/state"
 printf 'y\n' | a "$S" backup --backup-dir "$BKDIR" --backup-copy "$T/second" >"$T/bk_copy.out" 2>&1
 check "backup --backup-copy: copies the folder and checks the copy" bash -c '[ -f "$1/mtdblock7.bin" ] && grep -q "Copy checked" "$2"' _ "$T/second" "$T/bk_copy.out"
+check "backup --backup-copy (G19): a new copy folder is 0700 with 0600 files" bash -c '[ "$(stat -c %a "$1")" = 700 ] && [ -z "$(find "$1" -type f ! -perm 600)" ]' _ "$T/second"
+# an existing folder (USB stick root): its own mode and unrelated files are left alone
+mkdir -p "$T/usb" && echo keep >"$T/usb/photo.jpg" && chmod 755 "$T/usb" && chmod 644 "$T/usb/photo.jpg"
+S=$(new_state bk_copy2)
+{ mark doctor prepare_backup_sd; } >"$S/state"
+printf 'y\n' | a "$S" backup --backup-dir "$BKDIR" --backup-copy "$T/usb" >"$T/bk_copy2.out" 2>&1
+check "backup --backup-copy (G19): an existing folder keeps its mode and other files" bash -c '[ "$(stat -c %a "$1")" = 755 ] && [ "$(stat -c %a "$1/photo.jpg")" = 644 ] && [ "$(stat -c %a "$1/mtdblock7.bin")" = 600 ]' _ "$T/usb"
 
 # ------------------------------------------------------------------ fake camera B (stock + flash card)
 head -c 5242880 /dev/urandom >"$T/ak_rtsp_firmware_20260101_000000.squashfs"

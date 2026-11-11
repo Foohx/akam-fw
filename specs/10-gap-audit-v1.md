@@ -628,12 +628,24 @@ fix, the second is a product decision (wizard default stays "propose", but `./ak
 ## 5. P2 items
 
 ### G15 (P2) SD firmware update has no signature; document it
+Status 2026-11-11 (branch `feature/gap-p2`): **documented; guard verified.** `tf_update.sh` is behind the
+maintenance flag (`tests/lockdown_test.sh` P2b runs the patched service.sh with and without the flag). README
+"Security notes" and `docs/akam_v1_ssh_and_lockdown.md` say that any `*.bin` flashes the camera with the flag and
+that nothing is signed. Not done: the wizard removing the flag file from the card (the card is the user's; the
+docs tell the user to remove it).
 `patch_service_sh.sh` guards `tf_update.sh` behind the maintenance flag, so by default no card can reflash the
 camera. When the flag is present any `*.bin` flashes. Fix: document it in `docs/akam_v1_ssh_and_lockdown.md` as
 physical-access only (done partly at line 259), and let the wizard remove the flag file from the card after a flash.
 Do not build in-camera signature verification for V1 (no crypto library, and the vendor updater is not ours).
 
 ### G16 (P2) Tuning inputs are unvalidated
+Status 2026-11-11 (branch `feature/gap-p2`): **implemented on the host.** `control.c` parses every numeric SET
+strictly (`strtol`, whole string, no overflow) and replies `ERR <key> range [lo,hi]`, changing nothing. Ranges
+(chosen from the documented defaults and the hw_exp ceiling of 16384, the stock values are not known):
+`ae.stable_range`/`hold_range`/`speed` 0..100, `ae.exp_max` 0..32767 (the PC tool slider goes to 32767), `ae.enabled` 0|1, `night.trigger_hw_exp` and
+`night.day_hw_exp` 0..16384, `night.confirm_samples` 1..36000, `night.lock_ms` 0..3600000, `isp.*` -50..50 (now strict
+too). The other `night.*` keys already used a range parser in `night.c`. Valid values behave as before; golden test
+in `tests/native/control_test.c`. The torn-read note of `ae.c` is unchanged (accepted: aligned int reads).
 Evidence: `control.c:343-410` `atoi`/`strtoul` for `ae.stable_range`, `ae.hold_range`, `ae.speed`, `ae.exp_max`,
 `night.trigger_hw_exp`, `night.day_hw_exp`, `night.confirm_samples`, `night.lock_ms` with no range check, applied
 straight to the ISP or the state machine; `ae.c:96-99` documents the tearing as accepted. Only loopback or
@@ -642,6 +654,14 @@ the state machine flap or never switch. Fix: clamp each key with the ranges used
 `ERR ... range`, add the keys to `tests/native/control_test.c`. Effort S. HW no.
 
 ### G17 (P2) Binary hardening
+Status 2026-11-11 (branch `feature/gap-p2`): **partly applied, boot test on hardware pending.** Evaluated with the
+pinned Zig 0.14.1 (musl, ARMv5): `-fstack-protector-strong` builds and links (musl provides `__stack_chk_fail`)
+but on every object costs +10.2 KB stripped (322,924 to 333,100 bytes, +3.1 %), over the 2 % budget and with canary
+checks in the video and audio paths. Applied only to the objects that parse untrusted input (ONVIF/SOAP/HTTP,
+`rtsp_auth.o`, `control.o`): +3,432 bytes (+1.06 %), ARM build with 0 warnings. `-Wformat -Wformat-security` added
+(no new warning). Not applicable: `_FORTIFY_SOURCE` (musl ignores it), RELRO and `-z now` (static non-PIE musl has
+no dynamic loader to apply them), PIE (`-static-pie` changes startup and needs a hardware measure; not tried).
+Static analysis (`cppcheck`/`clang --analyze`) not added.
 Evidence: `Makefile:3-11` `-O2 -Wall -g`, `-static`; no `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2` (musl
 ignores it), no `-Wl,-z,relro,-z,now`, no PIE (static non-PIE has no ASLR). Fix: `-fstack-protector-strong`
 (check the Zig/musl toolchain supports it for ARMv5, cost a few KB and under 1% CPU), `-Wl,-z,relro,-z,now`,
@@ -650,6 +670,14 @@ Run `cppcheck`/`clang --analyze` over `soap.c`, `http_srv.c`, `rtsp.c` in the te
 (boot test).
 
 ### G18 (P2) Legacy cruft to remove before V1 (nothing here breaks anything today)
+Status 2026-11-11 (branch `feature/gap-p2`): **partly done.** Removed: `--no-isp-init` (documented as non-working)
+and the duplicated init list and stale "one client" line in the `main.c` header. Kept on purpose (not proven
+unused or still needed): the `camyn/` and `CAMYN_MAINTENANCE` aliases and `tests/upgrade_from_camyn_test.sh` (still
+the upgrade path of early images; remove at the V1 tag), `--grab-then-exit` and SIGUSR1 grab (dev tools, no compile
+flag yet), `aec_custom.c` and the Makefile dev variants (the kit already ships only `ak_rtsp` and `flash_tool`),
+the legacy `hw_exp > 3000` remark in `night_logic.h` (history only), the .NET serial console (decision needed),
+and every vendor binary or library in the APP: the repo has no stock init scripts to prove them unused (the
+fixtures are fake), so nothing was dropped from the image. Needs the G14 process list from a camera.
 - `camyn/` SD folder and `CAMYN_MAINTENANCE` aliases in `akam_ssh.sh`, `akam_lockdown.sh`, `patch_service_sh.sh`
   (all marked "removed in the next release"); remove at V1 and delete `tests/upgrade_from_camyn_test.sh` after a
   last look. S.
@@ -670,12 +698,18 @@ Run `cppcheck`/`clang --analyze` over `soap.c`, `http_srv.c`, `rtsp.c` in the te
   contains and what runs (G14) is needed to claim "no vendor daemon". M. HW yes.
 
 ### G19 (P2) Backups contain secrets
+Status 2026-11-11 (branch `feature/gap-p2`): **implemented on the host.** The wizard creates the backup folder
+with `umask 077`, sets 0700 on the folder and 0600 on the files (also for `--backup-dir` imports and
+`--backup-copy` copies) and prints a "contains secrets" warning; documented in `docs/akam_v1_backup.md` and the
+README. Test in `tests/wizard_camera_test.sh`. The clear-text ONVIF password stays by decision U2.
 `./akam backup` stores all 8 partitions in `~/akam-backup-*/`; CONFIG holds the Wi-Fi PSK
 (`/etc/config/wpa_supplicant.conf`), `credentials` (clear text ONVIF password) and `rtsp_auth` (HA1). Fix: say it
 in the backup guide and the wizard final message (mode 0700 on the backup directory, do not upload), and make
 the wizard create the folder with `umask 077`. S.
 
 ### G20 (P2) OSD timestamp, motion detection, timezone
+Status 2026-11-11 (branch `feature/gap-p2`): **deferred, not started.** Needs a reverse-engineering session and a
+clock (G08), hardware for every part, and an Events service for motion; nothing is safe to do on the host.
 - OSD: the stock firmware overlays text through a vendor OSD module (kernel/VENC); no code in `ak_rtsp` uses it.
   Needs a reverse-engineering session with `stock_hook` captures (the repo has `stock_capture.md` for this); cost
   is a font plus an overlay buffer in RAM (tens of KB) and a once-per-second update thread (1 wakeup/s). Depends
@@ -689,6 +723,8 @@ the wizard create the folder with `umask 077`. S.
 - `./akam config show`: see G11 item 8.
 
 ### G21 (P2) MQTT, optional
+Status 2026-11-11 (branch `feature/gap-p2`): **deferred.** No broker to test against, and the note above says not
+to start before G01 to G04 are checked on hardware.
 `specs/07` step 2 describes it; the user has no broker and no Home Assistant, so it cannot be tested end to end
 here. Keep it as an optional, off-by-default module (`/etc/config/akam/mqtt`: host, port, topic prefix, user, no
 TLS in the first cut): publish a retained `availability` and a metrics JSON every 30 s (the same keys as 8091
@@ -699,6 +735,16 @@ wakeups; when enabled under 50 KB RAM and under 1 wakeup/s. Do not start it befo
 only for the final check (with a broker started on the PC).
 
 ### G22 (P2) Wi-Fi power save and link tuning
+Status 2026-11-11 (branch `feature/gap-p2`): **investigated, no change.** Facts: nothing in the repo sets power
+save (no `iw`, `iwconfig` or `iwpriv` call in any template or doc); the driver is the vendor module
+`atbm6x3x_wifi_usb.ko` (Altobeam USB), whose power save behaviour, `cfg80211` support and tools present on the
+camera are unknown here (BusyBox 1.30.1 has no `iw`; the stock APP may ship `iwconfig`/`iwpriv`, unchecked). Changing
+it blind could break association or the fast reconnect. Proposed hardware experiment (one camera, SSH): 1. record
+`ls /sbin /usr/sbin /bin | grep -i -E "^iw"` and `cat /proc/net/wireless`; 2. if `iwconfig` exists, read
+`iwconfig wlan0` ("Power Management"); 3. try `iwconfig wlan0 power off|on` or `iwpriv`; 4. for each state take 5
+minutes with no client: current (USB meter), `ping -i 0.2` latency from the PC (budget: p95 under 100 ms), RTSP
+OPTIONS time, `net.wifi_rssi`; 5. keep a change only if idle current drops and latency stays in budget, then set
+it in `akam_net.sh` after association. Until then the default is untouched.
 Nothing sets power save: `grep -n -i "power_save\|iw " tools/firmware_patch_templates/*.sh` is empty. The camera streams
 continuously to a viewer, so power save gains little while a client is connected, but with no client (the idle
 budget) the link can sleep: test `iw dev wlan0 set power_save on` (BusyBox/`iw` may not exist; the driver

@@ -404,29 +404,46 @@ static void setmsg(char *resp, size_t cap, const char *fmt, ...)
     va_end(ap);
 }
 
+/* Strict decimal parse with a range (G16): no sign-less junk, no trailing text, no overflow. */
+static int ctl_parse_int(const char *s, long lo, long hi, long *out)
+{
+    char *end = NULL;
+    if (!s || !*s) return -1;
+    errno = 0;
+    long v = strtol(s, &end, 10);
+    if (errno || !end || *end || v < lo || v > hi) return -1;
+    *out = v;
+    return 0;
+}
+
+#define SET_INT(dst, key, lo, hi) do { long v_; \
+        if (ctl_parse_int(value, (lo), (hi), &v_) != 0) { \
+            setmsg(resp, cap, "ERR " key " range [%d,%d]", (int)(lo), (int)(hi)); return; } \
+        (dst) = (__typeof__(dst))v_; } while (0)
+
 static void do_set_locked(char *resp, size_t cap, const char *param, const char *value)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
     night_tuning_t n; night_get_tuning(&n);
 
     if (!strcmp(param, "ae.stable_range")) {
-        a.stable_range = atoi(value);
+        SET_INT(a.stable_range, "ae.stable_range", 0, 100);
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.stable_range=%d", a.stable_range);
     } else if (!strcmp(param, "ae.hold_range")) {
-        a.hold_range = atoi(value);
+        SET_INT(a.hold_range, "ae.hold_range", 0, 100);
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.hold_range=%d", a.hold_range);
     } else if (!strcmp(param, "ae.speed")) {
-        a.speed = atoi(value);
+        SET_INT(a.speed, "ae.speed", 0, 100);
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.speed=%d", a.speed);
     } else if (!strcmp(param, "ae.exp_max")) {
-        a.exp_max = atoi(value);
+        SET_INT(a.exp_max, "ae.exp_max", 0, 32767);
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.exp_max=%d", a.exp_max);
     } else if (!strcmp(param, "ae.enabled")) {
-        a.enabled = atoi(value) ? 1 : 0;
+        SET_INT(a.enabled, "ae.enabled", 0, 1);
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.enabled=%d", a.enabled);
     } else if (!strcmp(param, "night.mode")) {
@@ -440,45 +457,45 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         setmsg(resp, cap, "OK night.mode=%s%s%s%s", night_mode_name(m), e ? " (not saved: " : "", e ? strerror(e) : "",
                e ? ")" : "");
     } else if (!strcmp(param, "night.trigger_hw_exp")) {
-        n.trigger_hw_exp = (uint32_t)strtoul(value, NULL, 10);
+        SET_INT(n.trigger_hw_exp, "night.trigger_hw_exp", 0, 16384);
         night_set_tuning(&n);
         setmsg(resp, cap, "OK night.trigger_hw_exp=%u", n.trigger_hw_exp);
     } else if (!strcmp(param, "night.day_hw_exp")) {
-        n.day_hw_exp = (uint32_t)strtoul(value, NULL, 10);
+        SET_INT(n.day_hw_exp, "night.day_hw_exp", 0, 16384);
         night_set_tuning(&n);
         setmsg(resp, cap, "OK night.day_hw_exp=%u", n.day_hw_exp);
     } else if (!strcmp(param, "night.confirm_samples")) {
-        n.confirm_samples = atoi(value);
+        SET_INT(n.confirm_samples, "night.confirm_samples", 1, 36000);
         night_set_tuning(&n);
         setmsg(resp, cap, "OK night.confirm_samples=%d", n.confirm_samples);
     } else if (!strcmp(param, "night.lock_ms")) {
-        n.lock_ms = atoi(value);
+        SET_INT(n.lock_ms, "night.lock_ms", 0, 3600000);
         night_set_tuning(&n);
         setmsg(resp, cap, "OK night.lock_ms=%d", n.lock_ms);
     } else if (!strcmp(param, "isp.saturation")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.saturation range [-50,50]"); return; }
+        int v;
+        SET_INT(v, "isp.saturation", -50, 50);
         if (isp_set_saturation(v) != 0) { setmsg(resp, cap, "ERR isp_set_saturation failed"); return; }
         g_isp_saturation = v;
         char note[64];
         setmsg(resp, cap, "OK isp.saturation=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.contrast")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.contrast range [-50,50]"); return; }
+        int v;
+        SET_INT(v, "isp.contrast", -50, 50);
         if (isp_set_contrast(v) != 0) { setmsg(resp, cap, "ERR isp_set_contrast failed"); return; }
         g_isp_contrast = v;
         char note[64];
         setmsg(resp, cap, "OK isp.contrast=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.brightness")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.brightness range [-50,50]"); return; }
+        int v;
+        SET_INT(v, "isp.brightness", -50, 50);
         if (isp_set_brightness(v) != 0) { setmsg(resp, cap, "ERR isp_set_brightness failed"); return; }
         g_isp_brightness = v;
         char note[64];
         setmsg(resp, cap, "OK isp.brightness=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.sharpness")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { setmsg(resp, cap, "ERR isp.sharpness range [-50,50]"); return; }
+        int v;
+        SET_INT(v, "isp.sharpness", -50, 50);
         if (isp_set_sharpness(v) != 0) { setmsg(resp, cap, "ERR isp_set_sharpness failed"); return; }
         g_isp_sharpness = v;
         char note[64];

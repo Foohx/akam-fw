@@ -386,6 +386,7 @@ bk_write_pc_files() {
         echo "Akam backup of the camera at $CAM_IP, made $(date -u +%Y-%m-%dT%H:%M:%SZ) by ./akam backup."
         echo "mtdblock0..7.bin are the 8 flash partitions of the ORIGINAL firmware. This is the only way back."
         echo "Keep a second copy on a different medium. NEVER publish these files: they hold proprietary firmware."
+        echo "mtdblock*.bin also hold SECRETS (Wi-Fi password, ONVIF password in clear text): keep this folder private (0700)."
         echo "Check them with: sha256sum -c SHA256SUMS"
     } >"$d/README.txt"
     {
@@ -401,7 +402,7 @@ bk_write_pc_files() {
 # bk_copy_to_pc DIR: fetch dump1 (verified against the camera's hashes, which are identical to dump2).
 bk_copy_to_pc() {
     local d=$1 n
-    mkdir -p "$d"
+    (umask 077 && mkdir -p "$d") || return 1
     for n in 0 1 2 3 4 5 6 7; do
         xfer_get "$CAM_SD/dump1/mtdblock$n.bin" "$d/mtdblock$n.bin" "$(printf '%s\n' "$CAM_MTD_SIZES" | cut -d' ' -f$((n + 1)))" "$(bk_hash_get 1 "$n")" ||
             return 1

@@ -170,7 +170,14 @@ Verify:
 `mtdblock6.bin` (CONFIG) holds your Wi-Fi credentials, and the other partitions hold the vendor's
 proprietary firmware and device identifiers. **Never commit dumps to Git, attach them to issues, or
 share them.** The repository ignores `*.bin` and `*.squashfs`, but do not rely on that: keep dumps
-outside the working tree (the examples use `~/akam-backup`). Images built by Akam embed your
+outside the working tree (the examples use `~/akam-backup`).
+
+**Secrets inside.** The CONFIG partition also holds the ONVIF password in clear text
+(`/etc/config/akam/credentials`, kept in clear text by design) and the RTSP digest hash (`rtsp_auth`). The
+wizard creates the folder with `umask 077` and sets 0700 on the folder and 0600 on the files (also for a folder
+you import with `--backup-dir`, and for a `--backup-copy`), and prints a warning. A backup made by hand
+should get the same: `chmod 700 DIR; chmod 600 DIR/*`. Do not put it in a synced or shared folder; change the
+Wi-Fi and ONVIF passwords if a copy leaks. Images built by Akam embed your
 stock APP tree; do not publish those either.
 
 ---

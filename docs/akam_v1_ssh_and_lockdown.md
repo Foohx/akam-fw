@@ -258,6 +258,11 @@ the card is still mounted: right before the first guarded SD hook it runs
   safety net. It is never set by the
   watchdog or by a network event; only physical access to the card can enable it. Treat it as exactly
   that: whoever can put a card in the camera can run code as root, as with the stock firmware.
+- **No signature on card updates (G15).** Stock `tf_update.sh` runs `system_upgrade` on every `/mnt/*.bin` and
+  checks neither a signature nor a hash. `patch_service_sh.sh` guards that call with the maintenance flag
+  (`tests/lockdown_test.sh`, section P2b: no flag, nothing is flashed), so a card without the flag cannot reflash
+  the camera. With the flag, any `*.bin` flashes it. There is no network OTA, and no in-camera signature check
+  is planned for V1 (no crypto library, vendor updater). Remove the flag from the card after use.
 
 **Deprecated alias (one release).** The flag was named `CAMYN_MAINTENANCE` in the early-development image
 (formerly Camyn). A card that still carries that file keeps working: the patched `service.sh`, the
