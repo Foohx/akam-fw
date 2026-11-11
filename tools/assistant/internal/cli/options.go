@@ -19,7 +19,9 @@ type Options struct {
 	TrustNewHostKey                                                        string
 	PasswordFile                                                           string
 	AllowUnsigned, AllowUnknownComp, ManualTelnet, Plain, DryRun, NoColor  bool
-	Args                                                                   []string // command and its words
+	// TelnetNegotiate (hidden): answer telnet option negotiation (default: stay silent, as validated on hardware).
+	TelnetNegotiate bool
+	Args            []string // command and its words
 }
 
 var negNum = regexp.MustCompile(`^-[0-9]`)
@@ -55,6 +57,8 @@ func ParseArgs(argv []string) (*Options, error) {
 			o.AllowUnsigned = true
 		case "--allow-unknown-stock-comp":
 			o.AllowUnknownComp = true
+		case "--telnet-negotiate": // hidden: not in the help text
+			o.TelnetNegotiate = true
 		case "--manual-telnet":
 			o.ManualTelnet = true
 		case "--kit":

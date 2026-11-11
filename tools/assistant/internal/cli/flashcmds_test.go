@@ -411,11 +411,11 @@ func TestRestoreRefusals(t *testing.T) {
 		expectRC(t, r, 1)
 		w.unchanged(t)
 	}
-	// a camera not known to run Akam: the telnet route is not native yet
+	// a camera not known to run Akam: the telnet route is used (here its port is closed)
 	w.writeState("camera_kind=stock\n")
 	r = w.run("y\ny\n", "restore", "--backup-dir", bk)
 	expectRC(t, r, 1)
-	contains(t, r.out+r.err, "not in the native program yet")
+	contains(t, r.out+r.err, "  Route: telnet", "cannot connect to 127.0.0.1 port")
 	w.unchanged(t)
 	// dry run
 	n := len(w.cam.Commands())

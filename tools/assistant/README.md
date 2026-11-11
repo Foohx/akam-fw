@@ -1,15 +1,24 @@
-# akam: the assistant as a single binary (experimental, phases P1 and P2)
+# akam: the assistant as a single binary (experimental, phases P1 to P3)
 
 `akam` is the Go version of the guided setup program (`./akam`, bash, in the repository root). It is one
 static executable with no runtime dependency: SSH, the control port, the RTSP talk client, G.711 and
 WAV are built in. The plan is in [specs/09-spec-assistant-binary.md](../../specs/09-spec-assistant-binary.md).
 
-**Status: phases P1 and P2, experimental.** It does the daily commands on a camera that already runs Akam, gets
-and verifies the kit, and updates or restores a running Akam camera over SSH (`update`, `restore`, `verify`).
-`image`, `backup`, `flash` from stock, the SD card steps and the telnet route stay in the bash wizard (phase P3;
-`image` waits for a squashfs writer, see below). The program never reboots or power-cycles a camera: after a
-flash it tells you to do it by hand. It was tested on a fake camera and against the bash wizard's own output
-and verdicts, **not yet on a real camera**.
+**Status: phases P1, P2 and P3, experimental.** It does the daily commands on a camera that already runs Akam, gets
+and verifies the kit, updates or restores a camera over SSH, and now also the whole first install from a stock
+camera: `find-camera` (telnet detection), `prepare-backup-sd`, `backup`, `prepare-flash-sd`, `flash` and `wipe-sd`,
+with a built-in telnet client and a built-in microSD writer (MBR + FAT32 written directly on the card, no
+`mkfs`, `mount` or `sfdisk`). Only `image` still waits for a squashfs writer (it stays in the bash wizard, see below). The
+program never reboots or power-cycles a camera: after a flash it tells you to do it by hand. It was tested on
+fake cameras (SSH and stock telnet), on regular files that play the card, and against the bash wizard's own
+output, files and verdicts, **not yet on a real camera and not yet on a real card**.
+
+**Self-contained.** The camera-side scripts the program uploads (`akam_reflash_ssh.sh`, `flash_guard.sh`,
+`preflight_check.sh`, `install_with_flash_tool.sh`, `restore.sh`, `akam_hwcheck.sh`) and the supported-hardware list
+are embedded in the binary (`internal/assets`, copied from their source paths by `go generate ./internal/assets`; a
+test fails when a copy drifts). The program no longer looks for a source checkout: it works from any directory, and a
+folder it happens to be run in can never provide what is sent to a camera. `flash_tool` (an ARM binary) comes only from
+the verified kit.
 
 ## Build
 
@@ -27,8 +36,8 @@ VERSION=1.0.0 tools/assistant/build.sh   # version shown by `akam version`
 ```
 
 `make -C tools/assistant host|all|test` calls the same script. The build is static (`CGO_ENABLED=0`), uses
-`-trimpath -buildvcs=false -ldflags "-s -w"`, and checks the 12 MiB size budget of the spec (about 6.3 MiB for
-amd64 and 5.9 MiB for arm64, start in about 2 ms).
+`-trimpath -buildvcs=false -ldflags "-s -w"`, and checks the 12 MiB size budget of the spec (with P3: 9.6 MiB for
+amd64 and 8.9 MiB for arm64).
 
 ## Use
 
@@ -61,12 +70,56 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 
 | `get-kit` | downloads `akam-kit-X.tar.xz`, `SHA256SUMS`, `SHA256SUMS.sig` (HTTPS only, TLS 1.2+, a redirect to http is refused, 3 tries), checks the sha256, the OpenSSH signature (SSHSIG, principal and namespace `akam-release`, keys of `tools/release/allowed_signers` built in; there is no environment override in a release binary: `AKAM_ALLOWED_SIGNERS`, `AKAM_KIT_URL_BASE`, `AKAM_FLASH_TOOL`, `AKAM_FLASH_SCRIPTS_DIR`, `AKAM_PORT_SSH2`, `AKAM_REFLASH_*` and `AKAM_FORCE_TTY` are test hooks, read only by a build with `-tags akamtest`; downloads are capped at 256 MiB and 1 MiB for the checksum files, the archive at 1 GiB decompressed / 200 MiB of content / 10000 entries), the archive layout and the kit's MANIFEST exactly like `verify_kit.sh`, and extracts it to `<state dir>/kit`. `--kit FILE`, `--version`, `--expect-sha256`, `--allow-unsigned` keep their meaning. Today's `allowed_signers` holds no key, so a signed kit is refused; an unsigned one needs the yes/no "Unsigned kit" (default No, refused without a terminal) or `--allow-unsigned`. Nothing from a kit is run. The `xz` program is needed to open the archive |
 | `update [--image FILE]` | flashes a new image over SSH, no card: precheck (writes nothing), the red box and one yes/no (default No), upload to the camera's RAM, sha256 on both sides, md5 by the camera script, a second Dropbear from RAM on port 2222, detached flash, polled log, independent read-back md5 of `/dev/mtd7`. The camera-side scripts are those of `tools/flash_scripts` (or the kit's `scripts/flash`), unchanged. It never reboots: power-cycle by hand |
-| `restore --backup-dir DIR` | the same path with `mtdblock7.bin` of your backup (SHA256SUMS checked); needs a camera recorded as running Akam. The telnet + card route is bash only |
+| `restore --backup-dir DIR` | the same path with `mtdblock7.bin` of your backup (SHA256SUMS checked); over SSH when Akam runs (asked), else through the maintenance telnet and the card like `flash` |
 | `verify` | waits for SSH, runs `akam_hwcheck.sh`, checks the ports (22, 554, 8091; 24 only with the card; 80 only when ONVIF is on) and the Wi-Fi gate, asks you to power-cycle without the card by hand, repeats the checks, then the optional password, ONVIF and camera-name offers |
+| `backup` | over the maintenance telnet (port 24, toolkit card): `/proc/mtd` must be the supported 8-partition table, kernel and free space checked, the 8 partitions are `dd`-ed twice on the card, 16 exact sizes, both runs hashed on the camera and compared (CONFIG alone may differ: read again twice), dump1 copied to `~/akam-backup-<name>-<date>/` over `nc` with size + hash checks (3 tries, no partial file left), `SHA256SUMS`, `README.txt`, `camera_info.txt` as bash writes them, hardware verdict (yes/no in a red box, default No, unless validated), second-copy question. `--backup-dir DIR` accepts a folder made by hand |
+| `prepare-backup-sd`, `prepare-flash-sd`, `wipe-sd` | see "The SD card" below. One red box (device path, size, model) with a yes/no default No, refused without a terminal |
+| `flash` | stock or maintenance telnet with the flash card on `/mnt`: layout gate, exactly one image on the card with the right md5 (pushed over `nc` only after a yes), `flash_tool` and scripts checked or pushed, Wi-Fi gate (`preflight_check.sh --ensure-wifi` on the camera), the camera script's md5 line compared, the red box, and only after the explicit yes the `YES` to the camera's own prompt; then the read-back `dd if=/dev/mtd7 | md5sum` decides. SSH route when Akam runs and you say yes. No reboot is ever sent |
 
-Not in the native binary yet (the command says so and points to the bash wizard): `build`,
-`prepare-backup-sd`, `backup`, `image`, `prepare-flash-sd`, `flash` (from stock), `wipe-sd`. A `backup` over SSH of a
-camera that already runs Akam does not exist in bash either (its flash no longer holds the original firmware).
+Still in the bash wizard: `image` and `build` (they need a squashfs writer). `--manual-telnet` keeps its meaning;
+after two failed commands the session switches to manual mode on its own.
+
+### The telnet client
+
+`internal/camera/telnet` is a port of `camsh.sh` and `transfer.sh`. The PC only dials out. One command per send
+(at most 350 bytes, one line), wrapped as `echo "__AKAM_BEG_<nonce>_<n>_"x; CMD; echo "__AKAM_DONE_<nonce>_<n>:"$?"__"`
+so that the echo of the typed line never matches a marker; everything before the BEG marker is dropped; CR and
+terminal escapes (BusyBox `ls` colours, `ESC[6n`) are stripped; progress bars of `flash_tool` feed the progress line;
+the inactivity timeout is 30 s. RFC 854 negotiation: by default every request is dropped silently and never
+answered, exactly like the bash wizard (validated on hardware). The refuse-everything-except-echo/SGA behaviour
+(WONT/DONT, each answer once) exists only behind the hidden `--telnet-negotiate` option (or `AKAM_TELNET_NEGOTIATE=1`
+in a test build) until it has been seen to work on a real camera. The marker nonce comes from `crypto/rand`, a line
+is kept up to 64 KiB, and a transfer from the camera is cut off at the announced size. Manual mode
+shows the exact command and takes the pasted output: the program never invents an output, and `YES` is only sent
+through `sendYES`, which needs the `flash.Confirmation` of an explicit yes for that image's md5 (tested: any other
+answer makes the script receive `NO`, a missing terminal sends nothing).
+
+### The SD card
+
+Enumeration needs no privilege: `/sys/class/block`, `/proc/self/mountinfo`, `/proc/swaps`. Eligible: a whole `sdX`
+disk that is removable and USB-attached, or an `mmcblkN` of type SD; 128 MiB to 128 GiB; not carrying `/`, `/boot`,
+`/usr`, `/var`, `/etc`, `/home`, `/opt`, `/srv`, `/nix` or swap; not a member of a stack (holders: LUKS, LVM, RAID,
+device-mapper); the repository, `$HOME`, the working and the temp directories must not live on it; symlinks are
+resolved first and a link is refused by the check itself. The identity (size, model, serial, wwn, vendor, major:minor)
+travels as a token.
+
+Writing goes through `akam sd-helper`, re-executed with `sudo` or `pkexec` (`AKAM_SD_ELEVATE=sudo|pkexec`; auto: pkexec
+with a graphical session, else sudo) only when the user cannot already write the device, after the red box and a
+second yes/no ("This step needs administrator rights to write the card. Continue? [y/N]"). The helper takes one JSON
+request on stdin (so the Wi-Fi password is never in argv, nor in the environment: the helper starts with a minimal
+one), answers one JSON document and exits. Closed operation set: `list`, `prepare`, `verify`, `wipe`. It runs the
+same guards again, compares the identity token, unmounts, re-checks, opens `O_RDWR|O_EXCL`, and refuses anything that
+is not a block device. The content to write travels in the request (the helper reads no file). `prepare` writes the
+MBR (one active FAT32-LBA partition at 1 MiB), a FAT32 volume (label `AKAMSD`, 2 FATs, long names, cluster size by
+card size), the files, syncs, re-reads the card with the built-in FAT32 reader and compares every file and the checks
+of `sd_card.sh verify`. `wipe` zero-fills exactly the device size and spot-checks both ends. Unlike bash, the first-boot
+card and the flash files are written in one pass (no second write on a mounted card). A release binary has no
+image-file mode: the one that lets the helper write a regular file exists only under `-tags akamtest`.
+The toolkit is the pinned `tasarren/lsc-tuya-toolkit` commit: a checkout in `AKAM_TOOLKIT_DIR` (default
+`~/akam-sdprep/toolkit`), or, if missing, the GitHub tarball of that commit over HTTPS; either way the C-locale tree
+hash must equal the pin of `sd_card.sh` (a test compares the Go card tree byte for byte with the one `sd_card.sh
+--dry-run --stage-dir` builds, when the toolkit is present). Not done: LUKS/RAID signature probing of an inactive
+partition (only active holders are seen), macOS and Windows (P4).
 
 ### The flash path (audited)
 
@@ -129,6 +182,13 @@ ffmpeg:
   `tests/reflash_ssh_test.sh`), and an RTSP server with Digest login
   against the credentials those scripts wrote and the ONVIF backchannel. `akam_onvif.sh` is emulated until it is
   part of this tree (it is on the ONVIF branch).
+* the P3 tests: `internal/testfake/stock.go` is a fake stock camera (telnet server over a temporary tree, BusyBox-like
+  echo and IAC bytes, mtd "devices" as files, a fake `install_with_flash_tool.sh`; fault injection: dropped
+  commands, closed session, corrupted or truncated `nc` transfers, unreliable reads, bad write) used by the backup,
+  flash and restore tests; the SD tests run on a regular file (`internal/sdcard` guard matrix on a fake `/sys`,
+  FAT32 validated by the built-in reader and by `fsck.vfat -n` when installed, helper refusals, toolkit download over a
+  test HTTPS server). Tests that need the image-file mode or test hooks run with `-tags akamtest`
+  (`tools/assistant/build.sh test` and `tests/assistant_test.sh` do);
 * the P2 tests: kit refusal cases, SSHSIG interoperability with `ssh-keygen -Y` in both directions, verdict parity with
   `tools/release/verify_kit.sh` on 25 kits, and the whole update, restore and verify flows on the fake camera;
 * golden files (`testdata/golden/*.golden`) made from the **bash** wizard by `testdata/gen_golden.sh`; the Go
@@ -146,6 +206,9 @@ internal/ui/              the UI interface and the plain implementation; ui/tui 
 internal/state/           state files, cameras, log with redaction, lock
 internal/camera/ssh/      SSH client, keys, host-key pinning
 internal/camera/ctl/      control port 8091 client
+internal/camera/telnet/   maintenance telnet client, manual mode, nc transfers with hashing
+internal/sdcard/          card enumeration and guards, MBR + FAT32 writer and reader, payload, helper, toolkit
+internal/assets/          embedded camera-side scripts (go generate) and the supported-hardware list
 internal/kit/             kit download, SSHSIG check, archive and MANIFEST checks (port of verify_kit.sh); kit/kittest builds test kits
 internal/flash/           the one audited function that writes the camera flash (port of reflash_over_ssh.sh)
 internal/discover/        port probe, subnet list and scan, WS-Discovery, mDNS
@@ -156,9 +219,6 @@ internal/testfake/        fake camera for the tests
 
 ## Known gaps against the bash wizard (P1)
 
-* `find-camera` does not open the stock maintenance telnet shell (that is the telnet client of phase P3): a
-  camera with port 24 open is recorded as "stock firmware with the toolkit", where bash also tells an Akam camera
-  that still has the card in.
 * `find-camera` does not need `prepare-backup-sd` done first when the camera already runs Akam (ssh, rtsp and
   control ports open, telnet closed): it proceeds. Any other camera still gets the bash rule ("needs these
   steps first"). The bash wizard keeps the strict rule on every camera.
@@ -168,6 +228,12 @@ internal/testfake/        fake camera for the tests
 * `onvif` follows the command of the ONVIF branch (`akam_onvif.sh`), which is not merged into `dev` yet.
 * P2: opening a kit runs the `xz` program (the pure-Go `ulikunitz/xz` module could not be added in this run); the
   `update`/`restore` flow was tested against an emulation of the camera scripts, not the scripts themselves
-  (they have their own tests in `tests/reflash_ssh_test.sh`); `restore` has no telnet + card route; `get-kit` on a
+  (they have their own tests in `tests/reflash_ssh_test.sh`); `get-kit` on a
   folder (`--kit DIR`) is accepted only as an unsigned kit.
 * The Go toolchain is not pinned in `tools/build/deps.lock` yet.
+* P3: not seen on a real camera or a real card. Real hardware is needed for: the telnet negotiation answers (bash
+  stayed silent), the BusyBox prompt and echo details of the real shell, `nc` timing, the card booting the camera
+  into telnet 24 (and the camera reading a card written by this FAT32 writer), `sudo`/`pkexec` elevation, a real
+  USB reader and `/sys` layout, and a first install from stock end to end.
+* `akam telnet [IP]` (interactive passthrough) is not implemented; `prepare-*-sd` write the card in one pass (bash
+  prepared, then added the flash files).

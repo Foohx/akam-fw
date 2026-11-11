@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"os"
 	"path/filepath"
@@ -24,67 +25,33 @@ import (
 
 // ---------------------------------------------------------------- tools on this computer
 
-// repoRoot finds a source checkout (AKAM_ROOT, else upwards from the working directory and from the
-// program), or "" for a binary used on its own.
-func repoRoot() string {
-	if r := os.Getenv("AKAM_ROOT"); r != "" {
-		return r
-	}
-	var starts []string
-	if wd, err := os.Getwd(); err == nil {
-		starts = append(starts, wd)
-	}
-	if exe, err := os.Executable(); err == nil {
-		starts = append(starts, filepath.Dir(exe))
-	}
-	for _, d := range starts {
-		for i := 0; i < 8 && d != "" && d != string(filepath.Separator); i++ {
-			if st, err := os.Stat(filepath.Join(d, "tools", "flash_scripts", "akam_reflash_ssh.sh")); err == nil && !st.IsDir() {
-				return d
-			}
-			d = filepath.Dir(d)
-		}
-	}
-	return ""
-}
-
 func (a *App) kitDir() string { return filepath.Join(a.Cams.Base, "kit") }
 
 func exists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 
-// flashScriptsDir is cam_scripts_dir: AKAM_FLASH_SCRIPTS_DIR, a source checkout's tools/flash_scripts,
-// else the scripts shipped in the verified kit.
-func (a *App) flashScriptsDir() string {
-	if d := testhook.Env("AKAM_FLASH_SCRIPTS_DIR"); d != "" {
-		return d
+// flashScriptsDir is a test override of the scripts folder (akamtest builds only). In a release build it
+// is "" and the scripts embedded in the binary (internal/assets) are sent: no folder on disk, in the
+// working directory or in a checkout, is ever trusted to provide what goes to the camera.
+func (a *App) flashScriptsDir() string { return testhook.Env("AKAM_FLASH_SCRIPTS_DIR") }
+
+// embeddedScript is a camera-side script: the test override folder, else the embedded copy.
+func (a *App) embeddedScript(name string) ([]byte, error) {
+	if name == "akam_hwcheck.sh" {
+		if p := testhook.Env("AKAM_HWCHECK"); p != "" {
+			return os.ReadFile(p)
+		}
+	} else if d := a.flashScriptsDir(); d != "" {
+		return os.ReadFile(filepath.Join(d, name))
 	}
-	if r := repoRoot(); r != "" {
-		return filepath.Join(r, "tools", "flash_scripts")
-	}
-	return filepath.Join(a.kitDir(), "scripts", "flash")
+	return assets.Script(name)
 }
 
-// flashToolPath is cam_flash_tool.
+// flashToolPath is cam_flash_tool: flash_tool is an ARM binary that is only taken from the verified kit.
 func (a *App) flashToolPath() string {
 	if p := testhook.Env("AKAM_FLASH_TOOL"); p != "" {
 		return p
 	}
-	if a.St.Get("mode") == "source" {
-		if r := repoRoot(); r != "" {
-			return filepath.Join(r, "src", "ak_rtsp", "flash_tool")
-		}
-	}
 	return filepath.Join(a.kitDir(), "bin", "flash_tool")
-}
-
-func (a *App) hwcheckPath() string {
-	if p := os.Getenv("AKAM_HWCHECK"); p != "" {
-		return p
-	}
-	if r := repoRoot(); r != "" {
-		return filepath.Join(r, "tools", "hw_tests", "akam_hwcheck.sh")
-	}
-	return filepath.Join(a.kitDir(), "scripts", "hwcheck", "akam_hwcheck.sh")
 }
 
 // ---------------------------------------------------------------- image gate and confirmation
@@ -200,9 +167,6 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 		return nil
 	}
 	ft := a.flashToolPath()
-	if !exists(filepath.Join(a.flashScriptsDir(), "akam_reflash_ssh.sh")) || !exists(filepath.Join(a.flashScriptsDir(), "flash_guard.sh")) {
-		return a.UI.Fail("the SSH reflash scripts are missing: "+a.flashScriptsDir(), fmt.Sprintf("run %s get-kit again (they ship in the kit).", Prog))
-	}
 	if st, err := os.Stat(ft); err != nil || st.Size() == 0 {
 		return a.UI.Fail("flash_tool not found: "+ft, fmt.Sprintf("run %s get-kit again (or %s build).", Prog, Prog))
 	}
@@ -323,29 +287,25 @@ func (a *App) cmdRestore() error {
 		return a.UI.Fail(fmt.Sprintf("SHA256SUMS does not match the files in %s.", bk), "this backup is damaged: use your second copy.")
 	}
 	a.UI.Say("  Stock APP sha256: " + fileSHA(app))
-	if a.St.Get("camera_kind") != "akam" {
-		// The bash wizard falls back to the maintenance telnet and the card here (phase P3 of the
-		// native program). The SSH route needs a running Akam, so it is only offered then.
-		a.UI.Say("  Route: telnet")
-		return a.UI.Fail("restoring through the maintenance telnet and the card is not in the native program yet.",
-			fmt.Sprintf("use the bash wizard from a source checkout: %s restore (the SSH route needs a camera that runs Akam and is recorded as such: %s find-camera).", Prog, Prog))
+	route := "telnet"
+	if a.St.Get("camera_kind") == "akam" {
+		if c, derr := a.dial(ip); derr == nil {
+			c.Close()
+			a.UI.Say("  Akam runs and SSH works.")
+			if ok, perr := a.UI.AskYN("  Restore over SSH (no card needed)? [no = use the maintenance telnet and the card]"); perr == nil && ok {
+				route = "ssh"
+			}
+		}
 	}
-	c, err := a.dial(ip)
-	if err != nil {
-		return a.dialFailure(ip, err, fmt.Sprintf("SSH to root@%s with the key %s does not work.", ip, a.keyPath()),
-			"check the key (--identity FILE), the address, and that the camera has finished booting.")
-	}
-	c.Close()
-	a.UI.Say("  Akam runs and SSH works.")
-	ok, perr := a.UI.AskYN("  Restore over SSH (no card needed)? [no = use the maintenance telnet and the card]")
-	if perr != nil || !ok {
-		a.UI.Say("  Route: telnet")
-		return a.UI.Fail("restoring through the maintenance telnet and the card is not in the native program yet.",
-			fmt.Sprintf("use the bash wizard from a source checkout: %s restore", Prog))
-	}
-	a.UI.Say("  Route: ssh")
-	if err := a.flashSSH(ip, app, md5, "Restoring"); err != nil {
-		return err
+	a.UI.Say("  Route: " + route)
+	if route == "telnet" {
+		if err := a.flashTelnet(ip, app, md5, "Restoring"); err != nil {
+			return err
+		}
+	} else {
+		if err := a.flashSSH(ip, app, md5, "Restoring"); err != nil {
+			return err
+		}
 	}
 	_ = a.St.ClearDone("flash")
 	_ = a.St.ClearDone("verify")
@@ -391,10 +351,9 @@ var hwLineRe = regexp.MustCompile(`^(PASS|FAIL|WARN|UNKNOWN)|^INFO +RTSP auth`)
 
 // hwcheck is cam_hwcheck: copy akam_hwcheck.sh to the camera's RAM and run it.
 func (a *App) hwcheck(ip string) bool {
-	hw := a.hwcheckPath()
-	body, err := os.ReadFile(hw)
+	body, err := a.embeddedScript("akam_hwcheck.sh")
 	if err != nil {
-		a.UI.Fail("akam_hwcheck.sh not found: "+hw, "")
+		a.UI.Fail("akam_hwcheck.sh is not available: "+err.Error(), "")
 		return false
 	}
 	c, err := a.connectTools(ip)
@@ -539,10 +498,9 @@ func (a *App) wifiVerdict(out string) bool {
 
 // wifiGate is cam_wifi_gate_ssh: the script is sent through stdin into /tmp (RAM).
 func (a *App) wifiGate(ip string) bool {
-	pf := filepath.Join(a.flashScriptsDir(), "preflight_check.sh")
-	body, err := os.ReadFile(pf)
+	body, err := a.embeddedScript("preflight_check.sh")
 	if err != nil {
-		a.UI.Fail("preflight_check.sh not found: "+pf, "")
+		a.UI.Fail("preflight_check.sh is not available: "+err.Error(), "")
 		return false
 	}
 	c, err := a.connectTools(ip)

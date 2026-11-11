@@ -21,6 +21,8 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -47,8 +49,10 @@ type Hooks struct {
 	UI func(o *Options, st Streams, log *state.Log, secrets *state.Secrets, dry bool) ui.UI
 	// Discovery hooks (find-camera).
 	Discover DiscoverHooks
-	// HTTP is the client of get-kit; nil uses the real one (HTTPS only, TLS 1.2 or newer).
+	// HTTP is the client of get-kit and of the toolkit download; nil uses the real one (HTTPS only, TLS 1.2 or newer).
 	HTTP *http.Client
+	// SD is the microSD card layer; nil uses the real one (guards on /sys, writes through `akam sd-helper`).
+	SD sdcard.Backend
 }
 
 // App is one run of the program.
@@ -66,6 +70,7 @@ type App struct {
 	Ctx     context.Context
 
 	camIP        string
+	tn           *telnet.Session // the maintenance telnet session (backup, flash)
 	passphrase   *string
 	exitOverride int
 }
@@ -317,7 +322,17 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdRestore()
 	case "verify":
 		return a.cmdVerify()
-	case "build", "prepare-backup-sd", "backup", "image", "prepare-flash-sd", "wipe-sd", "flash":
+	case "prepare-backup-sd":
+		return a.cmdPrepareBackupSD()
+	case "backup":
+		return a.cmdBackup()
+	case "prepare-flash-sd":
+		return a.cmdPrepareFlashSD()
+	case "wipe-sd":
+		return a.cmdWipeSD()
+	case "flash":
+		return a.cmdFlash()
+	case "build", "image":
 		return a.notYet(cmd)
 	}
 	return usageErr(fmt.Sprintf("akam: unknown command '%s' (see %s help)", cmd, Prog))
@@ -340,6 +355,14 @@ func (a *App) runStep(name string) error {
 		return a.cmdGetKit()
 	case "verify":
 		return a.cmdVerify()
+	case "prepare-backup-sd":
+		return a.cmdPrepareBackupSD()
+	case "backup":
+		return a.cmdBackup()
+	case "prepare-flash-sd":
+		return a.cmdPrepareFlashSD()
+	case "flash":
+		return a.cmdFlash()
 	}
 	return a.notYet("step " + name)
 }

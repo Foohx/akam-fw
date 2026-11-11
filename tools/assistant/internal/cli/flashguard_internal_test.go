@@ -47,6 +47,10 @@ func TestOnlyTheFlashPackageWritesTheFlash(t *testing.T) {
 		inFake := strings.HasPrefix(rel, "testfake"+string(filepath.Separator)) || strings.HasPrefix(rel, filepath.Join("kit", "kittest")+string(filepath.Separator))
 		if !inFlash && !inFake && rel != filepath.Join("cli", "flashcmds.go") && rel != filepath.Join("cli", "remote.go") {
 			for _, w := range []string{"i-understand-no-uart", "akam_reflash_ssh.sh", "flash_guard.sh"} {
+				// the telnet + card route puts flash_guard.sh on the card (the card's script needs it)
+				if w == "flash_guard.sh" && (rel == filepath.Join("cli", "telnetcmds.go") || rel == filepath.Join("sdcard", "payload.go")) {
+					continue
+				}
 				if strings.Contains(s, w) {
 					t.Errorf("%s mentions %q: only internal/flash may drive a flash write", rel, w)
 				}
