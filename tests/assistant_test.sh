@@ -44,7 +44,8 @@ if out=$(go vet ./... 2>&1); then ok "go vet ./..."; else ko "go vet ./..."; ech
 
 LOG=$(mktemp)
 SELFSTATE=$(mktemp -d)
-trap 'rm -rf "$LOG" "$SELFSTATE"' EXIT
+BRIDGE=$(mktemp -d)
+trap 'rm -rf "$LOG" "$SELFSTATE" "$BRIDGE"' EXIT
 if go test -count=1 ./... >"$LOG" 2>&1; then
     ok "go test ./... ($(grep -c '^ok' "$LOG") packages)"
 else
@@ -60,6 +61,19 @@ if file "$ASSIST/bin/akam" 2>/dev/null | grep -q 'statically linked'; then ok "t
 fi
 if v=$("$ASSIST/bin/akam" version 2>&1) && [ "${v%% *}" = akam ]; then ok "akam version: $v"; else ko "akam version: $v"; fi
 if out=$("$ASSIST/bin/akam" self-test --state-dir "$SELFSTATE" 2>&1 </dev/null); then ok "akam self-test"; else ko "akam self-test: $out"; fi
+
+# The AKAM_USE_BIN bridge of the bash ./akam hands the same arguments to the binary
+printf '#!/bin/sh\necho "native:$*"\n' >"$BRIDGE/akam-fake"
+chmod +x "$BRIDGE/akam-fake"
+out=$(AKAM_USE_BIN=1 AKAM_BIN="$BRIDGE/akam-fake" bash "$REPO/akam" --camera salon status </dev/null 2>&1)
+if [ "$out" = "native:--camera salon status" ]; then ok "AKAM_USE_BIN=1 ./akam execs the binary with the same arguments"; else ko "bridge: $out"; fi
+out=$(AKAM_USE_BIN=1 AKAM_BIN="$BRIDGE/none" bash "$REPO/akam" status </dev/null 2>&1)
+rc=$?
+if [ "$rc" -eq 1 ] && [[ $out == *"native binary is not built"* ]]; then ok "AKAM_USE_BIN=1 without a binary fails clearly"; else ko "bridge, no binary: rc=$rc $out"; fi
+out=$(AKAM_USE_BIN='' bash "$REPO/akam" --no-color --state-dir "$BRIDGE/st" status </dev/null 2>&1)
+if [[ $out == *"Akam setup progress"* ]]; then ok "without AKAM_USE_BIN the bash wizard runs as before"; else ko "bash status: $out"; fi
+out=$(AKAM_USE_BIN=1 AKAM_BIN="$ASSIST/bin/akam" bash "$REPO/akam" version </dev/null 2>&1)
+if [[ $out == akam\ * ]]; then ok "the bridge runs the real binary: $out"; else ko "bridge, real binary: $out"; fi
 
 # Repository rules for what was added under tools/assistant
 cd "$REPO" || exit 1

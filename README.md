@@ -83,6 +83,14 @@ irreversible (erasing a card, writing the camera's flash) shows a **red box** th
 will happen and asks one yes/no whose **default is No** (Enter, Esc and `q` mean No). Nothing has to be
 typed, and without a terminal these steps refuse to run.
 
+### Native binary (experimental)
+
+A single static binary version of the wizard is being written in Go ([tools/assistant](tools/assistant/README.md),
+[plan](specs/09-spec-assistant-binary.md)). The first phase does the daily commands on a camera that already runs
+Akam (`status`, `led`, `audio`, `picture`, `debug`, `onvif`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`)
+with no SSH, `nc` or `akam-talk` to install; it shares the progress files with `./akam`. Backup, image and flash
+stay in the bash wizard. Build it with `tools/assistant/build.sh` and try it with `AKAM_USE_BIN=1 ./akam ...`.
+
 ## What the wizard does
 
 | Step | What happens | Risk |

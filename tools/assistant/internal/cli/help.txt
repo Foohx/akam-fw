@@ -98,6 +98,9 @@ Options:
   --plain            line-based output and prompts, no full-screen menu or widgets
                      (also automatic when not on a terminal; AKAM_PLAIN=1 does the same)
 
+A native binary (experimental) exists: see the releases. From a source checkout, build it with
+tools/assistant/build.sh and run it with AKAM_USE_BIN=1 ./akam ... (same arguments, same state files).
+
 Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
 for the disk work), shows every command before it runs, refuses destructive actions without a
 terminal, and never stores your Wi-Fi password. Erasing a card and writing the camera's flash
