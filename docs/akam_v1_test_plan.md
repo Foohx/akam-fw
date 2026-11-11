@@ -5,6 +5,8 @@ wizard (2026-11-07 to 11-09; list in section 1b). This page separates what was e
 what was seen on the cameras, and what is still to check. Tick a box only after you have seen the result on
 your own camera. The post-flash check script of section 2 is also run for you by `./akam verify`.
 
+The native `akam` binary (Windows, macOS, Linux) has its own checklists: [assistant hardware test plan](assistant_hardware_test_plan.md).
+
 ---
 
 ## 1. Status: host tests versus hardware tests
