@@ -243,6 +243,12 @@ password. Please report what you see on your camera.
   as `hidden` for other machines (the IP address stays readable).
 - A card with a file named `AKAM_MAINTENANCE` is root access to the camera
   ([details](docs/akam_v1_ssh_and_lockdown.md#7-maintenance-flag)). Never publish your backup, images or keys.
+- **Firmware updates from a card are not signed.** With the `AKAM_MAINTENANCE` flag on the card, the stock
+  `tf_update.sh` flashes any `*.bin` it finds, with no signature or hash check; without the flag it never runs
+  (checked by `tests/lockdown_test.sh`). There is no network update. Treat the flag as physical access.
+- **A backup holds secrets:** the CONFIG partition has your Wi-Fi password and the ONVIF password in clear text.
+  The wizard creates the backup folder private to your user (0700, files 0600): keep copies private too and
+  never upload them ([details](docs/akam_v1_backup.md#never-publish-the-dump)).
 
 ## Important disclaimer and risks
 
