@@ -1,7 +1,7 @@
 /* WS-Discovery responder for ONVIF (spec 07 section 3.1 and 3.2): SOAP 1.2 over UDP, multicast group
  * 239.255.255.250 port 3702. DORMANT until wsd_start(): no socket, no thread, no timer.
  *
- * One thread (niced +10), one poll() loop. It joins the multicast group (re-joined every 30 s, retried every 5 s
+ * One thread (niced +10), one poll() loop. It joins the multicast group (checked every 30 s, dropped and joined again every 5 minutes to send a fresh IGMP report, retried every 5 s
  * while it fails, which covers Wi-Fi reconnects; a new join triggers a Hello), answers Probe with ProbeMatches and
  * Resolve with ResolveMatches by UNICAST to the sender only, after a random 0-500 ms delay (WS-Discovery
  * APP_MAX_DELAY) held in a bounded queue of WSD_MAX_PENDING jobs, so the loop never sleeps. Beyond the queue or
@@ -24,6 +24,10 @@
 #define WSD_MAX_DELAY_MS 500
 #define WSD_SRC_RATE     5      /* matching requests per second per source IP (burst 5) */
 #define WSD_SRC_SLOTS    8
+#define WSD_REJOIN_MS    (5 * 60 * 1000)   /* drop and re-add the group membership: a fresh IGMP report for snooping switches */
+#ifndef WSD_INSTANCE_FILE
+#define WSD_INSTANCE_FILE "/etc/config/akam/wsd_instance"   /* boot counter, see wsd_next_instance */
+#endif
 #define WSD_ID_MAX       96
 #define WSD_SCOPES_MAX   1024
 #define WSD_TYPES_MAX    128
@@ -56,6 +60,16 @@ void wsd_stop(void);          /* sends Bye, joins the thread, closes everything 
 int  wsd_port(void);          /* bound port, 0 when stopped */
 
 /* ---- pure parts (tested on the host) ---- */
+/* The AppSequence InstanceId for this start: it must grow at every reboot (clients take a smaller or equal one for a
+ * stale device). max(previous + 1, wall clock seconds when the clock is set, i.e. >= 2024, else 1), where previous
+ * is the decimal in `path` (missing or unreadable = 0). The file is rewritten (tmp + rename, one flash write per
+ * start of the responder, i.e. per boot) when `path` is non NULL; a failed write is ignored and the call still returns
+ * the value. A clock that is unset on every boot therefore still counts 1, 2, 3 ... */
+unsigned wsd_next_instance(const char *path, long long wall_s);
+/* Per-source request limiter (WSD_SRC_RATE per second per address, burst WSD_SRC_RATE): 1 = allowed. now in ms,
+ * exposed so that the test can drive it with its own clock. */
+int  wsd_src_ok(uint32_t ip, long long now_ms);
+
 enum { WSD_K_NONE = 0, WSD_K_PROBE = 1, WSD_K_RESOLVE = 2 };
 typedef struct {
     int  kind;

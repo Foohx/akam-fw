@@ -1,5 +1,6 @@
 #include "swdog.h"
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -118,8 +119,15 @@ static void *swdog_thread(void *arg)
     return NULL;
 }
 
+void swdog_init_deadline(unsigned seconds)
+{
+    signal(SIGALRM, SIG_DFL);
+    alarm(seconds);
+}
+
 void swdog_start(void (*exit_hook)(void))
 {
+    alarm(0); /* the init deadline is replaced by the stall checker */
     g_sw_exit_hook = exit_hook;
     swdog_st_arm_video(&g_sw, sw_now_ms());
     if (pthread_create(&g_sw_tid, NULL, swdog_thread, NULL) != 0) perror("[swdog] pthread_create");

@@ -43,6 +43,7 @@ typedef struct {
     char   obuf[HTTP_OBUF];
     size_t olen, ooff, body_left;
     int    close_after, linger;
+    int    served;                  /* a request was dispatched on this connection (leaves the short first-request deadline) */
     struct sockaddr_in peer, local;
 } conn_t;
 
@@ -321,6 +322,7 @@ static void dispatch(conn_t *c)
     req.body_len = c->body_len;
     req.peer = c->peer;
     req.local = c->local;
+    c->served = 1;
 
     free(c->resp.owned);
     memset(&c->resp, 0, sizeof(c->resp));
@@ -481,7 +483,8 @@ static long long deadline(const conn_t *c)
     case S_WRITE:  return c->t_act + HTTP_WRITE_TIMEOUT_MS;
     case S_LINGER: return c->t_act + HTTP_LINGER_MS;
     case S_DEFER:  return c->defer_until;
-    default:       return c->t_start ? c->t_start + g.req_ms : c->t_act + g.idle_ms;
+    /* a connection that never completed a request is held to the request deadline, not the keep-alive one */
+    default:       return c->t_start ? c->t_start + g.req_ms : c->t_act + (c->served ? g.idle_ms : g.req_ms);
     }
 }
 
@@ -502,6 +505,15 @@ static void accept_all(void)
         conn_t *c = NULL;
         for (int i = 0; i < HTTP_MAX_CONNS; i++)
             if (g.conns[i].fd < 0) { c = &g.conns[i]; break; }
+        if (!c) {
+            /* Full: the longest-idle connection with nothing buffered (never-sent or idle keep-alive) makes room, so
+             * idle sockets cannot keep every slot. Connections with a request in progress or a reply pending stay. */
+            for (int i = 0; i < HTTP_MAX_CONNS; i++) {
+                conn_t *e = &g.conns[i];
+                if (e->state == S_READ && e->rlen == 0 && !e->t_start && (!c || e->t_act < c->t_act)) c = e;
+            }
+            if (c) conn_close(c);
+        }
         if (!c) {
             static const char busy[] = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             (void)send(fd, busy, sizeof(busy) - 1, MSG_NOSIGNAL | MSG_DONTWAIT);

@@ -46,6 +46,15 @@ int main(int argc, char **argv)
     CHECK(isp_tune_load(path, &t) == 1);
     CHECK(t.brightness == -50 && t.contrast == 50 && t.saturation == -1 && t.sharpness == 7);
 
+    /* same values again: no write (an atomic write makes a new inode) */
+    {
+        struct stat s1, s2;
+        stat(path, &s1);
+        CHECK(isp_tune_save(path, &w) == 0);
+        stat(path, &s2);
+        CHECK(s1.st_ino == s2.st_ino);
+    }
+
     /* overwrite */
     w.brightness = 3;
     CHECK(isp_tune_save(path, &w) == 0);

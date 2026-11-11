@@ -434,18 +434,12 @@ static void op_get_stream_uri(onvif_call_t *c)
 static void op_get_snapshot_uri(onvif_call_t *c)
 {
     if (!need_profile(c)) return;
-    onvif_fault(c, 0, "ter:ActionNotSupported", NULL, "Snapshots are not supported");
+    onvif_fault(c, 1, "ter:Action", "ter:ActionNotSupported", "Snapshots are not supported");
 }
 
 static void op_service_caps(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
-        "<trt:GetServiceCapabilitiesResponse><trt:Capabilities SnapshotUri=\"false\" Rotation=\"false\""
-        " VideoSourceMode=\"false\" OSD=\"false\" TemporaryOSDText=\"false\" EXICompression=\"false\">"
-        "<trt:ProfileCapabilities MaximumNumberOfProfiles=\"1\"/>"
-        "<trt:StreamingCapabilities RTPMulticast=\"false\" RTP_TCP=\"true\" RTP_RTSP_TCP=\"true\""
-        " NonAggregateControl=\"false\" NoRTSPStreaming=\"false\"/></trt:Capabilities>"
-        "</trt:GetServiceCapabilitiesResponse>" ENV_CLOSE);
+    onvif_reply(c, ENV_OPEN "<trt:GetServiceCapabilitiesResponse>" ONVIF_MEDIA_CAPS "</trt:GetServiceCapabilitiesResponse>" ENV_CLOSE);
     onvif_send(c);
 }
 

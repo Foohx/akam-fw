@@ -36,7 +36,7 @@ void rtsp_busy_fds(const rtsp_busy_t *b, int listen_fd, struct pollfd *p);
 void rtsp_busy_service(rtsp_busy_t *b, int listen_fd, const struct pollfd *p, int64_t now_ms);
 /* poll() timeout: max_ms, or less when a waiting newcomer expires sooner (never negative). */
 int  rtsp_busy_wait_ms(const rtsp_busy_t *b, int64_t now_ms, int max_ms);
-/* Close every waiting newcomer (end of the session). */
+/* End of the session: answer 503 to every waiting newcomer and close it (never a silent close). */
 void rtsp_busy_close_all(rtsp_busy_t *b);
 
 /* The 503 answer for a request prefix (CSeq is echoed when found). Returns the length written (< cap), 0 if cap is too small. */

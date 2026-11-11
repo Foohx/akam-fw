@@ -29,6 +29,7 @@ int isp_set_wb_manual(uint16_t r, uint16_t g, uint16_t b) { (void)r; (void)g; (v
 int isp_reapply_awb_ex(void) { return 0; }
 void swdog_beat(int s) { (void)s; }
 void swdog_disarm(int s) { (void)s; }
+int control_debug_on(void) { return 0; }
 
 static void hex(const char *tag, const void *p, size_t n)
 {

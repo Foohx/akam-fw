@@ -41,3 +41,7 @@ void control_apply_saved_isp(void);
 int  control_apply_setting(const char *key, const char *value, int persist, char *msg, size_t cap);
 int  control_get_setting(const char *key, char *out, size_t cap);
 int  control_persist_picture(void);
+
+/* 1 while the 8091 DEBUG mode is on (RAM flag, auto-off): the switch for chatty log lines (per-frame, per-AE-window).
+ * Thread safe, cheap enough for once a second; do not call per video frame without a rate condition first. */
+int  control_debug_on(void);

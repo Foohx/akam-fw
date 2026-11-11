@@ -19,7 +19,7 @@ $(ONVIF_OBJS): CFLAGS += -Os
 # the 8091 line parser). Everywhere would cost about 3 % of the stripped binary and a canary check on the
 # video/audio hot paths; here it costs under 1 %. Static non-PIE musl: no RELRO or PIE to turn on, and
 # musl ignores _FORTIFY_SOURCE, so those are deliberately not set.
-HARDENED_OBJS = $(ONVIF_OBJS) rtsp_auth.o control.o
+HARDENED_OBJS = $(ONVIF_OBJS) rtsp_auth.o control.o rtsp_in.o rtsp_busy.o rtp_in.o ctl_gate.o
 $(HARDENED_OBJS): CFLAGS += -fstack-protector-strong
 
 TARGET     = ak_rtsp

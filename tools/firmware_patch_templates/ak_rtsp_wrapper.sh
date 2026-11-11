@@ -127,11 +127,16 @@ RET=$?
 read_uptime
 RUN_S=$((UP - START_UP))
 [ "$RUN_S" -ge 0 ] || RUN_S=0
-if [ "$RUN_S" -ge "$STABLE_S" ]; then CRASH_N=0; else CRASH_N=$((CRASH_N + 1)); fi
+# 143 = SIGTERM, 130 = SIGINT: someone asked for the stop (the wizard restarts the video service with kill, so does
+# ./akam). That is not a crash: it must not feed the backoff, or five picture changes in ten minutes would cost 30 s of video.
+_why=
+case "$RET" in
+    143 | 130) _why=" (stopped on request, not counted as a crash)" ;;
+    *) if [ "$RUN_S" -ge "$STABLE_S" ]; then CRASH_N=0; else CRASH_N=$((CRASH_N + 1)); fi ;;
+esac
 CRASH_TOTAL=$((CRASH_TOTAL + 1))
 echo "count=$CRASH_N total=$CRASH_TOTAL last_rc=$RET last_run=$RUN_S up=$UP" >"$RESPAWN_FILE.tmp" 2>/dev/null &&
     mv -f "$RESPAWN_FILE.tmp" "$RESPAWN_FILE"
-_why=
 [ "$RET" = 70 ] && _why=" (software stall watchdog)"
 wlog "ak_rtsp exited with code $RET${_why} after ${RUN_S}s, short runs in a row: $CRASH_N, exits since boot: $CRASH_TOTAL"
 exit $RET

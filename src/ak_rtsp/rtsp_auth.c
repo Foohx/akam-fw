@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "md5.h"
@@ -129,6 +131,14 @@ void rtsp_auth_db_init(rtsp_auth_db_t *db, const char *path)
 
 static rtsp_auth_mode_t db_refresh_l(rtsp_auth_db_t *db)
 {
+    struct stat st;
+    bool have_st = stat(db->path, &st) == 0;
+    int serr = have_st ? 0 : errno;
+    if (db->loaded && db->sig_valid && db->sig_errno == serr &&
+        (!have_st || (db->sig_ino == (unsigned long long)st.st_ino && db->sig_size == (unsigned long long)st.st_size &&
+                      db->sig_mtime_s == (long long)st.st_mtim.tv_sec && db->sig_mtime_ns == st.st_mtim.tv_nsec &&
+                      (long long)time(NULL) - (long long)st.st_mtim.tv_sec > 2)))
+        return db->mode;                 /* unchanged since the last read: no open, no parse */
     rtsp_auth_mode_t mode = RTSP_AUTH_BROKEN;
     char user[RTSP_AUTH_USER_MAX + 1] = "", ha1[33] = "";
     int fd = open(db->path, O_RDONLY | O_CLOEXEC);
@@ -149,6 +159,12 @@ static rtsp_auth_mode_t db_refresh_l(rtsp_auth_db_t *db)
         if (n >= 0 && n <= 256 && rtsp_auth_parse_file(buf, (size_t)n, user, ha1) == 0)
             mode = RTSP_AUTH_ON;
     }
+    db->sig_valid = true;
+    db->sig_errno = serr;
+    db->sig_ino = have_st ? (unsigned long long)st.st_ino : 0;
+    db->sig_size = have_st ? (unsigned long long)st.st_size : 0;
+    db->sig_mtime_s = have_st ? (long long)st.st_mtim.tv_sec : 0;
+    db->sig_mtime_ns = have_st ? st.st_mtim.tv_nsec : 0;
     if (!db->loaded || mode != db->mode || strcmp(user, db->user) != 0 || strcmp(ha1, db->ha1) != 0) {
         db->generation++;
         db->loaded = true;
