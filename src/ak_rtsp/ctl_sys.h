@@ -11,7 +11,8 @@
  * (kB), sys.temp (degrees C, one decimal), net.ssid, net.wifi_rssi (dBm),
  * net.wifi_rate (Mb/s), net.ip, net.mac, video.fps_actual (tenths of a frame
  * per second: 199 = 19.9), video.bitrate (kbit/s), rtsp.clients,
- * rtsp.auth (off|on|broken).
+ * rtsp.auth (off|on|broken), sys.time_set (1 when the wall clock is 2024 or later, else 0:
+ * the camera has no RTC, see akam_ntp.sh).
  * The audio.talk_* counters stay in talk.c (talk_ctl_get) and ctl.clients in
  * control.c.
  *
@@ -20,6 +21,7 @@
  * 32-bit aligned volatile words; a counter increment, nothing else). */
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 /* 0 and the value in out for a metric key, -1 when key is not a metric key. */
 int ctl_sys_get(const char *key, char *out, size_t cap);
@@ -42,4 +44,5 @@ void ctl_sys_note_rtsp_auth(int mode);       /* 0 off, 1 on, 2 broken (rtsp_auth
 void ctl_sys_set_root(const char *root);          /* prefix of /proc and /sys paths, default "" */
 void ctl_sys_set_ifname(const char *ifname);      /* only interface to query (default wlan0, then eth0 for ip/mac) */
 void ctl_sys_set_clock(int64_t (*now_ms)(void));  /* monotonic milliseconds; NULL = CLOCK_MONOTONIC */
+void ctl_sys_set_wall_clock(time_t (*now)(void)); /* wall clock for sys.time_set; NULL = time() */
 void ctl_sys_reset(void);                         /* forget cache, baselines and counters */

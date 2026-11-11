@@ -98,6 +98,26 @@ static volatile uint32_t g_ring_read  = 0; /* total periods consumed */
  * consecutive failures and stop cleanly instead. */
 #define AUDIO_MAX_CONSECUTIVE_FAILS 5
 
+/* G07: after that many consecutive read errors the capture is not abandoned: the device is closed and the
+ * whole open+configure sequence is retried after 1, 2, 4 ... 60 s (a driver hiccup used to leave the stream
+ * video-only until reboot). The first try after a failure never comes sooner than 1 s, so the 100 Hz
+ * hammering that once rebooted the camera cannot happen. The units are macros so that the host test can
+ * shrink them. */
+#ifndef AUDIO_BACKOFF_UNIT_MS
+#define AUDIO_BACKOFF_UNIT_MS 1000
+#endif
+#ifndef AUDIO_FAIL_SLEEP_US
+#define AUDIO_FAIL_SLEEP_US 200000
+#endif
+#define AUDIO_BACKOFF_MAX_STEPS 6 /* 1,2,4,8,16,32 then 60 */
+
+/* Retry delay in units for the nth consecutive failed (re)open, n from 0: 1, 2, 4, 8, 16, 32, 60, 60 ... */
+int audio_backoff_units(unsigned attempt)
+{
+    if (attempt >= AUDIO_BACKOFF_MAX_STEPS) return 60;
+    return 1 << attempt;
+}
+
 /* Configures the playback fd matching the real, path-tagged ground-truth
  * order: SET_STATE(0) -> SET_MODE(0) ->
  * SET_RATE(8000) -> SET_PERIODS(4) -> SET_STATE(4). SET_MODE(0) is skipped
@@ -328,26 +348,81 @@ static void audio_close(void)
     audio_close_aux();
 }
 
+/* Sleeps ms in short slices so that audio_stop() never waits long. Returns 0, or 1 when stopping. */
+static int audio_wait_ms(long ms)
+{
+    while (ms > 0 && g_audio_running) {
+        long step = ms > 100 ? 100 : ms;
+        usleep((useconds_t)(step * 1000));
+        ms -= step;
+    }
+    return !g_audio_running;
+}
+
+static volatile uint32_t g_audio_reopens; /* successful re-opens after a failure */
+static volatile int g_playback_pending;   /* start failed to open the capture: playback/audio_out not started yet */
+
+/* Starts audio_out (or the legacy silence stream) once the capture is really streaming. */
+static void audio_begin_playback(void)
+{
+    audio_init_playback();
+    if (g_audio_playback_fd >= 0) {
+        g_playback_running = 1;
+        if (pthread_create(&g_playback_tid, NULL, audio_playback_loop, NULL) != 0) {
+            perror("[audio] playback pthread_create");
+            g_playback_running = 0;
+        } else {
+            g_playback_thread_started = 1;
+        }
+    }
+}
+
 static void *audio_capture_loop(void *arg)
 {
     (void)arg;
 
     int consecutive_fails = 0;
+    unsigned attempt = 0;        /* consecutive failed (re)opens */
+    int64_t lost_since_us = 0;   /* when the stream was lost, 0 = it is not */
     while (g_audio_running) {
+        if (g_audio_fd < 0) {
+            /* Capture is down: wait, then replay the full open+configure sequence. */
+            if (!lost_since_us) lost_since_us = rtp_mono_us();
+            int units = audio_backoff_units(attempt);
+            fprintf(stderr, "[audio] capture down, retrying in %d x %d ms (attempt %u)\n",
+                    units, AUDIO_BACKOFF_UNIT_MS, attempt + 1);
+            if (audio_wait_ms((long)units * AUDIO_BACKOFF_UNIT_MS)) break;
+            if (audio_init_capture() < 0) { attempt++; continue; }
+            /* Keep the RTP timeline continuous: the lost time counts as samples that were not delivered, so
+             * the next frame's timestamp jumps by the gap instead of overlapping the previous audio. */
+            int64_t gap_us = rtp_mono_us() - lost_since_us;
+            if (gap_us > 0) g_samples_total += (uint64_t)gap_us * AUDIO_SAMPLE_RATE / 1000000;
+            printf("[ak_rtsp] audio: capture recovered after %u failed attempt(s)\n", attempt);
+            g_audio_reopens++;
+            if (g_playback_pending) { /* the speaker was waiting for a running capture (start order, see above) */
+                g_playback_pending = 0;
+                audio_begin_playback();
+            }
+            attempt = 0;
+            lost_since_us = 0;
+            consecutive_fails = 0;
+            continue;
+        }
         struct audio_slot *slot = &g_ring[g_ring_write % AUDIO_RING_SLOTS];
         ssize_t n = read(g_audio_fd, slot->samples, sizeof(slot->samples));
         if (n < 0) {
             if (errno == EINTR) continue;
             perror("[audio] read");
             if (++consecutive_fails >= AUDIO_MAX_CONSECUTIVE_FAILS) {
-                fprintf(stderr,
-                        "[audio] read failed %d times in a row — stopping capture "
-                        "thread (not retrying further)\n",
+                fprintf(stderr, "[audio] read failed %d times in a row, closing and re-opening the capture\n",
                         consecutive_fails);
-                g_audio_running = 0; /* so audio_get_frame() reports "not running" immediately */
-                break;
+                close(g_audio_fd);
+                g_audio_fd = -1;
+                lost_since_us = rtp_mono_us();
+                attempt = 0;
+                continue;
             }
-            usleep(200000); /* 200ms backoff, not 10ms — this is a slow retry, not a poll */
+            usleep(AUDIO_FAIL_SLEEP_US); /* 200 ms backoff, not 10 ms: a slow retry, not a poll */
             continue;
         }
         consecutive_fails = 0;
@@ -372,9 +447,27 @@ static void *audio_capture_loop(void *arg)
  * actually started, even if it already exited on its own. */
 static volatile int g_audio_thread_started = 0;
 
+/* audio.mic_enable at start (saved in the audio_out file): 0 = the capture device is never opened. */
+static int g_mic_on = 1;
+
+int audio_mic_enabled(void) { return g_mic_on; }
+uint32_t audio_mic_restarts(void) { return g_audio_reopens; }
+
 int audio_start(void)
 {
-    if (audio_init_capture() < 0) return -1;
+    g_mic_on = audio_out_mic_enable();
+    if (!g_mic_on) {
+        /* G07: no microphone at all (privacy, power): capture is not opened, no capture thread, and the SDP
+         * has no audio track (rtsp.c asks audio_mic_enabled()). The speaker is independent of the capture and
+         * runs through audio_out when enabled; the legacy silence stream only existed for the capture's sake. */
+        printf("[ak_rtsp] audio: microphone disabled (audio.mic_enable=0), capture not opened\n");
+        if (audio_out_start() == 0) g_audio_out_active = 1;
+        return 0;
+    }
+
+    int cap_ok = audio_init_capture() == 0;
+    if (!cap_ok)
+        printf("[ak_rtsp] audio: capture not available at start, retrying with backoff\n");
 
     g_ring_write = 0;
     g_ring_read  = 0;
@@ -388,28 +481,28 @@ int audio_start(void)
         return -1;
     }
     g_audio_thread_started = 1;
+    if (!cap_ok) { /* the thread opens the capture as soon as it can and then starts the speaker */
+        g_playback_pending = 1;
+        return 0;
+    }
 
     /* Deliberately started only now — see the comment above
      * audio_init_capture(): real anyka_ipc's playback SET_MODE succeeds
      * while capture is already mid-read, not merely after capture's config
      * ioctls returned success. */
-    audio_init_playback();
-
-    if (g_audio_playback_fd >= 0) {
-        g_playback_running = 1;
-        if (pthread_create(&g_playback_tid, NULL, audio_playback_loop, NULL) != 0) {
-            perror("[audio] playback pthread_create");
-            g_playback_running = 0;
-        } else {
-            g_playback_thread_started = 1;
-        }
-    }
+    audio_begin_playback();
 
     return 0;
 }
 
 void audio_stop(void)
 {
+    /* The capture thread may still start the speaker after a late first open: stop and join it first. */
+    g_audio_running = 0;
+    if (g_audio_thread_started) {
+        pthread_join(g_audio_tid, NULL);
+        g_audio_thread_started = 0;
+    }
     if (g_audio_out_active) {
         audio_out_stop(); /* amp off, thread joined, device closed */
         g_audio_out_active = 0;
@@ -418,12 +511,6 @@ void audio_stop(void)
     if (g_playback_thread_started) {
         pthread_join(g_playback_tid, NULL);
         g_playback_thread_started = 0;
-    }
-
-    g_audio_running = 0;
-    if (g_audio_thread_started) {
-        pthread_join(g_audio_tid, NULL);
-        g_audio_thread_started = 0;
     }
     audio_close();
 }

@@ -36,6 +36,16 @@
  * fails). */
 int audio_start(void);
 
+/* G07: 1 when the microphone is part of the stream (audio.mic_enable was 1 at start): the SDP then offers the
+ * audio track. 0: the capture device was never opened and the SDP has no audio track at all (a track that never
+ * carries data makes some players wait for audio before showing video). */
+int audio_mic_enabled(void);
+/* Times the capture stream was lost and recovered by the supervisor since start. */
+uint32_t audio_mic_restarts(void);
+/* Capture retry delay, in units of one second (1, 2, 4, 8, 16, 32, then 60) for the nth consecutive failed
+ * (re)open, n counted from 0. */
+int audio_backoff_units(unsigned attempt);
+
 void audio_stop(void);
 
 /* Non-blocking. Copies the oldest not-yet-consumed period into buf (up to

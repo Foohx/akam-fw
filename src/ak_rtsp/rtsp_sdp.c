@@ -21,13 +21,18 @@ size_t rtsp_sdp_build(char *buf, size_t cap, const rtsp_sdp_params_t *p)
         "c=IN IP4 0.0.0.0\r\n"
         "a=rtpmap:96 H264/90000\r\n"
         "a=fmtp:96 %s\r\n"
-        "a=control:streamid=%d\r\n"
-        "m=audio 0 RTP/AVP 97\r\n"
-        "c=IN IP4 0.0.0.0\r\n"
-        "a=rtpmap:97 L16/%d/%d\r\n"
         "a=control:streamid=%d\r\n",
-        p->session_time, p->session_time, p->fmtp, RTSP_TRACK_VIDEO_ID,
-        p->audio_rate, p->audio_channels, RTSP_TRACK_AUDIO_ID);
+        p->session_time, p->session_time, p->fmtp, RTSP_TRACK_VIDEO_ID);
+    if (n > 0 && (size_t)n < cap && !p->audio_off) {
+        /* audio.mic_enable=0: no audio section at all (G07); the stream ids do not change. */
+        int a = snprintf(buf + n, cap - (size_t)n,
+            "m=audio 0 RTP/AVP 97\r\n"
+            "c=IN IP4 0.0.0.0\r\n"
+            "a=rtpmap:97 L16/%d/%d\r\n"
+            "a=control:streamid=%d\r\n",
+            p->audio_rate, p->audio_channels, RTSP_TRACK_AUDIO_ID);
+        if (a > 0) n += a;
+    }
     if (n < 0 || (size_t)n >= cap) {
         if (cap) buf[0] = '\0';
         return 0;

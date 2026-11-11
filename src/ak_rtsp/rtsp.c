@@ -29,6 +29,7 @@
 #include "net_tx.h"
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
+#include "rtsp_busy.h"
 #include "rtsp_auth.h"
 #include "rtsp_sdp.h"
 #include "talk.h"
@@ -529,6 +530,7 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
         .audio_rate = AUDIO_SAMPLE_RATE,
         .audio_channels = AUDIO_CHANNELS,
         .backchannel = (bc == RTSP_BC_OFFER),
+        .audio_off = !audio_mic_enabled(),
     };
     if (rtsp_sdp_build(sdp_buf, sizeof(sdp_buf), &sp) == 0) {
         smolrtsp_respond_internal_error(ctx);
@@ -552,6 +554,10 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
         if (setup_backchannel(self, ctx, req) < 0) return;
         break;
     case RTSP_TRACK_AUDIO:
+        if (!audio_mic_enabled()) { /* G07: not in the SDP, so a SETUP for it is a client error */
+            smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_FOUND, "No audio track (microphone disabled)");
+            return;
+        }
         if (setup_audio_transport(self, ctx, req) < 0) return;
         break;
     default:
@@ -1296,6 +1302,10 @@ rtsp_auth_db_t *rtsp_auth_shared_db(void)
     return &g_auth;
 }
 
+/* G06: the listening socket, polled during a session so a second client gets "503" at once (rtsp_busy.h). */
+static int g_busy_listen_fd = -1;
+void rtsp_set_listen_fd(int fd) { g_busy_listen_fd = fd; }
+
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len)
 {
@@ -1354,6 +1364,8 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     rtsp_in_init(&in);
     rtsp_idle_t idle;
     rtsp_idle_init(&idle, rtp_mono_us());
+    rtsp_busy_t busy;
+    rtsp_busy_init(&busy);
     InCtx in_ctx = { &client, &controller, &writer, &idle };
     const rtsp_in_ops_t in_ops = { &in_ctx, in_on_message, in_on_interleaved };
     bool video_idle = false;
@@ -1374,7 +1386,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         swdog_beat(SWDOG_BEAT_MAIN);
         /* Frames are fetched only while PLAYing (or draining for a talk-only session). */
         swdog_mode((client.is_playing || client.bc_playing) ? SWDOG_FETCH : SWDOG_IDLE);
-        struct pollfd pfds[2];
+        struct pollfd pfds[2 + RTSP_BUSY_NFDS];
         pfds[0].fd = client_fd;
         pfds[0].events = POLLIN;
         pfds[0].revents = 0;
@@ -1394,13 +1406,17 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             wait_ms = rtsp_idle_talk_wait_ms(&idle, rtp_mono_us(), 100);
         else
             wait_ms = rtsp_idle_wait_ms(&idle, 0, rtp_mono_us(), 5000);
-        int poll_ret = poll(pfds, 2, wait_ms);
+        rtsp_busy_fds(&busy, g_busy_listen_fd, &pfds[2]);
+        wait_ms = rtsp_busy_wait_ms(&busy, rtp_mono_us() / 1000, wait_ms);
+        int poll_ret = poll(pfds, 2 + RTSP_BUSY_NFDS, wait_ms);
 
         if (poll_ret < 0) {
             if (errno == EINTR) continue;
             perror("poll");
             break;
         }
+
+        rtsp_busy_service(&busy, g_busy_listen_fd, &pfds[2], rtp_mono_us() / 1000);
 
         if (poll_ret > 0 && (pfds[1].revents & POLLIN)) bc_udp_receive(&client, &idle);
 
@@ -1531,6 +1547,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     ctl_sys_note_rtsp_client(-1);
     bc_stop(&client);
     VCALL(DYN(Client, SmolRTSP_Droppable, &client), drop);
+    rtsp_busy_close_all(&busy);
     close(client_fd);
     printf("[ak_rtsp] Client connection closed\n");
 }

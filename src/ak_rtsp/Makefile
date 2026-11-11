@@ -59,6 +59,7 @@ SRCS    = main.c \
           net_tx.c \
           rtsp_in.c \
           rtsp_idle.c \
+          rtsp_busy.c \
           rtsp_sdp.c \
           rtp_in.c \
           audio_vad.c \

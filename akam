@@ -74,9 +74,11 @@ Commands:
                        status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
                        slowly while someone watches the video, solid otherwise)
                        ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
-  audio [show | volume 0-100 | beep | on | off | talk on|off]
-                     the camera's speaker, over SSH. Default: show (volume, speaker on/off, talk on/off,
-                     playback underruns and drops). volume and talk are saved on the camera; beep plays a
+  audio [show | volume 0-100 | beep | on | off | talk on|off | mic on|off]
+                     the camera's speaker and microphone, over SSH. Default: show (volume, speaker on/off,
+                     talk on/off, microphone on/off, playback underruns and drops). volume, talk and mic are
+                     saved on the camera; mic off never opens the microphone and removes the audio track from
+                     the stream (needs a reboot to apply); beep plays a
                      short tone; off silences the speaker and keeps it off after a reboot; on may need a
                      reboot of the camera to start the speaker. No confirmation is asked.
   picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]
@@ -87,6 +89,12 @@ Commands:
                      port 8091 is read-only for the network: 'on' lets the network change settings
                      too (for the PC tuning tool) for MINUTES (default 60, up to 1440) or until
                      'off' or a reboot; over SSH. Default: status
+  ntp [status | set SERVER... | off]
+                     time sync of the camera (it has no clock of its own and starts in the past), over SSH.
+                       set: 1 to 3 servers (host names or IPv4 addresses, for example pool.ntp.org); the camera
+                       asks them at start-up and every 6 hours (UDP 123, outgoing only) and saves the choice
+                       off: stop and forget the servers (default: off, no traffic at all)
+                       status (default): servers, the camera's clock, whether it is believable
   onvif [enable [PORT] | disable | status]
                      ONVIF for NVRs and apps (ONVIF Device Manager, Frigate, Home Assistant): off by default.
                      'enable' (asks first, needs the stream password: rtsp-auth set) opens TCP PORT (default 80)
@@ -277,6 +285,7 @@ case $CMD in
         cmd_led ${ARGS[@]+"${ARGS[@]:1}"} || rc=$?
         ;;
     debug) cmd_debug ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    ntp) cmd_ntp ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     onvif) cmd_onvif ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     audio) cmd_audio ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     picture) cmd_picture ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;

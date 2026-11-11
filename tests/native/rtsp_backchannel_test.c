@@ -92,6 +92,7 @@ size_t audio_out_push(const int16_t *pcm, size_t n)
     sp_pushed += n;
     return n;
 }
+int audio_mic_enabled(void) { return 1; }
 int  audio_out_feeder_claim(void) { if (sp_claimed) return -1; sp_claimed = 1; sp_claims++; return 0; }
 void audio_out_feeder_release(void) { sp_claimed = 0; sp_releases++; }
 
@@ -342,6 +343,34 @@ static const char *sdp_after_origin(const char *resp)
     if (!p) return NULL;
     p = strstr(p, "\r\n");
     return p ? p + 2 : NULL;
+}
+
+/* G06: while a session runs, a second client gets 503 at once and the first one is not disturbed. */
+static void test_second_client(void)
+{
+    printf("# second client\n");
+    set_auth(0);
+    conn_t a, b; char r[4096];
+    CHECK(tcp_connect(&a) == 0, "first client connects");
+    CHECK(rtsp(&a, "OPTIONS", "x", NULL, 0, r, sizeof(r)) == 200, "first client: OPTIONS 200");
+    CHECK(tcp_connect(&b) == 0, "second client connects");
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    CHECK(rtsp(&b, "OPTIONS", "x", NULL, 0, r, sizeof(r)) == 503, "second client: 503");
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long ms = (long)(t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+    CHECK(ms < 400, "the 503 comes at once, not from the backlog");
+    CHECK(strstr(r, "CSeq: 1\r\n") != NULL, "503 echoes CSeq");
+    CHECK(fill(&b) == 0, "the second connection is closed after the 503");
+    conn_close(&b);
+    CHECK(rtsp(&a, "OPTIONS", "x", NULL, 0, r, sizeof(r)) == 200, "first client still served after the refusal");
+    CHECK(rtsp(&a, "DESCRIBE", "x", "Accept: application/sdp\r\n", 0, r, sizeof(r)) == 200, "first client: DESCRIBE 200");
+    conn_close(&a);
+    /* the slot is free again for a new client */
+    conn_t d;
+    CHECK(tcp_connect(&d) == 0, "third client connects");
+    CHECK(rtsp(&d, "OPTIONS", "x", NULL, 0, r, sizeof(r)) == 200, "after the first left, a new client is served (not 503)");
+    conn_close(&d);
 }
 
 static void test_no_password(void)
@@ -838,10 +867,12 @@ int main(void)
     if (bind(srv_fd, (struct sockaddr *)&a, sizeof(a)) != 0 || listen(srv_fd, 4) != 0) { perror("bind"); return 2; }
     getsockname(srv_fd, (struct sockaddr *)&a, &al);
     srv_port = ntohs(a.sin_port);
+    rtsp_set_listen_fd(srv_fd);
     pthread_t t;
     pthread_create(&t, NULL, server_main, NULL);
     pthread_detach(t);
 
+    test_second_client();
     test_no_password();
     test_auth_gating();
     test_talk_only_tcp();
