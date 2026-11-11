@@ -81,7 +81,7 @@ int onvif_cfg_load(onvif_cfg_t *out)
     char buf[ONVIF_CFG_MAX + 2];
     out->enabled = 0;
     out->port = 0;
-    int fd = open(onvif_cfg_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = open(onvif_cfg_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)  /* O_NONBLOCK: a FIFO must not hang the start */;
     if (fd < 0) {
         if (errno == ENOENT) return 1;
         printf("[onvif] flag file unreadable (%s): ONVIF stays off\n", strerror(errno));

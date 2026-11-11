@@ -115,29 +115,3 @@ __sync_lock_test_and_set_1:
     pop     {r4, r5, r6, r7, r8, pc}
 .ltorg
 .size __sync_lock_test_and_set_1, . - __sync_lock_test_and_set_1
-
-
-@ -----------------------------------------------------------------------------
-@ int __sync_lock_test_and_set_4(volatile int *ptr, int val, ...)
-@   Atomic word swap. Returns the old value of *ptr. Needed by the 32-bit
-@   __atomic_store_n of http_srv.c (LLVM lowers it to this on ARMv5).
-@ -----------------------------------------------------------------------------
-.global __sync_lock_test_and_set_4
-.type   __sync_lock_test_and_set_4, %function
-__sync_lock_test_and_set_4:
-    push    {r4, r5, r6, lr}
-    mov     r4, r0              @ r4 = ptr
-    mov     r5, r1              @ r5 = new value
-.Ltas4_loop:
-    ldr     r6, [r4]            @ r6 = old value (preserved across blx)
-    mov     r0, r6              @ kuser arg0: oldval
-    mov     r1, r5              @ kuser arg1: newval
-    mov     r2, r4              @ kuser arg2: ptr
-    ldr     r3, =0xffff0fc0
-    blx     r3
-    cmp     r0, #0
-    bne     .Ltas4_loop         @ race, retry
-    mov     r0, r6
-    pop     {r4, r5, r6, pc}
-.ltorg
-.size __sync_lock_test_and_set_4, . - __sync_lock_test_and_set_4

@@ -212,6 +212,10 @@ static void test_parser(void)
     unlink(cfgp);
     CHECK(mkdir(cfgp, 0700) == 0 && onvif_cfg_load(&c) == -1, "a directory is refused");
     rmdir(cfgp);
+    alarm(5); /* a FIFO must be refused, not block the start (watchdog would kill the daemon) */
+    CHECK(mkfifo(cfgp, 0600) == 0 && onvif_cfg_load(&c) == -1 && c.enabled == 0, "a FIFO is refused without blocking");
+    alarm(0);
+    unlink(cfgp);
 }
 
 /* ------------------------------------------------------------------ state machine */
