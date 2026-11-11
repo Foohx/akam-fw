@@ -523,6 +523,25 @@ else
     warn "sbin/drop_caches.sh has no 'sleep 5' line: not patched"
 fi
 
+# The stock sbin/main.sh starts "klogd -n &", which forwards every kernel line to syslog. The vendor LED
+# driver prints a line per brightness write and the encoder driver prints bursts of identical errors, so
+# the 3 x 200 KB syslog files rotate every few minutes. "ak_rtsp klog" (src/ak_rtsp/klog.h) drops the LED
+# trace and collapses repeats; if it cannot start (no /proc/kmsg, binary missing) the stock klogd runs.
+# A different layout is left untouched with a warning.
+echo "Replacing klogd in sbin/main.sh with the kernel log filter..."
+MAINSH="$PATCHED/sbin/main.sh"
+KLOG_RE='^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$'
+if [ ! -f "$MAINSH" ]; then
+    warn "sbin/main.sh not found in the APP tree: kernel log filter not installed"
+elif grep -qE "$KLOG_RE" "$MAINSH"; then
+    sed -E -i "s@$KLOG_RE@\\1{ /usr/bin/ak_rtsp klog || klogd -n; } \\& # AKAM: filtered kernel log (stock: klogd -n)@" "$MAINSH"
+    sh -n "$MAINSH" || die "sbin/main.sh fails sh -n after the klogd patch"
+elif grep -q 'ak_rtsp klog' "$MAINSH"; then
+    :   # already patched (KEEP_PATCHED=1)
+else
+    warn "sbin/main.sh has no 'klogd -n &' line: kernel log filter not installed (stock klogd runs unfiltered)"
+fi
+
 AUDIT_OUT=""
 if [ -f "$TEMPLATES/audit_remote_services.sh" ]; then
     (cd "$FW_DIR" && bash "$TEMPLATES/audit_remote_services.sh" "$PATCHED") || warn "audit_remote_services.sh failed"

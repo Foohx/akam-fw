@@ -182,6 +182,34 @@ func TestDropCachesPatchEqualsSed(t *testing.T) {
 	}
 }
 
+func TestKlogdPatchEqualsSed(t *testing.T) {
+	ins := []string{"a\nklogd -n & # -c prio\nb\n", "  klogd -n &\n", "klogd -n &  \n", "klogd -n &x\n", "klogd -n\n", "", "x\n{ /usr/bin/ak_rtsp klog || klogd -n; } &\n"}
+	re := `^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$`
+	for _, in := range ins {
+		out, changed, _ := patchKlogd([]byte(in))
+		if have("sed", "grep") {
+			f := filepath.Join(t.TempDir(), "m.sh")
+			if err := os.WriteFile(f, []byte(in), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if exec.Command("grep", "-qE", re, f).Run() == nil {
+				repl := `s@` + re + `@\1{ /usr/bin/ak_rtsp klog || klogd -n; } \& # AKAM: filtered kernel log (stock: klogd -n)@`
+				if err := exec.Command("sed", "-E", "-i", repl, f).Run(); err != nil {
+					t.Fatal(err)
+				}
+				want, _ := os.ReadFile(f)
+				if !changed || string(out) != string(want) {
+					t.Fatalf("%q: native %q (changed %v), sed %q", in, out, changed, want)
+				}
+				continue
+			}
+		}
+		if changed {
+			t.Fatalf("%q: changed unexpectedly: %q", in, out)
+		}
+	}
+}
+
 func TestDiffHunks(t *testing.T) {
 	a := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n"
 	b := "1\n2\n3\nX\n5\n6\n7\n8\n9\n10\n11\n12\nY\n"

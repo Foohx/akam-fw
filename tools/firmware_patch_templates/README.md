@@ -20,6 +20,10 @@ full walkthrough. Listed here individually so the diff against stock is easy to 
 | `patch_ethernet_hostname.sh` | host tool, not installed | Build-time patch of `sbin/ethernet.sh`: the DHCP hostname comes from `akam_hostname.sh show` (fallback `akam`) |
 | `patch_service_sh.sh` | host tool, not installed | Build-time patch of `sbin/service.sh` (telnet/FTP launch lines, SD hook guard) |
 
+The build also edits two stock scripts with one-line `sed` patches in `build_firmware.sh` (mirrored by the assistant):
+`sbin/drop_caches.sh` (`sleep 5` becomes `sleep 60`) and `sbin/main.sh` (`klogd -n &` becomes
+`{ /usr/bin/ak_rtsp klog || klogd -n; } &`: the filtered kernel log, with the stock `klogd` as fallback).
+
 The two sections below describe the first two files. The Akam scripts document themselves in their
 headers.
 

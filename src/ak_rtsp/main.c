@@ -33,6 +33,7 @@
 #include "cred.h"
 #include "onvif_cfg.h"
 #include "swdog.h"
+#include "klog.h"
 #include "version.h"
 
 /* -------------------------------------------------------------------------
@@ -205,6 +206,8 @@ static void close_devices(void)
 
 int main(int argc, char **argv)
 {
+    if (argc >= 2 && strcmp(argv[1], "klog") == 0)
+        return klog_main(argc, argv);
     if (argc >= 3 && strcmp(argv[1], "ctl") == 0)
         return ctl_client_run(8091, argc - 2, argv + 2, stdout);
 

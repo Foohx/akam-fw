@@ -399,6 +399,23 @@ is on the serial console (`[swdog] ...`). Other codes are crashes or start-up fa
 Lines lost by the console tee (a console that cannot keep up): `ak_rtsp ctl GET log.dropped` on the camera, or
 `GET log.dropped` on port 8091. It only counts lost log lines; a growing number is harmless for the video.
 
+## The system log (`/var/log/messages`)
+
+The camera keeps its syslog in RAM: up to 4 files of 200 KB (`/var/log/messages`, `messages.0` to `messages.2`),
+read with `logread` or `cat`. The vendor kernel drivers are very chatty (a line for every LED write, bursts of
+identical encoder errors while the Wi-Fi is bad), so the stock `klogd` filled these files in about five minutes.
+The image therefore starts `ak_rtsp klog` (shown as `akam_klog` in `ps`) instead of `klogd -n`:
+
+- the LED driver trace (`gpio_led_set value=...`) is dropped;
+- a kernel message that repeats is written once, then counted: you get one line such as
+  `kern.err kernel: message repeated 599 times in the last 60s: [1234]:[venc_encode_tasklet_process:...] ...`
+  per message and per minute. Numbers are ignored when comparing, so `sh (101): drop_caches: 3` and
+  `sh (102): drop_caches: 3` are the same message;
+- everything else is forwarded unchanged with its original priority (`kern.err` stays `kern.err`).
+
+If it cannot start, the stock `klogd -n` runs instead (`./akam`'s `akam_hwcheck.sh` warns about it). Check with
+`ps | grep klog`. Kernel messages are also still on the serial console and in `dmesg`, unfiltered.
+
 ## The camera falls off the Wi-Fi and does not come back
 
 `akam_net.sh` checks `wpa_supplicant`, `udhcpc` and the IPv4 address of `wlan0` every 30 seconds and restarts what is

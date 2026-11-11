@@ -66,6 +66,7 @@ ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login wi
 | Flash over SSH with read-back, clean boot | `reflash_ssh_test.sh`, `flash_guard_test.sh`, `build_firmware_test.sh`, `preflight_test.sh` | Yes, two cameras, power cycle | |
 | Stack-protector build | none dedicated (compile flags; `build_firmware_test.sh` covers the image build) | Boot not yet tested | Canaries on the network parsers only |
 | Log caps and `drop_caches` every 60 s | `wrapper_backoff_test.sh`, `akam_net_test.sh`, `akam_ntp_test.sh` (log caps), `build_firmware_test.sh` and `kit_test.sh` (shipped files) | In the flashed image of akam-01 ("quieter logs"); caps not measured yet | |
+| Kernel log filter (`ak_rtsp klog`: LED trace dropped, repeats collapsed, priorities kept) | `klog_test.sh` (filter core with a fake clock, file-to-datagram-socket run), `leds_test.sh` (no rewrite of an unchanged LED), `hwcheck_test.sh`, `build_firmware_test.sh` and the assistant `image` tests (the `main.sh` patch) | Not yet | Measure `/var/log/messages` growth per hour before and after |
 | UDP listener and process audit | `hwcheck_test.sh` | Yes, akam-01 by default: ports 22, 554 and 8091 only, no UDP listener | |
 | Go assistant, daily commands (experimental) | `assistant_test.sh` (fake cameras) | Partly: some SSH and 8091 paths on a Linux PC | The bash wizard is the reference |
 | Go assistant phases P2 and P3 (update, restore, verify, telnet backup and flash, SD writer) | `assistant_test.sh` (fake cameras, files as cards) | Not yet | Never run against a real camera or card |

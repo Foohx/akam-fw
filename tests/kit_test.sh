@@ -323,7 +323,7 @@ drift_check() {
         { cmp -s "$P/local/akam/$f" "$K/licenses/$f" && [ "$(stat -c %a "$P/local/akam/$f")" = 644 ]; } || { echo "licence $f differs between image and kit"; rc=1; }
     done
     # every Akam-owned path of the image (new or changed against the stock tree) is in the list
-    printf '%s\n' sbin/service.sh sbin/ethernet.sh sbin/drop_caches.sh local/akam/MANIFEST.txt >>"$want"
+    printf '%s\n' sbin/service.sh sbin/ethernet.sh sbin/drop_caches.sh sbin/main.sh local/akam/MANIFEST.txt >>"$want"
     (cd "$P" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort) |
         while IFS= read -r f; do
             if [ ! -e "$FIXTURE/$f" ] && [ ! -L "$FIXTURE/$f" ]; then echo "$f"; elif [ -L "$P/$f" ]; then [ "$(readlink "$P/$f")" = "$(readlink "$FIXTURE/$f")" ] || echo "$f"; elif ! cmp -s "$P/$f" "$FIXTURE/$f"; then echo "$f"; fi

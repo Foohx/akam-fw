@@ -57,6 +57,7 @@ mkroot() {
     mkproc "$r" 103 "sh /usr/sbin/akam_lockdown.sh" 600
     mkproc "$r" 104 wpa_supplicant 800
     mkproc "$r" 105 udhcpc 300
+    mkproc "$r" 106 "akam_klog klog" 200
     echo 300 > "$r/proc/sys/kernel/random/entropy_avail"
     mkstat "$r" 101 ak_rtsp 100 50
     echo "cpu  1000 0 500 8000 0 0 0 0 0 0" > "$r/proc/stat"
@@ -446,6 +447,15 @@ udp6_at() { printf '  1: 00000000000000000000000000000000:%04X 00000000000000000
 R34=$WORK/r34; mkroot "$R34"; mkudp "$R34" ""; : > "$R34/proc/net/udp6"; udp6_at "$R34" 5683
 run t34 "$R34" "$WORK/s20"
 has "udp6: an IPv6 listener is audited too" '^FAIL +UDP 5683 bound' "$WORK/t34.out"
+
+# kernel log reader: the filter passes, the stock klogd alone is WARN, nothing at all is WARN
+has "klog: the filter running is PASS" '^PASS +kernel log filter akam_klog running' "$WORK/t1.out"
+R35K=$WORK/r35k; mkroot "$R35K"; rm -rf "$R35K/proc/106"; mkproc "$R35K" 120 "klogd -n" 100
+run t35k "$R35K" "$WORK/s20"
+has "klog: stock klogd instead of the filter is WARN" '^WARN +stock klogd runs instead of the kernel log filter' "$WORK/t35k.out"
+R35L=$WORK/r35l; mkroot "$R35L"; rm -rf "$R35L/proc/106"
+run t35l "$R35L" "$WORK/s20"
+has "klog: no reader at all is WARN" '^WARN +no kernel log reader' "$WORK/t35l.out"
 
 # process allow-list: the healthy fake camera is clean; vendor daemons are WARN "review"; strangers are WARN
 has "allow-list: healthy camera passes" '^PASS +all [0-9]+ processes are on the allow-list' "$WORK/t1.out"

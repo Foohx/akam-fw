@@ -97,6 +97,8 @@ SRCS    = main.c \
           audio_jitter.c \
           control.c \
           swdog.c \
+          klog.c \
+          klog_run.c \
           isp_tune.c \
           video_cfg.c \
           video_ctl.c \
