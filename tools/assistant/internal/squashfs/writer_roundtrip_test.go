@@ -48,7 +48,9 @@ func TestRoundTripRealImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := f.Tree()
+	// the stock images carry extended attributes (the builder drops them with -no-xattrs): drop them too;
+	// the listing and `unsquashfs -lln` do not show them, so the comparisons below are unaffected
+	tree, rep, err := f.TreeWith(TreeOptions{DropXattrs: true})
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}
@@ -84,6 +86,6 @@ func TestRoundTripRealImage(t *testing.T) {
 	if st.Size > 5242880 {
 		t.Errorf("rewritten image of %d bytes exceeds 5242880", st.Size)
 	}
-	t.Logf("roundtrip: original %d bytes (used %d), rewritten %d bytes, %d entries and %d file hashes equal, %s",
-		len(raw), f.Info().BytesUsed, st.Size, len(got), hashes, lln)
+	t.Logf("roundtrip: original %d bytes (used %d), rewritten %d bytes, %d entries and %d file hashes equal, %s, %d inodes with xattrs dropped",
+		len(raw), f.Info().BytesUsed, st.Size, len(got), hashes, lln, rep.DroppedXattrs)
 }

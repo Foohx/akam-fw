@@ -10,15 +10,46 @@ import (
 // example after a patch of some files). All file contents are loaded in memory, within Limits.MaxCallBytes.
 // Ownership, modes, times and device numbers are kept. Nothing the writer cannot represent is silently
 // dropped: an image with a hard link (a file inode reached from two directory entries, or with a link count
-// above 1) fails with ErrHardLink, and one with extended attributes with ErrUnsupported.
+// above 1) fails with ErrHardLink, and one with extended attributes with ErrUnsupported (TreeWith can drop them).
 func (f *FS) Tree() (*Node, error) {
+	n, _, err := f.TreeWith(TreeOptions{})
+	return n, err
+}
+
+// TreeOptions tune TreeWith.
+type TreeOptions struct {
+	// DropXattrs drops the extended attributes of the inodes that have some instead of refusing the image
+	// with ErrUnsupported (what mksquashfs -no-xattrs does when building). Their content is not read.
+	DropXattrs bool
+}
+
+// maxTreeReportPaths bounds the paths listed in a TreeReport.
+const maxTreeReportPaths = 64
+
+// TreeReport says what TreeWith left out.
+type TreeReport struct {
+	// DroppedXattrs is the number of inodes whose extended attributes were dropped.
+	DroppedXattrs int
+	// DroppedXattrPaths lists the first of them (at most 64), in walk order.
+	DroppedXattrPaths []string
+}
+
+// TreeWith is Tree with options; the report lists what the options made it drop.
+func (f *FS) TreeWith(o TreeOptions) (*Node, TreeReport, error) {
+	var rep TreeReport
 	bud := &budget{left: f.lim.MaxCallBytes}
 	nodes := map[string]*Node{}
 	seen := map[uint32]string{}
 	var root *Node
 	err := f.walkInodes("/", func(n *inode, fi FileInfo) error {
 		if fi.HasXattr {
-			return unsupported("%s: extended attributes", fi.Path)
+			if !o.DropXattrs {
+				return unsupported("%s: extended attributes", fi.Path)
+			}
+			rep.DroppedXattrs++
+			if len(rep.DroppedXattrPaths) < maxTreeReportPaths {
+				rep.DroppedXattrPaths = append(rep.DroppedXattrPaths, fi.Path)
+			}
 		}
 		if fi.Type != TypeDir {
 			if prev, dup := seen[fi.Inode]; dup || fi.Nlink > 1 {
@@ -62,7 +93,7 @@ func (f *FS) Tree() (*Node, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, TreeReport{}, err
 	}
-	return root, nil
+	return root, rep, nil
 }

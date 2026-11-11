@@ -155,6 +155,35 @@ type writer struct {
 	dups     map[[32]byte]fileLoc
 
 	inode, dir *metaWriter
+
+	// err is the first size error (ErrLimit): once set, the writer stops producing output
+	err error
+}
+
+// maxImage is the largest image the format can describe (the data start of a file inode and several table
+// offsets are 32 bit).
+const maxImage = 1<<32 - 1
+
+// over records an ErrLimit when the bytes already encoded (the data in w.out and the finished metadata blocks) exceed MaxSize, or the 32 bit range of the format, so a huge tree is refused while it is being
+// encoded and not after the whole image sits in memory.
+func (w *writer) over() bool {
+	if w.err != nil {
+		return true
+	}
+	size := int64(len(w.out))
+	if w.inode != nil {
+		size += int64(len(w.inode.out))
+	}
+	if w.dir != nil {
+		size += int64(len(w.dir.out))
+	}
+	switch {
+	case w.o.MaxSize > 0 && size > w.o.MaxSize:
+		w.err = fmt.Errorf("%w: image of more than %d bytes (cap %d)", ErrLimit, size, w.o.MaxSize)
+	case size > maxImage:
+		w.err = fmt.Errorf("%w: image of more than %d bytes", ErrLimit, int64(maxImage))
+	}
+	return w.err != nil
 }
 
 // Write writes the image of the tree rooted at root to w and returns what it wrote. root must be a directory.
@@ -217,8 +246,14 @@ func build(root *Node, o Options) ([]byte, Stats, error) {
 	}
 	w.flushFragment()
 	dataEnd := len(w.out)
+	if w.over() {
+		return nil, Stats{}, w.err
+	}
 	if err := w.writeInodes(rn); err != nil {
 		return nil, Stats{}, err
+	}
+	if w.over() {
+		return nil, Stats{}, w.err
 	}
 
 	// tables
@@ -248,12 +283,17 @@ func build(root *Node, o Options) ([]byte, Stats, error) {
 	idStart := w.writeTable(idRaw)
 
 	used := len(w.out)
+	pad := 0
 	if !o.NoPad {
-		w.out = append(w.out, make([]byte, (padSize-used%padSize)%padSize)...)
+		pad = (padSize - used%padSize) % padSize
 	}
-	if o.MaxSize > 0 && int64(len(w.out)) > o.MaxSize {
-		return nil, Stats{}, fmt.Errorf("%w: image of %d bytes exceeds %d", ErrLimit, len(w.out), o.MaxSize)
+	if o.MaxSize > 0 && int64(used+pad) > o.MaxSize {
+		return nil, Stats{}, fmt.Errorf("%w: image of %d bytes exceeds %d", ErrLimit, used+pad, o.MaxSize)
 	}
+	if int64(used) > maxImage {
+		return nil, Stats{}, fmt.Errorf("%w: image of %d bytes", ErrLimit, used)
+	}
+	w.out = append(w.out, make([]byte, pad)...)
 
 	flags := uint16(FlagDuplicates | FlagExportable | FlagNoXattrs)
 	if o.noCompress {
@@ -359,7 +399,7 @@ func (w *writer) convert(src *Node, parent *wnode, seen map[*Node]bool, depth in
 			return nil, invalid("%q: file of %d bytes", name, len(src.Data))
 		}
 	case TypeSymlink:
-		if src.Target == "" || len(src.Target) > maxSymlinkWrite {
+		if src.Target == "" || len(src.Target) > maxSymlinkWrite || strings.IndexByte(src.Target, 0) >= 0 {
 			return nil, invalid("%q: symlink target of %d bytes", name, len(src.Target))
 		}
 	case TypeBlock, TypeChar:
@@ -433,6 +473,9 @@ func (w *writer) storeFile(n *wnode) error {
 		// the whole file goes to a fragment
 		if len(w.frag)+size > w.bs {
 			w.flushFragment()
+			if w.over() {
+				return w.err
+			}
 		}
 		n.loc.fragIdx = uint32(len(w.fragEnts))
 		n.loc.fragOff = uint32(len(w.frag))
@@ -440,6 +483,9 @@ func (w *writer) storeFile(n *wnode) error {
 	default:
 		n.loc.start = uint64(len(w.out))
 		for off := 0; off < size; off += w.bs {
+			if w.over() {
+				return w.err
+			}
 			blk := data[off:min(off+w.bs, size)]
 			if allZero8(blk) {
 				n.loc.blocks = append(n.loc.blocks, 0)
@@ -511,6 +557,9 @@ func (w *writer) writeInodes(d *wnode) error {
 			}
 		} else {
 			w.writeInode(k)
+		}
+		if w.over() {
+			return w.err
 		}
 	}
 	return w.writeDir(d)
