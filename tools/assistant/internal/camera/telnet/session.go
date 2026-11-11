@@ -18,6 +18,7 @@
 package telnet
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -337,7 +338,7 @@ func (s *Session) reply(verb, opt byte) {
 // unfinished last line ends with prompt (rPrompt), the inactivity timeout (rTimeout) or the end of the
 // session (rClosed).
 func (s *Session) read(tmo time.Duration, prompt string) readStatus {
-	line := s.part
+	lb := []byte(s.part) // the unfinished line (appended byte by byte: a string += would be quadratic)
 	s.part = ""
 	deadline := time.Now().Add(tmo)
 	var verb byte
@@ -349,7 +350,7 @@ func (s *Session) read(tmo time.Duration, prompt string) readStatus {
 				slice = time.Second
 			}
 			if slice <= 0 {
-				s.part = line
+				s.part = string(lb)
 				return rTimeout
 			}
 			_ = s.conn.SetReadDeadline(time.Now().Add(slice))
@@ -361,14 +362,14 @@ func (s *Session) read(tmo time.Duration, prompt string) readStatus {
 			if err != nil && n == 0 {
 				var ne net.Error
 				if errors.As(err, &ne) && ne.Timeout() {
-					if prompt != "" && s.begSeen && line != "" && (strings.HasSuffix(line, prompt) || strings.HasSuffix(line, strings.TrimRight(prompt, " "))) {
+					if line := string(lb); prompt != "" && s.begSeen && line != "" && (strings.HasSuffix(line, prompt) || strings.HasSuffix(line, strings.TrimRight(prompt, " "))) {
 						s.show(line)
 						s.part = ""
 						return rPrompt
 					}
 					continue
 				}
-				s.part = line
+				s.part = string(lb)
 				s.open = false
 				return rClosed
 			}
@@ -383,18 +384,18 @@ func (s *Session) read(tmo time.Duration, prompt string) readStatus {
 				s.iac = 1
 			case '\r':
 				// flash_tool redraws its bar with \r: a segment that is a bar is consumed now
-				if s.begSeen && strings.Contains(line, "%") && s.progress(line) {
-					line = ""
+				if s.begSeen && bytes.IndexByte(lb, '%') >= 0 && s.progress(string(lb)) {
+					lb = lb[:0]
 				}
 			case '\n':
-				if s.handleLine(line) {
+				if s.handleLine(string(lb)) {
 					return rDone
 				}
-				line = ""
+				lb = lb[:0]
 			default:
 				// a camera that never ends a line must not grow this without bound
-				if len(line) < MaxLine {
-					line += string([]byte{c})
+				if len(lb) < MaxLine {
+					lb = append(lb, c)
 				}
 			}
 		case 1:

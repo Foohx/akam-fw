@@ -149,8 +149,32 @@ func skipName(b []byte, o int) (int, error) {
 	return 0, errors.New("bad name")
 }
 
-// parseA returns the A records of a DNS response.
-func parseA(b []byte) []net.IP {
+// readName decodes the (possibly compressed) name at o, lower-cased and without the final dot.
+func readName(b []byte, o int) (string, error) {
+	var parts []string
+	for hops := 0; hops < 128 && o < len(b); hops++ {
+		l := int(b[o])
+		switch {
+		case l == 0:
+			return strings.ToLower(strings.Join(parts, ".")), nil
+		case l&0xC0 == 0xC0:
+			if o+1 >= len(b) {
+				return "", errors.New("bad name")
+			}
+			o = (l&0x3F)<<8 | int(b[o+1])
+		case l&0xC0 != 0 || o+1+l > len(b):
+			return "", errors.New("bad name")
+		default:
+			parts = append(parts, string(b[o+1:o+1+l]))
+			o += 1 + l
+		}
+	}
+	return "", errors.New("bad name")
+}
+
+// parseA returns the A records of a DNS response whose owner name is want (any owner when want is "").
+func parseA(b []byte, want string) []net.IP {
+	want = strings.ToLower(strings.TrimSuffix(want, "."))
 	if len(b) < 12 {
 		return nil
 	}
@@ -165,6 +189,7 @@ func parseA(b []byte) []net.IP {
 	}
 	var out []net.IP
 	for i := 0; i < an; i++ {
+		owner, nerr := readName(b, o)
 		if o, err = skipName(b, o); err != nil || o+10 > len(b) {
 			return out
 		}
@@ -173,7 +198,7 @@ func parseA(b []byte) []net.IP {
 		if o+rdlen > len(b) {
 			return out
 		}
-		if typ == 1 && rdlen == 4 {
+		if typ == 1 && rdlen == 4 && nerr == nil && (want == "" || owner == want) {
 			out = append(out, net.IP(append([]byte(nil), b[o:o+4]...)))
 		}
 		o += rdlen
@@ -203,7 +228,7 @@ func MDNSLookup(ctx context.Context, name, target string, wait time.Duration) (n
 		if err != nil {
 			break
 		}
-		if ips := parseA(buf[:n]); len(ips) > 0 {
+		if ips := parseA(buf[:n], name); len(ips) > 0 {
 			return ips[0], nil
 		}
 	}
