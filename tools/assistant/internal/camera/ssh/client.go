@@ -13,10 +13,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
 )
 
 // Errors a caller may want to tell apart.
@@ -276,7 +279,7 @@ func (c *Config) hostKeyCallback() gossh.HostKeyCallback {
 		}
 		ok := false
 		switch {
-		case c.TrustFingerprint != "" && c.TrustFingerprint == fp:
+		case c.TrustFingerprint != "" && strings.TrimSpace(c.TrustFingerprint) == fp:
 			ok = true
 		case c.TrustFingerprint != "":
 			return fmt.Errorf("%w: --trust-new-host-key %s does not match the fingerprint shown by the camera (%s)", ErrHostKeyRefused, c.TrustFingerprint, fp)
@@ -302,7 +305,7 @@ func fileExists(p string) bool {
 }
 
 func appendPin(file, alias string, key gossh.PublicKey) error {
-	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+	if err := fsutil.PrivateMkdir(filepath.Dir(file)); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -340,11 +343,7 @@ func ForgetHostKey(file, alias string) (int, error) {
 	for _, l := range keep {
 		out += l + "\n"
 	}
-	tmp := file + ".tmp"
-	if err := os.WriteFile(tmp, []byte(out), 0o600); err != nil {
-		return 0, err
-	}
-	return n, os.Rename(tmp, file)
+	return n, fsutil.AtomicWrite(file, []byte(out), 0o600)
 }
 
 func hostsContain(list, alias string) bool {

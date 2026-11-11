@@ -6,11 +6,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -64,12 +64,13 @@ func GenerateKey(path, comment string, passphrase []byte) error {
 		return err
 	}
 	pemBytes := pem.EncodeToMemory(block)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := fsutil.PrivateMkdir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
 		return err
 	}
+	fsutil.PrivateFile(path) // Windows: OpenSSH refuses a key other accounts can read
 	sp, err := gossh.NewPublicKey(pub)
 	if err != nil {
 		return err
@@ -112,10 +113,6 @@ func LoadSigner(path string, ask func() (string, error)) (gossh.Signer, func(), 
 }
 
 func agentSigner(keyPath string) (gossh.Signer, func()) {
-	sock := os.Getenv("SSH_AUTH_SOCK")
-	if sock == "" {
-		return nil, nil
-	}
 	pubBytes, err := os.ReadFile(keyPath + ".pub")
 	if err != nil {
 		return nil, nil
@@ -124,7 +121,7 @@ func agentSigner(keyPath string) (gossh.Signer, func()) {
 	if err != nil {
 		return nil, nil
 	}
-	conn, err := net.Dial("unix", sock)
+	conn, err := dialAgent(os.Getenv("SSH_AUTH_SOCK"))
 	if err != nil {
 		return nil, nil
 	}
