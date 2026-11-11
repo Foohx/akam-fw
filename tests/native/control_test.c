@@ -365,6 +365,26 @@ static void test_server(void)
     CHECK_STR(out, "OK ae.speed=7\n");
     ask(c, "SET led.stub 9", out, sizeof(out));
     CHECK_STR(out, "OK led.stub=9\n");
+    /* G16: strict parsing and ranges, a refused value changes nothing */
+    {
+        static const char *const bad[] = { "SET ae.speed abc", "SET ae.speed 7x", "SET ae.speed -1", "SET ae.speed 101",
+            "SET ae.speed 99999999999", "SET ae.stable_range 101", "SET ae.hold_range -3", "SET ae.exp_max 16385",
+            "SET ae.enabled 2", "SET ae.enabled yes", "SET night.trigger_hw_exp -1", "SET night.trigger_hw_exp 16385",
+            "SET night.day_hw_exp 1e3", "SET night.confirm_samples 0", "SET night.confirm_samples 36001",
+            "SET night.lock_ms -5", "SET night.lock_ms 3600001", "SET isp.contrast 1.5", "SET isp.brightness x" };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            ask(c, bad[i], out, sizeof(out));
+            CHECK(!strncmp(out, "ERR ", 4) && strstr(out, "range ["));
+        }
+        ask(c, "GET ae.speed", out, sizeof(out));
+        CHECK_STR(out, "ae.speed=7\n");
+        ask(c, "SET night.confirm_samples 1", out, sizeof(out));
+        CHECK_STR(out, "OK night.confirm_samples=1\n");
+        ask(c, "SET night.lock_ms 0", out, sizeof(out));
+        CHECK_STR(out, "OK night.lock_ms=0\n");
+        ask(c, "SET ae.enabled 1", out, sizeof(out));
+        CHECK_STR(out, "OK ae.enabled=1\n");
+    }
     ask(c, "SET isp.saturation 99", out, sizeof(out));
     CHECK_STR(out, "ERR isp.saturation range [-50,50]\n");
     /* picture settings are saved after a change (ISP_TUNE_FILE is a temp file here) and removed at all zero */
