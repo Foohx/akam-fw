@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/resource.h>
@@ -333,7 +334,7 @@ static int enqueue(int kind, const struct sockaddr_in *dst, const char *relates,
 /* Per-source limit (reflection to a spoofed victim): WSD_SRC_RATE requests/s per IP, small LRU table. Wsd thread only. */
 static struct { uint32_t ip; long long t_ms; int tokens_x1000; } srcs[WSD_SRC_SLOTS];
 
-static int src_ok(uint32_t ip, long long now)
+int wsd_src_ok(uint32_t ip, long long now)
 {
     int k = -1, old = 0;
     for (int i = 0; i < WSD_SRC_SLOTS; i++) {
@@ -359,14 +360,17 @@ static int src_valid(const struct sockaddr_in *a)
            (h >> 24) != 0 && (h >> 28) != 0xf;
 }
 
-/* 0 failed, 1 joined (already), 2 newly joined */
-static int join_group(void)
+/* 0 failed, 1 joined (already, or refreshed), 2 newly joined. With `refresh` the membership is dropped and added
+ * again: adding a group the socket already belongs to just fails with EADDRINUSE and sends no IGMP report, so a
+ * switch that snoops IGMP and forgot us (or a querier that restarted) would never see us again. */
+static int join_group(int refresh)
 {
     if (!g.do_join) return 1;
     struct ip_mreq mr;
     mr.imr_multiaddr = g.group.sin_addr;
     mr.imr_interface.s_addr = g.info.mcast_if;
-    if (setsockopt(g.fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mr, sizeof(mr)) == 0) return 2;
+    if (refresh) (void)setsockopt(g.fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mr, sizeof(mr));
+    if (setsockopt(g.fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mr, sizeof(mr)) == 0) return refresh ? 1 : 2;
     return errno == EADDRINUSE ? 1 : 0;
 }
 
@@ -375,7 +379,7 @@ static void *wsd_thread(void *arg)
     (void)arg;
     setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), WSD_NICE);
     static char rx[WSD_MAX_DGRAM + 1];
-    long long next_tick = 0;
+    long long next_tick = 0, next_rejoin = now_ms() + WSD_REJOIN_MS;
     int need_hello = 1, joined = 0;
     while (!g.stop) {
         long long now = now_ms();
@@ -392,7 +396,10 @@ static void *wsd_thread(void *arg)
             }
         }
         if (now >= next_tick) {
-            int r = join_group();
+            int refresh = joined && now >= next_rejoin;
+            if (refresh) next_rejoin = now + WSD_REJOIN_MS;
+            int r = join_group(refresh);
+            if (refresh && r == 0) joined = 0;       /* the drop worked, the add did not: retry fast, Hello when back */
             if (r == 2) need_hello = 1; /* (re)joined after a failure or at start */
             joined = r != 0;
             if (need_hello && enqueue(WSD_B_HELLO, &g.group, NULL, now)) need_hello = 0;
@@ -412,7 +419,7 @@ static void *wsd_thread(void *arg)
             if (n > WSD_MAX_DGRAM || fl != sizeof(from)) continue;
             wsd_msg_t m;
             int kd = wsd_parse(rx, (size_t)n, &m);
-            if (kd > 0 && src_valid(&from) && wsd_match(&g.info, &m) && src_ok(from.sin_addr.s_addr, now_ms()))
+            if (kd > 0 && src_valid(&from) && wsd_match(&g.info, &m) && wsd_src_ok(from.sin_addr.s_addr, now_ms()))
                 enqueue(kd == WSD_K_PROBE ? WSD_B_PROBEMATCH : WSD_B_RESOLVEMATCH, &from, m.msgid, now_ms());
         }
     }
@@ -427,6 +434,34 @@ static void teardown(void)
     if (g.wake_w >= 0) close(g.wake_w);
     g.fd = g.wake_r = g.wake_w = -1;
     g.port = 0;
+}
+
+unsigned wsd_next_instance(const char *path, long long wall_s)
+{
+    unsigned long long prev = 0, next;
+    if (path) {
+        FILE *f = fopen(path, "re");
+        if (f) {
+            char b[24];
+            if (fgets(b, sizeof(b), f) && strspn(b, "0123456789") >= 1) prev = strtoull(b, NULL, 10);
+            fclose(f);
+        }
+    }
+    next = prev + 1;
+    if (wall_s >= 1704067200LL && (unsigned long long)wall_s > next) next = (unsigned long long)wall_s;
+    if (next > 0xfffffff0ULL) next = 1;                         /* xs:unsignedInt: wrap rather than overflow */
+    if (path && next != prev) {
+        char tmp[300], line[24];
+        snprintf(tmp, sizeof(tmp), "%s.new", path);
+        int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0644);
+        if (fd >= 0) {
+            int n = snprintf(line, sizeof(line), "%llu\n", next);
+            int ok = write(fd, line, (size_t)n) == n;
+            close(fd);
+            if (!ok || rename(tmp, path) != 0) unlink(tmp);
+        }
+    }
+    return (unsigned)next;
 }
 
 int wsd_start(const wsd_info_t *in)
@@ -455,7 +490,7 @@ int wsd_start(const wsd_info_t *in)
     g.do_join = IN_MULTICAST(ntohl(g.group.sin_addr.s_addr));
     g.njobs = 0;
     g.msgno = 0;
-    g.instance = (unsigned)time(NULL);
+    g.instance = wsd_next_instance(in->test ? NULL : WSD_INSTANCE_FILE, (long long)time(NULL));
     wsd_rl_init(&g.rl, now_ms());
     g.stop = 0;
 
