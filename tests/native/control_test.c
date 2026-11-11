@@ -25,6 +25,7 @@
 #include "control.h"
 #include "isp_tune.h"
 #include "onvif_cfg.h"
+#include "mqtt_svc.h"
 
 static int g_failed;
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); g_failed++; } } while (0)
@@ -87,6 +88,15 @@ static int  g_onvif_reloads;
 int  onvif_svc_reload(char *s, size_t c) { g_onvif_reloads++; snprintf(g_onvif_state, sizeof(g_onvif_state), "on:8080"); snprintf(s, c, "%s", g_onvif_state); return 0; }
 void onvif_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_onvif_state); }
 void onvif_svc_stop(void) {}
+/* mqtt_svc stub: the real service is tested in mqtt_svc_test.c */
+static char g_mqtt_state[MQTT_STATE_MAX] = "off";
+static int  g_mqtt_reloads, g_mqtt_tests;
+int  mqtt_svc_reload(char *s, size_t c) { g_mqtt_reloads++; snprintf(g_mqtt_state, sizeof(g_mqtt_state), "connecting"); snprintf(s, c, "%s", g_mqtt_state); return 0; }
+void mqtt_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_mqtt_state); }
+void mqtt_svc_stats(char *s, size_t c) { snprintf(s, c, "published=1 received=2 applied=3 rejected=4 connects=5"); }
+void mqtt_svc_test_result(char *s, size_t c) { snprintf(s, c, "%s", g_mqtt_tests ? "running" : "idle"); }
+int  mqtt_svc_test_start(void) { g_mqtt_tests++; return 0; }
+void mqtt_svc_stop(void) {}
 const char *firmware_version(void) { return "b1-test"; }
 void onvif_hostname_get(char *out) { strcpy(out, "akam-test"); }
 
@@ -333,7 +343,7 @@ static void test_server(void)
         "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
-        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\n.\n");
+        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\nmqtt.state=off\n.\n");
     ask(c, "GET sys.stub", out, sizeof(out));
     CHECK_STR(out, "sys.stub=6\n");
     ask(c, "GET net.ssid", out, sizeof(out));      /* CR/LF in a value never splits the reply */
@@ -473,6 +483,42 @@ static void test_server(void)
     snprintf(g_onvif_state, sizeof(g_onvif_state), "off");
     g_onvif_reloads = 0;
 
+    /* MQTT: reload and test from loopback only, state readable by all */
+    ask(c, "GET mqtt.state", out, sizeof(out));
+    CHECK_STR(out, "mqtt.state=off\n");
+    ask(c, "MQTT", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR usage", 9));
+    ask(c, "MQTT bogus", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR usage", 9) && g_mqtt_reloads == 0 && g_mqtt_tests == 0);
+    ask(c, "mqtt reload", out, sizeof(out));
+    CHECK_STR(out, "OK mqtt.state=connecting\n");
+    CHECK(g_mqtt_reloads == 1);
+    ask(c, "GET mqtt.state", out, sizeof(out));
+    CHECK_STR(out, "mqtt.state=connecting\n");
+    ask(c, "GET mqtt.stats", out, sizeof(out));
+    CHECK_STR(out, "mqtt.stats=published=1 received=2 applied=3 rejected=4 connects=5\n");
+    ask(c, "GET mqtt.test", out, sizeof(out));
+    CHECK_STR(out, "mqtt.test=idle\n");
+    ask(c, "MQTT test", out, sizeof(out));
+    CHECK_STR(out, "OK mqtt.test=running\n");
+    ask(c, "GET mqtt.test", out, sizeof(out));
+    CHECK_STR(out, "mqtt.test=running\n");
+    CHECK(g_mqtt_tests == 1);
+    snprintf(g_mqtt_state, sizeof(g_mqtt_state), "off");
+    g_mqtt_reloads = g_mqtt_tests = 0;
+    /* control_get_value: the one reader behind the MQTT module */
+    {
+        char val[32];
+        CHECK(control_get_value("night.state", val, sizeof(val)) == 0 && !strcmp(val, "day"));
+        CHECK(control_get_value("isp.contrast", val, sizeof(val)) == 0);
+        CHECK(control_get_value("night.mode", val, sizeof(val)) == 0 && !strcmp(val, "auto"));
+        CHECK(control_get_value("sys.stub", val, sizeof(val)) == 0 && !strcmp(val, "6"));
+        char want[16];
+        snprintf(want, sizeof(want), "%d", g_stub_val);
+        CHECK(control_get_value("led.stub", val, sizeof(val)) == 0 && !strcmp(val, want));        /* "key=value" line, value only */
+        CHECK(control_get_value("nope.nothing", val, sizeof(val)) == -1);
+    }
+
     /* DEBUG from loopback */
     ask(c, "GET ctl.debug", out, sizeof(out));
     CHECK_STR(out, "ctl.debug=0\n");
@@ -508,6 +554,12 @@ static void test_server(void)
             CHECK(!strncmp(out, "ERR DEBUG is loopback-only", 26));
             ask(r, "ONVIF reload", out, sizeof(out));      /* refused remotely, never reloads */
             CHECK(!strncmp(out, "ERR ", 4) && g_onvif_reloads == 0);
+            ask(r, "MQTT reload", out, sizeof(out));       /* refused remotely, never reloads */
+            CHECK(!strncmp(out, "ERR ", 4) && g_mqtt_reloads == 0);
+            ask(r, "MQTT test", out, sizeof(out));
+            CHECK(!strncmp(out, "ERR ", 4) && g_mqtt_tests == 0);
+            ask(r, "GET mqtt.state", out, sizeof(out));   /* readable by all */
+            CHECK_STR(out, "mqtt.state=off\n");
             ask(r, "GET onvif.state", out, sizeof(out));   /* readable by all */
             CHECK_STR(out, "onvif.state=off\n");
             ask(r, "DEBUG status", out, sizeof(out));

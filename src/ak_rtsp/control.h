@@ -11,6 +11,9 @@
  *   DEBUG on [min]|off|status  (loopback only) -> remote writes allowed for min minutes
  *   ONVIF reload          (loopback only) -> "OK onvif.state=<state>": re-read /etc/config/akam/onvif and start/stop
  *                         the ONVIF HTTP server and WS-Discovery (onvif_cfg.h); GET onvif.state is readable by all
+ *   MQTT reload|test      (loopback only) -> "OK mqtt.state=<state>" re-reads /etc/config/akam/mqtt and starts/stops the
+ *                         MQTT client (mqtt_svc.h); "OK mqtt.test=running" starts a one-shot broker test whose result
+ *                         is "GET mqtt.test" (running|ok|error:<reason>); GET mqtt.state and mqtt.stats are readable by all
  * Read-only by default: SET (and SAVE/RESET) from a non-loopback peer answer
  * "ERR read-only mode, see akam_debug.sh" unless DEBUG is on (RAM-only flag, off at start,
  * auto-off after 60 min by default). Loopback peers always may write.
@@ -41,6 +44,8 @@ void control_apply_saved_isp(void);
 int  control_apply_setting(const char *key, const char *value, int persist, char *msg, size_t cap);
 int  control_get_setting(const char *key, char *out, size_t cap);
 int  control_persist_picture(void);
+/* Value text of any readable key (settings, night.state, LED, audio, metrics), for the MQTT module. 0, or -1. */
+int  control_get_value(const char *key, char *out, size_t cap);
 
 /* 1 while the 8091 DEBUG mode is on (RAM flag, auto-off): the switch for chatty log lines (per-frame, per-AE-window).
  * Thread safe, cheap enough for once a second; do not call per video frame without a rate condition first. */

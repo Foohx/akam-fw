@@ -10,16 +10,22 @@ CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -Wformat -Wformat-security -g \
           -I../smolrtsp/build/_deps/metalang99-src/include \
           -DSMOLRTSP_WITH_H264
 LDFLAGS = -pthread -static -Wl,--gc-sections
+# make EXTRA_CFLAGS=-DMQTT_NO_DNS: the MQTT broker must then be an IPv4 address (saves about 14 KB, see mqtt_svc.c)
+CFLAGS += $(EXTRA_CFLAGS)
 
 # ONVIF is off the video path and opt-in: size over speed for its files only.
 ONVIF_OBJS = http_srv.o soap.o onvif.o onvif_cfg.o onvif_device.o onvif_media.o onvif_imaging.o wsd.o cred.o
 $(ONVIF_OBJS): CFLAGS += -Os
 
+# MQTT is off the video path and opt-in as well: size over speed, and stack canaries (it parses broker input).
+MQTT_OBJS = mqtt.o mqtt_ha.o mqtt_svc.o mqtt_ops.o
+$(MQTT_OBJS): CFLAGS += -Os
+
 # G17: stack canaries only on the parsers that read untrusted network input (ONVIF/SOAP/HTTP, RTSP auth,
 # the 8091 line parser). Everywhere would cost about 3 % of the stripped binary and a canary check on the
 # video/audio hot paths; here it costs under 1 %. Static non-PIE musl: no RELRO or PIE to turn on, and
 # musl ignores _FORTIFY_SOURCE, so those are deliberately not set.
-HARDENED_OBJS = $(ONVIF_OBJS) rtsp_auth.o control.o rtsp_in.o rtsp_busy.o rtp_in.o ctl_gate.o
+HARDENED_OBJS = $(ONVIF_OBJS) $(MQTT_OBJS) rtsp_auth.o control.o rtsp_in.o rtsp_busy.o rtp_in.o ctl_gate.o
 $(HARDENED_OBJS): CFLAGS += -fstack-protector-strong
 
 TARGET     = ak_rtsp
@@ -85,6 +91,10 @@ SRCS    = main.c \
           onvif_media.c \
           onvif_imaging.c \
           wsd.c \
+          mqtt.c \
+          mqtt_ha.c \
+          mqtt_svc.c \
+          mqtt_ops.c \
           ircut.c \
           leds.c \
           ledsys.c \
