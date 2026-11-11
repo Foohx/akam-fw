@@ -226,6 +226,29 @@ check_ports() {
 }
 
 # ---------------------------------------------------------------- processes
+# read_cmdline DIR: sets CL to the space-joined argv of the process in DIR (empty for a kernel thread or when it
+# vanished). /proc/<pid>/cmdline is NUL separated; the camera's BusyBox may lack strings, paste or tr, so the tool
+# is picked once: strings+paste, else tr, else the process name from comm (argv0 only, no script name). CL_MODE is
+# "full" or "comm"; with "comm" a process is only taken when its cmdline is not empty (kernel threads have none).
+CL_MODE=
+pick_cl_tool() {
+    if have strings && have paste; then CL_TOOL="sp"; CL_MODE="full"
+    elif have tr; then CL_TOOL="tr"; CL_MODE="full"
+    else CL_TOOL="none"; CL_MODE="comm"; fi
+}
+read_cmdline() {
+    CL=
+    [ -n "$CL_MODE" ] || pick_cl_tool
+    case $CL_TOOL in
+        sp) CL=$({ strings -n 1 < "$1/cmdline" | paste -s -d ' ' - ; } 2>/dev/null) || CL= ;;
+        tr) CL=$(tr '\0' ' ' < "$1/cmdline" 2>/dev/null) || CL= ;;
+        *)
+            _x=
+            { read -r _x < "$1/cmdline"; } 2>/dev/null || true
+            if [ -n "$_x" ]; then { read -r CL < "$1/comm"; } 2>/dev/null || CL=; fi ;;
+    esac
+    return 0
+}
 # Match $NAME against argv0 or argv1 of /proc/<pid>/cmdline (scripts run as
 # "sh x.sh"), directory and ".sh" removed. Prints matching pids.
 find_pids() {
@@ -235,7 +258,8 @@ find_pids() {
         [ "$pid" = "$$" ] && continue
         # Each read may race with the process exiting: errors (including the
         # shell's own "can't open") go to /dev/null and the pid is skipped.
-        cl=$({ strings -n 1 < "$d/cmdline" | paste -s -d ' ' - ; } 2>/dev/null) || cl=
+        read_cmdline "$d"
+        cl=$CL
         if [ -z "$cl" ]; then { read -r cl < "$d/comm"; } 2>/dev/null || cl=; fi
         [ -n "$cl" ] || continue
         set -f
@@ -313,7 +337,8 @@ udp_owner() { # process owning socket inode $1 (best effort)
         [ -d "$_d/fd" ] || continue
         # shellcheck disable=SC2010  # socket links are named socket:[inode], no glob can match them
         if ls -l "$_d/fd" 2>/dev/null | grep -q "socket:\[$1\]"; then
-            _c=$({ strings -n 1 < "$_d/cmdline" | paste -s -d ' ' - ; } 2>/dev/null)
+            read_cmdline "$_d"
+            _c=$CL
             echo "${_c:-pid ${_d##*/}}"
             return
         fi
@@ -356,7 +381,8 @@ check_udp() {
 # reported as WARN "review": whether they can go is a hardware decision. Kernel threads have no cmdline: skipped.
 PROC_ALLOW=" init syslogd klogd wpa_supplicant udhcpc watchdog ak_rtsp_wrapper ak_rtsp dropbear dropbearmulti sh ash sleep drop_caches ntpd timeout nice ps grep logger kill cat date wc tail sync mv "
 proc_name() { # name of the process in dir $1, empty when none
-    _cl=$({ strings -n 1 < "$1/cmdline" | paste -s -d ' ' - ; } 2>/dev/null) || _cl=
+    read_cmdline "$1"
+    _cl=$CL
     [ -n "$_cl" ] || return 1
     set -f
     # shellcheck disable=SC2086
@@ -373,6 +399,7 @@ proc_name() { # name of the process in dir $1, empty when none
 }
 check_proc_allowlist() {
     section "process allow-list"
+    pick_cl_tool
     if ! ls "$ROOT"/proc/[0-9]* >/dev/null 2>&1; then
         info "no /proc/<pid> entries readable: process allow-list skipped"
         return 0
@@ -402,7 +429,11 @@ check_proc_allowlist() {
                n_odd=$((n_odd + 1)) ;;
         esac
     done
-    if [ "$n_odd" -eq 0 ]; then pass "all $n_all processes are on the allow-list"; else info "$n_all processes, $n_odd to review (WARN above)"; fi
+    if [ "$n_all" -eq 0 ]; then
+        # Nothing readable: a vacuous "all 0 processes are on the allow-list" would be a false PASS.
+        fail "process allow-list could not be checked: no process command line was readable (cmdline reader: ${CL_TOOL:-?}, needs strings+paste, or tr, or comm)"
+    elif [ "$n_odd" -eq 0 ]; then pass "all $n_all processes are on the allow-list"
+    else info "$n_all processes, $n_odd to review (WARN above)"; fi
     return 0
 }
 
