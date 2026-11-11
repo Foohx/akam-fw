@@ -11,10 +11,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -59,9 +59,21 @@ type Options struct {
 	ExtractTo string
 	// Say and Warn print the "ok:" and WARNING lines (nil: discarded).
 	Say, Warn func(string)
-	// Decompress opens an .xz file as a stream (nil: the xz program, run with the file as argument).
+	// Decompress opens an .xz file as a stream (nil: XZReader, in process, with DefaultXZLimits).
 	Decompress func(file string) (io.ReadCloser, error)
+
+	// Test seams (nil: the real ones): symlink replaces os.Symlink, isLocal replaces filepath.IsLocal.
+	symlink func(oldname, newname string) error
+	isLocal func(string) bool
 }
+
+// modesMatter reports whether the OS has Unix permission bits (Windows has not: directory-mode
+// verification then skips the mode comparison; the tar-mode check against the archive headers is the authority).
+var modesMatter = runtime.GOOS != "windows"
+
+// linksSidecar lists, one "path target" per line, the links written as regular-file copies because the
+// OS refused os.Symlink (no privilege on Windows). It is read by VerifyDir.
+const linksSidecar = ".akam-links"
 
 func (o *Options) say(s string) {
 	if o.Say != nil {
@@ -101,55 +113,6 @@ func sha256File(p string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func xzDecompress(file string) (io.ReadCloser, error) {
-	xz, err := exec.LookPath("xz")
-	if err != nil {
-		return nil, &Usage{"xz not found (install the xz package: it unpacks the kit)"}
-	}
-	cmd := exec.Command(xz, "-dc", "--", file)
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	return &procReader{r: out, cmd: cmd, errb: &errb}, nil
-}
-
-type procReader struct {
-	r      io.Reader
-	cmd    *exec.Cmd
-	errb   *bytes.Buffer
-	waited bool
-}
-
-// Read passes the decompressed bytes through; at the end of the stream xz must have exited 0, so a
-// truncated or corrupt .xz is an error, never a short archive that happens to end on a block boundary.
-func (p *procReader) Read(b []byte) (int, error) {
-	n, err := p.r.Read(b)
-	if err == io.EOF {
-		if werr := p.cmd.Wait(); werr != nil {
-			p.waited = true
-			return n, fmt.Errorf("xz failed: %v: %s", werr, strings.TrimSpace(p.errb.String()))
-		}
-		p.waited = true
-	}
-	return n, err
-}
-
-func (p *procReader) Close() error {
-	if p.waited {
-		return nil
-	}
-	_ = p.cmd.Process.Kill()
-	err := p.cmd.Wait()
-	_ = err
-	return nil
 }
 
 // VerifyTarball is verify_kit.sh in tarball mode: sha256 against SHA256SUMS, signature, safe
@@ -338,6 +301,9 @@ func (o *Options) readArchive(file string, visit func(*tar.Header, *tar.Reader, 
 			return "", fail("archive contains absolute or '..' paths")
 		}
 		clean := strings.TrimSuffix(name, "/")
+		if !o.local(clean) {
+			return "", fail("archive entry name is not a safe local path on this system: %s", name)
+		}
 		if top == "" {
 			top = strings.SplitN(name, "/", 2)[0]
 			if !strings.HasPrefix(top, "akam-kit-") || len(top) == len("akam-kit-") {
@@ -419,6 +385,13 @@ func hasDotDot(name string) bool {
 	return false
 }
 
+func (o *Options) local(name string) bool {
+	if o.isLocal != nil {
+		return o.isLocal(name)
+	}
+	return filepath.IsLocal(filepath.FromSlash(name))
+}
+
 func (o *Options) listAndExtract(file, target string) (string, error) {
 	// First pass: validate everything without writing a byte.
 	top, err := o.readArchive(file, nil)
@@ -430,6 +403,8 @@ func (o *Options) listAndExtract(file, target string) (string, error) {
 	}
 	// Second pass: extract (no owner, modes as archived, no overwrite). The stream is the same
 	// private copy; names were validated by the first pass and are re-validated here.
+	type pendingLink struct{ rel, target, dst string }
+	var links []pendingLink
 	_, err = o.readArchive(file, func(h *tar.Header, tr *tar.Reader, clean string) error {
 		dst := filepath.Join(target, filepath.FromSlash(clean))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -442,7 +417,9 @@ func (o *Options) listAndExtract(file, target string) (string, error) {
 			}
 			return os.Chmod(dst, 0o755)
 		case tar.TypeSymlink:
-			return os.Symlink(h.Linkname, dst)
+			// Created after the walk: the link may come before its target in the archive.
+			links = append(links, pendingLink{rel: strings.TrimPrefix(clean, top+"/"), target: h.Linkname, dst: dst})
+			return nil
 		default:
 			f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 			if err != nil {
@@ -462,6 +439,30 @@ func (o *Options) listAndExtract(file, target string) (string, error) {
 		return "", err
 	}
 	o.say(fmt.Sprintf("ok: archive layout is safe (%d entries)", countEntries(target)))
+	// Links: os.Symlink when the OS allows it; otherwise (no privilege on Windows) a regular-file copy
+	// of the target plus a line in the sidecar, which VerifyDir accepts as the same thing.
+	var sidecar strings.Builder
+	for _, l := range links {
+		symlink := o.symlink
+		if symlink == nil {
+			symlink = os.Symlink
+		}
+		if err := symlink(l.target, l.dst); err == nil {
+			continue
+		}
+		if err := copyFile(linkCopySource(filepath.Join(target, top), l.rel, l.target), l.dst); err != nil {
+			return "", fmt.Errorf("cannot create the link %s (no symlink, no copy): %w", l.rel, err)
+		}
+		if err := os.Chmod(l.dst, 0o755); err != nil {
+			return "", err
+		}
+		sidecar.WriteString(l.rel + " " + l.target + "\n")
+	}
+	if sidecar.Len() > 0 {
+		if err := os.WriteFile(filepath.Join(target, top, linksSidecar), []byte(sidecar.String()), 0o644); err != nil {
+			return "", err
+		}
+	}
 	return top, nil
 }
 
@@ -507,6 +508,10 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 	m := string(mb)
 	if _, err := os.Stat(filepath.Join(d, "SHA256SUMS")); err != nil {
 		return nil, fail("SHA256SUMS missing in %s", d)
+	}
+	copies, err := readLinksSidecar(d)
+	if err != nil {
+		return nil, err
 	}
 	bad := false
 	_ = filepath.WalkDir(d, func(p string, de fs.DirEntry, err error) error {
@@ -593,7 +598,7 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 		if err == nil && de.Type().IsRegular() {
 			rel, _ := filepath.Rel(d, p)
 			rel = filepath.ToSlash(rel)
-			if rel != "SHA256SUMS" {
+			if rel != "SHA256SUMS" && rel != linksSidecar && copies[rel] == "" {
 				have = append(have, rel)
 			}
 		}
@@ -612,6 +617,7 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 	var manFiles []string
 	n := 0
 	links := 0
+	usedCopies := 0
 	for _, l := range strings.Split(m, "\n") {
 		if !strings.HasPrefix(l, "file ") && !strings.HasPrefix(l, "link ") {
 			continue
@@ -638,7 +644,7 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 			if got != a {
 				return nil, fail("sha256 mismatch for %s: MANIFEST %s, actual %s", p, a, got)
 			}
-			if fmt.Sprintf("%o", st.Mode().Perm()) != mode {
+			if modesMatter && fmt.Sprintf("%o", st.Mode().Perm()) != mode {
 				return nil, fail("mode mismatch for %s: MANIFEST %s, actual %o", p, mode, st.Mode().Perm())
 			}
 			manFiles = append(manFiles, p)
@@ -646,12 +652,29 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 			if !((p == "overlay/bin/dropbear" || p == "overlay/bin/dropbearkey") && a == "dropbearmulti") {
 				return nil, fail("MANIFEST lists an unexpected symlink %s -> %s", p, a)
 			}
-			t, err := os.Readlink(full)
-			if err != nil {
-				return nil, fail("MANIFEST lists %s as a link but it is not", p)
-			}
-			if t != a {
-				return nil, fail("link target mismatch for %s", p)
+			if c, isCopy := copies[p]; isCopy {
+				// A regular-file copy recorded in the sidecar (no symlink on this OS): same bytes as its target.
+				if c != a {
+					return nil, fail("link target mismatch for %s", p)
+				}
+				st, err := os.Lstat(full)
+				if err != nil || !st.Mode().IsRegular() {
+					return nil, fail("%s is recorded as a link copy but is not a regular file", p)
+				}
+				got, _ := sha256File(full)
+				want, _ := sha256File(linkCopySource(d, p, a))
+				if want == "" || got != want {
+					return nil, fail("link copy %s differs from its target %s", p, a)
+				}
+				usedCopies++
+			} else {
+				t, err := os.Readlink(full)
+				if err != nil {
+					return nil, fail("MANIFEST lists %s as a link but it is not", p)
+				}
+				if t != a {
+					return nil, fail("link target mismatch for %s", p)
+				}
 			}
 			links++
 		}
@@ -674,7 +697,10 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 		}
 		return nil
 	})
-	if actualLinks != links {
+	if usedCopies != len(copies) {
+		return nil, fail("%s lists a link that MANIFEST.txt does not", linksSidecar)
+	}
+	if actualLinks+usedCopies != links {
 		return nil, fail("symlinks in the kit are not all listed in MANIFEST.txt")
 	}
 
@@ -707,6 +733,42 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 				out[k] = v
 			}
 		}
+	}
+	return out, nil
+}
+
+// linkCopySource is the file a link copy is made from. The link's target (dropbearmulti) names a file
+// that lives next to the link on the camera; in the kit it is bin/dropbearmulti.
+func linkCopySource(kitDir, linkRel, target string) string {
+	next := filepath.Join(kitDir, filepath.FromSlash(path.Dir(linkRel)), filepath.FromSlash(target))
+	if _, err := os.Stat(next); err == nil {
+		return next
+	}
+	return filepath.Join(kitDir, "bin", filepath.FromSlash(target))
+}
+
+// readLinksSidecar reads the optional .akam-links file: "path target" per line, only the two known links.
+func readLinksSidecar(d string) (map[string]string, error) {
+	b, err := os.ReadFile(filepath.Join(d, linksSidecar))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fail("cannot read %s: %v", linksSidecar, err)
+	}
+	out := map[string]string{}
+	for _, l := range strings.Split(string(b), "\n") {
+		if l == "" {
+			continue
+		}
+		f := strings.Split(l, " ")
+		if len(f) != 2 || !((f[0] == "overlay/bin/dropbear" || f[0] == "overlay/bin/dropbearkey") && f[1] == "dropbearmulti") {
+			return nil, fail("%s has an unexpected line", linksSidecar)
+		}
+		if _, dup := out[f[0]]; dup {
+			return nil, fail("%s has a duplicate line", linksSidecar)
+		}
+		out[f[0]] = f[1]
 	}
 	return out, nil
 }
