@@ -1,4 +1,4 @@
-// Package squashfs is a pure-Go, read-only reader of squashfs 4.0 images (little-endian), written for the
+// Package squashfs is a pure-Go reader and writer (see writer.go) of squashfs 4.0 images (little-endian), written for the
 // image builder of the assistant. The input is untrusted (it comes from the user's own backup of a camera):
 // every count, size and offset is checked against a Limits value and against the image itself, loops are
 // detected, and nothing is ever extracted to the host file system. Callers get an in-memory view: Lstat,
@@ -12,4 +12,7 @@
 // them. lzma, lzo, lz4 and zstd images, and other superblock versions, are refused with ErrUnsupported.
 //
 // The directory index of extended directories is skipped, not used: directories are scanned linearly.
+//
+// The writer (Write, Build) turns an in-memory Node tree into an image laid out like mksquashfs's (xz with a
+// CRC32 check, 128 KiB blocks, fragments, export table, no xattrs); hard links are refused.
 package squashfs
