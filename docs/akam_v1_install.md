@@ -89,8 +89,8 @@ Not yet validated on hardware.
 
 ### ONVIF with ONVIF Device Manager
 
-ONVIF Profile S (WS-Discovery, device, media and imaging services) is **host-tested only, not yet validated on a
-camera**; ONVIF Device Manager (ODM) is the first client to try. Steps:
+ONVIF Profile S (WS-Discovery, device, media and imaging services) is **validated on one camera with ONVIF Device
+Manager (ODM) on Windows**: discovery, login, live video and imaging. Other NVRs are not tried yet. Steps:
 
 1. Make sure the camera runs an image that has ONVIF (`./akam update`), then set the video password, and **re-run it
    once even if a password already exists**, so that the clear-text copy ONVIF needs is stored:

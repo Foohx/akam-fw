@@ -13,7 +13,7 @@ Akam has been run on real cameras of **one** model. Nothing else is known to wor
 | Stock firmware | Linux `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`, stock APP squashfs xz, block 131072 (fingerprint in `tools/release/supported_hardware.txt`; no retail firmware version number is recorded) |
 | Units tested | 2, host names `akam-01` and `akam-02` |
 | Akam version flashed | `akam-01`: development image built 2026-11-11 (ONVIF, encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP, video config, quieter logs); `akam-02`: development image built 2026-11-10 ("v3 ctl"). Wizard `1.0.0-dev`; no release has been published yet |
-| What was validated | see [testing status](testing-status.md): the hardware-validated list covers video, audio, talk, LEDs, day/night, port 8091, SSH, flash and boot; ONVIF was validated on `akam-01` with the check tool; ONVIF Device Manager on Windows and several robustness features are not yet tested on a camera |
+| What was validated | see [testing status](testing-status.md): the hardware-validated list covers video, audio, talk, LEDs, day/night, port 8091, SSH, flash and boot; ONVIF was validated on `akam-01` with the check tool and with ONVIF Device Manager on Windows (discovery, login, live video, imaging); several robustness features are not yet tested on a camera |
 | Date | 2026-11 |
 
 Other models: the `3215672.2` (labels SI `B26101` / `C26101`) is untested with Akam. **Any other LSC or Tuya

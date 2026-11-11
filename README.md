@@ -235,7 +235,8 @@ service and the media service of Profile S, so the camera shows up in those apps
 **This is part of the same release as the `onvif` command: an image built before it has no ONVIF at all
 (`./akam update` first), and `./akam onvif status` then says it does not know.** The firmware side is now wired
 (`ak_rtsp` starts and stops the ONVIF server and the discovery by itself from the flag file, no reboot). It is
-**host-tested only: not yet validated on a real camera**; the first client to try is ONVIF Device Manager (steps in
+**validated on a real camera** (akam-01, 2026-11-11): ONVIF Device Manager on Windows finds it, logs in, plays the live
+video and changes the image; `tools/hw_tests/onvif_check.py` passes 34/34. Other NVRs are not tried yet (steps in
 the [install notes](docs/akam_v1_install.md#onvif-with-onvif-device-manager)).
 
 - **Off by default.** Nothing listens on the ONVIF ports until you ask: `./akam onvif enable` (it asks a
