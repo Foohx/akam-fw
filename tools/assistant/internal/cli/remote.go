@@ -7,7 +7,9 @@ import (
 )
 
 // Every command line sent to the camera is built here and nowhere else, so that a test can check
-// the whole set against the safety rule: no reboot, poweroff, halt, watchdog or flash write.
+// the whole set against the safety rule: no reboot, poweroff, halt, watchdog or flash write. The only
+// code that may write the flash is internal/flash (reached through flashSSH in flashcmds.go): it does not
+// use this guard, which therefore refuses the reflash commands on every other path.
 
 const (
 	hostnameCmd = "/usr/sbin/akam_hostname.sh"
@@ -52,7 +54,7 @@ func allRemoteCommands() []string {
 	}
 }
 
-var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|kill)\b|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|of=/dev/`)
+var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|kill)\b|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|of=/dev/|akam_reflash|i-understand-no-uart`)
 
 // forbiddenRemote reports why a command would break the safety rule (empty when fine).
 func forbiddenRemote(cmd string) string {

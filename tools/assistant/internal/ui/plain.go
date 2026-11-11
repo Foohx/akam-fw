@@ -3,6 +3,7 @@ package ui
 import (
 	"bufio"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"io"
 	"os"
 	"os/signal"
@@ -39,7 +40,7 @@ type Plain struct {
 func NewPlain(dry, color bool, log *state.Log, secrets *state.Secrets) *Plain {
 	return &Plain{
 		In: bufio.NewReader(os.Stdin), Out: os.Stdout, ErrOut: os.Stderr,
-		Color: color, DryRun: dry, ForceTT: os.Getenv("AKAM_FORCE_TTY") == "1",
+		Color: color, DryRun: dry, ForceTT: testhook.Env("AKAM_FORCE_TTY") == "1",
 		InFile: os.Stdin, ErrFile: os.Stderr, Log: log, Secrets: secrets, progLast: -1,
 	}
 }

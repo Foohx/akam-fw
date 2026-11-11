@@ -40,6 +40,8 @@ type Options struct {
 	NoOnvifHelper bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
+	// Flash selects the behaviour of the reflash emulation (see flash.go); zero is a healthy camera.
+	Flash FlashOptions
 }
 
 // Camera is one running fake camera.
@@ -49,6 +51,8 @@ type Camera struct {
 	Root string // AKAM_ROOT of the helper scripts
 
 	sshLn, ctlLn, rtspLn net.Listener
+	ssh2Ln               net.Listener // the second Dropbear (RAM, port 2222 on a real camera)
+	fl                   flashState
 	hostKeyMu            sync.Mutex
 	hostSigner           gossh.Signer
 
@@ -66,9 +70,12 @@ type Camera struct {
 }
 
 // SSHPort, CtlPort and RTSPPort are the real loopback ports.
-func (c *Camera) SSHPort() int  { return c.sshLn.Addr().(*net.TCPAddr).Port }
-func (c *Camera) CtlPort() int  { return c.ctlLn.Addr().(*net.TCPAddr).Port }
-func (c *Camera) RTSPPort() int { return c.rtspLn.Addr().(*net.TCPAddr).Port }
+func (c *Camera) SSHPort() int { return c.sshLn.Addr().(*net.TCPAddr).Port }
+func (c *Camera) CtlPort() int { return c.ctlLn.Addr().(*net.TCPAddr).Port }
+
+// SecondPort is the port of the RAM Dropbear (answers only after the camera script "prepare").
+func (c *Camera) SecondPort() int { return c.ssh2Ln.Addr().(*net.TCPAddr).Port }
+func (c *Camera) RTSPPort() int   { return c.rtspLn.Addr().(*net.TCPAddr).Port }
 
 // Commands returns the exec command lines received so far.
 func (c *Camera) Commands() []string {
@@ -180,9 +187,14 @@ func New(t testing.TB, opts Options) *Camera {
 	if c.ctlLn, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
 		t.Fatal(err)
 	}
+	if c.ssh2Ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	c.initFlash()
 	c.RTSP = newRTSPServer(t, filepath.Join(c.Root, "etc", "config", "akam", "credentials"))
 	c.rtspLn = c.RTSP.ln
 	c.serve(c.sshLn, c.handleSSH)
+	c.serve(c.ssh2Ln, c.handleSSH2)
 	c.serve(c.ctlLn, c.handleCtl)
 	t.Cleanup(c.Close)
 	return c
@@ -215,6 +227,7 @@ func (c *Camera) Close() {
 		close(c.done)
 	}
 	c.sshLn.Close()
+	c.ssh2Ln.Close()
 	c.ctlLn.Close()
 	c.RTSP.Close()
 	c.mu.Lock()
@@ -226,6 +239,15 @@ func (c *Camera) Close() {
 }
 
 // ---------------------------------------------------------------- SSH
+
+// handleSSH2 is the second Dropbear: it only exists once the camera script "prepare" has started it.
+func (c *Camera) handleSSH2(nc net.Conn) {
+	if !c.secondUp() {
+		nc.Close()
+		return
+	}
+	c.handleSSH(nc)
+}
 
 func (c *Camera) handleSSH(nc net.Conn) {
 	cfg := &gossh.ServerConfig{
@@ -255,7 +277,7 @@ func (c *Camera) handleSSH(nc net.Conn) {
 				continue
 			}
 			c.wg.Add(1)
-			go func() { defer c.wg.Done(); c.session(ch, creqs) }()
+			go func() { defer c.wg.Done(); c.session(ch, creqs, nc) }()
 		case "direct-tcpip":
 			var p struct {
 				Host     string
@@ -291,7 +313,7 @@ func (c *Camera) handleSSH(nc net.Conn) {
 	}
 }
 
-func (c *Camera) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
+func (c *Camera) session(ch gossh.Channel, reqs <-chan *gossh.Request, nc net.Conn) {
 	defer ch.Close()
 	for r := range reqs {
 		if r.Type != "exec" {
@@ -309,7 +331,11 @@ func (c *Camera) session(ch gossh.Channel, reqs <-chan *gossh.Request) {
 		c.mu.Lock()
 		c.commands = append(c.commands, p.Cmd)
 		c.mu.Unlock()
-		status := c.exec(p.Cmd, ch, ch, ch.Stderr())
+		status := c.exec(p.Cmd, ch, ch, ch.Stderr(), nc)
+		if status == dropConn {
+			nc.Close()
+			return
+		}
 		_, _ = ch.SendRequest("exit-status", false, binary.BigEndian.AppendUint32(nil, uint32(status)))
 		return
 	}
@@ -321,7 +347,10 @@ const registerCmd = `echo "REG_HOSTNAME=$(hostname)"; echo "REG_MTD7_MD5=$(dd if
 const Mtd7MD5 = "0123456789abcdef0123456789abcdef"
 
 // exec runs one of the known commands. Anything else is "not found".
-func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer) int {
+func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc net.Conn) int {
+	if st, ok := c.flashExec(cmd, stdin, stdout, stderr, nc); ok {
+		return st
+	}
 	switch {
 	case cmd == "true":
 		return 0

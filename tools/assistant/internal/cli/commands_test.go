@@ -484,7 +484,7 @@ func TestStatusCamerasRename(t *testing.T) {
 
 func TestStrayCommandsAreRefusedPolitely(t *testing.T) {
 	e := newEnv(t)
-	for _, c := range []string{"flash", "backup", "image", "get-kit", "update", "restore", "wipe-sd", "prepare-flash-sd", "verify"} {
+	for _, c := range []string{"flash", "backup", "image", "wipe-sd", "prepare-flash-sd"} {
 		r := e.run("", c)
 		expectRC(t, r, 1)
 		contains(t, r.err, "'"+c+"' is not in the native binary yet")
