@@ -4,8 +4,8 @@
 #   - SmolRTSP checkout      -> src/smolrtsp
 #   - its 4 header-only deps -> src/smolrtsp/build/_deps/<name>-src
 #   - Dropbear archive       -> tools/.cache/ (verified; built by tools/dropbear/)
-#   - Go modules of tools/assistant -> tools/.toolchain/go/mod (only when Go >= GO_VERSION is installed;
-#     Go itself is never installed: the message says where to get it)
+#   - official Go (GO_VERSION)  -> tools/.toolchain/go-<ver>-<os>-<arch>/  (project-local, never system-wide)
+#   - Go modules of tools/assistant -> tools/.toolchain/go/mod (with that Go, else a host Go >= GO_VERSION's minor)
 #   - static BusyBox (tests) -> tools/.toolchain/busybox-<ver>-x86_64/busybox (x86_64 hosts only)
 # Idempotent. Every download is sha256-checked; a mismatch aborts.
 #
@@ -26,6 +26,8 @@ lock="${DEPS_LOCK:-$here/deps.lock}"
 . "$lock"
 # shellcheck source=tools/lib/host.sh
 . "$root/tools/lib/host.sh"
+# shellcheck source=tools/lib/gotoolchain.sh
+. "$root/tools/lib/gotoolchain.sh"
 
 die() { echo "bootstrap: error: $*" >&2; exit 1; }
 log() { echo "bootstrap: $*"; }
@@ -62,6 +64,14 @@ fi
 zig_dir="$toolchain/zig-$ZIG_VERSION-$arch-linux"
 zig_inner="zig-$arch-linux-$ZIG_VERSION"
 bb_dir="$toolchain/busybox-$BUSYBOX_VERSION-x86_64"
+# Official Go archive of this host (GO_URL_<os>_<arch>); empty when the lock pins none for it.
+goos_="$(akam_go_os)"
+goarch_="$(akam_go_arch)"
+go_url_v="GO_URL_${goos_}_${goarch_}"
+go_sha_v="GO_SHA256_${goos_}_${goarch_}"
+GO_URL="${!go_url_v:-}"
+GO_SHA256="${!go_sha_v:-}"
+go_dir="$(akam_go_dir "$root")"
 
 # cache_state <file> <sha>: "cached" when tools/.cache holds a valid copy, else "missing".
 cache_state() {
@@ -89,7 +99,17 @@ if [ "$plan" = 1 ]; then
         echo "  $name:  ${!tag_v} (cache $(cache_state "$name-${!tag_v}.tar.gz" "${!sha_v}"))"
     done
     echo "  dropbear:   $DROPBEAR_VERSION (cache $(cache_state "$(basename "$DROPBEAR_URL")" "$DROPBEAR_SHA256"))"
-    echo "  go modules: tools/assistant (GO_VERSION >= $GO_VERSION; host go: $(command -v go >/dev/null 2>&1 && GOTOOLCHAIN=local go env GOVERSION || echo none))"
+    if [ -n "$GO_URL" ] && [ -n "$GO_SHA256" ]; then
+        gstate="cache $(cache_state "$(basename "$GO_URL")" "$GO_SHA256")"
+        [ -x "$go_dir/bin/go" ] && gstate=installed
+        echo "  go:         $GO_VERSION (official toolchain, project-local)"
+        echo "    url:      $GO_URL"
+        echo "    sha256:   $GO_SHA256"
+        echo "    install:  $go_dir ($gstate)"
+    else
+        echo "  go:         no pinned archive for ${goos_}/${goarch_}: the host go is used (release builds need exactly Go ${GO_VERSION:-?})"
+    fi
+    echo "  go modules: tools/assistant (modules need Go >= 1.26 (go.mod); release builds need exactly Go $GO_VERSION; host go: $(command -v go >/dev/null 2>&1 && GOTOOLCHAIN=local go env GOVERSION || echo none))"
     if [ "$arch" = x86_64 ]; then
         bstate="to fetch"
         [ -x "$bb_dir/busybox" ] && bstate=installed
@@ -101,6 +121,7 @@ if [ "$plan" = 1 ]; then
 fi
 
 mkdir -p "$cache" "$toolchain"
+trap 'rm -rf "${tmp:-}" "${gtmp:-}"' EXIT
 
 # retry <cmd...>: run it, retrying with exponential backoff (used for git).
 retry() {
@@ -166,7 +187,6 @@ else
     archive="$cache/$(basename "$ZIG_URL")"
     download "$ZIG_URL" "$ZIG_SHA256" "$archive"
     tmp="$(mktemp -d "$toolchain/.extract.XXXXXX")"
-    trap 'rm -rf "$tmp"' EXIT
     tar -xJf "$archive" -C "$tmp"
     [ -x "$tmp/$zig_inner/zig" ] || die "unexpected Zig archive layout"
     rm -rf "$zig_dir"
@@ -239,10 +259,34 @@ else
     log "busybox skipped on $arch (pinned binary is x86_64 only; camera-side ash tests will skip)"
 fi
 
+# --- Official Go toolchain (project-local; build.sh and the tests prefer it over the go of PATH) ---
+GO_VERSION="${GO_VERSION:-1.27.4}"; GO_NOTE="${GO_NOTE:-needs Go >= 1.26 (https://go.dev/dl/)}"
+if [ ! -f "$root/tools/assistant/go.mod" ]; then
+    : # no assistant in this checkout: no Go needed
+elif [ -z "$GO_URL" ] || [ -z "$GO_SHA256" ]; then
+    log "no pinned Go archive for ${goos_}/${goarch_} in $(basename "$lock"): using the host go if any"
+elif [ -x "$go_dir/bin/go" ]; then
+    log "go $GO_VERSION already installed in $go_dir"
+else
+    case "$GO_URL" in *.tar.gz) ;; *) die "unsupported Go archive type (tar.gz expected): $GO_URL" ;; esac
+    gz="$cache/$(basename "$GO_URL")"
+    download "$GO_URL" "$GO_SHA256" "$gz"
+    gtmp="$(mktemp -d "$toolchain/.extract.XXXXXX")"
+    # the archive holds a single top-level go/ directory
+    tar -xzf "$gz" -C "$gtmp" --strip-components=1
+    [ -x "$gtmp/bin/go" ] || die "unexpected Go archive layout (no bin/go)"
+    [ "$(GOTOOLCHAIN=local GOROOT="$gtmp" "$gtmp/bin/go" env GOVERSION 2>/dev/null | sed 's/^go//;s/[ -].*//')" = "$GO_VERSION" ] \
+        || die "the downloaded Go is not Go $GO_VERSION"
+    rm -rf "$go_dir"
+    mv "$gtmp" "$go_dir"
+    gtmp=""
+    log "installed go $GO_VERSION in $go_dir"
+fi
+
 # --- Go modules of the native assistant (tools/assistant; optional: needs Go) ---
 # Fetched into tools/.toolchain/go/mod, verified against go.sum. Never touches ~/go.
-GO_VERSION="${GO_VERSION:-1.26.0}"; GO_NOTE="${GO_NOTE:-needs Go >= 1.26 (https://go.dev/dl/)}"
-go_min="${GO_VERSION%.*}"
+akam_use_pinned_go "$root" || true
+go_min="$(sed -n 's/^go \([0-9]*\.[0-9]*\).*/\1/p' "$root/tools/assistant/go.mod" 2>/dev/null | head -n 1)"; go_min="${go_min:-1.26}"
 have_go=""
 if command -v go >/dev/null 2>&1; then
     have_go="$(GOTOOLCHAIN=local go env GOVERSION | sed 's/^go//;s/[ -].*//')"
