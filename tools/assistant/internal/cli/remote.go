@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
@@ -43,6 +44,16 @@ func remoteNtp(action string, servers ...string) string {
 	return strings.TrimSpace(ntpCmd + " " + action + " " + strings.Join(servers, " "))
 }
 
+// remoteDateRead reads the camera clock (seconds since 1970).
+func remoteDateRead() string { return "date +%s" }
+
+// remoteDateSet sets the camera clock to t (UTC). It uses the "YYYY-MM-DD hh:mm:ss" form every busybox
+// `date -s` accepts (the "@epoch" form is only in newer busybox). It is the only form of `date` that may
+// set the clock: forbiddenRemote refuses any other `date` that is not the read above.
+func remoteDateSet(t time.Time) string {
+	return "date -u -s '" + t.UTC().Format("2006-01-02 15:04:05") + "'"
+}
+
 // remoteTrue is cam_ssh_ok.
 func remoteTrue() string { return "true" }
 
@@ -76,10 +87,16 @@ func allRemoteCommands() []string {
 		remoteDebug("on", "60"), remoteDebug("off", ""), remoteDebug("status", ""),
 		remoteOnvif("enable", "80"), remoteOnvif("disable"), remoteOnvif("status"),
 		remoteRegister(), remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
+		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)),
 	}
 }
 
 var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|pkill|kill)\b|\bdd\b[^|;&]*\b(seek|conv|oflag|skip)=|\bdd\b[^|;&]*\bof\s*=|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|\bof=|>\s*/dev/mtd|akam_reflash|i-understand-no-uart`)
+
+// remoteDateSetRe is the one form of `date` that sets the clock (see remoteDateSet); nothing can be chained.
+var remoteDateSetRe = regexp.MustCompile(`^date -u -s '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}'$`)
+
+var dateWordRe = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_.-])date($|[^A-Za-z0-9_.-])`)
 
 // remoteReadRe is the ONE read-only form of a flash read that is allowed on its own: dd with an
 // input and a block size, never an of=. The partition number is a single digit 0..7.
@@ -96,8 +113,12 @@ func remoteReadMtd(n int) string {
 
 // forbiddenRemote reports why a command would break the safety rule (empty when fine).
 func forbiddenRemote(cmd string) string {
-	if cmd == restartVideoCmd {
+	if cmd == restartVideoCmd || cmd == remoteDateRead() || remoteDateSetRe.MatchString(cmd) {
 		return ""
+	}
+	// `date` can set the clock (-s, --set, or a bare MMDDhhmm): only the two exact forms above pass.
+	if dateWordRe.MatchString(cmd) {
+		return fmt.Sprintf("forbidden camera command: %s", cmd)
 	}
 	if remoteReadRe.MatchString(cmd) {
 		return ""
