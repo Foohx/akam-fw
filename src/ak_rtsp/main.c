@@ -238,6 +238,9 @@ int main(int argc, char **argv)
      * that in auto mode the LED blinks during the whole start-up. */
     ledsys_start();
 
+    /* A respawn after a stall exit can block for ever in a driver call here; the kernel ends it instead, swdog_start()
+     * cancels the alarm once the stream is up. */
+    swdog_init_deadline(SWDOG_INIT_DEADLINE_S);
     venc_reset_stale_channel();
 
     /* Step 1: Open and configure the ISP and Video Input (VI) devices.
