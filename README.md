@@ -18,13 +18,53 @@ from your backup, flash, check. No compiling.
 > **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
 > [risks](#important-disclaimer-and-risks). The wizard makes you take a full backup first.
 
+## Features
+
+- **Video and audio:** RTSP, H.264 1080p at 15 fps plus the microphone, on port 554. Optional Digest login
+  (VLC, ffmpeg, go2rtc, Frigate). The camera serves **one RTSP client at a time**: a second one is answered
+  at once with `503 Service Unavailable`. To serve several viewers or record and watch together, put
+  [go2rtc](https://github.com/AlexxIT/go2rtc) (or MediaMTX) in front of the camera.
+- **Two-way audio:** the ONVIF audio backchannel on port 554 (go2rtc, Frigate, Home Assistant, `./akam talk`).
+- **LEDs and night:** front LED on, off or status light; infrared LEDs auto or off; automatic day/night
+  switching.
+- **Port 8091:** read-only metrics (`sys.*`, `net.*`, `video.*`, `rtsp.*`) for the network. Changes are only
+  accepted from the camera itself, or from the network after `./akam debug on` (loopback and timed).
+- **ONVIF Profile S (optional, off by default):** WS-Discovery, device, media and imaging services for NVRs and
+  ONVIF Device Manager. Needs the video password (`./akam rtsp-auth set`, re-run it once after an update so the
+  ONVIF login copy exists). Host-tested only so far, see [testing status](docs/testing-status.md).
+- **Settings you can change:** video bitrate, frame rate and key frame interval; brightness, contrast,
+  saturation, sharpness, white balance and day/night mode; speaker volume, talk and microphone on/off.
+- **Time:** opt-in NTP (`./akam ntp set SERVER`); with it off the camera sends no time traffic and its clock
+  starts in 1970.
+- **Robustness:** the video service exits by itself if the encoder stalls, the camera's wrapper restarts it with a
+  growing delay, and a supervisor brings the Wi-Fi back when it drops.
+- **Admin:** SSH with a key only; Telnet and FTP are off.
+- **Install:** a guided wizard (`./akam`) from a Linux PC; only the APP partition is rewritten.
+
+What was tested on a real camera and what was only tested on a PC is listed in
+[docs/testing-status.md](docs/testing-status.md); the units used are in
+[docs/tested-hardware.md](docs/tested-hardware.md).
+
+## Open ports
+
+| Port | Service | When |
+|---|---|---|
+| 22/tcp | SSH (Dropbear, public key only) | always |
+| 554/tcp | RTSP video, audio and the talk backchannel | always |
+| 8091/tcp | metrics and control, read-only from the network | always |
+| 80/tcp (or the port you chose) | ONVIF device, media and imaging services | only after `./akam onvif enable` |
+| 3702/udp | ONVIF WS-Discovery (multicast) | only after `./akam onvif enable` |
+
+Telnet (23, 24) and FTP (21) are closed. UDP 123 is used outgoing only, and only if you set an NTP server.
+Never expose any of these to the Internet.
+
 ## Is my camera supported?
 
 Read the label under the camera: model `3215672.x` and the `SI ...` code.
 
 | Camera | Label | Status |
 |---|---|---|
-| LSC Smart Indoor 1080p `3215672.3` | SI `D26228` | **validated** (two cameras) |
+| LSC Smart Indoor 1080p `3215672.3` | SI `D26228` | **validated** (two cameras, see [tested hardware](docs/tested-hardware.md)) |
 | LSC Smart Indoor 1080p `3215672.2` | SI `B26101` / `C26101` | untested (works with upstream, not tried with Akam) |
 | anything else (other SoC such as AK3918EV200 or GK7102, other kernel or APP) | | not supported |
 
@@ -77,7 +117,7 @@ real terminal; `--plain` or no terminal gives line-by-line prompts):
  ↑↓ move  ⏎ run  ? help  r pick several  a run all  c camera  q quit
 ```
 
-Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`.
+Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`; the other settings commands (`led`, `audio`, `picture`, `video`, `onvif`, `ntp`, `debug`) are typed.
 Before a step starts, the wizard shows what it does and asks **Start this step? [Y/n]**. Anything
 irreversible (erasing a card, writing the camera's flash) shows a **red box** that says exactly what
 will happen and asks one yes/no whose **default is No** (Enter, Esc and `q` mean No). Nothing has to be
@@ -86,10 +126,15 @@ typed, and without a terminal these steps refuse to run.
 ### Native binary (experimental)
 
 A single static binary version of the wizard is being written in Go ([tools/assistant](tools/assistant/README.md),
-[plan](specs/09-spec-assistant-binary.md)). The first phase does the daily commands on a camera that already runs
-Akam (`status`, `led`, `audio`, `picture`, `debug`, `onvif`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`)
-with no SSH, `nc` or `akam-talk` to install; it shares the progress files with `./akam`. Backup, image and flash
-stay in the bash wizard. Build it with `tools/assistant/build.sh` and try it with `AKAM_USE_BIN=1 ./akam ...`.
+[plan](specs/09-spec-assistant-binary.md)). It is **experimental: the bash wizard (`./akam`) remains the
+reference**. The binary covers the daily commands on a camera that already runs Akam (`status`, `led`, `audio`,
+`picture`, `video`, `debug`, `onvif`, `ntp`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`) with no SSH,
+`nc` or `akam-talk` to install, kit download and verification, `update`, `restore` and `verify` over SSH, and a
+first install through the maintenance telnet and a built-in microSD writer (`backup`, `flash`, `prepare-*-sd`,
+`wipe-sd`). The `image` step stays in the bash wizard. It has been tested on fake cameras and files only: the
+update, restore, verify, telnet backup and flash and SD writer phases were never run against a real camera or card.
+It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
+`AKAM_USE_BIN=1 ./akam ...`.
 
 ## What the wizard does
 
@@ -125,6 +170,29 @@ hand, or by an earlier version) is recorded without redoing anything:
 ```bash
 ./akam --camera salon --ip 192.168.1.50 [--backup-dir DIR] register
 ```
+
+## Command reference
+
+`./akam help` is the full text. Run `./akam` with no command for the menu.
+
+| Command | What it does |
+|---|---|
+| `doctor`, `get-kit`, `build` | check this PC, download and verify the prebuilt kit, or build from source |
+| `prepare-backup-sd`, `find-camera`, `backup`, `image`, `prepare-flash-sd`, `flash`, `verify` | the installation steps, in order |
+| `update`, `restore` | flash a newer image over SSH, or put your original APP back |
+| `wipe-sd` | erase a card that holds your Wi-Fi password |
+| `status`, `step NAME` | show every step; run one step again |
+| `cameras`, `rename-camera NEW`, `register` | work with several cameras |
+| `hostname [NAME]` | the camera's network name |
+| `rtsp-auth [set\|disable\|status]` | the Digest password on the stream (also needed by ONVIF and talk) |
+| `led [show \| status on\|off\|auto] [ir auto\|off]` | front LED and infrared LEDs |
+| `audio [show \| volume N \| beep \| on \| off \| talk on\|off \| mic on\|off]` | speaker and microphone |
+| `picture [show \| brightness\|contrast\|saturation\|sharpness N \| wb \| night \| reset]` | the image |
+| `video [show \| bitrate N \| fps N \| gop N]` | encoder settings |
+| `onvif [enable [PORT] \| disable \| status]` | ONVIF, off by default |
+| `ntp [status \| set SERVER... \| off]` | time synchronisation, off by default |
+| `debug [on [MINUTES] \| off \| status]` | let the network change settings on port 8091 for a while |
+| `talk [SECONDS \| test]`, `say FILE` | speak or play a sound through the camera speaker |
 
 ## Update, change the name, add a video password
 
@@ -163,8 +231,9 @@ find a camera on the network and pull its video. Akam implements the discovery (
 service and the media service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
 **This is part of the same release as the `onvif` command: an image built before it has no ONVIF at all
 (`./akam update` first), and `./akam onvif status` then says it does not know.** The firmware side is now wired
-(`ak_rtsp` starts and stops the ONVIF server and the discovery by itself from the flag file, no reboot); it still
-has to be validated on a real camera and with real ONVIF apps.
+(`ak_rtsp` starts and stops the ONVIF server and the discovery by itself from the flag file, no reboot). It is
+**host-tested only: not yet validated on a real camera**; the first client to try is ONVIF Device Manager (steps in
+the [install notes](docs/akam_v1_install.md#onvif-with-onvif-device-manager)).
 
 - **Off by default.** Nothing listens on the ONVIF ports until you ask: `./akam onvif enable` (it asks a
   yes/no, default No; `verify` also offers it at the end). `./akam onvif disable` closes them again.
@@ -176,7 +245,7 @@ has to be validated on a real camera and with real ONVIF apps.
   (multicast discovery), on your LAN only: never forward them to the Internet. Without ONVIF, only 22, 554
   and 8091 are open.
 - **In your app:** let it search, or add the camera by hand with its address (`<camera-ip>`, port 80) and the
-  video user name and password. If it is not found, see [troubleshooting](docs/troubleshooting.md#an-onvif-app-does-not-find-the-camera).
+  video user name and password; the service address is `http://<camera-ip>/onvif/device_service`. If it is not found, see [troubleshooting](docs/troubleshooting.md#an-onvif-app-does-not-find-the-camera).
 - The setting is a small file on the camera that survives reboots; an older image says to reboot the camera to apply it.
   `./akam onvif status` shows what the camera really did (`onvif.state`: `off`, `on:<port>`, `no_password`, or
   `error:port_in_use`). When ONVIF is off the camera runs no ONVIF thread and no socket; when it is on, two idle
@@ -205,8 +274,8 @@ protocol with no password. It accepts up to **4 clients at once**, one of them r
 the SSH helpers always get in; a LAN peer can use 3 and is dropped after 2 minutes of silence), and is
 **read-only from the network**: anyone on your LAN can read the state, nobody can change it. Changes
 (`SET`) are accepted from the camera itself (over SSH, as `./akam led` does) or, for a limited time, after
-`./akam debug on`, which the PC tuning tool needs. Changes are lost at the next boot, except the LED
-settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
+`./akam debug on`, which the PC tuning tool needs. Raw changes are lost at the next boot; the settings made with `./akam led`, `audio`, `picture` (its four numbers) and `video` are saved on
+the camera ([details](docs/akam_v1_install.md#4-the-8091-control-port)).
 
 ## If something goes wrong
 
@@ -220,16 +289,19 @@ settings, which are saved ([details](docs/akam_v1_install.md#4-the-8091-control-
 
 ## Status and limits
 
-**Validated on real hardware** (two cameras, 2026-11-07 to 11-09): backup through the wizard, image
-from the kit, flash through the maintenance telnet and through SSH (no card), Wi-Fi saved on the camera,
-boot without a card, only ports 22, 554 and 8091 listening (80 and UDP 3702 only after `./akam onvif enable`), SSH with an ed25519 key, H.264 1080p with a
-fast start plus L16 audio, a 25-minute VLC run without a drop, stable IR night mode, about 1% CPU,
-hostname announced to the router (`akam-01`).
+Full matrix: [testing status](docs/testing-status.md). In short:
 
-**Still to check:** microphone audibility, Telnet staying off after a Wi-Fi reconnect, day/night over a
-long run ([test plan](docs/akam_v1_test_plan.md)). **Known limits:** the image is grainier than the stock
-firmware's (improvement planned); one RTSP client at a time; two-way audio (talk) is new, tested on the PC only, and needs the video
-password. Please report what you see on your camera.
+**Validated on real hardware** (two cameras, firmware image built 2026-11-10): RTSP H.264 1080p 15 fps with the
+microphone (VLC, ffmpeg, go2rtc over TCP), Digest login, ONVIF talk (speaker), front LED and infrared LED
+settings, automatic day/night switching, port 8091 read-only with its metrics (a remote `SET` is refused), SSH
+key admin with Telnet and FTP off, flash over SSH with read-back verification, clean boot after a power cycle.
+
+**Not yet tested on a camera** (host tests only): ONVIF Profile S, the encoder-stall self-exit, the respawn
+backoff, the Wi-Fi supervisor, NTP, microphone off, the video settings, the 503 for a second RTSP client, and the
+Go assistant's update, restore, telnet and card phases.
+
+**Known limits:** the image is grainier than the stock firmware's (improvement planned); one RTSP client at a
+time; talk needs the video password. Please report what you see on your camera.
 
 ## Security notes
 
@@ -256,7 +328,7 @@ password. Please report what you see on your camera.
 > **FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
 >
 > - **Experimental:** upstream comes from a private reverse-engineering project organised with AI
->   assistance; Akam's additions were written with AI assistance and validated on two cameras so far.
+>   assistance; Akam's additions were written with AI assistance and validated on two cameras so far (see [testing status](docs/testing-status.md)).
 > - **Risk of permanent bricking:** writing to the SPI NOR flash can brick the camera. In the worst case
 >   only an external SPI programmer (for example a CH341A) recovers it. **Restoring your backup is not
 >   guaranteed to work.**

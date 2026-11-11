@@ -7,6 +7,8 @@ Akam. These pages are for when you want details, want to do a step by hand, or s
 
 - [Troubleshooting](troubleshooting.md): real problems and their fixes (network, card reader, VLC, passwords, SSH).
 - [Two-way audio](two_way_audio.md): talk through the camera speaker (`./akam talk`, go2rtc, Frigate, Home Assistant), settings, hardware check list.
+- [Testing status](testing-status.md): what was tested on the host, in RAM and on hardware, feature by feature; how to run the host tests.
+- [Tested hardware](tested-hardware.md): the camera model and units validated, and how to report yours.
 - [Test plan and status](akam_v1_test_plan.md): what was validated on hardware, what is still to check, the post-flash check script.
 
 ## Reference
