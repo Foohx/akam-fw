@@ -64,6 +64,7 @@ SRCS    = main.c \
           h264_params.c \
           rtp_clock.c \
           net_tx.c \
+          tx_pace.c \
           rtsp_in.c \
           rtsp_idle.c \
           rtsp_busy.c \

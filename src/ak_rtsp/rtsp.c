@@ -28,6 +28,7 @@
 #include "h264_params.h"
 #include "rtp_clock.h"
 #include "net_tx.h"
+#include "tx_pace.h"
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
 #include "control.h"
@@ -105,6 +106,9 @@ typedef struct {
     /* Bounded, stall-tolerant writer for the RTSP/TCP socket (shared by the
      * RTSP responses, interleaved RTP and interleaved RTCP). */
     net_tx_t tx;
+    /* RTSP/TCP backpressure (tx_pace.h): frames are dropped for this client
+     * while its socket backlog is high, so the encoder keeps being drained. */
+    tx_pace_t pace;
 
     bool is_tcp;
     uint8_t rtp_channel;
@@ -601,6 +605,7 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
     }
     if (media) {
         client_set_playing(self, true);
+        tx_pace_init(&self->pace); /* a new PLAY starts with a clean pacing state */
         if (self->nal_transport) {
             self->need_idr = true;
             self->idr_wait_frames = 0;
@@ -817,6 +822,8 @@ void drain_venc_ring(void)
     }
 }
 
+static int64_t ms_ts_now(void) { return rtp_mono_us() / 1000; }
+
 /* Returns 1 when a frame was sent, 0 when none was ready, -1 on a fatal
  * error (the caller drops the client). */
 static int send_video_frame(Client *client)
@@ -919,7 +926,34 @@ static int send_video_frame(Client *client)
      * missing SPS/PPS/reference picture. If the encoder never reports an
      * I-frame within two GOPs, stop waiting rather than send nothing. */
     bool send_it = true;
-    if (client->need_idr) {
+    /* RTSP/TCP backpressure: never let a slow link hold the encoder. A
+     * dropped frame is released below like any other; P-frames stay dropped
+     * until a keyframe finds the socket drained (tx_pace.h). UDP has no such
+     * backlog and is not paced. */
+    if (client->is_tcp) {
+        tx_pace_event_t ev;
+        size_t backlog = tx_pace_backlog(client->tx.fd);
+        tx_pace_cfg_t pcfg = {
+            .base = tx_pace_base(video_kbps()),
+            .cap = tx_pace_cap(tx_pace_sndbuf(client->tx.fd)),
+            .stall_ms = TX_PACE_STALL_MS,
+            .max_skip_ms = tx_pace_max_skip_ms(video_gop_frames() / (video_fps() ? video_fps() : 1)),
+        };
+        tx_pace_verdict_t pv = tx_pace_decide(&client->pace, &pcfg, backlog, (size_t)req.len,
+                                              req.frame_type_raw == FRAME_TYPE_I, ms_ts_now(), &ev);
+        if (pv != TX_PACE_SEND) {
+            send_it = false;
+            ctl_sys_note_video_skipped();
+        }
+        if (pv == TX_PACE_DROP_CLIENT && !client->drop_reason)
+            client->drop_reason = ev.drop_reason; /* the client loop ends the session after this frame */
+        if (ev.log_it && ev.entered)
+            printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
+                   backlog);
+        if (ev.log_it && ev.left)
+            printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", ev.run_skipped);
+    }
+    if (send_it && client->need_idr) {
         if (req.frame_type_raw == FRAME_TYPE_I) {
             client->need_idr = false;
             /* Some encoders emit SPS/PPS only once at start-up: if this
@@ -1001,6 +1035,11 @@ static void send_audio_frame(Client *client)
     rtp_aclock_observe(&client->audio_clock, first_sample + n_samples,
                        t_end_us, AUDIO_SAMPLE_RATE);
     uint32_t audio_rtp_ts = client->audio_ts_base + (uint32_t)first_sample;
+
+    /* RTSP/TCP client whose link is backed up (video is being dropped): drop the
+     * audio period too instead of adding to the queue. The period was consumed
+     * and the RTP timestamp is the sample index, so the stream keeps its place. */
+    if (client->is_tcp && client->pace.skipping) return;
 
     U8Slice99 payload = U8Slice99_new((uint8_t *)net_pcm, n_samples * sizeof(uint16_t));
     if (SmolRTSP_RtpTransport_send_packet(
@@ -1331,6 +1370,11 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     int keepalive = 1;
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
     setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    /* Send buffer: ask for 256 KiB. The kernel clamps to net.core.wmem_max (160 KiB on the camera) and
+     * doubles it (~320 KiB sk_sndbuf), and a fixed SO_SNDBUF switches the buffer autotuning off. The pacing
+     * (tx_pace.h) reads the resulting size back every frame and keeps its watermarks inside it. */
+    int sndbuf = 256 * 1024;
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
     /* The kernel default probes only after 2 h of silence: a peer that vanished
      * before PLAY (or while paused) would keep this single-client server busy
      * for over 2 h. Probe after 30 s idle, every 10 s, give up after 3. */
@@ -1528,6 +1572,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                 client.drop_reason = "error sending video frame";
                 break;
             }
+            if (client.drop_reason) break; /* set by the TCP pacing: link stalled or hopeless */
             video_idle = (vret == 0);
             send_audio_frame(&client); /* no-op until the audio track is SETUP */
             send_rtcp_reports(&client); /* no-op for tracks not yet SETUP, or off-interval */
