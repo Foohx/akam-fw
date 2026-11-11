@@ -84,6 +84,9 @@ func (o *winOpener) Unmount(point string) error {
 	if err == nil {
 		var ext []DiskExtent
 		if ext, err = ParseDiskExtents(raw); err == nil {
+			if len(ext) == 0 {
+				err = fmt.Errorf("refusing: volume %s reports no disk, so it is not shown to be on disk %d", point, o.disk)
+			}
 			for _, e := range ext {
 				if int(e.Disk) != o.disk {
 					err = fmt.Errorf("refusing: volume %s is also on disk %d", point, e.Disk)
@@ -169,6 +172,20 @@ func (o *winOpener) Open(dev string, c *Candidate) (Disk, error) {
 	if f.SectorSize != 512 {
 		return fail(fmt.Errorf("refusing: %d-byte sectors", f.SectorSize))
 	}
+	// every volume that is on the disk now must be one of the volumes locked and dismounted above (a volume that
+	// appeared since the check would be written under); an unreadable volume list refuses
+	vols, err := enumVolumes()
+	if err != nil {
+		return fail(fmt.Errorf("refusing: cannot list the volumes of the opened disk: %w", err))
+	}
+	o.mu.Lock()
+	for _, v := range vols {
+		if _, held := o.vols[volKey(v.Name)]; v.onDisk(n) && !held {
+			o.mu.Unlock()
+			return fail(fmt.Errorf("refusing: volume %s is on the disk but was not locked", v.Name))
+		}
+	}
+	o.mu.Unlock()
 	d, err := newWinDisk(winDevOps{
 		Write:            w,
 		UpdateProperties: w.updateProperties,

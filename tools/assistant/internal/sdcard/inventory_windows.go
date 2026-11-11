@@ -268,6 +268,15 @@ func resolveGuards(paths []string) ([]WinGuard, error) {
 			return nil, err
 		}
 		out = append(out, WinGuard{Path: p, Volume: v})
+		// a junction or symbolic link can lead to another volume (the working directory reached through a link
+		// to a card): the target is guarded too
+		if real, err := filepath.EvalSymlinks(p); err == nil && !strings.EqualFold(real, p) {
+			rv, err := volumeOfPath(real)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, WinGuard{Path: p, Volume: rv})
+		}
 	}
 	return out, nil
 }

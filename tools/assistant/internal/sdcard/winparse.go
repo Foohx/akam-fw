@@ -163,9 +163,21 @@ func ParseDeviceDescriptor(b []byte) (WinDescriptor, error) {
 		if end < 0 {
 			return d, errors.New("storage descriptor: unterminated string")
 		}
-		*dst = strings.TrimSpace(string(b[off:end]))
+		*dst = printable(strings.TrimSpace(string(b[off:end])))
 	}
 	return d, nil
+}
+
+// printable replaces what is not printable ASCII: the strings come from the device, are shown in the red box and
+// are part of the identity token, so a control character (terminal escape) or the '|' separator must not pass.
+func printable(s string) string {
+	out := []byte(s)
+	for i, c := range out {
+		if c < 0x20 || c > 0x7e || c == '|' {
+			out[i] = '?'
+		}
+	}
+	return string(out)
 }
 
 // WinGeometry is the decoded DISK_GEOMETRY_EX.
@@ -443,6 +455,9 @@ func ParsePagingFiles(entries []string) ([]WinPagefile, error) {
 func BuildWinFacts(n int, d WinDescriptor, g WinGeometry, length int64, l WinLayout, readOnly bool) (Facts, error) {
 	if g.BytesPerSector == 0 {
 		return Facts{}, errors.New("the drive geometry reports no sector size")
+	}
+	if g.DiskSize%int64(g.BytesPerSector) != 0 {
+		return Facts{}, fmt.Errorf("the drive size %d is not a whole number of %d-byte sectors", g.DiskSize, g.BytesPerSector)
 	}
 	if length != 0 && length != g.DiskSize {
 		return Facts{}, fmt.Errorf("the drive reports two sizes (%d and %d)", g.DiskSize, length)

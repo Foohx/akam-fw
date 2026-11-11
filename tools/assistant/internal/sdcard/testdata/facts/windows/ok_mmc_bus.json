@@ -7,7 +7,7 @@
     "size": 34359738368,
     "sector_size": 512,
     "bus": "mmc",
-    "removable": "no",
+    "removable": "yes",
     "internal": "no",
     "vendor": "Generic",
     "model": "STORAGE DEVICE",

@@ -47,6 +47,12 @@ func TestEvaluateWindowsMatrix(t *testing.T) {
 		{name: "usb stick that reports RemovableMedia false is still accepted", mod: func(d *WinDescriptor, _ *WinGeometry, _ *WinLayout, _ *bool) { d.Removable = false }},
 		{name: "sd bus accepted", mod: bus(busSd)},
 		{name: "mmc bus accepted", mod: bus(busMmc)},
+		{name: "internal eMMC data disk (mmc bus, not removable)", mod: func(d *WinDescriptor, _ *WinGeometry, _ *WinLayout, _ *bool) {
+			d.BusType, d.Removable = busMmc, false
+		}, refuse: "not reported as removable"},
+		{name: "sd bus that is not removable", mod: func(d *WinDescriptor, _ *WinGeometry, _ *WinLayout, _ *bool) {
+			d.BusType, d.Removable = busSd, false
+		}, refuse: "not reported as removable"},
 		{name: "128 GiB accepted", mod: func(_ *WinDescriptor, g *WinGeometry, _ *WinLayout, _ *bool) { g.DiskSize = 128 << 30 }},
 		{name: "system disk", view: sys(RoleSystem), refuse: "system role"},
 		{name: "boot disk", view: sys(RoleBoot), refuse: "system role"},
@@ -123,6 +129,13 @@ func TestEvaluateWindowsFailsClosedOnUnknownFacts(t *testing.T) {
 	if _, err := Evaluate(f, DefaultPolicy); err == nil {
 		t.Error("an unknown bus was accepted")
 	}
+	for _, b := range []string{"sd", "mmc"} {
+		f = winCard(t, nil)
+		f.Bus, f.Removable = b, Unknown
+		if _, err := Evaluate(f, DefaultPolicy); err == nil {
+			t.Errorf("an unknown removable flag on the %s bus was accepted", b)
+		}
+	}
 	// the facts of the identity token are all there
 	f = winCard(t, nil)
 	if id := Ident(f); !strings.HasPrefix(id, "windows|34359738368|STORAGE DEVICE|Generic|W1||1.00|A1B2C3D4|2") {
@@ -168,5 +181,28 @@ func TestHelperRefusesChangedWindowsDisk(t *testing.T) {
 		if strings.HasPrefix(s, "open") || s == "write" {
 			t.Errorf("reached %s", s)
 		}
+	}
+}
+
+// The refusal of a non-whole node names the OS's own node, and the Linux sentence has not changed.
+func TestNonWholeSentencePerOS(t *testing.T) {
+	_, err := Evaluate(Facts{OS: "windows", Path: `E:\`, Whole: false}, DefaultPolicy)
+	if err == nil || strings.Contains(err.Error(), "/dev/") || !strings.Contains(err.Error(), `\\.\PhysicalDrive2`) {
+		t.Errorf("windows: %v", err)
+	}
+	_, err = Evaluate(Facts{OS: "linux", Path: "/dev/sdb1", Whole: false}, DefaultPolicy)
+	want := "/dev/sdb1 is not a whole USB/SD disk node like /dev/sdb or /dev/mmcblk0 (partitions, NVMe, loop and zram nodes are refused)"
+	if err == nil || err.Error() != want {
+		t.Errorf("linux: %v", err)
+	}
+}
+
+// The identity token holds the bus and the removable flag, so a renumbered drive (replug) of another kind is a different disk.
+func TestWindowsIdentHoldsBusAndRemovable(t *testing.T) {
+	a := winCard(t, nil)
+	b := winCard(t, func(d *WinDescriptor, _ *WinGeometry, _ *WinLayout, _ *bool) { d.BusType = busSd })
+	c := winCard(t, func(d *WinDescriptor, _ *WinGeometry, _ *WinLayout, _ *bool) { d.Removable = false })
+	if Ident(a) == Ident(b) || Ident(a) == Ident(c) {
+		t.Errorf("%q %q %q", Ident(a), Ident(b), Ident(c))
 	}
 }
