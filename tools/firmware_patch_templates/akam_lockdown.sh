@@ -66,8 +66,32 @@ LOG=$TMP_DIR/akam_lockdown.log
 LOCKDIR=$TMP_DIR/akam_lockdown.lock
 TERMED=' '
 
+# RAM logs must not grow (G09): /tmp is RAM on this camera. cap_log FILE trims a log IN PLACE to its last 50 lines when it
+# passes 100 lines or 64 KiB (the inode stays: Dropbear keeps /tmp/akam_ssh.log open with O_APPEND). Run on our own log
+# at every line, and on every /tmp/akam_*.log once a round, so the SSH log that Dropbear fills by itself is kept in check too.
+LOG_MAX_LINES=100
+LOG_MAX_BYTES=65536
+LOG_KEEP_LINES=50
+
+cap_log() {
+    [ -f "$1" ] || return 0
+    if [ "$(wc -l <"$1" 2>/dev/null)" -gt "$LOG_MAX_LINES" ] 2>/dev/null ||
+        [ "$(wc -c <"$1" 2>/dev/null)" -gt "$LOG_MAX_BYTES" ] 2>/dev/null; then
+        tail -n "$LOG_KEEP_LINES" "$1" >"$1.tmp" 2>/dev/null && cat "$1.tmp" >"$1" 2>/dev/null
+        rm -f "$1.tmp"
+    fi
+    return 0
+}
+
+cap_all_logs() {
+    for _f in "$TMP_DIR"/akam_*.log; do
+        cap_log "$_f"
+    done
+}
+
 log() {
     echo "akam_lockdown: $*" >>"$LOG" 2>/dev/null
+    cap_log "$LOG"
 }
 
 # Token classification of a command line ($1 = "ps" row without the pid).
@@ -193,6 +217,7 @@ main() {
     while [ "$SLOW_ROUNDS" -lt 0 ] || [ "$_i" -lt "$SLOW_ROUNDS" ]; do
         guarded_round
         respawn_ssh
+        cap_all_logs
         _i=$((_i + 1))
         sleep "$SLOW_PERIOD"
     done

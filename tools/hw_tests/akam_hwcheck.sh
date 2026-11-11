@@ -288,6 +288,123 @@ check_procs() {
     done
 }
 
+# ---------------------------------------------------------------- UDP sockets (G14)
+# Every bound UDP socket (/proc/net/udp and udp6) must be explained. 3702 belongs to ONVIF and is judged by
+# check_onvif_ports above; 68 is the DHCP client (udhcpc); ports 32768 to 60999 are ephemeral client sockets (DNS,
+# NTP of ./akam ntp, the UDP transport of an RTSP session) and are only reported; anything else is a listener
+# nobody audited: FAIL (WARN while the maintenance flag is present). The owner is looked up through the socket
+# inode in /proc/<pid>/fd when the shell can read it (best effort).
+udp_bound() { # prints "port inode" per bound socket of udp and udp6
+    for _uf in "$ROOT/proc/net/udp" "$ROOT/proc/net/udp6"; do
+        [ -r "$_uf" ] || continue
+        while read -r _sl _la _ra _st _q _tr _rt _uid _to _ino _rest; do
+            case $_sl in *:) ;; *) continue ;; esac
+            _lp=${_la##*:}
+            case $_lp in *[!0-9A-Fa-f]* | '') continue ;; esac
+            _pn=$((0x$_lp))
+            [ "$_pn" -gt 0 ] || continue
+            echo "$_pn ${_ino:-0}"
+        done < "$_uf"
+    done
+}
+udp_owner() { # process owning socket inode $1 (best effort)
+    [ "$1" != 0 ] || { echo "?"; return; }
+    for _d in "$ROOT"/proc/[0-9]*; do
+        [ -d "$_d/fd" ] || continue
+        if ls -l "$_d/fd" 2>/dev/null | grep -q "socket:\[$1\]"; then
+            _c=$({ strings -n 1 < "$_d/cmdline" | paste -s -d ' ' - ; } 2>/dev/null)
+            echo "${_c:-pid ${_d##*/}}"
+            return
+        fi
+    done
+    echo "?"
+}
+check_udp() {
+    section "UDP sockets"
+    if [ ! -r "$ROOT/proc/net/udp" ] && [ ! -r "$ROOT/proc/net/udp6" ]; then
+        info "/proc/net/udp not readable: UDP listeners not audited"
+        return 0
+    fi
+    udp_bound > "$WORK/udp" 2>/dev/null
+    bad=0
+    seen=" "
+    while read -r up ui; do
+        case $seen in *" $up "*) continue ;; esac
+        seen="$seen$up "
+        case $up in
+            3702) continue ;;
+            68) info "UDP 68 bound (DHCP client)"; continue ;;
+        esac
+        if [ "$up" -ge 32768 ] && [ "$up" -le 60999 ]; then
+            info "UDP $up bound (ephemeral client socket)"
+            continue
+        fi
+        bad=1
+        who=$(udp_owner "$ui")
+        if [ "$maint" = 1 ]; then warn "UDP $up bound ($who) while the maintenance flag is present: not an expected listener"
+        else fail "UDP $up bound ($who): not an expected listener (only 68, 3702 with ONVIF on, and ephemeral client ports)"; fi
+    done < "$WORK/udp"
+    [ "$bad" = 1 ] || pass "no unexpected UDP listener"
+    return 0
+}
+
+# ---------------------------------------------------------------- process allow-list (G14)
+# Everything running after boot must be one of ours, a stock piece we keep on purpose, or a short-lived tool our own
+# scripts call. Names are argv0, or argv1 for "sh script": directory and .sh removed (as find_pids). The vendor
+# daemons msgserver and cmdserver are kept deliberately (local IPC, docs/building_your_own_firmware.md) and are
+# reported as WARN "review": whether they can go is a hardware decision. Kernel threads have no cmdline: skipped.
+PROC_ALLOW=" init syslogd klogd wpa_supplicant udhcpc watchdog ak_rtsp_wrapper ak_rtsp dropbear dropbearmulti sh ash sleep drop_caches ntpd timeout nice ps grep logger kill cat date wc tail sync mv "
+proc_name() { # name of the process in dir $1, empty when none
+    _cl=$({ strings -n 1 < "$1/cmdline" | paste -s -d ' ' - ; } 2>/dev/null) || _cl=
+    [ -n "$_cl" ] || return 1
+    set -f
+    # shellcheck disable=SC2086
+    set -- $_cl
+    set +f
+    _a0=${1##*/}
+    _a0=${_a0%.sh}
+    case $_a0 in
+        sh | ash | busybox | -sh | -ash)
+            _a1=${2:-}
+            case $_a1 in '' | -*) ;; *) _a0=${_a1##*/}; _a0=${_a0%.sh} ;; esac ;;
+    esac
+    echo "${_a0#-}"
+}
+check_proc_allowlist() {
+    section "process allow-list"
+    if ! ls "$ROOT"/proc/[0-9]* >/dev/null 2>&1; then
+        info "no /proc/<pid> entries readable: process allow-list skipped"
+        return 0
+    fi
+    n_all=0
+    n_odd=0
+    for d in "$ROOT"/proc/[0-9]*; do
+        [ -d "$d" ] || continue
+        pid=${d##*/}
+        [ "$pid" = "$$" ] && continue
+        nm=$(proc_name "$d") || continue
+        [ -n "$nm" ] || continue
+        # our own forked helpers (command substitutions) show up as copies of this script
+        case $nm in akam_hwcheck) continue ;; esac
+        n_all=$((n_all + 1))
+        case $nm in
+            akam_*) continue ;;
+            anyka_ipc | telnetd | utelnetd | tcpsvd | ftpd) continue ;; # judged (FAIL) by check_procs
+            msgserver | cmdserver)
+                warn "vendor daemon, review: $nm (pid $pid) is kept on purpose (local IPC); decide whether it can go"
+                n_odd=$((n_odd + 1))
+                continue ;;
+        esac
+        case "$PROC_ALLOW" in
+            *" $nm "*) ;;
+            *) warn "unexpected process: $nm (pid $pid); not on the allow-list, find who starts it (service.sh, main.sh, ethernet.sh, _ht_*.ini)"
+               n_odd=$((n_odd + 1)) ;;
+        esac
+    done
+    if [ "$n_odd" -eq 0 ]; then pass "all $n_all processes are on the allow-list"; else info "$n_all processes, $n_odd to review (WARN above)"; fi
+    return 0
+}
+
 # CPU use of a process from /proc/PID/stat deltas (no top dependency).
 # utime and stime are fields 14 and 15 of the stat line, i.e. the 12th and 13th
 # after the ") " that ends the command name (which may contain spaces).
@@ -309,6 +426,18 @@ total_jiffies() { # sum of the aggregate "cpu" line of /proc/stat
     done < "$ROOT/proc/stat"
     return 1
 }
+proc_wakeups() { # sum of voluntary_ctxt_switches over all threads of pid $1; empty when unreadable
+    _t=0
+    _any=0
+    for _s in "$ROOT/proc/$1"/task/[0-9]*/status; do
+        [ -r "$_s" ] || continue
+        while read -r _k _v _r; do
+            if [ "$_k" = "voluntary_ctxt_switches:" ]; then _t=$((_t + _v)); _any=1; fi
+        done < "$_s"
+    done
+    [ "$_any" = 1 ] && echo "$_t"
+    return 0
+}
 check_cpu() {
     section "CPU use (ak_rtsp, ${CPU_WINDOW}s window)"
     if ! ls "$ROOT"/proc/[0-9]* >/dev/null 2>&1; then unk "no /proc/<pid> entries: CPU use skipped"; return; fi
@@ -316,7 +445,14 @@ check_cpu() {
     p=${p%% *}
     if [ -z "$p" ]; then unk "ak_rtsp not running: CPU use skipped"; return; fi
     if ! j1=$(proc_jiffies "$p") || ! t1=$(total_jiffies); then unk "/proc/$p/stat or /proc/stat unreadable: CPU use skipped"; return; fi
+    w1=$(proc_wakeups "$p")
     sleep "$CPU_WINDOW"
+    w2=$(proc_wakeups "$p")
+    # G10: wakeups per second = voluntary context switches of all threads (each sleep that ended); the budget of
+    # specs/10 is about 80/s with no client, the estimate from the code is about 140/s before the cuts.
+    if [ -n "$w1" ] && [ -n "$w2" ] && [ "$CPU_WINDOW" -gt 0 ]; then
+        info "ak_rtsp pid $p wakeups $(( (w2 - w1) / CPU_WINDOW ))/s over ${CPU_WINDOW}s (voluntary context switches, all threads)"
+    fi
     if ! j2=$(proc_jiffies "$p") || ! t2=$(total_jiffies); then unk "ak_rtsp (pid $p) vanished during the CPU sample"; return; fi
     dt=$((t2 - t1))
     dj=$((j2 - j1))
@@ -692,7 +828,9 @@ esac
 
 echo "akam_hwcheck: read-only check; results are evidence, not validation"
 check_ports
+check_udp
 check_procs
+check_proc_allowlist
 check_cpu
 check_modes
 check_misc
