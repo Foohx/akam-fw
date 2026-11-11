@@ -113,16 +113,18 @@ static const char *isp_persist_note(char *note, size_t cap)
 }
 
 /* One LOG line to every connected client, never blocking: a slot whose socket
- * is busy or full simply misses the line. */
+ * is busy or full simply misses the line. G05: the log holds client IPs, auth failures and request URIs, so
+ * only loopback peers get it, or every peer while DEBUG is on. */
 static void log_forward(const char *line)
 {
     char   buf[1100];
     int    n = snprintf(buf, sizeof(buf), "LOG %s\n", line);
     if (n >= (int)sizeof(buf)) n = (int)sizeof(buf) - 1;
+    int dbg = debug_active(); /* before g_slot_lock: g_dbg_lock is never taken inside it */
     pthread_mutex_lock(&g_slot_lock);
     for (int i = 0; i < CTL_MAX_CLIENTS; i++) {
         cli_t *c = &g_cli[i];
-        if (c->fd < 0 || pthread_mutex_trylock(&c->wlock) != 0) continue;
+        if (c->fd < 0 || !(c->loopback || dbg) || pthread_mutex_trylock(&c->wlock) != 0) continue;
         if (c->need_nl && send(c->fd, "\n", 1, MSG_DONTWAIT | MSG_NOSIGNAL) == 1) c->need_nl = 0;
         if (!c->need_nl) {
             ssize_t w = send(c->fd, buf, (size_t)n, MSG_DONTWAIT | MSG_NOSIGNAL);
@@ -260,11 +262,20 @@ static void audio_list_emit(void *arg, const char *line)
 }
 
 /* Metric lines are collected under the ctl_sys lock and sent after it is released. */
-typedef struct { char buf[2048]; size_t len; } metric_buf_t;
+typedef struct { char buf[2048]; size_t len; int hide; } metric_buf_t;
+
+/* G05: identity data (Wi-Fi name, MAC) is not given to remote peers unless DEBUG is on; net.ip stays (a
+ * remote reader already knows it). Loopback readers (the wizard over SSH) see everything. */
+static int ident_hidden(const cli_t *c, const char *key)
+{
+    if (c->loopback || (strcmp(key, "net.ssid") && strcmp(key, "net.mac"))) return 0;
+    return !debug_active();
+}
 
 static void metric_emit(const char *key, const char *value, void *u)
 {
     metric_buf_t *m = (metric_buf_t *)u;
+    if (m->hide && (!strcmp(key, "net.ssid") || !strcmp(key, "net.mac"))) value = "hidden";
     size_t kl = strlen(key), vl = strlen(value);
     if (m->len + kl + vl + 2 > sizeof(m->buf)) return;
     memcpy(m->buf + m->len, key, kl);
@@ -319,6 +330,7 @@ static void do_list(cli_t *c)
     metric_buf_t *m = malloc(sizeof(*m));   /* 2 KB: not on the 64 KB client stack */
     if (m) {
         m->len = 0;
+        m->hide = ident_hidden(c, "net.mac");
         ctl_sys_list(metric_emit, m);
         if (m->len) send_locked(c, m->buf, m->len);
         free(m);
@@ -365,7 +377,7 @@ static void do_get(cli_t *c, const char *param)
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(c, "%s", line);
         else if (imgq_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
         else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
-        else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, val);
+        else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, ident_hidden(c, param) ? "hidden" : val);
         else                                                   reply(c, "ERR unknown param %s", param);
     }
 }

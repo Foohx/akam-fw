@@ -204,7 +204,7 @@ Aujourd'hui un sondeur d'état éjecterait l'outil de réglage, et inversement. 
 
 ### 7.2 Journaux (`LOG`)
 
-- Client v1 : reçoit les `LOG <ligne>` comme aujourd'hui.
+- Client v1 : reçoit les `LOG <ligne>` comme aujourd'hui, **mais seulement s'il est en loopback ou tant que `DEBUG` est actif** (G05, specs/10) ; un lecteur distant sans `DEBUG` ne reçoit aucune ligne `LOG` et lit `net.ssid` et `net.mac` comme `hidden` (`net.ip` reste lisible).
 - Client v2 : **rien** tant qu'il n'a pas envoyé `SUBSCRIBE logs` ; `UNSUBSCRIBE logs` l'arrête. Les lignes restent préfixées de `LOG ` et ne sont jamais émises au milieu d'une réponse : toute réponse (ligne ou bloc) est composée en RAM puis envoyée par **un seul** `send` sous le verrou client, que le pump de journaux utilise aussi. Un client démultiplexe sur le préfixe `LOG `.
 - Texte filtré : octets de contrôle remplacés par `?`, 400 caractères maximum.
 - Client lent : envoi non bloquant ; en cas d'`EAGAIN` la ligne est **abandonnée** (compteur) et une ligne `LOG [dropped N lines]` est émise au retour de la place. Le tee vers la console série ne dépend jamais d'un client réseau.

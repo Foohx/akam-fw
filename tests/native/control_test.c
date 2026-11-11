@@ -454,11 +454,40 @@ static void test_server(void)
             ask(r, "GET ctl.debug", out, sizeof(out));
             CHECK_STR(out, "ctl.debug=0\n");
 
+            /* G05: a remote peer without DEBUG gets no LOG lines and no SSID/MAC; loopback gets both */
+            {
+                char rb[4096], lb[4096];
+                slurp(r, rb, sizeof(rb), 100, NULL);
+                slurp(c, lb, sizeof(lb), 100, NULL);
+                printf("g05-secret-line\n");
+                fflush(stdout);
+                slurp(c, lb, sizeof(lb), 1000, "g05-secret-line");
+                CHECK(strstr(lb, "LOG g05-secret-line\n") != NULL);
+                slurp(r, rb, sizeof(rb), 300, NULL);
+                CHECK(strstr(rb, "g05-secret-line") == NULL);
+                ask(r, "GET net.ssid", out, sizeof(out));
+                CHECK_STR(out, "net.ssid=hidden\n");
+                ask(r, "LIST", out, sizeof(out));
+                CHECK(strstr(out, "net.ssid=hidden\n") != NULL && strstr(out, "sys.stub=6\n") != NULL);
+                ask(c, "GET net.ssid", out, sizeof(out));
+                CHECK_STR(out, "net.ssid=my \"net\"=x??y\n");
+            }
+
             /* the flag opens remote writes, and loopback closing it shuts them */
             ask(c, "DEBUG on 5", out, sizeof(out));
             CHECK_STR(out, "OK ctl.debug=1 minutes=5\n");
             ask(r, "GET ctl.debug", out, sizeof(out));
             CHECK_STR(out, "ctl.debug=1\n");
+            {   /* DEBUG on: LOG lines and the SSID reach the remote peer */
+                char rb[4096];
+                slurp(r, rb, sizeof(rb), 100, NULL);
+                printf("g05-debug-line\n");
+                fflush(stdout);
+                slurp(r, rb, sizeof(rb), 1000, "g05-debug-line");
+                CHECK(strstr(rb, "LOG g05-debug-line\n") != NULL);
+                ask(r, "GET net.ssid", out, sizeof(out));
+                CHECK_STR(out, "net.ssid=my \"net\"=x??y\n");
+            }
             ask(c, "GET ctl.debug_remaining", out, sizeof(out));
             CHECK(!strcmp(out, "ctl.debug_remaining=300\n") || !strcmp(out, "ctl.debug_remaining=299\n"));
             ask(r, "SET ae.speed 9", out, sizeof(out));
