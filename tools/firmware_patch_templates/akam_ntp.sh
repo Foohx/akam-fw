@@ -38,6 +38,7 @@ DATE=${AKAM_DATE:-date}
 LOGGER=${AKAM_LOGGER:-logger}
 KILL=${AKAM_KILL:-kill}
 SYNC_TIMEOUT=${AKAM_NTP_TIMEOUT:-60}
+TIMEOUT_BIN=${AKAM_TIMEOUT_BIN:-timeout}
 RESYNC_S=${AKAM_NTP_RESYNC_S:-21600}
 MAX_CYCLES=${AKAM_NTP_MAX_CYCLES:-0} # 0 = forever (the tests set a number)
 MAX_SERVERS=3
@@ -131,12 +132,26 @@ sync_once() {
     for _s in $SERVERS; do _args="$_args -p $_s"; done
     _pre=
     command -v nice >/dev/null 2>&1 && _pre="nice -n 10"
-    if command -v timeout >/dev/null 2>&1; then
+    if command -v "$TIMEOUT_BIN" >/dev/null 2>&1; then
         # shellcheck disable=SC2086  # word list on purpose: no server name contains a space or starts with -
-        $_pre timeout "$SYNC_TIMEOUT" "$NTPD" -n -q $_args >/dev/null 2>&1
+        $_pre "$TIMEOUT_BIN" "$SYNC_TIMEOUT" "$NTPD" -n -q $_args >/dev/null 2>&1
     else
+        # No `timeout` applet (BusyBox 1.30.1 may lack it): ntpd -q can wait forever on an unreachable server
+        # (or a name that does not resolve), so a shell watchdog kills it after SYNC_TIMEOUT seconds.
         # shellcheck disable=SC2086
-        $_pre "$NTPD" -n -q $_args >/dev/null 2>&1
+        $_pre "$NTPD" -n -q $_args >/dev/null 2>&1 &
+        _np=$!
+        _t=0
+        while kill -0 "$_np" 2>/dev/null; do
+            if [ "$_t" -ge "$SYNC_TIMEOUT" ]; then
+                kill "$_np" 2>/dev/null
+                wait "$_np" 2>/dev/null
+                return 1
+            fi
+            sleep 1
+            _t=$((_t + 1))
+        done
+        wait "$_np"
     fi
 }
 
@@ -159,7 +174,8 @@ do_run() {
         exit 0
     fi
     take_lock || exit 0
-    trap 'rm -rf "$LOCKDIR"' EXIT
+    # remove the lock only while it is still ours (stop_helper may have removed it and a new helper taken it)
+    trap 'read -r _mp <"$LOCKDIR/pid" 2>/dev/null; [ "$_mp" = "$$" ] && rm -rf "$LOCKDIR"' EXIT
     trap 'exit 0' INT TERM HUP
     log "start (pid $$), servers: $SERVERS"
     _fails=0
@@ -180,7 +196,10 @@ do_run() {
         fi
         _n=$((_n + 1))
         if [ "$MAX_CYCLES" -gt 0 ] && [ "$_n" -ge "$MAX_CYCLES" ]; then break; fi
-        sleep "$WAIT"
+        # sleep in the background and wait for it: a TERM from `off`/`set` interrupts `wait` at once, while a
+        # foreground sleep would delay the trap by up to 6 hours
+        sleep "$WAIT" &
+        wait $!
     done
     return 0
 }

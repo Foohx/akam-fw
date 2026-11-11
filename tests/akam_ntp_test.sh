@@ -149,6 +149,23 @@ eq "run: lock removed at exit" "$([ -e "$E/tmp/akam_ntp.lock" ] && echo held || 
 out=$(run_ntp status)
 case $out in *"sys.time_set: 1"*) ok "status: clock 2025 reported as set" ;; *) ko "status after sync: $out" ;; esac
 
+# 4b. no `timeout` applet: ntpd -q still runs, and a hung ntpd is killed by the shell watchdog
+new_env notimeout
+run_ntp set pool.ntp.org >/dev/null
+EXTRA=(AKAM_NTP_MAX_CYCLES=1 AKAM_TIMEOUT_BIN=no-such-timeout-applet)
+run_ntp run >/dev/null
+eq "no timeout applet: ntpd called once, no timeout call" "$(count '^ntpd')$(count '^timeout')" 10
+eq "no timeout applet: success logged" "$(grep -c 'sync ok' "$E/tmp/akam_ntp.log")" 1
+cp "$STUBS/ntpd" "$STUBS/ntpd.real"
+printf '#!/bin/sh\necho "ntpd $*" >>"$FAKE/calls"\nexec tail -f /dev/null\n' >"$STUBS/ntpd"
+new_env hang
+run_ntp set pool.ntp.org >/dev/null
+EXTRA=(AKAM_NTP_MAX_CYCLES=1 AKAM_TIMEOUT_BIN=no-such-timeout-applet AKAM_NTP_TIMEOUT=3)
+run_ntp run >/dev/null
+eq "hung ntpd: killed by the watchdog, reported as a failed pass" "$(grep -c 'sync failed' "$E/tmp/akam_ntp.log")" 1
+mv "$STUBS/ntpd.real" "$STUBS/ntpd"
+EXTRA=()
+
 # 5. failures: retries 15, 30, 60, 120, 300, 600, 600; success switches to the 6 h rhythm
 new_env retry
 run_ntp set pool.ntp.org >/dev/null

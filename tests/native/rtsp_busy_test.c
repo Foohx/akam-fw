@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
@@ -107,9 +108,20 @@ int main(void)
 
     int port, lfd = listen_on(&port);
     CHECK(lfd >= 0);
+    fcntl(lfd, F_SETFL, fcntl(lfd, F_GETFL, 0) | O_NONBLOCK); /* as main.c does: accept() must never park the video loop */
     rtsp_busy_t b;
     rtsp_busy_init(&b);
     int fds0 = count_fds();
+
+    /* spurious POLLIN (connection reset before accept): returns at once, nothing is kept */
+    {
+        struct pollfd p[RTSP_BUSY_NFDS];
+        rtsp_busy_fds(&b, lfd, p);
+        p[0].revents = POLLIN;
+        int64_t t0 = now_ms();
+        rtsp_busy_service(&b, lfd, p, now_ms());
+        CHECK(now_ms() - t0 < 100 && count_fds() == fds0);
+    }
 
     /* a prober that sends OPTIONS gets the 503 at once and is closed */
     {

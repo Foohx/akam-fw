@@ -360,6 +360,22 @@ static int audio_wait_ms(long ms)
 }
 
 static volatile uint32_t g_audio_reopens; /* successful re-opens after a failure */
+static volatile int g_playback_pending;   /* start failed to open the capture: playback/audio_out not started yet */
+
+/* Starts audio_out (or the legacy silence stream) once the capture is really streaming. */
+static void audio_begin_playback(void)
+{
+    audio_init_playback();
+    if (g_audio_playback_fd >= 0) {
+        g_playback_running = 1;
+        if (pthread_create(&g_playback_tid, NULL, audio_playback_loop, NULL) != 0) {
+            perror("[audio] playback pthread_create");
+            g_playback_running = 0;
+        } else {
+            g_playback_thread_started = 1;
+        }
+    }
+}
 
 static void *audio_capture_loop(void *arg)
 {
@@ -383,6 +399,10 @@ static void *audio_capture_loop(void *arg)
             if (gap_us > 0) g_samples_total += (uint64_t)gap_us * AUDIO_SAMPLE_RATE / 1000000;
             printf("[ak_rtsp] audio: capture recovered after %u failed attempt(s)\n", attempt);
             g_audio_reopens++;
+            if (g_playback_pending) { /* the speaker was waiting for a running capture (start order, see above) */
+                g_playback_pending = 0;
+                audio_begin_playback();
+            }
             attempt = 0;
             lost_since_us = 0;
             consecutive_fails = 0;
@@ -461,29 +481,28 @@ int audio_start(void)
         return -1;
     }
     g_audio_thread_started = 1;
-    if (!cap_ok) return 0; /* the thread opens it as soon as it can; the speaker keeps its own start rules */
+    if (!cap_ok) { /* the thread opens the capture as soon as it can and then starts the speaker */
+        g_playback_pending = 1;
+        return 0;
+    }
 
     /* Deliberately started only now — see the comment above
      * audio_init_capture(): real anyka_ipc's playback SET_MODE succeeds
      * while capture is already mid-read, not merely after capture's config
      * ioctls returned success. */
-    audio_init_playback();
-
-    if (g_audio_playback_fd >= 0) {
-        g_playback_running = 1;
-        if (pthread_create(&g_playback_tid, NULL, audio_playback_loop, NULL) != 0) {
-            perror("[audio] playback pthread_create");
-            g_playback_running = 0;
-        } else {
-            g_playback_thread_started = 1;
-        }
-    }
+    audio_begin_playback();
 
     return 0;
 }
 
 void audio_stop(void)
 {
+    /* The capture thread may still start the speaker after a late first open: stop and join it first. */
+    g_audio_running = 0;
+    if (g_audio_thread_started) {
+        pthread_join(g_audio_tid, NULL);
+        g_audio_thread_started = 0;
+    }
     if (g_audio_out_active) {
         audio_out_stop(); /* amp off, thread joined, device closed */
         g_audio_out_active = 0;
@@ -492,12 +511,6 @@ void audio_stop(void)
     if (g_playback_thread_started) {
         pthread_join(g_playback_tid, NULL);
         g_playback_thread_started = 0;
-    }
-
-    g_audio_running = 0;
-    if (g_audio_thread_started) {
-        pthread_join(g_audio_tid, NULL);
-        g_audio_thread_started = 0;
     }
     audio_close();
 }

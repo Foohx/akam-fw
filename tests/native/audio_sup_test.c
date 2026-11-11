@@ -53,7 +53,8 @@ ssize_t __wrap_read(int fd, void *buf, size_t n)
 int __wrap_ioctl(int fd, unsigned long req, ...) { (void)fd; (void)req; return 0; }
 
 /* audio_out stubs */
-int audio_out_start(void) { return 0; }
+static int g_ao_starts;
+int audio_out_start(void) { g_ao_starts++; return 0; }
 void audio_out_stop(void) {}
 int audio_out_mic_enable(void) { return g_mic; }
 
@@ -152,12 +153,14 @@ int main(void)
 
     /* the device is not available at start: audio_start still succeeds and the thread keeps trying */
     int opens0 = g_cap_opens;
+    int ao0 = g_ao_starts;
     g_open_fail = 2;
     CHECK(audio_start() == 0, "start with the device failing: 0, retried in the background");
     t0 = now_ms();
     while (g_cap_opens == opens0 && now_ms() - t0 < 5000) usleep(5000);
     CHECK(g_cap_opens == opens0 + 1, "the first open that works is used");
     CHECK(wait_frame(1000, &first, &n) == 1, "frames flow after a late start");
+    CHECK(g_ao_starts - ao0 == 1, "speaker (audio_out) started once the late capture runs");
     audio_stop();
 
     /* G07: mic disabled: the device is never opened and there is no audio */
