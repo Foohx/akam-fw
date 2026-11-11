@@ -27,7 +27,7 @@ const char *firmware_version(void) { return "svctest"; }
 
 static int fails;
 #define CHECK(cond, msg) do { if (cond) printf("  ok   - %s\n", msg); \
-    else { printf("  FAIL - %s (line %d)\n", msg, __LINE__); fails++; } } while (0)
+    else { printf("  FAIL - %s (line %d: %s)\n", msg, __LINE__, #cond); fails++; } } while (0)
 
 static char dir[256], cfgp[300], cpath[300], apath[300], hpath[300];
 static rtsp_auth_db_t limiter;
@@ -48,6 +48,20 @@ static int count_dir(const char *p)
     while (d && (e = readdir(d))) if (e->d_name[0] != '.') n++;
     if (d) closedir(d);
     return n;
+}
+
+/* pthread_join can return before the kernel drops the task from /proc (and fds close asynchronously under load):
+ * poll up to 2 s for the count to settle on the expected value; print the observed value if it never does. */
+static int settled(const char *p, int want)
+{
+    int n = count_dir(p);
+    for (int i = 0; i < 400 && n != want; i++) {
+        struct timespec ts = { 0, 5 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+        n = count_dir(p);
+    }
+    if (n != want) printf("  info - %s: %d entries, expected %d\n", p, n, want);
+    return n == want;
 }
 
 #define USER "viewer"
@@ -252,20 +266,20 @@ static void test_machine(void)
     auth_on();
     CHECK(!strcmp(state(), "off"), "initial state off");
     CHECK(!strcmp(reload(), "off"), "no flag file: off");
-    CHECK(count_dir("/proc/self/fd") == fds0 && count_dir("/proc/self/task") == thr0, "off: no extra fd, no extra thread");
+    CHECK(settled("/proc/self/fd", fds0) && settled("/proc/self/task", thr0), "off: no extra fd, no extra thread");
 
     set_cfg(0, p1);
     CHECK(!strcmp(reload(), "off") && !can_connect(p1), "enabled=0: off, nothing listens");
 
     put(cfgp, "enabled=1\nport=22\n");
-    CHECK(!strcmp(reload(), "off") && count_dir("/proc/self/task") == thr0, "invalid file (port 22): off, no thread");
+    CHECK(!strcmp(reload(), "off") && settled("/proc/self/task", thr0), "invalid file (port 22): off, no thread");
 
     /* on */
     char want[ONVIF_STATE_MAX];
     set_cfg(1, p1);
     snprintf(want, sizeof(want), "on:%d", p1);
     CHECK(!strcmp(reload(), want) && !strcmp(state(), want), "enabled=1: on:<port>");
-    CHECK(count_dir("/proc/self/task") == thr0 + 2, "on: exactly two threads (http, wsd)");
+    CHECK(settled("/proc/self/task", thr0 + 2), "on: exactly two threads (http, wsd)");
     CHECK(http_post(p1, "GetSystemDateAndTime", b, sizeof(b)) == 0 && strstr(b, "GetSystemDateAndTimeResponse"),
           "end to end: GetSystemDateAndTime answered over HTTP");
     auth_off();
@@ -281,7 +295,7 @@ static void test_machine(void)
     /* reload with the same port keeps serving */
     CHECK(!strcmp(reload(), want) && http_post(p1, "GetSystemDateAndTime", b, sizeof(b)) == 0,
           "reload on the same port keeps serving");
-    CHECK(count_dir("/proc/self/task") == thr0 + 2, "same-port reload does not add threads");
+    CHECK(settled("/proc/self/task", thr0 + 2), "same-port reload does not add threads");
 
     /* idle wakeups */
     struct timespec ts = { 1, 0 };
@@ -299,13 +313,13 @@ static void test_machine(void)
     CHECK(!strcmp(reload(), want), "port change: on:<new port>");
     CHECK(!can_connect(p1) && can_connect(p2), "old port closed, new port open");
     CHECK(http_post(p2, "GetSystemDateAndTime", b, sizeof(b)) == 0, "new port serves");
-    CHECK(count_dir("/proc/self/task") == thr0 + 2, "port change keeps two threads");
+    CHECK(settled("/proc/self/task", thr0 + 2), "port change keeps two threads");
 
     /* no_password */
     auth_no_plain();
     CHECK(!strcmp(reload(), "no_password") && !strcmp(state(), "no_password"),
           "password on without clear-text credentials: no_password");
-    CHECK(!can_connect(p2) && count_dir("/proc/self/task") == thr0 && count_dir("/proc/self/fd") == fds0,
+    CHECK(!can_connect(p2) && settled("/proc/self/task", thr0) && settled("/proc/self/fd", fds0),
           "no_password: stopped, no thread, no fd");
     put(cpath, "user=viewer\npass=short\n");
     chmod(cpath, 0644);
@@ -327,14 +341,14 @@ static void test_machine(void)
     set_cfg(1, pb);
     const char *s = reload();
     CHECK(!strcmp(s, "error:port_in_use") && !strcmp(state(), "error:port_in_use"), "port in use: error:port_in_use");
-    CHECK(count_dir("/proc/self/task") == thr0, "error: nothing left running (old port stopped too)");
+    CHECK(settled("/proc/self/task", thr0), "error: nothing left running (old port stopped too)");
     close(busy);
     CHECK(strncmp(reload(), "on:", 3) == 0, "port freed: a reload recovers");
 
     /* off again */
     set_cfg(0, pb);
     CHECK(!strcmp(reload(), "off") && !can_connect(pb), "enabled=0: off");
-    CHECK(count_dir("/proc/self/fd") == fds0 && count_dir("/proc/self/task") == thr0,
+    CHECK(settled("/proc/self/fd", fds0) && settled("/proc/self/task", thr0),
           "off again: fds and threads back to the start");
     set_cfg(1, p1);
     reload();
@@ -343,7 +357,7 @@ static void test_machine(void)
     set_cfg(1, p1);
     reload();
     onvif_svc_stop();
-    CHECK(!strcmp(state(), "off") && count_dir("/proc/self/fd") == fds0 && count_dir("/proc/self/task") == thr0,
+    CHECK(!strcmp(state(), "off") && settled("/proc/self/fd", fds0) && settled("/proc/self/task", thr0),
           "onvif_svc_stop");
 }
 
