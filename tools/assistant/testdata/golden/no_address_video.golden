@@ -1,0 +1,7 @@
+rc=1
+--- stdout ---
+
+Video settings
+  What to do: run: ./akam step find-camera (or pass --ip ADDRESS)
+--- stderr ---
+ERROR: the camera address is not known yet.

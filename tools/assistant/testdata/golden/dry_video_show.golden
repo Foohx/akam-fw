@@ -1,0 +1,8 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Video settings
+  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 8091
+  WOULD send (read-only): GET video.bitrate_cfg, video.fps_cfg, video.gop_cfg, video.cfg_pending, video.bitrate, video.fps_actual
+--- stderr ---

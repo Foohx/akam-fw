@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: video fps needs 10 or 15 (see ./akam help)

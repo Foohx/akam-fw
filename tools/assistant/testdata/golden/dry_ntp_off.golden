@@ -1,0 +1,7 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Time sync: off
+  WOULD run over SSH on the camera: /usr/sbin/akam_ntp.sh off
+--- stderr ---

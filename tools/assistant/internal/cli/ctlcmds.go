@@ -198,7 +198,8 @@ func ctlOnOff(v string) string {
 }
 
 func (a *App) audioShow(c *camssh.Client) error {
-	out := a.ctlExchange(c, "GET audio.out_volume", "GET audio.out_enable", "GET audio.talk_enable", "GET audio.out_state", "GET audio.out_underruns", "GET audio.out_drops")
+	out := a.ctlExchange(c, "GET audio.out_volume", "GET audio.out_enable", "GET audio.talk_enable", "GET audio.out_state", "GET audio.out_underruns", "GET audio.out_drops", "GET audio.mic_enable")
+	mic := ctl.Get("audio.mic_enable", out)
 	vol, en := ctl.Get("audio.out_volume", out), ctl.Get("audio.out_enable", out)
 	talk, state := ctl.Get("audio.talk_enable", out), ctl.Get("audio.out_state", out)
 	under, drops := ctl.Get("audio.out_underruns", out), ctl.Get("audio.out_drops", out)
@@ -212,6 +213,9 @@ func (a *App) audioShow(c *camssh.Client) error {
 	a.UI.Say(fmt.Sprintf("  Speaker output: %s (state: %s); the on/off choice is read at start-up.", ctlOnOff(en), state))
 	a.UI.Say(fmt.Sprintf("  Volume: %s (0 to 100).", vol))
 	a.UI.Say(fmt.Sprintf("  Talk (RTSP audio backchannel): %s.", ctlOnOff(talk)))
+	if mic != "" {
+		a.UI.Say(fmt.Sprintf("  Microphone: %s (off = never opened and no audio track in the stream; read at start-up).", ctlOnOff(mic)))
+	}
 	if under != "" || drops != "" {
 		if under == "" {
 			under = "?"
@@ -221,7 +225,7 @@ func (a *App) audioShow(c *camssh.Client) error {
 		}
 		a.UI.Say(fmt.Sprintf("  Playback counters: underruns %s, drops %s.", under, drops))
 	}
-	a.UI.Say("  Volume, speaker and talk switches are saved on the camera and kept after a reboot.")
+	a.UI.Say("  Volume, speaker, talk and microphone switches are saved on the camera and kept after a reboot.")
 	return nil
 }
 
@@ -257,6 +261,11 @@ func (a *App) cmdAudio(args []string) error {
 				return audioUsage("audio talk needs on or off")
 			}
 			value = args[1]
+		case "mic":
+			if len(args) != 2 || (args[1] != "on" && args[1] != "off") {
+				return audioUsage("audio mic needs on or off")
+			}
+			value = args[1]
 		default:
 			return audioUsage(fmt.Sprintf("audio: unknown word '%s'", args[0]))
 		}
@@ -271,6 +280,12 @@ func (a *App) cmdAudio(args []string) error {
 		key, val = "audio.out_enable", "1"
 	case "off":
 		key, val = "audio.out_enable", "0"
+	case "mic":
+		key = "audio.mic_enable"
+		val = "0"
+		if value == "on" {
+			val = "1"
+		}
 	case "talk":
 		key = "audio.talk_enable"
 		val = "0"
@@ -310,6 +325,12 @@ func (a *App) cmdAudio(args []string) error {
 				a.UI.Warn("the speaker is enabled and saved, but it only starts after the camera application restarts: reboot the camera (power cycle) to apply.")
 			} else {
 				a.UI.Good("  Done. The speaker is enabled.")
+			}
+		case "mic":
+			if restart {
+				a.UI.Warn("the microphone setting is saved, but the camera reads it at start-up: reboot the camera (power cycle) to apply. With the microphone off the stream has no audio track at all.")
+			} else {
+				a.UI.Good("  Done. The microphone setting is saved.")
 			}
 		case "off":
 			a.UI.Good(fmt.Sprintf("  Done. The speaker is off now and stays off after a reboot (%s audio on to enable it again).", Prog))

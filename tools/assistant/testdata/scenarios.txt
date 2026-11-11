@@ -16,3 +16,23 @@ usage_debug|debug on 5000
 usage_audio|audio volume 101
 unknown_command|frobnicate
 unknown_option|--frob status
+dry_video_show|--dry-run video show
+dry_video_set|--dry-run video bitrate 2000
+dry_video_all|--dry-run video bitrate 0800 fps 10 gop 4
+dry_ntp_status|--dry-run ntp status
+dry_ntp_set|--dry-run ntp set pool.ntp.org 192.168.1.1
+dry_ntp_off|--dry-run ntp off
+dry_audio_mic|--dry-run audio mic off
+no_address_video|video
+usage_video_bitrate|video bitrate 3001
+usage_video_fps|video fps 12
+usage_video_gop|video gop 5
+usage_video_twice|video fps 10 fps 15
+usage_video_flip|video flip
+usage_video_show|video show gop 2
+usage_ntp_bad|ntp set bad_name
+usage_ntp_none|ntp set
+usage_ntp_four|ntp set a b c d
+usage_ntp_word|ntp frob
+usage_ntp_extra|ntp off now
+usage_audio_mic|audio mic maybe

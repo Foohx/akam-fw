@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: video flip is not available: the camera's flip registers and a second resolution are not supported yet (see ./akam help)
