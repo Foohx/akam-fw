@@ -126,6 +126,9 @@ func (t *uacTransport) run(self string, req Request, stderr io.Writer) (Response
 	if err != nil {
 		return Response{}, err
 	}
+	if len(body) > MaxRequest { // the helper would refuse it: say so before a prompt is shown
+		return Response{}, errors.New("the request is too large for the administrator helper")
+	}
 	rnd, err := randHex(16)
 	if err != nil {
 		return Response{}, err

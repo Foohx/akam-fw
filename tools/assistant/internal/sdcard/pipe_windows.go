@@ -24,7 +24,11 @@ var errPipeTimeout = errors.New("the pipe did not answer in time")
 type pipeConn struct {
 	h        windows.Handle
 	deadline atomic.Int64 // unix nanoseconds, 0 = none
-	once     sync.Once
+	// ops is held (shared) by every call in flight: Close takes it exclusively before it closes the handle, so a
+	// blocked call never meets a closed (or reused) handle value.
+	ops    sync.RWMutex
+	closed atomic.Bool
+	once   sync.Once
 }
 
 func (c *pipeConn) SetDeadline(t time.Time) error {
@@ -51,6 +55,11 @@ func (c *pipeConn) wait() (uint32, bool) {
 
 // do runs one overlapped read or write of p.
 func (c *pipeConn) do(p []byte, write bool) (int, error) {
+	c.ops.RLock()
+	defer c.ops.RUnlock()
+	if c.closed.Load() {
+		return 0, os.ErrClosed
+	}
 	ms, ok := c.wait()
 	if !ok {
 		return 0, errPipeTimeout
@@ -118,8 +127,15 @@ func (c *pipeConn) Write(p []byte) (int, error) {
 
 func (c *pipeConn) Close() error {
 	c.once.Do(func() {
-		_ = windows.CancelIoEx(c.h, nil)
+		c.closed.Store(true)
+		// cancel until no call is in flight (a call that started just before the flag may issue its I/O after
+		// the first cancel), then close
+		for !c.ops.TryLock() {
+			_ = windows.CancelIoEx(c.h, nil)
+			time.Sleep(5 * time.Millisecond)
+		}
 		windows.CloseHandle(c.h)
+		c.ops.Unlock()
 	})
 	return nil
 }
@@ -206,6 +222,11 @@ func (l *pipeListener) connect(timeout time.Duration) error {
 	default:
 		return err
 	}
+	l.mu.Lock()
+	if l.closed { // Close came before the connect was pending: its cancel found nothing to cancel
+		_ = windows.CancelIoEx(l.h, ov)
+	}
+	l.mu.Unlock()
 	r, werr := windows.WaitForSingleObject(ev, uint32(timeout/time.Millisecond))
 	if werr != nil || r == waitTimeout {
 		_ = windows.CancelIoEx(l.h, ov)

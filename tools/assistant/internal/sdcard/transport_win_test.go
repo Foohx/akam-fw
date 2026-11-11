@@ -456,3 +456,14 @@ func TestProgressWriterLines(t *testing.T) {
 		t.Errorf("%q", b.String())
 	}
 }
+
+func TestUACTransportRefusesAnOversizeRequestBeforeThePrompt(t *testing.T) {
+	facts := linuxCardFacts()
+	h := newUACHarness(t, facts)
+	tr := h.transport()
+	tr.launch = func(string, string) (uacProc, error) { t.Fatal("the prompt was shown"); return nil, nil }
+	req := Request{Op: OpWipe, Files: []File{{Path: "big", Data: make([]byte, MaxRequest)}}}
+	if _, err := tr.run("self.exe", req, io.Discard); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("%v", err)
+	}
+}

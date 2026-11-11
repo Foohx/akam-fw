@@ -82,7 +82,8 @@ func launchRunas(self, params string) (uacProc, error) {
 	// ShellExecuteEx wants a single-threaded COM apartment on the calling thread
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err == nil {
+	// S_FALSE (1) means "already initialised on this thread" and still needs its CoUninitialize
+	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err == nil || err == syscall.Errno(1) {
 		defer windows.CoUninitialize()
 	}
 	verb, err := windows.UTF16PtrFromString("runas")
