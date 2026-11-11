@@ -10,6 +10,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -74,7 +75,57 @@ func ParseProbeMatch(from net.IP, data []byte) (Found, bool) {
 // WSDiscover sends one Probe to target (WSDTarget, or a unicast address in tests) and collects
 // the answers for wait. One UDP packet out, nothing else.
 func WSDiscover(ctx context.Context, target string, wait time.Duration) ([]Found, error) {
-	pc, err := net.ListenPacket("udp4", ":0")
+	return wsdOn(ctx, net.ListenConfig{}, target, wait)
+}
+
+// WSDiscoverEach sends the Probe once per eligible interface, from a socket whose outgoing
+// multicast interface is that one (the OS default interface is often a VPN or a bridge), and merges
+// the answers. Interfaces are probed in parallel, so the wait is not multiplied.
+func WSDiscoverEach(ctx context.Context, goos string, ifaces []Iface, target string, wait time.Duration) ([]Found, error) {
+	var mu sync.Mutex
+	var out []Found
+	seen := map[string]bool{}
+	var firstErr error
+	var wg sync.WaitGroup
+	sent := 0
+	for _, ifc := range ifaces {
+		if !ifc.Eligible(goos) || ifc.Flags&net.FlagMulticast == 0 {
+			continue
+		}
+		nets := ifc.IPv4s()
+		if len(nets) == 0 {
+			continue
+		}
+		sent++
+		wg.Add(1)
+		go func(lc net.ListenConfig) {
+			defer wg.Done()
+			got, err := wsdOn(ctx, lc, target, wait)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			for _, f := range got {
+				if !seen[f.IP] {
+					seen[f.IP] = true
+					out = append(out, f)
+				}
+			}
+		}(multicastConfig(nets[0].IP.To4()))
+	}
+	wg.Wait()
+	if len(out) > 0 || sent == 0 {
+		return out, nil
+	}
+	return out, firstErr
+}
+
+// wsdMaxAnswers bounds the answers kept from one probe (a hostile LAN can answer from many addresses).
+const wsdMaxAnswers = 64
+
+func wsdOn(ctx context.Context, lc net.ListenConfig, target string, wait time.Duration) ([]Found, error) {
+	pc, err := lc.ListenPacket(ctx, "udp4", ":0")
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +157,9 @@ func WSDiscover(ctx context.Context, target string, wait time.Duration) ([]Found
 		f, ok := ParseProbeMatch(ua.IP, buf[:n])
 		if !ok || seen[f.IP] {
 			continue
+		}
+		if len(out) >= wsdMaxAnswers {
+			break
 		}
 		seen[f.IP] = true
 		out = append(out, f)
