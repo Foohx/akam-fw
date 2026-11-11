@@ -116,7 +116,9 @@ parameters; its grammar is unchanged from upstream. It has no authentication and
 - **Privacy of the read side:** the `LOG` lines (client addresses, authentication failures, request paths) are
   pushed only to the camera itself (loopback) or to everyone while debug mode is on: another machine that just
   connects receives none. `net.ssid` and `net.mac` read as `hidden` for other machines unless debug mode is on;
-  `net.ip` and the other metrics stay readable. `sys.time_set` (1 when the camera clock is 2024 or later) is a
+  `net.ip` and the other metrics stay readable. `fw.version` (for example `b35-2af81c5`, the same text as the ONVIF
+  `FirmwareVersion`) and `sys.hostname` are read-only keys that anyone on the network may read without a login (`GET
+  fw.version`, `GET sys.hostname`, also in `LIST`): the assistant uses them to identify an Akam camera. `sys.time_set` (1 when the camera clock is 2024 or later) is a
   metric like the others.
 - `SET` (and `SAVE`, `RESET`) from another machine is refused with `ERR read-only mode, see akam_debug.sh`.
 - `SET` from the camera itself (127.0.0.1: SSH helpers such as `./akam led`, `./akam audio`, `./akam picture`) always works.

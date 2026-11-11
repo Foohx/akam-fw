@@ -28,6 +28,8 @@
 #include "ctl_gate.h"
 #include "ctl_sys.h"
 #include "swdog.h"
+#include "version.h"
+#include "onvif_device.h"
 
 #ifndef CONTROL_PORT
 #define CONTROL_PORT 8091   /* the host test builds with another port */
@@ -343,6 +345,12 @@ static void do_list(cli_t *c)
     }
     reply(c, "ctl.clients=%d", clients_connected());
     reply(c, "ctl.debug=%d",   debug_active());
+    reply(c, "fw.version=%s",  firmware_version());
+    {
+        char hn[33];
+        onvif_hostname_get(hn);
+        reply(c, "sys.hostname=%s", hn);
+    }
     {
         char os[ONVIF_STATE_MAX];
         onvif_svc_state(os, sizeof(os));
@@ -376,6 +384,13 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
     else if (!strcmp(param, "ctl.clients"))           reply(c, "ctl.clients=%d", clients_connected());
     else if (!strcmp(param, "log.dropped"))           reply(c, "log.dropped=%u", (unsigned)g_log_dropped);
+    /* Not secret (the ONVIF DeviceInformation answers the same): readable by remote peers, no login. */
+    else if (!strcmp(param, "fw.version"))            reply(c, "fw.version=%s", firmware_version());
+    else if (!strcmp(param, "sys.hostname")) {
+        char hn[33];
+        onvif_hostname_get(hn);
+        reply(c, "sys.hostname=%s", hn);
+    }
     else if (!strcmp(param, "onvif.state")) {
         char os[ONVIF_STATE_MAX];
         onvif_svc_state(os, sizeof(os));

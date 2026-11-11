@@ -87,6 +87,8 @@ static int  g_onvif_reloads;
 int  onvif_svc_reload(char *s, size_t c) { g_onvif_reloads++; snprintf(g_onvif_state, sizeof(g_onvif_state), "on:8080"); snprintf(s, c, "%s", g_onvif_state); return 0; }
 void onvif_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_onvif_state); }
 void onvif_svc_stop(void) {}
+const char *firmware_version(void) { return "b1-test"; }
+void onvif_hostname_get(char *out) { strcpy(out, "akam-test"); }
 
 /* ctl_sys stub: two metrics, one of them hostile (an SSID with a quote, '=', a space and CR/LF). */
 static const char *const k_stub_keys[] = { "sys.stub", "net.ssid" };
@@ -331,13 +333,17 @@ static void test_server(void)
         "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
-        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nonvif.state=off\n.\n");
+        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\n.\n");
     ask(c, "GET sys.stub", out, sizeof(out));
     CHECK_STR(out, "sys.stub=6\n");
     ask(c, "GET net.ssid", out, sizeof(out));      /* CR/LF in a value never splits the reply */
     CHECK_STR(out, "net.ssid=my \"net\"=x??y\n");
     ask(c, "GET ctl.clients", out, sizeof(out));
     CHECK_STR(out, "ctl.clients=1\n");
+    ask(c, "GET fw.version", out, sizeof(out));
+    CHECK_STR(out, "fw.version=b1-test\n");
+    ask(c, "GET sys.hostname", out, sizeof(out));
+    CHECK_STR(out, "sys.hostname=akam-test\n");
     ask(c, "GET ae.speed", out, sizeof(out));
     CHECK_STR(out, "ae.speed=4\n");
     {   /* QUIT: "OK bye", then the server closes the connection */
