@@ -3,8 +3,9 @@ akam - guided setup for Akam (PC side)
 Usage: ./akam [options] [command]
 
 Commands:
-  (none)             step menu with status; resumes where you stopped
-                     (on a terminal: a full-screen menu, keys: arrows or j/k, Enter, ? help, q)
+  (none)             home screen: choose the camera, set up, update, options, backup, settings
+                     (on a terminal: a full-screen menu, keys: arrows or j/k, Enter, ? help, c camera, q)
+  steps              the nine setup steps with their status, one at a time; resumes where you stopped
   doctor             check this computer (tools); changes nothing
   get-kit            download and verify the prebuilt kit (no compiling)
   build              build from source instead (optional, needs more tools)

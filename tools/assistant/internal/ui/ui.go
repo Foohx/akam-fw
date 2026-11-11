@@ -59,5 +59,6 @@ type UI interface {
 type MenuItem struct {
 	Label  string
 	Detail string
-	Status string // done | todo | blocked | stale | tool
+	Status string // done | todo | blocked | stale | tool | plain (no tag, the home screen)
+	Key    string // optional one-letter shortcut (not q, j, k, g, G or ?)
 }

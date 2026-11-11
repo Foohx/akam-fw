@@ -256,6 +256,12 @@ func (a *App) cmdMenu() error {
 		a.UI.Say(fmt.Sprintf("No terminal attached: showing status only. Run %s in a terminal to continue.", Prog))
 		return nil
 	}
+	return a.cmdHome()
+}
+
+// cmdStepMenu is the list of the nine steps and the read-only camera tools (akam steps): the state
+// machine of the bash wizard, kept for people who want to run one step at a time.
+func (a *App) cmdStepMenu() error {
 	for {
 		entries := a.menuEntries()
 		items := make([]ui.MenuItem, len(entries))

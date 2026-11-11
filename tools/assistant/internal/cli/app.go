@@ -283,6 +283,12 @@ func (a *App) dispatch(cmd string) error {
 	case "status":
 		a.statusTable()
 		return nil
+	case "steps":
+		if a.UI.Dry() || !a.UI.Interactive() {
+			a.statusTable()
+			return nil
+		}
+		return a.cmdStepMenu()
 	case "cameras":
 		return a.cmdCameras()
 	case "rename-camera":
@@ -353,7 +359,12 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdWipeSD()
 	case "flash":
 		return a.cmdFlash()
-	case "build", "image":
+	case "image":
+		if a.Opt.Image != "" { // an image built elsewhere (T11.13, interim until the native builder)
+			return a.installImage()
+		}
+		return a.notYet(cmd)
+	case "build":
 		return a.notYet(cmd)
 	}
 	return usageErr(fmt.Sprintf("akam: unknown command '%s' (see %s help)", cmd, Prog))

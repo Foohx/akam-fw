@@ -267,6 +267,13 @@ func (m *Menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			m.Done, m.Quit = true, true
 			return m, tea.Quit
+		default:
+			for i, it := range m.Items {
+				if it.Key != "" && it.Key == v.String() {
+					m.Cursor, m.Done = i, true
+					return m, tea.Quit
+				}
+			}
 		}
 	}
 	return m, nil
@@ -282,6 +289,8 @@ func statusTag(s string) string {
 		return styYellow.Render("stale  ")
 	case "tool":
 		return "tool   "
+	case "plain":
+		return "       "
 	}
 	return "todo   "
 }
@@ -291,7 +300,7 @@ func (m *Menu) View() string {
 	if h < 8 {
 		h = 8
 	}
-	rows := h - 6 // title, rule, detail (2), blank, footer
+	rows := h - 6 - strings.Count(m.Title, "\n") // title (several lines for the home header), rule, detail (2), blank, footer
 	if m.Cursor < m.top {
 		m.top = m.Cursor
 	}

@@ -40,6 +40,7 @@ type env struct {
 	flashTest bool
 	http      *http.Client // the client of get-kit (a test server's), nil: none
 	sd        sdcard.Backend
+	disc      cli.DiscoverHooks // the network of the discovery tests (fake addresses mapped to the fake camera)
 }
 
 type fakeCapture struct {
@@ -177,6 +178,7 @@ func (e *env) hooks() cli.Hooks {
 	}
 	h.HTTP = e.http
 	h.SD = e.sd
+	h.Discover = e.disc
 	return h
 }
 
