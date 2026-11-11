@@ -1449,3 +1449,25 @@ Documented in `docs/assistant_install.md` (T11.15), summary:
     **Recommendation: reject for new names only; an existing state directory with such a name keeps working on Linux and warns on Windows.**
 15. **Stock camera discovery.** A stock camera is only found when it already runs the toolkit card. **Recommendation: say so in the screen, show the
     router-DHCP-list hint, and never probe more than the four ports; no OUI/MAC guessing.**
+
+## 10. Decisions (coordinator, 2026-11-11)
+
+Recommendations of section 9 are accepted except where noted.
+
+- **Q1** (c) now: Windows and macOS import an image built on Linux or WSL; (a) native squashfs reader + writer + assembly port is the planned
+  single code path (estimated 2500-3400 production LOC plus tests); (b) static squashfs-tools only if the (a) gate fails; (d) rejected.
+  Corrections and additions from the advisory review:
+  - The camera kernel is 4.4.302-cip94 (`tools/release/supported_hardware.txt`), not 3.4. Check its squashfs table sanity checks (id,
+    lookup, xattr tables, table order and adjacency) against the 4.4.302 source before writing the writer.
+  - Format: squashfs 4.0, xz, 128 KiB blocks, no BCJ, `-all-root -no-xattrs`, all times equal, fragments and export table present; xz
+    streams with CRC32 (or none) and a dictionary <= 128 KiB (`ulikunitz/xz` defaults are CRC64 / 8 MiB and must be overridden).
+  - The pipeline never unpacks to the host filesystem (reader -> in-memory tree -> patch -> writer); stock variants with BCJ, xattrs,
+    hardlinks or sparse files are refused cleanly.
+  - Gate before any real flash with the native builder: (1) reader matches `unsquashfs -lls` + extraction hashes on fixtures, mksquashfs
+    images and a real dump; (2) writer superblock flags/table order match mksquashfs, canonical dumps equal; (3) differential edge-case
+    trees (0 / 131072 / 131073 bytes, > 256 entries, metadata across 8 KiB); (4) every xz block decodes with system `xz`; (5) loop mount on
+    the host kernel and on a vanilla 4.4.302 kernel in QEMU with a full read; (6) real dump through both builders, equal trees, deterministic
+    native output; (7) loop mount read-only on an Akam camera if its kernel has loop support (no flash); (8) one flash on a spare camera with
+    UART attached, recorded; (9) every user build re-reads its output and compares it with the plan before offering to flash.
+- **Q2-Q9, Q11-Q15**: as recommended.
+- **Q10**: (a) and (b) yes; (c) no GitHub Actions workflow for now (the repository decision is "no CI"; the maintainer decides later).
