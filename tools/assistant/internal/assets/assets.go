@@ -8,6 +8,7 @@ package assets
 import (
 	"embed"
 	"fmt"
+	"strings"
 )
 
 //go:generate bash sync.sh
@@ -17,7 +18,7 @@ var scripts embed.FS
 
 // Script returns an embedded script by file name (for example "preflight_check.sh").
 func Script(name string) ([]byte, error) {
-	b, err := scripts.ReadFile("scripts/" + name)
+	b, err := scripts.ReadFile("scripts/" + name + ".embed")
 	if err != nil {
 		return nil, fmt.Errorf("no embedded script %q", name)
 	}
@@ -29,7 +30,7 @@ func Names() []string {
 	es, _ := scripts.ReadDir("scripts")
 	var out []string
 	for _, e := range es {
-		out = append(out, e.Name())
+		out = append(out, strings.TrimSuffix(e.Name(), ".embed"))
 	}
 	return out
 }

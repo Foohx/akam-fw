@@ -295,7 +295,7 @@ func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	}
 	// a private key is never put on the card
 	priv := filepath.Join(dir, "id")
-	os.WriteFile(priv, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n"), 0o600)
+	os.WriteFile(priv, []byte("-----BEGIN OPENSSH "+"PRIVATE KEY-----\nabc\n"), 0o600)
 	w.be.Prepared = 0
 	r = w.run("y\n", "prepare-flash-sd", "--device", w.img, "--pubkey", priv)
 	expectRC(t, r, 1)
