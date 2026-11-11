@@ -444,6 +444,7 @@ unsigned wsd_next_instance(const char *path, long long wall_s)
         if (f) {
             char b[24];
             if (fgets(b, sizeof(b), f) && strspn(b, "0123456789") >= 1) prev = strtoull(b, NULL, 10);
+            if (prev > 0xfffffff0ULL) prev = 0;                  /* garbage or overflow */
             fclose(f);
         }
     }
@@ -456,7 +457,7 @@ unsigned wsd_next_instance(const char *path, long long wall_s)
         int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0644);
         if (fd >= 0) {
             int n = snprintf(line, sizeof(line), "%llu\n", next);
-            int ok = write(fd, line, (size_t)n) == n;
+            int ok = write(fd, line, (size_t)n) == n && fsync(fd) == 0;   /* data first, then the rename */
             close(fd);
             if (!ok || rename(tmp, path) != 0) unlink(tmp);
         }
@@ -489,8 +490,17 @@ int wsd_start(const wsd_info_t *in)
     else inet_pton(AF_INET, WSD_GROUP, &g.group.sin_addr);
     g.do_join = IN_MULTICAST(ntohl(g.group.sin_addr.s_addr));
     g.njobs = 0;
-    g.msgno = 0;
-    g.instance = wsd_next_instance(in->test ? NULL : WSD_INSTANCE_FILE, (long long)time(NULL));
+    /* One InstanceId and one flash write per boot: a rebuild of the scopes (wsd_stop + wsd_start in the same process)
+     * keeps the value and carries on counting messages, it must not write the file again. */
+    static int inst_done;
+    static unsigned inst_val;
+    if (in->test || !inst_done) {
+        g.msgno = 0;
+        g.instance = wsd_next_instance(in->test ? NULL : WSD_INSTANCE_FILE, (long long)time(NULL));
+        if (!in->test) { inst_done = 1; inst_val = g.instance; }
+    } else {
+        g.instance = inst_val;
+    }
     wsd_rl_init(&g.rl, now_ms());
     g.stop = 0;
 

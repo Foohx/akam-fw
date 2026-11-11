@@ -211,7 +211,8 @@ static int find_token(const onvif_call_t *c, soap_elem_t *ut)
     return soap_find(doc, "Header", &h) == SOAP_OK && soap_find(h.inner, "UsernameToken", ut) == SOAP_OK;
 }
 
-/* WS-Security UsernameToken of the Header. 0 = none, 1 = valid, -1 = present and refused. */
+/* WS-Security UsernameToken of the Header. 0 = none, 1 = valid, -1 = present and refused, -2 = refused without
+ * blaming the peer (authentic, but older than the replay cache remembers). */
 static int wsse_check(onvif_call_t *c, unsigned *delay)
 {
     soap_elem_t ut, u, p, n, cr;
@@ -233,7 +234,9 @@ static int wsse_check(onvif_call_t *c, unsigned *delay)
         cred_check_wsse("", "", "", "", delay);
         return -1;
     }
-    return cred_check_wsse(user, nonce, created, digest, delay) ? 1 : -1;
+    int counted = 1;
+    if (cred_check_wsse_ex(user, nonce, created, digest, delay, &counted)) return 1;
+    return counted ? -1 : -2;
 }
 
 /* The request target as the client wrote it: path[?query]. */
@@ -282,7 +285,7 @@ int onvif_gate(onvif_call_t *c, onvif_class_t cls)
     if (has_token) {
         int w = wsse_check(c, &delay);
         if (w > 0) { cred_peer_ok(ip); return 1; }
-        cred_peer_failed(ip);
+        if (w == -1) cred_peer_failed(ip);
         not_authorized(c, delay);
         return 0;
     }

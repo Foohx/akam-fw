@@ -94,6 +94,10 @@ int cred_parse(const char *text, size_t len, char *user, char *pass);
  * ter:NotAuthorized, nothing more specific). */
 int cred_check_wsse(const char *username, const char *nonce_b64, const char *created,
                     const char *digest_b64, unsigned *delay_ms);
+/* Same, and *counted (may be NULL) is 0 when the refusal was not blamed on the peer (authentic token older than the
+ * replay cache remembers): the caller must not count it in a per-peer lockout either. */
+int cred_check_wsse_ex(const char *username, const char *nonce_b64, const char *created,
+                       const char *digest_b64, unsigned *delay_ms, int *counted);
 
 /* HTTP Digest (RFC 2617, MD5, realm akam) for ONVIF over HTTP: the htdigest
  * credentials of rtsp_auth.c, no plain password needed. hdr is the value of

@@ -259,6 +259,10 @@ static void test_instance(void)
     fputs("not a number\n", fp);
     fclose(fp);
     CHECK(wsd_next_instance(junk, 0) == 1);          /* garbage counts as 0 */
+    fp = fopen(junk, "w");
+    fputs("99999999999999999999\n", fp);
+    fclose(fp);
+    CHECK(wsd_next_instance(junk, 0) == 1);          /* overflowing counter is treated as garbage, not wrapped to 0 */
     unlink(junk);
     char nope[] = "/nonexistent-dir/wsd_instance";
     CHECK(wsd_next_instance(nope, 0) == 1);          /* an unwritable path does not break the start */

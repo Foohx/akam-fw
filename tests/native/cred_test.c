@@ -407,6 +407,19 @@ static void test_wsse(void)
     unsigned dd2 = 55, before = limiter.global_fails;
     CHECK(wsse("user", n, "2026-11-10T12:00:05Z", SPEC_PASS, &dd2) == 0 && dd2 == 0 && limiter.global_fails == before,
           "eviction: an authentic token older than the floor is refused without counting a failure");
+    {
+        char dg[64];
+        int counted = 1;
+        unsigned dd3 = 0;
+        nonce_n(5002, n);
+        mkdigest(n, "2026-11-10T12:00:06Z", SPEC_PASS, dg);
+        CHECK(cred_check_wsse_ex("user", n, "2026-11-10T12:00:06Z", dg, &dd3, &counted) == 0 && counted == 0,
+              "eviction: the extended check reports the refusal as not counted");
+        nonce_n(5003, n);
+        mkdigest(n, "2026-11-10T12:03:00Z", "wrongwrong", dg);
+        CHECK(cred_check_wsse_ex("user", n, "2026-11-10T12:03:00Z", dg, &dd3, &counted) == 0 && counted == 1,
+              "eviction: a bad digest is reported as counted");
+    }
     nonce_n(5001, n);
     CHECK(wsse("user", n, "2026-11-10T12:03:00Z", SPEC_PASS, NULL) == 1, "eviction: a newer token still passes");
 #endif

@@ -496,14 +496,22 @@ static int finish(int ok, unsigned *delay_ms)
     return 0;
 }
 
-int cred_check_wsse(const char *username, const char *nonce_b64, const char *created,
-                    const char *digest_b64, unsigned *delay_ms)
+int cred_check_wsse_ex(const char *username, const char *nonce_b64, const char *created,
+                       const char *digest_b64, unsigned *delay_ms, int *counted)
 {
     LOCK();
     if (!S.inited) init_l(NULL, NULL);
-    int r = finish(wsse_verify(username, nonce_b64, created, digest_b64), delay_ms);
+    int w = wsse_verify(username, nonce_b64, created, digest_b64);
+    if (counted) *counted = w >= 0;
+    int r = finish(w, delay_ms);
     UNLOCK();
     return r;
+}
+
+int cred_check_wsse(const char *username, const char *nonce_b64, const char *created,
+                    const char *digest_b64, unsigned *delay_ms)
+{
+    return cred_check_wsse_ex(username, nonce_b64, created, digest_b64, delay_ms, NULL);
 }
 
 void cred_note_failure(unsigned *delay_ms)
