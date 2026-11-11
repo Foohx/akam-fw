@@ -166,6 +166,25 @@ eq "hung ntpd: killed by the watchdog, reported as a failed pass" "$(grep -c 'sy
 mv "$STUBS/ntpd.real" "$STUBS/ntpd"
 EXTRA=()
 
+# 4c. TERM during a pass: the ntpd child must not be left behind (it would wait for ever on a dead server)
+cp "$STUBS/ntpd" "$STUBS/ntpd.real"
+printf '#!/bin/sh\necho $$ >"$FAKE/ntpd.pid"\nexec tail -f /dev/null\n' >"$STUBS/ntpd"
+new_env orphan
+run_ntp set pool.ntp.org >/dev/null
+EXTRA=(AKAM_NTP_MAX_CYCLES=1 AKAM_TIMEOUT_BIN=no-such-timeout-applet AKAM_NTP_TIMEOUT=100)
+run_ntp run >/dev/null &
+hp=$!
+for _i in $(seq 1 20); do [ -s "$E/fake/ntpd.pid" ] && break; sleep 0.25; done
+np=$(cat "$E/fake/ntpd.pid" 2>/dev/null)
+kill -TERM "$hp" 2>/dev/null
+wait "$hp" 2>/dev/null
+gone=no
+for _i in $(seq 1 12); do kill -0 "$np" 2>/dev/null || { gone=yes; break; }; sleep 0.25; done
+[ "$gone" = yes ] || kill -KILL "$np" 2>/dev/null
+eq "TERM during a pass: the ntpd child is gone" "$gone" yes
+mv "$STUBS/ntpd.real" "$STUBS/ntpd"
+EXTRA=()
+
 # 5. failures: retries 15, 30, 60, 120, 300, 600, 600; success switches to the 6 h rhythm
 new_env retry
 run_ntp set pool.ntp.org >/dev/null
