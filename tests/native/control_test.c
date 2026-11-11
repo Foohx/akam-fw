@@ -606,6 +606,15 @@ static void test_server(void)
     /* slots: 4 clients at once, the 5th is refused, nobody is kicked */
     int cl[CTL_MAX_CLIENTS];
     cl[0] = c;
+    /* Earlier clients (the LOG section above) are closed by the test, but their slots are released later by
+     * their own server threads: under load the 4th dial below could still find the table full and get
+     * "ERR busy". Wait until only this connection is counted. */
+    for (int i = 0; i < 200; i++) {
+        ask(c, "GET ctl.clients", out, sizeof(out));
+        if (!strcmp(out, "ctl.clients=1\n")) break;
+        usleep(25000);
+    }
+    CHECK_STR(out, "ctl.clients=1\n");
     for (int i = 1; i < CTL_MAX_CLIENTS; i++) { cl[i] = dial("127.0.0.1"); CHECK(cl[i] >= 0); }
     for (int i = 0; i < CTL_MAX_CLIENTS; i++) {
         ask(cl[i], "GET ae.speed", out, sizeof(out));
