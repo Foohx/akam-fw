@@ -128,6 +128,7 @@ BKDIR=$(sed -n 's/^backup_dir=//p' "$S/state")
 check "backup: the folder is ~/akam-backup-<date> under the chosen root" bash -c '[[ "$1" == "$2"/akam-backup-* ]]' _ "$BKDIR" "$AKAM_BACKUP_ROOT"
 check "backup: the 8 files equal the camera partitions" bash -c '
     for i in 0 1 2 3 4 5 6 7; do cmp -s "$1/mtdblock$i.bin" "$2/dev/mtdblock$i" || exit 1; done' _ "$BKDIR" "$CAM_A_ROOT"
+check "backup (G19): folder 0700, files 0600, secrets warning shown" bash -c '[ "$(stat -c %a "$1")" = 700 ] && [ -z "$(find "$1" -type f ! -perm 600)" ]' _ "$BKDIR"
 check "backup: SHA256SUMS verifies" bash -c 'cd "$1" && sha256sum -c SHA256SUMS >/dev/null 2>&1 && [ "$(grep -c . SHA256SUMS)" = 8 ]' _ "$BKDIR"
 check "backup: the two reads on the card are identical (READS_IDENTICAL)" has "$T/bk.out" "READS_IDENTICAL"
 check "backup: both dumps exist on the camera's card" bash -c '
