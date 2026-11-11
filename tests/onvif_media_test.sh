@@ -18,10 +18,10 @@ trap 'chmod -R u+rwx "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 SRC=$REPO/src/ak_rtsp
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-    -I"$SRC" -o "$WORK/onvif_media_test" \
+    -I"$SRC" "-DVIDEO_CFG_PATH=\"$WORK/d/video\"" -o "$WORK/onvif_media_test" \
     "$REPO/tests/native/onvif_media_test.c" "$REPO/tests/native/onvif_stubs.c" "$SRC/onvif.c" "$SRC/onvif_device.c" \
     "$SRC/onvif_media.c" "$SRC/onvif_imaging.c" "$SRC/http_srv.c" "$SRC/soap.c" \
-    "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
+    "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" "$SRC/video_cfg.c" -pthread
 mkdir "$WORK/d"
 "$WORK/onvif_media_test" "$WORK/d" "$REPO/tests/fixtures/onvif_media"
 

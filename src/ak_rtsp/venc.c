@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include "ak_rtsp.h"
+#include "video_cfg.h"
 #include "ak_ioctls.h"
 #include "venc.h"
 #include "imgq.h"
@@ -226,13 +227,13 @@ int venc_create_encoder(void)
      * (0x40-0x5f) sub-struct at all — still the hardware-confirmed-safe
      * values below, per the crash history below. */
     req.enc.rc_mode          = VENC_RC_VBRP;
-    req.enc.fps              = ENC_FPS;
-    req.enc.goplen           = ENC_GOP;
+    req.enc.fps              = (uint16_t)video_fps();
+    req.enc.goplen           = video_gop_frames();
     req.enc.max_fps          = 0;    /* stock sends 0 for both channels (isp_hook_n.log) */
     req.enc.enc_level        = 40;   /* H.264 Level 4.0 */
     req.enc.qp_or_kbps       = 28;   /* VBR+: minqp (stock isp_hook_n.log capture) */
     req.enc.qp2              = 43;   /* VBR+: maxqp */
-    req.enc.max_kbps_vbrp    = ENC_KBPS; /* VBR+: max_kbps */
+    req.enc.max_kbps_vbrp    = video_kbps(); /* VBR+: max_kbps */
     req.enc.initqp_vbrp      = 99;   /* VBR+: initqp — the "99" belongs here, not qp_or_kbps */
     req.smart.smart_mode     = 0;
     req.smart.smart_goplen   = 100;

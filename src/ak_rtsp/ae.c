@@ -8,6 +8,7 @@
 #include "isp.h"
 #include "ae.h"
 #include "swdog.h"
+#include "video_cfg.h"
 #include "imgq.h"
 
 /* -------------------------------------------------------------------------
@@ -227,11 +228,12 @@ int ae_init_isp_params(void)
      * This is the DAY config; night.c reconfigures to {10fps, vts=3426}
      * when it engages night mode (Ghidra + isp_hook-confirmed values from
      * stock anyka_ipc). */
-    uint32_t frame_rate[4] = {15, 2284, 8, 15};
+    const uint32_t cfg_fps = (uint32_t)video_fps(); /* 15 unless /etc/config/akam/video says 10 (video_cfg.h) */
+    uint32_t frame_rate[4] = {cfg_fps, (uint32_t)video_day_vts(), 8, cfg_fps};
     if (isp_tunnel(ISP_INNER_SET_FRAME_RATE, frame_rate) == 0)
-        printf("[ae] SET_FRAME_RATE OK (15fps, vts=2284)\n");
+        printf("[ae] SET_FRAME_RATE OK (%ufps, vts=%d)\n", cfg_fps, video_day_vts());
 
-    uint32_t fps[4] = {15, 0, 0, 15};
+    uint32_t fps[4] = {cfg_fps, 0, 0, cfg_fps};
     if (isp_tunnel(ISP_INNER_SET_SENSOR_FPS, fps) == 0)
         printf("[ae] SET_SENSOR_FPS OK\n");
 

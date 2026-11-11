@@ -62,6 +62,10 @@ void imgq_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "imgq.stub=3
 int  talk_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  talk_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void talk_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "talk.stub=4"); }
+int  video_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
+int  video_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+void video_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "video.stub=5"); }
+void video_ctl_set_persist(int on) { (void)on; }
 int  ledsys_ctl_get(const char *k, char *o, size_t c)
 {
     if (strcmp(k, "led.stub")) return -1;
@@ -324,7 +328,7 @@ static void test_server(void)
         "night.confirm_samples=0\nnight.lock_ms=0\n"
         "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
-        "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\n"
+        "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
         "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nonvif.state=off\n.\n");
     ask(c, "GET sys.stub", out, sizeof(out));
     CHECK_STR(out, "sys.stub=6\n");
@@ -632,6 +636,15 @@ static void test_server(void)
     /* slots: 4 clients at once, the 5th is refused, nobody is kicked */
     int cl[CTL_MAX_CLIENTS];
     cl[0] = c;
+    /* Earlier clients (the LOG section above) are closed by the test, but their slots are released later by
+     * their own server threads: under load the 4th dial below could still find the table full and get
+     * "ERR busy". Wait until only this connection is counted. */
+    for (int i = 0; i < 200; i++) {
+        ask(c, "GET ctl.clients", out, sizeof(out));
+        if (!strcmp(out, "ctl.clients=1\n")) break;
+        usleep(25000);
+    }
+    CHECK_STR(out, "ctl.clients=1\n");
     for (int i = 1; i < CTL_MAX_CLIENTS; i++) { cl[i] = dial("127.0.0.1"); CHECK(cl[i] >= 0); }
     for (int i = 0; i < CTL_MAX_CLIENTS; i++) {
         ask(cl[i], "GET ae.speed", out, sizeof(out));

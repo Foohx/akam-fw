@@ -20,7 +20,7 @@ SRC=$REPO/src/ak_rtsp
     -I"$SRC" -o "$WORK/onvif_test" \
     "$REPO/tests/native/onvif_test.c" "$SRC/onvif.c" "$SRC/onvif_device.c" "$SRC/onvif_media.c" "$SRC/onvif_imaging.c" \
     "$REPO/tests/native/onvif_stubs.c" "$SRC/http_srv.c" "$SRC/soap.c" \
-    "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
+    "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" "$SRC/video_cfg.c" -pthread
 mkdir "$WORK/d"
 "$WORK/onvif_test" "$WORK/d" "$REPO/tests/fixtures/onvif"
 

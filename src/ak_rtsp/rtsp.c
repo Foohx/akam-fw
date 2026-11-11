@@ -21,6 +21,7 @@
 #include <datatype99.h>
 
 #include "ak_rtsp.h"
+#include "video_cfg.h"
 #include "ak_ioctls.h"
 #include "audio.h"
 #include "rtsp.h"
@@ -63,7 +64,7 @@ static bool g_vclock_ready;
 static int64_t video_capture_time_us(void)
 {
     if (!g_vclock_ready) {
-        rtp_vclock_init(&g_vclock, 1000000.0 / ENC_FPS);
+        rtp_vclock_init(&g_vclock, 1000000.0 / video_fps());
         g_vclock_ready = true;
     }
     return rtp_vclock_stamp(&g_vclock, rtp_mono_us());
@@ -890,7 +891,7 @@ static int send_video_frame(Client *client)
     static uint64_t bitrate_window_start_ms = 0;
     static uint64_t bitrate_window_bytes    = 0;
     static int      bitrate_window_frames   = 0;
-    const uint64_t bitrate_window_target_ms = (uint64_t)(ENC_GOP * 2) * 1000 / ENC_FPS;
+    const uint64_t bitrate_window_target_ms = (uint64_t)(video_gop_frames() * 2) * 1000 / video_fps();
     if (bitrate_window_start_ms == 0) bitrate_window_start_ms = ms_ts;
     bitrate_window_bytes += (uint64_t)req.len;
     bitrate_window_frames++;
@@ -925,7 +926,7 @@ static int send_video_frame(Client *client)
                 send_one_nalu(client, g_params.sps, g_params.sps_len, rtp_ts, false);
                 send_one_nalu(client, g_params.pps, g_params.pps_len, rtp_ts, false);
             }
-        } else if (++client->idr_wait_frames > ENC_GOP * 2) {
+        } else if (++client->idr_wait_frames > video_gop_frames() * 2) {
             printf("[ak_rtsp] no I-frame within %d frames, starting anyway\n",
                    client->idr_wait_frames);
             client->need_idr = false;

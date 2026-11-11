@@ -13,6 +13,7 @@
 #include "night.h"
 #include "night_logic.h"
 #include "imgq.h"
+#include "video_cfg.h"
 
 /* -------------------------------------------------------------------------
  * Auto day/night mode.
@@ -37,8 +38,7 @@
  * AK_ISP_set_frame_rate({15,2284,8,15} day <-> {10,3426,8,10} night) all change together.
  * ------------------------------------------------------------------------- */
 
-#define DAY_FPS            15
-#define DAY_VTS          2284
+/* The day frame rate and VTS come from video_cfg.h (15 / 2284 by default, 10 / 3426 when configured). */
 #define NIGHT_FPS          10
 #define NIGHT_VTS        3426
 
@@ -169,7 +169,7 @@ static void switch_to_night_locked(void)
 static void switch_to_day_locked(void)
 {
     ircut_switch(0);
-    set_frame_rate(DAY_FPS, DAY_VTS);
+    set_frame_rate(video_fps(), video_day_vts());
     /* Restore the day ISP calibration (see switch_to_night()'s comment) —
      * replaces the old isp_set_wb_manual(460,256,504)-only restore. */
     if (isp_pipeline_init() != 0) {

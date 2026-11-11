@@ -85,6 +85,12 @@ Commands:
                      the picture, over SSH. N is -50 to 50 (0 = unchanged); the four numbers are saved on the
                      camera and applied at every start. wb and night are not saved (back to the default at a
                      reboot). reset puts the four numbers back to 0. Several words can be combined. Default: show.
+  video [show | bitrate N | fps N | gop N]
+                     the video encoder settings, over SSH. Default: show. bitrate is the cap in kbit/s (500 to 3000,
+                     default 1536); fps is 10 or 15 (default 15); gop is the key frame interval in seconds (1 to 4,
+                     default 2). Saved on the camera, applied at the next restart of the video service: you are
+                     asked (default No) whether to restart it now (the stream stops for a few seconds).
+                     Resolution and flip/mirror are not available.
   debug [on [MINUTES] | off | status]
                      port 8091 is read-only for the network: 'on' lets the network change settings
                      too (for the PC tuning tool) for MINUTES (default 60, up to 1440) or until
@@ -289,6 +295,7 @@ case $CMD in
     onvif) cmd_onvif ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     audio) cmd_audio ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     picture) cmd_picture ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    video) cmd_video ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     talk) cmd_talk ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     say) cmd_say ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     restore) cmd_restore || rc=$? ;;

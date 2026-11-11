@@ -101,6 +101,9 @@ parameters; its grammar is unchanged from upstream. It has no authentication and
   metric like the others.
 - `SET` (and `SAVE`, `RESET`) from another machine is refused with `ERR read-only mode, see akam_debug.sh`.
 - `SET` from the camera itself (127.0.0.1: SSH helpers such as `./akam led`, `./akam audio`, `./akam picture`) always works.
+- The saved video settings (`video.bitrate_cfg`, `video.fps_cfg`, `video.gop_cfg`, `GET video.cfg_pending`; file
+  `/etc/config/akam/video`) can only be set from the camera itself (`./akam video`) and apply at the next start of
+  `ak_rtsp`. Do not confuse them with the measured `video.bitrate` and `video.fps_actual`.
 - **Debug mode** lets the network write too, for a while: `./akam debug on [MINUTES]` (or `akam_debug.sh on`
   over SSH). It lasts 60 minutes by default (1 to 1440), is kept in RAM only, and is off at every reboot and
   every restart of `ak_rtsp`. `./akam debug off` closes it; `./akam debug status` shows it (`GET ctl.debug`

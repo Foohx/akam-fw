@@ -492,6 +492,29 @@ here except measuring (HW).
 
 ### G11 (P1) Video and audio are not configurable
 
+**Status: items 1 (bitrate) and 3 (frame rate, plus GOP) are implemented on `feature/video-config`, NOT hardware
+tested.** `/etc/config/akam/video` (`bitrate=` 500..3000, `fps=` 10|15, `gop=` 1..4 s), `video_cfg.[ch]` and
+`video_ctl.[ch]`, 8091 `video.bitrate_cfg|fps_cfg|gop_cfg|cfg_pending`, `./akam video`. Applied when `ak_rtsp` starts
+(restart-on-change; the wizard offers `kill the ak_rtsp pid`, the wrapper respawns it); every report (ONVIF Media,
+bitrate window, capture clock) uses the configured values; defaults are byte-identical to before. fps is limited
+to 10 and 15 because those are the only two {fps, VTS} pairs the code proves (15 / 2284 day, 10 / 3426 night);
+12 or 5 would need a new VTS the sensor has never been given here. Items 2 (substream), 4 (flip/mirror: only the
+ioctl number `0x40044979 FLIP_MIRROR` appears in `isp_hook.c`, with no payload and no sensor registers) and 6
+(resolution: ISP crop, VI S_FMT, the encoder DMA pool and `venc_bind_vi` are all sized for 1920x1080) are
+deliberately NOT done. Items 5 and 8 are untouched here. SDP and the H.264 SPS carry no frame rate in this code
+(no `a=framerate`, no VUI timing written), so nothing there changes.
+Needs hardware validation (nothing below has run on a camera):
+1. `bitrate 800`: the encoder accepts `max_kbps_vbrp` 500..3000 without a kernel oops (UART attached for the
+   first try, lowest and highest value); measured `video.bitrate` stays near or under the cap on a busy scene.
+2. `fps 10`: the ISP accepts {10, 3426} as the day setting at boot (no "Division by zero" from the fps cache,
+   cf. `ae.c`), the measured `video.fps_actual` is about 10, the vclock stays locked, and day/night switching
+   still works (night is 10 fps either way); exposure and image brightness at 10 fps by day look right.
+3. `gop 1` and `gop 4`: key frame spacing as expected in `ak_rtsp`'s log; a viewer starts within the GOP.
+4. The swdog does not fire at 10 fps over a 1 h run; ONVIF client (Frigate/ODM) shows the new numbers.
+5. Restart by `kill the ak_rtsp pid` from `./akam video` really comes back under the wrapper, with and without a
+   client connected, and the new values are in `[video] settings:` in the log.
+6. Rollback: remove `/etc/config/akam/video`, restart, and the stream is exactly as before.
+
 Evidence: constants only. `ak_rtsp.h:28-31` `ENC_WIDTH 1920`, `ENC_HEIGHT 1080`, `ENC_FPS 15`, `ENC_GOP 30`;
 `venc.c:233-236` rate control fixed (VBR+ minqp 28, maxqp 43, max 1536 kbps, initqp 99) with the 8091 keys
 `venc.minqp`/`venc.maxqp` explicitly read-only (control.c:269-270, 417). The saved settings are only: picture

@@ -25,6 +25,7 @@
 #include "onvif_imaging.h"
 #include "rtsp_auth.h"
 #include "sha1.h"
+#include "video_cfg.h"
 
 const char *firmware_version(void) { return "btest"; }
 
@@ -316,6 +317,37 @@ static void test_media_golden(void)
     golden("media_GetAudioEncoderConfiguration_none", MEDIA, CFGTOK("GetAudioEncoderConfiguration", "x"), 400);
 }
 
+/* The reported bitrate, frame rate and GOP follow the saved video settings; the defaults give the goldens above. */
+static void test_video_cfg(void)
+{
+    printf("Media: video settings reported from /etc/config/akam/video\n");
+    hresp_t r;
+    char p[400];
+    snprintf(p, sizeof(p), "%s/video", dir);
+    put(p, "bitrate=900\nfps=10\ngop=3\n");
+    video_cfg_reset_for_test();
+    video_cfg_load();
+    CHECK(call("127.0.0.1", MEDIA, 1, CFGTOK("GetVideoEncoderConfiguration", "venccfg"), &r) == 0 &&
+          has(&r, "<tt:FrameRateLimit>10</tt:FrameRateLimit>") && has(&r, "<tt:BitrateLimit>900</tt:BitrateLimit>") &&
+          has(&r, "<tt:GovLength>30</tt:GovLength>"), "GetVideoEncoderConfiguration: configured fps, bitrate, GOP (3 s x 10 fps)");
+    CHECK(call("127.0.0.1", MEDIA, 1, OPT("GetVideoEncoderConfigurations"), &r) == 0 && has(&r, "<tt:BitrateLimit>900</tt:BitrateLimit>"),
+          "GetVideoEncoderConfigurations: configured bitrate");
+    CHECK(call("127.0.0.1", MEDIA, 1, GETPROF, &r) == 0 && has(&r, "<tt:FrameRateLimit>10</tt:FrameRateLimit>") &&
+          has(&r, "<tt:GovLength>30</tt:GovLength>"), "GetProfile carries the configured values");
+    CHECK(call("127.0.0.1", MEDIA, 1, OPT("GetVideoEncoderConfigurationOptions"), &r) == 0 &&
+          has(&r, "<tt:FrameRateRange><tt:Min>10</tt:Min><tt:Max>10</tt:Max></tt:FrameRateRange>") &&
+          has(&r, "<tt:GovLengthRange><tt:Min>30</tt:Min><tt:Max>30</tt:Max></tt:GovLengthRange>"), "Options: configured fps and GOP");
+    CHECK(call("127.0.0.1", MEDIA, 1, OPT("GetVideoSources"), &r) == 0 && has(&r, "<tt:Framerate>10</tt:Framerate>"),
+          "GetVideoSources: configured frame rate");
+    /* an invalid file leaves the defaults */
+    put(p, "bitrate=99999\nfps=7\ngop=0\n");
+    video_cfg_reset_for_test();
+    video_cfg_load();
+    golden("media_GetVideoEncoderConfiguration", MEDIA, CFGTOK("GetVideoEncoderConfiguration", "venccfg"), 200);
+    unlink(p);
+    video_cfg_reset_for_test();
+}
+
 static void test_stream_uri(void)
 {
     printf("GetStreamUri\n");
@@ -493,6 +525,7 @@ int main(int argc, char **argv)
     g_port = http_srv_port();
     test_classes();
     test_media_golden();
+    test_video_cfg();
     test_stream_uri();
     test_imaging();
     onvif_stop();
