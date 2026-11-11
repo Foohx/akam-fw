@@ -93,6 +93,11 @@ Options:
   --manual-telnet    never drive the camera's telnet shell: the wizard prints each command and
                      you paste it in your own telnet window (also automatic after 2 failures)
   --out DIR          where the image is written (default ~/akam-image-<name>-<date>)
+  --builder native|tools
+                     image builder: tools = the bash wizard (Linux, the default there); native = built
+                     in this program from your backup (EXPERIMENTAL, not yet validated on hardware)
+  --i-understand-untested
+                     native builder: build even when the backup is not a validated target
   --comp xz|gzip     override the stock APP compression (not recommended)
   --allow-unknown-stock-comp
                      allow a stock APP compression other than xz/gzip (expert)

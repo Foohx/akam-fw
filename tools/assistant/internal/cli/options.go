@@ -17,8 +17,10 @@ type Options struct {
 	Kit, Version, ExpectSHA256, BackupDir, BackupCopy, IP, Identity, Image string
 	Out, Comp, Device, Pubkey, SSID, Profile, Camera, StateDir             string
 	TrustNewHostKey                                                        string
+	Builder                                                                string // --builder native|tools (the image step)
 	PasswordFile                                                           string
 	AllowUnsigned, AllowUnknownComp, ManualTelnet, Plain, DryRun, NoColor  bool
+	UntestedOK                                                             bool // --i-understand-untested (the native image builder)
 	// TelnetNegotiate (hidden): answer telnet option negotiation (default: stay silent, as validated on hardware).
 	TelnetNegotiate bool
 	Args            []string // command and its words
@@ -57,6 +59,10 @@ func ParseArgs(argv []string) (*Options, error) {
 			o.AllowUnsigned = true
 		case "--allow-unknown-stock-comp":
 			o.AllowUnknownComp = true
+		case "--i-understand-untested":
+			o.UntestedOK = true
+		case "--builder":
+			set(&o.Builder)
 		case "--telnet-negotiate": // hidden: not in the help text
 			o.TelnetNegotiate = true
 		case "--manual-telnet":
@@ -119,6 +125,13 @@ func ParseArgs(argv []string) (*Options, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+	}
+	switch o.Builder {
+	case "", "native", "tools":
+	default:
+		if len(o.Args) == 0 || o.Args[0] != "help" {
+			return nil, usageErr("akam: --builder must be native or tools")
 		}
 	}
 	switch o.Comp {

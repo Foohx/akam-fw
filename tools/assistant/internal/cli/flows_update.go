@@ -260,14 +260,17 @@ func (a *App) installRun(step string) error {
 	return a.runStep(step)
 }
 
-// installImage is the image step. Until the native builder lands (T11.12 to T11.16) the image is built
-// by the bash wizard on Linux, or imported with --image FILE (size exactly the APP partition; the red
-// box of the flash step shows its md5).
+// installImage is the image step. By default the image is built by the bash wizard on Linux, or imported
+// with --image FILE (size exactly the APP partition; the red box of the flash step shows its md5); the
+// native builder (imagecmds.go) is opt-in with --builder native until the hardware gate is recorded.
 func (a *App) installImage() error {
 	if err := a.stepNeed("image"); err != nil {
 		return err
 	}
 	a.stepBanner("image")
+	if a.imageBuilder() == "native" {
+		return a.buildNativeImage()
+	}
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD import --image FILE (exactly 5242880 bytes, md5 shown) as the image of this camera; on Linux the bash wizard builds it from your backup.")
 		_ = a.St.Set("image_path", "<image>")
@@ -277,6 +280,9 @@ func (a *App) installImage() error {
 	}
 	f := a.Opt.Image
 	if f == "" {
+		if a.Opt.Builder == "tools" && runtime.GOOS != "linux" {
+			return a.UI.Fail("the tools builder (the bash wizard) needs Linux or WSL.", fmt.Sprintf("build the image there and pass it with --image FILE, or try the experimental native builder: %s --builder native image", Prog))
+		}
 		if runtime.GOOS == "linux" {
 			return a.UI.Fail("the image is built from your backup by the bash wizard until the native builder lands.",
 				fmt.Sprintf("from a source checkout run: ./akam step image; then choose 'Set up a new camera' again (or pass --image FILE)."))
