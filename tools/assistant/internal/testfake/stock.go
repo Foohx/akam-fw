@@ -61,8 +61,8 @@ type Stock struct {
 	bound    bool // /mnt is bound to /tmp/sd
 	// fault injection (counts, decremented at each use)
 	drop, closeAt, corruptRx, corruptTx, truncateTx int
-	truncateTxAfter                                  int
-	conns                                            []net.Conn
+	truncateTxAfter                                 int
+	conns                                           []net.Conn
 }
 
 // Layout of the camera.
@@ -158,16 +158,32 @@ func (s *Stock) Close() {
 }
 
 // Commands are the raw lines received (the wrapped ones, as typed).
-func (s *Stock) Commands() []string { s.mu.Lock(); defer s.mu.Unlock(); return append([]string(nil), s.cmds...) }
+func (s *Stock) Commands() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.cmds...)
+}
 
 // Events are reboot, poweroff, halt, kill... calls (must stay empty).
-func (s *Stock) Events() []string { s.mu.Lock(); defer s.mu.Unlock(); return append([]string(nil), s.events...) }
+func (s *Stock) Events() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.events...)
+}
 
 // Unknown are commands the fake does not emulate (a test asserts it is empty).
-func (s *Stock) Unknown() []string { s.mu.Lock(); defer s.mu.Unlock(); return append([]string(nil), s.unknown...) }
+func (s *Stock) Unknown() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.unknown...)
+}
 
 // Confirms are the lines read at the flash script's "Type YES to continue" prompt.
-func (s *Stock) Confirms() []string { s.mu.Lock(); defer s.mu.Unlock(); return append([]string(nil), s.confirms...) }
+func (s *Stock) Confirms() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.confirms...)
+}
 
 // Mtd returns the content of /dev/mtdblock<i>.
 func (s *Stock) Mtd(i int) []byte {
@@ -177,11 +193,15 @@ func (s *Stock) Mtd(i int) []byte {
 
 // Fault injection: the next n command lines are ignored, the connection closes at the next one, a
 // received file gets one byte flipped, a served file is corrupted or cut after cutAfter bytes.
-func (s *Stock) Drop(n int)                  { s.mu.Lock(); s.drop = n; s.mu.Unlock() }
-func (s *Stock) CloseAtNext(n int)           { s.mu.Lock(); s.closeAt = n; s.mu.Unlock() }
-func (s *Stock) CorruptRx(n int)             { s.mu.Lock(); s.corruptRx = n; s.mu.Unlock() }
-func (s *Stock) CorruptTx(n int)             { s.mu.Lock(); s.corruptTx = n; s.mu.Unlock() }
-func (s *Stock) TruncateTx(n, after int)     { s.mu.Lock(); s.truncateTx, s.truncateTxAfter = n, after; s.mu.Unlock() }
+func (s *Stock) Drop(n int)        { s.mu.Lock(); s.drop = n; s.mu.Unlock() }
+func (s *Stock) CloseAtNext(n int) { s.mu.Lock(); s.closeAt = n; s.mu.Unlock() }
+func (s *Stock) CorruptRx(n int)   { s.mu.Lock(); s.corruptRx = n; s.mu.Unlock() }
+func (s *Stock) CorruptTx(n int)   { s.mu.Lock(); s.corruptTx = n; s.mu.Unlock() }
+func (s *Stock) TruncateTx(n, after int) {
+	s.mu.Lock()
+	s.truncateTx, s.truncateTxAfter = n, after
+	s.mu.Unlock()
+}
 func (s *Stock) take(p *int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -224,7 +244,9 @@ type sconn struct {
 	r *bufio.Reader
 }
 
-func (c *sconn) write(s string) { _, _ = io.WriteString(c.c, strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")) }
+func (c *sconn) write(s string) {
+	_, _ = io.WriteString(c.c, strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n"))
+}
 
 // readLine reads one typed line, dropping the client's IAC replies.
 func (c *sconn) readLine() (string, error) {

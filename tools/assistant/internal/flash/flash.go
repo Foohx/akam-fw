@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"io"
 	"os"
 	"path/filepath"
@@ -73,7 +74,7 @@ type Plan struct {
 	Image      string // exactly ImageBytes bytes
 	MD5        string // 32 lowercase hex digits: the md5 of Image
 	FlashTool  string // the ARM flash_tool binary
-	ScriptsDir string // holds akam_reflash_ssh.sh and flash_guard.sh
+	ScriptsDir string // "" = the embedded scripts (always, in a release build)
 	Port       int    // normal Dropbear (default 22)
 	SecondPort int    // RAM Dropbear (default 2222)
 	RemoteDir  string // RAM work dir (default DefaultRemoteDir)
@@ -209,9 +210,11 @@ func validate(p *Plan) (*inputs, error) {
 	if t, err := os.Stat(p.FlashTool); err != nil || !t.Mode().IsRegular() {
 		return nil, die("flash tool not found: %s", p.FlashTool)
 	}
-	for _, f := range []string{"akam_reflash_ssh.sh", "flash_guard.sh"} {
-		if _, err := os.Stat(filepath.Join(p.ScriptsDir, f)); err != nil {
-			return nil, die("%s missing", filepath.Join(p.ScriptsDir, f))
+	if p.ScriptsDir != "" { // test builds only; otherwise the scripts embedded in the binary are sent
+		for _, f := range []string{"akam_reflash_ssh.sh", "flash_guard.sh"} {
+			if _, err := os.Stat(filepath.Join(p.ScriptsDir, f)); err != nil {
+				return nil, die("%s missing", filepath.Join(p.ScriptsDir, f))
+			}
 		}
 	}
 	if st.Size() != ImageBytes {
@@ -234,13 +237,21 @@ func validate(p *Plan) (*inputs, error) {
 	if in.tool, err = readLimited(p.FlashTool, maxToolBytes); err != nil {
 		return nil, die("cannot read %s: %v", p.FlashTool, err)
 	}
-	if in.script, err = readLimited(filepath.Join(p.ScriptsDir, "akam_reflash_ssh.sh"), maxScriptBytes); err != nil {
+	if in.script, err = p.script("akam_reflash_ssh.sh"); err != nil {
 		return nil, die("cannot read akam_reflash_ssh.sh: %v", err)
 	}
-	if in.guard, err = readLimited(filepath.Join(p.ScriptsDir, "flash_guard.sh"), maxScriptBytes); err != nil {
+	if in.guard, err = p.script("flash_guard.sh"); err != nil {
 		return nil, die("cannot read flash_guard.sh: %v", err)
 	}
 	return in, nil
+}
+
+// script is a camera-side script: embedded in the binary, or read from ScriptsDir (tests only).
+func (p Plan) script(name string) ([]byte, error) {
+	if p.ScriptsDir == "" {
+		return assets.Script(name)
+	}
+	return readLimited(filepath.Join(p.ScriptsDir, name), maxScriptBytes)
 }
 
 const (
