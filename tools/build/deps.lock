@@ -10,11 +10,20 @@ ZIG_SHA256_linux_x86_64=24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa8841
 ZIG_URL_linux_aarch64=https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz
 ZIG_SHA256_linux_aarch64=f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
 
-# Go toolchain for the native assistant (tools/assistant). Minimum minor version: a host Go at
-# least this recent is used as is; otherwise bootstrap.sh prints where to get it (https://go.dev/dl/)
-# and never installs Go system-wide. Modules are pinned by tools/assistant/go.sum (sumdb-verified).
+# Go toolchain for the native assistant (tools/assistant). GO_VERSION is the EXACT release used for release
+# builds: tools/assistant/build.sh (all, flat, repro) and tools/release/build_assistant.sh refuse any other
+# `go version` unless AKAM_ALLOW_ANY_GO=1 (then the result is not a release). bootstrap.sh only needs
+# Go >= the minor version of GO_VERSION to fetch the modules and never installs Go system-wide.
+# Modules are pinned by tools/assistant/go.sum (sumdb-verified).
+# Per host: GO_URL_<os>_<arch> / GO_SHA256_<os>_<arch> (archives from https://go.dev/dl/, field "sha256" of
+# https://go.dev/dl/?mode=json). The hashes are EMPTY until the maintainer copies them from go.dev (they were
+# not available offline when this was written); nothing downloads Go, so the build does not read them yet.
 GO_VERSION=1.26.0
-GO_NOTE="needs Go >= 1.26 (go.mod says 1.26.0); download at https://go.dev/dl/"
+GO_NOTE="release builds need exactly Go 1.26.0 (go.mod says 1.26.0); download at https://go.dev/dl/"
+GO_URL_linux_x86_64=https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
+GO_SHA256_linux_x86_64=
+GO_URL_linux_aarch64=https://go.dev/dl/go1.26.0.linux-arm64.tar.gz
+GO_SHA256_linux_aarch64=
 
 SMOLRTSP_URL=https://github.com/OpenIPC/smolrtsp.git
 SMOLRTSP_COMMIT=8ae3b5115f7a77c383080b51cb7fdba1046f862f

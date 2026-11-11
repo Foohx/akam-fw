@@ -59,6 +59,46 @@ matching public key must be in `tools/release/allowed_signers` (committed before
 the release, see the comments in that file) and quoted in the README and the
 release notes. Use a dedicated Ed25519 key with a passphrase.
 
+## Assistant release (`akam` binaries, tag `assistant-vX.Y.Z`)
+
+Separate from the kit. Prerequisites: `tools/build/bootstrap.sh` done (Go modules in
+`tools/.toolchain/go/mod`), **exactly** the Go release named by `GO_VERSION` in
+`tools/build/deps.lock` (any other `go version` is refused; `AKAM_ALLOW_ANY_GO=1` overrides
+for a test build, never for a release), clean tree on the commit to release. No network is used.
+
+```sh
+AKAM_VERSION=1.0.0 tools/release/build_assistant.sh     # output: dist/assistant/ (git-ignored)
+tools/release/sign_kit.sh ~/.ssh/akam_release dist/assistant   # SHA256SUMS.sig (same key and scheme as the kit)
+```
+
+It builds the six targets through `tools/assistant/build.sh flat` (the single place of the flags:
+`CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w -X main.version=..."`, `-tags nethttpomithttp2`,
+never `-tags akamtest`), checks the binaries (no checkout or home path inside, flags recorded by
+`go version -m`), then writes, with names without version:
+`akam-<os>-<arch>[.exe]`, `akam-<os>-<arch>.tar.gz` (Linux, macOS) or `.zip` (Windows) holding
+`akam[.exe]` + `LICENSE` + `THIRD_PARTY_NOTICES.md` (exec bit kept), `LICENSE`,
+`THIRD_PARTY_NOTICES.md` and `SHA256SUMS`. Archives come from `mkarchive/` (standard library only):
+fixed mtime from `SOURCE_DATE_EPOCH` (default: commit date), owner 0/0, no user or group name, sorted entries.
+`AKAM_SIGN_WINDOWS` / `AKAM_SIGN_MACOS` are reserved hooks: nothing is signed yet (see spec 11, 8.3).
+
+Reproducibility: run it twice (second time with `--out` elsewhere) and compare the two `SHA256SUMS`
+(`tests/assistant_test.sh` does this for two targets; `tools/assistant/build.sh repro` compares two builds of
+each of the six targets; `AKAM_REPRO_FRESH=1` gives the second build an empty build cache). Before the first
+public release also compare a run on a second machine. Archives are reproducible for a given Go release
+(`compress/flate` output may change between Go releases, hence the exact pin).
+
+Size budget (`tools/assistant/build.sh sizes`): 12 MiB hard, 11 MiB soft per target; archives 5 MiB.
+`tools/assistant/build.sh sizes --by-package [os/arch]` shows the biggest Go packages of an unstripped build.
+Measured with `go1.27.3-X:nodwarf5` (not the pinned Go; re-measure with the pinned one): about 8.9 to 9.8 MiB per
+target. The figure of 14.6 MiB seen once for windows/amd64 comes from a build without `-trimpath -ldflags "-s -w"`
+(plain `go build`: 15.65 MB = 14.93 MiB); with the project flags it is 10.1 MiB (9.76 MiB with `nethttpomithttp2`).
+Do not use UPX.
+
+Unlike the kit, the binaries are all published, including the platforms that no hardware test has covered yet:
+the release notes label each one `tested` or `untested` (spec 11, 7.3).
+
+Files: `build_assistant.sh` (this pipeline), `mkarchive/main.go` (deterministic tar.gz and zip).
+
 ## Supported hardware (every release)
 
 `supported_hardware.txt` says exactly which cameras and firmware the kit is validated

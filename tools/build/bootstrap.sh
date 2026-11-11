@@ -89,7 +89,7 @@ if [ "$plan" = 1 ]; then
         echo "  $name:  ${!tag_v} (cache $(cache_state "$name-${!tag_v}.tar.gz" "${!sha_v}"))"
     done
     echo "  dropbear:   $DROPBEAR_VERSION (cache $(cache_state "$(basename "$DROPBEAR_URL")" "$DROPBEAR_SHA256"))"
-    echo "  go modules: tools/assistant (GO_VERSION >= $GO_VERSION; host go: $(command -v go >/dev/null 2>&1 && GOTOOLCHAIN=local go env GOVERSION || echo none))"
+    echo "  go modules: tools/assistant (modules need Go >= ${GO_VERSION%.*}; release builds need exactly Go $GO_VERSION; host go: $(command -v go >/dev/null 2>&1 && GOTOOLCHAIN=local go env GOVERSION || echo none))"
     if [ "$arch" = x86_64 ]; then
         bstate="to fetch"
         [ -x "$bb_dir/busybox" ] && bstate=installed
