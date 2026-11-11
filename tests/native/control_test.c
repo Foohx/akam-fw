@@ -382,6 +382,27 @@ static void test_server(void)
         ask(c, "SET isp.contrast 0", out, sizeof(out));
         CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     }
+    /* control_apply_setting is the entry point of the ONVIF Imaging service: same code as SET, persist is explicit */
+    {
+        char msg[128], val[16];
+        isp_tune_t t;
+        CHECK(control_apply_setting("isp.contrast", "9", 0, msg, sizeof(msg)) == 0 && !strcmp(msg, "OK isp.contrast=9"));
+        CHECK(access(ISP_TUNE_FILE, F_OK) != 0);                      /* persist=0: RAM only */
+        CHECK(control_get_setting("isp.contrast", val, sizeof(val)) == 0 && !strcmp(val, "9"));
+        ask(c, "GET isp.contrast", out, sizeof(out));
+        CHECK_STR(out, "isp.contrast=9\n");                           /* the 8091 GET sees it */
+        CHECK(control_persist_picture() == 0 && isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.contrast == 9);
+        CHECK(control_apply_setting("isp.contrast", "99", 0, msg, sizeof(msg)) == -1 && !strncmp(msg, "ERR", 3));
+        CHECK(control_apply_setting("isp.brightness", "4", 1, msg, sizeof(msg)) == 0);
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.brightness == 4 && t.contrast == 9);   /* persist=1 writes */
+        CHECK(control_apply_setting("night.mode", "day", 0, msg, sizeof(msg)) == 0 && g_night_persist == 0);
+        CHECK(control_get_setting("night.mode", val, sizeof(val)) == 0 && !strcmp(val, "day"));
+        CHECK(control_apply_setting("night.mode", "auto", 1, msg, sizeof(msg)) == 0 && g_night_persist == 1);
+        CHECK(control_get_setting("ae.speed", val, sizeof(val)) == -1);
+        CHECK(control_apply_setting("isp.contrast", "0", 1, msg, sizeof(msg)) == 0);
+        CHECK(control_apply_setting("isp.brightness", "0", 1, msg, sizeof(msg)) == 0);
+        CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    }
     /* night.mode / img.wb are saved by their modules: a loopback SET allows it, and a failure is reported */
     ask(c, "SET night.mode day", out, sizeof(out));
     CHECK_STR(out, "OK night.mode=day\n");

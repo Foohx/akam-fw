@@ -84,7 +84,7 @@ check "kit holds only our top-level directories" bash -c "
 check "no image, squashfs or dump in the kit" bash -c "! find '$K' -iname '*.squashfs' -o -iname '*.img' -o -iname 'app_*' | grep -q ."
 check "wrapper, akam_*.sh, hwcheck and flash scripts present" bash -c "
     cd '$K' && test -x overlay/sbin/ak_rtsp_wrapper.sh && test -x overlay/sbin/akam_ssh.sh &&
-    test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x overlay/sbin/akam_hostname.sh && test -x overlay/sbin/akam_debug.sh && test -x overlay/sbin/akam_net.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
+    test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x overlay/sbin/akam_hostname.sh && test -x overlay/sbin/akam_debug.sh && test -x overlay/sbin/akam_net.sh && test -x overlay/sbin/akam_onvif.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
     test -x scripts/flash/flash_guard.sh && test -x patches/patch_service_sh.sh"
 
 echo "== licences cover THIRD_PARTY_NOTICES.md"

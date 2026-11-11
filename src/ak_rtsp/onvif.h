@@ -83,6 +83,8 @@ void onvif_base_url(const http_req_t *req, char *out, size_t cap);
 /* ---- identity ---- */
 /* The interface used for the device identity: wlan0, then eth0 (tests may force one; NULL = automatic). */
 extern const char *onvif_ifname;
+/* Name of the interface actually used (onvif_ifname, else wlan0, else eth0). */
+const char *onvif_if_name(void);
 /* MAC of that interface as "aa:bb:cc:dd:ee:ff"; 0, or -1 (out = "00:00:00:00:00:00"). */
 int onvif_mac(char out[18]);
 /* Interface IPv4 address text and prefix length (netmask), MTU; 0 or -1. */

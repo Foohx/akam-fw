@@ -477,16 +477,58 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
  * the unlock so a stuck client cannot hold it. */
 static pthread_mutex_t g_set_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* The one entry point for every SET, whatever the transport: the 8091 text protocol (do_set) and the ONVIF
+ * Imaging service (onvif_imaging.c). Same lock, same setters, same persistence rules: `persist` is true for a
+ * local (loopback) SET, which writes flash (isp_tune_save, night_set_persist, imgq_set_persist); false keeps the
+ * change in RAM. msg receives the one-line answer ("OK key=value" or "ERR ..."). Returns 0 for an OK answer,
+ * else -1. The answer is written under the lock; callers send it after the call returns. */
+int control_apply_setting(const char *key, const char *value, int persist, char *msg, size_t cap)
+{
+    msg[0] = '\0';
+    pthread_mutex_lock(&g_set_lock);
+    g_persist_isp = persist;
+    night_set_persist(persist);
+    imgq_set_persist(persist);
+    do_set_locked(msg, cap, key, value);
+    pthread_mutex_unlock(&g_set_lock);
+    return strncmp(msg, "OK", 2) == 0 ? 0 : -1;
+}
+
+/* Current value (text) of the picture keys isp.brightness / contrast / saturation / sharpness and night.mode
+ * (auto|day|night). 0, or -1 for another key. */
+int control_get_setting(const char *key, char *out, size_t cap)
+{
+    int v, rc = 0;
+    pthread_mutex_lock(&g_set_lock);
+    if      (!strcmp(key, "isp.brightness")) v = g_isp_brightness;
+    else if (!strcmp(key, "isp.contrast"))   v = g_isp_contrast;
+    else if (!strcmp(key, "isp.saturation")) v = g_isp_saturation;
+    else if (!strcmp(key, "isp.sharpness"))  v = g_isp_sharpness;
+    else if (!strcmp(key, "night.mode")) {
+        night_tuning_t n; night_get_tuning(&n);
+        snprintf(out, cap, "%s", night_mode_name(n.override));
+        pthread_mutex_unlock(&g_set_lock);
+        return 0;
+    } else { rc = -1; v = 0; }
+    pthread_mutex_unlock(&g_set_lock);
+    if (rc == 0) snprintf(out, cap, "%d", v);
+    return rc;
+}
+
+/* Write the four picture values to flash now (what a loopback SET does after each change). 0, or -1 (errno). */
+int control_persist_picture(void)
+{
+    pthread_mutex_lock(&g_set_lock);
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
+    int rc = isp_tune_save(ISP_TUNE_FILE, &t);
+    pthread_mutex_unlock(&g_set_lock);
+    return rc < 0 ? -1 : 0;
+}
+
 static void do_set(cli_t *c, const char *param, const char *value)
 {
     char resp[256];
-    resp[0] = '\0';
-    pthread_mutex_lock(&g_set_lock);
-    g_persist_isp = c->loopback;
-    night_set_persist(c->loopback);
-    imgq_set_persist(c->loopback);
-    do_set_locked(resp, sizeof(resp), param, value);
-    pthread_mutex_unlock(&g_set_lock);
+    (void)control_apply_setting(param, value, c->loopback, resp, sizeof(resp));
     reply(c, "%s", resp);
 }
 

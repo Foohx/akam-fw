@@ -954,12 +954,38 @@ cam_hwcheck() {
     return "$rc"
 }
 
-# cam_ports_check EXPECT_TELNET: open = 22 554 8091 only (24 allowed while the card is in).
+# ONVIF flag on the camera (written by akam_onvif.sh): "enabled=1|0" and "port=N". Absent = off.
+ONVIF_CMD=/usr/sbin/akam_onvif.sh
+ONVIF_FLAG=/etc/config/akam/onvif
+
+# cam_onvif_flag: read the flag over SSH (CAM_SSH must be set). Sets ONVIF_ON (0|1) and ONVIF_PORT.
+cam_onvif_flag() {
+    local out l p
+    ONVIF_ON=0
+    ONVIF_PORT=80
+    out=$("${CAM_SSH[@]}" "cat $ONVIF_FLAG 2>/dev/null" 2>/dev/null) || out=""
+    while IFS= read -r l; do
+        l=${l%$'\r'}
+        case $l in
+            enabled=1) ONVIF_ON=1 ;;
+            port=*)
+                p=${l#port=}
+                case $p in '' | *[!0-9]*) ;; *) if [ "${#p}" -le 5 ] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; then ONVIF_PORT=$p; fi ;; esac
+                ;;
+        esac
+    done <<<"$out"
+}
+
+# cam_ports_check EXPECT_TELNET: open = 22 554 8091 only (24 allowed while the card is in). When ONVIF is
+# switched on (flag read over SSH) its HTTP port (80 by default) must be open too; otherwise it must be
+# closed. UDP 3702 (WS-Discovery) cannot be probed from here: akam_hwcheck.sh checks it on the camera.
 cam_ports_check() {
-    local p bad=0 ftp tel23
+    local p bad=0 ftp tel23 http
     ftp=${AKAM_PORT_FTP:-21}
     tel23=${AKAM_PORT_TELNET23:-23}
-    net_probe "$CAM_IP" "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)" "$(cam_port telnet)" "$ftp" "$tel23"
+    cam_onvif_flag
+    if [ "$ONVIF_ON" = 1 ]; then http=${AKAM_PORT_HTTP:-$ONVIF_PORT}; else http=${AKAM_PORT_HTTP:-80}; fi
+    net_probe "$CAM_IP" "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)" "$(cam_port telnet)" "$ftp" "$tel23" "$http"
     ui_say "  Open ports: ${PROBE_OPEN:-none}"
     for p in "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)"; do
         case " $PROBE_OPEN " in *" $p "*) ;; *) ui_err "port $p should be open and is not."; bad=1 ;; esac
@@ -971,6 +997,15 @@ cam_ports_check() {
                 ;;
         esac
     done
+    case " $PROBE_OPEN " in
+        *" $http "*)
+            if [ "$ONVIF_ON" = 1 ]; then ui_say "  ONVIF is on: port $http is open, as expected (UDP 3702 is checked on the camera)."
+            else ui_err "port $http should be closed (ONVIF is off) and is open."; bad=1; fi
+            ;;
+        *)
+            if [ "$ONVIF_ON" = 1 ]; then ui_err "ONVIF is on but port $http is not open: ak_rtsp may not have started it (./akam onvif status)."; bad=1; fi
+            ;;
+    esac
     return "$bad"
 }
 
@@ -988,7 +1023,7 @@ cmd_verify() {
     step_banner verify
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD wait for the camera, check SSH with your key, copy and run akam_hwcheck.sh (expecting no FAIL),"
-        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in), make sure the camera has a saved"
+        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in; 80 only if ONVIF is on), make sure the camera has a saved"
         ui_say "  Wi-Fi network (preflight_check.sh --ensure-wifi on the camera; it is created from the card's wifi.conf when missing,"
         ui_say "  and you are never asked to remove the card before that is done), then ask you to"
         ui_say "  unplug the power, take the card out and plug the power back in BY HAND, and repeat the checks:"
@@ -997,6 +1032,7 @@ cmd_verify() {
         verify_hostname
         rtsp_auth_offer
         wipe_offer
+        onvif_offer
         return 0
     fi
     cam_need_ip || return 1
@@ -1027,6 +1063,7 @@ cmd_verify() {
     verify_hostname
     rtsp_auth_offer
     wipe_offer
+    onvif_offer
 }
 
 # ------------------------------------------------------------------ host name
@@ -1608,6 +1645,113 @@ cmd_debug() {
         on) ui_warn "anyone on your network can now change the camera settings through port 8091 until it is switched off: ./akam debug off." ;;
         off) ui_good "  Port 8091 is read-only for the network again." ;;
     esac
+    return 0
+}
+
+# ------------------------------------------------------------------ onvif
+# ONVIF (Profile S: discovery, device, media) lets NVRs and apps such as ONVIF Device Manager find the camera and
+# pull its stream (specs/07-spec-standard-protocols.md section 3). It is OFF by default: switching it on opens
+# TCP 80 (or the chosen port) and UDP 3702 on your network, and it needs the stream password. Done over SSH with
+# akam_onvif.sh, which writes /etc/config/akam/onvif and asks ak_rtsp to reload it.
+#   ./akam onvif status            on or off, the port, what the camera reports (read-only)
+#   ./akam onvif enable [PORT]     turn it on (asks first; default port 80)
+#   ./akam onvif disable           turn it off
+# onvif_remote ACTION [PORT]: run the camera command, print its words, return its status.
+onvif_remote() {
+    local remote="$ONVIF_CMD $*" out rc l
+    log_line "CMD ssh root@$CAM_IP $remote"
+    out=$("${CAM_SSH[@]}" "$remote" 2>&1) && rc=0 || rc=$?
+    [ -z "$out" ] || printf '%s\n' "$out" | while IFS= read -r l; do ui_say "  $l"; done
+    if [ "$rc" -ne 0 ]; then
+        case $out in
+            *"not found"* | *"No such file"*) ui_fail "this camera does not have $ONVIF_CMD." "it runs an older Akam image: ./akam update (ONVIF arrives in the same release as this command)." ;;
+            *) ui_fail "the camera did not run $ONVIF_CMD $*." "read the lines above." ;;
+        esac
+    fi
+    return "$rc"
+}
+
+cmd_onvif() {
+    local action=${1:-status} port=""
+    case $action in
+        enable)
+            [ $# -le 2 ] || { echo "akam: onvif enable takes at most one PORT (see ./akam help)" >&2; return 2; }
+            if [ $# -eq 2 ]; then
+                port=$2
+                case $port in '' | *[!0-9]*) echo "akam: onvif enable: PORT must be a whole number from 1 to 65535 (see ./akam help)" >&2; return 2 ;; esac
+                if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+                    echo "akam: onvif enable: PORT must be a whole number from 1 to 65535 (see ./akam help)" >&2
+                    return 2
+                fi
+            fi
+            ;;
+        disable | status) [ $# -le 1 ] || { echo "akam: onvif $action takes no argument (see ./akam help)" >&2; return 2; } ;;
+        *) echo "akam: onvif needs enable [PORT], disable or status (see ./akam help)" >&2; return 2 ;;
+    esac
+    step_banner_free "ONVIF: $action"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        [ "$action" != enable ] || ui_say "  WOULD ask: Make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager)? [y/N]"
+        ui_say "  WOULD run over SSH on the camera: $ONVIF_CMD $action${port:+ $port}"
+        return 0
+    fi
+    rtsp_connect || return 1
+    if [ "$action" = enable ]; then
+        ui_require_tty "turning ONVIF on" || return 1
+        ui_say "  This opens port ${port:-80} (TCP) and UDP 3702 on your network, and needs the stream password."
+        ui_ask_yn "  Make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager)?" || { ui_say "  Left as it was (ONVIF off)."; return 0; }
+    fi
+    onvif_remote "$action${port:+ $port}" || return 1
+    case $action in
+        enable) ui_good "  ONVIF is on. In your app, add the camera by its address (port ${port:-80} unless you chose another), with your stream user and password." ;;
+        disable) ui_good "  ONVIF is off: the ONVIF ports are closed again." ;;
+    esac
+    return 0
+}
+
+# onvif_offer: the question at the end of verify. Never fatal, default No, no terminal = No.
+onvif_offer() {
+    ui_blank
+    ui_say "  Optional: make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager)."
+    ui_say "  Off by default. Turning it on opens port 80 (TCP) and UDP 3702 on your network and needs the stream password."
+    ui_say "  You can change your mind at any time: ./akam onvif enable | disable | status"
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD ask: Make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager)? [y/N] (default: No)"
+        ui_say "  WOULD, on yes and without a stream password, offer to run ./akam rtsp-auth set first"
+        ui_say "  WOULD run over SSH on the camera: $ONVIF_CMD enable"
+        return 0
+    fi
+    if ! host_is_tty; then
+        ui_say "  No terminal: ONVIF stays off. Run ./akam onvif enable later."
+        return 0
+    fi
+    cam_ssh_setup
+    cam_onvif_flag
+    if [ "$ONVIF_ON" = 1 ]; then
+        ui_say "  Already on (port $ONVIF_PORT). Turn it off with ./akam onvif disable."
+        return 0
+    fi
+    if ! ui_ask_yn "  Make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager)?"; then
+        ui_say "  ONVIF left off. Run ./akam onvif enable whenever you want it."
+        return 0
+    fi
+    rtsp_status
+    case $RTSP_STATE:$RTSP_TEXT in
+        enabled:*"not ONVIF-ready"* | disabled:* | invalid:* | unknown:*)
+            ui_say "  ONVIF needs the stream password (the camera refuses to turn it on without one)."
+            if ui_ask_yn "  Set the stream password now?"; then
+                rtsp_auth_set || { ui_warn "no password was set: ONVIF stays off. Run ./akam rtsp-auth set, then ./akam onvif enable."; return 0; }
+            else
+                ui_say "  ONVIF left off. Run ./akam rtsp-auth set, then ./akam onvif enable."
+                return 0
+            fi
+            ;;
+    esac
+    if onvif_remote enable; then
+        ui_good "  ONVIF is on. In your app, add the camera by its address (port 80), with your stream user and password."
+    else
+        ui_warn "ONVIF was not turned on (the verification above still stands). Run ./akam onvif enable later."
+    fi
     return 0
 }
 

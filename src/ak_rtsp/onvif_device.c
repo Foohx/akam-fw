@@ -17,6 +17,7 @@
 #include "cred.h"
 #include "onvif.h"
 #include "onvif_device.h"
+#include "onvif_imaging.h"
 #include "version.h"
 
 const char *onvif_hostname_path = ONVIF_HOSTNAME_FILE;
@@ -267,7 +268,7 @@ static void op_set_time(onvif_call_t *c)
     int h, mi, s, y, mo, d;
     if (soap_find(c->op.inner, "UTCDateTime", &ut) != SOAP_OK || arg_int(ut.inner, "Hour", &h) ||
         arg_int(ut.inner, "Minute", &mi) || arg_int(ut.inner, "Second", &s) || arg_int(ut.inner, "Year", &y) ||
-        arg_int(ut.inner, "Month", &mo) || arg_int(ut.inner, "Day", &d) || y < 1970 || y > 2037 || mo < 1 || mo > 12 ||
+        arg_int(ut.inner, "Month", &mo) || arg_int(ut.inner, "Day", &d) || mo < 1 || mo > 12 ||
         d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 60) {
         onvif_fault(c, 0, "ter:InvalidArgs", "ter:InvalidDateTime", "Invalid UTCDateTime");
         return;
@@ -276,6 +277,11 @@ static void op_set_time(onvif_call_t *c)
     int leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
     if (d > dm[mo - 1] + (mo == 2 && leap)) {
         onvif_fault(c, 0, "ter:InvalidArgs", "ter:InvalidDateTime", "Invalid UTCDateTime");
+        return;
+    }
+    /* The WS-Security Created window is checked against this clock: a clock set far back would reopen it. */
+    if (y < 2024 || y > 2037) {
+        onvif_fault(c, 0, "ter:InvalidArgs", "ter:InvalidArgVal", "Year must be 2024 to 2037");
         return;
     }
     int64_t t = days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + s;
@@ -324,10 +330,11 @@ static void op_network_interfaces(onvif_call_t *c)
     snprintf(pfx, sizeof(pfx), "%d", p);
     snprintf(mtu, sizeof(mtu), "%d", m);
     soap_tpl_t *t = onvif_reply(c, ENV_OPEN
-        "<tds:GetNetworkInterfacesResponse><tds:NetworkInterfaces token=\"wlan0\"><tt:Enabled>true</tt:Enabled>"
-        "<tt:Info><tt:Name>wlan0</tt:Name><tt:HwAddress>{{mac}}</tt:HwAddress><tt:MTU>{{mtu}}</tt:MTU></tt:Info>"
+        "<tds:GetNetworkInterfacesResponse><tds:NetworkInterfaces token=\"{{ifn}}\"><tt:Enabled>true</tt:Enabled>"
+        "<tt:Info><tt:Name>{{ifn}}</tt:Name><tt:HwAddress>{{mac}}</tt:HwAddress><tt:MTU>{{mtu}}</tt:MTU></tt:Info>"
         "<tt:IPv4><tt:Enabled>true</tt:Enabled><tt:Config>{{addr}}<tt:DHCP>true</tt:DHCP></tt:Config></tt:IPv4>"
         "</tds:NetworkInterfaces></tds:GetNetworkInterfacesResponse>" ENV_CLOSE);
+    soap_tpl_set(t, "ifn", onvif_if_name());
     soap_tpl_set(t, "mac", mac);
     soap_tpl_set(t, "mtu", mtu);
     if (have_ip) {
@@ -455,6 +462,7 @@ static void op_reboot(onvif_call_t *c)
     onvif_reply(c, ENV_OPEN
         "<tds:SystemRebootResponse><tds:Message>Rebooting in 1 second</tds:Message></tds:SystemRebootResponse>" ENV_CLOSE);
     onvif_send(c);
+    onvif_imaging_flush_pending();   /* a debounced picture write must not be lost to the reboot */
     onvif_reboot_fn();
 }
 

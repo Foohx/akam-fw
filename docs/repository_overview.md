@@ -11,7 +11,7 @@ A map of the repository for people who want to read or change the code. To insta
 | `ak_rtsp` | RTSP/RTP H.264 + audio server and the 8091 control port (read-only from the network, writes from the camera itself or in debug mode) | `src/ak_rtsp/` |
 | Native Linux build | Pinned Zig 0.14.1 and pinned SmolRTSP; `make` and `bash` only | `tools/build/` |
 | Dropbear 2026.94 | Static multi-call binary, ed25519 public-key login only | `tools/dropbear/` |
-| Camera-side scripts | SSH start, Telnet/FTP lockdown, hostname, stream password, debug mode of 8091 (`akam_debug.sh`) | `tools/firmware_patch_templates/` |
+| Camera-side scripts | SSH start, Telnet/FTP lockdown, hostname, stream password, debug mode of 8091 (`akam_debug.sh`), ONVIF on/off (`akam_onvif.sh`) | `tools/firmware_patch_templates/` |
 | Image builder | Patches **your own** APP dump, repacks, checks, pads to 5 242 880 bytes | `src/ak_rtsp/build_firmware.sh`, `tools/image/` |
 | Release kit | Prebuilt Akam binaries and scripts, signed ([kit](akam_v1_kit.md)) | `tools/release/` |
 | SD card tool | Prepares, verifies and wipes the microSD cards (Linux) | `tools/sd/sd_card.sh` |

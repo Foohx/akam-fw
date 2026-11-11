@@ -232,7 +232,7 @@ int venc_create_encoder(void)
     req.enc.enc_level        = 40;   /* H.264 Level 4.0 */
     req.enc.qp_or_kbps       = 28;   /* VBR+: minqp (stock isp_hook_n.log capture) */
     req.enc.qp2              = 43;   /* VBR+: maxqp */
-    req.enc.max_kbps_vbrp    = 1536; /* VBR+: max_kbps */
+    req.enc.max_kbps_vbrp    = ENC_KBPS; /* VBR+: max_kbps */
     req.enc.initqp_vbrp      = 99;   /* VBR+: initqp — the "99" belongs here, not qp_or_kbps */
     req.smart.smart_mode     = 0;
     req.smart.smart_goplen   = 100;

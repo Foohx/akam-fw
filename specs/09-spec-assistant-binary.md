@@ -344,3 +344,11 @@ Not part of P1-P4. Decided after P3 plus one release cycle. `tools/sd`, `tools/f
 5. **Toolkit payload.** Keep downloading `tasarren/lsc-tuya-toolkit` at the pinned commit, or embed? Recommendation: keep downloading (pin + tree hash); embed only after checking its licence.
 6. **Windows SD.** Recommendation: files-only in the first Windows release (user formats FAT32 with the OS), in-binary raw formatting later.
 7. **Binary vs script name in a source checkout.** Recommendation: as in 1.3 (release asset `akam`, build output `tools/assistant/bin/akam`, `AKAM_USE_BIN=1` bridge, launcher swap after P3).
+
+### 10.1 Decisions (2026-11-11)
+
+The user delegated these choices to the coordinator. Every recommendation of section 10 is adopted as written:
+the binary and the kit get separate release tags; if the squashfs spike fails, static squashfs tools ship in
+the kit; host key types follow what `akam_ssh.sh` generates; the first macOS/Windows binaries are unsigned
+(documented); the toolkit stays a pinned download, not embedded; Windows starts with files-only SD
+preparation; naming as in section 1.3. Work starts with P1.

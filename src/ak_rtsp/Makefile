@@ -67,6 +67,8 @@ SRCS    = main.c \
           soap.c \
           onvif.c \
           onvif_device.c \
+          onvif_media.c \
+          onvif_imaging.c \
           wsd.c \
           ircut.c \
           leds.c \
