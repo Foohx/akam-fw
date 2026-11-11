@@ -22,9 +22,12 @@ the verified kit.
 
 ## Build
 
-Needs Go 1.26 or newer (`GO_VERSION` in `tools/build/deps.lock`; a host Go at least that minor is used as is, nothing
-is installed system-wide). The modules are not stored in git: run `bash tools/build/bootstrap.sh` once (it does
-`go mod download`, checked against `go.sum`); `build.sh` and the tests then work offline. Nothing is written
+Release builds use the official Go of `GO_VERSION` in `tools/build/deps.lock` (1.27.4; `go.mod` keeps `go 1.26.0`
+as the language minimum). `bash tools/build/bootstrap.sh` downloads that archive (sha256-checked) into
+`tools/.toolchain/go-<version>-<os>-<arch>/` (project-local, never system-wide); `build.sh` and the tests prefer it,
+else use the `go` of PATH (dev and test actions then only warn; `all`, `flat`, `repro` and the release script refuse it
+unless `AKAM_ALLOW_ANY_GO=1`). The modules are not stored in git: bootstrap also runs `go mod download` (checked against
+`go.sum`); `build.sh` and the tests then work offline. Nothing is written
 outside the repository: the module and build caches live in `tools/.toolchain/go/` (git-ignored).
 
 ```bash
@@ -229,7 +232,6 @@ internal/testfake/        fake camera for the tests
 * P2: the `update`/`restore` flow was tested against an emulation of the camera scripts, not the scripts themselves
   (they have their own tests in `tests/reflash_ssh_test.sh`); `get-kit` on a
   folder (`--kit DIR`) is accepted only as an unsigned kit.
-* The Go toolchain is not pinned in `tools/build/deps.lock` yet.
 * P3: not seen on a real camera or a real card. Real hardware is needed for: the telnet negotiation answers (bash
   stayed silent), the BusyBox prompt and echo details of the real shell, `nc` timing, the card booting the camera
   into telnet 24 (and the camera reading a card written by this FAT32 writer), `sudo`/`pkexec` elevation, a real

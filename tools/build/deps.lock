@@ -10,11 +10,27 @@ ZIG_SHA256_linux_x86_64=24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa8841
 ZIG_URL_linux_aarch64=https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz
 ZIG_SHA256_linux_aarch64=f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
 
-# Go toolchain for the native assistant (tools/assistant). Minimum minor version: a host Go at
-# least this recent is used as is; otherwise bootstrap.sh prints where to get it (https://go.dev/dl/)
-# and never installs Go system-wide. Modules are pinned by tools/assistant/go.sum (sumdb-verified).
-GO_VERSION=1.26.0
-GO_NOTE="needs Go >= 1.26 (go.mod says 1.26.0); download at https://go.dev/dl/"
+# Go toolchain for the native assistant (tools/assistant): the OFFICIAL release from https://go.dev/dl/.
+# GO_VERSION is the EXACT release used for release builds: tools/assistant/build.sh (all, flat, repro) and
+# tools/release/build_assistant.sh refuse any other `go version` unless AKAM_ALLOW_ANY_GO=1 (then the result
+# is not a release). bootstrap.sh downloads the archive of the host (GO_URL_<os>_<arch>, sha256-checked) into
+# tools/.toolchain/go-<version>-<os>-<arch>/ (project-local: never system-wide, never ~/go); build.sh and
+# the tests prefer it over the go of PATH. go.mod keeps `go 1.26.0` as the language minimum.
+# Modules are pinned by tools/assistant/go.sum (sumdb-verified). Hashes: field "sha256" of https://go.dev/dl/?mode=json.
+GO_VERSION=1.27.4
+GO_NOTE="release builds need exactly Go 1.27.4 (go.mod says 1.26.0); bootstrap.sh installs it in tools/.toolchain/"
+GO_URL_linux_amd64=https://go.dev/dl/go1.27.4.linux-amd64.tar.gz
+GO_SHA256_linux_amd64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
+GO_URL_linux_arm64=https://go.dev/dl/go1.27.4.linux-arm64.tar.gz
+GO_SHA256_linux_arm64=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92
+GO_URL_darwin_amd64=https://go.dev/dl/go1.27.4.darwin-amd64.tar.gz
+GO_SHA256_darwin_amd64=2b799377704ef12db39bd254995d5c348c9cc8d86562ca817724390e56c38f43
+GO_URL_darwin_arm64=https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz
+GO_SHA256_darwin_arm64=91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4
+GO_URL_windows_amd64=https://go.dev/dl/go1.27.4.windows-amd64.zip
+GO_SHA256_windows_amd64=178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e
+GO_URL_windows_arm64=https://go.dev/dl/go1.27.4.windows-arm64.zip
+GO_SHA256_windows_arm64=9e7a72565792b8ab370b37ac9ac109799237abacb39ff2f541c438b963c0cc64
 
 SMOLRTSP_URL=https://github.com/OpenIPC/smolrtsp.git
 SMOLRTSP_COMMIT=8ae3b5115f7a77c383080b51cb7fdba1046f862f
