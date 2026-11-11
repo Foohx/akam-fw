@@ -352,3 +352,33 @@ the binary and the kit get separate release tags; if the squashfs spike fails, s
 the kit; host key types follow what `akam_ssh.sh` generates; the first macOS/Windows binaries are unsigned
 (documented); the toolkit stays a pinned download, not embedded; Windows starts with files-only SD
 preparation; naming as in section 1.3. Work starts with P1.
+
+### 10.2 P2 spike result (2026-11-11): squashfs writer, decision gate of 3.9
+
+Question: can a pure-Go writer produce an APP image that equals what `build_firmware.sh` builds with
+`mksquashfs` and that the camera kernel mounts?
+
+Reference layout (host `mksquashfs 4.7.5`, options of `build_firmware.sh:603`: `-comp xz -b 131072 -all-root
+-noappend -no-xattrs -mkfs-time/-all-time EPOCH`, no BCJ), measured on `tests/fixtures/app_fake` with
+`unsquashfs -s -lls`: squashfs 4.0, xz, block size 131072, inodes, ids, fragments and data compressed,
+fragments in use, tail ends not packed into fragments, duplicates removed, **exportable via NFS (export table
+present)**, root/root, all times equal. A Go writer has to reproduce all of this (directory index and sort
+order, fragment table, id table, export table, xz block framing) for the camera's kernel to accept the image,
+and nothing proves a "different but valid" layout boots: only the stock-equal layout is proven.
+
+Evidence about candidates. No module could be downloaded in this run (fetching a new module was refused), so no
+library was built or run: this is a documented limit, not a measurement. `CalebQ42/squashfs` v1.4.1 (listed by
+the module proxy, MIT) is a reader with extraction and no writer for this layout was found in its description;
+`diskfs/go-diskfs` handles squashfs read-only; no other MIT/BSD pure-Go writer is known. An own writer of the
+narrow subset is the ~1500-line option of 3.9 and would need the one real flash on the maintainer's camera as
+acceptance.
+
+**Decision.** No mature MIT/BSD writer exists, so the gate is **not passed**: in P2 `image` stays on the bash/PC
+side (`./akam image`, `tools/image/assemble_from_kit.sh`, `mksquashfs`/`unsquashfs`; `doctor` reports whether
+they are installed), and the native `update` takes the image from `--image FILE` or from the `image_path` the
+bash step recorded. Every byte of the image stays on the proven path. The fallback of 10.1 is unchanged: if the
+native `image` is wanted later, the kit ships static `mksquashfs`/`unsquashfs` per host (GPL-2.0 executables run
+from the verified kit), and an own writer stays an option behind `--builder native` after a real flash. T2.3 is
+deferred; T2.1, T2.4 and T2.5 are done. Not done in the spike: a byte comparison of a Go-made image (there is
+none) and a loop mount.
+
