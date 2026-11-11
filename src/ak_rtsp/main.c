@@ -341,6 +341,7 @@ int main(int argc, char **argv)
         perror("listen"); close(server_fd); goto err;
     }
 
+    rtsp_set_listen_fd(server_fd);
     printf("[ak_rtsp] Listening on port %d...\n", RTSP_SERVER_PORT);
     rtsp_auth_tick(true);
     ledsys_boot_done();
