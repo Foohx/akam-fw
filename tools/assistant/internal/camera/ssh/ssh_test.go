@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -301,4 +302,38 @@ func TestKnownHostsLineFormatIsOpenSSH(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = cb
+}
+
+// ProbeHostKey reads the key of the handshake without logging in; the pin helpers agree with it.
+func TestProbeHostKeyAndPins(t *testing.T) {
+	f := newFixture(t)
+	key, err := camssh.ProbeHostKey(context.Background(), "127.0.0.1", f.cam.SSHPort(), nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if camssh.Fingerprint(key) != f.cam.HostFingerprint() {
+		t.Errorf("fingerprint %s, camera %s", camssh.Fingerprint(key), f.cam.HostFingerprint())
+	}
+	if camssh.PinnedFingerprint(f.known, "192.0.2.50") != "" {
+		t.Error("a pin before any was written")
+	}
+	if err := camssh.PinHostKey(f.known, "192.0.2.50", key); err != nil {
+		t.Fatal(err)
+	}
+	if got := camssh.PinnedFingerprint(f.known, "192.0.2.50"); got != f.cam.HostFingerprint() {
+		t.Errorf("pinned %q", got)
+	}
+	if camssh.PinnedFingerprint(f.known, "192.0.2.51") != "" {
+		t.Error("another alias matched")
+	}
+	// the pin written this way is the one Dial checks
+	c, err := camssh.Dial(f.cfg(func(camssh.NewHostKey) (bool, error) { t.Error("asked"); return false, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	// a closed port is an error, not a hang
+	if _, err := camssh.ProbeHostKey(context.Background(), "127.0.0.1", 1, nil, time.Second); err == nil {
+		t.Error("probe of a closed port succeeded")
+	}
 }
