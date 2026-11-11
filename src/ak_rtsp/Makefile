@@ -81,6 +81,7 @@ SRCS    = main.c \
           g711.c \
           audio_jitter.c \
           control.c \
+          swdog.c \
           isp_tune.c \
           ctl_gate.c \
           ctl_sys.c \

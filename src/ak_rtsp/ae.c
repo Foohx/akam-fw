@@ -7,6 +7,7 @@
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ae.h"
+#include "swdog.h"
 #include "imgq.h"
 
 /* -------------------------------------------------------------------------
@@ -273,6 +274,7 @@ static void *ae_loop(void *arg)
 
     while (g_ae_running) {
         usleep(AE_TICK_US);
+        swdog_beat(SWDOG_BEAT_AE);
 
         /* control.c's "ae.enabled=0" freezes exposure at whatever it
          * currently is (skip the tick entirely) for A/B testing AE on vs
@@ -339,6 +341,7 @@ static void *ae_loop(void *arg)
         exp_min = 0xffffffffu; exp_max = 0; reversals = 0; dir = 0;
     }
 
+    swdog_disarm(SWDOG_BEAT_AE);
     printf("[ae] hardware AE tick stopped\n");
     return NULL;
 }

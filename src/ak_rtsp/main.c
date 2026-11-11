@@ -30,6 +30,7 @@
 #include "leds.h"
 #include "rtsp.h"
 #include "cred.h"
+#include "swdog.h"
 #include "version.h"
 
 /* -------------------------------------------------------------------------
@@ -343,8 +344,12 @@ int main(int argc, char **argv)
     printf("[ak_rtsp] Listening on port %d...\n", RTSP_SERVER_PORT);
     rtsp_auth_tick(true);
     ledsys_boot_done();
+    swdog_beat(SWDOG_BEAT_MAIN);
+    swdog_start(audio_out_emergency_off); /* G01: stall watchdog, armed only now that the stream is up */
 
     for (;;) {
+        swdog_beat(SWDOG_BEAT_MAIN);
+        swdog_mode(SWDOG_FETCH);
         struct pollfd pfd;
         pfd.fd     = server_fd;
         pfd.events = POLLIN;

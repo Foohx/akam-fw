@@ -627,6 +627,12 @@ static void test_server(void)
     { char junk[65536]; while (slurp(again, junk, sizeof(junk), 100, NULL) > 0) {} }
     ask(again, "GET ae.speed", out, sizeof(out));
     CHECK_STR(out, "ae.speed=7\n");
+    /* G02: lines lost to a full pipe or a stalled console are counted; control_test.sh runs this program a
+     * second time with a stdout nobody reads (CTL_TEST_STALLED_STDOUT=1): the flood above must not hang and
+     * the counter must show the loss. */
+    ask(again, "GET log.dropped", out, sizeof(out));
+    CHECK(!strncmp(out, "log.dropped=", 12));
+    if (getenv("CTL_TEST_STALLED_STDOUT")) CHECK(atoi(out + 12) > 0);
 
     for (int i = 0; i < CTL_MAX_CLIENTS - 1; i++) close(cl[i]);
     close(again);

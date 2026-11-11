@@ -15,6 +15,7 @@ file 755 overlay/sbin/akam_lockdown.sh sbin/akam_lockdown.sh tools/firmware_patc
 file 755 overlay/sbin/akam_hostname.sh sbin/akam_hostname.sh tools/firmware_patch_templates/akam_hostname.sh
 file 755 overlay/sbin/akam_rtsp_auth.sh sbin/akam_rtsp_auth.sh tools/firmware_patch_templates/akam_rtsp_auth.sh
 file 755 overlay/sbin/akam_debug.sh sbin/akam_debug.sh tools/firmware_patch_templates/akam_debug.sh
+file 755 overlay/sbin/akam_net.sh sbin/akam_net.sh tools/firmware_patch_templates/akam_net.sh
 file 755 overlay/sbin/akam_onvif.sh sbin/akam_onvif.sh tools/firmware_patch_templates/akam_onvif.sh
 file 644 overlay/local/_ht_process.ini local/_ht_process.ini tools/firmware_patch_templates/_ht_process.ini
 file 755 patches/patch_service_sh.sh - tools/firmware_patch_templates/patch_service_sh.sh
