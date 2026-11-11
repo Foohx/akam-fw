@@ -51,7 +51,6 @@ func (a *App) cmdDoctor() error {
 	opt("ffmpeg", "microphone and files other than WAV for talk and say")
 	opt("arecord", "microphone for talk when ffmpeg has no sound server")
 	opt("mksquashfs", "image building in a later phase")
-	opt("xz", "opening the kit for get-kit")
 	for _, t := range []string{"pkexec", "sudo"} {
 		if _, err := a.lookPath(t); err == nil {
 			a.UI.Say(fmt.Sprintf("  Can elevate with %s (only the SD card step ever needs it, in a later phase).", t))
