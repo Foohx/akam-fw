@@ -69,6 +69,7 @@ type Camera struct {
 	commands []string
 	ctl      map[string]string
 	ctlSets  []string
+	ctlWords []string // first word of every line received on the control port
 	onvifOn  bool
 	ntpOn    bool
 	ntpList  string
@@ -182,6 +183,7 @@ func New(t testing.TB, opts Options) *Camera {
 			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "1",
 			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.cfg_pending": "0",
 			"video.bitrate": "1480", "video.fps_actual": "150",
+			"fw.version": "b35-2af81c5", "sys.hostname": "akam-01",
 		}}
 	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2"}
 	c.Root = t.TempDir()
@@ -554,7 +556,12 @@ func (c *Camera) handleCtl(nc net.Conn) {
 		f := strings.SplitN(line, " ", 3)
 		var reply string
 		c.mu.Lock()
+		c.ctlWords = append(c.ctlWords, f[0])
 		switch {
+		case line == "QUIT":
+			c.mu.Unlock()
+			fmt.Fprintf(nc, "OK bye\n")
+			return
 		case f[0] == "GET" && len(f) >= 2:
 			if v, ok := c.ctl[f[1]]; ok {
 				reply = f[1] + "=" + v
@@ -697,4 +704,12 @@ func (c *Camera) mtdExec(cmd string, stdout io.Writer) (int, bool) {
 	}
 	stdout.Write(data)
 	return 0, true
+}
+
+// CtlWords returns the first word of every line the control port received, in order (tests prove
+// that discovery only ever sends GET and QUIT).
+func (c *Camera) CtlWords() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.ctlWords...)
 }

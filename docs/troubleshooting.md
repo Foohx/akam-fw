@@ -234,6 +234,22 @@ without it only 22, 554 and 8091 are.
 - The device address to add by hand is `http://<camera-ip>/onvif/device_service` (add `:PORT` for a port other than
   80). ONVIF is host-tested only so far, not yet validated on a camera: please report what ODM does.
 
+**Check the whole ONVIF surface from a PC** (Python 3, standard library only, no install): replays what ONVIF Device
+Manager does on first contact (WS-Discovery, Device, Media and Imaging calls, the refusal of a request without a
+password) and prints one line per call with its time:
+
+```bash
+python3 -I tools/hw_tests/onvif_check.py 192.0.2.10 viewer --rtsp --no-imaging
+```
+
+It asks for the video password without echo. `--rtsp` also does an RTSP DESCRIBE with Digest login on the stream URI
+and expects `200` and an H264 video line; `--yes-imaging` changes the brightness for 5 s and restores it (RAM only),
+`--no-imaging` skips that, `--no-discovery` skips the multicast probe. Without a password the camera answers HTTP 401
+with an empty body and a `WWW-Authenticate` header: that is the expected refusal, shown as `ok`. If the tool prints
+"the camera clock is not set", run `./akam ntp set`: the camera has no battery clock and boots in the past.
+A call that now and then takes about 1 s while most take 25 to 75 ms is Wi-Fi round-trip jitter (compare with
+`ping 192.0.2.10`), not a slow ONVIF server.
+
 
 ## The router still shows the old camera name
 

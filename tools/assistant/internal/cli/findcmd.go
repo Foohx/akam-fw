@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -79,12 +79,12 @@ func (a *App) resolveName(name string) (string, bool) {
 // wsdItem is the menu line of one WS-Discovery answer. The name and the address come from the
 // network: no control or escape character may reach the terminal.
 func wsdItem(f discover.Found) string {
-	d := textsafe.Clean(f.IP)
+	d := ui.Sanitize(f.IP)
 	if f.Name != "" {
-		d += "  " + textsafe.Clean(f.Name)
+		d += "  " + ui.Sanitize(f.Name)
 	}
 	if len(f.XAddrs) > 0 {
-		d += "  " + textsafe.Clean(f.XAddrs[0])
+		d += "  " + ui.Sanitize(f.XAddrs[0])
 	}
 	return d
 }
@@ -140,7 +140,14 @@ func (a *App) searchNetwork() (string, bool) {
 			target = discover.WSDTarget
 		}
 		a.Log.Line("CMD ws-discovery probe -> %s", target)
-		found, err := discover.WSDiscover(a.Ctx, target, 2*time.Second)
+		var found []discover.Found
+		var err error
+		if h.WSDTarget == "" {
+			// real network: once per eligible interface, not through the OS default one
+			found, err = a.wsdEachInterface(target)
+		} else {
+			found, err = discover.WSDiscover(a.Ctx, target, 2*time.Second)
+		}
 		if err != nil {
 			a.UI.Warn("the search failed: " + err.Error())
 		}
@@ -261,7 +268,11 @@ func (a *App) cmdFindCamera() error {
 	default:
 		return a.UI.Fail(fmt.Sprintf("port %d is closed and this is not Akam. Nothing usable answers on %s.", p.Telnet, ip), "is this the camera's address? Is the toolkit card in?")
 	}
-	_ = a.St.Set("camera_ip", ip)
+	host, fw := "", ""
+	if kind == discover.Akam {
+		host, fw = a.identifyAkam(ip, p.CTL)
+	}
+	_ = state.RecordSeen(a.St, ip, host, fw, time.Now())
 	_ = a.St.Set("camera_kind", string(kind))
 	_ = a.St.Set("camera_telnet", tel)
 	_ = a.St.MarkDone("find-camera")
@@ -272,6 +283,44 @@ func (a *App) cmdFindCamera() error {
 		a.UI.Good(fmt.Sprintf("  Camera found: it already runs Akam (%s). Updates go over SSH; the stock backup must already exist.", ip))
 	}
 	return nil
+}
+
+// wsdEachInterface sends the WS-Discovery probe once per eligible interface.
+func (a *App) wsdEachInterface(target string) ([]discover.Found, error) {
+	h := a.Hooks.Discover
+	list := h.Interfaces
+	if list == nil {
+		list = net.Interfaces
+	}
+	addrs := h.Addrs
+	if addrs == nil {
+		addrs = func(i *net.Interface) ([]net.Addr, error) { return i.Addrs() }
+	}
+	l, err := list()
+	if err != nil {
+		return nil, err
+	}
+	return discover.WSDiscoverEach(a.Ctx, runtime.GOOS, discover.Ifaces(l, addrs), target, 2*time.Second)
+}
+
+// identifyAkam reads fw.version and sys.hostname from the control port (read-only). An older image
+// that answers ERR is "Akam, version unknown". Both values come from the network: sanitised here.
+func (a *App) identifyAkam(ip string, port int) (host, fw string) {
+	a.Log.Line("CMD identify %s:%d (GET fw.version, GET sys.hostname, QUIT)", ip, port)
+	id, err := discover.Identify(a.Ctx, ip, port, a.Hooks.Discover.Dial)
+	if err != nil && !id.Akam {
+		a.UI.Say("  (the control port did not tell the firmware version)")
+		return "", ""
+	}
+	host, fw = ui.Sanitize(id.Hostname), ui.Sanitize(id.Version)
+	if fw == "" {
+		a.UI.Say("  Akam, firmware version unknown (an older image).")
+	} else if host != "" {
+		a.UI.Say(fmt.Sprintf("  Firmware %s, host name %s.", fw, host))
+	} else {
+		a.UI.Say(fmt.Sprintf("  Firmware %s.", fw))
+	}
+	return host, fw
 }
 
 func orNone(s string) string {

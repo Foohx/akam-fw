@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
@@ -74,7 +75,7 @@ func (a *App) cmdCameras() error {
 		if n == a.Cams.Name {
 			mark = "*"
 		}
-		fmt.Fprintf(a.out(), "  %s %-20s %s\n", mark, n, a.Cams.Summary(n))
+		fmt.Fprintf(a.out(), "  %s %-20s %s\n", mark, n, a.Cams.Summary(n)+seenSuffix(a.Cams.ReadSeen(n), time.Now()))
 	}
 	a.UI.Say(fmt.Sprintf("  Switch with: %s --camera NAME   (a new name starts a new camera)", Prog))
 	return nil
@@ -342,3 +343,20 @@ func containsInt(l []int, v int) bool {
 }
 
 var _ = discover.Akam
+
+// seenSuffix is "  host akam-01  fw b35-2af81c5  seen 3 days ago" from the discovery keys of a camera.
+// The values were written by this program from sanitised text; they are cleaned again on the way out
+// because the state file can be edited.
+func seenSuffix(s state.Seen, now time.Time) string {
+	var b strings.Builder
+	if s.Host != "" {
+		b.WriteString("  host " + ui.Sanitize(s.Host))
+	}
+	if s.FW != "" {
+		b.WriteString("  fw " + ui.Sanitize(s.FW))
+	}
+	if !s.At.IsZero() {
+		b.WriteString("  seen " + discover.Ago(s.At, now))
+	}
+	return b.String()
+}
