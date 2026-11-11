@@ -1,0 +1,27 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive2",
+    "name": "PhysicalDrive2",
+    "whole": true,
+    "size": 34359738368,
+    "sector_size": 512,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "no",
+    "vendor": "Generic",
+    "model": "STORAGE DEVICE",
+    "serial": "W1",
+    "layout_id": "0A1B2C3D",
+    "dev_num": "2",
+    "mounts": [
+      {
+        "node": "\\\\?\\Volume{11111111-2222-3333-4444-555555555555}\\",
+        "point": "E:\\",
+        "fs": "FAT32"
+      }
+    ],
+    "guard_hit": "C:\\Users\\me\\Akam"
+  },
+  "refuse": "carries C:\\Users\\me\\Akam"
+}

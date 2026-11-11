@@ -12,7 +12,12 @@ func Ident(f Facts) string {
 	if f.OS == "" || f.OS == "linux" {
 		return fmt.Sprintf("%d|%s|%s|%s|%s|%s", f.Size, f.Model, f.Serial, f.WWN, f.Vendor, f.DevNum)
 	}
-	return fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s|%s|%s", f.OS, f.Size, f.Model, f.Vendor, f.Serial, f.WWN, f.Revision, f.LayoutID, f.DevNum)
+	id := fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s|%s|%s", f.OS, f.Size, f.Model, f.Vendor, f.Serial, f.WWN, f.Revision, f.LayoutID, f.DevNum)
+	if f.OS == "windows" {
+		// \\.\PhysicalDriveN is renumbered after a replug: the bus and the removable flag are part of what was confirmed
+		id += "|" + f.Bus + "|" + f.Removable.String()
+	}
+	return id
 }
 
 var systemMounts = []string{"/", "/boot", "/usr", "/var", "/etc", "/home", "/opt", "/srv", "/nix"}
@@ -31,6 +36,9 @@ func isSystemMount(p string) bool {
 func Evaluate(f Facts, p Policy) (*Candidate, error) {
 	dev := f.Path
 	if !f.Whole {
+		if f.OS == "windows" {
+			return nil, fmt.Errorf(`%s is not a whole physical drive node like \\.\PhysicalDrive2 (drive letters, volumes and partitions are refused)`, dev)
+		}
 		return nil, fmt.Errorf("%s is not a whole USB/SD disk node like /dev/sdb or /dev/mmcblk0 (partitions, NVMe, loop and zram nodes are refused)", dev)
 	}
 	for _, m := range f.Mounts {
@@ -81,6 +89,14 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 		case "usb", "sd", "mmc":
 		default:
 			return nil, fmt.Errorf("%s is not a USB or SD disk (bus %q)", dev, f.Bus)
+		}
+		// An internal eMMC or SD-bus data disk (cheap laptops) is on the same bus as a card slot, and only the
+		// system-role scan would stop it. On the SD and MMC buses the disk must positively say it is removable
+		// (STORAGE_DEVICE_DESCRIPTOR.RemovableMedia); unknown refuses. USB keeps the spec rule (Q2): many USB
+		// readers report RemovableMedia false. IOCTL_STORAGE_GET_HOTPLUG_INFO is not used: DeviceHotplug is "designed
+		// to be hot-plugged", which hot-swap capable internal controllers also set, so it is no proof of a card slot.
+		if f.OS == "windows" && (f.Bus == "sd" || f.Bus == "mmc") && f.Removable != Yes {
+			return nil, fmt.Errorf("%s is on the %s bus but not reported as removable (removable=%s): an internal eMMC or SD controller disk is refused", dev, f.Bus, f.Removable)
 		}
 		// fail closed: an internal flag the inventory could not read is not "external"
 		switch f.Internal {

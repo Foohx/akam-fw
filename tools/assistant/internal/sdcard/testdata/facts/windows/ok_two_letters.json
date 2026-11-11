@@ -1,0 +1,31 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive2",
+    "name": "PhysicalDrive2",
+    "whole": true,
+    "size": 34359738368,
+    "sector_size": 512,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "no",
+    "vendor": "Generic",
+    "model": "STORAGE DEVICE",
+    "serial": "W1",
+    "layout_id": "0A1B2C3D",
+    "dev_num": "2",
+    "mounts": [
+      {
+        "node": "v",
+        "point": "E:\\",
+        "fs": "FAT32"
+      },
+      {
+        "node": "v",
+        "point": "F:\\",
+        "fs": "FAT32"
+      }
+    ]
+  },
+  "refuse": ""
+}

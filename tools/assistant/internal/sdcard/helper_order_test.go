@@ -105,3 +105,34 @@ func (s *swapRec) Inspect(dev string, ctx Context) (Facts, error) {
 	}
 	return s.facts, nil
 }
+
+// relRec is an opener that holds locks (Windows): the helper must let go of them when it stops before Open.
+type relRec struct {
+	swapRec
+	released int
+}
+
+func (r *relRec) release() error { r.released++; return nil }
+
+func TestHelperReleasesHeldVolumesOnEveryErrorPath(t *testing.T) {
+	facts := Facts{OS: "linux", Path: "/dev/sdz", Name: "sdz", Whole: true, Size: 128 << 20, Bus: "usb", RemovableRaw: "1", Model: "A", DevNum: "8:48"}
+	// the identity changes after the unmount
+	r := &relRec{swapRec: swapRec{recorder: recorder{facts: facts}, other: facts}}
+	r.other.Model = "B"
+	if resp := (Helper{Inv: r, Opener: r}).Handle(Request{Op: OpWipe, Device: "/dev/sdz", Token: Ident(facts)}); resp.OK || r.released != 1 {
+		t.Errorf("identity change: %+v released %d", resp, r.released)
+	}
+	// an unmount fails half way
+	facts.Mounts = []Mount{{Node: "/dev/sdz1", Point: "/mnt/a"}, {Node: "/dev/sdz2", Point: "/mnt/b"}}
+	r = &relRec{swapRec: swapRec{recorder: recorder{facts: facts}, other: facts}}
+	n := 0
+	h := Helper{Inv: r, Opener: r, Unmount: func(string) error {
+		if n++; n == 2 {
+			return fmt.Errorf("busy")
+		}
+		return nil
+	}}
+	if resp := h.Handle(Request{Op: OpWipe, Device: "/dev/sdz", Token: Ident(facts)}); resp.OK || r.released != 1 {
+		t.Errorf("unmount failure: %+v released %d", resp, r.released)
+	}
+}
