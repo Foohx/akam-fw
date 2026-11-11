@@ -646,8 +646,8 @@ static void test_golden(void)
 
     /* ODM-facing reads that used to be faults */
     put(gpath, "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-        "wlan0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
-        "wlan0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n", 0644);
+        "wlan0\t000200C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+        "wlan0\t00000000\t010200C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n", 0644);
     good_wsse(h, sizeof(h), PASS);
     golden("GetNetworkDefaultGateway", h, OPX("GetNetworkDefaultGateway"), 200);
     good_wsse(h, sizeof(h), PASS);
