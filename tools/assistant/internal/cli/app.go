@@ -361,10 +361,7 @@ func (a *App) dispatch(cmd string) error {
 	case "flash":
 		return a.cmdFlash()
 	case "image":
-		if a.Opt.Image != "" { // an image built elsewhere (T11.13, interim until the native builder)
-			return a.installImage()
-		}
-		return a.notYet(cmd)
+		return a.cmdImage()
 	case "build":
 		return a.notYet(cmd)
 	}
