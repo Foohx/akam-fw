@@ -1,0 +1,20 @@
+Committed test images of internal/squashfs. Everything here is synthetic: no vendor or camera data.
+
+  tiny_xz.sqfs        xz (CRC32), 128 KiB blocks, fragments, export table, directory index, id table
+  tiny_gzip_4k.sqfs   gzip (zlib), 4 KiB blocks, fragments, export table
+  tiny_stored.sqfs    everything stored uncompressed (-no-compression), 4 KiB blocks, no export table
+  *.listing           the expected canonical listing (Listing/WriteListing) of the image of the same name
+
+All three hold the same synthetic tree, written by gen.sh: empty and 1-byte files, text files of 1000,
+131072 and 131073 bytes, a 300000-byte file of zeros (sparse blocks), 20000 bytes of a sha256 chain (does
+not compress), a 300-entry directory, a sticky directory, symlinks (relative, dangling), a hard link, a
+fifo, one character and one block device (mksquashfs pseudo-file definitions), several uid/gid pairs.
+The images are byte-for-byte reproducible with mksquashfs 4.7.x.
+
+Regenerate the images:   bash gen.sh            (needs mksquashfs, python3, mkfifo)
+Regenerate the listings: go test ./internal/squashfs -run TestCommittedImages -update-golden
+                         (only after the reader agrees with `unsquashfs -lln`; the test refuses to
+                         rewrite a listing when unsquashfs is not installed)
+
+The tests run without any external tool; when mksquashfs/unsquashfs are installed they also build more
+images and compare the reader with `unsquashfs -lln -full-precision -UTC` and with an extraction.
