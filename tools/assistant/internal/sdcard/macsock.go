@@ -1,10 +1,6 @@
 package sdcard
 
 import (
-	"bufio"
-	"crypto/rand"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,11 +37,9 @@ const (
 	sockHandshakeTTL = 15 * time.Second
 	sockAcceptTTL    = 5 * time.Minute // the user types an administrator password
 	sockMaxBadPeers  = 8
-	sockMaxAnswer    = 8 << 20
 )
 
 var (
-	nonceRe    = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	safeSelfRe = regexp.MustCompile(`^/[A-Za-z0-9 ._+/@,=-]+$`)
 )
 
@@ -100,14 +94,6 @@ func osascriptArgv(self, sock string, uid uint32, nonce string) ([]string, error
 	return []string{"/usr/bin/osascript", "-e", script}, nil
 }
 
-func randHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
 // privateSockDir creates a 0700 directory with a random name and returns it.
 func privateSockDir(base string) (string, error) {
 	r, err := randHex(8)
@@ -129,12 +115,6 @@ func privateSockDir(base string) (string, error) {
 		return dir, nil
 	}
 	return "", errors.New("no short enough private directory for the socket")
-}
-
-// sockLine is one line of the helper's answer: progress text, or the final Response.
-type sockLine struct {
-	Progress *string `json:"progress"`
-	Response
 }
 
 // run is RunElevated for osascript.
@@ -238,12 +218,8 @@ func (t *osascriptTransport) authenticate(c *net.UnixConn, nonce string) error {
 		return fmt.Errorf("the peer is uid %d, not root", uid)
 	}
 	_ = c.SetReadDeadline(time.Now().Add(sockHandshakeTTL))
-	line, err := bufio.NewReaderSize(io.LimitReader(c, 64), 64).ReadString('\n')
-	if err != nil {
-		return errors.New("no nonce")
-	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSuffix(line, "\n")), []byte(nonce)) != 1 {
-		return errors.New("wrong nonce")
+	if err := readNonce(c, nonce); err != nil {
+		return err
 	}
 	_ = c.SetReadDeadline(time.Time{})
 	return nil
@@ -256,33 +232,11 @@ func (t *osascriptTransport) converse(c *net.UnixConn, body []byte, stderr io.Wr
 	if err := c.CloseWrite(); err != nil {
 		return Response{}, err
 	}
-	dec := json.NewDecoder(io.LimitReader(c, sockMaxAnswer))
-	for {
-		var l sockLine
-		if err := dec.Decode(&l); err != nil {
-			return Response{}, errors.New("the helper gave no usable answer")
-		}
-		if l.Progress != nil {
-			if stderr != nil {
-				fmt.Fprintln(stderr, sanitizeLine(*l.Progress))
-			}
-			continue
-		}
-		return l.Response, nil
-	}
+	return readAnswer(c, stderr)
 }
 
 // scrub removes the nonce from text that may echo the script (osascript quotes it on a syntax error).
 func scrub(s, nonce string) string { return strings.ReplaceAll(s, nonce, "[nonce]") }
-
-func sanitizeLine(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
-}
 
 // ttyAvailable reports whether sudo could ask for a password on a terminal.
 func ttyAvailable() bool {
@@ -303,19 +257,6 @@ func rawNodeFor(dev string) string {
 }
 
 // ---- helper side ----
-
-// progressWriter turns the lines a helper writes into {"progress": "..."} lines on the socket.
-type progressWriter struct{ w io.Writer }
-
-func (p progressWriter) Write(b []byte) (int, error) {
-	for _, ln := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
-		j, _ := json.Marshal(map[string]string{"progress": ln})
-		if _, err := p.w.Write(append(j, '\n')); err != nil {
-			return 0, err
-		}
-	}
-	return len(b), nil
-}
 
 // socketHelper is `sd-helper --socket P --uid N --nonce H` (root, started by osascript). It returns the exit status.
 func socketHelper(args []string, mk func() Helper, peer peerUIDFunc, owner func(fs.FileInfo) (uint32, bool)) int {
