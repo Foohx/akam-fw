@@ -15,72 +15,142 @@ static int fails;
 #define KB 1024u
 static tx_pace_event_t ev;
 
-static tx_pace_verdict_t step(tx_pace_t *p, size_t backlog, size_t len, int key, size_t base, int64_t t)
+static tx_pace_verdict_t step(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t len, int key,
+                              int64_t t)
 {
-    return tx_pace_decide(p, backlog, len, key, base, t, &ev);
+    return tx_pace_decide(p, c, backlog, len, key, t, &ev);
 }
+
+static unsigned rnd_state = 12345;
+static unsigned rnd(void) { rnd_state = rnd_state * 1103515245u + 12345u; return (rnd_state >> 8) & 0xffffff; }
 
 int main(void)
 {
     tx_pace_t p;
-    size_t base = tx_pace_base(1536); /* 0.5 s = 96000 bytes */
+    tx_pace_cfg_t c = { .base = tx_pace_base(1536), .cap = 0, .stall_ms = 0, .max_skip_ms = 0 };
+    size_t base = c.base; /* 0.5 s = 96000 bytes */
     CHECK(base == 96000, "base is half a second of the configured bitrate");
     CHECK(tx_pace_base(500) == TX_PACE_MIN_HIGH, "base floor at the minimum");
     CHECK(tx_pace_base(0) == TX_PACE_MIN_HIGH, "base without a bitrate is the floor");
     CHECK(tx_pace_low(base) == 24000, "low mark is a quarter of the base");
+    CHECK(tx_pace_max_skip_ms(2) == 10000 && tx_pace_max_skip_ms(4) == 12000, "skip limit is max(3 GOPs, 10 s)");
+    CHECK(tx_pace_cap(327680) == 245760 && tx_pace_cap(0) == 0, "cap is 3/4 of the reported (doubled) buffer");
 
     /* An idle link never skips, whatever the frame type. */
     tx_pace_init(&p);
-    CHECK(step(&p, 0, 130 * KB, 1, base, 0) == TX_PACE_SEND, "keyframe on an empty queue is sent");
-    CHECK(step(&p, 100 * KB, 5 * KB, 0, base, 66) == TX_PACE_SEND,
+    CHECK(step(&p, &c, 0, 130 * KB, 1, 0) == TX_PACE_SEND, "keyframe on an empty queue is sent");
+    CHECK(step(&p, &c, 100 * KB, 5 * KB, 0, 66) == TX_PACE_SEND,
           "P-frame behind a just-sent keyframe is sent (keyframe in flight is not congestion)");
     CHECK(!p.skipping, "still in normal mode");
 
     /* Backlog past base + keyframe: enter skip mode. */
-    CHECK(step(&p, 130 * KB + base + 1, 5 * KB, 0, base, 132) == TX_PACE_SKIP, "high backlog drops the P-frame");
+    CHECK(step(&p, &c, 130 * KB + base + 1, 5 * KB, 0, 132) == TX_PACE_SKIP, "high backlog drops the P-frame");
     CHECK(ev.entered && ev.log_it, "enter event reported and loggable");
     CHECK(p.skipping, "skip mode on");
 
-    /* Skip mode: P-frames dropped even when the backlog is gone; a keyframe over the low mark too. */
-    CHECK(step(&p, 0, 5 * KB, 0, base, 200) == TX_PACE_SKIP, "P-frame after the skip is dropped even on an empty queue");
+    CHECK(step(&p, &c, 0, 5 * KB, 0, 200) == TX_PACE_SKIP, "P-frame after the skip is dropped even on an empty queue");
     CHECK(!ev.entered && !ev.left, "no event while staying in skip mode");
-    CHECK(step(&p, 40 * KB, 120 * KB, 1, base, 2000) == TX_PACE_SKIP, "keyframe above the low mark is dropped");
-    CHECK(p.skipping, "still skipping");
-    CHECK(step(&p, 0, 5 * KB, 0, base, 2100) == TX_PACE_SKIP, "P-frame after a dropped keyframe is dropped");
-
-    /* Resume only on a keyframe at or below the low mark. */
-    CHECK(step(&p, tx_pace_low(base) + 1, 120 * KB, 1, base, 3000) == TX_PACE_SKIP, "keyframe one byte over low is dropped");
-    CHECK(step(&p, tx_pace_low(base), 120 * KB, 1, base, 4000) == TX_PACE_SEND, "keyframe at the low mark resumes");
+    CHECK(step(&p, &c, 40 * KB, 120 * KB, 1, 2000) == TX_PACE_SKIP, "keyframe above the low mark is dropped");
+    CHECK(step(&p, &c, 0, 5 * KB, 0, 2100) == TX_PACE_SKIP, "P-frame after a dropped keyframe is dropped");
+    CHECK(step(&p, &c, tx_pace_low(base) + 1, 120 * KB, 1, 3000) == TX_PACE_SKIP, "keyframe one byte over low is dropped");
+    CHECK(step(&p, &c, tx_pace_low(base), 120 * KB, 1, 4000) == TX_PACE_SEND, "keyframe at the low mark resumes");
     CHECK(ev.left && ev.run_skipped == 5, "leave event counts the dropped frames of the run");
     CHECK(ev.log_it == 1, "leave line printed because the enter line was");
-    CHECK(!p.skipping, "normal mode again");
-    CHECK(step(&p, 10 * KB, 5 * KB, 0, base, 4066) == TX_PACE_SEND, "P-frames flow after the keyframe");
+    CHECK(step(&p, &c, 10 * KB, 5 * KB, 0, 4066) == TX_PACE_SEND, "P-frames flow after the keyframe");
 
-    /* Rate limiting: a second run 4 s after the first logged is silent, both lines. */
-    CHECK(step(&p, 1000 * KB, 5 * KB, 0, base, 4132) == TX_PACE_SKIP, "second congestion drops");
-    CHECK(ev.entered && !ev.log_it, "second enter within the log window is not loggable");
-    CHECK(step(&p, 0, 100 * KB, 1, base, 5000) == TX_PACE_SEND && ev.left && !ev.log_it,
+    /* Rate limiting. */
+    CHECK(step(&p, &c, 1000 * KB, 5 * KB, 0, 4132) == TX_PACE_SKIP && ev.entered && !ev.log_it,
+          "second enter within the log window is not loggable");
+    CHECK(step(&p, &c, 0, 100 * KB, 1, 5000) == TX_PACE_SEND && ev.left && !ev.log_it,
           "its leave line is suppressed too (no orphan line)");
-    /* After the window a new run logs both. */
-    CHECK(step(&p, 1000 * KB, 5 * KB, 0, base, 20000) == TX_PACE_SKIP && ev.log_it, "enter loggable after the window");
-    CHECK(step(&p, 0, 100 * KB, 1, base, 21000) == TX_PACE_SEND && ev.left && ev.log_it && ev.run_skipped == 1,
+    CHECK(step(&p, &c, 1000 * KB, 5 * KB, 0, 20000) == TX_PACE_SKIP && ev.log_it, "enter loggable after the window");
+    CHECK(step(&p, &c, 0, 100 * KB, 1, 21000) == TX_PACE_SEND && ev.left && ev.log_it && ev.run_skipped == 1,
           "leave loggable when its enter was logged");
 
-    /* Keyframe size is counted but capped. */
+    /* Keyframe allowance capped; a dropped keyframe still updates it. */
     tx_pace_init(&p);
-    (void)step(&p, 0, 10 * 1024 * KB, 1, base, 0);
-    CHECK(tx_pace_high(&p, base) == base + TX_PACE_IKEY_CAP, "keyframe allowance is capped");
-
-    /* The size of a keyframe that is dropped still updates the allowance. */
+    (void)step(&p, &c, 0, 10 * 1024 * KB, 1, 0);
+    CHECK(tx_pace_high(&p, &c, 1) == base + TX_PACE_IKEY_CAP, "keyframe allowance is capped");
     tx_pace_init(&p);
-    (void)step(&p, 10000 * KB, 50 * KB, 1, base, 0);
+    (void)step(&p, &c, 10000 * KB, 50 * KB, 1, 0);
     CHECK(p.key_len == 50 * KB, "dropped keyframe size is remembered");
-
-    /* A NULL event pointer is accepted. */
     tx_pace_init(&p);
-    CHECK(tx_pace_decide(&p, 0, 1, 0, base, 0, NULL) == TX_PACE_SEND, "NULL event pointer accepted");
+    CHECK(tx_pace_decide(&p, &c, 0, 1, 0, 0, NULL) == TX_PACE_SEND, "NULL event pointer accepted");
 
-    /* Real TCP socket on loopback: a peer that never reads leaves unsent bytes in the send queue. */
+    /* --- send buffer cap --- */
+    /* Reported SO_SNDBUF 327680 (kernel doubled 160 KiB): cap 245760. */
+    tx_pace_cfg_t cc = { .base = base, .cap = tx_pace_cap(327680) };
+    tx_pace_init(&p);
+    (void)step(&p, &cc, 0, 200 * KB, 1, 0); /* keyframe seen: base + 200 KB > cap */
+    CHECK(tx_pace_high(&p, &cc, 10 * KB) == cc.cap - 10 * KB, "high is bounded by cap - frame_len (cap below base + keyframe)");
+    CHECK(step(&p, &cc, cc.cap - 10 * KB, 10 * KB, 0, 66) == TX_PACE_SEND, "a frame that exactly fits is sent");
+    CHECK(step(&p, &cc, cc.cap - 10 * KB + 1, 10 * KB, 0, 132) == TX_PACE_SKIP && ev.entered,
+          "a frame that does not fit enters skip mode");
+    /* Tiny buffer: high never falls below base/2. */
+    tx_pace_cfg_t tiny = { .base = base, .cap = 10 * KB };
+    tx_pace_init(&p);
+    CHECK(tx_pace_high(&p, &tiny, 5 * KB) == base / 2, "high floor is base/2 with a tiny buffer");
+    CHECK(step(&p, &tiny, 0, 5 * KB, 0, 0) == TX_PACE_SEND, "small frame on an empty queue goes through a tiny buffer");
+    CHECK(step(&p, &tiny, 7 * KB, 5 * KB, 0, 66) == TX_PACE_SKIP, "backlog + frame over the cap skips, even below base/2");
+    /* A keyframe larger than the buffer is sendable when the queue is at or under low. */
+    tx_pace_init(&p);
+    CHECK(step(&p, &tiny, tx_pace_low(base), 200 * KB, 1, 0) == TX_PACE_SEND, "oversized keyframe at backlog <= low is sent");
+    tx_pace_init(&p);
+    CHECK(step(&p, &tiny, tx_pace_low(base) + 1, 200 * KB, 1, 0) == TX_PACE_SKIP, "oversized keyframe above low waits");
+    /* No cap known: old behaviour. */
+    tx_pace_init(&p);
+    CHECK(step(&p, &c, 90 * KB, 1000 * KB, 0, 0) == TX_PACE_SEND, "without a cap only the watermarks count");
+
+    /* --- dead peer / hopeless link --- */
+    tx_pace_cfg_t d = { .base = base, .cap = 0, .stall_ms = 15000, .max_skip_ms = 30000 };
+    tx_pace_init(&p);
+    CHECK(step(&p, &d, 400 * KB, 5 * KB, 0, 0) == TX_PACE_SKIP, "enter skip");
+    CHECK(step(&p, &d, 400 * KB, 5 * KB, 0, 14999) == TX_PACE_SKIP, "no new minimum, just under the stall budget");
+    CHECK(step(&p, &d, 400 * KB, 5 * KB, 0, 15000) == TX_PACE_DROP_CLIENT && ev.drop_reason &&
+          strstr(ev.drop_reason, "stalled"), "no progress for the stall budget drops the client");
+    tx_pace_init(&p);
+    (void)step(&p, &d, 400 * KB, 5 * KB, 0, 0);
+    (void)step(&p, &d, 399 * KB, 5 * KB, 0, 10000);
+    CHECK(step(&p, &d, 399 * KB, 5 * KB, 0, 24999) == TX_PACE_SKIP, "a new minimum restarts the stall clock");
+    CHECK(step(&p, &d, 399 * KB, 5 * KB, 0, 25000) == TX_PACE_DROP_CLIENT, "and it expires 15 s after the last minimum");
+    tx_pace_init(&p);
+    (void)step(&p, &d, 400 * KB, 5 * KB, 0, 0);
+    for (int i = 1; i < 30; i++)
+        if (step(&p, &d, (400 - (size_t)i) * KB, 5 * KB, 0, i * 1000) != TX_PACE_SKIP) break;
+    CHECK(step(&p, &d, 300 * KB, 5 * KB, 0, 30000) == TX_PACE_DROP_CLIENT && ev.drop_reason &&
+          strstr(ev.drop_reason, "too long"), "draining but skipping past the limit drops the client");
+    tx_pace_init(&p);
+    (void)step(&p, &d, 400 * KB, 5 * KB, 0, 0);
+    CHECK(step(&p, &d, 0, 100 * KB, 1, 29000) == TX_PACE_SEND && !p.skipping, "a recovering keyframe is sent before any limit");
+    CHECK(step(&p, &d, 400 * KB, 5 * KB, 0, 60000) == TX_PACE_SKIP, "limits restart with each run");
+
+    /* --- invariant over random sequences: SEND after a SKIP only on a keyframe (backlog <= low) --- */
+    int bad = 0;
+    for (int run = 0; run < 200; run++) {
+        tx_pace_cfg_t r = { .base = base, .cap = (run & 1) ? tx_pace_cap(327680) : 0,
+                            .stall_ms = (run & 2) ? 15000 : 0, .max_skip_ms = (run & 4) ? 12000 : 0 };
+        tx_pace_init(&p);
+        int after_skip = 0;
+        int64_t t = 0;
+        for (int i = 0; i < 400; i++) {
+            t += 66;
+            int key = (i % 30) == 0;
+            size_t len = key ? 20 * KB + rnd() % (240 * KB) : 1 * KB + rnd() % (20 * KB);
+            size_t backlog = (rnd() % 8 == 0) ? rnd() % (500 * KB) : rnd() % (60 * KB);
+            tx_pace_verdict_t v = step(&p, &r, backlog, len, key, t);
+            if (v == TX_PACE_SEND) {
+                if (after_skip && !(key && backlog <= tx_pace_low(base))) bad++;
+                if (p.skipping) bad++;
+                after_skip = 0;
+            } else {
+                after_skip = 1;
+                if (v == TX_PACE_DROP_CLIENT) { tx_pace_init(&p); after_skip = 0; } /* session ends */
+            }
+        }
+    }
+    CHECK(bad == 0, "random sequences: never SEND a frame while skipping, nor after a skip except on a drained keyframe");
+
+    /* --- real sockets --- */
     int ls = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in sa;
     socklen_t sl = sizeof sa;
@@ -105,7 +175,13 @@ int main(void)
         total += n;
     }
     CHECK(total > 0 && tx_pace_backlog(cs) > 0, "unread bytes show up as backlog");
-    CHECK(tx_pace_backlog(-1) == 0, "bad fd gives 0 (no pacing)");
+    CHECK(tx_pace_backlog(-1) == 0 && tx_pace_sndbuf(-1) == 0, "bad fd gives 0 (no pacing)");
+    /* SO_SNDBUF reads back doubled: the cap is taken from the reported value, not from what was requested. */
+    int want = 64 * 1024;
+    setsockopt(cs, SOL_SOCKET, SO_SNDBUF, &want, sizeof want);
+    size_t got = tx_pace_sndbuf(cs);
+    CHECK(got >= (size_t)want, "getsockopt reports at least the requested size (the kernel doubles it)");
+    CHECK(tx_pace_cap(got) == got / 4 * 3, "cap derived from the reported value");
     close(cs);
     close(ps);
     close(ls);

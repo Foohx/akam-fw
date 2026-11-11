@@ -10,12 +10,27 @@
  * compared with a high watermark. Above it the stream enters SKIP mode: every frame is dropped (and
  * released at once) until a keyframe arrives while the backlog is back under a low watermark; that
  * keyframe is sent and the stream resumes. A P-frame is therefore never sent after a dropped frame
- * without a keyframe in between (decoder references stay intact).
+ * without a keyframe in between (decoder references stay intact), and a P-frame is only ever dropped
+ * by entering SKIP mode (never singly outside it).
  *
  *   base   = max(TX_PACE_MIN_HIGH, 0.5 s of the configured bitrate)        (latency bound)
- *   high   = base + size of the last keyframe                              (a keyframe in flight is
- *                                                                            not congestion)
+ *   cap    = 3/4 of the socket's SO_SNDBUF as reported by getsockopt (the kernel already doubled the
+ *            value that was set; the rest is skb overhead). 0 = unknown, no cap.
+ *   high   = min(base + size of the last keyframe, cap - frame_len), never below base/2
+ *            (a keyframe in flight is not congestion, but a write that cannot fit in the send buffer
+ *            would block while the encoder buffer is held, which is what this unit prevents)
  *   low    = base / 4
+ *   A keyframe at a backlog <= low is always sent, even when it is larger than the buffer.
+ *
+ * Dead or hopeless peers: while skipping, the client is dropped (TX_PACE_DROP_CLIENT, the frame is
+ * dropped too) when the backlog has not reached a new minimum for stall_ms (dead peer: tcp_retries2
+ * alone would take ~15 min), or when the skip run lasts longer than max_skip_ms (the link cannot carry
+ * the stream; no force-IDR ioctl exists in venc.c, so waiting for a lucky keyframe is all there is).
+ * The server is single-client: freeing the slot beats a frozen picture.
+ *
+ * Known limit / follow-up: a keyframe bigger than the free send buffer is still written with a
+ * blocking write while the encoder buffer is held. The full fix is a private frame copy and a
+ * non-blocking writer; not done here.
  *
  * Pure logic (no I/O, no clock besides the injected one): tests/tx_pace_test.sh. */
 #include <stddef.h>
@@ -23,9 +38,10 @@
 
 #define TX_PACE_MIN_HIGH   (64u * 1024u)   /* base never below this */
 #define TX_PACE_IKEY_CAP   (256u * 1024u)  /* keyframe size counted into the high mark is capped */
+#define TX_PACE_STALL_MS   15000           /* same as TX_STALL_BUDGET_MS in rtsp.c */
 #define TX_PACE_LOG_MS     10000           /* at most one enter/leave log pair per this long */
 
-typedef enum { TX_PACE_SEND = 0, TX_PACE_SKIP } tx_pace_verdict_t;
+typedef enum { TX_PACE_SEND = 0, TX_PACE_SKIP, TX_PACE_DROP_CLIENT } tx_pace_verdict_t;
 
 typedef struct {
     int      skipping;
@@ -34,25 +50,41 @@ typedef struct {
     int      run_logged;     /* the enter line of the current run was logged */
     int64_t  last_log_ms;
     int      have_log;
+    int64_t  skip_since_ms;  /* start of the current SKIP run */
+    size_t   best_backlog;   /* smallest backlog seen in the run */
+    int64_t  best_ms;        /* when it was reached */
 } tx_pace_t;
+
+typedef struct {
+    size_t  base;         /* tx_pace_base() */
+    size_t  cap;          /* tx_pace_cap(), 0 = unknown */
+    int64_t stall_ms;     /* skipping without a new backlog minimum for this long: drop the client */
+    int64_t max_skip_ms;  /* a skip run longer than this: drop the client */
+} tx_pace_cfg_t;
 
 typedef struct {
     int entered;   /* this call switched to SKIP mode */
     int left;      /* this call switched back to normal; run_skipped = frames dropped in that run */
     unsigned run_skipped;
     int log_it;    /* the caller may print one line for this event (rate limited) */
+    const char *drop_reason; /* set with TX_PACE_DROP_CLIENT */
 } tx_pace_event_t;
 
 void   tx_pace_init(tx_pace_t *p);
 /* Base watermark in bytes for a configured bitrate in kbit/s. */
 size_t tx_pace_base(int kbps);
-size_t tx_pace_high(const tx_pace_t *p, size_t base);
+/* Cap from the value getsockopt(SO_SNDBUF) returned (already doubled by the kernel); 0 stays 0. */
+size_t tx_pace_cap(size_t sndbuf_reported);
+/* Skip-run limit: max(3 GOPs, 10 s) in ms. */
+int64_t tx_pace_max_skip_ms(int gop_s);
+size_t tx_pace_high(const tx_pace_t *p, const tx_pace_cfg_t *c, size_t frame_len);
 size_t tx_pace_low(size_t base);
 
-/* Decide one video frame. backlog = unsent bytes in the socket before the write, frame_len/is_key
- * describe the frame, base from tx_pace_base(). ev may be NULL. */
-tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, size_t backlog, size_t frame_len, int is_key, size_t base,
-                                 int64_t now_ms, tx_pace_event_t *ev);
+/* Decide one video frame. backlog = unsent bytes in the socket before the write. ev may be NULL. */
+tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t frame_len,
+                                 int is_key, int64_t now_ms, tx_pace_event_t *ev);
 
 /* Unsent bytes in the socket send queue of a TCP fd, 0 when unknown (then no pacing happens). */
 size_t tx_pace_backlog(int fd);
+/* SO_SNDBUF as getsockopt reports it (kernel-doubled), 0 when unknown. */
+size_t tx_pace_sndbuf(int fd);

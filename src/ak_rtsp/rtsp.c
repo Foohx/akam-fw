@@ -605,6 +605,7 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
     }
     if (media) {
         client_set_playing(self, true);
+        tx_pace_init(&self->pace); /* a new PLAY starts with a clean pacing state */
         if (self->nal_transport) {
             self->need_idr = true;
             self->idr_wait_frames = 0;
@@ -932,12 +933,20 @@ static int send_video_frame(Client *client)
     if (client->is_tcp) {
         tx_pace_event_t ev;
         size_t backlog = tx_pace_backlog(client->tx.fd);
-        if (tx_pace_decide(&client->pace, backlog, (size_t)req.len,
-                           req.frame_type_raw == FRAME_TYPE_I,
-                           tx_pace_base(video_kbps()), ms_ts_now(), &ev) == TX_PACE_SKIP) {
+        tx_pace_cfg_t pcfg = {
+            .base = tx_pace_base(video_kbps()),
+            .cap = tx_pace_cap(tx_pace_sndbuf(client->tx.fd)),
+            .stall_ms = TX_PACE_STALL_MS,
+            .max_skip_ms = tx_pace_max_skip_ms(video_gop_frames() / (video_fps() ? video_fps() : 1)),
+        };
+        tx_pace_verdict_t pv = tx_pace_decide(&client->pace, &pcfg, backlog, (size_t)req.len,
+                                              req.frame_type_raw == FRAME_TYPE_I, ms_ts_now(), &ev);
+        if (pv != TX_PACE_SEND) {
             send_it = false;
             ctl_sys_note_video_skipped();
         }
+        if (pv == TX_PACE_DROP_CLIENT && !client->drop_reason)
+            client->drop_reason = ev.drop_reason; /* the client loop ends the session after this frame */
         if (ev.log_it && ev.entered)
             printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
                    backlog);
@@ -1361,6 +1370,11 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     int keepalive = 1;
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
     setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    /* Send buffer: ask for 256 KiB. The kernel clamps to net.core.wmem_max (160 KiB on the camera) and
+     * doubles it (~320 KiB sk_sndbuf), and a fixed SO_SNDBUF switches the buffer autotuning off. The pacing
+     * (tx_pace.h) reads the resulting size back every frame and keeps its watermarks inside it. */
+    int sndbuf = 256 * 1024;
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
     /* The kernel default probes only after 2 h of silence: a peer that vanished
      * before PLAY (or while paused) would keep this single-client server busy
      * for over 2 h. Probe after 30 s idle, every 10 s, give up after 3. */
@@ -1558,6 +1572,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                 client.drop_reason = "error sending video frame";
                 break;
             }
+            if (client.drop_reason) break; /* set by the TCP pacing: link stalled or hopeless */
             video_idle = (vret == 0);
             send_audio_frame(&client); /* no-op until the audio track is SETUP */
             send_rtcp_reports(&client); /* no-op for tracks not yet SETUP, or off-interval */
