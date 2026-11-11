@@ -1630,6 +1630,7 @@ video_show() {
 video_restart() { # kill ak_rtsp: the wrapper (ak_rtsp_wrapper.sh) starts it again by itself; /usr/bin/watchdog is never touched
     # no killall: not guaranteed in the camera's BusyBox (see akam_lockdown.sh); pidof matches the exact name only
     log_line "CMD ssh root@$CAM_IP kill \$(pidof ak_rtsp)"
+    # shellcheck disable=SC2016 # expanded on the camera, not here
     "${CAM_SSH[@]}" 'p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p' >/dev/null 2>&1 || true
 }
 
