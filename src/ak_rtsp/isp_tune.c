@@ -49,6 +49,8 @@ int isp_tune_load(const char *path, isp_tune_t *t)
 
 int isp_tune_save(const char *path, const isp_tune_t *t)
 {
+    isp_tune_t cur;
+    if (isp_tune_load(path, &cur) == 1 && !memcmp(&cur, t, sizeof(cur))) return 0; /* unchanged: no flash write */
     if (!t->brightness && !t->contrast && !t->saturation && !t->sharpness) {
         if (unlink(path) < 0 && errno != ENOENT) return -1;
         return 0;
