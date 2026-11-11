@@ -20,7 +20,7 @@ dry_video_show|--dry-run video show
 dry_video_set|--dry-run video bitrate 2000
 dry_video_all|--dry-run video bitrate 0800 fps 10 gop 4
 dry_ntp_status|--dry-run ntp status
-dry_ntp_set|--dry-run ntp set pool.ntp.org 192.168.1.1
+dry_ntp_set|--dry-run ntp set pool.ntp.org 192.0.2.1
 dry_ntp_off|--dry-run ntp off
 dry_audio_mic|--dry-run audio mic off
 no_address_video|video

@@ -106,12 +106,12 @@ func TestNtp(t *testing.T) {
 	r := e.run("", "ntp")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Time sync: status", "  time sync: off (default)")
-	r = e.run("", "ntp", "set", "pool.ntp.org", "192.168.1.1")
+	r = e.run("", "ntp", "set", "pool.ntp.org", "192.0.2.1")
 	expectRC(t, r, 0)
-	contains(t, r.out, "  The camera will ask pool.ntp.org 192.168.1.1 for the time at start-up and every 6 hours (UDP 123, outgoing only).",
-		"  Nothing is sent unless you do this; ./akam ntp off turns it off again.", "  Time sync on, servers: pool.ntp.org 192.168.1.1.")
+	contains(t, r.out, "  The camera will ask pool.ntp.org 192.0.2.1 for the time at start-up and every 6 hours (UDP 123, outgoing only).",
+		"  Nothing is sent unless you do this; ./akam ntp off turns it off again.", "  Time sync on, servers: pool.ntp.org 192.0.2.1.")
 	r = e.run("", "ntp", "status")
-	contains(t, r.out, "  time sync: on, servers: pool.ntp.org 192.168.1.1")
+	contains(t, r.out, "  time sync: on, servers: pool.ntp.org 192.0.2.1")
 	r = e.run("", "ntp", "off")
 	contains(t, r.out, "  Time sync off:")
 	var ntp []string
@@ -120,7 +120,7 @@ func TestNtp(t *testing.T) {
 			ntp = append(ntp, c)
 		}
 	}
-	want := "/usr/sbin/akam_ntp.sh status|/usr/sbin/akam_ntp.sh set pool.ntp.org 192.168.1.1|/usr/sbin/akam_ntp.sh status|/usr/sbin/akam_ntp.sh off"
+	want := "/usr/sbin/akam_ntp.sh status|/usr/sbin/akam_ntp.sh set pool.ntp.org 192.0.2.1|/usr/sbin/akam_ntp.sh status|/usr/sbin/akam_ntp.sh off"
 	if strings.Join(ntp, "|") != want {
 		t.Errorf("commands: %q", ntp)
 	}

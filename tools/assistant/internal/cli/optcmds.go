@@ -221,7 +221,7 @@ func (a *App) cmdNtp(args []string) error {
 	out := strings.TrimRight(res.Combined(), "\n")
 	if out != "" {
 		for _, l := range strings.Split(out, "\n") {
-			a.UI.Say("  " + l)
+			a.UI.Say("  " + plainText(l))
 		}
 	}
 	if res.Status != 0 {

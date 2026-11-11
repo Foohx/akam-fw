@@ -97,7 +97,7 @@ func TestValidatorsRejectBadValues(t *testing.T) {
 }
 
 func TestNTPServerGrammar(t *testing.T) {
-	good := []string{"pool.ntp.org", "192.168.1.1", "a", "0.fr.pool.ntp.org", "a-b.c", strings.Repeat("a", 63)}
+	good := []string{"pool.ntp.org", "192.0.2.1", "a", "0.fr.pool.ntp.org", "a-b.c", strings.Repeat("a", 63)}
 	bad := []string{"", "-x", ".x", "x.", "a..b", "a_b", "a b", "a;b", "a$(b)", "a'b", "a\nb", "x\x00", "-", "a-", "-a.b", "é.org", strings.Repeat("a", 64), strings.Repeat("a.", 127) + "a"}
 	for _, s := range good {
 		if !ValidNTPServer(s) {

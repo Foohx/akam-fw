@@ -75,7 +75,7 @@ func allRemoteCommands() []string {
 		remoteRtspAuth("status"), remoteRtspAuth("show"), remoteRtspAuth("set-creds"), remoteRtspAuth("disable"),
 		remoteDebug("on", "60"), remoteDebug("off", ""), remoteDebug("status", ""),
 		remoteOnvif("enable", "80"), remoteOnvif("disable"), remoteOnvif("status"),
-		remoteRegister(), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.168.1.1"),
+		remoteRegister(), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
 	}
 }
 

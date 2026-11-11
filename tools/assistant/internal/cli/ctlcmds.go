@@ -194,7 +194,7 @@ func ctlOnOff(v string) string {
 	case "":
 		return "unknown"
 	}
-	return v
+	return plainText(v)
 }
 
 func (a *App) audioShow(c *camssh.Client) error {
