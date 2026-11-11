@@ -24,3 +24,6 @@ func terminate(cmd *exec.Cmd, kill bool) {
 	_ = syscall.Kill(-cmd.Process.Pid, sig)
 	_ = cmd.Process.Signal(sig)
 }
+
+// afterStart: nothing to do (Pdeathsig does it).
+func afterStart(cmd *exec.Cmd) {}
