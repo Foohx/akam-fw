@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the assistant: static (CGO_ENABLED=0), from the vendored modules, reproducible flags.
+# Builds the assistant: static (CGO_ENABLED=0), modules from tools/.toolchain/go/mod (filled by
+# `bash tools/build/bootstrap.sh`, checksum-verified by go.sum), reproducible flags.
 #
 #   tools/assistant/build.sh             this computer's OS/arch  -> tools/assistant/bin/akam
 #   tools/assistant/build.sh all         linux/amd64 and linux/arm64 -> bin/linux-<arch>/akam (and bin/akam)
@@ -17,14 +18,18 @@ BUDGET_BYTES=$((12 * 1024 * 1024))
 VERSION=${VERSION:-1.0.0-dev}
 
 if ! command -v go >/dev/null 2>&1; then
-    echo "build.sh: Go is not installed (need Go 1.26 or newer: https://go.dev/dl/)" >&2
+    echo "build.sh: Go is not installed (need Go 1.26 or newer: https://go.dev/dl/; see GO_VERSION in tools/build/deps.lock)" >&2
     exit 127
 fi
 TC="$REPO/tools/.toolchain/go"
 mkdir -p "$TC/path" "$TC/mod" "$TC/cache"
 export GOPATH="$TC/path" GOMODCACHE="$TC/mod" GOCACHE="$TC/cache"
-export GOFLAGS="-modcacherw -mod=vendor" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
+export GOFLAGS="-modcacherw -mod=readonly" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
 cd "$HERE"
+if ! go list -deps ./cmd/akam >/dev/null 2>&1; then
+    echo "build.sh: the Go modules are not in tools/.toolchain/go/mod yet; run: bash tools/build/bootstrap.sh" >&2
+    exit 1
+fi
 
 build_one() { # GOOS GOARCH OUT
     mkdir -p "$(dirname "$3")"

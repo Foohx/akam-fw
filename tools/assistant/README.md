@@ -11,7 +11,9 @@ against the bash wizard's own output, **not yet on a real camera**.
 
 ## Build
 
-Needs Go 1.26 or newer. Nothing is downloaded (the modules are vendored in `vendor/`), and nothing is written
+Needs Go 1.26 or newer (`GO_VERSION` in `tools/build/deps.lock`; a host Go at least that minor is used as is, nothing
+is installed system-wide). The modules are not stored in git: run `bash tools/build/bootstrap.sh` once (it does
+`go mod download`, checked against `go.sum`); `build.sh` and the tests then work offline. Nothing is written
 outside the repository: the module and build caches live in `tools/.toolchain/go/` (git-ignored).
 
 ```bash
@@ -118,7 +120,6 @@ internal/discover/        port probe, subnet list and scan, WS-Discovery, mDNS
 internal/rtsp/            RTSP + Digest, ONVIF backchannel talk, G.711, WAV
 internal/audio/           optional capture tools (external processes)
 internal/testfake/        fake camera for the tests
-vendor/                   vendored modules (licences in THIRD_PARTY_NOTICES.md)
 ```
 
 ## Known gaps against the bash wizard (P1)

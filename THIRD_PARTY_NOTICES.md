@@ -87,9 +87,9 @@ notices ship in the image (`LICENSE.musl`, `LICENSE.zig`).
 
 ## Go assistant (`tools/assistant`)
 
-The native assistant binary links the Go modules below, vendored unchanged in
-`tools/assistant/vendor/` with their licence files (`vendor/<module>/LICENSE`) and pinned by
-`tools/assistant/go.sum`. Only MIT and BSD-3-Clause code is linked; GPL tools are never linked or
+The native assistant binary links the Go modules below, downloaded unchanged by
+`tools/build/bootstrap.sh` into `tools/.toolchain/go/mod` (not stored in git; each module has its
+licence file in its directory there) and pinned by the checksums of `tools/assistant/go.sum`. Only MIT and BSD-3-Clause code is linked; GPL tools are never linked or
 embedded (`ffmpeg` is only run when the user has it). Test-only code adds no module.
 
 | Module | Version | Licence | Used for |
@@ -111,7 +111,7 @@ embedded (`ffmpeg` is only run when the user has it). Test-only code adds no mod
 | github.com/erikgeiser/coninput | v0.0.0-20211004153227-1c3628e74d0f | MIT | Windows console input (bubbletea) |
 | github.com/lucasb-eyer/go-colorful | v1.2.0 | MIT | colour maths (lipgloss) |
 | github.com/mattn/go-isatty | v0.0.20 | MIT | terminal detection |
-| github.com/mattn/go-localereader | v0.0.1 | MIT (stated in its README; the module has no licence file) | locale-aware input (bubbletea) |
+| github.com/mattn/go-localereader | v0.0.1 | MIT (stated in its README; the module has no licence file; linked only in Windows builds, `key_windows.go` of bubbletea) | locale-aware input (bubbletea) |
 | github.com/mattn/go-runewidth | v0.0.16 | MIT | character widths |
 | github.com/rivo/uniseg | v0.4.7 | MIT | Unicode segmentation |
 | github.com/xo/terminfo | v0.0.0-20220910002029-abceb7e1c41e | MIT | terminfo database (bubbletea) |

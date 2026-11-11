@@ -3,7 +3,7 @@
 # output compared with the bash wizard, state round trip with bash), a reproducible build, the size
 # budget, and the repository rules (no symlink, no secret, no forbidden file name).
 # Nothing here touches a camera, the microphone, the speaker or ffmpeg. Every Go cache stays under
-# tools/.toolchain/go/ (git-ignored); the build uses the vendored modules and needs no network.
+# tools/.toolchain/go/ (git-ignored); the build uses the module cache filled by tools/build/bootstrap.sh and needs no network.
 # Skipped with a clear message when Go 1.26 or newer is missing.
 set -uo pipefail
 
@@ -27,16 +27,16 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 ko() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; }
 
-# Same environment as build.sh: caches under tools/.toolchain/go, vendored modules, no network.
+# Same environment as build.sh: caches under tools/.toolchain/go, modules from the local cache (bootstrap.sh fills it), no network.
 TC=$REPO/tools/.toolchain/go
 mkdir -p "$TC/path" "$TC/mod" "$TC/cache"
 export GOPATH="$TC/path" GOMODCACHE="$TC/mod" GOCACHE="$TC/cache"
-export GOFLAGS="-modcacherw -mod=vendor" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
+export GOFLAGS="-modcacherw -mod=readonly" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
 
 echo "go: $(go version)"
 cd "$ASSIST" || exit 1
 
-# gofmt on our own code (not the vendored modules)
+# gofmt on our own code 
 unformatted=$(gofmt -l cmd internal 2>&1)
 if [ -z "$unformatted" ]; then ok "gofmt: every file is formatted"; else ko "gofmt: $unformatted"; fi
 
@@ -78,7 +78,7 @@ if [[ $out == akam\ * ]]; then ok "the bridge runs the real binary: $out"; else 
 # Repository rules for what was added under tools/assistant
 cd "$REPO" || exit 1
 if [ -z "$(find tools/assistant -type l 2>/dev/null)" ]; then ok "no symlink under tools/assistant"; else ko "symlink under tools/assistant"; fi
-if grep -rIl --exclude-dir=vendor -e 'BEGIN OPENSSH PRIVATE KEY' -e 'BEGIN RSA PRIVATE KEY' tools/assistant >/dev/null 2>&1; then
+if grep -rIl -e 'BEGIN OPENSSH PRIVATE KEY' -e 'BEGIN RSA PRIVATE KEY' tools/assistant >/dev/null 2>&1; then
     ko "a private key is stored under tools/assistant"
 else ok "no private key under tools/assistant"; fi
 if [ -f tools/assistant/go.mod ] && git ls-files --error-unmatch tools/assistant/go.mod >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
