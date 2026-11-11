@@ -21,6 +21,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testfake"
 )
 
@@ -38,6 +39,7 @@ type env struct {
 	// received commands; reboot, power-off and friends stay forbidden.
 	flashTest bool
 	http      *http.Client // the client of get-kit (a test server's), nil: none
+	sd        sdcard.Backend
 }
 
 type fakeCapture struct {
@@ -174,6 +176,7 @@ func (e *env) hooks() cli.Hooks {
 		h.Capture = e.capture
 	}
 	h.HTTP = e.http
+	h.SD = e.sd
 	return h
 }
 

@@ -40,6 +40,8 @@ type StockOptions struct {
 	WifiVerdict string
 	// FreeKiB is what df reports (default 900000).
 	FreeKiB int
+	// DiffSecondRead lists partitions whose second dump differs from the first (an unreliable read).
+	DiffSecondRead []int
 	// Mtd7 is the initial APP content (default: 5242880 bytes of "fake APP content").
 	Mtd7 []byte
 }
@@ -429,6 +431,14 @@ func (s *Stock) handlers() []handler {
 		}},
 		{rx(`^dd if=/dev/mtdblock([0-7]) of=(\S+) bs=64k 2>/dev/null$`), func(c *sconn, m []string) (string, int) {
 			b, err := os.ReadFile(s.path("/dev/mtdblock" + m[1]))
+			if strings.Contains(m[2], "/dump2/") {
+				for _, d := range s.opt.DiffSecondRead {
+					if strconv.Itoa(d) == m[1] && len(b) > 0 {
+						b = append([]byte(nil), b...)
+						b[len(b)-1] ^= 0xff
+					}
+				}
+			}
 			if err != nil || os.WriteFile(s.path(m[2]), b, 0o644) != nil {
 				return "", 1
 			}

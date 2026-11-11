@@ -14,6 +14,8 @@ type ImageBackend struct {
 	Model string
 	// Refuse makes Check refuse the device with this reason (a system disk, a wrong size...).
 	Refuse string
+	// Elevate makes NeedsElevation true (the "administrator rights" question is asked).
+	Elevate bool
 	// Calls counts destructive operations.
 	Prepared, Wiped int
 }
@@ -47,7 +49,7 @@ func (b *ImageBackend) Check(dev string) (*Candidate, error) {
 	return b.cand()
 }
 
-func (b *ImageBackend) NeedsElevation(*Candidate) bool { return false }
+func (b *ImageBackend) NeedsElevation(*Candidate) bool { return b.Elevate }
 
 func (b *ImageBackend) Prepare(c *Candidate, files []File, spec VerifySpec) ([]string, error) {
 	b.Prepared++
