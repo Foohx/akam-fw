@@ -372,24 +372,43 @@ static int if_query(unsigned long req, const char *name, struct ifreq *ifr)
     return rc;
 }
 
+/* The probed interface name is cached once found (the interface does not change at run time): without that every
+ * identity lookup opened up to three sockets for the probe alone. */
 const char *onvif_if_name(void)
 {
     struct ifreq r;
+    static const char *found;
     if (onvif_ifname) return onvif_ifname;
-    if (if_query(SIOCGIFHWADDR, "wlan0", &r) == 0) return "wlan0";
-    if (if_query(SIOCGIFHWADDR, "eth0", &r) == 0) return "eth0";
+    if (found) return found;
+    if (if_query(SIOCGIFHWADDR, "wlan0", &r) == 0) return found = "wlan0";
+    if (if_query(SIOCGIFHWADDR, "eth0", &r) == 0) return found = "eth0";
     return "wlan0";
 }
 
+/* The MAC of an interface is static: cached per interface name after the first successful read. */
 int onvif_mac(char out[18])
 {
     struct ifreq r;
-    if (if_query(SIOCGIFHWADDR, onvif_if_name(), &r) != 0) {
+    static char cname[IFNAMSIZ], cmac[18];
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    const char *n = onvif_if_name();
+    pthread_mutex_lock(&mu);
+    if (cname[0] && strcmp(cname, n) == 0) {
+        memcpy(out, cmac, 18);
+        pthread_mutex_unlock(&mu);
+        return 0;
+    }
+    pthread_mutex_unlock(&mu);
+    if (if_query(SIOCGIFHWADDR, n, &r) != 0) {
         strcpy(out, "00:00:00:00:00:00");
         return -1;
     }
     const unsigned char *m = (const unsigned char *)r.ifr_hwaddr.sa_data;
     snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+    pthread_mutex_lock(&mu);
+    snprintf(cname, sizeof(cname), "%s", n);
+    memcpy(cmac, out, 18);
+    pthread_mutex_unlock(&mu);
     return 0;
 }
 
