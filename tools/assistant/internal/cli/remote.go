@@ -79,7 +79,7 @@ func allRemoteCommands() []string {
 	}
 }
 
-var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|kill)\b|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|\bof=|>\s*/dev/mtd|akam_reflash|i-understand-no-uart`)
+var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|pkill|kill)\b|\bdd\b[^|;&]*\b(seek|conv|oflag|skip)=|\bdd\b[^|;&]*\bof\s*=|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|\bof=|>\s*/dev/mtd|akam_reflash|i-understand-no-uart`)
 
 // remoteReadRe is the ONE read-only form of a flash read that is allowed on its own: dd with an
 // input and a block size, never an of=. The partition number is a single digit 0..7.
@@ -105,5 +105,16 @@ func forbiddenRemote(cmd string) string {
 	if forbiddenRe.MatchString(cmd) {
 		return fmt.Sprintf("forbidden camera command: %s", cmd)
 	}
+	// A flash device may only appear in the exact commands above (the anchored read, the register
+	// read): anything else naming one (tee, cp, a glob, a chained command after a read...) is refused.
+	if cmd != remoteRegister() && strings.Contains(strings.ToLower(cmd), "/dev/mt") {
+		return fmt.Sprintf("forbidden camera command: %s", cmd)
+	}
+	if strings.Contains(strings.ReplaceAll(cmd, "/dev/null", ""), "/dev/") && redirectDevRe.MatchString(strings.ReplaceAll(cmd, "/dev/null", "")) {
+		return fmt.Sprintf("forbidden camera command: %s", cmd)
+	}
 	return ""
 }
+
+// redirectDevRe is a redirection or tee into a device node (the /dev/null sink is removed first).
+var redirectDevRe = regexp.MustCompile(`>\s*/dev/|\btee\b[^|;&]*/dev/`)

@@ -32,13 +32,13 @@ var procMtdRe = regexp.MustCompile(`^mtd([0-7]): ([0-9a-f]{8}) ([0-9a-f]{8}) "([
 // of each partition as the camera reports it (the cap of its read).
 func (a *App) bkSSHLayout(c *camssh.Client) ([8]int64, string, error) {
 	var caps [8]int64
-	res, err := a.run(c, "cat /proc/mtd", nil, "")
-	if err != nil || res.Status != 0 {
+	out, status, err := a.runCapped(c, "cat /proc/mtd", 4096)
+	if err != nil || status != 0 {
 		return caps, "", a.UI.Fail("cannot read /proc/mtd on the camera.", "check the SSH session and run the backup again.")
 	}
 	var keep []string
 	seen := 0
-	for _, l := range strings.Split(string(res.Stdout), "\n") {
+	for _, l := range strings.Split(string(out), "\n") {
 		l = strings.TrimRight(l, "\r")
 		if strings.HasPrefix(l, "dev:") || strings.TrimSpace(l) == "" {
 			continue
@@ -66,6 +66,9 @@ func (a *App) bkSSHLayout(c *camssh.Client) ([8]int64, string, error) {
 			if i >= 16 {
 				break
 			}
+			if len(l) > 100 {
+				l = l[:100]
+			}
 			a.UI.Say("      " + textsafe.Clean(l))
 		}
 		a.UI.Hint("do NOT continue: this camera model or firmware layout is not supported. Nothing was changed.")
@@ -90,6 +93,23 @@ func (w *capBuf) Write(p []byte) (int, error) {
 		return 0, errOverCap
 	}
 	return w.b.Write(p)
+}
+
+// runCapped runs a read-only command and keeps at most max bytes of its output: a camera that sends
+// more is refused (never buffered without bound).
+func (a *App) runCapped(c *camssh.Client, cmd string, max int64) ([]byte, int, error) {
+	if why := forbiddenRemote(cmd); why != "" {
+		return nil, 0, errors.New(why)
+	}
+	a.Log.Line("CMD ssh root@%s %s", c.Host, cmd)
+	ctx, cancel := context.WithTimeout(a.Ctx, 60*time.Second)
+	defer cancel()
+	w := &capBuf{max: max}
+	res, err := c.RunStream(ctx, cmd, w)
+	if err != nil {
+		return nil, 0, err
+	}
+	return w.b.Bytes(), res.Status, nil
 }
 
 // bkSSHRead streams partition n once and returns its bytes and sha256.
@@ -222,8 +242,8 @@ func (a *App) backupSSH() error {
 		return err
 	}
 	kernel := ""
-	if res, err := a.run(c, "uname -r; uname -v", nil, ""); err == nil && res.Status == 0 {
-		ls := strings.Split(strings.TrimRight(textsafe.Clean(string(res.Stdout)), "\n"), "\n")
+	if out, status, err := a.runCapped(c, "uname -r; uname -v", 1024); err == nil && status == 0 {
+		ls := strings.Split(strings.TrimRight(textsafe.Clean(string(out)), "\n"), "\n")
 		if len(ls) >= 2 {
 			kernel = strings.TrimSpace(ls[0]) + " " + strings.TrimSpace(ls[1])
 			a.UI.Say("  Kernel: " + kernel)

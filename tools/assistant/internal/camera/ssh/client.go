@@ -258,7 +258,14 @@ func (c *Client) RunStream(ctx context.Context, cmd string, out io.Writer) (Resu
 	select {
 	case <-ctx.Done():
 		s.Close()
-		<-done
+		// The writer must not be called once we return, so wait for the session; a peer that never
+		// acknowledges the close would block that wait, so after a short grace the connection goes.
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			c.conn.Close()
+			<-done
+		}
 		if werr != nil {
 			return Result{}, werr
 		}
