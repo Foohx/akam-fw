@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"sort"
 	"strconv"
 	"sync"
@@ -129,18 +130,7 @@ func (s Subnet) Hosts() []net.IP {
 	return out
 }
 
-var virtualPrefixes = []string{"docker", "veth", "br-", "virbr", "vmnet", "vboxnet", "tun", "tap", "wg", "tailscale", "zt", "lo", "podman", "cni", "flannel", "kube"}
-
-func isVirtual(name string) bool {
-	for _, p := range virtualPrefixes {
-		if len(name) >= len(p) && name[:len(p)] == p {
-			return true
-		}
-	}
-	return false
-}
-
-// Subnets returns the /24 (or smaller) of every up, non-virtual, non-loopback IPv4 interface.
+// Subnets returns the scan ranges (see SelectSubnets) of the system's interfaces.
 func Subnets(ifaces func() ([]net.Interface, error), addrs func(*net.Interface) ([]net.Addr, error)) ([]Subnet, error) {
 	if ifaces == nil {
 		ifaces = net.Interfaces
@@ -152,33 +142,7 @@ func Subnets(ifaces func() ([]net.Interface, error), addrs func(*net.Interface) 
 	if err != nil {
 		return nil, err
 	}
-	var out []Subnet
-	for i := range list {
-		ifc := &list[i]
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 || isVirtual(ifc.Name) {
-			continue
-		}
-		as, err := addrs(ifc)
-		if err != nil {
-			continue
-		}
-		for _, a := range as {
-			ipn, ok := a.(*net.IPNet)
-			if !ok || ipn.IP.To4() == nil || ipn.IP.IsLinkLocalUnicast() {
-				continue
-			}
-			ones, bits := ipn.Mask.Size()
-			if bits != 32 {
-				continue
-			}
-			if ones < 24 {
-				ones = 24 // never scan more than a /24
-			}
-			mask := net.CIDRMask(ones, 32)
-			out = append(out, Subnet{Iface: ifc.Name, CIDR: &net.IPNet{IP: ipn.IP.To4().Mask(mask), Mask: mask}, Self: ipn.IP.To4()})
-		}
-	}
-	return out, nil
+	return SelectSubnets(runtime.GOOS, Ifaces(list, addrs)), nil
 }
 
 // Scan probes the four camera ports of every host of the subnet: at most `conc` dials at once,
