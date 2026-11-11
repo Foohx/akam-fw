@@ -19,9 +19,10 @@ type Identity struct {
 }
 
 const (
-	identifyTimeout = 2 * time.Second
-	identifyLineMax = 255
-	identifyLines   = 8 // lines read in all, LOG pushes included
+	identifyTimeout  = 2 * time.Second
+	identifyLineMax  = 255
+	identifyBytesMax = 256 * 1024
+	identifyLines    = 8 // lines read in all, LOG pushes included
 )
 
 // Identify asks the control port of host (read-only, no login) for fw.version and sys.hostname.
@@ -39,7 +40,7 @@ func Identify(ctx context.Context, host string, port int, dial DialFunc) (Identi
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(identifyTimeout))
-	r := bufio.NewReader(conn)
+	r := bufio.NewReader(io.LimitReader(conn, identifyBytesMax)) // a line without end cannot be read forever
 	var id Identity
 	left := identifyLines
 	for _, key := range []string{"fw.version", "sys.hostname"} {

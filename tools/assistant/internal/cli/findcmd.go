@@ -10,7 +10,6 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -80,12 +79,12 @@ func (a *App) resolveName(name string) (string, bool) {
 // wsdItem is the menu line of one WS-Discovery answer. The name and the address come from the
 // network: no control or escape character may reach the terminal.
 func wsdItem(f discover.Found) string {
-	d := textsafe.Clean(f.IP)
+	d := ui.Sanitize(f.IP)
 	if f.Name != "" {
-		d += "  " + textsafe.Clean(f.Name)
+		d += "  " + ui.Sanitize(f.Name)
 	}
 	if len(f.XAddrs) > 0 {
-		d += "  " + textsafe.Clean(f.XAddrs[0])
+		d += "  " + ui.Sanitize(f.XAddrs[0])
 	}
 	return d
 }

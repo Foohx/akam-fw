@@ -102,6 +102,7 @@ type Subnet struct {
 	Iface string
 	CIDR  *net.IPNet
 	Self  net.IP
+	Whole *net.IPNet // the real network of the interface when CIDR is only the part of it scanned, else nil
 }
 
 func (s Subnet) String() string { return s.CIDR.String() }
@@ -220,5 +221,5 @@ func ScanCount(sn Subnet) int { return len(sn.Hosts()) * 4 }
 
 // Describe is "192.168.1.0/24 (eth0, 254 addresses, 1016 connections)".
 func (s Subnet) Describe() string {
-	return fmt.Sprintf("%s (%s, %d addresses)", s.CIDR, s.Iface, len(s.Hosts()))
+	return fmt.Sprintf("%s%s (%s, %d addresses)", s.CIDR, s.cutNote(), s.Iface, len(s.Hosts()))
 }

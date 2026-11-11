@@ -16,6 +16,7 @@ type Known struct {
 	HostKey string    // SSH host key fingerprint pinned for it ("" when none)
 }
 
+// Host and FW of a Camera are raw network text: sanitise them (ui.Sanitize) before showing them.
 // Camera is one camera met during a search, with what Identify said and, when the caller fetched
 // it, the SSH host key fingerprint the address presented.
 type Camera struct {
@@ -43,30 +44,46 @@ type Row struct {
 func Merge(known []Known, found []Camera, now time.Time) []Row {
 	used := make([]bool, len(found))
 	var rows, gone []Row
-	for _, k := range known {
-		idx := -1
+	// Pass 1: by address, for every remembered camera, so that a camera that moved cannot take the
+	// answer of another one that stayed.
+	match := make([]int, len(known))
+	for ki, k := range known {
+		match[ki] = -1
 		for i, f := range found {
 			if !used[i] && f.IP == k.IP {
-				idx = i
+				match[ki], used[i] = i, true
 				break
 			}
 		}
-		moved := false
-		if idx < 0 && k.HostKey != "" {
-			for i, f := range found {
-				if !used[i] && f.HostKey == k.HostKey {
-					idx, moved = i, true
-					break
+	}
+	// Pass 2: by host key (the camera moved). Only a real SSH host key may decide identity: a
+	// camera-supplied host name never does. A key presented by two answers is ambiguous: no match.
+	moved := make([]bool, len(known))
+	for ki, k := range known {
+		if match[ki] >= 0 || k.HostKey == "" {
+			continue
+		}
+		idx, n := -1, 0
+		for i, f := range found {
+			if f.HostKey == k.HostKey {
+				n++
+				if !used[i] {
+					idx = i
 				}
 			}
 		}
+		if n == 1 && idx >= 0 {
+			match[ki], moved[ki], used[idx] = idx, true, true
+		}
+	}
+	for ki, k := range known {
+		idx := match[ki]
 		if idx < 0 {
 			gone = append(gone, Row{Name: k.Name, LastIP: k.IP, LastSeen: k.Seen})
 			continue
 		}
-		used[idx] = true
 		r := Row{Name: k.Name, Camera: found[idx], Found: true, LastSeen: now}
-		if moved {
+		if moved[ki] {
 			r.OldIP = k.IP
 		}
 		rows = append(rows, r)

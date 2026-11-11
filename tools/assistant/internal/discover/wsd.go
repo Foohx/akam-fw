@@ -121,6 +121,9 @@ func WSDiscoverEach(ctx context.Context, goos string, ifaces []Iface, target str
 	return out, firstErr
 }
 
+// wsdMaxAnswers bounds the answers kept from one probe (a hostile LAN can answer from many addresses).
+const wsdMaxAnswers = 64
+
 func wsdOn(ctx context.Context, lc net.ListenConfig, target string, wait time.Duration) ([]Found, error) {
 	pc, err := lc.ListenPacket(ctx, "udp4", ":0")
 	if err != nil {
@@ -154,6 +157,9 @@ func wsdOn(ctx context.Context, lc net.ListenConfig, target string, wait time.Du
 		f, ok := ParseProbeMatch(ua.IP, buf[:n])
 		if !ok || seen[f.IP] {
 			continue
+		}
+		if len(out) >= wsdMaxAnswers {
+			break
 		}
 		seen[f.IP] = true
 		out = append(out, f)
