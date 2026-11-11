@@ -674,8 +674,18 @@ func TestBombs(t *testing.T) {
 }
 
 func TestTruncationsAndCorruption(t *testing.T) {
-	for _, ext := range []bool{false, true} {
-		b := buildImage(sampleTree(ext), bopt{comp: CompGzip, bs: 4096, export: true, options: true})
+	before := decoderPanics.Load()
+	defer func() {
+		if n := decoderPanics.Load() - before; n != 0 {
+			t.Errorf("%d decoder panics were recovered: the recover must not hide a bug", n)
+		}
+	}()
+	for _, v := range []struct {
+		ext  bool
+		comp int
+	}{{false, CompGzip}, {true, CompGzip}, {true, CompXZ}} {
+		ext := v.ext
+		b := buildImage(sampleTree(ext), bopt{comp: v.comp, bs: 4096, export: true, options: true})
 		lim := Limits{MaxCallBytes: 8 << 20, MaxMetadataBytes: 4 << 20}
 		exercise := func(img []byte, size int64) {
 			f, err := OpenLimits(bytes.NewReader(img), size, lim)

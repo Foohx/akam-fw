@@ -8,8 +8,7 @@ import (
 	"io"
 	"math/bits"
 	"sync"
-
-	"github.com/ulikunitz/xz"
+	"sync/atomic"
 )
 
 const (
@@ -73,7 +72,6 @@ type superblock struct {
 	idStart, xattrStart        uint64
 	inodeStart, dirStart       uint64
 	fragStart, lookupStart     uint64
-	dictCap                    int
 	inodeEnd, dirEnd, lastUsed int64
 }
 
@@ -207,7 +205,6 @@ func (f *FS) parseSuperblock(b []byte) error {
 	default:
 		return unsupported("compression id %d", sb.Compression)
 	}
-	f.sb.dictCap = int(bs)
 	if sb.Flags&FlagCompressorOptions != 0 {
 		blk, err := f.rawMeta(sbSize, used, true)
 		if err != nil {
@@ -227,7 +224,6 @@ func (f *FS) parseSuperblock(b []byte) error {
 				return unsupported("xz dictionary of %d bytes", dict)
 			}
 			sb.XzDictSize = dict
-			f.sb.dictCap = max(int(dict), int(bs))
 		case CompGzip:
 			if len(blk.data) < 8 {
 				return corrupt("gzip compressor options of %d bytes", len(blk.data))
@@ -422,20 +418,23 @@ func (f *FS) rawMeta(abs, end int64, needStored bool) (*metaBlock, error) {
 	return b, nil
 }
 
+// decoderPanics counts the panics of the third party decoders turned into errors by decompress. The recover
+// is a last resort; tests assert that it never fires on the inputs they feed, so that it cannot hide a bug.
+var decoderPanics atomic.Int64
+
 // decompress inflates one block, refusing more than max bytes.
 func (f *FS) decompress(src []byte, max int) (out []byte, err error) {
 	defer func() {
-		if r := recover(); r != nil { // the decoders are third party code reading untrusted data
+		if r := recover(); r != nil {
+			decoderPanics.Add(1)
+			// the decoders are third party code reading untrusted data
 			out, err = nil, corrupt("decoder failure: %v", r)
 		}
 	}()
 	var r io.Reader
 	switch f.sb.Compression {
 	case CompXZ:
-		r, err = xz.ReaderConfig{SingleStream: true, DictCap: f.sb.dictCap}.NewReader(bytes.NewReader(src))
-		if err != nil {
-			return nil, fmt.Errorf("%w: xz: %v", ErrCorrupt, err)
-		}
+		return xzDecode(src, max)
 	case CompGzip:
 		r, err = zlib.NewReader(bytes.NewReader(src))
 		if err != nil {
