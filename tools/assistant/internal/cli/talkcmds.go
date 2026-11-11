@@ -10,10 +10,10 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/rtsp"
 )
 
@@ -77,7 +77,7 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 		if rerr != nil {
 			return "", "", a.UI.Fail("cannot read the password file.", "check the path given with --password-file.")
 		}
-		pass = strings.SplitN(strings.TrimRight(string(b), "\r\n"), "\n", 2)[0]
+		pass = strings.TrimRight(strings.SplitN(string(b), "\n", 2)[0], "\r")
 	}
 	// no child process (ffmpeg, arecord) may inherit it
 	os.Unsetenv("AKAM_RTSP_PASSWORD")
@@ -128,16 +128,13 @@ func (a *App) noToolFail(what string) error {
 func (a *App) talkContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(a.Ctx)
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(ch, platform.SignalsToIgnore()...)
 	stop := make(chan struct{})
 	go func() {
 		select {
 		case s := <-ch:
-			switch s {
-			case syscall.SIGTERM:
-				a.exitOverride = 143
-			case syscall.SIGHUP:
-				a.exitOverride = 129
+			if code := platform.ExitCodeFor(s); code != 130 {
+				a.exitOverride = code
 			}
 			cancel()
 		case <-stop:

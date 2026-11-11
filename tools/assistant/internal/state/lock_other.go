@@ -1,8 +1,8 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package state
 
-// Lock is a no-op where flock is not available (Windows support comes in a later phase).
+// Lock is a no-op where flock is not available (plan 9 and other systems without flock or LockFileEx).
 type Lock struct{}
 
 // Acquire always succeeds.

@@ -22,6 +22,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
@@ -125,13 +126,17 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 		fmt.Fprintf(st.Out, "akam %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return ExitOK
 	}
-	if opt.Camera != "" && !state.NameValid(opt.Camera) {
+	if opt.Camera != "" && !state.NameExists(opt.Camera) {
 		errln(fmt.Sprintf("akam: --camera needs a short name: lowercase letters, digits and '-', at most %d, not starting or ending with '-'", state.NameMax))
 		return ExitUsage
 	}
 	base := opt.StateDir
 	if base == "" {
 		base = state.DefaultDir()
+	}
+	if opt.Camera != "" && !state.NameValid(opt.Camera) && !state.CameraExists(base, opt.Camera) {
+		errln("akam: --camera: '" + opt.Camera + "' is a reserved name on Windows (con, prn, aux, nul, com1-9, lpt1-9); pick another one")
+		return ExitUsage
 	}
 	cams, err := state.InitCameras(base, opt.Camera, opt.DryRun)
 	if err != nil {
@@ -249,10 +254,18 @@ func NewPlainUI(o *Options, st Streams, log *state.Log, secrets *state.Secrets, 
 	if f, ok := st.Err.(*os.File); ok {
 		p.ErrFile = f
 	}
-	if f, ok := st.Out.(*os.File); ok && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb" && os.Getenv("TERM") != "" {
-		p.Color = isTerminal(f)
+	if f, ok := st.Out.(*os.File); ok && os.Getenv("NO_COLOR") == "" && colorTerm() {
+		p.Color = isTerminal(f) && platform.VTEnabled()
 	}
 	return p
+}
+
+// colorTerm is false for TERM=dumb or an empty TERM; Windows consoles set no TERM and use VT mode.
+func colorTerm() bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return os.Getenv("TERM") != "dumb" && os.Getenv("TERM") != ""
 }
 
 func (a *App) dispatch(cmd string) error {
