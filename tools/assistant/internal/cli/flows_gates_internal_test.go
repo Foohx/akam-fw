@@ -38,9 +38,15 @@ func TestEveryFlashPathRehashesTheBackupFirst(t *testing.T) {
 		{"telnetcmds.go", "cmdFlash", "stockBackupProblem(", "a.flashSSH("},
 		{"telnetcmds.go", "cmdFlash", "stockBackupProblem(", "a.flashTelnet("},
 		{"sdcmds.go", "cmdPrepareFlashSD", "stockBackupProblem(", "a.sdConfirmErase("},
+		{"flashcmds.go", "cmdUpdate", "a.imageGateChecked(", "a.flashSSH("},
+		{"flashcmds.go", "cmdRestore", "a.imageGateChecked(", "a.flashSSH("},
+		{"flashcmds.go", "cmdRestore", "a.imageGateChecked(", "a.flashTelnet("},
+		{"telnetcmds.go", "cmdFlash", "a.imageGateChecked(", "a.flashSSH("},
+		{"telnetcmds.go", "cmdFlash", "a.imageGateChecked(", "a.flashTelnet("},
+		{"sdcmds.go", "cmdPrepareFlashSD", "a.imageSquashBytes(", "a.sdConfirmErase("},
 		{"flows_update.go", "flowUpdate", "a.backupGate()", "a.cmdUpdate()"},
-		{"flows_update.go", "flowUpdate", "a.imageSquashCheck(", "a.cmdUpdate()"},
-		{"flows_update.go", "installImage", "a.imageSquashCheck(", `a.St.MarkDone("image")`},
+		{"flows_update.go", "flowUpdate", "a.imageGateChecked(", "a.cmdUpdate()"},
+		{"flows_update.go", "installImage", "a.imageGateChecked(", `a.St.MarkDone("image")`},
 	} {
 		body := funcBody(t, c.file, c.fn)
 		g, b := strings.Index(body, c.gate), strings.LastIndex(body, c.before) // the rehearsal branch before the gate never confirms

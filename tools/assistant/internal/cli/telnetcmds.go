@@ -1011,7 +1011,7 @@ func (a *App) cmdFlash() error {
 		return err
 	}
 	img := a.St.Get("image_path")
-	md5, err := a.imageGate(img)
+	md5, err := a.imageGateChecked(img)
 	if err != nil {
 		return err
 	}

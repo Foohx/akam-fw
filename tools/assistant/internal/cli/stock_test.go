@@ -390,8 +390,8 @@ func newCardFlashWorld(t *testing.T, so testfake.StockOptions, cardMod func(file
 	os.MkdirAll(fw.bkDir, 0o755)
 	var sums strings.Builder
 	for i := 0; i < 8; i++ {
-		os.WriteFile(filepath.Join(fw.bkDir, fmt.Sprintf("mtdblock%d.bin", i)), testfake.StockMtdContent(i), 0o600)
-		fmt.Fprintf(&sums, "%s  mtdblock%d.bin\n", shaOf(testfake.StockMtdContent(i)), i)
+		os.WriteFile(filepath.Join(fw.bkDir, fmt.Sprintf("mtdblock%d.bin", i)), stockMtd(t, i), 0o600)
+		fmt.Fprintf(&sums, "%s  mtdblock%d.bin\n", shaOf(stockMtd(t, i)), i)
 	}
 	os.WriteFile(filepath.Join(fw.bkDir, "SHA256SUMS"), []byte(sums.String()), 0o600)
 	fw.seed()
@@ -401,15 +401,14 @@ func newCardFlashWorld(t *testing.T, so testfake.StockOptions, cardMod func(file
 // seed writes the state of a camera whose flash card was prepared (re-run after changing a file).
 func (fw *cardFlashWorld) seed() {
 	img, _ := os.ReadFile(fw.imgPath)
-	app := shaOf(testfake.StockMtdContent(7))
+	app, isha := shaOf(fw.img), shaOf(img) // the backup APP is the valid image; the image file may have been changed
 	steps := ""
 	for _, s := range []string{"doctor", "get_kit", "prepare_backup_sd", "find_camera", "backup", "image", "prepare_flash_sd"} {
 		steps += "step_" + s + "_done=2026-01-01T00:00:00Z\n"
 	}
 	state := (steps + "mode=source\ncamera_ip=127.0.0.1\ncamera_kind=stock\ncamera_telnet=1\n" +
-		"image_path=" + fw.imgPath + "\nimage_sha=" + shaOf(fw.img) + "\nimage_kit_sha=source\nimage_backup_sha=" + app + "\n" +
-		"backup_dir=" + fw.bkDir + "\nbackup_sha=" + app + "\nflash_sd_image_sha=" + shaOf(fw.img) + "\n")
-	state = strings.ReplaceAll(state, shaOf(fw.img), shaOf(img))
+		"image_path=" + fw.imgPath + "\nimage_sha=" + isha + "\nimage_kit_sha=source\nimage_backup_sha=" + app + "\n" +
+		"backup_dir=" + fw.bkDir + "\nbackup_sha=" + app + "\nflash_sd_image_sha=" + isha + "\n")
 	fw.writeState(state)
 	os.WriteFile(filepath.Join(fw.state, "state.dry"), []byte(state), 0o600)
 }
@@ -599,7 +598,7 @@ func TestRestoreOverTelnetWritesTheStockApp(t *testing.T) {
 	// card carries no image: it is pushed after the yes, then the stock APP is written back
 	expectRC(t, r, 0)
 	contains(t, r.out, "  Route: telnet", "  Restore written and verified (read-back md5 = ")
-	if !bytes.Equal(fw.mtd7(), testfake.StockMtdContent(7)) {
+	if !bytes.Equal(fw.mtd7(), validImage(t)) {
 		t.Error("the stock APP was not restored")
 	}
 	if got := fw.st.Confirms(); len(got) != 1 || got[0] != "YES" {

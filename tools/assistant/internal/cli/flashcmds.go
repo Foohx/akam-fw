@@ -58,22 +58,41 @@ func (a *App) flashToolPath() string {
 
 // imageGate is cam_image_gate: exactly the APP partition size; returns the md5.
 func (a *App) imageGate(img string) (string, error) {
+	_, m, err := a.imageRead(img)
+	return m, err
+}
+
+// imageGateChecked is imageGate plus the squashfs check, both on the SAME bytes (the file is read once):
+// the md5 it returns is the md5 of the bytes that were checked, and flash.Flash / flashTelnet refuse any
+// bytes whose md5 differs, so a file swapped after the check cannot be written.
+func (a *App) imageGateChecked(img string) (string, error) {
+	b, m, err := a.imageRead(img)
+	if err != nil {
+		return "", err
+	}
+	if err := a.imageSquashBytes(b); err != nil {
+		return "", err
+	}
+	return m, nil
+}
+
+func (a *App) imageRead(img string) ([]byte, string, error) {
 	st, err := os.Stat(img)
 	if err != nil || !st.Mode().IsRegular() {
-		return "", a.UI.Fail("image not found: "+img, fmt.Sprintf("run %s step image.", Prog))
+		return nil, "", a.UI.Fail("image not found: "+img, fmt.Sprintf("run %s step image.", Prog))
 	}
 	if st.Size() != appPartitionBytes {
-		return "", a.UI.Fail(fmt.Sprintf("the image is %d bytes, expected exactly %d.", st.Size(), appPartitionBytes), "do not flash it.")
+		return nil, "", a.UI.Fail(fmt.Sprintf("the image is %d bytes, expected exactly %d.", st.Size(), appPartitionBytes), "do not flash it.")
 	}
 	b, err := os.ReadFile(img)
 	if err != nil {
-		return "", a.UI.Fail("cannot read the image: "+err.Error(), "")
+		return nil, "", a.UI.Fail("cannot read the image: "+err.Error(), "")
 	}
 	sum := md5.Sum(b)
 	m := fmt.Sprintf("%x", sum)
 	a.UI.Say("  Image: " + img)
 	a.UI.Say(fmt.Sprintf("  Size %d bytes (full APP partition), md5 %s.", st.Size(), m))
-	return m, nil
+	return b, m, nil
 }
 
 // flashConfirm is cam_flash_confirm: the red box and one yes/no (default No, needs a terminal).
@@ -243,7 +262,7 @@ func (a *App) cmdUpdate() error {
 	if img == "" {
 		return a.UI.Fail("no image given.", fmt.Sprintf("build one with %s step image or pass --image FILE.", Prog))
 	}
-	md5, err := a.imageGate(img)
+	md5, err := a.imageGateChecked(img)
 	if err != nil {
 		return err
 	}
@@ -283,14 +302,14 @@ func (a *App) cmdRestore() error {
 	if bk == "" || !exists(app) {
 		return a.UI.Fail("no backup found.", "pass --backup-dir DIR (it must hold mtdblock7.bin).")
 	}
-	md5, err := a.imageGate(app)
-	if err != nil {
-		return err
-	}
 	// restore puts the ORIGINAL APP back: the folder is re-hashed now, and a backup made over SSH from an
 	// Akam camera (kind=akam) is refused, it holds the Akam APP
 	if p := stockBackupProblem(bk); p != "" {
 		return a.UI.Fail("the backup does not verify: "+p+".", "restore needs the backup of the stock firmware (made with the card): use it or your second copy. Nothing was written.")
+	}
+	md5, err := a.imageGateChecked(app)
+	if err != nil {
+		return err
 	}
 	a.UI.Say("  Stock APP sha256: " + fileSHA(app))
 	route := "telnet"

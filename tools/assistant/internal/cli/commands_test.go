@@ -320,7 +320,11 @@ func backupFixture(t *testing.T) string {
 		if i == 7 {
 			size = 5242880
 		}
-		if err := os.WriteFile(f, make([]byte, size), 0o600); err != nil {
+		data := make([]byte, size)
+		if i == 7 {
+			data = validImage(t) // the restore and the flash card structure-check the stock APP
+		}
+		if err := os.WriteFile(f, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		h, err := hashOf(f)
@@ -496,4 +500,14 @@ func TestStrayCommandsAreRefusedPolitely(t *testing.T) {
 	if len(e.cam.Commands()) != 0 {
 		t.Errorf("commands reached the camera: %v", e.cam.Commands())
 	}
+}
+
+// stockMtd is partition i of a stock backup fixture: the fake content, except the APP, which is a real
+// padded squashfs (the restore and the flash card structure-check it).
+func stockMtd(t *testing.T, i int) []byte {
+	t.Helper()
+	if i == 7 {
+		return validImage(t)
+	}
+	return testfake.StockMtdContent(i)
 }
