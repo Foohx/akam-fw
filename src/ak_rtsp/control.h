@@ -9,6 +9,8 @@
  *   GET <param>           -> "<param>=<value>" or "ERR ..."
  *   SET <param> <value>   -> "OK <param>=<value>" or "ERR ..."
  *   DEBUG on [min]|off|status  (loopback only) -> remote writes allowed for min minutes
+ *   ONVIF reload          (loopback only) -> "OK onvif.state=<state>": re-read /etc/config/akam/onvif and start/stop
+ *                         the ONVIF HTTP server and WS-Discovery (onvif_cfg.h); GET onvif.state is readable by all
  * Read-only by default: SET (and SAVE/RESET) from a non-loopback peer answer
  * "ERR read-only mode, see akam_debug.sh" unless DEBUG is on (RAM-only flag, off at start,
  * auto-off after 60 min by default). Loopback peers always may write.
