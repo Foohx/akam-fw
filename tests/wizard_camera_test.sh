@@ -368,6 +368,8 @@ case $cmd in
         AKAM_ROOT="$STUB_DIR/camroot" sh "$STUB_DIR/preflight.copy" --ensure-wifi
         exit $? ;;
     *REG_MTD7_MD5*) echo "REG_HOSTNAME=${STUB_REG_HOST:-akam-stub}"; echo "REG_MTD7_MD5=${STUB_REG_MD5-0123456789abcdef0123456789abcdef}"; exit 0 ;;
+    "cat /etc/config/akam/onvif 2>/dev/null") printf '%b' "${STUB_ONVIF_FLAG:-}"; exit 0 ;;
+    "/usr/sbin/akam_onvif.sh enable") echo "$cmd" >>"$STUB_DIR/onvif.log"; echo "ONVIF enabled on port 80"; exit "${STUB_ONVIF_RC:-0}" ;;
     "/usr/sbin/akam_rtsp_auth.sh status") echo "${STUB_RTSP_STATUS:-disabled}"; exit 0 ;;
     "/usr/sbin/akam_rtsp_auth.sh set-creds") cat >"$STUB_DIR/rtsp_auth.stdin"; exit 0 ;;
     "sh /tmp/akam_hwcheck.sh")
@@ -472,6 +474,8 @@ AKAM_PORT_FTP=$(fc_free_port)
 AKAM_PORT_TELNET23=$(fc_free_port)
 export AKAM_PORT_FTP AKAM_PORT_TELNET23
 export AKAM_WAIT_SECS=10
+# 80/tcp: a closed port, so that a web server on the machine running the tests does not matter
+export AKAM_PORT_HTTP=$CLOSED_TEL
 printf '# fake hwcheck\n' >"$T/hwcheck.sh"
 export AKAM_HWCHECK=$T/hwcheck.sh
 
@@ -657,6 +661,57 @@ seed_verify_state "$S"
 printf '\ny\n' | STUB_RTSP_STATUS="enabled (user bob)" AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_rtsp_on.out" 2>&1
 check "verify: when a password is already set, it is not asked again" bash -c '! grep -q "Protect the video stream" "$1" && grep -q "Already on" "$1"' _ "$T/ver_rtsp_on.out"
 
+# ONVIF: off by default; the port check follows the flag read over SSH; verify offers it (default No)
+rm -f "$STUB_DIR/onvif.log" "$STUB_DIR/rtsp_auth.stdin"
+S=$(new_state ver_onvif_no)
+seed_verify_state "$S"
+printf '\n\n\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_no.out" 2>&1
+check "verify: asks whether to make the camera visible to ONVIF apps" has "$T/ver_onvif_no.out" "Make the camera visible to ONVIF apps"
+check "verify: an empty answer means No (ONVIF not enabled)" test ! -e "$STUB_DIR/onvif.log"
+check "verify: the step is done whatever the ONVIF answer" bash -c 'grep -q "^step_verify_done=" "$1"' _ "$S/state"
+
+S=$(new_state ver_onvif_notty)
+seed_verify_state "$S"
+printf '\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_notty.out" 2>&1
+check "verify: no answer (EOF) is No" test ! -e "$STUB_DIR/onvif.log"
+
+S=$(new_state ver_onvif_yes_pw)
+seed_verify_state "$S"
+printf '\n\ny\ny\nviewer\nS3NTINEL-pw-1\nS3NTINEL-pw-1\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_yes.out" 2>&1
+check "verify: ONVIF yes without a password: offers to set one first" has "$T/ver_onvif_yes.out" "ONVIF needs the stream password"
+check "verify: ...the password is sent, then ONVIF is enabled" bash -c '[ "$(cat "$1/rtsp_auth.stdin")" = "$(printf "viewer\nS3NTINEL-pw-1")" ] && grep -qx "/usr/sbin/akam_onvif.sh enable" "$1/onvif.log"' _ "$STUB_DIR"
+check "verify: ONVIF yes: the password is not in the output" hasnt "$T/ver_onvif_yes.out" S3NTINEL
+
+rm -f "$STUB_DIR/onvif.log" "$STUB_DIR/rtsp_auth.stdin"
+S=$(new_state ver_onvif_yes_ok)
+seed_verify_state "$S"
+printf '\ny\n' | STUB_RTSP_STATUS="enabled (user bob, ONVIF-ready)" AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_ok.out" 2>&1
+check "verify: ONVIF yes with a password already set: enables it, no password question" bash -c '[ ! -e "$1/rtsp_auth.stdin" ] && grep -qx "/usr/sbin/akam_onvif.sh enable" "$1/onvif.log" && ! grep -q "Set the stream password now" "$2"' _ "$STUB_DIR" "$T/ver_onvif_ok.out"
+
+rm -f "$STUB_DIR/onvif.log"
+S=$(new_state ver_onvif_pw_no)
+seed_verify_state "$S"
+printf '\n\ny\nn\n' | AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_pwno.out" 2>&1
+check "verify: ONVIF yes but no password wanted: ONVIF left off" bash -c '[ ! -e "$1/onvif.log" ] && grep -q "ONVIF left off" "$2"' _ "$STUB_DIR" "$T/ver_onvif_pwno.out"
+
+rm -f "$STUB_DIR/onvif.log"
+S=$(new_state ver_onvif_on)
+seed_verify_state "$S"
+printf '\n\ny\n' | STUB_ONVIF_FLAG='enabled=1\nport=80\n' AKAM_PORT_HTTP=$FC_PORT AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_on.out" 2>&1
+check "verify: ONVIF on and its port open: ports accepted" bash -c '[ "$1" -eq 0 ] && grep -q "ONVIF is on: port" "$2"' _ $? "$T/ver_onvif_on.out"
+check "verify: ONVIF already on: not offered again" bash -c '[ ! -e "$1/onvif.log" ] && grep -q "Already on" "$2"' _ "$STUB_DIR" "$T/ver_onvif_on.out"
+
+S=$(new_state ver_onvif_on_closed)
+seed_verify_state "$S"
+printf '\n' | STUB_ONVIF_FLAG='enabled=1\nport=80\n' AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_cl.out" 2>&1
+check "verify: ONVIF on but its port closed fails the step" bash -c '[ "$1" -ne 0 ] && grep -q "ONVIF is on but port" "$2"' _ $? "$T/ver_onvif_cl.out"
+
+S=$(new_state ver_onvif_off_open)
+seed_verify_state "$S"
+printf '\n' | AKAM_PORT_HTTP=$FC_PORT AKAM_PORT_TELNET=$CLOSED_TEL a "$S" --identity "$T/key" verify >"$T/ver_onvif_oo.out" 2>&1
+check "verify: port 80 open while ONVIF is off fails the step" bash -c '[ "$1" -ne 0 ] && grep -q "ONVIF is off) and is open" "$2"' _ $? "$T/ver_onvif_oo.out"
+check "verify: ...and stays undone" hasnt "$S/state" step_verify_done
+
 # ------------------------------------------------------------------ dry-run: nothing is contacted
 S=$(new_state dry)
 mark doctor get_kit prepare_backup_sd image prepare_flash_sd >"$S/state.dry"
@@ -674,6 +729,7 @@ check "dry-run: shows WOULD lines for the camera steps" bash -c 'for s in find-c
 check "dry-run: the camera received nothing" bash -c '[ "$(wc -l <"$1")" = "$2" ]' _ "$CAM_B_ROOT/ctl/commands.log" "$before"
 check "dry-run: the reflash tool was not called" bash -c '[ "$(wc -l <"$1/reflash.log")" = "$2" ]' _ "$STUB_DIR" "$rf_before"
 check "dry-run verify: shows the password question and sends nothing" bash -c 'grep -q "WOULD ask: Protect the video stream with a username/password? \[y/N\] (default: No)" "$1" && grep -q "WOULD run: ssh root@[^ ]* /usr/sbin/akam_rtsp_auth.sh set-creds" "$1"' _ "$T/dry_verify.out"
+check "dry-run verify: shows the ONVIF question (default No) and sends nothing" bash -c 'grep -q "WOULD ask: Make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager)? \[y/N\] (default: No)" "$1" && grep -q "WOULD run over SSH on the camera: /usr/sbin/akam_onvif.sh enable" "$1"' _ "$T/dry_verify.out"
 check "dry-run flash: asks the yes/no (shown, never answered)" has "$T/dry_flash.out" "WOULD ask: Write the camera flash now? [y/N] (default: No)"
 
 echo "wizard_camera_test: $PASS passed, $FAIL failed"

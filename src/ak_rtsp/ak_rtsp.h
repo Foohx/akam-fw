@@ -29,6 +29,7 @@
 #define ENC_HEIGHT      1080
 #define ENC_FPS         15
 #define ENC_GOP         30
+#define ENC_KBPS        1536     /* VBR+ max_kbps sent to CREATE_ENC (stock _ht_hw_settings.ini value) */
 #define ENC_VENC_SIZE   777600   /* bitstream ring size observed in boot log */
 #define ENC_RING_SIZE   4120384  /* H.264 1080p ring pool size from boot log */
 

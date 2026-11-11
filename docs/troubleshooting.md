@@ -184,6 +184,25 @@ fails, wait a few minutes and run the step again (`./akam step get-kit`). With n
 you already have (`./akam get-kit --kit FILE`) or run the bootstrap offline
 (`bash tools/build/bootstrap.sh --offline`).
 
+## An ONVIF app does not find the camera
+
+ONVIF is off unless you turned it on, and it needs the video password (this arrived in the same release as the
+`./akam onvif` command; an older image has no ONVIF). Check:
+
+```bash
+./akam onvif status      # "enabled, port 80", "password: set", "state: ..."
+./akam onvif enable      # if it says disabled (set the password first: ./akam rtsp-auth set)
+```
+
+If it is enabled and the app still lists nothing, discovery is the usual culprit: it uses UDP multicast
+(`239.255.255.250:3702`), which many Wi-Fi access points, guest networks and VLANs filter, and a firewall on the
+PC or the NVR can drop the reply. Put the app and the camera on the same subnet, allow UDP 3702 on the app's
+machine, then add the camera by hand with its address: `<camera-ip>`, port 80 (or the port you chose), and the
+video user name and password. Adding by address does not need discovery. A "not authorized" answer means the
+user name or password is wrong, or the app's clock is more than 5 minutes off the camera's while the camera
+clock is set. With ONVIF on, 80/tcp and 3702/udp are expected to be open on the camera (`./akam step verify` checks it);
+without it only 22, 554 and 8091 are.
+
 ## The router still shows the old camera name
 
 The camera announces its name (`akam-XXXX`, or the one set with `akam_hostname.sh set NAME`) only when

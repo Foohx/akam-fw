@@ -14,7 +14,7 @@ The kit (`akam-kit-<version>.tar.xz`) holds **only Akam's own files**:
 | Path | Content |
 |---|---|
 | `bin/ak_rtsp`, `bin/dropbearmulti`, `bin/flash_tool` | static ARM EABI5 soft-float binaries, stripped |
-| `overlay/` | files copied into the image: `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `_ht_process.ini`, `dropbear`/`dropbearkey` links |
+| `overlay/` | files copied into the image: `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh`, `_ht_process.ini`, `dropbear`/`dropbearkey` links |
 | `patches/` | `patch_service_sh.sh` turns Telnet/FTP off in the stock `sbin/service.sh`; `patch_ethernet_hostname.sh` makes DHCP announce the camera's name |
 | `scripts/flash/`, `scripts/hwcheck/` | flash, restore and hardware check scripts |
 | `licenses/` | Akam (MIT), `THIRD_PARTY_NOTICES.md`, Dropbear, musl, Zig (compiler-rt), SmolRTSP and its four header-only dependencies |

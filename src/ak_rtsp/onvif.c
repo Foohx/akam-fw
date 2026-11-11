@@ -15,6 +15,8 @@
 #include "cred.h"
 #include "onvif.h"
 #include "onvif_device.h"
+#include "onvif_imaging.h"
+#include "onvif_media.h"
 #include "sha1.h"
 
 /* ------------------------------------------------------------------------ services */
@@ -266,7 +268,7 @@ static void handler(const http_req_t *req, http_resp_t *resp, void *user)
 int onvif_start(int port)
 {
     if (!g_registered) {
-        if (onvif_device_register() != 0) return -1;
+        if (onvif_device_register() != 0 || onvif_media_register() != 0 || onvif_imaging_register() != 0) return -1;
         for (int i = 0; i < g_nsvc; i++)
             if (http_srv_route(g_svc[i].path, HTTP_M_POST, handler, &g_svc[i]) != 0) return -1;
         g_registered = 1;
@@ -291,7 +293,7 @@ static int if_query(unsigned long req, const char *name, struct ifreq *ifr)
     return rc;
 }
 
-static const char *pick_if(void)
+const char *onvif_if_name(void)
 {
     struct ifreq r;
     if (onvif_ifname) return onvif_ifname;
@@ -303,7 +305,7 @@ static const char *pick_if(void)
 int onvif_mac(char out[18])
 {
     struct ifreq r;
-    if (if_query(SIOCGIFHWADDR, pick_if(), &r) != 0) {
+    if (if_query(SIOCGIFHWADDR, onvif_if_name(), &r) != 0) {
         strcpy(out, "00:00:00:00:00:00");
         return -1;
     }
@@ -315,7 +317,7 @@ int onvif_mac(char out[18])
 int onvif_if_ipv4(char ip[16], int *prefix, int *mtu)
 {
     struct ifreq r;
-    const char *n = pick_if();
+    const char *n = onvif_if_name();
     if (if_query(SIOCGIFADDR, n, &r) != 0) return -1;
     struct in_addr a = ((struct sockaddr_in *)&r.ifr_addr)->sin_addr;
     if (!inet_ntop(AF_INET, &a, ip, 16)) return -1;

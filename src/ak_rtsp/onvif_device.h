@@ -1,5 +1,5 @@
 /* ONVIF Device service at /onvif/device_service (specs/07 section 3.1 and 3.2). Operations: GetDeviceInformation,
- * GetCapabilities, GetServices, GetServiceCapabilities, GetSystemDateAndTime, SetSystemDateAndTime (Manual only),
+ * GetCapabilities, GetServices, GetServiceCapabilities, GetSystemDateAndTime, SetSystemDateAndTime (Manual only, year 2024 to 2037),
  * GetHostname, SetHostname, GetNetworkInterfaces, GetScopes, GetNTP, SetNTP (refused: no NTP client in the image),
  * GetDNS (read only), GetUsers (the one user), SystemReboot. Access classes in onvif.h.
  *
