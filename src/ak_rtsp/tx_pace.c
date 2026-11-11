@@ -34,6 +34,35 @@ size_t tx_pace_high(const tx_pace_t *p, const tx_pace_cfg_t *c, size_t frame_len
     return hi;
 }
 
+static void enter_skip(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_event_t *e)
+{
+    p->skipping = 1;
+    p->run_skipped = 1;
+    p->skip_since_ms = now_ms;
+    p->best_backlog = backlog;
+    p->best_ms = now_ms;
+    e->entered = 1;
+    if (!p->have_log || now_ms - p->last_log_ms >= TX_PACE_LOG_MS) {
+        p->have_log = 1;
+        p->last_log_ms = now_ms;
+        p->run_logged = 1;
+        e->log_it = 1;
+    } else {
+        p->run_logged = 0;
+    }
+}
+
+tx_pace_verdict_t tx_pace_no_room(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_event_t *ev)
+{
+    tx_pace_event_t none;
+    memset(&none, 0, sizeof(none));
+    tx_pace_event_t *e = ev ? ev : &none;
+    *e = none;
+    if (!p->skipping) enter_skip(p, backlog, now_ms, e);
+    else p->run_skipped++;
+    return TX_PACE_SKIP;
+}
+
 tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t frame_len,
                                  int is_key, int64_t now_ms, tx_pace_event_t *ev)
 {
@@ -49,20 +78,7 @@ tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t ba
         int over = backlog > tx_pace_high(p, c, frame_len) ||
                    (c->cap && backlog + frame_len > c->cap && !key_ok);
         if (!over) return TX_PACE_SEND;
-        p->skipping = 1;
-        p->run_skipped = 1;
-        p->skip_since_ms = now_ms;
-        p->best_backlog = backlog;
-        p->best_ms = now_ms;
-        e->entered = 1;
-        if (!p->have_log || now_ms - p->last_log_ms >= TX_PACE_LOG_MS) {
-            p->have_log = 1;
-            p->last_log_ms = now_ms;
-            p->run_logged = 1;
-            e->log_it = 1;
-        } else {
-            p->run_logged = 0;
-        }
+        enter_skip(p, backlog, now_ms, e);
         return TX_PACE_SKIP;
     }
 

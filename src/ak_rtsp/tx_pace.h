@@ -28,9 +28,13 @@
  * the stream; no force-IDR ioctl exists in venc.c, so waiting for a lucky keyframe is all there is).
  * The server is single-client: freeing the slot beats a frozen picture.
  *
- * Known limit / follow-up: a keyframe bigger than the free send buffer is still written with a
- * blocking write while the encoder buffer is held. The full fix is a private frame copy and a
- * non-blocking writer; not done here.
+ * Private send queue (net_tx.h): for RTSP/TCP the writer never blocks. Bytes the kernel does not take at
+ * once wait in a per-client queue (256 KiB, allocated at PLAY) that the client loop drains with POLLOUT, so
+ * the encoder buffer is released as soon as the frame has been serialised, whatever the link does. A keyframe
+ * larger than the free kernel buffer therefore no longer blocks the encoder. The "backlog" given to
+ * tx_pace_decide() is the kernel backlog plus the queued bytes, and `cap` is the kernel cap plus the queue
+ * size. A frame that cannot fit in what is left is dropped through tx_pace_no_room() (SKIP mode). A queue
+ * that makes no progress for the stall budget ends the session like a stalled blocking write.
  *
  * Pure logic (no I/O, no clock besides the injected one): tests/tx_pace_test.sh. */
 #include <stddef.h>
@@ -83,6 +87,12 @@ size_t tx_pace_low(size_t base);
 /* Decide one video frame. backlog = unsent bytes in the socket before the write. ev may be NULL. */
 tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t frame_len,
                                  int is_key, int64_t now_ms, tx_pace_event_t *ev);
+
+/* The frame just approved by tx_pace_decide() (TX_PACE_SEND) does not fit the room left (free kernel send buffer
+ * plus the private queue of net_tx.h): enter SKIP mode now, exactly as if the backlog had been over the high
+ * mark, so a P-frame is still only ever dropped by entering SKIP mode. Also valid when already skipping
+ * (then it just counts the frame). Always returns TX_PACE_SKIP. ev may be NULL. */
+tx_pace_verdict_t tx_pace_no_room(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_event_t *ev);
 
 /* Unsent bytes in the socket send queue of a TCP fd, 0 when unknown (then no pacing happens). */
 size_t tx_pace_backlog(int fd);

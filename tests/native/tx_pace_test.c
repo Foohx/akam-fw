@@ -186,6 +186,25 @@ int main(void)
     close(ps);
     close(ls);
 
+    /* A frame that does not fit the room left (kernel buffer plus the private queue) goes through
+     * tx_pace_no_room(): SKIP mode is entered, so no P-frame is ever dropped singly. */
+    {
+        tx_pace_t p;
+        tx_pace_cfg_t q = { .base = tx_pace_base(1536), .cap = 245760 + 256 * KB, .stall_ms = 0, .max_skip_ms = 0 };
+        tx_pace_init(&p);
+        CHECK(step(&p, &q, 0, 300 * KB, 1, 0) == TX_PACE_SEND,
+              "a keyframe bigger than the kernel cap is approved when the queue extends the cap");
+        CHECK(tx_pace_no_room(&p, 0, 1, &ev) == TX_PACE_SKIP && p.skipping && ev.entered,
+              "no room: SKIP mode entered");
+        CHECK(step(&p, &q, 0, 5 * KB, 0, 66) == TX_PACE_SKIP,
+              "the next P-frame is dropped too (decoder references intact)");
+        CHECK(tx_pace_no_room(&p, 0, 70, &ev) == TX_PACE_SKIP && !ev.entered && p.run_skipped == 3,
+              "no room while skipping only counts the frame");
+        CHECK(step(&p, &q, tx_pace_low(q.base), 100 * KB, 1, 200) == TX_PACE_SEND && ev.left,
+              "a keyframe that fits at a drained backlog resumes");
+        CHECK(tx_pace_no_room(&p, 0, 300, NULL) == TX_PACE_SKIP, "NULL event pointer accepted");
+    }
+
     printf("%s\n", fails ? "tx_pace_test: FAILED" : "tx_pace_test: OK");
     return fails ? 1 : 0;
 }
