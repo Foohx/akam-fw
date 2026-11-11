@@ -125,7 +125,7 @@ func TestNativeImageBuildsWritesAndRecords(t *testing.T) {
 			t.Errorf("missing %s", f)
 		}
 	}
-	if a.St.Get("image_md5") == "" || !strings.Contains(out.String(), "EXPERIMENTAL") || !strings.Contains(out.String(), "warnings: 2") {
+	if a.St.Get("image_md5") == "" || !strings.Contains(out.String(), "EXPERIMENTAL") || !strings.Contains(out.String(), "warnings: 3") {
 		t.Fatalf("output:\n%s", out)
 	}
 	// without --i-understand-untested the unknown hardware is refused and nothing is written
