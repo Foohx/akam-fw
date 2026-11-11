@@ -32,6 +32,7 @@ type env struct {
 	key   string
 	// capture is the fake microphone/converter; nil means "no tool installed" (nothing is run).
 	capture *fakeCapture
+	pass    string // AKAM_RTSP_PASSWORD for the next run (the program removes it from its environment)
 }
 
 type fakeCapture struct {
@@ -49,6 +50,12 @@ type closer struct {
 }
 
 func (c closer) Close() error { c.f.mu.Lock(); c.f.closed++; c.f.mu.Unlock(); return nil }
+
+func (f *fakeCapture) stats() (mic, closed, conv int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.micCalls, f.closed, f.convCalls
+}
 
 func (f *fakeCapture) Mic(_ context.Context, _ int) (io.ReadCloser, error) {
 	f.mu.Lock()
@@ -164,6 +171,9 @@ func (e *env) run(stdin string, args ...string) result {
 }
 
 func (e *env) runRaw(stdin string, argv ...string) result {
+	if e.pass != "" {
+		os.Setenv("AKAM_RTSP_PASSWORD", e.pass)
+	}
 	var out, errb bytes.Buffer
 	rc := cli.Run(argv, cli.Streams{In: strings.NewReader(stdin), Out: &out, Err: &errb}, "test", e.hooks())
 	return result{out.String(), errb.String(), rc}

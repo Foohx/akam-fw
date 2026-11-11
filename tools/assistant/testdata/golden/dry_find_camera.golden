@@ -1,0 +1,6 @@
+rc=1
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+  What to do: run: ./akam step prepare-backup-sd
+--- stderr ---
+ERROR: step 'find-camera' needs these steps first: prepare-backup-sd

@@ -208,7 +208,6 @@ func (a *App) cmdTalk(args []string) error {
 	if err != nil {
 		return a.noToolFail("no way to read the microphone here (ffmpeg or arecord not found).")
 	}
-	defer mic.Close()
 	if secs == 0 {
 		a.UI.Say("  Speak now. The camera plays your voice; its own microphone is muted while you speak.")
 		a.UI.Say("  Press Ctrl-C to stop.")
@@ -222,8 +221,19 @@ func (a *App) cmdTalk(args []string) error {
 		tctx, c2 = context.WithTimeout(ctx, secondsDuration(secs))
 		defer c2()
 	}
-	// Ctrl-C (or the end of the time) closes the capture first, so a blocked read returns.
-	go func() { <-tctx.Done(); mic.Close() }()
+	// Ctrl-C (or the end of the time) closes the capture first, so a blocked read returns. The
+	// goroutine is always finished before this command returns.
+	stopMic := make(chan struct{})
+	micDone := make(chan struct{})
+	go func() {
+		defer close(micDone)
+		select {
+		case <-tctx.Done():
+		case <-stopMic:
+		}
+		mic.Close()
+	}()
+	defer func() { close(stopMic); <-micDone }()
 	if err := a.talkClient(tctx, ip, user, pass, &rtsp.S16LESource{R: mic}); err != nil {
 		return err
 	}
