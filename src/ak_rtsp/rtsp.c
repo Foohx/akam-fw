@@ -1417,8 +1417,6 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             break;
         }
 
-        rtsp_busy_service(&busy, g_busy_listen_fd, &pfds[2], rtp_mono_us() / 1000);
-
         if (poll_ret > 0 && (pfds[1].revents & POLLIN)) bc_udp_receive(&client, &idle);
 
         if (poll_ret > 0 && (pfds[0].revents != 0)) {
@@ -1463,6 +1461,12 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                 client.drop_reason = "TCP write failed or stalled";
             if (client.drop_reason) break;
         }
+
+        /* Second clients: only after the current client's socket was handled, and never in a round where
+         * the session ends. A newcomer that connects right after this client closed stays in the listen
+         * backlog for main()'s accept(); serving it here would put it in a busy slot that the end of
+         * the session closes without a word. */
+        rtsp_busy_service(&busy, g_busy_listen_fd, &pfds[2], rtp_mono_us() / 1000);
 
         /* Before PLAY the single slot must not be held by a silent or stuck
          * client. While playing there is no idleness drop (see rtsp_idle.h). */
