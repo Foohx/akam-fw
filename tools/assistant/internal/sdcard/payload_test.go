@@ -82,7 +82,7 @@ func TestPayloadRefusals(t *testing.T) {
 		"newline":         {Mode: ModeBackup, Toolkit: tk, SSID: "a\nb", Pass: "x"},
 		"bad mode":        {Mode: "flash-files", Toolkit: tk, SSID: "a", Pass: "b"},
 		"no key":          {Mode: ModeFirstBoot, Toolkit: tk, SSID: "a", Pass: "b"},
-		"private key":     {Mode: ModeFirstBoot, Toolkit: tk, SSID: "a", Pass: "b", PubKey: []byte("-----BEGIN OPENSSH "+"PRIVATE KEY-----\n")},
+		"private key":     {Mode: ModeFirstBoot, Toolkit: tk, SSID: "a", Pass: "b", PubKey: []byte("-----BEGIN OPENSSH " + "PRIVATE KEY-----\n")},
 		"rsa key":         {Mode: ModeFirstBoot, Toolkit: tk, SSID: "a", Pass: "b", PubKey: []byte("ssh-rsa AAAA x\n")},
 		"flash on backup": {Mode: ModeBackup, Toolkit: tk, SSID: "a", Pass: "b", Flash: &FlashFiles{}},
 	}
