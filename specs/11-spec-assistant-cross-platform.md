@@ -695,11 +695,17 @@ named pipe**, designed as follows (T11.9):
 
 - The parent creates `\\.\pipe\akam-sd-<32 hex random>` **before** launching, with `PIPE_ACCESS_DUPLEX`,
   `FILE_FLAG_FIRST_PIPE_INSTANCE` (nobody can have created it first), `PIPE_REJECT_REMOTE_CLIENTS`, one instance,
-  and a security descriptor whose DACL grants access **only to the current user's SID** (and SYSTEM). An
-  elevated process of the same user (the normal UAC case) can connect; nobody else can.
-- The elevated process is started as `akam.exe sd-helper --pipe <name> --parent <pid>` hidden (`SW_HIDE`). It
-  connects within 30 s or exits. It checks `GetNamedPipeServerProcessId == <pid>` before reading, so a pipe
-  squatted by another process is not obeyed.
+  and a protected security descriptor (`D:P`, nothing inherited) whose DACL grants read/write **only to the
+  current user's SID**; SYSTEM is deliberately not listed (the helper is an elevated token of the same account).
+  An elevated process of the same user (the normal UAC case) can connect; nobody else can, which also means the
+  "over-the-shoulder" case (another administrator answers the prompt) is refused with a clear message. The client
+  connects at `SECURITY_IDENTIFICATION`, so the pipe's owner can never impersonate the elevated helper.
+- The elevated process is started as `akam.exe sd-helper --pipe <name> --nonce <32 hex>` hidden (`SW_HIDE`); there
+  is no `--parent` argument. It connects within 30 s or exits, then sends the nonce as its first line. The parent
+  (which owns the pipe, created before the launch, so nobody can have squatted the name) accepts the one client
+  only if `GetNamedPipeClientProcessId` equals the process id of the elevated process it launched
+  (`SEE_MASK_NOCLOSEPROCESS` handle) **and** the nonce matches (constant-time), and only then sends the request.
+  The nonce is neither printed, logged nor placed in an error.
 - Framing: the parent sends one JSON request (same `Request` type, same 96 MiB cap, `DisallowUnknownFields`,
   one document); the helper answers with zero or more `{"progress":"..."}` lines and one final `Response`, then
   exits after a single operation. Progress is thus shown by the parent's own UI, where on Linux it goes to stderr.
@@ -708,8 +714,9 @@ named pipe**, designed as follows (T11.9):
   HMAC, would write the password to a file that the elevated helper, possibly running as a different
   administrator account in the "over-the-shoulder" UAC case, may not even be able to read; it needs a cleanup
   that fails on a crash. The pipe has neither problem. If the coordinator prefers a file, the fallback design is in Q3.)
-- The 32-hex random in the pipe name acts as a bearer nonce against processes that cannot read the DACL-protected
-  pipe object anyway; the helper's own guards (4.4.2) are the real authority, because a forged request can at worst
+- The random pipe name, the DACL, the first-instance flag, the client-PID check and the nonce together keep other
+  processes of the same user out (a same-user process that connects first is refused by the PID check: a denial
+  of service at worst); the helper's own guards (4.4.2) are the real authority, because a forged request can at worst
   write a disk that passes every guard **and** matches the identity token the user confirmed.
 - If the user declines the UAC prompt, `ShellExecuteExW` returns `ERROR_CANCELLED`; the step ends with "no
   administrator rights: nothing was written". If the helper cannot be launched at all (Group Policy), the message offers
@@ -1196,7 +1203,7 @@ S8  T11.16 image assembly + image cmd   |  T11.15 docs, hardware plan, release n
   framing in `internal/sdcard/frame.go` (untagged, shared with macOS socket), edits to `HelperEntry` flag parsing in `internal/sdcard/entry.go`.
 - Deps: T11.3 (T11.7 not required: the transport only needs `Transport` and `HelperEntry`).
 - Content: 4.4.5 elevation. Pipe with first-instance flag, user-SID DACL, `PIPE_REJECT_REMOTE_CLIENTS`; `ShellExecuteExW` via LazyDLL with
-  `runas`, `SW_HIDE`; server PID check; framing (request document, `{"progress"}` lines, final response); timeouts; decline mapping
+  `runas`, `SW_HIDE`; client PID check and nonce on the parent side (no `--parent`); framing (request document, `{"progress"}` lines, final response); timeouts; decline mapping
   (`ERROR_CANCELLED`); already-elevated in-process path.
 - AC (Linux-runnable): framing tests (oversize request, unknown field, second document, progress then final, truncated stream) shared
   with macOS; a fake `net.Pipe`-based transport proving one request one answer; cancellation message text; no secret appears in the

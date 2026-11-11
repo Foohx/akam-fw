@@ -1,10 +1,10 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package sdcard
 
 import "io"
 
-// The Windows transport (UAC, named pipe) arrives with T11.9; until then this build says so.
+// An OS with no elevation transport (neither Unix nor Windows) says so.
 type unsupportedTransport struct{}
 
 func newTransport() Transport { return unsupportedTransport{} }
