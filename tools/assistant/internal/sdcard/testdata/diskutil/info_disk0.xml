@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>DeviceIdentifier</key>
+	<string>disk0</string>
+	<key>DeviceNode</key>
+	<string>/dev/disk0</string>
+	<key>WholeDisk</key>
+	<true/>
+	<key>Internal</key>
+	<true/>
+	<key>RemovableMedia</key>
+	<false/>
+	<key>Removable</key>
+	<false/>
+	<key>VirtualOrPhysical</key>
+	<string>Physical</string>
+	<key>SystemImage</key>
+	<false/>
+	<key>BusProtocol</key>
+	<string>Apple Fabric</string>
+	<key>TotalSize</key>
+	<integer>500277792768</integer>
+	<key>DeviceBlockSize</key>
+	<integer>512</integer>
+	<key>MediaName</key>
+	<string>APPLE SSD AP0512Z</string>
+	<key>IORegistryEntryName</key>
+	<string>Generic Card Reader Media</string>
+	<key>DiskUUID</key>
+	<string>0D5F0E10-1111-2222-3333-444455556666</string>
+	<key>WritableMedia</key>
+	<true/>
+	<key>Writable</key>
+	<true/>
+	<key>ParentWholeDisk</key>
+	<string>disk0</string>
+</dict>
+</plist>

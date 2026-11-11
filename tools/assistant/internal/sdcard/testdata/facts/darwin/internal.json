@@ -1,7 +1,7 @@
 {
   "facts": {
     "os": "darwin",
-    "path": "/dev/rdisk0",
+    "path": "/dev/disk0",
     "name": "disk0",
     "whole": true,
     "size": 34359738368,

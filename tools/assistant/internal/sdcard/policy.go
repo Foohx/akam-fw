@@ -3,6 +3,7 @@ package sdcard
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -31,6 +32,18 @@ func isSystemMount(p string) bool {
 	return false
 }
 
+var darwinNodeRe = regexp.MustCompile(`^/dev/disk[0-9]+$`)
+
+// isDarwinSystemMount: mount points that belong to the running macOS.
+func isDarwinSystemMount(p string) bool {
+	for _, s := range []string{"/System", "/Users", "/private", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/opt", "/cores"} {
+		if p == s || strings.HasPrefix(p, s+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // Evaluate decides whether the disk described by f is an eligible card. The error text is the reason for a
 // refusal. It is pure: no file, no system call. The order of the rules is the order of the historical Linux guard.
 func Evaluate(f Facts, p Policy) (*Candidate, error) {
@@ -41,8 +54,11 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 		}
 		return nil, fmt.Errorf("%s is not a whole USB/SD disk node like /dev/sdb or /dev/mmcblk0 (partitions, NVMe, loop and zram nodes are refused)", dev)
 	}
+	if f.OS == "darwin" && !darwinNodeRe.MatchString(f.Path) {
+		return nil, fmt.Errorf("%s is not a /dev/diskN node (slices and raw nodes are refused)", dev)
+	}
 	for _, m := range f.Mounts {
-		if isSystemMount(m.Point) {
+		if isSystemMount(m.Point) || (f.OS == "darwin" && isDarwinSystemMount(m.Point)) {
 			return nil, fmt.Errorf("%s carries the system path %s", dev, m.Point)
 		}
 	}
@@ -101,6 +117,10 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 		// fail closed: an internal flag the inventory could not read is not "external"
 		switch f.Internal {
 		case Yes:
+			// a Mac's built-in SD slot reports Internal: accepted on the protocol alone (spec 11, 4.4.4)
+			if f.OS == "darwin" && f.Bus == "sd" {
+				break
+			}
 			return nil, fmt.Errorf("%s is an internal disk", dev)
 		case Unknown:
 			return nil, fmt.Errorf("%s: cannot tell whether it is an internal disk: refusing", dev)
@@ -111,6 +131,9 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 	}
 	if f.Size < p.MinBytes || f.Size > p.MaxBytes {
 		return nil, fmt.Errorf("%s size %d bytes is outside 128 MiB .. 128 GiB", dev, f.Size)
+	}
+	if f.OS == "darwin" && f.SectorSize == 0 {
+		return nil, fmt.Errorf("%s: cannot read the logical sector size: refusing", dev)
 	}
 	if f.SectorSize != 0 && f.SectorSize != 512 {
 		return nil, fmt.Errorf("%s has %d-byte logical sectors: only 512-byte sectors are supported", dev, f.SectorSize)
