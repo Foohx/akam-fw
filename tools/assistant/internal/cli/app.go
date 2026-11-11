@@ -263,7 +263,7 @@ func NewPlainUI(o *Options, st Streams, log *state.Log, secrets *state.Secrets, 
 // colorTerm is false for TERM=dumb or an empty TERM; Windows consoles set no TERM and use VT mode.
 func colorTerm() bool {
 	if runtime.GOOS == "windows" {
-		return true
+		return os.Getenv("TERM") != "dumb"
 	}
 	return os.Getenv("TERM") != "dumb" && os.Getenv("TERM") != ""
 }

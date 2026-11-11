@@ -120,3 +120,12 @@ func TestDefaultDirEnv(t *testing.T) {
 		t.Error("AKAM_STATE_DIR must win")
 	}
 }
+
+func TestNameExistsRefusesReservedOnWindows(t *testing.T) {
+	if nameExistsFor("windows", "con") || nameExistsFor("windows", "com1") || !nameExistsFor("windows", "salon") {
+		t.Error("windows: reserved names must be refused, others kept")
+	}
+	if !nameExistsFor("linux", "con") || nameExistsFor("linux", "../x") || nameExistsFor("windows", "a/b") {
+		t.Error("linux keeps con; separators and dots are never a name")
+	}
+}

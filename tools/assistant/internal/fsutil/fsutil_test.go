@@ -2,6 +2,7 @@ package fsutil
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -73,5 +74,13 @@ func TestAtomicWriteAndPrivateMkdir(t *testing.T) {
 		if st.Mode().Perm() != 0o600 {
 			t.Fatalf("file mode %v", st.Mode().Perm())
 		}
+	}
+}
+
+func TestRenameNoRetryWhenSourceMissing(t *testing.T) {
+	n := 0
+	err := renameRetry("a", "b", true, 20, 0, func(a, b string) error { n++; return fs.ErrNotExist })
+	if err == nil || n != 1 {
+		t.Errorf("err=%v calls=%d, want 1 call", err, n)
 	}
 }

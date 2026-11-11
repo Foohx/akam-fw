@@ -4,7 +4,9 @@
 package fsutil
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"runtime"
 	"strings"
@@ -52,6 +54,16 @@ func PrivateFile(path string) {
 	if err := restrictFile(path); err != nil {
 		warn(fmt.Sprintf("could not restrict access to %s: %v", path, err))
 	}
+}
+
+// PrivateFileStrict is PrivateFile for a file that holds a secret (the private key): when the access
+// cannot be restricted the caller gets the error and must not keep the file. A key that other
+// accounts can read is refused by OpenSSH anyway, so failing early is the honest outcome.
+func PrivateFileStrict(path string) error {
+	if err := restrictFile(path); err != nil {
+		return fmt.Errorf("could not restrict access to %s: %w", path, err)
+	}
+	return nil
 }
 
 // reserved is the set of names Windows refuses for a file or folder, with or without an extension.
@@ -115,7 +127,8 @@ func Rename(oldpath, newpath string) error {
 // renameRetry is Rename with the OS facts and the rename function injected (for tests).
 func renameRetry(oldpath, newpath string, retry bool, tries int, wait time.Duration, rename func(a, b string) error) error {
 	err := rename(oldpath, newpath)
-	for i := 1; err != nil && retry && i < tries; i++ {
+	// a missing source will not appear by waiting: only the transient errors are retried
+	for i := 1; err != nil && retry && i < tries && !errors.Is(err, fs.ErrNotExist); i++ {
 		time.Sleep(wait)
 		err = rename(oldpath, newpath)
 	}

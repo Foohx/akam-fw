@@ -70,7 +70,11 @@ func GenerateKey(path, comment string, passphrase []byte) error {
 	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
 		return err
 	}
-	fsutil.PrivateFile(path) // Windows: OpenSSH refuses a key other accounts can read
+	// Windows: OpenSSH refuses a key other accounts can read; a key we cannot protect is not kept.
+	if err := fsutil.PrivateFileStrict(path); err != nil {
+		os.Remove(path)
+		return err
+	}
 	sp, err := gossh.NewPublicKey(pub)
 	if err != nil {
 		return err

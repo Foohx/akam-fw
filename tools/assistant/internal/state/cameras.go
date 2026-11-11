@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -24,7 +25,13 @@ const NameMax = 20
 func NameValid(n string) bool { return nameShape(n) && !fsutil.ReservedName(n) }
 
 // NameExists is the shape check without the reserved-name rule: for names read back from disk.
-func NameExists(n string) bool { return nameShape(n) }
+// On Windows a reserved name is refused here too: no such folder can exist there, and a name read
+// from a copied current_camera must never reach a path.
+func NameExists(n string) bool { return nameExistsFor(runtime.GOOS, n) }
+
+func nameExistsFor(goos, n string) bool {
+	return nameShape(n) && !(goos == "windows" && fsutil.ReservedName(n))
+}
 
 func nameShape(n string) bool {
 	if n == "" || strings.HasPrefix(n, "-") || strings.HasSuffix(n, "-") || len(n) > NameMax {
