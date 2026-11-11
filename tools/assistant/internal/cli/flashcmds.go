@@ -564,6 +564,7 @@ func (a *App) cmdVerify() error {
 		a.rtspAuthOffer("")
 		a.wipeOffer()
 		a.onvifOffer("")
+		a.ntpOffer("")
 		return nil
 	}
 	ip, err := a.camNeedIP()
@@ -621,6 +622,7 @@ func (a *App) cmdVerify() error {
 	a.rtspAuthOffer(ip)
 	a.wipeOffer()
 	a.onvifOffer(ip)
+	a.ntpOffer(ip)
 	return nil
 }
 

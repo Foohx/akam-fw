@@ -65,21 +65,23 @@ type Camera struct {
 	hostKeyMu            sync.Mutex
 	hostSigner           gossh.Signer
 
-	mu       sync.Mutex
-	commands []string
-	ctl      map[string]string
-	ctlSets  []string
-	ctlWords []string // first word of every line received on the control port
-	onvifOn  bool
-	ntpOn    bool
-	ntpList  string
-	vRun     map[string]string // the video values the running ak_rtsp uses (applied at its restart)
-	onvifPrt string
-	restarts int
-	mtdReads [8]int
-	conns    []net.Conn
-	wg       sync.WaitGroup
-	done     chan struct{}
+	mu        sync.Mutex
+	commands  []string
+	ctl       map[string]string
+	ctlSets   []string
+	ctlWords  []string // first word of every line received on the control port
+	onvifOn   bool
+	clockOff  time.Duration // camera clock minus the clock of the machine running the test
+	clockSets []string
+	ntpOn     bool
+	ntpList   string
+	vRun      map[string]string // the video values the running ak_rtsp uses (applied at its restart)
+	onvifPrt  string
+	restarts  int
+	mtdReads  [8]int
+	conns     []net.Conn
+	wg        sync.WaitGroup
+	done      chan struct{}
 
 	RTSP *RTSPServer
 }
@@ -184,6 +186,7 @@ func New(t testing.TB, opts Options) *Camera {
 			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.cfg_pending": "0",
 			"video.bitrate": "1480", "video.fps_actual": "150",
 			"fw.version": "b35-2af81c5", "sys.hostname": "akam-01",
+			"net.wifi_rssi": "-55", "net.wifi_rate": "72", "night.state": "day", "sys.time_set": "1",
 		}}
 	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2"}
 	c.Root = t.TempDir()
@@ -386,6 +389,23 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 		}
 		c.ctl["video.cfg_pending"] = "0"
 		c.mu.Unlock()
+		return 0
+	case cmd == "date +%s":
+		fmt.Fprintln(stdout, c.clockNow().Unix())
+		return 0
+	case dateSetRe.MatchString(cmd):
+		m := dateSetRe.FindStringSubmatch(cmd)
+		t, err := time.ParseInLocation("2006-01-02 15:04:05", m[1], time.UTC)
+		if err != nil {
+			fmt.Fprintf(stderr, "date: invalid date '%s'\n", m[1])
+			return 1
+		}
+		c.mu.Lock()
+		c.clockOff = time.Until(t)
+		c.clockSets = append(c.clockSets, m[1])
+		c.ctl["sys.time_set"] = "1"
+		c.mu.Unlock()
+		fmt.Fprintln(stdout, t.Format("Mon Jan _2 15:04:05 UTC 2006"))
 		return 0
 	case cmd == registerCmd:
 		fmt.Fprintf(stdout, "REG_HOSTNAME=akam-fake\nREG_MTD7_MD5=%s\n", Mtd7MD5)
@@ -712,4 +732,32 @@ func (c *Camera) CtlWords() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.ctlWords...)
+}
+
+var dateSetRe = regexp.MustCompile(`^date -u -s '([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})'$`)
+
+func (c *Camera) clockNow() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.clockOff)
+}
+
+// SetClock makes the camera clock read t (it keeps running) and sets sys.time_set; set=false is a camera
+// whose clock nothing has set (it reads 2000-01-01 and sys.time_set is 0).
+func (c *Camera) SetClock(t time.Time, set bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.clockOff = time.Until(t)
+	if set {
+		c.ctl["sys.time_set"] = "1"
+	} else {
+		c.ctl["sys.time_set"] = "0"
+	}
+}
+
+// ClockSets are the times (UTC, "YYYY-MM-DD hh:mm:ss") the camera clock was set to over SSH.
+func (c *Camera) ClockSets() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.clockSets...)
 }

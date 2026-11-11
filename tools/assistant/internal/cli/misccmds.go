@@ -92,15 +92,15 @@ func doctorHost(goos, goarch, linuxID, version string) string {
 type optionalTool struct{ tool, why string }
 
 // doctorOptional lists what is optional on each OS. xz is built in and never listed; the squashfs
-// tools are only needed until the native image builder lands.
+// tools are only needed by the default image builder (--builder native needs none).
 func doctorOptional(goos string) []optionalTool {
 	out := []optionalTool{{"ffmpeg", "microphone and files other than WAV for talk and say"}}
 	if goos == "linux" {
 		out = append(out, optionalTool{"arecord", "microphone for talk when ffmpeg has no sound server"})
 	}
 	return append(out,
-		optionalTool{"mksquashfs", "image building until the native builder lands"},
-		optionalTool{"unsquashfs", "image building until the native builder lands"})
+		optionalTool{"mksquashfs", "image building with the default builder; `--builder native` (experimental) needs none"},
+		optionalTool{"unsquashfs", "image building with the default builder; `--builder native` (experimental) needs none"})
 }
 
 // doctorElevation says how the SD card step gets the rights it needs on this OS.

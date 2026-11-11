@@ -64,6 +64,15 @@ requires: do not repack or modify it.
 ./akam             # home screen
 ```
 
+`doctor` names the package of each optional tool for your system (for example `alsa-utils` for `arecord`). The squashfs tools
+have no native Windows package: use `--builder native` (experimental, needs none) or WSL.
+
+The camera options screen (`./akam`, item 3) also shows the camera's Wi-Fi signal and clock. A weak or poor signal (below
+-70 dBm) prints advice (move the camera or the access point, or lower the bitrate and key frame interval with
+`./akam video bitrate 1024 gop 1`); nothing is changed for you. If the clock is unset (the camera has no battery clock) or off
+by more than 2 minutes it offers to set it from this computer (default No; lost at the next reboot unless time sync is on:
+`./akam ntp set pool.ntp.org`, or a server on your network). The end of a first install or update offers time sync too (default No).
+
 On Windows and macOS, the first install needs an image built on Linux or in WSL until the native builder is released
 (`--image FILE`, see the README of the assistant). Writing a card asks for administrator rights: see "Writing the SD card,
 per OS" there.

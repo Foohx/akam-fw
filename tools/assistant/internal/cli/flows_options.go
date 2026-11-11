@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camopt"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
@@ -21,6 +22,7 @@ type optSnap struct {
 	onvifOn  bool
 	rtsp     string // enabled | disabled | invalid | unknown
 	ntp      string // on | off | unknown
+	health   camHealth
 }
 
 var optGroups = []string{"LED and night", "Picture", "Video", "Audio", "Network", "Security"}
@@ -43,6 +45,9 @@ func (a *App) readOptions(c *camssh.Client) optSnap {
 	var raw []string
 	ex := func(lines ...string) []string {
 		lines = append(lines, "GET fw.version", "GET sys.hostname")
+		for _, k := range healthKeys {
+			lines = append(lines, "GET "+k)
+		}
 		raw = a.ctlExchange(c, lines...)
 		return raw
 	}
@@ -66,6 +71,8 @@ func (a *App) readOptions(c *camssh.Client) optSnap {
 			}
 		}
 	}
+	snap.health = readCamHealth(func(k string) string { return ctl.Get(k, raw) })
+	a.readCamClock(c, &snap.health)
 	snap.onvifOn, _ = a.onvifFlag(c)
 	snap.rtsp, _ = a.rtspStatus(c)
 	snap.ntp = "unknown"
@@ -77,6 +84,7 @@ func (a *App) readOptions(c *camssh.Client) optSnap {
 			snap.ntp = "off"
 		}
 	}
+	snap.health.ntp = snap.ntp
 	return snap
 }
 
@@ -156,6 +164,7 @@ func (a *App) flowOptions() error {
 		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET lines>' | nc -w 2 127.0.0.1 %d (every option in one go),", 8091))
 		a.UI.Say("  show the groups, edit values locally, and only on 'apply' send the SET lines (read-only until then).")
 		a.UI.Say("  WOULD ask: Restart the video service now? [y/N] (default No) after a video change.")
+		a.UI.Say("  WOULD also read (read-only): the Wi-Fi signal and clock (date +%s over SSH), and offer to set the clock from this computer [y/N] (default No) when it is unset or off by more than 120 s.")
 		return nil
 	}
 	c, err := a.connectTools(ip)
@@ -163,10 +172,16 @@ func (a *App) flowOptions() error {
 		return err
 	}
 	defer c.Close()
+	offerClock := true
 	for {
 		snap := a.readOptions(c)
 		a.UI.Blank()
 		a.UI.Bold(fmt.Sprintf("Camera options - %s (%s)%s", a.Cams.Name, ip, fwSuffix(snap.fw)))
+		a.showHealth(snap.health)
+		if offerClock {
+			a.clockOffer(c, snap.health)
+			offerClock = false
+		}
 		items := make([]string, 0, len(optGroups)+2)
 		for _, g := range optGroups {
 			items = append(items, fmt.Sprintf("%-14s %s", g, groupSummary(g, snap)))
@@ -178,6 +193,7 @@ func (a *App) flowOptions() error {
 			return nil
 		}
 		if i == len(optGroups) {
+			offerClock = true
 			continue
 		}
 		switch g := optGroups[i]; g {

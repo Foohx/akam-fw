@@ -79,6 +79,18 @@ Repeat the matrix of spec 09 (section 8.6) and add:
 | H3.6 | Update Akam to Akam over SSH with a verified backup recorded | the backup gate re-verifies, red box shows the md5, flash, manual power cycle, `verify` passes | [ ] | |
 | H3.7 | Native `image` | only when its gate is open; otherwise SKIP | [ ] | |
 
+## H3b - Doctor hints, Wi-Fi signal and clock (any OS, one real camera)
+
+| # | Check | Expected result | Done | Notes |
+|---|---|---|---|---|
+| H3b.1 | `doctor` with `ffmpeg`, `arecord`, `mksquashfs` missing (use a PATH without them) | each hint names the right package for the OS (alsa-utils, squashfs-tools / squashfs, Gyan.FFmpeg); on Windows the squashfs tools point to `--builder native` or WSL, never a fake `winget install` | [ ] | |
+| H3b.2 | Camera options with the camera close to the access point | `Wi-Fi signal: ... (good)` and no warning; compare the dBm with the router's view | [ ] | |
+| H3b.3 | Move the camera (or add a wall) until the signal is below -70 dBm, open Camera options | level `weak` or `poor`, the warning names moving the camera or a repeater and, with the default video settings, `./akam video bitrate 1024 gop 1`; nothing changes on the camera | [ ] | |
+| H3b.4 | Same, in the dark (night mode, fps around 10) | the warning says the low frame rate at night is the exposure, not the Wi-Fi | [ ] | |
+| H3b.5 | Right after a power-up without time sync, open Camera options | `Clock: not set`; asked `Set the camera clock from this computer now?` with default No; Enter changes nothing; `y` sets it (also confirms busybox `date -u -s 'YYYY-MM-DD hh:mm:ss'` works on the camera), the next screen shows `Clock: set, +/-1 s` | [ ] | |
+| H3b.6 | Reboot the camera (by hand) with time sync off, then on | the clock is unset again when off; with `ntp set pool.ntp.org` it is right after a minute | [ ] | |
+| H3b.7 | End of `verify` of an install or update | time sync is offered, default No; `y` then Enter turns on `pool.ntp.org`, `y` then a LAN server address uses it | [ ] | |
+
 ## H4 - End to end per OS
 
 Run once on each OS that passed its table. Windows and macOS use an externally built image until the native builder gate.
