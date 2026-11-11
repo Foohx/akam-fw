@@ -170,3 +170,32 @@ func TestPrecheckWritesNothing(t *testing.T) {
 		}
 	}
 }
+
+// TOCTOU: the image, flash_tool and scripts are read once; replacing the files after the md5 check
+// (here: at the first connection) cannot change what is uploaded and written.
+func TestFilesReplacedAfterTheCheckAreNotUploaded(t *testing.T) {
+	w := newWorld(t)
+	dial := w.deps.Dial
+	swapped := false
+	w.deps.Dial = func(port int) (flash.Conn, error) {
+		if !swapped {
+			swapped = true
+			if err := os.WriteFile(w.plan.Image, bytes.Repeat([]byte{0x66}, 5242880), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(w.plan.FlashTool, []byte("evil tool"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dial(port)
+	}
+	if err := flash.Flash(w.plan, confirmed(t, w.plan.MD5), w.deps); err != nil {
+		t.Fatalf("%v\n%s", err, strings.Join(*w.out, "\n"))
+	}
+	if !swapped {
+		t.Fatal("the swap did not run")
+	}
+	if !bytes.Equal(w.cam.Mtd7(), w.data) {
+		t.Error("the camera did not get the image that was confirmed")
+	}
+}

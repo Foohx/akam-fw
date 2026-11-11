@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"os"
 	"regexp"
 	"strconv"
@@ -137,7 +138,11 @@ type Env struct {
 }
 
 func envPort(name string, def int) int {
-	if v := os.Getenv(name); v != "" {
+	v := os.Getenv(name)
+	if name == "AKAM_PORT_SSH2" {
+		v = testhook.Env(name) // test hook: a release build always uses 2222
+	}
+	if v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
 			return n
 		}

@@ -40,13 +40,13 @@ cd "$ASSIST" || exit 1
 unformatted=$(gofmt -l cmd internal 2>&1)
 if [ -z "$unformatted" ]; then ok "gofmt: every file is formatted"; else ko "gofmt: $unformatted"; fi
 
-if out=$(go vet ./... 2>&1); then ok "go vet ./..."; else ko "go vet ./..."; echo "$out" | tail -n 20; fi
+if out=$(go vet -tags akamtest ./... 2>&1); then ok "go vet ./... (akamtest)"; else ko "go vet ./..."; echo "$out" | tail -n 20; fi
 
 LOG=$(mktemp)
 SELFSTATE=$(mktemp -d)
 BRIDGE=$(mktemp -d)
 trap 'rm -rf "$LOG" "$SELFSTATE" "$BRIDGE"' EXIT
-if go test -count=1 ./... >"$LOG" 2>&1; then
+if go test -tags akamtest -count=1 ./... >"$LOG" 2>&1 && go test -count=1 ./internal/testhook >>"$LOG" 2>&1; then
     ok "go test ./... ($(grep -c '^ok' "$LOG") packages)"
 else
     ko "go test ./..."

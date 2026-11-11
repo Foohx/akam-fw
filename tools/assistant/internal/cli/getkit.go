@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ func validKitVersion(v string) bool {
 
 // allowedSigners is the trust list: AKAM_ALLOWED_SIGNERS (a file) or the copy built into the program.
 func (a *App) allowedSigners() []byte {
-	if f := os.Getenv("AKAM_ALLOWED_SIGNERS"); f != "" {
+	if f := testhook.Env("AKAM_ALLOWED_SIGNERS"); f != "" {
 		if b, err := os.ReadFile(f); err == nil {
 			return b
 		}
@@ -63,7 +64,7 @@ func (a *App) cmdGetKit() error {
 			return a.UI.Fail(fmt.Sprintf("'%s' is not a valid version.", ver), fmt.Sprintf("use a number such as 1.0.0 (see https://github.com/%s/releases).", kitRepo))
 		}
 		base := fmt.Sprintf("https://github.com/%s/releases/download/v%s", kitRepo, ver)
-		if o := os.Getenv("AKAM_KIT_URL_BASE"); o != "" { // test hook; still HTTPS only
+		if o := testhook.Env("AKAM_KIT_URL_BASE"); o != "" { // test hook; still HTTPS only
 			base = strings.TrimRight(o, "/") + "/v" + ver
 		}
 		dl := filepath.Join(a.Cams.Base, "downloads", ver)
@@ -75,7 +76,11 @@ func (a *App) cmdGetKit() error {
 			}
 		}
 		for _, f := range []string{"akam-kit-" + ver + ".tar.xz", "SHA256SUMS"} {
-			if err := a.download(base+"/"+f, filepath.Join(dl, f)); err != nil {
+			lim := int64(kit.MaxKitDownload)
+			if f == "SHA256SUMS" {
+				lim = kit.MaxSmallDownload
+			}
+			if err := a.download(base+"/"+f, filepath.Join(dl, f), lim); err != nil {
 				_ = os.Remove(filepath.Join(dl, f))
 				var he *kit.HTTPError
 				if errors.As(err, &he) {
@@ -87,7 +92,7 @@ func (a *App) cmdGetKit() error {
 			}
 		}
 		sig := filepath.Join(dl, "SHA256SUMS.sig")
-		if err := a.download(base+"/SHA256SUMS.sig", sig); err != nil {
+		if err := a.download(base+"/SHA256SUMS.sig", sig, kit.MaxSmallDownload); err != nil {
 			_ = os.Remove(sig)
 			var he *kit.HTTPError
 			if errors.As(err, &he) {
@@ -188,14 +193,14 @@ func containsStr(l []string, s string) bool {
 	return false
 }
 
-func (a *App) download(url, out string) error {
+func (a *App) download(url, out string, max int64) error {
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD download " + url)
 		return nil
 	}
 	a.Log.Line("CMD download %s", url)
 	a.UI.Say("  Downloading " + url)
-	return kit.Fetch(a.Ctx, a.Hooks.HTTP, url, out)
+	return kit.FetchLimit(a.Ctx, a.Hooks.HTTP, url, out, max)
 }
 
 // verifyKitFile runs the tarball checks; an unsigned kit needs the user's explicit consent.
