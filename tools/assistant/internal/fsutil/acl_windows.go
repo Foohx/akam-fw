@@ -3,6 +3,7 @@
 package fsutil
 
 import (
+	"github.com/Foohx/akam-fw/tools/assistant/internal/backuploc"
 	"golang.org/x/sys/windows"
 )
 
@@ -10,6 +11,7 @@ import (
 // current user, SYSTEM and Administrators only. dir adds the inherit flags so that files created
 // inside the directory get the same access.
 func protect(path string, dir bool) error {
+	path = backuploc.LongPath(path) // x/sys calls do not get the long-path handling of package os
 	tok := windows.GetCurrentProcessToken()
 	user, err := tok.GetTokenUser()
 	if err != nil {

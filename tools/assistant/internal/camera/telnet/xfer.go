@@ -296,7 +296,8 @@ func (x *Xfer) recv(port int, out string, max int64) error {
 		return err
 	}
 	defer c.Close()
-	f, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	_ = os.Remove(out) // a left-over file would keep its own mode; the new one is made 0600, exclusively
+	f, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

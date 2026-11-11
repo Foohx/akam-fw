@@ -9,6 +9,7 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -75,6 +76,19 @@ func (a *App) resolveName(name string) (string, bool) {
 	return "", false
 }
 
+// wsdItem is the menu line of one WS-Discovery answer. The name and the address come from the
+// network: no control or escape character may reach the terminal.
+func wsdItem(f discover.Found) string {
+	d := textsafe.Clean(f.IP)
+	if f.Name != "" {
+		d += "  " + textsafe.Clean(f.Name)
+	}
+	if len(f.XAddrs) > 0 {
+		d += "  " + textsafe.Clean(f.XAddrs[0])
+	}
+	return d
+}
+
 // askIP is cam_ask_ip, extended: a typed name is resolved, and when nothing is typed the user is
 // offered the opt-in searches (WS-Discovery, then a scan of the local network).
 func (a *App) askIP() (string, error) {
@@ -135,14 +149,7 @@ func (a *App) searchNetwork() (string, bool) {
 		} else {
 			items := make([]string, 0, len(found)+1)
 			for _, f := range found {
-				d := f.IP
-				if f.Name != "" {
-					d += "  " + f.Name
-				}
-				if len(f.XAddrs) > 0 {
-					d += "  " + f.XAddrs[0]
-				}
-				items = append(items, d)
+				items = append(items, wsdItem(f))
 			}
 			items = append(items, "None of these")
 			i, err := a.UI.Pick("Which one is your camera?", items)

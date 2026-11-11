@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 	"io"
 	"os"
 	"path/filepath"
@@ -352,7 +353,7 @@ func (r *runner) stage1(precheckOnly bool) error {
 
 // showRaw prints what a camera script said (the real script's lines are not prefixed).
 func (r *runner) showRaw(res camssh.Result) {
-	for _, l := range strings.Split(strings.TrimRight(res.Combined(), "\n"), "\n") {
+	for _, l := range strings.Split(strings.TrimRight(textsafe.Clean(res.Combined()), "\n"), "\n") {
 		if l != "" {
 			r.d.Out(l)
 		}
@@ -567,8 +568,8 @@ func (r *runner) showCamera(text string) {
 				r.progLast = pct
 				r.d.Out(fmt.Sprintf("camera: %s: %d%%", m[1], pct))
 			}
-		} else if l != "" {
-			r.d.Out("camera: " + l)
+		} else if c := textsafe.Clean(l); c != "" {
+			r.d.Out("camera: " + c)
 		}
 	}
 }

@@ -379,7 +379,7 @@ func (a *App) rtspAuthSet(c *camssh.Client, ip string) error {
 	if !rtspUserValid(user) {
 		return a.UI.Fail("invalid user name.", "use 1 to 32 letters, digits or . _ @ + - (no spaces, no colon).")
 	}
-	pw, err := a.UI.Secret(fmt.Sprintf("  Password (%d to %d characters, not shown):", rtspMinPass, rtspMaxPass))
+	pw, err := a.UI.Secret(fmt.Sprintf("  Password (%d to %d bytes, not shown):", rtspMinPass, rtspMaxPass))
 	if err != nil {
 		return a.UI.Fail("no input.", "")
 	}
@@ -390,11 +390,11 @@ func (a *App) rtspAuthSet(c *camssh.Client, ip string) error {
 	if pw != pw2 {
 		return a.UI.Fail("the two passwords differ.", "nothing was changed; try again.")
 	}
-	if len([]rune(pw)) < rtspMinPass {
-		return a.UI.Fail("the password is too short.", fmt.Sprintf("use at least %d characters; nothing was changed.", rtspMinPass))
+	if len(pw) < rtspMinPass {
+		return a.UI.Fail("the password is too short.", fmt.Sprintf("use at least %d bytes; nothing was changed.", rtspMinPass))
 	}
-	if len([]rune(pw)) > rtspMaxPass {
-		return a.UI.Fail("the password is too long.", fmt.Sprintf("use at most %d characters; nothing was changed.", rtspMaxPass))
+	if len(pw) > rtspMaxPass {
+		return a.UI.Fail("the password is too long.", fmt.Sprintf("use at most %d bytes; nothing was changed.", rtspMaxPass))
 	}
 	if hasControl(pw) {
 		return a.UI.Fail("the password contains a control character (tab, ...).", "use printable characters only; nothing was changed.")

@@ -224,7 +224,7 @@ question and a way to change it:
  The backup is the only way back to the original firmware, and it contains
  your Wi-Fi password in clear text. Keep it private and off cloud folders.
 
-   Suggested:  C:\Users\<you>\Documents\Akam backups\salon-20261111
+   Suggested:  C:\Users\<you>\Documents\Akam backups\salon\20261111
    Free space: 41.2 GB     Private: yes (only your account)
 
    [Enter] use this folder   [c] choose another folder   [q] cancel
@@ -235,7 +235,7 @@ Rules (implemented in a pure package, T11.4):
 - Root by OS: Linux `$XDG_DOCUMENTS_DIR` from `~/.config/user-dirs.dirs` if present, else `~/Documents` if it
   exists, else `$HOME`; macOS `~/Documents`; Windows the Documents known folder
   (`windows.KnownFolderPath(FOLDERID_Documents)` from `golang.org/x/sys`, already a dependency).
-  Subfolder `Akam backups/<camera>-<YYYYMMDD>[-N]`. Contents unchanged from today (`mtdblock0.bin`..`mtdblock7.bin`,
+  Subfolders `Akam backups/<camera>/<YYYYMMDD>[-N]` (one folder per camera, then one per date; the `-N` suffix applies to the date folder). Contents unchanged from today (`mtdblock0.bin`..`mtdblock7.bin`,
   `SHA256SUMS`, `README.txt`, `camera_info.txt`), so `--backup-dir DIR`, `backupAccept` and the bash wizard still work.
   A user who already has `~/akam-backup-*` keeps them; the state key `backup_dir` records the absolute path.
 - **Cloud-folder warning**: if the root is inside OneDrive (Windows: environment `OneDrive`, `OneDriveConsumer`,
@@ -243,8 +243,8 @@ Rules (implemented in a pure package, T11.4):
   `~/Library/Mobile Documents/`; Documents synced when "Desktop & Documents" is on, detected by the
   `com~apple~CloudDocs` path), Dropbox or similar names in the path, the suggested folder is
   `%USERPROFILE%\Akam backups` / `~/Akam backups` instead and the screen says why.
-- **Private permissions**: Linux/macOS directory `0700`, files `0600` (SHA256SUMS and the text files are
-  currently `0644`: `telnetcmds.go:432`; make them `0600`). Windows: the new directory gets a protected DACL
+- **Private permissions**: Linux/macOS directories `0700` (`Akam backups`, `<camera>` and the date folder, all made private before any secret is written; the date folder is made with a plain `mkdir`, never taken over if it exists), files `0600` (SHA256SUMS and the text files are
+  currently `0644`: `telnetcmds.go:432`; make them `0600`). Windows: each of these directories gets a protected DACL
   (no inheritance) with full control for the current user, SYSTEM and Administrators
   (`SetNamedSecurityInfo` from `x/sys/windows`); failure to set it is a visible warning, not an error. A
   folder on FAT/exFAT, a network share or a medium that cannot hold permissions shows
@@ -332,7 +332,7 @@ does not know a key (older image) answers `ERR`; the screen shows that option as
 
    [done]  1  Kit v1.2.0 downloaded and verified (signature, checksums)
    [done]  2  Image built from your backup   md5 9f2c...41aa  5242880 bytes
-   [done]  3  Backup checked: C:\Users\<you>\Documents\Akam backups\salon-20261001  8 files, SHA256SUMS ok
+   [done]  3  Backup checked: C:\Users\<you>\Documents\Akam backups\salon\20261001  8 files, SHA256SUMS ok
    [todo]  4  Pre-checks on the camera (writes nothing)
    [todo]  5  Write the image   <- the only step that changes the camera
    [todo]  6  Verify, then YOU power-cycle the camera
@@ -356,7 +356,7 @@ prepare-backup-sd, find-camera, backup, image, prepare-flash-sd, flash, verify),
 
    1 Check this computer        done
    2 Get and verify the kit     done
-   3 Choose the backup folder   C:\Users\<you>\Documents\Akam backups\salon-20261111
+   3 Choose the backup folder   C:\Users\<you>\Documents\Akam backups\salon\20261111
    4 Prepare the backup card    microSD 32 GB "SanDisk SD"  (will be erased)   <- asks
    5 Find the camera            put the card in the camera, power it on, wait 2 minutes
    6 Back up the camera         8 partitions read twice, compared, copied here, verified
@@ -850,7 +850,7 @@ call it. The sources, the opt-in rule and the TCP/UDP details:
 
 Package `internal/backuploc` (pure, with the OS facts injected): `Suggest(osFacts, camera, now) Suggestion`,
 `Validate(path, osFacts) []Problem`, `NextFree(base)`. `bkPCDir` (`telnetcmds.go:409-425`) calls it; its
-`AKAM_BACKUP_ROOT` test hook keeps working. Rules in 3.2.
+`AKAM_BACKUP_ROOT` test hook keeps working (legacy `<root>/akam-backup-<name>-<date>` layout). The default folder is `<Documents>/Akam backups/<camera>/<date>[-N]`; `Suggestion.Parents` lists the two folders above it, which the caller makes private (`fsutil.PrivateMkdirChain`) before the date folder (`fsutil.PrivateMkdirNew`). Rules in 3.2.
 
 ### 4.8 Native image builder (the dependency behind R1 and R3(d))
 
@@ -1420,7 +1420,7 @@ Documented in `docs/assistant_install.md` (T11.15), summary:
 4. **State folders per OS.** **Recommendation: Linux unchanged (shared with the bash wizard); macOS `~/Library/Application Support/Akam`;
    Windows `%LocalAppData%\Akam`; no migration.** (The brief said `os.UserConfigDir`: on Windows that is the roaming `%AppData%`, wrong for
    host-key pins and caches.)
-5. **Default backup folder.** **Recommendation: `<Documents>/Akam backups/<camera>-<date>` with the cloud-folder fallback and the privacy
+5. **Default backup folder.** **Recommendation: `<Documents>/Akam backups/<camera>/<date>` with the cloud-folder fallback and the privacy
    check of 3.2.** The bash and old Go default `~/akam-backup-*` stays accepted.
 6. **Microphone (R5).** **Recommendation: feature-gated; keep external `ffmpeg`/`arecord`; fix the Windows dshow device selection; build a
    pure-Go Windows `waveIn` capture later only if users ask; no macOS pure-Go capture without authorising a module.**
