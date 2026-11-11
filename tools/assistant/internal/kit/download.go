@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// ErrTooLarge: the download is longer than its limit.
+var ErrTooLarge = errors.New("the download is larger than the allowed size")
+
 // HTTPError is a server answer of 400 or more (curl's exit status 22).
 type HTTPError struct {
 	Code int
@@ -44,6 +47,17 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 // Fetch downloads url into out (written to a temporary file next to it and renamed when complete).
 // It retries three times on network errors and server errors, never on a 4xx answer.
 func Fetch(ctx context.Context, c *http.Client, url, out string) error {
+	return FetchLimit(ctx, c, url, out, MaxKitDownload)
+}
+
+// Download size limits: a server cannot fill the disk. The kit is a few tens of MB.
+const (
+	MaxKitDownload   = 256 << 20
+	MaxSmallDownload = 1 << 20 // SHA256SUMS and its signature
+)
+
+// FetchLimit is Fetch with a cap on the body (an answer longer than max bytes is an error).
+func FetchLimit(ctx context.Context, c *http.Client, url, out string, max int64) error {
 	if !strings.HasPrefix(url, "https://") {
 		return errors.New("refusing a non-HTTPS download address")
 	}
@@ -62,16 +76,16 @@ func Fetch(ctx context.Context, c *http.Client, url, out string) error {
 			case <-time.After(time.Duration(try) * 500 * time.Millisecond):
 			}
 		}
-		last = fetchOnce(ctx, &cc, url, out)
+		last = fetchOnce(ctx, &cc, url, out, max)
 		var he *HTTPError
-		if last == nil || (errors.As(last, &he) && he.Code < 500 && he.Code != 429) || errors.Is(last, context.Canceled) {
+		if last == nil || errors.Is(last, ErrTooLarge) || (errors.As(last, &he) && he.Code < 500 && he.Code != 429) || errors.Is(last, context.Canceled) {
 			return last
 		}
 	}
 	return last
 }
 
-func fetchOnce(ctx context.Context, c *http.Client, url, out string) error {
+func fetchOnce(ctx context.Context, c *http.Client, url, out string, max int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -93,8 +107,15 @@ func fetchOnce(ctx context.Context, c *http.Client, url, out string) error {
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	if resp.ContentLength > max {
 		tmp.Close()
+		return ErrTooLarge
+	}
+	if n, err := io.Copy(tmp, io.LimitReader(resp.Body, max+1)); err != nil || n > max {
+		tmp.Close()
+		if err == nil {
+			err = ErrTooLarge
+		}
 		return err
 	}
 	if err := tmp.Close(); err != nil {

@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,7 +55,7 @@ func exists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsD
 // flashScriptsDir is cam_scripts_dir: AKAM_FLASH_SCRIPTS_DIR, a source checkout's tools/flash_scripts,
 // else the scripts shipped in the verified kit.
 func (a *App) flashScriptsDir() string {
-	if d := os.Getenv("AKAM_FLASH_SCRIPTS_DIR"); d != "" {
+	if d := testhook.Env("AKAM_FLASH_SCRIPTS_DIR"); d != "" {
 		return d
 	}
 	if r := repoRoot(); r != "" {
@@ -65,7 +66,7 @@ func (a *App) flashScriptsDir() string {
 
 // flashToolPath is cam_flash_tool.
 func (a *App) flashToolPath() string {
-	if p := os.Getenv("AKAM_FLASH_TOOL"); p != "" {
+	if p := testhook.Env("AKAM_FLASH_TOOL"); p != "" {
 		return p
 	}
 	if a.St.Get("mode") == "source" {
@@ -110,6 +111,10 @@ func (a *App) imageGate(img string) (string, error) {
 
 // flashConfirm is cam_flash_confirm: the red box and one yes/no (default No, needs a terminal).
 func (a *App) flashConfirm(label, ip, md5, route string) (bool, error) {
+	// Danger answers "yes" in a rehearsal: that must never become a real confirmation.
+	if a.UI.Dry() {
+		return false, errors.New("a rehearsal never confirms a flash")
+	}
 	var what string
 	switch label {
 	case "Restoring":
@@ -180,7 +185,7 @@ func (a *App) flashPlan(img, md5 string) flash.Plan {
 }
 
 func envInt(name string) int {
-	n, _ := strconv.Atoi(os.Getenv(name))
+	n, _ := strconv.Atoi(testhook.Env(name)) // only the AKAM_REFLASH_* test hooks
 	return n
 }
 

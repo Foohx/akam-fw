@@ -21,6 +21,7 @@
 package flash
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -121,6 +122,7 @@ var (
 type runner struct {
 	p     Plan
 	d     Deps
+	in    *inputs
 	conns map[int]Conn
 
 	progLabel string
@@ -172,7 +174,7 @@ func (r *runner) rssh(port int, cmd string, stdin io.Reader, timeout time.Durati
 func (r *runner) rdir() string { return r.p.RemoteDir }
 
 // validate is the local part of reflash_over_ssh.sh: nothing touches the camera before it passes.
-func validate(p *Plan) (string, error) {
+func validate(p *Plan) (*inputs, error) {
 	if p.Port == 0 {
 		p.Port = 22
 	}
@@ -192,62 +194,90 @@ func validate(p *Plan) (string, error) {
 		p.RetrySleep = 2 * time.Second
 	}
 	if !md5Re.MatchString(p.MD5) {
-		return "", die("--md5 must be 32 lowercase hex digits")
+		return nil, die("--md5 must be 32 lowercase hex digits")
 	}
 	if !rdirRe.MatchString(p.RemoteDir) || strings.Contains(p.RemoteDir, "..") {
-		return "", die("--remote-dir must be a plain absolute path")
+		return nil, die("--remote-dir must be a plain absolute path")
 	}
 	if !strings.HasPrefix(p.RemoteDir, "/tmp/") || len(p.RemoteDir) <= len("/tmp/") {
-		return "", die("--remote-dir must be below /tmp (the camera's RAM disk)")
+		return nil, die("--remote-dir must be below /tmp (the camera's RAM disk)")
 	}
 	st, err := os.Stat(p.Image)
 	if err != nil || !st.Mode().IsRegular() {
-		return "", die("image not found: %s", p.Image)
+		return nil, die("image not found: %s", p.Image)
 	}
 	if t, err := os.Stat(p.FlashTool); err != nil || !t.Mode().IsRegular() {
-		return "", die("flash tool not found: %s", p.FlashTool)
+		return nil, die("flash tool not found: %s", p.FlashTool)
 	}
 	for _, f := range []string{"akam_reflash_ssh.sh", "flash_guard.sh"} {
 		if _, err := os.Stat(filepath.Join(p.ScriptsDir, f)); err != nil {
-			return "", die("%s missing", filepath.Join(p.ScriptsDir, f))
+			return nil, die("%s missing", filepath.Join(p.ScriptsDir, f))
 		}
 	}
 	if st.Size() != ImageBytes {
-		return "", die("image is %d bytes, expected exactly %d (full APP partition)", st.Size(), ImageBytes)
+		return nil, die("image is %d bytes, expected exactly %d (full APP partition)", st.Size(), ImageBytes)
 	}
-	got, err := fileHash(p.Image, md5.New())
-	if err != nil {
-		return "", die("cannot read the image: %v", err)
+	// Everything that will be sent is read ONCE, here, into memory; the md5 and the sha256 are
+	// computed over these very bytes, so a file replaced after the check cannot change what is
+	// uploaded (the camera also compares the md5 itself).
+	in := &inputs{}
+	if in.image, err = readLimited(p.Image, ImageBytes); err != nil {
+		return nil, die("cannot read the image: %v", err)
 	}
-	if got != p.MD5 {
-		return "", die("image md5 is %s, you said %s: refusing", got, p.MD5)
+	if len(in.image) != ImageBytes {
+		return nil, die("image is %d bytes, expected exactly %d (full APP partition)", len(in.image), ImageBytes)
 	}
-	return got, nil
+	sum := md5.Sum(in.image)
+	if got := hex.EncodeToString(sum[:]); got != p.MD5 {
+		return nil, die("image md5 is %s, you said %s: refusing", got, p.MD5)
+	}
+	if in.tool, err = readLimited(p.FlashTool, maxToolBytes); err != nil {
+		return nil, die("cannot read %s: %v", p.FlashTool, err)
+	}
+	if in.script, err = readLimited(filepath.Join(p.ScriptsDir, "akam_reflash_ssh.sh"), maxScriptBytes); err != nil {
+		return nil, die("cannot read akam_reflash_ssh.sh: %v", err)
+	}
+	if in.guard, err = readLimited(filepath.Join(p.ScriptsDir, "flash_guard.sh"), maxScriptBytes); err != nil {
+		return nil, die("cannot read flash_guard.sh: %v", err)
+	}
+	return in, nil
 }
 
-func fileHash(path string, h interface {
-	io.Writer
-	Sum([]byte) []byte
-}) (string, error) {
+const (
+	maxToolBytes   = 8 << 20
+	maxScriptBytes = 1 << 20
+)
+
+// inputs are the bytes that are sent to the camera.
+type inputs struct{ image, tool, script, guard []byte }
+
+// readLimited reads a regular file, at most max bytes (one more is read to notice an overflow, and
+// a longer file is an error).
+func readLimited(path string, max int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer f.Close()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	}
+	return b, nil
 }
 
 func newRunner(p Plan, d Deps) (*runner, error) {
-	if _, err := validate(&p); err != nil {
+	in, err := validate(&p)
+	if err != nil {
 		return nil, err
 	}
 	if d.Ctx == nil {
 		d.Ctx = context.Background()
 	}
-	return &runner{p: p, d: d, conns: map[int]Conn{}, progLast: -1}, nil
+	return &runner{p: p, d: d, in: in, conns: map[int]Conn{}, progLast: -1}, nil
 }
 
 // busySnippet is run on the camera before anything is uploaded: it refuses (exit 3) while a
@@ -264,13 +294,8 @@ mkdir -p RDIR && cd RDIR || exit 1
 rm -f akam_reflash_ssh.sh flash_guard.sh flash_tool image.squashfs flash.log worker.pid
 rm -rf worker.lock`
 
-func (r *runner) upload(local, remote string) error {
-	f, err := os.Open(local)
-	if err != nil {
-		return die("upload of %s failed", remote)
-	}
-	defer f.Close()
-	res, err := r.rssh(r.p.Port, fmt.Sprintf("umask 077; cat > '%s/%s'", r.rdir(), remote), f, 5*time.Minute)
+func (r *runner) upload(data []byte, remote string) error {
+	res, err := r.rssh(r.p.Port, fmt.Sprintf("umask 077; cat > '%s/%s'", r.rdir(), remote), bytes.NewReader(data), 5*time.Minute)
 	if err != nil || res.Status != 0 {
 		return die("upload of %s failed", remote)
 	}
@@ -292,10 +317,10 @@ func (r *runner) stage1(precheckOnly bool) error {
 	case err != nil || res.Status != 0:
 		return die("cannot prepare %s on the camera", rdir)
 	}
-	if err := r.upload(filepath.Join(r.p.ScriptsDir, "akam_reflash_ssh.sh"), "akam_reflash_ssh.sh"); err != nil {
+	if err := r.upload(r.in.script, "akam_reflash_ssh.sh"); err != nil {
 		return err
 	}
-	if err := r.upload(filepath.Join(r.p.ScriptsDir, "flash_guard.sh"), "flash_guard.sh"); err != nil {
+	if err := r.upload(r.in.guard, "flash_guard.sh"); err != nil {
 		return err
 	}
 	r.say("camera pre-checks (mtd7 = APP 00500000, free RAM)")
@@ -360,18 +385,19 @@ func (r *runner) flash() error {
 	}
 	// stage 2: image and tool to RAM, sha256 compared on both sides
 	r.say("uploading flash_tool and the image to RAM")
-	if err := r.upload(p.FlashTool, "flash_tool"); err != nil {
+	if err := r.upload(r.in.tool, "flash_tool"); err != nil {
 		return err
 	}
-	if err := r.upload(p.Image, "image.squashfs"); err != nil {
+	if err := r.upload(r.in.image, "image.squashfs"); err != nil {
 		return err
 	}
-	for _, pair := range [][2]string{{p.Image, "image.squashfs"}, {p.FlashTool, "flash_tool"}} {
-		l, err := fileHash(pair[0], sha256.New())
-		if err != nil {
-			return die("cannot read %s", pair[0])
-		}
-		res, err := r.rssh(p.Port, fmt.Sprintf("sha256sum '%s/%s'", rdir, pair[1]), nil, time.Minute)
+	for _, pair := range []struct {
+		data   []byte
+		remote string
+	}{{r.in.image, "image.squashfs"}, {r.in.tool, "flash_tool"}} {
+		sum := sha256.Sum256(pair.data) // the bytes that were uploaded, not a second read of the file
+		l := hex.EncodeToString(sum[:])
+		res, err := r.rssh(p.Port, fmt.Sprintf("sha256sum '%s/%s'", rdir, pair.remote), nil, time.Minute)
 		remote := ""
 		if err == nil {
 			if f := strings.Fields(string(res.Stdout)); len(f) > 0 {
@@ -383,9 +409,9 @@ func (r *runner) flash() error {
 			if none == "" {
 				none = "none"
 			}
-			return die("sha256 mismatch for %s (local %s, camera %s): nothing was written", pair[1], l, none)
+			return die("sha256 mismatch for %s (local %s, camera %s): nothing was written", pair.remote, l, none)
 		}
-		r.say("sha256 OK for %s (%s)", pair[1], l)
+		r.say("sha256 OK for %s (%s)", pair.remote, l)
 	}
 	r.say("preparing: busybox + dropbear copied to RAM, second Dropbear on port %d", p.SecondPort)
 	res, err := r.camSh("prepare --md5 " + p.MD5)

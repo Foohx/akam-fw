@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"io"
 	"net/http"
 	"os"
@@ -235,7 +236,7 @@ func defaultUI(o *Options, st Streams, log *state.Log, secrets *state.Secrets, d
 func NewPlainUI(o *Options, st Streams, log *state.Log, secrets *state.Secrets, dry bool) *ui.Plain {
 	p := &ui.Plain{
 		In: bufio.NewReader(st.In), Out: st.Out, ErrOut: st.Err, DryRun: dry,
-		ForceTT: os.Getenv("AKAM_FORCE_TTY") == "1", Log: log, Secrets: secrets,
+		ForceTT: testhook.Env("AKAM_FORCE_TTY") == "1", Log: log, Secrets: secrets,
 	}
 	if f, ok := st.In.(*os.File); ok {
 		p.InFile = f

@@ -25,6 +25,7 @@ var SupportedKitFormats = []string{"1"}
 const (
 	maxTotalSize = 209715200 // 200 MiB of file content, as verify_kit.sh
 	maxStream    = 1 << 30   // decompressed bytes read at all (a decompression bomb stops here)
+	maxEntries   = 10000     // archive entries (a flood of empty entries is not content)
 )
 
 // Fail is a verification failure (verify_kit.sh "FAIL:", exit status 1).
@@ -121,13 +122,30 @@ func xzDecompress(file string) (io.ReadCloser, error) {
 }
 
 type procReader struct {
-	r    io.Reader
-	cmd  *exec.Cmd
-	errb *bytes.Buffer
+	r      io.Reader
+	cmd    *exec.Cmd
+	errb   *bytes.Buffer
+	waited bool
 }
 
-func (p *procReader) Read(b []byte) (int, error) { return p.r.Read(b) }
+// Read passes the decompressed bytes through; at the end of the stream xz must have exited 0, so a
+// truncated or corrupt .xz is an error, never a short archive that happens to end on a block boundary.
+func (p *procReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if err == io.EOF {
+		if werr := p.cmd.Wait(); werr != nil {
+			p.waited = true
+			return n, fmt.Errorf("xz failed: %v: %s", werr, strings.TrimSpace(p.errb.String()))
+		}
+		p.waited = true
+	}
+	return n, err
+}
+
 func (p *procReader) Close() error {
+	if p.waited {
+		return nil
+	}
 	_ = p.cmd.Process.Kill()
 	err := p.cmd.Wait()
 	_ = err
@@ -294,7 +312,8 @@ func (o *Options) readArchive(file string, visit func(*tar.Header, *tar.Reader, 
 		return "", fail("cannot read the archive: %v", err)
 	}
 	defer rc.Close()
-	tr := tar.NewReader(io.LimitReader(rc, maxStream))
+	lr := &limitReader{r: rc, left: maxStream}
+	tr := tar.NewReader(lr)
 	seen := map[string]bool{}
 	top := ""
 	var total int64
@@ -308,6 +327,9 @@ func (o *Options) readArchive(file string, visit func(*tar.Header, *tar.Reader, 
 			return "", fail("cannot read the archive: %v", err)
 		}
 		n++
+		if n > maxEntries {
+			return "", fail("archive has more than %d entries", maxEntries)
+		}
 		name := h.Name
 		if !nameRe.MatchString(name) {
 			return "", fail("archive entry with a character outside A-Z a-z 0-9 . _ + - /")
@@ -359,7 +381,33 @@ func (o *Options) readArchive(file string, visit func(*tar.Header, *tar.Reader, 
 	if n == 0 {
 		return "", fail("the archive is empty")
 	}
+	// Read the stream to its end: this is where a truncated .xz (xz exits non-zero) or a
+	// decompression bomb (over maxStream) is noticed even when the tar part looked complete.
+	if _, err := io.Copy(io.Discard, lr); err != nil {
+		return "", fail("cannot read the archive: %v", err)
+	}
 	return top, nil
+}
+
+// limitReader fails (instead of silently ending) once more than left bytes are read.
+type limitReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (l *limitReader) Read(b []byte) (int, error) {
+	if l.left < 0 {
+		return 0, errors.New("the decompressed archive is larger than 1 GiB")
+	}
+	if int64(len(b)) > l.left+1 {
+		b = b[:l.left+1]
+	}
+	n, err := l.r.Read(b)
+	l.left -= int64(n)
+	if l.left < 0 {
+		return n, errors.New("the decompressed archive is larger than 1 GiB")
+	}
+	return n, err
 }
 
 func hasDotDot(name string) bool {

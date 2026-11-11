@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,5 +65,14 @@ func TestOnlyTheFlashPackageWritesTheFlash(t *testing.T) {
 	}
 	if callers != 1 {
 		t.Errorf("flash.Flash is called %d times outside the flash package, want exactly 1 (flashSSH)", callers)
+	}
+}
+
+// A rehearsal's automatic "yes" (Plain.Danger answers yes when DryRun) must never become a flash
+// confirmation, even if a code path forgot to return before asking.
+func TestRehearsalNeverConfirmsAFlash(t *testing.T) {
+	a := &App{UI: &ui.Plain{DryRun: true, Out: io.Discard, ErrOut: io.Discard}}
+	if ok, err := a.flashConfirm("Updating", "192.0.2.1", strings.Repeat("a", 32), "SSH"); ok || err == nil {
+		t.Fatalf("a rehearsal confirmed a flash: %v %v", ok, err)
 	}
 }

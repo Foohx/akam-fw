@@ -77,6 +77,16 @@ means ONVIF is off**; any other content is invalid and counts as off. `enable` i
 `/etc/config/akam/credentials` (written by `./akam rtsp-auth set`) exists and looks valid. This feature ships
 in the same release as the ONVIF firmware; an older image ignores the file.
 
+`ak_rtsp` reads the file after the video and RTSP are up (ONVIF never delays them) and again on
+`ak_rtsp ctl ONVIF reload` (loopback only, answers `OK onvif.state=<state>`), which starts, stops or moves the HTTP
+server and WS-Discovery without touching the video. `GET onvif.state` on 8091 (readable by everyone, also in `LIST`)
+says `off`, `on:<port>`, `no_password` (enabled, video password on, but no valid
+`/etc/config/akam/credentials`: nothing started) or `error:<reason>` (`port_in_use`, `permission_denied`,
+`http_failed`, `discovery_failed`; fix it and run `./akam onvif enable` again). With the video password OFF the
+service still starts: reads are open and the changes (reboot, time, name) are refused. The file needs exactly the two
+keys; port 21 to 24, 554 and 8091 are refused. A camera name change applies to discovery at the next reload or boot.
+Not yet validated on hardware.
+
 ## 4. The 8091 control port
 
 Port 8091 is `ak_rtsp`'s line protocol (`LIST`, `GET`, `SET`) for exposure, day/night and image

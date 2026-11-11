@@ -119,11 +119,11 @@ func ParseAllowedSigners(b []byte) ([]Allowed, error) {
 		a := Allowed{Principals: strings.Split(fields[0], ",")}
 		i := 1
 		if !isKeyType(fields[i]) {
-			for _, opt := range strings.Split(fields[i], ",") {
-				if v, ok := strings.CutPrefix(opt, "namespaces="); ok {
-					a.Namespaces = strings.Split(strings.Trim(v, `"`), ",")
-				}
+			ns, err := parseSignerOptions(fields[i])
+			if err != nil {
+				return nil, fmt.Errorf("allowed_signers line %d: %v", n+1, err)
 			}
+			a.Namespaces = ns
 			i++
 		}
 		if i+1 >= len(fields) {
@@ -137,6 +137,27 @@ func ParseAllowedSigners(b []byte) ([]Allowed, error) {
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+// parseSignerOptions reads the options field. Only namespaces="a,b" is understood; any other
+// option (cert-authority, valid-after, valid-before, ...) is an error, never silently dropped: a
+// restriction that is ignored would widen what a key may sign.
+func parseSignerOptions(f string) ([]string, error) {
+	rest := f
+	var ns []string
+	for rest != "" {
+		v, ok := strings.CutPrefix(rest, `namespaces="`)
+		if !ok {
+			return nil, fmt.Errorf("unsupported option %q (only namespaces=\"...\" is understood)", rest)
+		}
+		end := strings.IndexByte(v, '"')
+		if end < 0 {
+			return nil, errors.New("unterminated namespaces option")
+		}
+		ns = append(ns, strings.Split(v[:end], ",")...)
+		rest = strings.TrimPrefix(v[end+1:], ",")
+	}
+	return ns, nil
 }
 
 func isKeyType(s string) bool {
@@ -204,6 +225,9 @@ func Verify(allowed []Allowed, principal, namespace string, sig *Signature, mess
 	}
 	if !matched {
 		return "", errors.New("no principal matched (the signing key is not in allowed_signers for this identity and namespace)")
+	}
+	if sig.Sig.Format == gossh.KeyAlgoRSA {
+		return "", errors.New("RSA signatures with SHA-1 (ssh-rsa) are refused: use rsa-sha2-256 or -512, or ed25519")
 	}
 	if err := sig.PublicKey.Verify(data, sig.Sig); err != nil {
 		return "", fmt.Errorf("signature verification failed: %v", err)
