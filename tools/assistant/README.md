@@ -1,13 +1,15 @@
-# akam: the assistant as a single binary (experimental, phase P1)
+# akam: the assistant as a single binary (experimental, phases P1 and P2)
 
 `akam` is the Go version of the guided setup program (`./akam`, bash, in the repository root). It is one
 static executable with no runtime dependency: SSH, the control port, the RTSP talk client, G.711 and
 WAV are built in. The plan is in [specs/09-spec-assistant-binary.md](../../specs/09-spec-assistant-binary.md).
 
-**Status: phase P1, experimental.** It does the daily commands on a camera that already runs Akam. Backup,
-image, flash, update, restore, the SD card steps and the telnet route stay in the bash wizard until phases
-P2 and P3. Nothing in P1 flashes, reboots or power-cycles a camera. It was tested on a fake camera and
-against the bash wizard's own output, **not yet on a real camera**.
+**Status: phases P1 and P2, experimental.** It does the daily commands on a camera that already runs Akam, gets
+and verifies the kit, and updates or restores a running Akam camera over SSH (`update`, `restore`, `verify`).
+`image`, `backup`, `flash` from stock, the SD card steps and the telnet route stay in the bash wizard (phase P3;
+`image` waits for a squashfs writer, see below). The program never reboots or power-cycles a camera: after a
+flash it tells you to do it by hand. It was tested on a fake camera and against the bash wizard's own output
+and verdicts, **not yet on a real camera**.
 
 ## Build
 
@@ -57,8 +59,32 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `doctor` | what this program found on your computer (optional tools included) |
 | menu (`akam` alone) | on a terminal, a full-screen menu (arrows or `j`/`k`, Enter, `?`, `q`); with `--plain`, `AKAM_PLAIN=1` or without a terminal, the status table |
 
-Not in this phase (the command says so and points to the bash wizard): `get-kit`, `build`,
-`prepare-backup-sd`, `backup`, `image`, `prepare-flash-sd`, `flash`, `verify`, `update`, `restore`, `wipe-sd`.
+| `get-kit` | downloads `akam-kit-X.tar.xz`, `SHA256SUMS`, `SHA256SUMS.sig` (HTTPS only, TLS 1.2+, a redirect to http is refused, 3 tries), checks the sha256, the OpenSSH signature (SSHSIG, principal and namespace `akam-release`, keys of `tools/release/allowed_signers` built in; `AKAM_ALLOWED_SIGNERS` names another file), the archive layout and the kit's MANIFEST exactly like `verify_kit.sh`, and extracts it to `<state dir>/kit`. `--kit FILE`, `--version`, `--expect-sha256`, `--allow-unsigned` keep their meaning. Today's `allowed_signers` holds no key, so a signed kit is refused; an unsigned one needs the yes/no "Unsigned kit" (default No, refused without a terminal) or `--allow-unsigned`. Nothing from a kit is run. The `xz` program is needed to open the archive |
+| `update [--image FILE]` | flashes a new image over SSH, no card: precheck (writes nothing), the red box and one yes/no (default No), upload to the camera's RAM, sha256 on both sides, md5 by the camera script, a second Dropbear from RAM on port 2222, detached flash, polled log, independent read-back md5 of `/dev/mtd7`. The camera-side scripts are those of `tools/flash_scripts` (or the kit's `scripts/flash`), unchanged. It never reboots: power-cycle by hand |
+| `restore --backup-dir DIR` | the same path with `mtdblock7.bin` of your backup (SHA256SUMS checked); needs a camera recorded as running Akam. The telnet + card route is bash only |
+| `verify` | waits for SSH, runs `akam_hwcheck.sh`, checks the ports (22, 554, 8091; 24 only with the card; 80 only when ONVIF is on) and the Wi-Fi gate, asks you to power-cycle without the card by hand, repeats the checks, then the optional password, ONVIF and camera-name offers |
+
+Not in the native binary yet (the command says so and points to the bash wizard): `build`,
+`prepare-backup-sd`, `backup`, `image`, `prepare-flash-sd`, `flash` (from stock), `wipe-sd`. A `backup` over SSH of a
+camera that already runs Akam does not exist in bash either (its flash no longer holds the original firmware).
+
+### The flash path (audited)
+
+* One function writes the flash: `flash.Flash` in `internal/flash`, called from `flashSSH` only (a test counts the
+  callers and checks that the start command and the confirmation flag appear nowhere else).
+* It needs a `flash.Confirmation`, which only `flash.NewConfirmation` can make, from an explicit yes (default No: Enter,
+  Esc, `q` and end of input are No; refused without a terminal) for that image's md5. `--dry-run` never reaches it.
+* The image must be exactly 5242880 bytes; its md5 is checked here, its sha256 after the upload, its md5 by the camera
+  script and by the detached worker, then two read-backs (the worker's and an independent one) must equal it.
+* The set of commands sent is closed and tested; no `reboot`, `poweroff`, `kill` or watchdog action ever appears. The P1
+  guard of `internal/cli/remote.go` still refuses `flash_tool`, mtd writes and the reflash script on every other path.
+* After a failure that follows the start the message says **DO NOT power-cycle**; after success it says to unplug and
+  replug USB-C by hand.
+
+### Image building (spike result)
+
+The squashfs spike (specs/09, section 10.2) found no mature MIT/BSD pure-Go writer, so `image` stays in the bash
+wizard (`mksquashfs`/`unsquashfs`, reported by `doctor`). `update` takes `--image FILE` or the image the bash step recorded.
 
 ### SSH and host keys
 
@@ -98,9 +124,13 @@ ffmpeg:
 
 * `internal/testfake`: the fake camera. An in-process SSH server that runs the **real helper scripts**
   of `tools/firmware_patch_templates/` (`akam_rtsp_auth.sh`, `akam_hostname.sh`, `akam_debug.sh`) in a
-  temporary root, a control port 8091 reached through `direct-tcpip`, and an RTSP server with Digest login
+  temporary root, a control port 8091 reached through `direct-tcpip`, a second Dropbear and a fake flash (a byte slice plays
+  `/dev/mtd7`; the behaviour of `akam_reflash_ssh.sh` is emulated, the real script is tested by
+  `tests/reflash_ssh_test.sh`), and an RTSP server with Digest login
   against the credentials those scripts wrote and the ONVIF backchannel. `akam_onvif.sh` is emulated until it is
   part of this tree (it is on the ONVIF branch).
+* the P2 tests: kit refusal cases, SSHSIG interoperability with `ssh-keygen -Y` in both directions, verdict parity with
+  `tools/release/verify_kit.sh` on 25 kits, and the whole update, restore and verify flows on the fake camera;
 * golden files (`testdata/golden/*.golden`) made from the **bash** wizard by `testdata/gen_golden.sh`; the Go
   output must equal them byte for byte (`testdata/scenarios.txt` lists the scenarios);
 * a state round trip with the real `./akam` in both directions;
@@ -116,6 +146,8 @@ internal/ui/              the UI interface and the plain implementation; ui/tui 
 internal/state/           state files, cameras, log with redaction, lock
 internal/camera/ssh/      SSH client, keys, host-key pinning
 internal/camera/ctl/      control port 8091 client
+internal/kit/             kit download, SSHSIG check, archive and MANIFEST checks (port of verify_kit.sh); kit/kittest builds test kits
+internal/flash/           the one audited function that writes the camera flash (port of reflash_over_ssh.sh)
 internal/discover/        port probe, subnet list and scan, WS-Discovery, mDNS
 internal/rtsp/            RTSP + Digest, ONVIF backchannel talk, G.711, WAV
 internal/audio/           optional capture tools (external processes)
@@ -134,4 +166,8 @@ internal/testfake/        fake camera for the tests
   present), so its rehearsal line differs; `pw-record`/`parec` capture backends are not used yet.
 * Messages say `./akam` (as the bash wizard does) even when the binary is run under another name.
 * `onvif` follows the command of the ONVIF branch (`akam_onvif.sh`), which is not merged into `dev` yet.
+* P2: opening a kit runs the `xz` program (the pure-Go `ulikunitz/xz` module could not be added in this run); the
+  `update`/`restore` flow was tested against an emulation of the camera scripts, not the scripts themselves
+  (they have their own tests in `tests/reflash_ssh_test.sh`); `restore` has no telnet + card route; `get-kit` on a
+  folder (`--kit DIR`) is accepted only as an unsigned kit.
 * The Go toolchain is not pinned in `tools/build/deps.lock` yet.
