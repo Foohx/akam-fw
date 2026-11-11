@@ -1025,8 +1025,8 @@ func (a *App) cmdFlash() error {
 			fmt.Sprintf("run: %s backup --backup-dir DIR", Prog))
 	}
 	// the backup gate: the folder is re-hashed now, not trusted from the run that made it
-	if sums := filepath.Join(bk, "SHA256SUMS"); exists(sums) && !sha256sumCheck(bk, sums) {
-		return a.UI.Fail(fmt.Sprintf("SHA256SUMS does not match the files in %s.", bk), "this backup is damaged: use your second copy. Nothing was written.")
+	if p := stockBackupProblem(bk); p != "" {
+		return a.UI.Fail("the stock backup does not verify: "+p+".", "this backup is damaged or not the original: use your second copy. Nothing was written.")
 	}
 	if !a.camConfirmUntested(app, "Flash with untested firmware?") {
 		return ui.ErrFailed

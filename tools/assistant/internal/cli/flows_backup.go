@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
@@ -85,8 +86,8 @@ func (a *App) chooseBackupRoot() {
 		return
 	}
 	abs, err := filepath.Abs(v)
-	if err != nil {
-		a.UI.Say("  That is not a usable path.")
+	if err != nil || hasControl(abs) {
+		a.UI.Say("  That is not a usable path (no control characters, no line breaks).")
 		return
 	}
 	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
@@ -113,7 +114,7 @@ func (a *App) chooseBackupRoot() {
 		a.UI.Warn("cannot remember the folder: " + err.Error())
 		return
 	}
-	a.UI.Good("  The backups will be kept under " + filepath.Join(abs, backuploc.Folder) + ".")
+	a.UI.Good("  The backups will be kept under " + ui.Sanitize(filepath.Join(abs, backuploc.Folder)) + ".")
 }
 
 // backupRootOverride is the root the user chose (state key backup_root), "" for the suggestion.
@@ -125,10 +126,70 @@ func (a *App) backupRootOverride() string {
 	if r == "" {
 		return ""
 	}
+	if hasControl(r) {
+		return ""
+	}
 	if st, err := os.Stat(r); err != nil || !st.IsDir() {
 		return ""
 	}
 	return r
+}
+
+// backupKindAkam reports whether the backup folder was made over SSH from a camera that ran Akam
+// (camera_info.txt carries the kind=akam marker). Such a backup holds the Akam APP, never the original.
+func backupKindAkam(dir string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, "camera_info.txt"))
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.EqualFold(strings.TrimSpace(l), "kind=akam") {
+			return true
+		}
+	}
+	return false
+}
+
+// sumsCoverApp reports whether SHA256SUMS lists mtdblock7.bin (a file the check would otherwise skip).
+func sumsCoverApp(sums string) bool {
+	b, err := os.ReadFile(sums)
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimRight(l, "\r")
+		if len(l) > 66 && strings.TrimPrefix(strings.TrimLeft(l[64:], " "), "*") == "mtdblock7.bin" {
+			return true
+		}
+	}
+	return false
+}
+
+// backupProblem re-hashes a backup folder NOW and says what is wrong with it ("" when it verifies):
+// APP dump and SHA256SUMS present, SHA256SUMS lists the APP and matches every file.
+func backupProblem(d string) string {
+	sums := filepath.Join(d, "SHA256SUMS")
+	switch {
+	case !exists(filepath.Join(d, "mtdblock7.bin")) || !exists(sums):
+		return d + " has no mtdblock7.bin or SHA256SUMS"
+	case !sha256sumCheck(d, sums):
+		return "SHA256SUMS does not match the files in " + d
+	case !sumsCoverApp(sums):
+		return "SHA256SUMS in " + d + " does not list mtdblock7.bin"
+	}
+	return ""
+}
+
+// stockBackupProblem is backupProblem plus the kind: restoring or flashing from the stock backup needs
+// the ORIGINAL APP, so a backup made over SSH from an Akam camera (kind=akam) never qualifies.
+func stockBackupProblem(d string) string {
+	if p := backupProblem(d); p != "" {
+		return p
+	}
+	if backupKindAkam(d) {
+		return d + " is a backup of a camera that ran Akam (kind=akam), not the original firmware"
+	}
+	return ""
 }
 
 // backupGate re-verifies the recorded backup NOW (SHA256SUMS re-hashed, not trusted from an earlier
@@ -139,16 +200,11 @@ func (a *App) backupGate() (dir, why string) {
 		if d == "" {
 			continue
 		}
-		app := filepath.Join(d, "mtdblock7.bin")
-		sums := filepath.Join(d, "SHA256SUMS")
-		switch {
-		case !exists(app) || !exists(sums):
-			why = d + " has no mtdblock7.bin or SHA256SUMS"
-		case !sha256sumCheck(d, sums):
-			why = "SHA256SUMS does not match the files in " + d
-		default:
-			return d, ""
+		if p := backupProblem(d); p != "" {
+			why = p
+			continue
 		}
+		return d, ""
 	}
 	if why == "" {
 		why = "no backup of this camera is recorded"

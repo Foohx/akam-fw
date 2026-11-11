@@ -248,9 +248,12 @@ func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	t.Setenv("AKAM_FLASH_TOOL", tool)
 	bk := filepath.Join(dir, "backup")
 	os.MkdirAll(bk, 0o755)
+	var sums strings.Builder
 	for i := 0; i < 8; i++ {
 		os.WriteFile(filepath.Join(bk, fmt.Sprintf("mtdblock%d.bin", i)), testfake.StockMtdContent(i), 0o600)
+		fmt.Fprintf(&sums, "%s  mtdblock%d.bin\n", shaOf(testfake.StockMtdContent(i)), i)
 	}
+	os.WriteFile(filepath.Join(bk, "SHA256SUMS"), []byte(sums.String()), 0o600)
 	app, isha := shaOf(testfake.StockMtdContent(7)), shaOf(img)
 	st := "mode=source\nimage_path=" + imgPath + "\nimage_sha=" + isha + "\nimage_kit_sha=source\nimage_backup_sha=" + app + "\nbackup_dir=" + bk + "\nbackup_sha=" + app + "\n"
 	for _, s := range []string{"doctor", "get_kit", "prepare_backup_sd", "find_camera", "backup", "image"} {

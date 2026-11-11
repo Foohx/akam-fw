@@ -366,7 +366,7 @@ func newCardFlashWorld(t *testing.T, so testfake.StockOptions, cardMod func(file
 	t.Helper()
 	dir := t.TempDir()
 	fw := &cardFlashWorld{imgName: "ak_rtsp_firmware_20261111_101010.squashfs"}
-	fw.img = bytes.Repeat([]byte("akam image block 0123456789abcdef"), 5242880/33+1)[:5242880]
+	fw.img = validImage(t)
 	fw.tool = []byte("#!fake flash_tool\n")
 	files := map[string][]byte{"custom_firmware/" + fw.imgName: fw.img, "flash_tool": fw.tool, "hack.sh": []byte("x")}
 	for _, n := range []string{"install_with_flash_tool.sh", "flash_guard.sh", "preflight_check.sh"} {
@@ -388,9 +388,12 @@ func newCardFlashWorld(t *testing.T, so testfake.StockOptions, cardMod func(file
 	t.Setenv("AKAM_FLASH_TOOL", fw.toolPath)
 	fw.bkDir = filepath.Join(dir, "backup")
 	os.MkdirAll(fw.bkDir, 0o755)
+	var sums strings.Builder
 	for i := 0; i < 8; i++ {
 		os.WriteFile(filepath.Join(fw.bkDir, fmt.Sprintf("mtdblock%d.bin", i)), testfake.StockMtdContent(i), 0o600)
+		fmt.Fprintf(&sums, "%s  mtdblock%d.bin\n", shaOf(testfake.StockMtdContent(i)), i)
 	}
+	os.WriteFile(filepath.Join(fw.bkDir, "SHA256SUMS"), []byte(sums.String()), 0o600)
 	fw.seed()
 	return fw
 }

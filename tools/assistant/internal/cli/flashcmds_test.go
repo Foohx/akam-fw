@@ -33,7 +33,7 @@ func newFlashWorld(t *testing.T, fo testfake.FlashOptions) *fw {
 	e := newEnv(t, func(o *testfake.Options) { o.Flash = fo })
 	e.flashTest = true
 	w := &fw{env: e, dir: t.TempDir()}
-	w.imgData = bytes.Repeat([]byte("akam image block 0123456789abcdef"), 5242880/33+1)[:5242880]
+	w.imgData = validImage(t)
 	w.img = filepath.Join(w.dir, "ak_rtsp_firmware_20261111_101010.squashfs")
 	if err := os.WriteFile(w.img, w.imgData, 0o600); err != nil {
 		t.Fatal(err)
@@ -92,7 +92,22 @@ func (w *fw) checkClosedSet(t *testing.T) {
 	}
 }
 
+// validImage is a real xz squashfs (the T11.12 test image) padded with zeros to the APP partition size:
+// what the image gate of the flows accepts.
+func validImage(t *testing.T) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "squashfs", "testdata", "tiny_xz.sqfs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(b, make([]byte, 5242880-len(b))...)
+}
+
 func (w *fw) update(stdin string, extra ...string) result {
+	// the update command re-hashes a recorded backup before it sends anything
+	if st, _ := os.ReadFile(filepath.Join(w.state, "state")); !bytes.Contains(st, []byte("backup_dir=")) {
+		w.writeState(string(st) + "backup_dir=" + backupFixture(w.t) + "\n")
+	}
 	return w.run(stdin, append([]string{"update", "--image", w.img}, extra...)...)
 }
 
@@ -402,7 +417,7 @@ func TestRestoreRefusals(t *testing.T) {
 	}
 	r = w.run("y\ny\n", "restore", "--backup-dir", bk)
 	expectRC(t, r, 1)
-	contains(t, r.out+r.err, "SHA256SUMS does not match the files in "+bk+".", "this backup is damaged: use your second copy.")
+	contains(t, r.out+r.err, "SHA256SUMS does not match the files in "+bk+".", "use it or your second copy", "Nothing was written.")
 	// the user says no to the SSH route, or no to the flash
 	bk = w.backupDir(t, true)
 	_ = os.WriteFile(filepath.Join(bk, "mtdblock3.bin"), []byte("partition 3\n"), 0o600)

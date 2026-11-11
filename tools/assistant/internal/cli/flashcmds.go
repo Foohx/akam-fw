@@ -247,6 +247,10 @@ func (a *App) cmdUpdate() error {
 	if err != nil {
 		return err
 	}
+	// the backup gate, for the command as for the flow: re-hashed now, before anything is sent
+	if dir, why := a.backupGate(); dir == "" {
+		return a.UI.Fail("no verified backup: "+why+".", fmt.Sprintf("make one first (%s backup, or Back up / restore); nothing was written.", Prog))
+	}
 	if err := a.flashSSH(ip, img, md5, "Updating"); err != nil {
 		return err
 	}
@@ -283,8 +287,10 @@ func (a *App) cmdRestore() error {
 	if err != nil {
 		return err
 	}
-	if sums := filepath.Join(bk, "SHA256SUMS"); exists(sums) && !sha256sumCheck(bk, sums) {
-		return a.UI.Fail(fmt.Sprintf("SHA256SUMS does not match the files in %s.", bk), "this backup is damaged: use your second copy.")
+	// restore puts the ORIGINAL APP back: the folder is re-hashed now, and a backup made over SSH from an
+	// Akam camera (kind=akam) is refused, it holds the Akam APP
+	if p := stockBackupProblem(bk); p != "" {
+		return a.UI.Fail("the backup does not verify: "+p+".", "restore needs the backup of the stock firmware (made with the card): use it or your second copy. Nothing was written.")
 	}
 	a.UI.Say("  Stock APP sha256: " + fileSHA(app))
 	route := "telnet"

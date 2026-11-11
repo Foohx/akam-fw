@@ -370,6 +370,17 @@ func (a *App) offerRepin(ch *chooser, name, oldIP, newIP string) {
 	if camssh.PinnedFingerprint(a.knownHostsFile(), oldIP) != fp {
 		return
 	}
+	if oldIP == newIP {
+		return
+	}
+	// A key already pinned for the new address is never replaced or doubled: if it differs, that is a
+	// changed key at one address, which stays a hard error at connection time (no re-pin path here).
+	if have := camssh.PinnedFingerprint(a.knownHostsFile(), newIP); have != "" {
+		if have != fp {
+			a.UI.Warn(fmt.Sprintf("%s already has a DIFFERENT SSH host key pinned (%s): nothing is pinned. If you are sure that you changed the camera, forget that address first.", newIP, have))
+		}
+		return
+	}
 	a.UI.Say(fmt.Sprintf("  %s was at %s and now answers at %s with the same SSH host key (%s).", name, oldIP, newIP, fp))
 	ok, _ := a.UI.AskYN(fmt.Sprintf("  Same camera, new address: remember the host key for %s too?", newIP))
 	if !ok {

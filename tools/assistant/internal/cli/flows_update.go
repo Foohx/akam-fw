@@ -2,10 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/squashfs"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -109,6 +111,9 @@ func (a *App) flowUpdate() error {
 	}
 	md5, err := a.imageGate(img)
 	if err != nil {
+		return err
+	}
+	if err := a.imageSquashCheck(img); err != nil {
 		return err
 	}
 	// 3. the backup gate
@@ -285,6 +290,9 @@ func (a *App) installImage() error {
 	if err != nil {
 		return err
 	}
+	if err := a.imageSquashCheck(f); err != nil {
+		return err
+	}
 	abs := f
 	_ = a.St.Set("image_path", abs)
 	_ = a.St.Set("image_sha", fileSHA(f))
@@ -294,5 +302,37 @@ func (a *App) installImage() error {
 	_ = a.St.MarkDone("image")
 	a.UI.Warn("this image was built elsewhere: it must come from YOUR backup of THIS camera. The red box of the flash step shows its md5; compare it with the one printed where you built it.")
 	a.UI.Good("  Image recorded: " + strings.TrimSpace(abs))
+	return nil
+}
+
+// imageSquashCheck is the trust check of an image that was not built by this run (--image FILE, the
+// image of an earlier run): it must open as a squashfs 4.0 with the T11.12 reader (magic, version,
+// bytes_used inside the APP partition, every table in range), be xz-compressed like the images of the
+// builder, and decode completely (Verify). Anything else is refused before any card or camera is touched.
+func (a *App) imageSquashCheck(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return a.UI.Fail("cannot read the image: "+err.Error(), "")
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return a.UI.Fail("cannot read the image: "+err.Error(), "")
+	}
+	fs, err := squashfs.Open(f, st.Size())
+	if err != nil {
+		return a.UI.Fail("this file is not a valid squashfs image: "+ui.Sanitize(err.Error())+".", "do not flash it; build the image again from your own backup.")
+	}
+	info := fs.Info()
+	if info.CompressionName() != "xz" {
+		return a.UI.Fail("the image is compressed with "+info.CompressionName()+", the camera image must be xz.", "do not flash it; build the image again from your own backup.")
+	}
+	if info.BytesUsed > appPartitionBytes {
+		return a.UI.Fail(fmt.Sprintf("the image uses %d bytes, more than the APP partition (%d).", info.BytesUsed, appPartitionBytes), "do not flash it.")
+	}
+	if err := fs.Verify(); err != nil {
+		return a.UI.Fail("the image does not decode cleanly: "+ui.Sanitize(err.Error())+".", "do not flash it; build the image again from your own backup.")
+	}
+	a.UI.Say(fmt.Sprintf("  Image structure checked: squashfs 4.0, xz, %d bytes used of %d, every block decodes.", info.BytesUsed, appPartitionBytes))
 	return nil
 }
