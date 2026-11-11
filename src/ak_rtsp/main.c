@@ -178,10 +178,6 @@ static void close_devices(void)
  *
  * Init sequence:
  *   venc_reset_stale_channel  — clear any state left by a killed anyka_ipc
- *   open_devices              — open all device nodes
- *   isp_load_sensor_conf      — program GC20C3 I2C registers
- *   isp_pipeline_init         — program 24 ISP image-pipeline modules
- *   venc_reset_stale_channel  — clear any state left by a killed anyka_ipc
  *   open_isp_vi_devices       — open ISP + VI fds (VENC must NOT be open yet)
  *   isp_load_sensor_conf      — program GC20C3 I2C registers
  *   isp_pipeline_init         — program 24 ISP image-pipeline modules
@@ -201,7 +197,7 @@ static void close_devices(void)
  *   audio_start               — open /dev/pcmC0D0c, configure mic capture,
  *                               start its background read() thread
  *                               (non-fatal — video keeps working if this fails)
- *   accept loop               — serve one RTSP client at a time on port 554
+ *   accept loop               — serve RTSP on port 554 (one viewer at a time; a second one gets 503)
  * ------------------------------------------------------------------------- */
 /* Idle wait between ring drains while no RTSP client is connected. */
 #define IDLE_DRAIN_POLL_MS 20
@@ -222,13 +218,10 @@ int main(int argc, char **argv)
      * than per-callsite logging changes. */
     control_start();
 
-    int         no_isp_init       = 0;
     const char *grab_then_exit    = NULL;
     int i;
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--no-isp-init") == 0) {
-            no_isp_init = 1;
-        } else if (strcmp(argv[i], "--grab-then-exit") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--grab-then-exit") == 0 && i + 1 < argc) {
             grab_then_exit = argv[++i];
         }
     }
@@ -250,25 +243,8 @@ int main(int argc, char **argv)
      * Starts capturing so the ISP-side bridge is initialized cleanly. */
     if (open_isp_vi_devices()    < 0) goto err;
 
-    if (no_isp_init) {
-        /* --no-isp-init DOES NOT WORK as a diagnostic.
-         *
-         * Intent was: skip isp_pipeline_init() to inherit anyka_ipc's converged
-         * ISP state and compare image quality.
-         *
-         * Why it fails: when anyka_ipc exits, the ISP kernel driver resets ALL
-         * its software-managed state (exposure attr, AE stats, etc.) to zero.
-         * The hardware silicon may retain register values, but the kernel driver
-         * structures are zeroed. Result: exp_type=0 (uninitialized zero = AUTO
-         * mode), priv[exp]=0, luma=0 permanently, hw_exp=256 stuck, NO FRAMES.
-         *
-         * Do not attempt to use --no-isp-init as a diagnostic again. */
-        printf("[ak_rtsp] --no-isp-init: WARNING — ISP kernel state reset on anyka_ipc exit.\n");
-        printf("[ak_rtsp]   Frames will not work. See main.c comment for explanation.\n");
-    } else {
-        if (isp_load_sensor_conf()   < 0) goto err;
-        if (isp_pipeline_init()      < 0) goto err;
-    }
+    if (isp_load_sensor_conf()   < 0) goto err;
+    if (isp_pipeline_init()      < 0) goto err;
 
     /* Must run before vi_set_channel_attr()/vi_start_capture() (STREAMON) --
      * matches anyka_ipc's own strace-confirmed ordering (it issues every ISP
