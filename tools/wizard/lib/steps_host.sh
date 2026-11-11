@@ -824,10 +824,16 @@ backup_check() {
 # backup_secure DIR: the CONFIG partition holds the Wi-Fi password (wpa_supplicant.conf), the ONVIF password
 # in clear text and the RTSP digest hash (G19): the folder is private to this user (0700, files 0600).
 backup_secure() {
-    local d=$1
+    local d=$1 f
     [ "$UI_DRY" = 1 ] && return 0
-    chmod 700 "$d" 2>/dev/null || ui_warn "  could not restrict $d to your user (chmod 700): do it by hand."
-    chmod 600 "$d"/* 2>/dev/null || true
+    if [ "${2:-}" != files-only ]; then
+        chmod 700 "$d" 2>/dev/null || ui_warn "  could not restrict $d to your user (chmod 700): do it by hand."
+    fi
+    # only the backup's own files: the folder may be an existing one (USB stick root) holding other things
+    for f in "$d"/mtdblock[0-7].bin "$d"/SHA256SUMS "$d"/README.txt "$d"/camera_info.txt; do
+        if [ -f "$f" ]; then chmod 600 "$f" 2>/dev/null || true; fi
+    done
+    return 0
 }
 
 # backup_accept DIR: final checks and the second-copy gate for a backup folder, then record it.
@@ -861,6 +867,8 @@ backup_accept() {
 backup_copy_to() {
     local src=$1 dest=$2
     case $dest in "$src" | "$src"/*) { ui_fail "the copy must be outside $src" ""; return 1; } ;; esac
+    local pre=0
+    if [ -d "$dest" ]; then pre=1; fi
     (umask 077 && run_cmd mkdir -p "$dest") || return 1
     run_cmd cp -p "$src"/mtdblock[0-7].bin "$src"/SHA256SUMS "$dest"/ || { ui_fail "copying the backup failed." ""; return 1; }
     if [ "$UI_DRY" = 1 ]; then return 0; fi
@@ -868,7 +876,7 @@ backup_copy_to() {
         ui_fail "the copy in $dest does not match SHA256SUMS." "copy it again to a different medium."
         return 1
     fi
-    backup_secure "$dest"
+    if [ "$pre" = 1 ]; then backup_secure "$dest" files-only; else backup_secure "$dest"; fi
     ui_good "  Copy checked: $dest matches SHA256SUMS."
 }
 

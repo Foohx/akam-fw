@@ -436,7 +436,7 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.speed=%d", a.speed);
     } else if (!strcmp(param, "ae.exp_max")) {
-        SET_INT(a.exp_max, "ae.exp_max", 0, 16384);
+        SET_INT(a.exp_max, "ae.exp_max", 0, 32767);
         ae_set_tuning(&a);
         setmsg(resp, cap, "OK ae.exp_max=%d", a.exp_max);
     } else if (!strcmp(param, "ae.enabled")) {

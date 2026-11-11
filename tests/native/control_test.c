@@ -368,7 +368,7 @@ static void test_server(void)
     /* G16: strict parsing and ranges, a refused value changes nothing */
     {
         static const char *const bad[] = { "SET ae.speed abc", "SET ae.speed 7x", "SET ae.speed -1", "SET ae.speed 101",
-            "SET ae.speed 99999999999", "SET ae.stable_range 101", "SET ae.hold_range -3", "SET ae.exp_max 16385",
+            "SET ae.speed 99999999999", "SET ae.stable_range 101", "SET ae.hold_range -3", "SET ae.exp_max 32768",
             "SET ae.enabled 2", "SET ae.enabled yes", "SET night.trigger_hw_exp -1", "SET night.trigger_hw_exp 16385",
             "SET night.day_hw_exp 1e3", "SET night.confirm_samples 0", "SET night.confirm_samples 36001",
             "SET night.lock_ms -5", "SET night.lock_ms 3600001", "SET isp.contrast 1.5", "SET isp.brightness x" };
@@ -382,6 +382,8 @@ static void test_server(void)
         CHECK_STR(out, "OK night.confirm_samples=1\n");
         ask(c, "SET night.lock_ms 0", out, sizeof(out));
         CHECK_STR(out, "OK night.lock_ms=0\n");
+        ask(c, "SET ae.exp_max 32767", out, sizeof(out));
+        CHECK_STR(out, "OK ae.exp_max=32767\n");
         ask(c, "SET ae.enabled 1", out, sizeof(out));
         CHECK_STR(out, "OK ae.enabled=1\n");
     }

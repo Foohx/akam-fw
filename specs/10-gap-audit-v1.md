@@ -619,7 +619,7 @@ Do not build in-camera signature verification for V1 (no crypto library, and the
 Status 2026-11-11 (branch `feature/gap-p2`): **implemented on the host.** `control.c` parses every numeric SET
 strictly (`strtol`, whole string, no overflow) and replies `ERR <key> range [lo,hi]`, changing nothing. Ranges
 (chosen from the documented defaults and the hw_exp ceiling of 16384, the stock values are not known):
-`ae.stable_range`/`hold_range`/`speed` 0..100, `ae.exp_max` 0..16384, `ae.enabled` 0|1, `night.trigger_hw_exp` and
+`ae.stable_range`/`hold_range`/`speed` 0..100, `ae.exp_max` 0..32767 (the PC tool slider goes to 32767), `ae.enabled` 0|1, `night.trigger_hw_exp` and
 `night.day_hw_exp` 0..16384, `night.confirm_samples` 1..36000, `night.lock_ms` 0..3600000, `isp.*` -50..50 (now strict
 too). The other `night.*` keys already used a range parser in `night.c`. Valid values behave as before; golden test
 in `tests/native/control_test.c`. The torn-read note of `ae.c` is unchanged (accepted: aligned int reads).

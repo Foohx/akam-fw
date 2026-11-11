@@ -161,6 +161,13 @@ S=$(new_state bk_copy)
 { mark doctor prepare_backup_sd; } >"$S/state"
 printf 'y\n' | a "$S" backup --backup-dir "$BKDIR" --backup-copy "$T/second" >"$T/bk_copy.out" 2>&1
 check "backup --backup-copy: copies the folder and checks the copy" bash -c '[ -f "$1/mtdblock7.bin" ] && grep -q "Copy checked" "$2"' _ "$T/second" "$T/bk_copy.out"
+check "backup --backup-copy (G19): a new copy folder is 0700 with 0600 files" bash -c '[ "$(stat -c %a "$1")" = 700 ] && [ -z "$(find "$1" -type f ! -perm 600)" ]' _ "$T/second"
+# an existing folder (USB stick root): its own mode and unrelated files are left alone
+mkdir -p "$T/usb" && echo keep >"$T/usb/photo.jpg" && chmod 755 "$T/usb" && chmod 644 "$T/usb/photo.jpg"
+S=$(new_state bk_copy2)
+{ mark doctor prepare_backup_sd; } >"$S/state"
+printf 'y\n' | a "$S" backup --backup-dir "$BKDIR" --backup-copy "$T/usb" >"$T/bk_copy2.out" 2>&1
+check "backup --backup-copy (G19): an existing folder keeps its mode and other files" bash -c '[ "$(stat -c %a "$1")" = 755 ] && [ "$(stat -c %a "$1/photo.jpg")" = 644 ] && [ "$(stat -c %a "$1/mtdblock7.bin")" = 600 ]' _ "$T/usb"
 
 # ------------------------------------------------------------------ fake camera B (stock + flash card)
 head -c 5242880 /dev/urandom >"$T/ak_rtsp_firmware_20260101_000000.squashfs"
