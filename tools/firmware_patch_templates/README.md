@@ -14,8 +14,7 @@ full walkthrough. Listed here individually so the diff against stock is easy to 
 | `akam_rtsp_auth.sh` | `sbin/akam_rtsp_auth.sh` | Run over SSH: turns the optional RTSP Digest login on or off (`status`, `set`, `set-creds`, `disable`; also keeps the clear-text copy ONVIF needs in `/etc/config/akam/credentials`); see the README |
 | `akam_hostname.sh` | `sbin/akam_hostname.sh` | Network hostname (`set`, `show`, `status`, `reset`, `apply`); default `akam-XXXX` from the wlan0 MAC; stored in `/etc/config/akam/hostname` |
 | `akam_debug.sh` | `sbin/akam_debug.sh` | Run over SSH: debug mode of the control port 8091 (`on [MINUTES]`, `off`, `status`); lets the network write for a while, RAM-only; uses `ak_rtsp ctl` |
-| `akam_onvif.sh` | `sbin/akam_onvif.sh` | Run over SSH: ONVIF on or off (`enable [PORT]`, `disable`, `status`); writes `/etc/config/akam/onvif` (`enabled=`, `port=`), refuses without the stream password, then `ak_rtsp ctl ONVIF reload` |
-| `akam_net.sh` | `sbin/akam_net.sh` | Started detached by the wrapper: every 30 s checks `wpa_supplicant`, `udhcpc` and the IPv4 address of wlan0 and repairs them with growing delays; does nothing without `/etc/config/wpa_supplicant.conf`; log `/tmp/akam_net.log` |
+| `akam_net.sh` | `sbin/akam_net.sh sbin/akam_onvif.sh` | Started detached by the wrapper: every 30 s checks `wpa_supplicant`, `udhcpc` and the IPv4 address of wlan0 and repairs them with growing delays; does nothing without `/etc/config/wpa_supplicant.conf`; log `/tmp/akam_net.log` |
 | `patch_ethernet_hostname.sh` | host tool, not installed | Build-time patch of `sbin/ethernet.sh`: the DHCP hostname comes from `akam_hostname.sh show` (fallback `akam`) |
 | `patch_service_sh.sh` | host tool, not installed | Build-time patch of `sbin/service.sh` (telnet/FTP launch lines, SD hook guard) |
 

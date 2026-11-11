@@ -10,6 +10,12 @@ ZIG_SHA256_linux_x86_64=24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa8841
 ZIG_URL_linux_aarch64=https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz
 ZIG_SHA256_linux_aarch64=f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
 
+# Go toolchain for the native assistant (tools/assistant). Minimum minor version: a host Go at
+# least this recent is used as is; otherwise bootstrap.sh prints where to get it (https://go.dev/dl/)
+# and never installs Go system-wide. Modules are pinned by tools/assistant/go.sum (sumdb-verified).
+GO_VERSION=1.26.0
+GO_NOTE="needs Go >= 1.26 (go.mod says 1.26.0); download at https://go.dev/dl/"
+
 SMOLRTSP_URL=https://github.com/OpenIPC/smolrtsp.git
 SMOLRTSP_COMMIT=8ae3b5115f7a77c383080b51cb7fdba1046f862f
 

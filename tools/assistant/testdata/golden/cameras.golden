@@ -1,0 +1,6 @@
+rc=0
+--- stdout ---
+Cameras (state in STATE)
+  * default              0/9 steps done
+  Switch with: ./akam --camera NAME   (a new name starts a new camera)
+--- stderr ---

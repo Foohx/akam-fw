@@ -4,6 +4,8 @@
 #   - SmolRTSP checkout      -> src/smolrtsp
 #   - its 4 header-only deps -> src/smolrtsp/build/_deps/<name>-src
 #   - Dropbear archive       -> tools/.cache/ (verified; built by tools/dropbear/)
+#   - Go modules of tools/assistant -> tools/.toolchain/go/mod (only when Go >= GO_VERSION is installed;
+#     Go itself is never installed: the message says where to get it)
 #   - static BusyBox (tests) -> tools/.toolchain/busybox-<ver>-x86_64/busybox (x86_64 hosts only)
 # Idempotent. Every download is sha256-checked; a mismatch aborts.
 #
@@ -87,6 +89,7 @@ if [ "$plan" = 1 ]; then
         echo "  $name:  ${!tag_v} (cache $(cache_state "$name-${!tag_v}.tar.gz" "${!sha_v}"))"
     done
     echo "  dropbear:   $DROPBEAR_VERSION (cache $(cache_state "$(basename "$DROPBEAR_URL")" "$DROPBEAR_SHA256"))"
+    echo "  go modules: tools/assistant (GO_VERSION >= $GO_VERSION; host go: $(command -v go >/dev/null 2>&1 && GOTOOLCHAIN=local go env GOVERSION || echo none))"
     if [ "$arch" = x86_64 ]; then
         bstate="to fetch"
         [ -x "$bb_dir/busybox" ] && bstate=installed
@@ -234,6 +237,37 @@ if [ "$arch" = x86_64 ]; then
     log "busybox $BUSYBOX_VERSION at $bb_dir/busybox"
 else
     log "busybox skipped on $arch (pinned binary is x86_64 only; camera-side ash tests will skip)"
+fi
+
+# --- Go modules of the native assistant (tools/assistant; optional: needs Go) ---
+# Fetched into tools/.toolchain/go/mod, verified against go.sum. Never touches ~/go.
+GO_VERSION="${GO_VERSION:-1.26.0}"; GO_NOTE="${GO_NOTE:-needs Go >= 1.26 (https://go.dev/dl/)}"
+go_min="${GO_VERSION%.*}"
+have_go=""
+if command -v go >/dev/null 2>&1; then
+    have_go="$(GOTOOLCHAIN=local go env GOVERSION | sed 's/^go//;s/[ -].*//')"
+fi
+version_ge() { # version_ge A B: major.minor of A >= major.minor of B
+    local a="${1%.*}" b="${2%.*}"
+    [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | head -n1)" = "$b" ]
+}
+if [ ! -f "$root/tools/assistant/go.mod" ]; then
+    log "tools/assistant not present: no Go modules to fetch"
+elif [ -z "$have_go" ]; then
+    log "Go not found: skipping the assistant modules ($GO_NOTE)"
+elif ! version_ge "$have_go" "$go_min"; then
+    log "Go $have_go is older than $go_min: skipping the assistant modules ($GO_NOTE)"
+elif [ "$offline" = 1 ]; then
+    log "offline: assistant Go modules not fetched (run bootstrap.sh online once)"
+else
+    mkdir -p "$toolchain/go/path" "$toolchain/go/mod" "$toolchain/go/cache"
+    if (cd "$root/tools/assistant" && GOPATH="$toolchain/go/path" GOMODCACHE="$toolchain/go/mod" \
+        GOCACHE="$toolchain/go/cache" GOFLAGS=-modcacherw GOTOOLCHAIN=local GOTELEMETRY=off \
+        GOPROXY="${AKAM_GOPROXY:-https://proxy.golang.org}" go mod download); then
+        log "assistant Go modules ready in $toolchain/go/mod (go $have_go)"
+    else
+        die "go mod download failed (network? proxy: set AKAM_GOPROXY)"
+    fi
 fi
 
 log "done"
