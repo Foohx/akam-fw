@@ -266,6 +266,7 @@ func buildMacFacts(id string, info, list, root Dict, devNum string, guards []str
 	found := false
 	var apfsMounts []Mount
 	containerOf := map[string][]string{} // container whole disk -> physical store whole disks
+	entryByID := map[string]Dict{}
 	for _, v := range entries {
 		e, ok := v.(Dict)
 		if !ok {
@@ -277,6 +278,7 @@ func buildMacFacts(id string, info, list, root Dict, devNum string, guards []str
 		}
 		stores := storeDisks(e)
 		containerOf[eid] = stores
+		entryByID[eid] = e
 		if eid == id {
 			found = true
 			if mp, _ := e.Str("MountPoint"); mp != "" {
@@ -329,8 +331,16 @@ func buildMacFacts(id string, info, list, root Dict, devNum string, guards []str
 		return Facts{}, errors.New("cannot tell which disk holds the system volume")
 	}
 	rootDisks := map[string]bool{rootParent: true}
-	for _, s := range storeDisks(root) {
+	rootStores := storeDisks(root)
+	for _, s := range rootStores {
 		rootDisks[s] = true
+	}
+	// fail closed: the disk behind "/" must be in the list, and an APFS container behind "/" must name at least
+	// one physical store (from the list or from the volume itself), or a card holding that store could hide
+	if rootEntry, ok := entryByID[rootParent]; !ok {
+		return Facts{}, errors.New("cannot tell which disk holds the system volume: it is not in the disk list")
+	} else if vols, _ := rootEntry.Arr("APFSVolumes"); len(vols) > 0 && len(rootStores) == 0 && len(containerOf[rootParent]) == 0 {
+		return Facts{}, errors.New("cannot tell which physical disk holds the system APFS container")
 	}
 	for changed := true; changed; { // follow containers to their physical disks
 		changed = false

@@ -115,8 +115,8 @@ func privateSockDir(base string) (string, error) {
 		return "", err
 	}
 	for _, b := range []string{base, "/tmp"} {
-		if len(filepath.Join(b, "akam-"+r, sockName)) > sockMaxPath {
-			continue
+		if len(filepath.Join(b, "akam-"+r, sockName)) > sockMaxPath || !safeSelfRe.MatchString(filepath.Join(b, "akam-"+r, sockName)) {
+			continue // too long for sun_path, or a path the administrator prompt could not carry safely
 		}
 		dir := filepath.Join(b, "akam-"+r)
 		if err := os.Mkdir(dir, 0o700); err != nil {
@@ -171,7 +171,7 @@ func (t *osascriptTransport) run(self string, req Request, stderr io.Writer) (Re
 	}
 	exited, err := t.launch(argv)
 	if err != nil {
-		return Response{}, fmt.Errorf("the administrator prompt did not start: %v", err)
+		return Response{}, fmt.Errorf("the administrator prompt did not start: %v", scrub(err.Error(), nonce))
 	}
 	type accepted struct {
 		c   *net.UnixConn
@@ -198,7 +198,7 @@ func (t *osascriptTransport) run(self string, req Request, stderr io.Writer) (Re
 		if err == nil {
 			err = errors.New("the administrator step ended without connecting")
 		}
-		return Response{}, fmt.Errorf("the administrator step did not run (declined?): %v", err)
+		return Response{}, fmt.Errorf("the administrator step did not run (declined?): %v", scrub(err.Error(), nonce))
 	}
 	defer conn.Close()
 	resp, err := t.converse(conn, body, stderr)
@@ -271,6 +271,9 @@ func (t *osascriptTransport) converse(c *net.UnixConn, body []byte, stderr io.Wr
 		return l.Response, nil
 	}
 }
+
+// scrub removes the nonce from text that may echo the script (osascript quotes it on a syntax error).
+func scrub(s, nonce string) string { return strings.ReplaceAll(s, nonce, "[nonce]") }
 
 func sanitizeLine(s string) string {
 	return strings.Map(func(r rune) rune {
