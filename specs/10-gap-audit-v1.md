@@ -396,7 +396,7 @@ here except measuring (HW).
 **Status: items 1 (bitrate) and 3 (frame rate, plus GOP) are implemented on `feature/video-config`, NOT hardware
 tested.** `/etc/config/akam/video` (`bitrate=` 500..3000, `fps=` 10|15, `gop=` 1..4 s), `video_cfg.[ch]` and
 `video_ctl.[ch]`, 8091 `video.bitrate_cfg|fps_cfg|gop_cfg|cfg_pending`, `./akam video`. Applied when `ak_rtsp` starts
-(restart-on-change; the wizard offers `killall ak_rtsp`, the wrapper respawns it); every report (ONVIF Media,
+(restart-on-change; the wizard offers `kill the ak_rtsp pid`, the wrapper respawns it); every report (ONVIF Media,
 bitrate window, capture clock) uses the configured values; defaults are byte-identical to before. fps is limited
 to 10 and 15 because those are the only two {fps, VTS} pairs the code proves (15 / 2284 day, 10 / 3426 night);
 12 or 5 would need a new VTS the sensor has never been given here. Items 2 (substream), 4 (flip/mirror: only the
@@ -412,7 +412,7 @@ Needs hardware validation (nothing below has run on a camera):
    still works (night is 10 fps either way); exposure and image brightness at 10 fps by day look right.
 3. `gop 1` and `gop 4`: key frame spacing as expected in `ak_rtsp`'s log; a viewer starts within the GOP.
 4. The swdog does not fire at 10 fps over a 1 h run; ONVIF client (Frigate/ODM) shows the new numbers.
-5. Restart by `killall ak_rtsp` from `./akam video` really comes back under the wrapper, with and without a
+5. Restart by `kill the ak_rtsp pid` from `./akam video` really comes back under the wrapper, with and without a
    client connected, and the new values are in `[video] settings:` in the log.
 6. Rollback: remove `/etc/config/akam/video`, restart, and the stream is exactly as before.
 

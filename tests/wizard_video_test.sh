@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for ./akam video (show, bitrate, fps, gop, the refused flip/mirror/resolution, the restart question)
 # against a fake ssh that runs the command line the wizard sends on a fake camera: a fake `nc` plays the 8091
-# control port (video.*_cfg keys, LOG lines, an old firmware) and the fake ssh records `killall ak_rtsp`.
+# control port (video.*_cfg keys, LOG lines, an old firmware) and the fake ssh records `kill the ak_rtsp pid`.
 # The real camera is never contacted.
 set -uo pipefail
 
@@ -89,7 +89,7 @@ cmd=${cmd# }
 case $cmd in
     true) exit 0 ;;
     printf\ *) exec env PATH="$STUB_DIR/bin:$PATH" bash -c "$cmd" ;;
-    "killall ak_rtsp") echo killed >>"$CAM/killed"; exit 0 ;;
+    'p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p') echo killed >>"$CAM/killed"; exit 0 ;;
 esac
 exit 0
 EOF
@@ -140,7 +140,7 @@ printf 'y\n' | a_tty "$S" video bitrate 1200 gop 4 >"$T/y.out" 2>&1
 check "yes: both values saved" test "$(cam video.bitrate_cfg)" = 1200 -a "$(cam video.gop_cfg)" = 4
 check "yes: ak_rtsp was killed once (the wrapper respawns it)" test "$(killed)" -eq 1
 check "yes: says it comes back" has "$T/y.out" "back in about 20 seconds"
-check "yes: only killall ak_rtsp, never the watchdog or the wrapper" bash -c '! grep -E "watchdog|wrapper|reboot" "$1"' _ "$STUB_DIR/ssh.log"
+check "yes: only kill of the ak_rtsp pid (no killall), never the watchdog or the wrapper" bash -c '! grep -E "watchdog|wrapper|reboot|killall" "$1"' _ "$STUB_DIR/ssh.log"
 
 # ---- back to the defaults: nothing pending, no question ----------------------------------------------
 : >"$CAM/killed"

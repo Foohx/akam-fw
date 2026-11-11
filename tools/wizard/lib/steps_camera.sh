@@ -1628,8 +1628,9 @@ video_show() {
 }
 
 video_restart() { # kill ak_rtsp: the wrapper (ak_rtsp_wrapper.sh) starts it again by itself; /usr/bin/watchdog is never touched
-    log_line "CMD ssh root@$CAM_IP killall ak_rtsp"
-    "${CAM_SSH[@]}" "killall ak_rtsp" >/dev/null 2>&1 || true
+    # no killall: not guaranteed in the camera's BusyBox (see akam_lockdown.sh); pidof matches the exact name only
+    log_line "CMD ssh root@$CAM_IP kill \$(pidof ak_rtsp)"
+    "${CAM_SSH[@]}" 'p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p' >/dev/null 2>&1 || true
 }
 
 cmd_video() {
@@ -1670,7 +1671,7 @@ cmd_video() {
         local i
         for i in "${!keys[@]}"; do ui_say "  WOULD send: SET ${keys[$i]} ${vals[$i]}"; done
         if [ "${#keys[@]}" -gt 0 ]; then
-            ui_say "  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh killall ak_rtsp (the wrapper starts it again)"
+            ui_say "  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the ak_rtsp pid (the wrapper starts it again)"
         else
             ui_say "  WOULD send (read-only): GET video.bitrate_cfg, video.fps_cfg, video.gop_cfg, video.cfg_pending, video.bitrate, video.fps_actual"
         fi
