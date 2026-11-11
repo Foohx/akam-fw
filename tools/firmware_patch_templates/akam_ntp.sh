@@ -167,6 +167,13 @@ retry_wait() {
     esac
 }
 
+release_lock() {
+    _mp=
+    read -r _mp <"$LOCKDIR/pid" 2>/dev/null
+    [ "$_mp" = "$$" ] && rm -rf "$LOCKDIR"
+    return 0
+}
+
 do_run() {
     read_servers || exit 0 # no file: nothing to do (off)
     if [ "$NSERV" -eq 0 ]; then
@@ -175,7 +182,7 @@ do_run() {
     fi
     take_lock || exit 0
     # remove the lock only while it is still ours (stop_helper may have removed it and a new helper taken it)
-    trap 'read -r _mp <"$LOCKDIR/pid" 2>/dev/null; [ "$_mp" = "$$" ] && rm -rf "$LOCKDIR"' EXIT
+    trap release_lock EXIT
     trap 'exit 0' INT TERM HUP
     log "start (pid $$), servers: $SERVERS"
     _fails=0
