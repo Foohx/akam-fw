@@ -31,9 +31,9 @@ func TestOptionsShowsWifiLevels(t *testing.T) {
 		contains(t, r.out, "Wi-Fi signal: "+c.rssi+" dBm ("+c.level+"), link 65 Mb/s.")
 		if c.warn {
 			contains(t, r.out, "move the camera or the access point closer", "repeater", "UDP loses key frames", "TCP lags",
-				"now: bitrate 1536 kbit/s, key frame every 2 s", "./akam video bitrate 1024 gop 1", "nothing is changed automatically")
+				"now: bitrate 1536 kbit/s, key frame every 2 s", "./akam --camera salon video bitrate 1024 gop 1", "nothing is changed automatically")
 		} else {
-			notContains(t, r.out, "move the camera", "./akam video bitrate")
+			notContains(t, r.out, "move the camera", "video bitrate 1024")
 		}
 	}
 }
@@ -46,7 +46,7 @@ func TestOptionsWifiWarningIsReadOnlyAndSkipsLowSettings(t *testing.T) {
 	})
 	expectRC(t, r, 0)
 	contains(t, r.out, "(poor)", "The video settings are already low (now: bitrate 1024 kbit/s, key frame every 1 s).")
-	notContains(t, r.out, "./akam video bitrate")
+	notContains(t, r.out, "video bitrate 1024")
 	if len(e.cam.CtlSets()) != 0 {
 		t.Errorf("sets: %v", e.cam.CtlSets())
 	}
@@ -138,7 +138,7 @@ func TestVideoShowAndNtpStatusShowHealth(t *testing.T) {
 	e.cam.SetCtl("net.wifi_rssi", "-77")
 	r := e.run("", "--camera", "salon", "video", "show")
 	expectRC(t, r, 0)
-	contains(t, r.out, "Wi-Fi signal: -77 dBm (poor)", "./akam video bitrate 1024 gop 1")
+	contains(t, r.out, "Wi-Fi signal: -77 dBm (poor)", "./akam --camera salon video bitrate 1024 gop 1")
 	r = e.run("", "--camera", "salon", "ntp", "status")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Clock: set, ")
@@ -189,4 +189,18 @@ func TestVerifyDryRunMentionsTimeSync(t *testing.T) {
 	w.verifyWorld(t)
 	r := w.run("", "--dry-run", "verify")
 	contains(t, r.out+r.err, "WOULD ask: Turn on time sync? [y/N] (default: No)", "WOULD run over SSH on the camera: /usr/sbin/akam_ntp.sh set pool.ntp.org")
+}
+
+// With time sync on, the clock offer must not say the time is lost at the next reboot.
+func TestClockOfferWithTimeSyncOn(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.rememberCamera("salon", "127.0.0.1")
+	t.Setenv("AKAM_FORCE_TTY", "1")
+	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
+	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	r := e.run("3\n\n8\n9\n", "--camera", "salon")
+	contains(t, r.err, "Time sync is on and corrects the clock shortly")
+	notContains(t, r.err, "lost at the next reboot")
+	contains(t, r.out, "time sync should correct it shortly.")
 }

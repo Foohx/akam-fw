@@ -227,6 +227,11 @@ func (a *App) cmdNtp(args []string) error {
 	}
 	if res.Status == 0 && action == "status" {
 		h := a.readHealthOf(c, true)
+		if strings.HasPrefix(strings.TrimSpace(out), "time sync: on") {
+			h.ntp = "on"
+		} else if strings.HasPrefix(strings.TrimSpace(out), "time sync: off") {
+			h.ntp = "off"
+		}
 		cl, _ := clockReport(h)
 		for _, l := range cl {
 			a.UI.Say("  " + l)

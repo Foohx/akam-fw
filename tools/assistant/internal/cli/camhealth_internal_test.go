@@ -24,12 +24,12 @@ func TestWifiReportPerLevel(t *testing.T) {
 		{-50, []string{"-50 dBm (good), link 65 Mb/s."}, []string{"Best fix"}},
 		{-65, []string{"(fair)"}, []string{"Best fix"}},
 		{-72, []string{"(weak)", "Best fix: move the camera or the access point closer", "repeater", "UDP loses key frames", "TCP lags",
-			"now: bitrate 1536 kbit/s, key frame every 2 s", "akam video bitrate 1024 gop 1", "nothing is changed automatically"}, nil},
-		{-78, []string{"(poor)", "akam video bitrate 1024 gop 1"}, nil},
+			"now: bitrate 1536 kbit/s, key frame every 2 s", "akam --camera salon video bitrate 1024 gop 1", "nothing is changed automatically"}, nil},
+		{-78, []string{"(poor)", "akam --camera salon video bitrate 1024 gop 1"}, nil},
 	} {
 		h := base
 		h.rssi = c.rssi
-		got := strings.Join(wifiReport(h), "\n")
+		got := strings.Join(wifiReport(h, "akam --camera salon"), "\n")
 		for _, w := range c.wantAll {
 			if !strings.Contains(got, w) {
 				t.Errorf("%d dBm: lacks %q:\n%s", c.rssi, w, got)
@@ -44,30 +44,30 @@ func TestWifiReportPerLevel(t *testing.T) {
 	// settings already low: no command to suggest; only the value that is above is named
 	h := base
 	h.rssi, h.kbpsCfg, h.gop = -78, 1024, 1
-	if got := strings.Join(wifiReport(h), "\n"); strings.Contains(got, "akam video") || !strings.Contains(got, "already low") {
+	if got := strings.Join(wifiReport(h, "akam --camera salon"), "\n"); strings.Contains(got, "akam video") || !strings.Contains(got, "already low") {
 		t.Error(got)
 	}
 	h.kbpsCfg, h.gop = 1536, 1
-	if got := strings.Join(wifiReport(h), "\n"); !strings.Contains(got, "akam video bitrate 1024   (") || strings.Contains(got, "gop 1   (") {
+	if got := strings.Join(wifiReport(h, "akam --camera salon"), "\n"); !strings.Contains(got, "video bitrate 1024   (") || strings.Contains(got, "gop 1   (") {
 		t.Error(got)
 	}
 	h.kbpsCfg, h.gop = 1024, 2
-	if got := strings.Join(wifiReport(h), "\n"); !strings.Contains(got, "akam video gop 1   (") || strings.Contains(got, "bitrate 1024   (") {
+	if got := strings.Join(wifiReport(h, "akam --camera salon"), "\n"); !strings.Contains(got, "video gop 1   (") || strings.Contains(got, "bitrate 1024   (") {
 		t.Error(got)
 	}
-	if wifiReport(camHealth{}) != nil {
+	if wifiReport(camHealth{}, "akam") != nil {
 		t.Error("an unknown signal must print nothing")
 	}
 }
 
 func TestWifiReportNightFpsIsNotBlamedOnWifi(t *testing.T) {
 	h := camHealth{rssi: -78, rate: 65, kbpsCfg: 1536, gop: 2, fpsCfg: 15, fps10: 100, night: "night"}
-	got := strings.Join(wifiReport(h), "\n")
+	got := strings.Join(wifiReport(h, "akam --camera salon"), "\n")
 	if !strings.Contains(got, "at night this is normal") || strings.Contains(got, "frames are being dropped") {
 		t.Error(got)
 	}
 	h.night = "day"
-	got = strings.Join(wifiReport(h), "\n")
+	got = strings.Join(wifiReport(h, "akam --camera salon"), "\n")
 	if !strings.Contains(got, "frames are being dropped") || strings.Contains(got, "at night") {
 		t.Error(got)
 	}
@@ -121,5 +121,16 @@ func TestDateGuard(t *testing.T) {
 	}
 	if forbiddenRemote("/usr/sbin/akam_ntp.sh status") != "" || forbiddenRemote("cat /proc/mtd") != "" {
 		t.Error("the date rule must not touch other commands")
+	}
+}
+
+func TestClockLostNote(t *testing.T) {
+	if got := clockLostNote("on"); strings.Contains(got, "lost") || !strings.Contains(got, "corrects") {
+		t.Error(got)
+	}
+	for _, n := range []string{"off", ""} {
+		if got := clockLostNote(n); !strings.Contains(got, "lost at the next reboot") {
+			t.Error(got)
+		}
 	}
 }

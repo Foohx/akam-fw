@@ -84,6 +84,7 @@ func (a *App) readOptions(c *camssh.Client) optSnap {
 			snap.ntp = "off"
 		}
 	}
+	snap.health.ntp = snap.ntp
 	return snap
 }
 
@@ -163,6 +164,7 @@ func (a *App) flowOptions() error {
 		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET lines>' | nc -w 2 127.0.0.1 %d (every option in one go),", 8091))
 		a.UI.Say("  show the groups, edit values locally, and only on 'apply' send the SET lines (read-only until then).")
 		a.UI.Say("  WOULD ask: Restart the video service now? [y/N] (default No) after a video change.")
+		a.UI.Say("  WOULD also read (read-only): the Wi-Fi signal and clock (date +%s over SSH), and offer to set the clock from this computer [y/N] (default No) when it is unset or off by more than 120 s.")
 		return nil
 	}
 	c, err := a.connectTools(ip)

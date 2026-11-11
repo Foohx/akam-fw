@@ -42,6 +42,7 @@ type camHealth struct {
 	night                string // night.state: night | day | ""
 	timeSet              string // sys.time_set: 1 | 0 | ""
 	camEpoch, pcEpoch    int64  // seconds since 1970 on the camera / on this PC (0: unknown)
+	ntp                  string // time sync: on | off | "" (unknown)
 }
 
 // readCamHealth parses the answers of the control port (healthKeys) into a camHealth.
@@ -84,7 +85,7 @@ func wifiLevel(rssi int) string {
 
 // wifiReport is the "Wi-Fi signal" line and, for a weak or poor one, the short advice. It never changes
 // anything: the commands it names are for the user to run.
-func wifiReport(h camHealth) []string {
+func wifiReport(h camHealth, prog string) []string {
 	lvl := wifiLevel(h.rssi)
 	if lvl == "" {
 		return nil
@@ -109,7 +110,7 @@ func wifiReport(h camHealth) []string {
 	}
 	now := fmt.Sprintf("now: bitrate %s kbit/s, key frame every %s s", numOrQ(h.kbpsCfg), numOrQ(h.gop))
 	if len(set) > 0 {
-		out = append(out, fmt.Sprintf("Or lower the load (%s): %s video %s   (nothing is changed automatically)", now, Prog, strings.Join(set, " ")))
+		out = append(out, fmt.Sprintf("Or lower the load (%s): %s video %s   (nothing is changed automatically)", now, prog, strings.Join(set, " ")))
 	} else if h.kbpsCfg > 0 || h.gop > 0 {
 		out = append(out, fmt.Sprintf("The video settings are already low (%s).", now))
 	}
@@ -184,9 +185,20 @@ func (a *App) readCamClock(c *camssh.Client, h *camHealth) {
 	h.camEpoch, h.pcEpoch = v, time.Now().Unix()
 }
 
+// camCmd is the program with the chosen camera, so a command in a hint is safe to paste with several cameras.
+func (a *App) camCmd() string { return Prog + " --camera " + a.Cams.Name }
+
+// clockLostNote is the end of the clock offer: a time set by hand is lost at reboot unless time sync is on.
+func clockLostNote(ntp string) string {
+	if ntp == "on" {
+		return "Time sync is on and corrects the clock shortly, also after a reboot."
+	}
+	return "It is lost at the next reboot unless time sync (NTP) is on."
+}
+
 // showHealth prints the Wi-Fi and clock lines of a snapshot.
 func (a *App) showHealth(h camHealth) {
-	for _, l := range wifiReport(h) {
+	for _, l := range wifiReport(h, a.camCmd()) {
 		a.UI.Say("  " + l)
 	}
 	cl, _ := clockReport(h)
@@ -202,22 +214,26 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 		return
 	}
 	a.UI.Say("  The clock is used by ONVIF clients (their login checks the time) and by video time stamps.")
-	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? It is lost at the next reboot unless time sync (NTP) is on."); !ok {
-		a.UI.Say(fmt.Sprintf("  Clock left as it is. Time sync keeps it right across reboots: %s ntp set pool.ntp.org", Prog))
+	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? " + clockLostNote(h.ntp)); !ok {
+		if h.ntp != "on" {
+			a.UI.Say(fmt.Sprintf("  Clock left as it is. Time sync keeps it right across reboots: %s ntp set pool.ntp.org", a.camCmd()))
+		} else {
+			a.UI.Say("  Clock left as it is; time sync should correct it shortly.")
+		}
 		return
 	}
-	a.setCamClock(c)
+	a.setCamClock(c, h.ntp)
 }
 
 // setCamClock sets the camera clock to the time of this PC (UTC, so the time zone does not matter).
-func (a *App) setCamClock(c *camssh.Client) {
+func (a *App) setCamClock(c *camssh.Client, ntp string) {
 	now := time.Now().UTC()
 	res, err := a.run(c, remoteDateSet(now), nil, "")
 	if err != nil || res.Status != 0 {
 		a.UI.Warn("the camera did not accept the new time (the clock is unchanged).")
 		return
 	}
-	a.UI.Good("  Camera clock set to " + now.Format("2006-01-02 15:04:05") + " UTC. It is lost at the next reboot unless time sync is on: " + Prog + " ntp set pool.ntp.org")
+	a.UI.Good("  Camera clock set to " + now.Format("2006-01-02 15:04:05") + " UTC. " + clockLostNote(ntp))
 }
 
 // ntpOffer, at the end of an install or an update, offers time sync when it is off (default No): the
@@ -226,14 +242,14 @@ func (a *App) ntpOffer(ip string) {
 	a.UI.Blank()
 	a.UI.Say("  Optional: time sync. The camera has no battery clock and starts in 2000; ONVIF apps need the right time.")
 	a.UI.Say("  Off by default. Turning it on makes the camera ask time servers (default pool.ntp.org, or a server on your network) over UDP 123, outgoing only.")
-	a.UI.Say(fmt.Sprintf("  You can change your mind at any time: %s ntp set SERVER | off | status", Prog))
+	a.UI.Say(fmt.Sprintf("  You can change your mind at any time: %s ntp set SERVER | off | status", a.camCmd()))
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD ask: Turn on time sync? [y/N] (default: No)")
 		a.UI.Say("  WOULD run over SSH on the camera: " + remoteNtp("set", "pool.ntp.org"))
 		return
 	}
 	if !a.UI.Interactive() {
-		a.UI.Say(fmt.Sprintf("  No terminal: time sync stays off. Run %s ntp set pool.ntp.org later.", Prog))
+		a.UI.Say(fmt.Sprintf("  No terminal: time sync stays off. Run %s ntp set pool.ntp.org later.", a.camCmd()))
 		return
 	}
 	c, err := a.connectTools(ip)
@@ -243,11 +259,11 @@ func (a *App) ntpOffer(ip string) {
 	defer c.Close()
 	if res, err := a.run(c, remoteNtp("status"), nil, ""); err == nil && res.Status == 0 &&
 		strings.HasPrefix(strings.TrimSpace(string(res.Stdout)), "time sync: on") {
-		a.UI.Say(fmt.Sprintf("  Already on. Turn it off with %s ntp off.", Prog))
+		a.UI.Say(fmt.Sprintf("  Already on. Turn it off with %s ntp off.", a.camCmd()))
 		return
 	}
 	if ok, _ := a.UI.AskYN("  Turn on time sync?"); !ok {
-		a.UI.Say(fmt.Sprintf("  Time sync left off. Run %s ntp set pool.ntp.org whenever you want it.", Prog))
+		a.UI.Say(fmt.Sprintf("  Time sync left off. Run %s ntp set pool.ntp.org whenever you want it.", a.camCmd()))
 		return
 	}
 	srv, err := a.UI.Prompt("  Time server (host name or IPv4 address; Enter for pool.ntp.org):", "pool.ntp.org")
@@ -256,7 +272,7 @@ func (a *App) ntpOffer(ip string) {
 		srv = "pool.ntp.org"
 	}
 	if !camopt.ValidNTPServer(srv) {
-		a.UI.Say(fmt.Sprintf("  '%s' is not a host name or an IPv4 address: time sync stays off. Run %s ntp set SERVER later.", srv, Prog))
+		a.UI.Say(fmt.Sprintf("  '%s' is not a host name or an IPv4 address: time sync stays off. Run %s ntp set SERVER later.", srv, a.camCmd()))
 		return
 	}
 	a.reportFlowError(a.cmdNtp([]string{"set", srv}))
