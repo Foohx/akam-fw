@@ -84,7 +84,7 @@ check "kit holds only our top-level directories" bash -c "
 check "no image, squashfs or dump in the kit" bash -c "! find '$K' -iname '*.squashfs' -o -iname '*.img' -o -iname 'app_*' | grep -q ."
 check "wrapper, akam_*.sh, hwcheck and flash scripts present" bash -c "
     cd '$K' && test -x overlay/sbin/ak_rtsp_wrapper.sh && test -x overlay/sbin/akam_ssh.sh &&
-    test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x overlay/sbin/akam_hostname.sh && test -x overlay/sbin/akam_debug.sh && test -x overlay/sbin/akam_onvif.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
+    test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x overlay/sbin/akam_hostname.sh && test -x overlay/sbin/akam_debug.sh && test -x overlay/sbin/akam_onvif.sh && test -x overlay/sbin/akam_net.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
     test -x scripts/flash/flash_guard.sh && test -x patches/patch_service_sh.sh"
 
 echo "== licences cover THIRD_PARTY_NOTICES.md"
@@ -323,7 +323,7 @@ drift_check() {
         { cmp -s "$P/local/akam/$f" "$K/licenses/$f" && [ "$(stat -c %a "$P/local/akam/$f")" = 644 ]; } || { echo "licence $f differs between image and kit"; rc=1; }
     done
     # every Akam-owned path of the image (new or changed against the stock tree) is in the list
-    printf '%s\n' sbin/service.sh sbin/ethernet.sh local/akam/MANIFEST.txt >>"$want"
+    printf '%s\n' sbin/service.sh sbin/ethernet.sh sbin/drop_caches.sh local/akam/MANIFEST.txt >>"$want"
     (cd "$P" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort) |
         while IFS= read -r f; do
             if [ ! -e "$FIXTURE/$f" ] && [ ! -L "$FIXTURE/$f" ]; then echo "$f"; elif [ -L "$P/$f" ]; then [ "$(readlink "$P/$f")" = "$(readlink "$FIXTURE/$f")" ] || echo "$f"; elif ! cmp -s "$P/$f" "$FIXTURE/$f"; then echo "$f"; fi
