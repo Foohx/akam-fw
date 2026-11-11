@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"runtime"
@@ -109,11 +110,8 @@ func (a *App) flowUpdate() error {
 	if img == "" {
 		return a.UI.Fail("no image to write.", "build it from your backup on Linux (./akam image from a source checkout) or pass --image FILE.")
 	}
-	md5, err := a.imageGate(img)
+	md5, err := a.imageGateChecked(img)
 	if err != nil {
-		return err
-	}
-	if err := a.imageSquashCheck(img); err != nil {
 		return err
 	}
 	// 3. the backup gate
@@ -286,11 +284,8 @@ func (a *App) installImage() error {
 		return a.UI.Fail("this system cannot build the image yet: it needs an image built on Linux or WSL from your own backup.",
 			fmt.Sprintf("build it there (./akam step image), copy the 5242880 byte file here and run: %s --image FILE image", Prog))
 	}
-	md5, err := a.imageGate(f)
+	md5, err := a.imageGateChecked(f)
 	if err != nil {
-		return err
-	}
-	if err := a.imageSquashCheck(f); err != nil {
 		return err
 	}
 	abs := f
@@ -310,16 +305,17 @@ func (a *App) installImage() error {
 // bytes_used inside the APP partition, every table in range), be xz-compressed like the images of the
 // builder, and decode completely (Verify). Anything else is refused before any card or camera is touched.
 func (a *App) imageSquashCheck(path string) error {
-	f, err := os.Open(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return a.UI.Fail("cannot read the image: "+err.Error(), "")
 	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return a.UI.Fail("cannot read the image: "+err.Error(), "")
-	}
-	fs, err := squashfs.Open(f, st.Size())
+	return a.imageSquashBytes(b)
+}
+
+// imageSquashBytes is imageSquashCheck on bytes already in memory: callers check the very bytes they hash
+// and write (no second read of the file after the check). The "checked" line is said once per image.
+func (a *App) imageSquashBytes(b []byte) error {
+	fs, err := squashfs.Open(bytes.NewReader(b), int64(len(b)))
 	if err != nil {
 		return a.UI.Fail("this file is not a valid squashfs image: "+ui.Sanitize(err.Error())+".", "do not flash it; build the image again from your own backup.")
 	}
@@ -333,6 +329,10 @@ func (a *App) imageSquashCheck(path string) error {
 	if err := fs.Verify(); err != nil {
 		return a.UI.Fail("the image does not decode cleanly: "+ui.Sanitize(err.Error())+".", "do not flash it; build the image again from your own backup.")
 	}
-	a.UI.Say(fmt.Sprintf("  Image structure checked: squashfs 4.0, xz, %d bytes used of %d, every block decodes.", info.BytesUsed, appPartitionBytes))
+	sum := md5hex(b)
+	if a.squashSaid != sum {
+		a.UI.Say(fmt.Sprintf("  Image structure checked: squashfs 4.0, xz, %d bytes used of %d, every block decodes.", info.BytesUsed, appPartitionBytes))
+		a.squashSaid = sum
+	}
 	return nil
 }

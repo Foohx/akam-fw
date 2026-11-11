@@ -59,17 +59,18 @@ type Hooks struct {
 
 // App is one run of the program.
 type App struct {
-	Opt     *Options
-	Env     Env
-	UI      ui.UI
-	St      *state.Store
-	Cams    *state.Cameras
-	Log     *state.Log
-	Secrets *state.Secrets
-	Version string
-	Streams Streams
-	Hooks   Hooks
-	Ctx     context.Context
+	Opt        *Options
+	squashSaid string // md5 of the image whose "structure checked" line was printed (said once)
+	Env        Env
+	UI         ui.UI
+	St         *state.Store
+	Cams       *state.Cameras
+	Log        *state.Log
+	Secrets    *state.Secrets
+	Version    string
+	Streams    Streams
+	Hooks      Hooks
+	Ctx        context.Context
 
 	camIP        string
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)

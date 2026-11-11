@@ -387,12 +387,6 @@ func (a *App) cmdPrepareFlashSD() error {
 		_ = a.St.MarkDone("prepare-flash-sd")
 		return nil
 	}
-	if err := a.imageSquashCheck(img); err != nil {
-		return err
-	}
-	if err := a.imageSquashCheck(filepath.Join(bk, "mtdblock7.bin")); err != nil {
-		return err
-	}
 	pk, _ := os.ReadFile(pub)
 	toolkit, err := a.loadToolkit(tk)
 	if err != nil {
@@ -402,6 +396,10 @@ func (a *App) cmdPrepareFlashSD() error {
 	imgB, err := os.ReadFile(img)
 	if err != nil {
 		return a.UI.Fail("image not found: "+img, fmt.Sprintf("run %s step image.", Prog))
+	}
+	// the structure check runs on these very bytes, before the red box and before anything is written
+	if err := a.imageSquashBytes(imgB); err != nil {
+		return err
 	}
 	toolB, err := os.ReadFile(ft)
 	if err != nil {
@@ -413,6 +411,9 @@ func (a *App) cmdPrepareFlashSD() error {
 	mtd7, err := os.ReadFile(filepath.Join(bk, "mtdblock7.bin"))
 	if err != nil || len(mtd7) != sdcard.MTD7Size {
 		return a.UI.Fail(fmt.Sprintf("%s/mtdblock7.bin missing or not %d bytes (stock APP backup)", bk, sdcard.MTD7Size), fmt.Sprintf("run: %s backup --backup-dir DIR", Prog))
+	}
+	if err := a.imageSquashBytes(mtd7); err != nil {
+		return err
 	}
 	scripts := map[string][]byte{}
 	for _, n := range sdcard.FlashScriptNames {
