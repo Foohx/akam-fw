@@ -10,6 +10,9 @@ Akam. These pages are for when you want details, want to do a step by hand, or s
 - [Testing status](testing-status.md): what was tested on the host, in RAM and on hardware, feature by feature; how to run the host tests.
 - [Tested hardware](tested-hardware.md): the camera model and units validated, and how to report yours.
 - [Test plan and status](akam_v1_test_plan.md): what was validated on hardware, what is still to check, the post-flash check script.
+- [Assistant hardware test plan](assistant_hardware_test_plan.md): tickable checklists for Windows, macOS and Linux with the native `akam` binary.
+- [Installing the `akam` binary](assistant_install.md): downloads, checks, SmartScreen and Gatekeeper steps.
+- [Release notes draft](release_notes_draft.md): what the assistant release contains and which targets are untested.
 
 ## Reference
 

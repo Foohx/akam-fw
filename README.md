@@ -133,6 +133,9 @@ reference**. The binary covers the daily commands on a camera that already runs 
 first install through the maintenance telnet and a built-in microSD writer (`backup`, `flash`, `prepare-*-sd`,
 `wipe-sd`). The `image` step stays in the bash wizard. It has been tested on fake cameras and files only: the
 update, restore, verify, telnet backup and flash and SD writer phases were never run against a real camera or card.
+Phase 11 adds builds for Linux, Windows and macOS (amd64 and arm64), a home screen with a camera chooser and option screens,
+and a backup over SSH. The Windows and macOS binaries are **built, not hardware-tested**, and they import an image built on Linux
+or in WSL for now ([install and unsigned-binary steps](docs/assistant_install.md), [hardware test plan](docs/assistant_hardware_test_plan.md)).
 It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
 `AKAM_USE_BIN=1 ./akam ...`.
 
