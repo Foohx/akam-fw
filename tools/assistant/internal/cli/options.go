@@ -129,6 +129,11 @@ func ParseArgs(argv []string) (*Options, error) {
 // Env holds the AKAM_* test and port hooks (cam_port and friends).
 type Env struct {
 	PortSSH, PortRTSP, PortCTL, PortTelnet int
+	// PortSSH2 is the RAM Dropbear of the SSH reflash (2222); PortFTP, PortTelnet23 and PortHTTP are the
+	// extra ports verify checks (PortHTTP 0: 80, or the ONVIF port when ONVIF is on).
+	PortSSH2, PortFTP, PortTelnet23, PortHTTP int
+	// WaitSecs is how long verify waits for the camera (AKAM_WAIT_SECS, default 240).
+	WaitSecs int
 }
 
 func envPort(name string, def int) int {
@@ -145,5 +150,8 @@ func LoadEnv() Env {
 	return Env{
 		PortSSH: envPort("AKAM_PORT_SSH", 22), PortRTSP: envPort("AKAM_PORT_RTSP", 554),
 		PortCTL: envPort("AKAM_PORT_CTL", 8091), PortTelnet: envPort("AKAM_PORT_TELNET", 24),
+		PortSSH2: envPort("AKAM_PORT_SSH2", 2222), PortFTP: envPort("AKAM_PORT_FTP", 21),
+		PortTelnet23: envPort("AKAM_PORT_TELNET23", 23), PortHTTP: envPort("AKAM_PORT_HTTP", 0),
+		WaitSecs: envPort("AKAM_WAIT_SECS", 240),
 	}
 }

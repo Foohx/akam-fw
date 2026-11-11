@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,10 @@ type env struct {
 	// capture is the fake microphone/converter; nil means "no tool installed" (nothing is run).
 	capture *fakeCapture
 	pass    string // AKAM_RTSP_PASSWORD for the next run (the program removes it from its environment)
+	// flashTest allows the reflash commands (flash_tool upload, start) in the safety check of the
+	// received commands; reboot, power-off and friends stay forbidden.
+	flashTest bool
+	http      *http.Client // the client of get-kit (a test server's), nil: none
 }
 
 type fakeCapture struct {
@@ -134,7 +139,13 @@ func newEnv(t *testing.T, opts ...func(*testfake.Options)) *env {
 	t.Cleanup(func() {
 		// Safety rule on every command the camera ever received: no reboot, power-off, flash write.
 		bad := regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6])\b|watchdog|flash_tool|of=/dev/`)
+		if e.flashTest {
+			bad = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|kill)\b|watchdog|of=/dev/|\bsysrq\b`)
+		}
 		for _, c := range e.cam.Commands() {
+			if e.flashTest && strings.HasPrefix(c, "busy=0\nfor f in /tmp/akam_reflash/") {
+				continue // the camera-side "is a worker alive" probe (kill -0), checked by name in flashcmds_test.go
+			}
 			if bad.MatchString(c) {
 				t.Errorf("the camera received a forbidden command: %s", c)
 			}
@@ -162,6 +173,7 @@ func (e *env) hooks() cli.Hooks {
 	if e.capture != nil {
 		h.Capture = e.capture
 	}
+	h.HTTP = e.http
 	return h
 }
 
@@ -170,12 +182,21 @@ func (e *env) run(stdin string, args ...string) result {
 	return e.runRaw(stdin, append(e.base(), args...)...)
 }
 
+// runVersion is run with another program version (get-kit's default release depends on it).
+func (e *env) runVersion(version string, args ...string) result {
+	return e.runRawVersion(version, "", append(e.base(), args...)...)
+}
+
 func (e *env) runRaw(stdin string, argv ...string) result {
+	return e.runRawVersion("test", stdin, argv...)
+}
+
+func (e *env) runRawVersion(version, stdin string, argv ...string) result {
 	if e.pass != "" {
 		os.Setenv("AKAM_RTSP_PASSWORD", e.pass)
 	}
 	var out, errb bytes.Buffer
-	rc := cli.Run(argv, cli.Streams{In: strings.NewReader(stdin), Out: &out, Err: &errb}, "test", e.hooks())
+	rc := cli.Run(argv, cli.Streams{In: strings.NewReader(stdin), Out: &out, Err: &errb}, version, e.hooks())
 	return result{out.String(), errb.String(), rc}
 }
 

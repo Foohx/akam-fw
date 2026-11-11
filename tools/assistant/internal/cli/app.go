@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +46,8 @@ type Hooks struct {
 	UI func(o *Options, st Streams, log *state.Log, secrets *state.Secrets, dry bool) ui.UI
 	// Discovery hooks (find-camera).
 	Discover DiscoverHooks
-	// NewKeyPass etc. are not needed: secrets come through UI.
+	// HTTP is the client of get-kit; nil uses the real one (HTTPS only, TLS 1.2 or newer).
+	HTTP *http.Client
 }
 
 // App is one run of the program.
@@ -63,6 +65,7 @@ type App struct {
 	Ctx     context.Context
 
 	camIP        string
+	passphrase   *string
 	exitOverride int
 }
 
@@ -305,7 +308,15 @@ func (a *App) dispatch(cmd string) error {
 			return usageErr("akam: step needs a name: " + strings.Join(state.Steps, " "))
 		}
 		return a.runStep(args[0])
-	case "get-kit", "build", "prepare-backup-sd", "backup", "image", "prepare-flash-sd", "wipe-sd", "flash", "verify", "update", "restore":
+	case "get-kit":
+		return a.cmdGetKit()
+	case "update":
+		return a.cmdUpdate()
+	case "restore":
+		return a.cmdRestore()
+	case "verify":
+		return a.cmdVerify()
+	case "build", "prepare-backup-sd", "backup", "image", "prepare-flash-sd", "wipe-sd", "flash":
 		return a.notYet(cmd)
 	}
 	return usageErr(fmt.Sprintf("akam: unknown command '%s' (see %s help)", cmd, Prog))
@@ -324,6 +335,10 @@ func (a *App) runStep(name string) error {
 		return a.cmdDoctor()
 	case "find-camera":
 		return a.cmdFindCamera()
+	case "get-kit":
+		return a.cmdGetKit()
+	case "verify":
+		return a.cmdVerify()
 	}
 	return a.notYet("step " + name)
 }
@@ -387,14 +402,25 @@ func userKnownHosts() string {
 }
 
 // dial opens the SSH connection to the camera (cam_ssh_setup + a login).
-func (a *App) dial(ip string) (*camssh.Client, error) {
+func (a *App) dial(ip string) (*camssh.Client, error) { return a.dialPort(ip, a.Env.PortSSH) }
+
+// dialPort is dial on another port (the RAM Dropbear of the reflash): same key, and the same pin
+// because the pin is stored under the camera's address.
+func (a *App) dialPort(ip string, port int) (*camssh.Client, error) {
 	cfg := camssh.Config{
-		Host: ip, Port: a.Env.PortSSH, KeyPath: a.keyPath(),
+		Host: ip, Port: port, KeyPath: a.keyPath(),
 		KnownHosts: a.knownHostsFile(), UserKnownHosts: userKnownHosts(), Alias: ip,
 		TrustFingerprint: a.Opt.TrustNewHostKey,
 		Timeout:          10 * time.Second,
 		Passphrase: func() (string, error) {
-			return a.UI.Secret(fmt.Sprintf("  Passphrase of the SSH key %s (not shown):", a.keyPath()))
+			if a.passphrase != nil { // asked once per run, not once per connection
+				return *a.passphrase, nil
+			}
+			p, err := a.UI.Secret(fmt.Sprintf("  Passphrase of the SSH key %s (not shown):", a.keyPath()))
+			if err == nil {
+				a.passphrase = &p
+			}
+			return p, err
 		},
 		Confirm: a.confirmHostKey,
 	}
