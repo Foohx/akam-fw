@@ -395,6 +395,13 @@ static void test_imaging(void)
     strcpy(g_stub_night, "day");
     golden("img_GetImagingSettings", IMG, GETIMG("GetImagingSettings"), 200);
     golden("img_GetOptions", IMG, GETIMG("GetOptions"), 200);
+    golden("img_GetMoveOptions", IMG, GETIMG("GetMoveOptions"), 200);
+    golden("img_GetStatus", IMG, GETIMG("GetStatus"), 200);
+    golden("img_GetServices_caps", "/onvif/device_service", "<tds:GetServices xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\"><tds:IncludeCapability>true</tds:IncludeCapability></tds:GetServices>", 200);
+    CHECK(call("127.0.0.1", IMG, 1, GETIMG("Move"), &r) == 0 && r.status == 500 && has(&r, "ter:ActionNotSupported"), "Move: Receiver fault ActionNotSupported (no focus motor)");
+    CHECK(call("127.0.0.1", IMG, 1, GETIMG("Stop"), &r) == 0 && r.status == 500 && has(&r, "ter:ActionNotSupported"), "Stop: Receiver fault ActionNotSupported");
+    CHECK(call("127.0.0.1", IMG, 1, "<timg:GetStatus " TIMG "><timg:VideoSourceToken>x</timg:VideoSourceToken></timg:GetStatus>", &r) == 0 && r.status == 400 && has(&r, "ter:NoSource"),
+          "GetStatus with an unknown source: NoSource");
     golden("img_GetImagingSettings_nosource", IMG, "<timg:GetImagingSettings " TIMG "><timg:VideoSourceToken>x</timg:VideoSourceToken></timg:GetImagingSettings>", 400);
     strcpy(g_stub_night, "night");
     CHECK(call("127.0.0.1", IMG, 1, GETIMG("GetImagingSettings"), &r) == 0 && has(&r, "<tt:IrCutFilter>OFF</tt:IrCutFilter>"), "night.mode night -> IrCutFilter OFF");
@@ -449,6 +456,20 @@ static void test_imaging(void)
     CHECK(call("127.0.0.1", IMG, 1, SETIMG_FP("<tt:Brightness>-7</tt:Brightness>", "true"), &r) == 0 && r.status == 200 &&
           g_stub_persist_calls == pc + 1, "ForcePersistence=true writes at once");
     CHECK(onvif_imaging_poll() == 0, "... and leaves nothing pending");
+    /* a slider with ForcePersistence=true: one immediate write per ONVIF_IMAGING_FORCE_MIN_MS, the rest debounced */
+    pc = g_stub_persist_calls;
+    g_clock_ms += 100;
+    CHECK(call("127.0.0.1", IMG, 1, SETIMG_FP("<tt:Brightness>-8</tt:Brightness>", "true"), &r) == 0 && r.status == 200 &&
+          g_stub_persist_calls == pc, "ForcePersistence again 100 ms later: not written at once (debounced)");
+    g_clock_ms += 100;
+    CHECK(call("127.0.0.1", IMG, 1, SETIMG_FP("<tt:Brightness>-9</tt:Brightness>", "true"), &r) == 0 && g_stub_persist_calls == pc,
+          "... nor the next step");
+    g_clock_ms += ONVIF_IMAGING_PERSIST_MS;
+    CHECK(onvif_imaging_poll() == 1 && g_stub_persist_calls == pc + 1, "the last value is written once after the quiet time");
+    g_clock_ms += ONVIF_IMAGING_FORCE_MIN_MS;
+    pc = g_stub_persist_calls;
+    CHECK(call("127.0.0.1", IMG, 1, SETIMG_FP("<tt:Brightness>-4</tt:Brightness>", "true"), &r) == 0 && g_stub_persist_calls == pc + 1,
+          "ForcePersistence after the minimum interval writes at once again");
 
     /* SystemReboot flushes a pending debounced picture write first */
     CHECK(call("127.0.0.1", IMG, 1, SETIMG("<tt:Brightness>-3</tt:Brightness>"), &r) == 0 && r.status == 200, "a change is pending");

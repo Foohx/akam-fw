@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -30,7 +31,7 @@ static int fails;
 #define CHECK(cond, msg) do { if (cond) printf("  ok   - %s\n", msg); \
     else { printf("  FAIL - %s (line %d)\n", msg, __LINE__); fails++; } } while (0)
 
-static char dir[256], fixdir[300], cpath[300], apath[300], hpath[300], rpath[300];
+static char dir[256], fixdir[300], cpath[300], apath[300], hpath[300], rpath[300], npath[300], gpath[300];
 static int g_port;
 static rtsp_auth_db_t limiter;
 static int64_t g_mono = 5000000000LL;
@@ -642,6 +643,62 @@ static void test_golden(void)
     golden("Fault_NotAuthorized", h, OPX("GetDeviceInformation"), 400);
     golden("Fault_ActionNotSupported", NULL, OPX("Nope"), 500);
     golden("GetHostname_after_set", NULL, OPX("GetHostname"), 200);
+
+    /* ODM-facing reads that used to be faults */
+    put(gpath, "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+        "wlan0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+        "wlan0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n", 0644);
+    good_wsse(h, sizeof(h), PASS);
+    golden("GetNetworkDefaultGateway", h, OPX("GetNetworkDefaultGateway"), 200);
+    good_wsse(h, sizeof(h), PASS);
+    {   /* the HTTP port is the dynamic one of this test, so no golden file */
+        hresp_t pr;
+        char want[80];
+        snprintf(want, sizeof(want), "<tt:Name>HTTP</tt:Name><tt:Enabled>true</tt:Enabled><tt:Port>%d</tt:Port>", g_port);
+        CHECK(dev(h, NULL, OPX("GetNetworkProtocols"), &pr) == 0 && pr.status == 200 && has(&pr, want) &&
+              has(&pr, "<tt:Name>RTSP</tt:Name><tt:Enabled>true</tt:Enabled><tt:Port>554</tt:Port>"), "GetNetworkProtocols: HTTP on its port, RTSP 554");
+    }
+    good_wsse(h, sizeof(h), PASS);
+    golden("GetDiscoveryMode", h, OPX("GetDiscoveryMode"), 200);
+    good_wsse(h, sizeof(h), PASS);
+    golden("GetZeroConfiguration", h, OPX("GetZeroConfiguration"), 200);
+    hresp_t r;
+    unlink(gpath);
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, OPX("GetNetworkDefaultGateway"), &r) == 0 && r.status == 200 && has(&r, "<tds:NetworkGateway/>"), "no route file: empty NetworkGateway");
+    CHECK(dev(NULL, NULL, OPX("GetNetworkProtocols"), &r) == 0 && r.status == 401, "GetNetworkProtocols needs a login when the password is on");
+    /* GetServices: capabilities only when asked */
+    CHECK(dev(NULL, NULL, OPX("GetServices"), &r) == 0 && !has(&r, "<tds:Capabilities>"), "GetServices without IncludeCapability: no Capabilities");
+    CHECK(dev(NULL, NULL, "<tds:GetServices " TDS "><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>", &r) == 0 && !has(&r, "Capabilities"),
+          "IncludeCapability=false: none");
+    CHECK(dev(NULL, NULL, "<tds:GetServices " TDS "><tds:IncludeCapability>true</tds:IncludeCapability></tds:GetServices>", &r) == 0 && r.status == 200 &&
+          has(&r, "<trt:StreamingCapabilities") && has(&r, "<timg:Capabilities") && has(&r, "HttpDigest=\"true\"") &&
+          has(&r, "RTP_TCP=\"false\"") && has(&r, "RTP_RTSP_TCP=\"true\""),
+          "IncludeCapability=true: the capabilities of the three services, RTP_TCP false and RTP_RTSP_TCP true");
+    /* NTP configured by akam_ntp.sh: reported, never writable here */
+    put(npath, "server=pool.ntp.org\nserver=192.0.2.7\nserver=bad name!\nserver=-x\nserver=time.example.net\nserver=fourth.example.net\n", 0600);
+    good_wsse(h, sizeof(h), PASS);
+    golden("GetNTP_servers", h, OPX("GetNTP"), 200);
+    CHECK(dev(NULL, NULL, OPX("GetSystemDateAndTime"), &r) == 0 && has(&r, "<tt:DateTimeType>NTP</tt:DateTimeType>"), "NTP configured: DateTimeType NTP");
+    CHECK(dev(NULL, NULL, OPX("GetServiceCapabilities"), &r) == 0 && has(&r, "NTP=\"3\""), "NTP configured: capability NTP=3");
+    unlink(npath);
+    CHECK(dev(NULL, NULL, OPX("GetSystemDateAndTime"), &r) == 0 && has(&r, "<tt:DateTimeType>Manual</tt:DateTimeType>"), "no NTP file: Manual");
+    CHECK(dev(NULL, NULL, OPX("GetServiceCapabilities"), &r) == 0 && has(&r, "NTP=\"0\"") && has(&r, "DiscoveryResolve=\"true\""), "no NTP file: NTP=0, Resolve advertised");
+
+    /* SetHostname with the stored value: no write (no new file, same inode and mtime) */
+    reset_state();
+    unlink(hpath);
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, "<tds:SetHostname " TDS "><tds:Name>Same-Name</tds:Name></tds:SetHostname>", &r) == 0 && r.status == 200, "SetHostname stores");
+    struct stat st1, st2;
+    struct timeval old[2] = { { 1000000000, 0 }, { 1000000000, 0 } };
+    CHECK(stat(hpath, &st1) == 0 && utimes(hpath, old) == 0, "age the hostname file");
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, "<tds:SetHostname " TDS "><tds:Name>same-name</tds:Name></tds:SetHostname>", &r) == 0 && r.status == 200, "SetHostname with the same name");
+    CHECK(stat(hpath, &st2) == 0 && st2.st_mtime == 1000000000 && st2.st_ino == st1.st_ino, "unchanged hostname: the file is not rewritten");
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, "<tds:SetHostname " TDS "><tds:Name>other-name</tds:Name></tds:SetHostname>", &r) == 0 && r.status == 200 &&
+          stat(hpath, &st2) == 0 && st2.st_mtime != 1000000000, "a different name is written");
 }
 
 int main(int argc, char **argv)
@@ -653,6 +710,8 @@ int main(int argc, char **argv)
     snprintf(apath, sizeof(apath), "%s/rtsp_auth", dir);
     snprintf(hpath, sizeof(hpath), "%s/hostname", dir);
     snprintf(rpath, sizeof(rpath), "%s/resolv.conf", dir);
+    snprintf(npath, sizeof(npath), "%s/ntp", dir);
+    snprintf(gpath, sizeof(gpath), "%s/route", dir);
     setenv("TZ", "UTC", 1);
     tzset();
     cred_mono_us = fake_mono;
@@ -661,6 +720,8 @@ int main(int argc, char **argv)
     onvif_ifname = "lo";
     onvif_hostname_path = hpath;
     onvif_resolv_path = rpath;
+    onvif_ntp_path = npath;
+    onvif_route_path = gpath;
     onvif_time_fn = fake_now;
     onvif_settime_fn = fake_settime;
     onvif_reboot_fn = fake_reboot;

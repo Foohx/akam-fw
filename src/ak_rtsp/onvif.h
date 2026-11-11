@@ -45,6 +45,18 @@
     " xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\"><env:Body>"
 #define ONVIF_ENV_CLOSE "</env:Body></env:Envelope>"
 
+/* Capabilities element of the media and imaging services: the body of their GetServiceCapabilities response and,
+ * wrapped in <tds:Capabilities>, of GetServices with IncludeCapability. RTP_TCP is RTP over HTTP tunnelling (not
+ * offered), RTP_RTSP_TCP is the interleaved RTP/RTSP/TCP that ak_rtsp serves. */
+#define ONVIF_MEDIA_CAPS \
+    "<trt:Capabilities SnapshotUri=\"false\" Rotation=\"false\"" \
+    " VideoSourceMode=\"false\" OSD=\"false\" TemporaryOSDText=\"false\" EXICompression=\"false\">" \
+    "<trt:ProfileCapabilities MaximumNumberOfProfiles=\"1\"/>" \
+    "<trt:StreamingCapabilities RTPMulticast=\"false\" RTP_TCP=\"false\" RTP_RTSP_TCP=\"true\"" \
+    " NonAggregateControl=\"false\" NoRTSPStreaming=\"false\"/></trt:Capabilities>"
+#define ONVIF_IMAGING_CAPS \
+    "<timg:Capabilities ImageStabilization=\"false\" Presets=\"false\" AdaptablePreset=\"false\"/>"
+
 typedef enum { ONVIF_PRE, ONVIF_READ, ONVIF_WRITE } onvif_class_t;
 
 /* One response per request: a template plus a scratch area for fragments built by the operation. */
