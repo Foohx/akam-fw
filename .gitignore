@@ -65,6 +65,10 @@ obj/
 /src/ak_rtsp/audit_remote_services.txt
 /src/ak_rtsp/ak_rtsp_firmware_*
 
+# Go assistant (tools/assistant): go.mod is not a Fortran module file; the build output bin/ stays ignored
+!/tools/assistant/go.mod
+/tools/assistant/bin/
+
 # OS Specific
 .DS_Store
 Thumbs.db

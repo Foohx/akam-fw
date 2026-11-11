@@ -7,3 +7,10 @@ tools/flash_scripts/quiet_and_flash_test.sh
 tools/flash_scripts/restore_full_firmware.sh
 tools/flash_scripts/restore.sh
 tools/flash_scripts/start_rtsp.sh
+# Vendored upstream scripts of the Go assistant (tools/assistant/vendor, never edited here)
+tools/assistant/vendor/github.com/mattn/go-isatty/go.test.sh
+tools/assistant/vendor/golang.org/x/sys/plan9/mkall.sh
+tools/assistant/vendor/golang.org/x/sys/plan9/mkerrors.sh
+tools/assistant/vendor/golang.org/x/sys/plan9/mksysnum_plan9.sh
+tools/assistant/vendor/golang.org/x/sys/unix/mkall.sh
+tools/assistant/vendor/golang.org/x/sys/unix/mkerrors.sh
