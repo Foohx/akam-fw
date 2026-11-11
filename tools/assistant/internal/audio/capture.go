@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -113,9 +114,11 @@ func (e *Exec) Convert(ctx context.Context, path string) (io.ReadCloser, error) 
 
 // Proc is a running capture process; reading gives its stdout.
 type Proc struct {
-	cmd  *exec.Cmd
-	out  io.ReadCloser
-	done chan struct{}
+	cmd     *exec.Cmd
+	out     io.ReadCloser
+	done    chan struct{}
+	once    sync.Once
+	stopped chan struct{}
 }
 
 // Start runs argv in its own process group with stdout piped and stderr discarded. The process
@@ -132,7 +135,7 @@ func Start(ctx context.Context, argv []string) (*Proc, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	p := &Proc{cmd: cmd, out: out, done: make(chan struct{})}
+	p := &Proc{cmd: cmd, out: out, done: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -148,12 +151,14 @@ func (p *Proc) Read(b []byte) (int, error) { return p.out.Read(b) }
 // Close stops the process group (TERM, then KILL after a second) and waits for it. It is safe to
 // call more than once.
 func (p *Proc) Close() error {
-	select {
-	case <-p.done:
-		return nil
-	default:
-	}
+	p.once.Do(p.stop)
+	<-p.stopped
+	return nil
+}
+
+func (p *Proc) stop() {
 	close(p.done)
+	defer close(p.stopped)
 	terminate(p.cmd, false)
 	waited := make(chan struct{})
 	go func() { _ = p.cmd.Wait(); close(waited) }()
@@ -163,5 +168,4 @@ func (p *Proc) Close() error {
 		terminate(p.cmd, true)
 		<-waited
 	}
-	return nil
 }

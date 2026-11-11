@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"golang.org/x/term"
 
@@ -125,7 +127,7 @@ func (p *Plain) Secret(prompt string) (string, error) {
 	fmt.Fprintf(p.ErrOut, "%s ", prompt)
 	var s string
 	if p.InFile != nil && term.IsTerminal(int(p.InFile.Fd())) {
-		b, err := term.ReadPassword(int(p.InFile.Fd()))
+		b, err := readPasswordRestoring(int(p.InFile.Fd()))
 		fmt.Fprintln(p.ErrOut)
 		if err != nil {
 			return "", ErrNoInput
@@ -222,4 +224,33 @@ func (p *Plain) ProgressClose() {
 		p.progLabel = ""
 		p.progLast = -1
 	}
+}
+
+// readPasswordRestoring reads a password without echo; a signal (Ctrl-C, TERM, HUP) during the read
+// puts the terminal back as it was before the process exits, so the user's shell keeps echoing.
+func readPasswordRestoring(fd int) ([]byte, error) {
+	old, gerr := term.GetState(fd)
+	if gerr != nil {
+		return term.ReadPassword(fd)
+	}
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	done := make(chan struct{})
+	defer func() { signal.Stop(ch); close(done) }()
+	go func() {
+		select {
+		case sig := <-ch:
+			_ = term.Restore(fd, old)
+			code := 130
+			switch sig {
+			case syscall.SIGTERM:
+				code = 143
+			case syscall.SIGHUP:
+				code = 129
+			}
+			os.Exit(code)
+		case <-done:
+		}
+	}()
+	return term.ReadPassword(fd)
 }

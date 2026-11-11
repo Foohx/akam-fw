@@ -198,8 +198,19 @@ func (a *App) stepBanner(step string) {
 }
 
 func (a *App) cmdFindCamera() error {
-	if err := a.stepNeed("find-camera"); err != nil {
-		return err
+	// Known difference with the bash wizard: a camera that already runs Akam needs no backup card,
+	// so a missing prepare-backup-sd does not stop the search; it only stops it when the camera
+	// turns out not to run Akam (checked after the probe).
+	deferred := false
+	if !a.UI.Dry() && a.stepStatus("find-camera") == "blocked" {
+		if b := a.stepBlockers("find-camera"); len(b) == 1 && b[0] == "prepare-backup-sd" {
+			deferred = true
+		}
+	}
+	if !deferred {
+		if err := a.stepNeed("find-camera"); err != nil {
+			return err
+		}
 	}
 	a.stepBanner("find-camera")
 	p := a.ports()
@@ -219,6 +230,9 @@ func (a *App) cmdFindCamera() error {
 	a.UI.Say(fmt.Sprintf("  Probing %s on ports %d, %d, %d and %d ...", ip, p.Telnet, p.SSH, p.RTSP, p.CTL))
 	open := a.probe(ip, p.Telnet, p.SSH, p.RTSP, p.CTL)
 	a.UI.Say("  Open ports: " + orNone(joinPorts(open)))
+	if deferred && discover.Classify(open, p) != discover.Akam {
+		return a.stepNeed("find-camera")
+	}
 	if len(open) == 0 {
 		return a.UI.Fail(fmt.Sprintf("%s does not answer on any expected port.", ip),
 			fmt.Sprintf("check the address in your router; the camera needs about 2 minutes after power-on; the backup card must be in the camera (telnet appears on port %d); the PC and the camera must be on the same network.", p.Telnet))

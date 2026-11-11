@@ -390,9 +390,18 @@ func seedDone(e *env, steps ...string) {
 func TestFindCamera(t *testing.T) {
 	e := newEnv(t)
 	// blocked until the steps before it are done (same rule as the bash wizard)
-	r := e.run("", "find-camera")
+	ln0 := listen(t)
+	t.Setenv("AKAM_PORT_TELNET", itoa(ln0)) // a stock camera: still needs the backup card step
+	t.Setenv("AKAM_PORT_SSH", freeClosedPort(t))
+	r := e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")
 	expectRC(t, r, 1)
 	contains(t, r.err, "step 'find-camera' needs these steps first: prepare-backup-sd")
+	t.Setenv("AKAM_PORT_TELNET", freeClosedPort(t))
+	t.Setenv("AKAM_PORT_SSH", itoa(e.cam.SSHPort()))
+	// ... unless the camera already runs Akam: then no backup card is needed
+	r = e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")
+	expectRC(t, r, 0)
+	contains(t, r.out, "  Camera found: it already runs Akam (127.0.0.1).")
 	seedDone(e, "doctor", "prepare-backup-sd")
 
 	r = e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")

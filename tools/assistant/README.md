@@ -127,8 +127,9 @@ internal/testfake/        fake camera for the tests
 * `find-camera` does not open the stock maintenance telnet shell (that is the telnet client of phase P3): a
   camera with port 24 open is recorded as "stock firmware with the toolkit", where bash also tells an Akam camera
   that still has the card in.
-* `find-camera` keeps the bash rule that it needs `prepare-backup-sd` done first (use `register` for a camera
-  that already runs Akam, from either program).
+* `find-camera` does not need `prepare-backup-sd` done first when the camera already runs Akam (ssh, rtsp and
+  control ports open, telnet closed): it proceeds. Any other camera still gets the bash rule ("needs these
+  steps first"). The bash wizard keeps the strict rule on every camera.
 * `say` decodes WAV itself and uses `ffmpeg` only for other formats (the bash script always used `ffmpeg` when
   present), so its rehearsal line differs; `pw-record`/`parec` capture backends are not used yet.
 * Messages say `./akam` (as the bash wizard does) even when the binary is run under another name.

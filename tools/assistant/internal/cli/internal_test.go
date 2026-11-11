@@ -20,7 +20,7 @@ func TestCameraCommandsAreAllowListed(t *testing.T) {
 	for _, bad := range []string{
 		"reboot", "/sbin/reboot -f", "poweroff", "halt", "shutdown -h now", "init 6", "telinit 0",
 		"killall watchdog", "kill 1", "echo 1 > /dev/watchdog", "flash_tool -w x", "flashcp x /dev/mtd7",
-		"dd if=x of=/dev/mtd7", "sh -c 'reboot'", "true; reboot",
+		"dd if=x of=/dev/mtd7", "flash_eraseall /dev/mtd7", "nandwrite -p /dev/mtd7 x", "mtd_debug write /dev/mtd7 0 1 x", "echo b > /proc/sysrq-trigger", "sh -c 'reboot'", "true; reboot",
 	} {
 		if forbiddenRemote(bad) == "" {
 			t.Errorf("the guard lets %q through", bad)

@@ -52,7 +52,7 @@ func allRemoteCommands() []string {
 	}
 }
 
-var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|kill)\b|watchdog|flash_tool|flashcp|/dev/mtd[0-9]*\s*$|of=/dev/`)
+var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|kill)\b|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|of=/dev/`)
 
 // forbiddenRemote reports why a command would break the safety rule (empty when fine).
 func forbiddenRemote(cmd string) string {
