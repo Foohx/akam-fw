@@ -133,7 +133,7 @@ Le résultat de **toute** la collecte `STATUS` est mis en cache 1 s : un sondage
 - L'APP stock contient `iwconfig`, `iwlist`, `iwpriv` (`app/bin/`) : le pilote `atbm6x3x` expose donc au moins l'interface wireless-extensions. Le BusyBox 1.30.1 n'a pas `iw`.
 - **Sources retenues (sans `fork`)** : `net.wifi_rssi` = colonne `level` de la ligne `wlan0` de `/proc/net/wireless` (si le fichier existe ; valeur déjà en dBm quand elle finit par `.`), sinon `ioctl(SIOCGIWSTATS)`, sinon `unknown`. `net.ssid` = `ioctl(SIOCGIWESSID)` sur `wlan0` ; en repli seulement, le SSID **configuré** dans `/etc/config/wpa_supplicant.conf` (`ssid="…"`, sans jamais lire ni exposer `psk`) ; sinon `unknown`. Pas de `popen("iwconfig")` : un `fork` d'un processus sous charge vidéo sur 64 Mo coûte plus que ces lectures.
 - **À VÉRIFIER sur matériel** (T11) : lequel de ces chemins répond avec ce pilote. Le code les tente tous dans cet ordre et n'échoue jamais ; l'API est identique quel que soit le résultat.
-- Confidentialité : `net.ssid`, `net.ip`, `net.mac`, `rtsp.client` sont lisibles sans authentification, par décision. Aucune clé n'expose un mot de passe, un `psk`, le HA1 ni le secret HMAC.
+- Confidentialité : `net.ip` et `rtsp.client` sont lisibles sans authentification, par décision ; `net.ssid` et `net.mac` ne sont donnés qu'aux pairs loopback ou pendant `DEBUG` (sinon `hidden`, G05). Aucune clé n'expose un mot de passe, un `psk`, le HA1 ni le secret HMAC.
 
 ## 4. Sortie JSON
 
