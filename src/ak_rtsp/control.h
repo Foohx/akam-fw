@@ -15,7 +15,8 @@
  * "ERR read-only mode, see akam_debug.sh" unless DEBUG is on (RAM-only flag, off at start,
  * auto-off after 60 min by default). Loopback peers always may write.
  * Async log lines (tee'd from stdout) are pushed on the same connection
- * prefixed "LOG " whenever they occur, interleaved with command responses —
+ * (loopback peers only, or any peer while DEBUG is on; a remote reader without DEBUG gets none, and
+ * reads net.ssid and net.mac as "hidden") prefixed "LOG " whenever they occur, interleaved with command responses —
  * a client tells them apart by the "LOG " prefix, not by strict
  * request/response framing.
  *

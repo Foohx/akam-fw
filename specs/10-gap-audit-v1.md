@@ -222,6 +222,15 @@ in (safe mode), and say so on the front LED. Needs the stock watchdog behaviour 
 
 ### G05 (P1) 8091 pushes the log stream and identity data to unauthenticated remote peers
 
+Status 2026-11-11 (branch `feature/gap-p1`): **implemented on the host, one hardware check left.**
+`control.c`: `LOG` lines go only to loopback peers, or to every peer while DEBUG is on (a remote reader without
+DEBUG gets none). Identity data: **`net.ip` stays readable** (any remote reader of port 8091 already knows it, and
+`./akam` and the monitoring integrations use it), **`net.ssid` and `net.mac` answer `hidden`** to remote peers
+without DEBUG, in `GET` and in `LIST`; loopback readers (the wizard over SSH) and DEBUG see the real values. The
+rule is applied in `control.c` (the metric module has no notion of peer). Tests: `tests/native/control_test.c`
+(remote peer: no LOG line, `hidden`; loopback: both; DEBUG on: both). Documented in `docs/akam_v1_install.md`,
+`README.md` and `specs/04`. HW: one check that the PC tuning tool still works (it connects through DEBUG).
+
 Evidence: `control.c:114-131` `log_forward` sends every stdout line as `LOG ...` to every connected client slot,
 remote or not; `control.c:565` binds `INADDR_ANY`. The log contains client IPs of RTSP and auth failures
 (`rtsp.c:683`, `[ak_rtsp] auth: ...`), request URIs (credentials in the URI are masked), the build info, paths.
@@ -236,6 +245,23 @@ address, default all, so the user can set loopback only once the wizard no longe
 `tests/native/control_test.c`. Effort S. HW no (host test) then one HW check.
 
 ### G06 (P1) A second RTSP client hangs; decide go2rtc versus a second slot
+
+Status 2026-11-11 (branch `feature/gap-p1`): **step 1 implemented on the host (tests with a real `rtsp.c` session and real sockets); step 2 (a second slot)
+rejected, go2rtc stays the supported restream.**
+`rtsp_busy.[ch]`: while a session runs, `handle_client` adds the listening socket to its own `poll` set; a second
+connection is accepted at once, its request is read non-blockingly (at most 3 newcomers wait, 384 bytes kept, 500 ms
+at most) and answered `RTSP/1.0 503 Service Unavailable` with the request's `CSeq`, `Retry-After: 10` and a
+`Reason` header that names go2rtc, then closed (a fourth simultaneous newcomer is closed without a reading). The spec
+asked for the 503 on OPTIONS or DESCRIBE after reading the first line; the answer is the same for any method (a
+client that sends nothing is answered after 500 ms and closed, never held). **Why in the session loop and not a
+helper thread:** no extra thread (stack and RSS on 45 MB), no race with `main()`'s own `accept`, no extra wakeup when
+nobody connects (the sockets only join a `poll` that already runs for the client), and the video path is untouched:
+the work per newcomer is about six non-blocking syscalls, the active client's socket, send timeouts, frame fetching
+and RTP timing are not modified. 503 rather than 453 because 453 means "bandwidth" and 503 is what retrying
+clients (go2rtc, Frigate, VLC) treat as temporary. Tests: `tests/native/rtsp_busy_test.c` (answer builder, flood,
+silent client, no fd leak, ASan) and `tests/native/rtsp_backchannel_test.c` (real `handle_client`: first client keeps
+working, second gets 503 within 400 ms and is closed, the slot is free again afterwards). Documented in
+`docs/troubleshooting.md`. HW: VLC plus `ffprobe` at the same time, and a slow-loris client (section 6).
 
 Evidence: `main.c:333` `listen(server_fd, 5)` and `main.c:369` `handle_client(...)` blocks the whole accept loop
 for the duration of a session. A second client's TCP connect succeeds (kernel backlog) and then receives nothing
@@ -263,6 +289,25 @@ Effort S for step 1. HW yes (test with VLC + ffprobe at the same time).
 
 ### G07 (P1) Audio capture stops forever after 5 read errors; mic always on
 
+Status 2026-11-11 (branch `feature/gap-p1`): **implemented on the host, not yet checked on hardware.**
+(1) Supervisor in `audio.c`: after 5 read errors in a row the capture device is closed and the whole
+open+configure sequence is replayed after 1, 2, 4, 8, 16, 32 then 60 s (units shrunk in the test); the RTP sample
+index jumps by the outage so timestamps keep the gap; a failed open at start no longer ends audio, the thread keeps
+trying (the speaker keeps its old start rule: it starts only when the first capture open worked). (2) `audio.mic_enable`
+(default 1, `mic_enable=` in `/etc/config/akam/audio_out` next to the speaker keys, read at start, key on 8091,
+`./akam audio mic on|off`; a change says "restart to apply"; a remote DEBUG SET is RAM only, as for the other
+persistent keys). **When off the SDP has no audio track at all**, not an empty one: a track that never carries data
+makes several clients (ffmpeg, some NVRs) wait for audio or log timestamp errors, while video-only streams are
+universal; stream ids stay 0 (video) and 2 (backchannel), a SETUP of `streamid=1` answers 404. With the mic off
+there is no capture thread, the capture device is not opened, and the legacy silence stream (which only existed for
+the capture's sake) is not started; the speaker still starts through `audio_out`. Tests: `tests/native/audio_sup_test.c`
+(faked device: five errors then recovery, failing opens with backoff, prompt `audio_stop`, late start, mic off opens
+nothing), `audio_out_test.c`, `rtsp_sdp_test.c`, `wizard_audio_test.sh`. **Not done, needs hardware:** capture on demand
+(start on first PLAY, stop 30 s after the last viewer) and a silent playback thread only during talk: both depend on
+how the driver and the amplifier behave when the streams stop and restart (see G10). HW: unplug-free recovery test
+(`kill -STOP` cannot simulate a driver error: use a debug build that forces EIO), `./akam audio mic off` then reboot,
+the speaker with the mic off (never tried without capture running).
+
 Evidence:
 - `audio.c:340-348`: after `AUDIO_MAX_CONSECUTIVE_FAILS` (5, audio.c:99) consecutive read errors the capture
   thread sets `g_audio_running = 0` and exits ("not retrying further"). Nothing restarts it; the stream stays
@@ -287,6 +332,21 @@ confirm the amplifier does not pop/hiss when the stream is stopped, and `audio_o
 Effort M. HW yes.
 
 ### G08 (P1) No clock: no RTC, no NTP, so time-based security and logs are meaningless
+
+Status 2026-11-11 (branch `feature/gap-p1`): **opt-in helper implemented on the host (BusyBox `ntpd`, no C code); not checked on a camera.**
+Decision for fix 2: BusyBox `ntpd` exists on the camera (the task brief, to confirm with `busybox --list`), so the
+helper is `akam_ntp.sh`, not `sntp.c`. Config `/etc/config/akam/ntp` (`server=` lines, at most 3, host names or IPv4
+addresses only, validated, never starting with `-`), started by the wrapper only when the file exists, detached;
+`./akam ntp [status | set SERVER... | off]`. **One-shot, not a daemon:** `ntpd -n -q -p ...` under `timeout 60` and
+`nice -n 10`, retried after 15, 30, 60, 120, 300, 600 s until the year is 2024 or later, then every 6 h. BusyBox 1.30
+options checked against the pinned 1.35 (`-n -q -p` are old options); a daemon (`-n -p` without `-q`) would keep a
+UDP socket and a resident process for ever (the G14 audit would see the socket), and the oscillator error is about a
+second in 6 h. `sys.time_set` (0/1, year >= 2024, the same threshold as `cred.c`) is a metric on 8091. Off by default:
+no file, no helper, no traffic. Not done: DHCP option 42 (stock `udhcpc` script unknown), timezone, ONVIF refusing
+WS-Security while unsynchronised, `./akam verify` showing the clock. Tests: `tests/akam_ntp_test.sh` (pinned BusyBox, stub
+`ntpd`/`date`/`timeout`/`nice`), `wizard_ntp_test.sh`, `ctl_sys_test.c`. HW: `busybox --list | grep ntp`, `ntpd -q` from a
+1970 clock (the first step is large: BusyBox must accept it; if it refuses, switch to `rdate` or `date -s` from a
+reply), `settimeofday` on this kernel (docs/akam_v1_kernel_time64.md), a power cut, the DNS of the router.
 
 Evidence:
 - `docs/akam_v1_install.md:113-114` tells the user to block outbound traffic and says "NTP if you configure it",
@@ -328,6 +388,20 @@ Effort M. HW yes (clock set after `date -s`, `clock_gettime`, power cycle behavi
 
 ### G09 (P1) RAM logs have no cap; no process-level soak metrics
 
+Status 2026-11-11 (branch `feature/gap-p1`): **log caps implemented on the host; `proc.*` metrics and `--soak` not done; syslog size needs a camera.**
+Every RAM log written by our scripts is now capped at 100 lines (kept: the last 50) or 64 KiB: `akam_wrapper.log`,
+`akam_net.log`, `akam_ntp.log` (own `log()`, already so for the first two), `akam_ssh.log` and `akam_lockdown.log`
+(new). Dropbear's `-E` stderr goes straight into `akam_ssh.log` through an `O_APPEND` descriptor, so that file is
+trimmed **in place** (same inode, `tail > tmp; cat tmp > file`) by `akam_ssh.sh` at each of its lines and by the
+lockdown loop every 60 s for every `/tmp/akam_*.log`; the worst case is one minute of flood plus 64 KiB. `ak_rtsp`
+itself writes no log file in the shipped build (`isp_hook.log` and `ak_rtsp_ioctl_dump.log` exist only in the debug
+builds; its stdout goes through the tee to the console, nothing in RAM). Tests: `tests/lockdown_test.sh` (L7: 3000
+lines, long lines, small file untouched, inode kept). **syslogd:** the stock `-s 200 -b 3` line (up to 3 x 200 KB
+in `/var/log`) is in the stock rootfs init, not in this repository, so we do not control it; whether `/var/log` is
+tmpfs and how big it gets after days is a HW measurement (`df /var/log; ls -l /var/log`); if 600 KB is too much the
+only lever is a patch of the stock init line in `build_firmware.sh`, to decide with the numbers. Still open from the
+fix list: `proc.rss_kb/fds/threads/log_drops` on 8091 and `akam_hwcheck.sh --soak`.
+
 Evidence:
 - `/tmp` is RAM on this camera. Logs: `/tmp/akam_ssh.log` (one line per step and, through `dropbear -E`
   stderr appended with `2>>"$LOG"`, akam_ssh.sh:432-433, one line per connection and failed login for the
@@ -352,6 +426,31 @@ rebooted once, accept if RSS slope < 4 KB/h and fds constant.
 Effort S. HW yes (soak).
 
 ### G10 (P1) Idle wakeup budget, to be measured then cut
+
+Status 2026-11-11 (branch `feature/gap-p1`): **one structural cut done, the risky ones deliberately not changed; measurement support added.**
+Measured by reading the code (HW will confirm with `akam_hwcheck.sh`, which now prints `wakeups N/s` from the
+voluntary context switches of all `ak_rtsp` threads):
+
+| Source | Before (/s) | After (/s) | Note |
+|---|---|---|---|
+| Audio capture read | 31 | 31, or **0 with `audio.mic_enable=0`** | driver period; the opt-in mic off removes it |
+| Legacy silent playback | 31 (when `audio_out` is not active) | 31, or **0 with the mic off** | not started without the capture it served |
+| `audio_out` playback | 15.6 (64 ms periods, speaker enabled) | 15.6 | unchanged |
+| Main drain poll | 50 | 50 | **not changed**, see below |
+| AE tick, night monitor, LEDs, rest | 15 + 10 + about 1 | same | unchanged |
+| Total with a default image | about 125 to 140 | same | default behaviour is not changed (76 without audio, plus audio) |
+| Total with `./akam audio mic off` | n/a | about 76 (speaker off) to 92 (`audio_out` active) | 62 fewer, or 31 fewer when `audio_out` runs |
+
+Not changed, and why (all need a camera): **drain poll 20 to 100 ms.** The ring would not wrap (4 s at the cap), but
+`drain_venc_ring()` also feeds the video capture clock (`video_capture_time_us()` stamps each frame when it is
+fetched, so the learned frame period is locked before the first client arrives) and a 100 ms poll would add up to 80
+ms of jitter to those stamps: that touches the video and audio timing, which must not change without a measurement
+of the first client's lip-sync. A safer variant to try on a camera is 50 ms (saves 30/s). **Silent playback only
+during talk, audio capture on demand:** need the speaker amplifier and the capture driver to survive stop/start
+(pops, EPERM, kernel crash history) and a restart latency measurement. **Night monitor on the AE sequence:**
+touches the state machine timing (counts in polls). **`akam_lockdown.sh` ending its slow phase:** needs the 24 h
+check that Telnet never comes back (the slow phase also respawns Dropbear). Budget thresholds in `--budget` are not
+added yet.
 
 Static count of timers that fire with no client connected (estimate, from the code; HW: `grep ctxt /proc/<pid>/status`
 or `cat /proc/<pid>/task/*/stat` deltas to confirm):
@@ -447,6 +546,19 @@ reconnect (criterion 12), restore rehearsal (criterion 17), microphone audible (
 checks after the read-only change, LEDs, `audio`/`picture`, ONVIF backchannel (`akam talk`).
 
 ### G14 (P1) Port and process audit covers TCP only
+
+Status 2026-11-11 (branch `feature/gap-p1`): **implemented in `akam_hwcheck.sh`, not yet run on a camera.**
+New sections: `UDP sockets` (reads `/proc/net/udp` and `udp6`; allowed: 68 for the DHCP client, 3702 only with ONVIF
+on (still judged by the ONVIF check), ephemeral client ports 32768 to 60999 are listed as INFO; anything else is
+FAIL, WARN while the maintenance flag is present, with the owner found through the socket inode when readable) and
+`process allow-list` (everything running is checked by name: `init syslogd klogd wpa_supplicant udhcpc watchdog
+ak_rtsp_wrapper ak_rtsp akam_* dropbear sh sleep drop_caches`, plus the short-lived tools our own scripts call:
+`ntpd timeout nice ps grep logger kill cat date wc tail sync mv`; `msgserver` and `cmdserver` are WARN "vendor
+daemon, review"; the forbidden ones (`anyka_ipc`, Telnet, FTP) stay FAIL in the existing process check; anything
+else is WARN "unexpected process"). Tests: `tests/hwcheck_test.sh` (UDP cases incl. udp6, duplicate ports, owner,
+maintenance, unreadable file; allow-list cases). Still to do on the camera: run it after a clean boot, record the real
+list in `docs/akam_v1_test_plan.md`, then decide per item (the `PROC_ALLOW` string in the script is the single
+place to adjust).
 
 Evidence: `tools/hw_tests/akam_hwcheck.sh` checks TCP listeners (22/554/8091 expected; 21/23/24/80 closed) and
 a process list (`anyka_ipc`, `telnetd`, `tcpsvd`, `ftpd` absent); `grep -n -i udp akam_hwcheck.sh` finds no UDP

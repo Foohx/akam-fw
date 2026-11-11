@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2012,SC2016  # ls for modes and inodes, single-quoted commands for other shells
 # Host-side tests for patch_service_sh.sh (T4 layer 1) and akam_lockdown.sh
 # (layer 2). Camera scripts run with $SH_UNDER_TEST (default: "busybox sh" if
 # installed, else "sh"). `ps` is stubbed (PATH); `kill` is the real one, aimed
@@ -399,6 +400,20 @@ echo "== L6. robustness"
 new_ld_root l6
 rm -f "$STUBS/ps"
 check "no ps available: exits 0" run_lockdown "$LR"
+
+echo "== L7. RAM logs stay capped (G09)"
+new_ld_root l7
+for n in $(seq 1 3000); do echo "dropbear[1]: Bad password attempt for 'root' from 10.0.0.9:$n"; done >"$LR/tmp/akam_ssh.log"
+ino_before=$(ls -i "$LR/tmp/akam_ssh.log" | cut -d' ' -f1)
+for n in $(seq 1 90); do printf 'akam_net: %0900d\n' "$n"; done >"$LR/tmp/akam_net.log"   # 90 long lines: under 100 lines, over 64 KiB
+for n in $(seq 1 10); do echo "akam_wrapper line $n"; done >"$LR/tmp/akam_wrapper.log"
+check "lockdown with huge logs: exits 0" run_lockdown "$LR"
+check "ssh log trimmed to at most 100 lines" bash -c '[ "$(wc -l <"$1")" -le 100 ]' _ "$LR/tmp/akam_ssh.log"
+check "ssh log keeps the newest lines" grep -q ":3000\$" "$LR/tmp/akam_ssh.log"
+check "ssh log trimmed in place (same inode: Dropbear keeps it open)" test "$(ls -i "$LR/tmp/akam_ssh.log" | cut -d' ' -f1)" = "$ino_before"
+check "a log over 64 KiB with few lines is trimmed too" bash -c '[ "$(wc -c <"$1")" -le 65536 ]' _ "$LR/tmp/akam_net.log"
+check "a small log is left alone" test "$(wc -l <"$LR/tmp/akam_wrapper.log" | tr -d ' ')" = 10
+check "no temporary file left" bash -c 'ls "$1"/*.tmp >/dev/null 2>&1 && exit 1 || exit 0' _ "$LR/tmp"
 
 echo
 echo "passed: $PASS  failed: $FAIL  (shell under test: $SH_UNDER_TEST)"

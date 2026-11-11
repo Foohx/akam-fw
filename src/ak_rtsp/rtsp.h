@@ -12,6 +12,8 @@ void rtsp_auth_tick(bool force);
 
 /* The RTSP server's credentials state (see rtsp_auth.h), initialised. */
 rtsp_auth_db_t *rtsp_auth_shared_db(void);
+/* Listening socket of main(): while a session runs, a second client is answered "503" and closed (rtsp_busy.h). */
+void rtsp_set_listen_fd(int fd);
 void handle_client(int client_fd, struct sockaddr_storage *client_addr,
                    socklen_t addr_len);
 

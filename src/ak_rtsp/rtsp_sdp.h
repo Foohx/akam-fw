@@ -21,6 +21,7 @@ typedef struct {
     int audio_rate;                  /* L16 microphone track: sample rate */
     int audio_channels;
     int backchannel;                 /* 1: add the send-only G.711 track */
+    int audio_off;                   /* 1: no microphone track at all (audio.mic_enable=0, G07); stream ids unchanged */
 } rtsp_sdp_params_t;
 
 /* Writes the SDP, NUL terminated. Returns its length, or 0 when cap is too small

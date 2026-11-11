@@ -59,7 +59,7 @@ static void test_sdp(void)
 {
     printf("# SDP\n");
     char buf[1280], old[1280];
-    rtsp_sdp_params_t p = { 1700000000ULL, "packetization-mode=1", 8000, 1, 0 };
+    rtsp_sdp_params_t p = { 1700000000ULL, "packetization-mode=1", 8000, 1, 0, 0 };
 
     size_t n = rtsp_sdp_build(buf, sizeof(buf), &p);
     CHECK(n == strlen(GOLDEN_DEFAULT) && !strcmp(buf, GOLDEN_DEFAULT), "without backchannel: golden bytes");
@@ -82,6 +82,16 @@ static void test_sdp(void)
     CHECK(n == strlen(want) && !strcmp(buf, want), "with backchannel: the unchanged SDP plus one send-only G.711 section");
     CHECK(strstr(buf, "streamid=0") && strstr(buf, "streamid=1") && strstr(buf, "streamid=2"), "three tracks, ids 0 1 2");
     CHECK(strncmp(buf, GOLDEN_DEFAULT, strlen(GOLDEN_DEFAULT)) == 0, "existing tracks come first and are untouched");
+
+    /* G07: audio.mic_enable=0: no microphone section, the video section and the stream ids are unchanged */
+    p.audio_off = 1; p.backchannel = 0;
+    n = rtsp_sdp_build(buf, sizeof(buf), &p);
+    CHECK(n > 0 && !strstr(buf, "m=audio") && !strstr(buf, "L16") && strstr(buf, "m=video 0 RTP/AVP 96\r\n"), "mic off: video only");
+    CHECK(strstr(buf, "a=control:streamid=0\r\n") && !strstr(buf, "streamid=1"), "mic off: no audio track id");
+    p.backchannel = 1;
+    n = rtsp_sdp_build(buf, sizeof(buf), &p);
+    CHECK(n > 0 && strstr(buf, "m=audio 0 RTP/AVP 0 8") && strstr(buf, "streamid=2") && !strstr(buf, "L16"), "mic off with backchannel: only the send-only track, id 2");
+    p.audio_off = 0;
 
     char tiny[40];
     CHECK(rtsp_sdp_build(tiny, sizeof(tiny), &p) == 0 && tiny[0] == '\0', "buffer too small: 0 and an empty string");

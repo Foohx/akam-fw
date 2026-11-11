@@ -101,7 +101,10 @@ interleaved RTCP input is now read and discarded properly): update your camera w
 
 ## Only one viewer works at a time
 
-The camera serves **one RTSP client at a time**; a second client is refused or the first one is cut.
+The camera serves **one RTSP client at a time**. A second client is answered at once with
+`RTSP/1.0 503 Service Unavailable` (with `Retry-After: 10`) and disconnected; the first viewer is not
+disturbed and the video does not stutter. Before this change the second client connected and then waited in
+silence until the first one left. Players show it as "server busy" or "503"; retry when the first viewer is gone.
 A client that stays silent before PLAY is dropped after 20 s (60 s at most to reach PLAY), so a player
 that cannot connect right after another one only has to wait that long.
 To watch from several places, or to record and watch together, put a relay in front of the camera
@@ -113,7 +116,7 @@ need.
 `./akam talk` and the go2rtc / Home Assistant microphone button use the ONVIF audio backchannel on port 554.
 The camera offers it only with the video password on (`./akam rtsp-auth status`), audio out enabled and
 `audio.talk_enable=1`; otherwise it answers `551 Option not supported` and clients fall back to plain
-video. A second client waits while another one is connected (the same single-client limit as above: let
+video. A second client gets `503` while another one is connected (the same single-client limit as above: let
 go2rtc be the only client). The full list of causes, the counters to read (`audio.talk_*`) and the
 configuration examples are in [two-way audio](two_way_audio.md).
 
@@ -249,6 +252,7 @@ lines from the camera itself, as `./akam led` does). No confirmation is asked:
 ./akam audio off              # 3. Speaker off (at once, and it stays off after a reboot)
 ./akam audio on               #    Speaker on; the camera says when it only starts after a reboot
 ./akam audio talk off         #    Soft switch of the network talk (ONVIF backchannel); `on` to allow it again
+./akam audio mic off          #    Microphone off: never opened, no audio track in the stream (needs a reboot); `mic on` undoes it
 ```
 
 The hardware gain, the route (source), the amplifier mode and the volume sweeps below are developer
@@ -299,6 +303,28 @@ need no permission) or the serial console: lines starting with `[audio_out]` sho
 - **Sound over the network:** `./akam talk test`, `./akam talk` and `./akam say FILE` send sound to this speaker
   through the RTSP port ([two-way audio](two_way_audio.md)). A client that streams G.711 silence does not
   switch the amplifier on: the amp follows sound above about -56 dBFS.
+
+## No sound on the stream, or the sound came back late
+
+The microphone capture is supervised: after 5 read errors in a row the camera closes the device and opens it again
+after 1, 2, 4, 8, 16, 32, then 60 seconds (it used to give up until the next reboot). The log shows
+`[audio] capture down, retrying` and then `capture recovered`. Sound returns by itself; players that dropped the
+audio track during the gap may need a reconnect.
+
+If you do not want the microphone at all (privacy, less work for the camera): `./akam audio mic off`, then power
+cycle the camera. With the microphone off the capture device is never opened and the stream has **no audio track**
+(video only), which every player accepts; a track that never carries data makes some players wait for it.
+`./akam audio` shows `Microphone: on` or `off`; `./akam audio mic on` and a reboot bring it back. The setting is
+`mic_enable` in `/etc/config/akam/audio_out`, saved like the speaker settings.
+
+## The camera clock is wrong (1970 or the build date)
+
+The camera has no battery clock: it starts in the past after every power cut. Nothing sets it unless you ask:
+`./akam ntp set pool.ntp.org` (or your router's address, up to 3 servers) makes it ask those servers at start-up
+and every 6 hours (UDP 123, outgoing only); `./akam ntp status` shows the clock and `./akam ntp off` removes the
+setting. Without a clock the WS-Security time window of ONVIF logins is not checked (the replay cache still is) and
+the RTCP sender reports carry a wrong date; the video itself is not affected. `GET sys.time_set` on port 8091 is
+`1` once the year is 2024 or later. The helper is `/usr/sbin/akam_ntp.sh`, it logs to `/tmp/akam_ntp.log`.
 
 ## The camera restarted itself, or the stream came back after a gap
 

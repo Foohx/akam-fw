@@ -96,6 +96,12 @@ if [ -x /usr/sbin/akam_net.sh ]; then
     ( /usr/sbin/akam_net.sh start </dev/null >/dev/null 2>&1 & )
 fi
 
+# Time sync (G08), OFF by default: the helper starts only when the user saved a server with ./akam ntp set
+# (/etc/config/akam/ntp exists). Detached like the others; it syncs once the network is up, then every 6 hours.
+if [ -f "$AKAM_ROOT/etc/config/akam/ntp" ] && [ -x /usr/sbin/akam_ntp.sh ]; then
+    ( /usr/sbin/akam_ntp.sh run </dev/null >/dev/null 2>&1 & )
+fi
+
 # --- Manual WiFi bring-up ---
 # ethernet.sh's wifi_driver.sh install() deliberately SKIPS starting
 # wpa_supplicant and assigning an IP whenever /tmp/_ak39_factory.ini exists

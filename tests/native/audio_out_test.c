@@ -806,7 +806,7 @@ static void test_ctl(void)
     CHECK(ao_ctl_set(ao, "audio.out_test", "0", out, sizeof(out)) == 0, "test 0 accepted (no-op)");
     int n = 0;
     ao_ctl_list(ao, collect, &n);
-    CHECK(n == 12, "LIST emits the seven audio.out_ lines, the three counters and the two talk settings");
+    CHECK(n == 13, "LIST emits the audio.out_ lines, the counters, the two talk settings and audio.mic_enable");
     ao_close(ao);
     free(ao);
 }
@@ -887,6 +887,39 @@ static void test_talk_support(void)
     CHECK(cnt == 1, "saving twice does not duplicate the talk lines");
     free(ao2);
 
+    /* G07: audio.mic_enable: default 1, saved with the other keys, reloaded, remote SET is RAM only */
+    new_case(ao); open_quiet(ao);
+    ao_ctl_get(ao, "audio.mic_enable", out, sizeof(out));
+    CHECK(!strcmp(out, "audio.mic_enable=1"), "mic_enable defaults to 1");
+    CHECK(ao_ctl_set(ao, "audio.mic_enable", "2", out, sizeof(out)) == 1, "mic_enable range checked");
+    CHECK(ao_ctl_set(ao, "audio.mic_enable", "x", out, sizeof(out)) == 1, "mic_enable must be a number");
+    CHECK(ao_ctl_set(ao, "audio.mic_enable", "0", out, sizeof(out)) == 0 && !strcmp(out, "OK audio.mic_enable=0 (restart to apply)"), "set mic_enable 0 says a restart is needed");
+    ao_ctl_get(ao, "audio.mic_enable", out, sizeof(out));
+    CHECK(!strcmp(out, "audio.mic_enable=0"), "mic_enable reads back");
+    {
+        audio_out_t *a3 = calloc(1, sizeof(*a3));
+        ao_cfg_t c3 = { "/dev/fake", ao->conf_dir };
+        ao_init(a3, &OPS, &c3);
+        CHECK(a3->mic_enable == 1, "a fresh instance has the mic on");
+        CHECK(ao_load_config(a3) == 1 && a3->mic_enable == 0, "mic_enable is saved and reloaded");
+        FILE *fm = fopen(ao->conf_path, "r"); size_t nm = fread(buf, 1, sizeof(buf) - 1, fm); buf[nm] = 0; fclose(fm);
+        CHECK(strstr(buf, "mic_enable=0\n") && strstr(buf, "talk_enable=") && strstr(buf, "volume="), "file has mic_enable next to the other keys");
+        ao_set_amp_mode(a3, AO_AMP_AUTO);
+        ao_save_config(a3); ao_save_config(a3);
+        fm = fopen(ao->conf_path, "r"); nm = fread(buf, 1, sizeof(buf) - 1, fm); buf[nm] = 0; fclose(fm);
+        int cm = 0; for (const char *q = buf; (q = strstr(q, "mic_enable=")); q++) cm++;
+        CHECK(cm == 1, "saving twice does not duplicate the mic line");
+        /* a remote SET (persist off) changes RAM only */
+        ao_ctl_set(ao, "audio.mic_enable", "1", out, sizeof(out));
+        ao->persist = 0;
+        CHECK(ao_ctl_set(ao, "audio.mic_enable", "0", out, sizeof(out)) == 0 && ao->mic_enable == 0, "remote SET applies in RAM");
+        ao_ctl_set(ao, "audio.volume_nothing", "0", out, sizeof(out));
+        ao_ctl_set(ao, "audio.out_volume", "37", out, sizeof(out));
+        ao_load_config(a3);
+        CHECK(a3->mic_enable == 1 && a3->volume != 37, "remote SET is not written to flash");
+        ao->persist = 1;
+        free(a3);
+    }
     /* counters */
     new_case(ao); open_quiet(ao);
     int16_t part[JITTER_PREFILL_SAMPLES + 100];

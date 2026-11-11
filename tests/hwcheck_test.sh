@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2012,SC2016  # ls for modes and inodes, single-quoted commands for other shells
 # Host-side tests for tools/hw_tests/akam_hwcheck.sh. The script runs under
 # $SH_UNDER_TEST (default: "$AKAM_BUSYBOX sh", else "busybox sh", else "sh")
 # against a fake root ($AKAM_ROOT with proc/, etc/, mnt/, tmp/) and a
@@ -414,6 +415,69 @@ run t26 "$R26" "$WORK/s20"
 has "maintenance, onvif off, 80 open: WARN" '^WARN +port 80 listening' "$WORK/t26.out"
 has "maintenance, onvif off, 3702 bound: WARN" '^WARN +UDP 3702 bound' "$WORK/t26.out"
 hasnt "maintenance, onvif off: no FAIL on 80/3702" '^FAIL +(port 80|UDP 3702)' "$WORK/t26.out"
+
+# 30. UDP listeners and the process allow-list (G14) ------------------------------------------------------
+udp_at() { printf '  1: %s:%04X 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 %s 2 0\n' 00000000 "$2" "${3:-1}" >> "$1/proc/net/udp"; }
+R30=$WORK/r30; mkroot "$R30"; mkudp "$R30" ""
+udp_at "$R30" 68; udp_at "$R30" 40000; udp_at "$R30" 3702
+mkdir -p "$R30/etc/config/akam"; printf 'enabled=1\nport=80\n' > "$R30/etc/config/akam/onvif"; tcp_line 00000000 80 >> "$R30/proc/net/tcp"
+run t30 "$R30" "$WORK/s20"
+has "udp: 68, an ephemeral port and 3702 (ONVIF on) are fine" '^PASS +no unexpected UDP listener' "$WORK/t30.out"
+has "udp: DHCP client reported" 'UDP 68 bound \(DHCP client\)' "$WORK/t30.out"
+has "udp: ephemeral port reported, not failed" 'UDP 40000 bound \(ephemeral' "$WORK/t30.out"
+R31=$WORK/r31; mkroot "$R31"; mkudp "$R31" ""
+udp_at "$R31" 5353 777; udp_at "$R31" 5353 777; udp_at "$R31" 1900 778
+mkproc "$R31" 130 "mdnsd -f" 500; mkdir -p "$R31/proc/130/fd"; ln -s 'socket:[777]' "$R31/proc/130/fd/3"
+run t31 "$R31" "$WORK/s20"
+has "udp: mDNS port is a FAIL, owner found through the inode" '^FAIL +UDP 5353 bound \(mdnsd -f\)' "$WORK/t31.out"
+has "udp: SSDP port is a FAIL, owner unknown" '^FAIL +UDP 1900 bound \(\?\)' "$WORK/t31.out"
+if [ "$(grep -Ec '^FAIL +UDP 5353' "$WORK/t31.out")" = 1 ]; then ok "udp: a port bound twice is reported once"; else ko "udp: duplicate report"; fi
+if [ "$RC" -ne 0 ]; then ok "udp: an unexpected listener makes the exit status 1"; else ko "udp: exit status"; fi
+R32=$WORK/r32; mkroot "$R32"; mkudp "$R32" ""; udp_at "$R32" 1900
+: > "$R32/mnt/AKAM_MAINTENANCE"
+run t32 "$R32" "$WORK/s20"
+has "udp: maintenance flag: WARN instead of FAIL" '^WARN +UDP 1900 bound' "$WORK/t32.out"
+hasnt "udp: maintenance flag: no FAIL" '^FAIL +UDP' "$WORK/t32.out"
+R33=$WORK/r33; mkroot "$R33"
+run t33 "$R33" "$WORK/s20"
+has "udp: unreadable /proc/net/udp is said, not failed" '^INFO +/proc/net/udp not readable' "$WORK/t33.out"
+hasnt "udp: unreadable: no FAIL about UDP" '^FAIL +UDP' "$WORK/t33.out"
+udp6_at() { printf '  1: 00000000000000000000000000000000:%04X 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 5 2 0\n' "$2" >> "$1/proc/net/udp6"; }
+R34=$WORK/r34; mkroot "$R34"; mkudp "$R34" ""; : > "$R34/proc/net/udp6"; udp6_at "$R34" 5683
+run t34 "$R34" "$WORK/s20"
+has "udp6: an IPv6 listener is audited too" '^FAIL +UDP 5683 bound' "$WORK/t34.out"
+
+# process allow-list: the healthy fake camera is clean; vendor daemons are WARN "review"; strangers are WARN
+has "allow-list: healthy camera passes" '^PASS +all [0-9]+ processes are on the allow-list' "$WORK/t1.out"
+R35=$WORK/r35; mkroot "$R35"
+mkproc "$R35" 140 "msgserver" 900; mkproc "$R35" 141 "/usr/bin/cmdserver" 900; mkproc "$R35" 142 "mdnsd -f" 100
+mkproc "$R35" 143 "syslogd -s 200 -b 3" 100; mkproc "$R35" 144 "klogd" 100; mkproc "$R35" 145 "/usr/bin/watchdog" 100
+mkproc "$R35" 146 "sh /usr/bin/ak_rtsp_wrapper.sh" 100; mkproc "$R35" 147 "sh /usr/sbin/akam_net.sh start" 100
+mkproc "$R35" 148 "sh /etc/init.d/drop_caches.sh" 100; mkproc "$R35" 149 "sleep 60" 100; mkproc "$R35" 150 "-sh" 100
+mkproc "$R35" 151 "init" 100; mkproc "$R35" 152 "ntpd -n -q -p pool.ntp.org" 100
+mkdir -p "$R35/proc/160"; : > "$R35/proc/160/cmdline"     # a kernel thread: no cmdline, skipped
+run t35 "$R35" "$WORK/s20"
+has "allow-list: msgserver is WARN vendor daemon, review" '^WARN +vendor daemon, review: msgserver \(pid 140\)' "$WORK/t35.out"
+has "allow-list: cmdserver (full path) is WARN vendor daemon, review" '^WARN +vendor daemon, review: cmdserver \(pid 141\)' "$WORK/t35.out"
+has "allow-list: an unknown daemon is WARN unexpected" '^WARN +unexpected process: mdnsd \(pid 142\)' "$WORK/t35.out"
+hasnt "allow-list: syslogd, klogd, watchdog, wrapper, akam_*, drop_caches, sleep, sh, init, ntpd are fine" 'unexpected process: (syslogd|klogd|watchdog|ak_rtsp_wrapper|akam_net|drop_caches|sleep|sh|init|ntpd)' "$WORK/t35.out"
+hasnt "allow-list: msgserver/cmdserver are not FAIL" '^FAIL +.*(msgserver|cmdserver)' "$WORK/t35.out"
+has "allow-list: summary counts what needs review" 'processes, 3 to review' "$WORK/t35.out"
+
+# 31b. wakeups per second from the threads' voluntary context switches (G10)
+R36=$WORK/r36; mkroot "$R36"
+for tid in 201 202 203; do
+    mkdir -p "$R36/proc/101/task/$tid"
+    printf 'Name:\tak_rtsp\nvoluntary_ctxt_switches:\t100\nnonvoluntary_ctxt_switches:\t9\n' > "$R36/proc/101/task/$tid/status"
+done
+S36=$WORK/s36
+stub "$S36" sleep 'for f in '"$R36"'/proc/101/task/*/status; do sed "s/^voluntary_ctxt_switches:.*/voluntary_ctxt_switches:\t160/" "$f" > "$f.n"; cat "$f.n" > "$f"; rm -f "$f.n"; done'
+EXTRA_ENV=(HWCHECK_CPU_WINDOW=2)
+run t36 "$R36" "$S36"
+EXTRA_ENV=(HWCHECK_X=1)
+has "wakeups: 3 threads x 60 switches in 2 s = 90/s" 'ak_rtsp pid 101 wakeups 90/s over 2s' "$WORK/t36.out"
+run t37 "$R1" "$S1"
+hasnt "wakeups: no per-thread data, nothing invented" 'wakeups' "$WORK/t37.out"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

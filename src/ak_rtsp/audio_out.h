@@ -98,6 +98,9 @@ typedef struct audio_out {
     volatile int test_req;      /* beep requested */
     volatile int talk_enable;   /* 0/1: soft switch of the RTSP backchannel (audio.talk_enable) */
     volatile int talk_duplex;   /* enum ao_duplex (audio.talk_duplex) */
+    volatile int mic_enable;    /* 0/1: audio.mic_enable, read once at start by audio.c (G07) */
+    volatile int persist;       /* 1 (default): a changed setting is saved; the 8091 server clears it for a remote
+                                 * peer (DEBUG), like the picture keys: RAM only */
     volatile int feeder;        /* a talker holds the push side (one at a time) */
 
     /* playback thread state */
@@ -212,6 +215,10 @@ int  audio_out_talk_available(void);
 int  audio_out_talk_half_duplex(void);
 int  audio_out_feeder_claim(void);
 void audio_out_feeder_release(void);
+/* audio.mic_enable as saved ("mic_enable=" in the audio_out file, default 1); read by audio_start(). */
+int  audio_out_mic_enable(void);
+/* Saving on or off for the next 8091 SETs (loopback = 1, remote = 0), set by control.c under its SET lock. */
+void audio_out_set_persist(int persist);
 int  audio_out_ctl_get(const char *key, char *out, size_t cap);
 int  audio_out_ctl_set(const char *key, const char *val, char *msg, size_t cap);
 void audio_out_ctl_list(void (*emit)(void *arg, const char *line), void *arg);

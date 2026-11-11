@@ -342,6 +342,13 @@ int main(int argc, char **argv)
         perror("listen"); close(server_fd); goto err;
     }
 
+    /* Non-blocking: a connection reset between poll() and accept() (here or in handle_client's G06 poll)
+     * must return EAGAIN, not park the thread (and the video session) until the next connection. */
+    {
+        int fl = fcntl(server_fd, F_GETFL, 0);
+        if (fl >= 0) fcntl(server_fd, F_SETFL, fl | O_NONBLOCK);
+    }
+    rtsp_set_listen_fd(server_fd);
     printf("[ak_rtsp] Listening on port %d...\n", RTSP_SERVER_PORT);
     rtsp_auth_tick(true);
     ledsys_boot_done();
@@ -395,7 +402,10 @@ int main(int argc, char **argv)
         struct sockaddr_storage client_addr;
         socklen_t addr_len = sizeof(client_addr);
         int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len);
-        if (client_fd < 0) { perror("accept"); continue; }
+        if (client_fd < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED) perror("accept");
+            continue;
+        }
         handle_client(client_fd, &client_addr, addr_len);
     }
 

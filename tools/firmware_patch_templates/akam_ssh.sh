@@ -56,8 +56,21 @@ LOG=$TMP_DIR/akam_ssh.log
 PIDFILE=$TMP_DIR/dropbear.pid
 LOCKDIR=$TMP_DIR/akam_ssh.lock
 
+# The log is RAM (/tmp). Dropbear's own stderr (-E, one line per connection and failed login) goes to the same file,
+# so a LAN host hammering port 22 would grow it without bound (G09). Trimmed IN PLACE (the file keeps its inode:
+# Dropbear holds it open with O_APPEND and goes on writing after a trim) to the last 50 lines when it passes 100
+# lines or 64 KiB. akam_lockdown.sh trims it again every minute, between two of our own log lines.
+LOG_MAX_LINES=100
+LOG_MAX_BYTES=65536
+LOG_KEEP_LINES=50
+
 log() {
     echo "akam_ssh: $*" >>"$LOG" 2>/dev/null
+    if [ "$(wc -l <"$LOG" 2>/dev/null)" -gt "$LOG_MAX_LINES" ] 2>/dev/null ||
+        [ "$(wc -c <"$LOG" 2>/dev/null)" -gt "$LOG_MAX_BYTES" ] 2>/dev/null; then
+        tail -n "$LOG_KEEP_LINES" "$LOG" >"$LOG.tmp" 2>/dev/null && cat "$LOG.tmp" >"$LOG" 2>/dev/null
+        rm -f "$LOG.tmp"
+    fi
 }
 
 is_running() {

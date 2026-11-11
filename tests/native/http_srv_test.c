@@ -41,6 +41,21 @@ static int count_threads(void)
     return n;
 }
 
+static long long now_ms(void);
+
+/* fd and thread counts back to the baseline. A closed fd or a joined thread can take a moment to leave /proc
+ * (and the server reaps reset connections on its next poll round), more so on a loaded host: wait up to 3 s.
+ * A real leak never settles and still fails. */
+static int settled(int base_fds, int base_thr)
+{
+    long long end = now_ms() + 3000;
+    for (;;) {
+        if (count_fds() == base_fds && count_threads() == base_thr) return 1;
+        if (now_ms() >= end) return 0;
+        usleep(10000);
+    }
+}
+
 static long long now_ms(void)
 {
     struct timespec ts;
@@ -495,10 +510,16 @@ static void test_slowloris_default(int port)
     long long t0 = now_ms();
     sendstr(fd, "GET /addr HTTP/1.1\r\nX-A: ");
     resp_t r;
-    int other = dial(port);
-    CHECK(simple(other, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
-    free(r.body);
-    close(other);
+    /* connections reset by the previous test may still hold slots on a loaded host (the server answers 503
+     * until it reaps them): retry for up to 3 s; the point is that a trickling client does not block others */
+    int other_ok = 0;
+    for (long long end = now_ms() + 3000; !other_ok && now_ms() < end; usleep(20000)) {
+        int other = dial(port);
+        other_ok = simple(other, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200;
+        free(r.body);
+        close(other);
+    }
+    CHECK(other_ok);
     int got = 0;
     while (now_ms() - t0 < 9000) {
         struct pollfd p = { fd, POLLIN, 0 };
@@ -636,7 +657,7 @@ int main(void)
     CHECK(http_srv_route("relative", HTTP_M_GET, h_addr, NULL) == -1);
 
     /* dormant: no thread, no fd, nothing listening */
-    CHECK(count_fds() == base_fds && count_threads() == base_thr);
+    CHECK(settled(base_fds, base_thr));
     CHECK(http_srv_port() == 0);
     http_srv_stop();                                       /* stop when stopped: a no-op */
 
@@ -656,7 +677,7 @@ int main(void)
     http_srv_stop();
     CHECK(http_srv_port() == 0);
     CHECK(dial(port) < 0);
-    CHECK(count_fds() == base_fds && count_threads() == base_thr);
+    CHECK(settled(base_fds, base_thr));
 
     /* start again with short timeouts */
     http_srv_set_timeouts(700, 1500);
@@ -673,7 +694,7 @@ int main(void)
         http_srv_stop();                                    /* the client is still connected */
         CHECK(expect_closed(fd, 2000));
         close(fd);
-        CHECK(count_fds() == base_fds && count_threads() == base_thr);
+        CHECK(settled(base_fds, base_thr));
         CHECK(http_srv_start(0) == 0);
         port = http_srv_port();
     }
@@ -689,10 +710,10 @@ int main(void)
     CHECK(http_srv_start(ntohs(a.sin_port)) == -1);
     CHECK(http_srv_port() == 0);
     close(blocker);
-    CHECK(count_fds() == base_fds && count_threads() == base_thr);
+    CHECK(settled(base_fds, base_thr));
     CHECK(http_srv_start(0) == 0);
     http_srv_stop();
-    CHECK(count_fds() == base_fds && count_threads() == base_thr);
+    CHECK(settled(base_fds, base_thr));
 
     if (g_failed) { printf("http_srv_test: %d FAILED\n", g_failed); return 1; }
     printf("http_srv_test: all passed\n");
