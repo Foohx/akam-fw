@@ -129,7 +129,8 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | ask for a user and password on the stream (off by default) | `./akam rtsp-auth set` (also `status`, `disable`) |
 | turn the front LED off or make it a status light, or keep the infrared LEDs dark at night | `./akam led` shows both; `./akam led status on\|off\|auto`, `./akam led ir auto\|off` |
 | talk through the camera speaker from this computer, or play a sound file on it | `./akam talk` (microphone, Ctrl-C stops), `./akam talk test`, `./akam say FILE`; needs the video password ([two-way audio](docs/two_way_audio.md)) |
-| check or change the speaker volume, play a beep, switch the speaker or talk on or off | `./akam audio` shows the settings; `./akam audio volume 0-100`, `beep`, `on`, `off`, `talk on\|off` (volume and switches are saved on the camera) |
+| check or change the speaker volume, play a beep, switch the speaker, talk or the microphone on or off | `./akam audio` shows the settings; `./akam audio volume 0-100`, `beep`, `on`, `off`, `talk on\|off`, `mic on\|off` (saved on the camera; `mic off` removes the audio track from the stream and needs a reboot) |
+| give the camera the right time (it has no clock of its own); off by default, no traffic unless you ask | `./akam ntp set pool.ntp.org` (1 to 3 servers; also `status`, `off`) |
 | change brightness, contrast, saturation, sharpness, white balance or day/night mode | `./akam picture` shows them; `./akam picture brightness N` (also `contrast`, `saturation`, `sharpness`, N from -50 to 50), `wb conf\|manual`, `night auto\|day\|night`, `reset` (all of them are saved on the camera) |
 | make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager); off by default | `./akam onvif enable [PORT]` (asks first; needs the video password), `./akam onvif status`, `./akam onvif disable` ([ONVIF](#onvif-nvrs-and-onvif-apps)) |
 | go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](#important-disclaimer-and-risks)) |
@@ -220,7 +221,12 @@ password. Please report what you see on your camera.
 - **Never expose ports 554, 8091 or 22 to the Internet:** no port forwarding, UPnP or DMZ. Use a VPN into
   your LAN ([network hardening](docs/akam_v1_install.md#5-network-hardening)).
 - The stream is open unless you set a password, and anyone on your network can occupy its single RTSP client
-  slot: keep untrusted devices (guest Wi-Fi, IoT) off the camera's network.
+  slot (a second client gets `503 Service Unavailable` at once; several viewers: restream with go2rtc, see
+  [troubleshooting](docs/troubleshooting.md#only-one-viewer-works-at-a-time)): keep untrusted devices (guest
+  Wi-Fi, IoT) off the camera's network.
+- Port 8091 is read-only for the network. Its log stream (`LOG` lines: client addresses, auth failures) is sent
+  only to the camera itself or while `akam_debug.sh` debug mode is on, and the Wi-Fi name and MAC address read
+  as `hidden` for other machines (the IP address stays readable).
 - A card with a file named `AKAM_MAINTENANCE` is root access to the camera
   ([details](docs/akam_v1_ssh_and_lockdown.md#7-maintenance-flag)). Never publish your backup, images or keys.
 

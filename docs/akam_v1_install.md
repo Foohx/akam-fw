@@ -45,7 +45,7 @@ procedures behind it are in the [documentation index](README.md#manual-procedure
 
 Inside the APP image: `anyka_ipc` (Tuya) removed; `ak_rtsp` started through `ak_rtsp_wrapper.sh` from a
 single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` links; `akam_ssh.sh`,
-`akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh` and `akam_onvif.sh`; `sbin/service.sh` and `sbin/ethernet.sh` patched; Dropbear license and a `MANIFEST.txt`.
+`akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh`, `akam_net.sh` and `akam_ntp.sh`; `sbin/service.sh` and `sbin/ethernet.sh` patched; Dropbear license and a `MANIFEST.txt`.
 
 ## 3. Services after Akam
 
@@ -84,6 +84,11 @@ parameters; its grammar is unchanged from upstream. It has no authentication and
 (`src/ak_rtsp/control.c`), binds to all interfaces, but it is **read-only for the network**:
 
 - `LIST`, `GET` and the state and metrics work for every client (up to 4 at once; a fifth gets `ERR busy`).
+- **Privacy of the read side:** the `LOG` lines (client addresses, authentication failures, request paths) are
+  pushed only to the camera itself (loopback) or to everyone while debug mode is on: another machine that just
+  connects receives none. `net.ssid` and `net.mac` read as `hidden` for other machines unless debug mode is on;
+  `net.ip` and the other metrics stay readable. `sys.time_set` (1 when the camera clock is 2024 or later) is a
+  metric like the others.
 - `SET` (and `SAVE`, `RESET`) from another machine is refused with `ERR read-only mode, see akam_debug.sh`.
 - `SET` from the camera itself (127.0.0.1: SSH helpers such as `./akam led`, `./akam audio`, `./akam picture`) always works.
 - **Debug mode** lets the network write too, for a while: `./akam debug on [MINUTES]` (or `akam_debug.sh on`
@@ -127,7 +132,7 @@ down; the "someone is watching" test is an RTSP client in the PLAY state.
   554 (and your admin PC to reach 22 and 8091), nothing else into the VLAN. 8091 only reads from the network
   unless you switched debug mode on.
 - **Block outbound traffic** from the camera at the router or firewall (it needs only DHCP, and NTP
-  if you configure it): the camera has no RTC, so the clock is meaningless without NTP, and it should
+  if you configure it with `./akam ntp set SERVER`: UDP 123 to that server only): the camera has no RTC, so the clock is meaningless without NTP, and it should
   not talk to any cloud.
 - Treat the microSD card as physical access: a card with `AKAM_MAINTENANCE` and hook scripts can run
   code as root ([maintenance flag](akam_v1_ssh_and_lockdown.md#7-maintenance-flag)).
