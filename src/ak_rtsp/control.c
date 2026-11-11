@@ -23,6 +23,7 @@
 #include "talk.h"
 #include "leds.h"
 #include "control.h"
+#include "video_ctl.h"
 #include "onvif_cfg.h"
 #include "ctl_gate.h"
 #include "ctl_sys.h"
@@ -317,6 +318,7 @@ static void do_list(cli_t *c)
     audio_out_ctl_list(audio_list_emit, c);
     imgq_ctl_list(audio_list_emit, c);
     talk_ctl_list(audio_list_emit, c);
+    video_ctl_list(audio_list_emit, c);
     metric_buf_t *m = malloc(sizeof(*m));   /* 2 KB: not on the 64 KB client stack */
     if (m) {
         m->len = 0;
@@ -376,6 +378,7 @@ static void do_get(cli_t *c, const char *param)
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(c, "%s", line);
         else if (imgq_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
         else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
+        else if (video_ctl_get(param, line, sizeof(line)) == 0)     reply(c, "%s", line);
         else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, val);
         else                                                   reply(c, "ERR unknown param %s", param);
     }
@@ -478,6 +481,7 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) setmsg(resp, cap, "%s", msg);
         else if (imgq_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
         else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
+        else if (video_ctl_set(param, value, msg, sizeof(msg)) >= 0)     setmsg(resp, cap, "%s", msg);
         else                                                        setmsg(resp, cap, "ERR unknown param %s", param);
     }
 }
@@ -500,6 +504,7 @@ int control_apply_setting(const char *key, const char *value, int persist, char 
     g_persist_isp = persist;
     night_set_persist(persist);
     imgq_set_persist(persist);
+    video_ctl_set_persist(persist);
     do_set_locked(msg, cap, key, value);
     pthread_mutex_unlock(&g_set_lock);
     return strncmp(msg, "OK", 2) == 0 ? 0 : -1;

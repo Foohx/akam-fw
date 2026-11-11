@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "ak_rtsp.h"
+#include "video_cfg.h"
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ircut.h"
@@ -277,6 +278,9 @@ int main(int argc, char **argv)
      * fps cache zeroed when the first frame interrupt landed, causing a
      * kernel "Division by zero" — see ae_init_isp_params()'s comment in
      * ae.c. */
+    /* Saved video settings (bitrate, fps, GOP): read once, before anything uses them (the sensor frame rate
+     * in ae_init_isp_params, then the encoder). Absent file = the compiled-in defaults. */
+    video_cfg_load();
     if (ae_init_isp_params()     < 0) goto err;
 
     ircut_init();

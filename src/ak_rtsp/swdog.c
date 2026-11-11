@@ -5,6 +5,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "video_cfg.h"
+
+/* The video stall limit is wall-clock time, not a frame count, so a lower configured frame rate does not move it.
+ * Guard the margin anyway: even at the lowest allowed rate (VIDEO_FPS_LOW) the limit must stay at least 100 frame
+ * periods, far above the longest legitimate gap (a day/night ISP reload, well under 2 s). */
+_Static_assert(SWDOG_VIDEO_STALL_MS >= 100u * (1000u / VIDEO_FPS_LOW), "swdog video stall limit too tight for the lowest fps");
+
 static int32_t sw_diff(uint32_t a, uint32_t b) { return (int32_t)(a - b); } /* a - b, wrap-safe */
 
 void swdog_state_init(swdog_state_t *s) { memset((void *)s, 0, sizeof(*s)); }

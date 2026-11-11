@@ -89,6 +89,8 @@ SRCS    = main.c \
           control.c \
           swdog.c \
           isp_tune.c \
+          video_cfg.c \
+          video_ctl.c \
           ctl_gate.c \
           ctl_sys.c \
           version.c \

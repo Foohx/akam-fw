@@ -11,6 +11,7 @@
 #include "cred.h"
 #include "onvif.h"
 #include "onvif_media.h"
+#include "video_cfg.h"
 
 #define ENV_OPEN ONVIF_ENV_OPEN
 #define ENV_CLOSE ONVIF_ENV_CLOSE
@@ -19,9 +20,11 @@
 #define STR(x) STR_(x)
 #define W STR(ENC_WIDTH)
 #define H STR(ENC_HEIGHT)
-#define FPS STR(ENC_FPS)
-#define GOP STR(ENC_GOP)
-#define KBPS STR(ENC_KBPS)
+/* Frame rate, GOP and bitrate are the saved settings (video_cfg.h, the values the encoder was created with):
+ * placeholders in the templates, filled by venc_vars(). */
+#define FPS "{{fps}}"
+#define GOP "{{gop}}"
+#define KBPS "{{kbps}}"
 
 #define TOK_PROFILE "main"
 #define TOK_VSRC "vsrc"
@@ -51,6 +54,18 @@
 #define ADEC_BODY "<tt:Name>" TOK_ADEC "</tt:Name><tt:UseCount>1</tt:UseCount>"
 
 /* ---- runtime facts ---- */
+
+/* Fill the {{fps}}, {{gop}} and {{kbps}} placeholders from the active video settings. */
+static void venc_vars(soap_tpl_t *t)
+{
+    char v[12];
+    snprintf(v, sizeof(v), "%d", video_fps());
+    soap_tpl_set(t, "fps", v);
+    snprintf(v, sizeof(v), "%d", video_gop_frames());
+    soap_tpl_set(t, "gop", v);
+    snprintf(v, sizeof(v), "%d", video_kbps());
+    soap_tpl_set(t, "kbps", v);
+}
 
 /* The G.711 backchannel can be served right now: same rule as rtsp.c (password ON, audio out and talk enabled). */
 static int backchannel_on(void)
@@ -149,6 +164,7 @@ static void op_get_profiles(onvif_call_t *c)
         "</trt:Profiles></trt:GetProfilesResponse>" ENV_CLOSE);
     profile_ext(c->out->scratch, ONVIF_SCRATCH);
     soap_tpl_set_raw(t, "ext", c->out->scratch);
+    venc_vars(t);
     onvif_send(c);
 }
 
@@ -160,6 +176,7 @@ static void op_get_profile(onvif_call_t *c)
         "</trt:Profile></trt:GetProfileResponse>" ENV_CLOSE);
     profile_ext(c->out->scratch, ONVIF_SCRATCH);
     soap_tpl_set_raw(t, "ext", c->out->scratch);
+    venc_vars(t);
     onvif_send(c);
 }
 
@@ -167,10 +184,11 @@ static void op_get_profile(onvif_call_t *c)
 
 static void op_get_video_sources(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
         "<trt:GetVideoSourcesResponse><trt:VideoSources token=\"" TOK_VSRC "\"><tt:Framerate>" FPS "</tt:Framerate>"
         "<tt:Resolution><tt:Width>" W "</tt:Width><tt:Height>" H "</tt:Height></tt:Resolution></trt:VideoSources>"
         "</trt:GetVideoSourcesResponse>" ENV_CLOSE);
+    venc_vars(t);
     onvif_send(c);
 }
 
@@ -206,24 +224,26 @@ static void op_get_vsrc_options(onvif_call_t *c)
 
 static void op_get_venc_configs(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
         "<trt:GetVideoEncoderConfigurationsResponse><trt:Configurations token=\"" TOK_VENCCFG "\">" VENCCFG_BODY
         "</trt:Configurations></trt:GetVideoEncoderConfigurationsResponse>" ENV_CLOSE);
+    venc_vars(t);
     onvif_send(c);
 }
 
 static void op_get_venc_config(onvif_call_t *c)
 {
     if (!need_config(c, TOK_VENCCFG)) return;
-    onvif_reply(c, ENV_OPEN
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
         "<trt:GetVideoEncoderConfigurationResponse><trt:Configuration token=\"" TOK_VENCCFG "\">" VENCCFG_BODY
         "</trt:Configuration></trt:GetVideoEncoderConfigurationResponse>" ENV_CLOSE);
+    venc_vars(t);
     onvif_send(c);
 }
 
 static void op_get_venc_options(onvif_call_t *c)
 {
-    onvif_reply(c, ENV_OPEN
+    soap_tpl_t *t = onvif_reply(c, ENV_OPEN
         "<trt:GetVideoEncoderConfigurationOptionsResponse><trt:Options>"
         "<tt:QualityRange><tt:Min>5</tt:Min><tt:Max>5</tt:Max></tt:QualityRange>"
         "<tt:H264><tt:ResolutionsAvailable><tt:Width>" W "</tt:Width><tt:Height>" H "</tt:Height></tt:ResolutionsAvailable>"
@@ -232,6 +252,7 @@ static void op_get_venc_options(onvif_call_t *c)
         "<tt:EncodingIntervalRange><tt:Min>1</tt:Min><tt:Max>1</tt:Max></tt:EncodingIntervalRange>"
         "<tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported></tt:H264>"
         "</trt:Options></trt:GetVideoEncoderConfigurationOptionsResponse>" ENV_CLOSE);
+    venc_vars(t);
     onvif_send(c);
 }
 
