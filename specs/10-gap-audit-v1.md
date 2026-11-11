@@ -45,7 +45,14 @@ wiring that is still missing (section 1).
 
 ---
 
-## 1. ONVIF wiring still missing (do not duplicate the in-progress branches)
+## 1. ONVIF wiring (status: DONE on `feature/onvif-wiring`, hardware validation pending)
+
+Implemented: `onvif_cfg.[ch]` (flag file `/etc/config/akam/onvif`, `enabled=`/`port=`, reload via loopback `ONVIF reload`
+on 8091 instead of a stat poll, `GET onvif.state`), started in `main.c` after the RTSP listener, stopped on `err:`;
+a bind failure is reported as `error:port_in_use` (no retry loop: `./akam onvif enable` or a reload retries), `wsd`
+retries its multicast join by itself; the scopes use `onvif_hostname_get` (same name as `akam_hostname.sh show`) at
+each reload. The items below are the original gap description; the hwcheck/test-plan port lists and the HW checks
+stay open.
 
 `dev` has cred, http_srv, soap and wsd merged, but nothing starts them: `grep -n "http_srv_\|wsd_\|onvif" src/ak_rtsp/main.c`
 returns nothing. Remaining glue, to be done once device/media/imaging/wizard land:

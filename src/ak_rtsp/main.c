@@ -30,6 +30,7 @@
 #include "leds.h"
 #include "rtsp.h"
 #include "cred.h"
+#include "onvif_cfg.h"
 #include "swdog.h"
 #include "version.h"
 
@@ -348,6 +349,15 @@ int main(int argc, char **argv)
     swdog_beat(SWDOG_BEAT_MAIN);
     swdog_start(audio_out_emergency_off); /* G01: stall watchdog, armed only now that the stream is up */
 
+    /* ONVIF is opt-in (flag file): started only now, after the video and RTSP are up, so it never delays them. Off:
+     * no thread, no socket. The HTTP server binds INADDR_ANY (works before the network is up) and WS-Discovery
+     * retries its multicast join every 5 s until Wi-Fi is there. */
+    {
+        char ostate[ONVIF_STATE_MAX];
+        onvif_svc_reload(ostate, sizeof(ostate));
+        printf("[ak_rtsp] onvif.state=%s\n", ostate);
+    }
+
     for (;;) {
         swdog_beat(SWDOG_BEAT_MAIN);
         swdog_mode(SWDOG_FETCH);
@@ -393,6 +403,7 @@ int main(int argc, char **argv)
     close(server_fd);
 
 err:
+    onvif_svc_stop();
     ledsys_stop();
     night_stop();
 #ifdef AEC_CUSTOM

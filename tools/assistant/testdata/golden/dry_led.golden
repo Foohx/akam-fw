@@ -1,0 +1,9 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Front LED and IR LEDs
+  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 8091
+  WOULD send: SET led.status on
+  WOULD send: SET night.ir_led off
+--- stderr ---

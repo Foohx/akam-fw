@@ -13,7 +13,8 @@
 #   - wpa_supplicant for wlan0 and udhcpc for wlan0 must run, and wlan0 must have an IPv4 address;
 #   - healthy -> resets its failure state; otherwise repairs, escalating:
 #       a daemon missing            -> start it (wpa_supplicant first, then udhcpc);
-#       both run but no IPv4 yet    -> restart udhcpc; from the 3rd attempt restart wpa_supplicant too.
+#       both run but no IPv4 yet    -> 1st attempt only waits (wpa_supplicant may be roaming); then restart
+#                                      udhcpc; from the 4th attempt (about 7 minutes) restart wpa_supplicant too.
 #     Between two attempts it waits 1, 2, 4, 8 then 10 checks (30 s ... 5 min), so a router that is off
 #     for an hour costs one cheap check every 5 minutes, not a restart storm.
 # BusyBox applets only (no pgrep, no tr, no mktemp). Log: /tmp/akam_net.log (capped), and syslog when
@@ -100,7 +101,11 @@ repair() { # $1 = attempt number
         dhcp_running || start_dhcp
     elif [ "$_d" = 0 ]; then
         start_dhcp
-    elif [ "$1" -ge 3 ]; then
+    elif [ "$1" -le 1 ]; then
+        # Both daemons run: wpa_supplicant may be roaming or re-associating and udhcpc retries by itself.
+        # The first unhealthy check only observes; nothing is touched before the second.
+        log "no IPv4 on $IFACE yet, both daemons run: waiting"
+    elif [ "$1" -ge 4 ]; then
         log "no IPv4 on $IFACE after $1 attempts: restarting wpa_supplicant and udhcpc"
         kill_daemon '[u]dhcpc'
         kill_daemon '[w]pa_supplicant'

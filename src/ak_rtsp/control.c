@@ -23,6 +23,7 @@
 #include "talk.h"
 #include "leds.h"
 #include "control.h"
+#include "onvif_cfg.h"
 #include "ctl_gate.h"
 #include "ctl_sys.h"
 #include "swdog.h"
@@ -337,6 +338,11 @@ static void do_list(cli_t *c)
     }
     reply(c, "ctl.clients=%d", clients_connected());
     reply(c, "ctl.debug=%d",   debug_active());
+    {
+        char os[ONVIF_STATE_MAX];
+        onvif_svc_state(os, sizeof(os));
+        reply(c, "onvif.state=%s", os);
+    }
     reply(c, ".");
 }
 
@@ -365,6 +371,11 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
     else if (!strcmp(param, "ctl.clients"))           reply(c, "ctl.clients=%d", clients_connected());
     else if (!strcmp(param, "log.dropped"))           reply(c, "log.dropped=%u", (unsigned)g_log_dropped);
+    else if (!strcmp(param, "onvif.state")) {
+        char os[ONVIF_STATE_MAX];
+        onvif_svc_state(os, sizeof(os));
+        reply(c, "onvif.state=%s", os);
+    }
     else if (!strcmp(param, "ctl.debug_remaining")) {
         pthread_mutex_lock(&g_dbg_lock);
         int r = ctl_debug_remaining_s(&g_dbg, mono_ms());
@@ -620,6 +631,16 @@ static void handle_control_client(cli_t *c)
         } else if (!strcasecmp(cmd, "QUIT")) {
             reply(c, "OK bye");
             return;
+        } else if (!strcasecmp(cmd, "ONVIF")) {
+            /* loopback only, like DEBUG: starts/stops the HTTP server and WS-Discovery from the flag file */
+            char *a1 = strtok(NULL, " ");
+            if (!c->loopback) reply(c, "ERR ONVIF reload is only allowed from the camera");
+            else if (!a1 || strcasecmp(a1, "reload")) reply(c, "ERR usage: ONVIF reload");
+            else {
+                char os[ONVIF_STATE_MAX];
+                (void)onvif_svc_reload(os, sizeof(os));
+                reply(c, "OK onvif.state=%s", os);
+            }
         } else if (!strcasecmp(cmd, "DEBUG")) {
             char *a1 = strtok(NULL, " ");
             char *a2 = strtok(NULL, " ");
@@ -684,7 +705,11 @@ static void *control_accept_loop(void *arg)
         socklen_t alen = sizeof(client_addr);
         swdog_beat(SWDOG_BEAT_CONTROL); /* G01 heartbeat: wake at least every 5 s */
         struct pollfd apf = { .fd = server_fd, .events = POLLIN, .revents = 0 };
-        if (poll(&apf, 1, 5000) == 0) continue;
+        int pr = poll(&apf, 1, 5000);
+        /* Never fall through to a blocking accept() on EINTR (SIGUSR1 may land on this thread): the beat
+         * would go stale and the stall watchdog would restart a healthy camera. */
+        if (pr < 0 && errno != EINTR) usleep(100000);
+        if (pr <= 0) continue;
         int fd = accept(server_fd, (struct sockaddr *)&client_addr, &alen);
         if (fd < 0) {
             if (errno == EINTR) continue;

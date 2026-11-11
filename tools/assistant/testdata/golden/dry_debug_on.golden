@@ -1,0 +1,8 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Debug mode of the control port: on
+  WOULD ask: Let anyone on your network change the camera settings through port 8091? [y/N]
+  WOULD run over SSH on the camera: /usr/sbin/akam_debug.sh on 30
+--- stderr ---

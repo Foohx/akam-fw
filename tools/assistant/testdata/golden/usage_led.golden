@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: led: unknown word 'foo' (see ./akam help)

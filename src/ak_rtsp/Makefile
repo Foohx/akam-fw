@@ -1,6 +1,7 @@
 ZIG    ?= zig
 CC      = $(ZIG) cc -target arm-linux-musleabi -mcpu=arm926ej_s
 CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -g \
+          -ffunction-sections -fdata-sections \
           -I. \
           -I../smolrtsp/include \
           -I../smolrtsp/build/_deps/slice99-src \
@@ -8,7 +9,11 @@ CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -g \
           -I../smolrtsp/build/_deps/interface99-src \
           -I../smolrtsp/build/_deps/metalang99-src/include \
           -DSMOLRTSP_WITH_H264
-LDFLAGS = -pthread -static
+LDFLAGS = -pthread -static -Wl,--gc-sections
+
+# ONVIF is off the video path and opt-in: size over speed for its files only.
+ONVIF_OBJS = http_srv.o soap.o onvif.o onvif_cfg.o onvif_device.o onvif_media.o onvif_imaging.o wsd.o cred.o
+$(ONVIF_OBJS): CFLAGS += -Os
 
 TARGET     = ak_rtsp
 TARGET_DBG = isp_dump
@@ -67,6 +72,7 @@ SRCS    = main.c \
           http_srv.c \
           soap.c \
           onvif.c \
+          onvif_cfg.c \
           onvif_device.c \
           onvif_media.c \
           onvif_imaging.c \

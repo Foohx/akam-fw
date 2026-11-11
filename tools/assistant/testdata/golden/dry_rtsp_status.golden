@@ -1,0 +1,7 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+RTSP password: status
+  WOULD run (read-only): ssh root@<camera-ip> /usr/sbin/akam_rtsp_auth.sh status
+--- stderr ---

@@ -53,7 +53,8 @@ static struct {
     pthread_t       tid;
     int             running;
     volatile int    stop;
-    int             listen_fd, wake_r, wake_w, port;
+    int             listen_fd, wake_r, wake_w;
+    volatile int    port; /* plain int: read lock-free by http_srv_port(), written under the lock (a 4-byte aligned word access is atomic on ARMv5) */
     conn_t         *conns;
     route_t         routes[HTTP_MAX_ROUTES];
     int             nroutes;
@@ -578,7 +579,7 @@ static void teardown(void)
     if (g.wake_r >= 0) close(g.wake_r);
     if (g.wake_w >= 0) close(g.wake_w);
     g.listen_fd = g.wake_r = g.wake_w = -1;
-    __atomic_store_n(&g.port, 0, __ATOMIC_RELEASE);
+    g.port = 0;
 }
 
 int http_srv_start(int port)
@@ -617,7 +618,7 @@ int http_srv_start(int port)
         errno = e;
         goto out;
     }
-    __atomic_store_n(&g.port, ntohs(a.sin_port), __ATOMIC_RELEASE);
+    g.port = ntohs(a.sin_port);
     g.stop = 0;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -650,7 +651,7 @@ void http_srv_stop(void)
 int http_srv_port(void)
 {
     /* No lock: a handler (server thread) may call this while http_srv_stop holds the lock and joins that thread. */
-    return __atomic_load_n(&g.port, __ATOMIC_ACQUIRE);
+    return g.port;
 }
 
 void http_srv_set_timeouts(int req_ms, int idle_ms)

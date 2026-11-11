@@ -144,13 +144,17 @@ eq "wpa dead: wpa_supplicant restarted" "$(count '^wpa_supplicant')" 1
 eq "wpa dead: stale udhcpc killed" "$(count '^kill 102')" 1
 eq "wpa dead: udhcpc restarted" "$(count '^udhcpc')" 1
 
-# 6. both alive, no IPv4 (router gone): udhcpc restarts at checks 1, 3, then both from attempt 3 (check 6)
+# 6. both alive, no IPv4 (router gone): attempt 1 (check 1) only waits, udhcpc restarts at checks 3, 6, then both from attempt 4 (check 11)
 new_env noip
 : >"$E/fake/wpa_up"; : >"$E/fake/dhcp_up"
-run_net 6 FAKE_DHCP_NOIP=1 >/dev/null
-eq "no IPv4: 3 repair attempts in 6 checks (gaps 1 and 2 checks)" "$(lc 'repair attempt')" 3
-eq "no IPv4: udhcpc restarted on every attempt" "$(count '^udhcpc')" 3
-eq "no IPv4: wpa_supplicant restarted only from the 3rd attempt" "$(count '^wpa_supplicant')" 1
+run_net 2 FAKE_DHCP_NOIP=1 >/dev/null
+eq "no IPv4: the first attempt only waits (nothing restarted)" "$(( $(count '^udhcpc') + $(count '^wpa_supplicant') + $(count '^kill') ))" 0
+new_env noip2
+: >"$E/fake/wpa_up"; : >"$E/fake/dhcp_up"
+run_net 11 FAKE_DHCP_NOIP=1 >/dev/null
+eq "no IPv4: 4 repair attempts in 11 checks (gaps 1, 2 and 4 checks)" "$(lc 'repair attempt')" 4
+eq "no IPv4: udhcpc restarted on attempts 2 to 4" "$(count '^udhcpc')" 3
+eq "no IPv4: wpa_supplicant restarted only from the 4th attempt" "$(count '^wpa_supplicant')" 1
 
 # 7. backoff grows: wpa never comes up. Attempts at checks 1, 3, 6, 11, 20 (gaps 1, 2, 4, 8, then 10)
 new_env backoff

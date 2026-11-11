@@ -1,0 +1,8 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Set the camera's network name
+  Why: your router will list the camera under this name instead of a number. Risk: none (a small file on the camera).
+  WOULD run over SSH: test -x /usr/sbin/akam_hostname.sh, then /usr/sbin/akam_hostname.sh set salon (applies after the next power cycle).
+--- stderr ---

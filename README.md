@@ -83,6 +83,14 @@ irreversible (erasing a card, writing the camera's flash) shows a **red box** th
 will happen and asks one yes/no whose **default is No** (Enter, Esc and `q` mean No). Nothing has to be
 typed, and without a terminal these steps refuse to run.
 
+### Native binary (experimental)
+
+A single static binary version of the wizard is being written in Go ([tools/assistant](tools/assistant/README.md),
+[plan](specs/09-spec-assistant-binary.md)). The first phase does the daily commands on a camera that already runs
+Akam (`status`, `led`, `audio`, `picture`, `debug`, `onvif`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`)
+with no SSH, `nc` or `akam-talk` to install; it shares the progress files with `./akam`. Backup, image and flash
+stay in the bash wizard. Build it with `tools/assistant/build.sh` and try it with `AKAM_USE_BIN=1 ./akam ...`.
+
 ## What the wizard does
 
 | Step | What happens | Risk |
@@ -153,7 +161,9 @@ ONVIF is the standard that NVRs, ONVIF Device Manager, Synology Surveillance Sta
 find a camera on the network and pull its video. Akam implements the discovery (WS-Discovery), the device
 service and the media service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
 **This is part of the same release as the `onvif` command: an image built before it has no ONVIF at all
-(`./akam update` first), and `./akam onvif status` then says it does not know.**
+(`./akam update` first), and `./akam onvif status` then says it does not know.** The firmware side is now wired
+(`ak_rtsp` starts and stops the ONVIF server and the discovery by itself from the flag file, no reboot); it still
+has to be validated on a real camera and with real ONVIF apps.
 
 - **Off by default.** Nothing listens on the ONVIF ports until you ask: `./akam onvif enable` (it asks a
   yes/no, default No; `verify` also offers it at the end). `./akam onvif disable` closes them again.
@@ -167,6 +177,10 @@ service and the media service of Profile S, so the camera shows up in those apps
 - **In your app:** let it search, or add the camera by hand with its address (`<camera-ip>`, port 80) and the
   video user name and password. If it is not found, see [troubleshooting](docs/troubleshooting.md#an-onvif-app-does-not-find-the-camera).
 - The setting is a small file on the camera that survives reboots; an older image says to reboot the camera to apply it.
+  `./akam onvif status` shows what the camera really did (`onvif.state`: `off`, `on:<port>`, `no_password`, or
+  `error:port_in_use`). When ONVIF is off the camera runs no ONVIF thread and no socket; when it is on, two idle
+  threads that wake up at most every 30 s. A new camera name (`./akam hostname`) shows in discovery at the next
+  `./akam onvif enable` or reboot.
 
 ## Watching the stream
 
