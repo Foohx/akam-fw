@@ -1593,6 +1593,111 @@ cmd_picture() {
     picture_show
 }
 
+# video: bitrate cap, frame rate and key-frame interval are saved on the camera (/etc/config/akam/video, through
+# the 8091 keys video.bitrate_cfg / video.fps_cfg / video.gop_cfg) and applied when the video service (ak_rtsp)
+# starts: the encoder cannot be changed while it runs. Resolution and flip/mirror are not offered (specs/10 G11).
+VIDEO_KBPS_MIN=500
+VIDEO_KBPS_MAX=3000
+
+video_num() { # WORD MIN MAX: a whole number MIN..MAX written with digits only
+    case $1 in "" | *[!0-9]* | ???????*) return 1 ;; esac
+    [ "$((10#$1))" -ge "$2" ] && [ "$((10#$1))" -le "$3" ]
+}
+
+video_show() {
+    local out br fps gop pend mbr mfps
+    out=$(led_remote "GET video.bitrate_cfg" "GET video.fps_cfg" "GET video.gop_cfg" "GET video.cfg_pending" "GET video.bitrate" "GET video.fps_actual")
+    br=$(led_get video.bitrate_cfg "$out")
+    fps=$(led_get video.fps_cfg "$out")
+    gop=$(led_get video.gop_cfg "$out")
+    pend=$(led_get video.cfg_pending "$out")
+    mbr=$(led_get video.bitrate "$out")
+    mfps=$(led_get video.fps_actual "$out")
+    if [ -z "$br" ] || [ -z "$fps" ] || [ -z "$gop" ]; then
+        ui_fail "the camera did not answer the video settings." "it may run an older Akam image without them (./akam update), or its control port may be busy; try again."
+        return 1
+    fi
+    ui_say "  Bitrate cap: $br kbit/s ($VIDEO_KBPS_MIN to $VIDEO_KBPS_MAX; the default is 1536)."
+    ui_say "  Frame rate: $fps per second (10 or 15; the default is 15)."
+    ui_say "  Key frame every $gop second(s) (1 to 4; the default is 2)."
+    if [ "$pend" = 1 ]; then
+        ui_warn "these values are saved but not running yet: they apply at the next restart of the video service."
+    fi
+    [ -z "$mbr$mfps" ] || ui_say "  Measured now: ${mbr:-?} kbit/s, ${mfps:-?} (tenths of a frame per second)."
+    ui_say "  Resolution and flip/mirror cannot be changed in this version (docs/troubleshooting.md, video settings)."
+}
+
+video_restart() { # kill ak_rtsp: the wrapper (ak_rtsp_wrapper.sh) starts it again by itself; /usr/bin/watchdog is never touched
+    log_line "CMD ssh root@$CAM_IP killall ak_rtsp"
+    "${CAM_SSH[@]}" "killall ak_rtsp" >/dev/null 2>&1 || true
+}
+
+cmd_video() {
+    local keys=() vals=() show=0 k
+    while [ $# -gt 0 ]; do
+        case $1 in
+            show) show=1; shift ;;
+            bitrate)
+                video_num "${2:-}" "$VIDEO_KBPS_MIN" "$VIDEO_KBPS_MAX" || { echo "akam: video bitrate needs a whole number of kbit/s from $VIDEO_KBPS_MIN to $VIDEO_KBPS_MAX (see ./akam help)" >&2; return 2; }
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != video.bitrate_cfg ] || { echo "akam: video bitrate given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=(video.bitrate_cfg); vals+=("$((10#$2))"); shift 2
+                ;;
+            fps)
+                case ${2:-} in 10 | 15) ;; *) echo "akam: video fps needs 10 or 15 (see ./akam help)" >&2; return 2 ;; esac
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != video.fps_cfg ] || { echo "akam: video fps given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=(video.fps_cfg); vals+=("$2"); shift 2
+                ;;
+            gop)
+                video_num "${2:-}" 1 4 || { echo "akam: video gop needs a whole number of seconds from 1 to 4 (see ./akam help)" >&2; return 2; }
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != video.gop_cfg ] || { echo "akam: video gop given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=(video.gop_cfg); vals+=("$((10#$2))"); shift 2
+                ;;
+            flip | mirror | resolution)
+                echo "akam: video $1 is not available: the camera's flip registers and a second resolution are not supported yet (see ./akam help)" >&2
+                return 2
+                ;;
+            *) echo "akam: video: unknown word '$1' (see ./akam help)" >&2; return 2 ;;
+        esac
+    done
+    if [ "$show" = 1 ] && [ "${#keys[@]}" -gt 0 ]; then
+        echo "akam: video: show takes no other word (see ./akam help)" >&2
+        return 2
+    fi
+    step_banner_free "Video settings"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 $LED_PORT"
+        local i
+        for i in "${!keys[@]}"; do ui_say "  WOULD send: SET ${keys[$i]} ${vals[$i]}"; done
+        if [ "${#keys[@]}" -gt 0 ]; then
+            ui_say "  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh killall ak_rtsp (the wrapper starts it again)"
+        else
+            ui_say "  WOULD send (read-only): GET video.bitrate_cfg, video.fps_cfg, video.gop_cfg, video.cfg_pending, video.bitrate, video.fps_actual"
+        fi
+        return 0
+    fi
+    rtsp_connect || return 1
+    if [ "${#keys[@]}" -gt 0 ]; then
+        local i restart=0
+        for i in "${!keys[@]}"; do
+            ctl_set "${keys[$i]}" "${vals[$i]}" || return 1
+            # only the last answer counts: after "bitrate 1536 fps 15 gop 2" the earlier ones may still say restart
+            if [ "$CTL_NOTE" = restart ]; then restart=1; else restart=0; fi
+        done
+        ui_good "  Saved on the camera."
+        if [ "$restart" = 1 ]; then
+            ui_say "  It applies at the next restart of the video service."
+            if ui_ask_yn "Restart the video service now? The stream stops for a few seconds and starts again by itself."; then
+                video_restart
+                ui_good "  The video service was asked to restart; it is back in about 20 seconds (./akam video show)."
+                return 0
+            fi
+            ui_say "  Not restarted: the new values apply at the next restart of the video service or the next reboot."
+        fi
+    fi
+    video_show
+}
+
 # ------------------------------------------------------------------ debug
 # Port 8091 is read-only for the network: reads (LIST, GET, metrics) work, SET/SAVE/RESET are refused
 # unless the command comes from the camera itself (SSH helpers such as ./akam led) or the debug flag

@@ -117,6 +117,14 @@ video. A second client waits while another one is connected (the same single-cli
 go2rtc be the only client). The full list of causes, the counters to read (`audio.talk_*`) and the
 configuration examples are in [two-way audio](two_way_audio.md).
 
+## Video settings (`./akam video`): bitrate, frame rate, key frames
+
+- The values are saved in `/etc/config/akam/video` on the camera (mode 0600; removed again when every value is back to its default) and read **once, when the video service (`ak_rtsp`) starts**: the hardware encoder cannot be changed while it runs. `./akam video bitrate 900` therefore says "applies at the next restart of the video service" and asks whether to restart it now (default No). Yes only runs `killall ak_rtsp`: the camera's own wrapper starts it again within a few seconds; nothing else is touched (the hardware watchdog `/usr/bin/watchdog` never). If you answer No, the new values apply at the next reboot.
+- `./akam video` shows the saved values and warns "saved but not running yet" while they differ from what the running encoder uses.
+- Allowed values: bitrate 500 to 3000 kbit/s (it is a ceiling for the variable-bitrate encoder, not a fixed rate: a still scene stays well under it), fps 10 or 15 (the two frame rates for which the code already knows the sensor timing: 10 fps is also what the camera uses at night), key frame interval 1 to 4 seconds (shorter = quicker start of a viewer and faster recovery after a lost packet, bigger stream). A bad line in the file is ignored with a line in the log and that value stays at its default.
+- Resolution (always 1920x1080) and flip/mirror (ceiling mount) cannot be changed in this version; ONVIF clients are told the configured bitrate, frame rate and GOP length.
+- If the picture is wrong after a change (no video, a reboot loop): remove the file over SSH (`rm /etc/config/akam/video`) and restart `ak_rtsp`, or run `./akam video bitrate 1536 fps 15 gop 2`.
+
 ## VLC cannot open the stream, or hardware decoding fails
 
 - Missing plugins (seen on Arch): install `vlc-plugin-live555` (RTSP) and `vlc-plugin-ffmpeg`
