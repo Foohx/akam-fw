@@ -53,6 +53,11 @@ func (a *App) backupBase(now time.Time) (base, cloudNote string, foldCase bool, 
 		return filepath.Join(root, "akam-backup-"+a.Cams.Slug()+now.Format("20060102")), "", false, nil
 	}
 	f := osFacts()
+	if root := a.backupRootOverride(); root != "" { // the folder the user chose in the backup location screen
+		top := filepath.Join(root, backuploc.Folder)
+		cam := filepath.Join(top, backuploc.CameraDir(a.Cams.Name))
+		return filepath.Join(cam, backuploc.DateName(now)), "", runtime.GOOS == "windows" || runtime.GOOS == "darwin", []string{top, cam}
+	}
 	s := backuploc.Suggest(f, a.Cams.Name, now)
 	return s.Dir, s.Cloud, runtime.GOOS == "windows" || runtime.GOOS == "darwin", s.Parents
 }

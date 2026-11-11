@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
@@ -121,6 +122,9 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 	switch cmd {
 	case "help":
 		fmt.Fprint(st.Out, helpText)
+		return ExitOK
+	case "licenses", "licences":
+		fmt.Fprint(st.Out, assets.Notices())
 		return ExitOK
 	case "version":
 		fmt.Fprintf(st.Out, "akam %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
@@ -279,6 +283,12 @@ func (a *App) dispatch(cmd string) error {
 	case "status":
 		a.statusTable()
 		return nil
+	case "steps":
+		if a.UI.Dry() || !a.UI.Interactive() {
+			a.statusTable()
+			return nil
+		}
+		return a.cmdStepMenu()
 	case "cameras":
 		return a.cmdCameras()
 	case "rename-camera":
@@ -349,7 +359,12 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdWipeSD()
 	case "flash":
 		return a.cmdFlash()
-	case "build", "image":
+	case "image":
+		if a.Opt.Image != "" { // an image built elsewhere (T11.13, interim until the native builder)
+			return a.installImage()
+		}
+		return a.notYet(cmd)
+	case "build":
 		return a.notYet(cmd)
 	}
 	return usageErr(fmt.Sprintf("akam: unknown command '%s' (see %s help)", cmd, Prog))

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/rtsp"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
@@ -21,14 +22,7 @@ import (
 func (a *App) cmdDoctor() error {
 	a.stepBanner("doctor")
 	os_ := hostOS()
-	arch := runtime.GOARCH
-	switch arch {
-	case "amd64":
-		arch = "x86_64"
-	case "arm64":
-		arch = "aarch64"
-	}
-	a.UI.Say(fmt.Sprintf("  Host: %s %s", os_, arch))
+	a.UI.Say("  " + doctorHost(runtime.GOOS, runtime.GOARCH, os_, platform.OSVersion()))
 	a.UI.Say(fmt.Sprintf("  Program: akam %s (%s, no runtime dependency: SSH, RTSP, G.711 and WAV are built in)", a.Version, runtime.Version()))
 	a.UI.Say(fmt.Sprintf("  State folder: %s", a.Cams.Base))
 	if _, err := os.Stat(a.keyPath()); err == nil {
@@ -48,22 +42,81 @@ func (a *App) cmdDoctor() error {
 			a.UI.Say(fmt.Sprintf("  Optional %s: not found - %s. Install: %s", tool, why, pkgHint(a, tool)))
 		}
 	}
-	opt("ffmpeg", "microphone and files other than WAV for talk and say")
-	opt("arecord", "microphone for talk when ffmpeg has no sound server")
-	opt("mksquashfs", "image building in a later phase")
-	for _, t := range []string{"pkexec", "sudo"} {
-		if _, err := a.lookPath(t); err == nil {
-			a.UI.Say(fmt.Sprintf("  Can elevate with %s (only the SD card step ever needs it, in a later phase).", t))
-			break
+	for _, o := range doctorOptional(runtime.GOOS) {
+		opt(o.tool, o.why)
+	}
+	a.UI.Say("  " + doctorElevation(runtime.GOOS, a.have))
+	if runtime.GOOS == "windows" {
+		if platform.VTEnabled() {
+			a.UI.Say("  Console: colours and the full-screen menu work (virtual terminal mode is on).")
+		} else {
+			a.UI.Say("  Console: this console refuses colours; the plain text screens are used (use Windows Terminal for the full-screen menu).")
 		}
 	}
-	if os_ == "unknown" {
-		a.UI.Warn("only Arch Linux and Debian/Ubuntu are supported (macOS is planned for later). Tools are still checked.")
+	if os_ == "unknown" && runtime.GOOS == "linux" {
+		a.UI.Warn("only Arch Linux and Debian/Ubuntu packages are named here; other Linux systems work, install the tools with your package manager.")
 	}
 	_ = a.St.Set("doctor_profile", "kit")
 	_ = a.St.MarkDone("doctor")
 	a.UI.Good("  Host check passed (profile: kit).")
 	return nil
+}
+
+// doctorHost is the "Host:" line: the operating system with its version, then the architecture.
+func doctorHost(goos, goarch, linuxID, version string) string {
+	arch := goarch
+	switch arch {
+	case "amd64":
+		arch = "x86_64"
+	case "arm64":
+		arch = "aarch64"
+	}
+	switch goos {
+	case "windows":
+		if version == "" {
+			version = "Windows"
+		}
+		return fmt.Sprintf("Host: %s %s", version, arch)
+	case "darwin":
+		if version == "" {
+			version = "macOS"
+		}
+		return fmt.Sprintf("Host: %s %s", version, arch)
+	}
+	if version != "" {
+		return fmt.Sprintf("Host: %s %s (%s)", linuxID, arch, version)
+	}
+	return fmt.Sprintf("Host: %s %s", linuxID, arch)
+}
+
+type optionalTool struct{ tool, why string }
+
+// doctorOptional lists what is optional on each OS. xz is built in and never listed; the squashfs
+// tools are only needed until the native image builder lands.
+func doctorOptional(goos string) []optionalTool {
+	out := []optionalTool{{"ffmpeg", "microphone and files other than WAV for talk and say"}}
+	if goos == "linux" {
+		out = append(out, optionalTool{"arecord", "microphone for talk when ffmpeg has no sound server"})
+	}
+	return append(out,
+		optionalTool{"mksquashfs", "image building until the native builder lands"},
+		optionalTool{"unsquashfs", "image building until the native builder lands"})
+}
+
+// doctorElevation says how the SD card step gets the rights it needs on this OS.
+func doctorElevation(goos string, have func(string) bool) string {
+	switch goos {
+	case "windows":
+		return "Elevation: the SD card step asks Windows (a UAC prompt) for administrator rights; nothing else needs them."
+	case "darwin":
+		return "Elevation: the SD card step asks for your macOS password (the system prompt); nothing else needs it."
+	}
+	for _, t := range []string{"pkexec", "sudo"} {
+		if have(t) {
+			return fmt.Sprintf("Can elevate with %s (only the SD card step ever needs it).", t)
+		}
+	}
+	return "Elevation: neither pkexec nor sudo found; the SD card step needs one of them (AKAM_SD_ELEVATE names the helper)."
 }
 
 // ---------------------------------------------------------------- self-test
@@ -203,6 +256,12 @@ func (a *App) cmdMenu() error {
 		a.UI.Say(fmt.Sprintf("No terminal attached: showing status only. Run %s in a terminal to continue.", Prog))
 		return nil
 	}
+	return a.cmdHome()
+}
+
+// cmdStepMenu is the list of the nine steps and the read-only camera tools (akam steps): the state
+// machine of the bash wizard, kept for people who want to run one step at a time.
+func (a *App) cmdStepMenu() error {
 	for {
 		entries := a.menuEntries()
 		items := make([]ui.MenuItem, len(entries))

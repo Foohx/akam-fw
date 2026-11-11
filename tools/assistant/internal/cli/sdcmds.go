@@ -401,6 +401,9 @@ func (a *App) cmdPrepareFlashSD() error {
 	if err != nil {
 		return a.UI.Fail("flash_tool not found: "+ft, "")
 	}
+	if p := stockBackupProblem(bk); p != "" {
+		return a.UI.Fail("the stock backup does not verify: "+p+".", "nothing was written to the card; make the backup again (or use your second copy).")
+	}
 	mtd7, err := os.ReadFile(filepath.Join(bk, "mtdblock7.bin"))
 	if err != nil || len(mtd7) != sdcard.MTD7Size {
 		return a.UI.Fail(fmt.Sprintf("%s/mtdblock7.bin missing or not %d bytes (stock APP backup)", bk, sdcard.MTD7Size), fmt.Sprintf("run: %s backup --backup-dir DIR", Prog))

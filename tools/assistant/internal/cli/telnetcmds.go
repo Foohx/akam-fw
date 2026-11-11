@@ -1024,6 +1024,10 @@ func (a *App) cmdFlash() error {
 		return a.UI.Fail(fmt.Sprintf("the stock APP backup (%s/mtdblock7.bin) is not readable, so the hardware cannot be checked.", bk),
 			fmt.Sprintf("run: %s backup --backup-dir DIR", Prog))
 	}
+	// the backup gate: the folder is re-hashed now, not trusted from the run that made it
+	if p := stockBackupProblem(bk); p != "" {
+		return a.UI.Fail("the stock backup does not verify: "+p+".", "this backup is damaged or not the original: use your second copy. Nothing was written.")
+	}
 	if !a.camConfirmUntested(app, "Flash with untested firmware?") {
 		return ui.ErrFailed
 	}
