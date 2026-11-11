@@ -14,7 +14,7 @@ SRV_PID=""
 trap '[ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 cat >"$WORK/fake.py" <<'PY'
-import hashlib, re, socketserver, sys, threading, time
+import hashlib, os, re, socketserver, sys, threading, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE = sys.argv[2]                       # normal | acceptall | oldclock
@@ -62,25 +62,30 @@ class H(BaseHTTPRequestHandler):
 
 
 class R(socketserver.StreamRequestHandler):
+    # Like the camera: the nonce belongs to this TCP connection (a nonce from
+    # another connection is refused), and the challenge has no qop.
     def handle(self):
-        head = b""
-        while b"\r\n\r\n" not in head:
-            c = self.request.recv(4096)
-            if not c: return
-            head += c
-        t = head.decode()
-        uri = re.search(r"DESCRIBE (\S+)", t).group(1)
-        a = re.search(r'Authorization: Digest (.*)', t)
-        if a:
-            p = dict(re.findall(r'(\w+)="?([^",\r]*)"?', a.group(1)))
-            md5 = lambda x: hashlib.md5(x.encode()).hexdigest()
-            ha1 = md5("viewer:fake:" + PASSWORD)
-            exp = md5("%s:%s:%s:%s:auth:%s" % (ha1, p["nonce"], p["nc"], p["cnonce"], md5("DESCRIBE:" + uri)))
-            if p.get("response") == exp:
-                sdp = "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
-                self.request.sendall(("RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: %d\r\n\r\n%s" % (len(sdp), sdp)).encode())
-                return
-        self.request.sendall(b'RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest realm="fake", nonce="n0nce", qop="auth"\r\n\r\n')
+        nonce = os.urandom(8).hex()
+        buf = b""
+        while True:
+            while b"\r\n\r\n" not in buf:
+                c = self.request.recv(4096)
+                if not c: return
+                buf += c
+            head, _, buf = buf.partition(b"\r\n\r\n")
+            t = head.decode()
+            uri = re.search(r"DESCRIBE (\S+)", t).group(1)
+            a = re.search(r'Authorization: Digest (.*)', t)
+            if a:
+                p = dict(re.findall(r'(\w+)="?([^",\r]*)"?', a.group(1)))
+                md5 = lambda x: hashlib.md5(x.encode()).hexdigest()
+                ha1 = md5("viewer:fake:" + PASSWORD)
+                exp = md5("%s:%s:%s" % (ha1, nonce, md5("DESCRIBE:" + uri)))
+                if p.get("nonce") == nonce and p.get("response") == exp:
+                    sdp = "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
+                    self.request.sendall(("RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: %d\r\n\r\n%s" % (len(sdp), sdp)).encode())
+                    return
+            self.request.sendall(('RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest realm="fake", nonce="%s", algorithm=MD5\r\n\r\n' % nonce).encode())
 
 
 class TS(socketserver.ThreadingTCPServer):

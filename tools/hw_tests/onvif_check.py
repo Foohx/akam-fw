@@ -123,27 +123,34 @@ class Check:
         host, port, path = m.group(1), int(m.group(2) or 554), m.group(3) or "/"
         url = f"rtsp://{host}:{port}{path}" if m.group(2) else f"rtsp://{host}{path}"
         cseq = [1]
+        # One TCP connection for both requests: the camera binds its Digest
+        # nonce to the connection that received the challenge (as VLC, ffmpeg
+        # and go2rtc expect), so a second connection would be refused.
+        conn = {"s": None, "buf": b""}
 
         def talk(extra):
             req = f"DESCRIBE {url} RTSP/1.0\r\nCSeq: {cseq[0]}\r\nAccept: application/sdp\r\n{extra}\r\n"
             cseq[0] += 1
-            with socket.create_connection((host, port), timeout=8) as s:
-                s.settimeout(8)
-                s.sendall(req.encode())
-                buf = b""
-                while b"\r\n\r\n" not in buf:
-                    c = s.recv(4096)
-                    if not c: break
-                    buf += c
-                head, _, body = buf.partition(b"\r\n\r\n")
-                hl = head.decode(errors="replace")
-                n = re.search(r"(?im)^content-length:\s*(\d+)", hl)
-                want = int(n.group(1)) if n else 0
-                while len(body) < want:
-                    c = s.recv(4096)
-                    if not c: break
-                    body += c
-            return hl, body.decode(errors="replace")
+            if conn["s"] is None:
+                conn["s"] = socket.create_connection((host, port), timeout=8)
+                conn["s"].settimeout(8)
+            s = conn["s"]
+            s.sendall(req.encode())
+            buf = conn["buf"]
+            while b"\r\n\r\n" not in buf:
+                c = s.recv(4096)
+                if not c: break
+                buf += c
+            head, _, body = buf.partition(b"\r\n\r\n")
+            hl = head.decode(errors="replace")
+            n = re.search(r"(?im)^content-length:\s*(\d+)", hl)
+            want = int(n.group(1)) if n else 0
+            while len(body) < want:
+                c = s.recv(4096)
+                if not c: break
+                body += c
+            conn["buf"] = body[want:]
+            return hl, body[:want].decode(errors="replace")
         try:
             head, _ = talk("")
             code = int(head.split(None, 2)[1])
@@ -179,6 +186,9 @@ class Check:
                 self.fail("RTSP DESCRIBE: 200 but no H264 m=video line in the SDP")
         except Exception as e:
             self.fail(f"RTSP DESCRIBE: {e}")
+        finally:
+            if conn["s"] is not None:
+                conn["s"].close()
 
     @staticmethod
     def want_imaging(a):
