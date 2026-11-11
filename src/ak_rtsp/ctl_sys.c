@@ -39,12 +39,12 @@ struct ak_iwreq {
 
 enum {
     K_UPTIME, K_LOAD, K_CPU, K_MEM_TOTAL, K_MEM_FREE, K_TEMP, K_SSID, K_RSSI, K_RATE, K_IP, K_MAC,
-    K_FPS, K_BITRATE, K_CLIENTS, K_AUTH, K_COUNT
+    K_FPS, K_BITRATE, K_CLIENTS, K_AUTH, K_TIME_SET, K_COUNT
 };
 static const char *const g_keys[K_COUNT] = {
     "sys.uptime", "sys.load", "sys.cpu", "sys.mem_total", "sys.mem_free", "sys.temp",
     "net.ssid", "net.wifi_rssi", "net.wifi_rate", "net.ip", "net.mac",
-    "video.fps_actual", "video.bitrate", "rtsp.clients", "rtsp.auth"
+    "video.fps_actual", "video.bitrate", "rtsp.clients", "rtsp.auth", "sys.time_set"
 };
 
 #define VAL_MAX 48
@@ -59,6 +59,7 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static char     g_root[128] = "";
 static char     g_ifname[IFNAMSIZ] = "";
 static int64_t (*g_clock)(void);
+static time_t  (*g_wall)(void);         /* test hook: wall clock, NULL = time() */
 static char     g_val[K_COUNT][VAL_MAX];
 static int      g_have;                 /* cache holds a collection */
 static int64_t  g_last_ms;
@@ -360,6 +361,9 @@ AK_SMALL static void refresh(void)
     collect_proc(t);
     collect_net();
     collect_stream(t);
+    /* sys.time_set: the wall clock is believable (the camera has no RTC: it boots in the past until NTP or a
+     * manual set). 1 from 2024-01-01 UTC on, the same threshold as the WS-Security window in cred.c. */
+    snprintf(g_val[K_TIME_SET], VAL_MAX, "%d", (g_wall ? g_wall() : time(NULL)) >= 1704067200 ? 1 : 0);
     g_have = 1;
     g_last_ms = t;
 }
@@ -417,6 +421,13 @@ void ctl_sys_set_clock(int64_t (*fn)(void))
 {
     pthread_mutex_lock(&g_mu);
     g_clock = fn;
+    g_have = 0;
+    pthread_mutex_unlock(&g_mu);
+}
+void ctl_sys_set_wall_clock(time_t (*fn)(void))
+{
+    pthread_mutex_lock(&g_mu);
+    g_wall = fn;
     g_have = 0;
     pthread_mutex_unlock(&g_mu);
 }

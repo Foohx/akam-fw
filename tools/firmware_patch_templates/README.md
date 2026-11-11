@@ -16,6 +16,7 @@ full walkthrough. Listed here individually so the diff against stock is easy to 
 | `akam_debug.sh` | `sbin/akam_debug.sh` | Run over SSH: debug mode of the control port 8091 (`on [MINUTES]`, `off`, `status`); lets the network write for a while, RAM-only; uses `ak_rtsp ctl` |
 | `akam_onvif.sh` | `sbin/akam_onvif.sh` | Run over SSH: ONVIF on or off (`enable [PORT]`, `disable`, `status`); writes `/etc/config/akam/onvif` (`enabled=`, `port=`), refuses without the stream password, then `ak_rtsp ctl ONVIF reload` |
 | `akam_net.sh` | `sbin/akam_net.sh` | Started detached by the wrapper: every 30 s checks `wpa_supplicant`, `udhcpc` and the IPv4 address of wlan0 and repairs them with growing delays; does nothing without `/etc/config/wpa_supplicant.conf`; log `/tmp/akam_net.log` |
+| `akam_ntp.sh` | `sbin/akam_ntp.sh` | Run over SSH: opt-in time sync (`set SERVER...` up to 3, `off`, `status`); writes `/etc/config/akam/ntp`; the wrapper starts `akam_ntp.sh run` at boot only when that file exists (one-shot BusyBox `ntpd -q`, retried until the clock is 2024 or later, then every 6 h) |
 | `patch_ethernet_hostname.sh` | host tool, not installed | Build-time patch of `sbin/ethernet.sh`: the DHCP hostname comes from `akam_hostname.sh show` (fallback `akam`) |
 | `patch_service_sh.sh` | host tool, not installed | Build-time patch of `sbin/service.sh` (telnet/FTP launch lines, SD hook guard) |
 

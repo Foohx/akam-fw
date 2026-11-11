@@ -9,6 +9,8 @@
 
 #include "ctl_sys.h"
 
+static time_t g_wall;
+static time_t wall(void) { return g_wall; }
 static int g_failed;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); g_failed++; } } while (0)
 
@@ -249,13 +251,25 @@ int main(void)
     CHECK(IS("video.fps_actual", "unknown"));
     CHECK(IS("video.bitrate", "0"));
 
+    /* --- sys.time_set: 0 before 2024 (no RTC: the camera boots in the past), 1 from 2024-01-01 UTC --- */
+    g_wall = 1000000000; ctl_sys_set_wall_clock(wall); g_now = 59000;
+    CHECK(IS("sys.time_set", "0"));
+    g_wall = 1704067199; g_now = 59100; ctl_sys_reset();
+    CHECK(IS("sys.time_set", "0"));
+    g_wall = 1704067200; g_now = 59200; ctl_sys_reset();
+    CHECK(IS("sys.time_set", "1"));
+    g_wall = 1893456000; g_now = 59300; ctl_sys_reset();
+    CHECK(IS("sys.time_set", "1"));
+    ctl_sys_set_wall_clock(NULL);
+
     /* --- list: every key once, same count as ctl_sys_count --- */
     g_now = 60000;
     ctl_sys_list(emit, NULL);
     CHECK(g_emitted == (int)ctl_sys_count());
-    CHECK(ctl_sys_count() == 15);
+    CHECK(ctl_sys_count() == 16);
     CHECK(ctl_sys_key(0) && !strcmp(ctl_sys_key(0), "sys.uptime"));
-    CHECK(ctl_sys_key(15) == NULL);
+    CHECK(ctl_sys_key(15) && !strcmp(ctl_sys_key(15), "sys.time_set"));
+    CHECK(ctl_sys_key(16) == NULL);
     CHECK(g_emit_unknown >= 1);
 
     /* --- small output buffer truncates, does not overflow --- */

@@ -87,6 +87,7 @@ check "sbin/akam_hostname.sh 755" test "$(stat -c %a "$X/sbin/akam_hostname.sh")
 check "sbin/akam_debug.sh 755" test "$(stat -c %a "$X/sbin/akam_debug.sh")" = 755
 check "sbin/akam_onvif.sh 755" test "$(stat -c %a "$X/sbin/akam_onvif.sh")" = 755
 check "sbin/akam_net.sh 755" test "$(stat -c %a "$X/sbin/akam_net.sh")" = 755
+check "sbin/akam_ntp.sh 755" test "$(stat -c %a "$X/sbin/akam_ntp.sh")" = 755
 check "drop_caches.sh slowed to 60 s, still valid, mode kept" bash -c "grep -q '^[[:space:]]*sleep 60\$' '$X/sbin/drop_caches.sh' && ! grep -q 'sleep 5\$' '$X/sbin/drop_caches.sh' && sh -n '$X/sbin/drop_caches.sh' && test \"\$(stat -c %a '$X/sbin/drop_caches.sh')\" = 755"
 check "ethernet.sh: DHCP hostname patched, valid shell" bash -c "grep -q 'akam_hostname.sh show' '$X/sbin/ethernet.sh' && ! grep -q IPCamera '$X/sbin/ethernet.sh' && sh -n '$X/sbin/ethernet.sh'"
 check "sbin/ak_rtsp_wrapper.sh 755" test "$(stat -c %a "$X/sbin/ak_rtsp_wrapper.sh")" = 755

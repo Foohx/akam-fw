@@ -1524,6 +1524,59 @@ cmd_audio() {
     audio_show
 }
 
+# ---------------------------------------------------------------------- time sync (opt-in, G08)
+# ./akam ntp [status | set SERVER... | off]: /etc/config/akam/ntp on the camera, managed by akam_ntp.sh over SSH.
+# Off by default; the camera has no RTC, so without it the clock starts in the past.
+NTP_CMD=/usr/sbin/akam_ntp.sh
+
+ntp_server_ok() { # SERVER: a host name or an IPv4 address, what akam_ntp.sh accepts
+    case $1 in
+        '' | -* | .* | *. | *..* | *[!A-Za-z0-9.-]*) return 1 ;;
+    esac
+    [ "${#1}" -le 253 ] || return 1
+    printf '%s\n' "$1" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'
+}
+
+cmd_ntp() {
+    local action=${1:-status} s
+    case $action in
+        status | off) [ $# -le 1 ] || { echo "akam: ntp $action takes no argument (see ./akam help)" >&2; return 2; } ;;
+        set)
+            shift
+            [ $# -ge 1 ] && [ $# -le 3 ] || { echo "akam: ntp set needs 1 to 3 servers, for example: ./akam ntp set pool.ntp.org (see ./akam help)" >&2; return 2; }
+            for s in "$@"; do
+                ntp_server_ok "$s" || { echo "akam: ntp set: '$s' is not a host name or an IPv4 address (see ./akam help)" >&2; return 2; }
+            done
+            ;;
+        *) echo "akam: ntp needs status, set SERVER... or off (see ./akam help)" >&2; return 2 ;;
+    esac
+    local servers=""
+    [ "$action" != set ] || servers=$*
+    step_banner_free "Time sync: $action"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        ui_say "  WOULD run over SSH on the camera: $NTP_CMD $action${servers:+ $servers}"
+        return 0
+    fi
+    rtsp_connect || return 1
+    if [ "$action" = set ]; then
+        ui_say "  The camera will ask $servers for the time at start-up and every 6 hours (UDP 123, outgoing only)."
+        ui_say "  Nothing is sent unless you do this; ./akam ntp off turns it off again."
+    fi
+    local cmdline="$NTP_CMD $action${servers:+ $servers}" out rc l
+    log_line "CMD ssh root@$CAM_IP $cmdline"
+    out=$("${CAM_SSH[@]}" "$cmdline" 2>&1) && rc=0 || rc=$?
+    [ -z "$out" ] || printf '%s\n' "$out" | while IFS= read -r l; do ui_say "  $l"; done
+    if [ "$rc" -ne 0 ]; then
+        case $out in
+            *"not found"* | *"No such file"*) ui_fail "this camera does not have $NTP_CMD." "it runs an older Akam image: ./akam update." ;;
+            *) ui_fail "the camera did not run $NTP_CMD $action." "read the lines above." ;;
+        esac
+        return "$rc"
+    fi
+    return 0
+}
+
 # picture: isp.brightness/contrast/saturation/sharpness are saved on the camera and applied at start-up;
 # img.wb (conf | manual) and night.mode (auto | day | night) are RAM-only: they go back at the next reboot.
 picture_show() {
