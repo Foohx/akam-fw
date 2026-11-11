@@ -155,9 +155,10 @@ contains "plan unknown arch message" "$OUT" "no pinned Zig for linux/riscv64"
 # ---------------------------------------------------------------- bootstrap in a sandbox
 ROOT=$WORK/root
 FAKE=$WORK/fake
-mkdir -p "$ROOT/tools/build" "$ROOT/tools/lib" "$FAKE/files" "$WORK/art"
+mkdir -p "$ROOT/tools/build" "$ROOT/tools/lib" "$ROOT/tools/assistant" "$FAKE/files" "$WORK/art"
 cp "$REPO/tools/build/bootstrap.sh" "$ROOT/tools/build/"
-cp "$REPO/tools/lib/host.sh" "$ROOT/tools/lib/"
+cp "$REPO/tools/lib/host.sh" "$REPO/tools/lib/gotoolchain.sh" "$ROOT/tools/lib/"
+printf 'module fake\n\ngo 1.26.0\n' >"$ROOT/tools/assistant/go.mod"
 
 # Fixture artifacts.
 mkdir -p "$WORK/art/zig-x86_64-linux-0.14.1"
@@ -170,6 +171,18 @@ for n in slice99 metalang99 datatype99 interface99; do
     tar -czf "$FAKE/files/$n.tar.gz" -C "$WORK/art" "$n-1"
 done
 echo dropbear >"$FAKE/files/dropbear.tar.bz2"
+# A fake official Go archive: top-level go/, bin/go answers `env GOVERSION` and records `mod download`.
+mkdir -p "$WORK/art/go/bin"
+cat >"$WORK/art/go/bin/go" <<'GOEOF'
+#!/bin/sh
+case "$1 $2" in
+    "env GOVERSION") echo go1.27.4 ;;
+    "mod download") echo "GOROOT=$GOROOT TOOLCHAIN=$GOTOOLCHAIN" >"$FAKE_DIR/moddl" ;;
+esac
+exit 0
+GOEOF
+chmod 755 "$WORK/art/go/bin/go"
+tar -czf "$FAKE/files/go1.27.4.linux-amd64.tar.gz" -C "$WORK/art" go
 printf '#!/bin/sh\necho busybox\n' >"$FAKE/files/busybox"
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 # A local git repository stands in for SmolRTSP.
@@ -184,6 +197,9 @@ cat >"$WORK/deps.lock" <<EOF
 ZIG_VERSION=0.14.1
 ZIG_URL_linux_x86_64=https://fake.invalid/zig-x86_64-linux-0.14.1.tar.xz
 ZIG_SHA256_linux_x86_64=$(sha "$FAKE/files/zig-x86_64-linux-0.14.1.tar.xz")
+GO_VERSION=1.27.4
+GO_URL_linux_amd64=https://fake.invalid/go1.27.4.linux-amd64.tar.gz
+GO_SHA256_linux_amd64=$(sha "$FAKE/files/go1.27.4.linux-amd64.tar.gz")
 SMOLRTSP_URL=$SMOL
 SMOLRTSP_COMMIT=$SMOL_SHA
 SLICE99_TAG=v1
@@ -263,6 +279,48 @@ check "smolrtsp checked out" "$SMOL_SHA" "$(git -C "$ROOT/src/smolrtsp" rev-pars
 SEQ='' boot
 check "second run: ok" 0 "$RC"
 check "second run: no download" 0 "$CALLS"
+
+# The official Go is installed project-local, used for the module download, and the plan shows it.
+GOD=$ROOT/tools/.toolchain/go-1.27.4-linux-amd64
+if [ -x "$GOD/bin/go" ]; then ok "go installed in tools/.toolchain/go-<ver>-<os>-<arch>"; else bad "go installed in tools/.toolchain/go-<ver>-<os>-<arch>"; fi
+contains "go modules fetched with the project-local go" "$(cat "$FAKE/moddl" 2>/dev/null)" "GOROOT=$GOD TOOLCHAIN=local"
+if [ -d "$ROOT/go" ] || [ -n "$(find "$ROOT/tools/.toolchain" -maxdepth 1 -name '.extract.*')" ]; then bad "go install leaves no stray directory"; else ok "go install leaves no stray directory"; fi
+boot --print-plan
+contains "plan shows the Go version" "$OUT" "go:         1.27.4"
+contains "plan shows the Go url" "$OUT" "https://fake.invalid/go1.27.4.linux-amd64.tar.gz"
+contains "plan shows the Go sha256" "$OUT" "$(sha "$FAKE/files/go1.27.4.linux-amd64.tar.gz")"
+contains "plan shows the Go install dir" "$OUT" "install:  $GOD (installed)"
+# A wrong archive hash aborts and installs nothing.
+rm -rf "$GOD" "$ROOT/tools/.cache/go1.27.4.linux-amd64.tar.gz"
+cp "$FAKE/files/go1.27.4.linux-amd64.tar.gz" "$WORK/go.good"
+echo corrupt >"$FAKE/files/go1.27.4.linux-amd64.tar.gz"
+SEQ='' boot
+check "go sha mismatch: fails" 1 "$RC"
+contains "go sha mismatch: message" "$OUT" "sha256 mismatch"
+if [ -e "$GOD" ]; then bad "go sha mismatch: nothing installed"; else ok "go sha mismatch: nothing installed"; fi
+cp "$WORK/go.good" "$FAKE/files/go1.27.4.linux-amd64.tar.gz"
+SEQ='' boot
+check "go reinstalled after the fix" 0 "$RC"
+# Offline: the cached archive is enough; no curl call.
+rm -rf "$GOD"
+SEQ='' boot --offline
+check "offline: go installed from the cache" 0 "$RC"
+check "offline: go, no curl call" 0 "$CALLS"
+if [ -x "$GOD/bin/go" ]; then ok "offline: go present"; else bad "offline: go present"; fi
+# An archive that is not the pinned version is refused.
+rm -rf "$GOD"
+sed -i 's/go1.27.4/go1.27.9/' "$WORK/art/go/bin/go"
+tar -czf "$FAKE/files/go1.27.4.linux-amd64.tar.gz" -C "$WORK/art" go
+sed -i "s/^GO_SHA256_linux_amd64=.*/GO_SHA256_linux_amd64=$(sha "$FAKE/files/go1.27.4.linux-amd64.tar.gz")/" "$WORK/deps.lock"
+SEQ='' boot
+check "wrong Go version in the archive: fails" 1 "$RC"
+contains "wrong Go version: message" "$OUT" "is not Go 1.27.4"
+if [ -e "$GOD" ]; then bad "wrong Go version: nothing installed"; else ok "wrong Go version: nothing installed"; fi
+sed -i 's/go1.27.9/go1.27.4/' "$WORK/art/go/bin/go"
+tar -czf "$FAKE/files/go1.27.4.linux-amd64.tar.gz" -C "$WORK/art" go
+sed -i "s/^GO_SHA256_linux_amd64=.*/GO_SHA256_linux_amd64=$(sha "$FAKE/files/go1.27.4.linux-amd64.tar.gz")/" "$WORK/deps.lock"
+SEQ='' boot
+check "go back to the right archive" 0 "$RC"
 
 # Sha mismatch from the server aborts.
 rm -rf "$ROOT/tools/.cache" "$ROOT/tools/.toolchain/zig-0.14.1-x86_64-linux"
