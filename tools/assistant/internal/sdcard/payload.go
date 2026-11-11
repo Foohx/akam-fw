@@ -50,9 +50,16 @@ type PayloadInput struct {
 
 func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// PubKeyLF is the key file with CRLF turned into LF (the camera reads authorized_keys with LF only).
+func PubKeyLF(b []byte) []byte { return []byte(strings.ReplaceAll(string(b), "\r\n", "\n")) }
+
 // CheckPubKey is check_pubkey: one ssh-ed25519 line with a 68-character blob.
+// A key file saved on Windows (CRLF) is accepted; PubKeyLF gives the LF-only form that goes on the card.
 func CheckPubKey(b []byte) error {
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(string(b), "\r\n"), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], "\r")
+	}
 	if len(lines) != 1 || len(b) == 0 {
 		return errors.New("the public key file must hold exactly one key line")
 	}
@@ -136,7 +143,7 @@ func BuildPayload(in PayloadInput) ([]File, error) {
 			return nil, err
 		}
 		files["AKAM_MAINTENANCE"] = []byte{}
-		files["akam/authorized_keys"] = in.PubKey
+		files["akam/authorized_keys"] = PubKeyLF(in.PubKey)
 	}
 	if f := in.Flash; f != nil {
 		if in.Mode != ModeFirstBoot {

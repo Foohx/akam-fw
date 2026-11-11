@@ -7,6 +7,8 @@ package state
 import (
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,17 +17,13 @@ import (
 	"time"
 )
 
-// DefaultDir returns the state directory: AKAM_STATE_DIR, else $XDG_STATE_HOME/akam, else
-// ~/.local/state/akam (state_default_dir in state.sh).
+// DefaultDir returns the state directory: AKAM_STATE_DIR, else the OS default of platform.StateDirFor
+// (Linux: $XDG_STATE_HOME/akam or ~/.local/state/akam, as state_default_dir in state.sh).
 func DefaultDir() string {
 	if d := os.Getenv("AKAM_STATE_DIR"); d != "" {
 		return d
 	}
-	if x := os.Getenv("XDG_STATE_HOME"); x != "" {
-		return filepath.Join(x, "akam")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "akam")
+	return platform.DefaultStateDir()
 }
 
 var keyRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -86,7 +84,7 @@ type Log struct {
 
 // NewLog opens (creating, mode 0600) dir/akam.log.
 func NewLog(dir string, secrets *Secrets) (*Log, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsutil.PrivateMkdir(dir); err != nil {
 		return nil, err
 	}
 	_ = os.Chmod(dir, 0o700)
@@ -136,7 +134,7 @@ type Store struct {
 
 // Open selects dir/state (dir/state.dry for a rehearsal), creating it (0600) when missing.
 func Open(dir string, dry bool, secrets *Secrets) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsutil.PrivateMkdir(dir); err != nil {
 		return nil, err
 	}
 	_ = os.Chmod(dir, 0o700)
@@ -185,19 +183,11 @@ func (s *Store) Get(key string) string {
 }
 
 func (s *Store) write(lines []string) error {
-	tmp := fmt.Sprintf("%s.tmp.%d", s.File, os.Getpid())
 	data := ""
 	if len(lines) > 0 {
 		data = strings.Join(lines, "\n") + "\n"
 	}
-	if err := os.WriteFile(tmp, []byte(data), 0o600); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, s.File)
+	return fsutil.AtomicWrite(s.File, []byte(data), 0o600)
 }
 
 // Set replaces key (atomic). It refuses a bad key, a multi-line value or a secret.

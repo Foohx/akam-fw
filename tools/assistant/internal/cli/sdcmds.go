@@ -12,10 +12,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -26,8 +26,9 @@ func md5sum(b []byte) [16]byte { return md5.Sum(b) }
 
 // ignoreSignals makes Ctrl-C, hangup and TERM harmless while a flash is being written.
 func ignoreSignals() func() {
-	signal.Ignore(os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
-	return func() { signal.Reset(os.Interrupt, syscall.SIGHUP, syscall.SIGTERM) }
+	sigs := platform.SignalsToIgnore()
+	signal.Ignore(sigs...)
+	return func() { signal.Reset(sigs...) }
 }
 
 func (a *App) sd() sdcard.Backend {

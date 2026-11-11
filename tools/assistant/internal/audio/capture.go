@@ -135,6 +135,7 @@ func Start(ctx context.Context, argv []string) (*Proc, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	afterStart(cmd)
 	p := &Proc{cmd: cmd, out: out, done: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		select {

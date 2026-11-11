@@ -3,9 +3,11 @@ package state
 import (
 	"bufio"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -16,8 +18,22 @@ var Steps = []string{"doctor", "get-kit", "prepare-backup-sd", "find-camera", "b
 // NameMax is the longest camera name.
 const NameMax = 20
 
-// NameValid: lowercase letters, digits and '-', at most 20, not starting or ending with '-'.
-func NameValid(n string) bool {
+// NameValid: lowercase letters, digits and '-', at most 20, not starting or ending with '-', and not
+// a Windows reserved device name (con, nul, com1, ...), so a camera name works on any computer the
+// backup folder is moved to. It is for NEW names; a camera that already exists under a reserved name
+// keeps working (see NameExists).
+func NameValid(n string) bool { return nameShape(n) && !fsutil.ReservedName(n) }
+
+// NameExists is the shape check without the reserved-name rule: for names read back from disk.
+// On Windows a reserved name is refused here too: no such folder can exist there, and a name read
+// from a copied current_camera must never reach a path.
+func NameExists(n string) bool { return nameExistsFor(runtime.GOOS, n) }
+
+func nameExistsFor(goos, n string) bool {
+	return nameShape(n) && !(goos == "windows" && fsutil.ReservedName(n))
+}
+
+func nameShape(n string) bool {
 	if n == "" || strings.HasPrefix(n, "-") || strings.HasSuffix(n, "-") || len(n) > NameMax {
 		return false
 	}
@@ -46,6 +62,13 @@ func (c *Cameras) DirOf(name string) string {
 	return filepath.Join(c.Base, "cameras", name)
 }
 
+// CameraExists reports whether a camera called name already has a state under base.
+func CameraExists(base, name string) bool {
+	c := &Cameras{Base: base}
+	d := c.DirOf(name)
+	return exists(filepath.Join(d, "state")) || exists(filepath.Join(d, "state.dry"))
+}
+
 // Slug is "salon-" for a named camera and "" for "default".
 func (c *Cameras) Slug() string {
 	if c.Name == "default" {
@@ -57,7 +80,7 @@ func (c *Cameras) Slug() string {
 // InitCameras picks the camera: wanted (--camera), else the one used last, else "default".
 func InitCameras(base, wanted string, dry bool) (*Cameras, error) {
 	c := &Cameras{Base: base, Dry: dry}
-	if err := os.MkdirAll(base, 0o700); err != nil {
+	if err := fsutil.PrivateMkdir(base); err != nil {
 		return nil, err
 	}
 	_ = os.Chmod(base, 0o700)
@@ -85,7 +108,7 @@ func (c *Cameras) CurrentRead() string {
 	defer f.Close()
 	line, _ := bufio.NewReader(f).ReadString('\n')
 	line = strings.TrimRight(line, "\r\n")
-	if NameValid(line) {
+	if NameExists(line) {
 		return line
 	}
 	return ""
@@ -96,11 +119,7 @@ func (c *Cameras) Remember(name string) error {
 	if c.Dry {
 		return nil
 	}
-	tmp := fmt.Sprintf("%s/current_camera.tmp.%d", c.Base, os.Getpid())
-	if err := os.WriteFile(tmp, []byte(name+"\n"), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(c.Base, "current_camera"))
+	return fsutil.AtomicWrite(filepath.Join(c.Base, "current_camera"), []byte(name+"\n"), 0o600)
 }
 
 // Known lists the cameras that have a state, "default" first.
@@ -112,7 +131,7 @@ func (c *Cameras) Known() []string {
 	ents, _ := os.ReadDir(filepath.Join(c.Base, "cameras"))
 	var named []string
 	for _, e := range ents {
-		if e.IsDir() && NameValid(e.Name()) {
+		if e.IsDir() && NameExists(e.Name()) {
 			named = append(named, e.Name())
 		}
 	}
@@ -180,7 +199,7 @@ func (c *Cameras) MoveFiles(old, nw string) error {
 	if exists(filepath.Join(nd, "state")) {
 		return fmt.Errorf("a camera called '%s' already has a state", nw)
 	}
-	if err := os.MkdirAll(nd, 0o700); err != nil {
+	if err := fsutil.PrivateMkdir(nd); err != nil {
 		return err
 	}
 	_ = os.Chmod(nd, 0o700)
@@ -197,7 +216,7 @@ func (c *Cameras) MoveFiles(old, nw string) error {
 		}
 		for _, f := range []string{"state", "state.dry", "akam.log", "reflash.log", "reflash-precheck.log", "rtsp_auth.err"} {
 			if exists(filepath.Join(od, f)) {
-				if err := os.Rename(filepath.Join(od, f), filepath.Join(nd, f)); err != nil {
+				if err := fsutil.Rename(filepath.Join(od, f), filepath.Join(nd, f)); err != nil {
 					return err
 				}
 			}
@@ -206,7 +225,7 @@ func (c *Cameras) MoveFiles(old, nw string) error {
 	}
 	ents, _ := os.ReadDir(od)
 	for _, e := range ents {
-		if err := os.Rename(filepath.Join(od, e.Name()), filepath.Join(nd, e.Name())); err != nil {
+		if err := fsutil.Rename(filepath.Join(od, e.Name()), filepath.Join(nd, e.Name())); err != nil {
 			return err
 		}
 	}

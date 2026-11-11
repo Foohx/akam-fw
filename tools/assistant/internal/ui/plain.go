@@ -9,10 +9,10 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"golang.org/x/term"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 )
 
@@ -235,21 +235,14 @@ func readPasswordRestoring(fd int) ([]byte, error) {
 		return term.ReadPassword(fd)
 	}
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(ch, platform.SignalsToIgnore()...)
 	done := make(chan struct{})
 	defer func() { signal.Stop(ch); close(done) }()
 	go func() {
 		select {
 		case sig := <-ch:
 			_ = term.Restore(fd, old)
-			code := 130
-			switch sig {
-			case syscall.SIGTERM:
-				code = 143
-			case syscall.SIGHUP:
-				code = 129
-			}
-			os.Exit(code)
+			os.Exit(platform.ExitCodeFor(sig))
 		case <-done:
 		}
 	}()
