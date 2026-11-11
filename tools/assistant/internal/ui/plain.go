@@ -14,6 +14,7 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 )
 
 // Plain is the line-based UI: the strings and the prompts of the bash wizard (ui.sh, host.sh).
@@ -58,18 +59,23 @@ func (p *Plain) paint(code, s string) string {
 	return s
 }
 
-func (p *Plain) Say(s string)  { fmt.Fprintln(p.Out, s); p.logf("SAY %s", s) }
-func (p *Plain) Bold(s string) { fmt.Fprintln(p.Out, p.paint("1", s)) }
-func (p *Plain) Good(s string) { fmt.Fprintln(p.Out, p.paint("32", s)) }
+// Every printing method cleans its text (textsafe): much of it embeds what a camera or the network
+// said, and no escape or control character of that may reach the terminal. The colours are added
+// after the cleaning.
+func (p *Plain) Say(s string)  { s = textsafe.Clean(s); fmt.Fprintln(p.Out, s); p.logf("SAY %s", s) }
+func (p *Plain) Bold(s string) { fmt.Fprintln(p.Out, p.paint("1", textsafe.Clean(s))) }
+func (p *Plain) Good(s string) { fmt.Fprintln(p.Out, p.paint("32", textsafe.Clean(s))) }
 func (p *Plain) Warn(s string) {
+	s = textsafe.Clean(s)
 	fmt.Fprintln(p.Out, p.paint("33", "WARNING: "+s))
 	p.logf("WARN %s", s)
 }
 func (p *Plain) Err(s string) {
+	s = textsafe.Clean(s)
 	fmt.Fprintln(p.ErrOut, p.paint("31", "ERROR: "+s))
 	p.logf("ERROR %s", s)
 }
-func (p *Plain) Hint(s string) { fmt.Fprintf(p.Out, "  What to do: %s\n", s) }
+func (p *Plain) Hint(s string) { fmt.Fprintf(p.Out, "  What to do: %s\n", textsafe.Clean(s)) }
 func (p *Plain) Blank()        { fmt.Fprintln(p.Out) }
 
 func (p *Plain) Fail(msg, hint string) error {
@@ -150,7 +156,7 @@ func (p *Plain) AskYN(prompt string) (bool, error) {
 		fmt.Fprintf(p.ErrOut, "refusing to ask '%s' without a terminal\n", prompt)
 		return false, ErrNoTTY
 	}
-	fmt.Fprintf(p.ErrOut, "%s [y/N] ", prompt)
+	fmt.Fprintf(p.ErrOut, "%s [y/N] ", textsafe.Clean(prompt))
 	s, err := p.readLine()
 	if err != nil {
 		return false, err
@@ -216,7 +222,7 @@ func (p *Plain) Progress(label string, pct int) {
 	}
 	if p.progLast < 0 || pct >= p.progLast+10 || (pct >= 100 && p.progLast < 100) {
 		p.progLast = pct
-		fmt.Fprintf(p.Out, "    | %s: %d%%\n", label, pct)
+		fmt.Fprintf(p.Out, "    | %s: %d%%\n", textsafe.Clean(label), pct)
 	}
 }
 

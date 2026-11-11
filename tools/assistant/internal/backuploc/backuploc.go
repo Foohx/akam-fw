@@ -18,7 +18,8 @@ type Facts struct {
 	Getenv       func(string) string
 	ReadFile     func(string) ([]byte, error) // for ~/.config/user-dirs.dirs
 	DirExists    func(string) bool
-	WinDocuments string // the Documents known folder (Windows), "" when unknown
+	WinDocuments string                       // the Documents known folder (Windows), "" when unknown
+	EvalSymlinks func(string) (string, error) // optional: a Documents folder that is a link into a synced folder
 }
 
 func (f Facts) env(k string) string {
@@ -117,27 +118,41 @@ type Suggestion struct {
 	Dir   string // the folder to create (before NextFree)
 	Root  string // the Documents root, or the home folder after a cloud fallback
 	Cloud string // non-empty when Documents is synced and Dir moved to the home folder
+	// Parents are the folders above Dir that are made private too: Akam backups, then the camera.
+	Parents []string
 }
 
-// FolderName is <camera>-<YYYYMMDD>. camera is the name the user chose (state.NameValid); an
-// empty or "default" camera is called "camera". Never the hostname the camera reported.
-func FolderName(camera string, now time.Time) string {
+// CameraDir is the folder of one camera: the name the user chose (state.NameValid); an empty or
+// "default" camera is called "camera". Never the hostname the camera reported.
+func CameraDir(camera string) string {
 	if camera == "" || camera == "default" {
-		camera = "camera"
+		return "camera"
 	}
-	return camera + "-" + now.Format("20060102")
+	return camera
 }
 
-// Suggest is the default location of 3.2: <Documents>/Akam backups/<camera>-<date>, or
+// DateName is the folder of one backup, <YYYYMMDD> (a -N suffix is added by NextFree).
+func DateName(now time.Time) string { return now.Format("20060102") }
+
+// Suggest is the default location of 3.2: <Documents>/Akam backups/<camera>/<date>, or
 // <home>/Akam backups/... when Documents is inside a cloud-synced folder.
 func Suggest(f Facts, camera string, now time.Time) Suggestion {
 	root := DocumentsDir(f)
 	s := Suggestion{Root: root}
-	if why := CloudReason(root, f); why != "" {
+	why := CloudReason(root, f)
+	if why == "" && f.EvalSymlinks != nil {
+		if r, err := f.EvalSymlinks(root); err == nil {
+			why = CloudReason(r, f)
+		}
+	}
+	if why != "" {
 		s.Cloud = why
 		s.Root = f.Home
 	}
-	s.Dir = filepath.Join(s.Root, Folder, FolderName(camera, now))
+	top := filepath.Join(s.Root, Folder)
+	cam := filepath.Join(top, CameraDir(camera))
+	s.Parents = []string{top, cam}
+	s.Dir = filepath.Join(cam, DateName(now))
 	return s
 }
 

@@ -32,6 +32,7 @@ func osFacts() backuploc.Facts {
 		ReadFile:     os.ReadFile,
 		DirExists:    func(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() },
 		WinDocuments: platform.DocumentsKnownFolder(),
+		EvalSymlinks: filepath.EvalSymlinks,
 	}
 }
 
@@ -46,14 +47,14 @@ func backupNames(dir string) []string {
 }
 
 // backupBase is the folder to create for camera, before the -N suffix, and the reason shown with it.
-func (a *App) backupBase(now time.Time) (base, cloudNote string, foldCase bool) {
+func (a *App) backupBase(now time.Time) (base, cloudNote string, foldCase bool, parents []string) {
 	if root := testhook.Env("AKAM_BACKUP_ROOT"); root != "" {
 		// test hook and legacy layout: <root>/akam-backup-<name>-<date>
-		return filepath.Join(root, "akam-backup-"+a.Cams.Slug()+now.Format("20060102")), "", false
+		return filepath.Join(root, "akam-backup-"+a.Cams.Slug()+now.Format("20060102")), "", false, nil
 	}
 	f := osFacts()
 	s := backuploc.Suggest(f, a.Cams.Name, now)
-	return s.Dir, s.Cloud, runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+	return s.Dir, s.Cloud, runtime.GOOS == "windows" || runtime.GOOS == "darwin", s.Parents
 }
 
 // backupSecure is backup_secure (G19): the CONFIG partition holds the Wi-Fi password, the ONVIF
@@ -82,7 +83,13 @@ func (a *App) backupSecure(d string, filesOnly bool) bool {
 		p := filepath.Join(d, n)
 		if st, err := os.Lstat(p); err == nil && st.Mode().IsRegular() {
 			fsutil.PrivateFile(p)
+			if !fsutil.IsPrivateFile(p) {
+				ok = false
+			}
 		}
+	}
+	if filesOnly && ok {
+		ok = fsutil.IsPrivateDir(d) // the folder itself was left alone: say so when it is open
 	}
 	return ok
 }
@@ -96,7 +103,11 @@ func (a *App) backupSecretsWarning(d string, private bool) {
 		a.UI.Warn("inside the CONFIG partition. This folder is NOT private (its medium has no permissions); keep the copy private,")
 	}
 	a.UI.Warn("never upload it or put it in a shared or cloud-synced folder.")
-	if why := backuploc.CloudReason(d, osFacts()); why != "" {
+	why := backuploc.CloudReason(d, osFacts())
+	if r, err := filepath.EvalSymlinks(d); why == "" && err == nil {
+		why = backuploc.CloudReason(r, osFacts())
+	}
+	if why != "" {
 		a.UI.Warn(fmt.Sprintf("this folder looks like part of %s: its content may be copied to the cloud. Move it to a local folder.", why))
 	}
 }
@@ -105,6 +116,7 @@ func (a *App) backupSecretsWarning(d string, private bool) {
 // are in the SD commands).
 func (a *App) backupValidate(d string) []string {
 	st := backuploc.State{FreeBytes: platform.FreeSpace(d), NeedBytes: backupDumpBytes()}
+	st.InRepo = inGitTree(d)
 	if fi, err := os.Stat(d); err == nil {
 		st.Exists = true
 		if es, err := os.ReadDir(d); err == nil && fi.IsDir() {
@@ -116,4 +128,22 @@ func (a *App) backupValidate(d string) []string {
 		out = append(out, p.Msg)
 	}
 	return out
+}
+
+// inGitTree reports whether d is inside a git work tree (a backup there could be committed).
+func inGitTree(d string) bool {
+	p, err := filepath.Abs(d)
+	if err != nil {
+		return false
+	}
+	for {
+		if _, err := os.Lstat(filepath.Join(p, ".git")); err == nil {
+			return true
+		}
+		up := filepath.Dir(p)
+		if up == p {
+			return false
+		}
+		p = up
+	}
 }

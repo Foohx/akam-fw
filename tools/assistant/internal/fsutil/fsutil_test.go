@@ -84,3 +84,58 @@ func TestRenameNoRetryWhenSourceMissing(t *testing.T) {
 		t.Errorf("err=%v calls=%d, want 1 call", err, n)
 	}
 }
+
+func TestWritePrivateFileReplacesOpenFileAndIgnoresUmask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("modes are Unix")
+	}
+	d := t.TempDir()
+	p := filepath.Join(d, "f")
+	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePrivateFile(p, []byte("secret")); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v", st.Mode())
+	}
+	// a symlink planted at the name is replaced, never followed
+	target := filepath.Join(d, "target")
+	os.WriteFile(target, []byte("keep"), 0o644)
+	q := filepath.Join(d, "link")
+	if err := os.Symlink(target, q); err != nil {
+		t.Skip("no symlinks")
+	}
+	if err := WritePrivateFile(q, []byte("secret")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "keep" {
+		t.Errorf("symlink target overwritten: %q", b)
+	}
+}
+
+func TestPrivateMkdirNewAndChain(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("modes are Unix")
+	}
+	root := t.TempDir()
+	top := filepath.Join(root, "Akam backups")
+	os.Mkdir(top, 0o755) // an older, open folder is closed again
+	cam := filepath.Join(top, "salon")
+	if err := PrivateMkdirChain(top, cam); err != nil {
+		t.Fatal(err)
+	}
+	day := filepath.Join(cam, "20261111")
+	if err := PrivateMkdirNew(day); err != nil {
+		t.Fatal(err)
+	}
+	if PrivateMkdirNew(day) == nil {
+		t.Error("an existing folder must be refused")
+	}
+	for _, d := range []string{top, cam, day} {
+		if st, _ := os.Stat(d); st.Mode().Perm() != 0o700 {
+			t.Errorf("%s mode %v", d, st.Mode())
+		}
+	}
+}

@@ -38,11 +38,11 @@ func TestSuggestLinux(t *testing.T) {
 		f    Facts
 		want string
 	}{
-		{"user-dirs", facts("linux", "/home/u", nil, map[string]string{ud: "# c\nXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\n"}), "/home/u/Docs/Akam backups/salon-20261111"},
-		{"user-dirs braces", facts("linux", "/home/u", nil, map[string]string{ud: "XDG_DOCUMENTS_DIR=\"${HOME}/Papiers\""}), "/home/u/Papiers/Akam backups/salon-20261111"},
-		{"disabled (= $HOME) falls back", facts("linux", "/home/u", nil, map[string]string{ud: "XDG_DOCUMENTS_DIR=\"$HOME/\""}, "/home/u/Documents"), "/home/u/Documents/Akam backups/salon-20261111"},
-		{"no file, Documents exists", facts("linux", "/home/u", nil, nil, "/home/u/Documents"), "/home/u/Documents/Akam backups/salon-20261111"},
-		{"no file, no Documents", facts("linux", "/home/u", nil, nil), "/home/u/Akam backups/salon-20261111"},
+		{"user-dirs", facts("linux", "/home/u", nil, map[string]string{ud: "# c\nXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\n"}), "/home/u/Docs/Akam backups/salon/20261111"},
+		{"user-dirs braces", facts("linux", "/home/u", nil, map[string]string{ud: "XDG_DOCUMENTS_DIR=\"${HOME}/Papiers\""}), "/home/u/Papiers/Akam backups/salon/20261111"},
+		{"disabled (= $HOME) falls back", facts("linux", "/home/u", nil, map[string]string{ud: "XDG_DOCUMENTS_DIR=\"$HOME/\""}, "/home/u/Documents"), "/home/u/Documents/Akam backups/salon/20261111"},
+		{"no file, Documents exists", facts("linux", "/home/u", nil, nil, "/home/u/Documents"), "/home/u/Documents/Akam backups/salon/20261111"},
+		{"no file, no Documents", facts("linux", "/home/u", nil, nil), "/home/u/Akam backups/salon/20261111"},
 	} {
 		if got := Suggest(c.f, "salon", now).Dir; got != filepath.FromSlash(c.want) {
 			t.Errorf("%s: %s, want %s", c.name, got, c.want)
@@ -53,7 +53,7 @@ func TestSuggestLinux(t *testing.T) {
 func TestSuggestMacAndICloud(t *testing.T) {
 	f := facts("darwin", "/Users/u", nil, nil)
 	s := Suggest(f, "salon", now)
-	if s.Dir != "/Users/u/Documents/Akam backups/salon-20261111" || s.Cloud != "" {
+	if s.Dir != "/Users/u/Documents/Akam backups/salon/20261111" || s.Cloud != "" {
 		t.Errorf("%+v", s)
 	}
 	// Documents synced by iCloud: the folder is under ~/Library/Mobile Documents/com~apple~CloudDocs
@@ -66,7 +66,7 @@ func TestSuggestMacAndICloud(t *testing.T) {
 func TestSuggestWindows(t *testing.T) {
 	f := facts("windows", `C:\Users\u`, nil, nil)
 	f.WinDocuments = `C:\Users\u\Documents`
-	if s := Suggest(f, "salon", now); !strings.HasSuffix(s.Dir, "Akam backups"+string(filepath.Separator)+"salon-20261111") && !strings.HasSuffix(s.Dir, `Akam backups\salon-20261111`) {
+	if s := Suggest(f, "salon", now); !strings.HasSuffix(s.Dir, "salon"+string(filepath.Separator)+"20261111") && !strings.HasSuffix(s.Dir, `salon\20261111`) {
 		t.Errorf("%+v", s)
 	}
 	// Documents redirected into OneDrive: fall back to the home folder and say why
@@ -98,19 +98,23 @@ func TestCloudNames(t *testing.T) {
 	}
 }
 
-func TestFolderNameNeverUsesCameraText(t *testing.T) {
+func TestCameraDirNeverUsesCameraText(t *testing.T) {
 	// the name is the one chosen by the user; "default" and "" become "camera"
-	if FolderName("default", now) != "camera-20261111" || FolderName("", now) != "camera-20261111" || FolderName("garage", now) != "garage-20261111" {
+	if CameraDir("default") != "camera" || CameraDir("") != "camera" || CameraDir("garage") != "garage" || DateName(now) != "20261111" {
 		t.Error("folder names")
+	}
+	s := Suggest(facts("linux", "/home/u", nil, nil), "garage", now)
+	if len(s.Parents) != 2 || s.Parents[0] != filepath.FromSlash("/home/u/Akam backups") || s.Parents[1] != filepath.FromSlash("/home/u/Akam backups/garage") {
+		t.Errorf("parents %v", s.Parents)
 	}
 }
 
 func TestNextFreeCaseFolded(t *testing.T) {
-	base := "/d/Akam backups/salon-20261111"
+	base := "/d/Akam backups/salon/20261111"
 	if NextFree(base, func(string) bool { return false }) != base {
 		t.Error("free base")
 	}
-	ex := FoldedSet([]string{"/D/AKAM BACKUPS/SALON-20261111", base + "-2"})
+	ex := FoldedSet([]string{"/D/AKAM BACKUPS/SALON/20261111", base + "-2"})
 	if got := NextFree(base, ex); got != base+"-3" {
 		t.Errorf("%s", got)
 	}
@@ -118,7 +122,7 @@ func TestNextFreeCaseFolded(t *testing.T) {
 
 func TestWindowsNames(t *testing.T) {
 	for p, bad := range map[string]bool{
-		`C:\Users\u\Documents\Akam backups\salon-20261111`: false,
+		`C:\Users\u\Documents\Akam backups\salon\20261111`: false,
 		`C:\Users\u\nul`:      true,
 		`C:\Users\u\COM1.txt`: true,
 		`C:\Users\u\backup.`:  true,

@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 	"net"
 	"regexp"
 	"strconv"
@@ -240,7 +241,7 @@ func (s *Session) show(line string) {
 	if s.streamFn == nil || (s.skip != nil && s.skip.MatchString(line)) {
 		return
 	}
-	s.streamFn(line)
+	s.streamFn(textsafe.Clean(line))
 }
 
 // handleLine processes one completed line; true when it is the end marker.

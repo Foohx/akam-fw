@@ -144,7 +144,7 @@ It shares the progress files with `./akam`. Build it with `tools/assistant/build
 | `get-kit` | downloads the prebuilt kit, checks checksum and signature (`./akam build` builds from source instead) | none |
 | `prepare-backup-sd` | writes the backup toolkit to a microSD card | erases that card |
 | `find-camera` | asks the camera's address, probes its ports | none |
-| `backup` | copies the 8 flash partitions twice, compares them, stores them in `~/akam-backup-<name>-<date>` | none (read only) |
+| `backup` | copies the 8 flash partitions twice, compares them, stores them in `<Documents>/Akam backups/<name>/<date>` (private to your user) | none (read only) |
 | `image` | builds the Akam image from your backup, shows the hardware verdict | none |
 | `prepare-flash-sd` | writes the image, your SSH key and the Wi-Fi settings to a card | erases that card |
 | `flash` | writes the APP partition (over SSH when Akam already runs, else through the maintenance telnet and the card) | **can brick the camera** |

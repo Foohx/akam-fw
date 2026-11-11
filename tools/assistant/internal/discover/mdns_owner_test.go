@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"encoding/binary"
+	"math/rand"
 	"net"
 	"testing"
 	"time"
@@ -64,5 +65,31 @@ func TestMDNSLookupIgnoresOtherNames(t *testing.T) {
 	ip, err := MDNSLookup(context.Background(), "salon.local", srv.LocalAddr().String(), time.Second)
 	if err != nil || ip.String() != "192.168.1.77" {
 		t.Fatalf("%v %v", ip, err)
+	}
+}
+
+// Compression pointer loops, pointers past the end and truncated records must neither hang nor panic.
+func TestParseAHostile(t *testing.T) {
+	hdr := []byte{0, 0, 0x84, 0, 0, 0, 0, 3, 0, 0, 0, 0}
+	loop := append(append([]byte{}, hdr...), 0xC0, 12, 0, 1, 0, 1, 0, 0, 0, 1, 0, 4, 1, 2, 3, 4) // points at itself
+	if got := parseA(loop, "x.local"); len(got) != 0 {
+		t.Errorf("%v", got)
+	}
+	far := append(append([]byte{}, hdr...), 0xFF, 0xFF, 0, 1, 0, 1, 0, 0, 0, 1, 0, 4, 1, 2, 3, 4)
+	parseA(far, "")
+	rnd := rand.New(rand.NewSource(7))
+	for i := 0; i < 20000; i++ {
+		b := make([]byte, rnd.Intn(80))
+		rnd.Read(b)
+		if len(b) >= 12 && i%2 == 0 {
+			b[4], b[5], b[6], b[7] = 0, byte(rnd.Intn(3)), 0, byte(rnd.Intn(4))
+			for j := 12; j < len(b); j++ {
+				if rnd.Intn(3) == 0 {
+					b[j] = 0xC0 | byte(rnd.Intn(2))
+				}
+			}
+		}
+		parseA(b, "x.local")
+		parseA(b, "")
 	}
 }
