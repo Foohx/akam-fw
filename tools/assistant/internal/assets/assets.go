@@ -25,6 +25,13 @@ func Script(name string) ([]byte, error) {
 	return b, nil
 }
 
+// Notices is THIRD_PARTY_NOTICES.md of the repository, embedded so that `akam licenses` works from any
+// directory (a test fails when the copy drifts).
+func Notices() string {
+	b, _ := scripts.ReadFile("scripts/THIRD_PARTY_NOTICES.md.embed")
+	return string(b)
+}
+
 // Names lists the embedded files.
 func Names() []string {
 	es, _ := scripts.ReadDir("scripts")

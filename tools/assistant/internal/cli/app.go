@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
@@ -121,6 +122,9 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 	switch cmd {
 	case "help":
 		fmt.Fprint(st.Out, helpText)
+		return ExitOK
+	case "licenses", "licences":
+		fmt.Fprint(st.Out, assets.Notices())
 		return ExitOK
 	case "version":
 		fmt.Fprintf(st.Out, "akam %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())

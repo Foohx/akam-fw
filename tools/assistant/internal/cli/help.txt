@@ -75,6 +75,7 @@ Commands:
   version            show the version of this program
   self-test          offline checks of the built-in parts (G.711, Digest, state files); changes nothing
   forget-host-key IP forget the remembered SSH host key of a camera (after a reinstall; asks first)
+  licenses           show the licences of the software built into this program
   help               this text
 
 Options:

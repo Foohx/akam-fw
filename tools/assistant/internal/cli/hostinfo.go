@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -55,6 +56,12 @@ func hostOS() string {
 // pkgHint is host_pkg_install_hint.
 func pkgHint(_ *App, pkgs ...string) string {
 	p := strings.Join(pkgs, " ")
+	switch runtime.GOOS {
+	case "darwin":
+		return "brew install " + p
+	case "windows":
+		return "winget install " + p + " (or download it and put it on the PATH)"
+	}
 	switch hostOS() {
 	case "arch":
 		return "sudo pacman -S --needed " + p
