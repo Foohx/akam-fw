@@ -36,8 +36,8 @@ VERSION=1.0.0 tools/assistant/build.sh   # version shown by `akam version`
 ```
 
 `make -C tools/assistant host|all|test` calls the same script. The build is static (`CGO_ENABLED=0`), uses
-`-trimpath -buildvcs=false -ldflags "-s -w"`, and checks the 12 MiB size budget of the spec (about 6.3 MiB for
-amd64 and 5.9 MiB for arm64, start in about 2 ms).
+`-trimpath -buildvcs=false -ldflags "-s -w"`, and checks the 12 MiB size budget of the spec (with P3: 9.6 MiB for
+amd64 and 8.9 MiB for arm64).
 
 ## Use
 
