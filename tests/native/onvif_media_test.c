@@ -290,7 +290,7 @@ static void test_media_golden(void)
     golden("media_GetCompatibleVideoSourceConfigurations", MEDIA, COMPAT("GetCompatibleVideoSourceConfigurations"), 200);
     golden("media_GetCompatibleVideoEncoderConfigurations", MEDIA, COMPAT("GetCompatibleVideoEncoderConfigurations"), 200);
     golden("media_GetCompatibleAudioOutputConfigurations_off", MEDIA, COMPAT("GetCompatibleAudioOutputConfigurations"), 200);
-    golden("media_GetSnapshotUri", MEDIA, COMPAT("GetSnapshotUri"), 400);
+    golden("media_GetSnapshotUri", MEDIA, COMPAT("GetSnapshotUri"), 500);
 
     printf("Media: golden responses (backchannel on)\n");
     g_stub_talk = 1;
@@ -364,7 +364,7 @@ static void test_stream_uri(void)
           "HTTP transport: fault");
     CHECK(call("127.0.0.1", MEDIA, 1, "<trt:GetStreamUri " TRT "><trt:ProfileToken>other</trt:ProfileToken></trt:GetStreamUri>", &r) == 0 &&
           r.status == 400 && has(&r, "ter:NoProfile"), "unknown profile: ter:NoProfile");
-    CHECK(call("127.0.0.1", MEDIA, 1, COMPAT("GetSnapshotUri"), &r) == 0 && r.status == 400 && has(&r, "ter:ActionNotSupported"),
+    CHECK(call("127.0.0.1", MEDIA, 1, COMPAT("GetSnapshotUri"), &r) == 0 && r.status == 500 && has(&r, "ter:ActionNotSupported"),
           "GetSnapshotUri: ter:ActionNotSupported");
 }
 

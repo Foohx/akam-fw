@@ -77,6 +77,7 @@ static void reset_state(void)
 {
     onvif_reset();
     rtsp_auth_note_success(&limiter);
+    cred_peer_ok(htonl(INADDR_LOOPBACK));
     g_settime = -1;
     g_reboots = 0;
     unlink(hpath);
@@ -93,10 +94,19 @@ static long long now_ms(void)
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+static uint32_t g_src_ip;   /* host order source address for request(), 0 = default */
+static int g_keep_lock;     /* the lockout test wants the per-peer lockout to run; every other test starts each request unlocked */
+
 static int request(const char *method, const char *target, const char *extra, const char *body, hresp_t *r)
 {
     memset(r, 0, sizeof(*r));
+    if (!g_keep_lock) cred_peer_ok(htonl(INADDR_LOOPBACK));
     int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (g_src_ip) {                         /* another client address (127.0.0.0/8 is all local) */
+        struct sockaddr_in sa = { .sin_family = AF_INET };
+        sa.sin_addr.s_addr = htonl(g_src_ip);
+        if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) { close(fd); return -1; }
+    }
     struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)g_port) };
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (connect(fd, (struct sockaddr *)&a, sizeof(a)) < 0) { close(fd); return -1; }
@@ -350,7 +360,7 @@ static void test_digest(void)
     digest_hdr(h, sizeof(h), PASS, nonce, "00000001", DEV);
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200 && has(&r, "Manufacturer"), "valid Digest");
     digest_hdr(h, sizeof(h), PASS, nonce, "00000001", DEV);
-    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "nc replay refused");
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "stale=true"), "nc replay refused: new challenge, stale=true");
     digest_hdr(h, sizeof(h), PASS, nonce, "00000002", DEV);
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "higher nc accepted (nonce reused as RFC 7616 allows)");
     digest_hdr(h, sizeof(h), PASS, nonce, "00000003", "/onvif/media_service");
@@ -395,17 +405,43 @@ static void test_digest(void)
     CHECK(devc(NULL, "Authorization: Basic dmlld2VyOnB3\r\n", OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "Basic refused");
     CHECK(devc(NULL, "Authorization: Digest garbage\r\n", OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "malformed Digest refused");
 
-    /* the table is bounded: one more than ONVIF_NONCES outstanding nonces evicts the oldest */
+    /* M5: challenges are stateless, any number of unauthenticated 401s leaves earlier nonces valid */
     char first[40], cur[40];
     CHECK(devc(NULL, NULL, OPX("GetDeviceInformation"), &c) == 0 && nonce_from(&c, first) == 0, "first of many nonces");
-    for (int i = 0; i < ONVIF_NONCES; i++) {
+    for (int i = 0; i < 4 * ONVIF_NONCES; i++) {
         devc(NULL, NULL, OPX("GetDeviceInformation"), &c);
         nonce_from(&c, cur);
     }
     digest_hdr(h, sizeof(h), PASS, first, "00000001", DEV);
-    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "stale=true"), "evicted nonce is unknown (bounded table)");
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "M5: the first nonce still works after 128 more challenges");
     digest_hdr(h, sizeof(h), PASS, cur, "00000001", DEV);
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "the newest one works");
+    /* M5: parallel connections of one client reuse a nonce with nc out of order: stale, no failure counted */
+    digest_hdr(h, sizeof(h), PASS, cur, "00000003", DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "nc 3 accepted");
+    unsigned before = limiter.global_fails;
+    digest_hdr(h, sizeof(h), PASS, cur, "00000002", DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "stale=true") && r.ms < 300,
+          "M5: nc 2 after nc 3 (out of order): stale=true, answered at once");
+    CHECK(limiter.global_fails == before && !cred_peer_locked(htonl(INADDR_LOOPBACK), NULL), "M5: ... and no login failure counted");
+    /* a forged nonce (right shape, wrong tag) and one with a future timestamp are stale, not failures */
+    snprintf(cur + 12, sizeof(cur) - 12, "%s", "00000000000000000000");
+    digest_hdr(h, sizeof(h), PASS, cur, "00000001", DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "stale=true"), "M5: forged nonce tag: stale");
+    /* more than ONVIF_NONCES nonces in use: the oldest is evicted, and it cannot be replayed afterwards */
+    char ns[ONVIF_NONCES + 3][40];
+    for (int i = 0; i < ONVIF_NONCES + 3; i++) {
+        advance_s(1);
+        devc(NULL, NULL, OPX("GetDeviceInformation"), &c);
+        nonce_from(&c, ns[i]);
+        digest_hdr(h, sizeof(h), PASS, ns[i], "00000001", DEV);
+        CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "a fresh nonce logs in (table churn)");
+    }
+    digest_hdr(h, sizeof(h), PASS, ns[0], "00000002", DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && hdr_has(&r, "stale=true"),
+          "an evicted nonce is refused with stale=true (no replay with a new nc)");
+    digest_hdr(h, sizeof(h), PASS, ns[ONVIF_NONCES + 2], "00000002", DEV);
+    CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "the latest nonce keeps working");
 
     /* state change with Digest */
     devc(NULL, NULL, OPX("SystemReboot"), &c);
@@ -431,6 +467,7 @@ static void test_broken_and_delay(void)
     auth_on();
     reset_state();
     long ms[4];
+    g_keep_lock = 1;
     for (int i = 0; i < 4; i++) {
         good_wsse(h, sizeof(h), "wrong-password");
         dev(h, NULL, OPX("GetDeviceInformation"), &r);
@@ -438,7 +475,31 @@ static void test_broken_and_delay(void)
     }
     CHECK(ms[0] < 300 && ms[1] < 300, "first failures are answered at once");
     CHECK(ms[2] >= 450 && ms[2] < 1500, "third failure: answer deferred by about 500 ms");
-    CHECK(ms[3] >= 950 && ms[3] < 2500, "fourth failure: about 1 s");
+    CHECK(ms[3] < 300, "fourth attempt: the address is locked out, answered at once without evaluating");
+    /* M1: while locked, a CORRECT token is refused too (success is not evaluated), and at once */
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, OPX("GetDeviceInformation"), &r) == 0 && r.status == 400 && has(&r, "ter:NotAuthorized") && r.ms < 300,
+          "M1: correct credentials are not accepted during the lockout");
+    {   /* ... also with HTTP Digest, with a fresh connection each time */
+        hresp_t c2;
+        char nn[40], dh[800];
+        dev(NULL, NULL, OPX("GetDeviceInformation"), &c2);
+        nonce_from(&c2, nn);
+        digest_hdr(dh, sizeof(dh), PASS, nn, "00000001", DEV);
+        CHECK(dev(NULL, dh, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401 && !hdr_has(&r, "stale"),
+              "M1: a correct Digest is not accepted during the lockout either");
+    }
+    /* another address is unaffected */
+    g_src_ip = 0x7f000002;
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "M1: another client address logs in normally");
+    g_src_ip = 0;
+    /* the lock ends by itself and the right password then works */
+    advance_s(20);
+    good_wsse(h, sizeof(h), PASS);
+    CHECK(dev(h, NULL, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "M1: after the penalty a correct token passes");
+    g_keep_lock = 0;
+    cred_peer_ok(htonl(INADDR_LOOPBACK));
     /* while a delayed answer waits, another client is served */
     int ok = 0;
     {
@@ -471,7 +532,7 @@ static void test_dispatch(void)
     auth_off();
     reset_state();
     hresp_t r;
-    CHECK(dev(NULL, NULL, OPX("FlyToTheMoon"), &r) == 0 && r.status == 400 && has(&r, "ter:ActionNotSupported"), "unknown op: ter:ActionNotSupported");
+    CHECK(dev(NULL, NULL, OPX("FlyToTheMoon"), &r) == 0 && r.status == 500 && has(&r, "env:Receiver") && has(&r, "ter:ActionNotSupported"), "unknown op: ter:ActionNotSupported");
     CHECK(request("POST", DEV, NULL, "not xml at all", &r) == 0 && r.status == 400 && has(&r, "ter:InvalidArgs"), "malformed body: Sender fault");
     CHECK(request("POST", DEV, NULL, NS_OPEN "<s:Body/></s:Envelope>", &r) == 0 && r.status == 400, "empty Body: Sender fault");
     CHECK(request("GET", DEV, NULL, NULL, &r) == 0 && r.status == 405, "GET on a service: 405");
@@ -579,7 +640,7 @@ static void test_golden(void)
     golden("SystemReboot", h, OPX("SystemReboot"), 200);
     good_wsse(h, sizeof(h), "wrong-password");
     golden("Fault_NotAuthorized", h, OPX("GetDeviceInformation"), 400);
-    golden("Fault_ActionNotSupported", NULL, OPX("Nope"), 400);
+    golden("Fault_ActionNotSupported", NULL, OPX("Nope"), 500);
     golden("GetHostname_after_set", NULL, OPX("GetHostname"), 200);
 }
 

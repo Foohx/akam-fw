@@ -434,7 +434,7 @@ static void op_get_stream_uri(onvif_call_t *c)
 static void op_get_snapshot_uri(onvif_call_t *c)
 {
     if (!need_profile(c)) return;
-    onvif_fault(c, 0, "ter:ActionNotSupported", NULL, "Snapshots are not supported");
+    onvif_fault(c, 1, "ter:Action", "ter:ActionNotSupported", "Snapshots are not supported");
 }
 
 static void op_service_caps(onvif_call_t *c)

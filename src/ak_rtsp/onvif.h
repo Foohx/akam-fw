@@ -3,7 +3,7 @@
  *
  * Flow of one request (runs in the http_srv thread, must not block): find the operation (first element of the SOAP
  * Body) in the service's table, ask the gate for its access class, then call the operation, which fills a response
- * template. Unknown operation: Sender fault ter:ActionNotSupported (HTTP 400).
+ * template. Unknown operation: Receiver fault ter:Action / ter:ActionNotSupported (HTTP 500, as ONVIF Core pairs it).
  *
  * Access classes (spec 3.3):
  *   ONVIF_PRE    always open: GetSystemDateAndTime, GetCapabilities, GetServices, GetServiceCapabilities,
@@ -17,8 +17,11 @@
  * DEFERRED by the returned delay with http_resp_defer: the poll loop is never blocked.
  *
  * HTTP Digest checks beyond rtsp_auth_digest_verify: the uri must equal the request target (path[?query]) or be that target as an absolute http:// URI (host not compared); qop=auth is required; the
- * nonce must be one this module issued (table of ONVIF_NONCES, ONVIF_NONCE_LIFETIME_US each; an unknown or old
- * nonce gets a new challenge with stale=true, no penalty); with qop=auth, nc must increase per nonce. */
+ * nonce must be one this module issued (stateless: issue time + keyed hash, valid ONVIF_NONCE_LIFETIME_US; an unknown or old
+ * nonce gets a new challenge with stale=true, no penalty); with qop=auth, nc must increase per nonce (nonces that
+ * logged in successfully are tracked in a table of ONVIF_NONCES; an nc that is not higher, e.g. out of order on parallel
+ * connections, also gets stale=true without penalty). After CRED_PEER_FREE_FAILS failed logins an address is locked
+ * out for a growing time (cred_peer_locked): its credentials are not evaluated meanwhile. */
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

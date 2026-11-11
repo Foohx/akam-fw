@@ -56,64 +56,124 @@ void onvif_fault(onvif_call_t *c, int receiver, const char *sub1, const char *su
 
 /* ------------------------------------------------------------------------ Digest nonces */
 
+/* Nonces are stateless: 8 hex digits of the monotonic second they were issued at, 4 of a sequence number (two
+ * challenges in one second differ), then 20 hex digits of SHA-1(boot secret || second || sequence). Unauthenticated 401s therefore cost no memory and cannot push a legitimate
+ * client's nonce out of a table. The table below only holds nonces that already carried a successful login, for
+ * the nc counter (allocated after the first success, a slot per nonce in use). */
 typedef struct {
     char nonce[RTSP_AUTH_NONCE_HEX + 1];
-    int64_t issued_us;
+    uint32_t ts;
     uint32_t last_nc;
     int used;
 } nonce_ent_t;
 static nonce_ent_t g_nonce[ONVIF_NONCES];
+static uint32_t g_floor_ts;                  /* nonces issued at or before this second were evicted: treated as stale */
+static uint8_t g_secret[RTSP_AUTH_NONCE_HEX];
+static int g_have_secret;
+static unsigned g_seq;
 static pthread_mutex_t g_nonce_mu = PTHREAD_MUTEX_INITIALIZER;
 
 void onvif_reset(void)
 {
     pthread_mutex_lock(&g_nonce_mu);
     memset(g_nonce, 0, sizeof(g_nonce));
+    g_floor_ts = 0;
+    g_have_secret = 0;
     pthread_mutex_unlock(&g_nonce_mu);
 }
 
-/* Issue a nonce into out (RTSP_AUTH_NONCE_HEX + 1); frees an expired slot, else replaces the oldest one. */
-static int nonce_issue(char *out)
+static uint32_t now_s(void) { return (uint32_t)(cred_mono_us() / 1000000); }
+
+/* The 20-hex tag for a second and sequence under the boot secret; the secret is drawn on first use (caller holds the mutex). */
+static int nonce_tag(uint32_t ts, unsigned seq, char tag[21])
 {
-    int64_t now = cred_mono_us();
-    if (rtsp_auth_new_nonce(out) != 0) return -1;
-    pthread_mutex_lock(&g_nonce_mu);
-    nonce_ent_t *slot = NULL;
-    for (int i = 0; i < ONVIF_NONCES; i++) {
-        nonce_ent_t *e = &g_nonce[i];
-        if (e->used && now - e->issued_us > ONVIF_NONCE_LIFETIME_US) e->used = 0;
-        if (!e->used) { slot = e; break; }
-        if (!slot || e->issued_us < slot->issued_us) slot = e;
+    static const char hex[] = "0123456789abcdef";
+    if (!g_have_secret) {
+        char r[RTSP_AUTH_NONCE_HEX + 1];
+        if (rtsp_auth_new_nonce(r) != 0) return -1;
+        memcpy(g_secret, r, sizeof(g_secret));
+        g_have_secret = 1;
     }
-    memcpy(slot->nonce, out, RTSP_AUTH_NONCE_HEX + 1);
-    slot->issued_us = now;
-    slot->last_nc = 0;
-    slot->used = 1;
-    pthread_mutex_unlock(&g_nonce_mu);
+    uint8_t b[6] = { (uint8_t)(ts >> 24), (uint8_t)(ts >> 16), (uint8_t)(ts >> 8), (uint8_t)ts, (uint8_t)(seq >> 8), (uint8_t)seq },
+            h[SHA1_DIGEST_LEN];
+    sha1_ctx c;
+    sha1_init(&c);
+    sha1_update(&c, g_secret, sizeof(g_secret));
+    sha1_update(&c, b, sizeof(b));
+    sha1_final(&c, h);
+    for (int i = 0; i < 10; i++) {
+        tag[2 * i] = hex[h[i] >> 4];
+        tag[2 * i + 1] = hex[h[i] & 15];
+    }
+    tag[20] = '\0';
     return 0;
 }
 
-enum { NC_OK, NC_UNKNOWN, NC_REPLAY };
+/* Issue a nonce into out (RTSP_AUTH_NONCE_HEX + 1). */
+static int nonce_issue(char *out)
+{
+    char tag[21];
+    uint32_t ts = now_s();
+    pthread_mutex_lock(&g_nonce_mu);
+    unsigned seq = (++g_seq) & 0xffff;
+    int rc = nonce_tag(ts, seq, tag);
+    pthread_mutex_unlock(&g_nonce_mu);
+    if (rc != 0) return -1;
+    snprintf(out, RTSP_AUTH_NONCE_HEX + 1, "%08x%04x%s", (unsigned)ts, seq, tag);
+    return 0;
+}
 
-/* Is d->nonce one of ours and alive; with qop, is nc higher than the last one used (and remember it). */
+/* NC_STALE: not ours, too old, forgotten, or an nc that is not higher than the last one seen on that nonce (parallel
+ * connections of one client interleave them): the client simply asks again, no penalty. NC_BAD: unusable nc. */
+enum { NC_OK, NC_STALE, NC_BAD };
+
 static int nonce_use(const rtsp_auth_digest_t *d)
 {
-    int64_t now = cred_mono_us();
-    int rc = NC_UNKNOWN;
-    pthread_mutex_lock(&g_nonce_mu);
-    for (int i = 0; i < ONVIF_NONCES; i++) {
-        nonce_ent_t *e = &g_nonce[i];
-        if (!e->used || strcmp(e->nonce, d->nonce) != 0) continue;
-        if (now - e->issued_us > ONVIF_NONCE_LIFETIME_US) { e->used = 0; break; }
-        if (d->qop) {
-            char *end;
-            unsigned long nc = strtoul(d->nc, &end, 16);
-            if (*end != '\0' || nc == 0 || nc > 0xffffffffUL || (uint32_t)nc <= e->last_nc) { rc = NC_REPLAY; break; }
-            e->last_nc = (uint32_t)nc;
-        }
-        rc = NC_OK;
-        break;
+    uint32_t now = now_s();
+    size_t n = strlen(d->nonce);
+    if (n != RTSP_AUTH_NONCE_HEX || strspn(d->nonce, "0123456789abcdef") != n) return NC_STALE;
+    char t8[9], q4[5], tag[21];
+    memcpy(t8, d->nonce, 8);
+    t8[8] = '\0';
+    memcpy(q4, d->nonce + 8, 4);
+    q4[4] = '\0';
+    uint32_t ts = (uint32_t)strtoul(t8, NULL, 16);
+    unsigned seq = (unsigned)strtoul(q4, NULL, 16);
+    if (ts > now || (int64_t)(now - ts) * 1000000 > ONVIF_NONCE_LIFETIME_US) return NC_STALE;
+    unsigned long nc = 0;
+    if (d->qop) {
+        char *end;
+        nc = strtoul(d->nc, &end, 16);
+        if (*end != '\0' || nc == 0 || nc > 0xffffffffUL) return NC_BAD;
     }
+    int rc = NC_STALE;
+    pthread_mutex_lock(&g_nonce_mu);
+    if (nonce_tag(ts, seq, tag) != 0 || strcmp(d->nonce + 12, tag) != 0) goto out;         /* not issued by us */
+    nonce_ent_t *e = NULL, *free_e = NULL, *old = NULL;
+    for (int i = 0; i < ONVIF_NONCES; i++) {
+        nonce_ent_t *x = &g_nonce[i];
+        if (x->used && (int64_t)(now - x->ts) * 1000000 > ONVIF_NONCE_LIFETIME_US) x->used = 0;
+        if (x->used && strcmp(x->nonce, d->nonce) == 0) e = x;
+        else if (!x->used) { if (!free_e) free_e = x; }
+        else if (!old || x->ts < old->ts) old = x;
+    }
+    if (e) {
+        if ((uint32_t)nc <= e->last_nc) goto out;                                      /* NC_STALE */
+        e->last_nc = (uint32_t)nc;
+        rc = NC_OK;
+        goto out;
+    }
+    if (ts <= g_floor_ts) goto out;                                                    /* maybe evicted: cannot tell */
+    if (!free_e) {
+        if (old->ts > g_floor_ts) g_floor_ts = old->ts;
+        free_e = old;
+    }
+    memcpy(free_e->nonce, d->nonce, n + 1);
+    free_e->ts = ts;
+    free_e->last_nc = (uint32_t)nc;
+    free_e->used = 1;
+    rc = NC_OK;
+out:
     pthread_mutex_unlock(&g_nonce_mu);
     return rc;
 }
@@ -211,19 +271,32 @@ int onvif_gate(onvif_call_t *c, onvif_class_t cls)
         if (has_token) not_authorized(c, 0); else challenge(c, 0, 0);
         return 0;
     }
+    const char *hdr = c->req->authorization;
+    const uint32_t ip = c->req->peer.sin_addr.s_addr;
+    if ((has_token || hdr) && cred_peer_locked(ip, NULL)) {
+        /* Lockout: answer as for a failed login without looking at the credentials, at once (so neither a correct
+         * password nor a reconnect gets anything out of it), and let the lock run on. */
+        if (has_token) not_authorized(c, 0); else challenge(c, 0, 0);
+        return 0;
+    }
     if (has_token) {
         int w = wsse_check(c, &delay);
-        if (w > 0) return 1;
+        if (w > 0) { cred_peer_ok(ip); return 1; }
+        cred_peer_failed(ip);
         not_authorized(c, delay);
         return 0;
     }
-    const char *hdr = c->req->authorization;
     if (!hdr) { challenge(c, 0, 0); return 0; }
     rtsp_auth_digest_t d;
-    if (!cred_check_http_digest(c->req->method, hdr, strlen(hdr), &d, &delay)) { challenge(c, 0, delay); return 0; }
+    if (!cred_check_http_digest(c->req->method, hdr, strlen(hdr), &d, &delay)) {
+        cred_peer_failed(ip);
+        challenge(c, 0, delay);
+        return 0;
+    }
     char target[512];
     if (!target_of(c->req, target, sizeof(target)) || !uri_matches(d.uri, target)) {
         cred_note_failure(&delay);          /* right credentials for another URI: replay or confusion */
+        cred_peer_failed(ip);
         challenge(c, 0, delay);
         return 0;
     }
@@ -232,12 +305,15 @@ int onvif_gate(onvif_call_t *c, onvif_class_t cls)
         return 0;
     }
     switch (nonce_use(&d)) {
-    case NC_OK: return 1;
-    case NC_REPLAY:
+    case NC_OK:
+        cred_peer_ok(ip);
+        return 1;
+    case NC_BAD:
         cred_note_failure(&delay);
+        cred_peer_failed(ip);
         challenge(c, 0, delay);
         return 0;
-    default:                                /* not ours or too old: a client that simply has to retry */
+    default:                                /* not ours, too old, or an nc that is not higher: ask again, no penalty */
         challenge(c, 1, 0);
         return 0;
     }
@@ -262,7 +338,7 @@ static void handler(const http_req_t *req, http_resp_t *resp, void *user)
         if (!resp->status) onvif_fault(&call, 1, "ter:Action", NULL, "Internal error");
         return;
     }
-    onvif_fault(&call, 0, "ter:ActionNotSupported", NULL, "Operation not supported");
+    onvif_fault(&call, 1, "ter:Action", "ter:ActionNotSupported", "Operation not supported");
 }
 
 int onvif_start(int port)
