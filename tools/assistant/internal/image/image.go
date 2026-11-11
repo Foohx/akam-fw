@@ -135,6 +135,20 @@ func Build(o Options) (*Result, error) {
 			return nil, fmt.Errorf("the stock APP has no %s/ -- not an APP tree", d)
 		}
 	}
+	// The bash builder works on a tree extracted by the user with unsquashfs: as a normal user, unsquashfs
+	// creates regular files under the umask (022), so a stock 0775 script or a 0777 file comes out 0755 /
+	// 0755 and the image carries that; directories keep their stored mode. Same here, or the safety
+	// checks below (nothing group/other-writable) would refuse a real stock APP, which has 0775 scripts.
+	masked := 0
+	walk(root, "", func(_ string, n *squashfs.Node) {
+		if n.Type == squashfs.TypeFile && n.Mode&0o022 != 0 {
+			n.Mode &^= 0o022
+			masked++
+		}
+	})
+	if masked > 0 {
+		b.say(fmt.Sprintf("Removed group/other write permission from %d stock file(s) (umask 022, like unsquashfs run by a normal user).", masked))
+	}
 	if rep.DroppedXattrs > 0 {
 		b.say(fmt.Sprintf("Dropped the extended attributes of %d inode(s) (-no-xattrs, like mksquashfs).", rep.DroppedXattrs))
 	}
@@ -247,26 +261,18 @@ func Build(o Options) (*Result, error) {
 		return nil, fmt.Errorf("squashfs write failed: %w", err)
 	}
 
-	// 6. round-trip: the reader of this program reads its own output and the tree must equal the plan
-	b.say("Round-trip verifying...")
-	got, err := roundTrip(sq, stockBlock, plan)
-	if err != nil {
-		return nil, err
-	}
-	b.say(fmt.Sprintf("Round-trip verify OK (%d entries).", len(got)))
-
-	// 7. size guard (before padding)
+	// 6. size guard (before padding)
 	sqSize := len(sq)
 	free := PartitionSize - sqSize
 	if free < stockBlock {
 		if o.AllowTight {
-			b.warn(fmt.Sprintf("only %d bytes free in the APP partition (< one block); AKAM_ALLOW_TIGHT=1", free))
+			b.warn(fmt.Sprintf("*** only %d bytes free in the APP partition (< one block); AKAM_ALLOW_TIGHT=1: building anyway, an image this full may not mount or leave no room for the camera. ***", free))
 		} else {
 			return nil, fmt.Errorf("only %d bytes free in the APP partition (< %d, one block of margin). Set AKAM_ALLOW_TIGHT=1 to accept", free, stockBlock)
 		}
 	}
 
-	// 8. pad with 0xFF (the erased-flash value) like pad_build.sh
+	// 7. pad with 0xFF (the erased-flash value) like pad_build.sh
 	img := make([]byte, PartitionSize)
 	copy(img, sq)
 	for i := sqSize; i < len(img); i++ {
@@ -275,6 +281,15 @@ func Build(o Options) (*Result, error) {
 	if !bytes.Equal(img[:sqSize], sq) || len(bytes.Trim(img[sqSize:], "\xff")) != 0 {
 		return nil, errors.New("internal error: the padded image does not start with the squashfs or its padding is not all 0xFF")
 	}
+
+	// 8. round-trip (gate step 9): the reader of this program re-reads the PADDED image, the very bytes
+	// that will be flashed, decodes every block (Verify) and the whole tree must equal the plan
+	b.say("Round-trip verifying...")
+	got, err := roundTrip(img, stockBlock, plan)
+	if err != nil {
+		return nil, err
+	}
+	b.say(fmt.Sprintf("Round-trip verify OK (%d entries).", len(got)))
 	now := o.Now
 	if now.IsZero() {
 		now = time.Now()

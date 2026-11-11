@@ -27,8 +27,28 @@ func TestImageFilesCopyEqualsRepository(t *testing.T) {
 
 var variants = []string{"app_fake", "app_fake_variants/a", "app_fake_variants/b", "app_fake_variants/c", "app_fake_variants/d"}
 
+// permsVariant is the app_fake tree as the real stock APP has it: sbin and the three scripts the builder
+// patches are 0775, one more file is 0777 (the bash builder, fed by unsquashfs under umask 022, makes the files
+// 0755/0755 and keeps the directories).
+const permsVariant = "perms_0775"
+
+var treeVariants = append(append([]string{}, variants...), permsVariant)
+
 func fixtureTree(t testing.TB, variant string) *squashfs.Node {
 	t.Helper()
+	if variant == permsVariant {
+		root := fixtureTree(t, "app_fake")
+		lookup(root, "sbin").Mode = 0o775
+		for _, f := range []string{"sbin/service.sh", "sbin/ethernet.sh", "sbin/drop_caches.sh"} {
+			if n := lookup(root, f); n != nil {
+				n.Mode = 0o775
+			} else {
+				t.Fatalf("fixture has no %s", f)
+			}
+		}
+		root.Children = append(root.Children, squashfs.NewFile("world_writable", 0o777, []byte("x\n")))
+		return root
+	}
 	fx := filepath.Join(repoRoot(t), "tests", "fixtures")
 	root := nodeFromDir(t, filepath.Join(fx, "app_fake"))
 	if variant != "app_fake" {
@@ -320,6 +340,67 @@ func TestBuildRefusals(t *testing.T) {
 	nkit, _ := NewKit(stubKitFiles(t, hwFor(sha(ns))))
 	if _, err := Build(Options{Kit: nkit, Stock: &Stock{App: ns}, Epoch: testEpoch}); err == nil || !strings.Contains(err.Error(), "not an APP tree") {
 		t.Fatalf("no bin: %v", err)
+	}
+}
+
+func TestKitRequiresTime64Gate(t *testing.T) {
+	for _, man := range []string{
+		"kit_format=1\nakam_version=t\n",
+		"kit_format=1\nakam_version=t\ntime64_gate=fail\n",
+		"kit_format=1\nakam_version=t\ntime64_gate=pass\ntime64_gate=pass\n",
+		"kit_format=1\nakam_version=t\nxtime64_gate=pass\n",
+	} {
+		f := stubKitFiles(t, hwFor("00"))
+		f["MANIFEST.txt"] = []byte(man)
+		if _, err := NewKit(f); err == nil || !strings.Contains(err.Error(), "time64_gate=pass") {
+			t.Errorf("manifest %q accepted: %v", man, err)
+		}
+	}
+}
+
+func TestBuildTightNeedsExplicitAllow(t *testing.T) {
+	// incompressible content makes the squashfs fill the partition
+	root := fixtureTree(t, "app_fake")
+	junk := make([]byte, PartitionSize-100<<10)
+	x := uint32(1)
+	for i := range junk {
+		x = x*1664525 + 1013904223
+		junk[i] = byte(x >> 24)
+	}
+	root.Add(squashfs.NewFile("junk.bin", 0o644, junk))
+	sq, _, err := squashfs.Build(root, squashfs.Options{Time: 1, AllTime: true, MaxSize: PartitionSize})
+	if err != nil {
+		t.Fatal("synthetic tree does not fit:", err)
+	}
+	if PartitionSize-len(sq) >= 131072 {
+		t.Fatalf("not tight enough: %d free", PartitionSize-len(sq))
+	}
+	stock := make([]byte, PartitionSize)
+	for i := range stock {
+		stock[i] = 0xFF
+	}
+	copy(stock, sq)
+	k, err := NewKit(stubKitFiles(t, hwFor(sha(stock))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := Options{Kit: k, Stock: &Stock{App: stock, Name: "mtdblock7.bin"}, Epoch: testEpoch}
+	if _, err := Build(o); err == nil || !strings.Contains(err.Error(), "AKAM_ALLOW_TIGHT") {
+		t.Fatalf("tight image accepted: %v", err)
+	}
+	o.AllowTight = true
+	r, err := Build(o)
+	if err != nil || len(r.Warnings) == 0 || !strings.Contains(r.Warnings[len(r.Warnings)-1], "building anyway") {
+		t.Fatalf("allowed tight: %v %v", err, r)
+	}
+}
+
+func TestStockModesAreMaskedLikeUnsquashfs(t *testing.T) {
+	r, _, _ := buildFixture(t, permsVariant)
+	for p, want := range map[string]uint16{"sbin/service.sh": 0o755, "sbin/ethernet.sh": 0o755, "sbin/drop_caches.sh": 0o755, "world_writable": 0o755, "sbin": 0o775} {
+		if n := lookup(r.Tree, p); n == nil || n.Mode != want {
+			t.Errorf("%s: %v, want %o", p, n, want)
+		}
 	}
 }
 

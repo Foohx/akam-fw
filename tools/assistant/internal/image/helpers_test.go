@@ -88,7 +88,7 @@ func stubKitFiles(t testing.TB, hw string) map[string][]byte {
 	f := map[string][]byte{
 		"bin/ak_rtsp":            []byte("#!/bin/sh\necho stub ak_rtsp\n"),
 		"bin/dropbearmulti":      []byte("#!/bin/sh\necho stub dropbearmulti\n"),
-		"MANIFEST.txt":           []byte("kit_format=1\nkit_grade=test\nakam_version=test1\nsource_commit=0123456789ab\n"),
+		"MANIFEST.txt":           []byte("kit_format=1\nkit_grade=test\nakam_version=test1\nsource_commit=0123456789ab\ntime64_gate=pass\n"),
 		"supported_hardware.txt": []byte(hw),
 	}
 	for _, n := range licenseNames {

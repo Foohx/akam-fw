@@ -207,7 +207,8 @@ func writeTree(t testing.TB, root *squashfs.Node, dir string) {
 				if err := os.WriteFile(fp, c.Data, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Chmod(fp, os.FileMode(c.Mode)); err != nil {
+				// unsquashfs run by a normal user creates regular files under the umask (022)
+				if err := os.Chmod(fp, os.FileMode(c.Mode&^0o022)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -235,7 +236,7 @@ func TestBuildEqualsBashBuilder(t *testing.T) {
 	kitDir := makeKit(t)
 	fx := filepath.Join(repoRoot(t), "tests", "fixtures")
 	_ = fx
-	for _, v := range variants {
+	for _, v := range treeVariants {
 		t.Run(v, func(t *testing.T) {
 			root := fixtureTree(t, v)
 			stock := stockImage(t, root)
@@ -331,7 +332,7 @@ func lln(t testing.TB, img []byte) string {
 // compared by path, mode, owner and time only (the repository's templates may change).
 func TestBuildGolden(t *testing.T) {
 	blank := kitDerived()
-	for _, v := range variants {
+	for _, v := range treeVariants {
 		name := strings.ReplaceAll(v, "/", "_")
 		t.Run(v, func(t *testing.T) {
 			r, stock, _ := buildFixture(t, v)

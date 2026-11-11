@@ -11,6 +11,7 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/image"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 )
 
 // The `image` command and the image step (T11.16): three ways to get the image of a camera.
@@ -96,16 +97,65 @@ func (a *App) kitAuthText() (auth, info string) {
 }
 
 // imageEpoch is the time of the image: SOURCE_DATE_EPOCH, else the build time of the kit (reproducible), else now.
-func imageEpoch(manifest map[string]string) uint32 {
+func imageEpoch(manifest map[string]string) (uint32, error) {
 	if v := os.Getenv("SOURCE_DATE_EPOCH"); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
-			return uint32(n)
+		n, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("SOURCE_DATE_EPOCH must be an integer (seconds, below 2^32), got %q", v)
 		}
+		return uint32(n), nil
 	}
 	if t, err := time.Parse("2006-01-02T15:04:05Z", manifest["built_utc"]); err == nil && t.Unix() > 0 && t.Unix() < 1<<32 {
-		return uint32(t.Unix())
+		return uint32(t.Unix()), nil
 	}
-	return uint32(time.Now().Unix())
+	return uint32(time.Now().Unix()), nil
+}
+
+// verifiedKit re-verifies the kit NOW and returns the folder to load it from, plus a cleanup. A kit that
+// came as a tarball is verified again from the tarball itself (SHA256SUMS, SSHSIG signature, safe layout,
+// MANIFEST) into a private temporary folder, so a folder edited after get-kit is never used; a kit that is
+// only a folder is checked against its own MANIFEST and SHA256SUMS (time64_gate=pass, release grade, every
+// sha256 and mode). Nothing from the kit is run.
+func (a *App) verifiedKit(kitDir string) (string, func(), error) {
+	opts := kit.Options{AllowedSigners: a.allowedSigners(), AllowUnsigned: a.St.Get("kit_unsigned_ok") == "1"}
+	if p := a.St.Get("kit_path"); p != "" {
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+			res, err := kit.VerifyTarball(p, opts)
+			if err != nil {
+				return "", nil, err
+			}
+			return res.Dir, res.Close, nil
+		}
+	}
+	if _, err := opts.VerifyExtracted(kitDir); err != nil {
+		return "", nil, err
+	}
+	return kitDir, func() {}, nil
+}
+
+// confirmOverrides asks, default No, before an environment override that weakens a safety check of the
+// native builder is honoured. It returns the overrides that were confirmed.
+func (a *App) confirmOverrides() (tight, unpatched bool, err error) {
+	tight = os.Getenv("AKAM_ALLOW_TIGHT") == "1"
+	unpatched = os.Getenv("AKAM_ALLOW_UNPATCHED_SERVICE") == "1"
+	if unpatched {
+		ok, derr := a.UI.Danger("Unpatched service.sh", "Allow an image whose boot script is NOT locked down?",
+			"AKAM_ALLOW_UNPATCHED_SERVICE=1 is set: if sbin/service.sh cannot be patched, the build continues.",
+			"Telnet and FTP may then still be started by the stock boot script of the camera.",
+			"If in doubt, answer No.")
+		if derr != nil || !ok {
+			return false, false, fmt.Errorf("AKAM_ALLOW_UNPATCHED_SERVICE=1 was not confirmed")
+		}
+	}
+	if tight {
+		ok, derr := a.UI.Danger("Image nearly full", "Allow an image within one block of the partition size?",
+			"AKAM_ALLOW_TIGHT=1 is set: an image that leaves less than one block free in the APP partition is accepted.",
+			"If in doubt, answer No.")
+		if derr != nil || !ok {
+			return false, false, fmt.Errorf("AKAM_ALLOW_TIGHT=1 was not confirmed")
+		}
+	}
+	return tight, unpatched, nil
 }
 
 // outDir is where the image and its report go: --out, else a private folder of this camera.
@@ -118,7 +168,19 @@ func (a *App) imageOutDir() string {
 
 // runNativeImage builds, writes the four files and records the image in the state.
 func (a *App) runNativeImage(kitDir, backupDir string) error {
-	kit, err := image.LoadKit(kitDir)
+	// The kit is loaded only after it verified (again, now); the backup only after its SHA256SUMS
+	// re-hashed clean, and never when it is a backup of an Akam camera (kind=akam): the image is built
+	// on the ORIGINAL APP.
+	kdir, done, err := a.verifiedKit(kitDir)
+	if err != nil {
+		fmt.Fprintln(a.Streams.Err, err.Error())
+		return a.UI.Fail("the kit failed verification (see the message above).", fmt.Sprintf("do not use it. Run: %s step get-kit", Prog))
+	}
+	defer done()
+	if p := stockBackupProblem(backupDir); p != "" {
+		return a.UI.Fail("the backup does not verify: "+p+".", "the image is built from the backup of the ORIGINAL firmware (made with the card): use it or your second copy. Nothing was written.")
+	}
+	k, err := image.LoadKit(kdir)
 	if err != nil {
 		return a.UI.Fail("cannot use the kit: "+err.Error()+".", fmt.Sprintf("run: %s step get-kit", Prog))
 	}
@@ -126,13 +188,20 @@ func (a *App) runNativeImage(kitDir, backupDir string) error {
 	if err != nil {
 		return a.UI.Fail(err.Error(), "the image is built from your own backup of this camera.")
 	}
+	epoch, err := imageEpoch(k.Manifest)
+	if err != nil {
+		return a.UI.Fail(err.Error()+".", "")
+	}
+	tight, unpatched, err := a.confirmOverrides()
+	if err != nil {
+		return a.UI.Fail(err.Error()+": nothing was built.", "")
+	}
 	auth, info := a.kitAuthText()
 	say := func(s string) { a.UI.Say("  " + s) }
 	res, err := image.Build(image.Options{
-		Kit: kit, Stock: stock, KitAuth: auth, KitInfo: info, Epoch: imageEpoch(kit.Manifest),
-		UntestedOK: a.Opt.UntestedOK, AllowTight: os.Getenv("AKAM_ALLOW_TIGHT") == "1",
-		AllowUnpatchedService: os.Getenv("AKAM_ALLOW_UNPATCHED_SERVICE") == "1",
-		Say:                   say, Note: func(s string) { fmt.Fprintln(a.Streams.Err, s) }, Warn: func(s string) { a.UI.Warn(s) },
+		Kit: k, Stock: stock, KitAuth: auth, KitInfo: info, Epoch: epoch,
+		UntestedOK: a.Opt.UntestedOK, AllowTight: tight, AllowUnpatchedService: unpatched,
+		Say: say, Note: func(s string) { fmt.Fprintln(a.Streams.Err, s) }, Warn: func(s string) { a.UI.Warn(s) },
 	})
 	if err != nil {
 		return a.UI.Fail("native image build failed: "+err.Error()+".", "nothing was written; the stock backup is untouched.")
@@ -161,6 +230,9 @@ func (a *App) runNativeImage(kitDir, backupDir string) error {
 		a.UI.Say(l)
 	}
 	a.UI.Say("(the free-space figure is only meaningful for the real APP dump)")
+	if got := fileSHA(out); got != res.SHA256 {
+		return a.UI.Fail("the image written to "+out+" does not match the one that was built.", "do not use it; check the disk and run the command again.")
+	}
 	md5, err := a.imageGateChecked(out)
 	if err != nil {
 		return err

@@ -12,6 +12,7 @@ package image
 import (
 	"bufio"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -108,12 +109,22 @@ func NewKit(files map[string][]byte) (*Kit, error) {
 	if len(extra) > 0 {
 		return nil, fmt.Errorf("the kit has files this program does not install (kit newer than the program? update Akam): %s", strings.Join(extra, " "))
 	}
+	gates := 0
 	for _, l := range strings.Split(string(files["MANIFEST.txt"]), "\n") {
 		if key, v, ok := strings.Cut(l, "="); ok {
+			if key == "time64_gate" {
+				gates++
+			}
 			if _, dup := k.Manifest[key]; !dup {
 				k.Manifest[key] = v
 			}
 		}
+	}
+	// The camera's kernel acknowledges musl's time64 clock syscalls without executing them: the machine-code
+	// gate (tools/build/check_time32.sh, needs gdb) cannot be replayed in process, so the verdict the kit
+	// builder recorded in the hashed MANIFEST is REQUIRED, exactly as verify_kit.sh does.
+	if gates != 1 || k.Manifest["time64_gate"] != "pass" {
+		return nil, errors.New("the kit MANIFEST.txt does not carry exactly one time64_gate=pass: its binaries are not cleared for the camera's kernel. Refusing")
 	}
 	return k, nil
 }
