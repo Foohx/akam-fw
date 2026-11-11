@@ -12,6 +12,7 @@ Without --yes-imaging/--no-imaging the question is asked on a terminal and skipp
 Exit status: 0 all checks passed, 1 at least one failed.
 """
 import argparse, base64, calendar, getpass, hashlib, os, re, socket, sys, time, urllib.request, urllib.error, uuid
+from xml.sax.saxutils import escape as xesc
 import xml.etree.ElementTree as ET
 
 NS = {"tds": "http://www.onvif.org/ver10/device/wsdl", "trt": "http://www.onvif.org/ver10/media/wsdl",
@@ -45,7 +46,7 @@ class Check:
                 '#PasswordDigest">%s</Password><Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/'
                 'oasis-200401-wss-soap-message-security-1.0#Base64Binary">%s</Nonce><Created xmlns="http://docs.'
                 'oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">%s</Created>'
-                '</UsernameToken></Security></s:Header>' % (self.user, digest, base64.b64encode(nonce).decode(), created))
+                '</UsernameToken></Security></s:Header>' % (xesc(self.user), digest, base64.b64encode(nonce).decode(), created))
 
     def call(self, url, body, auth=True, expect=None, label=None):
         env = ('<?xml version="1.0" encoding="UTF-8"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
@@ -152,11 +153,15 @@ class Check:
             if code != 401 or not ch:
                 self.fail(f"RTSP DESCRIBE without a password: {head.splitlines()[0]} (401 + Digest expected)"); return
             self.good("RTSP DESCRIBE without a password: 401 with a Digest challenge")
-            p = dict(re.findall(r'(\w+)="?([^",]*)"?', ch.group(1)))
-            realm, nonce, qop = p.get("realm", ""), p.get("nonce", ""), p.get("qop", "")
+            p = {k.lower(): (q if q or not v else v)
+                 for k, q, v in re.findall(r'(\w+)\s*=\s*(?:"([^"]*)"|([^,\s]*))', ch.group(1))}
+            realm, nonce = p.get("realm", ""), p.get("nonce", "")
+            qop = [x.strip() for x in p.get("qop", "").split(",")]
+            if p.get("algorithm", "MD5").upper() != "MD5" or not nonce:
+                self.fail(f"RTSP: unsupported Digest challenge ({ch.group(1)[:80]})"); return
             md5 = lambda x: hashlib.md5(x.encode()).hexdigest()
             ha1, ha2 = md5(f"{self.user}:{realm}:{self.pw}"), md5(f"DESCRIBE:{url}")
-            if "auth" in qop.split(","):
+            if "auth" in qop:
                 cn, nc = os.urandom(8).hex(), "00000001"
                 resp = md5(f"{ha1}:{nonce}:{nc}:{cn}:auth:{ha2}")
                 tail = f', qop=auth, nc={nc}, cnonce="{cn}"'
@@ -258,11 +263,13 @@ class Check:
                 st = lambda v: (f"<timg:SetImagingSettings><timg:VideoSourceToken>{vsrc}</timg:VideoSourceToken><timg:ImagingSettings>"
                                 f"<tt:Brightness>{v}</tt:Brightness></timg:ImagingSettings><timg:ForcePersistence>false"
                                 "</timg:ForcePersistence></timg:SetImagingSettings>")
-                call(imaging, st(nb), label=f"SetImagingSettings brightness {b} -> {nb}")
-                r = call(imaging, gs, label="GetImagingSettings after set")
-                print("        brightness now", T(r, ".//tt:Brightness"), "(look at the live image)")
-                time.sleep(a.imaging_hold)
-                call(imaging, st(b), label=f"SetImagingSettings brightness restored to {b}")
+                try:
+                    call(imaging, st(nb), label=f"SetImagingSettings brightness {b} -> {nb}")
+                    r = call(imaging, gs, label="GetImagingSettings after set")
+                    print("        brightness now", T(r, ".//tt:Brightness"), "(look at the live image)")
+                    time.sleep(a.imaging_hold)
+                finally:   # also on Ctrl-C or an error: never leave the changed value behind
+                    call(imaging, st(b), label=f"SetImagingSettings brightness restored to {b}")
         if a.rtsp:
             if uri: self.rtsp_describe(uri)
             else: self.fail("RTSP: GetStreamUri gave no URI to test")
@@ -282,7 +289,9 @@ def main():
     ap.add_argument("--password-env", metavar="VAR", help="read the password from this environment variable")
     ap.add_argument("--imaging-hold", type=float, default=5.0, help=argparse.SUPPRESS)
     a = ap.parse_args()
-    pw = os.environ.get(a.password_env, "") if a.password_env else getpass.getpass(f"RTSP/ONVIF password for {a.user}@{a.host}: ")
+    if a.password_env and a.password_env not in os.environ:
+        ap.error(f"environment variable {a.password_env} is not set")
+    pw = os.environ[a.password_env] if a.password_env else getpass.getpass(f"RTSP/ONVIF password for {a.user}@{a.host}: ")
     return Check(a.host, a.user, pw).run(a)
 
 

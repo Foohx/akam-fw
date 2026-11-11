@@ -247,6 +247,8 @@ and expects `200` and an H264 video line; `--yes-imaging` changes the brightness
 `--no-imaging` skips that, `--no-discovery` skips the multicast probe. Without a password the camera answers HTTP 401
 with an empty body and a `WWW-Authenticate` header: that is the expected refusal, shown as `ok`. If the tool prints
 "the camera clock is not set", run `./akam ntp set`: the camera has no battery clock and boots in the past.
+A call that now and then takes about 1 s while most take 25 to 75 ms is Wi-Fi round-trip jitter (compare with
+`ping 192.0.2.10`), not a slow ONVIF server.
 
 
 ## The router still shows the old camera name
