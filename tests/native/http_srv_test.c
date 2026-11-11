@@ -561,28 +561,33 @@ static void test_timeouts_short(int port)
     fd = dial(port);
     t0 = now_ms();
     CHECK(expect_closed(fd, 5000));
-    CHECK(now_ms() - t0 <= 2500);
+    CHECK(now_ms() - t0 <= 1200);              /* request deadline (700 ms), not the 1500 ms keep-alive one */
     close(fd);
 }
 
 static void test_conn_cap(int port)
 {
+    /* every slot busy (a deferred reply pending): the 5th client gets 503 */
     int fds[HTTP_MAX_CONNS];
     resp_t r;
     for (int i = 0; i < HTTP_MAX_CONNS; i++) {
         fds[i] = dial(port);
-        CHECK(simple(fds[i], "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
-        free(r.body);
+        sendstr(fds[i], "GET /defer?ms=1500 HTTP/1.1\r\n\r\n");
     }
+    usleep(100000);
     int extra = dial(port);
     CHECK(extra >= 0);
     CHECK(simple(extra, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 503);
     free(r.body);
     CHECK(expect_closed(extra, 2000));
     close(extra);
-    /* the established ones still work */
-    CHECK(simple(fds[0], "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
-    free(r.body);
+    /* the established ones still get their answer */
+    for (int i = 0; i < HTTP_MAX_CONNS; i++) {
+        char carry[8] = "";
+        size_t cl = 0;
+        CHECK(read_resp(fds[i], &r, carry, &cl, 4000, 65536) == 0 && r.status == 200);
+        free(r.body);
+    }
     /* freeing a slot lets a new client in */
     close(fds[1]);
     usleep(100000);
@@ -592,6 +597,47 @@ static void test_conn_cap(int port)
     close(n);
     for (int i = 0; i < HTTP_MAX_CONNS; i++) if (i != 1) close(fds[i]);
     usleep(100000);
+}
+
+/* Idle connections must not keep every slot: never-sent sockets and idle keep-alive ones make room for a newcomer
+ * (longest idle first), and a connection that has not completed a request is held to the request deadline. */
+static void test_idle_eviction(int port)
+{
+    resp_t r;
+    int idle[HTTP_MAX_CONNS];
+    for (int i = 0; i < HTTP_MAX_CONNS; i++) {      /* four sockets that never send a byte */
+        idle[i] = dial(port);
+        usleep(20000);
+    }
+    usleep(100000);
+    int n = dial(port);
+    CHECK(simple(n, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
+    free(r.body);
+    CHECK(expect_closed(idle[0], 1000));            /* the longest-idle one was evicted */
+    for (int i = 0; i < HTTP_MAX_CONNS; i++) close(idle[i]);
+    close(n);
+    usleep(100000);
+
+    /* idle keep-alive connections (served once) are evictable too */
+    for (int i = 0; i < HTTP_MAX_CONNS; i++) {
+        idle[i] = dial(port);
+        CHECK(simple(idle[i], "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
+        free(r.body);
+    }
+    n = dial(port);
+    CHECK(simple(n, "GET /addr HTTP/1.1\r\n\r\n", &r) == 0 && r.status == 200);
+    free(r.body);
+    CHECK(expect_closed(idle[0], 1000));
+    close(n);
+    for (int i = 0; i < HTTP_MAX_CONNS; i++) close(idle[i]);
+    usleep(100000);
+
+    /* a never-sent connection is cut at the request deadline (700 ms here), a served one at the idle one (1500) */
+    int fd = dial(port);
+    long long t0 = now_ms();
+    CHECK(expect_closed(fd, 3000));
+    CHECK(now_ms() - t0 < 1200);
+    close(fd);
 }
 
 /* http_resp_defer: the answer is held back without blocking the loop. */
@@ -685,6 +731,7 @@ int main(void)
     port = http_srv_port();
     test_timeouts_short(port);
     test_conn_cap(port);
+    test_idle_eviction(port);
     test_emfile(port);
     for (int i = 0; i < 3; i++) {                           /* start/stop cycling with open clients */
         int fd = dial(port);

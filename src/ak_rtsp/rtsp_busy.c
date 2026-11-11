@@ -116,8 +116,9 @@ int rtsp_busy_wait_ms(const rtsp_busy_t *b, int64_t now_ms, int max_ms)
 
 void rtsp_busy_close_all(rtsp_busy_t *b)
 {
+    /* A newcomer that was accepted during the session gets its 503 now rather than a silent close. */
     for (int i = 0; i < RTSP_BUSY_MAX; i++) {
-        if (b->fd[i] >= 0) close(b->fd[i]);
+        if (b->fd[i] >= 0) answer_and_close(b, i);
         b->fd[i] = -1;
         b->len[i] = 0;
     }

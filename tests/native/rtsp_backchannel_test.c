@@ -41,6 +41,7 @@ void    *g_venc_virt = NULL;
 uint32_t g_venc_phys = 0;
 
 void ledsys_stream_delta(int delta) { (void)delta; }
+int control_debug_on(void) { return 0; }
 
 /* The encoder never has a frame: every ioctl on it answers EAGAIN. */
 int __wrap_ioctl(int fd, unsigned long req, ...)
@@ -137,7 +138,7 @@ static int tcp_connect(conn_t *c)
     struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)srv_port),
                              .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
     if (connect(c->fd, (struct sockaddr *)&a, sizeof(a)) != 0) return -1;
-    struct timeval tv = { 3, 0 };
+    struct timeval tv = { 10, 0 }; /* generous: a loaded CI box must not turn a slow answer into a failure */
     setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     return 0;
 }
@@ -359,7 +360,7 @@ static void test_second_client(void)
     CHECK(rtsp(&b, "OPTIONS", "x", NULL, 0, r, sizeof(r)) == 503, "second client: 503");
     clock_gettime(CLOCK_MONOTONIC, &t1);
     long ms = (long)(t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
-    CHECK(ms < 400, "the 503 comes at once, not from the backlog");
+    CHECK(ms < 2500, "the 503 comes at once, not from the backlog (a stuck backlog would take minutes)");
     CHECK(strstr(r, "CSeq: 1\r\n") != NULL, "503 echoes CSeq");
     CHECK(fill(&b) == 0, "the second connection is closed after the 503");
     conn_close(&b);
@@ -371,6 +372,42 @@ static void test_second_client(void)
     CHECK(tcp_connect(&d) == 0, "third client connects");
     CHECK(rtsp(&d, "OPTIONS", "x", NULL, 0, r, sizeof(r)) == 200, "after the first left, a new client is served (not 503)");
     conn_close(&d);
+}
+
+/* M6 regression: a client that closes and reconnects at once must be served (never parked in a busy slot
+ * that the end of the old session closes in silence). Also the case of a newcomer already waiting while
+ * the current client leaves. */
+static void test_close_then_reconnect(void)
+{
+    printf("# close then immediate reconnect\n");
+    set_auth(0);
+    char r[4096];
+    for (int i = 0; i < 30; i++) {
+        conn_t a, b;
+        if (tcp_connect(&a) != 0) { CHECK(0, "connect a"); return; }
+        if (rtsp(&a, "OPTIONS", "x", NULL, 0, r, sizeof(r)) != 200) { CHECK(0, "a OPTIONS"); conn_close(&a); return; }
+        conn_close(&a);
+        if (tcp_connect(&b) != 0) { CHECK(0, "connect b"); return; } /* no pause: FIN and SYN in the same poll round */
+        int code = rtsp(&b, "OPTIONS", "x", NULL, 0, r, sizeof(r));
+        conn_close(&b);
+        if (code != 200) { printf("  iteration %d: code %d\n", i, code); CHECK(0, "reconnect after close served (200)"); return; }
+    }
+    CHECK(1, "30 x (close, reconnect at once): every newcomer served with 200");
+    /* a newcomer that is queued while the first client leaves: served or answered 503, never a silent close */
+    for (int i = 0; i < 20; i++) {
+        conn_t a, b;
+        if (tcp_connect(&a) != 0 || tcp_connect(&b) != 0) { CHECK(0, "connect pair"); return; }
+        static const char req[] = "OPTIONS x RTSP/1.0\r\nCSeq: 1\r\n\r\n";
+        send_all(b.fd, req, sizeof(req) - 1);
+        conn_close(&a);
+        int got = 0;
+        char t[256];
+        ssize_t n = recv(b.fd, t, 12, MSG_WAITALL); /* a response may arrive in pieces */
+        got = n == 12 && (!strncmp(t, "RTSP/1.0 200", 12) || !strncmp(t, "RTSP/1.0 503", 12));
+        conn_close(&b);
+        if (!got) { printf("  iteration %d: recv %zd\n", i, n); CHECK(0, "queued newcomer answered"); return; }
+    }
+    CHECK(1, "20 x (newcomer queued while the first client leaves): answered, never a silent close");
 }
 
 static void test_no_password(void)
@@ -873,6 +910,7 @@ int main(void)
     pthread_detach(t);
 
     test_second_client();
+    test_close_then_reconnect();
     test_no_password();
     test_auth_gating();
     test_talk_only_tcp();

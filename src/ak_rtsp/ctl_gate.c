@@ -84,6 +84,11 @@ int ctl_idle_limit_s(int is_loopback, int debug_on)
     return (is_loopback || debug_on) ? CTL_IDLE_LOCAL_S : CTL_IDLE_REMOTE_S;
 }
 
+int ctl_session_limit_s(int is_loopback, int debug_on)
+{
+    return (is_loopback || debug_on) ? 0 : CTL_SESSION_REMOTE_S;
+}
+
 int ctl_slots_acquire(ctl_slots_t *s, int is_loopback)
 {
     int remote = 0;

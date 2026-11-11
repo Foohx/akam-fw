@@ -189,6 +189,9 @@ int main(void)
         CHECK(b.fd[0] >= 0);
         rtsp_busy_close_all(&b);
         CHECK(b.fd[0] < 0);
+        char t[64] = "";
+        ssize_t r = recv(c, t, sizeof(t) - 1, MSG_DONTWAIT);
+        CHECK(r > 12 && !strncmp(t, "RTSP/1.0 503", 12)); /* answered, not closed in silence */
         close(c);
     }
     CHECK(count_fds() == fds0);

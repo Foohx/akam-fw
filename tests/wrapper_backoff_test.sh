@@ -93,6 +93,18 @@ new_env edge
 run_wrap FAKE_RUN=599 FAKE_RC=1
 case $(state) in "count=1 "*) ok "599 s counts as a short run" ;; *) ko "599 s ($(state))" ;; esac
 
+# 5b. a stop on request (SIGTERM 143, SIGINT 130) is not a crash: the counter and the delay stay as they were
+new_env termreq
+for i in 1 2 3 4 5 6; do run_wrap FAKE_RUN=5 FAKE_RC=143; done
+case $(state) in "count=0 total=6 last_rc=143"*) ok "six requested restarts in a row: counter stays 0" ;; *) ko "requested restarts ($(state))" ;; esac
+eq "no backoff sleep for requested restarts" "$(grep -c '^sleep' "$E/fake/calls")" 0
+run_wrap FAKE_RUN=5 FAKE_RC=130
+case $(state) in "count=0 total=7 last_rc=130"*) ok "SIGINT is not counted either" ;; *) ko "SIGINT ($(state))" ;; esac
+case $(cat "$E/tmp/akam_wrapper.log") in *"stopped on request"*) ok "the log says it was requested" ;; *) ko "request log" ;; esac
+run_wrap FAKE_RUN=5 FAKE_RC=1
+run_wrap FAKE_RUN=5 FAKE_RC=143
+case $(state) in "count=1 total=9 last_rc=143"*) ok "a real crash before a requested stop keeps its count" ;; *) ko "mixed ($(state))" ;; esac
+
 # 5. software watchdog exit code is named in the log
 new_env swdog
 run_wrap FAKE_RUN=100 FAKE_RC=70

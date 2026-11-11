@@ -10,7 +10,8 @@
  *     while no frame is expected (SWDOG_IDLE: a session that has not issued PLAY).
  *  2. Heartbeats of long-lived threads (main/RTSP loop, AE tick, control accept loop). A thread arms
  *     itself with its first beat and disarms when it exits on purpose.
- *  3. Nothing before swdog_start(): the init sequence is not supervised (it exits on failure).
+ *  3. Before swdog_start() only the init deadline below: the init sequence exits on failure, but a hung
+ *     driver ioctl (for instance in the respawn after a stall exit) would otherwise block it for ever.
  *
  * Longest legitimate pauses found in the code: a night/day ISP reload and the IR-cut pulses take well
  * under 2 s; a blocked client write is bounded by TX_STALL_BUDGET_MS (15 s) and is excluded by
@@ -24,6 +25,7 @@
 #define SWDOG_VIDEO_STALL_MS   30000u  /* no frame fetched for this long while one is expected */
 #define SWDOG_BEAT_STALL_MS    60000u  /* a beating thread silent for this long is wedged */
 #define SWDOG_CHECK_MS         1000u
+#define SWDOG_INIT_DEADLINE_S  120u    /* init (ISP, VI, VENC, audio) takes a few seconds; 120 s means wedged */
 
 typedef enum { SWDOG_BEAT_MAIN = 0, SWDOG_BEAT_AE, SWDOG_BEAT_CONTROL, SWDOG_BEAT_N } swdog_beat_t;
 typedef enum { SWDOG_IDLE = 0, SWDOG_FETCH, SWDOG_SEND } swdog_mode_t;
@@ -56,6 +58,10 @@ void swdog_frame(void);
 void swdog_mode(swdog_mode_t m);
 void swdog_beat(swdog_beat_t b);
 void swdog_disarm(swdog_beat_t b);
+/* Init deadline: alarm(seconds) with the DEFAULT SIGALRM action, so the kernel ends the process (no handler has to
+ * run, which matters when the main thread is stuck in a driver call) and the wrapper respawns it. Call early in
+ * main(). swdog_start() cancels it: from then on the stall checker supervises. Nothing else may use SIGALRM. */
+void swdog_init_deadline(unsigned seconds);
 /* Arms the video rule and starts the checker thread (once, from main, when the stream is up).
  * exit_hook (async-signal-safe, may be NULL) runs just before _exit, e.g. the speaker amplifier off. */
 void swdog_start(void (*exit_hook)(void));

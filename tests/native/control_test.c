@@ -221,6 +221,8 @@ static void test_pure(void)
     CHECK(ctl_idle_limit_s(1, 0) == CTL_IDLE_LOCAL_S);
     CHECK(ctl_idle_limit_s(0, 1) == CTL_IDLE_LOCAL_S);
     CHECK(ctl_idle_limit_s(0, 0) == CTL_IDLE_REMOTE_S);
+    CHECK(ctl_session_limit_s(1, 0) == 0 && ctl_session_limit_s(0, 1) == 0);
+    CHECK(ctl_session_limit_s(0, 0) == CTL_SESSION_REMOTE_S && CTL_SESSION_REMOTE_S >= CTL_IDLE_REMOTE_S);
     CHECK(CTL_IDLE_REMOTE_S < CTL_IDLE_LOCAL_S);
 }
 
