@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: video gop needs a whole number of seconds from 1 to 4 (see ./akam help)

@@ -318,6 +318,10 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdAudio(args)
 	case "picture":
 		return a.cmdPicture(args)
+	case "video":
+		return a.cmdVideo(args)
+	case "ntp":
+		return a.cmdNtp(args)
 	case "talk":
 		return a.cmdTalk(args)
 	case "say":

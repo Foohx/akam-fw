@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -38,6 +39,8 @@ type Options struct {
 	NoHostnameHelper bool
 	// NoOnvifHelper makes akam_onvif.sh "not found".
 	NoOnvifHelper bool
+	// NoNtpHelper makes akam_ntp.sh "not found" (an older image).
+	NoNtpHelper bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
 	// Flash selects the behaviour of the reflash emulation (see flash.go); zero is a healthy camera.
@@ -61,7 +64,11 @@ type Camera struct {
 	ctl      map[string]string
 	ctlSets  []string
 	onvifOn  bool
+	ntpOn    bool
+	ntpList  string
+	vRun     map[string]string // the video values the running ak_rtsp uses (applied at its restart)
 	onvifPrt string
+	restarts int
 	conns    []net.Conn
 	wg       sync.WaitGroup
 	done     chan struct{}
@@ -165,8 +172,11 @@ func New(t testing.TB, opts Options) *Camera {
 			"audio.out_volume": "60", "audio.out_enable": "1", "audio.talk_enable": "1", "audio.out_state": "idle",
 			"audio.out_underruns": "0", "audio.out_drops": "0", "audio.out_test": "0",
 			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "0",
-			"img.wb": "conf", "night.mode": "auto",
+			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "1",
+			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.cfg_pending": "0",
+			"video.bitrate": "1480", "video.fps_actual": "150",
 		}}
+	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2"}
 	c.Root = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(c.Root, "etc", "config"), 0o700); err != nil {
 		t.Fatal(err)
@@ -359,6 +369,15 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 			return 1
 		}
 		return 0
+	case cmd == `p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p`:
+		c.mu.Lock()
+		c.restarts++
+		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
+			c.vRun[k] = c.ctl[k]
+		}
+		c.ctl["video.cfg_pending"] = "0"
+		c.mu.Unlock()
+		return 0
 	case cmd == registerCmd:
 		fmt.Fprintf(stdout, "REG_HOSTNAME=akam-fake\nREG_MTD7_MD5=%s\n", Mtd7MD5)
 		return 0
@@ -369,6 +388,8 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 		switch name {
 		case "akam_onvif.sh":
 			return c.onvif(f[1:], stdout, stderr)
+		case "akam_ntp.sh":
+			return c.ntp(f[1:], stdout, stderr)
 		case "akam_rtsp_auth.sh", "akam_hostname.sh", "akam_debug.sh":
 			if name == "akam_hostname.sh" && c.opts.NoHostnameHelper {
 				fmt.Fprintf(stderr, "sh: %s: not found\n", f[0])
@@ -406,6 +427,62 @@ func (c *Camera) runScript(name string, args []string, stdin io.Reader, stdout, 
 	}
 	return 0
 }
+
+// VideoRestarts is how many times the video service was restarted (the audited kill of ak_rtsp).
+func (c *Camera) VideoRestarts() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.restarts
+}
+
+// ntp emulates akam_ntp.sh (texts of tools/firmware_patch_templates/akam_ntp.sh); the host grammar is
+// checked again here, as the script does, so that a bad name from a client is refused like on the camera.
+func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
+	if c.opts.NoNtpHelper {
+		fmt.Fprintln(stderr, "sh: /usr/sbin/akam_ntp.sh: not found")
+		return 127
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: akam_ntp.sh set SERVER [SERVER [SERVER]] | off | status | run    (SERVER: a host name or an IPv4 address)")
+		return 2
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 || len(args) > 4 {
+			fmt.Fprintln(stderr, "akam_ntp: give 1 to 3 servers")
+			return 2
+		}
+		for _, s := range args[1:] {
+			if !ntpHostRe.MatchString(s) {
+				fmt.Fprintf(stderr, "akam_ntp: '%s' is not a host name or IPv4 address; nothing changed.\n", s)
+				return 2
+			}
+		}
+		c.ntpOn, c.ntpList = true, strings.Join(args[1:], " ")
+		fmt.Fprintf(stdout, "Time sync on, servers: %s. The camera asks them for the time at start and every 6 hours (UDP 123 outgoing).\nStarted now; see: %s status\n", c.ntpList, "/usr/sbin/akam_ntp.sh")
+	case "off":
+		if !c.ntpOn {
+			fmt.Fprintln(stdout, "Time sync was already off.")
+			return 0
+		}
+		c.ntpOn, c.ntpList = false, ""
+		fmt.Fprintln(stdout, "Time sync off: no more traffic to time servers. The clock keeps its current value until the next reboot.")
+	case "status":
+		if c.ntpOn {
+			fmt.Fprintf(stdout, "time sync: on, servers: %s\n", c.ntpList)
+		} else {
+			fmt.Fprintln(stdout, "time sync: off (default)")
+		}
+		fmt.Fprintln(stdout, "camera clock: 2026-01-01 00:00:00 UTC\nsys.time_set: 0 (the clock is before 2024: no RTC, nothing set it yet)\nhelper: not running")
+	default:
+		return 2
+	}
+	return 0
+}
+
+var ntpHostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 
 // onvif emulates akam_onvif.sh (it is not part of this checkout's templates yet); the texts are
 // those of the script on the ONVIF branch.
@@ -478,6 +555,36 @@ func (c *Camera) handleCtl(nc net.Conn) {
 			c.ctlSets = append(c.ctlSets, line)
 			if _, ok := c.ctl[f[1]]; !ok {
 				reply = "ERR unknown param " + f[1]
+			} else if strings.HasPrefix(f[1], "video.") {
+				n, err := strconv.Atoi(f[2])
+				lo, hi := 0, 0
+				switch f[1] {
+				case "video.bitrate_cfg":
+					lo, hi = 500, 3000
+				case "video.fps_cfg":
+					lo, hi = 10, 15
+				case "video.gop_cfg":
+					lo, hi = 1, 4
+				}
+				if hi == 0 {
+					reply = "ERR " + f[1] + " is read-only"
+				} else if err != nil || n < lo || n > hi || (f[1] == "video.fps_cfg" && n != 10 && n != 15) {
+					reply = "ERR invalid " + f[1] + " value"
+				} else {
+					c.ctl[f[1]] = f[2]
+					pend := false
+					for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
+						if c.ctl[k] != c.vRun[k] {
+							pend = true
+						}
+					}
+					c.ctl["video.cfg_pending"] = "0"
+					reply = "OK " + f[1] + "=" + f[2]
+					if pend {
+						c.ctl["video.cfg_pending"] = "1"
+						reply += " (restart to apply)"
+					}
+				}
 			} else if strings.HasPrefix(f[1], "isp.") {
 				n, err := strconv.Atoi(f[2])
 				if err != nil || n < -50 || n > 50 {
@@ -489,6 +596,9 @@ func (c *Camera) handleCtl(nc net.Conn) {
 			} else {
 				c.ctl[f[1]] = f[2]
 				reply = "OK " + f[1] + "=" + f[2]
+				if f[1] == "audio.mic_enable" {
+					reply += " (restart to apply)"
+				}
 			}
 		default:
 			reply = "ERR syntax"

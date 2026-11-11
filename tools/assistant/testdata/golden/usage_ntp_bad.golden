@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: ntp set: 'bad_name' is not a host name or an IPv4 address (see ./akam help)

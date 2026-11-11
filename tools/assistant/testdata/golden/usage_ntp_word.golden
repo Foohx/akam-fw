@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: ntp needs status, set SERVER... or off (see ./akam help)

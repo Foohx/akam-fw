@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: video bitrate needs a whole number of kbit/s from 500 to 3000 (see ./akam help)
