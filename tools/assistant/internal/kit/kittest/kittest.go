@@ -12,22 +12,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/ulikunitz/xz"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 )
 
-// Available reports whether the xz program (needed to write and read a kit) is installed.
-func Available() bool {
-	_, err := exec.LookPath("xz")
-	return err == nil
-}
+// Available reports whether a kit can be written and read: always, the .xz codec is in process.
+func Available() bool { return true }
 
 // Spec describes the kit to build. The zero value is a valid release kit.
 type Spec struct {
@@ -114,12 +111,26 @@ func modeFor(p string) int64 {
 	return 0o644
 }
 
+// XZ compresses data to a single-stream, single-block .xz with the library writer (no external xz).
+func XZ(t testing.TB, data []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w, err := xz.WriterConfig{DictCap: 1 << 20}.NewWriter(&out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
 // Build writes the kit into dir.
 func Build(t testing.TB, dir string, sp Spec) Built {
 	t.Helper()
-	if !Available() {
-		t.Skip("skip: xz is not installed")
-	}
 	if sp.Version == "" {
 		sp.Version = "1.0.0"
 	}
@@ -215,21 +226,15 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("xz", "-c", "-6")
-	cmd.Stdin = &tb
-	var xzOut bytes.Buffer
-	cmd.Stdout = &xzOut
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
+	xzOut := XZ(t, tb.Bytes())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	b := Built{Dir: dir, Tarball: filepath.Join(dir, "akam-kit-"+sp.Version+".tar.xz"), Sums: filepath.Join(dir, "SHA256SUMS"), Sig: filepath.Join(dir, "SHA256SUMS.sig")}
-	if err := os.WriteFile(b.Tarball, xzOut.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(b.Tarball, xzOut, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b.TarSHA = shaHex(xzOut.Bytes())
+	b.TarSHA = shaHex(xzOut)
 	digest := b.TarSHA
 	if sp.BadSumsLine {
 		digest = strings.Repeat("0", 64)

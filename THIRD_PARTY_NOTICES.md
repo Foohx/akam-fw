@@ -98,6 +98,7 @@ embedded (`ffmpeg` is only run when the user has it). Test-only code adds no mod
 | golang.org/x/sys | v0.50.0 | BSD-3-Clause | system calls (file locks, terminals) |
 | golang.org/x/term | v0.48.0 | BSD-3-Clause | hidden password input, terminal detection |
 | golang.org/x/text | v0.43.0 | BSD-3-Clause | width tables used by the terminal libraries |
+| github.com/ulikunitz/xz | v0.5.17 | BSD-3-Clause | in-process decoding of the kit (.tar.xz) |
 | github.com/charmbracelet/bubbletea | v1.3.10 | MIT | full-screen menu and widgets |
 | github.com/charmbracelet/lipgloss | v1.1.0 | MIT | terminal styling |
 | github.com/charmbracelet/colorprofile | v0.2.3-0.20250311203215-f60798e515dc | MIT | colour support detection (lipgloss) |
