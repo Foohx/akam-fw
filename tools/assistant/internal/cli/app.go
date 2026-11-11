@@ -434,6 +434,9 @@ func (a *App) dialFailure(ip string, err error, msg, hint string) error {
 	case errors.As(err, &hk):
 		a.UI.Err(fmt.Sprintf("REMOTE HOST IDENTIFICATION HAS CHANGED for %s: the camera now shows %s.", ip, hk.Fingerprint))
 		a.UI.Say("  Someone may be impersonating the camera, or the camera was reinstalled (new host key).")
+		if hk.KnownHosts != "" && hk.KnownHosts == userKnownHosts() {
+			return a.UI.Fail("refusing to connect.", fmt.Sprintf("the old key is in %s; if you reinstalled the camera yourself, run: ssh-keygen -R %s, then try again.", hk.KnownHosts, ip))
+		}
 		return a.UI.Fail("refusing to connect.", fmt.Sprintf("if you reinstalled the camera yourself, run: %s forget-host-key %s, then try again.", Prog, ip))
 	case errors.Is(err, camssh.ErrHostKeyRefused):
 		return a.UI.Fail(fmt.Sprintf("the host key of %s was not accepted: %v", ip, err), "nothing was sent to the camera. Run the command again in a terminal to review the fingerprint.")

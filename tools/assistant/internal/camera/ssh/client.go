@@ -262,8 +262,16 @@ func (c *Config) hostKeyCallback() gossh.HostKeyCallback {
 		// First contact.
 		nh := NewHostKey{Alias: alias, Fingerprint: fp, PinFile: c.KnownHosts}
 		if c.UserKnownHosts != "" && fileExists(c.UserKnownHosts) {
-			if ucb, err := knownhosts.New(c.UserKnownHosts); err == nil && ucb(target, remote, key) == nil {
-				nh.FromUserKnownHosts = true
+			if ucb, err := knownhosts.New(c.UserKnownHosts); err == nil {
+				uerr := ucb(target, remote, key)
+				var uke *knownhosts.KeyError
+				switch {
+				case uerr == nil:
+					nh.FromUserKnownHosts = true
+				case errors.As(uerr, &uke) && len(uke.Want) > 0:
+					// The wizard's ssh pinned another key for this camera: same hard error.
+					return &HostKeyChangedError{Alias: alias, Fingerprint: fp, KnownHosts: c.UserKnownHosts}
+				}
 			}
 		}
 		ok := false
