@@ -92,6 +92,7 @@ size_t audio_out_push(const int16_t *pcm, size_t n)
     sp_pushed += n;
     return n;
 }
+int audio_mic_enabled(void) { return 1; }
 int  audio_out_feeder_claim(void) { if (sp_claimed) return -1; sp_claimed = 1; sp_claims++; return 0; }
 void audio_out_feeder_release(void) { sp_claimed = 0; sp_releases++; }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2012,SC2016  # ls for modes and inodes, single-quoted commands for other shells
 # Host-side tests for tools/hw_tests/akam_hwcheck.sh. The script runs under
 # $SH_UNDER_TEST (default: "$AKAM_BUSYBOX sh", else "busybox sh", else "sh")
 # against a fake root ($AKAM_ROOT with proc/, etc/, mnt/, tmp/) and a

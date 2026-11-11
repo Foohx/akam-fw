@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2012,SC2016  # ls for modes and inodes, single-quoted commands for other shells
 # Host tests for akam_ntp.sh (camera time sync helper, G08), run under the pinned BusyBox sh when available.
 # ntpd, date, timeout, nice, sleep, kill and logger are stubs: nothing touches the network or the host clock.
 set -uo pipefail

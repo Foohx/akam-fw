@@ -311,6 +311,7 @@ udp_owner() { # process owning socket inode $1 (best effort)
     [ "$1" != 0 ] || { echo "?"; return; }
     for _d in "$ROOT"/proc/[0-9]*; do
         [ -d "$_d/fd" ] || continue
+        # shellcheck disable=SC2010  # socket links are named socket:[inode], no glob can match them
         if ls -l "$_d/fd" 2>/dev/null | grep -q "socket:\[$1\]"; then
             _c=$({ strings -n 1 < "$_d/cmdline" | paste -s -d ' ' - ; } 2>/dev/null)
             echo "${_c:-pid ${_d##*/}}"

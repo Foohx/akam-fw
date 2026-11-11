@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2012,SC2016  # ls for modes and inodes, single-quoted commands for other shells
 # Host-side tests for patch_service_sh.sh (T4 layer 1) and akam_lockdown.sh
 # (layer 2). Camera scripts run with $SH_UNDER_TEST (default: "busybox sh" if
 # installed, else "sh"). `ps` is stubbed (PATH); `kill` is the real one, aimed
