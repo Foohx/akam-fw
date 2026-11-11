@@ -1,0 +1,16 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive2",
+    "name": "PhysicalDrive2",
+    "whole": true,
+    "size": 34359738368,
+    "sector_size": 512,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "no",
+    "model": "Card",
+    "serial": "W1"
+  },
+  "refuse": ""
+}

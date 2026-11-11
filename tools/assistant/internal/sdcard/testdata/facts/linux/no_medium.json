@@ -1,0 +1,18 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdk",
+    "name": "sdk",
+    "whole": true,
+    "size": 0,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdk",
+    "dev_num": "8:16",
+    "removable_raw": "1"
+  },
+  "refuse": "no medium"
+}

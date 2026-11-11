@@ -1,13 +1,9 @@
 package sdcard
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -35,55 +31,44 @@ type System struct {
 	Elevate string
 	// Stderr receives the elevation tool's prompts and the helper's stderr.
 	Stderr io.Writer
+	// Inv, Opener and Transport override the running OS's (nil: Sys, and the platform's own).
+	Inv       Inventory
+	Opener    Opener
+	Transport Transport
 }
 
 // NewSystem is the backend of the real program.
 func NewSystem() *System {
-	return &System{Sys: RealSys(), Elevate: os.Getenv("AKAM_SD_ELEVATE"), Stderr: os.Stderr}
+	p := newPlatform()
+	return &System{Sys: RealSys(), Inv: p.Inventory, Opener: p.Opener, Transport: p.Transport, Elevate: os.Getenv("AKAM_SD_ELEVATE"), Stderr: os.Stderr}
 }
 
-func (s *System) List() []Candidate { return s.Sys.List() }
+func (s *System) List() []Candidate {
+	return listDevices(s.inventory(), Context{GuardPaths: s.Sys.GuardPaths})
+}
 
 // Check resolves /dev/disk/by-* links first, like the bash tool, then applies the guards.
 func (s *System) Check(dev string) (*Candidate, error) {
 	if real, err := filepath.EvalSymlinks(dev); err == nil {
 		dev = real
 	}
-	return s.Sys.Check(dev)
+	return checkDevice(s.inventory(), dev, Context{GuardPaths: s.Sys.GuardPaths})
 }
 
-func (s *System) NeedsElevation(c *Candidate) bool {
-	if os.Geteuid() == 0 {
-		return false
+func (s *System) NeedsElevation(c *Candidate) bool { return s.transport().NeedsElevation(c) }
+
+func (s *System) transport() Transport {
+	if s.Transport != nil {
+		return s.Transport
 	}
-	f, err := os.OpenFile(c.Dev, os.O_RDWR, 0)
-	if err != nil {
-		return true
-	}
-	f.Close()
-	return false
+	return newPlatform().Transport
 }
 
-func (s *System) elevator() ([]string, error) {
-	choice := s.Elevate
-	if choice == "" {
-		if _, err := exec.LookPath("pkexec"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
-			choice = "pkexec"
-		} else {
-			choice = "sudo"
-		}
+func (s *System) inventory() Inventory {
+	if s.Inv != nil {
+		return s.Inv
 	}
-	p, err := exec.LookPath(choice)
-	if err != nil {
-		return nil, fmt.Errorf("%s is not installed: cannot get administrator rights", choice)
-	}
-	if choice == "sudo" {
-		return []string{p, "--"}, nil
-	}
-	if choice != "pkexec" {
-		return nil, fmt.Errorf("AKAM_SD_ELEVATE must be sudo or pkexec, not %q", choice)
-	}
-	return []string{p}, nil
+	return s.Sys
 }
 
 // call sends one request: in this process when no rights are needed (or already root), else to
@@ -91,48 +76,10 @@ func (s *System) elevator() ([]string, error) {
 // password is in the request only: never in argv, never in the environment).
 func (s *System) call(c *Candidate, req Request) (Response, error) {
 	if !s.NeedsElevation(c) {
-		return Helper{Sys: s.Sys, Progress: s.Stderr}.Handle(req), nil
-	}
-	pre, err := s.elevator()
-	if err != nil {
-		return Response{}, err
-	}
-	self := s.Self
-	if self == "" {
-		if self, err = os.Executable(); err != nil {
-			return Response{}, err
-		}
+		return Helper{Sys: s.Sys, Inv: s.Inv, Opener: s.Opener, Progress: s.Stderr}.Handle(req), nil
 	}
 	req.GuardPaths = s.Sys.GuardPaths
-	body, err := json.Marshal(req)
-	if err != nil {
-		return Response{}, err
-	}
-	args := append(append([]string{}, pre[1:]...), self, "sd-helper")
-	cmd := exec.Command(pre[0], args...)
-	cmd.Stdin = bytes.NewReader(body)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = s.Stderr
-	cmd.Env = minimalEnv()
-	if err := cmd.Run(); err != nil && out.Len() == 0 {
-		return Response{}, fmt.Errorf("the administrator step did not run: %v", err)
-	}
-	var resp Response
-	if err := json.NewDecoder(&out).Decode(&resp); err != nil {
-		return Response{}, errors.New("the helper gave no usable answer")
-	}
-	return resp, nil
-}
-
-func minimalEnv() []string {
-	var env []string
-	for _, k := range []string{"PATH", "HOME", "TERM", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
+	return s.transport().RunElevated(s.Self, s.Elevate, req, s.Stderr)
 }
 
 func (s *System) Prepare(c *Candidate, files []File, spec VerifySpec) ([]string, error) {

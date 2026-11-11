@@ -1,0 +1,13 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive4",
+    "name": "PhysicalDrive4",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "internal": "no",
+    "read_only": true
+  },
+  "refuse": "write-protect"
+}

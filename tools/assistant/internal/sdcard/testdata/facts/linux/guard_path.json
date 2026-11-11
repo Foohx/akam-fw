@@ -1,0 +1,19 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdj",
+    "name": "sdj",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdj",
+    "dev_num": "8:16",
+    "removable_raw": "1",
+    "guard_hit": "/work/repo/src"
+  },
+  "refuse": "working or the temp directory"
+}

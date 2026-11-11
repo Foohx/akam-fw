@@ -1,0 +1,12 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive3",
+    "name": "PhysicalDrive3",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "dynamic": true
+  },
+  "refuse": "storage stack"
+}

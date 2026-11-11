@@ -1,0 +1,14 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive1",
+    "name": "PhysicalDrive1",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "roles": [
+      "pagefile"
+    ]
+  },
+  "refuse": "system role"
+}
