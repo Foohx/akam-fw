@@ -79,6 +79,14 @@ ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/
 
 If `ffplay` works, the camera is fine and the problem is in VLC: see the next sections.
 
+## VLC shows the first image and then freezes (UDP)
+
+By default VLC asks for the RTP video over UDP. The RTSP connection (TCP) works, so the player starts and shows
+the first frame, but the video packets are sent from the camera to a UDP port of your PC, and a firewall on the PC
+that blocks incoming UDP drops them: the picture freezes or stays black. Use TCP, which only needs the outgoing
+connection: `vlc --rtsp-tcp rtsp://<camera-ip>:554/` (or Tools, Preferences, Input / Codecs, "RTP over RTSP (TCP)"),
+`ffplay -rtsp_transport tcp ...`, and go2rtc over TCP. Or allow incoming UDP from the camera on the PC.
+
 ## VLC goes black or stops when its window is on another workspace
 
 Symptom: the picture is fine, you switch to another Hyprland (or other Wayland) workspace, and when
@@ -108,7 +116,7 @@ silence until the first one left. Players show it as "server busy" or "503"; ret
 A client that stays silent before PLAY is dropped after 20 s (60 s at most to reach PLAY), so a player
 that cannot connect right after another one only has to wait that long.
 To watch from several places, or to record and watch together, put a relay in front of the camera
-(go2rtc or MediaMTX): the relay is the only client of the camera and serves as many viewers as you
+(go2rtc is the recommended one; MediaMTX also works): the relay is the only client of the camera and serves as many viewers as you
 need.
 
 ## Talk (two-way audio) does not work
@@ -213,6 +221,19 @@ video user name and password. Adding by address does not need discovery. A "not 
 user name or password is wrong, or the app's clock is more than 5 minutes off the camera's while the camera
 clock is set. With ONVIF on, 80/tcp and 3702/udp are expected to be open on the camera (`./akam step verify` checks it);
 without it only 22, 554 and 8091 are.
+
+**ONVIF login fails** (ODM or an NVR says "not authorized", or the camera is found but the device is refused):
+
+- Run `./akam rtsp-auth set` again, even if a password exists: ONVIF checks the clear-text copy
+  `/etc/config/akam/credentials`, which older setups do not have. `./akam rtsp-auth status` must say `ONVIF-ready`.
+- `./akam onvif status` should show the state `on:<port>`. `no_password` means the copy is missing or invalid;
+  `error:port_in_use` means another service holds the port (pick another with `./akam onvif enable 8080`).
+- Use the same user name and password as the video stream. If the camera clock is set (NTP) and the app's clock
+  differs by more than 5 minutes, the WS-Security login is refused: fix the clock on either side.
+- With the video password off, ONVIF reads are open but reboot, time and name changes are always refused.
+- The device address to add by hand is `http://<camera-ip>/onvif/device_service` (add `:PORT` for a port other than
+  80). ONVIF is host-tested only so far, not yet validated on a camera: please report what ODM does.
+
 
 ## The router still shows the old camera name
 
@@ -330,9 +351,18 @@ cycle the camera. With the microphone off the capture device is never opened and
 The camera has no battery clock: it starts in the past after every power cut. Nothing sets it unless you ask:
 `./akam ntp set pool.ntp.org` (or your router's address, up to 3 servers) makes it ask those servers at start-up
 and every 6 hours (UDP 123, outgoing only); `./akam ntp status` shows the clock and `./akam ntp off` removes the
-setting. Without a clock the WS-Security time window of ONVIF logins is not checked (the replay cache still is) and
+setting. If `./akam ntp status` still shows a year near 1970, the camera cannot reach the server (outgoing UDP 123 is blocked, or the name does not resolve): try your router's address or an IPv4 address. Without a clock the WS-Security time window of ONVIF logins is not checked (the replay cache still is) and
 the RTCP sender reports carry a wrong date; the video itself is not affected. `GET sys.time_set` on port 8091 is
 `1` once the year is 2024 or later. The helper is `/usr/sbin/akam_ntp.sh`, it logs to `/tmp/akam_ntp.log`.
+
+## Port 8091 refuses SET ("read-only mode")
+
+`SET`, `SAVE` and `RESET` from another machine answer `ERR read-only mode, see akam_debug.sh`: this is by design,
+the port has no password. Reading (`LIST`, `GET`) always works. To change settings from the PC (for example with the
+tuning tool), open debug mode for a while with `./akam debug on [MINUTES]` (default 60, up to 1440), and close it
+with `./akam debug off`; it also ends at the timeout and at every reboot. For everyday settings use `./akam led`,
+`audio`, `picture` and `video`, which write from the camera itself. While debug mode is on, the log lines and the
+Wi-Fi name and MAC address on 8091 are visible to the network too.
 
 ## The camera restarted itself, or the stream came back after a gap
 

@@ -4,8 +4,8 @@ What Akam changes on the camera, which ports it opens, how the 8091 port works, 
 and the licences. To install, use `./akam` (see the [README](../README.md#quick-start)); the manual
 procedures behind it are in the [documentation index](README.md#manual-procedures-advanced-without-the-wizard).
 
-> Validated on two real cameras (LSC `3215672.3`, SI `D26228`) between 2026-11-07 and 11-09; some checks
-> remain, see the [test plan](akam_v1_test_plan.md). Flashing can brick the camera, and restoring is not
+> Validated on two real cameras (LSC `3215672.3`, SI `D26228`); what was and was not tested on hardware is in
+> [testing status](testing-status.md) and the [test plan](akam_v1_test_plan.md). Flashing can brick the camera, and restoring is not
 > guaranteed.
 
 ## 1. How the wizard works with the camera
@@ -87,6 +87,25 @@ service still starts: reads are open and the changes (reboot, time, name) are re
 keys; port 21 to 24, 554 and 8091 are refused. A camera name change applies to discovery at the next reload or boot.
 Not yet validated on hardware.
 
+### ONVIF with ONVIF Device Manager
+
+ONVIF Profile S (WS-Discovery, device, media and imaging services) is **host-tested only, not yet validated on a
+camera**; ONVIF Device Manager (ODM) is the first client to try. Steps:
+
+1. Make sure the camera runs an image that has ONVIF (`./akam update`), then set the video password, and **re-run it
+   once even if a password already exists**, so that the clear-text copy ONVIF needs is stored:
+   `./akam rtsp-auth set`. `./akam rtsp-auth status` must say `ONVIF-ready`.
+2. Turn ONVIF on: `./akam onvif enable` (asks first; default port 80, or `./akam onvif enable 8080`).
+   `./akam onvif status` should show the state `on:80`.
+3. In ODM, the camera appears by itself through WS-Discovery (UDP multicast 239.255.255.250:3702, same subnet,
+   firewall of the PC open for UDP 3702). Otherwise add it by hand with the address
+   `http://<camera-ip>/onvif/device_service` (`http://<camera-ip>:PORT/onvif/device_service` for another port).
+   The other services are `/onvif/media_service` and `/onvif/imaging_service`.
+4. Log in with the video user name and password. The live view uses the camera's RTSP stream, so the one-client limit
+   still applies (a second viewer gets 503: put go2rtc in front).
+
+Problems: [troubleshooting](troubleshooting.md#an-onvif-app-does-not-find-the-camera).
+
 ## 4. The 8091 control port
 
 Port 8091 is `ak_rtsp`'s line protocol (`LIST`, `GET`, `SET`) for exposure, day/night and image
@@ -134,6 +153,20 @@ always allowed). Full description:
 The front LED is the kernel LED `state_led` (`/sys/class/leds/state_led`, on or off only) and the IR LEDs
 are GPIO 70. In `auto` the "Wi-Fi connected" test is an IPv4 address on `wlan0` whose link state is not
 down; the "someone is watching" test is an RTSP client in the PLAY state.
+
+## 4b. Settings commands (over SSH)
+
+All of these talk to the camera over SSH and change nothing on the PC (`./akam help` has the exact syntax).
+
+| Command | Saved on the camera | Applied |
+|---|---|---|
+| `./akam audio [volume N \| beep \| on \| off \| talk on\|off \| mic on\|off]` | volume, speaker, talk, microphone (`/etc/config/akam/audio_out`) | at once; `mic off` (removes the audio track, the microphone is never opened) and speaker `on` may need a reboot |
+| `./akam picture [brightness\|contrast\|saturation\|sharpness N \| wb conf\|manual \| night auto\|day\|night \| reset]` | the four numbers (-50 to 50) | at once and at every start; `wb` and `night` return to default at a reboot |
+| `./akam video [bitrate N \| fps N \| gop N]` | `/etc/config/akam/video` | at the next restart of the video service (the command offers it, default No) |
+| `./akam led [status on\|off\|auto] [ir auto\|off]` | `/etc/config/akam/leds` | at once |
+| `./akam ntp [set SERVER... \| off \| status]` | the servers | at start-up and every 6 h; off by default |
+| `./akam onvif [enable [PORT] \| disable \| status]` | `/etc/config/akam/onvif` | at once, no reboot |
+| `./akam debug [on [MINUTES] \| off \| status]` | nothing (RAM only) | at once; ends at `off`, the timeout or a reboot |
 
 ## 5. Network hardening
 
