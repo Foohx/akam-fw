@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 )
 
 // The privileged helper (`akam sd-helper`): a tiny, closed set of operations on one card. It takes ONE
@@ -284,10 +285,18 @@ func max64(a, b int64) int64 {
 // flags will be parsed here) and reports whether args named it. Nothing else runs in this mode: no state
 // directory, no lock, no UI.
 func HelperEntry(args []string, in io.Reader, out, progress io.Writer) (code int, handled bool) {
-	if len(args) != 1 || args[0] != "sd-helper" {
+	if len(args) == 0 || args[0] != "sd-helper" {
 		return 0, false
 	}
 	p := newPlatform()
+	if len(args) != 1 {
+		// `sd-helper --socket P --uid N --nonce H`: the macOS osascript path (macsock.go); any other argument is refused
+		if runtime.GOOS != "darwin" {
+			return 2, true
+		}
+		mk := func() Helper { return Helper{Inv: p.Inventory, Opener: p.Opener} }
+		return socketHelper(args[1:], mk, peerUIDOS, ownerUID), true
+	}
 	h := Helper{Inv: p.Inventory, Opener: p.Opener, Progress: progress}
 	if s, ok := p.Inventory.(Sys); ok {
 		h.Sys = s

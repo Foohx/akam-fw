@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 )
 
 // unixTransport re-executes this program under pkexec (graphical session) or sudo, request on stdin, minimal
@@ -22,7 +23,7 @@ func (unixTransport) NeedsElevation(c *Candidate) bool {
 	if os.Geteuid() == 0 {
 		return false
 	}
-	f, err := os.OpenFile(c.Dev, os.O_RDWR, 0)
+	f, err := os.OpenFile(rawNodeFor(c.Dev), os.O_RDWR, 0)
 	if err != nil {
 		return true
 	}
@@ -52,6 +53,16 @@ func elevator(choice string) ([]string, error) {
 }
 
 func (unixTransport) RunElevated(self, elevate string, req Request, stderr io.Writer) (Response, error) {
+	if elevate == "osascript" {
+		// opt-in macOS path: the request travels over a private Unix socket (macsock.go)
+		if runtime.GOOS != "darwin" {
+			return Response{}, errors.New("AKAM_SD_ELEVATE=osascript exists on macOS only")
+		}
+		return realOsascript().run(self, req, stderr)
+	}
+	if runtime.GOOS == "darwin" && !ttyAvailable() {
+		return Response{}, errors.New("sudo needs a terminal to ask for the password: run the program in Terminal (or set AKAM_SD_ELEVATE=osascript)")
+	}
 	pre, err := elevator(elevate)
 	if err != nil {
 		return Response{}, err

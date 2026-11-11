@@ -1,0 +1,17 @@
+{
+  "facts": {
+    "os": "darwin",
+    "path": "/dev/disk4",
+    "name": "disk4",
+    "whole": true,
+    "size": 34359738368,
+    "sector_size": 512,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "no",
+    "model": "Card Reader",
+    "dev_num": "14:4",
+    "virtual": true
+  },
+  "refuse": "virtual"
+}
