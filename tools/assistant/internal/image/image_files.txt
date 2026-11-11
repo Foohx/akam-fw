@@ -1,0 +1,26 @@
+# Single source of truth for the Akam files that go into the firmware image.
+#
+# make_kit.sh reads this list to build the kit's overlay/ and patches/; tests/kit_test.sh
+# builds an image with src/ak_rtsp/build_firmware.sh and fails when the image and this
+# list disagree (paths, modes, links), so the two code paths cannot drift apart.
+# Binaries (bin/ak_rtsp, bin/dropbearmulti) and licences (local/akam/LICENSE.*) are
+# built from variables in both scripts and are covered by the same test.
+#
+# Format, fields separated by one space:
+#   file <mode> <kit path> <image path> <source in the repository>
+#   link <target> <kit path> <image path>
+file 755 overlay/sbin/ak_rtsp_wrapper.sh sbin/ak_rtsp_wrapper.sh tools/firmware_patch_templates/ak_rtsp_wrapper.sh
+file 755 overlay/sbin/akam_ssh.sh sbin/akam_ssh.sh tools/firmware_patch_templates/akam_ssh.sh
+file 755 overlay/sbin/akam_lockdown.sh sbin/akam_lockdown.sh tools/firmware_patch_templates/akam_lockdown.sh
+file 755 overlay/sbin/akam_hostname.sh sbin/akam_hostname.sh tools/firmware_patch_templates/akam_hostname.sh
+file 755 overlay/sbin/akam_rtsp_auth.sh sbin/akam_rtsp_auth.sh tools/firmware_patch_templates/akam_rtsp_auth.sh
+file 755 overlay/sbin/akam_debug.sh sbin/akam_debug.sh tools/firmware_patch_templates/akam_debug.sh
+file 755 overlay/sbin/akam_onvif.sh sbin/akam_onvif.sh tools/firmware_patch_templates/akam_onvif.sh
+file 755 overlay/sbin/akam_net.sh sbin/akam_net.sh tools/firmware_patch_templates/akam_net.sh
+file 755 overlay/sbin/akam_ntp.sh sbin/akam_ntp.sh tools/firmware_patch_templates/akam_ntp.sh
+file 644 overlay/local/_ht_process.ini local/_ht_process.ini tools/firmware_patch_templates/_ht_process.ini
+file 755 patches/patch_service_sh.sh - tools/firmware_patch_templates/patch_service_sh.sh
+file 755 patches/patch_ethernet_hostname.sh - tools/firmware_patch_templates/patch_ethernet_hostname.sh
+file 755 scripts/hwcheck/akam_hwcheck.sh - tools/hw_tests/akam_hwcheck.sh
+link dropbearmulti overlay/bin/dropbear bin/dropbear
+link dropbearmulti overlay/bin/dropbearkey bin/dropbearkey
