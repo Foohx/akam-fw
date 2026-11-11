@@ -121,6 +121,7 @@ func Catalog() []Option {
 		{ID: "video.fps_actual", Group: "Video", Label: "Measured frame rate (tenths)", Kind: Int, Key: "video.fps_actual", Persisted: PersistNone, ReadOnly: true},
 		{ID: "security.rtsp_auth", Group: "Security", Label: "Stream password", Kind: Secret, Helper: "akam_rtsp_auth.sh", Persisted: PersistCamera, Applies: Now, Danger: DangerAsks},
 		{ID: "net.onvif", Group: "Network", Label: "ONVIF", Kind: Action, Helper: "akam_onvif.sh", Persisted: PersistCamera, Applies: Now, Danger: DangerAsks, Needs: "security.rtsp_auth"},
+		{ID: "net.mqtt", Group: "Network", Label: "MQTT (Home Assistant)", Kind: Action, Helper: "akam_mqtt.sh", Persisted: PersistCamera, Applies: Now, Danger: DangerAsks},
 		{ID: "net.ntp", Group: "Network", Label: "NTP", Kind: String, Helper: "akam_ntp.sh", Persisted: PersistCamera, Applies: Now},
 		{ID: "net.hostname", Group: "Network", Label: "Host name", Kind: String, Helper: "akam_hostname.sh", Persisted: PersistCamera, Applies: NextPowerCycle},
 		{ID: "net.ssid", Group: "Network", Label: "Wi-Fi network", Kind: String, Key: "net.ssid", Persisted: PersistNone, ReadOnly: true},

@@ -36,3 +36,11 @@ usage_ntp_four|ntp set a b c d
 usage_ntp_word|ntp frob
 usage_ntp_extra|ntp off now
 usage_audio_mic|audio mic maybe
+dry_mqtt_status|--dry-run mqtt status
+dry_mqtt_set|--dry-run mqtt set
+dry_mqtt_disable|--dry-run mqtt disable
+dry_mqtt_forget|--dry-run mqtt forget
+dry_mqtt_test|--dry-run mqtt test
+no_address_mqtt|mqtt status
+usage_mqtt_bad|mqtt frob
+usage_mqtt_extra|mqtt set now

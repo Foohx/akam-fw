@@ -1930,6 +1930,139 @@ onvif_offer() {
     return 0
 }
 
+# ------------------------------------------------------------------ mqtt
+# The optional MQTT client of the camera (Home Assistant discovery, specs/07-spec-standard-protocols.md section 2),
+# managed over SSH with akam_mqtt.sh. Off by default; the camera connects OUT to the broker (no new open port), in
+# plain TCP. The broker password is typed without echo and goes on the SSH standard input only.
+#   ./akam mqtt status    on or off, the broker, what the camera reports (read-only)
+#   ./akam mqtt set       ask the broker address, port, user and password, ask (default No), save and turn on
+#   ./akam mqtt disable   stop (the settings stay)        ./akam mqtt forget   stop and delete settings and password
+#   ./akam mqtt test      one connection attempt with the saved settings
+MQTT_CMD=/usr/sbin/akam_mqtt.sh
+MQTT_PASS_MAX=128
+
+mqtt_host_ok() { # a host name or an IPv4 address, what akam_mqtt.sh accepts
+    case $1 in
+        '' | -* | .* | *[!A-Za-z0-9.-]*) return 1 ;;
+    esac
+    [ "${#1}" -le 63 ]
+}
+mqtt_port_ok() {
+    case $1 in '' | *[!0-9]*) return 1 ;; esac
+    [ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+mqtt_user_ok() {
+    case $1 in '' | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
+    [ "${#1}" -le 32 ]
+}
+
+# mqtt_remote STDIN-TEXT ARGS...: run the camera helper (STDIN-TEXT is sent on its standard input when not empty), print
+# its words, return its status.
+mqtt_remote() {
+    local input=$1 out rc l
+    shift
+    log_line "CMD ssh root@$CAM_IP $MQTT_CMD $*"
+    if [ -n "$input" ]; then
+        # printf is a bash builtin: the password is in no command line.
+        out=$(printf '%s' "$input" | "${CAM_SSH[@]}" "$MQTT_CMD $*" 2>&1) && rc=0 || rc=$?
+    else
+        out=$("${CAM_SSH[@]}" "$MQTT_CMD $*" 2>&1 </dev/null) && rc=0 || rc=$?
+    fi
+    [ -z "$out" ] || printf '%s\n' "$out" | while IFS= read -r l; do ui_say "  $l"; done
+    if [ "$rc" -ne 0 ]; then
+        case $out in
+            *"not found"* | *"No such file"*) ui_fail "this camera does not have $MQTT_CMD." "it runs an older Akam image: ./akam update (MQTT arrives in the same release as this command)." ;;
+            *) ui_fail "the camera did not run $MQTT_CMD $1." "read the lines above." ;;
+        esac
+    fi
+    return "$rc"
+}
+
+mqtt_set() {
+    local host port user pw=""
+    ui_require_tty "turning MQTT on" || return 1
+    ui_say "  MQTT lets the camera publish its state to a broker (for example Home Assistant) and take a few commands from it."
+    ui_say "  The camera connects out to the broker: no new port is opened on the camera. The connection is plain TCP,"
+    ui_say "  so the broker password travels in clear on your network. The broker must be on your own network."
+    ui_prompt "  Broker address (host name or IPv4 address):" "" || { ui_fail "no broker address." "nothing was changed."; return 1; }
+    host=$ANSWER
+    [ -n "$host" ] || { ui_fail "no broker address." "nothing was changed."; return 1; }
+    mqtt_host_ok "$host" || { ui_fail "invalid broker address." "use a host name or an IPv4 address (letters, digits, . and -, at most 63); nothing was changed."; return 1; }
+    ui_prompt "  Broker port [1883]:" 1883 || { ui_fail "no input." "nothing was changed."; return 1; }
+    port=$ANSWER
+    mqtt_port_ok "$port" || { ui_fail "invalid port." "use a whole number from 1 to 65535; nothing was changed."; return 1; }
+    ui_prompt "  Broker user name (empty for none):" "" || { ui_fail "no input." "nothing was changed."; return 1; }
+    user=$ANSWER
+    if [ -n "$user" ] && ! mqtt_user_ok "$user"; then
+        ui_fail "invalid user name." "use 1 to 32 letters, digits or . _ @ + - (no spaces, no colon); nothing was changed."
+        return 1
+    fi
+    if [ -n "$user" ]; then
+        ui_secret "  Broker password (not shown, at most $MQTT_PASS_MAX characters, empty for none):" || { ui_fail "no input." "nothing was changed."; return 1; }
+        pw=$SECRET
+        SECRET=""
+        if [ "${#pw}" -gt "$MQTT_PASS_MAX" ]; then ui_fail "the password is too long." "use at most $MQTT_PASS_MAX characters; nothing was changed."; return 1; fi
+        case $pw in *[[:cntrl:]]*) ui_fail "the password contains a control character (tab, ...)." "use printable characters only; nothing was changed."; return 1 ;; esac
+        log_add_secret "$pw"
+    fi
+    ui_ask_yn "  Turn MQTT on with these settings?" || { pw=""; ui_say "  Left as it was (MQTT off)."; return 0; }
+    ui_say "  Sending the settings over SSH ..."
+    if ! mqtt_remote "$pw
+" set "$host" "$port" "${user:--}"; then
+        pw=""
+        return 1
+    fi
+    pw=""
+    ui_good "  MQTT is on. Home Assistant finds the camera by itself (MQTT integration, discovery on)."
+    ui_say "  Check it with: ./akam mqtt test    Turn it off with: ./akam mqtt disable"
+    if ui_ask_yn "  Test the connection to the broker now?"; then
+        mqtt_remote "" test || return 1
+    fi
+    return 0
+}
+
+cmd_mqtt() {
+    local action=${1:-status}
+    case $action in
+        status | disable | forget | test | set) [ $# -le 1 ] || { echo "akam: mqtt $action takes no argument (see ./akam help)" >&2; return 2; } ;;
+        *) echo "akam: mqtt needs status, set, disable, forget or test (see ./akam help)" >&2; return 2 ;;
+    esac
+    step_banner_free "MQTT: $action"
+    cam_need_ip || return 1
+    if [ "$UI_DRY" = 1 ]; then
+        case $action in
+            set)
+                ui_say "  WOULD ask the broker address, port, user name and password (the password is not shown and goes on stdin, never in a command line)."
+                ui_say "  WOULD ask: Turn MQTT on with these settings? [y/N] (default: No)"
+                ui_say "  WOULD run over SSH on the camera: $MQTT_CMD set <host> <port> <user> (password on stdin)"
+                ;;
+            forget)
+                ui_say "  WOULD ask: Delete the saved MQTT settings and password from the camera? [y/N] (default: No)"
+                ui_say "  WOULD run over SSH on the camera: $MQTT_CMD $action"
+                ;;
+            *) ui_say "  WOULD run over SSH on the camera: $MQTT_CMD $action" ;;
+        esac
+        return 0
+    fi
+    rtsp_connect || return 1
+    case $action in
+        set) mqtt_set || return 1 ;;
+        forget)
+            ui_require_tty "deleting the MQTT settings" || return 1
+            ui_ask_yn "  Delete the saved MQTT settings and the broker password from the camera?" || { ui_say "  Left as it was."; return 0; }
+            mqtt_remote "" forget || return 1
+            ui_good "  MQTT is off and the settings are deleted. In Home Assistant, delete the device by hand if you do not want it any more."
+            ;;
+        disable)
+            mqtt_remote "" disable || return 1
+            ui_good "  MQTT is off: the camera makes no connection to the broker any more."
+            ;;
+        test) mqtt_remote "" test || return 1 ;;
+        *) mqtt_remote "" status || return 1 ;;
+    esac
+    return 0
+}
+
 # ------------------------------------------------------------------ talk, say
 # Speak to the camera's speaker from this computer, with the ONVIF audio backchannel on the RTSP
 # port (specs/07-spec-standard-protocols.md section 1). The audio is captured or converted here

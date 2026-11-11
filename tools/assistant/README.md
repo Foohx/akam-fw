@@ -67,7 +67,7 @@ at the next video restart, at the next reboot). Toggles that open ports (`onvif 
 protection (`rtsp-auth disable`) keep their yes/no, default No. The only camera process this program ever stops is the
 video service, behind one yes/no (default No) after a video change ("the stream stops for a few seconds"). An option
 the camera image does not know is shown as "not available on this image (update first)". The same settings exist as
-commands: `led`, `picture`, `video`, `audio` (including `mic on|off`), `ntp`, `onvif`, `debug`, `rtsp-auth`,
+commands: `led`, `picture`, `video`, `audio` (including `mic on|off`), `ntp`, `onvif`, `mqtt`, `debug`, `rtsp-auth`,
 `hostname`. Wi-Fi is displayed only; changing it needs the card route.
 
 ### Backup location
