@@ -582,7 +582,7 @@ BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null 
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh; sbin/akam_net.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh; do
     [ "$(stat -c %a "$PATCHED/$f")" = 755 ] || die "$f is not mode 755"
 done
 BADW="$(find "$PATCHED/local/akam" \( -type f -o -type d \) -perm /022 2>/dev/null)"
