@@ -1,6 +1,6 @@
 ZIG    ?= zig
 CC      = $(ZIG) cc -target arm-linux-musleabi -mcpu=arm926ej_s
-CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -g \
+CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -Wformat -Wformat-security -g \
           -ffunction-sections -fdata-sections \
           -I. \
           -I../smolrtsp/include \
@@ -14,6 +14,13 @@ LDFLAGS = -pthread -static -Wl,--gc-sections
 # ONVIF is off the video path and opt-in: size over speed for its files only.
 ONVIF_OBJS = http_srv.o soap.o onvif.o onvif_cfg.o onvif_device.o onvif_media.o onvif_imaging.o wsd.o cred.o
 $(ONVIF_OBJS): CFLAGS += -Os
+
+# G17: stack canaries only on the parsers that read untrusted network input (ONVIF/SOAP/HTTP, RTSP auth,
+# the 8091 line parser). Everywhere would cost about 3 % of the stripped binary and a canary check on the
+# video/audio hot paths; here it costs under 1 %. Static non-PIE musl: no RELRO or PIE to turn on, and
+# musl ignores _FORTIFY_SOURCE, so those are deliberately not set.
+HARDENED_OBJS = $(ONVIF_OBJS) rtsp_auth.o control.o
+$(HARDENED_OBJS): CFLAGS += -fstack-protector-strong
 
 TARGET     = ak_rtsp
 TARGET_DBG = isp_dump
