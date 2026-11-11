@@ -6,6 +6,7 @@ Akam. These pages are for when you want details, want to do a step by hand, or s
 ## Help
 
 - [Troubleshooting](troubleshooting.md): real problems and their fixes (network, card reader, VLC, passwords, SSH).
+- [MQTT and Home Assistant](mqtt.md): the optional MQTT client with Home Assistant discovery (`./akam mqtt`), entities, security, a temporary Mosquitto to try it, hardware checks.
 - [Two-way audio](two_way_audio.md): talk through the camera speaker (`./akam talk`, go2rtc, Frigate, Home Assistant), settings, hardware check list.
 - [Testing status](testing-status.md): what was tested on the host, in RAM and on hardware, feature by feature; how to run the host tests.
 - [Tested hardware](tested-hardware.md): the camera model and units validated, and how to report yours.
