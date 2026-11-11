@@ -5,6 +5,7 @@ package blockio
 import (
 	"errors"
 	"io"
+	"math"
 	"sync"
 	"unsafe"
 )
@@ -60,6 +61,9 @@ func (a *Aligned) ReadAt(p []byte, off int64) (int, error) {
 	if off < 0 {
 		return 0, errors.New("blockio: negative offset")
 	}
+	if off > math.MaxInt64-int64(len(p))-a.ss {
+		return 0, errors.New("blockio: offset out of range")
+	}
 	start, end := a.down(off), a.up(off+int64(len(p)))
 	buf := alignedBuf(end - start)
 	n, err := a.raw.ReadAt(buf, start)
@@ -87,6 +91,9 @@ func (a *Aligned) WriteAt(p []byte, off int64) (int, error) {
 	}
 	if off < 0 {
 		return 0, errors.New("blockio: negative offset")
+	}
+	if off > math.MaxInt64-int64(len(p))-a.ss {
+		return 0, errors.New("blockio: offset out of range")
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -6,6 +6,7 @@
     "whole": true,
     "size": 34359738368,
     "bus": "usb",
+    "internal": "no",
     "read_only": true
   },
   "refuse": "write-protect"

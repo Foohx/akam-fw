@@ -55,6 +55,14 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 	if f.GuardHit != "" {
 		return nil, fmt.Errorf("%s carries %s (the repository, your home, the working or the temp directory)", dev, f.GuardHit)
 	}
+	if f.Virtual {
+		return nil, fmt.Errorf("%s is a virtual or file-backed disk", dev)
+	}
+	switch f.OS {
+	case "", "linux", "darwin", "windows":
+	default:
+		return nil, fmt.Errorf("%s: disks of the OS %q are not supported", dev, f.OS)
+	}
 	if f.OS == "" || f.OS == "linux" {
 		if f.Bus == "mmc" {
 			if f.DevType != "SD" {
@@ -74,11 +82,12 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 		default:
 			return nil, fmt.Errorf("%s is not a USB or SD disk (bus %q)", dev, f.Bus)
 		}
-		if f.Virtual {
-			return nil, fmt.Errorf("%s is a virtual or file-backed disk", dev)
-		}
-		if f.Internal == Yes {
+		// fail closed: an internal flag the inventory could not read is not "external"
+		switch f.Internal {
+		case Yes:
 			return nil, fmt.Errorf("%s is an internal disk", dev)
+		case Unknown:
+			return nil, fmt.Errorf("%s: cannot tell whether it is an internal disk: refusing", dev)
 		}
 	}
 	if f.Size <= 0 {

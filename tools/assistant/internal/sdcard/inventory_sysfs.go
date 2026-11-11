@@ -197,6 +197,7 @@ func (s Sys) Inspect(dev string, ctx Context) (Facts, error) {
 		}
 	}
 	if sf, err := os.Open(s.Swaps); err == nil {
+		defer sf.Close()
 		sc := bufio.NewScanner(sf)
 	swaps:
 		for sc.Scan() {
@@ -210,7 +211,6 @@ func (s Sys) Inspect(dev string, ctx Context) (Facts, error) {
 				}
 			}
 		}
-		sf.Close()
 	}
 	if why := s.holders(name, nodes); why != "" {
 		f.InStack = why

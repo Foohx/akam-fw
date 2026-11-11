@@ -7,7 +7,8 @@
     "size": 34359738368,
     "sector_size": 4096,
     "bus": "usb",
-    "removable": "yes"
+    "removable": "yes",
+    "internal": "no"
   },
   "refuse": "4096-byte logical sectors"
 }
