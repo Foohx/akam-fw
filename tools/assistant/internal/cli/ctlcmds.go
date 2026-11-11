@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strconv"
 
-	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
+	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
 
 // This file: led, audio, picture, the commands that talk to the control port (8091) through an

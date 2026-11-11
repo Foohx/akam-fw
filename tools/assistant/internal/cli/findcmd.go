@@ -48,7 +48,9 @@ func (a *App) resolveName(name string) (string, bool) {
 	h := a.Hooks.Discover
 	lookup := h.Lookup
 	if lookup == nil {
-		lookup = func(ctx context.Context, host string) ([]string, error) { return net.DefaultResolver.LookupHost(ctx, host) }
+		lookup = func(ctx context.Context, host string) ([]string, error) {
+			return net.DefaultResolver.LookupHost(ctx, host)
+		}
 	}
 	ctx, cancel := context.WithTimeout(a.Ctx, 3*time.Second)
 	defer cancel()

@@ -31,13 +31,13 @@ type RTSPServer struct {
 	// Codec is the payload type the SDP offers first: "PCMU" (default) or "PCMA".
 	Codec string
 	// Packets are the RTP packets received (header + payload, without the '$' framing).
-	packets  [][]byte
-	rtcp     [][]byte
-	requests []string // "METHOD uri" of every request, in order
-	teardown bool
-	conns    []net.Conn
-	wg       sync.WaitGroup
-	nonceN   int
+	packets         [][]byte
+	rtcp            [][]byte
+	requests        []string // "METHOD uri" of every request, in order
+	teardown        bool
+	conns           []net.Conn
+	wg              sync.WaitGroup
+	nonceN          int
 	describeRequire string
 }
 

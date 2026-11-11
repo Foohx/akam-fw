@@ -129,7 +129,7 @@ func dnsQuestion(name string) []byte {
 		b = append(b, l...)
 	}
 	b = append(b, 0)
-	b = binary.BigEndian.AppendUint16(b, 1)      // A
+	b = binary.BigEndian.AppendUint16(b, 1)        // A
 	b = binary.BigEndian.AppendUint16(b, 1|0x8000) // IN, unicast response wanted
 	return b
 }

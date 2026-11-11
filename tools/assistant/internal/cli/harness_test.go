@@ -1,10 +1,10 @@
 package cli_test
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net"
 	"os"

@@ -1,0 +1,7 @@
++----------------------------------------------------+
+| WRITE THE CAMERA FLASH                             |
+| A power cut during the write can brick the camera. |
+| Image md5: 0123456789abcdef                        |
++----------------------------------------------------+
+Write the flash now?
+  ( ) Yes  (*) No   (y/N: Enter, Esc and q mean No)

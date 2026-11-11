@@ -140,7 +140,10 @@ func TestChangedHostKeyIsAHardError(t *testing.T) {
 	}
 	c.Close()
 	f.cam.RotateHostKey()
-	_, err = camssh.Dial(f.cfg(func(camssh.NewHostKey) (bool, error) { t.Error("a changed key must never be offered for acceptance"); return true, nil }))
+	_, err = camssh.Dial(f.cfg(func(camssh.NewHostKey) (bool, error) {
+		t.Error("a changed key must never be offered for acceptance")
+		return true, nil
+	}))
 	var hk *camssh.HostKeyChangedError
 	if !errors.As(err, &hk) {
 		t.Fatalf("err = %v", err)

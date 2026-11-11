@@ -225,6 +225,11 @@ func exitCode(a *App, err error) int {
 }
 
 func defaultUI(o *Options, st Streams, log *state.Log, secrets *state.Secrets, dry bool) ui.UI {
+	return NewPlainUI(o, st, log, secrets, dry)
+}
+
+// NewPlainUI builds the line-based UI on the given streams (colour only on a terminal).
+func NewPlainUI(o *Options, st Streams, log *state.Log, secrets *state.Secrets, dry bool) *ui.Plain {
 	p := &ui.Plain{
 		In: bufio.NewReader(st.In), Out: st.Out, ErrOut: st.Err, DryRun: dry,
 		ForceTT: os.Getenv("AKAM_FORCE_TTY") == "1", Log: log, Secrets: secrets,
