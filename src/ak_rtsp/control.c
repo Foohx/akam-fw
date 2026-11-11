@@ -55,13 +55,14 @@ typedef struct {
     int             loopback;  /* peer is 127.0.0.0/8 */
     int             need_nl;   /* a LOG line was cut short: start the next one on a fresh line */
     pthread_mutex_t wlock;     /* one writer at a time on this socket (replies vs LOG) */
+    int64_t         t0_ms;     /* connect time (absolute session cap of remote peers) */
 } cli_t;
 
 static pthread_mutex_t g_slot_lock = PTHREAD_MUTEX_INITIALIZER;
 static ctl_slots_t     g_slots;
 static cli_t           g_cli[CTL_MAX_CLIENTS] = {
-    { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER },
-    { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER },
+    { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 },
+    { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 },
 };
 
 /* RAM-only debug flag (writes from remote peers), off at every start. */
@@ -604,8 +605,11 @@ static int read_line(cli_t *c, char *buf, size_t cap)
 {
     size_t  i = 0;
     int64_t last = mono_ms();
+    int     cap_s = ctl_session_limit_s(c->loopback, debug_active());
     for (;;) {
         char c1;
+        /* A remote peer cannot hold a slot for ever by trickling one byte per idle period. */
+        if (cap_s && mono_ms() - c->t0_ms >= 1000LL * cap_s) return -1;
         ssize_t n = recv(c->fd, &c1, 1, 0);
         if (n == 0) return -1;  /* EOF */
         if (n < 0) {
@@ -630,7 +634,8 @@ static void handle_control_client(cli_t *c)
         if (n < 0) return;
         if (n == 0) continue;
 
-        char *cmd = strtok(line, " ");
+        char *sp = NULL; /* strtok_r: up to CTL_MAX_CLIENTS threads parse at once */
+        char *cmd = strtok_r(line, " ", &sp);
         if (!cmd) continue;
 
         /* Read-only gate: writes only from loopback or while DEBUG is on. */
@@ -642,12 +647,12 @@ static void handle_control_client(cli_t *c)
         if (!strcasecmp(cmd, "LIST")) {
             do_list(c);
         } else if (!strcasecmp(cmd, "GET")) {
-            char *param = strtok(NULL, " ");
+            char *param = strtok_r(NULL, " ", &sp);
             if (!param) { reply(c, "ERR GET requires a param name"); continue; }
             do_get(c, param);
         } else if (!strcasecmp(cmd, "SET")) {
-            char *param = strtok(NULL, " ");
-            char *value = strtok(NULL, " ");
+            char *param = strtok_r(NULL, " ", &sp);
+            char *value = strtok_r(NULL, " ", &sp);
             if (!param || !value) { reply(c, "ERR SET requires param and value"); continue; }
             do_set(c, param, value);
         } else if (!strcasecmp(cmd, "QUIT")) {
@@ -655,7 +660,7 @@ static void handle_control_client(cli_t *c)
             return;
         } else if (!strcasecmp(cmd, "ONVIF")) {
             /* loopback only, like DEBUG: starts/stops the HTTP server and WS-Discovery from the flag file */
-            char *a1 = strtok(NULL, " ");
+            char *a1 = strtok_r(NULL, " ", &sp);
             if (!c->loopback) reply(c, "ERR ONVIF reload is only allowed from the camera");
             else if (!a1 || strcasecmp(a1, "reload")) reply(c, "ERR usage: ONVIF reload");
             else {
@@ -664,8 +669,8 @@ static void handle_control_client(cli_t *c)
                 reply(c, "OK onvif.state=%s", os);
             }
         } else if (!strcasecmp(cmd, "DEBUG")) {
-            char *a1 = strtok(NULL, " ");
-            char *a2 = strtok(NULL, " ");
+            char *a1 = strtok_r(NULL, " ", &sp);
+            char *a2 = strtok_r(NULL, " ", &sp);
             char  out[96];
             pthread_mutex_lock(&g_dbg_lock);
             ctl_debug_command(&g_dbg, mono_ms(), c->loopback, a1, a2, out, sizeof(out));
@@ -714,6 +719,7 @@ static void *control_accept_loop(void *arg)
         perror("[control] listen"); close(server_fd); return NULL;
     }
 
+    fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL) | O_NONBLOCK); /* a connection reset between poll and accept must not block */
     g_server_fd = server_fd;
     printf("[control] tuning server listening on port %d\n", CONTROL_PORT);
 
@@ -734,8 +740,12 @@ static void *control_accept_loop(void *arg)
         if (pr <= 0) continue;
         int fd = accept(server_fd, (struct sockaddr *)&client_addr, &alen);
         if (fd < 0) {
-            if (errno == EINTR) continue;
-            break;  /* server_fd closed by control_stop() */
+            /* Only control_stop() ends the loop. EMFILE/ENOMEM/ECONNABORTED are transient: leaving here
+             * would kill port 8091 until restart and disarm the watchdog's control heartbeat. */
+            if (!g_control_running) break;
+            if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED)
+                usleep(100000);
+            continue;
         }
 
         pthread_mutex_lock(&g_slot_lock);
@@ -749,6 +759,7 @@ static void *control_accept_loop(void *arg)
             c->fd       = fd;
             c->loopback = lo;
             c->need_nl  = 0;
+            c->t0_ms    = mono_ms();
             pthread_t t;
             if (pthread_create(&t, &attr, control_client_thread, (void *)(intptr_t)idx) != 0) {
                 c->fd = -1;
