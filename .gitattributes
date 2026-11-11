@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Text the program writes for the camera or the SD card, and the scripts embedded in the assistant,
+# must stay LF on every checkout, Windows included (spec 11, 4.9.5).
+*.sh text eol=lf
+*.embed text eol=lf
+*.txt text eol=lf
+tools/assistant/internal/assets/scripts/** text eol=lf
