@@ -23,6 +23,14 @@ SRC=$REPO/src/ak_rtsp
 mkdir "$WORK/d"
 "$WORK/cred_test" "$WORK/d"
 
+# Same test with an 8-slot nonce cache: eviction of the oldest Created and the replay floor.
+"$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    -fno-sanitize-recover=undefined -I"$SRC" -DCRED_NONCE_CACHE=8 -DCRED_EVICT_TEST \
+    -o "$WORK/cred_test8" \
+    "$REPO/tests/native/cred_test.c" "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
+mkdir "$WORK/d8"
+"$WORK/cred_test8" "$WORK/d8"
+
 # The password must never reach a log: the module does not print at all.
 if grep -nE '\b(printf|fprintf|puts|fputs|perror|syslog)\b' "$SRC/cred.c"; then
     echo "FAIL: cred.c prints"

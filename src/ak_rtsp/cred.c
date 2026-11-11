@@ -38,12 +38,19 @@ typedef struct {
     uid_t uid;
 } sig_t;
 
-/* A verified nonce, remembered as its SHA-1 until its token can no longer pass the Created check. */
+/* A verified nonce: the first 8 bytes of its SHA-1 and the monotonic second (cred_mono_us() / 1e6) after which its
+ * token can no longer pass the Created check (0 = free slot). 12 bytes each: CRED_NONCE_CACHE of them fit in 12 KB. */
 typedef struct {
-    uint8_t h[SHA1_DIGEST_LEN];
-    int64_t expire_us;               /* cred_mono_us() time after which the entry is free */
-    bool used;
+    uint8_t h[CRED_NONCE_HASH];
+    uint32_t exp_s;
 } nonce_t;
+
+/* Failed logins of one peer address (ONVIF over HTTP): lockout, see cred_peer_locked. */
+typedef struct {
+    uint32_t ip;                     /* network order; 0 = free */
+    unsigned fails;
+    int64_t last_us, until_us;
+} peer_t;
 
 /* One mutex around every public entry point (the RTSP thread and the ONVIF HTTP thread both come here). Lock
  * order: cred, then rtsp_auth. Nothing below sleeps: the limiter delay is returned to the caller. */
@@ -64,6 +71,13 @@ static struct {
     char user[CRED_USER_MAX + 1];
     char pass[CRED_PASS_MAX + 1];
     nonce_t cache[CRED_NONCE_CACHE]; /* verified nonces with their expiry */
+    uint32_t floor_s;                /* tokens whose expiry is <= this were evicted from the cache: refused */
+    /* Token clock: offset (token time - monotonic seconds) of the wall clock, or, while the wall clock is unset,
+     * the one anchored on the first authenticated token; the previous one stays valid for a while after a step. */
+    bool have_off, have_prev;
+    int64_t off_s, prev_off_s;
+    int64_t prev_until_s;
+    peer_t peers[CRED_PEERS];
 } S;
 
 static void wipe(void *p, size_t n)
@@ -360,19 +374,91 @@ static bool parse_created(const char *s, int64_t *out)
 /* ------------------------------------------------------------------------
  * WS-Security
  * ------------------------------------------------------------------------ */
-static bool wsse_verify(const char *username, const char *nonce_b64, const char *created, const char *digest_b64)
+/* Update the time base for a token that passed the digest and keep the previous base across a clock step. */
+static void clock_track(int64_t mono_s, int64_t wall, int64_t created)
 {
-    if (!username || !nonce_b64 || !created || !digest_b64) return false;
-    if (refresh_l(false) != CRED_OK) return false;
+    if (wall >= CRED_CLOCK_MIN_YEAR_S) {
+        int64_t off = wall - mono_s;
+        if (S.have_off && (off > S.off_s + 2 || off < S.off_s - 2)) {     /* SetSystemDateAndTime, NTP, or the clock got set */
+            S.prev_off_s = S.off_s;
+            S.have_prev = true;
+            S.prev_until_s = mono_s + CRED_STEP_GRACE_S;
+            S.floor_s = 0;                                                /* expiries of the old base are not comparable */
+        }
+        if (!S.have_off || off > S.off_s + 2 || off < S.off_s - 2) S.off_s = off;   /* +-2 s: rounding, not a step */
+        S.have_off = true;
+    } else if (!S.have_off) {
+        S.off_s = created - mono_s;           /* unset clock: anchor on the first authenticated token */
+        S.have_off = true;
+    }                                          /* else keep the base: the monotonic clock still runs */
+}
+
+static bool in_window(int64_t created, int64_t mono_s, int64_t off, int64_t *exp)
+{
+    int64_t d = created - (mono_s + off);
+    if (d > CRED_CLOCK_WINDOW_S || d < -CRED_CLOCK_WINDOW_S) return false;
+    *exp = created + CRED_CLOCK_WINDOW_S - off;   /* monotonic second after which this token is stale */
+    return true;
+}
+
+/* 1 = accepted and remembered, 0 = refused (counts as a failed login), -1 = authentic but older than every cached
+ * nonce while the cache is full (refused, not counted: nothing suggests an attack). */
+static int fresh_and_remember(const char *created, const uint8_t *nonce, size_t nn)
+{
+    int64_t c, exp1, exp2 = 0, mono_s = cred_mono_us() / 1000000, wall = cred_wall_s();
+    if (!parse_created(created, &c)) return 0;
+    clock_track(mono_s, wall, c);
+    bool ok = in_window(c, mono_s, S.off_s, &exp1);
+    if (S.have_prev && mono_s <= S.prev_until_s && in_window(c, mono_s, S.prev_off_s, &exp2)) {
+        if (!ok || exp2 > exp1) exp1 = exp2;
+        ok = true;
+    }
+    if (!ok) return 0;
+    uint32_t stored = (uint32_t)(exp1 + 1);      /* 0 stays "free" */
+
+    uint8_t h[SHA1_DIGEST_LEN];
+    sha1_ctx x;
+    sha1_init(&x);
+    sha1_update(&x, nonce, nn);
+    sha1_final(&x, h);
+    nonce_t *slot = NULL, *oldest = NULL;
+    for (unsigned i = 0; i < CRED_NONCE_CACHE; i++) {
+        nonce_t *e = &S.cache[i];
+        if (e->exp_s && (uint32_t)mono_s >= e->exp_s) e->exp_s = 0;
+        if (e->exp_s) {
+            if (ct_eq(e->h, h, CRED_NONCE_HASH)) return 0;                  /* replay */
+            if (!oldest || e->exp_s < oldest->exp_s) oldest = e;
+        } else if (!slot) {
+            slot = e;
+        }
+    }
+    if (stored <= S.floor_s) return -1;                                      /* older than something already forgotten */
+    if (!slot) {
+        /* Full of live nonces: forget the one with the oldest Created and refuse anything not newer than it from
+         * now on, so that a forgotten nonce can never be replayed. Logins stay possible however many there are. */
+        if (stored <= oldest->exp_s) return -1;
+        if (oldest->exp_s > S.floor_s) S.floor_s = oldest->exp_s;
+        slot = oldest;
+    }
+    memcpy(slot->h, h, CRED_NONCE_HASH);
+    slot->exp_s = stored;
+    return 1;
+}
+
+/* 1 = authenticated, 0 = refused and counted, -1 = refused, not counted. */
+static int wsse_verify(const char *username, const char *nonce_b64, const char *created, const char *digest_b64)
+{
+    if (!username || !nonce_b64 || !created || !digest_b64) return 0;
+    if (refresh_l(false) != CRED_OK) return 0;
 
     size_t nl = strlen(nonce_b64), cl = strlen(created), dl = strlen(digest_b64);
     if (nl == 0 || nl > B64_ENCODED_LEN(CRED_NONCE_RAW_MAX) || cl == 0 || cl > CRED_CREATED_MAX ||
         dl != B64_ENCODED_LEN(SHA1_DIGEST_LEN))
-        return false;
+        return 0;
     uint8_t nonce[CRED_NONCE_RAW_MAX], want[SHA1_DIGEST_LEN + 3];
     long nn = b64_decode(nonce_b64, nl, nonce, sizeof(nonce));
     long dn = b64_decode(digest_b64, dl, want, sizeof(want));
-    if (nn < 1 || dn != SHA1_DIGEST_LEN) return false;
+    if (nn < 1 || dn != SHA1_DIGEST_LEN) return 0;
 
     /* Everything below runs whatever the user name is. */
     char ub_client[CRED_USER_MAX + 1] = "", ub_db[CRED_USER_MAX + 1] = "";
@@ -390,49 +476,16 @@ static bool wsse_verify(const char *username, const char *nonce_b64, const char 
     sha1_final(&c, mine);
     good &= ct_eq(mine, want, SHA1_DIGEST_LEN);
     wipe(mine, sizeof(mine));
-    if (!good) return false;
-
-    /* Authentic: now the freshness. */
-    int64_t wall = cred_wall_s();
-    if (wall >= CRED_CLOCK_MIN_YEAR_S) {
-        int64_t t;
-        if (!parse_created(created, &t)) return false;
-        int64_t d = wall - t;
-        if (d > CRED_CLOCK_WINDOW_S || d < -CRED_CLOCK_WINDOW_S) return false;
-    }
-    /* Replay: the nonce is remembered until its token could no longer pass the Created check (Created + window),
-     * or receive time + window when the clock is not set (no Created check then). Only expired entries are
-     * reused; when every slot still holds a live nonce the request is refused (fail closed) rather than
-     * forgetting one that could still be replayed. */
-    int64_t now = cred_mono_us(), expire = now + (int64_t)CRED_CLOCK_WINDOW_S * 1000000;
-    if (wall >= CRED_CLOCK_MIN_YEAR_S) {
-        int64_t t;
-        parse_created(created, &t); /* already known good above */
-        expire = now + (t + CRED_CLOCK_WINDOW_S - wall) * 1000000;
-    }
-    uint8_t h[SHA1_DIGEST_LEN];
-    sha1_init(&c);
-    sha1_update(&c, nonce, (size_t)nn);
-    sha1_final(&c, h);
-    nonce_t *slot = NULL;
-    for (unsigned i = 0; i < CRED_NONCE_CACHE; i++) {
-        nonce_t *e = &S.cache[i];
-        if (e->used && now >= e->expire_us) e->used = false;
-        if (e->used) {
-            if (ct_eq(e->h, h, sizeof(h))) return false;
-        } else if (!slot) {
-            slot = e;
-        }
-    }
-    if (!slot) return false;
-    memcpy(slot->h, h, sizeof(h));
-    slot->expire_us = expire;
-    slot->used = true;
-    return true;
+    if (!good) return 0;
+    return fresh_and_remember(created, nonce, (size_t)nn);
 }
 
-static int finish(bool ok, unsigned *delay_ms)
+static int finish(int ok, unsigned *delay_ms)
 {
+    if (ok < 0) {                  /* refused without blaming the peer */
+        if (delay_ms) *delay_ms = 0;
+        return 0;
+    }
     if (ok) {
         rtsp_auth_note_success(S.limiter);
         if (delay_ms) *delay_ms = 0;
@@ -457,7 +510,7 @@ void cred_note_failure(unsigned *delay_ms)
 {
     LOCK();
     if (!S.inited) init_l(NULL, NULL);
-    finish(false, delay_ms);
+    finish(0, delay_ms);
     UNLOCK();
 }
 
@@ -485,3 +538,66 @@ rtsp_auth_mode_t cred_auth_mode(void)
 }
 
 bool cred_auth_enabled(void) { return cred_auth_mode() != RTSP_AUTH_OFF; }
+
+/* ------------------------------------------------------------------------
+ * Per-peer lockout (ONVIF over HTTP)
+ * ------------------------------------------------------------------------ */
+static unsigned lock_ms(unsigned fails)
+{
+    if (fails < CRED_PEER_FREE_FAILS) return 0;
+    unsigned sh = fails - CRED_PEER_FREE_FAILS;
+    unsigned ms = 1000u << (sh > 4 ? 4 : sh);        /* 1, 2, 4, 8, 16 s */
+    return ms;
+}
+
+static peer_t *peer_find(uint32_t ip, int64_t now, bool create)
+{
+    peer_t *free_e = NULL, *old = NULL;
+    for (unsigned i = 0; i < CRED_PEERS; i++) {
+        peer_t *p = &S.peers[i];
+        if (p->ip && now - p->last_us > CRED_PEER_FORGET_US && now >= p->until_us) p->ip = 0;
+        if (p->ip == ip && ip) return p;
+        if (!p->ip) { if (!free_e) free_e = p; }
+        else if (!old || p->last_us < old->last_us) old = p;
+    }
+    if (!create) return NULL;
+    peer_t *p = free_e ? free_e : old;
+    memset(p, 0, sizeof(*p));
+    p->ip = ip;
+    p->last_us = now;
+    return p;
+}
+
+bool cred_peer_locked(uint32_t ip, unsigned *retry_ms)
+{
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
+    int64_t now = cred_mono_us();
+    peer_t *p = peer_find(ip, now, false);
+    bool lk = p && now < p->until_us;
+    if (retry_ms) *retry_ms = lk ? (unsigned)((p->until_us - now + 999) / 1000) : 0;
+    UNLOCK();
+    return lk;
+}
+
+void cred_peer_failed(uint32_t ip)
+{
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
+    int64_t now = cred_mono_us();
+    peer_t *p = peer_find(ip, now, true);
+    if (p->fails < 1000) p->fails++;
+    p->last_us = now;
+    unsigned ms = lock_ms(p->fails);
+    if (ms) p->until_us = now + (int64_t)ms * 1000;
+    UNLOCK();
+}
+
+void cred_peer_ok(uint32_t ip)
+{
+    LOCK();
+    if (!S.inited) init_l(NULL, NULL);
+    peer_t *p = peer_find(ip, cred_mono_us(), false);
+    if (p) p->ip = 0;
+    UNLOCK();
+}

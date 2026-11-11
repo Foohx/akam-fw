@@ -35,7 +35,14 @@
 #define CRED_FILE_MAX 512
 #define CRED_RECHECK_US (3LL * 1000000)
 /* WS-Security */
-#define CRED_NONCE_CACHE 128
+#ifndef CRED_NONCE_CACHE                 /* tests shrink it to exercise eviction */
+#define CRED_NONCE_CACHE 1024            /* 12 bytes each */
+#endif
+#define CRED_NONCE_HASH 8                /* bytes of SHA-1(nonce) kept */
+#define CRED_STEP_GRACE_S 600            /* the time base before a clock step stays valid this long */
+#define CRED_PEERS 8                     /* addresses tracked by the lockout */
+#define CRED_PEER_FREE_FAILS 3           /* failures a peer may make before it is locked out */
+#define CRED_PEER_FORGET_US (300LL * 1000000)
 #define CRED_NONCE_RAW_MAX 64            /* decoded nonce, bytes */
 #define CRED_CREATED_MAX 40              /* xsd:dateTime text, characters */
 #define CRED_CLOCK_WINDOW_S 300          /* Created must be within +/- 5 min ... */
@@ -74,15 +81,17 @@ int cred_parse(const char *text, size_t len, char *user, char *pass);
 /* WS-Security UsernameToken, PasswordDigest = Base64(SHA1(nonce + created +
  * password)) with nonce the decoded Nonce. All four arguments are the element
  * texts as received (NUL-terminated, nothing trimmed). Constant-time compare;
- * nonce reuse refused: each verified nonce is kept until Created + 5 min (receive
- * time + 5 min when the wall clock is unset), in CRED_NONCE_CACHE slots; only expired entries are reused and a
- * full table of live nonces refuses the request (fail closed). Created checked
- * within +/- 5 minutes only when the wall clock is >= 2024. Every failure
- * (unknown user, no plain credentials, malformed input, bad digest, replay, old
- * Created) counts in the shared limiter and sets *delay_ms to the time to wait
- * before answering (the caller sleeps or defers; may be NULL); a success resets
- * the counter. Returns 1 = authenticated, 0 = refused (answer ter:NotAuthorized,
- * nothing more specific). */
+ * nonce reuse refused: each verified nonce is remembered (8 bytes of its hash + the second at which its token goes
+ * stale) in CRED_NONCE_CACHE slots. Created must be within +/- 5 minutes of the token clock: the wall clock when it
+ * is >= 2024, else a clock anchored on the first authenticated token (created and monotonic time), so that a captured
+ * token is not replayable with an unset clock either. After a step of the clock (SetSystemDateAndTime, NTP) the
+ * previous time base stays valid for CRED_STEP_GRACE_S, for clients that cached the device time. When every slot
+ * holds a live nonce the one with the oldest Created is forgotten and tokens not newer than it are refused from then
+ * on (never a refusal for a valid newer token). Every failure (unknown user, no plain credentials, malformed
+ * input, bad digest, replay, stale Created) counts in the shared limiter and sets *delay_ms to the time to wait
+ * before answering (the caller sleeps or defers; may be NULL); a success resets the counter. A valid token older than
+ * everything the cache remembers is refused without counting. Returns 1 = authenticated, 0 = refused (answer
+ * ter:NotAuthorized, nothing more specific). */
 int cred_check_wsse(const char *username, const char *nonce_b64, const char *created,
                     const char *digest_b64, unsigned *delay_ms);
 
@@ -107,3 +116,14 @@ void cred_note_failure(unsigned *delay_ms);
 bool cred_auth_enabled(void);
 /* The mode behind it (the htdigest file, re-read): OFF, ON or BROKEN. */
 rtsp_auth_mode_t cred_auth_mode(void);
+
+/* Per-peer lockout for ONVIF over HTTP (ip = sin_addr.s_addr). After CRED_PEER_FREE_FAILS failures from one address
+ * (counted with cred_peer_failed by the caller, which also covers failures that cred_check_* cannot see) the address
+ * is locked for 1, 2, 4, 8, 16 s (growing with each further failure, forgotten after 5 quiet minutes). While
+ * cred_peer_locked is true the caller must answer as for a failed login WITHOUT evaluating the credentials, so a
+ * correct password gets no earlier answer than a wrong one and a reconnect does not shorten the wait. Other
+ * addresses are unaffected. 8 addresses are tracked (the least recently failing one is replaced); cred_peer_ok
+ * forgets the address after a success. retry_ms may be NULL. */
+bool cred_peer_locked(uint32_t ip, unsigned *retry_ms);
+void cred_peer_failed(uint32_t ip);
+void cred_peer_ok(uint32_t ip);

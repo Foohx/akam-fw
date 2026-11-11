@@ -311,7 +311,8 @@ static void test_wsse(void)
     CHECK(cred_check_wsse("user", n1, "2010-09-16T07:50:46Z", dg, NULL) == 0, "created changed after signing");
     CHECK(cred_check_wsse("user", n1, SPEC_CREATED, dg, NULL) == 1, "the genuine message passes after all the junk");
 
-    /* replay cache: CRED_NONCE_CACHE slots, each kept until its expiry (clock unset here: receive time + 300 s) */
+    /* replay cache with the clock unset: the first authenticated token anchors the token clock (Created and monotonic
+     * time); all CRED_NONCE_CACHE distinct nonces fit and each is then refused as a replay */
     fresh();
     put_creds("user", SPEC_PASS);
     wall = 0;
@@ -328,22 +329,18 @@ static void test_wsse(void)
         if (wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) != 0) ok = 0;
     }
     CHECK(ok, "each of them is refused as a replay (none was evicted)");
-    unsigned dl = 0;
-    nonce_n(CRED_NONCE_CACHE + 1, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, &dl) == 0, "table full of live nonces: a new request is refused (fail closed)");
+    /* M3: with the clock unset a captured token is not replayable after the forgetting time either */
     nonce_n(1, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "... and the first nonce is still remembered");
-    mono += (int64_t)CRED_CLOCK_WINDOW_S * 1000000 - 1000000;
-    nonce_n(CRED_NONCE_CACHE + 1, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "1 s before the expiry: still full");
-    mono += 2000000;
-    nonce_n(CRED_NONCE_CACHE + 1, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "after the expiry the slots are reusable");
-    nonce_n(2, n);
-    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "an expired nonce is forgotten (clock unset: nothing else to judge it by)");
+    mono += (int64_t)(CRED_CLOCK_WINDOW_S + 100) * 1000000;
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "clock unset: old token replayed 400 s later is refused");
+    nonce_n(CRED_NONCE_CACHE + 5, n);
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0, "clock unset: a fresh nonce with the old Created is refused too");
+    CHECK(wsse("user", n, "2010-09-16T07:57:25Z", SPEC_PASS, NULL) == 1, "clock unset: a token that follows the monotonic clock passes");
+    CHECK(wsse("user", n, "2010-09-16T07:57:25Z", SPEC_PASS, NULL) == 0, "... once");
+    nonce_n(CRED_NONCE_CACHE + 6, n);
+    CHECK(wsse("user", n, "2010-09-16T07:50:45Z", SPEC_PASS, NULL) == 0, "a token from before the anchor window is refused");
 
-    /* clock set: a nonce lives until Created + 300 s, so a token created in the past frees its slot sooner, and
-     * a replay after that is stopped by the Created window itself */
+    /* clock set: a nonce lives until Created + 300 s; a replay after that is stopped by the Created window */
     fresh();
     put_creds("user", SPEC_PASS);
     wall = utc(2026, 11, 10, 12, 0, 0);
@@ -352,22 +349,106 @@ static void test_wsse(void)
         nonce_n(i, n);
         if (wsse("user", n, "2026-11-10T11:58:20Z", SPEC_PASS, NULL) != 1) ok = 0; /* 100 s old: 200 s left */
     }
-    CHECK(ok, "128 tokens created 100 s ago accepted");
-    nonce_n(500, n);
-    CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 0, "full while they live");
+    CHECK(ok, "CRED_NONCE_CACHE tokens created 100 s ago accepted");
     mono += 199LL * 1000000;
     wall += 199;
-    nonce_n(500, n);
-    CHECK(wsse("user", n, "2026-11-10T12:03:19Z", SPEC_PASS, NULL) == 0, "199 s later: still full");
+    nonce_n(1, n);
+    CHECK(wsse("user", n, "2026-11-10T11:58:20Z", SPEC_PASS, NULL) == 0, "199 s later: replay refused");
     mono += 2LL * 1000000;
     wall += 2;
     nonce_n(500, n);
-    CHECK(wsse("user", n, "2026-11-10T12:03:21Z", SPEC_PASS, NULL) == 1, "201 s later: expired slots reused");
+    CHECK(wsse("user", n, "2026-11-10T12:03:21Z", SPEC_PASS, NULL) == 1, "201 s later: a fresh token passes");
     nonce_n(1, n);
     CHECK(wsse("user", n, "2026-11-10T11:58:20Z", SPEC_PASS, NULL) == 0, "replay of an expired token: stopped by the Created window");
+
+#if CRED_NONCE_CACHE >= 256
+    /* H1: far more than the old 128 valid logins in one window all pass, none is refused for table reasons */
+    fresh();
+    put_creds("user", SPEC_PASS);
+    wall = utc(2026, 11, 10, 12, 0, 0);
+    ok = 1;
+    unsigned dly = 0;
+    for (int i = 1; i <= 250; i++) {
+        nonce_n(i, n);
+        char cr[40];
+        snprintf(cr, sizeof(cr), "2026-11-10T12:%02d:%02dZ", i / 60, i % 60);
+        if (wsse("user", n, cr, SPEC_PASS, &dly) != 1 || dly != 0) ok = 0;
+    }
+    CHECK(ok, "H1: 250 valid tokens with distinct nonces in one window are all accepted");
+    CHECK(limiter.global_fails == 0, "H1: ... and no failure was counted");
+    ok = 1;
+    for (int i = 1; i <= 250; i++) {
+        nonce_n(i, n);
+        char cr[40];
+        snprintf(cr, sizeof(cr), "2026-11-10T12:%02d:%02dZ", i / 60, i % 60);
+        if (wsse("user", n, cr, SPEC_PASS, NULL) != 0) ok = 0;
+    }
+    CHECK(ok, "H1: replay of each of them is still refused");
+#endif
+#ifdef CRED_EVICT_TEST
+    /* H1 eviction: a tiny cache full of live nonces. A newer token evicts the oldest one and logins go on. */
+    fresh();
+    put_creds("user", SPEC_PASS);
+    wall = utc(2026, 11, 10, 12, 0, 0);
+    ok = 1;
+    for (int i = 0; i < 100; i++) {                    /* Created now+0 .. now+99: always newer than what is cached */
+        nonce_n(i, n);
+        char cr[40];
+        snprintf(cr, sizeof(cr), "2026-11-10T12:%02d:%02dZ", i / 60, i % 60);
+        if (wsse("user", n, cr, SPEC_PASS, NULL) != 1) ok = 0;
+    }
+    CHECK(ok, "eviction: 100 valid tokens through a cache of CRED_NONCE_CACHE are accepted");
+    CHECK(limiter.global_fails == 0, "eviction: no failure counted for a full table");
+    nonce_n(99, n);
+    CHECK(wsse("user", n, "2026-11-10T12:01:39Z", SPEC_PASS, NULL) == 0, "eviction: a cached nonce is still a replay");
+    nonce_n(0, n);
+    CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 0, "eviction: an evicted token cannot be replayed (floor)");
+    nonce_n(5000, n);
+    unsigned dd2 = 55, before = limiter.global_fails;
+    CHECK(wsse("user", n, "2026-11-10T12:00:05Z", SPEC_PASS, &dd2) == 0 && dd2 == 0 && limiter.global_fails == before,
+          "eviction: an authentic token older than the floor is refused without counting a failure");
+    nonce_n(5001, n);
+    CHECK(wsse("user", n, "2026-11-10T12:03:00Z", SPEC_PASS, NULL) == 1, "eviction: a newer token still passes");
+#endif
+
+    /* M4: a clock step keeps the previous time base valid for a while */
+    fresh();
+    put_creds("user", SPEC_PASS);
+    wall = utc(2026, 11, 10, 12, 0, 0);
+    nonce_n(1, n);
+    CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 1, "step: before the step");
+    mono += 10LL * 1000000;
+    wall += 10 + 7200;                                  /* SetSystemDateAndTime: +2 h */
+    nonce_n(2, n);
+    CHECK(wsse("user", n, "2026-11-10T14:00:10Z", SPEC_PASS, NULL) == 1, "step: new time base accepted");
+    nonce_n(3, n);
+    CHECK(wsse("user", n, "2026-11-10T12:00:10Z", SPEC_PASS, NULL) == 1, "step: client still on the cached old offset accepted");
+    CHECK(wsse("user", n, "2026-11-10T12:00:10Z", SPEC_PASS, NULL) == 0, "step: ... and its token is not replayable");
+    nonce_n(1, n);
+    CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 0, "step: a token from before the step is not replayable");
+    mono += (int64_t)(CRED_STEP_GRACE_S + 5) * 1000000;
+    wall += CRED_STEP_GRACE_S + 5;
+    nonce_n(4, n);
+    CHECK(wsse("user", n, "2026-11-10T12:10:15Z", SPEC_PASS, NULL) == 0, "step: after the grace the old base is refused");
+    CHECK(wsse("user", n, "2026-11-10T14:10:15Z", SPEC_PASS, NULL) == 1, "step: the new base still works");
+    /* unset clock that then gets set (NTP): same grace for the client that cached the device's own time */
+    fresh();
+    put_creds("user", SPEC_PASS);
     wall = 0;
+    nonce_n(1, n);
+    CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1, "set: anchored with the clock unset");
+    mono += 20LL * 1000000;
+    wall = utc(2026, 11, 10, 12, 0, 0);
+    nonce_n(2, n);
+    CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 1, "set: the real time is accepted");
+    nonce_n(3, n);
+    CHECK(wsse("user", n, "2010-09-16T07:51:05Z", SPEC_PASS, NULL) == 1, "set: the unset-clock time base stays valid for the grace");
 
     /* new credentials file: the old password stops working */
+    fresh();
+    wall = 0;
+    put_creds("user", SPEC_PASS);
+    later();
     put_creds("user", "A-brand-new-pass");
     later();
     nonce_n(100, n);
@@ -416,23 +497,63 @@ static void test_clock(void)
     wall = utc(2024, 3, 1, 0, 0, 0);
     CHECK(TRY("2024-02-29T23:59:59Z") == 1, "leap day, one second before the clock");
 
+    fresh();
+    put_creds("user", SPEC_PASS);
     wall = utc(2023, 12, 31, 23, 59, 59);
-    CHECK(TRY("2010-09-16T07:50:45Z") == 1, "clock before 2024: window skipped (old Created accepted)");
-    CHECK(TRY("not even a date") == 1, "clock before 2024: Created is only part of the digest");
+    CHECK(TRY("2010-09-16T07:50:45Z") == 1, "clock before 2024: the first token anchors the token clock");
+    CHECK(TRY("2010-09-16T07:50:45Z") == 1, "clock before 2024: later tokens within 5 min of it pass");
+    CHECK(TRY("not even a date") == 0, "clock before 2024: Created must still be a date");
+    CHECK(TRY("2099-01-01T00:00:00Z") == 0, "clock before 2024: a Created far from the anchor is refused");
     wall = 0;
-    CHECK(TRY("2099-01-01T00:00:00Z") == 1, "clock at 0: window skipped");
+    CHECK(TRY("2010-09-16T07:50:45Z") == 1, "clock at 0: same");
     wall = utc(2024, 1, 1, 0, 0, 0);
-    CHECK(TRY("2010-09-16T07:50:45Z") == 0, "clock exactly at 2024-01-01: window applies");
+    CHECK(TRY("2010-09-16T07:50:45Z") == 1, "clock exactly at 2024-01-01: the previous base is still valid for the step grace");
     /* the replay cache stays active with a wrong clock */
     wall = 0;
     nonce_n(7777, n);
     CHECK(wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 1 && wsse("user", n, SPEC_CREATED, SPEC_PASS, NULL) == 0,
-          "replay refused even when the window is skipped");
+          "replay refused with an unset clock");
+    fresh();
+    put_creds("user", SPEC_PASS);
     /* a message that failed the window must not use up its nonce */
     wall = utc(2026, 11, 10, 12, 0, 0);
     nonce_n(8888, n);
     CHECK(wsse("user", n, "2026-11-10T10:00:00Z", SPEC_PASS, NULL) == 0, "stale Created refused");
     CHECK(wsse("user", n, "2026-11-10T12:00:00Z", SPEC_PASS, NULL) == 1, "its nonce was not burnt by the refusal");
+}
+
+/* M1: per-peer lockout */
+static void test_peer(void)
+{
+    printf("per-peer lockout\n");
+    fresh();
+    unsigned ms = 99;
+    const uint32_t A = 0x0100007f, B = 0x0200007f;
+    CHECK(!cred_peer_locked(A, &ms) && ms == 0, "a new peer is not locked");
+    for (int i = 0; i < CRED_PEER_FREE_FAILS - 1; i++) cred_peer_failed(A);
+    CHECK(!cred_peer_locked(A, NULL), "below the free failures: open");
+    cred_peer_failed(A);
+    CHECK(cred_peer_locked(A, &ms) && ms == 1000, "third failure: locked for 1 s");
+    CHECK(!cred_peer_locked(B, NULL), "another address is unaffected");
+    mono += 600000;
+    CHECK(cred_peer_locked(A, &ms) && ms == 400, "still locked 600 ms later");
+    mono += 450000;
+    CHECK(!cred_peer_locked(A, NULL), "unlocked after the penalty");
+    cred_peer_failed(A);
+    CHECK(cred_peer_locked(A, &ms) && ms == 2000, "next failure: 2 s");
+    mono += 2100000;
+    for (int i = 0; i < 10; i++) cred_peer_failed(A);
+    CHECK(cred_peer_locked(A, &ms) && ms == 16000, "capped at 16 s");
+    cred_peer_ok(A);
+    CHECK(!cred_peer_locked(A, NULL), "a success forgets the peer");
+    cred_peer_failed(A);
+    CHECK(!cred_peer_locked(A, NULL), "... and the count restarts");
+    for (int i = 0; i < 3; i++) cred_peer_failed(B);
+    mono += CRED_PEER_FORGET_US + 20000000;
+    CHECK(!cred_peer_locked(B, NULL), "forgotten after a quiet time");
+    /* the table is bounded: more addresses than slots replace the least recently failing one */
+    for (uint32_t i = 1; i <= CRED_PEERS + 3; i++) for (int k = 0; k < 3; k++) cred_peer_failed(0x0a000000u + i);
+    CHECK(cred_peer_locked(0x0a000000u + CRED_PEERS + 3, NULL), "the newest address is tracked beyond the table size");
 }
 
 static void test_limiter(void)
@@ -532,6 +653,7 @@ int main(int argc, char **argv)
     test_wsse();
     test_clock();
     test_limiter();
+    test_peer();
     test_http_digest();
     printf("%s\n", fails ? "FAILED" : "all ok");
     return fails ? 1 : 0;
