@@ -304,6 +304,12 @@ func (o *Options) readArchive(file string, visit func(*tar.Header, *tar.Reader, 
 		if !o.local(clean) {
 			return "", fail("archive entry name is not a safe local path on this system: %s", name)
 		}
+		for _, part := range strings.Split(clean, "/") {
+			// Windows drops a trailing dot, so "x." and "x" are one file there; "." and "" are no name.
+			if part == "" || part == "." || strings.HasSuffix(part, ".") {
+				return "", fail("archive entry with an empty, '.' or dot-terminated path element: %s", name)
+			}
+		}
 		if top == "" {
 			top = strings.SplitN(name, "/", 2)[0]
 			if !strings.HasPrefix(top, "akam-kit-") || len(top) == len("akam-kit-") {
@@ -313,10 +319,15 @@ func (o *Options) readArchive(file string, visit func(*tar.Header, *tar.Reader, 
 		if clean != top && !strings.HasPrefix(clean, top+"/") {
 			return "", fail("archive has entries outside %s/", top)
 		}
-		if seen[clean] {
-			return "", fail("archive has duplicate entries")
+		if clean == top+"/"+linksSidecar {
+			return "", fail("archive contains %s, which only the extraction itself writes", linksSidecar)
 		}
-		seen[clean] = true
+		// Case-folded: on Windows and macOS "A" and "a" are the same file.
+		key := strings.ToLower(clean)
+		if seen[key] {
+			return "", fail("archive has duplicate entries (names that differ only in case collide on Windows and macOS)")
+		}
+		seen[key] = true
 		perm := h.Mode & 0o7777
 		switch h.Typeflag {
 		case tar.TypeReg:
