@@ -46,6 +46,7 @@ Anything marked "not yet" has **not** been run on a camera. Older, more detailed
 | Strict `SET` ranges (`ae.*`, `night.*`, `isp.*`) | `control_test.sh` | Not yet | |
 | Debug mode (`./akam debug on`) | `akam_debug_test.sh`, `wizard_debug_test.sh` | Not yet on the final image | Loopback `SET` and timed network `SET` |
 | ONVIF Profile S (device, media, imaging, WS-Discovery, SystemReboot) | `onvif_test.sh`, `onvif_svc_test.sh`, `onvif_media_test.sh`, `soap_test.sh`, `wsd_test.sh`, `sha1_test.sh`, `akam_onvif_test.sh`, `wizard_onvif_test.sh` | Not yet | First target client: ONVIF Device Manager. Off by default |
+| ONVIF check tool for a real camera (`tools/hw_tests/onvif_check.py`: Device, Media, Imaging, WS-Discovery, optional RTSP Digest DESCRIBE) | `onvif_check_test.sh` (fake ONVIF and RTSP server on 127.0.0.1) | Yes, once: found the slow-looking calls and the missing `fw.version` key | Run `python3 -I tools/hw_tests/onvif_check.py <camera-ip> --rtsp` (see [troubleshooting](troubleshooting.md#an-onvif-app-does-not-find-the-camera)) |
 | Encoder-stall self-exit | `swdog_test.sh` | Not yet on a real stall | The 15-minute RAM soak saw no spurious exit |
 | Wrapper respawn backoff | `wrapper_backoff_test.sh` | Not yet | |
 | Wi-Fi supervisor | `akam_net_test.sh` | Not yet | |
