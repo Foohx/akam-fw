@@ -53,6 +53,7 @@ int  night_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (
 void night_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "night.stub=1"); }
 int  audio_out_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  audio_out_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+void audio_out_set_persist(int p) { (void)p; }
 void audio_out_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "audio.out_stub=2"); }
 int  imgq_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  imgq_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }

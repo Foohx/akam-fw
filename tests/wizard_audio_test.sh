@@ -28,6 +28,7 @@ mkdir -p "$STUB_DIR/bin" "$CAM"
 printf '50\n' >"$CAM/volume"
 printf '1\n' >"$CAM/enable"
 printf '1\n' >"$CAM/talk"
+printf '1\n' >"$CAM/mic"
 printf '0\n' >"$CAM/beeps"
 cat >"$STUB_DIR/bin/nc" <<'EOF'
 #!/usr/bin/env bash
@@ -51,6 +52,7 @@ while IFS= read -r line; do
         GET:audio.out_volume) echo "audio.out_volume=$(cat "$CAM/volume")" ;;
         GET:audio.out_enable) echo "audio.out_enable=$(cat "$CAM/enable")" ;;
         GET:audio.talk_enable) echo "audio.talk_enable=$(cat "$CAM/talk")" ;;
+        GET:audio.mic_enable) echo "audio.mic_enable=$(cat "$CAM/mic")" ;;
         GET:audio.out_state) [ "$(cat "$CAM/enable")" = 1 ] && echo "audio.out_state=idle" || echo "audio.out_state=disabled" ;;
         GET:audio.out_underruns) echo "audio.out_underruns=3" ;;
         GET:audio.out_drops) echo "audio.out_drops=0" ;;
@@ -59,6 +61,9 @@ while IFS= read -r line; do
                 '' | *[!0-9]*) echo "ERR audio.out_volume range [0,100]" ;;
                 *) if [ "$3" -gt 100 ]; then echo "ERR audio.out_volume range [0,100]"; else printf '%s\n' "$3" >"$CAM/volume"; echo "OK audio.out_volume=$3$note"; fi ;;
             esac
+            ;;
+        SET:audio.mic_enable)
+            case ${3:-} in 0 | 1) printf '%s\n' "$3" >"$CAM/mic"; echo "OK audio.mic_enable=$3 (restart to apply)" ;; *) echo "ERR audio.mic_enable range [0,1]" ;; esac
             ;;
         SET:audio.talk_enable)
             case ${3:-} in 0 | 1) printf '%s\n' "$3" >"$CAM/talk"; echo "OK audio.talk_enable=$3$note" ;; *) echo "ERR audio.talk_enable range [0,1]" ;; esac
@@ -154,6 +159,15 @@ check "talk off: reported" has "$T/t.out" "Talk (RTSP audio backchannel): off"
 a "$S" audio talk on </dev/null >/dev/null 2>&1
 check "talk on: the camera got it" test "$(cam talk)" = 1
 
+a "$S" audio mic off </dev/null >"$T/m.out" 2>&1
+check "mic off: the camera got it" test "$(cam mic)" = 0
+check "mic off: tells to reboot and that the track goes" bash -c 'grep -q "reboot the camera" "$1" && grep -q "no audio track" "$1"' _ "$T/m.out"
+check "mic off: reported" has "$T/m.out" "Microphone: off"
+a "$S" audio mic on </dev/null >/dev/null 2>&1
+check "mic on: the camera got it" test "$(cam mic)" = 1
+a "$S" audio show </dev/null >"$T/show2.out" 2>&1
+check "show: microphone line" has "$T/show2.out" "Microphone: on"
+
 # ---- camera cases -------------------------------------------------------------------------------
 setmode restart
 a "$S" audio on </dev/null >"$T/r.out" 2>&1
@@ -181,7 +195,7 @@ check "camera unreachable: fails clearly, nothing changed" bash -c '[ "$1" -ne 0
 
 # ---- refusals: nothing reaches the camera ---------------------------------------------------------
 : >"$STUB_DIR/ssh.log"
-for bad in "volume" "volume 101" "volume -1" "volume abc" "volume 5x" "volume 1.5" 'volume $(id)' "volume 10 20" "volume 1000" "beep now" "on now" "off 1" "show on" "talk" "talk maybe" "talk on off" "frob" "VOLUME 10" "on; reboot"; do
+for bad in "volume" "volume 101" "volume -1" "volume abc" "volume 5x" "volume 1.5" 'volume $(id)' "volume 10 20" "volume 1000" "beep now" "on now" "off 1" "show on" "talk" "talk maybe" "talk on off" "mic" "mic maybe" "mic on off" "frob" "VOLUME 10" "on; reboot"; do
     # shellcheck disable=SC2086  # word list on purpose
     a "$S" audio $bad </dev/null >"$T/bad.out" 2>&1
     check "refused (exit 2): audio $bad" test $? -eq 2
@@ -193,6 +207,8 @@ check "refusals: nothing changed" test "$(cam volume)" = 50
 : >"$STUB_DIR/ssh.log"
 a "$S" --dry-run audio volume 20 </dev/null >"$T/dry.out" 2>&1
 check "dry-run: WOULD send" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD send: SET audio.out_volume 20" "$2"' _ $? "$T/dry.out"
+a "$S" --dry-run audio mic off </dev/null >"$T/dry3.out" 2>&1
+check "dry-run mic: WOULD send" has "$T/dry3.out" "WOULD send: SET audio.mic_enable 0"
 a "$S" --dry-run audio beep </dev/null >"$T/dry1.out" 2>&1
 check "dry-run beep: WOULD send" has "$T/dry1.out" "WOULD send: SET audio.out_test 1"
 a "$S" --dry-run audio </dev/null >"$T/dry2.out" 2>&1
@@ -201,7 +217,7 @@ check "dry-run: the camera was not contacted, nothing changed" bash -c '[ ! -s "
 
 # ---- help and talk message -----------------------------------------------------------------------
 a "$S" help >"$T/help.out" 2>&1
-check "help lists audio" has "$T/help.out" "audio [show | volume 0-100 | beep | on | off | talk on|off]"
+check "help lists audio" has "$T/help.out" "audio [show | volume 0-100 | beep | on | off | talk on|off | mic on|off]"
 check "the talk message points to a command that exists" bash -c 'grep -q "cmd_audio()" "$1/tools/wizard/lib/steps_camera.sh" && grep -q "Heard it? If not: ./akam audio" "$1/tools/wizard/lib/steps_camera.sh"' _ "$ROOT"
 
 echo "wizard_audio_test: $PASS passed, $FAIL failed"

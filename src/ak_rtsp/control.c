@@ -501,6 +501,7 @@ int control_apply_setting(const char *key, const char *value, int persist, char 
     g_persist_isp = persist;
     night_set_persist(persist);
     imgq_set_persist(persist);
+    audio_out_set_persist(persist);
     do_set_locked(msg, cap, key, value);
     pthread_mutex_unlock(&g_set_lock);
     return strncmp(msg, "OK", 2) == 0 ? 0 : -1;

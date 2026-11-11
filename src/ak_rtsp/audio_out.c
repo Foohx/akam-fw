@@ -108,6 +108,8 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     ao->amp_mode = AO_AMP_AUTO;
     ao->talk_enable = 1;
     ao->talk_duplex = AO_DUPLEX_HALF;
+    ao->mic_enable = 1;
+    ao->persist  = 1;
     ao->state    = AO_OFF;
     ao->fd       = -1;
     ao->beep_pos = -1;
@@ -194,6 +196,7 @@ int ao_load_config(audio_out_t *ao)
         else if (!strcmp(k, "gain")   && !parse_int(v, 0, 5, &x))    ao->gain = (int)x;
         else if (!strcmp(k, "source") && !parse_int(v, 4, 6, &x))    ao_set_source(ao, (int)x);
         else if (!strcmp(k, "talk_enable") && !parse_int(v, 0, 1, &x)) ao->talk_enable = (int)x;
+        else if (!strcmp(k, "mic_enable") && !parse_int(v, 0, 1, &x))  ao->mic_enable = (int)x;
         else if (!strcmp(k, "talk_duplex")) {
             if (!strcmp(v, "half")) ao->talk_duplex = AO_DUPLEX_HALF;
             else if (!strcmp(v, "full")) ao->talk_duplex = AO_DUPLEX_FULL;
@@ -206,7 +209,7 @@ int ao_load_config(audio_out_t *ao)
 static int key_is_ours(const char *line)
 {
     static const char *const keys[] = { "enable=", "volume=", "gain=", "source=",
-                                        "talk_enable=", "talk_duplex=" };
+                                        "talk_enable=", "talk_duplex=", "mic_enable=" };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
         if (!strncmp(line, keys[i], strlen(keys[i]))) return 1;
     return 0;
@@ -235,9 +238,9 @@ int ao_save_config(audio_out_t *ao)
     }
     int w = snprintf(out + outn, sizeof(out) - outn,
                      "enable=%d\nvolume=%d\ngain=%d\nsource=%d\n"
-                     "talk_enable=%d\ntalk_duplex=%s\n",
+                     "talk_enable=%d\ntalk_duplex=%s\nmic_enable=%d\n",
                      ao->enabled, ao->volume, ao->gain, ao->source,
-                     ao->talk_enable, duplex_name(ao->talk_duplex));
+                     ao->talk_enable, duplex_name(ao->talk_duplex), ao->mic_enable);
     if (w < 0 || (size_t)w >= sizeof(out) - outn) { errno = ENOSPC; return -1; }
     outn += (size_t)w;
 
@@ -636,12 +639,15 @@ void ao_thread_stop(audio_out_t *ao)
  * 8091 keys
  * ------------------------------------------------------------------------ */
 
+static int is_mic_key(const char *key) { return !strcmp(key, "audio.mic_enable"); }
+
 static int is_audio_key(const char *key) { return !strncmp(key, "audio.out_", 10); }
 
 static int is_talk_key(const char *key) { return !strncmp(key, "audio.talk_", 11); }
 
 int ao_ctl_get(audio_out_t *ao, const char *key, char *out, size_t cap)
 {
+    if (is_mic_key(key)) { snprintf(out, cap, "audio.mic_enable=%d", ao->mic_enable); return 0; }
     if (is_talk_key(key)) {
         const char *t = key + 11;
         if      (!strcmp(t, "enable")) snprintf(out, cap, "audio.talk_enable=%d", ao->talk_enable);
@@ -671,7 +677,7 @@ void ao_ctl_list(audio_out_t *ao, void (*emit)(void *arg, const char *line), voi
         "audio.out_enable", "audio.out_volume", "audio.out_gain", "audio.out_source",
         "audio.out_amp", "audio.out_test", "audio.out_state",
         "audio.out_underruns", "audio.out_drops", "audio.out_buf_ms",
-        "audio.talk_enable", "audio.talk_duplex"
+        "audio.talk_enable", "audio.talk_duplex", "audio.mic_enable"
     };
     char line[80];
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
@@ -686,12 +692,24 @@ void ao_ctl_list(audio_out_t *ao, void (*emit)(void *arg, const char *line), voi
 static void persist_note(audio_out_t *ao, char *note, size_t cap)
 {
     note[0] = '\0';
+    if (!ao->persist) return; /* a remote peer (DEBUG): RAM only */
     if (ao_save_config(ao) < 0) snprintf(note, cap, " (not saved: %s)", strerror(errno));
 }
 
 int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, size_t cap)
 {
     long x;
+    if (is_mic_key(key)) {
+        char note[64] = "";
+        if (parse_int(val, 0, 1, &x) < 0) { snprintf(msg, cap, "ERR audio.mic_enable range [0,1]"); return 1; }
+        if (ao->mic_enable != (int)x) {
+            ao->mic_enable = (int)x;
+            persist_note(ao, note, sizeof(note));
+            if (!note[0]) snprintf(note, sizeof(note), " (restart to apply)");
+        }
+        snprintf(msg, cap, "OK audio.mic_enable=%ld%s", x, note);
+        return 0;
+    }
     if (is_talk_key(key)) {
         const char *t = key + 11;
         char note[64] = "";
@@ -852,6 +870,9 @@ int  audio_out_talk_available(void) { return ao_talk_available(single()); }
 int  audio_out_talk_half_duplex(void) { return ao_talk_half_duplex(single()); }
 int  audio_out_feeder_claim(void) { return ao_feeder_claim(single()); }
 void audio_out_feeder_release(void) { ao_feeder_release(single()); }
+
+int audio_out_mic_enable(void) { return single()->mic_enable; }
+void audio_out_set_persist(int persist) { single()->persist = persist ? 1 : 0; }
 
 int audio_out_ctl_get(const char *key, char *out, size_t cap) { return ao_ctl_get(single(), key, out, cap); }
 int audio_out_ctl_set(const char *key, const char *val, char *msg, size_t cap)

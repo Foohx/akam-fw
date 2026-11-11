@@ -530,6 +530,7 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
         .audio_rate = AUDIO_SAMPLE_RATE,
         .audio_channels = AUDIO_CHANNELS,
         .backchannel = (bc == RTSP_BC_OFFER),
+        .audio_off = !audio_mic_enabled(),
     };
     if (rtsp_sdp_build(sdp_buf, sizeof(sdp_buf), &sp) == 0) {
         smolrtsp_respond_internal_error(ctx);
@@ -553,6 +554,10 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
         if (setup_backchannel(self, ctx, req) < 0) return;
         break;
     case RTSP_TRACK_AUDIO:
+        if (!audio_mic_enabled()) { /* G07: not in the SDP, so a SETUP for it is a client error */
+            smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_FOUND, "No audio track (microphone disabled)");
+            return;
+        }
         if (setup_audio_transport(self, ctx, req) < 0) return;
         break;
     default:

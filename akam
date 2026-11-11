@@ -63,9 +63,11 @@ Commands:
                        status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
                        slowly while someone watches the video, solid otherwise)
                        ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
-  audio [show | volume 0-100 | beep | on | off | talk on|off]
-                     the camera's speaker, over SSH. Default: show (volume, speaker on/off, talk on/off,
-                     playback underruns and drops). volume and talk are saved on the camera; beep plays a
+  audio [show | volume 0-100 | beep | on | off | talk on|off | mic on|off]
+                     the camera's speaker and microphone, over SSH. Default: show (volume, speaker on/off,
+                     talk on/off, microphone on/off, playback underruns and drops). volume, talk and mic are
+                     saved on the camera; mic off never opens the microphone and removes the audio track from
+                     the stream (needs a reboot to apply); beep plays a
                      short tone; off silences the speaker and keeps it off after a reboot; on may need a
                      reboot of the camera to start the speaker. No confirmation is asked.
   picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]
