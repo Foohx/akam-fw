@@ -71,6 +71,18 @@ returns nothing. Remaining glue, to be done once device/media/imaging/wizard lan
 
 ### G01 (P0) A hung ak_rtsp is never restarted; the crash and respawn path was never exercised
 
+Status 2026-11-11 (branch `feature/robustness-p0`): **implemented on the host, not yet checked on hardware.**
+`swdog.[ch]`: a checker thread (1 s) arms when the stream is up and exits with code 70 after writing one line to
+stderr and switching the speaker amplifier off. Video rule: no frame fetched from the encoder (GET_STREAM success)
+for 30 s (90 s before the very first frame), suspended while the consumer is blocked writing to a client and while
+a session has not issued PLAY, so a stalled client never counts. Heartbeats (60 s): main/RTSP loop, AE tick,
+control accept loop. Longest legitimate pauses found in the code: night/day reload and IR-cut pulses under 2 s, a
+blocked client write 15 s (excluded anyway). The hardware watchdog is untouched. Limit: a `kill -STOP` or a hang in
+an uninterruptible kernel wait stops the watchdog thread too, so an in-process watchdog cannot see it; only a
+thread-level wedge (deadlock, a blocking ioctl in one thread) is covered. Hardware answer to "does the stock
+watchdog restart process_0 and with what delay": `_ht_process.ini` says `delay = 0` and the stock tree has no other
+setting; the wrapper now adds its own backoff (G04). Step 2 of the fix (reboot after N respawns) was not done.
+
 Evidence:
 - `tools/firmware_patch_templates/_ht_process.ini` (6 lines): the stock `/usr/bin/watchdog` restarts a
   `process_0` entry, here `ak_rtsp_wrapper.sh`, when it dies. `docs/akam_v1_test_plan.md` H3 lists "the stock
@@ -100,6 +112,15 @@ Fix:
 Effort M. HW yes.
 
 ### G02 (P0) The stdout tee can freeze every thread; the real stdout is unverified
+
+Status 2026-11-11 (branch `feature/robustness-p0`): **implemented on the host, not yet checked on hardware.**
+Measured on a camera: `ak_rtsp` fd 1 is its own tee pipe, fd 2 is `/dev/console`, and the original stdout that
+`control.c` duplicates is inherited from the wrapper, i.e. the console (serial, 115200 baud). Now the write end of
+the tee pipe is `O_NONBLOCK` (a printf that meets a full pipe loses its line, never waits) and the pump writes to the
+console through a private non-blocking descriptor reopened from `/proc/self/fd` (the flag is not shared with stderr
+or the wrapper); a write that cannot complete is dropped. Both losses are counted: `GET log.dropped` on 8091. `stderr`
+(perror) still goes straight to the console and is not covered. Test: `tests/control_test.sh` runs the whole suite
+again with a stdout that nobody reads. Steps 3 and 4 (log sink choice, AE print rate) are not done.
 
 Evidence:
 - `control.c:625-637`: stdout is replaced by a pipe; `log_pump` (control.c:141-162) copies each chunk to the
@@ -131,6 +152,14 @@ Effort S. HW yes (to confirm the stdout target; the code change is host-testable
 
 ### G03 (P0) Wi-Fi and DHCP are launched once and never supervised
 
+Status 2026-11-11 (branch `feature/robustness-p0`): **implemented on the host, not yet checked on hardware.**
+`akam_net.sh` (installed as `/usr/sbin/akam_net.sh`, started detached by the wrapper, lock + pid guard): every 30 s,
+only when `/etc/config/wpa_supplicant.conf` exists, checks `wpa_supplicant` and `udhcpc` on wlan0 and an IPv4
+address; repairs by starting the missing daemon, then restarting `udhcpc`, then (3rd attempt) both, with 1, 2, 4, 8
+then 10 checks (30 s to 5 min) between attempts. Log `/tmp/akam_net.log` (capped), syslog if `logger` exists. No
+gateway ping and no reboot after 30 minutes (not done: a reboot loop on a long outage is worse than a slow retry).
+Tests: `tests/akam_net_test.sh` under the pinned BusyBox with stubs.
+
 Evidence:
 - `ak_rtsp_wrapper.sh:45-49`: `wpa_supplicant -B` and `udhcpc -i wlan0 &` are started only if no
   `wpa_supplicant` shows in `ps`. The check is on `wpa_supplicant` only: if `udhcpc` dies, nothing restarts it;
@@ -155,6 +184,15 @@ change the AP channel; wrong password then fixed; DHCP server reboot; all with `
 Effort M. HW yes. Also add the router-reboot and AP-loss cases to the test plan (section 6).
 
 ### G04 (P0) Respawn loop has no backoff and no crash counter
+
+Status 2026-11-11 (branch `feature/robustness-p0`): **wrapper part implemented on the host, not yet checked on
+hardware.** The wrapper keeps `/tmp/akam_respawn` (`count`, `total`, `last_rc`, `last_run`) and waits before the next
+start by consecutive short runs (under 10 min): 1 -> 0 s, 2 -> 2 s, 3 -> 5 s, 4 -> 10 s, 5 and more -> 30 s; a run of
+10 minutes resets it; the first start never waits. Log `/tmp/akam_wrapper.log` (capped) and syslog. Not done: reboot
+after N failures and the safe mode with LED (decided against for now: a reboot loop hides the cause).
+Remaining item found while doing this: the stock `/tmp/drop_caches.sh` ran `sync && echo 3 > drop_caches` every 5 s.
+It comes from the APP image (`service.sh` copies `/usr/sbin/drop_caches.sh` to `/tmp` and runs it), so the build now
+changes its `sleep 5` to `sleep 60` (`build_firmware.sh`); it still removes a stale `/tmp/wpa_supplicant`.
 
 Evidence: `_ht_process.ini` has `delay = 0` for `process_0`; the wrapper ends with `/usr/bin/ak_rtsp; exit $RET`
 (ak_rtsp_wrapper.sh:52-54). Any init failure (`goto err` in main.c:243-334: sensor conf, a busy audio device,

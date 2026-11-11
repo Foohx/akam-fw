@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <time.h>
@@ -23,6 +25,7 @@
 #include "control.h"
 #include "ctl_gate.h"
 #include "ctl_sys.h"
+#include "swdog.h"
 
 #ifndef CONTROL_PORT
 #define CONTROL_PORT 8091   /* the host test builds with another port */
@@ -137,19 +140,59 @@ static void log_forward(const char *line)
  * exact same bytes back to the real stdout (serial console unaffected),
  * and additionally forwards complete lines to the connected control client
  * prefixed "LOG ".
+ *
+ * Nothing here may ever block another thread (G02):
+ *  - the pipe's write end is O_NONBLOCK: a printf that finds the pipe full
+ *    loses its line (stdio sets the stream error flag; this thread counts it
+ *    in g_log_dropped and clears the flag) instead of freezing its caller;
+ *  - the real stdout is written through a PRIVATE, non-blocking open file
+ *    description (reopened from /proc/self/fd), so O_NONBLOCK is not leaked to
+ *    stderr or to the wrapper, which share the original description; if the
+ *    reopen fails, a zero-timeout poll() guards each write instead;
+ *  - a write that cannot complete is dropped and counted (GET log.dropped).
  * ------------------------------------------------------------------------- */
+static volatile uint32_t g_log_dropped; /* lines/chunks lost to a full pipe or a stalled console */
+static int               g_console_nb = -1; /* private non-blocking console fd, -1 = use the poll guard */
+
+static void console_write(const char *buf, size_t len)
+{
+    int fd = g_console_nb >= 0 ? g_console_nb : g_orig_stdout;
+    if (fd < 0) return;
+    if (g_console_nb < 0) {
+        struct pollfd pf = { .fd = fd, .events = POLLOUT, .revents = 0 };
+        if (poll(&pf, 1, 0) <= 0 || !(pf.revents & POLLOUT)) { g_log_dropped++; return; }
+    }
+    while (len > 0) {
+        ssize_t w = write(fd, buf, len);
+        if (w > 0) { buf += w; len -= (size_t)w; continue; }
+        if (w < 0 && errno == EINTR) continue;
+        g_log_dropped++; /* EAGAIN (console busy), EPIPE, ENOSPC...: drop the rest, never wait */
+        return;
+    }
+}
+
 static void *log_pump(void *arg)
 {
     (void)arg;
     char   raw[512];
     char   line[1024];
     size_t line_len = 0;
+    sigset_t nopipe;
+
+    sigemptyset(&nopipe);
+    sigaddset(&nopipe, SIGPIPE); /* a dead console reader must give EPIPE here, not kill the process */
+    pthread_sigmask(SIG_BLOCK, &nopipe, NULL);
 
     for (;;) {
         ssize_t n = read(g_log_pipe_r, raw, sizeof(raw));
+        if (n < 0 && errno == EINTR) continue;
         if (n <= 0) break;  /* pipe write end closed = process exiting */
 
-        write(g_orig_stdout, raw, n);  /* unchanged passthrough to serial console */
+        if (ferror(stdout)) { /* a printf met the full pipe since the last pass */
+            clearerr(stdout);
+            g_log_dropped++;
+        }
+        console_write(raw, (size_t)n);  /* passthrough to the serial console, never blocking */
 
         for (ssize_t i = 0; i < n; i++) {
             char c = raw[i];
@@ -309,6 +352,7 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=43 (read-only)");
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
     else if (!strcmp(param, "ctl.clients"))           reply(c, "ctl.clients=%d", clients_connected());
+    else if (!strcmp(param, "log.dropped"))           reply(c, "log.dropped=%u", (unsigned)g_log_dropped);
     else if (!strcmp(param, "ctl.debug_remaining")) {
         pthread_mutex_lock(&g_dbg_lock);
         int r = ctl_debug_remaining_s(&g_dbg, mono_ms());
@@ -625,6 +669,9 @@ static void *control_accept_loop(void *arg)
     while (g_control_running) {
         struct sockaddr_storage client_addr;
         socklen_t alen = sizeof(client_addr);
+        swdog_beat(SWDOG_BEAT_CONTROL); /* G01 heartbeat: wake at least every 5 s */
+        struct pollfd apf = { .fd = server_fd, .events = POLLIN, .revents = 0 };
+        if (poll(&apf, 1, 5000) == 0) continue;
         int fd = accept(server_fd, (struct sockaddr *)&client_addr, &alen);
         if (fd < 0) {
             if (errno == EINTR) continue;
@@ -655,6 +702,7 @@ static void *control_accept_loop(void *arg)
             close(fd);
         }
     }
+    swdog_disarm(SWDOG_BEAT_CONTROL);
     pthread_attr_destroy(&attr);
     return NULL;
 }
@@ -665,8 +713,14 @@ int control_start(void)
      * VI, VENC) reaches the tuning tab's debug view, not just ae/night's
      * own logging. */
     g_orig_stdout = dup(STDOUT_FILENO);
+    {
+        char self[32];
+        snprintf(self, sizeof(self), "/proc/self/fd/%d", g_orig_stdout);
+        g_console_nb = open(self, O_WRONLY | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+    }
     int pipefd[2];
     if (pipe(pipefd) != 0) { perror("[control] pipe"); return -1; }
+    fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL) | O_NONBLOCK); /* printf never waits on a full pipe */
     if (dup2(pipefd[1], STDOUT_FILENO) < 0) { perror("[control] dup2"); return -1; }
     close(pipefd[1]);
     g_log_pipe_r = pipefd[0];

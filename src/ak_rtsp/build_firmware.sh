@@ -12,7 +12,7 @@
 #      KEEP_PATCHED=1; the Akam install/patch steps below run in both cases)
 #   2. de-Tuyafication: remove anyka_ipc, install ak_rtsp + wrapper + ini
 #   3. Akam: install dropbearmulti (+ dropbear/dropbearkey symlinks),
-#      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, akam_hostname.sh, akam_debug.sh, akam_onvif.sh, LICENSE.dropbear, MANIFEST.txt;
+#      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, akam_hostname.sh, akam_debug.sh, akam_onvif.sh, akam_net.sh, LICENSE.dropbear, MANIFEST.txt;
 #      patch sbin/service.sh (telnet/ftp off)
 #   4. safety checks (modes, no private key), mksquashfs, round-trip verify,
 #      size guard (BEFORE padding), pad to exactly 5242880 bytes, report,
@@ -506,6 +506,23 @@ esac
 echo "Patching sbin/ethernet.sh (DHCP hostname from akam_hostname.sh)..."
 bash "$PATCH_ETH" "$PATCHED" || die "patch_ethernet_hostname.sh failed: the DHCP hostname of ethernet.sh would stay hard-coded"
 
+# The stock service.sh copies sbin/drop_caches.sh to /tmp and runs it forever: "sleep 5; sync; echo 3 >
+# /proc/sys/vm/drop_caches" (it also removes a stale /tmp/wpa_supplicant). Nothing depends on the 5 s
+# period; each pass is a wakeup plus a sync, and drop_caches is a no-op on this kernel
+# (see tools/flash_scripts/install_custom_firmware.sh). One pass per minute keeps the stock behaviour
+# at a twelfth of the cost. A different layout is left untouched with a warning.
+echo "Slowing sbin/drop_caches.sh (5 s -> 60 s)..."
+DROPC="$PATCHED/sbin/drop_caches.sh"
+if [ ! -f "$DROPC" ]; then
+    warn "sbin/drop_caches.sh not found in the APP tree: not patched"
+elif grep -q '^[[:space:]]*sleep 5[[:space:]]*$' "$DROPC"; then
+    sed -i 's/^\([[:space:]]*\)sleep 5[[:space:]]*$/\1sleep 60/' "$DROPC"
+elif grep -q '^[[:space:]]*sleep 60[[:space:]]*$' "$DROPC"; then
+    :   # already patched (KEEP_PATCHED=1)
+else
+    warn "sbin/drop_caches.sh has no 'sleep 5' line: not patched"
+fi
+
 AUDIT_OUT=""
 if [ -f "$TEMPLATES/audit_remote_services.sh" ]; then
     (cd "$FW_DIR" && bash "$TEMPLATES/audit_remote_services.sh" "$PATCHED") || warn "audit_remote_services.sh failed"
@@ -565,12 +582,12 @@ BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null 
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh; sbin/akam_net.sh; do
     [ "$(stat -c %a "$PATCHED/$f")" = 755 ] || die "$f is not mode 755"
 done
 BADW="$(find "$PATCHED/local/akam" \( -type f -o -type d \) -perm /022 2>/dev/null)"
 [ -z "$BADW" ] || die "group/other-writable files in local/akam: $BADW"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/service.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/service.sh; do
     if [ ! -e "$PATCHED/$f" ] || [ -n "$(find "$PATCHED/$f" -perm /022)" ]; then
         die "$f is group/other-writable or missing"
     fi
@@ -663,7 +680,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
+    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
     echo "ak_rtsp sha256:     $SHA_AK"

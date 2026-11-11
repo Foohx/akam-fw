@@ -35,6 +35,7 @@
 #include "audio_out.h"
 #include "leds.h"
 #include "ctl_sys.h"
+#include "swdog.h"
 
 /* Session timeout announced in the SETUP response (RFC 2326 section 12.37;
  * 60 s is also the protocol default). Clients refresh the session at about
@@ -790,6 +791,7 @@ void drain_venc_ring(void)
 
         if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) != 0)
             return; /* nothing ready (EAGAIN) or transient error: wait again */
+        swdog_frame();
         (void)video_capture_time_us(); /* keep the capture clock locked */
         /* Keep the SPS/PPS cache current for DESCRIBE (sprop-parameter-sets).
          * This is the only place the idle path dereferences the ring, so the
@@ -828,6 +830,8 @@ static int send_video_frame(Client *client)
         return -1;
     }
 
+    swdog_frame();
+    swdog_mode(SWDOG_SEND); /* a blocked client write is not an encoder stall; the next loop pass resets this */
     void *data = (char *)g_venc_virt + (req.frame_offset - g_venc_phys);
     /* The encoder's req.ts_hi/ts_lo is a nominal frame-index clock (exactly
      * 66.667 ms per frame while the sensor delivers 14.67 fps): not used. */
@@ -1367,6 +1371,9 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     }
 
     while (client_fd >= 0) {
+        swdog_beat(SWDOG_BEAT_MAIN);
+        /* Frames are fetched only while PLAYing (or draining for a talk-only session). */
+        swdog_mode((client.is_playing || client.bc_playing) ? SWDOG_FETCH : SWDOG_IDLE);
         struct pollfd pfds[2];
         pfds[0].fd = client_fd;
         pfds[0].events = POLLIN;
