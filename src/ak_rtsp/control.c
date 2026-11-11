@@ -84,6 +84,8 @@ static int debug_active(void)
     return on;
 }
 
+int control_debug_on(void) { return debug_active(); }
+
 static int             g_orig_stdout = -1; /* real stdout fd (serial console) */
 static int             g_log_pipe_r  = -1;
 

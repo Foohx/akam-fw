@@ -41,6 +41,7 @@ void    *g_venc_virt = NULL;
 uint32_t g_venc_phys = 0;
 
 void ledsys_stream_delta(int delta) { (void)delta; }
+int control_debug_on(void) { return 0; }
 
 /* The encoder never has a frame: every ioctl on it answers EAGAIN. */
 int __wrap_ioctl(int fd, unsigned long req, ...)
