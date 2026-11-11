@@ -66,6 +66,7 @@ SRCS    = main.c \
           http_srv.c \
           soap.c \
           onvif.c \
+          onvif_cfg.c \
           onvif_device.c \
           onvif_media.c \
           onvif_imaging.c \

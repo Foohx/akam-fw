@@ -152,7 +152,9 @@ ONVIF is the standard that NVRs, ONVIF Device Manager, Synology Surveillance Sta
 find a camera on the network and pull its video. Akam implements the discovery (WS-Discovery), the device
 service and the media service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
 **This is part of the same release as the `onvif` command: an image built before it has no ONVIF at all
-(`./akam update` first), and `./akam onvif status` then says it does not know.**
+(`./akam update` first), and `./akam onvif status` then says it does not know.** The firmware side is now wired
+(`ak_rtsp` starts and stops the ONVIF server and the discovery by itself from the flag file, no reboot); it still
+has to be validated on a real camera and with real ONVIF apps.
 
 - **Off by default.** Nothing listens on the ONVIF ports until you ask: `./akam onvif enable` (it asks a
   yes/no, default No; `verify` also offers it at the end). `./akam onvif disable` closes them again.
@@ -166,6 +168,10 @@ service and the media service of Profile S, so the camera shows up in those apps
 - **In your app:** let it search, or add the camera by hand with its address (`<camera-ip>`, port 80) and the
   video user name and password. If it is not found, see [troubleshooting](docs/troubleshooting.md#an-onvif-app-does-not-find-the-camera).
 - The setting is a small file on the camera that survives reboots; an older image says to reboot the camera to apply it.
+  `./akam onvif status` shows what the camera really did (`onvif.state`: `off`, `on:<port>`, `no_password`, or
+  `error:port_in_use`). When ONVIF is off the camera runs no ONVIF thread and no socket; when it is on, two idle
+  threads that wake up at most every 30 s. A new camera name (`./akam hostname`) shows in discovery at the next
+  `./akam onvif enable` or reboot.
 
 ## Watching the stream
 

@@ -24,6 +24,7 @@
 #include "ctl_sys.h"
 #include "control.h"
 #include "isp_tune.h"
+#include "onvif_cfg.h"
 
 static int g_failed;
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); g_failed++; } } while (0)
@@ -74,6 +75,13 @@ int  ledsys_ctl_set(const char *k, const char *v, char *m, size_t c)
     return 0;
 }
 void ledsys_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "led.stub=5"); }
+
+/* onvif_cfg stub: the real state machine is tested in onvif_svc_test.c */
+static char g_onvif_state[ONVIF_STATE_MAX] = "off";
+static int  g_onvif_reloads;
+int  onvif_svc_reload(char *s, size_t c) { g_onvif_reloads++; snprintf(g_onvif_state, sizeof(g_onvif_state), "on:8080"); snprintf(s, c, "%s", g_onvif_state); return 0; }
+void onvif_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_onvif_state); }
+void onvif_svc_stop(void) {}
 
 /* ctl_sys stub: two metrics, one of them hostile (an SSID with a quote, '=', a space and CR/LF). */
 static const char *const k_stub_keys[] = { "sys.stub", "net.ssid" };
@@ -316,7 +324,7 @@ static void test_server(void)
         "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\n"
-        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\n.\n");
+        "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nonvif.state=off\n.\n");
     ask(c, "GET sys.stub", out, sizeof(out));
     CHECK_STR(out, "sys.stub=6\n");
     ask(c, "GET net.ssid", out, sizeof(out));      /* CR/LF in a value never splits the reply */
@@ -416,6 +424,20 @@ static void test_server(void)
     ask(c, "SET venc.minqp 1", out, sizeof(out));
     CHECK(!strncmp(out, "ERR venc.minqp is read-only in this version", 43));
 
+    ask(c, "GET onvif.state", out, sizeof(out));
+    CHECK_STR(out, "onvif.state=off\n");
+    ask(c, "ONVIF", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR usage", 9));
+    ask(c, "ONVIF bogus", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR usage", 9) && g_onvif_reloads == 0);
+    ask(c, "onvif reload", out, sizeof(out));
+    CHECK_STR(out, "OK onvif.state=on:8080\n");
+    CHECK(g_onvif_reloads == 1);
+    ask(c, "GET onvif.state", out, sizeof(out));
+    CHECK_STR(out, "onvif.state=on:8080\n");
+    snprintf(g_onvif_state, sizeof(g_onvif_state), "off");
+    g_onvif_reloads = 0;
+
     /* DEBUG from loopback */
     ask(c, "GET ctl.debug", out, sizeof(out));
     CHECK_STR(out, "ctl.debug=0\n");
@@ -449,6 +471,10 @@ static void test_server(void)
             CHECK_STR(out, "ae.speed=7\n");
             ask(r, "DEBUG on", out, sizeof(out));
             CHECK(!strncmp(out, "ERR DEBUG is loopback-only", 26));
+            ask(r, "ONVIF reload", out, sizeof(out));      /* refused remotely, never reloads */
+            CHECK(!strncmp(out, "ERR ", 4) && g_onvif_reloads == 0);
+            ask(r, "GET onvif.state", out, sizeof(out));   /* readable by all */
+            CHECK_STR(out, "onvif.state=off\n");
             ask(r, "DEBUG status", out, sizeof(out));
             CHECK(!strncmp(out, "ERR ", 4));
             ask(r, "GET ctl.debug", out, sizeof(out));
