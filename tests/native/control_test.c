@@ -1,6 +1,6 @@
 /* Host test of the control port (8091): the read-only gate, DEBUG, client slots, golden read output.
  * Part 1 tests the pure logic of src/ak_rtsp/ctl_gate.c (no sockets, injected clock).
- * Part 2 links the REAL src/ak_rtsp/control.c with stub modules (built with -DCONTROL_PORT=18091) and talks to it
+ * Part 2 links the REAL src/ak_rtsp/control.c with stub modules (built with -DCONTROL_PORT=<free port>) and talks to it
  * over TCP: loopback clients, the 4-client limit, LOG forwarding that never blocks, `ak_rtsp ctl`. A "remote" client
  * is a connection to this host's own non-loopback address (skipped when the host has none). No camera. */
 #define _GNU_SOURCE
@@ -229,7 +229,10 @@ static void test_pure(void)
 }
 
 /* ------------------------------------------------------------------ part 2: the real server */
-#define PORT 18091
+#ifndef CONTROL_PORT
+#define CONTROL_PORT 18091 /* tests/control_test.sh passes a free port (PORT and PORT + 1 are used) */
+#endif
+#define PORT CONTROL_PORT
 
 static int dial(const char *ip)
 {
