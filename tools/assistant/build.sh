@@ -13,6 +13,8 @@
 #   tools/assistant/build.sh repro [os/arch ...]   builds twice and compares the sha256 (default: all six)
 #   tools/assistant/build.sh notices       THIRD_PARTY_NOTICES.md lists every module linked into each target
 #
+# The Go used is the project-local official toolchain tools/.toolchain/go-<GO_VERSION>-<os>-<arch>/ when
+# bootstrap.sh installed it (GOROOT and PATH are set for this script only), else the go of PATH.
 # Everything Go writes (module cache, build cache, GOPATH) stays under tools/.toolchain/go/ (git-ignored):
 # nothing goes to ~/go or ~/.cache. VERSION=x.y.z sets the version shown by `akam version`.
 # Release-grade actions (all, flat, repro) refuse any Go other than GO_VERSION of tools/build/deps.lock;
@@ -22,14 +24,17 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
+# shellcheck source=tools/lib/gotoolchain.sh
+. "$REPO/tools/lib/gotoolchain.sh"
 BUDGET_BYTES=$((12 * 1024 * 1024))
 SOFT_BYTES=$((11 * 1024 * 1024))
 VERSION=${VERSION:-1.0.0-dev}
 ALL_TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 TARGETS=${AKAM_TARGETS:-$ALL_TARGETS}
 
+akam_use_pinned_go "$REPO" || true
 if ! command -v go >/dev/null 2>&1; then
-    echo "build.sh: Go is not installed (need the Go of GO_VERSION in tools/build/deps.lock: https://go.dev/dl/)" >&2
+    echo "build.sh: Go is not installed (run: bash tools/build/bootstrap.sh, which installs the Go of GO_VERSION in tools/build/deps.lock)" >&2
     exit 127
 fi
 TC="$REPO/tools/.toolchain/go"
@@ -42,8 +47,8 @@ if ! go list -deps ./cmd/akam >/dev/null 2>&1; then
     exit 1
 fi
 
-# The exact Go release pinned in tools/build/deps.lock (GO_VERSION=1.26.0).
-pinned_go() { sed -n 's/^GO_VERSION=\([0-9][0-9.]*\).*/\1/p' "$REPO/tools/build/deps.lock" | head -n 1; }
+# The exact Go release pinned in tools/build/deps.lock (GO_VERSION).
+pinned_go() { akam_pinned_go_version "$REPO"; }
 have_go() { local v; v=$(go env GOVERSION); v=${v#go}; echo "${v%%[ -]*}"; }
 check_go() { # strict (1: refuse, 0: warn)
     local want have
@@ -56,7 +61,7 @@ check_go() { # strict (1: refuse, 0: warn)
     fi
     if [ "$1" = 1 ]; then
         echo "build.sh: refusing to build: this is Go $have but tools/build/deps.lock pins Go $want." >&2
-        echo "build.sh: install Go $want (https://go.dev/dl/) or set AKAM_ALLOW_ANY_GO=1 for a non-release build." >&2
+        echo "build.sh: run bash tools/build/bootstrap.sh (installs Go $want in tools/.toolchain/) or set AKAM_ALLOW_ANY_GO=1 for a non-release build." >&2
         exit 1
     fi
     echo "build.sh: warning: Go $have, the pinned toolchain is Go $want (sizes and hashes may differ)" >&2
@@ -187,11 +192,14 @@ case ${1:-host} in
         for t in $TARGETS; do build_one "${t%/*}" "${t#*/}" "$2/akam-${t%/*}-${t#*/}$(exe "${t%/*}")"; done
         ;;
     test)
+        check_go 0
         go vet -tags akamtest ./...
         go test -tags akamtest -count=1 ./...
+        # the downloads (kit, toolkit) must work with the release tag that drops the bundled HTTP/2 client
+        go test -tags "akamtest nethttpomithttp2" -count=1 ./internal/kit ./internal/sdcard
         go test -count=1 ./internal/testhook   # release build: the test hooks are ignored
         ;;
-    vet-all) vet_all "${2:-}" ;;
+    vet-all) check_go 0; vet_all "${2:-}" ;;
     notices) notices ;;
     sizes)
         if [ "${2:-}" = --by-package ]; then

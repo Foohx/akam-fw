@@ -61,9 +61,9 @@ release notes. Use a dedicated Ed25519 key with a passphrase.
 
 ## Assistant release (`akam` binaries, tag `assistant-vX.Y.Z`)
 
-Separate from the kit. Prerequisites: `tools/build/bootstrap.sh` done (Go modules in
-`tools/.toolchain/go/mod`), **exactly** the Go release named by `GO_VERSION` in
-`tools/build/deps.lock` (any other `go version` is refused; `AKAM_ALLOW_ANY_GO=1` overrides
+Separate from the kit. Prerequisites: `tools/build/bootstrap.sh` done (the official Go of `GO_VERSION` in
+`tools/build/deps.lock`, installed in `tools/.toolchain/go-<version>-<os>-<arch>/`, and the Go modules in
+`tools/.toolchain/go/mod`); **exactly** that Go is used (any other `go version` is refused; `AKAM_ALLOW_ANY_GO=1` overrides
 for a test build, never for a release), clean tree on the commit to release. No network is used.
 
 ```sh

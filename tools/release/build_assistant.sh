@@ -25,6 +25,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+# shellcheck source=tools/lib/gotoolchain.sh
+. "$ROOT/tools/lib/gotoolchain.sh"
 die() { echo "build_assistant: error: $*" >&2; exit 1; }
 log() { echo "build_assistant: $*"; }
 
@@ -38,9 +40,17 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+akam_use_pinned_go "$ROOT" || true   # the project-local official Go (bootstrap.sh), else the go of PATH
 for t in go git sha256sum tar gzip find sort mktemp; do
     command -v "$t" >/dev/null 2>&1 || die "required tool '$t' not found"
 done
+
+# The archives are compressed by this Go's compress/flate: only the pinned release gives the same bytes everywhere.
+WANT_GO="$(akam_pinned_go_version "$ROOT")"
+HAVE_GO="$(go env GOVERSION)"; HAVE_GO="${HAVE_GO#go}"; HAVE_GO="${HAVE_GO%%[ -]*}"
+if [ "$HAVE_GO" != "$WANT_GO" ] && [ "${AKAM_ALLOW_ANY_GO:-}" != 1 ]; then
+    die "this is Go $HAVE_GO but tools/build/deps.lock pins Go $WANT_GO (run bash tools/build/bootstrap.sh; AKAM_ALLOW_ANY_GO=1 only for a non-release build)"
+fi
 
 # --- identity --------------------------------------------------------------------
 git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1 || die "not a git checkout: cannot record the source commit"
@@ -72,6 +82,7 @@ for t in $TARGETS; do
     [ -s "$f" ] || die "missing $f"
     if [ -n "$HOME" ] && [ "$HOME" != / ] && grep -aqF -e "$HOME" "$f"; then die "$f contains the home directory path"; fi
     if grep -aqF -e "$ROOT" "$f"; then die "$f contains the checkout path"; fi
+    [ "$(wc -c <"$f")" -le $((12 * 1024 * 1024)) ] || die "$f is larger than the 12 MiB binary budget"
     info=$(go version -m "$f")
     case "$info" in *akamtest*) die "$f was built with the akamtest tag" ;; esac
     case "$info" in *CGO_ENABLED=0*) ;; *) die "$f was not built with CGO_ENABLED=0" ;; esac

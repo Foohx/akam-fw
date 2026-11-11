@@ -10,6 +10,10 @@ set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 ASSIST=$REPO/tools/assistant
+# shellcheck source=tools/lib/gotoolchain.sh
+. "$REPO/tools/lib/gotoolchain.sh"
+# The project-local official Go (tools/build/bootstrap.sh) when installed, else the go of PATH (with a note below).
+akam_use_pinned_go "$REPO" || true
 
 if ! command -v go >/dev/null 2>&1; then
     echo "SKIP: Go is not installed (the assistant needs Go 1.26 or newer: https://go.dev/dl/)"
@@ -38,7 +42,10 @@ echo "go: $(go version)"
 # toolchain to be recent enough, so it accepts any (the guard itself is tested below with a fake go).
 PINNED=$(sed -n 's/^GO_VERSION=\([0-9][0-9.]*\).*/\1/p' "$REPO/tools/build/deps.lock" | head -n 1)
 HAVEGO=$(go env GOVERSION); HAVEGO=${HAVEGO#go}; HAVEGO=${HAVEGO%%[ -]*}
-if [ "$HAVEGO" != "$PINNED" ]; then echo "note: Go $HAVEGO is not the pinned Go $PINNED: sizes and hashes below are not release figures"; fi
+if [ "$HAVEGO" != "$PINNED" ]; then
+    echo "note: Go $HAVEGO is not the pinned Go $PINNED (run tools/build/bootstrap.sh to install it): sizes and hashes below are not release figures"
+    export AKAM_ALLOW_ANY_GO=1
+fi
 FAKEGO=$(mktemp -d)
 cd "$ASSIST" || exit 1
 
@@ -66,12 +73,11 @@ if grep -q '^SKIP\|--- SKIP' "$LOG"; then echo "note: some Go tests were skipped
 # shellcheck disable=SC2016
 printf '#!/bin/sh\nif [ "$1" = env ] && [ "$2" = GOVERSION ]; then echo go1.0.0; exit 0; fi\nexec "%s" "$@"\n' "$(command -v go)" >"$FAKEGO/go"
 chmod +x "$FAKEGO/go"
-out=$(PATH="$FAKEGO:$PATH" env -u AKAM_ALLOW_ANY_GO "$ASSIST/build.sh" flat "$FAKEGO/out" 2>&1)
+out=$(PATH="$FAKEGO:$PATH" AKAM_GO_ROOT=/nonexistent env -u AKAM_ALLOW_ANY_GO "$ASSIST/build.sh" flat "$FAKEGO/out" 2>&1)
 rc=$?
 if [ "$rc" -ne 0 ] && [[ $out == *"pins Go $PINNED"* ]] && [ ! -e "$FAKEGO/out" ]; then ok "a Go other than the pinned one is refused with a clear message"; else ko "pinned Go guard: rc=$rc $out"; fi
 
 # The six targets, release flags: sizes against the budget (12 MiB hard, 11 MiB soft), static/format check, flags
-export AKAM_ALLOW_ANY_GO=1
 if out=$("$ASSIST/build.sh" all 2>&1); then ok "six targets built, all within the 12 MiB budget"; printf '        %s\n' "${out//$'\n'/$'\n'        }"; else ko "build all: $out"; fi
 for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
     os=${t%/*}; arch=${t#*/}; f=$ASSIST/bin/$os-$arch/akam; [ "$os" = windows ] && f=$f.exe
@@ -99,6 +105,14 @@ if out=$("$ASSIST/build.sh" repro 2>&1); then ok "two builds of each of the six 
 if out=$("$ASSIST/build.sh" notices 2>&1); then ok "THIRD_PARTY_NOTICES.md lists every module linked into each target"; else ko "notices: $out"; fi
 if out=$("$ASSIST/build.sh" vet-all 2>&1); then ok "go vet (akamtest) of the five other targets, test files included"; else ko "vet-all: $out"; fi
 
+# The release script refuses a dirty tree and an unpinned Go
+if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
+    out=$(env -u AKAM_ALLOW_DIRTY AKAM_TARGETS=linux/amd64 "$REPO/tools/release/build_assistant.sh" --out "$REL2" 2>&1); rc=$?
+    if [ "$rc" -ne 0 ] && [[ $out == *"tree is not clean"* ]]; then ok "the release script refuses a dirty tree"; else ko "dirty tree not refused: rc=$rc $out"; fi
+fi
+out=$(PATH="$FAKEGO:$PATH" AKAM_GO_ROOT=/nonexistent env -u AKAM_ALLOW_ANY_GO AKAM_ALLOW_DIRTY=1 "$REPO/tools/release/build_assistant.sh" --out "$REL2" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && [[ $out == *"pins Go $PINNED"* ]]; then ok "the release script refuses a Go other than the pinned one"; else ko "release script, unpinned Go: rc=$rc $out"; fi
+
 # The release script, twice, on this tree (two targets only: all six are built by the checks above and by the maintainer)
 export AKAM_ALLOW_DIRTY=1 AKAM_TARGETS="linux/amd64 windows/arm64" AKAM_VERSION=0.0.0-test SOURCE_DATE_EPOCH=1700000000
 if "$REPO/tools/release/build_assistant.sh" --out "$REL1" >/dev/null 2>&1 && "$REPO/tools/release/build_assistant.sh" --out "$REL2" >/dev/null 2>&1 \
@@ -109,7 +123,7 @@ listing=$(tar tvzf "$REL1/akam-linux-amd64.tar.gz" --numeric-owner 2>/dev/null)
 if [[ $listing =~ -rwxr-xr-x[[:space:]]+0/0[[:space:]].*akam-linux-amd64/akam ]] && [ "$(grep -c ' 0/0 ' <<<"$listing")" -eq "$(grep -c . <<<"$listing")" ] \
     && ! grep -aqF -e "$REPO" "$REL1/akam-linux-amd64" "$REL1/akam-linux-amd64.tar.gz" "$REL1/akam-windows-arm64.exe" \
     && [ ! -s "$REL1/SHA256SUMS.sig" ]; then ok "archives: exec bit kept, owner 0/0, no checkout path in any file"; else ko "archive content"; fi
-unset AKAM_ALLOW_DIRTY AKAM_TARGETS AKAM_VERSION SOURCE_DATE_EPOCH AKAM_ALLOW_ANY_GO
+unset AKAM_ALLOW_DIRTY AKAM_TARGETS AKAM_VERSION SOURCE_DATE_EPOCH
 
 if v=$("$ASSIST/bin/akam" version 2>&1) && [ "${v%% *}" = akam ]; then ok "akam version: $v"; else ko "akam version: $v"; fi
 if out=$("$ASSIST/bin/akam" self-test --state-dir "$SELFSTATE" 2>&1 </dev/null); then ok "akam self-test"; else ko "akam self-test: $out"; fi

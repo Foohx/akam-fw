@@ -2,7 +2,7 @@
 //
 //	mkarchive -format tar.gz|zip -epoch SECONDS -o OUT -dir PREFIX NAME=FILE[:MODE] ...
 //
-// Every entry is stored under PREFIX/NAME in the order given, with a fixed
+// Every entry is stored under PREFIX/NAME, sorted by name, with a fixed
 // modification time (-epoch, UTC), owner 0/0 with no user or group name, and a
 // mode of 0755 or 0644 (MODE overrides, octal). Nothing of the build machine
 // (user, host, path, clock) reaches the archive, so the same inputs always
@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -73,6 +74,7 @@ func parseEntries(dir string, args []string) ([]entry, error) {
 	if len(es) == 0 {
 		return nil, fmt.Errorf("no entry")
 	}
+	sort.SliceStable(es, func(i, j int) bool { return es[i].name < es[j].name }) // the order never depends on the command line
 	return es, nil
 }
 
