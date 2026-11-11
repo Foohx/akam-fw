@@ -28,17 +28,17 @@ func rnd(n int) []byte { b := make([]byte, n); rand.Read(b); return b }
 
 func sampleFiles() []File {
 	return []File{
-		{"hack.sh", []byte("#!/bin/sh\necho hi\n")},
-		{"custom/configs/hack.conf", []byte("TELNET=1\n")},
-		{"custom/configs/wifi.conf", []byte("MODE=sta\n")},
-		{"custom/state/dump.done", []byte{}},
-		{"custom_firmware/ak_rtsp_firmware_20251111_101010.squashfs", rnd(5 * 1024 * 1024)},
-		{"flash_tool", rnd(300000)},
-		{"original_firmware/mtdblock7.bin", rnd(5242880)},
-		{"UPPER.TXT", []byte("short name only")},
-		{"a name with spaces and ÉÀ.txt", []byte("unicode")},
-		{"long_name_number_one_0001.txt", []byte("1")},
-		{"long_name_number_one_0002.txt", []byte("2")},
+		{Path: "hack.sh", Data: []byte("#!/bin/sh\necho hi\n")},
+		{Path: "custom/configs/hack.conf", Data: []byte("TELNET=1\n")},
+		{Path: "custom/configs/wifi.conf", Data: []byte("MODE=sta\n")},
+		{Path: "custom/state/dump.done", Data: []byte{}},
+		{Path: "custom_firmware/ak_rtsp_firmware_20251111_101010.squashfs", Data: rnd(5 * 1024 * 1024)},
+		{Path: "flash_tool", Data: rnd(300000)},
+		{Path: "original_firmware/mtdblock7.bin", Data: rnd(5242880)},
+		{Path: "UPPER.TXT", Data: []byte("short name only")},
+		{Path: "a name with spaces and ÉÀ.txt", Data: []byte("unicode")},
+		{Path: "long_name_number_one_0001.txt", Data: []byte("1")},
+		{Path: "long_name_number_one_0002.txt", Data: []byte("2")},
 	}
 }
 
@@ -115,7 +115,7 @@ func TestTooSmall(t *testing.T) {
 	const size = 128 << 20
 	g, _ := sparse(t, size)
 	off, ps, _ := FormatMBR(g, size)
-	big := []File{{"big.bin", make([]byte, 140<<20)}}
+	big := []File{{Path: "big.bin", Data: make([]byte, 140<<20)}}
 	if err := WriteFAT32(g, off, ps, big, WriteOptions{}); err != ErrTooSmall {
 		t.Errorf("got %v", err)
 	}
@@ -125,7 +125,7 @@ func TestBadNames(t *testing.T) {
 	f, _ := sparse(t, 128<<20)
 	off, ps, _ := FormatMBR(f, 128<<20)
 	for _, n := range []string{"../x", "/abs", "a:b", "a/../../b", "trail."} {
-		if err := WriteFAT32(f, off, ps, []File{{n, nil}}, WriteOptions{}); err == nil {
+		if err := WriteFAT32(f, off, ps, []File{{Path: n}}, WriteOptions{}); err == nil {
 			t.Errorf("%q accepted", n)
 		}
 	}

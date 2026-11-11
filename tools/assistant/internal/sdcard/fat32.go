@@ -26,8 +26,9 @@ type Device interface {
 
 // File is one file of the card tree.
 type File struct {
-	Path string // slash separated, relative, no ".."
-	Data []byte
+	Path string `json:"path"` // slash separated, relative, no ".."
+	Data []byte `json:"data,omitempty"`
+	Dir  bool `json:"dir,omitempty"` // an empty folder (Data ignored)
 }
 
 const (
@@ -185,6 +186,9 @@ func buildTree(files []File) (*node, error) {
 				return nil, fmt.Errorf("name %q cannot be written on a FAT volume", part)
 			}
 			last := i == len(parts)-1
+			if last && f.Dir {
+				last = false
+			}
 			var next *node
 			for _, c := range cur.children {
 				if c.name == part {
