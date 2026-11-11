@@ -43,6 +43,12 @@ type Options struct {
 	NoNtpHelper bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
+	// MtdRead, when set, may change what one `dd if=/dev/mtdblockN` read streams: n is the partition,
+	// read the 1-based count of reads of that partition so far. It returns the bytes to send and
+	// whether the connection is then dropped (no exit status).
+	MtdRead func(n, read int, data []byte) (out []byte, drop bool)
+	// ProcMtd replaces the text of /proc/mtd (an unsupported layout, hostile text).
+	ProcMtd string
 	// Flash selects the behaviour of the reflash emulation (see flash.go); zero is a healthy camera.
 	Flash FlashOptions
 }
@@ -70,6 +76,7 @@ type Camera struct {
 	vRun     map[string]string // the video values the running ak_rtsp uses (applied at its restart)
 	onvifPrt string
 	restarts int
+	mtdReads [8]int
 	conns    []net.Conn
 	wg       sync.WaitGroup
 	done     chan struct{}
@@ -384,6 +391,9 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 		fmt.Fprintf(stdout, "REG_HOSTNAME=akam-fake\nREG_MTD7_MD5=%s\n", Mtd7MD5)
 		return 0
 	}
+	if st, ok := c.mtdExec(cmd, stdout); ok {
+		return st
+	}
 	f := strings.Fields(cmd)
 	if len(f) > 0 && strings.HasPrefix(f[0], "/usr/sbin/akam_") && strings.HasSuffix(f[0], ".sh") {
 		name := filepath.Base(f[0])
@@ -631,6 +641,69 @@ func (c *Camera) SetCtl(key, value string) {
 		return
 	}
 	c.ctl[key] = value
+}
+
+// MtdSizes are the sizes of the 8 partitions of the fake camera (the supported layout).
+var MtdSizes = [8]int{204800, 4096, 4096, 65536, 1572864, 1032192, 262144, 5242880}
+
+// ProcMtdText is /proc/mtd of the supported layout.
+const ProcMtdText = `dev:    size   erasesize  name
+mtd0: 00032000 00001000 "UBOOT"
+mtd1: 00001000 00001000 "ENV"
+mtd2: 00001000 00001000 "ENVBK"
+mtd3: 00010000 00001000 "DTB"
+mtd4: 00180000 00001000 "KERNEL"
+mtd5: 000fc000 00001000 "ROOTFS"
+mtd6: 00040000 00001000 "CONFIG"
+mtd7: 00500000 00001000 "APP"
+`
+
+// MtdData is the content of partition n of the fake camera.
+func MtdData(n int) []byte {
+	b := make([]byte, MtdSizes[n])
+	for i := range b {
+		b[i] = byte((i*7 + n*31 + i>>8) % 251)
+	}
+	return b
+}
+
+var ddReadRe = regexp.MustCompile(`^dd if=/dev/mtdblock([0-7]) bs=64k$`)
+
+// mtdExec serves the read-only partition commands: /proc/mtd, the kernel version and
+// `dd if=/dev/mtdblockN bs=64k` (anything with of= is not matched, so "not found").
+func (c *Camera) mtdExec(cmd string, stdout io.Writer) (int, bool) {
+	switch cmd {
+	case "cat /proc/mtd":
+		t := ProcMtdText
+		if c.opts.ProcMtd != "" {
+			t = c.opts.ProcMtd
+		}
+		io.WriteString(stdout, t)
+		return 0, true
+	case "uname -r; uname -v":
+		io.WriteString(stdout, "3.10.14\n#1 PREEMPT fake\n")
+		return 0, true
+	}
+	m := ddReadRe.FindStringSubmatch(cmd)
+	if m == nil {
+		return 0, false
+	}
+	n, _ := strconv.Atoi(m[1])
+	c.mu.Lock()
+	c.mtdReads[n]++
+	read := c.mtdReads[n]
+	c.mu.Unlock()
+	data := MtdData(n)
+	if c.opts.MtdRead != nil {
+		out, drop := c.opts.MtdRead(n, read, data)
+		stdout.Write(out)
+		if drop {
+			return dropConn, true
+		}
+		return 0, true
+	}
+	stdout.Write(data)
+	return 0, true
 }
 
 // CtlWords returns the first word of every line the control port received, in order (tests prove

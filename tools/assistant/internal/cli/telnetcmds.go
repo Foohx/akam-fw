@@ -635,6 +635,10 @@ func (a *App) cmdBackup() error {
 		a.stepBanner("backup")
 		return a.backupAccept(a.Opt.BackupDir)
 	}
+	if a.St.Get("camera_kind") == "akam" { // Akam runs: read it over SSH (T11.11)
+		a.stepBanner("backup")
+		return a.backupSSH()
+	}
 	if err := a.stepNeed("backup"); err != nil {
 		return err
 	}

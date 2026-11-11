@@ -230,6 +230,84 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, 
 	}
 }
 
+// RunStream executes cmd and sends its standard output to out as it arrives (nothing is buffered
+// here), for a command that prints a large read-only stream. When out returns an error the session
+// is closed at once and that error is returned. Stderr is returned (the first 4 KiB). A non-zero
+// exit status is Result.Status, not an error; a dropped connection is an error.
+func (c *Client) RunStream(ctx context.Context, cmd string, out io.Writer) (Result, error) {
+	s, err := c.conn.NewSession()
+	if err != nil {
+		return Result{}, err
+	}
+	defer s.Close()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var werr error
+	var errb limitBuf
+	s.Stdout = writerFunc(func(p []byte) (int, error) {
+		n, err := out.Write(p)
+		if err != nil {
+			werr = err
+			cancel()
+		}
+		return n, err
+	})
+	s.Stderr = &errb
+	done := make(chan error, 1)
+	go func() { done <- s.Run(cmd) }()
+	select {
+	case <-ctx.Done():
+		s.Close()
+		// The writer must not be called once we return, so wait for the session; a peer that never
+		// acknowledges the close would block that wait, so after a short grace the connection goes.
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			c.conn.Close()
+			<-done
+		}
+		if werr != nil {
+			return Result{}, werr
+		}
+		return Result{}, ctx.Err()
+	case err := <-done:
+		res := Result{Stderr: errb.b}
+		if err != nil {
+			if werr != nil {
+				return res, werr
+			}
+			var ee *gossh.ExitError
+			if errors.As(err, &ee) {
+				res.Status = ee.ExitStatus()
+				return res, nil
+			}
+			var em *gossh.ExitMissingError
+			if errors.As(err, &em) {
+				return res, fmt.Errorf("the connection closed before the command ended")
+			}
+			return res, err
+		}
+		return res, nil
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// limitBuf keeps the first 4 KiB written to it and drops the rest.
+type limitBuf struct{ b []byte }
+
+func (l *limitBuf) Write(p []byte) (int, error) {
+	if room := 4096 - len(l.b); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		l.b = append(l.b, p[:room]...)
+	}
+	return len(p), nil
+}
+
 // Forward opens a direct-tcpip channel to host:port as seen from the camera (loopback).
 func (c *Client) Forward(host string, port int) (net.Conn, error) {
 	return c.conn.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))

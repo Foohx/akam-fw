@@ -25,7 +25,9 @@ type fixture struct {
 	userKnow string
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { return newFixtureWith(t, testfake.Options{}) }
+
+func newFixtureWith(t *testing.T, o testfake.Options) *fixture {
 	t.Helper()
 	dir := t.TempDir()
 	key := filepath.Join(dir, "akam")
@@ -37,7 +39,8 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cam := testfake.New(t, testfake.Options{AuthorizedKey: pub})
+	o.AuthorizedKey = pub
+	cam := testfake.New(t, o)
 	return &fixture{cam: cam, key: key, known: filepath.Join(dir, "state", "known_hosts"), userKnow: filepath.Join(dir, "user_known_hosts")}
 }
 
