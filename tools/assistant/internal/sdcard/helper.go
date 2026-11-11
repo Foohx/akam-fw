@@ -54,9 +54,13 @@ type Response struct {
 // Helper is the logic of the helper, with its system view injectable.
 type Helper struct {
 	Sys Sys
-	// Unmount unmounts a mount point (nil: the OS call).
+	// Inv overrides the inventory (nil: Sys, the Linux one). Opener overrides the OS side of the privileged
+	// steps (nil: the running OS's).
+	Inv    Inventory
+	Opener Opener
+	// Unmount unmounts a mount point (nil: the Opener's).
 	Unmount func(point string) error
-	// Rescan asks the kernel to re-read the partition table (nil: BLKRRPART).
+	// Rescan asks the kernel to re-read the partition table (nil: the disk's own, BLKRRPART on Linux).
 	Rescan func(f *os.File)
 	// Progress receives the progress lines of a wipe (nil: silent).
 	Progress io.Writer
@@ -68,8 +72,22 @@ func fail(format string, a ...any) Response { return Response{Error: fmt.Sprintf
 func ImageToken(size int64) string { return fmt.Sprintf("image|%d", size) }
 
 type target struct {
-	f    *os.File
+	d    Disk
 	size int64
+}
+
+func (h Helper) inventory() Inventory {
+	if h.Inv != nil {
+		return h.Inv
+	}
+	return h.Sys
+}
+
+func (h Helper) opener() Opener {
+	if h.Opener != nil {
+		return h.Opener
+	}
+	return newPlatform().Opener
 }
 
 // open validates the device and opens it.
@@ -89,52 +107,51 @@ func (h Helper) open(req Request) (*target, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &target{f, st.Size()}, nil
+		return &target{fileDisk{f: f, rescan: h.Rescan}, st.Size()}, nil
 	}
 	if req.Token == "" {
 		return nil, errors.New("no identity token: refusing")
 	}
-	c, err := h.Sys.Recheck(req.Device, req.Token)
+	ctx := Context{GuardPaths: h.Sys.GuardPaths}
+	inv, op := h.inventory(), h.opener()
+	c, err := recheckDevice(inv, req.Device, req.Token, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("refusing: %w", err)
 	}
-	st, err := os.Lstat(req.Device)
-	if err != nil || st.Mode()&os.ModeDevice == 0 || st.Mode()&os.ModeCharDevice != 0 {
-		return nil, fmt.Errorf("refusing: %s is not a block device", req.Device)
+	if err := op.CheckNode(req.Device); err != nil {
+		return nil, err
 	}
-	for _, pt := range h.Sys.mountPointsOf(c) {
+	for _, m := range c.Mounts {
 		un := h.Unmount
 		if un == nil {
-			un = osUnmount
+			un = op.Unmount
 		}
-		if err := un(pt); err != nil {
-			return nil, fmt.Errorf("cannot unmount %s: %v", pt, err)
+		if err := un(m.Point); err != nil {
+			return nil, fmt.Errorf("cannot unmount %s: %v", m.Point, err)
 		}
 	}
 	// the card was unmounted: it must still be the same one, right before the first write
-	if _, err := h.Sys.Recheck(req.Device, req.Token); err != nil {
+	if _, err := recheckDevice(inv, req.Device, req.Token, ctx); err != nil {
 		return nil, fmt.Errorf("refusing: %w (nothing was written)", err)
 	}
-	f, err := os.OpenFile(req.Device, os.O_RDWR|os.O_EXCL, 0)
+	d, err := op.Open(req.Device, c)
 	if err != nil {
 		return nil, err
 	}
-	return &target{f, c.Size}, nil
-}
-
-func (h Helper) rescan(f *os.File) {
 	if h.Rescan != nil {
-		h.Rescan(f)
-		return
+		if fd, ok := d.(fileDisk); ok {
+			fd.rescan = h.Rescan
+			d = fd
+		}
 	}
-	osRescan(f)
+	return &target{d, c.Size}, nil
 }
 
 // Handle runs one request.
 func (h Helper) Handle(req Request) Response {
 	switch req.Op {
 	case OpList:
-		return Response{OK: true, Candidates: h.Sys.List()}
+		return Response{OK: true, Candidates: listDevices(h.inventory(), Context{GuardPaths: h.Sys.GuardPaths})}
 	case OpPrepare, OpVerify, OpWipe:
 	default:
 		return fail("unknown operation %q", req.Op)
@@ -147,7 +164,7 @@ func (h Helper) Handle(req Request) Response {
 	if err != nil {
 		return fail("%v", err)
 	}
-	defer t.f.Close()
+	defer t.d.Close()
 	switch req.Op {
 	case OpPrepare:
 		return h.prepare(t, req)
@@ -167,15 +184,15 @@ func (h Helper) prepare(t *target, req Request) Response {
 	if req.Verify == nil || len(req.Files) == 0 {
 		return fail("prepare needs the files and the verification spec")
 	}
-	off, psize, err := FormatMBR(t.f, t.size)
+	off, psize, err := FormatMBR(t.d, t.size)
 	if err != nil {
 		return fail("%v", err)
 	}
-	if err := WriteFAT32(t.f, off, psize, req.Files, WriteOptions{}); err != nil {
+	if err := WriteFAT32(t.d, off, psize, req.Files, WriteOptions{}); err != nil {
 		return fail("writing the card failed: %v", err)
 	}
-	h.rescan(t.f)
-	card, err := OpenCard(t.f)
+	t.d.Rescan()
+	card, err := OpenCard(t.d)
 	if err != nil {
 		return fail("the card cannot be read back: %v", err)
 	}
@@ -201,7 +218,7 @@ func (h Helper) verify(t *target, req Request) Response {
 	if req.Verify == nil {
 		return fail("verify needs the verification spec")
 	}
-	card, err := OpenCard(t.f)
+	card, err := OpenCard(t.d)
 	if err != nil {
 		return fail("the card cannot be read: %v", err)
 	}
@@ -224,7 +241,7 @@ func (h Helper) wipe(t *target) Response {
 			h.say("wipe: %d%%", pct)
 		}
 		if off > 0 && off%(256<<20) == 0 {
-			if err := t.f.Sync(); err != nil {
+			if err := t.d.Sync(); err != nil {
 				return fail("sync failed at %d: %v", off, err)
 			}
 		}
@@ -232,21 +249,21 @@ func (h Helper) wipe(t *target) Response {
 		if t.size-off < n {
 			n = t.size - off
 		}
-		if _, err := t.f.WriteAt(zero[:n], off); err != nil {
+		if _, err := t.d.WriteAt(zero[:n], off); err != nil {
 			return fail("write failed at %d: %v", off, err)
 		}
 	}
-	if err := t.f.Sync(); err != nil {
+	if err := t.d.Sync(); err != nil {
 		return fail("sync failed: %v", err)
 	}
-	h.rescan(t.f)
+	t.d.Rescan()
 	chk := make([]byte, blk)
 	for _, off := range []int64{0, max64(0, t.size-blk)} {
 		n := int64(blk)
 		if t.size-off < n {
 			n = t.size - off
 		}
-		if _, err := t.f.ReadAt(chk[:n], off); err != nil {
+		if _, err := t.d.ReadAt(chk[:n], off); err != nil {
 			return fail("read-back failed: %v", err)
 		}
 		if !bytes.Equal(chk[:n], zero[:n]) {
@@ -261,6 +278,21 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// HelperEntry is the entry of the privileged mode: it handles `sd-helper` (the only argument today; per-OS
+// flags will be parsed here) and reports whether args named it. Nothing else runs in this mode: no state
+// directory, no lock, no UI.
+func HelperEntry(args []string, in io.Reader, out, progress io.Writer) (code int, handled bool) {
+	if len(args) != 1 || args[0] != "sd-helper" {
+		return 0, false
+	}
+	p := newPlatform()
+	h := Helper{Inv: p.Inventory, Opener: p.Opener, Progress: progress}
+	if s, ok := p.Inventory.(Sys); ok {
+		h.Sys = s
+	}
+	return HelperMain(in, out, h), true
 }
 
 // HelperMain is `akam sd-helper`: one request on in, one answer on out. It returns the exit status.

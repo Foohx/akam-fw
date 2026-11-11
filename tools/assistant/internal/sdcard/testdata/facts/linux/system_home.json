@@ -1,0 +1,24 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdg",
+    "name": "sdg",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdg",
+    "dev_num": "8:16",
+    "removable_raw": "1",
+    "mounts": [
+      {
+        "node": "/dev/sdg1",
+        "point": "/home"
+      }
+    ]
+  },
+  "refuse": "system path /home"
+}

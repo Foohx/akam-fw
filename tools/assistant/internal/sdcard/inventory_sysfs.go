@@ -2,40 +2,13 @@ package sdcard
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
-
-// Size range of an acceptable card (backend_linux.sh).
-const (
-	MinBytes = 128 << 20
-	MaxBytes = 128 << 30
-)
-
-// Mount is one mounted node of a disk.
-type Mount struct {
-	Node  string `json:"node"`
-	Point string `json:"point"`
-}
-
-// Candidate is an eligible whole disk.
-type Candidate struct {
-	Dev    string  `json:"dev"`
-	Name   string  `json:"name"`
-	Size   int64   `json:"size"`
-	Model  string  `json:"model"`
-	Tran   string  `json:"tran"`
-	Mounts []Mount `json:"mounts"`
-	// Ident is what must not change between the check and the write: size, model, serial, wwn,
-	// vendor, major:minor. The parent passes it to the helper, which compares it again.
-	Ident string `json:"ident"`
-}
 
 // Sys is the view of the system used by the guards: paths are injectable so that tests run on a
 // fake /sys, /proc/self/mountinfo and /dev built in a temp directory.
@@ -186,64 +159,66 @@ func underPath(p, dir string) bool {
 	return p == dir || dir == "/" || strings.HasPrefix(p, dir+"/")
 }
 
-var systemMounts = []string{"/", "/boot", "/usr", "/var", "/etc", "/home", "/opt", "/srv", "/nix"}
+// Sys implements Inventory (Linux: sysfs, mountinfo, swaps). It only reads files, so it compiles everywhere.
+var _ Inventory = Sys{}
 
-func isSystemMount(p string) bool {
-	for _, s := range systemMounts {
-		if p == s || (s != "/" && strings.HasPrefix(p, s+"/")) {
-			return true
+// Devices lists the whole-disk nodes (sdX, mmcblkN) known to sysfs.
+func (s Sys) Devices() []string {
+	es, _ := os.ReadDir(filepath.Join(s.SysRoot, "class", "block"))
+	var out []string
+	for _, e := range es {
+		if wholeDiskRe.MatchString(e.Name()) {
+			out = append(out, filepath.Join(s.DevDir, e.Name()))
 		}
 	}
-	return false
+	return out
 }
 
-// Check decides whether dev is an eligible card. The error text is the reason for a refusal.
-func (s Sys) Check(dev string) (*Candidate, error) {
+// Inspect reads the facts of dev. Only the facts: Evaluate decides.
+func (s Sys) Inspect(dev string, ctx Context) (Facts, error) {
 	name := filepath.Base(dev)
+	f := Facts{OS: "linux", Path: dev, Name: name}
 	if filepath.Dir(dev) != filepath.Clean(s.DevDir) || !wholeDiskRe.MatchString(name) {
-		return nil, fmt.Errorf("%s is not a whole USB/SD disk node like /dev/sdb or /dev/mmcblk0 (partitions, NVMe, loop and zram nodes are refused)", dev)
+		return f, nil // not a whole disk: Evaluate refuses
 	}
+	f.Whole = true
 	if real, err := filepath.EvalSymlinks(dev); err == nil && real != dev {
-		return nil, fmt.Errorf("%s resolves to %s: give the real device", dev, real)
+		return f, fmt.Errorf("%s resolves to %s: give the real device", dev, real)
 	}
 	base := filepath.Join(s.SysRoot, "class", "block", name)
 	if _, err := os.Stat(base); err != nil {
-		return nil, fmt.Errorf("%s is unknown to the system", dev)
+		return f, fmt.Errorf("%s is unknown to the system", dev)
 	}
 	nodes, majmins := s.diskNodes(name)
 	mounts := s.mounts()
-	var mine []Mount
 	for _, m := range mounts {
 		if s.onDisk(m, nodes, majmins) {
-			if isSystemMount(m.point) {
-				return nil, fmt.Errorf("%s carries the system path %s", dev, m.point)
-			}
-			mine = append(mine, Mount{Node: m.source, Point: m.point})
+			f.Mounts = append(f.Mounts, Mount{Node: m.source, Point: m.point, FS: m.fstype})
 		}
 	}
-	if f, err := os.Open(s.Swaps); err == nil {
-		sc := bufio.NewScanner(f)
+	if sf, err := os.Open(s.Swaps); err == nil {
+		sc := bufio.NewScanner(sf)
+	swaps:
 		for sc.Scan() {
 			fl := strings.Fields(sc.Text())
 			if len(fl) > 0 && strings.HasPrefix(fl[0], "/dev/") {
 				for _, n := range nodes {
 					if filepath.Base(fl[0]) == n {
-						f.Close()
-						return nil, fmt.Errorf("%s carries swap space", dev)
+						f.Roles = append(f.Roles, RoleSwap)
+						break swaps
 					}
 				}
 			}
 		}
-		f.Close()
+		sf.Close()
 	}
 	if why := s.holders(name, nodes); why != "" {
-		return nil, fmt.Errorf("%s is part of a storage stack (%s)", dev, why)
-	}
-	if why := s.loopBacked(nodes); why != "" {
-		return nil, fmt.Errorf("%s is part of a storage stack (%s)", dev, why)
+		f.InStack = why
+	} else if why := s.loopBacked(nodes); why != "" {
+		f.InStack = why
 	}
 	// the repository, home, working and temp directories must not live on this disk
-	for _, gp := range s.GuardPaths {
+	for _, gp := range ctx.GuardPaths {
 		var best *mountEnt
 		for i := range mounts {
 			if underPath(gp, mounts[i].point) && (best == nil || len(mounts[i].point) >= len(best.point)) {
@@ -251,81 +226,47 @@ func (s Sys) Check(dev string) (*Candidate, error) {
 			}
 		}
 		if best != nil && s.onDisk(*best, nodes, majmins) {
-			return nil, fmt.Errorf("%s carries %s (the repository, your home, the working or the temp directory)", dev, gp)
+			f.GuardHit = gp
+			break
 		}
 	}
-	rm := readStr(filepath.Join(base, "removable"))
-	tran := ""
+	f.RemovableRaw = readStr(filepath.Join(base, "removable"))
+	f.DevType = readStr(filepath.Join(base, "device", "type"))
 	if strings.HasPrefix(name, "mmcblk") {
-		if readStr(filepath.Join(base, "device", "type")) != "SD" {
-			return nil, fmt.Errorf("%s is not an SD card (device type %q)", dev, readStr(filepath.Join(base, "device", "type")))
-		}
-		tran = "mmc"
+		f.Bus = "mmc"
+	} else if real, err := filepath.EvalSymlinks(base); err == nil && strings.Contains(real, "/usb") {
+		f.Bus = "usb"
 	} else {
-		if rm != "1" {
-			return nil, fmt.Errorf("%s is not removable (removable=%q)", dev, rm)
-		}
-		if real, err := filepath.EvalSymlinks(base); err != nil || !strings.Contains(real, "/usb") {
-			return nil, fmt.Errorf("%s is not USB-attached", dev)
-		}
-		tran = "usb"
+		f.Bus = "other"
+	}
+	switch f.RemovableRaw {
+	case "1":
+		f.Removable = Yes
+	case "0":
+		f.Removable = No
 	}
 	secs, _ := strconv.ParseInt(readStr(filepath.Join(base, "size")), 10, 64)
-	size := secs * 512
-	if size <= 0 {
-		return nil, fmt.Errorf("%s reports no medium (size 0)", dev)
+	f.Size = secs * 512
+	f.Model = strings.Join(strings.Fields(readStr(filepath.Join(base, "device", "model"))), " ")
+	if f.Model == "" {
+		f.Model = strings.Join(strings.Fields(readStr(filepath.Join(base, "device", "name"))), " ")
 	}
-	if size < MinBytes || size > MaxBytes {
-		return nil, fmt.Errorf("%s size %d bytes is outside 128 MiB .. 128 GiB", dev, size)
-	}
-	model := strings.Join(strings.Fields(readStr(filepath.Join(base, "device", "model"))), " ")
-	if model == "" {
-		model = strings.Join(strings.Fields(readStr(filepath.Join(base, "device", "name"))), " ")
-	}
-	vendor := readStr(filepath.Join(base, "device", "vendor"))
-	serial := readStr(filepath.Join(base, "device", "serial"))
-	wwn := readStr(filepath.Join(base, "device", "wwid"))
-	c := &Candidate{Dev: dev, Name: name, Size: size, Model: model, Tran: tran, Mounts: mine,
-		Ident: fmt.Sprintf("%d|%s|%s|%s|%s|%s", size, model, serial, wwn, vendor, readStr(filepath.Join(base, "dev")))}
-	return c, nil
+	f.Vendor = readStr(filepath.Join(base, "device", "vendor"))
+	f.Serial = readStr(filepath.Join(base, "device", "serial"))
+	f.WWN = readStr(filepath.Join(base, "device", "wwid"))
+	f.DevNum = readStr(filepath.Join(base, "dev"))
+	return f, nil
+}
+
+// Check decides whether dev is an eligible card. The error text is the reason for a refusal.
+func (s Sys) Check(dev string) (*Candidate, error) {
+	return checkDevice(s, dev, Context{GuardPaths: s.GuardPaths})
 }
 
 // List returns every eligible disk, sorted.
-func (s Sys) List() []Candidate {
-	es, _ := os.ReadDir(filepath.Join(s.SysRoot, "class", "block"))
-	var out []Candidate
-	for _, e := range es {
-		if !wholeDiskRe.MatchString(e.Name()) {
-			continue
-		}
-		if c, err := s.Check(filepath.Join(s.DevDir, e.Name())); err == nil {
-			out = append(out, *c)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Dev < out[j].Dev })
-	return out
-}
-
-// ErrIdentChanged means the disk is not the one that was confirmed.
-var ErrIdentChanged = errors.New("the disk changed since it was checked: card replaced?")
+func (s Sys) List() []Candidate { return listDevices(s, Context{GuardPaths: s.GuardPaths}) }
 
 // Recheck is the whole guard again, right before a destructive step: still eligible, same identity.
 func (s Sys) Recheck(dev, ident string) (*Candidate, error) {
-	c, err := s.Check(dev)
-	if err != nil {
-		return nil, err
-	}
-	if c.Ident != ident {
-		return nil, fmt.Errorf("%s changed since it was checked (was: %s, now: %s): %w", dev, ident, c.Ident, ErrIdentChanged)
-	}
-	return c, nil
-}
-
-// Unmount unmounts every mounted node of the disk (privileged).
-func (s Sys) mountPointsOf(c *Candidate) []string {
-	var pts []string
-	for _, m := range c.Mounts {
-		pts = append(pts, m.Point)
-	}
-	return pts
+	return recheckDevice(s, dev, ident, Context{GuardPaths: s.GuardPaths})
 }

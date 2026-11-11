@@ -1,0 +1,19 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/mmcblk0",
+    "name": "mmcblk0",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "mmc",
+    "removable": "no",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-mmcblk0",
+    "dev_num": "179:0",
+    "removable_raw": "0",
+    "dev_type": "SD"
+  },
+  "refuse": ""
+}
