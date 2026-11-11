@@ -103,6 +103,10 @@ func NewConfirmation(md5 string, ask func() (bool, error)) (Confirmation, error)
 	return Confirmation{md5: md5, ok: true}, nil
 }
 
+// For reports whether c is the human's explicit yes for the image with this md5 (the telnet route
+// uses it to gate the one "YES" typed to the camera's own flash script).
+func (c Confirmation) For(md5 string) bool { return c.ok && c.md5 == md5 }
+
 // ErrNotConfirmed: the user did not say yes.
 var ErrNotConfirmed = errors.New("not confirmed")
 

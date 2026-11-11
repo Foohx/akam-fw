@@ -4,3 +4,4 @@ tools/flash_scripts/preflight_check.sh
 tools/flash_scripts/install_with_flash_tool.sh
 tools/flash_scripts/restore.sh
 tools/hw_tests/akam_hwcheck.sh
+tools/release/supported_hardware.txt

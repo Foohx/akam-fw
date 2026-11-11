@@ -168,7 +168,8 @@ func (x *Xfer) settle(d time.Duration) {
 	}
 }
 
-func (x *Xfer) putOnce(src, dst, q string, port int, size int64, hash string) error {
+func (x *Xfer) putOnce(data []byte, dst, q string, port int, hash string) error {
+	size := int64(len(data))
 	if err := x.sessionOK(); err != nil {
 		x.warn("no camera session.")
 		return err
@@ -184,7 +185,7 @@ func (x *Xfer) putOnce(src, dst, q string, port int, size int64, hash string) er
 			return err
 		}
 	}
-	if err := x.send(src, port, size); err != nil {
+	if err := x.send(data, port); err != nil {
 		x.warn(fmt.Sprintf("could not send the file to the camera on port %d.", port))
 		x.S.Close()
 		return err
@@ -200,31 +201,34 @@ func (x *Xfer) putOnce(src, dst, q string, port int, size int64, hash string) er
 	return nil
 }
 
-func (x *Xfer) send(src string, port int, size int64) error {
-	f, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+func (x *Xfer) send(data []byte, port int) error {
 	c, err := x.dial(port)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(30*time.Second + time.Duration(size/100000)*time.Second))
-	if _, err := io.Copy(c, f); err != nil {
-		return err
-	}
-	return nil
+	_ = c.SetDeadline(time.Now().Add(30*time.Second + time.Duration(len(data)/100000)*time.Second))
+	_, err = c.Write(data)
+	return err
 }
 
-// Put sends local to remote on the camera and verifies size and hash (3 tries by default).
+// Put sends the local file src to dst on the camera and verifies size and hash (3 tries by default).
 func (x *Xfer) Put(src, dst string) error {
 	st, err := os.Stat(src)
 	if err != nil || !st.Mode().IsRegular() {
 		x.Rep.Err("transfer: no such file: " + src)
 		return errors.New("no such file")
 	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		x.Rep.Err("transfer: cannot read " + src)
+		return err
+	}
+	return x.PutData(filepath.Base(src), data, dst)
+}
+
+// PutData sends bytes already in memory (the hash is computed over exactly these bytes).
+func (x *Xfer) PutData(name string, data []byte, dst string) error {
 	q, ok := quote(dst)
 	if !ok {
 		x.Rep.Err("transfer: bad remote path")
@@ -237,10 +241,12 @@ func (x *Xfer) Put(src, dst string) error {
 	}
 	for try := 1; try <= tries; try++ {
 		_ = x.HashTool()
-		hash, herr := x.LocalHash(src)
-		x.say(fmt.Sprintf("  Sending %s (%d bytes), try %d of %d ...", filepath.Base(src), st.Size(), try, tries))
-		if herr == nil && x.putOnce(src, dst, q, port, st.Size(), hash) == nil {
-			x.Rep.Good(fmt.Sprintf("  Verified on the camera: %s (%d bytes, %s %s).", dst, st.Size(), x.HT, hash))
+		h := x.newHash()
+		h.Write(data)
+		hash := hex.EncodeToString(h.Sum(nil))
+		x.say(fmt.Sprintf("  Sending %s (%d bytes), try %d of %d ...", name, len(data), try, tries))
+		if x.putOnce(data, dst, q, port, hash) == nil {
+			x.Rep.Good(fmt.Sprintf("  Verified on the camera: %s (%d bytes, %s %s).", dst, len(data), x.HT, hash))
 			return nil
 		}
 	}

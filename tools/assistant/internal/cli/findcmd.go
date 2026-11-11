@@ -242,8 +242,11 @@ func (a *App) cmdFindCamera() error {
 	switch kind {
 	case discover.Stock:
 		tel = "1"
-		a.UI.Say("  The native program does not open the maintenance shell yet: assuming stock firmware with the toolkit")
-		a.UI.Say(fmt.Sprintf("  (to tell an Akam camera that still has the card in, use the bash wizard: %s step find-camera).", Prog))
+		k, err := a.identifyTelnet(ip)
+		if err != nil {
+			return err
+		}
+		kind = discover.Kind(k)
 	case discover.Akam:
 		a.UI.Say(fmt.Sprintf("  Ports %d, %d and %d are open and telnet is closed: this is a camera running Akam.", p.SSH, p.RTSP, p.CTL))
 	case discover.Partial:

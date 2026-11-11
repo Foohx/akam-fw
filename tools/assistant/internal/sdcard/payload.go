@@ -204,7 +204,10 @@ func (d DirTree) List(rel string) ([]string, error) {
 	return out, nil
 }
 
-func (d DirTree) Exists(rel string) bool { _, err := os.Stat(filepath.Join(d.Root, rel)); return err == nil }
+func (d DirTree) Exists(rel string) bool {
+	_, err := os.Stat(filepath.Join(d.Root, rel))
+	return err == nil
+}
 
 // ReadTree reads every regular file under dir (relative slash paths). Anything else (links, devices)
 // is refused: a toolkit tree must be plain files.

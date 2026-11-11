@@ -75,11 +75,11 @@ const gib = 1 << 30
 func TestGuardMatrix(t *testing.T) {
 	f := newFakeSys(t)
 	f.disk("sdb", 32*gib, "1", "usb1", "SD Reader  ", "8:16")
-	f.disk("sdc", 32*gib, "0", "usb1", "Hard disk", "8:32")      // not removable
-	f.disk("sdd", 32*gib, "1", "ata1", "Odd SATA", "8:48")        // removable flag but not USB
-	f.disk("sde", 64*1024*1024, "1", "usb2", "Tiny", "8:64")      // too small
-	f.disk("sdf", 256*gib, "1", "usb3", "Huge", "8:80")           // too big
-	f.disk("sdg", 16*gib, "1", "usb4", "Sys", "8:96")             // carries /home
+	f.disk("sdc", 32*gib, "0", "usb1", "Hard disk", "8:32")  // not removable
+	f.disk("sdd", 32*gib, "1", "ata1", "Odd SATA", "8:48")   // removable flag but not USB
+	f.disk("sde", 64*1024*1024, "1", "usb2", "Tiny", "8:64") // too small
+	f.disk("sdf", 256*gib, "1", "usb3", "Huge", "8:80")      // too big
+	f.disk("sdg", 16*gib, "1", "usb4", "Sys", "8:96")        // carries /home
 	f.part("sdg", "sdg1", "8:97")
 	f.disk("sdh", 16*gib, "1", "usb5", "Swap", "8:112")
 	f.part("sdh", "sdh1", "8:113")

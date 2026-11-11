@@ -287,29 +287,25 @@ func (a *App) cmdRestore() error {
 		return a.UI.Fail(fmt.Sprintf("SHA256SUMS does not match the files in %s.", bk), "this backup is damaged: use your second copy.")
 	}
 	a.UI.Say("  Stock APP sha256: " + fileSHA(app))
-	if a.St.Get("camera_kind") != "akam" {
-		// The bash wizard falls back to the maintenance telnet and the card here (phase P3 of the
-		// native program). The SSH route needs a running Akam, so it is only offered then.
-		a.UI.Say("  Route: telnet")
-		return a.UI.Fail("restoring through the maintenance telnet and the card is not in the native program yet.",
-			fmt.Sprintf("use the bash wizard from a source checkout: %s restore (the SSH route needs a camera that runs Akam and is recorded as such: %s find-camera).", Prog, Prog))
+	route := "telnet"
+	if a.St.Get("camera_kind") == "akam" {
+		if c, derr := a.dial(ip); derr == nil {
+			c.Close()
+			a.UI.Say("  Akam runs and SSH works.")
+			if ok, perr := a.UI.AskYN("  Restore over SSH (no card needed)? [no = use the maintenance telnet and the card]"); perr == nil && ok {
+				route = "ssh"
+			}
+		}
 	}
-	c, err := a.dial(ip)
-	if err != nil {
-		return a.dialFailure(ip, err, fmt.Sprintf("SSH to root@%s with the key %s does not work.", ip, a.keyPath()),
-			"check the key (--identity FILE), the address, and that the camera has finished booting.")
-	}
-	c.Close()
-	a.UI.Say("  Akam runs and SSH works.")
-	ok, perr := a.UI.AskYN("  Restore over SSH (no card needed)? [no = use the maintenance telnet and the card]")
-	if perr != nil || !ok {
-		a.UI.Say("  Route: telnet")
-		return a.UI.Fail("restoring through the maintenance telnet and the card is not in the native program yet.",
-			fmt.Sprintf("use the bash wizard from a source checkout: %s restore", Prog))
-	}
-	a.UI.Say("  Route: ssh")
-	if err := a.flashSSH(ip, app, md5, "Restoring"); err != nil {
-		return err
+	a.UI.Say("  Route: " + route)
+	if route == "telnet" {
+		if err := a.flashTelnet(ip, app, md5, "Restoring"); err != nil {
+			return err
+		}
+	} else {
+		if err := a.flashSSH(ip, app, md5, "Restoring"); err != nil {
+			return err
+		}
 	}
 	_ = a.St.ClearDone("flash")
 	_ = a.St.ClearDone("verify")

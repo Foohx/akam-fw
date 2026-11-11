@@ -412,12 +412,13 @@ func TestFindCamera(t *testing.T) {
 	}
 
 	// stock firmware: the maintenance telnet port is open
-	ln := listen(t)
+	stock := testfake.NewStock(t, testfake.StockOptions{})
+	ln := stock.Port()
 	t.Setenv("AKAM_PORT_TELNET", itoa(ln))
 	t.Setenv("AKAM_PORT_SSH", freeClosedPort(t))
 	r = e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")
 	expectRC(t, r, 0)
-	contains(t, r.out, "  Camera found: stock firmware with the toolkit shell on port "+itoa(ln)+" (127.0.0.1). The backup can start.")
+	contains(t, r.out, "  Shell answered: Linux version 4.4.302-cip94", "  Camera found: stock firmware with the toolkit shell on port "+itoa(ln)+" (127.0.0.1). The backup can start.")
 	if e.readState("camera_kind") != "stock" || e.readState("camera_telnet") != "1" {
 		t.Error("stock not recorded")
 	}
@@ -484,7 +485,7 @@ func TestStatusCamerasRename(t *testing.T) {
 
 func TestStrayCommandsAreRefusedPolitely(t *testing.T) {
 	e := newEnv(t)
-	for _, c := range []string{"flash", "backup", "image", "wipe-sd", "prepare-flash-sd"} {
+	for _, c := range []string{"image", "build"} {
 		r := e.run("", c)
 		expectRC(t, r, 1)
 		contains(t, r.err, "'"+c+"' is not in the native binary yet")

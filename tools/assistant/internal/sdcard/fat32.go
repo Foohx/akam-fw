@@ -28,7 +28,7 @@ type Device interface {
 type File struct {
 	Path string `json:"path"` // slash separated, relative, no ".."
 	Data []byte `json:"data,omitempty"`
-	Dir  bool `json:"dir,omitempty"` // an empty folder (Data ignored)
+	Dir  bool   `json:"dir,omitempty"` // an empty folder (Data ignored)
 }
 
 const (
