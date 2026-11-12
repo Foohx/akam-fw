@@ -25,19 +25,22 @@ func (r resultMenu) View() string {
 	if r.res.Text == "" {
 		return v
 	}
-	tag := map[string]string{"ok": "[ok] ", "warn": "[!] ", "error": "[x] "}[r.res.Level]
-	line := "  " + tag + r.res.Text
-	if r.Menu.W > 8 && len(line) > r.Menu.W-1 {
-		line = line[:r.Menu.W-4] + "..."
+	th := r.Menu.Theme
+	if th == nil {
+		th = theme()
 	}
+	kind, st := BadgeErr, th.Err
 	switch r.res.Level {
 	case "ok":
-		line = styGreen.Render(line)
+		kind, st = BadgeOK, th.OK
 	case "warn":
-		line = styYellow.Render(line)
-	default:
-		line = styRed.Render(line)
+		kind, st = BadgeWarn, th.Warn
 	}
+	text := r.res.Text
+	if r.Menu.W > 8 {
+		text = truncW(text, max(r.Menu.W-6, 8), th.Glyphs.Ellipsis)
+	}
+	line := "  " + th.Badge(kind, "") + " " + st.Render(text)
 	body := strings.TrimRight(v, "\n")
 	i := strings.LastIndex(body, "\n")
 	if i < 0 {
