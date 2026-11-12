@@ -46,7 +46,7 @@
 #define AE_WINDOW_TICKS       15 /* ~1s window (15 ticks @ ~66ms) for min/max/peak stats */
 #define AE_QUIET_SUMMARY_WINDOWS 60 /* without DEBUG: one [ae] window line per this many windows */
 #define AE_QUIET_HUNTING_WINDOWS 10 /* ... or a HUNTING one, at most this often */
-/* NOTE (stock capture, specs/08): pub[0] is the longest exposure (= the sensor VTS, 2284 day / 3426 night) and
+/* NOTE (stock capture, specs/08): pub[0] is the longest exposure (= the sensor VTS, 2284 day at 15 fps, 3426 night; day VTS = 34260 / fps) and
  * pub[1] the SHORTEST (2 lines in the file): what ae_tuning_t calls exp_max is really exp_time_min; its
  * default 2 is the stock value, a larger one only raises the shortest exposure (brighter, never grainier). */
 #define AE_EXP_MAX        32767 /* unused */
@@ -227,11 +227,11 @@ int ae_init_isp_params(void)
         printf("[ae] SET_WB OK\n");
     }
 
-    /* Frame timing — tells ISP AE the sensor's VTS (2284 lines per frame).
+    /* Frame timing — tells ISP AE the sensor's VTS (2284 lines per frame at 15 fps, 34260 / fps in general).
      * This is the DAY config; night.c reconfigures to {10fps, vts=3426}
      * when it engages night mode (Ghidra + isp_hook-confirmed values from
      * stock anyka_ipc). */
-    const uint32_t cfg_fps = (uint32_t)video_fps(); /* 15 unless /etc/config/akam/video says 10 (video_cfg.h) */
+    const uint32_t cfg_fps = (uint32_t)video_fps(); /* 15 unless /etc/config/akam/video says 10, 20 or 25 (video_cfg.h) */
     uint32_t frame_rate[4] = {cfg_fps, (uint32_t)video_day_vts(), 8, cfg_fps};
     if (isp_tunnel(ISP_INNER_SET_FRAME_RATE, frame_rate) == 0)
         printf("[ae] SET_FRAME_RATE OK (%ufps, vts=%d)\n", cfg_fps, video_day_vts());

@@ -38,7 +38,7 @@
  * AK_ISP_set_frame_rate({15,2284,8,15} day <-> {10,3426,8,10} night) all change together.
  * ------------------------------------------------------------------------- */
 
-/* The day frame rate and VTS come from video_cfg.h (15 / 2284 by default, 10 / 3426 when configured). */
+/* The day frame rate and VTS come from video_cfg.h (15 / 2284 by default; 10, 20 or 25 when configured). Night is always 10 fps. */
 #define NIGHT_FPS          10
 #define NIGHT_VTS        3426
 

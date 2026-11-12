@@ -66,7 +66,7 @@ int video_ctl_set(const char *key, const char *val, char *msg, size_t cap)
         if (!strcmp(want, "bitrate"))
             snprintf(msg, cap, "ERR invalid %s value (want %d..%d kbit/s)", key, VIDEO_KBPS_MIN, VIDEO_KBPS_MAX);
         else if (!strcmp(want, "fps"))
-            snprintf(msg, cap, "ERR invalid %s value (want %d or %d)", key, VIDEO_FPS_LOW, VIDEO_FPS_HIGH);
+            snprintf(msg, cap, "ERR invalid %s value (want 10, 15, 20 or 25)", key);
         else
             snprintf(msg, cap, "ERR invalid %s value (want %d..%d seconds)", key, VIDEO_GOP_S_MIN, VIDEO_GOP_S_MAX);
         return 1;

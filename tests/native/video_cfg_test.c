@@ -59,8 +59,12 @@ int main(int argc, char **argv)
     CHECK(bad == 0 && c.bitrate == 500, "range limits are inclusive; the last line wins");
     parse("fps=12\n", &c, &bad);
     CHECK(bad == 1 && c.fps == 15, "fps 12 refused (no sensor timing pair for it)");
-    parse("fps=5\nfps=30\nfps=0\n", &c, &bad);
-    CHECK(bad == 3 && c.fps == 15, "fps 5, 30 and 0 refused");
+    parse("fps=5\nfps=30\nfps=0\nfps=35\nfps=1\nfps=+20\nfps=2 5\n", &c, &bad);
+    CHECK(bad == 7 && c.fps == 15, "fps 5, 30 (too dark on hardware), 0, 35, 1 and malformed numbers refused");
+    parse("fps=20\n", &c, &bad);
+    CHECK(bad == 0 && c.fps == 20, "fps 20 accepted");
+    parse("fps=25\n", &c, &bad);
+    CHECK(bad == 0 && c.fps == 25, "fps 25 accepted");
     parse("gop=0\n", &c, &bad);
     CHECK(bad == 1 && c.gop_s == 2, "gop 0 refused");
     parse("gop=5\n", &c, &bad);
@@ -121,7 +125,9 @@ int main(int argc, char **argv)
         CHECK(s1.st_ino != s2.st_ino, "a changed value is a new file");
         CHECK(video_ctl_set("video.gop_cfg", "3", msg, sizeof(msg)) == 0, "back to 3");
     }
-    CHECK(video_ctl_set("video.fps_cfg", "12", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4), "SET fps 12 refused");
+    CHECK(video_ctl_set("video.fps_cfg", "12", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4) && strstr(msg, "10, 15, 20 or 25"),
+          "SET fps 12 refused, the error lists the allowed values");
+    CHECK(video_ctl_set("video.fps_cfg", "30", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4), "SET fps 30 refused");
     CHECK(video_ctl_set("video.bitrate_cfg", "100", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4), "SET bitrate 100 refused");
     CHECK(video_ctl_set("video.bitrate_cfg", "9e2", msg, sizeof(msg)) == 1, "SET bitrate 9e2 refused");
     CHECK(video_ctl_set("video.gop_cfg", "9", msg, sizeof(msg)) == 1, "SET gop 9 refused");
@@ -163,6 +169,25 @@ int main(int argc, char **argv)
         video_cfg_reset_for_test();
         video_cfg_load();
         CHECK(video_fps() == 15 && video_kbps() == 700, "a bad line at start: that key keeps the default, the others apply");
+        unlink(VIDEO_CFG_PATH);
+        video_cfg_reset_for_test();
+    }
+
+    {
+        /* every allowed fps: the {fps, VTS = 34260 / fps} pair and the GOP frame count follow */
+        static const struct { int fps, vts; } pairs[] = { { 10, 3426 }, { 15, 2284 }, { 20, 1713 }, { 25, 1370 } };
+        for (unsigned i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
+            char txt[64];
+            snprintf(txt, sizeof(txt), "fps=%d\ngop=4\n", pairs[i].fps);
+            FILE *f = fopen(VIDEO_CFG_PATH, "w");
+            if (!f) return 2;
+            fputs(txt, f);
+            fclose(f);
+            video_cfg_reset_for_test();
+            video_cfg_load();
+            CHECK(video_fps() == pairs[i].fps && video_day_vts() == pairs[i].vts && video_gop_frames() == 4 * pairs[i].fps,
+                  "load: fps, day VTS and GOP frames follow the configured rate");
+        }
         unlink(VIDEO_CFG_PATH);
         video_cfg_reset_for_test();
     }
