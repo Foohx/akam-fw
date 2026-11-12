@@ -40,7 +40,7 @@ func TestParseAMatchesOwnerName(t *testing.T) {
 	if got := parseA(mdnsAnswer(q, "other.local", [4]byte{6, 6, 6, 6}), "salon.local"); len(got) != 0 {
 		t.Errorf("a record for another name accepted: %v", got)
 	}
-	if got := parseA(mdnsAnswer(q, "SALON.local", [4]byte{192, 168, 1, 9}), "salon.local."); len(got) != 1 || got[0].String() != "192.168.1.9" {
+	if got := parseA(mdnsAnswer(q, "SALON.local", [4]byte{192, 0, 2, 9}), "salon.local."); len(got) != 1 || got[0].String() != "192.0.2.9" {
 		t.Errorf("matching name refused (case-insensitive): %v", got)
 	}
 }
@@ -60,10 +60,10 @@ func TestMDNSLookupIgnoresOtherNames(t *testing.T) {
 		}
 		q := buf[:n]
 		srv.WriteTo(mdnsAnswer(q, "evil.local", [4]byte{6, 6, 6, 6}), from)
-		srv.WriteTo(mdnsAnswer(q, "salon.local", [4]byte{192, 168, 1, 77}), from)
+		srv.WriteTo(mdnsAnswer(q, "salon.local", [4]byte{192, 0, 2, 77}), from)
 	}()
 	ip, err := MDNSLookup(context.Background(), "salon.local", srv.LocalAddr().String(), time.Second)
-	if err != nil || ip.String() != "192.168.1.77" {
+	if err != nil || ip.String() != "192.0.2.77" {
 		t.Fatalf("%v %v", ip, err)
 	}
 }

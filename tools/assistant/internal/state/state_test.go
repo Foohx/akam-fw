@@ -13,7 +13,7 @@ func TestStoreFormatIsTheBashFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range map[string]string{"camera_ip": "192.168.1.50", "kit_path": "/home/me/my kit/x=y"} {
+	for k, v := range map[string]string{"camera_ip": "192.0.2.50", "kit_path": "/home/me/my kit/x=y"} {
 		if err := s.Set(k, v); err != nil {
 			t.Fatal(err)
 		}

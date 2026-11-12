@@ -102,7 +102,7 @@
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="IP Address / Host + Port" FontSize="11" Foreground="{StaticResource TextMutedBrush}" />
                                     <Grid ColumnDefinitions="*, 8, 60">
-                                        <TextBox x:Name="TelnetHostTextBox" Grid.Column="0" Text="{x:Bind ViewModel.TelnetHost, Mode=TwoWay}" PlaceholderText="e.g. 192.168.1.1" HorizontalAlignment="Stretch" />
+                                        <TextBox x:Name="TelnetHostTextBox" Grid.Column="0" Text="{x:Bind ViewModel.TelnetHost, Mode=TwoWay}" PlaceholderText="e.g. 192.0.2.1" HorizontalAlignment="Stretch" />
                                         <TextBox x:Name="TelnetPortTextBox" Grid.Column="2" Text="{x:Bind ViewModel.TelnetPort, Mode=TwoWay}" PlaceholderText="23" HorizontalAlignment="Stretch" />
                                     </Grid>
                                 </StackPanel>

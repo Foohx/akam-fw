@@ -46,7 +46,7 @@ func ipnet(s string) net.Addr {
 func TestSelectSubnets(t *testing.T) {
 	up := net.FlagUp | net.FlagMulticast
 	ifaces := []Iface{
-		{Name: "eth0", Flags: up, Addrs: []net.Addr{ipnet("192.168.1.77/24"), ipnet("169.254.3.4/16"), ipnet("fe80::1/64")}},
+		{Name: "eth0", Flags: up, Addrs: []net.Addr{ipnet("192.0.2.77/24"), ipnet("169.254.3.4/16"), ipnet("fe80::1/64")}},
 		{Name: "eth1", Flags: up, Addrs: []net.Addr{ipnet("10.8.0.9/8")}},                   // too large: cut to /24
 		{Name: "eth2", Flags: up, Addrs: []net.Addr{ipnet("198.51.100.5/23")}},              // /23 kept whole
 		{Name: "eth3", Flags: up, Addrs: []net.Addr{ipnet("203.0.113.9/22")}},               // /22 kept
@@ -60,7 +60,7 @@ func TestSelectSubnets(t *testing.T) {
 	for _, x := range got {
 		s = append(s, x.Iface+"="+x.CIDR.String())
 	}
-	want := "eth0=192.168.1.0/24 eth1=10.8.0.0/24 eth2=198.51.100.0/23 eth3=203.0.112.0/22"
+	want := "eth0=192.0.2.0/24 eth1=10.8.0.0/24 eth2=198.51.100.0/23 eth3=203.0.112.0/22"
 	if strings.Join(s, " ") != want {
 		t.Errorf("subnets = %v, want %s", s, want)
 	}

@@ -55,7 +55,7 @@ namespace serial_console_dotnet.ViewModels
 
         // ---- Connection -----------------------------------------------------
 
-        private string _host = "192.168.50.4";
+        private string _host = "198.51.100.4";
         public string Host { get => _host; set => SetProperty(ref _host, value); }
 
         // String-typed for direct TextBox.Text x:Bind (no int<->string TwoWay

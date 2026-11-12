@@ -374,13 +374,13 @@ static void test_digest(void)
     char body[1024];
     envelope(body, sizeof(body), NULL, OPX("GetDeviceInformation"));
     CHECK(request("POST", target, h, body, &r) == 0 && r.status == 200, "uri with a query matches the target when it is the same");
-    digest_hdr(h, sizeof(h), PASS, nonce, "00000006", "http://192.168.1.77:8080" DEV);
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000006", "http://192.0.2.77:8080" DEV);
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 200, "absolute-URI form of uri accepted (host not compared)");
     digest_hdr(h, sizeof(h), PASS, nonce, "00000007", "HTTP://cam.local" DEV "?x=1");
     CHECK(request("POST", target, h, body, &r) == 0 && r.status == 200, "absolute URI with a query matches the target");
-    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://192.168.1.77" "/onvif/media_service");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://192.0.2.77" "/onvif/media_service");
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "absolute URI with another path refused");
-    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://192.168.1.77" DEV "x");
+    digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://192.0.2.77" DEV "x");
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "absolute URI with a longer path refused");
     digest_hdr(h, sizeof(h), PASS, nonce, "00000008", "http://" DEV);
     CHECK(devc(NULL, h, OPX("GetDeviceInformation"), &r) == 0 && r.status == 401, "absolute URI without a host refused");
@@ -613,7 +613,7 @@ static void test_golden(void)
     printf("Golden responses\n");
     auth_on();
     reset_state();
-    put(rpath, "# comment\nsearch lan\nnameserver 192.168.1.1\nnameserver fe80::1\nnameserver 8.8.8.8\n", 0644);
+    put(rpath, "# comment\nsearch lan\nnameserver 192.0.2.1\nnameserver fe80::1\nnameserver 8.8.8.8\n", 0644);
     char h[1500];
     golden("GetSystemDateAndTime", NULL, OPX("GetSystemDateAndTime"), 200);
     golden("GetCapabilities", NULL, OPX("GetCapabilities"), 200);

@@ -91,7 +91,7 @@ namespace serial_console_dotnet.ViewModels
             set => SetProperty(ref _selectedBaudRate, value);
         }
 
-        private string _telnetHost = "192.168.1.1";
+        private string _telnetHost = "192.0.2.1";
         public string TelnetHost
         {
             get => _telnetHost;
@@ -275,7 +275,7 @@ namespace serial_console_dotnet.ViewModels
             FtpPassword = password;
             SaveSettings();
 
-            string host = _connectionService.RemoteIp ?? "192.168.1.1";
+            string host = _connectionService.RemoteIp ?? "192.0.2.1";
             await _fileTransfer.RunFtpUploadOrchestrationAsync(host, username, password, remotePath, file?.Path, folder?.Path);
         }
 
@@ -285,7 +285,7 @@ namespace serial_console_dotnet.ViewModels
             FtpPassword = password;
             SaveSettings();
 
-            string host = _connectionService.RemoteIp ?? "192.168.1.1";
+            string host = _connectionService.RemoteIp ?? "192.0.2.1";
             await _fileTransfer.StartInteractiveFtpDownloadAsync(host, username, password, remotePath);
         }
 

@@ -55,7 +55,7 @@ log       = "LOG" SP texte LF                     ; asynchrone, voir §7
 ```
 
 - `api` = version de grammaire du serveur (2). Elle n'augmente que pour un changement **incompatible**. Nouvelles clés, commandes, capacités : additifs, sans changement de `api` ; un client teste `caps` (et gère `ERR unknown_cmd`).
-- Un client qui annonce `api=N` > 2 reçoit quand même `api=2` et décide. `client=` ne sert qu'au journal (`[control] client 192.168.1.5 "akam-cli"`), jamais à une décision d'accès.
+- Un client qui annonce `api=N` > 2 reçoit quand même `api=2` et décide. `client=` ne sert qu'au journal (`[control] client 192.0.2.5 "akam-cli"`), jamais à une décision d'accès.
 - `HELLO` est accepté une seule fois, avant toute autre commande de configuration ; un second donne `ERR invalid`. `PING` → `OK pong`. `QUIT` → `OK bye` puis fermeture. `HELP` → bloc : une commande par ligne.
 
 ### 2.3 Commandes
@@ -140,7 +140,7 @@ Le résultat de **toute** la collecte `STATUS` est mis en cache 1 s : un sondage
 Commande : `STATUS json` ou `LIST json` (mot-clé final `json`, insensible à la casse). Réponse : **une seule ligne** UTF-8 terminée par `\n`, sans `.` final. Aucun mode de connexion à mémoriser (`nc` en une commande fonctionne).
 
 ```json
-{"api":2,"fw":{"version":"v1.1.0-3-gabc123","build":42,"built":"2026-11-09 12:00:00","api":2},"sys":{"hostname":"akam","uptime":86400,"load":[0.12,0.10,0.05],"cpu":18,"mem_total":57344,"mem_free":21000,"flash_total":262144,"flash_free":170000},"net":{"ip":"192.168.1.50","mac":"aa:bb:cc:dd:ee:ff","ssid":"home","wifi_rssi":-58},"video":{"resolution":"1920x1080","fps":20,"fps_actual":199,"bitrate":2100},"rtsp":{"state":"playing","client":"192.168.1.10","since":120,"auth":"off"},"night":{"mode":"auto","state":"day"},"isp":{"saturation":0},"ae":{"enabled":1},"ctl":{"api":2,"auth":"on","clients":2,"unsaved":0}}
+{"api":2,"fw":{"version":"v1.1.0-3-gabc123","build":42,"built":"2026-11-09 12:00:00","api":2},"sys":{"hostname":"akam","uptime":86400,"load":[0.12,0.10,0.05],"cpu":18,"mem_total":57344,"mem_free":21000,"flash_total":262144,"flash_free":170000},"net":{"ip":"192.0.2.50","mac":"aa:bb:cc:dd:ee:ff","ssid":"home","wifi_rssi":-58},"video":{"resolution":"1920x1080","fps":20,"fps_actual":199,"bitrate":2100},"rtsp":{"state":"playing","client":"192.0.2.10","since":120,"auth":"off"},"night":{"mode":"auto","state":"day"},"isp":{"saturation":0},"ae":{"enabled":1},"ctl":{"api":2,"auth":"on","clients":2,"unsaved":0}}
 ```
 
 (Abrégé : le vrai objet contient toutes les clés de §3.) Règles :

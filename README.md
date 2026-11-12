@@ -171,7 +171,7 @@ Each camera has its own name, progress, log and folders. Switch with `./akam --c
 hand, or by an earlier version) is recorded without redoing anything:
 
 ```bash
-./akam --camera salon --ip 192.168.1.50 [--backup-dir DIR] register
+./akam --camera salon --ip 192.0.2.50 [--backup-dir DIR] register
 ```
 
 ## Command reference

@@ -141,7 +141,7 @@ func (c *Cameras) Known() []string {
 
 var doneRe = regexp.MustCompile(`^step_[a-z_]*_done=`)
 
-// Summary is "3/9 steps done  192.168.1.50  last: find-camera".
+// Summary is "3/9 steps done  192.0.2.50  last: find-camera".
 func (c *Cameras) Summary(name string) string {
 	f := filepath.Join(c.DirOf(name), "state")
 	n := 0

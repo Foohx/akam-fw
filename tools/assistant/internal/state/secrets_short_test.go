@@ -16,7 +16,7 @@ func TestShortSecretsMatchWholeTokensOnly(t *testing.T) {
 		"abcdef":                       false,
 		"xabc":                         false,
 		"cabinet":                      false,
-		"192.168.12.5":                 true, // '.' separates tokens, it is a whole token here
+		"198.51.100.12":                true, // '.' separates tokens, it is a whole token here
 		"image 123456":                 false,
 		"the longsecret-value, again":  true,
 		"prefixlongsecret-valuesuffix": true,

@@ -8,6 +8,6 @@ get_ip_from_ap()
     if test $DHCP -eq 1 ; then
         udhcpc -i wlan0 -x hostname:IPCamera &
     else
-        ifconfig wlan0 192.168.1.2 netmask 255.255.255.0
+        ifconfig wlan0 192.0.2.2 netmask 255.255.255.0
     fi
 }

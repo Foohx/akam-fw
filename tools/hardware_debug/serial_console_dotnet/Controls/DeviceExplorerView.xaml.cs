@@ -359,7 +359,7 @@ namespace serial_console_dotnet.Controls
             if (selectedItems.Count == 0 || _fileTransfer == null || _connectionService == null || _shell == null) return;
 
             bool useFtp = true;
-            string host = _connectionService.RemoteIp ?? "192.168.1.1";
+            string host = _connectionService.RemoteIp ?? "192.0.2.1";
             string username = FtpUsernameTextBox.Text;
             string password = FtpPasswordBox.Password;
 
@@ -857,7 +857,7 @@ namespace serial_console_dotnet.Controls
             if (_shell == null || _fileTransfer == null || _connectionService == null) return;
 
             bool useFtp = true;
-            string host = _connectionService.RemoteIp ?? "192.168.1.1";
+            string host = _connectionService.RemoteIp ?? "192.0.2.1";
             string username = FtpUsernameTextBox.Text;
             string password = FtpPasswordBox.Password;
 
@@ -1045,7 +1045,7 @@ namespace serial_console_dotnet.Controls
         {
             if (item == null || item.IsDirectory || _fileTransfer == null || _connectionService == null) return;
 
-            string host = _connectionService.RemoteIp ?? "192.168.1.1";
+            string host = _connectionService.RemoteIp ?? "192.0.2.1";
             string hostIp = host;
             int colon = host.IndexOf(':');
             if (colon != -1)

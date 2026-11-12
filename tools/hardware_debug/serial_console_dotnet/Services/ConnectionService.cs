@@ -50,7 +50,7 @@ namespace serial_console_dotnet.Services
 			{
 				if (Mode == ConnectionMode.Telnet && _tcpClient?.Client.RemoteEndPoint is IPEndPoint remoteEndPoint)
 				{
-					// If it's an IPv4-mapped IPv6 address, this converts it to native IPv4 (e.g., 192.168.50.4)
+					// If it's an IPv4-mapped IPv6 address, this converts it to native IPv4 (e.g., 198.51.100.4)
 					var ipAddress = remoteEndPoint.Address.IsIPv4MappedToIPv6
 						? remoteEndPoint.Address.MapToIPv4()
 						: remoteEndPoint.Address;

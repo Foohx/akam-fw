@@ -65,12 +65,12 @@ check "ntp (default status): off, exit 0" bash -c '[ "$1" -eq 0 ] && grep -q "ti
 check "status: the clock is reported as not set" has "$T/s1" "sys.time_set: 0"
 check "status: nothing written" test ! -e "$FILE"
 
-a "$S" ntp set pool.ntp.org 192.168.1.1 </dev/null >"$T/s2" 2>&1
+a "$S" ntp set pool.ntp.org 192.0.2.1 </dev/null >"$T/s2" 2>&1
 check "set: succeeds" bash -c '[ "$1" -eq 0 ] && grep -q "Time sync on" "$2"' _ $? "$T/s2"
 check "set: says what is sent and that it is opt-in" bash -c 'grep -q "UDP 123, outgoing only" "$1" && grep -q "Nothing is sent unless you do this" "$1"' _ "$T/s2"
-check "set: file on the camera" test "$(cat "$FILE")" = "$(printf 'server=pool.ntp.org\nserver=192.168.1.1')"
+check "set: file on the camera" test "$(cat "$FILE")" = "$(printf 'server=pool.ntp.org\nserver=192.0.2.1')"
 a "$S" ntp status </dev/null >"$T/s3" 2>&1
-check "status after set: servers shown" has "$T/s3" "servers: pool.ntp.org 192.168.1.1"
+check "status after set: servers shown" has "$T/s3" "servers: pool.ntp.org 192.0.2.1"
 
 a "$S" ntp off </dev/null >"$T/s4" 2>&1
 check "off: succeeds, file gone" bash -c '[ "$1" -eq 0 ] && [ ! -e "$2" ]' _ $? "$FILE"

@@ -52,7 +52,7 @@ func TestSubnets(t *testing.T) {
 	up := net.FlagUp
 	ifs := []net.Interface{mk("lo", up|net.FlagLoopback), mk("eth0", up), mk("docker0", up), mk("wlan0", up), mk("down0", 0), mk("br-123", up), mk("veth9", up)}
 	addrs := map[string][]net.Addr{
-		"eth0":    {&net.IPNet{IP: net.ParseIP("192.168.1.30"), Mask: net.CIDRMask(24, 32)}, &net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}},
+		"eth0":    {&net.IPNet{IP: net.ParseIP("192.0.2.30"), Mask: net.CIDRMask(24, 32)}, &net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}},
 		"wlan0":   {&net.IPNet{IP: net.ParseIP("10.1.2.3"), Mask: net.CIDRMask(16, 32)}}, // a /16 is limited to its /24
 		"docker0": {&net.IPNet{IP: net.ParseIP("172.17.0.1"), Mask: net.CIDRMask(16, 32)}},
 	}
@@ -60,15 +60,15 @@ func TestSubnets(t *testing.T) {
 	if err != nil || len(subs) != 2 {
 		t.Fatalf("%v %v", subs, err)
 	}
-	if subs[0].CIDR.String() != "192.168.1.0/24" || subs[1].CIDR.String() != "10.1.2.0/24" {
+	if subs[0].CIDR.String() != "192.0.2.0/24" || subs[1].CIDR.String() != "10.1.2.0/24" {
 		t.Errorf("%v %v", subs[0].CIDR, subs[1].CIDR)
 	}
 	h := subs[0].Hosts()
-	if len(h) != 253 || h[0].String() != "192.168.1.1" || h[len(h)-1].String() != "192.168.1.254" {
+	if len(h) != 253 || h[0].String() != "192.0.2.1" || h[len(h)-1].String() != "192.0.2.254" {
 		t.Errorf("%d hosts, %v..%v", len(h), h[0], h[len(h)-1]) // 254 minus the PC itself
 	}
 	for _, x := range h {
-		if x.String() == "192.168.1.30" {
+		if x.String() == "192.0.2.30" {
 			t.Error("scanned itself")
 		}
 	}
@@ -113,7 +113,7 @@ func TestScanFindsHostsAndRespectsTheConcurrencyLimit(t *testing.T) {
 
 const probeMatch = `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><d:ProbeMatches xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"><d:ProbeMatch>` +
 	`<d:Types>dn:NetworkVideoTransmitter</d:Types><d:Scopes>onvif://www.onvif.org/name/akam-1a2b onvif://www.onvif.org/hardware/lsc-indoor</d:Scopes>` +
-	`<d:XAddrs>http://192.168.1.50:80/onvif/device_service</d:XAddrs></d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>`
+	`<d:XAddrs>http://192.0.2.50:80/onvif/device_service</d:XAddrs></d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>`
 
 func TestWSDiscoveryOneProbeAndItsAnswer(t *testing.T) {
 	srv, err := net.ListenPacket("udp4", "127.0.0.1:0")
@@ -146,7 +146,7 @@ func TestWSDiscoveryOneProbeAndItsAnswer(t *testing.T) {
 		}
 	}
 	if len(found) != 1 || found[0].IP != "127.0.0.1" || found[0].Name != "akam-1a2b" || found[0].Hard != "lsc-indoor" ||
-		len(found[0].XAddrs) != 1 || found[0].XAddrs[0] != "http://192.168.1.50:80/onvif/device_service" {
+		len(found[0].XAddrs) != 1 || found[0].XAddrs[0] != "http://192.0.2.50:80/onvif/device_service" {
 		t.Errorf("%+v", found)
 	}
 	if len(got) != 0 {
@@ -174,11 +174,11 @@ func TestMDNSLookup(t *testing.T) {
 		resp := append([]byte{}, q[:2]...)
 		resp = append(resp, 0x84, 0, 0, 1, 0, 1, 0, 0, 0, 0)
 		resp = append(resp, q[12:]...)
-		resp = append(resp, 0xC0, 12, 0, 1, 0, 1, 0, 0, 0, 120, 0, 4, 192, 168, 1, 77)
+		resp = append(resp, 0xC0, 12, 0, 1, 0, 1, 0, 0, 0, 120, 0, 4, 192, 0, 2, 77)
 		srv.WriteTo(resp, from)
 	}()
 	ip, err := MDNSLookup(context.Background(), "salon.local", srv.LocalAddr().String(), time.Second)
-	if err != nil || ip.String() != "192.168.1.77" {
+	if err != nil || ip.String() != "192.0.2.77" {
 		t.Fatalf("%v %v", ip, err)
 	}
 	if _, err := MDNSLookup(context.Background(), "nobody.local", "127.0.0.1:9", 100*time.Millisecond); err == nil {

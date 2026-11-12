@@ -149,7 +149,7 @@ func TestInput(t *testing.T) {
 }
 
 func TestPicker(t *testing.T) {
-	m := feed(&Picker{Title: "Which one is your camera?", Items: []string{"192.168.1.60", "192.168.1.61", "None of these"}}, "down", "j", "j", "k", "enter").(*Picker)
+	m := feed(&Picker{Title: "Which one is your camera?", Items: []string{"192.0.2.60", "192.0.2.61", "None of these"}}, "down", "j", "j", "k", "enter").(*Picker)
 	if !m.Done || m.Cursor != 1 || m.Cancelled {
 		t.Errorf("%+v", m)
 	}
@@ -162,7 +162,7 @@ func TestPicker(t *testing.T) {
 	if m = feed(&Picker{Items: []string{"a", "b"}}, "9").(*Picker); m.Done {
 		t.Error("a digit beyond the list")
 	}
-	golden(t, "picker", feed(&Picker{Title: "Which one is your camera?", Items: []string{"192.168.1.60  ports 22 554 8091 (akam)", "192.168.1.61  ports 24 (stock)", "None of these"}}, "down").View())
+	golden(t, "picker", feed(&Picker{Title: "Which one is your camera?", Items: []string{"192.0.2.60  ports 22 554 8091 (akam)", "192.0.2.61  ports 24 (stock)", "None of these"}}, "down").View())
 }
 
 func menuItems() []ui.MenuItem {
