@@ -110,7 +110,10 @@ type sessModel struct {
 	total int
 	prog  *progress
 
-	queue    []*ask // the first one is on screen
+	queue    []*ask   // the first one is on screen
+	scroll   int      // lines the main panel is scrolled up from the latest output
+	overflow bool     // the transcript is longer than the panel (set when drawn)
+	pane     *Details // the "?" pane over the transcript, when open
 	frame    int
 	ticking  bool
 	finished bool // the flow returned
@@ -206,6 +209,9 @@ func (m *sessModel) banner(t string) {
 }
 
 func (m *sessModel) resizeAll() {
+	if m.pane != nil {
+		m.pane.Update(tea.WindowSizeMsg{Width: m.w, Height: m.panelRows()})
+	}
 	for _, q := range m.queue {
 		q.resize(m.w, m.panelRows())
 	}
@@ -217,7 +223,14 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = v.Width, v.Height
 		m.resizeAll()
 	case msgLine:
+		before := 0
+		if m.scroll > 0 {
+			before = len(m.transcriptLines(m.w))
+		}
 		m.addLine(v.e)
+		if m.scroll > 0 { // keep what the user is reading where it is
+			m.scroll += len(m.transcriptLines(m.w)) - before
+		}
 	case msgBanner:
 		m.banner(v.title)
 		return m, m.startTick()
@@ -237,6 +250,7 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgAsk:
 		v.q.resize(m.w, m.panelRows())
 		m.queue = append(m.queue, v.q)
+		m.pane = nil
 	case msgFlowDone:
 		m.finished = true
 		return m, tea.Quit
@@ -247,17 +261,98 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.frame++
 		return m, tea.Tick(tickEvery, func(time.Time) tea.Msg { return msgTick{} })
+	case formMsg:
+		var cmd tea.Cmd
+		for _, q := range m.queue {
+			if q.model == tea.Model(v.target()) {
+				cmd = q.update(msg)
+			}
+		}
+		m.settle()
+		return m, cmd
 	case tea.KeyMsg:
 		return m.key(v)
 	}
 	return m, nil
 }
 
+// settle answers the overlay on screen when its model is finished.
+func (m *sessModel) settle() {
+	if q := m.current(); q != nil {
+		if a, ok := q.finished(); ok {
+			q.ch <- a
+			m.queue = m.queue[1:]
+			if len(m.queue) > 0 {
+				m.queue[0].resize(m.w, m.panelRows())
+			}
+		}
+	}
+}
+
+// transcriptText is the whole transcript as plain lines, for the "?" pane.
+func (m *sessModel) transcriptText() string {
+	g := m.th.Glyphs
+	var b strings.Builder
+	for _, e := range m.transcript {
+		switch e.kind {
+		case kGood:
+			b.WriteString(g.OK + " ")
+		case kWarn:
+			b.WriteString(g.Warn + " ")
+		case kErr:
+			b.WriteString(g.Err + " ")
+		case kHint:
+			b.WriteString("What to do: ")
+		}
+		b.WriteString(e.text + "\n")
+	}
+	if b.Len() == 0 {
+		return "Nothing to show yet."
+	}
+	return b.String()
+}
+
+// keyIdle handles the keys of a screen with no question: scrolling the output, the "?" pane and the
+// two-step Ctrl-C. It returns false for a key it does not use.
+func (m *sessModel) keyIdle(k tea.KeyMsg) {
+	if m.pane != nil {
+		if k.String() == "ctrl+c" {
+			m.pane = nil
+			return
+		}
+		m.pane.Update(k)
+		if m.pane.Done {
+			m.pane = nil
+		}
+		return
+	}
+	page := max(m.panelRows()-2, 1)
+	switch k.String() {
+	case "up", "k":
+		m.scroll++
+	case "down", "j":
+		m.scroll--
+	case "pgup":
+		m.scroll += page
+	case "pgdown":
+		m.scroll -= page
+	case "home":
+		m.scroll = 1 << 20
+	case "end":
+		m.scroll = 0
+	case "?":
+		m.pane = &Details{Title: "Details", Text: m.transcriptText(), Theme: m.th, AtEnd: true}
+		m.pane.Update(tea.WindowSizeMsg{Width: m.w, Height: m.panelRows()})
+	}
+	m.scroll = max(m.scroll, 0)
+}
+
 func (m *sessModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.strip = nil // any key clears the result strip
 	q := m.current()
 	if q == nil {
-		if k.String() != "ctrl+c" {
+		if k.String() != "ctrl+c" || m.pane != nil {
+			m.keyIdle(k)
 			return m, nil
 		}
 		if m.stopping { // the second Ctrl-C leaves now; pending questions are answered No
@@ -269,15 +364,9 @@ func (m *sessModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.strip = &entry{kWarn, "Stopping after the current step. Ctrl-C again quits now."}
 		return m, nil
 	}
-	q.model, _ = q.model.Update(k) // the models' own Quit commands are not used here
-	if a, ok := q.finished(); ok {
-		q.ch <- a
-		m.queue = m.queue[1:]
-		if len(m.queue) > 0 {
-			m.queue[0].resize(m.w, m.panelRows())
-		}
-	}
-	return m, nil
+	cmd := q.update(k)
+	m.settle()
+	return m, cmd
 }
 
 // lastResult is the last Good, Warn or Err of the transcript (what the user should still see after
@@ -388,10 +477,25 @@ func (m *sessModel) footer() string {
 	if q := m.current(); q != nil {
 		return " " + th.Footer(q.keys()...)
 	}
-	if m.stopping {
-		return " " + th.Footer("Ctrl-C", "quit now")
+	if m.pane != nil {
+		return " " + th.Footer(m.pane.keys()...)
 	}
-	return " " + th.Footer("Ctrl-C", "stop")
+	var pairs []string
+	if m.stopping {
+		pairs = []string{"Ctrl-C", "quit now"}
+	} else {
+		pairs = []string{"Ctrl-C", "stop"}
+	}
+	if m.overflow {
+		pairs = append(pairs, "up/down", "scroll")
+		if m.scroll > 0 {
+			pairs = append(pairs, "End", "latest")
+		}
+	}
+	if len(m.transcript) > 0 {
+		pairs = append(pairs, "?", "details")
+	}
+	return " " + th.Footer(pairs...)
 }
 
 // transcriptLines renders the transcript wrapped to w columns.
@@ -484,7 +588,10 @@ func (m *sessModel) head(w int) []string {
 // panel draws the main panel in exactly rows lines.
 func (m *sessModel) panel(rows, w int) []string {
 	var lines []string
-	if q := m.current(); q != nil {
+	m.overflow = false
+	if q := m.current(); q == nil && m.pane != nil {
+		lines = strings.Split(strings.TrimRight(m.pane.body(), "\n"), "\n")
+	} else if q != nil {
 		lines = q.lines() // an overlay takes over the whole panel
 		if len(lines) > rows {
 			// A window too small for a box keeps its title and its last lines: the command, the
@@ -503,7 +610,11 @@ func (m *sessModel) panel(rows, w int) []string {
 				rest--
 			}
 			if len(t) > rest {
-				t = t[len(t)-rest:]
+				m.overflow = true
+				m.scroll = min(m.scroll, len(t)-rest)
+				t = t[len(t)-rest-m.scroll : len(t)-m.scroll]
+			} else {
+				m.scroll = 0
 			}
 			lines = append(lines, t...)
 		}

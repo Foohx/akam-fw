@@ -37,6 +37,12 @@ func (a *ask) finished() (answer, bool) {
 		return answer{idx: m.Cursor, cancelled: m.Cancelled}, m.Done
 	case *Menu:
 		return answer{idx: m.Cursor, cancelled: m.Quit || !m.Done}, m.Done
+	case *Form:
+		return answer{}, m.Done
+	case *Details:
+		return answer{}, m.Done
+	case *Checklist:
+		return answer{cancelled: m.Cancelled}, m.Done
 	}
 	return answer{}, false
 }
@@ -52,6 +58,12 @@ func (a *ask) body() string {
 		return m.body()
 	case *Menu:
 		return m.body()
+	case *Form:
+		return m.body()
+	case *Details:
+		return m.body()
+	case *Checklist:
+		return m.body()
 	}
 	return ""
 }
@@ -66,6 +78,23 @@ func (a *ask) keys() []string {
 		return m.keys()
 	case *Menu:
 		return m.keys()
+	case *Form:
+		return m.keys()
+	case *Details:
+		return m.keys()
+	case *Checklist:
+		return m.keys()
+	}
+	return nil
+}
+
+// update gives a message to the model. The models of the inline widgets end with a tea.Quit the
+// session does not use; only a Form has commands of its own (its debounce timer and its apply).
+func (a *ask) update(msg tea.Msg) tea.Cmd {
+	var c tea.Cmd
+	a.model, c = a.model.Update(msg)
+	if _, ok := a.model.(*Form); ok {
+		return c
 	}
 	return nil
 }

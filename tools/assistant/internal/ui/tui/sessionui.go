@@ -32,6 +32,9 @@ type sessionUI struct {
 var (
 	_ ui.UI           = (*sessionUI)(nil)
 	_ ui.HeaderSetter = (*sessionUI)(nil)
+	_ ui.Former       = (*sessionUI)(nil)
+	_ ui.Detailer     = (*sessionUI)(nil)
+	_ ui.Checklister  = (*sessionUI)(nil)
 )
 
 func (s *sessionUI) log(format string, a ...any) {
@@ -203,6 +206,70 @@ func (s *sessionUI) MenuWithResult(v ui.MenuView) (int, error) {
 		return -1, nil
 	}
 	return a.idx, nil
+}
+
+// cleanRow makes the text of a row safe to draw (it comes from the camera). A secret row never
+// carries a value.
+func cleanRow(r ui.FormRow) ui.FormRow {
+	r.ID = textsafe.Clean(r.ID)
+	r.Group = textsafe.Clean(r.Group)
+	r.Label = textsafe.Clean(r.Label)
+	r.Value = textsafe.Clean(r.Value)
+	r.Note = textsafe.Clean(r.Note)
+	r.Detail = textsafe.Clean(r.Detail)
+	cs := make([]string, len(r.Choices))
+	for i, c := range r.Choices {
+		cs[i] = textsafe.Clean(c)
+	}
+	r.Choices = cs
+	if r.Secret {
+		r.Value = ""
+	}
+	return r
+}
+
+// Form edits rows in place (ui.Former). It returns when the user leaves the form, after the pending
+// changes were applied. apply runs off the screen goroutine; a panic in it is an error of that row.
+func (s *sessionUI) Form(title string, rows []ui.FormRow, apply func(id, value string) (ui.FormRow, error)) error {
+	clean := make([]ui.FormRow, len(rows))
+	for i, r := range rows {
+		clean[i] = cleanRow(r)
+	}
+	safe := func(id, value string) (row ui.FormRow, err error) {
+		defer func() {
+			if p := recover(); p != nil {
+				err = fmt.Errorf("internal error: %v", p)
+			}
+		}()
+		row, err = apply(id, value)
+		return cleanRow(row), err
+	}
+	if apply == nil {
+		safe = nil
+	}
+	_, err := s.ask(&Form{Title: textsafe.Clean(title), Rows: clean, Apply: safe})
+	return err
+}
+
+// Details shows a long text in a scrollable pane (ui.Detailer).
+func (s *sessionUI) Details(title, text string) {
+	s.ask(&Details{Title: textsafe.Clean(title), Text: textsafe.Clean(text)}) //nolint:errcheck // nothing to report
+}
+
+// Checklist shows physical-action steps; Space or Enter acknowledges them all (ui.Checklister).
+func (s *sessionUI) Checklist(title string, steps []string) error {
+	clean := make([]string, len(steps))
+	for i, st := range steps {
+		clean[i] = textsafe.Clean(st)
+	}
+	a, err := s.ask(&Checklist{Title: textsafe.Clean(title), Steps: clean})
+	if err != nil {
+		return err
+	}
+	if a.cancelled {
+		return ui.ErrNoInput
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- running a session

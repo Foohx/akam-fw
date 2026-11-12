@@ -98,3 +98,49 @@ type Header struct {
 // HeaderSetter is implemented by the session UI: SetHeader replaces the header (it may be called
 // from the flow goroutine at any time).
 type HeaderSetter interface{ SetHeader(h Header) }
+
+// FormKind is how one row of a Form is edited.
+type FormKind int
+
+const (
+	FormEnum     FormKind = iota // Choices, cycled with left/right/Space (on/off included)
+	FormInt                      // a number in [Min, Max]: arrows, Shift or PgUp/PgDn, typed digits
+	FormText                     // a free text edited inline (Secret: never echoed, never shown)
+	FormReadonly                 // shown, not editable
+)
+
+// FormRow is one option of a Form. The cli side fills it from what the camera reports; the widget
+// knows nothing about cameras. Value is the current real value as text: the choice for an enum, the
+// decimal number for an int, the text for a text row (empty for a Secret row, which is never shown).
+type FormRow struct {
+	ID          string // opaque key handed back to the apply callback
+	Group       string // optional: rows with a group are shown one group at a time (Tab switches)
+	Label       string
+	Kind        FormKind
+	Value       string
+	Choices     []string // enum
+	Min, Max    int      // int: the bar is drawn from them
+	Secret      bool     // text: nothing typed is ever drawn
+	NotSaved    bool     // "! not saved": lost at the next reboot
+	Unavailable bool     // muted "needs update": not editable
+	Note        string   // one line shown while the row is focused (empty: nothing)
+	Detail      string   // the long text shown by "?"
+}
+
+// Former is implemented by the full-screen session only (plain does not: callers check with a type
+// assertion and keep their line based path). Form edits rows in place and returns when the user
+// leaves it. apply is called off the screen goroutine, never concurrently with itself, after a short
+// pause without keys; it returns the row as it really is now (an empty ID keeps the row and takes the
+// submitted value) or an error, in which case the row snaps back to its real value.
+type Former interface {
+	Form(title string, rows []FormRow, apply func(id, value string) (FormRow, error)) error
+}
+
+// Detailer shows a long text in a scrollable pane and returns when the user closes it.
+type Detailer interface{ Details(title, text string) }
+
+// Checklister shows physical-action steps; one key press (Space or Enter) acknowledges them all and
+// returns nil. q, Esc and Ctrl-C return ErrNoInput (the user stops).
+type Checklister interface {
+	Checklist(title string, steps []string) error
+}
