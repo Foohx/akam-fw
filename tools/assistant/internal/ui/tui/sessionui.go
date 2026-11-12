@@ -52,15 +52,25 @@ func (s *sessionUI) log(format string, a ...any) {
 	}
 }
 
-func (s *sessionUI) line(k lineKind, text string) {
-	s.st.send(msgLine{entry{k, textsafe.Clean(text)}})
+// clean is textsafe.Clean plus the redaction of the registered secrets: a secret that a camera text or
+// an error message happens to carry never reaches the transcript, the details pane or the error screen.
+func (s *sessionUI) clean(t string) string {
+	t = textsafe.Clean(t)
+	if r, ok := s.base.(interface{ Redact(string) string }); ok {
+		t = r.Redact(t)
+	}
+	return t
 }
 
-func (s *sessionUI) Say(t string)  { t = textsafe.Clean(t); s.log("SAY %s", t); s.line(kSay, t) }
+func (s *sessionUI) line(k lineKind, text string) {
+	s.st.send(msgLine{entry{k, s.clean(text)}})
+}
+
+func (s *sessionUI) Say(t string)  { t = s.clean(t); s.log("SAY %s", t); s.line(kSay, t) }
 func (s *sessionUI) Bold(t string) { s.line(kBold, t) }
 func (s *sessionUI) Good(t string) { s.line(kGood, t) }
-func (s *sessionUI) Warn(t string) { t = textsafe.Clean(t); s.log("WARN %s", t); s.line(kWarn, t) }
-func (s *sessionUI) Err(t string)  { t = textsafe.Clean(t); s.log("ERROR %s", t); s.line(kErr, t) }
+func (s *sessionUI) Warn(t string) { t = s.clean(t); s.log("WARN %s", t); s.line(kWarn, t) }
+func (s *sessionUI) Err(t string)  { t = s.clean(t); s.log("ERROR %s", t); s.line(kErr, t) }
 func (s *sessionUI) Hint(t string) { s.line(kHint, t) }
 func (s *sessionUI) Blank()        { s.line(kBlank, "") }
 
@@ -74,7 +84,7 @@ func (s *sessionUI) FailTech(msg, hint, tech string) error {
 		s.Hint(hint)
 	}
 	s.failMu.Lock()
-	s.fail = &ui.FailInfo{Msg: textsafe.Clean(msg), Hint: textsafe.Clean(hint), Tech: textsafe.Clean(tech)}
+	s.fail = &ui.FailInfo{Msg: s.clean(msg), Hint: s.clean(hint), Tech: s.clean(tech)}
 	s.failMu.Unlock()
 	return ui.ErrFailed
 }
@@ -105,7 +115,7 @@ func (s *sessionUI) ClearOutput() {
 // ErrorScreen shows the error screen and returns the key chosen (ui.ErrorScreener). Once the user is
 // back, the title stays on the result strip of the screen below.
 func (s *sessionUI) ErrorScreen(spec ui.ErrorSpec) (string, error) {
-	c := textsafe.Clean
+	c := s.clean
 	spec.Context, spec.Title, spec.Tech, spec.Help, spec.Log = c(spec.Context), c(spec.Title), c(spec.Tech), c(spec.Help), c(spec.Log)
 	spec.Body = append([]string(nil), spec.Body...)
 	spec.Todo = append([]string(nil), spec.Todo...)

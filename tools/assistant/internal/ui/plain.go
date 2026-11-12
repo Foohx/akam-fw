@@ -46,6 +46,10 @@ func NewPlain(dry, color bool, log *state.Log, secrets *state.Secrets) *Plain {
 	}
 }
 
+// Redact masks the registered secrets (and password assignments) in a text; the session UI calls it
+// before a line reaches the transcript.
+func (p *Plain) Redact(s string) string { return p.Secrets.Redact(s) }
+
 func (p *Plain) logf(format string, a ...any) {
 	if p.Log != nil {
 		p.Log.Line(format, a...)
