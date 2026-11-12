@@ -72,7 +72,7 @@ tools/release/sign_kit.sh ~/.ssh/akam_release dist/assistant   # SHA256SUMS.sig 
 ```
 
 It builds the six targets through `tools/assistant/build.sh flat` (the single place of the flags:
-`CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w -X main.version=..."`, `-tags nethttpomithttp2`,
+`CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w -X main.version=..."`,
 never `-tags akamtest`), checks the binaries (no checkout or home path inside, flags recorded by
 `go version -m`), then writes, with names without version:
 `akam-<os>-<arch>[.exe]`, `akam-<os>-<arch>.tar.gz` (Linux, macOS) or `.zip` (Windows) holding
@@ -97,7 +97,7 @@ Measured with `go1.27.3-X:nodwarf5` (not the pinned Go; re-measure with the pinn
 | linux/arm64 | 9.50 |
 | darwin/amd64 | 10.57 |
 | darwin/arm64 | 9.77 |
-| windows/amd64 | 10.78 |
+| windows/amd64 | 10.79 |
 | windows/arm64 | 9.79 |
 
 The figure of 14.6 MiB seen once for windows/amd64 comes from a build without `-trimpath -ldflags "-s -w"`.

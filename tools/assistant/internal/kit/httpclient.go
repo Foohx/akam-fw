@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/netip"
 	"net/textproto"
@@ -19,7 +20,7 @@ import (
 	"time"
 )
 
-// Client is the minimal HTTPS GET client of the downloads. It replaces net/http, which links about 1.6 MiB
+// Client is the minimal HTTPS GET client of the downloads. It replaces net/http, which links about 0.55 MiB more
 // (HTTP/1 and proxy machinery, IDNA and Unicode normalisation tables) for what is one GET with a redirect
 // rule. HTTP/1.1 only, one connection per request, no cookies, no cache. A proxy (HTTPS_PROXY, NO_PROXY)
 // is reached through an HTTP CONNECT tunnel; SOCKS proxies are not supported.
@@ -44,7 +45,40 @@ func NewHTTPClient() *Client {
 	}
 }
 
-const maxRedirects = 10
+const (
+	maxRedirects = 10
+	maxHead      = 1 << 20 // status line, headers and 1xx answers together (also a proxy's CONNECT answer)
+	maxLine      = 4 << 10 // a chunk-size or trailer line
+	maxTrailers  = 16 << 10
+)
+
+// policyError is a refusal that a retry cannot change (non-HTTPS redirect, redirect loop, unsupported or
+// malformed proxy setting, a certificate that does not verify): FetchLimit fails at once.
+type policyError struct{ error }
+
+func (e *policyError) Unwrap() error { return e.error }
+
+func policyf(format string, a ...any) error { return &policyError{fmt.Errorf(format, a...)} }
+
+// capReader limits the bytes read from the connection while the head of a message is parsed.
+type capReader struct {
+	r io.Reader
+	n int64
+}
+
+var errHeadTooLarge = errors.New("the answer head is too large")
+
+func (c *capReader) Read(p []byte) (int, error) {
+	if c.n <= 0 {
+		return 0, errHeadTooLarge
+	}
+	if int64(len(p)) > c.n {
+		p = p[:c.n]
+	}
+	n, err := c.r.Read(p)
+	c.n -= int64(n)
+	return n, err
+}
 
 // httpResponse is one answer: Body is the decoded entity, ContentLength -1 when unknown.
 type httpResponse struct {
@@ -89,10 +123,10 @@ func (c *Client) get(ctx context.Context, rawURL string) (*httpResponse, error) 
 
 func checkRedirect(next *url.URL, requests int) error {
 	if next.Scheme != "https" {
-		return errors.New("refusing a redirect to a non-HTTPS address")
+		return policyf("refusing a redirect to a non-HTTPS address")
 	}
 	if requests >= maxRedirects {
-		return errors.New("too many redirects")
+		return policyf("too many redirects")
 	}
 	return nil
 }
@@ -118,7 +152,7 @@ func (b connBody) Close() error { return b.closeConn() }
 // once sends one request; for a redirect it returns the Location (the body is still to be closed).
 func (c *Client) once(ctx context.Context, u *url.URL) (*httpResponse, string, error) {
 	if u.Scheme != "https" || u.Hostname() == "" {
-		return nil, "", errors.New("only HTTPS addresses are supported")
+		return nil, "", policyf("only HTTPS addresses are supported")
 	}
 	conn, err := c.connect(ctx, u)
 	if err != nil {
@@ -128,19 +162,18 @@ func (c *Client) once(ctx context.Context, u *url.URL) (*httpResponse, string, e
 	closeConn := func() error { stop(); return conn.Close() }
 	fail := func(err error) (*httpResponse, string, error) {
 		closeConn()
-		if cerr := ctx.Err(); cerr != nil {
-			err = cerr
-		}
-		return nil, "", err
+		return nil, "", ctxOr(ctx, err)
 	}
 	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: akam\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n", u.RequestURI(), u.Host); err != nil {
 		return fail(err)
 	}
-	br := bufio.NewReaderSize(conn, 32<<10)
+	cr := &capReader{r: conn, n: maxHead}
+	br := bufio.NewReaderSize(cr, 32<<10)
 	code, hdr, err := readHead(br)
 	if err != nil {
 		return fail(err)
 	}
+	cr.n = math.MaxInt64 // the head is read: the body is bounded by its own framing and by the caller's limit
 	if loc := hdr.Get("Location"); loc != "" && (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
 		return &httpResponse{StatusCode: code, Body: connBody{strings.NewReader(""), closeConn}}, loc, nil
 	}
@@ -180,22 +213,39 @@ func (c *Client) connect(ctx context.Context, u *url.URL) (net.Conn, error) {
 		raw, err = c.tunnel(ctx, proxy, hostport)
 	}
 	if err != nil {
-		return nil, err
+		return nil, ctxOr(ctx, err)
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.TLSConfig != nil {
-		cfg = c.TLSConfig.Clone()
-	}
-	cfg.ServerName = u.Hostname()
-	conn := tls.Client(raw, cfg)
+	conn := tls.Client(raw, c.tlsConfig(u.Hostname()))
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
 	}
 	if err := conn.HandshakeContext(ctx); err != nil {
 		raw.Close()
-		return nil, err
+		var cve *tls.CertificateVerificationError
+		if errors.As(err, &cve) {
+			err = &policyError{err} // a retry meets the same certificate
+		}
+		return nil, ctxOr(ctx, err)
 	}
 	return conn, nil
+}
+
+// tlsConfig is a clone of the client's configuration for serverName (TLS 1.2 or newer by default).
+func (c *Client) tlsConfig(serverName string) *tls.Config {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if c.TLSConfig != nil {
+		cfg = c.TLSConfig.Clone()
+	}
+	cfg.ServerName = serverName
+	return cfg
+}
+
+// ctxOr is the context's error when it is done (a closed connection is then only a consequence).
+func ctxOr(ctx context.Context, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	return err
 }
 
 func (c *Client) dial(ctx context.Context, hostport string) (net.Conn, error) {
@@ -206,7 +256,8 @@ func (c *Client) dial(ctx context.Context, hostport string) (net.Conn, error) {
 	return d.DialContext(ctx, "tcp", hostport)
 }
 
-// tunnel opens an HTTP CONNECT tunnel to hostport through proxy.
+// tunnel opens an HTTP CONNECT tunnel to hostport through proxy. Its errors start with "proxy:" and never
+// carry the proxy's credentials.
 func (c *Client) tunnel(ctx context.Context, proxy *url.URL, hostport string) (net.Conn, error) {
 	pport := proxy.Port()
 	if pport == "" {
@@ -214,16 +265,24 @@ func (c *Client) tunnel(ctx context.Context, proxy *url.URL, hostport string) (n
 	}
 	conn, err := c.dial(ctx, net.JoinHostPort(proxy.Hostname(), pport))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("proxy: %w", err)
 	}
+	// Cancellation must reach a proxy that accepts and never answers.
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	done := false
+	defer func() {
+		stop()
+		if !done {
+			conn.Close()
+		}
+	}()
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
 	}
 	if proxy.Scheme == "https" {
-		tc := tls.Client(conn, &tls.Config{MinVersion: tls.VersionTLS12, ServerName: proxy.Hostname()})
+		tc := tls.Client(conn, c.tlsConfig(proxy.Hostname()))
 		if err := tc.HandshakeContext(ctx); err != nil {
-			conn.Close()
-			return nil, err
+			return nil, fmt.Errorf("proxy: %w", ctxOr(ctx, err))
 		}
 		conn = tc
 	}
@@ -233,24 +292,25 @@ func (c *Client) tunnel(ctx context.Context, proxy *url.URL, hostport string) (n
 		req += "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(ui.Username()+":"+pw)) + "\r\n"
 	}
 	if _, err := io.WriteString(conn, req+"\r\n"); err != nil {
-		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("proxy: %w", ctxOr(ctx, err))
 	}
 	// The origin's TLS handshake starts only after the proxy's blank line, and the origin speaks only after
 	// the client hello, so the reader cannot swallow tunnel bytes.
-	code, _, err := readHead(bufio.NewReader(conn))
+	code, _, err := readHead(bufio.NewReader(&capReader{r: conn, n: maxHead}))
 	if err != nil {
-		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("proxy: %w", ctxOr(ctx, err))
 	}
 	if code != 200 {
-		conn.Close()
-		return nil, fmt.Errorf("the proxy refused the tunnel: HTTP %d", code)
+		return nil, fmt.Errorf("proxy: the tunnel was refused (HTTP %d)", code)
 	}
+	done = true
 	return conn, nil
 }
 
-// readHead reads a status line and the header block (1xx answers are skipped).
+// readHead reads a status line and the header block (1xx answers are skipped); the caller bounds the bytes.
+// Only HTTP/1.0 and HTTP/1.1 with a 3-digit status are accepted. Lines are those of net/textproto, which
+// tolerates a bare LF: headers carry no framing risk here (one request per connection, Connection: close);
+// the chunk framing, where a sloppy parser could desynchronise, requires CRLF (see readLine).
 func readHead(br *bufio.Reader) (int, textproto.MIMEHeader, error) {
 	tp := textproto.NewReader(br)
 	for {
@@ -258,12 +318,9 @@ func readHead(br *bufio.Reader) (int, textproto.MIMEHeader, error) {
 		if err != nil {
 			return 0, nil, eofToUnexpected(err)
 		}
-		if !strings.HasPrefix(line, "HTTP/1.") || len(line) < 12 || line[8] != ' ' {
-			return 0, nil, fmt.Errorf("malformed HTTP response %q", truncate(line, 40))
-		}
-		code, err := strconv.Atoi(line[9:12])
-		if err != nil || code < 100 {
-			return 0, nil, fmt.Errorf("malformed HTTP status %q", truncate(line, 40))
+		code, ok := parseStatus(line)
+		if !ok {
+			return 0, nil, fmt.Errorf("malformed HTTP status line %q", truncate(line, 40))
 		}
 		hdr, err := tp.ReadMIMEHeader()
 		if err != nil {
@@ -273,6 +330,29 @@ func readHead(br *bufio.Reader) (int, textproto.MIMEHeader, error) {
 			return code, hdr, nil
 		}
 	}
+}
+
+func parseStatus(line string) (int, bool) {
+	if len(line) < 12 || (!strings.HasPrefix(line, "HTTP/1.1 ") && !strings.HasPrefix(line, "HTTP/1.0 ")) {
+		return 0, false
+	}
+	if !allDigits(line[9:12]) || (len(line) > 12 && line[12] != ' ') {
+		return 0, false
+	}
+	code, _ := strconv.Atoi(line[9:12])
+	return code, code >= 100
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func eofToUnexpected(err error) error {
@@ -294,19 +374,24 @@ func entity(br *bufio.Reader, code int, hdr textproto.MIMEHeader) (io.Reader, in
 	if code == 204 || code == 304 || code/100 == 1 {
 		return strings.NewReader(""), 0, nil
 	}
-	if te := hdr.Values("Transfer-Encoding"); len(te) > 0 {
+	te, cl := hdr.Values("Transfer-Encoding"), hdr.Values("Content-Length")
+	if len(te) > 0 && len(cl) > 0 {
+		return nil, 0, errors.New("the answer has both Transfer-Encoding and Content-Length")
+	}
+	if len(te) > 0 {
 		if len(te) != 1 || !strings.EqualFold(strings.TrimSpace(te[0]), "chunked") {
 			return nil, 0, fmt.Errorf("unsupported Transfer-Encoding %q", truncate(strings.Join(te, ","), 40))
 		}
 		return &chunkedReader{br: br}, -1, nil
 	}
-	if cl := hdr.Values("Content-Length"); len(cl) > 0 {
-		n, err := strconv.ParseInt(strings.TrimSpace(cl[0]), 10, 64)
-		if err != nil || n < 0 {
+	if len(cl) > 0 {
+		v := strings.TrimSpace(cl[0])
+		n, err := strconv.ParseInt(v, 10, 64)
+		if !allDigits(v) || len(v) > 18 || err != nil {
 			return nil, 0, fmt.Errorf("bad Content-Length %q", truncate(cl[0], 20))
 		}
-		for _, v := range cl[1:] {
-			if strings.TrimSpace(v) != strings.TrimSpace(cl[0]) {
+		for _, o := range cl[1:] {
+			if strings.TrimSpace(o) != v {
 				return nil, 0, errors.New("conflicting Content-Length headers")
 			}
 		}
@@ -339,7 +424,26 @@ func (e *exactReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// chunkedReader decodes Transfer-Encoding: chunked (chunk extensions and trailers are ignored).
+// readLine reads one CRLF-terminated line of at most maxLine bytes (the line and its CRLF are bounded, so a
+// server cannot make the client buffer an endless line). A bare LF is an error: chunk framing is strict.
+func readLine(br *bufio.Reader) (string, error) {
+	b, err := br.ReadSlice('\n')
+	if err == bufio.ErrBufferFull {
+		return "", errors.New("chunk framing line too long")
+	}
+	if err != nil {
+		return "", eofToUnexpected(err)
+	}
+	if len(b) > maxLine {
+		return "", errors.New("chunk framing line too long")
+	}
+	if len(b) < 2 || b[len(b)-2] != '\r' {
+		return "", errors.New("malformed chunk framing (no CRLF)")
+	}
+	return string(b[:len(b)-2]), nil
+}
+
+// chunkedReader decodes Transfer-Encoding: chunked (chunk extensions and trailers are ignored, but bounded).
 type chunkedReader struct {
 	br   *bufio.Reader
 	left int64
@@ -360,26 +464,28 @@ func (c *chunkedReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if c.left == 0 {
-		line, err := c.br.ReadString('\n')
+		line, err := readLine(c.br)
 		if err != nil {
 			return 0, c.fail(err)
 		}
-		line = strings.TrimSpace(line)
-		if i := strings.IndexByte(line, ';'); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		n, perr := strconv.ParseUint(line, 16, 62)
+		size, _, _ := strings.Cut(line, ";")
+		size = strings.TrimRight(size, " \t")
+		n, perr := strconv.ParseUint(size, 16, 62)
 		if perr != nil {
 			return 0, c.fail(errors.New("malformed chunk size"))
 		}
 		if n == 0 {
+			total := 0
 			for { // trailers, up to the blank line
-				t, err := c.br.ReadString('\n')
+				t, err := readLine(c.br)
 				if err != nil {
 					return 0, c.fail(err)
 				}
-				if strings.TrimSpace(t) == "" {
+				if t == "" {
 					break
+				}
+				if total += len(t) + 2; total > maxTrailers {
+					return 0, c.fail(errors.New("chunked trailers too large"))
 				}
 			}
 			c.done = true
@@ -408,7 +514,8 @@ func (c *chunkedReader) Read(p []byte) (int, error) {
 }
 
 // ProxyFromEnvironment is the proxy of HTTPS_PROXY (or https_proxy) for u, unless NO_PROXY (or no_proxy) or
-// the address (localhost, loopback) excludes it. A value without a scheme is an http:// proxy.
+// the address (localhost, loopback) excludes it. A value without a scheme is an http:// proxy. Its errors
+// never quote the variable (it may hold credentials).
 func ProxyFromEnvironment(u *url.URL) (*url.URL, error) {
 	v := os.Getenv("HTTPS_PROXY")
 	if v == "" {
@@ -421,18 +528,25 @@ func ProxyFromEnvironment(u *url.URL) (*url.URL, error) {
 	if np == "" {
 		np = os.Getenv("no_proxy")
 	}
-	if !proxyApplies(u.Hostname(), u.Port(), np) {
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	if !proxyApplies(u.Hostname(), port, np) {
 		return nil, nil
 	}
-	p, err := url.Parse(v)
-	if err != nil || p.Scheme == "" || p.Host == "" {
-		p, err = url.Parse("http://" + v)
+	if !strings.Contains(v, "://") {
+		v = "http://" + v
 	}
-	if err != nil || p.Host == "" {
-		return nil, errors.New("invalid proxy address in HTTPS_PROXY")
+	p, err := url.Parse(v)
+	if err != nil {
+		return nil, policyf("proxy: HTTPS_PROXY is not a valid address")
+	}
+	if p.Hostname() == "" {
+		return nil, policyf("proxy: HTTPS_PROXY has no host name")
 	}
 	if p.Scheme != "http" && p.Scheme != "https" {
-		return nil, fmt.Errorf("unsupported proxy scheme %q (use an http:// or https:// proxy)", p.Scheme)
+		return nil, policyf("proxy: unsupported scheme %q in HTTPS_PROXY (SOCKS proxies are not supported; use an HTTP CONNECT proxy)", p.Scheme)
 	}
 	return p, nil
 }

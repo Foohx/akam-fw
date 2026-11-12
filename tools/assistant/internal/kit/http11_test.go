@@ -13,7 +13,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit/kittest"
 )
 
-// The release binary is built with -tags nethttpomithttp2 (no HTTP/2 client): the production client must still
+// The production client speaks HTTP/1.1 only: it must still
 // download from a TLS server that offers HTTP/2 (GitHub does), over HTTP/1.1.
 func TestDownloadWorksOverHTTP11WhenServerOffersHTTP2(t *testing.T) {
 	var proto atomic.Int32

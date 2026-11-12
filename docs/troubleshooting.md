@@ -204,6 +204,13 @@ fails, wait a few minutes and run the step again (`./akam step get-kit`). With n
 you already have (`./akam get-kit --kit FILE`) or run the bootstrap offline
 (`bash tools/build/bootstrap.sh --offline`).
 
+## Downloads behind a proxy
+
+`get-kit` and the SD toolkit download read `HTTPS_PROXY` (or `https_proxy`) and `NO_PROXY` (or
+`no_proxy`). Use an HTTP proxy that supports CONNECT, for example
+`HTTPS_PROXY=http://proxy.example:3128 ./akam get-kit`. SOCKS proxies are not supported; use an HTTP
+CONNECT proxy via `HTTPS_PROXY`. Localhost and loopback addresses are never sent through the proxy.
+
 ## An ONVIF app does not find the camera
 
 ONVIF is off unless you turned it on, and it needs the video password (this arrived in the same release as the

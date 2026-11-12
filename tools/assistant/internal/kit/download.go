@@ -14,7 +14,7 @@ import (
 // ErrTooLarge: the download is longer than its limit.
 var ErrTooLarge = errors.New("the download is larger than the allowed size")
 
-// HTTPError is a server answer of 400 or more (curl's exit status 22).
+// HTTPError is a server answer other than 200 (for 400 and more, curl's exit status 22).
 type HTTPError struct {
 	Code int
 	URL  string
@@ -23,7 +23,8 @@ type HTTPError struct {
 func (e *HTTPError) Error() string { return fmt.Sprintf("HTTP %d for %s", e.Code, e.URL) }
 
 // Fetch downloads url into out (written to a temporary file next to it and renamed when complete).
-// It retries three times on network errors and server errors, never on a 4xx answer.
+// It retries three times on network errors and server errors, never on a 4xx answer or on a policy refusal
+// (non-HTTPS redirect, redirect loop, unsupported proxy, certificate that does not verify).
 func Fetch(ctx context.Context, c *Client, url, out string) error {
 	return FetchLimit(ctx, c, url, out, MaxKitDownload)
 }
@@ -53,7 +54,8 @@ func FetchLimit(ctx context.Context, c *Client, url, out string, max int64) erro
 		}
 		last = fetchOnce(ctx, c, url, out, max)
 		var he *HTTPError
-		if last == nil || errors.Is(last, ErrTooLarge) || (errors.As(last, &he) && he.Code < 500 && he.Code != 429) || errors.Is(last, context.Canceled) {
+		var pe *policyError
+		if last == nil || errors.As(last, &pe) || errors.Is(last, ErrTooLarge) || (errors.As(last, &he) && he.Code < 500 && he.Code != 429) || errors.Is(last, context.Canceled) {
 			return last
 		}
 	}
@@ -66,7 +68,7 @@ func fetchOnce(ctx context.Context, c *Client, url, out string, max int64) error
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode != 200 { // 204, 206, a 3xx without Location, 4xx and 5xx are not the file
 		return &HTTPError{Code: resp.StatusCode, URL: url}
 	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o700); err != nil {

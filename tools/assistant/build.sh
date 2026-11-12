@@ -71,8 +71,8 @@ exe() { if [ "$1" = windows ]; then echo .exe; fi; }
 
 build_one() { # GOOS GOARCH OUT
     mkdir -p "$(dirname "$3")"
-    # nethttpomithttp2: no bundled HTTP/2 client (-360 KiB measured); downloads use HTTP/1.1. Never -tags akamtest here.
-    GOOS=$1 GOARCH=$2 go build -trimpath -buildvcs=false -tags nethttpomithttp2 \
+    # Never -tags akamtest here. The downloads use internal/kit's own HTTPS client: net/http is not linked.
+    GOOS=$1 GOARCH=$2 go build -trimpath -buildvcs=false \
         -ldflags "-s -w -X main.version=$VERSION" -o "$3" ./cmd/akam
 }
 
@@ -102,7 +102,7 @@ sizes() {
 by_package() { # GOOS GOARCH
     local tmp
     tmp=$(mktemp -d)
-    GOOS=$1 GOARCH=$2 go build -trimpath -buildvcs=false -tags nethttpomithttp2 -ldflags "-X main.version=$VERSION" -o "$tmp/akam" ./cmd/akam
+    GOOS=$1 GOARCH=$2 go build -trimpath -buildvcs=false -ldflags "-X main.version=$VERSION" -o "$tmp/akam" ./cmd/akam
     echo "size by package, $1/$2, unstripped build (symbol sizes only):"
     go tool nm -size "$tmp/akam" | awk '
         { sz = $2; name = $4
@@ -195,8 +195,6 @@ case ${1:-host} in
         check_go 0
         go vet -tags akamtest ./...
         go test -tags akamtest -count=1 ./...
-        # the downloads (kit, toolkit) must work with the release tag that drops the bundled HTTP/2 client
-        go test -tags "akamtest nethttpomithttp2" -count=1 ./internal/kit ./internal/sdcard
         go test -count=1 ./internal/testhook   # release build: the test hooks are ignored
         ;;
     vet-all) check_go 0; vet_all "${2:-}" ;;

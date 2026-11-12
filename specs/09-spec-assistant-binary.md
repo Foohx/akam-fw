@@ -26,7 +26,7 @@ User request: "direct access to a binary for the assistant; the binary should be
 | `nc -w 2 127.0.0.1 8091` on the camera | `steps_camera.sh:1266-1274,1352,1453,1544` | led/audio/picture control | SSH exec of `nc -w 2 127.0.0.1 8091` with the lines on stdin (3.3; Dropbear has no TCP forwarding) |
 | `timeout` | `transfer.sh:66` | deadline | context deadlines |
 | `md5sum`, `sha256sum`, `shasum -a 256` | `host.sh:78-95`, `transfer.sh:35-45`, `steps_host.sh:814,854`, `steps_camera.sh:1985`, `verify_kit.sh:79-85,227` | hashes, `sha256sum -c` | `crypto/md5`, `crypto/sha256` (3.5) |
-| `curl --proto =https --tlsv1.2 --retry 3` | `steps_host.sh:444-452,496,509` | kit + `SHA256SUMS(.sig)` | `net/http`, same constraints (3.8) |
+| `curl --proto =https --tlsv1.2 --retry 3` | `steps_host.sh:444-452,496,509` | kit + `SHA256SUMS(.sig)` | `internal/kit` HTTPS client over `crypto/tls` (no `net/http`, which costs about 0.55 MiB), same constraints; `HTTPS_PROXY` via CONNECT (3.8) |
 | `tar -tvJf`, `tar -xJf`, `xz` | `verify_kit.sh:97,147-182` | list/extract kit | `archive/tar` + `ulikunitz/xz` (3.8) |
 | `unsquashfs -s/-l/-lln/-d`, `mksquashfs -all-root` | `steps_host.sh:900-903,957`, `assemble_from_kit.sh`, `build_firmware.sh` | read stock APP, build image | native or optional tools (3.9) |
 | `dd if=/dev/mtd7 bs=64k \| md5sum` on the camera | `steps_camera.sh:268,803`, `reflash_over_ssh.sh` | read-back verification | stays camera-side (section 4) |

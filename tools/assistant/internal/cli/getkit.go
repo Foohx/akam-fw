@@ -93,7 +93,7 @@ func (a *App) cmdGetKit() error {
 			if err := a.download(base+"/"+f, filepath.Join(dl, f), lim); err != nil {
 				_ = os.Remove(filepath.Join(dl, f))
 				var he *kit.HTTPError
-				if errors.As(err, &he) {
+				if errors.As(err, &he) && (he.Code == 404 || he.Code == 410) {
 					return a.UI.Fail(fmt.Sprintf("release v%s was not found (%s). Akam may not have published a release yet.", ver, f),
 						fmt.Sprintf("see https://github.com/%s/releases for the versions that exist, or use a kit you already have: %s get-kit --kit FILE (or build from source: %s build).", kitRepo, Prog, Prog))
 				}
@@ -106,7 +106,7 @@ func (a *App) cmdGetKit() error {
 		if err := a.download(base+"/SHA256SUMS.sig", sig, kit.MaxSmallDownload); err != nil {
 			_ = os.Remove(sig)
 			var he *kit.HTTPError
-			if errors.As(err, &he) {
+			if errors.As(err, &he) && (he.Code == 404 || he.Code == 410) {
 				a.UI.Warn("no signature file in this release: the kit would be checked by checksum only.")
 			} else {
 				return a.UI.Fail(fmt.Sprintf("download of SHA256SUMS.sig failed (%v).", err), "check your network and retry.")

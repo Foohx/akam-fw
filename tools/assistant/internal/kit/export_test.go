@@ -1,6 +1,9 @@
 package kit
 
-import "io"
+import (
+	"context"
+	"io"
+)
 
 // Test seams of verify.go, visible to the external test package only.
 
@@ -15,3 +18,14 @@ func SetModesMatter(v bool) bool { old := modesMatter; modesMatter = v; return o
 
 // NewLimitReader is the 1 GiB backstop with a small limit.
 func NewLimitReader(r io.Reader, left int64) io.Reader { return &limitReader{r: r, left: left} }
+
+// Get does one GET (redirects followed) and reads the body, capped at max bytes.
+func Get(ctx context.Context, c *Client, url string, max int64) (int, []byte, error) {
+	resp, err := c.get(ctx, url)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
+	return resp.StatusCode, b, err
+}
