@@ -209,7 +209,7 @@ func (a *App) flowInstall() error {
 				a.reportFlowError(err)
 			}
 			a.UI.Say("  Stopped at '" + next + "'. Fix what is shown above and choose 'Set up a new camera' again: it resumes here.")
-			return nil
+			return ui.ErrFailed // already shown; the session turns the last Fail into its error screen
 		}
 		if a.UI.Dry() && next == "verify" {
 			return nil

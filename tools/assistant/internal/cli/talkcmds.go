@@ -114,7 +114,11 @@ func (a *App) talkClient(ctx context.Context, ip, user, pass string, src rtsp.PC
 		if te.RetryAfter != "" {
 			hint = fmt.Sprintf("the camera suggests trying again in %s (Retry-After); or %s", te.RetryAfter, hint)
 		}
-		return a.UI.Fail("the camera is busy: it serves one video client at a time and another client is connected to it.", hint)
+		tech := "camera answered: " + te.Msg
+		if te.RetryAfter != "" {
+			tech += ", Retry-After " + te.RetryAfter
+		}
+		return a.failTech("the camera is busy: it serves one video client at a time and another client is connected to it.", hint, tech)
 	}
 	switch te.Code {
 	case rtsp.CodeNet:

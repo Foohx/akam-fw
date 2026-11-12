@@ -55,6 +55,7 @@ type (
 	msgStripIfEmpty  struct{ e entry }
 	msgFlowDone      struct{}
 	msgTick          struct{}
+	msgClear         struct{}
 )
 
 const tickEvery = 100 * time.Millisecond
@@ -265,7 +266,12 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			e.text = oneLine(e.text)
 			m.strip = &e
 		}
+	case msgClear:
+		m.clearOutput()
 	case msgAsk:
+		if ev, ok := v.q.model.(*ErrorView); ok && ev.Theme == nil {
+			ev.Theme = m.th
+		}
 		v.q.resize(m.w, m.panelRows())
 		m.queue = append(m.queue, v.q)
 		m.pane = nil
@@ -295,6 +301,13 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.key(v)
 	}
 	return m, nil
+}
+
+// clearOutput starts a new action on a clean panel: the transcript, the steps, the operation and the
+// strip of the previous one are dropped (the home keeps the last output only until the next action).
+func (m *sessModel) clearOutput() {
+	m.transcript, m.strip, m.scroll, m.pane = nil, nil, 0, nil
+	m.title, m.steps, m.total, m.prog, m.op = "", nil, 0, nil, nil
 }
 
 // settle answers the overlay on screen when its model is finished.
@@ -371,7 +384,7 @@ func (m *sessModel) keyIdle(k tea.KeyMsg) {
 func (m *sessModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.strip = nil // any key clears the result strip
 	q := m.current()
-	if q == nil && m.board != nil {
+	if q == nil && m.board != nil && m.pane == nil {
 		return m.boardKey(k)
 	}
 	if q == nil {

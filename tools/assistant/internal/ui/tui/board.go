@@ -135,6 +135,10 @@ func (m *sessModel) boardKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "?":
+		if len(m.transcript) > 0 { // the output of the last action stays readable from the home
+			m.openLastOutput()
+			return m, nil
+		}
 		if len(bv.b.Help) > 0 {
 			bv.help = !bv.help
 		}
@@ -156,6 +160,17 @@ func (m *sessModel) boardKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openLastOutput opens the "?" pane over the board with what the last action printed (from its first
+// line, like a report), then the help of the screen.
+func (m *sessModel) openLastOutput() {
+	text := m.transcriptText()
+	if h := m.board.b.Help; len(h) > 0 {
+		text += "\n" + strings.Join(h, "\n")
+	}
+	m.pane = &Details{Title: "Last action", Text: text, Theme: m.th}
+	m.pane.Update(tea.WindowSizeMsg{Width: m.w, Height: m.panelRows()})
+}
+
 // boardFooter draws the key hints; on a narrow window "up/down move" goes first, then "? details",
 // then the last keys, so the keys that act (and Esc) stay.
 func (m *sessModel) boardFooter() string {
@@ -167,7 +182,7 @@ func (m *sessModel) boardFooter() string {
 		}
 	}
 	more := []string{}
-	if len(bv.b.Help) > 0 {
+	if len(bv.b.Help) > 0 || len(m.transcript) > 0 {
 		more = []string{"?", "details"}
 	}
 	var move []string

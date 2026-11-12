@@ -33,7 +33,10 @@ type boardSession struct {
 	headers    []ui.Header
 	closed     int
 	waitedStop int
+	clears     int
 }
+
+func (s *boardSession) ClearOutput() { s.mu.Lock(); s.clears++; s.mu.Unlock() }
 
 func (s *boardSession) SetHeader(h ui.Header) {
 	s.mu.Lock()
@@ -239,5 +242,17 @@ func TestHomeBoardRows(t *testing.T) {
 	want := "Set up a new camera|Update this camera|Camera options|Back up / restore|Find cameras|Settings|Check this computer"
 	if strings.Join(labels, "|") != want {
 		t.Errorf("rows: %v", labels)
+	}
+}
+
+// Every action of the home starts on a clean panel (the session transcript is cleared), once per
+// action, not by the home itself.
+func TestHomeClearsOutputAtEachAction(t *testing.T) {
+	e := newEnv(t)
+	bs := &boardSession{keys: []string{"c", "esc", "c", "esc", "esc"}}
+	r := runBoard(t, e, bs, "")
+	expectRC(t, r, 0)
+	if bs.clears != 2 {
+		t.Errorf("the output was cleared %d times, want 2 (two actions)", bs.clears)
 	}
 }

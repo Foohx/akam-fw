@@ -149,7 +149,7 @@ func (a *App) cmdHome() error {
 			continue
 		}
 		// The outcome is shown on the home screen the user returns to, not behind a "Press Enter".
-		res = a.runAction(func() error { return a.homeAction(items[idx].Act) })
+		res = a.runAction(strings.TrimSpace(items[idx].Label[3:]), func() error { return a.homeAction(items[idx].Act) })
 	}
 }
 
