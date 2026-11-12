@@ -35,21 +35,23 @@ static long mono_s(void)
 static void sink_emit(void *user, int prio, const char *text)
 {
     sink_t *s = user;
-    if (s->fd < 0) {
-        int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-        if (fd < 0) return;
-        struct sockaddr_un sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sun_family = AF_UNIX;
-        snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", s->sock_path);
-        if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(fd); return; }
-        s->fd = fd;
-    }
     char buf[LINE_MAX_BYTES + 32];
     int n = snprintf(buf, sizeof(buf), "<%d>kernel: %.*s", prio & 7, LINE_MAX_BYTES, text);
     if (n <= 0) return;
-    if (send(s->fd, buf, (size_t)n, MSG_DONTWAIT) < 0 && errno != EAGAIN && errno != EINTR) {
-        close(s->fd); /* syslogd restarted or gone: reconnect on the next line */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (s->fd < 0) {
+            int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+            if (fd < 0) return;
+            struct sockaddr_un sa;
+            memset(&sa, 0, sizeof(sa));
+            sa.sun_family = AF_UNIX;
+            snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", s->sock_path);
+            if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(fd); return; }
+            s->fd = fd;
+        }
+        if (send(s->fd, buf, (size_t)n, MSG_DONTWAIT) >= 0) return;
+        if (errno == EAGAIN || errno == EINTR) return; /* syslogd is slow: this line is lost, the socket is fine */
+        close(s->fd); /* syslogd restarted (stale socket): reconnect and send this same line once more */
         s->fd = -1;
     }
 }
@@ -65,6 +67,7 @@ int klog_run(const char *kmsg_path, const char *sock_path, long window_s)
 
     char chunk[2048], line[LINE_MAX_BYTES + 1];
     size_t ll = 0;
+    int discard = 0;
     int rc = 0;
     for (;;) {
         long due = klog_next_due(&k, mono_s());
@@ -90,10 +93,21 @@ int klog_run(const char *kmsg_path, const char *sock_path, long window_s)
         long now = mono_s();
         for (ssize_t i = 0; i < n; i++) {
             char c = chunk[i];
-            if (c == '\n' || ll >= LINE_MAX_BYTES) {
+            if (discard) { /* the rest of a line that was cut at the cap: dropped up to its newline */
+                if (c == '\n') discard = 0;
+                continue;
+            }
+            if (c == '\n') {
                 if (ll) { line[ll] = '\0'; klog_feed(&k, line, now); }
                 ll = 0;
-                if (c == '\n') continue;
+                continue;
+            }
+            if (ll >= LINE_MAX_BYTES) {
+                line[ll] = '\0';
+                klog_feed(&k, line, now);
+                ll = 0;
+                discard = 1;
+                continue;
             }
             if (c != '\r') line[ll++] = c;
         }
@@ -119,11 +133,12 @@ static void rename_process(char **argv)
 
 int klog_main(int argc, char **argv)
 {
-    const char *kmsg = "/proc/kmsg", *sock = "/dev/log";
+    char kmsg_buf[256] = "/proc/kmsg", sock_buf[256] = "/dev/log";
+    const char *kmsg = kmsg_buf, *sock = sock_buf;
     long window = KLOG_WINDOW_S;
     for (int i = 2; i < argc; i++) {
-        if (!strcmp(argv[i], "--kmsg") && i + 1 < argc) kmsg = argv[++i];
-        else if (!strcmp(argv[i], "--sock") && i + 1 < argc) sock = argv[++i];
+        if (!strcmp(argv[i], "--kmsg") && i + 1 < argc) snprintf(kmsg_buf, sizeof(kmsg_buf), "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--sock") && i + 1 < argc) snprintf(sock_buf, sizeof(sock_buf), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--window") && i + 1 < argc) window = atol(argv[++i]);
         else {
             fprintf(stderr, "usage: ak_rtsp klog [--kmsg PATH] [--sock PATH] [--window SECONDS]\n");
@@ -131,5 +146,6 @@ int klog_main(int argc, char **argv)
         }
     }
     rename_process(argv);
+    for (int i = 1; i < argc; i++) memset(argv[i], 0, strlen(argv[i])); /* cmdline reads just "akam_klog" */
     return klog_run(kmsg, sock, window);
 }

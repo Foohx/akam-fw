@@ -1,11 +1,15 @@
 /* Host test of src/ak_rtsp/klog.c (filter core, fake clock) and klog_run.c (real file in, unix datagram
  * socket out). Synthetic fixture text only. Build/run: tests/klog_test.sh */
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include "klog.h"
 
@@ -142,6 +146,17 @@ static int recv_all(int s, char out[][1100], int max)
     return n;
 }
 
+static int bind_dgram(const char *path)
+{
+    int s = socket(AF_UNIX, SOCK_DGRAM, 0);
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    memcpy(sa.sun_path, path, strlen(path) + 1);
+    if (bind(s, (struct sockaddr *)&sa, sizeof(sa)) != 0) { perror("bind"); exit(2); }
+    return s;
+}
+
 static void run_tests(const char *dir)
 {
     char kmsg[256], sock[256];
@@ -182,6 +197,59 @@ static void run_tests(const char *dir)
     close(s);
     unlink(sock);
     CHECK(klog_run(kmsg, sock, 60) == 0, "no socket: still returns 0, nothing crashes");
+
+    printf("run: a line over the cap is cut once, its tail is discarded\n");
+    {
+        int s2 = bind_dgram(sock);
+        FILE *g = fopen(kmsg, "w");
+        fputs("<6>", g);
+        for (int i = 0; i < 1500; i++) fputc('x', g);
+        fputs("TAILMARK\n<6>next line\n", g);
+        fclose(g);
+        CHECK(klog_run(kmsg, sock, 60) == 0, "run ends");
+        char b[8][1100];
+        int m = recv_all(s2, b, 8);
+        int tail = 0;
+        for (int i = 0; i < m; i++) if (strstr(b[i], "TAILMARK")) tail++;
+        CHECK(m == 2 && tail == 0 && !strcmp(b[1], "<6>kernel: next line"),
+              "cut line then the next line only, no stray tail (%d datagrams)", m);
+        close(s2);
+        unlink(sock);
+    }
+
+    printf("run: syslogd restarted while running, the first line after it is not lost\n");
+    {
+        char fifo[256];
+        snprintf(fifo, sizeof(fifo), "%s/fifo", dir);
+        unlink(fifo);
+        CHECK(mkfifo(fifo, 0600) == 0, "fifo");
+        int s3 = bind_dgram(sock);
+        pid_t pid = fork();
+        if (pid == 0) { close(s3); _exit(klog_run(fifo, sock, 60)); } /* the child must not keep the fake syslogd socket alive */
+        int w = open(fifo, O_WRONLY);
+        CHECK(write(w, "<6>one\n", 7) == 7, "first line written");
+        char b[4][1100];
+        struct timeval tv = { 3, 0 };
+        setsockopt(s3, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        ssize_t r = recv(s3, b[0], 1099, 0);
+        CHECK(r > 0, "first line received");
+        close(s3); /* syslogd goes away and comes back: new socket, same path */
+        unlink(sock);
+        s3 = bind_dgram(sock);
+        setsockopt(s3, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        CHECK(write(w, "<6>two\n", 7) == 7, "second line written");
+        r = recv(s3, b[1], 1099, 0);
+        if (r > 0) b[1][r] = '\0';
+        if (r <= 0) printf("recv r=%zd errno=%d\n", r, errno);
+        CHECK(r > 0 && !strcmp(b[1], "<6>kernel: two"), "line after the restart arrives (reconnect and retry)");
+        close(w); /* EOF ends klog_run */
+        int st = 0;
+        waitpid(pid, &st, 0);
+        CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "child ended cleanly");
+        close(s3);
+        unlink(sock);
+        unlink(fifo);
+    }
 
     printf("run: unreadable kernel log reports failure (caller falls back to klogd)\n");
     CHECK(klog_run("/nonexistent/kmsg", sock, 60) == 1, "returns 1");
