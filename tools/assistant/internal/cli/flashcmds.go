@@ -219,7 +219,7 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 	if err != nil {
 		if a.stopRequested() {
 			a.UI.Warn("Stopped. Nothing was written to the camera.")
-			return ui.ErrNoInput
+			return ui.ErrFailed // the warning above is the message
 		}
 		return a.UI.Fail("the precheck failed (see above).", "nothing was written to the camera.")
 	}

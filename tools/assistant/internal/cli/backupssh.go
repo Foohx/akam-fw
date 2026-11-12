@@ -155,7 +155,7 @@ func (a *App) stopRequested() bool {
 // stoppedRead reports a read-only phase the user stopped: nothing failed, nothing was changed.
 func (a *App) stoppedRead() error {
 	a.UI.Warn("Stopped. Nothing was changed on the camera and nothing was kept here.")
-	return ui.ErrNoInput
+	return ui.ErrFailed // the warning above is the message: no error screen, no second line
 }
 
 // bkSSHRead streams partition n once and returns its bytes and sha256.
