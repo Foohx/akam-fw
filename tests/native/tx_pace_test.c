@@ -203,6 +203,17 @@ int main(void)
         CHECK(step(&p, &q, tx_pace_low(q.base), 100 * KB, 1, 200) == TX_PACE_SEND && ev.left,
               "a keyframe that fits at a drained backlog resumes");
         CHECK(tx_pace_no_room(&p, 0, 300, NULL) == TX_PACE_SKIP, "NULL event pointer accepted");
+        /* The event of the decide call survives no_room: a keyframe that resumes the stream but does not fit
+         * reports both "left" (with its count and log) and "entered". */
+        tx_pace_init(&p);
+        step(&p, &q, 600 * KB, 5 * KB, 0, 0);            /* enter SKIP, enter line logged */
+        step(&p, &q, 600 * KB, 5 * KB, 0, 100);
+        CHECK(step(&p, &q, tx_pace_low(q.base), 100 * KB, 1, 200) == TX_PACE_SEND && ev.left && ev.log_leave,
+              "resume approved, leave event pending");
+        CHECK(tx_pace_no_room(&p, tx_pace_low(q.base), 200, &ev) == TX_PACE_SKIP && ev.left && ev.entered &&
+              ev.run_skipped == 2 && ev.log_leave && !ev.log_enter && ev.log_it,
+              "no_room keeps the leave event (count, log) and adds the enter one; enter is rate limited");
+        CHECK(p.skipping, "and the stream is skipping again");
     }
 
     printf("%s\n", fails ? "tx_pace_test: FAILED" : "tx_pace_test: OK");

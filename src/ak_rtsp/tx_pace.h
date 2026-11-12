@@ -70,7 +70,9 @@ typedef struct {
     int entered;   /* this call switched to SKIP mode */
     int left;      /* this call switched back to normal; run_skipped = frames dropped in that run */
     unsigned run_skipped;
-    int log_it;    /* the caller may print one line for this event (rate limited) */
+    int log_it;    /* log_enter || log_leave */
+    int log_enter; /* the caller may print the "link slow" line (rate limited) */
+    int log_leave; /* the caller may print the "recovered" line (only when the enter line was printed) */
     const char *drop_reason; /* set with TX_PACE_DROP_CLIENT */
 } tx_pace_event_t;
 
@@ -91,7 +93,9 @@ tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t ba
 /* The frame just approved by tx_pace_decide() (TX_PACE_SEND) does not fit the room left (free kernel send buffer
  * plus the private queue of net_tx.h): enter SKIP mode now, exactly as if the backlog had been over the high
  * mark, so a P-frame is still only ever dropped by entering SKIP mode. Also valid when already skipping
- * (then it just counts the frame). Always returns TX_PACE_SKIP. ev may be NULL. */
+ * (then it just counts the frame). Always returns TX_PACE_SKIP. ev may be NULL. *ev is merged, not reset: pass
+ * the event tx_pace_decide() filled, so a "left SKIP" event of the same frame (run_skipped, log_leave) survives
+ * next to the new "entered" one. */
 tx_pace_verdict_t tx_pace_no_room(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_event_t *ev);
 
 /* Unsent bytes in the socket send queue of a TCP fd, 0 when unknown (then no pacing happens). */

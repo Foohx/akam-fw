@@ -957,8 +957,18 @@ static int send_video_frame(Client *client)
              * stream. Wire size = payload + 4 B interleave + 12 B RTP + 2 B FU-A per ~1400 B packet. */
             size_t need = (size_t)req.len + (size_t)req.len / 64 + 256;
             size_t kfree = kcap > kq ? kcap - kq : 0;
-            if (need > net_tx_room(&client->tx) + kfree)
+            if (need > net_tx_room(&client->tx) + kfree) {
                 pv = tx_pace_no_room(&client->pace, backlog, ms_ts_now(), &ev);
+                /* Bigger than the kernel buffer plus the whole queue: it can never be sent, so the stream
+                 * stays in SKIP mode until the max-skip limit drops the client. Say so (at most every 10 s). */
+                static int64_t last_big_ms;
+                int64_t now_ms = ms_ts_now();
+                if (need > qcap + kcap && (last_big_ms == 0 || now_ms - last_big_ms >= TX_PACE_LOG_MS)) {
+                    last_big_ms = now_ms;
+                    printf("[ak_rtsp] frame of %d bytes cannot fit the TCP send room (%zu bytes): video is skipped\n",
+                           req.len, qcap + kcap);
+                }
+            }
         }
         if (pv != TX_PACE_SEND) {
             send_it = false;
@@ -966,10 +976,10 @@ static int send_video_frame(Client *client)
         }
         if (pv == TX_PACE_DROP_CLIENT && !client->drop_reason)
             client->drop_reason = ev.drop_reason; /* the client loop ends the session after this frame */
-        if (ev.log_it && ev.entered)
+        if (ev.log_enter && ev.entered)
             printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
                    backlog);
-        if (ev.log_it && ev.left)
+        if (ev.log_leave && ev.left)
             printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", ev.run_skipped);
     }
     if (send_it && client->need_idr) {

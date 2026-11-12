@@ -46,18 +46,18 @@ static void enter_skip(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_eve
         p->have_log = 1;
         p->last_log_ms = now_ms;
         p->run_logged = 1;
-        e->log_it = 1;
+        e->log_enter = 1;
     } else {
         p->run_logged = 0;
     }
+    e->log_it = e->log_enter || e->log_leave;
 }
 
 tx_pace_verdict_t tx_pace_no_room(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_event_t *ev)
 {
     tx_pace_event_t none;
     memset(&none, 0, sizeof(none));
-    tx_pace_event_t *e = ev ? ev : &none;
-    *e = none;
+    tx_pace_event_t *e = ev ? ev : &none; /* *ev is kept: it may hold the "left SKIP" event of this frame's decide */
     if (!p->skipping) enter_skip(p, backlog, now_ms, e);
     else p->run_skipped++;
     return TX_PACE_SKIP;
@@ -86,7 +86,8 @@ tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t ba
         p->skipping = 0;
         e->left = 1;
         e->run_skipped = p->run_skipped;
-        e->log_it = p->run_logged; /* the leave line only closes an enter line that was printed */
+        e->log_leave = p->run_logged; /* the leave line only closes an enter line that was printed */
+        e->log_it = e->log_leave;
         p->run_skipped = 0;
         p->run_logged = 0;
         return TX_PACE_SEND;
