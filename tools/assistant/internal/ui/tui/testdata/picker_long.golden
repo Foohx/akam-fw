@@ -1,0 +1,14 @@
+Which camera?
+ > 1) camera-01 192.0.2.10
+   2) camera-02 192.0.2.11
+   3) camera-03 192.0.2.12
+   4) camera-04 192.0.2.13
+   5) camera-05 192.0.2.14
+   6) camera-06 192.0.2.15
+   7) camera-07 192.0.2.16
+   8) camera-08 192.0.2.17
+   9) camera-09 192.0.2.18
+      camera-10 192.0.2.19
+      camera-11 192.0.2.20
+      camera-12 192.0.2.21
+  up/down move   Enter choose   1-9 jump   type filter   Esc cancel

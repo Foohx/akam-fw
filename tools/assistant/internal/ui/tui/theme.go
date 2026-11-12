@@ -151,6 +151,7 @@ type Theme struct {
 	OK, Warn, Err, Accent, Info, Muted lipgloss.Style
 	Bold                               lipgloss.Style
 	Sel                                lipgloss.Style // selected row: accent + bold
+	Rev                                lipgloss.Style // the text cursor: reverse video
 	Glyphs                             Glyphs
 	Mode                               Mode
 	Profile                            termenv.Profile
@@ -186,6 +187,7 @@ func NewTheme(e Env) *Theme {
 	}
 	t.Bold = r.NewStyle().Bold(true)
 	t.Sel = t.Accent.Bold(true)
+	t.Rev = r.NewStyle().Reverse(true)
 	return t
 }
 
@@ -261,6 +263,17 @@ func (t *Theme) Footer(pairs ...string) string {
 		parts = append(parts, t.Accent.Render(pairs[i])+" "+t.Muted.Render(pairs[i+1]))
 	}
 	return strings.Join(parts, "   ")
+}
+
+// CursorAt draws the text rs with the cursor before rune pos: reverse video on the character under
+// it (a space at the end). The Ascii profile (no terminal) emits no attribute, so no cursor shows.
+func (t *Theme) CursorAt(rs []rune, pos int) string {
+	pos = min(max(pos, 0), len(rs))
+	under, rest := " ", ""
+	if pos < len(rs) {
+		under, rest = string(rs[pos]), string(rs[pos+1:])
+	}
+	return string(rs[:pos]) + t.Rev.Render(under) + rest
 }
 
 // Rule is a muted separator line of n columns.

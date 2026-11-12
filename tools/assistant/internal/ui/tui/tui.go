@@ -89,15 +89,28 @@ func (u *UI) Secret(prompt string) (string, error) {
 	return m.Value(), nil // the caller registers it once it has validated it
 }
 
+// splitBack separates a trailing "Back" or "Cancel" row: in the TUI Esc does what the row does, so
+// the row is not drawn; plain keeps it. hidden is its index, or -1.
+func splitBack(items []string) (shown []string, hidden int) {
+	if n := len(items); n > 1 && (items[n-1] == "Back" || items[n-1] == "Cancel") {
+		return items[:n-1], n - 1
+	}
+	return items, -1
+}
+
 func (u *UI) Pick(title string, items []string) (int, error) {
 	if !u.widgets() || u.DryRun {
 		return u.Plain.Pick(title, items)
 	}
-	m := &Picker{Title: title, Items: items}
+	shown, hidden := splitBack(items)
+	m := &Picker{Title: title, Items: shown}
 	if err := u.run(m, false); err != nil {
 		return -1, err
 	}
 	if m.Cancelled {
+		if hidden >= 0 {
+			return hidden, nil // Esc is the hidden Back / Cancel row
+		}
 		return -1, ui.ErrNoInput
 	}
 	return m.Cursor, nil

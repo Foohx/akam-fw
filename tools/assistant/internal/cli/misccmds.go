@@ -249,6 +249,28 @@ type Menuer interface {
 	Menu(title string, items []ui.MenuItem) (int, error)
 }
 
+// Sessioner is implemented by the TUI: Session shows the full-screen session and runs fn in a
+// goroutine whose ui.UI renders inside it (Say/Good/Warn/Err on the result strip, questions as
+// overlays). It returns fn's error. Without a terminal it just runs fn.
+type Sessioner interface {
+	Session(fn func(ui.UI) error) error
+}
+
+// inSession runs run inside the session when the UI has one, with a.UI swapped for the session's UI
+// (the flows keep using a.UI). done is false when there is no session: the caller then runs run itself.
+func (a *App) inSession(run func() error) (done bool, err error) {
+	s, ok := a.UI.(Sessioner)
+	if !ok {
+		return false, nil
+	}
+	return true, s.Session(func(u ui.UI) error {
+		outer := a.UI
+		a.UI = u
+		defer func() { a.UI = outer }()
+		return run()
+	})
+}
+
 type menuEntry struct {
 	item ui.MenuItem
 	args []string
@@ -300,6 +322,9 @@ func (a *App) cmdMenu() error {
 // cmdStepMenu is the list of the nine steps and the read-only camera tools (akam steps): the state
 // machine of the bash wizard, kept for people who want to run one step at a time.
 func (a *App) cmdStepMenu() error {
+	if done, err := a.inSession(a.cmdStepMenu); done { // the session UI is not a Sessioner: no recursion
+		return err
+	}
 	var res ui.MenuResult
 	for {
 		entries := a.menuEntries()

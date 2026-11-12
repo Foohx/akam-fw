@@ -1,0 +1,16 @@
+ Akam 0.9  linux/amd64
+ salon  192.0.2.41  Akam 1.4.2   [ok] ready   [!] clock off
+ ----------------------------------------------------------
+ Back up the camera - salon                     step 3 of 4
+  [ok] Connect over SSH
+  [ok] Check free space
+  | Dump the flash
+      mtd2 rootfs  ############------------ 52 %
+
+  [ok] Connected
+  12.4 GB free
+  [!] The camera clock is off
+
+ ----------------------------------------------------------
+ [!] The camera clock is off
+ Ctrl-C stop

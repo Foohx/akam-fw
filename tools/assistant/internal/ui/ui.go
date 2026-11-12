@@ -76,3 +76,25 @@ type MenuView struct {
 	Items  []MenuItem
 	Result MenuResult
 }
+
+// HeaderBadge is one health badge of the session header. Level is "ok", "warn", "error", "info" or
+// "muted"; Text is one short word (12 columns at most).
+type HeaderBadge struct {
+	Level string
+	Text  string
+}
+
+// Header is the first lines of the full-screen session: the product line and the chosen camera with
+// its health badges. Badges are listed by priority; a narrow window drops them from the right.
+// An empty Name and IP mean "no camera".
+type Header struct {
+	Product  string // "Akam 0.9  linux/amd64"; empty means "Akam"
+	Name     string
+	IP       string
+	Firmware string
+	Badges   []HeaderBadge
+}
+
+// HeaderSetter is implemented by the session UI: SetHeader replaces the header (it may be called
+// from the flow goroutine at any time).
+type HeaderSetter interface{ SetHeader(h Header) }
