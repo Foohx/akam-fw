@@ -21,7 +21,16 @@ func opModel(w, h int) (*sessModel, func(d time.Duration)) {
 	return m, func(d time.Duration) { now = now.Add(d) }
 }
 
-func op(m *sessModel, v msgOp) { m.Update(v) }
+// op feeds an Operator call to the model; "writing" also sets the session atomic like OpWriting does.
+func op(m *sessModel, v msgOp) {
+	if v.kind == "writing" {
+		if v.on {
+			m.st.wrote.Store(true)
+		}
+		m.st.writing.Store(v.on)
+	}
+	m.Update(v)
+}
 
 func backupOp(m *sessModel, adv func(time.Duration)) {
 	m.Update(msgBanner{"Back up the camera - salon"})

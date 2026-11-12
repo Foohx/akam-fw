@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Foohx/akam-fw/tools/assistant/internal/guard"
 )
 
 // DialFunc is net.Dialer.DialContext.
@@ -36,11 +38,9 @@ func OpenPorts(ctx context.Context, host string, ports []int, timeout time.Durat
 		dial = realDial(timeout)
 	}
 	open := make([]bool, len(ports))
-	var wg sync.WaitGroup
+	var wg guard.Group // a panic of a probe is raised in the caller, where the session restores the terminal
 	for i, p := range ports {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			c, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			conn, err := dial(c, "tcp", net.JoinHostPort(host, strconv.Itoa(p)))
@@ -48,7 +48,7 @@ func OpenPorts(ctx context.Context, host string, ports []int, timeout time.Durat
 				conn.Close()
 				open[i] = true
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	var out []int
@@ -223,16 +223,14 @@ func ScanProgress(ctx context.Context, sn Subnet, ports Ports, conc int, timeout
 	sem := make(chan struct{}, conc)
 	var mu sync.Mutex
 	var found []Host
-	var wg sync.WaitGroup
+	var wg guard.Group
 	var probed atomic.Int64
 	total := ScanCount(sn)
 	for _, ip := range sn.Hosts() {
 		ipS := ip.String()
 		for _, p := range plist {
-			wg.Add(1)
 			sem <- struct{}{}
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer func() { <-sem }()
 				if progress != nil {
 					defer func() { progress(int(probed.Add(1)), total) }()
@@ -256,7 +254,7 @@ func ScanProgress(ctx context.Context, sn Subnet, ports Ports, conc int, timeout
 					}
 				}
 				found = append(found, Host{IP: ipS, Open: []int{p}})
-			}()
+			})
 		}
 	}
 	wg.Wait()

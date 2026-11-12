@@ -14,6 +14,10 @@ var ErrNoTTY = errors.New("no terminal")
 // ErrNoInput means the input ended before an answer was given.
 var ErrNoInput = errors.New("no input")
 
+// ErrInterrupted is returned by a session the user left (a second Ctrl-C) while the flow was still
+// busy: the work in progress was cut short. The program exits with status 130 and says so once.
+var ErrInterrupted = errors.New("interrupted")
+
 // UsageError is a command-line mistake: the message is printed on stderr and the exit status is 2.
 type UsageError struct{ Msg string }
 
@@ -69,6 +73,17 @@ type MenuResult struct {
 	Level string
 	Text  string
 }
+
+// ActionResulter is implemented by the session UI: it remembers the outcome of the action running (the
+// last Good, Warn or Err; an error stays over a later success) from the call of ClearOutput. The
+// caller reads it instead of wrapping the UI, so every optional interface of the session stays visible
+// to the flow (Operator, Checklister, FormKeyer, TechFailer, HeaderSetter, ...).
+type ActionResulter interface{ ActionResult() MenuResult }
+
+// Stopper is implemented by the session UI: StopChan is closed when the user asked the action running
+// to stop (Esc on an operation, the first Ctrl-C), and replaced by a fresh channel when the next
+// action starts. Read-only phases tie their context to it; a write to the camera never does.
+type Stopper interface{ StopChan() <-chan struct{} }
 
 // MenuView is a full-screen menu with the result of the previous action.
 type MenuView struct {

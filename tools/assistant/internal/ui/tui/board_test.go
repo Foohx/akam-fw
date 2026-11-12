@@ -106,12 +106,12 @@ func TestBoardKeys(t *testing.T) {
 	m := boardModel(80, 24, testHeader, chooserBoard())
 	press(m, "x", "down", "down", "enter", "s", "ctrl+c", "esc")
 	got := drain(m)
-	want := []boardEv{{"enter", 2}, {"s", 2}, {"esc", 2}, {"esc", 2}}
+	want := []boardEv{{key: "enter", row: 2}, {key: "s", row: 2}, {key: "esc", row: 2}, {key: "esc", row: 2}}
 	if len(got) != len(want) {
 		t.Fatalf("events %v, want %v", got, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if got[i].key != want[i].key || got[i].row != want[i].row {
 			t.Errorf("event %d: %v, want %v", i, got[i], want[i])
 		}
 	}
@@ -119,7 +119,7 @@ func TestBoardKeys(t *testing.T) {
 	m = boardModel(80, 24, testHeader, home)
 	press(m, "2", "8", "3")
 	got = drain(m)
-	if len(got) != 2 || got[0] != (boardEv{"enter", 1}) || got[1].key != "8" {
+	if len(got) != 2 || got[0].key != "enter" || got[0].row != 1 || got[1].key != "8" {
 		t.Errorf("home events %v", got)
 	}
 }

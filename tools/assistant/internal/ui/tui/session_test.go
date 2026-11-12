@@ -616,8 +616,13 @@ func TestSessionFlowPanic(t *testing.T) {
 	inR, inW := io.Pipe()
 	defer inW.Close()
 	defer func() {
-		if r := recover(); r != "boom" {
-			t.Errorf("recovered %v", r)
+		fp, ok := recover().(*FlowPanic)
+		if !ok || fp.Value != "boom" {
+			t.Fatalf("recovered %v", fp)
+		}
+		// the stack is the one of the flow, with the function that panicked
+		if !strings.Contains(string(fp.Stack), "TestSessionFlowPanic") {
+			t.Errorf("the stack lacks the panicking function:\n%s", fp.Stack)
 		}
 	}()
 	_, _, _ = runSession(testTheme(), newBase(), nil, sessionOpts{in: inR, out: &syncBuf{}, alt: true},
@@ -739,6 +744,8 @@ func TestSessionMenuOverlay(t *testing.T) {
 }
 
 // ---------------------------------------------------------------- layout goldens
+
+func init() { dangerTypeAhead = 0 } // the tests answer at once; TestDangerTypeAhead sets it back
 
 func layoutModel(w, h int) *sessModel {
 	m := newSessModel(testTheme(), newSessState())

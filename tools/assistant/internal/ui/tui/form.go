@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,6 +56,10 @@ type Form struct {
 	gen      int    // debounce generation: only the last tick counts
 	want     bool   // a tick came while an apply was running
 	help     bool   // "?" shows the detail of the focused row
+
+	// pending counts the Apply calls started and not returned: the session waits for them before it
+	// hands the flow back, so a form closed with a second Esc leaves nothing running behind the flow.
+	pending sync.WaitGroup
 }
 
 // formMsg is a message that belongs to one Form (a session may hold several).
@@ -194,7 +199,9 @@ func (m *Form) flush() tea.Cmd {
 		m.dirty[i] = false
 		m.inflight = i
 		id, val, apply := m.Rows[i].ID, m.Rows[i].Value, m.Apply
+		m.pending.Add(1)
 		return func() tea.Msg {
+			defer m.pending.Done()
 			if apply == nil {
 				return formResult{f: m, i: i}
 			}
@@ -489,29 +496,59 @@ func (m *Form) keyText(k tea.KeyMsg) tea.Cmd {
 
 // ---------------------------------------------------------------- drawing
 
-func (m *Form) keys() []string {
+func (m *Form) keys() []string { return m.keysFit(nil) }
+
+// keysFit is the footer pairs; when fits is given and the full list does not fit, hints are dropped
+// like on the board: the move and change hints first, then the group and type hints, then "? details",
+// then the action keys from the last one. Esc and the first action key stay.
+func (m *Form) keysFit(fits func([]string) bool) []string {
 	switch {
 	case m.edit != nil:
 		return []string{"Enter", "apply", "Esc", "cancel"}
 	case m.typing:
 		return []string{"0-9", "type", "Enter", "apply", "Esc", "cancel"}
 	}
-	k := []string{"left/right", "change", "up/down", "move"}
+	move := []string{"left/right", "change", "up/down", "move"}
+	var extra []string
 	if len(m.groups()) > 1 {
-		k = append(k, "Tab", "group")
+		extra = append(extra, "Tab", "group")
 	}
 	if m.focus < len(m.Rows) && m.editable(m.focus) && m.Rows[m.focus].Kind != ui.FormEnum {
-		k = append(k, "Enter", "type a value")
+		extra = append(extra, "Enter", "type a value")
 	}
+	var actions []string
 	for _, fk := range m.Keys {
-		k = append(k, fk.Key, fk.Label)
+		actions = append(actions, fk.Key, fk.Label)
 	}
-	return append(k, "?", "details", "Esc", "back")
+	cat := func(parts ...[]string) []string {
+		var out []string
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
+	}
+	details, back := []string{"?", "details"}, []string{"Esc", "back"}
+	all := cat(move, extra, actions, details, back)
+	if fits == nil || fits(all) {
+		return all
+	}
+	for _, p := range [][]string{cat(extra, actions, details, back), cat(actions, details, back), cat(actions, back)} {
+		if fits(p) {
+			return p
+		}
+	}
+	a := actions
+	for len(a) > 2 && !fits(cat(a, back)) {
+		a = a[:len(a)-2]
+	}
+	return cat(a, back)
 }
 
 func (m *Form) View() string {
 	w, _ := m.size()
-	return m.body() + clip("  "+m.themed().Footer(m.keys()...), w) + "\n"
+	th := m.themed()
+	fit := func(p []string) bool { return lipgloss.Width(th.Footer(p...))+2 <= w }
+	return m.body() + clip("  "+th.Footer(m.keysFit(fit)...), w) + "\n"
 }
 
 // bar draws the value of an int row between its Min and Max.

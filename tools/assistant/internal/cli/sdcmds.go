@@ -25,10 +25,15 @@ func camsshGenerate(path string, pass []byte) error { return camssh.GenerateKey(
 func md5sum(b []byte) [16]byte { return md5.Sum(b) }
 
 // ignoreSignals makes Ctrl-C, hangup and TERM harmless while a flash is being written.
+//
+// It catches the signals into a channel nobody reads (Notify) instead of Ignore/Reset: Ignore and Reset
+// undo every Notify of the program, including the handler of the full-screen session, which would
+// then be gone for the rest of the session.
 func ignoreSignals() func() {
 	sigs := platform.SignalsToIgnore()
-	signal.Ignore(sigs...)
-	return func() { signal.Reset(sigs...) }
+	ch := make(chan os.Signal, 1) // a full channel drops the signal: that is the point
+	signal.Notify(ch, sigs...)
+	return func() { signal.Stop(ch) }
 }
 
 func (a *App) sd() sdcard.Backend {

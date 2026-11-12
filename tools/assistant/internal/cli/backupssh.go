@@ -107,7 +107,9 @@ func (a *App) runCapped(c *camssh.Client, cmd string, max int64) ([]byte, int, e
 		return nil, 0, errors.New(why)
 	}
 	a.Log.Line("CMD ssh root@%s %s", c.Host, cmd)
-	ctx, cancel := context.WithTimeout(a.Ctx, 60*time.Second)
+	base, stopCancel := a.stopCtx()
+	defer stopCancel()
+	ctx, cancel := context.WithTimeout(base, 60*time.Second)
 	defer cancel()
 	w := &capBuf{max: max}
 	res, err := c.RunStream(ctx, cmd, w)
@@ -115,6 +117,45 @@ func (a *App) runCapped(c *camssh.Client, cmd string, max int64) ([]byte, int, e
 		return nil, 0, err
 	}
 	return w.b.Bytes(), res.Status, nil
+}
+
+// errStopped is a read the user stopped (Esc on the operation).
+var errStopped = errors.New("stopped")
+
+// stopCtx is a.Ctx that is also cancelled when the user stops the action (ui.Stopper). Only read-only
+// phases use it: a write to the camera is never tied to a stop.
+func (a *App) stopCtx() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(a.Ctx)
+	if s, ok := a.UI.(ui.Stopper); ok {
+		if ch := s.StopChan(); ch != nil {
+			go func() {
+				select {
+				case <-ch:
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
+	return ctx, cancel
+}
+
+// stopRequested is whether the user asked the action running to stop.
+func (a *App) stopRequested() bool {
+	if s, ok := a.UI.(ui.Stopper); ok {
+		select {
+		case <-s.StopChan():
+			return true
+		default:
+		}
+	}
+	return false
+}
+
+// stoppedRead reports a read-only phase the user stopped: nothing failed, nothing was changed.
+func (a *App) stoppedRead() error {
+	a.UI.Warn("Stopped. Nothing was changed on the camera and nothing was kept here.")
+	return ui.ErrFailed // the warning above is the message: no error screen, no second line
 }
 
 // bkSSHRead streams partition n once and returns its bytes and sha256.
@@ -129,7 +170,9 @@ func (a *App) bkSSHReadP(c *camssh.Client, n int, size int64, on func(int64)) ([
 		return nil, "", errors.New(why)
 	}
 	a.Log.Line("CMD ssh root@%s %s", c.Host, cmd)
-	ctx, cancel := context.WithTimeout(a.Ctx, 300*time.Second)
+	base, stopCancel := a.stopCtx()
+	defer stopCancel()
+	ctx, cancel := context.WithTimeout(base, 300*time.Second)
 	defer cancel()
 	w := &capBuf{max: size, on: on}
 	w.b.Grow(int(size))
@@ -137,6 +180,8 @@ func (a *App) bkSSHReadP(c *camssh.Client, n int, size int64, on func(int64)) ([
 	switch {
 	case w.over:
 		return nil, "", fmt.Errorf("mtdblock%d: the camera sent more than the %d bytes of /proc/mtd; refused", n, size)
+	case a.stopRequested():
+		return nil, "", errStopped
 	case err != nil:
 		return nil, "", fmt.Errorf("mtdblock%d: the connection to the camera was lost: %s", n, textsafe.Clean(err.Error()))
 	case res.Status != 0:
@@ -160,11 +205,17 @@ func (a *App) bkSSHReadAll(c *camssh.Client, caps [8]int64) (data [8][]byte, con
 			op.status(fmt.Sprintf("%s   (runs on the camera, read only)", remoteReadMtd(n)))
 			a.UI.Say(fmt.Sprintf("  Reading mtdblock%d (read 1 of 2) ...", n))
 			d1, h1, err := a.bkSSHReadP(c, n, caps[n], op.bytes(0, 2*caps[n]))
+			if errors.Is(err, errStopped) {
+				return data, false, a.stoppedRead()
+			}
 			if err != nil {
 				return data, false, a.UI.Fail(err.Error()+".", "nothing was changed on the camera and nothing was written here; try again.")
 			}
 			a.UI.Say(fmt.Sprintf("  Reading mtdblock%d (read 2 of 2) ...", n))
 			_, h2, err := a.bkSSHReadP(c, n, caps[n], op.bytes(caps[n], 2*caps[n]))
+			if errors.Is(err, errStopped) {
+				return data, false, a.stoppedRead()
+			}
 			if err != nil {
 				return data, false, a.UI.Fail(err.Error()+".", "nothing was changed on the camera and nothing was written here; try again.")
 			}

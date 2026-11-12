@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
@@ -28,7 +29,9 @@ type boardSession struct {
 	*ui.Plain
 	mu         sync.Mutex
 	keys       []string
-	escOnWait  bool // a search listens: answer Esc at once (the user stops it)
+	escOnWait  bool        // a search listens: answer Esc (the user stops it)
+	endAfter   func() bool // when set, a search that listens finds the session ended (ErrNoInput) once it returns true
+	escAfter   func() bool // when set, Esc is answered only once it returns true (the search really started)
 	boards     []ui.Board
 	headers    []ui.Header
 	closed     int
@@ -67,9 +70,26 @@ func (s *boardSession) WaitBoardKey(stop <-chan struct{}) (string, int, error) {
 	}
 	s.mu.Lock()
 	s.waitedStop++
-	esc := s.escOnWait
+	esc, after, end := s.escOnWait, s.escAfter, s.endAfter
 	s.mu.Unlock()
+	if end != nil {
+		for !end() {
+			select {
+			case <-stop:
+				return "", -1, nil
+			case <-time.After(time.Millisecond):
+			}
+		}
+		return "", -1, ui.ErrNoInput
+	}
 	if esc {
+		for after != nil && !after() { // the user presses Esc once the search is under way
+			select {
+			case <-stop:
+				return "", -1, nil
+			case <-time.After(time.Millisecond):
+			}
+		}
 		return "esc", 0, nil
 	}
 	<-stop
@@ -210,7 +230,7 @@ func TestEscStopsScan(t *testing.T) {
 	e.fakeLAN("192.0.2.99")
 	var n atomic.Int32
 	e.countDial(&n, true) // every connection hangs until the context is cancelled
-	bs := &boardSession{keys: []string{"c", "s", "esc", "esc"}, escOnWait: true}
+	bs := &boardSession{keys: []string{"c", "s", "esc", "esc"}, escOnWait: true, escAfter: func() bool { return n.Load() > 0 }}
 	r := runBoard(t, e, bs, "y\n")
 	expectRC(t, r, 0)
 	if bs.waitedStop == 0 {
@@ -221,6 +241,52 @@ func TestEscStopsScan(t *testing.T) {
 	}
 	if got := bs.last(); len(got.Rows) != 7 {
 		t.Errorf("the home did not come back: %d rows", len(got.Rows))
+	}
+}
+
+// L7: the chooser help says that r connects to the remembered addresses at once, without asking.
+func TestChooserHelpSaysRecheckProbesAtOnce(t *testing.T) {
+	e := newEnv(t)
+	bs := &boardSession{keys: []string{"c", "esc", "esc"}}
+	r := runBoard(t, e, bs, "y\n")
+	expectRC(t, r, 0)
+	help := strings.Join(bs.last().Help, "\n")
+	bs.mu.Lock()
+	for _, b := range bs.boards {
+		if b.Title == "Choose the camera" {
+			help = strings.Join(b.Help, "\n")
+		}
+	}
+	bs.mu.Unlock()
+	if !strings.Contains(help, "r checks the remembered cameras again at once, without asking") {
+		t.Errorf("chooser help:\n%s", help)
+	}
+	if strings.Contains(help, "r checks the remembered cameras again, f forgets one. Each of them asks") {
+		t.Errorf("the help still says that r asks first:\n%s", help)
+	}
+}
+
+// The session ends while a search runs: the search is cancelled, nothing keeps dialling for nobody.
+func TestSessionEndCancelsTheSearch(t *testing.T) {
+	e := newEnv(t)
+	e.fakeLAN("192.0.2.99")
+	var n atomic.Int32
+	e.countDial(&n, true) // every connection hangs until the context is cancelled
+	bs := &boardSession{keys: []string{"c", "s"}, endAfter: func() bool { return n.Load() > 0 }}
+	done := make(chan result, 1)
+	start := time.Now()
+	go func() { done <- runBoard(t, e, bs, "y\n") }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the search kept running after the session ended")
+	}
+	// a probe that is not cancelled waits its own 2 s timeout
+	if d := time.Since(start); d > 1500*time.Millisecond {
+		t.Errorf("the search took %v to notice that the session ended", d)
+	}
+	if n.Load() == 0 {
+		t.Error("the scan never started")
 	}
 }
 

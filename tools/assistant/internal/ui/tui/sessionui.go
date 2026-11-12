@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +14,25 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
+// FlowPanic is what runSession panics with when the flow panicked: the value and the stack of the flow
+// goroutine, taken where it happened.
+type FlowPanic struct {
+	Value any
+	Stack []byte
+}
+
+func (p *FlowPanic) Error() string {
+	return fmt.Sprintf("%v\n\ngoroutine stack of the flow:\n%s", p.Value, p.Stack)
+}
+
+// Unwrap lets errors.As find an error the flow panicked with.
+func (p *FlowPanic) Unwrap() error {
+	e, _ := p.Value.(error)
+	return e
+}
+
 // errInterrupted is returned by a session the user left while the flow was still busy.
-var errInterrupted = errors.New("interrupted")
+var errInterrupted = ui.ErrInterrupted
 
 // graceDefault is how long Session waits for the flow after the program ended (a flow blocked in a
 // question is released at once; one busy in a long operation is not waited for any longer).
@@ -31,6 +48,10 @@ type sessionUI struct {
 
 	failMu sync.Mutex
 	fail   *ui.FailInfo // the last Fail, until it was shown or cleared
+
+	resMu   sync.Mutex
+	resLast ui.MenuResult // the last Good, Warn or Err of the action running
+	resErr  ui.MenuResult // the last Err: it stays the result over a later success
 }
 
 var (
@@ -63,7 +84,46 @@ func (s *sessionUI) clean(t string) string {
 }
 
 func (s *sessionUI) line(k lineKind, text string) {
-	s.st.send(msgLine{entry{k, s.clean(text)}})
+	text = s.clean(text)
+	s.st.send(msgLine{entry{k, text}})
+	level := ""
+	switch k {
+	case kGood:
+		level = "ok"
+	case kWarn:
+		level = "warn"
+	case kErr:
+		level = "error"
+	default:
+		return
+	}
+	if t := oneLine(text); t != "" {
+		res := ui.MenuResult{Level: level, Text: t}
+		s.resMu.Lock()
+		s.resLast = res
+		if level == "error" {
+			s.resErr = res
+		}
+		s.resMu.Unlock()
+	}
+}
+
+var (
+	_ ui.ActionResulter = (*sessionUI)(nil)
+	_ ui.Stopper        = (*sessionUI)(nil)
+)
+
+// StopChan is closed when the user asked the current action to stop (ui.Stopper).
+func (s *sessionUI) StopChan() <-chan struct{} { return s.st.stopChan() }
+
+// ActionResult is the outcome of the action running since the last ClearOutput (ui.ActionResulter).
+func (s *sessionUI) ActionResult() ui.MenuResult {
+	s.resMu.Lock()
+	defer s.resMu.Unlock()
+	if s.resErr.Text != "" {
+		return s.resErr
+	}
+	return s.resLast
 }
 
 func (s *sessionUI) Say(t string)  { t = s.clean(t); s.log("SAY %s", t); s.line(kSay, t) }
@@ -109,6 +169,12 @@ func (s *sessionUI) ClearFail() {
 // (ui.OutputClearer); the flow calls it as an action starts.
 func (s *sessionUI) ClearOutput() {
 	s.ClearFail()
+	s.resMu.Lock()
+	s.resLast, s.resErr = ui.MenuResult{}, ui.MenuResult{}
+	s.resMu.Unlock()
+	s.st.rearm() // synchronously: the next question of this action must not see the old stop
+	s.st.wrote.Store(false)
+	s.st.writing.Store(false) // one flow goroutine runs the actions one after the other: the last one is over
 	s.st.send(msgClear{})
 }
 
@@ -331,6 +397,18 @@ func (s *sessionUI) FormKeys(spec ui.FormSpec) (ui.FormResult, error) {
 	}
 	f := &Form{Title: textsafe.Clean(spec.Title), Rows: clean, Apply: safe, Keys: keys, StartGroup: textsafe.Clean(spec.Group)}
 	_, err := s.ask(f)
+	// An Apply still running (the form was left with a second Esc, or the program ended) must return
+	// before the flow goes on: the flow may close the connection it uses or read the options again.
+	wd := make(chan struct{})
+	go func() { f.pending.Wait(); close(wd) }()
+	select {
+	case <-wd:
+	case <-s.st.done: // the program is gone: wait for a running call, but not for ever
+		select {
+		case <-wd:
+		case <-time.After(graceDefault):
+		}
+	}
 	return ui.FormResult{Key: f.Key, Group: f.ShownGroup()}, err
 }
 
@@ -388,7 +466,11 @@ func runSession(th *Theme, base ui.UI, logf func(string, ...any), o sessionOpts,
 	go func() {
 		defer close(flowDone)
 		defer func() {
-			flowPanic = recover()
+			if r := recover(); r != nil {
+				// The stack is taken here, where the panic is still on it: raised again from runSession it
+				// would show the wrong goroutine.
+				flowPanic = &FlowPanic{Value: r, Stack: debug.Stack()}
+			}
 			p.Send(msgFlowDone{}) // returns at once when the program has ended
 		}()
 		flowErr = fn(sui)
@@ -403,10 +485,21 @@ func runSession(th *Theme, base ui.UI, logf func(string, ...any), o sessionOpts,
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	interrupted := false
-	select {
-	case <-flowDone:
-	case <-timer.C:
-		interrupted = true
+wait:
+	for {
+		select {
+		case <-flowDone:
+			break wait
+		case <-timer.C:
+			if st.writing.Load() {
+				// A write to the camera is under way: leaving now would cut it short and could leave the
+				// camera half written. Wait for the flow without limit.
+				timer.Reset(grace)
+				continue
+			}
+			interrupted = true
+			break wait
+		}
 	}
 	last, ok := m.lastResult()
 	switch {
@@ -442,5 +535,14 @@ func (u *UI) Session(fn func(ui.UI) error) error {
 			fmt.Fprintln(u.ErrOut, "ERROR: "+last.text)
 		}
 	}
+	return err
+}
+
+// RunSession is the full-screen session on the given streams instead of the terminal: fn runs against
+// the real session UI, the program reads its keys from in and draws on out (no alternate screen). It
+// exists for tests of the flows, which must see the same ui.UI the terminal gives them; the
+// terminal path is (*UI).Session.
+func RunSession(base ui.UI, in io.Reader, out io.Writer, fn func(ui.UI) error) error {
+	_, _, err := runSession(theme(), base, nil, sessionOpts{in: in, out: out}, fn)
 	return err
 }

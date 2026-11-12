@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
@@ -126,21 +127,20 @@ func (e *env) readStateOf(name, key string) string {
 func TestChooserScanDefaultsToNo(t *testing.T) {
 	e := newEnv(t)
 	e.rememberCamera("salon", "192.0.2.21")
-	dials := 0
+	var dials atomic.Int32 // the dial hook runs on the probe goroutines
 	e.fakeLAN("192.0.2.21")
 	inner := e.disc.Dial
-	e.disc.Dial = func(ctx context.Context, n, a string) (net.Conn, error) { dials++; return inner(ctx, n, a) }
+	e.disc.Dial = func(ctx context.Context, n, a string) (net.Conn, error) { dials.Add(1); return inner(ctx, n, a) }
 	r := e.noIP("5\n2\n7\n9\n", "--camera", "salon") // check remembered (4 ports), then back
 	expectRC(t, r, 0)
-	before := dials
-	if before == 0 {
+	if dials.Load() == 0 {
 		t.Error("checking the remembered camera dialled nothing")
 	}
-	dials = 0
+	dials.Store(0)
 	r = e.noIP("5\n3\n\n7\n9\n", "--camera", "salon") // scan, Enter = No
 	expectRC(t, r, 0)
-	if dials != 0 {
-		t.Errorf("%d connections before a yes", dials)
+	if n := dials.Load(); n != 0 {
+		t.Errorf("%d connections before a yes", n)
 	}
 	contains(t, r.out, "salon", "not answering")
 }
