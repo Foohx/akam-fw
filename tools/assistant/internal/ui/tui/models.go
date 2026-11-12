@@ -22,6 +22,7 @@ type YesNo struct {
 	Box    []string // lines of the warning box (danger)
 	Title  string
 	Danger bool
+	Frame  bool   // a normal question drawn in an accent box (the session overlay)
 	Theme  *Theme // nil: the package theme (SetTheme)
 	W      int    // window width (WindowSizeMsg); 0 means 80
 
@@ -93,7 +94,7 @@ func (m *YesNo) body() string {
 	}
 	styled := yes + "   " + no
 	var b strings.Builder
-	if !m.Danger {
+	if !m.Danger && !m.Frame {
 		fmt.Fprintf(&b, "%s\n  %s\n", th.Bold.Render(m.Prompt), styled)
 		return b.String()
 	}
@@ -117,7 +118,11 @@ func (m *YesNo) body() string {
 		}
 		lines = append(lines, styled)
 	}
-	b.WriteString(th.Box(th.Err, strings.ToUpper(truncW(m.Title, inner-3, th.Glyphs.Ellipsis)), lines, outer))
+	border, title := th.Err, strings.ToUpper(truncW(m.Title, inner-3, th.Glyphs.Ellipsis))
+	if !m.Danger { // a normal question: accent border, the title as given
+		border, title = th.Accent, truncW(m.Title, inner-3, th.Glyphs.Ellipsis)
+	}
+	b.WriteString(th.Box(border, title, lines, outer))
 	return b.String()
 }
 
