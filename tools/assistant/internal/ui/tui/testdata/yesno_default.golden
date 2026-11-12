@@ -1,2 +1,3 @@
 Make the camera visible to ONVIF apps?
-  ( ) Yes  (*) No   (y/N: Enter, Esc and q mean No)
+  ( ) Yes   (*) No
+  y yes   n/Enter/Esc/q no

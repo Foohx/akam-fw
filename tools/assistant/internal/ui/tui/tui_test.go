@@ -2,6 +2,7 @@ package tui
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,8 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden files")
 
-func init() { lipgloss.SetColorProfile(termenv.Ascii) } // no colour codes in the golden files
+// Golden files: the Ascii profile (no colour code) and the ASCII glyph set, whatever the host is.
+func init() { SetTheme(NewTheme(Env{Profile: termenv.Ascii, ASCII: true})) }
 
 func key(s string) tea.KeyMsg {
 	switch s {
@@ -217,21 +219,48 @@ func TestMenu(t *testing.T) {
 	golden(t, "menu_small_window_end", small.View())
 }
 
-// The colour map: the same views carry colour codes on a colour terminal (golden files are
-// compared without them).
-func TestColourMap(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.ANSI)
-	defer lipgloss.SetColorProfile(termenv.Ascii)
-	d := &YesNo{Prompt: "Write?", Title: "DANGER", Danger: true, Box: []string{"x"}}
-	if v := d.View(); !strings.Contains(v, "\x1b[") {
-		t.Errorf("the danger box has no colour: %q", v)
+// The menu at the three sizes of the spec; no line is wider than the window or taller than it.
+func TestMenuSizesGolden(t *testing.T) {
+	for _, sz := range [][2]int{{80, 24}, {60, 16}, {120, 40}} {
+		m := NewMenu("Akam 1.3.0  (linux/amd64)\nCamera: salon  192.0.2.21", menuItems())
+		m.Update(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
+		v := m.View()
+		for _, l := range strings.Split(v, "\n") {
+			if w := lipgloss.Width(l); w > sz[0] {
+				t.Errorf("%dx%d: a line is %d columns: %q", sz[0], sz[1], w, l)
+			}
+		}
+		if n := strings.Count(v, "\n"); n > sz[1] {
+			t.Errorf("%dx%d: %d lines", sz[0], sz[1], n)
+		}
+		golden(t, fmt.Sprintf("menu_%dx%d", sz[0], sz[1]), v)
 	}
-	menu := sized(NewMenu("t", menuItems())).View()
-	if !strings.Contains(menu, "\x1b[") {
-		t.Error("the menu has no colour")
+}
+
+// The red box at the three sizes: same lines as the plain Danger, command inside, No highlighted.
+func TestDangerSizesGolden(t *testing.T) {
+	for _, sz := range [][2]int{{80, 24}, {60, 16}, {120, 40}} {
+		d := &YesNo{Prompt: "Erase the card?", Title: "Erase the SD card", Danger: true, Box: []string{
+			"This erases everything on /dev/sdb (Sample 32 GB, 31.9 GB).",
+			"The camera is not touched. This cannot be undone.",
+			"",
+			"Command:  mkfs.fat -F32 /dev/sdb1"}}
+		d.Update(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
+		v := d.View()
+		for _, l := range strings.Split(v, "\n") {
+			if w := lipgloss.Width(l); w > sz[0] {
+				t.Errorf("%dx%d: a line is %d columns: %q", sz[0], sz[1], w, l)
+			}
+		}
+		if !strings.Contains(v, "ERASE THE SD CARD") || !strings.Contains(v, "(*) No") || strings.Contains(v, "(*) Yes") {
+			t.Errorf("%dx%d: title or default choice: %s", sz[0], sz[1], v)
+		}
+		golden(t, fmt.Sprintf("danger_%dx%d", sz[0], sz[1]), v)
 	}
-	// done is green, blocked is dim: different codes
-	if statusTag("done") == statusTag("blocked") {
-		t.Error("done and blocked look the same")
-	}
+}
+
+func TestPickerNarrowGolden(t *testing.T) {
+	p := &Picker{Title: "Which one?", Items: []string{"192.0.2.60  ports 22 554 8091 (akam, a long description of this camera)", "None of these"}}
+	p.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	golden(t, "picker_40", p.View())
 }

@@ -13,15 +13,6 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-var (
-	styBold   = lipgloss.NewStyle().Bold(true)
-	styDim    = lipgloss.NewStyle().Faint(true)
-	styRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	styGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	stySel    = lipgloss.NewStyle().Reverse(true)
-)
-
 // ---------------------------------------------------------------- yes / no
 
 // YesNo is the one yes/no question of the wizard: the default is No. y answers yes; n, q, Esc and
@@ -31,6 +22,8 @@ type YesNo struct {
 	Box    []string // lines of the warning box (danger)
 	Title  string
 	Danger bool
+	Theme  *Theme // nil: the package theme (SetTheme)
+	W      int    // window width (WindowSizeMsg); 0 means 80
 
 	yes    bool // highlighted choice
 	Done   bool
@@ -40,6 +33,10 @@ type YesNo struct {
 func (m *YesNo) Init() tea.Cmd { return nil }
 
 func (m *YesNo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if v, ok := msg.(tea.WindowSizeMsg); ok {
+		m.W = v.Width
+		return m, nil
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -63,36 +60,52 @@ func (m *YesNo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *YesNo) View() string {
-	var b strings.Builder
-	if m.Danger {
-		w := len(m.Title) + 2
-		for _, l := range m.Box {
-			if len(l)+2 > w {
-				w = len(l) + 2
-			}
-		}
-		b.WriteString(styRed.Render("+"+strings.Repeat("-", w)+"+") + "\n")
-		b.WriteString(styRed.Render("| "+pad(m.Title, w-1)+"|") + "\n")
-		for _, l := range m.Box {
-			b.WriteString(styRed.Render("| "+pad(l, w-1)+"|") + "\n")
-		}
-		b.WriteString(styRed.Render("+"+strings.Repeat("-", w)+"+") + "\n")
+	th := m.Theme
+	if th == nil {
+		th = theme()
 	}
-	yes, no := "( ) Yes", "( ) No"
+	yes, no := th.Glyphs.RadioOff+" Yes", th.Glyphs.RadioOff+" No"
 	if m.yes {
-		yes = stySel.Render("(*) Yes")
+		yes = th.Glyphs.RadioOn + " Yes"
 	} else {
-		no = stySel.Render("(*) No")
+		no = th.Glyphs.RadioOn + " No"
 	}
-	fmt.Fprintf(&b, "%s\n  %s  %s   %s\n", m.Prompt, yes, no, styDim.Render("(y/N: Enter, Esc and q mean No)"))
+	radios := yes + "   " + no // measured unstyled: the styling adds no column
+	if m.yes {
+		yes = th.Sel.Render(yes)
+	} else {
+		no = th.Sel.Render(no)
+	}
+	styled := yes + "   " + no
+	footer := "  " + th.Footer("y", "yes", "n/Enter/Esc/q", "no") + "\n"
+	var b strings.Builder
+	if !m.Danger {
+		fmt.Fprintf(&b, "%s\n  %s\n%s", th.Bold.Render(m.Prompt), styled, footer)
+		return b.String()
+	}
+	outer := m.W
+	if outer <= 0 {
+		outer = 80
+	}
+	outer = max(min(outer, 100), 24)
+	inner := outer - 4
+	var lines []string
+	lines = append(lines, "")
+	for _, l := range m.Box {
+		lines = append(lines, wrapW(l, inner)...)
+	}
+	lines = append(lines, "")
+	if q := m.Prompt; lipgloss.Width(q)+3+lipgloss.Width(radios) <= inner {
+		lines = append(lines, q+"   "+styled)
+	} else {
+		for _, l := range wrapW(q, inner) {
+			lines = append(lines, l)
+		}
+		lines = append(lines, styled)
+	}
+	b.WriteString(th.Box(th.Err, strings.ToUpper(truncW(m.Title, inner-3, th.Glyphs.Ellipsis)), lines, outer))
+	b.WriteString(footer)
 	return b.String()
-}
-
-func pad(s string, n int) string {
-	if len(s) >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-len(s))
 }
 
 // ---------------------------------------------------------------- text input
@@ -102,6 +115,7 @@ type Input struct {
 	Prompt string
 	Def    string
 	Secret bool
+	Theme  *Theme
 
 	val       []rune
 	Done      bool
@@ -150,7 +164,12 @@ func (m *Input) View() string {
 	if m.Secret {
 		shown = ""
 	}
-	return fmt.Sprintf("%s %s\n", m.Prompt, shown) // the prompt text already shows its default
+	th := m.Theme
+	if th == nil {
+		th = theme()
+	}
+	// the prompt text already shows its default
+	return fmt.Sprintf("%s %s\n  %s\n", th.Bold.Render(m.Prompt), shown, th.Footer("Enter", "ok", "Esc", "cancel"))
 }
 
 // ---------------------------------------------------------------- picker
@@ -159,15 +178,21 @@ func (m *Input) View() string {
 type Picker struct {
 	Title string
 	Items []string
+	Theme *Theme
 
 	Cursor    int
 	Done      bool
 	Cancelled bool
+	W         int // window width; 0 means 80
 }
 
 func (m *Picker) Init() tea.Cmd { return nil }
 
 func (m *Picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if v, ok := msg.(tea.WindowSizeMsg); ok {
+		m.W = v.Width
+		return m, nil
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -198,16 +223,26 @@ func (m *Picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Picker) View() string {
-	var b strings.Builder
-	b.WriteString(styBold.Render(m.Title) + "\n")
-	for i, it := range m.Items {
-		line := fmt.Sprintf("  %d) %s", i+1, it)
-		if i == m.Cursor {
-			line = stySel.Render("> " + line[2:])
-		}
-		b.WriteString(line + "\n")
+	th := m.Theme
+	if th == nil {
+		th = theme()
 	}
-	b.WriteString(styDim.Render("  up/down or j/k, Enter, or the number; Esc cancels") + "\n")
+	w := m.W
+	if w <= 0 {
+		w = 80
+	}
+	var b strings.Builder
+	b.WriteString(th.Bold.Render(m.Title) + "\n")
+	for i, it := range m.Items {
+		num := fmt.Sprintf("%d)", i+1)
+		it = truncW(it, max(w-len(num)-5, 8), th.Glyphs.Ellipsis)
+		if i == m.Cursor {
+			b.WriteString(" " + th.Sel.Render(th.Glyphs.Marker+" "+num+" "+it) + "\n")
+		} else {
+			b.WriteString("   " + th.Muted.Render(num) + " " + it + "\n")
+		}
+	}
+	b.WriteString("  " + th.Footer(th.Glyphs.UpDown, "move", "Enter", "choose", "1-9", "jump", "Esc", "cancel") + "\n")
 	return b.String()
 }
 
@@ -218,6 +253,7 @@ func (m *Picker) View() string {
 type Menu struct {
 	Title string
 	Items []ui.MenuItem
+	Theme *Theme
 
 	Cursor int
 	Help   bool
@@ -279,23 +315,26 @@ func (m *Menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func statusTag(s string) string {
+// statusBadge is the badge of a step status; ok is false for a line without one (tool, plain).
+func (m *Menu) statusBadge(th *Theme, s string) (string, bool) {
 	switch s {
 	case "done":
-		return styGreen.Render("done   ")
-	case "blocked":
-		return styDim.Render("blocked")
+		return th.Badge(BadgeOK, "done"), true
 	case "stale":
-		return styYellow.Render("stale  ")
-	case "tool":
-		return "tool   "
-	case "plain":
-		return "       "
+		return th.Badge(BadgeWarn, "stale"), true
+	case "blocked":
+		return th.Badge(BadgeMute, "blocked"), true
+	case "tool", "plain":
+		return "", false
 	}
-	return "todo   "
+	return th.Badge(BadgeInfo, "todo"), true
 }
 
 func (m *Menu) View() string {
+	th := m.Theme
+	if th == nil {
+		th = theme()
+	}
 	h := m.H
 	if h < 8 {
 		h = 8
@@ -308,15 +347,41 @@ func (m *Menu) View() string {
 		m.top = m.Cursor - rows + 1
 	}
 	var b strings.Builder
-	b.WriteString(styBold.Render(m.Title) + "\n")
-	b.WriteString(strings.Repeat("-", min(m.W, 78)) + "\n")
+	tl := strings.Split(m.Title, "\n")
+	for i, l := range tl {
+		if len(tl) > 1 && i == 0 {
+			b.WriteString(th.Muted.Render(l) + "\n") // product line of the home header
+		} else {
+			b.WriteString(th.Bold.Render(l) + "\n")
+		}
+	}
+	b.WriteString(th.Rule(min(m.W, 78)) + "\n")
+	tagged := false
+	for _, it := range m.Items {
+		if _, ok := m.statusBadge(th, it.Status); ok {
+			tagged = true
+		}
+	}
+	tagW := 0
+	if tagged {
+		tagW = th.BadgeWidth(len("blocked")) + 2
+	}
 	for i := m.top; i < len(m.Items) && i < m.top+rows; i++ {
 		it := m.Items[i]
-		line := fmt.Sprintf("  %s  %s", statusTag(it.Status), it.Label)
+		prefix := "   "
 		if i == m.Cursor {
-			line = stySel.Render(">" + line[1:])
+			prefix = " " + th.Sel.Render(th.Glyphs.Marker) + " "
 		}
-		b.WriteString(line + "\n")
+		tag := ""
+		if tagged {
+			bd, _ := m.statusBadge(th, it.Status)
+			tag = pad(bd, tagW)
+		}
+		label := truncW(it.Label, max(m.W-3-tagW-1, 8), th.Glyphs.Ellipsis)
+		if i == m.Cursor {
+			label = th.Sel.Render(label)
+		}
+		b.WriteString(prefix + tag + label + "\n")
 	}
 	for i := len(m.Items) - m.top; i < rows; i++ {
 		b.WriteString("\n")
@@ -324,16 +389,16 @@ func (m *Menu) View() string {
 	b.WriteString("\n")
 	if m.Cursor < len(m.Items) {
 		d := m.Items[m.Cursor].Detail
-		if !m.Help && len(d) > m.W-4 && m.W > 8 {
-			d = d[:m.W-7] + "..."
+		if !m.Help && m.W > 8 {
+			d = truncW(d, m.W-4, th.Glyphs.Ellipsis)
 		}
 		b.WriteString("  " + d + "\n")
 	}
 	if m.Help {
-		b.WriteString(styDim.Render("  Enter runs the line. Every action shows what it will do first and asks one yes/no (default No).") + "\n")
+		b.WriteString("  " + th.Muted.Render("Enter runs the line. Every action shows what it will do first and asks one yes/no (default No).") + "\n")
 	} else {
 		b.WriteString("\n")
 	}
-	b.WriteString(styDim.Render("  up/down or j/k move, Enter runs, ? help, q quits") + "\n")
+	b.WriteString("  " + th.Footer(th.Glyphs.UpDown, "move", "Enter", "run", "?", "help", "q", "quit") + "\n")
 	return b.String()
 }

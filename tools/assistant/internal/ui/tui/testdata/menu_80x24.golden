@@ -1,0 +1,24 @@
+Akam 1.3.0  (linux/amd64)
+Camera: salon  192.0.2.21
+------------------------------------------------------------------------------
+   [ok] done     1. Check this computer
+ > [~] todo      2. Get the Akam kit
+   [-] blocked   3. Prepare the backup microSD card
+   [!] stale     4. Find the camera on your network
+                 Camera: show LEDs
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Why: the prebuilt kit means no compiling. Risk: none (download + signatur...
+
+  up/down move   Enter run   ? help   q quit
