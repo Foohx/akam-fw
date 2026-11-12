@@ -100,6 +100,9 @@ const (
 	ExitOK    = 0
 	ExitFail  = 1
 	ExitUsage = 2
+
+	// ExitInterrupted is the status of a run the user cut short (Ctrl-C), like a shell reports SIGINT.
+	ExitInterrupted = 130
 )
 
 // Run is the whole program: it returns the exit status.
@@ -238,8 +241,12 @@ func exitCode(a *App, err error) int {
 		return ExitUsage
 	case errors.Is(err, ui.ErrFailed):
 		return ExitFail
+	case errors.Is(err, ui.ErrInterrupted):
+		// The session is gone and the work was cut short: one line on stderr, the shell's status for SIGINT.
+		fmt.Fprintln(a.Streams.Err, "akam: interrupted; the action in progress was stopped before it finished.")
+		return ExitInterrupted
 	case errors.Is(err, context.Canceled):
-		return 130
+		return ExitInterrupted
 	default:
 		a.UI.Err(err.Error())
 		return ExitFail

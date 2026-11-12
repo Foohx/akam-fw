@@ -34,9 +34,13 @@ type screenBuf struct {
 	b  bytes.Buffer
 }
 
-func (s *screenBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
-func (s *screenBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
-func (s *screenBuf) Len() int                    { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Len() }
+func (s *screenBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *screenBuf) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+func (s *screenBuf) Len() int       { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Len() }
 
 func (s *screenBuf) waitFor(t *testing.T, text string, d time.Duration) {
 	t.Helper()
@@ -120,5 +124,32 @@ func TestStepsFlashWriteIsLockedInTheRealSession(t *testing.T) {
 	_ = r
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) {
 		t.Error("the image was not written completely")
+	}
+}
+
+// L11: switching the stream password off asks in the red danger box (title, facts, default No).
+func TestPasswordRemovalUsesTheDangerBox(t *testing.T) {
+	e := newEnv(t)
+	r := e.run("\n", "rtsp-auth", "disable") // Enter: the default is No
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "Switch the video stream password off", "Camera: 127.0.0.1",
+		"Anyone on your network could then watch the camera.", "Switch the video stream password off? [y/N]", "Left as it was.")
+}
+
+type interruptedSession struct{ *ui.Plain }
+
+func (interruptedSession) Session(func(ui.UI) error) error { return ui.ErrInterrupted }
+
+// L4: a session left with a second Ctrl-C while the flow is busy exits 130 and says so once.
+func TestInterruptedSessionExits130(t *testing.T) {
+	e := newEnv(t)
+	h := e.hooks()
+	h.UI = func(o *cli.Options, s cli.Streams, log *state.Log, sec *state.Secrets, dry bool) ui.UI {
+		return interruptedSession{cli.NewPlainUI(o, s, log, sec, dry)}
+	}
+	r := runWith(e, h, "", append(e.base(), "--camera", "default", "steps")...)
+	expectRC(t, r, 130)
+	if n := strings.Count(r.err, "interrupted"); n != 1 {
+		t.Errorf("%d interrupted lines on stderr:\n%s", n, r.err)
 	}
 }

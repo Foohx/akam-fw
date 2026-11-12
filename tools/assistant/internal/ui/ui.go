@@ -14,6 +14,10 @@ var ErrNoTTY = errors.New("no terminal")
 // ErrNoInput means the input ended before an answer was given.
 var ErrNoInput = errors.New("no input")
 
+// ErrInterrupted is returned by a session the user left (a second Ctrl-C) while the flow was still
+// busy: the work in progress was cut short. The program exits with status 130 and says so once.
+var ErrInterrupted = errors.New("interrupted")
+
 // UsageError is a command-line mistake: the message is printed on stderr and the exit status is 2.
 type UsageError struct{ Msg string }
 
