@@ -6,23 +6,27 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakePulse stands for a PulseAudio connection: the adapter is tested without any sound server.
 type fakePulse struct {
 	push      func([]int16) error
+	isLost    bool
 	stopped   int
 	closed    int
 	recordErr error
 }
 
-func (f *fakePulse) Record(push func([]int16) error) (func(), error) {
+func (f *fakePulse) Record(push func([]int16) error) (func(), func() bool, error) {
 	if f.recordErr != nil {
-		return nil, f.recordErr
+		return nil, nil, f.recordErr
 	}
 	f.push = push
-	return func() { f.stopped++ }, nil
+	return func() { f.stopped++ }, func() bool { return f.isLost }, nil
 }
 func (f *fakePulse) Close() { f.closed++ }
 
@@ -48,6 +52,42 @@ func TestPulseBackendAdapter(t *testing.T) {
 	if err := fp.push([]int16{3}); err == nil {
 		t.Error("the callback still accepts data after Close")
 	}
+}
+
+// A server that disappears mid-talk ends the stream with an error instead of blocking the reader.
+func TestPulseWatchdogEndsStreamWhenServerIsLost(t *testing.T) {
+	old := pulseWatchEvery
+	pulseWatchEvery = 5 * time.Millisecond
+	defer func() { pulseWatchEvery = old }()
+	var lost atomic.Bool
+	fp := &fakePulse{}
+	b := &pulseBackend{connect: func() (pulseSession, error) { return &lostPulse{fakePulse: fp, lost: &lost}, nil }}
+	r, err := b.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	done := make(chan error, 1)
+	go func() { _, err := r.Read(make([]byte, 4)); done <- err }()
+	lost.Store(true)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "lost the connection") {
+			t.Errorf("read error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the reader stayed blocked after the server was lost")
+	}
+}
+
+type lostPulse struct {
+	*fakePulse
+	lost *atomic.Bool
+}
+
+func (l *lostPulse) Record(push func([]int16) error) (func(), func() bool, error) {
+	stop, _, err := l.fakePulse.Record(push)
+	return stop, l.lost.Load, err
 }
 
 func TestPulseBackendUnreachable(t *testing.T) {

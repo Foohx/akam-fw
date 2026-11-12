@@ -15,6 +15,7 @@ type fakeBackend struct {
 	name      string
 	available bool
 	opened    int
+	openErr   error
 	data      []byte
 	closed    chan struct{}
 }
@@ -23,6 +24,9 @@ func (f *fakeBackend) Name() string    { return f.name }
 func (f *fakeBackend) Available() bool { return f.available }
 func (f *fakeBackend) Open(ctx context.Context) (io.ReadCloser, error) {
 	f.opened++
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
 	return &fakeStream{f: f, r: bytesReader(f.data)}, nil
 }
 
@@ -169,15 +173,15 @@ func f32le(v float32) []byte {
 }
 
 func TestPCMConverter(t *testing.T) {
-	// float stereo 16 kHz: left 0.5, right -0.25 -> mean 0.125 * 32768 = 4096, two frames make one output sample
-	c := NewPCMConverter(16000, 2, 32, true)
+	// float stereo: left 0.5, right -0.25 -> mean 0.125 * 32768 = 4096
+	c := NewPCMConverter(8000, 2, 32, true)
 	var in []byte
 	for i := 0; i < 4; i++ {
 		in = append(in, f32le(0.5)...)
 		in = append(in, f32le(-0.25)...)
 	}
 	out := c.Convert(in, false, nil)
-	if len(out) != 2 || out[0] != 4096 || out[1] != 4096 {
+	if len(out) != 4 || out[0] != 4096 || out[3] != 4096 {
 		t.Errorf("float: %v", out)
 	}
 	// int16 mono at 8 kHz is copied; a partial frame is ignored
@@ -199,13 +203,23 @@ func TestPCMConverter(t *testing.T) {
 	if out = c.Convert([]byte{1, 2, 3, 4}, true, nil); len(out) != 1 || out[0] != 0 {
 		t.Errorf("silent: %v", out)
 	}
-	// 48 kHz stereo 16-bit: 6 frames -> 1 sample
+	// 48 kHz stereo 16-bit: 6 frames -> 1 sample (the value is filtered, only the count is checked)
 	c = NewPCMConverter(48000, 2, 16, false)
 	var s []byte
-	for i := 0; i < 6; i++ {
-		s = append(s, 0x10, 0x00, 0x30, 0x00) // 16 and 48: mean 32
+	for i := 0; i < 600; i++ {
+		s = append(s, 0x10, 0x00, 0x30, 0x00)
 	}
-	if out = c.Convert(s, false, nil); len(out) != 1 || out[0] != 32 {
-		t.Errorf("48k: %v", out)
+	if out = c.Convert(s, false, nil); len(out) != 100 {
+		t.Errorf("48k: %d samples", len(out))
+	}
+}
+
+// A reachable server that cannot record is an error when there is no other tool (the ffmpeg and
+// arecord fallback itself starts a process, so it is not run here).
+func TestMicBuiltinOpenFailureWithoutFallbackIsAnError(t *testing.T) {
+	b := &fakeBackend{name: "Fake", available: true, openErr: errors.New("no source")}
+	_, err := (&Exec{Builtin: b, LookPath: finder(), GOOS: "linux"}).Mic(context.Background(), 0)
+	if err == nil || err.Error() != "no source" || b.opened != 1 {
+		t.Errorf("%v (opened %d)", err, b.opened)
 	}
 }

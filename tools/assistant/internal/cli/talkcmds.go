@@ -265,6 +265,10 @@ func (a *App) micProbe(secs int) (audio.Choice, error) {
 	return a.execCapture().Choose(secs)
 }
 
+// maxSayFile bounds the audio file read into memory by say (a 30 minute stereo WAV is about 320 MB at
+// 48 kHz, but the camera speaker needs far less: longer files should be cut).
+const maxSayFile = 256 << 20
+
 func (a *App) cmdSay(args []string) error {
 	if len(args) != 1 || args[0] == "" {
 		return usageErr(fmt.Sprintf("akam: say needs one audio file (see %s help)", Prog))
@@ -278,6 +282,9 @@ func (a *App) cmdSay(args []string) error {
 	if a.UI.Dry() {
 		a.UI.Say(fmt.Sprintf("  WOULD decode %s to 8 kHz mono (built in for WAV, MP3, FLAC and Ogg Vorbis; ffmpeg for anything else) and send it to rtsp://%s:%d (stream password needed).", file, ip, a.Env.PortRTSP))
 		return nil
+	}
+	if st, serr := os.Stat(file); serr == nil && st.Size() > maxSayFile {
+		return a.UI.Fail(fmt.Sprintf("%s is too large (%d MiB; the limit is %d MiB).", file, st.Size()>>20, maxSayFile>>20), "cut it first, or convert it with ffmpeg to a smaller file.")
 	}
 	data, rerr := os.ReadFile(file)
 	if rerr != nil {

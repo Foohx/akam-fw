@@ -133,10 +133,15 @@ func (e *Exec) Mic(ctx context.Context, seconds int) (io.ReadCloser, error) {
 	}
 	if c.Builtin != nil {
 		r, err := c.Builtin.Open(ctx)
-		if err != nil {
+		if err == nil {
+			return LimitSeconds(r, seconds), nil
+		}
+		// The server answered but cannot record (no source, refused): use ffmpeg or arecord when present.
+		argv, aerr := e.MicCommand(seconds)
+		if aerr != nil {
 			return nil, err
 		}
-		return LimitSeconds(r, seconds), nil
+		return Start(ctx, argv)
 	}
 	return Start(ctx, c.Argv)
 }

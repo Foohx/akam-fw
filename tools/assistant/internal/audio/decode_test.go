@@ -140,7 +140,8 @@ func TestResamplerLengthsAndIdentity(t *testing.T) {
 			t.Fatalf("identity: sample %d = %d", i, v)
 		}
 	}
-	// one second of input gives 8000 samples (give or take the last partial one) at any rate
+	// one second of input gives 8000 samples (give or take the last partial one) at any rate, and
+	// a constant stays constant once the filter has settled
 	for _, rate := range []int{6000, 11025, 16000, 22050, 32000, 44100, 48000, 96000} {
 		rs := NewResampler(rate)
 		var o []int16
@@ -150,21 +151,56 @@ func TestResamplerLengthsAndIdentity(t *testing.T) {
 		if len(o) < 7999 || len(o) > 8000 {
 			t.Errorf("%d Hz: %d samples out of one second", rate, len(o))
 		}
-		for _, v := range o {
-			if v != 1000 {
+		for _, v := range o[200:] {
+			if v < 998 || v > 1002 {
 				t.Fatalf("%d Hz: a constant came out as %d", rate, v)
 			}
 		}
 	}
-	// 2:1 box average
-	rs = NewResampler(16000)
-	o := rs.Push(100, nil)
-	o = rs.Push(300, o)
-	if len(o) != 1 || o[0] != 200 {
-		t.Errorf("average: %v", o)
-	}
+	// 2:1 without the filter is a box average: only checked on the upsampling-free 8 kHz path above;
 	// clipping
 	if got := NewResampler(8000).Push(1e9, nil); got[0] != 32767 {
 		t.Errorf("clip: %v", got)
+	}
+}
+
+func sineRMS(rate int, freq float64, seconds int) (in, out float64) {
+	rs := NewResampler(rate)
+	var o []int16
+	var si float64
+	n := rate * seconds
+	for i := 0; i < n; i++ {
+		x := 10000 * math.Sin(2*math.Pi*freq*float64(i)/float64(rate))
+		si += x * x
+		o = rs.Push(x, o)
+	}
+	o = o[400:] // let the filter settle
+	var so float64
+	for _, v := range o {
+		so += float64(v) * float64(v)
+	}
+	return math.Sqrt(si / float64(n)), math.Sqrt(so / float64(len(o)))
+}
+
+// Music at 44.1 or 48 kHz must not fold back into the voice band, and the voice band stays.
+func TestResamplerRejectsAliasesAndKeepsPassband(t *testing.T) {
+	for _, rate := range []int{44100, 48000} {
+		// without a low-pass 6 kHz would fold to 2 kHz at 8 kHz output, 7 kHz to 1 kHz, 10 kHz to 2 kHz
+		for _, f := range []float64{6000, 7000, 10000} {
+			in, out := sineRMS(rate, f, 2)
+			if out > in*0.01 {
+				t.Errorf("%d Hz, %.0f Hz tone: output RMS %.1f of %.1f (more than -40 dB)", rate, f, out, in)
+			}
+		}
+		for _, f := range []float64{300, 1000, 2000} {
+			in, out := sineRMS(rate, f, 2)
+			lo := 0.9 // within 1 dB; at 2 kHz the box average of the decimation already costs about 1 dB
+			if f >= 2000 {
+				lo = 0.8
+			}
+			if out < in*lo || out > in*1.1 {
+				t.Errorf("%d Hz, %.0f Hz tone: output RMS %.1f of %.1f (passband too uneven)", rate, f, out, in)
+			}
+		}
 	}
 }

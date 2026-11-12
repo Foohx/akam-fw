@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && (amd64 || arm64)
 
 package audio
 
@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -19,6 +20,14 @@ import (
 // stream is asked as 8 kHz mono 16-bit with the Windows sample rate converter
 // (AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | SRC_DEFAULT_QUALITY); if the driver refuses, the mix
 // format is used and converted in Go (PCMConverter).
+//
+// 64-bit only (amd64, arm64): every argument is one 64-bit register, which is how the 64-bit
+// hnsBufferDuration of IAudioClient.Initialize is passed. Other Windows builds have no built-in
+// microphone (backend_other.go).
+//
+// Memory rule: a pointer handed to COM is turned into a uintptr only for objects on the heap
+// (scratch, the format buffers, the package-level GUIDs), never for stack variables, because the
+// Go stack can move between the conversion and the call.
 
 type guid struct {
 	D1 uint32
@@ -47,6 +56,7 @@ const (
 	wavePCM               = 1
 	waveFloat             = 3
 	waveExtensible        = 0xFFFE
+	rpcEChangedMode       = 0x80010106
 )
 
 var (
@@ -56,6 +66,24 @@ var (
 	procCoCreate      = ole32.NewProc("CoCreateInstance")
 	procCoTaskMemFree = ole32.NewProc("CoTaskMemFree")
 )
+
+// scratch holds the out-parameters of the COM calls. It is allocated on the heap on purpose
+// (see newScratch), so its address stays valid for the whole call.
+type scratch struct {
+	enum, dev, client, capc, pfmt uintptr
+	data                          *byte
+	n, flags, frames              uint32
+}
+
+var scratchSink atomic.Pointer[scratch]
+
+func newScratch() *scratch {
+	s := new(scratch)
+	scratchSink.Store(s) // makes s escape: it can never live on the (movable) stack
+	return s
+}
+
+func ptr[T any](p *T) uintptr { return uintptr(unsafe.Pointer(p)) }
 
 // vcall calls method idx of the COM object obj (a pointer to a pointer to a vtable).
 func vcall(obj uintptr, idx int, args ...uintptr) uintptr {
@@ -77,6 +105,20 @@ func release(obj uintptr) {
 	}
 }
 
+// coInit initialises COM on this (locked) thread. The returned function undoes it, and is a no-op
+// when CoInitializeEx did not succeed (RPC_E_CHANGED_MODE: someone else set the apartment, which
+// is fine for us but must not be uninitialised by us).
+func coInit() (func(), error) {
+	hr, _, _ := procCoInit.Call(0, 0) // COINIT_MULTITHREADED
+	switch {
+	case !failed(hr):
+		return func() { procCoUninit.Call() }, nil
+	case uint32(hr) == rpcEChangedMode:
+		return func() {}, nil
+	}
+	return func() {}, hrErr("CoInitializeEx", hr)
+}
+
 type wasapiBackend struct{}
 
 func defaultBackend() MicBackend { return wasapiBackend{} }
@@ -88,34 +130,33 @@ func (wasapiBackend) Available() bool {
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		hr, _, _ := procCoInit.Call(0, 0) // COINIT_MULTITHREADED
-		if failed(hr) && uint32(hr) != 0x80010106 {
+		undo, err := coInit()
+		defer undo()
+		if err != nil {
 			ok <- false
 			return
 		}
-		defer procCoUninit.Call()
-		dev, err := defaultCaptureDevice()
-		release(dev)
+		s := newScratch()
+		err = defaultCaptureDevice(s)
+		release(s.dev)
 		ok <- err == nil
 	}()
 	return <-ok
 }
 
-func defaultCaptureDevice() (uintptr, error) {
-	var enum uintptr
-	hr, _, _ := procCoCreate.Call(uintptr(unsafe.Pointer(&clsidMMDeviceEnumerator)), 0, clsctxAll,
-		uintptr(unsafe.Pointer(&iidIMMDeviceEnumerator)), uintptr(unsafe.Pointer(&enum)))
+// defaultCaptureDevice puts the default capture endpoint (console role, else communications) in s.dev.
+func defaultCaptureDevice(s *scratch) error {
+	hr, _, _ := procCoCreate.Call(ptr(&clsidMMDeviceEnumerator), 0, clsctxAll, ptr(&iidIMMDeviceEnumerator), ptr(&s.enum))
 	if failed(hr) {
-		return 0, hrErr("CoCreateInstance(MMDeviceEnumerator)", hr)
+		return hrErr("CoCreateInstance(MMDeviceEnumerator)", hr)
 	}
-	defer release(enum)
-	var dev uintptr
-	if hr := vcall(enum, 4, eCapture, eConsole, uintptr(unsafe.Pointer(&dev))); failed(hr) { // GetDefaultAudioEndpoint
-		if hr2 := vcall(enum, 4, eCapture, eCommunications, uintptr(unsafe.Pointer(&dev))); failed(hr2) {
-			return 0, hrErr("GetDefaultAudioEndpoint (is a microphone plugged in and allowed in Windows privacy settings?)", hr)
+	defer func() { release(s.enum) }()
+	if hr := vcall(s.enum, 4, eCapture, eConsole, ptr(&s.dev)); failed(hr) { // GetDefaultAudioEndpoint
+		if hr2 := vcall(s.enum, 4, eCapture, eCommunications, ptr(&s.dev)); failed(hr2) {
+			return hrErr("GetDefaultAudioEndpoint (is a microphone plugged in and allowed in Windows privacy settings?)", hr)
 		}
 	}
-	return dev, nil
+	return nil
 }
 
 func (b wasapiBackend) Open(ctx context.Context) (io.ReadCloser, error) {
@@ -143,66 +184,72 @@ func (b wasapiBackend) Open(ctx context.Context) (io.ReadCloser, error) {
 	return ps, nil
 }
 
-// capture runs the whole COM session on one locked OS thread until quit closes or the reader goes.
-func capture(ps *pipeStream, quit <-chan struct{}, started chan<- error) error {
-	hr, _, _ := procCoInit.Call(0, 0)
-	if failed(hr) && uint32(hr) != 0x80010106 { // RPC_E_CHANGED_MODE: already initialised by someone else, fine
-		return hrErr("CoInitializeEx", hr)
+// activateClient creates an IAudioClient on the device into s.client.
+func activateClient(s *scratch) error {
+	if hr := vcall(s.dev, 3, ptr(&iidIAudioClient), clsctxAll, 0, ptr(&s.client)); failed(hr) { // IMMDevice.Activate
+		return hrErr("IMMDevice.Activate", hr)
 	}
-	defer procCoUninit.Call()
-	dev, err := defaultCaptureDevice()
+	return nil
+}
+
+// capture runs the whole COM session on one locked OS thread until quit closes or the reader goes.
+// Every release is a closure over the scratch fields, so it always acts on the object that is
+// current when the function returns (the client is re-created by the fallback below).
+func capture(ps *pipeStream, quit <-chan struct{}, started chan<- error) error {
+	undo, err := coInit()
+	defer undo()
 	if err != nil {
 		return err
 	}
-	defer release(dev)
-	var client uintptr
-	if hr := vcall(dev, 3, uintptr(unsafe.Pointer(&iidIAudioClient)), clsctxAll, 0, uintptr(unsafe.Pointer(&client))); failed(hr) { // Activate
-		return hrErr("IMMDevice.Activate", hr)
+	s := newScratch()
+	if err := defaultCaptureDevice(s); err != nil {
+		return err
 	}
-	defer release(client)
+	defer func() { release(s.dev) }()
+	if err := activateClient(s); err != nil {
+		return err
+	}
+	defer func() { release(s.client) }()
 
 	// Preferred: ask 8 kHz mono 16-bit and let Windows convert.
 	want := waveFormat(wavePCM, 1, Rate, 16)
 	conv := NewPCMConverter(Rate, 1, 16, false)
-	hr = vcall(client, 3, audclntShareShared, flagAutoConvertPCM|flagSrcDefaultQuality, hnsPerSecond, 0,
-		uintptr(unsafe.Pointer(&want[0])), 0) // Initialize
+	hr := vcall(s.client, 3, audclntShareShared, flagAutoConvertPCM|flagSrcDefaultQuality, hnsPerSecond, 0, uintptr(unsafe.Pointer(&want[0])), 0) // Initialize
+	runtime.KeepAlive(want)
 	if failed(hr) {
-		// Fallback: the mix format of the device, converted here. The client must be re-created
-		// after a failed Initialize.
-		release(client)
-		client = 0
-		if hr := vcall(dev, 3, uintptr(unsafe.Pointer(&iidIAudioClient)), clsctxAll, 0, uintptr(unsafe.Pointer(&client))); failed(hr) {
-			return hrErr("IMMDevice.Activate", hr)
+		// Fallback: the mix format of the device, converted here. An IAudioClient cannot be
+		// initialised twice, so a new one replaces the first (which is released now).
+		release(s.client)
+		s.client = 0
+		if err := activateClient(s); err != nil {
+			return err
 		}
-		var pfmt uintptr
-		if hr := vcall(client, 8, uintptr(unsafe.Pointer(&pfmt))); failed(hr) || pfmt == 0 { // GetMixFormat
+		if hr := vcall(s.client, 8, ptr(&s.pfmt)); failed(hr) || s.pfmt == 0 { // GetMixFormat
 			return hrErr("GetMixFormat", hr)
 		}
-		base := *(*unsafe.Pointer)(unsafe.Pointer(&pfmt))
-		raw := unsafe.Slice((*byte)(base), 18)
-		raw = unsafe.Slice((*byte)(base), 18+int(binary.LittleEndian.Uint16(raw[16:18])))
+		base := *(*unsafe.Pointer)(unsafe.Pointer(&s.pfmt))
+		hdr := unsafe.Slice((*byte)(base), 18)
+		raw := append([]byte(nil), unsafe.Slice((*byte)(base), 18+int(binary.LittleEndian.Uint16(hdr[16:18])))...)
+		procCoTaskMemFree.Call(s.pfmt)
 		c, ferr := converterFor(raw)
-		fmtCopy := append([]byte(nil), raw...)
 		if ferr != nil {
-			procCoTaskMemFree.Call(pfmt)
 			return ferr
 		}
 		conv = c
-		hr = vcall(client, 3, audclntShareShared, 0, hnsPerSecond, 0, uintptr(unsafe.Pointer(&fmtCopy[0])), 0)
-		procCoTaskMemFree.Call(pfmt)
+		hr = vcall(s.client, 3, audclntShareShared, 0, hnsPerSecond, 0, uintptr(unsafe.Pointer(&raw[0])), 0)
+		runtime.KeepAlive(raw)
 		if failed(hr) {
 			return hrErr("IAudioClient.Initialize", hr)
 		}
 	}
-	var capc uintptr
-	if hr := vcall(client, 14, uintptr(unsafe.Pointer(&iidIAudioCaptureClient)), uintptr(unsafe.Pointer(&capc))); failed(hr) { // GetService
+	if hr := vcall(s.client, 14, ptr(&iidIAudioCaptureClient), ptr(&s.capc)); failed(hr) { // GetService
 		return hrErr("GetService(IAudioCaptureClient)", hr)
 	}
-	defer release(capc)
-	if hr := vcall(client, 10); failed(hr) { // Start
+	defer func() { release(s.capc) }()
+	if hr := vcall(s.client, 10); failed(hr) { // Start
 		return hrErr("IAudioClient.Start", hr)
 	}
-	defer vcall(client, 11) // Stop
+	defer func() { vcall(s.client, 11) }() // Stop, registered only once the final client runs
 	started <- nil
 
 	var out []int16
@@ -215,24 +262,22 @@ func capture(ps *pipeStream, quit <-chan struct{}, started chan<- error) error {
 		case <-tick.C:
 		}
 		for {
-			var frames uint32
-			if hr := vcall(capc, 5, uintptr(unsafe.Pointer(&frames))); failed(hr) { // GetNextPacketSize
+			if hr := vcall(s.capc, 5, ptr(&s.frames)); failed(hr) { // GetNextPacketSize
 				return hrErr("GetNextPacketSize", hr)
 			}
-			if frames == 0 {
+			if s.frames == 0 {
 				break
 			}
-			var data *byte
-			var n, flags uint32
-			if hr := vcall(capc, 3, uintptr(unsafe.Pointer(&data)), uintptr(unsafe.Pointer(&n)), uintptr(unsafe.Pointer(&flags)), 0, 0); failed(hr) { // GetBuffer
+			if hr := vcall(s.capc, 3, ptr(&s.data), ptr(&s.n), ptr(&s.flags), 0, 0); failed(hr) { // GetBuffer
 				return hrErr("GetBuffer", hr)
 			}
 			out = out[:0]
-			if n > 0 && data != nil {
-				buf := unsafe.Slice(data, int(n)*conv.BytesPerFrame())
-				out = conv.Convert(buf, flags&bufferFlagSilent != 0, out)
+			n := s.n
+			if n > 0 && s.data != nil {
+				buf := unsafe.Slice(s.data, int(n)*conv.BytesPerFrame())
+				out = conv.Convert(buf, s.flags&bufferFlagSilent != 0, out)
 			}
-			vcall(capc, 4, uintptr(n)) // ReleaseBuffer
+			vcall(s.capc, 4, uintptr(n)) // ReleaseBuffer
 			if len(out) > 0 {
 				if err := ps.Push(out); err != nil {
 					return nil // the reader closed

@@ -15,8 +15,9 @@ import (
 // pulseSession is the part of a PulseAudio connection the microphone needs (a fake in tests).
 type pulseSession interface {
 	// Record starts recording the default source as 8 kHz mono s16 (the server converts) and calls
-	// push for every chunk; stop ends it.
-	Record(push func([]int16) error) (stop func(), err error)
+	// push for every chunk; stop ends it; lost reports that the server went away (or the stream
+	// died) while recording.
+	Record(push func([]int16) error) (stop func(), lost func() bool, err error)
 	Close()
 }
 
@@ -51,14 +52,35 @@ func (b *pulseBackend) Open(ctx context.Context) (io.ReadCloser, error) {
 		}
 		s.Close()
 	})
-	stopRec, err = s.Record(ps.Push)
+	var lost func() bool
+	stopRec, lost, err = s.Record(ps.Push)
 	if err != nil {
 		s.Close()
 		return nil, fmt.Errorf("cannot record from the default source: %w", err)
 	}
 	ps.watchContext(ctx)
+	// A server that vanishes mid-talk would leave a reader blocked for ever: poll the stream and
+	// end the pipe with a clear error.
+	go func() {
+		t := time.NewTicker(pulseWatchEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ps.done:
+				return
+			case <-t.C:
+				if lost() {
+					ps.Fail(errors.New("lost the connection to the PulseAudio / PipeWire server"))
+					return
+				}
+			}
+		}
+	}()
 	return ps, nil
 }
+
+// pulseWatchEvery is how often the watchdog looks at the stream (a variable for tests).
+var pulseWatchEvery = 500 * time.Millisecond
 
 type realPulse struct{ c *pulse.Client }
 
@@ -70,7 +92,7 @@ func connectPulse() (pulseSession, error) {
 	return &realPulse{c: c}, nil
 }
 
-func (r *realPulse) Record(push func([]int16) error) (func(), error) {
+func (r *realPulse) Record(push func([]int16) error) (func(), func() bool, error) {
 	w := pulse.Int16Writer(func(s []int16) (int, error) {
 		if err := push(s); err != nil {
 			return 0, err
@@ -81,14 +103,14 @@ func (r *realPulse) Record(push func([]int16) error) (func(), error) {
 	// latency keeps the voice close to real time.
 	rs, err := r.c.NewRecord(w, pulse.RecordSampleRate(Rate), pulse.RecordLatency(0.1))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if rs.SampleRate() != Rate || rs.Channels() != 1 {
 		rs.Close()
-		return nil, errors.New("the sound server did not give 8 kHz mono")
+		return nil, nil, errors.New("the sound server did not give 8 kHz mono")
 	}
 	rs.Start()
-	return func() { rs.Stop(); rs.Close() }, nil
+	return func() { rs.Stop(); rs.Close() }, rs.Closed, nil
 }
 
 func (r *realPulse) Close() { r.c.Close() }
