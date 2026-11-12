@@ -328,7 +328,19 @@ static void dns_job_free(dns_job_t *j)
     free(j);
 }
 
-static int g_dns_helpers;                         /* lookup threads alive (running or abandoned) */
+/* lookup threads alive (running or abandoned). A mutex, not __atomic_*: ARMv5 has no atomic instructions and the
+ * static build has no libatomic. */
+static int g_dns_helpers;
+static pthread_mutex_t g_dns_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int dns_helpers_add(int d)
+{
+    pthread_mutex_lock(&g_dns_mu);
+    g_dns_helpers += d;
+    int n = g_dns_helpers;
+    pthread_mutex_unlock(&g_dns_mu);
+    return n;
+}
 
 static void *dns_main(void *arg)
 {
@@ -342,7 +354,7 @@ static void *dns_main(void *arg)
     int drop = j->abandoned;
     pthread_mutex_unlock(&j->mu);
     if (drop) dns_job_free(j);
-    __atomic_sub_fetch(&g_dns_helpers, 1, __ATOMIC_SEQ_CST);
+    dns_helpers_add(-1);
     return NULL;
 }
 
@@ -351,13 +363,13 @@ static int resolve_name(const char *host, int wake, struct in_addr *out, const c
     pthread_t t;
     pthread_attr_t at;
     /* a dead resolver blocks every helper for 10 to 30 s: never pile up more than DNS_HELPERS_MAX of them */
-    if (__atomic_add_fetch(&g_dns_helpers, 1, __ATOMIC_SEQ_CST) > DNS_HELPERS_MAX) {
-        __atomic_sub_fetch(&g_dns_helpers, 1, __ATOMIC_SEQ_CST);
+    if (dns_helpers_add(1) > DNS_HELPERS_MAX) {
+        dns_helpers_add(-1);
         *reason = "dns";
         return -1;
     }
     dns_job_t *j = calloc(1, sizeof(*j));
-    if (!j) { __atomic_sub_fetch(&g_dns_helpers, 1, __ATOMIC_SEQ_CST); *reason = "dns"; return -1; }
+    if (!j) { dns_helpers_add(-1); *reason = "dns"; return -1; }
     pthread_mutex_init(&j->mu, NULL);
     snprintf(j->host, sizeof(j->host), "%s", host);
     pthread_attr_init(&at);
@@ -365,7 +377,7 @@ static int resolve_name(const char *host, int wake, struct in_addr *out, const c
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     int rc = pthread_create(&t, &at, dns_main, j);
     pthread_attr_destroy(&at);
-    if (rc != 0) { dns_job_free(j); __atomic_sub_fetch(&g_dns_helpers, 1, __ATOMIC_SEQ_CST); *reason = "dns"; return -1; }
+    if (rc != 0) { dns_job_free(j); dns_helpers_add(-1); *reason = "dns"; return -1; }
     int64_t end = now_ms() + DNS_WAIT_MS;
     int res = -1, stopped = 0;
     for (;;) {
