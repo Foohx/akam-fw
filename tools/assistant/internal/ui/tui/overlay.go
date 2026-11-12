@@ -43,6 +43,8 @@ func (a *ask) finished() (answer, bool) {
 		return answer{}, m.Done
 	case *Checklist:
 		return answer{cancelled: m.Cancelled}, m.Done
+	case *ErrorView:
+		return answer{text: m.Key}, m.Done
 	}
 	return answer{}, false
 }
@@ -64,6 +66,8 @@ func (a *ask) body() string {
 		return m.body()
 	case *Checklist:
 		return m.body()
+	case *ErrorView:
+		return m.body()
 	}
 	return ""
 }
@@ -83,6 +87,8 @@ func (a *ask) keys() []string {
 	case *Details:
 		return m.keys()
 	case *Checklist:
+		return m.keys()
+	case *ErrorView:
 		return m.keys()
 	}
 	return nil

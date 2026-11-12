@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +28,9 @@ type sessionUI struct {
 	base ui.UI // Interactive, Dry
 	st   *sessState
 	logf func(format string, a ...any)
+
+	failMu sync.Mutex
+	fail   *ui.FailInfo // the last Fail, until it was shown or cleared
 }
 
 var (
@@ -35,6 +39,11 @@ var (
 	_ ui.Former       = (*sessionUI)(nil)
 	_ ui.Detailer     = (*sessionUI)(nil)
 	_ ui.Checklister  = (*sessionUI)(nil)
+
+	_ ui.ErrorScreener = (*sessionUI)(nil)
+	_ ui.FailReader    = (*sessionUI)(nil)
+	_ ui.TechFailer    = (*sessionUI)(nil)
+	_ ui.OutputClearer = (*sessionUI)(nil)
 )
 
 func (s *sessionUI) log(format string, a ...any) {
@@ -55,12 +64,63 @@ func (s *sessionUI) Err(t string)  { t = textsafe.Clean(t); s.log("ERROR %s", t)
 func (s *sessionUI) Hint(t string) { s.line(kHint, t) }
 func (s *sessionUI) Blank()        { s.line(kBlank, "") }
 
-func (s *sessionUI) Fail(msg, hint string) error {
+func (s *sessionUI) Fail(msg, hint string) error { return s.FailTech(msg, hint, "") }
+
+// FailTech is Fail with a technical line for the error screen (ui.TechFailer). The transcript and the
+// log get the same lines as before; the screen is shown by whoever called the flow.
+func (s *sessionUI) FailTech(msg, hint, tech string) error {
 	s.Err(msg)
 	if hint != "" {
 		s.Hint(hint)
 	}
+	s.failMu.Lock()
+	s.fail = &ui.FailInfo{Msg: textsafe.Clean(msg), Hint: textsafe.Clean(hint), Tech: textsafe.Clean(tech)}
+	s.failMu.Unlock()
 	return ui.ErrFailed
+}
+
+// LastFail is the last Fail not shown yet (ui.FailReader).
+func (s *sessionUI) LastFail() (ui.FailInfo, bool) {
+	s.failMu.Lock()
+	defer s.failMu.Unlock()
+	if s.fail == nil {
+		return ui.FailInfo{}, false
+	}
+	return *s.fail, true
+}
+
+func (s *sessionUI) ClearFail() {
+	s.failMu.Lock()
+	s.fail = nil
+	s.failMu.Unlock()
+}
+
+// ClearOutput empties the transcript, the steps and the strip of the previous action
+// (ui.OutputClearer); the flow calls it as an action starts.
+func (s *sessionUI) ClearOutput() {
+	s.ClearFail()
+	s.st.send(msgClear{})
+}
+
+// ErrorScreen shows the error screen and returns the key chosen (ui.ErrorScreener). Once the user is
+// back, the title stays on the result strip of the screen below.
+func (s *sessionUI) ErrorScreen(spec ui.ErrorSpec) (string, error) {
+	c := textsafe.Clean
+	spec.Context, spec.Title, spec.Tech, spec.Help, spec.Log = c(spec.Context), c(spec.Title), c(spec.Tech), c(spec.Help), c(spec.Log)
+	spec.Body = append([]string(nil), spec.Body...)
+	spec.Todo = append([]string(nil), spec.Todo...)
+	for i := range spec.Body {
+		spec.Body[i] = c(spec.Body[i])
+	}
+	for i := range spec.Todo {
+		spec.Todo[i] = c(spec.Todo[i])
+	}
+	a, err := s.ask(&ErrorView{Spec: spec})
+	if err != nil {
+		return "", err
+	}
+	s.st.send(msgStripIfEmpty{entry{kErr, spec.Title}})
+	return a.text, nil
 }
 
 func (s *sessionUI) Banner(title string) {
