@@ -75,6 +75,7 @@ type App struct {
 	envSecrets map[string]string // AKAM_*PASS* read once at start-up (the environment no longer has them)
 
 	camIP        string
+	live         *liveHealth     // what a flow read of the chosen camera this session (header badges)
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)
 	passphrase   *string
 	exitOverride int

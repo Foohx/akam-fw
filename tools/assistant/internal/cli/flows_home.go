@@ -107,6 +107,12 @@ func (a *App) needCamera() bool {
 
 // cmdHome shows the home screen until the user quits.
 func (a *App) cmdHome() error {
+	if done, err := a.inSession(a.cmdHome); done { // the session UI is not a Sessioner: no recursion
+		return err
+	}
+	if bd, ok := a.UI.(ui.Boarder); ok {
+		return a.cmdHomeSession(bd)
+	}
 	var res ui.MenuResult
 	for {
 		_, hot := a.UI.(Menuer)

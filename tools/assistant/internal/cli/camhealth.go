@@ -276,6 +276,7 @@ func clockLostNote(h camHealth) string {
 
 // showHealth prints the Wi-Fi and clock lines of a snapshot.
 func (a *App) showHealth(h camHealth) {
+	a.noteHealth(h)
 	for _, l := range wifiReport(h, a.camCmd()) {
 		a.UI.Say("  " + l)
 	}
