@@ -185,6 +185,35 @@ int main(void)
         close(sv[0]); close(sv[1]);
     }
 
+    /* 5b. Ring wrap-around: a small queue filled and drained in odd sizes keeps every byte in order. */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 600);
+        net_tx_queue_enable(&t, 5000);
+        int fl = 1; ioctl(sv[1], FIONBIO, &fl);
+        int fl0 = 1; ioctl(sv[0], FIONBIO, &fl0);
+        static unsigned char src[400000], dst[400000];
+        for (size_t i = 0; i < sizeof src; i++) src[i] = (unsigned char)(i * 13 + (i >> 7));
+        size_t put = 0, got = 0;
+        int bad = 0;
+        unsigned seed = 7;
+        while (got < sizeof src && !bad) {
+            seed = seed * 1103515245u + 12345u;
+            size_t n = 1 + (seed >> 8) % 3000;
+            if (put + n > sizeof src) n = sizeof src - put;
+            if (n && net_tx_room(&t) >= n) {
+                if (net_tx_write_all(&t, src + put, n) != 0) bad = 1; else put += n;
+            }
+            if (net_tx_pump(&t) < 0) bad = 1;
+            ssize_t r = read(sv[1], dst + got, 700);
+            if (r > 0) got += (size_t)r;
+        }
+        CHECK(!bad && got == sizeof src && memcmp(src, dst, sizeof src) == 0,
+              "400 KB through a 5000-byte ring in random sizes arrives intact (wrap-around)");
+        net_tx_queue_free(&t);
+        close(sv[0]); close(sv[1]);
+    }
+
     /* 6. Queue mode: a write that does not fit the queue fails with ENOBUFS; what was queued is still intact. */
     {
         int sv[2]; pair(sv);

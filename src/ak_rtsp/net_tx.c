@@ -51,9 +51,12 @@ int net_tx_queue_stalled_ms(const net_tx_t *t)
 int net_tx_pump(net_tx_t *t)
 {
     while (t->q_len > 0) {
-        ssize_t n = send(t->fd, t->q + t->q_head, t->q_len, MSG_NOSIGNAL | MSG_DONTWAIT);
+        /* The queue is a ring: send the contiguous run from the head; the next pass takes the wrapped part. */
+        size_t run = t->q_cap - t->q_head;
+        if (run > t->q_len) run = t->q_len;
+        ssize_t n = send(t->fd, t->q + t->q_head, run, MSG_NOSIGNAL | MSG_DONTWAIT);
         if (n > 0) {
-            t->q_head += (size_t)n;
+            t->q_head = (t->q_head + (size_t)n) % t->q_cap;
             t->q_len -= (size_t)n;
             t->q_progress_us = rtp_mono_us();
             continue;
@@ -76,11 +79,12 @@ static int queue_append(net_tx_t *t, const unsigned char *p, size_t len)
     if (t->q_len == 0) {
         t->q_head = 0;
         t->q_progress_us = rtp_mono_us(); /* the stall clock starts when data starts waiting */
-    } else if (t->q_head + t->q_len + len > t->q_cap) {
-        memmove(t->q, t->q + t->q_head, t->q_len);
-        t->q_head = 0;
     }
-    memcpy(t->q + t->q_head + t->q_len, p, len);
+    size_t tail = (t->q_head + t->q_len) % t->q_cap;
+    size_t first = t->q_cap - tail;
+    if (first > len) first = len;
+    memcpy(t->q + tail, p, first); /* no memmove of the pending bytes, whatever the fill level */
+    if (len > first) memcpy(t->q, p + first, len - first);
     t->q_len += len;
     return 0;
 }
