@@ -536,6 +536,7 @@ KLOG_RE='^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$'
 if [ ! -f "$MAINSH" ]; then
     warn "sbin/main.sh not found in the APP tree: kernel log filter not installed"
 elif grep -qE "$KLOG_RE" "$MAINSH"; then
+    # shellcheck disable=SC2016  # the text is written to main.sh as it is, nothing expands here
     KLOG_NEW='{ _k=0; while [ "$_k" -lt 5 ]; do /usr/bin/ak_rtsp klog; [ $? -ge 128 ] || break; _k=$((_k + 1)); sleep $((_k * 2)); done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)'
     sed -E -i "s@$KLOG_RE@\\1${KLOG_NEW//&/\\&}@" "$MAINSH"
     sh -n "$MAINSH" || die "sbin/main.sh fails sh -n after the klogd patch"

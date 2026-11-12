@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # the stub scripts are written with single quotes on purpose
 # Host test of the kernel log filter (src/ak_rtsp/klog.c, klog_run.c): drop, collapse, priorities, syslogd absent.
 # Synthetic input only; never reads the real kernel log.
 set -euo pipefail
