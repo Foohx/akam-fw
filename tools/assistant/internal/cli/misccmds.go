@@ -300,6 +300,7 @@ func (a *App) cmdMenu() error {
 // cmdStepMenu is the list of the nine steps and the read-only camera tools (akam steps): the state
 // machine of the bash wizard, kept for people who want to run one step at a time.
 func (a *App) cmdStepMenu() error {
+	var res ui.MenuResult
 	for {
 		entries := a.menuEntries()
 		items := make([]ui.MenuItem, len(entries))
@@ -309,7 +310,7 @@ func (a *App) cmdStepMenu() error {
 		var idx int
 		var err error
 		if m, ok := a.UI.(Menuer); ok {
-			idx, err = m.Menu(fmt.Sprintf("Akam - camera: %s", a.Cams.Name), items)
+			idx, err = a.showMenu(m, fmt.Sprintf("Akam - camera: %s", a.Cams.Name), items, res)
 		} else {
 			a.statusTable()
 			a.UI.Blank()
@@ -327,18 +328,12 @@ func (a *App) cmdStepMenu() error {
 			return nil
 		}
 		a.Opt.Args = entries[idx].args
-		if e := a.dispatch(entries[idx].args[0]); e != nil {
-			var ue *ui.UsageError
-			switch {
-			case e == ui.ErrFailed:
-			case asUsage(e, &ue):
-				a.UI.Err(ue.Msg)
-			default:
-				a.UI.Err(e.Error())
-			}
-		}
+		act := func() error { return a.dispatch(entries[idx].args[0]) }
 		if _, ok := a.UI.(Menuer); ok {
-			_, _ = a.UI.Prompt("Press Enter to go back to the menu.", "")
+			// The outcome is shown on the menu the user returns to, not behind a "Press Enter".
+			res = a.runAction(act)
+		} else {
+			a.reportFlowError(act())
 		}
 	}
 }

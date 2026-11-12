@@ -62,3 +62,17 @@ type MenuItem struct {
 	Status string // done | todo | blocked | stale | tool | plain (no tag, the home screen)
 	Key    string // optional one-letter shortcut (not q, j, k, g, G or ?)
 }
+
+// MenuResult is the outcome of the last action, shown on the strip above the footer of the menu the
+// user returns to. Level is "ok", "warn" or "error"; an empty Text means nothing to show.
+type MenuResult struct {
+	Level string
+	Text  string
+}
+
+// MenuView is a full-screen menu with the result of the previous action.
+type MenuView struct {
+	Title  string
+	Items  []MenuItem
+	Result MenuResult
+}

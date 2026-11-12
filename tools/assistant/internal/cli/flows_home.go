@@ -107,6 +107,7 @@ func (a *App) needCamera() bool {
 
 // cmdHome shows the home screen until the user quits.
 func (a *App) cmdHome() error {
+	var res ui.MenuResult
 	for {
 		_, hot := a.UI.(Menuer)
 		title, items := homeScreen(a.homeInfo(hot))
@@ -117,7 +118,7 @@ func (a *App) cmdHome() error {
 		var idx int
 		var err error
 		if m, ok := a.UI.(Menuer); ok {
-			idx, err = m.Menu(title, mi)
+			idx, err = a.showMenu(m, title, mi, res)
 		} else {
 			a.UI.Blank()
 			for _, l := range strings.Split(title, "\n") {
@@ -136,11 +137,13 @@ func (a *App) cmdHome() error {
 		if err != nil || idx < 0 {
 			return nil
 		}
-		e := a.homeAction(items[idx].Act)
-		a.reportFlowError(e)
-		if _, ok := a.UI.(Menuer); ok {
-			_, _ = a.UI.Prompt("Press Enter to go back to the home screen.", "")
+		_, hot = a.UI.(Menuer)
+		if !hot {
+			a.reportFlowError(a.homeAction(items[idx].Act))
+			continue
 		}
+		// The outcome is shown on the home screen the user returns to, not behind a "Press Enter".
+		res = a.runAction(func() error { return a.homeAction(items[idx].Act) })
 	}
 }
 
