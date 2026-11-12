@@ -452,6 +452,17 @@ static int ctl_parse_int(const char *s, long lo, long hi, long *out)
             setmsg(resp, cap, "ERR " key " range [%d,%d]", (int)(lo), (int)(hi)); return; } \
         (dst) = (__typeof__(dst))v_; } while (0)
 
+/* The picture setters read-modify-write isp.c's cached baselines, which the day/night pipeline reload frees and
+ * invalidates under isp_cfg_lock() (night thread). Every caller therefore takes that lock around the setter.
+ * Order: g_set_lock -> isp_cfg_lock (the night thread never takes g_set_lock). */
+static int isp_set_locked(int (*fn)(int), int v)
+{
+    isp_cfg_lock();
+    int rc = fn(v);
+    isp_cfg_unlock();
+    return rc;
+}
+
 static void do_set_locked(char *resp, size_t cap, const char *param, const char *value)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
@@ -506,28 +517,28 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
     } else if (!strcmp(param, "isp.saturation")) {
         int v;
         SET_INT(v, "isp.saturation", -50, 50);
-        if (isp_set_saturation(v) != 0) { setmsg(resp, cap, "ERR isp_set_saturation failed"); return; }
+        if (isp_set_locked(isp_set_saturation, v) != 0) { setmsg(resp, cap, "ERR isp_set_saturation failed"); return; }
         g_isp_saturation = v;
         char note[64];
         setmsg(resp, cap, "OK isp.saturation=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.contrast")) {
         int v;
         SET_INT(v, "isp.contrast", -50, 50);
-        if (isp_set_contrast(v) != 0) { setmsg(resp, cap, "ERR isp_set_contrast failed"); return; }
+        if (isp_set_locked(isp_set_contrast, v) != 0) { setmsg(resp, cap, "ERR isp_set_contrast failed"); return; }
         g_isp_contrast = v;
         char note[64];
         setmsg(resp, cap, "OK isp.contrast=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.brightness")) {
         int v;
         SET_INT(v, "isp.brightness", -50, 50);
-        if (isp_set_brightness(v) != 0) { setmsg(resp, cap, "ERR isp_set_brightness failed"); return; }
+        if (isp_set_locked(isp_set_brightness, v) != 0) { setmsg(resp, cap, "ERR isp_set_brightness failed"); return; }
         g_isp_brightness = v;
         char note[64];
         setmsg(resp, cap, "OK isp.brightness=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.sharpness")) {
         int v;
         SET_INT(v, "isp.sharpness", -50, 50);
-        if (isp_set_sharpness(v) != 0) { setmsg(resp, cap, "ERR isp_set_sharpness failed"); return; }
+        if (isp_set_locked(isp_set_sharpness, v) != 0) { setmsg(resp, cap, "ERR isp_set_sharpness failed"); return; }
         g_isp_sharpness = v;
         char note[64];
         setmsg(resp, cap, "OK isp.sharpness=%d%s", v, isp_persist_note(note, sizeof(note)));
@@ -634,10 +645,10 @@ void control_apply_saved_isp(void)
     isp_tune_t t;
     if (!isp_tune_load(ISP_TUNE_FILE, &t)) return;
     pthread_mutex_lock(&g_set_lock);
-    if (t.saturation && isp_set_saturation(t.saturation) == 0) g_isp_saturation = t.saturation;
-    if (t.contrast   && isp_set_contrast(t.contrast) == 0)     g_isp_contrast = t.contrast;
-    if (t.brightness && isp_set_brightness(t.brightness) == 0) g_isp_brightness = t.brightness;
-    if (t.sharpness  && isp_set_sharpness(t.sharpness) == 0)   g_isp_sharpness = t.sharpness;
+    if (t.saturation && isp_set_locked(isp_set_saturation, t.saturation) == 0) g_isp_saturation = t.saturation;
+    if (t.contrast && isp_set_locked(isp_set_contrast, t.contrast) == 0)     g_isp_contrast = t.contrast;
+    if (t.brightness && isp_set_locked(isp_set_brightness, t.brightness) == 0) g_isp_brightness = t.brightness;
+    if (t.sharpness && isp_set_locked(isp_set_sharpness, t.sharpness) == 0)   g_isp_sharpness = t.sharpness;
     pthread_mutex_unlock(&g_set_lock);
     printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d\n",
            g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness);

@@ -46,10 +46,17 @@ void night_set_persist(int on) { g_night_persist = on; }
 int  g_imgq_persist = -1;
 void imgq_set_persist(int on) { g_imgq_persist = on; }
 int  night_is_night(void) { return 0; }
-int  isp_set_saturation(int v) { (void)v; return 0; }
-int  isp_set_contrast(int v) { (void)v; return 0; }
-int  isp_set_brightness(int v) { (void)v; return 0; }
-int  isp_set_sharpness(int v) { (void)v; return 0; }
+/* isp_cfg_lock stubs: the real setters read-modify-write baselines the night thread frees under this lock, so
+ * a setter called without it is the H1 race. Each stub counts such a call. */
+static pthread_mutex_t g_stub_isp_mu = PTHREAD_MUTEX_INITIALIZER;
+static volatile int    g_isp_held, g_isp_unlocked_calls;
+void isp_cfg_lock(void)   { pthread_mutex_lock(&g_stub_isp_mu); g_isp_held = 1; }
+void isp_cfg_unlock(void) { g_isp_held = 0; pthread_mutex_unlock(&g_stub_isp_mu); }
+static int stub_isp_set(int v) { (void)v; if (!g_isp_held) g_isp_unlocked_calls++; return 0; }
+int  isp_set_saturation(int v) { return stub_isp_set(v); }
+int  isp_set_contrast(int v) { return stub_isp_set(v); }
+int  isp_set_brightness(int v) { return stub_isp_set(v); }
+int  isp_set_sharpness(int v) { return stub_isp_set(v); }
 int  night_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  night_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void night_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "night.stub=1"); }
@@ -437,6 +444,8 @@ static void test_server(void)
         CHECK_STR(out, "isp.brightness=0\n");
         ask(c, "SET isp.contrast 0", out, sizeof(out));
         CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+        /* H1: every isp.* setter ran under isp_cfg_lock (8091 SET, ONVIF path and the saved-picture apply) */
+        CHECK(g_isp_unlocked_calls == 0);
     }
     /* control_apply_setting is the entry point of the ONVIF Imaging service: same code as SET, persist is explicit */
     {
