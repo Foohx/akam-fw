@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testfake"
 )
@@ -38,7 +38,7 @@ type env struct {
 	// flashTest allows the reflash commands (flash_tool upload, start) in the safety check of the
 	// received commands; reboot, power-off and friends stay forbidden.
 	flashTest bool
-	http      *http.Client // the client of get-kit (a test server's), nil: none
+	http      *kit.Client // the client of get-kit (a test server's), nil: none
 	sd        sdcard.Backend
 	disc      cli.DiscoverHooks // the network of the discovery tests (fake addresses mapped to the fake camera)
 }

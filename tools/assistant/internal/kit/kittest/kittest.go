@@ -9,13 +9,17 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ulikunitz/xz"
 	gossh "golang.org/x/crypto/ssh"
@@ -251,4 +255,11 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 		}
 	}
 	return b
+}
+
+// ClientFor is the download client trusting the test certificate of srv (no proxy, whatever the environment).
+func ClientFor(srv *httptest.Server) *kit.Client {
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	return &kit.Client{Timeout: time.Minute, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}}
 }

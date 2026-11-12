@@ -1002,7 +1002,7 @@ Reductions, in the order to try (each one measured and kept only if it saves mor
 
 1. Confirm the flags are really applied in every path that produces a release (`-s -w`, `-trimpath`, no
    `-tags akamtest`): they are in `build.sh:36-38` already; the release script must reuse that function (T11.5).
-2. `-tags nethttpomithttp2` (an existing `net/http` build tag, to be confirmed on the pinned toolchain) drops the
+2. (Superseded: the downloads no longer use `net/http` at all, see `internal/kit/httpclient.go`.) `-tags nethttpomithttp2` (an existing `net/http` build tag, to be confirmed on the pinned toolchain) drops the
    bundled HTTP/2 client (about 120 KiB of `net/http/internal/http2` in an unstripped Windows build here); the kit and toolkit downloads work
    over HTTP/1.1.
 3. Per-package size report (`go tool nm -size` on an unstripped build, grouped by import path) added to

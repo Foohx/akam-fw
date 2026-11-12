@@ -247,7 +247,8 @@ func TestUACTransportTimeoutsAndCleanup(t *testing.T) {
 	tr = h.transport()
 	tr.prompt = 100 * time.Millisecond
 	release := make(chan struct{})
-	tr.launch = func(string, string) (uacProc, error) { <-release; return h.proc, nil }
+	proc := h.proc // h is reassigned below while this launch may still be blocked
+	tr.launch = func(string, string) (uacProc, error) { <-release; return proc, nil }
 	if _, err := tr.run("self.exe", Request{Op: OpList}, io.Discard); err == nil || !strings.Contains(err.Error(), "not answered") {
 		t.Fatalf("%v", err)
 	}
