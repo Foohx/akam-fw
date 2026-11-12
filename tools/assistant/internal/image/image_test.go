@@ -193,7 +193,7 @@ func TestKlogdPatchEqualsSed(t *testing.T) {
 				t.Fatal(err)
 			}
 			if exec.Command("grep", "-qE", re, f).Run() == nil {
-				repl := `s@` + re + `@\1{ /usr/bin/ak_rtsp klog || klogd -n; } \& # AKAM: filtered kernel log (stock: klogd -n)@`
+				repl := `s@` + re + `@\1` + strings.ReplaceAll(klogdNew, "&", `\&`) + `@`
 				if err := exec.Command("sed", "-E", "-i", repl, f).Run(); err != nil {
 					t.Fatal(err)
 				}

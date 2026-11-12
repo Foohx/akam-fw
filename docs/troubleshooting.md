@@ -413,7 +413,7 @@ The image therefore starts `ak_rtsp klog` (shown as `akam_klog` in `ps`) instead
   `sh (102): drop_caches: 3` are the same message;
 - everything else is forwarded unchanged with its original priority (`kern.err` stays `kern.err`).
 
-If it cannot start, the stock `klogd -n` runs instead (`./akam`'s `akam_hwcheck.sh` warns about it). Check with
+If a signal kills it, it is restarted (up to 5 times); if it cannot start or keeps crashing, the stock `klogd -n` runs instead (`./akam`'s `akam_hwcheck.sh` warns about it). Check with
 `ps | grep klog`. Kernel messages are also still on the serial console and in `dmesg`, unfiltered.
 
 ## The camera falls off the Wi-Fi and does not come back
