@@ -18,7 +18,13 @@ static tx_pace_event_t ev;
 static tx_pace_verdict_t step(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t len, int key,
                               int64_t t)
 {
-    return tx_pace_decide(p, c, backlog, len, key, t, &ev);
+    return tx_pace_decide(p, c, backlog, len, SIZE_MAX, key, t, &ev); /* no private queue: unlimited room */
+}
+
+static tx_pace_verdict_t step_room(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t len, size_t room,
+                                   int key, int64_t t)
+{
+    return tx_pace_decide(p, c, backlog, len, room, key, t, &ev);
 }
 
 static unsigned rnd_state = 12345;
@@ -75,7 +81,7 @@ int main(void)
     (void)step(&p, &c, 10000 * KB, 50 * KB, 1, 0);
     CHECK(p.key_len == 50 * KB, "dropped keyframe size is remembered");
     tx_pace_init(&p);
-    CHECK(tx_pace_decide(&p, &c, 0, 1, 0, 0, NULL) == TX_PACE_SEND, "NULL event pointer accepted");
+    CHECK(tx_pace_decide(&p, &c, 0, 1, SIZE_MAX, 0, 0, NULL) == TX_PACE_SEND, "NULL event pointer accepted");
 
     /* --- send buffer cap --- */
     /* Reported SO_SNDBUF 327680 (kernel doubled 160 KiB): cap 245760. */
@@ -123,6 +129,70 @@ int main(void)
     (void)step(&p, &d, 400 * KB, 5 * KB, 0, 0);
     CHECK(step(&p, &d, 0, 100 * KB, 1, 29000) == TX_PACE_SEND && !p.skipping, "a recovering keyframe is sent before any limit");
     CHECK(step(&p, &d, 400 * KB, 5 * KB, 0, 60000) == TX_PACE_SKIP, "limits restart with each run");
+
+    /* --- the room is part of the decision (never a second, later step that would restart the run clocks) --- */
+    {
+        tx_pace_cfg_t rc = { .base = base, .cap = 0, .stall_ms = 15000, .max_skip_ms = 10000 };
+        CHECK(tx_pace_wire_len(100 * KB) == 100 * KB + 100 * KB / 64 + 256, "wire size: payload + headers");
+        tx_pace_init(&p);
+        CHECK(step_room(&p, &rc, 0, 100 * KB, tx_pace_wire_len(100 * KB) - 1, 1, 0) == TX_PACE_SKIP && ev.entered && ev.no_room,
+              "a keyframe that does not fit the room is dropped at once (SKIP entered, no_room reported)");
+        CHECK(step_room(&p, &rc, 0, 100 * KB, tx_pace_wire_len(100 * KB), 1, 100) == TX_PACE_SEND && ev.left && !ev.no_room,
+              "a keyframe that exactly fits resumes");
+
+        /* The reviewed bug: oversize keyframes that never fit used to restart the run (and print "recovered")
+         * every GOP, so the stream froze for ever. With the room in decide(), the run clocks keep running. */
+        tx_pace_init(&p);
+        size_t room = 90 * KB;
+        int64_t t = 0;
+        int sent = 0, left = 0;
+        tx_pace_verdict_t v = TX_PACE_SKIP;
+        for (int i = 0; i < 40 && v != TX_PACE_DROP_CLIENT; i++, t += 500) { /* 2 fps of P-frames, a keyframe every 2 s */
+            int key = (i % 4) == 0;
+            v = step_room(&p, &rc, 0, key ? 130 * KB : 5 * KB, room, key, t);
+            if (v == TX_PACE_SEND) sent++;
+            if (ev.left) left++;
+        }
+        CHECK(v == TX_PACE_DROP_CLIENT && ev.drop_reason && strstr(ev.drop_reason, "too long"),
+              "repeated keyframes that never fit: the client is dropped after max_skip_ms");
+        CHECK(t - 500 == 10000, "... exactly when the run reaches 10 s, not later");
+        CHECK(left == 0 && sent == 0, "nothing was sent, no run was restarted, no 'recovered' event");
+
+        /* a keyframe that fits later still ends the run before the limit */
+        tx_pace_init(&p);
+        step_room(&p, &rc, 0, 130 * KB, room, 1, 0);
+        step_room(&p, &rc, 0, 5 * KB, room, 0, 500);
+        CHECK(step_room(&p, &rc, 0, 60 * KB, room, 1, 2000) == TX_PACE_SEND && ev.left && ev.run_skipped == 2,
+              "a keyframe that fits the room ends the run, counting the frames of the run");
+    }
+
+    /* --- a keyframe is admitted only behind a shallow backlog --- */
+    {
+        tx_pace_init(&p);
+        step(&p, &c, 0, 150 * KB, 1, 0); /* high = base + 150 KB */
+        CHECK(step(&p, &c, base, 5 * KB, 0, 66) == TX_PACE_SEND, "a P-frame at backlog = base is sent");
+        CHECK(step(&p, &c, base + 1, 150 * KB, 1, 132) == TX_PACE_SKIP && ev.entered,
+              "a keyframe one byte over base is not admitted (it would be wasted: the P-frames after it hit the high mark)");
+        tx_pace_init(&p);
+        step(&p, &c, 0, 150 * KB, 1, 0);
+        CHECK(step(&p, &c, base, 150 * KB, 1, 66) == TX_PACE_SEND, "a keyframe at backlog = base is admitted");
+        tx_pace_cfg_t cb = { .base = base, .cap = 200 * KB };
+        tx_pace_init(&p);
+        step(&p, &cb, 0, 150 * KB, 1, 0); /* high = cap - 150 KB = 50 KB < base */
+        CHECK(step(&p, &cb, 60 * KB, 150 * KB, 1, 66) == TX_PACE_SKIP, "behind a small send buffer the limit is high - frame_len");
+    }
+
+    /* --- the stall rule applies only above the low mark --- */
+    {
+        tx_pace_cfg_t sc = { .base = base, .cap = 0, .stall_ms = 15000, .max_skip_ms = 0 };
+        tx_pace_init(&p);
+        step(&p, &sc, 400 * KB, 5 * KB, 0, 0);
+        step(&p, &sc, tx_pace_low(base), 5 * KB, 0, 1000); /* the minimum is reached, then nothing improves */
+        CHECK(step(&p, &sc, tx_pace_low(base), 5 * KB, 0, 20000) == TX_PACE_SKIP,
+              "a drained link (backlog <= low) waiting for the next keyframe is not a dead peer");
+        CHECK(step(&p, &sc, tx_pace_low(base) + 1, 5 * KB, 0, 40000) == TX_PACE_DROP_CLIENT,
+              "above the low mark with no progress it is");
+    }
 
     /* --- invariant over random sequences: SEND after a SKIP only on a keyframe (backlog <= low) --- */
     int bad = 0;

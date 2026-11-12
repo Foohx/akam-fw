@@ -63,8 +63,10 @@ tx_pace_verdict_t tx_pace_no_room(tx_pace_t *p, size_t backlog, int64_t now_ms, 
     return TX_PACE_SKIP;
 }
 
+size_t tx_pace_wire_len(size_t frame_len) { return frame_len + frame_len / 64 + 256; }
+
 tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, size_t frame_len,
-                                 int is_key, int64_t now_ms, tx_pace_event_t *ev)
+                                 size_t room, int is_key, int64_t now_ms, tx_pace_event_t *ev)
 {
     tx_pace_event_t none;
     memset(&none, 0, sizeof(none));
@@ -72,17 +74,21 @@ tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t ba
     *e = none;
     if (is_key) p->key_len = frame_len;
     size_t low = tx_pace_low(c->base);
+    int fits = tx_pace_wire_len(frame_len) <= room;
 
     if (!p->skipping) {
+        size_t high = tx_pace_high(p, c, frame_len);
+        size_t limit = is_key && c->base < high ? c->base : high; /* a keyframe needs a shallower backlog */
         int key_ok = is_key && backlog <= low; /* always sendable, even above the buffer size */
-        int over = backlog > tx_pace_high(p, c, frame_len) ||
-                   (c->cap && backlog + frame_len > c->cap && !key_ok);
+        int over = backlog > limit || (c->cap && backlog + frame_len > c->cap && !key_ok) || !fits;
         if (!over) return TX_PACE_SEND;
         enter_skip(p, backlog, now_ms, e);
+        e->no_room = !fits;
         return TX_PACE_SKIP;
     }
 
-    if (is_key && backlog <= low) {
+    e->no_room = !fits;
+    if (is_key && backlog <= low && fits) {
         p->skipping = 0;
         e->left = 1;
         e->run_skipped = p->run_skipped;
@@ -97,7 +103,7 @@ tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t ba
         p->best_ms = now_ms;
     }
     p->run_skipped++;
-    if (c->stall_ms > 0 && now_ms - p->best_ms >= c->stall_ms) {
+    if (c->stall_ms > 0 && backlog > low && now_ms - p->best_ms >= c->stall_ms) {
         e->drop_reason = "TCP link stalled while skipping";
         return TX_PACE_DROP_CLIENT;
     }

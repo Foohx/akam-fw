@@ -197,6 +197,7 @@ int main(void)
         size_t put = 0, got = 0;
         int bad = 0;
         unsigned seed = 7;
+        alarm(60); /* a stuck ring (no progress) kills the test instead of the CI job */
         while (got < sizeof src && !bad) {
             seed = seed * 1103515245u + 12345u;
             size_t n = 1 + (seed >> 8) % 3000;
@@ -208,6 +209,7 @@ int main(void)
             ssize_t r = read(sv[1], dst + got, 700);
             if (r > 0) got += (size_t)r;
         }
+        alarm(0);
         CHECK(!bad && got == sizeof src && memcmp(src, dst, sizeof src) == 0,
               "400 KB through a 5000-byte ring in random sizes arrives intact (wrap-around)");
         net_tx_queue_free(&t);
@@ -221,6 +223,59 @@ int main(void)
         net_tx_queue_enable(&t, 8 * 1024);
         int rc = net_tx_write_all(&t, data, LEN);
         CHECK(rc == -1 && errno == ENOBUFS, "overflow of the queue fails with ENOBUFS");
+        net_tx_queue_free(&t);
+        close(sv[0]); close(sv[1]);
+    }
+
+    /* 6b. ENOBUFS is all-or-nothing per write: interleaved packets (one write each) that do not fit are refused
+     * whole, so the byte stream the peer finally reads holds only complete packets and framing stays valid.
+     * The RTSP loop relies on this to treat ENOBUFS as "drop the rest of the frame" instead of "drop the client". */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 600);
+        net_tx_queue_enable(&t, 5000);
+        int fl = 1; ioctl(sv[1], FIONBIO, &fl);
+        int fl0 = 1; ioctl(sv[0], FIONBIO, &fl0);
+        enum { PKT = 1216 };
+        static unsigned char pkt[PKT], rd[200000];
+        int accepted = 0, refused = 0, torn = 0;
+        size_t rd_len = 0;
+        alarm(60);
+        for (int i = 0; i < 60; i++) {
+            memset(pkt, 0, sizeof pkt);
+            pkt[0] = '$'; pkt[1] = 0; pkt[2] = (PKT - 4) >> 8; pkt[3] = (PKT - 4) & 0xff;
+            pkt[4] = (unsigned char)i;
+            for (int k = 5; k < PKT; k++) pkt[k] = (unsigned char)(i + k);
+            size_t before = net_tx_pending(&t);
+            int rc = net_tx_write_all(&t, pkt, PKT);
+            if (rc == 0) accepted++;
+            else if (errno == ENOBUFS) {
+                refused++;
+                if (net_tx_pending(&t) != before) torn = 1; /* nothing of the refused packet may be queued */
+            } else torn = 1;
+            if (i % 7 == 6) { /* the peer reads a little now and then */
+                ssize_t r = read(sv[1], rd + rd_len, 3000);
+                if (r > 0) rd_len += (size_t)r;
+                (void)net_tx_pump(&t);
+            }
+        }
+        for (int i = 0; i < 1000 && net_tx_pending(&t); i++) {
+            ssize_t r = read(sv[1], rd + rd_len, 4096);
+            if (r > 0) rd_len += (size_t)r;
+            (void)net_tx_pump(&t);
+        }
+        for (;;) { ssize_t r = read(sv[1], rd + rd_len, 4096); if (r <= 0) break; rd_len += (size_t)r; }
+        alarm(0);
+        CHECK(accepted > 0 && refused > 0, "some packets were taken and some refused (ENOBUFS) while the peer lagged");
+        CHECK(!torn, "a refused packet leaves no byte in the queue, other errors do not occur");
+        int framing_ok = rd_len == (size_t)accepted * PKT;
+        for (size_t o = 0; framing_ok && o < rd_len; o += PKT) {
+            const unsigned char *q = rd + o;
+            if (q[0] != '$' || ((q[2] << 8) | q[3]) != PKT - 4) framing_ok = 0;
+            for (int k = 5; framing_ok && k < PKT; k++)
+                if (q[k] != (unsigned char)(q[4] + k)) framing_ok = 0;
+        }
+        CHECK(framing_ok, "the stream the peer reads is exactly the accepted packets, each whole, framing valid");
         net_tx_queue_free(&t);
         close(sv[0]); close(sv[1]);
     }

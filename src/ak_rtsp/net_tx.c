@@ -89,9 +89,15 @@ static int queue_append(net_tx_t *t, const unsigned char *p, size_t len)
     return 0;
 }
 
-/* Queue mode of net_tx_write_all: never waits. */
+/* Queue mode of net_tx_write_all: never waits. All or nothing: a write the queue could not take completely is
+ * refused (ENOBUFS) before the first byte goes out, so a refused packet never leaves a torn interleaved frame.
+ * With an empty queue the part the kernel does not take always fits (len <= q_cap is checked up front). */
 static int write_queued(net_tx_t *t, const unsigned char *p, size_t len)
 {
+    if (len > t->q_cap) {
+        errno = ENOBUFS;
+        return -1;
+    }
     if (t->q_len > 0 && net_tx_pump(t) < 0) return -1;
     while (t->q_len == 0 && len > 0) {
         ssize_t n = send(t->fd, p, len, MSG_NOSIGNAL | MSG_DONTWAIT);

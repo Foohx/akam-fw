@@ -7,6 +7,7 @@
  * Build/run: tests/rtsp_backchannel_test.sh */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -22,6 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "ak_ioctls.h"
 #include "ak_rtsp.h"
 #include "audio.h"
 #include "g711.h"
@@ -43,10 +45,13 @@ uint32_t g_venc_phys = 0;
 void ledsys_stream_delta(int delta) { (void)delta; }
 int control_debug_on(void) { return 0; }
 
-/* The encoder never has a frame: every ioctl on it answers EAGAIN. */
+/* The encoder never has a frame: every ioctl on it answers EAGAIN. GET_STREAM calls are counted: the ring is
+ * drained on every loop pass of a connected client that does not play. */
+static volatile unsigned long venc_gets;
 int __wrap_ioctl(int fd, unsigned long req, ...)
 {
-    (void)fd; (void)req;
+    (void)fd;
+    if (req == VENC_IOCTL_GET_STREAM) venc_gets++;
     errno = EAGAIN;
     return -1;
 }
@@ -895,6 +900,92 @@ static void test_akam_talk(void)
     CHECK(run_talk("--tone 1 --bogus", PASS, NULL) == 1, "unknown option: exit 1");
 }
 
+/* Open descriptors of this process (the server runs in a thread of it). */
+static int count_fds(void)
+{
+    int n = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (!d) return -1;
+    while (readdir(d)) n++;
+    closedir(d);
+    return n - 3; /* ".", ".." and the directory itself */
+}
+
+#define UDP_TR(a, b) "Transport: RTP/AVP;unicast;client_port=" #a "-" #b "\r\n"
+
+/* Review findings: a repeated SETUP of a track leaked its UDP sockets and transport (EMFILE after a few
+ * thousand requests), mixed UDP/TCP tracks broke the pacing, SETUP while playing swapped transports under the
+ * running loop, a connected-but-not-playing client let the encoder ring wrap. */
+static void test_setup_hygiene(void)
+{
+    printf("# SETUP hygiene\n");
+    set_auth(0);
+    conn_t c; char r[2048];
+    int base = count_fds();
+    CHECK(tcp_connect(&c) == 0, "connect");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", "Transport: RTP/AVP;unicast;client_port=5000-5001\r\n", 0, r, sizeof(r)) == 200,
+          "video SETUP over UDP");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=1", "Transport: RTP/AVP;unicast;client_port=5002-5003\r\n", 0, r, sizeof(r)) == 200,
+          "audio SETUP over UDP");
+    int after_first = count_fds();
+    int ok = 1;
+    for (int i = 0; i < 40; i++) {
+        char tr[96];
+        snprintf(tr, sizeof(tr), "Transport: RTP/AVP;unicast;client_port=%d-%d\r\n", 6000 + 4 * i, 6001 + 4 * i);
+        ok &= rtsp(&c, "SETUP", "x/streamid=0", tr, 0, r, sizeof(r)) == 200;
+        snprintf(tr, sizeof(tr), "Transport: RTP/AVP;unicast;client_port=%d-%d\r\n", 6002 + 4 * i, 6003 + 4 * i);
+        ok &= rtsp(&c, "SETUP", "x/streamid=1", tr, 0, r, sizeof(r)) == 200;
+    }
+    CHECK(ok, "80 repeated SETUPs of both tracks are all answered 200");
+    CHECK(count_fds() == after_first, "... and leak no descriptor (the old sockets are released at each SETUP)");
+
+    /* The session is still usable after all that. */
+    CHECK(rtsp(&c, "PLAY", "x", "", 0, r, sizeof(r)) == 200, "PLAY works after the repeated SETUPs");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", "Transport: RTP/AVP;unicast;client_port=7000-7001\r\n", 0, r, sizeof(r)) == 455,
+          "SETUP while playing: 455 (the loop is using the transports)");
+    CHECK(count_fds() == after_first, "the refused SETUP created nothing");
+    CHECK(rtsp(&c, "TEARDOWN", "x", "", 0, r, sizeof(r)) == 200, "TEARDOWN is answered 200 (the reply is flushed before the close)");
+    CHECK(server_closed(&c, 3000), "and then the server closes");
+    conn_close(&c);
+    WAIT_FOR(count_fds() == base, 2000);
+    CHECK(count_fds() == base, "all descriptors of the session are closed at its end");
+
+    /* One lower transport per session. */
+    CHECK(tcp_connect(&c) == 0, "connect");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", 0, r, sizeof(r)) == 200,
+          "video SETUP over TCP");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=1", UDP_TR(5002, 5003), 0, r, sizeof(r)) == 461, "audio over UDP next to TCP video: 461");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=1", "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n", 0, r, sizeof(r)) == 200,
+          "audio over TCP: 200");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", UDP_TR(5000, 5001), 0, r, sizeof(r)) == 461, "video switched to UDP while audio is TCP: 461");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", 0, r, sizeof(r)) == 200,
+          "video re-SETUP over TCP: 200");
+    conn_close(&c);
+
+    CHECK(tcp_connect(&c) == 0, "connect");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", UDP_TR(5000, 5001), 0, r, sizeof(r)) == 200, "video SETUP over UDP");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=1", "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n", 0, r, sizeof(r)) == 461,
+          "audio over TCP next to UDP video: 461");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=1", UDP_TR(5002, 5003), 0, r, sizeof(r)) == 200, "audio over UDP: 200");
+    conn_close(&c);
+    /* a lone track may change transport (nothing else depends on it) */
+    CHECK(tcp_connect(&c) == 0, "connect");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", UDP_TR(5000, 5001), 0, r, sizeof(r)) == 200, "video over UDP");
+    CHECK(rtsp(&c, "SETUP", "x/streamid=0", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", 0, r, sizeof(r)) == 200,
+          "video alone, re-SETUP over TCP: 200");
+    conn_close(&c);
+
+    /* A client that is connected but does not play keeps the encoder ring drained (about every 20 ms). */
+    CHECK(tcp_connect(&c) == 0, "connect");
+    CHECK(rtsp(&c, "OPTIONS", "x", "", 0, r, sizeof(r)) == 200, "OPTIONS");
+    unsigned long g0 = venc_gets;
+    wait_ms(400);
+    unsigned long g1 = venc_gets;
+    CHECK(g1 - g0 >= 8, "a connected client that does not play: the encoder is polled every ~20 ms");
+    conn_close(&c);
+    WAIT_FOR(count_fds() == base, 2000);
+}
+
 int main(void)
 {
     md5_hex_cat(HA1, USER, ":" RTSP_AUTH_REALM ":", PASS, (char *)NULL);
@@ -912,6 +1003,7 @@ int main(void)
     test_second_client();
     test_close_then_reconnect();
     test_no_password();
+    test_setup_hygiene();
     test_auth_gating();
     test_talk_only_tcp();
     test_garbage_frames();
