@@ -23,7 +23,7 @@ User request: "direct access to a binary for the assistant; the binary should be
 | `ssh-keygen -Y verify` / `-Y sign` | `verify_kit.sh:130-136`, `sign_kit.sh:7,28,33` | kit signature (namespace and principal `akam-release`) | in-process sshsig verify (3.8); signing stays maintainer-side |
 | second Dropbear on 2222, `HostKeyAlias` | `reflash_over_ssh.sh:35-38`, `steps_camera.sh:79` | no-UART reflash | same alias logic (3.2, 3.6) |
 | `nc` on the camera + `/dev/tcp` on PC | `transfer.sh:158,207`, `steps_camera.sh:467` | backup copy, image push over telnet route | in-binary dial + camera-side `nc -l` (3.5) |
-| `nc -w 2 127.0.0.1 8091` on the camera | `steps_camera.sh:1266-1274,1352,1453,1544` | led/audio/picture control | SSH direct-tcpip to 127.0.0.1:8091 (3.3) |
+| `nc -w 2 127.0.0.1 8091` on the camera | `steps_camera.sh:1266-1274,1352,1453,1544` | led/audio/picture control | SSH exec of `nc -w 2 127.0.0.1 8091` with the lines on stdin (3.3; Dropbear has no TCP forwarding) |
 | `timeout` | `transfer.sh:66` | deadline | context deadlines |
 | `md5sum`, `sha256sum`, `shasum -a 256` | `host.sh:78-95`, `transfer.sh:35-45`, `steps_host.sh:814,854`, `steps_camera.sh:1985`, `verify_kit.sh:79-85,227` | hashes, `sha256sum -c` | `crypto/md5`, `crypto/sha256` (3.5) |
 | `curl --proto =https --tlsv1.2 --retry 3` | `steps_host.sh:444-452,496,509` | kit + `SHA256SUMS(.sig)` | `net/http`, same constraints (3.8) |
@@ -100,7 +100,7 @@ cmd/akam/main.go          dispatcher, flags (same names as ./akam)
 internal/cli/             one file per sub-command
 internal/ui/              UI interface; plain implementation; tui/ (bubbletea)
 internal/state/           state files, cameras, lock, migration
-internal/camera/ssh/      client, keys, known_hosts, exec, forward, put/get
+internal/camera/ssh/      client, keys, known_hosts, exec, put/get
 internal/camera/telnet/   maintenance telnet (camsh port)
 internal/camera/xfer/     nc-based and SSH transfers, hashes
 internal/camera/ctl/      control port 8091 client
@@ -124,11 +124,11 @@ internal/testfake/        fake camera (SSH, telnet, 8091, RTSP) for tests
 - `x/crypto/ssh`, user `root`, port 22 (`AKAM_PORT_SSH`). Host-key algorithms limited to what `akam_ssh.sh` generates (to confirm, Q3).
 - Key generation: ed25519 in OpenSSH format (`ssh.MarshalPrivateKey`) at `~/.ssh/akam` (0600) + `.pub`, comment `akam`; `--identity`/`--pubkey` kept; optional passphrase prompted without echo; `SSH_AUTH_SOCK` agent supported (Windows named pipe in P4). Only `ssh-ed25519` public keys go on the card (`steps_host.sh:1002`); a private key is refused (`steps_host.sh:997`).
 - Pinning: dedicated `~/.local/state/akam/known_hosts` (OpenSSH line format, `HostKeyAlias`=IP convention so one pin also covers the RAM Dropbear on 2222) via `knownhosts`. First contact shows the SHA256 fingerprint and asks yes/no (default No); non-tty refuses unless `--trust-new-host-key FP`. **A changed key is a hard error**; only `akam forget-host-key IP` (explicit, logged) clears it. The user's `~/.ssh/config` is ignored.
-- Primitives: `Exec`, `ExecStdin` (secrets on stdin, as `steps_camera.sh:1115`), `Forward`, `Put`/`Get` via `cat` on an exec channel (no sftp/scp on Dropbear), always followed by size + hash check.
+- Primitives: `Exec`, `ExecStdin` (secrets on stdin, as `steps_camera.sh:1115`), `Put`/`Get` via `cat` on an exec channel (no sftp/scp on Dropbear), always followed by size + hash check.
 - Connect timeout 10 s, keepalive 15 s, per-command deadlines (flash read-back 600 s). Log lines `CMD ssh root@IP <cmd>` only for commands carrying no secret.
 
 ### 3.3 Control port (led, audio, picture, debug)
-Today: `printf 'GET/SET...' | nc -w 2 127.0.0.1 8091` over SSH. In-binary: SSH `direct-tcpip` to `127.0.0.1:8091`, same GET/SET lines, same parsing (drop `LOG ` lines), same ranges (picture -50..50, volume 0-100, debug minutes 1-1440, default 60). Loopback trust model unchanged. `debug on` keeps its extra yes/no (default No) and runs `akam_debug.sh` over SSH (`steps_camera.sh:1567,1599`).
+Today: `printf 'GET/SET...' | nc -w 2 127.0.0.1 8091` over SSH. In-binary: an SSH exec of `nc -w 2 127.0.0.1 8091` with the GET/SET lines then `QUIT` on stdin (the camera's Dropbear is built without TCP forwarding, so no `direct-tcpip`; the `OK bye` answer to QUIT is dropped; 10 s timeout, partial output kept), same GET/SET lines, same parsing (drop `LOG ` lines), same ranges (picture -50..50, volume 0-100, debug minutes 1-1440, default 60). Loopback trust model unchanged. `debug on` keeps its extra yes/no (default No) and runs `akam_debug.sh` over SSH (`steps_camera.sh:1567,1599`).
 
 ### 3.4 Telnet client (stock maintenance telnet, port 24)
 Port of `camsh.sh` into `internal/camera/telnet`: PC dials out only; IAC negotiation parsed and refused; CR and ANSI (`ESC[6n`, BusyBox line-editor echo and 80-column wrapping) stripped; one command per send, <= 350 bytes, wrapped with nonce markers built by the shell (`__AKAM_BEG_<nonce>_<n>_` / `__AKAM_DONE_<nonce>_<n>:<rc>__`), output before BEG dropped, inactivity timeout 30 s (`AKAM_CAMSH_TIMEOUT`). After 2 consecutive failures or `--manual-telnet`: **manual mode** (print the command; user pastes it in their own terminal; the tool never invents output). The `YES` to the camera flash script is never sent by code, only what a human typed (`camsh.sh:25-26`). `akam telnet [IP]` is an interactive passthrough (`Ctrl-]` quits). Stock+toolkit vs Akam detection by port probe as `steps_camera.sh:146-178`.
@@ -263,7 +263,7 @@ Principle: the camera keeps every decision that protects the camera (flash guard
 
 ### 8.2 Fake camera
 `internal/testfake` (also built as `akam-fakecam` for manual runs, replacing `tools/wizard/fake_camera.sh`):
-- SSH server (`x/crypto/ssh` server side, ed25519 host key) that runs the **real helper scripts** from `tools/firmware_patch_templates/` in a temp rootfs (as `tests/fixtures/fake_camera_env.sh`); exec, stdin, `direct-tcpip` to a fake 8091, `cat >`/`cat <`, and a second server standing for port 2222;
+- SSH server (`x/crypto/ssh` server side, ed25519 host key) that runs the **real helper scripts** from `tools/firmware_patch_templates/` in a temp rootfs (as `tests/fixtures/fake_camera_env.sh`); exec, stdin, the exec `nc -w 2 127.0.0.1 8091` to a fake 8091 (`direct-tcpip` refused like Dropbear), `cat >`/`cat <`, and a second server standing for port 2222;
 - telnet-port server with a BusyBox-like shell (real `busybox sh` if present, else a Go interpreter of the ~25 commands used) reproducing the quirks `camsh` handles (echo, wrapping, `ESC[6n`, IAC), `nc -l` listeners, `/proc/mtd` (8 partitions), `dd`/`md5sum` on a file-backed fake `/dev/mtd7`, with fault injection (drop, short transfer, bad hash, slow, silence leading to manual mode);
 - control server on 8091 and an RTSP server with Digest + backchannel; `tests/native/rtsp_auth_server.c` is the conformance oracle for the Go client, and a test compares RTP/RTCP framing against the C `akam-talk`.
 
@@ -300,7 +300,7 @@ Commands: `help`, `version`, `status`, `cameras`, `rename-camera`, `register`, `
 - T1.1 `tools/assistant/` skeleton, Go pin in `deps.lock`, vendoring, CI, size and reproducibility checks, `AKAM_USE_BIN` bridge in the bash script. AC: `akam version` on both arches; two builds give the same sha256; size within budget.
 - T1.2 `internal/state`: read/write compatible with bash, multi-camera layout, lock, migration prompts. AC: round-trip with a state made by bash and the reverse; extra keys ignored by bash.
 - T1.3 `internal/ui` + bubbletea TUI + plain mode + widgets. AC: golden tests; every prompt defaults to No; plain output equals bash on 10 scripted scenarios.
-- T1.4 SSH: client, key generation, pinning, exec/stdin/forward/put/get. AC: works against OpenSSH, Dropbear and the fake camera; changed key refused; key usable by `ssh -i`; no secret in logs.
+- T1.4 SSH: client, key generation, pinning, exec/stdin/put/get. AC: works against OpenSSH, Dropbear and the fake camera; changed key refused; key usable by `ssh -i`; no secret in logs.
 - T1.5 control-port client and `led`, `audio`, `picture`, `debug`, `hostname`, `rtsp-auth`, `onvif`. AC: same camera-side effects and text as bash on the fake camera and, for the maintainer, on a real camera; `debug on` asks yes/no default No.
 - T1.6 RTSP/Digest/backchannel + G.711 + WAV + optional capture + `talk`/`say`. AC: frames byte-compatible with `akam-talk`; `talk test` and `say file.wav` need no external tool; mic works with `arecord`/`ffmpeg` when present; error codes mapped.
 - T1.7 `find-camera`. AC: classification matches bash on stock/Akam/unknown fixtures; no traffic before the user chose; subnet scan only behind an explicit yes.

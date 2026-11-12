@@ -16,3 +16,10 @@ func HomeMenu(version, name, ip, kind, fw string, hotkey bool) (string, []ui.Men
 	}
 	return title, out
 }
+
+// SetCtlTimeout shortens the control-port exchange timeout and returns the function that restores it.
+func SetCtlTimeout(d time.Duration) func() {
+	old := ctlTimeout
+	ctlTimeout = d
+	return func() { ctlTimeout = old }
+}

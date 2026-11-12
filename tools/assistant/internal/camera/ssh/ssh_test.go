@@ -283,7 +283,7 @@ func TestExecStdinControlPortAndUnknownCommand(t *testing.T) {
 	if err != nil || r.Status != 0 {
 		t.Fatalf("nc: %+v %v", r, err)
 	}
-	out := ctl.Answers(string(r.Stdout), 2)
+	out := ctl.Answers(string(r.Stdout))
 	if ctl.Get("led.status", out) != "auto" || ctl.Get("night.ir_led", out) != "auto" || len(out) != 2 {
 		t.Errorf("control answers: %v (raw %q)", out, r.Stdout)
 	}

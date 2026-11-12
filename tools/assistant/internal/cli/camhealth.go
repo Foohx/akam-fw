@@ -52,6 +52,7 @@ type camHealth struct {
 	timeSet              string // sys.time_set: 1 | 0 | ""
 	camEpoch, pcEpoch    int64  // seconds since 1970 on the camera / on this PC (0: unknown)
 	ntp                  string // time sync: on | off | "" (unknown)
+	ntpSync              string // last helper log of time sync: ok | failed | "" (none, or unknown)
 }
 
 // readCamHealth parses the answers of the control port (healthKeys) into a camHealth.
@@ -154,8 +155,13 @@ func clockReport(h camHealth) (lines []string, offer bool) {
 	if pc < minPlausibleEpoch { // this computer cannot be the reference
 		return append(lines, pcClockNote(pc)), false
 	}
-	// Time sync is on and the camera clock is plausibly set: the camera is the better reference. A
+	// Time sync is on and has worked, and the camera clock is plausibly set: the camera is the better reference. A
 	// difference then most likely means this computer is wrong, so never offer to overwrite the camera.
+	if h.ntp == "on" && !clockUnset(h) && h.ntpSync != "ok" {
+		// Time sync is on but nothing says it has worked: the camera clock is not known to be right, so
+		// the offer stays (default No).
+		return append(lines, "Time sync is on but has not succeeded yet (see "+ntpStatusHint+"), so the camera clock is not known to be right."), true
+	}
 	if h.ntp == "on" && !clockUnset(h) {
 		return append(lines,
 			"The camera keeps its time with NTP (time sync is on), so its clock is probably right and the clock or time zone of this computer may be wrong.",
@@ -163,6 +169,32 @@ func clockReport(h camHealth) (lines []string, offer bool) {
 				time.Unix(h.camEpoch, 0).UTC().Format("2006-01-02 15:04:05"), time.Unix(pc, 0).UTC().Format("2006-01-02 15:04:05"), humanSeconds(absInt64(h.camEpoch-pc)))), false
 	}
 	return lines, true
+}
+
+// ntpStatusHint is where the reason is shown.
+const ntpStatusHint = "akam ntp status"
+
+// parseNtpStatus reads the output of `akam_ntp.sh status`: "on", "off" or "" for the first line, and
+// for the last helper log line "ok" (sync ok), "failed" (sync failed) or "" (none, or anything else).
+func parseNtpStatus(out string) (ntp, sync string) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	switch first := strings.TrimSpace(lines[0]); {
+	case strings.HasPrefix(first, "time sync: on"):
+		ntp = "on"
+	case strings.HasPrefix(first, "time sync: off"):
+		ntp = "off"
+	}
+	for _, l := range lines {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "last log:"); ok {
+			switch {
+			case strings.Contains(v, "sync ok"):
+				sync = "ok"
+			case strings.Contains(v, "sync failed"):
+				sync = "failed"
+			}
+		}
+	}
+	return ntp, sync
 }
 
 func absInt64(v int64) int64 {
@@ -232,9 +264,12 @@ func (a *App) readCamClock(c *camssh.Client, h *camHealth) {
 func (a *App) camCmd() string { return Prog + " --camera " + a.Cams.Name }
 
 // clockLostNote is the end of the clock offer: a time set by hand is lost at reboot unless time sync is on.
-func clockLostNote(ntp string) string {
-	if ntp == "on" {
+func clockLostNote(h camHealth) string {
+	if h.ntp == "on" && h.ntpSync == "ok" {
 		return "Time sync is on and corrects the clock shortly, also after a reboot."
+	}
+	if h.ntp == "on" {
+		return "Time sync is on but has not succeeded yet, so it may not correct the clock."
 	}
 	return "It is lost at the next reboot unless time sync (NTP) is on."
 }
@@ -257,7 +292,7 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 		return
 	}
 	a.UI.Say("  The clock is used by ONVIF clients (their login checks the time) and by video time stamps.")
-	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? " + clockLostNote(h.ntp)); !ok {
+	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? " + clockLostNote(h)); !ok {
 		if h.ntp != "on" {
 			a.UI.Say(fmt.Sprintf("  Clock left as it is. Time sync keeps it right across reboots: %s ntp set pool.ntp.org", a.camCmd()))
 		} else {
@@ -265,11 +300,11 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 		}
 		return
 	}
-	a.setCamClock(c, h.ntp)
+	a.setCamClock(c, h)
 }
 
 // setCamClock sets the camera clock to the time of this PC (UTC, so the time zone does not matter).
-func (a *App) setCamClock(c *camssh.Client, ntp string) {
+func (a *App) setCamClock(c *camssh.Client, h camHealth) {
 	now := pcNow().UTC()
 	if now.Unix() < minPlausibleEpoch {
 		a.UI.Warn(pcClockNote(now.Unix()))
@@ -280,7 +315,7 @@ func (a *App) setCamClock(c *camssh.Client, ntp string) {
 		a.UI.Warn("the camera did not accept the new time (the clock is unchanged).")
 		return
 	}
-	a.UI.Good("  Camera clock set to " + now.Format("2006-01-02 15:04:05") + " UTC. " + clockLostNote(ntp))
+	a.UI.Good("  Camera clock set to " + now.Format("2006-01-02 15:04:05") + " UTC. " + clockLostNote(h))
 }
 
 // ntpOffer, at the end of an install or an update, offers time sync when it is off (default No): the

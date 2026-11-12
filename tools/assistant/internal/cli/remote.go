@@ -95,7 +95,7 @@ func allRemoteCommands() []string {
 		remoteMqtt("status"), remoteMqtt("set", "192.0.2.10", "1883", "bob"), remoteMqtt("set", "broker.lan", "1883", "-"),
 		remoteMqtt("disable"), remoteMqtt("forget"), remoteMqtt("test"),
 		remoteRegister(), remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
-		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)),
+		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), ctl.NcCommand,
 	}
 }
 

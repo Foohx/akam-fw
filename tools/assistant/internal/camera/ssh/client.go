@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -110,10 +112,21 @@ func Dial(cfg Config) (*Client, error) {
 	}
 	// The handshake has a deadline, but not while a person reads the host-key fingerprint: the
 	// deadline is suspended while Confirm waits and restarted afterwards.
+	// Only during that first handshake: once it returned, the flag stops the wrapper from touching the
+	// deadline of a live connection (a later callback must never leave a deadline on it).
+	var handshaking atomic.Bool
+	handshaking.Store(true)
 	if confirm := cfg.Confirm; confirm != nil {
 		cfg.Confirm = func(nh NewHostKey) (bool, error) {
+			if !handshaking.Load() {
+				return confirm(nh)
+			}
 			_ = raw.SetDeadline(time.Time{})
-			defer func() { _ = raw.SetDeadline(time.Now().Add(cfg.Timeout)) }()
+			defer func() {
+				if handshaking.Load() {
+					_ = raw.SetDeadline(time.Now().Add(cfg.Timeout))
+				}
+			}()
 			return confirm(nh)
 		}
 	}
@@ -127,6 +140,7 @@ func Dial(cfg Config) (*Client, error) {
 	}
 	_ = raw.SetDeadline(time.Now().Add(cfg.Timeout))
 	cc, chans, reqs, err := gossh.NewClientConn(raw, addr, sc)
+	handshaking.Store(false)
 	if err != nil {
 		raw.Close()
 		closeSigner()
@@ -202,7 +216,8 @@ type Result struct {
 func (r Result) Combined() string { return string(r.Stdout) + string(r.Stderr) }
 
 // Run executes cmd on the camera with optional stdin. A non-zero exit status is not an error:
-// it is Result.Status. Context cancellation closes the session.
+// it is Result.Status. Context cancellation closes the session; the output received so far is
+// returned with the context error.
 func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, error) {
 	s, err := c.conn.NewSession()
 	if err != nil {
@@ -220,9 +235,10 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, 
 	select {
 	case <-ctx.Done():
 		s.Close()
-		return Result{}, ctx.Err()
+		// What arrived before the deadline is kept: a caller may use a partial answer.
+		return Result{Stdout: out.bytes(), Stderr: errb.bytes()}, ctx.Err()
 	case err := <-done:
-		res := Result{Stdout: out.b, Stderr: errb.b}
+		res := Result{Stdout: out.bytes(), Stderr: errb.bytes()}
 		if err != nil {
 			var ee *gossh.ExitError
 			if errors.As(err, &ee) {
@@ -281,7 +297,7 @@ func (c *Client) RunStream(ctx context.Context, cmd string, out io.Writer) (Resu
 		}
 		return Result{}, ctx.Err()
 	case err := <-done:
-		res := Result{Stderr: errb.b}
+		res := Result{Stderr: errb.bytes()}
 		if err != nil {
 			if werr != nil {
 				return res, werr
@@ -314,11 +330,21 @@ const (
 // limitBuf keeps the first max bytes written to it (4 KiB when max is 0) and drops the rest; the
 // writer always reports success, so the command is not stopped.
 type limitBuf struct {
+	mu  sync.Mutex
 	b   []byte
 	max int
 }
 
+// bytes returns a copy of what was kept so far (safe while the session still writes).
+func (l *limitBuf) bytes() []byte {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]byte(nil), l.b...)
+}
+
 func (l *limitBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	limit := l.max
 	if limit == 0 {
 		limit = 4096

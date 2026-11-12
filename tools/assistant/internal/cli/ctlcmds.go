@@ -12,7 +12,10 @@ import (
 )
 
 // This file: led, audio, picture, the commands that talk to the control port (8091) through an
-// SSH forward to the camera's own loopback. Texts are those of steps_camera.sh.
+// `nc` run on the camera over SSH (its Dropbear has no forwarding), to its own loopback. Texts are those of steps_camera.sh.
+
+// ctlTimeout bounds one control-port exchange (a variable so that a test can shorten it).
+var ctlTimeout = ctl.Timeout
 
 // ctlExchange is led_remote: send GET/SET lines to 127.0.0.1:8091 on the camera, return the
 // answers without the LOG lines. The lines are the stdin of `nc -w 2 127.0.0.1 8091` run over an SSH
@@ -24,14 +27,16 @@ func (a *App) ctlExchange(c *camssh.Client, lines ...string) []string {
 		return nil
 	}
 	a.Log.Line("CMD ssh root@%s printf <%d> | nc -w 2 127.0.0.1 %d", c.Host, len(lines), ctl.Port)
-	ctx, cancel := context.WithTimeout(a.Ctx, ctl.Timeout)
+	ctx, cancel := context.WithTimeout(a.Ctx, ctlTimeout)
 	defer cancel()
 	res, err := c.Run(ctx, cmd, strings.NewReader(ctl.Input(lines)))
 	if err != nil {
-		a.Log.Line("control port exchange failed: %v", err)
-		return nil
+		// A timeout keeps the answers received so far (the caller treats a missing one as unknown).
+		a.Log.Line("control port exchange failed: %v (kept %d byte(s) of output)", err, len(res.Stdout))
+	} else if res.Status != 0 || len(res.Stderr) > 0 {
+		a.Log.Line("control port exchange: nc exited with status %d, stderr %q", res.Status, strings.TrimSpace(string(res.Stderr)))
 	}
-	return ctl.Answers(string(res.Stdout), len(lines))
+	return ctl.Answers(string(res.Stdout))
 }
 
 // connectTools is rtsp_connect with the wording of the "tools" commands.

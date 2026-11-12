@@ -12,15 +12,15 @@ func TestInputEndsWithQuit(t *testing.T) {
 }
 
 func TestAnswersDropsLogByeAndBlank(t *testing.T) {
-	out := Answers("LOG [early] hello\r\nled.status=auto\r\n\nLOG [x]\nnight.ir_led=off\nOK bye\n", 2)
+	out := Answers("LOG [early] hello\r\nled.status=auto\r\n\nLOG [x]\nnight.ir_led=off\nOK bye\n")
 	if len(out) != 2 || Get("led.status", out) != "auto" || Get("night.ir_led", out) != "off" {
 		t.Errorf("answers: %q", out)
 	}
 	// a missing answer: the QUIT reply must not take its place
-	if out = Answers("led.status=on\nOK bye\n", 2); len(out) != 1 {
+	if out = Answers("led.status=on\nOK bye\n"); len(out) != 1 {
 		t.Errorf("answers: %q", out)
 	}
-	if out = Answers("", 1); len(out) != 0 {
+	if out = Answers(""); len(out) != 0 {
 		t.Errorf("answers: %q", out)
 	}
 }

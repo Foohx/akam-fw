@@ -17,7 +17,8 @@ const Port = 8091
 // Timeout bounds one whole exchange (send and answers), so a hung camera cannot hang the assistant.
 const Timeout = 10 * time.Second
 
-// NcCommand is the command run on the camera: busybox nc, giving up after 2 s of silence.
+// NcCommand is the command run on the camera: busybox nc. With -w 2 it gives up connecting after 2 s and
+// ends after 2 s of idle input; normally it ends sooner, when the server closes after QUIT.
 const NcCommand = "nc -w 2 127.0.0.1 8091"
 
 // Input is the stdin of NcCommand: every line, then QUIT so the server closes at once.
@@ -32,8 +33,8 @@ func Input(lines []string) string {
 }
 
 // Answers filters what nc printed: CRLF trimmed, empty and LOG lines dropped, the "OK bye" answer to
-// QUIT removed, and at most one answer kept per line sent.
-func Answers(stdout string, sent int) []string {
+// QUIT removed when it is the last line.
+func Answers(stdout string) []string {
 	var out []string
 	for _, l := range strings.Split(stdout, "\n") {
 		l = strings.TrimRight(l, "\r")
@@ -43,9 +44,6 @@ func Answers(stdout string, sent int) []string {
 	}
 	if n := len(out); n > 0 && out[n-1] == "OK bye" {
 		out = out[:n-1]
-	}
-	if len(out) > sent {
-		out = out[:sent]
 	}
 	return out
 }

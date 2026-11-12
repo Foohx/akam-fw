@@ -88,8 +88,10 @@ func TestClockReport(t *testing.T) {
 		{"off", camHealth{timeSet: "1", camEpoch: now - 3600*5, pcEpoch: now}, "off by 5 hour(s)", true},
 		{"unreadable", camHealth{timeSet: "1"}, "Clock: set.", false},
 		{"ntp off, 1 h off", camHealth{timeSet: "1", ntp: "off", camEpoch: now - 3600, pcEpoch: now}, "off by 1 hour(s)", true},
-		{"ntp on, 1 h off: no offer", camHealth{timeSet: "1", ntp: "on", camEpoch: now - 3600, pcEpoch: now}, "may be wrong", false},
-		{"ntp on, 1 h off: both times and difference", camHealth{timeSet: "1", ntp: "on", camEpoch: now - 3600, pcEpoch: now}, "difference 1 hour(s)", false},
+		{"ntp on, never synced: offer", camHealth{timeSet: "1", ntp: "on", camEpoch: now - 3600, pcEpoch: now}, "has not succeeded yet", true},
+		{"ntp on, sync failed: offer", camHealth{timeSet: "1", ntp: "on", ntpSync: "failed", camEpoch: now - 3600, pcEpoch: now}, "has not succeeded yet", true},
+		{"ntp on, 1 h off: no offer", camHealth{timeSet: "1", ntp: "on", ntpSync: "ok", camEpoch: now - 3600, pcEpoch: now}, "may be wrong", false},
+		{"ntp on, 1 h off: both times and difference", camHealth{timeSet: "1", ntp: "on", ntpSync: "ok", camEpoch: now - 3600, pcEpoch: now}, "difference 1 hour(s)", false},
 		{"ntp on, unset: offer", camHealth{timeSet: "0", ntp: "on", camEpoch: 946684900, pcEpoch: now}, "Clock: not set", true},
 		{"ntp on, reads 2000: offer", camHealth{ntp: "on", camEpoch: 946684900, pcEpoch: now}, "reads 2000-01-01", true},
 	} {
@@ -100,6 +102,22 @@ func TestClockReport(t *testing.T) {
 	}
 	if l, o := clockReport(camHealth{}); l != nil || o {
 		t.Error("unknown clock must print nothing and offer nothing")
+	}
+}
+
+func TestParseNtpStatus(t *testing.T) {
+	for _, c := range []struct{ out, ntp, sync string }{
+		{"time sync: on, servers: pool.ntp.org\ncamera clock: x\nlast log: akam_ntp: sync ok", "on", "ok"},
+		{"time sync: on, servers: a\nlast log: akam_ntp: sync ok after 2 failed pass(es)", "on", "ok"},
+		{"time sync: on, servers: a\nlast log: akam_ntp: sync failed (pass 1), next try in 60s", "on", "failed"},
+		{"time sync: on, servers: a\nlast log: akam_ntp: start (pid 5), servers: a", "on", ""},
+		{"time sync: on, servers: a\nhelper: running", "on", ""},
+		{"time sync: off (default)\n", "off", ""},
+		{"garbage", "", ""},
+	} {
+		if n, s := parseNtpStatus(c.out); n != c.ntp || s != c.sync {
+			t.Errorf("%q: %q %q", c.out, n, s)
+		}
 	}
 }
 
@@ -130,12 +148,15 @@ func TestDateGuard(t *testing.T) {
 }
 
 func TestClockLostNote(t *testing.T) {
-	if got := clockLostNote("on"); strings.Contains(got, "lost") || !strings.Contains(got, "corrects") {
+	if got := clockLostNote(camHealth{ntp: "on", ntpSync: "ok"}); strings.Contains(got, "lost") || !strings.Contains(got, "corrects") {
 		t.Error(got)
 	}
 	for _, n := range []string{"off", ""} {
-		if got := clockLostNote(n); !strings.Contains(got, "lost at the next reboot") {
+		if got := clockLostNote(camHealth{ntp: n}); !strings.Contains(got, "lost at the next reboot") {
 			t.Error(got)
 		}
+	}
+	if got := clockLostNote(camHealth{ntp: "on"}); strings.Contains(got, "corrects the clock shortly") || !strings.Contains(got, "not succeeded") {
+		t.Error(got)
 	}
 }

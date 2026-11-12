@@ -46,6 +46,9 @@ type Options struct {
 	NoMqttHelper bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
+	// CtlAnswerLimit, when above 0, makes the control port answer only that many lines and then stay
+	// silent without closing (a hung camera).
+	CtlAnswerLimit int
 	// MtdRead, when set, may change what one `dd if=/dev/mtdblockN` read streams: n is the partition,
 	// read the 1-based count of reads of that partition so far. It returns the bytes to send and
 	// whether the connection is then dropped (no exit status).
@@ -78,6 +81,7 @@ type Camera struct {
 	clockSets []string
 	ntpOn     bool
 	ntpList   string
+	ntpLog    string            // last log line of the helper ("" none)
 	vRun      map[string]string // the video values the running ak_rtsp uses (applied at its restart)
 	onvifPrt  string
 	restarts  int
@@ -459,6 +463,14 @@ func (c *Camera) VideoRestarts() int {
 	return c.restarts
 }
 
+// SetNtpLog sets the last log line of the time sync helper shown by `akam_ntp.sh status` (for example
+// "akam_ntp: sync failed (pass 2), next try in 60s"); "" shows none.
+func (c *Camera) SetNtpLog(line string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ntpLog = line
+}
+
 // ntp emulates akam_ntp.sh (texts of tools/firmware_patch_templates/akam_ntp.sh); the host grammar is
 // checked again here, as the script does, so that a bad name from a client is refused like on the camera.
 func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
@@ -484,14 +496,14 @@ func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 		}
-		c.ntpOn, c.ntpList = true, strings.Join(args[1:], " ")
+		c.ntpOn, c.ntpList, c.ntpLog = true, strings.Join(args[1:], " "), "akam_ntp: sync ok"
 		fmt.Fprintf(stdout, "Time sync on, servers: %s. The camera asks them for the time at start and every 6 hours (UDP 123 outgoing).\nStarted now; see: %s status\n", c.ntpList, "/usr/sbin/akam_ntp.sh")
 	case "off":
 		if !c.ntpOn {
 			fmt.Fprintln(stdout, "Time sync was already off.")
 			return 0
 		}
-		c.ntpOn, c.ntpList = false, ""
+		c.ntpOn, c.ntpList, c.ntpLog = false, "", ""
 		fmt.Fprintln(stdout, "Time sync off: no more traffic to time servers. The clock keeps its current value until the next reboot.")
 	case "status":
 		if c.ntpOn {
@@ -500,6 +512,9 @@ func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "time sync: off (default)")
 		}
 		fmt.Fprintln(stdout, "camera clock: 2026-01-01 00:00:00 UTC\nsys.time_set: 0 (the clock is before 2024: no RTC, nothing set it yet)\nhelper: not running")
+		if c.ntpLog != "" {
+			fmt.Fprintf(stdout, "last log: %s\n", c.ntpLog)
+		}
 	default:
 		return 2
 	}
@@ -563,7 +578,13 @@ func (c *Camera) handleCtl(nc net.Conn) {
 	// the camera pushes a LOG line at any time: the client must drop it
 	fmt.Fprintf(nc, "LOG [fake] hello\n")
 	sc := bufio.NewScanner(nc)
+	answered := 0
 	for sc.Scan() {
+		if c.opts.CtlAnswerLimit > 0 && answered >= c.opts.CtlAnswerLimit {
+			<-c.done // silent until the camera is closed
+			return
+		}
+		answered++
 		line := strings.TrimRight(sc.Text(), "\r")
 		f := strings.SplitN(line, " ", 3)
 		var reply string
