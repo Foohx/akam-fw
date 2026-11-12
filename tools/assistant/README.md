@@ -193,7 +193,7 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `help`, `version`, `self-test` | the text, the version, offline checks (G.711, Digest, state file, the safety rule below) |
 | `status`, `cameras`, `rename-camera NEW`, `register` | progress table, camera list, rename, and record a camera that already runs Akam (`--ip`, optional `--backup-dir`) |
 | `find-camera` | asks the address (or a name: DNS, then mDNS `<name>.local`), probes the four ports in parallel and tells stock + toolkit from Akam. With no address typed, two opt-in searches, each behind its own yes/no (default No): ONVIF discovery (one UDP packet to 239.255.255.250:3702) and a scan of your local /24 (only the four camera ports) |
-| `led`, `audio`, `picture`, `debug`, `onvif` | the same settings, checks and messages as the bash commands; control-port lines go through an SSH forward to the camera's own loopback |
+| `led`, `audio`, `picture`, `debug`, `onvif` | the same settings, checks and messages as the bash commands; control-port lines are sent to the camera's own loopback by running `nc -w 2 127.0.0.1 8091` over an SSH exec session (its Dropbear has no TCP forwarding) |
 | `rtsp-auth [set\|disable\|status]` | the password is typed twice without echo and sent on stdin to `akam_rtsp_auth.sh set-creds` |
 | `hostname [NAME]` | `akam_hostname.sh set NAME` (a note only on an older image) |
 | `talk [SECONDS\|test]`, `say FILE` | RTSP + Digest + ONVIF audio backchannel + G.711 in Go; `talk test` and `say file.wav` need no other program (any rate or channel count; 8/16/24/32-bit PCM or float). The microphone and files that are not WAV need `arecord` or `ffmpeg` (optional, found automatically, nothing else uses them) |
@@ -310,7 +310,7 @@ ffmpeg:
 
 * `internal/testfake`: the fake camera. An in-process SSH server that runs the **real helper scripts**
   of `tools/firmware_patch_templates/` (`akam_rtsp_auth.sh`, `akam_hostname.sh`, `akam_debug.sh`) in a
-  temporary root, a control port 8091 reached through `direct-tcpip`, a second Dropbear and a fake flash (a byte slice plays
+  temporary root, a control port 8091 reached the way the real camera allows (the exec `nc -w 2 127.0.0.1 8091`; `direct-tcpip` is refused like Dropbear), a second Dropbear and a fake flash (a byte slice plays
   `/dev/mtd7`; the behaviour of `akam_reflash_ssh.sh` is emulated, the real script is tested by
   `tests/reflash_ssh_test.sh`), and an RTSP server with Digest login
   against the credentials those scripts wrote and the ONVIF backchannel. `akam_onvif.sh` is emulated until it is

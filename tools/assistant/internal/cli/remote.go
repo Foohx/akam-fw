@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
 
@@ -94,7 +95,7 @@ func allRemoteCommands() []string {
 		remoteMqtt("status"), remoteMqtt("set", "192.0.2.10", "1883", "bob"), remoteMqtt("set", "broker.lan", "1883", "-"),
 		remoteMqtt("disable"), remoteMqtt("forget"), remoteMqtt("test"),
 		remoteRegister(), remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
-		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)),
+		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), ctl.NcCommand,
 	}
 }
 
@@ -143,6 +144,7 @@ var fixedRemote = map[string]bool{
 	remoteDateRead(): true, remoteRegister(): true,
 	remoteMtdList: true, remoteKernelInfo: true,
 	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
+	ctl.NcCommand: true,
 }
 
 // forbiddenRemote is an ALLOW-list: it returns "" only for a command line the assistant itself

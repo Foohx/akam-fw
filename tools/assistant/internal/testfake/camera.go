@@ -1,7 +1,8 @@
 // Package testfake is the fake camera of the tests: an in-process SSH server that runs the real
 // camera helper scripts (tools/firmware_patch_templates) in a temporary root file system, a fake
-// control port 8091 reached through direct-tcpip (and also listening on a real port, for port
-// probes), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
+// control port 8091 reached the way the real camera allows it (the exec command
+// `nc -w 2 127.0.0.1 8091`; direct-tcpip is refused like Dropbear built without forwarding; the port
+// also listens on a real loopback port, for port probes), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
 // listens outside the loopback, never runs anything but the closed set of commands below, and
 // removes everything it started when the test ends.
 package testfake
@@ -45,6 +46,9 @@ type Options struct {
 	NoMqttHelper bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
+	// CtlAnswerLimit, when above 0, makes the control port answer only that many lines and then stay
+	// silent without closing (a hung camera).
+	CtlAnswerLimit int
 	// MtdRead, when set, may change what one `dd if=/dev/mtdblockN` read streams: n is the partition,
 	// read the 1-based count of reads of that partition so far. It returns the bytes to send and
 	// whether the connection is then dropped (no exit status).
@@ -77,6 +81,7 @@ type Camera struct {
 	clockSets []string
 	ntpOn     bool
 	ntpList   string
+	ntpLog    string            // last log line of the helper ("" none)
 	vRun      map[string]string // the video values the running ak_rtsp uses (applied at its restart)
 	onvifPrt  string
 	restarts  int
@@ -311,35 +316,7 @@ func (c *Camera) handleSSH(nc net.Conn) {
 			}
 			c.wg.Add(1)
 			go func() { defer c.wg.Done(); c.session(ch, creqs, nc) }()
-		case "direct-tcpip":
-			var p struct {
-				Host     string
-				Port     uint32
-				OrigHost string
-				OrigPort uint32
-			}
-			if gossh.Unmarshal(nch.ExtraData(), &p) != nil || p.Host != "127.0.0.1" || p.Port != 8091 {
-				_ = nch.Reject(gossh.Prohibited, "only 127.0.0.1:8091 is forwarded")
-				continue
-			}
-			ch, creqs, err := nch.Accept()
-			if err != nil {
-				continue
-			}
-			go gossh.DiscardRequests(creqs)
-			up, err := net.Dial("tcp", c.ctlLn.Addr().String())
-			if err != nil {
-				ch.Close()
-				continue
-			}
-			c.wg.Add(1)
-			go func() {
-				defer c.wg.Done()
-				defer up.Close()
-				defer ch.Close()
-				go io.Copy(up, ch)
-				io.Copy(ch, up)
-			}()
+		// Like the camera's Dropbear (DROPBEAR_SVR_LOCALTCPFWD 0): no direct-tcpip, no forwarding of any kind.
 		default:
 			_ = nch.Reject(gossh.UnknownChannelType, "no")
 		}
@@ -387,6 +364,8 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 	switch {
 	case cmd == "true":
 		return 0
+	case cmd == "nc -w 2 127.0.0.1 8091":
+		return c.ncCtl(stdin, stdout)
 	case cmd == "test -x /usr/sbin/akam_hostname.sh":
 		if c.opts.NoHostnameHelper {
 			return 1
@@ -484,6 +463,14 @@ func (c *Camera) VideoRestarts() int {
 	return c.restarts
 }
 
+// SetNtpLog sets the last log line of the time sync helper shown by `akam_ntp.sh status` (for example
+// "akam_ntp: sync failed (pass 2), next try in 60s"); "" shows none.
+func (c *Camera) SetNtpLog(line string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ntpLog = line
+}
+
 // ntp emulates akam_ntp.sh (texts of tools/firmware_patch_templates/akam_ntp.sh); the host grammar is
 // checked again here, as the script does, so that a bad name from a client is refused like on the camera.
 func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
@@ -509,14 +496,14 @@ func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 		}
-		c.ntpOn, c.ntpList = true, strings.Join(args[1:], " ")
+		c.ntpOn, c.ntpList, c.ntpLog = true, strings.Join(args[1:], " "), "akam_ntp: sync ok"
 		fmt.Fprintf(stdout, "Time sync on, servers: %s. The camera asks them for the time at start and every 6 hours (UDP 123 outgoing).\nStarted now; see: %s status\n", c.ntpList, "/usr/sbin/akam_ntp.sh")
 	case "off":
 		if !c.ntpOn {
 			fmt.Fprintln(stdout, "Time sync was already off.")
 			return 0
 		}
-		c.ntpOn, c.ntpList = false, ""
+		c.ntpOn, c.ntpList, c.ntpLog = false, "", ""
 		fmt.Fprintln(stdout, "Time sync off: no more traffic to time servers. The clock keeps its current value until the next reboot.")
 	case "status":
 		if c.ntpOn {
@@ -525,6 +512,9 @@ func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "time sync: off (default)")
 		}
 		fmt.Fprintln(stdout, "camera clock: 2026-01-01 00:00:00 UTC\nsys.time_set: 0 (the clock is before 2024: no RTC, nothing set it yet)\nhelper: not running")
+		if c.ntpLog != "" {
+			fmt.Fprintf(stdout, "last log: %s\n", c.ntpLog)
+		}
 	default:
 		return 2
 	}
@@ -588,7 +578,13 @@ func (c *Camera) handleCtl(nc net.Conn) {
 	// the camera pushes a LOG line at any time: the client must drop it
 	fmt.Fprintf(nc, "LOG [fake] hello\n")
 	sc := bufio.NewScanner(nc)
+	answered := 0
 	for sc.Scan() {
+		if c.opts.CtlAnswerLimit > 0 && answered >= c.opts.CtlAnswerLimit {
+			<-c.done // silent until the camera is closed
+			return
+		}
+		answered++
 		line := strings.TrimRight(sc.Text(), "\r")
 		f := strings.SplitN(line, " ", 3)
 		var reply string
@@ -660,6 +656,23 @@ func (c *Camera) handleCtl(nc net.Conn) {
 		c.mu.Unlock()
 		fmt.Fprintf(nc, "%s\n", reply)
 	}
+}
+
+// ncCtl emulates busybox `nc -w 2 127.0.0.1 8091` on the camera: stdin goes to the control port, what
+// the port sends goes to stdout. nc ends when the server closes, or 2 s after stdin ended.
+func (c *Camera) ncCtl(stdin io.Reader, stdout io.Writer) int {
+	up, err := net.Dial("tcp", c.ctlLn.Addr().String())
+	if err != nil {
+		return 1
+	}
+	defer up.Close()
+	go func() {
+		_, _ = io.Copy(up, stdin)
+		time.Sleep(2 * time.Second) // -w 2
+		up.Close()
+	}()
+	_, _ = io.Copy(stdout, up)
+	return 0
 }
 
 // CtlValue reads a control value (tests).

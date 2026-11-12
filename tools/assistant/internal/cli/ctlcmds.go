@@ -1,27 +1,42 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
 
 // This file: led, audio, picture, the commands that talk to the control port (8091) through an
-// SSH forward to the camera's own loopback. Texts are those of steps_camera.sh.
+// `nc` run on the camera over SSH (its Dropbear has no forwarding), to its own loopback. Texts are those of steps_camera.sh.
+
+// ctlTimeout bounds one control-port exchange (a variable so that a test can shorten it).
+var ctlTimeout = ctl.Timeout
 
 // ctlExchange is led_remote: send GET/SET lines to 127.0.0.1:8091 on the camera, return the
-// answers without the LOG lines.
+// answers without the LOG lines. The lines are the stdin of `nc -w 2 127.0.0.1 8091` run over an SSH
+// exec session (the camera's Dropbear has no TCP forwarding), followed by QUIT so the server closes.
 func (a *App) ctlExchange(c *camssh.Client, lines ...string) []string {
-	a.Log.Line("CMD ssh root@%s printf <%d> | nc -w 2 127.0.0.1 %d", c.Host, len(lines), ctl.Port)
-	conn, err := c.Forward("127.0.0.1", ctl.Port)
-	if err != nil {
-		a.Log.Line("forward to 127.0.0.1:%d failed: %v", ctl.Port, err)
+	cmd := ctl.NcCommand
+	if why := forbiddenRemote(cmd); why != "" {
+		a.Log.Line("%s", why)
 		return nil
 	}
-	return ctl.Exchange(conn, lines, ctl.Idle)
+	a.Log.Line("CMD ssh root@%s printf <%d> | nc -w 2 127.0.0.1 %d", c.Host, len(lines), ctl.Port)
+	ctx, cancel := context.WithTimeout(a.Ctx, ctlTimeout)
+	defer cancel()
+	res, err := c.Run(ctx, cmd, strings.NewReader(ctl.Input(lines)))
+	if err != nil {
+		// A timeout keeps the answers received so far (the caller treats a missing one as unknown).
+		a.Log.Line("control port exchange failed: %v (kept %d byte(s) of output)", err, len(res.Stdout))
+	} else if res.Status != 0 || len(res.Stderr) > 0 {
+		a.Log.Line("control port exchange: nc exited with status %d, stderr %q", res.Status, strings.TrimSpace(string(res.Stderr)))
+	}
+	return ctl.Answers(string(res.Stdout))
 }
 
 // connectTools is rtsp_connect with the wording of the "tools" commands.

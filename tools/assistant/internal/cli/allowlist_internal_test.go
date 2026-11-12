@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 )
 
 // The guard is an allow-list: harmless arguments that merely contain a scary word are fine, and
@@ -34,6 +36,7 @@ func TestGuardIsAnAllowListNotADenyList(t *testing.T) {
 		"/tmp/usr/sbin/akam_ntp.sh status", "x/usr/sbin/akam_ntp.sh status", "date -s x", "date", " date +%s",
 		restartVideoCmd + "; reboot", remoteHwcheckRun + " x", "sh /tmp/akam_hwcheck.sh; reboot",
 		"cat > /tmp/x", "dd if=/dev/mtdblock3 bs=64k of=/tmp/x",
+		ctl.NcCommand + "; reboot", ctl.NcCommand + " ", "nc -w 2 127.0.0.1 22", "nc -w 2 192.0.2.1 8091", "nc -w 9 127.0.0.1 8091", "nc 127.0.0.1 8091",
 	} {
 		if forbiddenRemote(bad) == "" {
 			t.Errorf("the guard lets %q through", bad)

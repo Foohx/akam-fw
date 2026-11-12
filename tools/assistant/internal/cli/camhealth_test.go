@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testfake"
 )
 
@@ -198,9 +199,68 @@ func TestClockOfferWithTimeSyncOn(t *testing.T) {
 	e.rememberCamera("salon", "127.0.0.1")
 	t.Setenv("AKAM_FORCE_TTY", "1")
 	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
-	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false) // never set: the offer stays with time sync on
 	r := e.run("3\n\n8\n9\n", "--camera", "salon")
 	contains(t, r.err, "Time sync is on and corrects the clock shortly")
 	notContains(t, r.err, "lost at the next reboot")
 	contains(t, r.out, "time sync should correct it shortly.")
+}
+
+// A camera that keeps its time with NTP is the better reference: a difference with this computer
+// must never lead to overwriting the camera clock (a PC with a wrong clock once set a camera 1 h wrong).
+func TestOptionsClockNtpOnNeverOffersToOverwrite(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.rememberCamera("salon", "127.0.0.1")
+	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
+	t.Setenv("AKAM_FORCE_TTY", "1")
+	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	r := e.run("3\n8\n9\n", "--camera", "salon")
+	contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong", "difference 1 hour(s)")
+	notContains(t, r.err, "Set the camera clock")
+	// the same through "ntp status"
+	r = e.run("", "--camera", "salon", "ntp", "status")
+	contains(t, r.out, "may be wrong")
+	// the clock never set: the offer stays, even with time sync on
+	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false)
+	r = e.run("3\n\n8\n9\n", "--camera", "salon")
+	contains(t, r.err, "Set the camera clock from this computer now?")
+	if len(e.cam.ClockSets()) != 0 {
+		t.Errorf("clock set: %v", e.cam.ClockSets())
+	}
+}
+
+// A hung control port: the answers received before the timeout are used, not thrown away.
+func TestCtlTimeoutKeepsPartialAnswers(t *testing.T) {
+	defer cli.SetCtlTimeout(500 * time.Millisecond)()
+	e := newEnv(t, func(o *testfake.Options) { o.CtlAnswerLimit = 3 })
+	e.rememberCamera("salon", "127.0.0.1")
+	r := e.run("", "--camera", "salon", "led", "show")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Front LED")
+}
+
+// Time sync is on and has worked: a difference means this computer is wrong. On but not (yet) synced:
+// the camera clock is not known to be right, so the offer stays.
+func TestClockNtpOnWithoutASuccessfulSyncStillOffers(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.rememberCamera("salon", "127.0.0.1")
+	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
+	t.Setenv("AKAM_FORCE_TTY", "1")
+	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	for _, log := range []string{"akam_ntp: sync failed (pass 2), next try in 60s", ""} {
+		e.cam.SetNtpLog(log)
+		r := e.run("3\n\n8\n9\n", "--camera", "salon")
+		contains(t, r.out, "Time sync is on but has not succeeded yet")
+		contains(t, r.err, "Set the camera clock from this computer now?", "Time sync is on but has not succeeded yet")
+		notContains(t, r.out, "may be wrong")
+	}
+	e.cam.SetNtpLog("akam_ntp: sync ok after 1 failed pass(es)")
+	r := e.run("3\n8\n9\n", "--camera", "salon")
+	contains(t, r.out, "may be wrong")
+	notContains(t, r.err, "Set the camera clock")
+	if len(e.cam.ClockSets()) != 0 {
+		t.Errorf("clock set: %v", e.cam.ClockSets())
+	}
 }

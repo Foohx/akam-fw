@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -251,7 +253,7 @@ func TestWrongKeyIsRefused(t *testing.T) {
 	}
 }
 
-func TestExecStdinForwardAndUnknownCommand(t *testing.T) {
+func TestExecStdinControlPortAndUnknownCommand(t *testing.T) {
 	f := newFixture(t)
 	c, err := camssh.Dial(f.cfg(yes))
 	if err != nil {
@@ -277,16 +279,58 @@ func TestExecStdinForwardAndUnknownCommand(t *testing.T) {
 			t.Errorf("show: %q err=%q status=%d", r.Stdout, r.Stderr, r.Status)
 		}
 	}
-	conn, err := c.Forward("127.0.0.1", ctl.Port)
+	r, err = c.Run(ctx, ctl.NcCommand, strings.NewReader(ctl.Input([]string{"GET led.status", "GET night.ir_led"})))
+	if err != nil || r.Status != 0 {
+		t.Fatalf("nc: %+v %v", r, err)
+	}
+	out := ctl.Answers(string(r.Stdout))
+	if ctl.Get("led.status", out) != "auto" || ctl.Get("night.ir_led", out) != "auto" || len(out) != 2 {
+		t.Errorf("control answers: %v (raw %q)", out, r.Stdout)
+	}
+}
+
+// The camera's Dropbear is built without TCP forwarding: the fake must refuse direct-tcpip as it does,
+// so that nothing in the assistant can come to rely on a forward again.
+func TestFakeRefusesForwardingLikeDropbear(t *testing.T) {
+	f := newFixture(t)
+	pem, err := os.ReadFile(f.key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := ctl.Exchange(conn, []string{"GET led.status", "GET night.ir_led"}, ctl.Idle)
-	if ctl.Get("led.status", out) != "auto" || ctl.Get("night.ir_led", out) != "auto" || len(out) != 2 {
-		t.Errorf("control answers: %v", out)
+	signer, err := gossh.ParsePrivateKey(pem)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := c.Forward("127.0.0.1", 22); err == nil {
-		t.Error("the fake allows forwards to other ports: the test fixture is too open")
+	raw, err := gossh.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.cam.SSHPort())), &gossh.ClientConfig{
+		User: "root", Auth: []gossh.AuthMethod{gossh.PublicKeys(signer)}, HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if conn, err := raw.Dial("tcp", "127.0.0.1:8091"); err == nil {
+		conn.Close()
+		t.Fatal("the fake accepted a direct-tcpip channel: the real camera refuses it")
+	} else if !strings.Contains(err.Error(), "unknown channel type") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// A person may take longer than the connection timeout to read the fingerprint of a new camera.
+func TestSlowHostKeyConfirmationDoesNotExpireTheHandshake(t *testing.T) {
+	f := newFixture(t)
+	cfg := f.cfg(func(camssh.NewHostKey) (bool, error) {
+		time.Sleep(900 * time.Millisecond)
+		return true, nil
+	})
+	cfg.Timeout = 300 * time.Millisecond
+	c, err := camssh.Dial(cfg)
+	if err != nil {
+		t.Fatalf("a slow confirmation broke the handshake: %v", err)
+	}
+	defer c.Close()
+	if r, err := c.Run(context.Background(), "true", nil); err != nil || r.Status != 0 {
+		t.Fatalf("true: %+v %v", r, err)
 	}
 }
 

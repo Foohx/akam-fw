@@ -1,6 +1,6 @@
 // Package ssh is the built-in SSH client of the assistant (replacing the ssh binary): user root,
 // public-key login with the dedicated key, host-key pinning in Akam's own known_hosts file, command
-// execution with optional stdin, and direct-tcpip forwards to the camera's loopback.
+// execution with optional stdin. It uses no forwarding (the camera's Dropbear has none).
 package ssh
 
 import (
@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -102,6 +104,32 @@ func Dial(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	raw, err := net.DialTimeout("tcp", addr, cfg.Timeout)
+	if err != nil {
+		closeSigner()
+		return nil, err
+	}
+	// The handshake has a deadline, but not while a person reads the host-key fingerprint: the
+	// deadline is suspended while Confirm waits and restarted afterwards.
+	// Only during that first handshake: once it returned, the flag stops the wrapper from touching the
+	// deadline of a live connection (a later callback must never leave a deadline on it).
+	var handshaking atomic.Bool
+	handshaking.Store(true)
+	if confirm := cfg.Confirm; confirm != nil {
+		cfg.Confirm = func(nh NewHostKey) (bool, error) {
+			if !handshaking.Load() {
+				return confirm(nh)
+			}
+			_ = raw.SetDeadline(time.Time{})
+			defer func() {
+				if handshaking.Load() {
+					_ = raw.SetDeadline(time.Now().Add(cfg.Timeout))
+				}
+			}()
+			return confirm(nh)
+		}
+	}
 	sc := &gossh.ClientConfig{
 		User:              "root",
 		Auth:              []gossh.AuthMethod{gossh.PublicKeys(signer)},
@@ -110,14 +138,9 @@ func Dial(cfg Config) (*Client, error) {
 		Timeout:           cfg.Timeout,
 		ClientVersion:     "SSH-2.0-akam",
 	}
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	raw, err := net.DialTimeout("tcp", addr, cfg.Timeout)
-	if err != nil {
-		closeSigner()
-		return nil, err
-	}
 	_ = raw.SetDeadline(time.Now().Add(cfg.Timeout))
 	cc, chans, reqs, err := gossh.NewClientConn(raw, addr, sc)
+	handshaking.Store(false)
 	if err != nil {
 		raw.Close()
 		closeSigner()
@@ -193,7 +216,8 @@ type Result struct {
 func (r Result) Combined() string { return string(r.Stdout) + string(r.Stderr) }
 
 // Run executes cmd on the camera with optional stdin. A non-zero exit status is not an error:
-// it is Result.Status. Context cancellation closes the session.
+// it is Result.Status. Context cancellation closes the session; the output received so far is
+// returned with the context error.
 func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, error) {
 	s, err := c.conn.NewSession()
 	if err != nil {
@@ -211,9 +235,10 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, 
 	select {
 	case <-ctx.Done():
 		s.Close()
-		return Result{}, ctx.Err()
+		// What arrived before the deadline is kept: a caller may use a partial answer.
+		return Result{Stdout: out.bytes(), Stderr: errb.bytes()}, ctx.Err()
 	case err := <-done:
-		res := Result{Stdout: out.b, Stderr: errb.b}
+		res := Result{Stdout: out.bytes(), Stderr: errb.bytes()}
 		if err != nil {
 			var ee *gossh.ExitError
 			if errors.As(err, &ee) {
@@ -272,7 +297,7 @@ func (c *Client) RunStream(ctx context.Context, cmd string, out io.Writer) (Resu
 		}
 		return Result{}, ctx.Err()
 	case err := <-done:
-		res := Result{Stderr: errb.b}
+		res := Result{Stderr: errb.bytes()}
 		if err != nil {
 			if werr != nil {
 				return res, werr
@@ -305,11 +330,21 @@ const (
 // limitBuf keeps the first max bytes written to it (4 KiB when max is 0) and drops the rest; the
 // writer always reports success, so the command is not stopped.
 type limitBuf struct {
+	mu  sync.Mutex
 	b   []byte
 	max int
 }
 
+// bytes returns a copy of what was kept so far (safe while the session still writes).
+func (l *limitBuf) bytes() []byte {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]byte(nil), l.b...)
+}
+
 func (l *limitBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	limit := l.max
 	if limit == 0 {
 		limit = 4096
@@ -321,11 +356,6 @@ func (l *limitBuf) Write(p []byte) (int, error) {
 		l.b = append(l.b, p[:room]...)
 	}
 	return len(p), nil
-}
-
-// Forward opens a direct-tcpip channel to host:port as seen from the camera (loopback).
-func (c *Client) Forward(host string, port int) (net.Conn, error) {
-	return c.conn.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
 // ---- host key pinning ----
