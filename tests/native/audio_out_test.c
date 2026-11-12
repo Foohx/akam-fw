@@ -684,7 +684,7 @@ static void test_config(void)
     CHECK(ao_load_config(ao) == 1, "file read");
     CHECK(ao->enabled == 0 && ao->volume == 20 && ao->gain == 2 && ao->source == 6, "valid keys applied, bad ones ignored");
 
-    ao->enabled = 1; ao->volume = 77;
+    ao->enabled = 1; ao->volume = ao->saved_volume = 77;
     CHECK(ao_save_config(ao) == 0, "save");
     struct stat st;
     stat(ao->conf_path, &st);
@@ -918,6 +918,18 @@ static void test_talk_support(void)
         ao_load_config(a3);
         CHECK(a3->mic_enable == 1 && a3->volume != 37, "remote SET is not written to flash");
         ao->persist = 1;
+        /* L7: a RAM-only volume does not become permanent when another key is saved later */
+        ao_ctl_set(ao, "audio.out_volume", "30", out, sizeof(out));      /* saved: 30 */
+        ao->persist = 0;
+        ao_ctl_set(ao, "audio.out_volume", "12", out, sizeof(out));      /* RAM only */
+        ao->persist = 1;
+        CHECK(ao->volume == 12, "RAM-only volume plays");
+        ao_ctl_set(ao, "audio.talk_enable", ao->talk_enable ? "0" : "1", out, sizeof(out));   /* saves the file */
+        ao_load_config(a3);
+        CHECK(a3->volume == 30, "a RAM-only volume is not written by the next flash save of another key");
+        ao_ctl_set(ao, "audio.out_volume", "12", out, sizeof(out));      /* the same as the RAM value, but not saved yet */
+        ao_load_config(a3);
+        CHECK(a3->volume == 12, "a saved SET equal to the RAM value still reaches flash");
         free(a3);
     }
     /* counters */

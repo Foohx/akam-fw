@@ -103,6 +103,7 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     snprintf(ao->guard_path, sizeof(ao->guard_path), "%s/%s", ao->conf_dir, AO_GUARD_FILE);
     ao->enabled  = 1;
     ao->volume   = 100;
+    ao->saved_volume = 100;
     ao->gain     = 2;   /* stock value */
     ao->source   = 4;   /* stock playback route */
     ao->amp_mode = AO_AMP_AUTO;
@@ -192,7 +193,7 @@ int ao_load_config(audio_out_t *ao)
         const char *k = line, *v = eq + 1;
         long x;
         if      (!strcmp(k, "enable") && !parse_int(v, 0, 1, &x))    ao->enabled = (int)x;
-        else if (!strcmp(k, "volume") && !parse_int(v, 0, 100, &x))  ao->volume = (int)x;
+        else if (!strcmp(k, "volume") && !parse_int(v, 0, 100, &x))  ao->volume = ao->saved_volume = (int)x;
         else if (!strcmp(k, "gain")   && !parse_int(v, 0, 5, &x))    ao->gain = (int)x;
         else if (!strcmp(k, "source") && !parse_int(v, 4, 6, &x))    ao_set_source(ao, (int)x);
         else if (!strcmp(k, "talk_enable") && !parse_int(v, 0, 1, &x)) ao->talk_enable = (int)x;
@@ -239,7 +240,7 @@ int ao_save_config(audio_out_t *ao)
     int w = snprintf(out + outn, sizeof(out) - outn,
                      "enable=%d\nvolume=%d\ngain=%d\nsource=%d\n"
                      "talk_enable=%d\ntalk_duplex=%s\nmic_enable=%d\n",
-                     ao->enabled, ao->volume, ao->gain, ao->source,
+                     ao->enabled, ao->saved_volume, ao->gain, ao->source,
                      ao->talk_enable, duplex_name(ao->talk_duplex), ao->mic_enable);
     if (w < 0 || (size_t)w >= sizeof(out) - outn) { errno = ENOSPC; return -1; }
     outn += (size_t)w;
@@ -743,7 +744,10 @@ int ao_ctl_set(audio_out_t *ao, const char *key, const char *val, char *msg, siz
     } else if (!strcmp(k, "volume")) {
         if (parse_int(val, 0, 100, &x) < 0) { snprintf(msg, cap, "ERR audio.out_volume range [0,100]"); return 1; }
         char note[64] = "";
-        if (ao->volume != (int)x) { ao->volume = (int)x; persist_note(ao, note, sizeof(note)); }
+        ao->volume = (int)x;
+        /* a RAM-only SET (MQTT, ONVIF, a remote peer) leaves the saved volume alone, so the next flash write of another
+         * key (ao_save_config) does not make it permanent; a saved SET equal to the RAM value still reaches flash */
+        if (ao->persist && ao->saved_volume != (int)x) { ao->saved_volume = (int)x; persist_note(ao, note, sizeof(note)); }
         snprintf(msg, cap, "OK audio.out_volume=%ld%s", x, note);
     } else if (!strcmp(k, "gain")) {
         if (parse_int(val, 0, 5, &x) < 0) { snprintf(msg, cap, "ERR audio.out_gain range [0,5]"); return 1; }
