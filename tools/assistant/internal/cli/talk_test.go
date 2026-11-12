@@ -164,7 +164,7 @@ func TestSayNeedsFfmpegForOtherFormatsAndNeverRunsIt(t *testing.T) {
 	}
 	r := e.run("", "say", mp3)
 	expectRC(t, r, 1)
-	contains(t, r.err, "ERROR: ffmpeg is needed to convert "+mp3+".")
+	contains(t, r.err, "ERROR: cannot use "+mp3+": unreadable MP3")
 	if len(e.cam.RTSP.Requests()) != 0 {
 		t.Error("the camera was contacted before the conversion tool was found")
 	}
@@ -183,6 +183,30 @@ func TestSayNeedsFfmpegForOtherFormatsAndNeverRunsIt(t *testing.T) {
 	expectRC(t, e.run("", "say"), 2)
 }
 
+// MP3, FLAC and Ogg Vorbis play with no ffmpeg and no capture tool, found by content not by name.
+func TestSayBuiltinDecoders(t *testing.T) {
+	for _, name := range []string{"sine_mono_22k.mp3", "sine_stereo_16k.flac", "sine_stereo_44k.ogg"} {
+		e := talkEnv(t)
+		e.pass = talkPass
+		data, err := os.ReadFile(filepath.Join("..", "audio", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := filepath.Join(t.TempDir(), "voice.bin") // a name that says nothing
+		if err := os.WriteFile(f, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r := e.run("", "say", f)
+		expectRC(t, r, 0)
+		if n := len(e.cam.RTSP.Packets()); n < 20 || n > 35 {
+			t.Errorf("%s: %d packets, want about 25", name, n)
+		}
+		if e.capture != nil {
+			t.Errorf("%s: a capture tool was used", name)
+		}
+	}
+}
+
 func TestTalkMicrophone(t *testing.T) {
 	e := talkEnv(t)
 	e.pass = talkPass
@@ -190,7 +214,7 @@ func TestTalkMicrophone(t *testing.T) {
 	n := len(e.cam.Commands())
 	r := e.run("", "talk", "5")
 	expectRC(t, r, 1)
-	contains(t, r.err, "ERROR: no way to read the microphone here (ffmpeg or arecord not found).")
+	contains(t, r.err, "ERROR: no way to read the microphone here (")
 	if len(e.cam.Commands()) != n {
 		t.Error("the camera was contacted although there is no microphone tool")
 	}

@@ -42,6 +42,7 @@ func (a *App) cmdDoctor() error {
 			a.UI.Say(fmt.Sprintf("  Optional %s: not found - %s. Install: %s", tool, why, pkgHint(a, tool)))
 		}
 	}
+	a.UI.Say("  " + a.doctorAudio())
 	for _, o := range doctorOptional(runtime.GOOS) {
 		opt(o.tool, o.why)
 	}
@@ -94,13 +95,50 @@ type optionalTool struct{ tool, why string }
 // doctorOptional lists what is optional on each OS. xz is built in and never listed; the squashfs
 // tools are only needed by the default image builder (--builder native needs none).
 func doctorOptional(goos string) []optionalTool {
-	out := []optionalTool{{"ffmpeg", "microphone and files other than WAV for talk and say"}}
+	// WAV, MP3, FLAC and Ogg Vorbis files and (Linux, Windows) the microphone are built in.
+	why := "files other than WAV, MP3, FLAC and Ogg Vorbis for say"
+	if goos == "darwin" {
+		why = "the microphone for talk (macOS has no built-in capture), and other file formats for say"
+	}
+	out := []optionalTool{{"ffmpeg", why}}
 	if goos == "linux" {
-		out = append(out, optionalTool{"arecord", "microphone for talk when ffmpeg has no sound server"})
+		out = append(out, optionalTool{"arecord", "microphone fallback for talk when no PulseAudio or PipeWire server runs"})
 	}
 	return append(out,
 		optionalTool{"mksquashfs", "image building with the default builder; `--builder native` (experimental) needs none"},
 		optionalTool{"unsquashfs", "image building with the default builder; `--builder native` (experimental) needs none"})
+}
+
+// doctorAudio is the "Audio:" line: what plays files and what captures the microphone here.
+func (a *App) doctorAudio() string {
+	files := "files: WAV, MP3, FLAC and Ogg Vorbis built in"
+	mic := ""
+	if a.Hooks.Capture != nil {
+		return "Audio: " + files
+	}
+	e := a.execCapture()
+	switch c, err := e.Choose(0); {
+	case os.Getenv("AKAM_TALK_CAPTURE_CMD") != "":
+		mic = "microphone: AKAM_TALK_CAPTURE_CMD (your command)"
+	case err != nil:
+		mic = "microphone: none found (" + micAdvice(runtime.GOOS) + ")"
+	default:
+		mic = "microphone: " + c.Name
+		if c.Builtin != nil {
+			mic += " (built in)"
+		}
+	}
+	return "Audio: " + files + "; " + mic
+}
+
+func micAdvice(goos string) string {
+	switch goos {
+	case "linux":
+		return "no PulseAudio or PipeWire server reachable"
+	case "windows":
+		return "no default capture device, or Windows privacy settings block it"
+	}
+	return "install ffmpeg"
 }
 
 // doctorElevation says how the SD card step gets the rights it needs on this OS.

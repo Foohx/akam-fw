@@ -64,6 +64,22 @@ requires: do not repack or modify it.
 ./akam             # home screen
 ```
 
+### Audio: what is built in
+
+`./akam say FILE` and `./akam talk` need no external program for audio on Linux and Windows:
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| `say`: WAV, MP3, FLAC, Ogg Vorbis files | built in (found by content, not by file name; any rate or channel count) | built in | built in |
+| `talk`: live microphone | built in: PulseAudio protocol client, also served by PipeWire (`pipewire-pulse`) | built in: WASAPI, shared mode, default capture device | needs `ffmpeg` (CoreAudio cannot be used without cgo) |
+| Other file formats for `say` | optional `ffmpeg` | optional `ffmpeg` | optional `ffmpeg` |
+| Microphone fallback | `ffmpeg` or `arecord` when no PulseAudio/PipeWire server is reachable | `ffmpeg` if WASAPI fails | - |
+
+The microphone source is chosen in this order: `AKAM_TALK_CAPTURE_CMD` (your own command, raw 8 kHz mono s16le on stdout),
+the built-in backend, `ffmpeg`, `arecord`. `./akam doctor` prints an `Audio:` line with what will be used. Files longer than
+30 minutes are refused by the built-in decoders. On Windows the first use may trigger the microphone privacy prompt
+(Settings, Privacy, Microphone, "Let desktop apps access your microphone").
+
 `doctor` names the package of each optional tool for your system (for example `alsa-utils` for `arecord`). The squashfs tools
 have no native Windows package: use `--builder native` (experimental, needs none) or WSL.
 

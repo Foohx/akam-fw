@@ -1,6 +1,7 @@
-// Package audio runs the optional external tools of talk and say: ffmpeg or arecord for the
-// microphone, ffmpeg to decode files the binary cannot read itself. Everything else (WAV, G.711,
-// RTSP) is built in. A capture process is always stopped on every way out: Close kills its whole
+// Package audio is the sound side of talk and say. Built in: decoding of WAV, MP3, FLAC and Ogg
+// Vorbis, and the microphone through PulseAudio / PipeWire (Linux) or WASAPI (Windows). Optional
+// external tools, used when the built-in path does not apply: ffmpeg or arecord for the microphone,
+// ffmpeg to decode other file formats. A capture process is always stopped on every way out: Close kills its whole
 // process group, and on Linux the kernel kills it too if this process dies (Pdeathsig).
 package audio
 
@@ -32,6 +33,35 @@ type Exec struct {
 	// Shell is a command from AKAM_TALK_CAPTURE_CMD (run with sh -c); empty uses the detection.
 	Shell string
 	GOOS  string
+	// Builtin is the in-process microphone of this OS (PulseAudio / PipeWire, WASAPI); nil when
+	// there is none (macOS) or in tests. It comes after Shell and before ffmpeg and arecord.
+	Builtin MicBackend
+}
+
+// Choice is the microphone source picked by Choose.
+type Choice struct {
+	// Name is "AKAM_TALK_CAPTURE_CMD", the name of the built-in backend, "ffmpeg" or "arecord".
+	Name string
+	// Builtin is set when the built-in backend was picked; else Argv is the command to run.
+	Builtin MicBackend
+	Argv    []string
+}
+
+// Choose picks the microphone source without starting anything (the sound server is only asked
+// whether it is reachable): AKAM_TALK_CAPTURE_CMD, then the built-in backend, then ffmpeg, then arecord.
+func (e *Exec) Choose(seconds int) (Choice, error) {
+	if e.Shell != "" {
+		argv, _ := e.MicCommand(seconds)
+		return Choice{Name: "AKAM_TALK_CAPTURE_CMD", Argv: argv}, nil
+	}
+	if e.Builtin != nil && e.Builtin.Available() {
+		return Choice{Name: e.Builtin.Name(), Builtin: e.Builtin}, nil
+	}
+	argv, err := e.MicCommand(seconds)
+	if err != nil {
+		return Choice{}, err
+	}
+	return Choice{Name: argv[0], Argv: argv}, nil
 }
 
 func (e *Exec) look(n string) bool {
@@ -97,11 +127,18 @@ func (e *Exec) ConvertCommand(path string) ([]string, error) {
 }
 
 func (e *Exec) Mic(ctx context.Context, seconds int) (io.ReadCloser, error) {
-	argv, err := e.MicCommand(seconds)
+	c, err := e.Choose(seconds)
 	if err != nil {
 		return nil, err
 	}
-	return Start(ctx, argv)
+	if c.Builtin != nil {
+		r, err := c.Builtin.Open(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return LimitSeconds(r, seconds), nil
+	}
+	return Start(ctx, c.Argv)
 }
 
 func (e *Exec) Convert(ctx context.Context, path string) (io.ReadCloser, error) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -27,7 +28,11 @@ func (a *App) capturer() audio.Capturer {
 	if a.Hooks.Capture != nil {
 		return a.Hooks.Capture
 	}
-	return &audio.Exec{LookPath: a.lookPath, Shell: os.Getenv("AKAM_TALK_CAPTURE_CMD")}
+	return a.execCapture()
+}
+
+func (a *App) execCapture() *audio.Exec {
+	return &audio.Exec{LookPath: a.lookPath, Shell: os.Getenv("AKAM_TALK_CAPTURE_CMD"), Builtin: audio.DefaultBackend()}
 }
 
 // talkLogin is talk_login: the stream password must be on; returns the user name and password.
@@ -119,6 +124,17 @@ func (a *App) talkClient(ctx context.Context, ip, user, pass string, src rtsp.PC
 	return a.UI.Fail(fmt.Sprintf("talk stopped with status %d: %s.", te.Code, te.Msg), "see docs/troubleshooting.md (Talk).")
 }
 
+// micMissing is the failure text when no microphone source works.
+func micMissing() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "no way to read the microphone here (no PulseAudio or PipeWire server reachable, and ffmpeg or arecord not found)."
+	case "windows":
+		return "no way to read the microphone here (Windows audio capture failed, and ffmpeg not found)."
+	}
+	return "no way to read the microphone here (ffmpeg not found; macOS needs it for the microphone)."
+}
+
 func (a *App) noToolFail(what string) error {
 	hint := fmt.Sprintf("%s; or set AKAM_TALK_CAPTURE_CMD to a command that writes raw 8 kHz mono s16le on stdout. %s talk test and %s say FILE.wav do not need a microphone or ffmpeg.", pkgHint(a, "ffmpeg"), Prog, Prog)
 	return a.UI.Fail(what, hint)
@@ -185,9 +201,12 @@ func (a *App) cmdTalk(args []string) error {
 	ctx, done := a.talkContext()
 	defer done()
 	if !test {
-		if _, e := a.micProbe(secs); e != nil {
-			return a.noToolFail("no way to read the microphone here (ffmpeg or arecord not found).")
+		ch, e := a.micProbe(secs)
+		if e != nil {
+			return a.noToolFail(micMissing())
 		}
+		a.Log.Line("talk: microphone source: %s", ch.Name)
+		a.UI.Say("  Microphone: " + ch.Name)
 	}
 	user, pass, err := a.talkLogin(ip)
 	if err != nil {
@@ -203,7 +222,7 @@ func (a *App) cmdTalk(args []string) error {
 	}
 	mic, err = a.capturer().Mic(ctx, secs)
 	if err != nil {
-		return a.noToolFail("no way to read the microphone here (ffmpeg or arecord not found).")
+		return a.noToolFail(micMissing())
 	}
 	if secs == 0 {
 		a.UI.Say("  Speak now. The camera plays your voice; its own microphone is muted while you speak.")
@@ -238,13 +257,12 @@ func (a *App) cmdTalk(args []string) error {
 	return nil
 }
 
-// micProbe only checks that a microphone tool exists (the real capture starts after the login).
-func (a *App) micProbe(secs int) ([]string, error) {
+// micProbe only checks that a microphone source exists (the real capture starts after the login).
+func (a *App) micProbe(secs int) (audio.Choice, error) {
 	if a.Hooks.Capture != nil {
-		return nil, nil
+		return audio.Choice{Name: "test"}, nil
 	}
-	e := &audio.Exec{LookPath: a.lookPath, Shell: os.Getenv("AKAM_TALK_CAPTURE_CMD")}
-	return e.MicCommand(secs)
+	return a.execCapture().Choose(secs)
 }
 
 func (a *App) cmdSay(args []string) error {
@@ -258,7 +276,7 @@ func (a *App) cmdSay(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD decode %s to 8 kHz mono (built in for WAV, ffmpeg otherwise) and send it to rtsp://%s:%d (stream password needed).", file, ip, a.Env.PortRTSP))
+		a.UI.Say(fmt.Sprintf("  WOULD decode %s to 8 kHz mono (built in for WAV, MP3, FLAC and Ogg Vorbis; ffmpeg for anything else) and send it to rtsp://%s:%d (stream password needed).", file, ip, a.Env.PortRTSP))
 		return nil
 	}
 	data, rerr := os.ReadFile(file)
@@ -273,18 +291,30 @@ func (a *App) cmdSay(args []string) error {
 		if pcm, werr := rtsp.ReadWAV(bytes.NewReader(data)); werr == nil {
 			src = &rtsp.SliceSource{S: pcm}
 		} else if !a.have("ffmpeg") && a.Hooks.Capture == nil {
-			return a.UI.Fail(fmt.Sprintf("cannot use %s: %v.", file, werr), "give a PCM WAV file, or install ffmpeg to convert other formats: "+pkgHint(a, "ffmpeg"))
+			return a.UI.Fail(fmt.Sprintf("cannot use %s: %v.", file, werr), "give a PCM WAV, MP3, FLAC or Ogg Vorbis file, or install ffmpeg to convert other formats: "+pkgHint(a, "ffmpeg"))
+		}
+	}
+	if src == nil {
+		// MP3, FLAC and Ogg Vorbis are decoded in process (found by their first bytes, not the name)
+		pcm, derr := audio.Decode(data)
+		switch {
+		case derr == nil:
+			src = &rtsp.SliceSource{S: pcm}
+		case !errors.Is(derr, audio.ErrUnsupported):
+			if !a.have("ffmpeg") && a.Hooks.Capture == nil {
+				return a.UI.Fail(fmt.Sprintf("cannot use %s: %v.", file, derr), "if the file is fine, install ffmpeg to convert it: "+pkgHint(a, "ffmpeg"))
+			}
 		}
 	}
 	data = nil
 	if src == nil {
 		if a.Hooks.Capture == nil && !a.have("ffmpeg") {
-			return a.UI.Fail(fmt.Sprintf("ffmpeg is needed to convert %s.", file), pkgHint(a, "ffmpeg")+"; or give a WAV file (any rate or channel count).")
+			return a.UI.Fail(fmt.Sprintf("ffmpeg is needed to convert %s.", file), pkgHint(a, "ffmpeg")+"; or give a WAV, MP3, FLAC or Ogg Vorbis file.")
 		}
 		var cerr error
 		conv, cerr = a.capturer().Convert(ctx, file)
 		if cerr != nil {
-			return a.UI.Fail(fmt.Sprintf("ffmpeg is needed to convert %s.", file), pkgHint(a, "ffmpeg")+"; or give a WAV file (any rate or channel count).")
+			return a.UI.Fail(fmt.Sprintf("ffmpeg is needed to convert %s.", file), pkgHint(a, "ffmpeg")+"; or give a WAV, MP3, FLAC or Ogg Vorbis file.")
 		}
 		defer conv.Close()
 		src = &rtsp.S16LESource{R: conv}

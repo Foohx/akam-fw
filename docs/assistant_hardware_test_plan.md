@@ -47,6 +47,9 @@ its whole table passes; until then the release marks it "built, not hardware-tes
 | H1.15 | Update Akam to Akam over SSH; options edit and apply (LED, video, NTP, ONVIF) | applied, "applies at" texts true | [ ] | |
 | H1.16 | Close the console window during an SD write and during the flash wait | card refused by the next verify; camera-side flash completes or aborts safely, message says not to power-cycle | [ ] | |
 | H1.17 | Antivirus: Microsoft Defender with real-time protection on: no detection of the unsigned binary, or the documented exclusion/report steps work | recorded | [ ] | |
+| H1.19 | Built-in audio, no ffmpeg on the PATH: `doctor` shows `Audio: ... microphone: Windows WASAPI (built in)`; `say` with a WAV, an MP3, a FLAC and an Ogg Vorbis file (stereo, 44.1 and 48 kHz) plays at the right speed and pitch | all four play clearly on the camera speaker | [ ] | |
+| H1.20 | `talk 20` with the default microphone, no ffmpeg: speech is heard on the camera, no stutter, pitch normal; try a USB headset and the laptop array as default device; microphone privacy switch off gives a clear error | works with both devices; the error names the Windows privacy setting | [ ] | |
+| H1.21 | Ctrl-C during `talk`: returns at once; no `akam` process left; the microphone indicator goes off | yes | [ ] | |
 | H1.18 | Start to menu time (cold, Defender on) | under 100 ms of program time, recorded wall time | [ ] | |
 
 ## H2 - macOS arm64 (and amd64 on an Intel Mac, or the amd64 binary under Rosetta for everything except real Intel SD behaviour)
@@ -63,7 +66,7 @@ its whole table passes; until then the release marks it "built, not hardware-tes
 | H2.8 | iCloud Drive "Desktop & Documents" on: backup suggestion warns and proposes `~/Akam backups` | yes | [ ] | |
 | H2.9 | Discovery with Wi-Fi and Ethernet both up; firewall prompt for WS-Discovery | listed; prompt text matches the note | [ ] | |
 | H2.10 | First install from stock, update, options, restore, as H1.14/H1.15 | passes | [ ] | |
-| H2.11 | `talk`/`say` with ffmpeg installed (`avfoundation`) and without (clear message) | ok | [ ] | |
+| H2.11 | `talk`/`say` with ffmpeg installed (`avfoundation`) and without (clear message: macOS needs ffmpeg for the microphone). `say` with a WAV, MP3, FLAC and Ogg file works with no ffmpeg | ok | [ ] | |
 
 ## H3 - Linux regression (amd64, and arm64 such as a Raspberry Pi)
 
@@ -77,6 +80,10 @@ Repeat the matrix of spec 09 (section 8.6) and add:
 | H3.4 | Home screen, camera chooser (scan and WS-Discovery each asked first, default No), option screens: apply an LED, video and ONVIF change | applied; "applies at" texts true; ports shown match the scan | [ ] | |
 | H3.5 | Backup of an Akam camera over SSH (no card) | folder `Akam backups/<camera>/<date>` with 8 files, `SHA256SUMS` ok, marker `kind=akam`, private permissions | [ ] | |
 | H3.6 | Update Akam to Akam over SSH with a verified backup recorded | the backup gate re-verifies, red box shows the md5, flash, manual power cycle, `verify` passes | [ ] | |
+| H3.8 | Built-in decoders: `say` with a short MP3, FLAC and Ogg Vorbis file whose names have a wrong extension (for example `voice.bin`) | plays, no ffmpeg needed (also with ffmpeg removed from the PATH) | [ ] | |
+| H3.9 | `talk 20` on a PipeWire desktop (`pipewire-pulse` running) with no ffmpeg and no arecord on the PATH; `doctor` shows `microphone: PulseAudio / PipeWire (built in)` | voice heard on the camera at normal pitch; the capture stream shows up in `pavucontrol`/`wpctl status` as `akam` and disappears at the end | [ ] | |
+| H3.10 | `talk` on a plain PulseAudio desktop, and with the server stopped (`AKAM_TALK_CAPTURE_CMD` unset) | PulseAudio works; without a server it falls back to `arecord`/`ffmpeg` if present, else a clear error | [ ] | |
+| H3.11 | `AKAM_TALK_CAPTURE_CMD='arecord -q -t raw -f S16_LE -r 8000 -c 1'` still wins over the built-in backend | the command is used (`Microphone: AKAM_TALK_CAPTURE_CMD`) | [ ] | |
 | H3.7 | Native `image` | only when its gate is open; otherwise SKIP | [ ] | |
 
 ## H3b - Doctor hints, Wi-Fi signal and clock (any OS, one real camera)
