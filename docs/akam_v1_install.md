@@ -165,7 +165,7 @@ All of these talk to the camera over SSH and change nothing on the PC (`./akam h
 |---|---|---|
 | `./akam audio [volume N \| beep \| on \| off \| talk on\|off \| mic on\|off]` | volume, speaker, talk, microphone (`/etc/config/akam/audio_out`) | at once; `mic off` (removes the audio track, the microphone is never opened) and speaker `on` may need a reboot |
 | `./akam picture [brightness\|contrast\|saturation\|sharpness N \| wb conf\|manual \| night auto\|day\|night \| reset]` | the four numbers (-50 to 50) | at once and at every start; `wb` and `night` return to default at a reboot |
-| `./akam video [bitrate N \| fps N \| gop N]` | `/etc/config/akam/video` | at the next restart of the video service (the command offers it, default No) |
+| `./akam video [bitrate N \| fps N \| gop N]` (fps 10, 15, 20 or 25) | `/etc/config/akam/video` | at the next restart of the video service (the command offers it, default No) |
 | `./akam led [status on\|off\|auto] [ir auto\|off]` | `/etc/config/akam/leds` | at once |
 | `./akam ntp [set SERVER... \| off \| status]` | the servers | at start-up and every 6 h; off by default |
 | `./akam onvif [enable [PORT] \| disable \| status]` | `/etc/config/akam/onvif` | at once, no reboot |
