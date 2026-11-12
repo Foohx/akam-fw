@@ -91,6 +91,7 @@ type step struct {
 type progress struct {
 	label string
 	pct   int
+	start time.Time // when this bar began (elapsed and time left)
 }
 
 var stepRe = regexp.MustCompile(`^Step (\d+)/(\d+) - (.+)$`)
@@ -110,6 +111,8 @@ type sessModel struct {
 	steps []step
 	total int
 	prog  *progress
+	op    *opState // the long operation of ui.Operator, nil when none
+	now   func() time.Time
 
 	board *boardView // the persistent list of the home and the chooser, nil when none
 
@@ -124,7 +127,7 @@ type sessModel struct {
 }
 
 func newSessModel(th *Theme, st *sessState) *sessModel {
-	return &sessModel{th: th, st: st, w: 80, h: 24}
+	return &sessModel{th: th, st: st, w: 80, h: 24, now: time.Now}
 }
 
 func (m *sessModel) Init() tea.Cmd { return nil }
@@ -150,7 +153,7 @@ func (m *sessModel) busy() bool {
 	if m.finished || m.current() != nil {
 		return false
 	}
-	if m.prog != nil {
+	if m.prog != nil || m.op != nil {
 		return true
 	}
 	for _, s := range m.steps {
@@ -208,7 +211,7 @@ func (m *sessModel) banner(t string) {
 		m.prog = nil
 		return
 	}
-	m.title, m.steps, m.total, m.prog = t, nil, 0, nil
+	m.title, m.steps, m.total, m.prog, m.op = t, nil, 0, nil, nil
 }
 
 func (m *sessModel) resizeAll() {
@@ -238,13 +241,21 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.banner(v.title)
 		return m, m.startTick()
 	case msgProgress:
-		m.prog = &progress{v.label, min(max(v.pct, 0), 100)}
+		p := &progress{label: v.label, pct: min(max(v.pct, 0), 100), start: m.now()}
+		if m.prog != nil && m.prog.label == p.label && p.pct >= m.prog.pct {
+			p.start = m.prog.start
+		}
+		m.prog = p
+		return m, m.startTick()
+	case msgOp:
+		m.opApply(v)
 		return m, m.startTick()
 	case msgProgressClose:
 		m.prog = nil
 	case msgHeader:
 		m.hdr = v.h
 	case msgBoardSet:
+		m.op = nil
 		m.setBoard(v.b)
 	case msgBoardClose:
 		m.board = nil
@@ -260,6 +271,9 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pane = nil
 	case msgFlowDone:
 		m.finished = true
+		if m.op != nil {
+			m.op.writing = false
+		}
 		return m, tea.Quit
 	case msgTick:
 		if !m.busy() {
@@ -361,6 +375,9 @@ func (m *sessModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.boardKey(k)
 	}
 	if q == nil {
+		if m.pane == nil && m.opKey(k.String()) {
+			return m, nil
+		}
 		if k.String() != "ctrl+c" || m.pane != nil {
 			m.keyIdle(k)
 			return m, nil
@@ -493,6 +510,9 @@ func (m *sessModel) footer() string {
 	if m.board != nil {
 		return m.boardFooter()
 	}
+	if m.op != nil {
+		return m.opFooter()
+	}
 	var pairs []string
 	if m.stopping {
 		pairs = []string{"Ctrl-C", "quit now"}
@@ -564,20 +584,18 @@ func (m *sessModel) head(w int) []string {
 	var out []string
 	if m.title != "" {
 		l := " " + th.Bold.Render(truncW(m.title, max(w-2, 8), th.Glyphs.Ellipsis))
-		if m.total > 0 && len(m.steps) > 0 {
-			info := fmt.Sprintf("step %d of %d", len(m.steps), m.total)
+		if info := m.stepInfo(); info != "" {
 			if gap := w - 1 - lipgloss.Width(l) - lipgloss.Width(info); gap > 1 {
 				l += strings.Repeat(" ", gap) + th.Muted.Render(info)
 			}
 		}
 		out = append(out, l)
-	} else if m.total > 0 && len(m.steps) > 0 {
-		out = append(out, " "+th.Muted.Render(fmt.Sprintf("step %d of %d", len(m.steps), m.total)))
+	} else if info := m.stepInfo(); info != "" {
+		out = append(out, " "+th.Muted.Render(info))
 	}
-	barW := max(min(w-30, 24), 4)
-	progLine := func(indent string) string {
-		lbl := truncW(m.prog.label, max(w-len(indent)-barW-10, 6), th.Glyphs.Ellipsis)
-		return indent + lbl + "  " + th.ProgressBar(m.prog.pct, barW)
+	progLine := func(indent string) string { return m.progBar(w, indent) }
+	if m.op != nil {
+		return append(out, m.opLines(w)...)
 	}
 	for i, s := range m.steps {
 		mark := th.Badge(BadgeOK, "")
@@ -660,4 +678,20 @@ func (m *sessModel) View() string {
 		out[i] = clip(l, w)
 	}
 	return strings.Join(out, "\n")
+}
+
+// stepInfo is "step 2 of 4": from the operation's items, else from the Banner step list.
+func (m *sessModel) stepInfo() string {
+	if m.op != nil {
+		for i, it := range m.op.items {
+			if it.mark == opRunning {
+				return fmt.Sprintf("step %d of %d", i+1, len(m.op.items))
+			}
+		}
+		return ""
+	}
+	if m.total > 0 && len(m.steps) > 0 {
+		return fmt.Sprintf("step %d of %d", len(m.steps), m.total)
+	}
+	return ""
 }

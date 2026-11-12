@@ -166,3 +166,27 @@ type Detailer interface{ Details(title, text string) }
 type Checklister interface {
 	Checklist(title string, steps []string) error
 }
+
+// Operator is implemented by the full-screen session only (plain does not: callers check with a type
+// assertion and keep their line output). It describes one long operation (backup, image build, flash,
+// update, restore, verify, download) as a list of items: the running one has a spinner, the finished
+// ones a short note, the pending ones are muted. Every method may be called from the flow goroutine
+// at any time and never blocks.
+type Operator interface {
+	// OpPlan declares the items of the operation, all pending, replacing any earlier plan.
+	OpPlan(items []string)
+	// OpStart marks item i as running (the item running before it, if any, is marked done).
+	OpStart(i int)
+	// OpDone marks item i as finished with a short note ("12.4 GB free"; empty: none).
+	OpDone(i int, note string)
+	// OpStatus is the line under the list: what runs now ("dd if=/dev/mtdblock2 bs=64k", read only).
+	OpStatus(line string)
+	// OpBytes gives the size of the running item: done of total bytes (total 0: unknown). The panel
+	// derives the percentage, the speed and the time left from it.
+	OpBytes(done, total int64)
+	// OpWriting says a write to the camera is under way: it cannot be interrupted safely, so the
+	// screen offers no stop and ignores Ctrl-C until OpWriting(false).
+	OpWriting(on bool)
+	// OpEnd removes the list (the result stays on the strip).
+	OpEnd()
+}

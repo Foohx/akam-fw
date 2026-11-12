@@ -76,8 +76,8 @@ func (m manualUI) Collect() (string, bool, error) {
 func (m manualUI) Wait(text string) error {
 	u := m.a.UI
 	u.Say("  " + text)
-	ans, err := u.Prompt("  Press Enter when done (or type q to stop):", "")
-	if err != nil || ans == "q" {
+	stopped, err := m.a.handsDone("Do this by hand", []string{text}, "  Press Enter when done (or type q to stop):")
+	if err != nil || stopped {
 		return errors.New("stopped")
 	}
 	return nil
@@ -856,6 +856,11 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 			return ui.ErrFailed
 		}
 	}
+	op := a.op()
+	defer op.end()
+	op.plan("Check the camera and the card (nothing is written)", "Confirm in the red box", "Write the flash", "Read the partition back")
+	op.done(0, "nothing was written")
+	op.start(1)
 	a.UI.Blank()
 	a.UI.Warn(label + " writes the camera's flash. If the power is cut while it writes, only a UART cable can recover the camera.")
 	a.UI.Warn("Keep the camera powered and do not unplug anything until this step says it is finished.")
@@ -906,12 +911,20 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 		}
 		a.tn.StreamSet(func(l string) { a.UI.Say("    | " + l) }, ftSkipRe, func(lbl string, pct int) { a.UI.Progress(lbl, pct) })
 		// The write is under way: Ctrl-C, hangup or kill of this wizard must not end it half way.
+		op.done(1, "confirmed")
+		op.start(2)
+		op.status("camera script install_with_flash_tool.sh writes /dev/mtd7. It cannot be interrupted safely.")
+		op.writing(true)
 		a.UI.Warn("Writing. Do NOT press Ctrl-C and do NOT unplug anything until this says it is finished.")
 		stop := ignoreSignals()
 		ferr := a.tn.Finish(900 * time.Second)
 		stop()
 		a.tn.StreamSet(nil, nil, nil)
 		a.UI.ProgressClose()
+		op.writing(false)
+		if ferr == nil {
+			op.done(2, "the script finished")
+		}
 		if ferr != nil {
 			_ = a.UI.Fail(fmt.Sprintf("the flash script did not finish (no end of output, %v).", ferr),
 				"DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery).")
@@ -925,6 +938,8 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 		a.ftNoteScriptResult()
 	}
 	// The authoritative check is the partition itself, never the wording of the script's last line.
+	op.start(3)
+	op.status("dd if=/dev/mtd7 bs=64k | md5sum   (runs on the camera, read only)")
 	a.UI.Say("  Reading the partition back to check it ...")
 	if err := a.tn.Exec("dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum", 600*time.Second); err != nil {
 		return a.UI.Fail("cannot read /dev/mtd7 back.", "DO NOT power-cycle.")
@@ -939,6 +954,7 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 		return a.UI.Fail(fmt.Sprintf("the partition read back as md5 '%s', the image is %s.", sums, md5),
 			"DO NOT power-cycle. Run the flash again from this step or restore (docs/akam_v1_flash_and_restore.md).")
 	}
+	op.done(3, "md5 matches the image")
 	a.UI.Good(fmt.Sprintf("  Read-back md5 of /dev/mtd7 = image md5 (%s).", md5))
 	return nil
 }

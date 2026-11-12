@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -32,6 +33,7 @@ type chooser struct {
 	checking map[string]bool
 	onChange func()                         // the rows changed: draw them again
 	run      func(status string, fn func()) // runs a search with a status line and Esc listened for
+	progress func(label string, pct int)    // the running search is pct % done (status line)
 }
 
 // snapshot is a copy of the rows' inputs, safe to read while probes answer.
@@ -311,8 +313,23 @@ func (a *App) chooserScan(ch *chooser) {
 		}
 		a.Log.Line("CMD scan %s ports %v", sn.CIDR, a.scanPorts())
 		t0 := time.Now()
-		ch.search(fmt.Sprintf("Scanning %s on %d ports", sn.CIDR, len(a.scanPorts())), func() {
-			hosts := discover.Scan(a.Ctx, sn, a.ports(), 64, 2*time.Second, h.Dial)
+		label := fmt.Sprintf("Scanning %s on %d ports", sn.CIDR, len(a.scanPorts()))
+		ch.search(label, func() {
+			var prog func(done, total int)
+			if ch.progress != nil {
+				var lastPct atomic.Int64
+				lastPct.Store(-1)
+				prog = func(done, total int) {
+					pct := int64(0)
+					if total > 0 {
+						pct = int64(done) * 100 / int64(total)
+					}
+					if lastPct.Swap(pct) != pct {
+						ch.progress(label, int(pct))
+					}
+				}
+			}
+			hosts := discover.ScanProgress(a.Ctx, sn, a.ports(), 64, 2*time.Second, h.Dial, prog)
 			var ips []string
 			for _, ho := range hosts {
 				ips = append(ips, ho.IP)

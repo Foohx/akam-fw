@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,17 @@ func (s *boardSession) hasStatus(prefix string) bool {
 	return false
 }
 
+func (s *boardSession) hasStatusMatch(re *regexp.Regexp) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, b := range s.boards {
+		if re.MatchString(b.Status) {
+			return true
+		}
+	}
+	return false
+}
+
 // runBoard runs the home with a board session and the scripted keys; stdin answers the questions.
 func runBoard(t *testing.T, e *env, bs *boardSession, stdin string) result {
 	t.Helper()
@@ -151,6 +163,9 @@ func TestNoNetworkBeforeScanYes(t *testing.T) {
 				}
 				if !bs.hasStatus("Scanning 192.0.2.0/24") {
 					t.Error("no scanning status line was shown")
+				}
+				if !bs.hasStatusMatch(regexp.MustCompile(`^Scanning 192\.0\.2\.0/24 on 4 ports  [0-9]+ %$`)) {
+					t.Error("the scanning status line never showed a percentage")
 				}
 			}
 		})
