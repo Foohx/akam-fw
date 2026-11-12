@@ -105,6 +105,14 @@ if out=$("$ASSIST/build.sh" repro 2>&1); then ok "two builds of each of the six 
 if out=$("$ASSIST/build.sh" notices 2>&1); then ok "THIRD_PARTY_NOTICES.md lists every module linked into each target"; else ko "notices: $out"; fi
 if out=$("$ASSIST/build.sh" vet-all 2>&1); then ok "go vet (akamtest) of the five other targets, test files included"; else ko "vet-all: $out"; fi
 
+# WASAPI: a buffer whose address goes to COM must live on the heap (a stack move would leave the driver reading freed memory).
+# The compiler's escape analysis must report no make/append in wasapi_windows.go as "does not escape".
+if esc=$(GOOS=windows GOARCH=amd64 go build -gcflags=-m ./internal/audio 2>&1); then
+    if grep -q 'wasapi_windows\.go:[0-9]*:[0-9]*: .*escapes to heap' <<<"$esc" && ! grep -E 'wasapi_windows\.go:[0-9]+:[0-9]+: .*(make|append).* does not escape' <<<"$esc" | grep -q .; then
+        ok "wasapi_windows.go: no make/append buffer stays on the stack (escape analysis)"
+    else ko "wasapi_windows.go: a make/append buffer does not escape (stack buffer passed to COM?) or the escape output is empty"; fi
+else ko "windows escape-analysis build: $esc"; fi
+
 # The release script refuses a dirty tree and an unpinned Go
 if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
     out=$(env -u AKAM_ALLOW_DIRTY AKAM_TARGETS=linux/amd64 "$REPO/tools/release/build_assistant.sh" --out "$REL2" 2>&1); rc=$?
