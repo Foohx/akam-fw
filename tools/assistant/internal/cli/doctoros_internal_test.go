@@ -30,7 +30,7 @@ func TestDoctorTextPerOS(t *testing.T) {
 		}
 		return false
 	}
-	if has("windows", "arecord") || !has("linux", "arecord") || !has("windows", "ffmpeg") {
+	if has("windows", "arecord") || has("darwin", "arecord") || !has("linux", "arecord") || !has("windows", "ffmpeg") || !has("darwin", "ffmpeg") {
 		t.Error("optional tools per OS")
 	}
 	none := func(string) bool { return false }

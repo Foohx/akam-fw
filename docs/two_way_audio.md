@@ -24,7 +24,9 @@ on a camera.** Please report what you hear.
 ./akam say hello.mp3   # any audio file ffmpeg can read (a WAV at 8 kHz mono 16-bit needs no ffmpeg)
 ```
 
-`./akam talk` captures the microphone with `ffmpeg` (PulseAudio or PipeWire) or `arecord`, converts it to
+The native `akam` binary needs no external program for this on Linux and Windows: it decodes WAV, MP3, FLAC and Ogg
+Vorbis files itself and captures the microphone itself (PulseAudio / PipeWire on Linux, WASAPI on Windows; macOS still
+needs ffmpeg). See [assistant_install.md](assistant_install.md). The bash wizard (`./akam` without the binary) captures the microphone with `ffmpeg` (PulseAudio or PipeWire) or `arecord`, converts it to
 8 kHz mono and sends it with `akam-talk`, a small C program in [tools/akam-talk](../tools/akam-talk/)
 (it is built once from source with your C compiler or the pinned Zig, or taken from
 `tools/akam-talk/bin/<os>-<cpu>/`). The password is asked without echo (or read from
