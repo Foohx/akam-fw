@@ -740,6 +740,8 @@ func TestSessionMenuOverlay(t *testing.T) {
 
 // ---------------------------------------------------------------- layout goldens
 
+func init() { dangerTypeAhead = 0 } // the tests answer at once; TestDangerTypeAhead sets it back
+
 func layoutModel(w, h int) *sessModel {
 	m := newSessModel(testTheme(), newSessState())
 	m.Update(tea.WindowSizeMsg{Width: w, Height: h})

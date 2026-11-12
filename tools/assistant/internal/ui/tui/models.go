@@ -519,10 +519,13 @@ func (m *Menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "home", "g":
 			m.Cursor = 0
 		case "end", "G":
-			m.Cursor = len(m.Items) - 1
+			m.Cursor = max(len(m.Items)-1, 0)
 		case "?":
 			m.Help = !m.Help
 		case "enter":
+			if len(m.Items) == 0 {
+				return m, nil // nothing to run
+			}
 			m.Done = true
 			return m, tea.Quit
 		case "q", "esc", "ctrl+c":

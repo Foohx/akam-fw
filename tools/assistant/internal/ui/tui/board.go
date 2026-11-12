@@ -14,9 +14,12 @@ import (
 // part of the session model and owned by the program goroutine; the flow replaces its content with
 // messages and receives the keys through a channel.
 
+// boardEv is a key of the board. It carries the ID of the row it was pressed on, not only its index:
+// the rows may change between the key and the moment the flow reads it.
 type boardEv struct {
 	key string
 	row int
+	id  string
 }
 
 type (
@@ -51,7 +54,11 @@ func cleanBoard(b ui.Board) ui.Board {
 	return out
 }
 
-func (s *sessionUI) SetBoard(b ui.Board) { s.st.send(msgBoardSet{cleanBoard(b)}) }
+func (s *sessionUI) SetBoard(b ui.Board) {
+	s.st.rearm() // a board is where an action ends and the next one starts
+	s.st.writing.Store(false)
+	s.st.send(msgBoardSet{cleanBoard(b)})
+}
 
 func (s *sessionUI) CloseBoard() {
 	s.st.send(msgBoardClose{})
@@ -71,7 +78,7 @@ func (s *sessionUI) WaitBoardKey(stop <-chan struct{}) (string, int, error) {
 	case <-stop:
 		return "", -1, nil
 	case ev := <-s.st.boardKeys:
-		return ev.key, ev.row, nil
+		return ev.key, s.st.rowOf(ev), nil
 	case <-s.st.done:
 		return "", -1, ui.ErrNoInput
 	}
@@ -88,6 +95,11 @@ func (m *sessModel) setBoard(b ui.Board) {
 		id = bv.b.Rows[bv.cursor].ID
 	}
 	bv.b = b
+	ids := make([]string, len(b.Rows))
+	for i, r := range b.Rows {
+		ids[i] = r.ID
+	}
+	m.st.setBoardIDs(ids)
 	if id != "" {
 		for i, r := range b.Rows {
 			if r.ID == id {
@@ -100,12 +112,13 @@ func (m *sessModel) setBoard(b ui.Board) {
 }
 
 func (m *sessModel) boardSend(key string) {
-	row := -1
+	row, id := -1, ""
 	if m.board != nil && len(m.board.b.Rows) > 0 {
 		row = m.board.cursor
+		id = m.board.b.Rows[row].ID
 	}
 	select {
-	case m.st.boardKeys <- boardEv{key, row}:
+	case m.st.boardKeys <- boardEv{key, row, id}:
 	default: // nobody is reading: drop it
 	}
 }

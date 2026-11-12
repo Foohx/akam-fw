@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -22,6 +23,7 @@ type answer struct {
 type ask struct {
 	model tea.Model
 	ch    chan answer
+	since time.Time // when it became the question on screen (type-ahead guard of the danger box)
 }
 
 func newAsk(m tea.Model) *ask { return &ask{model: m, ch: make(chan answer, 1)} }

@@ -906,7 +906,12 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 			return ui.ErrFailed
 		}
 		// The only place where text goes to the flash script's prompt: "YES", sent only after the explicit yes above.
+		// The write lock goes on before the "YES" leaves: from that byte on the write can start.
+		op.writing(true)
+		stop := ignoreSignals()
 		if err := a.sendYES(conf, md5); err != nil {
+			stop()
+			op.writing(false)
 			return a.UI.Fail("lost the camera session.", "DO NOT power-cycle; check the camera.")
 		}
 		a.tn.StreamSet(func(l string) { a.UI.Say("    | " + l) }, ftSkipRe, func(lbl string, pct int) { a.UI.Progress(lbl, pct) })
@@ -914,9 +919,7 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 		op.done(1, "confirmed")
 		op.start(2)
 		op.status("camera script install_with_flash_tool.sh writes /dev/mtd7. It cannot be interrupted safely.")
-		op.writing(true)
 		a.UI.Warn("Writing. Do NOT press Ctrl-C and do NOT unplug anything until this says it is finished.")
-		stop := ignoreSignals()
 		ferr := a.tn.Finish(900 * time.Second)
 		stop()
 		a.tn.StreamSet(nil, nil, nil)

@@ -210,9 +210,17 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 	a.UI.Say("  (full output: " + logPre + ")")
 	out, done := a.flashSink(logPre)
 	a.Log.Line("CMD flash precheck %s", ip)
-	err = flash.Precheck(plan, deps(out))
+	pctx, pstop := a.stopCtx() // the precheck writes nothing: a stop cancels it
+	pre := deps(out)
+	pre.Ctx = pctx
+	err = flash.Precheck(plan, pre)
+	pstop()
 	done()
 	if err != nil {
+		if a.stopRequested() {
+			a.UI.Warn("Stopped. Nothing was written to the camera.")
+			return ui.ErrNoInput
+		}
 		return a.UI.Fail("the precheck failed (see above).", "nothing was written to the camera.")
 	}
 	op.done(0, "nothing was written")

@@ -70,6 +70,17 @@ type MenuResult struct {
 	Text  string
 }
 
+// ActionResulter is implemented by the session UI: it remembers the outcome of the action running (the
+// last Good, Warn or Err; an error stays over a later success) from the call of ClearOutput. The
+// caller reads it instead of wrapping the UI, so every optional interface of the session stays visible
+// to the flow (Operator, Checklister, FormKeyer, TechFailer, HeaderSetter, ...).
+type ActionResulter interface{ ActionResult() MenuResult }
+
+// Stopper is implemented by the session UI: StopChan is closed when the user asked the action running
+// to stop (Esc on an operation, the first Ctrl-C), and replaced by a fresh channel when the next
+// action starts. Read-only phases tie their context to it; a write to the camera never does.
+type Stopper interface{ StopChan() <-chan struct{} }
+
 // MenuView is a full-screen menu with the result of the previous action.
 type MenuView struct {
 	Title  string

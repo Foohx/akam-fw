@@ -32,12 +32,11 @@ type opItem struct {
 
 // opState is the operation on screen. Its fields belong to the program goroutine.
 type opState struct {
-	items   []opItem
-	status  string
-	writing bool
-	done    int64
-	total   int64
-	start   time.Time // the running item started (speed and time left)
+	items  []opItem
+	status string
+	done   int64
+	total  int64
+	start  time.Time // the running item started (speed and time left)
 }
 
 // msgOp is one Operator call on its way to the program.
@@ -69,8 +68,17 @@ func (s *sessionUI) OpStatus(line string) {
 	s.st.send(msgOp{kind: "status", text: line})
 }
 func (s *sessionUI) OpBytes(done, total int64) { s.st.send(msgOp{kind: "bytes", a: done, b: total}) }
-func (s *sessionUI) OpWriting(on bool)         { s.st.send(msgOp{kind: "writing", on: on}) }
-func (s *sessionUI) OpEnd()                    { s.st.send(msgOp{kind: "end"}) }
+
+// OpWriting sets the write lock at once (an atomic of the session, not a message): the screen must
+// refuse to stop from the very moment the flow says the write starts, whatever panel is shown.
+func (s *sessionUI) OpWriting(on bool) {
+	if on {
+		s.st.wrote.Store(true)
+	}
+	s.st.writing.Store(on)
+	s.st.send(msgOp{kind: "writing", on: on})
+}
+func (s *sessionUI) OpEnd() { s.st.send(msgOp{kind: "end"}) }
 
 // opApply applies one Operator call.
 func (m *sessModel) opApply(v msgOp) {
@@ -107,14 +115,13 @@ func (m *sessModel) opApply(v msgOp) {
 	case "bytes":
 		o.done, o.total = max(v.a, 0), max(v.b, 0)
 	case "writing":
-		o.writing = v.on
 	case "end":
 		m.op = nil
 	}
 }
 
 // stoppable is whether the screen offers to stop: never in the middle of a write to the camera.
-func (m *sessModel) writing() bool { return m.op != nil && m.op.writing }
+func (m *sessModel) writing() bool { return m.st.writing.Load() }
 
 const writeBlocked = "A write to the camera is under way: it cannot be interrupted safely. Wait until it says it is finished."
 
@@ -262,6 +269,8 @@ func (m *sessModel) opFooter() string {
 		return " " + th.Footer(pairs...) + "   " + th.Warn.Render("the write cannot be interrupted safely")
 	case m.stopping:
 		pairs = append(pairs, "Ctrl-C", "quit now")
+	case m.st.wrote.Load():
+		pairs = append(pairs, "Esc", "stop the read-back")
 	default:
 		pairs = append(pairs, "Esc", "stop (nothing on the camera changes)")
 	}
@@ -270,23 +279,27 @@ func (m *sessModel) opFooter() string {
 
 // opKey handles Esc and Ctrl-C while an operation runs. It returns true when it used the key.
 func (m *sessModel) opKey(k string) bool {
+	if k != "esc" && k != "ctrl+c" {
+		return false
+	}
+	if m.writing() { // before any quit or stop path, with or without a panel
+		m.strip = &entry{kWarn, writeBlocked}
+		return true
+	}
 	if m.op == nil {
 		return false
 	}
-	switch k {
-	case "esc", "ctrl+c":
-		if m.writing() {
-			m.strip = &entry{kWarn, writeBlocked}
-			return true
-		}
-		if k == "esc" {
-			if !m.stopping {
-				m.stopping = true
-				m.st.stop()
+	if k == "esc" {
+		if !m.stopping {
+			m.stopping = true
+			m.st.stop()
+			if m.st.wrote.Load() {
+				m.strip = &entry{kWarn, "Stopping the read-back after the current step. The write to the camera is already done."}
+			} else {
 				m.strip = &entry{kWarn, "Stopping after the current step. Nothing on the camera changes."}
 			}
-			return true
 		}
+		return true
 	}
 	return false
 }

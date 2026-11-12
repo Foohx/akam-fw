@@ -51,6 +51,13 @@ func (r *recorder) result() ui.MenuResult {
 // runAction runs one menu action with its outcome recorded, and returns it for the next menu. A
 // failure is shown as the error screen when the UI has one (runScreen); label names the action there.
 func (a *App) runAction(label string, act func() error) ui.MenuResult {
+	if ar, ok := a.UI.(ui.ActionResulter); ok {
+		// The session UI is not wrapped: a wrapper would hide its optional interfaces from the flow
+		// (the write lock of ui.Operator, the checklist, the form keys, the technical error line).
+		a.clearOutput()
+		a.runScreen(label, act)
+		return ar.ActionResult()
+	}
 	inner := a.UI
 	rec := &recorder{UI: inner}
 	a.clearOutput()

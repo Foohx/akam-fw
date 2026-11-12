@@ -31,6 +31,10 @@ type sessionUI struct {
 
 	failMu sync.Mutex
 	fail   *ui.FailInfo // the last Fail, until it was shown or cleared
+
+	resMu   sync.Mutex
+	resLast ui.MenuResult // the last Good, Warn or Err of the action running
+	resErr  ui.MenuResult // the last Err: it stays the result over a later success
 }
 
 var (
@@ -53,7 +57,46 @@ func (s *sessionUI) log(format string, a ...any) {
 }
 
 func (s *sessionUI) line(k lineKind, text string) {
-	s.st.send(msgLine{entry{k, textsafe.Clean(text)}})
+	text = textsafe.Clean(text)
+	s.st.send(msgLine{entry{k, text}})
+	level := ""
+	switch k {
+	case kGood:
+		level = "ok"
+	case kWarn:
+		level = "warn"
+	case kErr:
+		level = "error"
+	default:
+		return
+	}
+	if t := oneLine(text); t != "" {
+		res := ui.MenuResult{Level: level, Text: t}
+		s.resMu.Lock()
+		s.resLast = res
+		if level == "error" {
+			s.resErr = res
+		}
+		s.resMu.Unlock()
+	}
+}
+
+var (
+	_ ui.ActionResulter = (*sessionUI)(nil)
+	_ ui.Stopper        = (*sessionUI)(nil)
+)
+
+// StopChan is closed when the user asked the current action to stop (ui.Stopper).
+func (s *sessionUI) StopChan() <-chan struct{} { return s.st.stopChan() }
+
+// ActionResult is the outcome of the action running since the last ClearOutput (ui.ActionResulter).
+func (s *sessionUI) ActionResult() ui.MenuResult {
+	s.resMu.Lock()
+	defer s.resMu.Unlock()
+	if s.resErr.Text != "" {
+		return s.resErr
+	}
+	return s.resLast
 }
 
 func (s *sessionUI) Say(t string)  { t = textsafe.Clean(t); s.log("SAY %s", t); s.line(kSay, t) }
@@ -99,6 +142,12 @@ func (s *sessionUI) ClearFail() {
 // (ui.OutputClearer); the flow calls it as an action starts.
 func (s *sessionUI) ClearOutput() {
 	s.ClearFail()
+	s.resMu.Lock()
+	s.resLast, s.resErr = ui.MenuResult{}, ui.MenuResult{}
+	s.resMu.Unlock()
+	s.st.rearm() // synchronously: the next question of this action must not see the old stop
+	s.st.wrote.Store(false)
+	s.st.writing.Store(false) // one flow goroutine runs the actions one after the other: the last one is over
 	s.st.send(msgClear{})
 }
 
@@ -393,10 +442,21 @@ func runSession(th *Theme, base ui.UI, logf func(string, ...any), o sessionOpts,
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	interrupted := false
-	select {
-	case <-flowDone:
-	case <-timer.C:
-		interrupted = true
+wait:
+	for {
+		select {
+		case <-flowDone:
+			break wait
+		case <-timer.C:
+			if st.writing.Load() {
+				// A write to the camera is under way: leaving now would cut it short and could leave the
+				// camera half written. Wait for the flow without limit.
+				timer.Reset(grace)
+				continue
+			}
+			interrupted = true
+			break wait
+		}
 	}
 	last, ok := m.lastResult()
 	switch {
@@ -432,5 +492,14 @@ func (u *UI) Session(fn func(ui.UI) error) error {
 			fmt.Fprintln(u.ErrOut, "ERROR: "+last.text)
 		}
 	}
+	return err
+}
+
+// RunSession is the full-screen session on the given streams instead of the terminal: fn runs against
+// the real session UI, the program reads its keys from in and draws on out (no alternate screen). It
+// exists for tests of the flows, which must see the same ui.UI the terminal gives them; the
+// terminal path is (*UI).Session.
+func RunSession(base ui.UI, in io.Reader, out io.Writer, fn func(ui.UI) error) error {
+	_, _, err := runSession(theme(), base, nil, sessionOpts{in: in, out: out}, fn)
 	return err
 }

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -62,22 +63,86 @@ const tickEvery = 100 * time.Millisecond
 
 // sessState is what the program and the flow goroutine share.
 type sessState struct {
-	done       chan struct{} // closed when the program has ended
-	cancel     chan struct{} // closed by the first Ctrl-C on a running flow: stop asking, finish
-	cancelOnce sync.Once
-	send       func(tea.Msg)
-	boardKeys  chan boardEv // keys of the board for the flow (board.go)
+	done      chan struct{} // closed when the program has ended
+	send      func(tea.Msg)
+	boardKeys chan boardEv // keys of the board for the flow (board.go)
+
+	// writing is set by OpWriting for as long as a write to the camera is under way. It does not
+	// depend on the operation panel (a banner or a new board may drop the panel): while it is set the
+	// session offers no stop, ignores Ctrl-C and Esc, and runSession waits for the flow without limit.
+	writing atomic.Bool
+	// wrote is set once a write was started in the current action: what is left to stop is only the
+	// read-back, and the strip must not say that nothing on the camera changes.
+	wrote atomic.Bool
+
+	mu       sync.Mutex
+	cancel   chan struct{} // closed by a stop; replaced by rearm when the next action starts
+	boardIDs []string      // the row IDs of the board on screen, for the keys the flow reads
 }
 
 func newSessState() *sessState {
 	return &sessState{done: make(chan struct{}), cancel: make(chan struct{}), send: func(tea.Msg) {}, boardKeys: make(chan boardEv, 16)}
 }
 
-func (s *sessState) stop() { s.cancelOnce.Do(func() { close(s.cancel) }) }
+func (s *sessState) stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.cancel:
+	default:
+		close(s.cancel)
+	}
+}
+
+// rearm makes a stop of an earlier action forgotten: the next action may ask questions again.
+func (s *sessState) rearm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.cancel:
+		s.cancel = make(chan struct{})
+	default:
+	}
+}
+
+func (s *sessState) setBoardIDs(ids []string) {
+	s.mu.Lock()
+	s.boardIDs = ids
+	s.mu.Unlock()
+}
+
+// rowOf is the index, in the board now on screen, of the row a key was pressed on: found by its ID
+// (the rows may have changed since), -1 when that row is gone. A row without an ID keeps its index.
+func (s *sessState) rowOf(ev boardEv) int {
+	if ev.row < 0 {
+		return -1
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ev.id == "" {
+		if ev.row < len(s.boardIDs) {
+			return ev.row
+		}
+		return -1
+	}
+	for i, id := range s.boardIDs {
+		if id == ev.id {
+			return i
+		}
+	}
+	return -1
+}
+
+// stopChan is the channel closed when the current action is asked to stop.
+func (s *sessState) stopChan() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cancel
+}
 
 func (s *sessState) stopped() bool {
 	select {
-	case <-s.cancel:
+	case <-s.stopChan():
 		return true
 	default:
 		return false
@@ -256,10 +321,11 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgHeader:
 		m.hdr = v.h
 	case msgBoardSet:
-		m.op = nil
+		m.op, m.stopping = nil, false // a board is a new screen: an earlier stop is forgotten
 		m.setBoard(v.b)
 	case msgBoardClose:
 		m.board = nil
+		m.st.setBoardIDs(nil)
 	case msgStripIfEmpty:
 		if m.strip == nil {
 			e := v.e
@@ -274,12 +340,11 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		v.q.resize(m.w, m.panelRows())
 		m.queue = append(m.queue, v.q)
+		m.armHead()
 		m.pane = nil
 	case msgFlowDone:
 		m.finished = true
-		if m.op != nil {
-			m.op.writing = false
-		}
+		m.st.writing.Store(false)
 		return m, tea.Quit
 	case msgTick:
 		if !m.busy() {
@@ -306,6 +371,7 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // clearOutput starts a new action on a clean panel: the transcript, the steps, the operation and the
 // strip of the previous one are dropped (the home keeps the last output only until the next action).
 func (m *sessModel) clearOutput() {
+	m.stopping = false // the stop of the previous action does not carry over
 	m.transcript, m.strip, m.scroll, m.pane = nil, nil, 0, nil
 	m.title, m.steps, m.total, m.prog, m.op = "", nil, 0, nil, nil
 }
@@ -319,6 +385,7 @@ func (m *sessModel) settle() {
 			if len(m.queue) > 0 {
 				m.queue[0].resize(m.w, m.panelRows())
 			}
+			m.armHead()
 		}
 	}
 }
@@ -404,9 +471,68 @@ func (m *sessModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.strip = &entry{kWarn, "Stopping after the current step. Ctrl-C again quits now."}
 		return m, nil
 	}
+	if msg := m.dangerRefuses(q, k.String()); msg != "" {
+		m.strip = &entry{kWarn, msg}
+		return m, nil
+	}
 	cmd := q.update(k)
 	m.settle()
 	return m, cmd
+}
+
+// dangerTypeAhead is how long a danger box ignores a confirmation after it appeared: a key typed
+// before the user could read it (type-ahead, a held Enter) must never answer it.
+var dangerTypeAhead = 300 * time.Millisecond
+
+// armHead starts the type-ahead guard of the question that is now on screen.
+func (m *sessModel) armHead() {
+	if q := m.current(); q != nil && q.since.IsZero() {
+		q.since = m.now()
+	}
+}
+
+func dangerBox(q *ask) (*YesNo, bool) {
+	yn, ok := q.model.(*YesNo)
+	return yn, ok && yn.Danger
+}
+
+// dangerCut keeps the title, a notice and the last lines (the question and the answer) of a danger
+// box that does not fit in rows lines.
+func (m *sessModel) dangerCut(lines []string, rows int) []string {
+	q := m.current()
+	if q == nil {
+		return lines
+	}
+	if _, ok := dangerBox(q); !ok || rows < 3 {
+		return append([]string{lines[0]}, lines[len(lines)-(rows-1):]...)
+	}
+	hidden := len(lines) - rows + 1
+	note := " " + m.th.Warn.Render(fmt.Sprintf("%d lines hidden - enlarge the window to confirm", hidden))
+	if hidden == 1 {
+		note = " " + m.th.Warn.Render("1 line hidden - enlarge the window to confirm")
+	}
+	out := []string{lines[0], note}
+	return append(out, lines[len(lines)-(rows-2):]...)
+}
+
+// dangerRefuses says why a key that would answer Yes to the danger box on screen is ignored ("" when
+// it is not refused): the box does not fit the window, or it appeared a moment ago.
+func (m *sessModel) dangerRefuses(q *ask, k string) string {
+	yn, ok := dangerBox(q)
+	if !ok {
+		return ""
+	}
+	confirms := k == "y" || k == "Y" || (k == "enter" && yn.yes)
+	if !confirms {
+		return ""
+	}
+	if len(q.lines()) > m.panelRows() {
+		return "The warning does not fit the window: enlarge it to read every line before answering yes."
+	}
+	if m.now().Sub(q.since) < dangerTypeAhead {
+		return "Ignored: read the warning first, then answer."
+	}
+	return ""
 }
 
 // lastResult is the last Good, Warn or Err of the transcript (what the user should still see after
@@ -515,6 +641,12 @@ func (m *sessModel) stripLine(w int) string {
 func (m *sessModel) footer() string {
 	th := m.th
 	if q := m.current(); q != nil {
+		if _, ok := dangerBox(q); ok && len(q.lines()) > m.panelRows() {
+			return " " + th.Footer("n/Enter/Esc/q", "no") // yes is refused until the box fits
+		}
+		if f, ok := q.model.(*Form); ok {
+			return " " + th.Footer(f.keysFit(func(p []string) bool { return lipgloss.Width(th.Footer(p...))+2 <= m.w })...)
+		}
 		return " " + th.Footer(q.keys()...)
 	}
 	if m.pane != nil {
@@ -523,7 +655,7 @@ func (m *sessModel) footer() string {
 	if m.board != nil {
 		return m.boardFooter()
 	}
-	if m.op != nil {
+	if m.op != nil || m.writing() {
 		return m.opFooter()
 	}
 	var pairs []string
@@ -638,9 +770,9 @@ func (m *sessModel) panel(rows, w int) []string {
 	} else if q != nil {
 		lines = q.lines() // an overlay takes over the whole panel
 		if len(lines) > rows {
-			// A window too small for a box keeps its title and its last lines: the command, the
-			// question and the highlighted answer must never be the part that is cut off.
-			lines = append([]string{lines[0]}, lines[len(lines)-(rows-1):]...)
+			// A window too small for the box never cuts facts silently: the box says how many lines
+			// are hidden (the title, the question and the answer stay) and y is refused until it fits.
+			lines = m.dangerCut(lines, rows)
 		}
 	} else if m.board != nil {
 		lines = m.boardLines(rows, w)
