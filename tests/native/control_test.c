@@ -97,8 +97,14 @@ void onvif_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_onvif_state); }
 void onvif_svc_stop(void) {}
 /* mqtt_svc stub: the real service is tested in mqtt_svc_test.c */
 static char g_mqtt_state[MQTT_STATE_MAX] = "off";
-static int  g_mqtt_reloads, g_mqtt_tests;
-int  mqtt_svc_reload(char *s, size_t c) { g_mqtt_reloads++; snprintf(g_mqtt_state, sizeof(g_mqtt_state), "connecting"); snprintf(s, c, "%s", g_mqtt_state); return 0; }
+static int  g_mqtt_reloads, g_mqtt_tests, g_mqtt_fail;
+int  mqtt_svc_reload(char *s, size_t c)
+{
+    g_mqtt_reloads++;
+    snprintf(g_mqtt_state, sizeof(g_mqtt_state), "%s", g_mqtt_fail ? "error:thread" : "connecting");
+    snprintf(s, c, "%s", g_mqtt_state);
+    return g_mqtt_fail ? -1 : 0;
+}
 void mqtt_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_mqtt_state); }
 void mqtt_svc_stats(char *s, size_t c) { snprintf(s, c, "published=1 received=2 applied=3 rejected=4 connects=5"); }
 void mqtt_svc_test_result(char *s, size_t c) { snprintf(s, c, "%s", g_mqtt_tests ? "running" : "idle"); }
@@ -505,6 +511,12 @@ static void test_server(void)
     ask(c, "mqtt reload", out, sizeof(out));
     CHECK_STR(out, "OK mqtt.state=connecting\n");
     CHECK(g_mqtt_reloads == 1);
+    g_mqtt_fail = 1;                                         /* a failed start is an ERR, not a blind OK */
+    ask(c, "mqtt reload", out, sizeof(out));
+    CHECK_STR(out, "ERR mqtt.state=error:thread\n");
+    g_mqtt_fail = 0;
+    ask(c, "mqtt reload", out, sizeof(out));
+    g_mqtt_reloads = 1;
     ask(c, "GET mqtt.state", out, sizeof(out));
     CHECK_STR(out, "mqtt.state=connecting\n");
     ask(c, "GET mqtt.stats", out, sizeof(out));

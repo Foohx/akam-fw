@@ -403,7 +403,7 @@ static void do_get(cli_t *c, const char *param)
         reply(c, "onvif.state=%s", os);
     }
     else if (!strcmp(param, "mqtt.state") || !strcmp(param, "mqtt.stats") || !strcmp(param, "mqtt.test")) {
-        char ms[96];
+        char ms[192];
         if (!strcmp(param, "mqtt.state")) mqtt_svc_state(ms, sizeof(ms));
         else if (!strcmp(param, "mqtt.stats")) mqtt_svc_stats(ms, sizeof(ms));
         else mqtt_svc_test_result(ms, sizeof(ms));
@@ -732,8 +732,9 @@ static void handle_control_client(cli_t *c)
             if (!c->loopback) reply(c, "ERR MQTT commands are only allowed from the camera");
             else if (a1 && !strcasecmp(a1, "reload")) {
                 char ms[MQTT_STATE_MAX];
-                (void)mqtt_svc_reload(ms, sizeof(ms));
-                reply(c, "OK mqtt.state=%s", ms);
+                int rr = mqtt_svc_reload(ms, sizeof(ms));
+                if (rr != 0) reply(c, "ERR mqtt.state=%s", ms);   /* thread start failed, or the password file is unusable */
+                else reply(c, "OK mqtt.state=%s", ms);
             } else if (a1 && !strcasecmp(a1, "test")) {
                 if (mqtt_svc_test_start() == 0) reply(c, "OK mqtt.test=running");
                 else reply(c, "ERR no valid MQTT configuration");

@@ -54,9 +54,10 @@ typedef struct {
 extern const char *mqtt_cfg_path;
 extern const char *mqtt_pass_path;
 
-/* TEST-ONLY timings: defaults 5000, 60000, 60, 2000, 10000, 10000 (backoff minimum and cap, MQTT keepalive in
- * seconds, the period of the change scan, how long a PINGREQ or the CONNECT may stay unanswered). */
-typedef struct { unsigned backoff_min_ms, backoff_max_ms, keepalive_s, tick_ms, ping_reply_ms, connack_ms; } mqtt_svc_tune_t;
+/* TEST-ONLY timings: defaults 5000, 60000, 60, 2000, 10000, 10000, 60000 (backoff minimum and cap, MQTT keepalive
+ * in seconds, the period of the change scan, how long a PINGREQ or the CONNECT may stay unanswered, how long a
+ * session must last before the backoff starts again from its minimum). */
+typedef struct { unsigned backoff_min_ms, backoff_max_ms, keepalive_s, tick_ms, ping_reply_ms, connack_ms, stable_ms; } mqtt_svc_tune_t;
 extern mqtt_svc_tune_t mqtt_svc_tune;
 
 #ifndef MQTT_NO_DNS

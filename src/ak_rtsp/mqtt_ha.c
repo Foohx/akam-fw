@@ -120,6 +120,7 @@ int mqtt_ha_init(mqtt_ha_t *h, const mqtt_ops_t *ops, const char *base, const ch
     char v[64];
     memset(h, 0, sizeof(*h));
     h->reject_idx = -1;
+    h->lim = &h->own_lim;
     h->ops = ops;
     h->discovery = discovery;
     ops->hostname(h->host);
@@ -137,7 +138,7 @@ int mqtt_ha_init(mqtt_ha_t *h, const mqtt_ops_t *ops, const char *base, const ch
             if (h->mac[i] != ':') h->node[o++] = h->mac[i];
         h->node[o] = '\0';
     } else {
-        snprintf(h->node, sizeof(h->node), "akam_%s", h->host);
+        return -2;   /* no MAC yet (Wi-Fi not up): the node id must be the stable hardware one, never the renamable host name */
     }
     if (base && base[0]) {
         if (!mqtt_ha_topic_ok(base, 64)) return -1;
@@ -159,6 +160,8 @@ int mqtt_ha_init(mqtt_ha_t *h, const mqtt_ops_t *ops, const char *base, const ch
     }
     return 0;
 }
+
+void mqtt_ha_use_limits(mqtt_ha_t *h, mqtt_ha_limits_t *lim) { h->lim = lim ? lim : &h->own_lim; }
 
 int mqtt_ha_status_topic(const mqtt_ha_t *h, char *out, size_t cap)
 {
@@ -226,8 +229,8 @@ int mqtt_ha_discovery(const mqtt_ha_t *h, size_t i, char *topic, size_t tcap, ch
     jb_t j = { payload, pcap, 0, 0 };
     if (i >= N_ENT) return -1;
     e = &g_ent[i];
-    if (!h->present[i]) return 0;
     if (snprintf(topic, tcap, "%s/%s/%s/%s/config", h->prefix, e->comp, h->node, e->id) >= (int)tcap) return -1;
+    if (!h->present[i]) return 0;    /* the topic is still filled: the caller clears a stale retained document with it */
     if (pcap < 2) return -1;
     payload[0] = '\0';
     snprintf(uid, sizeof(uid), "%s_%s", h->node, e->id);
@@ -359,10 +362,26 @@ static int command_value(const ent_t *e, const char *p, char *out, size_t cap)
     return -1;
 }
 
+/* Token bucket in milli-tokens (1000 = one command). per_s tokens are added per second, i.e. per_s milli-tokens per
+ * millisecond. A zeroed bucket starts full; a clock that goes backwards refills nothing. 1 = a token was taken. */
+static int bucket_take(int64_t *milli, int64_t *last_ms, int64_t now, int burst, double per_s)
+{
+    int64_t cap = (int64_t)burst * 1000;
+    if (*last_ms == 0 && *milli == 0) *milli = cap;       /* zeroed state: starts full */
+    else if (now > *last_ms) {
+        int64_t add = (int64_t)((double)(now - *last_ms) * per_s);
+        *milli = *milli + add > cap ? cap : *milli + add;
+    }
+    *last_ms = now ? now : 1;
+    if (*milli < 1000) return 0;
+    *milli -= 1000;
+    return 1;
+}
+
 int mqtt_ha_command(mqtt_ha_t *h, const char *topic, size_t tlen, const uint8_t *payload, size_t plen, int retained)
 {
     size_t bl = strlen(h->base);
-    char id[24], pl[MQTT_HA_VAL_MAX], val[24], msg[96];
+    char id[24], pl[MQTT_HA_VAL_MAX], val[24], cur[64], msg[96];
     const char *rest;
     size_t rl, il;
     h->reject_idx = -1;
@@ -379,6 +398,11 @@ int mqtt_ha_command(mqtt_ha_t *h, const char *topic, size_t tlen, const uint8_t 
     for (size_t i = 0; i < N_ENT; i++)
         if (is_cmd(&g_ent[i]) && !strcmp(g_ent[i].id, id)) { idx = i; break; }
     if (idx == N_ENT || !h->present[idx]) { h->invalid++; return -1; }
+    if (h->ops->now_ms &&
+        !bucket_take(&h->lim->cmd_milli, &h->lim->cmd_ms, h->ops->now_ms(), MQTT_HA_CMD_BURST, MQTT_HA_CMD_PER_S)) {
+        h->invalid++;                            /* flood: dropped, not answered */
+        return -1;
+    }
     h->reject_idx = (int)idx;                    /* until the command is applied */
     if (retained) { h->invalid++; return -1; }   /* a retained command would replay at every reconnect */
     if (plen == 0 || plen >= sizeof(pl)) { h->invalid++; return -1; }
@@ -389,16 +413,30 @@ int mqtt_ha_command(mqtt_ha_t *h, const char *topic, size_t tlen, const uint8_t 
     if (command_value(&g_ent[idx], pl, val, sizeof(val)) != 0) { h->invalid++; return -1; }
     msg[0] = '\0';
     int saved = (g_ent[idx].flags & F_PERSIST) ? 1 : 0;
+    int button = !strcmp(g_ent[idx].comp, "button");
     int64_t now = h->ops->now_ms ? h->ops->now_ms() : 0;
-    if (saved && h->ops->now_ms && h->have_persist && now - h->last_persist_ms < MQTT_HA_PERSIST_GAP_MS) {
-        h->invalid++;                             /* flash wear: one saved change per window */
+    int limited = h->ops->now_ms != NULL;
+    /* the same value as now: nothing to apply, nothing to write, no token */
+    if (!button && h->ops->get(g_ent[idx].key, cur, sizeof(cur)) == 0 && !strcmp(cur, val)) {
+        h->reject_idx = -1;
+        h->applied++;
+        return (int)idx;
+    }
+    if (limited && saved && !bucket_take(&h->lim->persist_milli, &h->lim->persist_ms, now, MQTT_HA_PERSIST_BURST,
+                                         1000.0 / MQTT_HA_PERSIST_REFILL_MS)) {
+        h->invalid++;                             /* flash wear: bounded burst, then one saved change per refill */
+        return -1;
+    }
+    if (limited && button && h->lim->have_beep && now - h->lim->beep_ms < MQTT_HA_BEEP_GAP_MS) {
+        h->invalid++;
+        h->reject_idx = -1;                       /* a button has no state to show */
         return -1;
     }
     if (h->ops->set(g_ent[idx].key, val, saved, msg, sizeof(msg)) != 0) {
         h->invalid++;
         return -1;
     }
-    if (saved) { h->last_persist_ms = now; h->have_persist = 1; }
+    if (button) { h->lim->beep_ms = now; h->lim->have_beep = 1; }
     h->reject_idx = -1;
     h->applied++;
     return (int)idx;
