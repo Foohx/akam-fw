@@ -48,7 +48,7 @@ func getKitEnv(t *testing.T, ks *kitServer, b *kittest.Built) *env {
 	e := newEnv(t)
 	e.writeState("step_doctor_done=2026-11-11T00:00:00Z\n")
 	if ks != nil {
-		e.http = ks.srv.Client()
+		e.http = kittest.ClientFor(ks.srv)
 		t.Setenv("AKAM_KIT_URL_BASE", ks.srv.URL)
 	}
 	if b != nil {
@@ -188,7 +188,7 @@ func TestGetKitRefusals(t *testing.T) {
 		}))
 		defer srv.Close()
 		e := getKitEnv(t, nil, &b)
-		e.http = srv.Client()
+		e.http = kittest.ClientFor(srv)
 		t.Setenv("AKAM_KIT_URL_BASE", srv.URL)
 		r := e.run("", "get-kit", "--version", "1.0.0")
 		expectRC(t, r, 1)

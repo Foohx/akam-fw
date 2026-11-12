@@ -72,7 +72,7 @@ tools/release/sign_kit.sh ~/.ssh/akam_release dist/assistant   # SHA256SUMS.sig 
 ```
 
 It builds the six targets through `tools/assistant/build.sh flat` (the single place of the flags:
-`CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w -X main.version=..."`, `-tags nethttpomithttp2`,
+`CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w -X main.version=..."`,
 never `-tags akamtest`), checks the binaries (no checkout or home path inside, flags recorded by
 `go version -m`), then writes, with names without version:
 `akam-<os>-<arch>[.exe]`, `akam-<os>-<arch>.tar.gz` (Linux, macOS) or `.zip` (Windows) holding
@@ -89,9 +89,22 @@ public release also compare a run on a second machine. Archives are reproducible
 
 Size budget (`tools/assistant/build.sh sizes`): 12 MiB hard, 11 MiB soft per target; archives 5 MiB.
 `tools/assistant/build.sh sizes --by-package [os/arch]` shows the biggest Go packages of an unstripped build.
-Measured with `go1.27.3-X:nodwarf5` (not the pinned Go; re-measure with the pinned one): about 8.9 to 9.8 MiB per
-target. The figure of 14.6 MiB seen once for windows/amd64 comes from a build without `-trimpath -ldflags "-s -w"`
-(plain `go build`: 15.65 MB = 14.93 MiB); with the project flags it is 10.1 MiB (9.76 MiB with `nethttpomithttp2`).
+Measured with `go1.27.3-X:nodwarf5` (not the pinned Go; re-measure with the pinned one), project flags:
+
+| target | size (MiB) |
+|---|---|
+| linux/amd64 | 10.34 |
+| linux/arm64 | 9.50 |
+| darwin/amd64 | 10.57 |
+| darwin/arm64 | 9.77 |
+| windows/amd64 | 10.79 |
+| windows/arm64 | 9.79 |
+
+The figure of 14.6 MiB seen once for windows/amd64 comes from a build without `-trimpath -ldflags "-s -w"`.
+The binaries grew past 11 MiB (windows/amd64 11.35, darwin/amd64 11.14) with the TUI, the audio decoders and the
+Windows audio layer; the downloads no longer use `net/http` (`kit.Client`, about 0.6 MiB: no HTTP/1 stack, no IDNA
+or Unicode normalisation tables). The biggest remaining parts are the runtime, `crypto/tls` and `x/crypto/ssh`,
+`encoding/json` (about 0.4 MiB, used by the SD helper frames), `regexp` and the CLI code itself.
 Do not use UPX.
 
 Unlike the kit, the binaries are all published, including the platforms that no hardware test has covered yet:

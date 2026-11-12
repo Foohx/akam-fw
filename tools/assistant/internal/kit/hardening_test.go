@@ -34,14 +34,14 @@ func TestDownloadIsLimited(t *testing.T) {
 	}))
 	defer srv.Close()
 	out := filepath.Join(t.TempDir(), "f")
-	err := kit.FetchLimit(context.Background(), srv.Client(), srv.URL+"/f", out, 4096)
+	err := kit.FetchLimit(context.Background(), kittest.ClientFor(srv), srv.URL+"/f", out, 4096)
 	if err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Fatalf("an over-long download was accepted: %v", err)
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("the over-long download was kept")
 	}
-	if err := kit.FetchLimit(context.Background(), srv.Client(), srv.URL+"/f", out, 5000); err != nil {
+	if err := kit.FetchLimit(context.Background(), kittest.ClientFor(srv), srv.URL+"/f", out, 5000); err != nil {
 		t.Errorf("a download at the limit failed: %v", err)
 	}
 }

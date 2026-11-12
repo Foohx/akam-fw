@@ -55,6 +55,17 @@ if [ -z "$unformatted" ]; then ok "gofmt: every file is formatted"; else ko "gof
 
 if out=$(go vet -tags akamtest ./... 2>&1); then ok "go vet ./... (akamtest)"; else ko "go vet ./..."; echo "$out" | tail -n 20; fi
 
+# net/http costs about 0.55 MiB (HTTP/1 stack, IDNA and Unicode tables): the downloads use internal/kit's client.
+nethttp_bad=
+for goos in windows linux darwin; do
+    if deps=$(GOOS=$goos go list -deps ./cmd/akam 2>&1); then
+        if grep -qx 'net/http' <<<"$deps"; then nethttp_bad="$nethttp_bad $goos"; fi
+    else
+        nethttp_bad="$nethttp_bad $goos(go list failed)"
+    fi
+done
+if [ -z "$nethttp_bad" ]; then ok "net/http is not linked (windows, linux, darwin)"; else ko "net/http is linked into:$nethttp_bad"; fi
+
 LOG=$(mktemp)
 SELFSTATE=$(mktemp -d)
 BRIDGE=$(mktemp -d)

@@ -2,12 +2,14 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
-	"net/http"
+	"net"
 	"strings"
 	"testing"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -106,7 +108,7 @@ func TestStepMenuNoPressEnter(t *testing.T) {
 // A declined or failed action leaves its message on the next screen; nothing waits for Enter.
 func TestHomeFailureShownOnStrip(t *testing.T) {
 	e := newEnv(t)
-	e.http = &http.Client{Transport: noNet{}} // no network: every download is refused
+	e.http = &kit.Client{DialContext: noNet} // no network: every download is refused
 	s, _ := runWithMenu(t, e, []string{"Update this camera"}, "n\n", "--camera", "salon", "--ip", "127.0.0.1")
 	noPressEnter(t, s)
 	if len(s.views) < 2 {
@@ -117,8 +119,6 @@ func TestHomeFailureShownOnStrip(t *testing.T) {
 	}
 }
 
-type noNet struct{}
-
-func (noNet) RoundTrip(*http.Request) (*http.Response, error) {
+func noNet(context.Context, string, string) (net.Conn, error) {
 	return nil, errors.New("network disabled in tests")
 }

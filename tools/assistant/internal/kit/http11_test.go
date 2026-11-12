@@ -10,9 +10,10 @@ import (
 	"testing"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit/kittest"
 )
 
-// The release binary is built with -tags nethttpomithttp2 (no HTTP/2 client): the production client must still
+// The production client speaks HTTP/1.1 only: it must still
 // download from a TLS server that offers HTTP/2 (GitHub does), over HTTP/1.1.
 func TestDownloadWorksOverHTTP11WhenServerOffersHTTP2(t *testing.T) {
 	var proto atomic.Int32
@@ -23,8 +24,7 @@ func TestDownloadWorksOverHTTP11WhenServerOffersHTTP2(t *testing.T) {
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
 	defer srv.Close()
-	c := kit.NewHTTPClient()
-	c.Transport.(*http.Transport).TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	c := kittest.ClientFor(srv)
 	out := filepath.Join(t.TempDir(), "f")
 	if err := kit.Fetch(context.Background(), c, srv.URL+"/f", out); err != nil {
 		t.Fatalf("download: %v", err)

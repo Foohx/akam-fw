@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,7 +23,7 @@ const maxToolkitBytes = 64 << 20
 // EnsureToolkit returns the verified sd_card tree of the toolkit in dir. When dir/sd_card is missing it
 // downloads the pinned commit's tarball (HTTPS only, size capped), extracts only sd_card/ (plain files,
 // local paths) and refuses unless the C-locale tree hash equals the pin.
-func EnsureToolkit(ctx context.Context, hc *http.Client, dir string, say func(string)) (map[string][]byte, error) {
+func EnsureToolkit(ctx context.Context, hc *kit.Client, dir string, say func(string)) (map[string][]byte, error) {
 	if st, err := os.Stat(filepath.Join(dir, "sd_card")); err == nil && st.IsDir() {
 		files, err := LoadToolkit(dir)
 		if err == nil && say != nil {
