@@ -318,3 +318,41 @@ func TestSessionUIRecordsTheActionResult(t *testing.T) {
 		t.Errorf("result %+v", got)
 	}
 }
+
+// L3: a form left with a second Esc while a change is being applied does not release the flow before
+// the apply call returned.
+func TestForceClosedFormWaitsForItsApply(t *testing.T) {
+	h := newHarness(t, 80, 24, nil)
+	started, release := make(chan struct{}), make(chan struct{})
+	var applied bool
+	h.run(func(u ui.UI) error {
+		_, err := u.(ui.FormKeyer).FormKeys(ui.FormSpec{Title: "Options",
+			Rows: []ui.FormRow{{ID: "led", Label: "LED", Kind: ui.FormEnum, Value: "on", Choices: []string{"on", "off"}}},
+			Apply: func(id, value string) (ui.FormRow, error) {
+				close(started)
+				<-release
+				applied = true
+				return ui.FormRow{}, nil
+			}})
+		if !applied {
+			t.Error("the flow was released while the apply was still running")
+		}
+		return err
+	})
+	h.ask()
+	h.press("right")
+	_, cmd := h.m.Update(key("esc")) // close: the pending change is applied
+	if cmd == nil {
+		t.Fatal("no apply was started")
+	}
+	go cmd() // what the program does with the command
+	<-started
+	h.press("esc") // a second Esc leaves at once
+	select {
+	case <-h.flowDone:
+		t.Fatal("the flow was released during the apply")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	h.finish()
+}

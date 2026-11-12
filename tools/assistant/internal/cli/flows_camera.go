@@ -12,6 +12,7 @@ import (
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/guard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -120,7 +121,7 @@ func (a *App) probeCamera(ip string) (discover.Camera, gossh.PublicKey, bool) {
 
 // probeMany checks addresses in parallel (at most 8 at a time).
 func (a *App) probeMany(ips []string, ch *chooser) {
-	var wg sync.WaitGroup
+	var wg guard.Group // a panic of a probe is raised here, in the flow, where the session restores the terminal
 	sem := make(chan struct{}, 8)
 	if ch.onChange != nil {
 		ch.mu.Lock()
@@ -134,10 +135,8 @@ func (a *App) probeMany(ips []string, ch *chooser) {
 		ch.changed()
 	}
 	for _, ip := range ips {
-		wg.Add(1)
 		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer func() { <-sem }()
 			cam, key, ok := a.probeCamera(ip)
 			if ok {
@@ -149,7 +148,7 @@ func (a *App) probeMany(ips []string, ch *chooser) {
 				ch.mu.Unlock()
 				ch.changed()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

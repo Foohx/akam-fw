@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,6 +56,10 @@ type Form struct {
 	gen      int    // debounce generation: only the last tick counts
 	want     bool   // a tick came while an apply was running
 	help     bool   // "?" shows the detail of the focused row
+
+	// pending counts the Apply calls started and not returned: the session waits for them before it
+	// hands the flow back, so a form closed with a second Esc leaves nothing running behind the flow.
+	pending sync.WaitGroup
 }
 
 // formMsg is a message that belongs to one Form (a session may hold several).
@@ -194,7 +199,9 @@ func (m *Form) flush() tea.Cmd {
 		m.dirty[i] = false
 		m.inflight = i
 		id, val, apply := m.Rows[i].ID, m.Rows[i].Value, m.Apply
+		m.pending.Add(1)
 		return func() tea.Msg {
+			defer m.pending.Done()
 			if apply == nil {
 				return formResult{f: m, i: i}
 			}

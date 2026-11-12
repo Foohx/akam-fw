@@ -443,7 +443,10 @@ func (a *App) rtspAuthDisable(c *camssh.Client, ip string) error {
 	if err := a.UI.RequireTTY("switching the stream password off"); err != nil {
 		return err
 	}
-	ok, _ := a.UI.AskYN("  Switch the video stream password off (anyone on your network could watch the camera)?")
+	ok, _ := a.UI.Danger("Switch the video stream password off", "Switch the video stream password off?",
+		fmt.Sprintf("Camera: %s", ip),
+		"Anyone on your network could then watch the camera.",
+		"This removes the RTSP login and the copy of the password stored for ONVIF.")
 	if !ok {
 		a.UI.Say("  Left as it was.")
 		return nil

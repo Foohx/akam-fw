@@ -206,7 +206,8 @@ func (c *boardCtl) show(status string) {
 		Empty: "No camera known yet. Press s to scan, or t to type an address.",
 		Help: []string{
 			"A stock camera only answers while the toolkit card is in it and it has had 2 minutes to start; your router's client list (maker 'AltoBeam') shows its address.",
-			"s scans your network, o searches with ONVIF, t takes an address or a name, r checks the remembered cameras again, f forgets one. Each of them asks before sending anything.",
+			"s scans your network, o searches with ONVIF, t takes an address or a name, f forgets one: each of them asks before sending anything.",
+			"r checks the remembered cameras again at once, without asking: it only connects to the addresses already in the list.",
 		}}
 	now := time.Now()
 	for _, r := range rows {
@@ -300,7 +301,11 @@ func (c *boardCtl) run(status string, fn func()) {
 		defer close(joined)
 		for {
 			k, _, err := c.bd.WaitBoardKey(stop)
-			if k == "" || err != nil {
+			if err != nil { // the session ended: the search must not run on for nobody
+				cancel()
+				return
+			}
+			if k == "" {
 				return
 			}
 			if k == "esc" {
