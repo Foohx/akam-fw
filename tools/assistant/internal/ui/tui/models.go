@@ -59,7 +59,22 @@ func (m *YesNo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *YesNo) keys() []string { return []string{"y", "yes", "n/Enter/Esc/q", "no"} }
+
 func (m *YesNo) View() string {
+	th := m.themed()
+	return m.body() + "  " + th.Footer(m.keys()...) + "\n"
+}
+
+func (m *YesNo) themed() *Theme {
+	if m.Theme != nil {
+		return m.Theme
+	}
+	return theme()
+}
+
+// body is the question without its key hints (the session layout draws the footer itself).
+func (m *YesNo) body() string {
 	th := m.Theme
 	if th == nil {
 		th = theme()
@@ -77,10 +92,9 @@ func (m *YesNo) View() string {
 		no = th.Sel.Render(no)
 	}
 	styled := yes + "   " + no
-	footer := "  " + th.Footer("y", "yes", "n/Enter/Esc/q", "no") + "\n"
 	var b strings.Builder
 	if !m.Danger {
-		fmt.Fprintf(&b, "%s\n  %s\n%s", th.Bold.Render(m.Prompt), styled, footer)
+		fmt.Fprintf(&b, "%s\n  %s\n", th.Bold.Render(m.Prompt), styled)
 		return b.String()
 	}
 	outer := m.W
@@ -104,20 +118,22 @@ func (m *YesNo) View() string {
 		lines = append(lines, styled)
 	}
 	b.WriteString(th.Box(th.Err, strings.ToUpper(truncW(m.Title, inner-3, th.Glyphs.Ellipsis)), lines, outer))
-	b.WriteString(footer)
 	return b.String()
 }
 
 // ---------------------------------------------------------------- text input
 
-// Input reads one line; Secret hides it (nothing is echoed, not even stars). Esc cancels.
+// Input reads one line; Secret hides it (nothing is echoed, not even stars). Esc cancels. The default
+// is shown as ghost text until something is typed; Left, Right, Home, End, Delete and Backspace edit.
 type Input struct {
 	Prompt string
 	Def    string
 	Secret bool
 	Theme  *Theme
+	W      int // window width (WindowSizeMsg); 0 means no limit
 
 	val       []rune
+	pos       int // cursor position in val
 	Done      bool
 	Cancelled bool
 }
@@ -125,6 +141,10 @@ type Input struct {
 func (m *Input) Init() tea.Cmd { return nil }
 
 func (m *Input) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if v, ok := msg.(tea.WindowSizeMsg); ok {
+		m.W = v.Width
+		return m, nil
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -137,16 +157,36 @@ func (m *Input) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Done, m.Cancelled = true, true
 		return m, tea.Quit
 	case tea.KeyBackspace, tea.KeyCtrlH:
-		if len(m.val) > 0 {
-			m.val = m.val[:len(m.val)-1]
+		if m.pos > 0 {
+			m.val = append(m.val[:m.pos-1], m.val[m.pos:]...)
+			m.pos--
 		}
+	case tea.KeyDelete:
+		if m.pos < len(m.val) {
+			m.val = append(m.val[:m.pos], m.val[m.pos+1:]...)
+		}
+	case tea.KeyLeft:
+		if m.pos > 0 {
+			m.pos--
+		}
+	case tea.KeyRight:
+		if m.pos < len(m.val) {
+			m.pos++
+		}
+	case tea.KeyHome, tea.KeyCtrlA:
+		m.pos = 0
+	case tea.KeyEnd, tea.KeyCtrlE:
+		m.pos = len(m.val)
 	case tea.KeyCtrlU:
-		m.val = nil
+		m.val, m.pos = nil, 0
 	case tea.KeyRunes, tea.KeySpace:
-		m.val = append(m.val, k.Runes...)
-		if k.Type == tea.KeySpace && len(k.Runes) == 0 {
-			m.val = append(m.val, ' ')
+		rs := k.Runes
+		if k.Type == tea.KeySpace && len(rs) == 0 {
+			rs = []rune{' '}
 		}
+		tail := append([]rune(nil), m.val[m.pos:]...)
+		m.val = append(append(m.val[:m.pos], rs...), tail...)
+		m.pos += len(rs)
 	}
 	return m, nil
 }
@@ -159,57 +199,190 @@ func (m *Input) Value() string {
 	return string(m.val)
 }
 
+func (m *Input) themed() *Theme {
+	if m.Theme != nil {
+		return m.Theme
+	}
+	return theme()
+}
+
+func (m *Input) keys() []string { return []string{"Enter", "ok", "Esc", "cancel"} }
+
 func (m *Input) View() string {
-	shown := string(m.val)
+	return m.body() + "  " + m.themed().Footer(m.keys()...) + "\n"
+}
+
+// field draws the text with the cursor, or the default as ghost text; width 0 means no limit.
+func (m *Input) field(th *Theme, width int) string {
 	if m.Secret {
-		shown = ""
+		return th.CursorAt(nil, 0) // nothing typed is ever drawn
 	}
-	th := m.Theme
-	if th == nil {
-		th = theme()
+	if len(m.val) == 0 {
+		g := []rune(m.Def)
+		if len(g) == 0 {
+			return th.CursorAt(nil, 0)
+		}
+		ghost := string(g[1:])
+		if width > 0 {
+			ghost = truncW(ghost, max(width-1, 0), "")
+		}
+		return th.CursorAt(g[:1], 0) + th.Muted.Render(ghost)
 	}
-	// the prompt text already shows its default
-	return fmt.Sprintf("%s %s\n  %s\n", th.Bold.Render(m.Prompt), shown, th.Footer("Enter", "ok", "Esc", "cancel"))
+	rs, pos := m.val, m.pos
+	if width > 0 {
+		// keep the cursor in view: drop leading runes until the part up to the cursor fits
+		for len(rs) > 0 && pos > 0 && lipgloss.Width(string(rs[:pos]))+1 > width {
+			rs, pos = rs[1:], pos-1
+		}
+		for len(rs) > pos && lipgloss.Width(string(rs))+1 > width {
+			rs = rs[:len(rs)-1]
+		}
+	}
+	return th.CursorAt(rs, pos)
+}
+
+func (m *Input) body() string {
+	th := m.themed()
+	width := 0
+	if m.W > 0 {
+		width = max(m.W-lipgloss.Width(m.Prompt)-2, 4)
+	}
+	return th.Bold.Render(m.Prompt) + " " + m.field(th, width) + "\n"
 }
 
 // ---------------------------------------------------------------- picker
 
-// Picker chooses one item: arrows or j/k, Enter, a digit, Esc or q to cancel.
+// maxNumbered is the number of items that get a digit shortcut; a longer list is filtered by typing.
+const maxNumbered = 9
+
+// Picker chooses one item: arrows or j/k, Enter, a digit (the first nine items), Esc or q to cancel.
+// Past nine items, typing narrows the list ("/" starts the filter when its first letter is j, k or q).
 type Picker struct {
 	Title string
 	Items []string
 	Theme *Theme
 
-	Cursor    int
+	Cursor    int // index in Items
 	Done      bool
 	Cancelled bool
-	W         int // window width; 0 means 80
+	W, H      int // window size; 0 means 80 wide and unlimited height
+
+	filter    string
+	filtering bool
+	top       int
 }
 
 func (m *Picker) Init() tea.Cmd { return nil }
 
+func (m *Picker) themed() *Theme {
+	if m.Theme != nil {
+		return m.Theme
+	}
+	return theme()
+}
+
+func (m *Picker) filterable() bool { return len(m.Items) > maxNumbered }
+
+// visible is the indexes of the items that match the filter.
+func (m *Picker) visible() []int {
+	var out []int
+	f := strings.ToLower(m.filter)
+	for i, it := range m.Items {
+		if f == "" || strings.Contains(strings.ToLower(it), f) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (m *Picker) move(d int) {
+	vis := m.visible()
+	for p, i := range vis {
+		if i == m.Cursor {
+			if q := p + d; q >= 0 && q < len(vis) {
+				m.Cursor = vis[q]
+			}
+			return
+		}
+	}
+	if len(vis) > 0 {
+		m.Cursor = vis[0]
+	}
+}
+
+// refilter keeps the cursor on a visible item.
+func (m *Picker) refilter() {
+	vis := m.visible()
+	for _, i := range vis {
+		if i == m.Cursor {
+			return
+		}
+	}
+	if len(vis) > 0 {
+		m.Cursor = vis[0]
+	}
+	m.top = 0
+}
+
 func (m *Picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if v, ok := msg.(tea.WindowSizeMsg); ok {
-		m.W = v.Width
+		m.W, m.H = v.Width, v.Height
 		return m, nil
 	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
 	}
-	switch s := k.String(); s {
-	case "up", "k":
-		if m.Cursor > 0 {
-			m.Cursor--
-		}
-	case "down", "j":
-		if m.Cursor < len(m.Items)-1 {
-			m.Cursor++
-		}
+	s := k.String()
+	switch s {
+	case "up":
+		m.move(-1)
+		return m, nil
+	case "down":
+		m.move(1)
+		return m, nil
 	case "enter":
-		m.Done = true
+		if len(m.visible()) > 0 {
+			m.Done = true
+			return m, tea.Quit
+		}
+		return m, nil
+	case "ctrl+c":
+		m.Done, m.Cancelled = true, true
 		return m, tea.Quit
-	case "esc", "q", "ctrl+c":
+	case "esc":
+		if m.filtering || m.filter != "" { // the first Esc clears the filter, the next one cancels
+			m.filter, m.filtering = "", false
+			m.refilter()
+			return m, nil
+		}
+		m.Done, m.Cancelled = true, true
+		return m, tea.Quit
+	}
+	if m.filtering {
+		switch k.Type {
+		case tea.KeyBackspace, tea.KeyCtrlH:
+			if rs := []rune(m.filter); len(rs) > 0 {
+				m.filter = string(rs[:len(rs)-1])
+			}
+			if m.filter == "" {
+				m.filtering = false
+			}
+		case tea.KeyRunes, tea.KeySpace:
+			m.filter += string(k.Runes)
+			if k.Type == tea.KeySpace && len(k.Runes) == 0 {
+				m.filter += " "
+			}
+		}
+		m.refilter()
+		return m, nil
+	}
+	switch s {
+	case "k":
+		m.move(-1)
+	case "j":
+		m.move(1)
+	case "q":
 		m.Done, m.Cancelled = true, true
 		return m, tea.Quit
 	default:
@@ -218,31 +391,78 @@ func (m *Picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Done = true
 			return m, tea.Quit
 		}
+		if m.filterable() && (s == "/" || (k.Type == tea.KeyRunes && len(k.Runes) == 1 && s != "?")) {
+			m.filtering = true
+			if s != "/" {
+				m.filter += s
+			}
+			m.refilter()
+		}
 	}
 	return m, nil
 }
 
-func (m *Picker) View() string {
-	th := m.Theme
-	if th == nil {
-		th = theme()
+func (m *Picker) keys() []string {
+	ud := m.themed().Glyphs.UpDown
+	switch {
+	case m.filtering || m.filter != "":
+		return []string{ud, "move", "Enter", "choose", "Esc", "clear filter"}
+	case m.filterable():
+		return []string{ud, "move", "Enter", "choose", "1-9", "jump", "type", "filter", "Esc", "cancel"}
 	}
+	return []string{ud, "move", "Enter", "choose", "1-9", "jump", "Esc", "cancel"}
+}
+
+func (m *Picker) View() string {
+	return m.body() + "  " + m.themed().Footer(m.keys()...) + "\n"
+}
+
+func (m *Picker) body() string {
+	th := m.themed()
 	w := m.W
 	if w <= 0 {
 		w = 80
 	}
+	title := th.Bold.Render(m.Title)
+	if m.filtering || m.filter != "" {
+		title += "  " + th.Accent.Render("/") + m.filter + th.CursorAt(nil, 0)
+	}
 	var b strings.Builder
-	b.WriteString(th.Bold.Render(m.Title) + "\n")
-	for i, it := range m.Items {
-		num := fmt.Sprintf("%d)", i+1)
-		it = truncW(it, max(w-len(num)-5, 8), th.Glyphs.Ellipsis)
+	b.WriteString(title + "\n")
+	vis := m.visible()
+	rows := len(vis)
+	if m.H > 0 {
+		rows = min(rows, max(m.H-2, 1)) // the title and the footer take two lines
+	}
+	cp := 0
+	for p, i := range vis {
+		if i == m.Cursor {
+			cp = p
+		}
+	}
+	if cp < m.top {
+		m.top = cp
+	}
+	if cp >= m.top+rows {
+		m.top = cp - rows + 1
+	}
+	numbered := !m.filtering && m.filter == ""
+	for p := m.top; p < len(vis) && p < m.top+rows; p++ {
+		i := vis[p]
+		num := "  "
+		if numbered && i < maxNumbered {
+			num = fmt.Sprintf("%d)", i+1)
+		}
+		it := truncW(m.Items[i], max(w-len(num)-5, 8), th.Glyphs.Ellipsis)
 		if i == m.Cursor {
 			b.WriteString(" " + th.Sel.Render(th.Glyphs.Marker+" "+num+" "+it) + "\n")
 		} else {
 			b.WriteString("   " + th.Muted.Render(num) + " " + it + "\n")
 		}
 	}
-	b.WriteString("  " + th.Footer(th.Glyphs.UpDown, "move", "Enter", "choose", "1-9", "jump", "Esc", "cancel") + "\n")
+	if len(vis) == 0 {
+		b.WriteString("   " + th.Muted.Render("no match") + "\n")
+	}
 	return b.String()
 }
 
@@ -330,11 +550,24 @@ func (m *Menu) statusBadge(th *Theme, s string) (string, bool) {
 	return th.Badge(BadgeInfo, "todo"), true
 }
 
-func (m *Menu) View() string {
-	th := m.Theme
-	if th == nil {
-		th = theme()
+func (m *Menu) themed() *Theme {
+	if m.Theme != nil {
+		return m.Theme
 	}
+	return theme()
+}
+
+func (m *Menu) keys() []string {
+	return []string{m.themed().Glyphs.UpDown, "move", "Enter", "run", "?", "help", "q", "quit"}
+}
+
+func (m *Menu) View() string {
+	return m.body() + "  " + m.themed().Footer(m.keys()...) + "\n"
+}
+
+// body is the menu without its key hints (the session layout draws the footer itself).
+func (m *Menu) body() string {
+	th := m.themed()
 	h := m.H
 	if h < 8 {
 		h = 8
@@ -399,6 +632,5 @@ func (m *Menu) View() string {
 	} else {
 		b.WriteString("\n")
 	}
-	b.WriteString("  " + th.Footer(th.Glyphs.UpDown, "move", "Enter", "run", "?", "help", "q", "quit") + "\n")
 	return b.String()
 }
