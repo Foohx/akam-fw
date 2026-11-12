@@ -278,11 +278,19 @@ type menuEntry struct {
 
 func (a *App) menuEntries() []menuEntry {
 	var out []menuEntry
+	_, short := a.UI.(Menuer) // the full-screen menu shows one clause; plain keeps the full text
 	for i, s := range state.Steps {
 		st := a.stepStatus(s)
-		out = append(out, menuEntry{ui.MenuItem{Label: fmt.Sprintf("%d. %s", i+1, stepTitle(s)), Detail: stepWhy(s), Status: st}, []string{"step", s}})
+		why := stepWhy(s)
+		if short {
+			why = stepWhyShort(s)
+		}
+		out = append(out, menuEntry{ui.MenuItem{Label: fmt.Sprintf("%d. %s", i+1, stepTitle(s)), Detail: why, Status: st}, []string{"step", s}})
 	}
 	tool := func(label, detail string, args ...string) {
+		if short {
+			detail = strings.TrimSuffix(strings.SplitN(detail, " (", 2)[0], ".")
+		}
 		out = append(out, menuEntry{ui.MenuItem{Label: label, Detail: detail, Status: "tool"}, args})
 	}
 	tool("Camera: show LEDs", "Front LED and infrared LEDs (read-only).", "led")
@@ -356,7 +364,7 @@ func (a *App) cmdStepMenu() error {
 		act := func() error { return a.dispatch(entries[idx].args[0]) }
 		if _, ok := a.UI.(Menuer); ok {
 			// The outcome is shown on the menu the user returns to, not behind a "Press Enter".
-			res = a.runAction(act)
+			res = a.runAction(items[idx].Label, act)
 		} else {
 			a.reportFlowError(act())
 		}

@@ -62,6 +62,28 @@ func stepWhy(s string) string {
 	return ""
 }
 
+// stepWhyShort is stepWhy cut to one clause for the full-screen menu (the risk stays, the reason goes);
+// the full text is shown when the step starts and stays in the plain interface.
+func stepWhyShort(s string) string {
+	switch s {
+	case "doctor", "verify":
+		return "read-only check"
+	case "get-kit":
+		return "download and signature check"
+	case "prepare-backup-sd", "prepare-flash-sd":
+		return "ERASES the microSD card"
+	case "find-camera":
+		return "read-only"
+	case "backup":
+		return "keep TWO copies"
+	case "image":
+		return "files on this PC only"
+	case "flash":
+		return "WRITES the flash: no power cut"
+	}
+	return ""
+}
+
 func stepDeps(s string) []string {
 	switch s {
 	case "get-kit", "prepare-backup-sd":

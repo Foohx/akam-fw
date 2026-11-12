@@ -528,7 +528,7 @@ func (a *App) dialFailure(ip string, err error, msg, hint string) error {
 		return a.UI.Fail(fmt.Sprintf("the host key of %s was not accepted: %v", ip, err), "nothing was sent to the camera. Run the command again in a terminal to review the fingerprint.")
 	}
 	a.Log.Line("SSH error: %v", err)
-	return a.UI.Fail(msg, hint)
+	return a.failTech(msg, hint, "ssh: "+err.Error())
 }
 
 // run executes a camera command; the safety guard refuses anything that is not a plain read or a

@@ -162,8 +162,15 @@ func (a *App) cmdHomeSession(bd ui.Boarder) error {
 		if act == "" {
 			continue
 		}
+		label := "Camera"
+		if row >= 0 && row < len(b.Rows) && key == "enter" {
+			label = b.Rows[row].Label
+		} else if act == "camera" {
+			label = "Choose the camera"
+		}
 		bd.CloseBoard()
-		a.reportFlowError(a.homeAction(act))
+		a.clearOutput() // the panel of this action starts empty; the last output stays until here
+		a.runScreen(label, func() error { return a.homeAction(act) })
 	}
 }
 

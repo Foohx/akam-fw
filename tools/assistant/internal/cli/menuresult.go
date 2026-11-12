@@ -48,14 +48,17 @@ func (r *recorder) result() ui.MenuResult {
 	return r.last
 }
 
-// runAction runs one menu action with its outcome recorded, and returns it for the next menu.
-func (a *App) runAction(act func() error) ui.MenuResult {
+// runAction runs one menu action with its outcome recorded, and returns it for the next menu. A
+// failure is shown as the error screen when the UI has one (runScreen); label names the action there.
+func (a *App) runAction(label string, act func() error) ui.MenuResult {
 	inner := a.UI
 	rec := &recorder{UI: inner}
-	a.UI = rec
-	defer func() { a.UI = inner }()
-	e := act()
-	a.reportFlowError(e)
+	a.clearOutput()
+	a.runScreen(label, func() error {
+		a.UI = rec
+		defer func() { a.UI = inner }()
+		return act()
+	})
 	return rec.result()
 }
 
