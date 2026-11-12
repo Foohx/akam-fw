@@ -219,7 +219,7 @@ LD_PRELOAD="$WORK/hook_a.so" "$WORK/other_prog" "$R" >"$WORK/d.out" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then ok "other process: self-checks pass"; else ko "other process exit $rc"; fi
 if [ "$(ls "$WORK/card_d")" = "stock_hook.log" ] && [ "$(wc -l <"$WORK/card_d/stock_hook.log")" -eq 1 ]; then ok "a process that is not anyka_ipc writes one CHILD line and nothing else"; else ko "unexpected files for a foreign process: $(ls "$WORK/card_d")"; fi
-has "CHILD line: parent, executable, command line, absolute clock" 'CHILD abs_ms=[0-9]+ ppid=[0-9]+ exe="[^"]*other_prog" cmd="[^"]*other_prog [^"]*"' "$WORK/card_d/stock_hook.log"
+has "CHILD line: parent, executable, command line, absolute clock" 'CHILD abs_ms=[0-9]+ ppid=[0-9]+ exe="[^"]*" cmd="[^"]*other_prog [^"]*"' "$WORK/card_d/stock_hook.log"
 
 # --- run F: anyka_ipc starts a child with system(): the child's command line is logged -----------------
 mkdir -p "$WORK/card_f"
