@@ -1,28 +1,139 @@
-# Release kit: maintainer procedure
+# Release: maintainer procedure
 
-The kit is what a user downloads instead of compiling Akam. It contains only
-Akam's own files (ARM binaries built here, overlay scripts, licences). It never
-contains a camera image or any vendor content: the user supplies their own APP
-dump. User-facing description: [docs/akam_v1_kit.md](../../docs/akam_v1_kit.md).
+One release, one tag `vX.Y.Z`. A release holds the camera firmware kit, the `akam` assistant binaries
+and the source, with ONE `SHA256SUMS` and ONE signature. The version is written **without** the `v`
+everywhere except the tag: `akam-kit-X.Y.Z.tar.xz`, `akam_version=X.Y.Z` in `MANIFEST.txt`, `akam version`.
+`akam get-kit` depends on it: it downloads
+`https://github.com/Foohx/akam-fw/releases/download/vX.Y.Z/akam-kit-X.Y.Z.tar.xz`, `SHA256SUMS` and
+`SHA256SUMS.sig`, where `X.Y.Z` is the assistant's own version. A single release cannot hold two files named
+`SHA256SUMS`, so the combined list covers the kit and the assistant files; the kit check only looks up the
+kit's own line in it.
 
-There is no CI. Everything below runs on the maintainer's Linux machine.
+The kit contains only Akam's own files (ARM binaries built here, overlay scripts, licences). It never
+contains a camera image or any vendor content: the user supplies their own APP dump. User-facing
+description: [docs/akam_v1_kit.md](../../docs/akam_v1_kit.md) and
+[docs/assistant_install.md](../../docs/assistant_install.md).
+
+There is no CI. Everything below runs on the maintainer's Linux machine. Nothing here publishes by itself:
+`make_release.sh` never signs, tags or uploads.
 
 ## Prerequisites
 
-`tools/build/bootstrap.sh` done (pinned Zig, SmolRTSP and its 4 dependencies,
-Dropbear archive), plus `gdb` (time64 gate), `make`, `patch`, GNU `tar`, `xz`,
-`ssh-keygen`. The tree must be clean (no uncommitted and no untracked file) and on the commit to
-release. A kit built any other way (`AKAM_KIT_ALLOW_DIRTY`, `--no-build`, a gate
-override) is stamped `kit_grade=test` in `MANIFEST.txt`, and `verify_kit.sh` refuses it
+`tools/build/bootstrap.sh` done (pinned Zig, SmolRTSP and its 4 dependencies, Dropbear archive, the official Go
+of `GO_VERSION` in `tools/build/deps.lock` and the Go modules), plus `gdb` (time64 gate), `make`, `patch`,
+GNU `tar`, `xz`, `ssh-keygen`, and `gh` (to create the draft). The tree must be clean (no uncommitted and no
+untracked file) and on the commit to release. A kit built any other way (`AKAM_KIT_ALLOW_DIRTY`,
+`--no-build`, a gate override) is stamped `kit_grade=test` in `MANIFEST.txt`, and `verify_kit.sh` refuses it
 unless `--allow-test-kit` is given: never publish one.
 
-## 1. Build the kit
+## Procedure
+
+### 0. Release key (once)
 
 ```sh
-export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)   # optional: this is the default
-AKAM_KIT_VERSION=v1.0.0 tools/release/make_kit.sh      # default version: git describe
-# output: dist/kit/akam-kit-<version>.tar.xz and dist/kit/SHA256SUMS
+ssh-keygen -t ed25519 -f ~/.ssh/akam_release -C akam-release     # choose a passphrase
 ```
+
+Keep the private key outside the repository (`sign_kit.sh` refuses a key inside it) and back it up. Then, in ONE
+commit before the release build:
+
+1. add one line to `tools/release/allowed_signers`:
+   `akam-release namespaces="akam-release" ssh-ed25519 AAAA...base64... akam-release`
+   (the key text comes from `cat ~/.ssh/akam_release.pub`);
+2. copy it: `cp tools/release/allowed_signers tools/assistant/internal/kit/allowed_signers` (the assistant
+   embeds this file; a Go test fails when the two differ);
+3. quote the public key in the root `README.md` and in the release notes (`<key>` in
+   `docs/release_notes_draft.md`), so it can be cross-checked from another channel.
+
+The assistant binaries embed `allowed_signers`, so they must be built after this commit. `make_release.sh`
+refuses a release build while the file has no key line or the embedded copy differs.
+
+### 1. Prepare the commit
+
+Set the version in the release commit: `AKAM_WIZARD_VERSION` default in `./akam` and `var version` in
+`tools/assistant/cmd/akam/main.go` must both equal `X.Y.Z` (`make_release.sh` refuses otherwise). Date the
+`CHANGELOG.md` section (`## X.Y.Z (YYYY-MM-DD)`), finish `docs/release_notes_draft.md` (it keeps the `<version>`, `<sha256>`,
+`<date>` and `<key>` placeholders; the build fills them), review `supported_hardware.txt`, commit. The tree must then
+be clean, and the tag `vX.Y.Z` must not exist yet.
+
+### 2. Build everything
+
+```sh
+tools/release/make_release.sh X.Y.Z          # output: dist/release/vX.Y.Z/ (git-ignored)
+```
+
+`X.Y.Z` is plain semver, no `v`. The script refuses a dirty tree, a bad version, an existing tag, a default version
+that is not `X.Y.Z`, a placeholder key, a directory that already holds a signature, and the build overrides
+(`AKAM_ALLOW_ANY_GO`, `AKAM_STRIP`, `ZIG`, `AKAM_TARGETS`, ...); runs
+`make_kit.sh` (`AKAM_KIT_VERSION=X.Y.Z`) and `build_assistant.sh` (`AKAM_VERSION=X.Y.Z`); gathers in
+`dist/release/vX.Y.Z/` the kit tarball, the six assistant binaries and archives, `LICENSE`,
+`THIRD_PARTY_NOTICES.md`, `akam-X.Y.Z-src.tar.gz` (`git archive --prefix=akam-X.Y.Z/ HEAD`) and ONE combined
+`SHA256SUMS` (sorted, `sha256sum` format); checks every line; runs `verify_kit.sh --allow-unsigned` on the kit;
+refuses any camera image or dump (`*.squashfs`, `*.sqfs`, `*.bin`, `*.img`, `mtd*`, ...); writes the filled release notes
+to `dist/release/vX.Y.Z-notes.md` (from `docs/release_notes_draft.md`: version, kit sha256, date, key, absolute links); and
+prints the next commands.
+
+`tools/release/make_release.sh X.Y.Z --test` is a development run: a dirty tree and any version string are
+allowed, everything is stamped `X.Y.Z-test` (kit, binaries, directory `dist/release/vX.Y.Z-test/`), the kit is
+`kit_grade=test`, and the directory holds `TEST_BUILD_NOT_PUBLISHABLE.txt` (listed in `SHA256SUMS`): `sign_kit.sh`
+refuses it and `--check-signed` can never pass. The gathering and the refusals are covered
+by `tests/release_test.sh` on synthetic fixtures (`tools/release/gather_release.sh`).
+
+### 3. Sign
+
+```sh
+tools/release/sign_kit.sh ~/.ssh/akam_release dist/release/vX.Y.Z      # writes SHA256SUMS.sig
+```
+
+`sign_kit.sh` only hands the key path to `ssh-keygen -Y sign -n akam-release`; it never copies or stores the key.
+
+### 4. Verify the signed release
+
+```sh
+tools/release/make_release.sh --check-signed X.Y.Z
+tools/release/verify_kit.sh dist/release/vX.Y.Z/akam-kit-X.Y.Z.tar.xz
+```
+
+`--check-signed` checks that `SHA256SUMS.sig` verifies against `tools/release/allowed_signers`, that the embedded
+copy is identical, that all six binaries contain the key (so they were built after the key was committed) and that
+`akam-linux-amd64 version` reports `X.Y.Z` (on a Linux amd64 host), every `SHA256SUMS` line, that the kit and the source
+tarball come from the current commit, that the notes file has no placeholder left and quotes the kit sha256 and the key,
+and that `verify_kit.sh` accepts the kit without `--allow-unsigned`.
+
+### 5. Hardware check of the release kit (maintainer, by hand)
+
+Build an image from THIS kit (not from a development tree): `./akam get-kit --kit dist/release/vX.Y.Z/akam-kit-X.Y.Z.tar.xz`,
+then `./akam image`. Flash ONE validated camera, with a verified stock backup and a UART adapter at hand, only on the
+maintainer's explicit go. Then run `./akam verify` (it runs `tools/hw_tests/akam_hwcheck.sh` on the camera: ports, processes, no UDP listener) and check the RTSP stream.
+Put what was really validated, on which build, in the release notes (`docs/release_notes_draft.md`, committed before step 2).
+If anything fails, fix it and start over with a new version: do not touch a built or signed release.
+
+### 6. Draft release
+
+Push the release commit, then create a draft; the tag `vX.Y.Z` is created on that commit when you publish.
+`make_release.sh` prints this command with the exact file list:
+
+```sh
+gh release create vX.Y.Z --draft --title "Akam X.Y.Z" --notes-file dist/release/vX.Y.Z-notes.md \
+    --target <release commit sha> <every file of dist/release/vX.Y.Z/, including SHA256SUMS and SHA256SUMS.sig>
+```
+
+The kit sha256 and the key are already in the generated notes, so users can cross-check them from another channel
+(`verify_kit.sh --expect-sha256 <first 12 hex>`). Never attach a firmware image or a dump. After the tag exists, a
+follow-up commit puts the kit sha256 in `CHANGELOG.md` and bumps the two default versions (`./akam`,
+`tools/assistant/cmd/akam/main.go`) to the next `-dev`.
+
+### 7. Review and publish
+
+Review the draft on GitHub: file list (kit, 6 binaries, 6 archives, `LICENSE`, `THIRD_PARTY_NOTICES.md`, source,
+`SHA256SUMS`, `SHA256SUMS.sig`), notes, the key and the sha256 quoted. Download one file and check it as a user
+would ([docs/assistant_install.md](../../docs/assistant_install.md)). Publish the draft. A published release is never modified: a
+problem means a new version (`make_release.sh` refuses an existing tag and a directory holding a signature).
+
+## Details: the kit (`make_kit.sh`)
+
+Run by `make_release.sh`; alone: `AKAM_KIT_VERSION=X.Y.Z tools/release/make_kit.sh` (output `dist/kit/`). The
+version has no `v`: the kit is named `akam-kit-<AKAM_KIT_VERSION>` and `akam get-kit` looks for that exact name.
 
 `make_kit.sh` rebuilds `ak_rtsp` and `flash_tool` (`make clean` first) and
 `dropbearmulti` (`build_dropbear.sh`, fresh work tree), strips copies, and runs
@@ -40,36 +151,13 @@ Which Akam files end up in the image (overlay, `service.sh` patch, links) is lis
 in `image_files.txt`; `tests/kit_test.sh` builds an image with `build_firmware.sh` and
 fails if it disagrees with that list. Edit the list, not two scripts.
 
-## 2. Verify it yourself, unsigned
+## Details: the assistant (`build_assistant.sh`)
 
-```sh
-tools/release/verify_kit.sh --allow-unsigned dist/kit/akam-kit-<version>.tar.xz
-```
-
-## 3. Sign
-
-```sh
-tools/release/sign_kit.sh ~/.ssh/akam_release          # writes dist/kit/SHA256SUMS.sig
-tools/release/verify_kit.sh dist/kit/akam-kit-<version>.tar.xz
-```
-
-`sign_kit.sh` only hands the key path to `ssh-keygen -Y sign -n akam-release`;
-it never copies or stores the key and refuses a key inside the repository. The
-matching public key must be in `tools/release/allowed_signers` (committed before
-the release, see the comments in that file) and quoted in the README and the
-release notes. Use a dedicated Ed25519 key with a passphrase.
-
-## Assistant release (`akam` binaries, tag `assistant-vX.Y.Z`)
-
-Separate from the kit. Prerequisites: `tools/build/bootstrap.sh` done (the official Go of `GO_VERSION` in
+Run by `make_release.sh`; alone: `AKAM_VERSION=X.Y.Z tools/release/build_assistant.sh` (output `dist/assistant/`,
+git-ignored). Prerequisites: `tools/build/bootstrap.sh` done (the official Go of `GO_VERSION` in
 `tools/build/deps.lock`, installed in `tools/.toolchain/go-<version>-<os>-<arch>/`, and the Go modules in
 `tools/.toolchain/go/mod`); **exactly** that Go is used (any other `go version` is refused; `AKAM_ALLOW_ANY_GO=1` overrides
 for a test build, never for a release), clean tree on the commit to release. No network is used.
-
-```sh
-AKAM_VERSION=1.0.0 tools/release/build_assistant.sh     # output: dist/assistant/ (git-ignored)
-tools/release/sign_kit.sh ~/.ssh/akam_release dist/assistant   # SHA256SUMS.sig (same key and scheme as the kit)
-```
 
 It builds the six targets through `tools/assistant/build.sh flat` (the single place of the flags:
 `CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w -X main.version=..."`,
@@ -77,7 +165,8 @@ never `-tags akamtest`), checks the binaries (no checkout or home path inside, f
 `go version -m`), then writes, with names without version:
 `akam-<os>-<arch>[.exe]`, `akam-<os>-<arch>.tar.gz` (Linux, macOS) or `.zip` (Windows) holding
 `akam[.exe]` + `LICENSE` + `THIRD_PARTY_NOTICES.md` (exec bit kept), `LICENSE`,
-`THIRD_PARTY_NOTICES.md` and `SHA256SUMS`. Archives come from `mkarchive/` (standard library only):
+`THIRD_PARTY_NOTICES.md` and its own `SHA256SUMS`, which `make_release.sh` replaces by the combined one.
+Archives come from `mkarchive/` (standard library only):
 fixed mtime from `SOURCE_DATE_EPOCH` (default: commit date), owner 0/0, no user or group name, sorted entries.
 `AKAM_SIGN_WINDOWS` / `AKAM_SIGN_MACOS` are reserved hooks: nothing is signed yet (see spec 11, 8.3).
 
@@ -110,8 +199,6 @@ Do not use UPX.
 Unlike the kit, the binaries are all published, including the platforms that no hardware test has covered yet:
 the release notes label each one `tested` or `untested` (spec 11, 7.3).
 
-Files: `build_assistant.sh` (this pipeline), `mkarchive/main.go` (deterministic tar.gz and zip).
-
 ## Supported hardware (every release)
 
 `supported_hardware.txt` says exactly which cameras and firmware the kit is validated
@@ -136,31 +223,19 @@ sha256 of akam-kit-<version>.tar.xz: <64 hex digits>
 signature: ssh-keygen -Y verify (public key in tools/release/allowed_signers: <key>)
 ```
 
-## 4. Publish (by hand)
-
-```sh
-git archive --format=tar.gz --prefix=akam-<version>/ -o dist/kit/akam-<version>-src.tar.gz <tag>
-gh release create <tag> --draft --title "Akam <version>" --notes-file notes.md \
-    dist/kit/akam-kit-<version>.tar.xz dist/kit/SHA256SUMS dist/kit/SHA256SUMS.sig \
-    dist/kit/akam-<version>-src.tar.gz
-# later additions:  gh release upload <tag> <file>
-```
-
-Put the kit's sha256 (`cat dist/kit/SHA256SUMS`) in the release notes,
-`CHANGELOG.md` and the annotated tag message, so that users can cross-check it
-from another channel (`verify_kit.sh --expect-sha256 <first 12 hex>`). Review the
-draft, then publish it. Never attach a firmware image or a dump.
-
 ## Files
 
 | File | Role |
 |---|---|
+| `make_release.sh` | the whole release: kit + assistant + source, one directory, one `SHA256SUMS`; `--test`, `--check-signed` |
+| `gather_release.sh` | gathers and checks the release directory (used by `make_release.sh`, tested on fixtures) |
 | `make_kit.sh` | build, gate, MANIFEST, SHA256SUMS, tarball |
+| `build_assistant.sh` | the six assistant binaries, archives, notices |
 | `image_files.txt` | single list of the Akam files installed into the image |
 | `supported_hardware.txt` | validated / reported / untested hardware and firmware fingerprints |
 | `sign_kit.sh` | `ssh-keygen -Y sign` of `SHA256SUMS` |
 | `verify_kit.sh` | user-side verification (checksums, signature, MANIFEST, `kit_format`) |
-| `allowed_signers` | trusted public keys (placeholder until the maintainer adds one) |
+| `allowed_signers` | trusted public keys (placeholder until the maintainer adds one; the assistant embeds a copy) |
 
 Bump `KIT_FORMAT` in `make_kit.sh` and `SUPPORTED_KIT_FORMATS` in
 `verify_kit.sh` together when the kit layout changes incompatibly.

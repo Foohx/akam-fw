@@ -107,7 +107,7 @@ card being written. Old `~/akam-backup-*` folders stay valid, `--backup-dir DIR`
 
 `akam licenses` prints the notices of the software built into the binary (the same text as `THIRD_PARTY_NOTICES.md`;
 a binary downloaded alone still carries them). `akam doctor` is OS-aware: it shows the Linux distribution, the macOS or
-Windows version, what works here, what is optional (`ffmpeg` or `arecord` for the microphone; `unsquashfs` and
+Windows version, what works here, what is optional (`ffmpeg` for the microphone on macOS only; `unsquashfs` and
 `mksquashfs` only for the interim image rule below) and, on Windows, whether the console supports colours. It changes
 nothing.
 

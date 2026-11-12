@@ -3,7 +3,7 @@
 #
 #   tools/release/sign_kit.sh <private-key-path> [dir-with-SHA256SUMS]
 #
-# Writes SHA256SUMS.sig next to SHA256SUMS (default directory: dist/kit) using
+# Writes SHA256SUMS.sig next to SHA256SUMS (a release: dist/release/vX.Y.Z; default directory: dist/kit) using
 # `ssh-keygen -Y sign -n akam-release`. The key path is only passed to
 # ssh-keygen: this script never reads, copies or stores the key, and it refuses
 # a key path inside the repository. ssh-keygen asks for the passphrase itself
@@ -20,7 +20,8 @@ KEY=$1
 DIR="${2:-$ROOT/dist/kit}"
 command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found"
 [ -f "$KEY" ] || die "key file $KEY not found"
-[ -f "$DIR/SHA256SUMS" ] || die "$DIR/SHA256SUMS not found (run tools/release/make_kit.sh first)"
+[ -f "$DIR/SHA256SUMS" ] || die "$DIR/SHA256SUMS not found (run tools/release/make_release.sh X.Y.Z first, then sign dist/release/vX.Y.Z)"
+[ ! -e "$DIR/TEST_BUILD_NOT_PUBLISHABLE.txt" ] || die "$DIR is a TEST build (TEST_BUILD_NOT_PUBLISHABLE.txt): it is never signed or published"
 KEYABS="$(cd "$(dirname "$KEY")" && pwd)/$(basename "$KEY")"
 case "$KEYABS" in "$ROOT"/*) die "refusing a key stored inside the repository ($KEYABS)" ;; esac
 

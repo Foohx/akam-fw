@@ -6,7 +6,7 @@
 # Output (default dist/assistant/, git-ignored), names without version:
 #   akam-linux-amd64  akam-linux-arm64  akam-darwin-amd64  akam-darwin-arm64  akam-windows-amd64.exe  akam-windows-arm64.exe
 #   akam-<os>-<arch>.tar.gz (Linux, macOS) / .zip (Windows): <dir>/akam[.exe] + LICENSE + THIRD_PARTY_NOTICES.md, exec bit kept
-#   LICENSE  THIRD_PARTY_NOTICES.md  SHA256SUMS      (SHA256SUMS.sig: tools/release/sign_kit.sh <key> dist/assistant)
+#   LICENSE  THIRD_PARTY_NOTICES.md  SHA256SUMS      (the assistant's own list; make_release.sh replaces it by the combined one)
 #
 # Builds offline, from a clean checkout, with the exact Go of tools/build/deps.lock, through tools/assistant/build.sh
 # (same flags as every other build: CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags "-s -w", never -tags akamtest).
@@ -125,4 +125,4 @@ done
 cp "$TMP/SHA256SUMS" "$OUT/SHA256SUMS"
 log "wrote $(grep -c . "$OUT/SHA256SUMS") files, checksums in $OUT/SHA256SUMS:"
 cat "$OUT/SHA256SUMS"
-log "next: tools/release/sign_kit.sh <private-key> $OUT   (writes SHA256SUMS.sig)"
+log "standalone run: for a release use tools/release/make_release.sh X.Y.Z (one directory, one combined SHA256SUMS, then sign that directory)"

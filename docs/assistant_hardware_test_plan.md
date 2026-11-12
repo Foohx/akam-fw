@@ -1,8 +1,10 @@
 # Assistant hardware test plan (Windows, macOS, Linux)
 
 Plan for the people who test the native `akam` binary (spec 11, section 7.3). The binaries for Windows and macOS are
-**built and host-tested, not hardware-tested**: nothing below has been run yet. A platform is called **ready** only when
-its whole table passes; until then the release marks it "built, not hardware-tested". Current evidence:
+**built and host-tested**. An earlier Windows amd64 build met a real camera on 2026-11-12 (discovery, options over SSH, talk with the
+PC microphone, clock offer); the current full-screen interface build, the SD writer and the flash are **not tested on Windows**, and macOS and
+arm64 never ran on hardware. A platform is called **ready** only when its whole table passes; until then the release marks it "built,
+not hardware-tested" or "partly tested". Current evidence:
 [testing status](testing-status.md). What the program does: [tools/assistant/README.md](../tools/assistant/README.md).
 
 ## What you need

@@ -10,6 +10,20 @@ This page separates three levels of evidence, so you know what to trust:
 Anything marked "not yet" has **not** been run on a camera. Older, more detailed checklists are in the
 [test plan](akam_v1_test_plan.md).
 
+## Hardware results of 2026-11-12 (maintainer records)
+
+- **Image "v6"** (klog filter, RTSP/TCP backpressure `tx_pace`, ONVIF, watchdog, NTP, video config) flashed on two cameras (LSC Smart
+  Indoor 1080p 3215672.3) and run with a home server pulling RTSP: 14.9 to 15 fps, TCP send queue 0 to 24 KB, 0 encoder errors. The klog
+  filter works on hardware (syslog about 460 KB a day, about 1.5 days kept in RAM).
+- **Image "v7"** (adds 20 and 25 fps) flashed on one camera: 25 fps configured; night mode correctly drops to 10 fps; 0 encoder errors.
+  A RAM test delivered exactly 15, 20, 25 and 30 fps. The daytime measurement of the flashed 25 fps is **still pending**.
+- **MQTT**: host-tested only. **Native image builder** (`akam image --builder native`): experimental, opt-in, never flashed.
+- **Assistant**: Linux amd64 partly tested on real cameras (SSH, 8091 options, `video show`, `led`, `ntp`, `talk`); update, restore, telnet
+  backup and flash, the SD writer and first install were never run on hardware from the Go assistant. Windows amd64: an earlier build was
+  tested on a real camera (discovery, options over SSH, talk with the PC microphone, clock offer); the new full-screen interface build is
+  pending its Windows test; the SD writer and flash are not tested. macOS and arm64: built, not hardware-tested.
+  Microphone capture is built in on Linux (PulseAudio or PipeWire) and on Windows (WASAPI); only macOS needs `ffmpeg`.
+
 ## Hardware results in short
 
 **akam-01 was flashed with the image built 2026-11-11** (ONVIF, encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP,
@@ -67,11 +81,11 @@ ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login wi
 | Flash over SSH with read-back, clean boot | `reflash_ssh_test.sh`, `flash_guard_test.sh`, `build_firmware_test.sh`, `preflight_test.sh` | Yes, two cameras, power cycle | |
 | Stack-protector build | none dedicated (compile flags; `build_firmware_test.sh` covers the image build) | Boot not yet tested | Canaries on the network parsers only |
 | Log caps and `drop_caches` every 60 s | `wrapper_backoff_test.sh`, `akam_net_test.sh`, `akam_ntp_test.sh` (log caps), `build_firmware_test.sh` and `kit_test.sh` (shipped files) | In the flashed image of akam-01 ("quieter logs"); caps not measured yet | |
-| Kernel log filter (`ak_rtsp klog`: LED trace dropped, repeats collapsed, priorities kept) | `klog_test.sh` (filter core with a fake clock, file-to-datagram-socket run), `leds_test.sh` (no rewrite of an unchanged LED), `hwcheck_test.sh`, `build_firmware_test.sh` and the assistant `image` tests (the `main.sh` patch) | Not yet | Measure `/var/log/messages` growth per hour before and after |
+| Kernel log filter (`ak_rtsp klog`: LED trace dropped, repeats collapsed, priorities kept) | `klog_test.sh` (filter core with a fake clock, file-to-datagram-socket run), `leds_test.sh` (no rewrite of an unchanged LED), `hwcheck_test.sh`, `build_firmware_test.sh` and the assistant `image` tests (the `main.sh` patch) | Yes, two cameras (image v6, 2026-11-12): the filter works, syslog about 460 KB per day, about 1.5 days kept in RAM | Measure `/var/log/messages` growth per hour before and after |
 | UDP listener and process audit | `hwcheck_test.sh` | Yes, akam-01 by default: ports 22, 554 and 8091 only, no UDP listener | |
-| Go assistant, daily commands (experimental) | `assistant_test.sh` (fake cameras) | Partly: some SSH and 8091 paths on a Linux PC | The bash wizard is the reference |
-| Go assistant phases P2 and P3 (update, restore, verify, telnet backup and flash, SD writer) | `assistant_test.sh` (fake cameras, files as cards) | Not yet | Never run against a real camera or card |
-| Go assistant, cross-platform layers (phase 11): Windows SD disk layer and UAC pipe, macOS SD disk layer and `osascript` elevation, Linux SD layer, backup location and private folders, options engine, discovery, backup over SSH, squashfs reader, home screen and guided flows, licences, six-target build | `assistant_test.sh` and `go test ./...` on Linux: each OS-specific layer is tested on fake system facts, parsers and pipes (Windows and macOS code is cross-compiled and vetted, not run on those systems) | **Not hardware-tested on Windows or macOS** (no real run, no real card write, no UAC or administrator dialog). Linux: paths partly (see akam-01 below) | Built for six targets (Linux, Windows, macOS, amd64 and arm64). See the [assistant hardware test plan](assistant_hardware_test_plan.md) |
+| Go assistant, daily commands (experimental) | `assistant_test.sh` (fake cameras) | Partly, Linux amd64 on real cameras: SSH, 8091 options, `video show`, `led`, `ntp`, `talk`. Windows amd64: an earlier build ran on a real camera on 2026-11-12 (discovery, options over SSH, talk with the PC microphone, clock offer); the current full-screen interface build is pending its Windows test | The bash wizard is the reference |
+| Go assistant phases P2 and P3 (update, restore, verify, telnet backup and flash, SD writer) | `assistant_test.sh` (fake cameras, files as cards) | **Not yet.** Update, restore, telnet backup and flash, the SD writer and first install were never run on hardware from the Go assistant | Never run against a real camera or card |
+| Go assistant, cross-platform layers (phase 11): Windows SD disk layer and UAC pipe, macOS SD disk layer and `osascript` elevation, Linux SD layer, backup location and private folders, options engine, discovery, backup over SSH, squashfs reader, home screen and guided flows, licences, six-target build | `assistant_test.sh` and `go test ./...` on Linux: each OS-specific layer is tested on fake system facts, parsers and pipes (Windows and macOS code is cross-compiled and vetted, not run on those systems) | Linux amd64: partly (see the first row). Windows amd64: an earlier build tested on one camera (2026-11-12); the **SD writer, UAC flow and flash are not tested**, nor the new interface. **macOS and arm64: built, not hardware-tested** | Built for six targets (Linux, Windows, macOS, amd64 and arm64). See the [assistant hardware test plan](assistant_hardware_test_plan.md) |
 | Squashfs gate for the native image builder (spec 11, 4.8) | reader and writer fixtures, round trips | Step 1 PASSED locally: the reader equals `unsquashfs` on a real stock APP dump and on an Akam image. Writer round trip on an Akam image PASSED (rewritten image about 13% larger). A stock image needs its xattrs dropped | Step 6 PASSED locally: the native builder (`akam image --builder native`) and the bash builder give the same tree (300 entries, 0 listing differences) from a real stock backup and a fresh release kit; the native squashfs is about 13% larger (2.92 MB vs 2.59 MB, Go xz encoder), well inside the 5.24 MB partition. Step 7 PASSED: the native image was loop-mounted read-only on a real camera (kernel 4.4.302) and all 117 files read back identical, no kernel error, no reboot. Not done: step 5 (QEMU) and step 8 (a flash on a spare camera with UART), so the native builder stays opt-in and experimental |
 
 ## How to run the host tests
