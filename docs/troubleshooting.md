@@ -408,12 +408,12 @@ The image therefore starts `ak_rtsp klog` (shown as `akam_klog` in `ps`) instead
 
 - the LED driver trace (`gpio_led_set value=...`) is dropped;
 - a kernel message that repeats is written once, then counted: you get one line such as
-  `kern.err kernel: message repeated 599 times in the last 60s: [1234]:[venc_encode_tasklet_process:...] ...`
+  `kern.err kernel: message repeated 599 times since the last report: [1234]:[venc_encode_tasklet_process:...] ...`
   per message and per minute. Numbers are ignored when comparing, so `sh (101): drop_caches: 3` and
   `sh (102): drop_caches: 3` are the same message;
 - everything else is forwarded unchanged with its original priority (`kern.err` stays `kern.err`).
 
-If a signal kills it, it is restarted (up to 5 times); if it cannot start or keeps crashing, the stock `klogd -n` runs instead (`./akam`'s `akam_hwcheck.sh` warns about it). Check with
+If a signal kills it, it is restarted (up to 5 crashes in a row; a run longer than a minute resets the count and a plain `kill` is not counted); if it cannot start or keeps crashing, the stock `klogd -n` runs instead (`./akam`'s `akam_hwcheck.sh` warns about it). Check with
 `ps | grep klog`. Kernel messages are also still on the serial console and in `dmesg`, unfiltered.
 
 ## The camera falls off the Wi-Fi and does not come back

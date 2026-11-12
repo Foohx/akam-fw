@@ -10,6 +10,6 @@ int vi_start_capture(void);
 
 /* Grab one 640×360 NV12 frame from the sub channel and write it to path.
  * Blocks up to 200ms for a frame. Call only after vi_start_capture().
- * Trigger via: kill -USR1 $(pidof ak_rtsp)
+ * Trigger via: kill -USR1 $(pidof ak_rtsp) (the kernel log filter, same exe, ignores SIGUSR1)
  * View on PC: ffplay -f rawvideo -video_size 640x360 -pixel_format nv12 <file> */
 int vi_grab_sub_frame(const char *path);

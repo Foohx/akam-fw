@@ -17,15 +17,17 @@ static int fails;
 #define CHECK(cond, ...) do { if (cond) { printf("  ok   - "); printf(__VA_ARGS__); printf("\n"); } \
     else { printf("  FAIL - "); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
 
-typedef struct { int prio[256]; char text[256][300]; int n; } cap_t;
+typedef struct { int prio[256]; char text[256][300]; int n; int fail; } cap_t;
 
-static void cap_emit(void *u, int prio, const char *text)
+static int cap_emit(void *u, int prio, const char *text)
 {
     cap_t *c = u;
-    if (c->n >= 256) return;
+    if (c->fail) return 0;
+    if (c->n >= 256) return 1;
     c->prio[c->n] = prio;
     snprintf(c->text[c->n], sizeof(c->text[0]), "%s", text);
     c->n++;
+    return 1;
 }
 
 static void core_tests(void)
@@ -75,7 +77,7 @@ static void core_tests(void)
     klog_tick(&k, 59);
     CHECK(c.n == 1, "no summary before the window ends");
     klog_tick(&k, 60);
-    CHECK(c.n == 2 && c.prio[1] == 3 && strstr(c.text[1], "repeated 599 times in the last 60s") &&
+    CHECK(c.n == 2 && c.prio[1] == 3 && strstr(c.text[1], "repeated 599 times since the last report") &&
           strstr(c.text[1], "ret =128"), "summary with count, window and the message: %s", c.text[1]);
     CHECK(klog_next_due(&k, 60) == -1, "nothing pending right after the summary");
     for (int i = 0; i < 100; i++) klog_feed(&k, "<3>[9999]:[venc_encode_tasklet_process:4467] error! AKV_Encoder_Process failed.ret =129", 60 + i / 10);
@@ -119,6 +121,45 @@ static void core_tests(void)
     int seen = 0;
     for (int i = 0; i < c.n; i++) if (strstr(c.text[i], "repeated 1 times") && strstr(c.text[i], "first message")) seen = 1;
     CHECK(seen, "the evicted entry's summary was emitted");
+
+    printf("core: crit/alert/emerg lines are never collapsed\n");
+    memset(&c, 0, sizeof(c));
+    klog_init(&k, cap_emit, &c, 60);
+    for (int i = 0; i < 5; i++) klog_feed(&k, "<0>Unable to handle kernel NULL pointer dereference at 00000000", i);
+    for (int i = 0; i < 3; i++) klog_feed(&k, "<2>BUG: scheduling while atomic", i);
+    CHECK(c.n == 8 && c.prio[0] == 0 && c.prio[5] == 2, "all 8 oops-like lines forwarded (%d)", c.n);
+    klog_tick(&k, 100);
+    CHECK(c.n == 8 && klog_next_due(&k, 100) == -1, "no summary, nothing pending");
+
+    printf("core: a line the sink lost is counted, not remembered as forwarded\n");
+    memset(&c, 0, sizeof(c));
+    klog_init(&k, cap_emit, &c, 60);
+    c.fail = 1;
+    klog_feed(&k, "<3>burst line", 0);
+    klog_feed(&k, "<3>other burst line", 0);
+    CHECK(c.n == 0 && k.lost == 2, "two lines lost, counted (%lu)", k.lost);
+    CHECK(klog_next_due(&k, 0) == -1, "a lost first occurrence leaves nothing pending");
+    c.fail = 0;
+    klog_feed(&k, "<3>burst line", 1);
+    CHECK(c.n == 2 && !strcmp(c.text[0], "burst line") && c.prio[1] == 4 &&
+          !strcmp(c.text[1], "2 kernel lines lost (syslogd busy)"), "next occurrence is forwarded, then the loss report: %s",
+          c.n > 1 ? c.text[1] : "");
+    CHECK(k.lost == 0, "loss counter reset after the report");
+    klog_feed(&k, "<3>burst line", 2);
+    CHECK(c.n == 2, "and now it is collapsed as usual");
+
+    printf("core: a lost summary keeps its count\n");
+    memset(&c, 0, sizeof(c));
+    klog_init(&k, cap_emit, &c, 60);
+    klog_feed(&k, "<3>repeat me", 0);
+    klog_feed(&k, "<3>repeat me", 1);
+    klog_feed(&k, "<3>repeat me", 2);
+    c.fail = 1;
+    klog_tick(&k, 60);
+    CHECK(c.n == 1 && k.lost == 0, "summary not delivered, not counted as a lost kernel line");
+    c.fail = 0;
+    klog_tick(&k, 120);
+    CHECK(c.n == 2 && strstr(c.text[1], "repeated 2 times"), "retried in the next window with the same count");
 
     printf("core: long lines are safe\n");
     memset(&c, 0, sizeof(c));
@@ -251,6 +292,50 @@ static void run_tests(const char *dir)
         unlink(fifo);
     }
 
+    printf("run: syslogd socket full (EAGAIN): bounded wait, loss counted and reported\n");
+    {
+        char fifo[256];
+        snprintf(fifo, sizeof(fifo), "%s/fifo2", dir);
+        unlink(fifo);
+        CHECK(mkfifo(fifo, 0600) == 0, "fifo");
+        int s4 = bind_dgram(sock); /* a "syslogd" that does not read */
+        pid_t pid = fork();
+        if (pid == 0) { close(s4); _exit(klog_run(fifo, sock, 60)); }
+        int w = open(fifo, O_WRONLY);
+        const int total = 640; /* 900-byte lines: more than the queue (qlen ~11 on the camera) or the sender's buffer holds */
+        for (int i = 0; i < total; i++) {
+            char l[1000];
+            int p = snprintf(l, sizeof(l), "<6>%c%c burst ", 'a' + i / 26, 'a' + i % 26); /* distinct, key is the first 120 bytes */
+            memset(l + p, 'x', 900);
+            l[p + 900] = '\n';
+            p += 901;
+            if (write(w, l, (size_t)p) != (ssize_t)p) { CHECK(0, "line %d written", i); break; }
+        }
+        usleep(900000); /* the filter has waited at most 300 ms once, then dropped without waiting */
+        static char b[1000][1100];
+        int got_n = recv_all(s4, b, 1000);
+        CHECK(got_n >= 1 && got_n < total, "the full queue kept %d of %d lines, the filter did not hang", got_n, total);
+        CHECK(write(w, "<6>after burst\n", 15) == 15, "line after the burst written");
+        struct timeval tv = { 3, 0 };
+        setsockopt(s4, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        char x[2][1100];
+        ssize_t r0 = recv(s4, x[0], 1099, 0);
+        ssize_t r1 = recv(s4, x[1], 1099, 0);
+        if (r0 > 0) x[0][r0] = '\0';
+        if (r1 > 0) x[1][r1] = '\0';
+        CHECK(r0 > 0 && !strcmp(x[0], "<6>kernel: after burst"), "the next line goes through");
+        char want[80];
+        snprintf(want, sizeof(want), "<4>kernel: %d kernel lines lost (syslogd busy)", total - got_n);
+        CHECK(r1 > 0 && !strcmp(x[1], want), "loss report with the exact count: %s", r1 > 0 ? x[1] : "(none)");
+        close(w);
+        int st = 0;
+        waitpid(pid, &st, 0);
+        CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "child ended cleanly");
+        close(s4);
+        unlink(sock);
+        unlink(fifo);
+    }
+
     printf("run: unreadable kernel log reports failure (caller falls back to klogd)\n");
     CHECK(klog_run("/nonexistent/kmsg", sock, 60) == 1, "returns 1");
 }
@@ -258,6 +343,7 @@ static void run_tests(const char *dir)
 int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: klog_test WORKDIR\n"); return 2; }
+    alarm(60); /* a hung filter fails the test instead of the CI job */
     core_tests();
     run_tests(argv[1]);
     if (fails) { printf("%d FAILED\n", fails); return 1; }

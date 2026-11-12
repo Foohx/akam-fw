@@ -392,7 +392,7 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 			return 1
 		}
 		return 0
-	case cmd == `p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p`:
+	case cmd == `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`:
 		c.mu.Lock()
 		c.restarts++
 		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {

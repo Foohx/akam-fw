@@ -96,7 +96,7 @@ Assistant with its Mosquitto add-on. Steps M1 to M8 are the MQTT part of the spe
 
 | # | Check | How | Done |
 |---|---|---|---|
-| M1 | Off by default: no thread, no socket | Fresh image, no MQTT file: `akam_hwcheck.sh` says `MQTT is off: ak_rtsp holds no outbound TCP connection`; `ls /proc/$(pidof ak_rtsp)/task` has the same number of threads as an image without MQTT (record both) | [ ] |
+| M1 | Off by default: no thread, no socket | Fresh image, no MQTT file: `akam_hwcheck.sh` says `MQTT is off: ak_rtsp holds no outbound TCP connection`; `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || ls /proc/$p/task; done` (pidof also lists the kernel log filter) has the same number of threads as an image without MQTT (record both) | [ ] |
 | M2 | `./akam mqtt set` then `mqtt test` | Wrong password: test says refused; right password: test says ok; `mqtt status` shows `state: connected` | [ ] |
 | M3 | Home Assistant entities | One device `akam-XXXX` with all entities of [the table](mqtt.md#3-what-home-assistant-gets); the MAC merges it with the ONVIF device if both are on | [ ] |
 | M4 | Controls work both ways | Each select, number, switch and button in Home Assistant changes the real LED, IR LEDs, night mode, volume (hear it), picture (see it), talk switch, beep; a change made with `./akam led status off` shows up in Home Assistant within about 2 s | [ ] |

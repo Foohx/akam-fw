@@ -66,13 +66,25 @@ void klog_init(klog_t *k, klog_emit_fn emit, void *user, long window_s)
     k->window = window_s > 0 ? window_s : KLOG_WINDOW_S;
 }
 
+/* One emit with loss accounting. After a delivered line the lost count (if any) is reported once. */
+static int emit_line(klog_t *k, int prio, const char *text)
+{
+    if (!k->emit(k->user, prio, text)) { k->lost++; return 0; }
+    if (k->lost) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%lu kernel lines lost (syslogd busy)", k->lost);
+        if (k->emit(k->user, 4, buf)) k->lost = 0;
+    }
+    return 1;
+}
+
+/* A summary that cannot be delivered keeps its count for the next window instead of vanishing. */
 static void emit_summary(klog_t *k, klog_ent_t *e)
 {
     char buf[KLOG_TEXT_MAX + 80];
-    snprintf(buf, sizeof(buf), "message repeated %u times in the last %lds: %s", e->suppressed, k->window,
-             e->text);
-    k->emit(k->user, e->prio, buf);
-    e->suppressed = 0;
+    snprintf(buf, sizeof(buf), "message repeated %u times since the last report: %s", e->suppressed, e->text);
+    if (emit_line(k, e->prio, buf)) e->suppressed = 0;
+    else k->lost--; /* the summary is retried, not a lost kernel line */
 }
 
 static void set_text(klog_ent_t *e, const char *msg, int prio)
@@ -107,6 +119,7 @@ void klog_feed(klog_t *k, const char *line, long now)
     int prio;
     const char *msg = split_prio(line, &prio);
     if (klog_is_noise(msg)) { k->dropped++; return; }
+    if (prio <= 2) { emit_line(k, prio, msg); return; } /* oops/panic: every line, never collapsed */
 
     char key[KLOG_KEY_MAX];
     make_key(msg, key, sizeof(key));
@@ -123,7 +136,7 @@ void klog_feed(klog_t *k, const char *line, long now)
     else if (e->suppressed) emit_summary(k, e); /* window over, the tick has not run yet */
     set_text(e, msg, prio);
     e->last_emit = now;
-    k->emit(k->user, prio, msg);
+    if (!emit_line(k, prio, msg) && !e->suppressed) e->used = 0; /* lost: not "already forwarded" */
 }
 
 void klog_tick(klog_t *k, long now)

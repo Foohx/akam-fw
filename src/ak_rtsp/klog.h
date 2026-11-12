@@ -11,7 +11,12 @@
  *     and one summary line per distinct message and per window follows ("message repeated N times ...").
  *     Messages are compared after the kernel/driver counter prefix ("[1234]" or "[ 12.345]") is removed
  *     and every run of digits is replaced by "#", so "sh (101): drop_caches: 3" and "... (102) ..." are
- *     the same message. The first occurrence is forwarded verbatim, immediately.
+ *     the same message. The first occurrence is forwarded verbatim, immediately. A first occurrence the sink
+ *     could not deliver is not remembered as forwarded (the next one is tried again) and is counted; the
+ *     count is reported as "N kernel lines lost (syslogd busy)" with the next line that does get through.
+ *   - crit, alert and emerg lines (priority <= 2: oops, panic, BUG) are never counted or collapsed: every
+ *     one is forwarded. Err (3) is still collapsed: the encoder driver's bursts of identical errors are
+ *     err, and they are the reason for the filter.
  *
  * The core below is pure (time and output are injected) so the host test can drive it with a fake clock. */
 
@@ -22,7 +27,8 @@
 #define KLOG_TEXT_MAX  240
 #define KLOG_WINDOW_S  60
 
-typedef void (*klog_emit_fn)(void *user, int prio, const char *text);
+/* Returns 1 when the line was handed to syslogd, 0 when it was lost (socket full or no syslogd). */
+typedef int (*klog_emit_fn)(void *user, int prio, const char *text);
 
 typedef struct {
     int      used;
@@ -38,6 +44,7 @@ typedef struct {
     void        *user;
     long         window;
     unsigned long dropped;        /* lines removed by the drop list */
+    unsigned long lost;           /* lines the sink could not deliver, not yet reported */
     klog_ent_t   e[KLOG_MAX_KEYS];
 } klog_t;
 
@@ -56,6 +63,8 @@ int  klog_is_noise(const char *msg);
 /* The reader loop (klog_run.c). kmsg_path: /proc/kmsg; sock_path: /dev/log. Returns 1 when the kernel log
  * cannot be read (the caller falls back to the stock klogd) and 0 at end of input (never on /proc/kmsg).
  * Pending summaries are written out at end of input. */
+/* Lines are sent without blocking; when the socket is full (a unix datagram queue holds about 11 messages on
+ * this kernel) the sender waits up to 300 ms for room, then drops the line (see klog.c lost). */
 int  klog_run(const char *kmsg_path, const char *sock_path, long window_s);
 /* "ak_rtsp klog [--kmsg PATH] [--sock PATH] [--window SECONDS]" */
 int  klog_main(int argc, char **argv);

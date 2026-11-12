@@ -57,7 +57,7 @@ mkroot() {
     mkproc "$r" 103 "sh /usr/sbin/akam_lockdown.sh" 600
     mkproc "$r" 104 wpa_supplicant 800
     mkproc "$r" 105 udhcpc 300
-    mkproc "$r" 106 "akam_klog klog" 200
+    mkproc "$r" 106 "akam_klog" 200
     echo 300 > "$r/proc/sys/kernel/random/entropy_avail"
     mkstat "$r" 101 ak_rtsp 100 50
     echo "cpu  1000 0 500 8000 0 0 0 0 0 0" > "$r/proc/stat"

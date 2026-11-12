@@ -289,9 +289,10 @@ func patchDropCaches(in []byte) (out []byte, changed bool, reason string) {
 	return in, false, "sbin/drop_caches.sh has no 'sleep 5' line: not patched"
 }
 
-// klogdNew replaces "klogd -n &": restart the filter when a signal kills it (up to 5 times), run the stock klogd
+// klogdNew replaces "klogd -n &": restart the filter when a signal kills it (up to 5 crashes in a row; a run over 60 s resets the count, 143/130 are
+// not counted), run the stock klogd
 // when it cannot start or after the last crash. Identical to KLOG_NEW in build_firmware.sh.
-const klogdNew = `{ _k=0; while [ "$_k" -lt 5 ]; do /usr/bin/ak_rtsp klog; [ $? -ge 128 ] || break; _k=$((_k + 1)); sleep $((_k * 2)); done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)`
+const klogdNew = `{ _k=0; while [ "$_k" -lt 5 ]; do read _a _ </proc/uptime; /usr/bin/ak_rtsp klog; _r=$?; [ $_r -ge 128 ] || break; read _b _ </proc/uptime; [ $((${_b%.*}+0 - (${_a%.*}+0))) -gt 60 ] && _k=0; if [ $_r -eq 143 ] || [ $_r -eq 130 ]; then sleep 1; else _k=$((_k + 1)); sleep $((_k * 2)); fi; done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)`
 
 var klogdRe = regexp.MustCompile(`^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$`)
 

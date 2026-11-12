@@ -225,7 +225,7 @@ static int setup_channel_attrs(int fd, int is_main)
  *   ffmpeg -f rawvideo -video_size 640x360 -pix_fmt nv12 -i <file> out.png
  *
  * Trigger via SIGUSR1 on the camera:
- *   kill -USR1 $(pidof ak_rtsp)
+ *   kill -USR1 $(pidof ak_rtsp)   (the kernel log filter, same exe, ignores SIGUSR1)
  * ------------------------------------------------------------------------- */
 int vi_grab_sub_frame(const char *path)
 {

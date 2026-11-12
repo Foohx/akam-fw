@@ -88,8 +88,9 @@ static uint64_t rand_u64(void)
  * ------------------------------------------------------------------------- */
 /* Private send queue of an RTSP/TCP client (net_tx.h), allocated at PLAY. The kernel buffer takes the first
  * ~240 KB of a frame; the queue takes the rest, so it only has to hold the part of the biggest keyframe
- * (the encoder ring is 777600 bytes, a 720p keyframe is about 130 KB) that does not fit the socket, plus a
- * little audio and RTCP. A frame that does not fit the room left is dropped (tx_pace_no_room), never torn. */
+ * (the encoder is 1080p and its ring is 777600 bytes; a keyframe is about 130 KB) that does not fit the
+ * socket, plus a little audio and RTCP. A frame that does not fit the room left is dropped (the room is given
+ * to tx_pace_decide), never torn: net_tx queues a packet completely or not at all. */
 #define TX_QUEUE_BYTES (256 * 1024)
 
 typedef struct {
@@ -145,6 +146,7 @@ typedef struct {
      * track: rtcp_channel above only holds the last SETUP's value. */
     uint8_t video_rtcp_ch;
     uint8_t audio_rtcp_ch;
+    unsigned pace_recovered; /* frames dropped in the SKIP run that the current frame ended (for the log) */
 
     /* RTP timestamp bases (RFC 3550 section 5.1: random origin per stream).
      * Video: microseconds added to the capture time before conversion to
@@ -201,20 +203,43 @@ static void client_set_playing(Client *c, bool playing) {
     ledsys_stream_delta(playing ? 1 : -1);
 }
 
-static void Client_drop(VSelf) {
-    VSELF(Client);
+/* Releases the video / audio track of a session: its transport and UDP sockets. A UDP transport closes its
+ * own RTP socket when it is dropped, so that descriptor is only forgotten here, never closed twice (a second
+ * close() could hit a descriptor another thread has opened in the meantime). Used by SETUP, which replaces a
+ * track that is already set up (a client that repeats SETUP must not leak two descriptors a time until
+ * accept() fails with EMFILE), and when the client goes. */
+static void release_video_track(Client *self) {
+    bool had = self->nal_transport || self->rtp_transport;
     if (self->nal_transport) {
         VTABLE(SmolRTSP_NalTransport, SmolRTSP_Droppable).drop(self->nal_transport);
     } else if (self->rtp_transport) {
         VTABLE(SmolRTSP_RtpTransport, SmolRTSP_Droppable).drop(self->rtp_transport);
     }
-    if (self->rtp_udp_fd >= 0) close(self->rtp_udp_fd);
+    self->nal_transport = NULL;
+    self->rtp_transport = NULL;
+    if (!had && self->rtp_udp_fd >= 0) close(self->rtp_udp_fd);
+    self->rtp_udp_fd = -1;
     if (self->rtcp_udp_fd >= 0) close(self->rtcp_udp_fd);
+    self->rtcp_udp_fd = -1;
+    self->next_sr_video_us = 0;
+}
 
+static void release_audio_track(Client *self) {
+    bool had = self->audio_rtp_transport != NULL;
     if (self->audio_rtp_transport)
         VTABLE(SmolRTSP_RtpTransport, SmolRTSP_Droppable).drop(self->audio_rtp_transport);
-    if (self->audio_rtp_udp_fd >= 0) close(self->audio_rtp_udp_fd);
+    self->audio_rtp_transport = NULL;
+    if (!had && self->audio_rtp_udp_fd >= 0) close(self->audio_rtp_udp_fd);
+    self->audio_rtp_udp_fd = -1;
     if (self->audio_rtcp_udp_fd >= 0) close(self->audio_rtcp_udp_fd);
+    self->audio_rtcp_udp_fd = -1;
+    self->next_sr_audio_us = 0;
+}
+
+static void Client_drop(VSelf) {
+    VSELF(Client);
+    release_video_track(self);
+    release_audio_track(self);
     if (self->bc_rtp_fd >= 0) close(self->bc_rtp_fd);
     if (self->bc_rtcp_fd >= 0) close(self->bc_rtcp_fd);
 }
@@ -226,7 +251,7 @@ impl(SmolRTSP_Droppable, Client);
  * Creates the RtpTransport and its UDP fds (for UDP) but does NOT wrap it
  * in a NalTransport — that's video-specific and done by the caller. */
 static int setup_rtp_transport(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req,
-                                uint8_t payload_ty, uint32_t clock_rate,
+                                uint8_t payload_ty, uint32_t clock_rate, bool other_track_set,
                                 SmolRTSP_RtpTransport **out_transport,
                                 int *out_rtp_fd, int *out_rtcp_fd,
                                 uint8_t *out_rtcp_channel) {
@@ -239,6 +264,14 @@ static int setup_rtp_transport(Client *self, SmolRTSP_Context *ctx, const SmolRT
     SmolRTSP_TransportConfig config;
     if (smolrtsp_parse_transport(&config, transport_val) == -1) {
         smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Malformed Transport");
+        return -1;
+    }
+
+    /* One lower transport per session: is_tcp drives the pacing, the send queue and the failure policy of
+     * the whole connection, so the audio track cannot be UDP while the video is interleaved (or the other way
+     * round). The client may choose again with the transport of the track that is already set up. */
+    if (other_track_set && self->is_tcp != (config.lower == SmolRTSP_LowerTransport_TCP)) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_UNSUPPORTED_TRANSPORT, "Unsupported Transport");
         return -1;
     }
 
@@ -317,7 +350,7 @@ static int setup_rtp_transport(Client *self, SmolRTSP_Context *ctx, const SmolRT
 }
 
 static int setup_video_transport(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
-    if (setup_rtp_transport(self, ctx, req, 96, 90000,
+    if (setup_rtp_transport(self, ctx, req, 96, 90000, self->audio_rtp_transport != NULL,
                              &self->rtp_transport, &self->rtp_udp_fd, &self->rtcp_udp_fd,
                              &self->video_rtcp_ch) < 0)
         return -1;
@@ -327,7 +360,7 @@ static int setup_video_transport(Client *self, SmolRTSP_Context *ctx, const Smol
 }
 
 static int setup_audio_transport(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
-    if (setup_rtp_transport(self, ctx, req, 97, AUDIO_SAMPLE_RATE,
+    if (setup_rtp_transport(self, ctx, req, 97, AUDIO_SAMPLE_RATE, self->nal_transport != NULL,
                             &self->audio_rtp_transport,
                             &self->audio_rtp_udp_fd, &self->audio_rtcp_udp_fd,
                             &self->audio_rtcp_ch) < 0)
@@ -557,6 +590,13 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
 static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req) {
     VSELF(Client);
 
+    /* No SETUP once the stream runs: the transports are in use by the client loop (RFC 2326 section 10.4
+     * allows it only for a transport change, which no client needs). */
+    if (self->is_playing) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_METHOD_NOT_VALID_IN_THIS_STATE, "Method Not Valid in This State");
+        return;
+    }
+
     /* Which track this SETUP is for is carried in the request URI, matching
      * the "a=control:streamid=N" values handed out in Client_describe above
      * (clients build the SETUP URI as <base>/<control-value>). */
@@ -570,9 +610,11 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
             smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_FOUND, "No audio track (microphone disabled)");
             return;
         }
+        release_audio_track(self); /* a repeated SETUP replaces the track, it does not leak the old one */
         if (setup_audio_transport(self, ctx, req) < 0) return;
         break;
     default:
+        release_video_track(self);
         if (setup_video_transport(self, ctx, req) < 0) return;
         break;
     }
@@ -739,9 +781,15 @@ impl(SmolRTSP_Controller, Client);
  * by g_vclock (CLOCK_MONOTONIC), NOT the encoder's own ms timestamp, which is
  * nominal (see rtp_clock.h).
  * ------------------------------------------------------------------------- */
-/* Sends one NAL unit (data points at its header byte, no start code). */
-static void send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len,
-                          uint32_t timestamp, bool is_vcl)
+/* Result of sending one packet or NAL unit of the video track. */
+enum { SEND_OK = 0, SEND_NOBUFS = 1, SEND_FAIL = -1 };
+
+/* Sends one NAL unit (data points at its header byte, no start code). SEND_NOBUFS: the RTSP/TCP queue was
+ * full and refused a packet; it takes a packet completely or not at all, so the interleaved framing is still
+ * valid and the client stays (the caller drops the rest of the frame and skips to the next keyframe).
+ * SEND_FAIL: the connection is broken (tx_fail is set). UDP errors are not fatal: SEND_OK. */
+static int send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len,
+                         uint32_t timestamp, bool is_vcl)
 {
     SmolRTSP_H264NalHeader h264_hdr = SmolRTSP_H264NalHeader_parse(data[0]);
     SmolRTSP_NalUnit nalu = {
@@ -753,13 +801,22 @@ static void send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len,
             SmolRTSP_RtpTimestamp_Raw(timestamp),
             is_vcl, nalu) == -1)
     {
+        int e = errno; /* perror() may change it */
+        if (client->is_tcp && e == ENOBUFS) return SEND_NOBUFS;
+        errno = e;
         perror("send RTP/NAL");
-        if (client->is_tcp && errno != EINTR) client->tx_fail = true;
+        if (client->is_tcp && e != EINTR) {
+            client->tx_fail = true;
+            return SEND_FAIL;
+        }
     }
+    return SEND_OK;
 }
 
-static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
-                              uint32_t timestamp)
+/* Sends every NAL unit of a frame; stops at the first packet the connection refuses (SEND_NOBUFS) or breaks
+ * on (SEND_FAIL): the rest of the frame would only be written into a dead or full stream. */
+static int send_frame_nalus(Client *client, uint8_t *data, size_t len,
+                            uint32_t timestamp)
 {
     size_t i = 0;
     while (i + 3 < len) {
@@ -785,14 +842,16 @@ static void send_frame_nalus(Client *client, uint8_t *data, size_t len,
             size_t nalu_len = next_nalu_start - nalu_start;
             if (nalu_len > 0) {
                 uint8_t nalu_type = data[nalu_start] & 0x1F;
-                send_one_nalu(client, data + nalu_start, nalu_len, timestamp,
-                              nalu_type >= 1 && nalu_type <= 5);
+                int r = send_one_nalu(client, data + nalu_start, nalu_len, timestamp,
+                                      nalu_type >= 1 && nalu_type <= 5);
+                if (r != SEND_OK) return r;
             }
             i = next_nalu_start;
         } else {
             i++;
         }
     }
+    return SEND_OK;
 }
 
 /* Drain any frames queued in the VENC ring without sending them.
@@ -934,6 +993,8 @@ static int send_video_frame(Client *client)
      * missing SPS/PPS/reference picture. If the encoder never reports an
      * I-frame within two GOPs, stop waiting rather than send nothing. */
     bool send_it = true;
+    bool log_recovered = false;
+    size_t pace_backlog = 0;
     /* RTSP/TCP backpressure: never let a slow link hold the encoder. A
      * dropped frame is released below like any other; P-frames stay dropped
      * until a keyframe finds the socket drained (tx_pace.h). UDP has no such
@@ -943,31 +1004,33 @@ static int send_video_frame(Client *client)
         size_t kq = tx_pace_backlog(client->tx.fd);
         size_t kcap = tx_pace_cap(tx_pace_sndbuf(client->tx.fd));
         size_t qcap = net_tx_queue_cap(&client->tx);
-        size_t backlog = kq + net_tx_pending(&client->tx); /* what the peer has yet to take */
+        size_t pending = net_tx_pending(&client->tx);
+        size_t backlog = kq + pending; /* what the peer has yet to take */
+        pace_backlog = backlog;
+        /* The loop pumped the queue just before this frame: bytes still pending mean the socket refused them
+         * a moment ago, so what the counters call free kernel space is not (writes go behind the queue). */
+        size_t kfree = pending ? 0 : (kcap > kq ? kcap - kq : 0);
         tx_pace_cfg_t pcfg = {
             .base = tx_pace_base(video_kbps()),
             .cap = kcap ? kcap + qcap : 0, /* the queue extends the kernel buffer */
             .stall_ms = TX_PACE_STALL_MS,
             .max_skip_ms = tx_pace_max_skip_ms(video_gop_frames() / (video_fps() ? video_fps() : 1)),
         };
-        tx_pace_verdict_t pv = tx_pace_decide(&client->pace, &pcfg, backlog, (size_t)req.len,
+        /* Room for this frame: never start one that cannot be queued completely (a part would tear the
+         * interleaved stream). Without a queue the writer blocks instead and there is no limit to give. */
+        size_t room = qcap ? net_tx_room(&client->tx) + kfree : SIZE_MAX;
+        tx_pace_verdict_t pv = tx_pace_decide(&client->pace, &pcfg, backlog, (size_t)req.len, room,
                                               req.frame_type_raw == FRAME_TYPE_I, ms_ts_now(), &ev);
-        if (pv == TX_PACE_SEND && qcap) {
-            /* Never start a frame that cannot be queued completely: a part would tear the interleaved
-             * stream. Wire size = payload + 4 B interleave + 12 B RTP + 2 B FU-A per ~1400 B packet. */
-            size_t need = (size_t)req.len + (size_t)req.len / 64 + 256;
-            size_t kfree = kcap > kq ? kcap - kq : 0;
-            if (need > net_tx_room(&client->tx) + kfree) {
-                pv = tx_pace_no_room(&client->pace, backlog, ms_ts_now(), &ev);
-                /* Bigger than the kernel buffer plus the whole queue: it can never be sent, so the stream
-                 * stays in SKIP mode until the max-skip limit drops the client. Say so (at most every 10 s). */
-                static int64_t last_big_ms;
-                int64_t now_ms = ms_ts_now();
-                if (need > qcap + kcap && (last_big_ms == 0 || now_ms - last_big_ms >= TX_PACE_LOG_MS)) {
-                    last_big_ms = now_ms;
-                    printf("[ak_rtsp] frame of %d bytes cannot fit the TCP send room (%zu bytes): video is skipped\n",
-                           req.len, qcap + kcap);
-                }
+        if (pv != TX_PACE_SEND && ev.no_room && qcap) {
+            /* Bigger than the kernel buffer plus the whole queue: it can never be sent, so the stream
+             * stays in SKIP mode until the max-skip limit drops the client. Say so (at most every 10 s). */
+            static int64_t last_big_ms;
+            int64_t now_ms = ms_ts_now();
+            if (tx_pace_wire_len((size_t)req.len) > qcap + kcap &&
+                (last_big_ms == 0 || now_ms - last_big_ms >= TX_PACE_LOG_MS)) {
+                last_big_ms = now_ms;
+                printf("[ak_rtsp] frame of %d bytes cannot fit the TCP send room (%zu bytes): video is skipped\n",
+                       req.len, qcap + kcap);
             }
         }
         if (pv != TX_PACE_SEND) {
@@ -979,8 +1042,8 @@ static int send_video_frame(Client *client)
         if (ev.log_enter && ev.entered)
             printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
                    backlog);
-        if (ev.log_leave && ev.left)
-            printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", ev.run_skipped);
+        log_recovered = ev.log_leave && ev.left && pv == TX_PACE_SEND;
+        if (log_recovered) client->pace_recovered = ev.run_skipped;
     }
     if (send_it && client->need_idr) {
         if (req.frame_type_raw == FRAME_TYPE_I) {
@@ -988,8 +1051,8 @@ static int send_video_frame(Client *client)
             /* Some encoders emit SPS/PPS only once at start-up: if this
              * I-frame does not carry them, send the cached ones first. */
             if (in_band != (H264_FOUND_SPS | H264_FOUND_PPS) && h264_params_ready(&g_params)) {
-                send_one_nalu(client, g_params.sps, g_params.sps_len, rtp_ts, false);
-                send_one_nalu(client, g_params.pps, g_params.pps_len, rtp_ts, false);
+                if (send_one_nalu(client, g_params.sps, g_params.sps_len, rtp_ts, false) == SEND_OK)
+                    (void)send_one_nalu(client, g_params.pps, g_params.pps_len, rtp_ts, false);
             }
         } else if (++client->idr_wait_frames > video_gop_frames() * 2) {
             printf("[ak_rtsp] no I-frame within %d frames, starting anyway\n",
@@ -1005,9 +1068,23 @@ static int send_video_frame(Client *client)
         if (rtp_astart_holding(&client->audio_start))
             rtp_astart_release(&client->audio_start, capture_us);
     }
-    if (send_it) {
-        send_frame_nalus(client, (uint8_t *)data, req.len, rtp_ts);
-        ctl_sys_note_video_frame(req.len);
+    if (send_it && !client->tx_fail) {
+        int r = send_frame_nalus(client, (uint8_t *)data, req.len, rtp_ts);
+        if (r == SEND_NOBUFS) {
+            /* The queue refused a packet in the middle of the frame (only whole packets were queued, so the
+             * stream is intact, but this picture is incomplete and the P-frames after it reference it): skip
+             * to the next keyframe, exactly as for a backlog over the high mark. */
+            tx_pace_event_t ev;
+            memset(&ev, 0, sizeof(ev));
+            (void)tx_pace_no_room(&client->pace, pace_backlog, ms_ts_now(), &ev);
+            ctl_sys_note_video_skipped();
+            if (ev.log_enter && ev.entered)
+                printf("[ak_rtsp] client link slow (TCP send queue full): dropping video until the next keyframe\n");
+        } else {
+            ctl_sys_note_video_frame(req.len);
+            if (log_recovered)
+                printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", client->pace_recovered);
+        }
     }
 
     if (ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req) < 0) {
@@ -1037,7 +1114,7 @@ static int send_video_frame(Client *client)
  * sending. */
 static void send_audio_frame(Client *client)
 {
-    if (!client->audio_rtp_transport) return;
+    if (!client->audio_rtp_transport || client->tx_fail) return;
 
     if (rtp_astart_holding(&client->audio_start)) return; /* no video frame yet */
 
@@ -1075,8 +1152,13 @@ static void send_audio_frame(Client *client)
             client->audio_rtp_transport, SmolRTSP_RtpTimestamp_Raw(audio_rtp_ts),
             true, U8Slice99_empty(), payload) == -1)
     {
-        perror("send RTP/audio");
-        if (client->is_tcp && errno != EINTR) client->tx_fail = true;
+        int e = errno; /* perror() may change it */
+        /* ENOBUFS (the RTSP/TCP queue is full): this packet is dropped, the client stays. */
+        if (!(client->is_tcp && e == ENOBUFS)) {
+            errno = e;
+            perror("send RTP/audio");
+            if (client->is_tcp && e != EINTR) client->tx_fail = true;
+        }
     }
 }
 
@@ -1130,6 +1212,9 @@ static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport,
         frame[3] = SMOLRTSP_RTCP_SR_SIZE_BASE;
         (void)SmolRTSP_RtcpSr_serialize(sr, frame + 4);
         if (net_tx_write_all(&client->tx, frame, sizeof(frame)) < 0) {
+            int e = errno; /* perror() may change it */
+            if (e == ENOBUFS) return; /* queue full: this report is dropped (the next one is in 5 s) */
+            errno = e;
             perror("send RTCP SR (interleaved)");
             client->tx_fail = true;
         }
@@ -1144,6 +1229,7 @@ static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport,
 
 /* Called once per client-loop iteration; cheap, no-ops between intervals. */
 static void send_rtcp_reports(Client *client) {
+    if (client->tx_fail) return;
     int64_t now = rtp_mono_us();
     int64_t real = rtp_realtime_us();
     const int64_t interval = (int64_t)RTCP_SR_INTERVAL_SEC * 1000000;
@@ -1159,7 +1245,7 @@ static void send_rtcp_reports(Client *client) {
                          real);
     }
 
-    if (client->audio_rtp_transport && client->audio_clock.init &&
+    if (client->audio_rtp_transport && !client->tx_fail && client->audio_clock.init &&
         SmolRTSP_RtpTransport_pkt_count(client->audio_rtp_transport) > 0 &&
         now >= client->next_sr_audio_us) {
         client->next_sr_audio_us = now + interval;
@@ -1327,14 +1413,24 @@ static int in_on_interleaved(void *user, uint8_t channel, const uint8_t *data, s
 /* -------------------------------------------------------------------------
  * Client connection loop
  *
- * Uses poll() for incoming RTSP commands; the client socket remains blocking for writes:
+ * Uses poll() for incoming RTSP commands and for the socket becoming writable (POLLOUT, only while the
+ * private send queue holds bytes). Writes never block for long: net_tx sends without waiting and, for
+ * RTSP/TCP video, queues what the kernel does not take.
  *   timeout = 0 / PLAY_IDLE_POLL_MS when is_playing (0 right after a frame,
  *             PLAY_IDLE_POLL_MS when the encoder had nothing ready)
- *   timeout = 5000 ms when idle (block until a request arrives)
+ *   timeout = at most VENC_DRAIN_POLL_MS when connected but not playing (the encoder ring is drained
+ *             on every pass, as while no client is connected), else until the idle deadline
  * ------------------------------------------------------------------------- */
 /* Poll timeout while playing and the encoder has no frame ready. Short
  * enough for 15 fps video (66 ms) and the 32 ms audio period. */
 #define PLAY_IDLE_POLL_MS 4
+
+/* Poll timeout while a client is connected but not playing: the encoder ring is drained on every pass so it
+ * does not wrap (about 1.5 s of video) while the client takes its time between DESCRIBE and PLAY. */
+#define VENC_DRAIN_POLL_MS 20
+
+/* After TEARDOWN: the longest wait for the last bytes (the 200 OK, a queued tail) to be taken by the peer. */
+#define TEARDOWN_FLUSH_MS 200
 
 /* A client that accepts no byte at all for this long is considered gone. */
 #define TX_STALL_BUDGET_MS 15000
@@ -1483,6 +1579,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             wait_ms = rtsp_idle_talk_wait_ms(&idle, rtp_mono_us(), 100);
         else
             wait_ms = rtsp_idle_wait_ms(&idle, 0, rtp_mono_us(), 5000);
+        if (!client.is_playing && wait_ms > VENC_DRAIN_POLL_MS) wait_ms = VENC_DRAIN_POLL_MS;
         rtsp_busy_fds(&busy, g_busy_listen_fd, &pfds[2]);
         wait_ms = rtsp_busy_wait_ms(&busy, rtp_mono_us() / 1000, wait_ms);
         int poll_ret = poll(pfds, 2 + RTSP_BUSY_NFDS, wait_ms);
@@ -1596,10 +1693,10 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             }
         }
         if (client.bc_playing) talk_tick(talk_global(), rtp_mono_us());
-        /* A talk-only session fetches no video, but the encoder ring must not
-         * wrap (and the SPS/PPS cache and the capture clock must stay current)
-         * for the next viewer, exactly as while no client is connected. */
-        if (client.bc_playing && !client.is_playing) drain_venc_ring();
+        /* A client that is connected but does not play (before PLAY, talk-only, paused) fetches no video, but
+         * the encoder ring must not wrap (and the SPS/PPS cache and the capture clock must stay current) for
+         * the next PLAY or viewer, exactly as while no client is connected. */
+        if (!client.is_playing) drain_venc_ring();
 
         if (client.is_playing) {
             /* A session without a video track (microphone only) must not touch
@@ -1638,6 +1735,18 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
 
     printf("[ak_rtsp] Dropping client: %s\n",
            client.drop_reason ? client.drop_reason : "loop ended");
+    /* TEARDOWN: the 200 OK (and the tail of the queue) should be out before the socket closes; the loop left
+     * as soon as the request was handled. Bounded, and only while the connection is healthy. */
+    if (client.drop_reason && !strcmp(client.drop_reason, "TEARDOWN") && !client.tx_fail) {
+        int64_t end_us = rtp_mono_us() + (int64_t)TEARDOWN_FLUSH_MS * 1000;
+        while (net_tx_pending(&client.tx) > 0 && net_tx_pump(&client.tx) == 0 &&
+               net_tx_pending(&client.tx) > 0) {
+            int64_t left_ms = (end_us - rtp_mono_us()) / 1000;
+            if (left_ms <= 0) break;
+            struct pollfd po = { .fd = client_fd, .events = POLLOUT, .revents = 0 };
+            (void)poll(&po, 1, (int)left_ms);
+        }
+    }
     client_set_playing(&client, false);
     ctl_sys_note_rtsp_client(-1);
     bc_stop(&client);

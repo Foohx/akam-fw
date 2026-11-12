@@ -40,7 +40,7 @@
 
 /* -------------------------------------------------------------------------
  * Frame grab — triggered by SIGUSR1
- * Send with: kill -USR1 $(pidof ak_rtsp)
+ * Send with: kill -USR1 $(pidof ak_rtsp)  (the kernel log filter, same exe, ignores SIGUSR1)
  * Saves 640×360 NV12 to /mnt/grab_NNNN.yuv; view with:
  *   ffplay -f rawvideo -video_size 640x360 -pixel_format nv12 /mnt/grab_0001.yuv
  * ------------------------------------------------------------------------- */

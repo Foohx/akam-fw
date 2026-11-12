@@ -89,7 +89,7 @@ cmd=${cmd# }
 case $cmd in
     true) exit 0 ;;
     printf\ *) exec env PATH="$STUB_DIR/bin:$PATH" bash -c "$cmd" ;;
-    'p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p') echo killed >>"$CAM/killed"; exit 0 ;;
+    'for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done') echo killed >>"$CAM/killed"; exit 0 ;;
 esac
 exit 0
 EOF

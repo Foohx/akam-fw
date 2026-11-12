@@ -9,7 +9,7 @@ import (
 // restartVideo is the one audited exception of the "no kill" rule (spec 11, Q8): this exact command,
 // nothing else, and it never names the watchdog.
 func TestRestartVideoCommandIsExactAndTheOnlyKill(t *testing.T) {
-	const want = `p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p`
+	const want = `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`
 	if restartVideoCmd != want {
 		t.Fatalf("restartVideoCmd = %q", restartVideoCmd)
 	}
