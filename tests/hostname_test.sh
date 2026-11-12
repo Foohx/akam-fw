@@ -11,7 +11,7 @@ TPL=$REPO/tools/firmware_patch_templates
 HN=$TPL/akam_hostname.sh
 PATCH=$TPL/patch_ethernet_hostname.sh
 WRAPPER=$TPL/ak_rtsp_wrapper.sh
-FIXTURE=$REPO/tests/fixtures/app_fake
+FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
@@ -22,6 +22,10 @@ read -r -a SHCMD <<<"$SH_UNDER_TEST"
 echo "shell under test: $SH_UNDER_TEST"
 
 WORK=$(mktemp -d)
+# The repository tracks no symlink: build the fixture's lib/libfake.so link in a throw-away copy.
+FIXTURE=$WORK/app_fake
+cp -a "$FIXTURE_SRC" "$FIXTURE"
+ln -s libfake.so.1 "$FIXTURE/lib/libfake.so"
 trap 'rm -rf "$WORK"' EXIT
 PASS=0
 FAIL=0

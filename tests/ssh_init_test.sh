@@ -7,7 +7,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 TPL=$REPO/tools/firmware_patch_templates
-FIXTURE=$REPO/tests/fixtures/app_fake
+FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if command -v busybox >/dev/null 2>&1; then SH_UNDER_TEST="busybox sh"; else SH_UNDER_TEST="sh"; fi
@@ -16,6 +16,10 @@ read -r -a SHCMD <<<"$SH_UNDER_TEST"
 echo "shell under test: $SH_UNDER_TEST"
 
 WORK=$(mktemp -d)
+# The repository tracks no symlink: build the fixture's lib/libfake.so link in a throw-away copy.
+FIXTURE=$WORK/app_fake
+cp -a "$FIXTURE_SRC" "$FIXTURE"
+ln -s libfake.so.1 "$FIXTURE/lib/libfake.so"
 PASS=0
 FAIL=0
 cleanup() {

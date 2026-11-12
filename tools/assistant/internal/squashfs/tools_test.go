@@ -344,6 +344,9 @@ func TestAppFakeFixtures(t *testing.T) {
 		if _, err := os.Stat(src); err != nil {
 			t.Skipf("fixture %s: %v", name, err)
 		}
+		if name == "app_fake" {
+			src = appFakeCopy(t, src)
+		}
 		for _, comp := range []string{"xz", "gzip"} {
 			t.Run(name+"/"+comp, func(t *testing.T) {
 				img := filepath.Join(t.TempDir(), "i.sqfs")

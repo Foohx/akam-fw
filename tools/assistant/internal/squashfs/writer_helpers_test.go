@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -369,4 +371,37 @@ func firstDiff(a, b []byte) string {
 		}
 	}
 	return fmt.Sprintf("same prefix, lengths %d and %d", len(a), len(b))
+}
+
+// appFakeCopy copies tests/fixtures/app_fake into a temp dir and creates the lib/libfake.so symlink there:
+// the repository never tracks a symlink, but the image builders must keep the ones a real APP tree has.
+func appFakeCopy(t testing.TB, src string) string {
+	t.Helper()
+	dst := t.TempDir()
+	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, info.Mode().Perm())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("libfake.so.1", filepath.Join(dst, "lib", "libfake.so")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	return dst
 }
