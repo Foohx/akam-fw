@@ -131,11 +131,10 @@ func (a *App) sdChooseDevice() (*sdcard.Candidate, string, error) {
 
 // sdGetWifi is sd_get_wifi: SSID and password from --ssid, the environment (read once, then removed) or a prompt.
 func (a *App) sdGetWifi() (ssid, pass string, err error) {
-	ssid, pass = a.Opt.SSID, os.Getenv("AKAM_WIFI_PASS")
+	ssid, pass = a.Opt.SSID, a.envSecret("AKAM_WIFI_PASS")
 	if ssid == "" {
 		ssid = os.Getenv("AKAM_WIFI_SSID")
 	}
-	os.Unsetenv("AKAM_WIFI_PASS")
 	os.Unsetenv("AKAM_WIFI_SSID")
 	a.Secrets.Add(pass)
 	if a.UI.Dry() {

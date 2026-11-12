@@ -76,7 +76,7 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 	if !rtspUserValid(user) {
 		return "", "", a.UI.Fail("could not read the stream user name from the camera.", fmt.Sprintf("check %s rtsp-auth status.", Prog))
 	}
-	pass = os.Getenv("AKAM_RTSP_PASSWORD")
+	pass = a.envSecret("AKAM_RTSP_PASSWORD")
 	if a.Opt.PasswordFile != "" && pass == "" {
 		b, rerr := os.ReadFile(a.Opt.PasswordFile)
 		if rerr != nil {
@@ -84,8 +84,6 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 		}
 		pass = strings.TrimRight(strings.SplitN(string(b), "\n", 2)[0], "\r")
 	}
-	// no child process (ffmpeg, arecord) may inherit it
-	os.Unsetenv("AKAM_RTSP_PASSWORD")
 	if pass == "" {
 		pass, err = a.UI.Secret(fmt.Sprintf("  Stream password of user %s (not shown):", user))
 		if err != nil {
