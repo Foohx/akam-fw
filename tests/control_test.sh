@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host test of the control port 8091 (src/ak_rtsp/control.c + ctl_gate.c): read-only gate, DEBUG with an
 # injected clock, 4 client slots, golden read output, LOG forwarding that never blocks, `ak_rtsp ctl`.
-# control.c is built for real against stub modules and talked to over TCP on port 18091. No camera.
+# control.c is built for real against stub modules and talked to over TCP on a free port chosen per run. No camera.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -10,7 +10,24 @@ CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT=18091 -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" \
+# Several CI runs share the machine: pick a port pair (PORT, PORT + 1) that is free right now, per run.
+PORT=$(python3 -I -c '
+import random, socket
+for _ in range(200):
+    p = random.randint(20000, 60000)
+    socks = []
+    try:
+        for q in (p, p + 1):
+            s = socket.socket(); s.bind(("0.0.0.0", q)); socks.append(s)
+        print(p); break
+    except OSError:
+        pass
+    finally:
+        for s in socks: s.close()
+else:
+    print(18091)
+')
+"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT="$PORT" -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" \
     -I"$REPO/src/ak_rtsp" \
     -o "$WORK/control_test" \
     "$REPO/tests/native/control_test.c" "$REPO/src/ak_rtsp/control.c" "$REPO/src/ak_rtsp/ctl_gate.c" "$REPO/src/ak_rtsp/isp_tune.c" "$REPO/src/ak_rtsp/swdog.c"

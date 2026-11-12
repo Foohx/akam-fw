@@ -237,6 +237,18 @@ func Build(o Options) (*Result, error) {
 		dc.Data = nd
 	}
 
+	b.say("Replacing klogd in sbin/main.sh with the kernel log filter...")
+	if ms := lookup(root, "sbin/main.sh"); ms == nil || ms.Type != squashfs.TypeFile {
+		b.warn("sbin/main.sh not found in the APP tree: kernel log filter not installed")
+	} else if nd, _, reason := patchKlogd(ms.Data); reason != "" {
+		b.warn(reason)
+	} else {
+		if err := shSyntax(nd); err != nil && !errors.Is(err, errNoSh) {
+			return nil, fmt.Errorf("sbin/main.sh fails sh -n after the klogd patch: %w", err)
+		}
+		ms.Data = nd
+	}
+
 	// MANIFEST of the kit travels with the image
 	if err := putFile(root, "local/akam/MANIFEST.txt", 0o644, k.File("MANIFEST.txt")); err != nil {
 		return nil, err

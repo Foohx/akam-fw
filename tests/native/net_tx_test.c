@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -142,6 +143,108 @@ int main(void)
         CHECK(net_tx_write_all(&t, b, sizeof b) == 0 && read(sv[1], in, sizeof in) == (ssize_t)sizeof in,
               "small write goes through");
         CHECK(net_tx_take_stall(&t) < 50, "and reports no stall");
+        close(sv[0]); close(sv[1]);
+    }
+
+    /* 5. Queue mode: a write bigger than the socket takes returns at once, nothing is torn. */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 600);
+        CHECK(net_tx_queue_enable(&t, 256 * 1024) == 0 && net_tx_queue_cap(&t) == 256 * 1024, "queue enabled");
+        CHECK(net_tx_queue_enable(&t, 1) == 0 && net_tx_queue_cap(&t) == 256 * 1024, "enabling twice keeps the queue");
+        int64_t t0 = rtp_mono_us();
+        int rc = net_tx_write_all(&t, data, LEN); /* nobody reads: blocking mode would wait 600 ms and fail */
+        int64_t ms = (rtp_mono_us() - t0) / 1000;
+        CHECK(rc == 0 && ms < 200, "a frame bigger than the send buffer is accepted without waiting");
+        CHECK(net_tx_pending(&t) > 0 && net_tx_pending(&t) < LEN, "the part the socket refused is queued");
+        CHECK(net_tx_room(&t) == net_tx_queue_cap(&t) - net_tx_pending(&t), "room is capacity minus pending");
+        size_t before = net_tx_pending(&t);
+        unsigned char tail[1000];
+        for (size_t i = 0; i < sizeof tail; i++) tail[i] = (unsigned char)(255 - i);
+        CHECK(net_tx_write_all(&t, tail, sizeof tail) == 0 && net_tx_pending(&t) == before + sizeof tail,
+              "a later write queues behind the first (order kept)");
+        CHECK(net_tx_queue_stalled_ms(&t) < 300, "stall clock only counts since the data started waiting");
+        usleep(250000);
+        CHECK(net_tx_queue_stalled_ms(&t) >= 200, "a peer that takes nothing shows as a growing stall");
+        /* The reader now drains everything: pump until the queue is empty and check the stream byte for byte. */
+        int fl = 1; ioctl(sv[1], FIONBIO, &fl);
+        unsigned char *got = malloc(LEN + sizeof tail + 16);
+        size_t ng = 0;
+        for (int i = 0; i < 2000 && (net_tx_pending(&t) || ng < LEN + sizeof tail); i++) {
+            ssize_t n = read(sv[1], got + ng, 4096);
+            if (n > 0) ng += (size_t)n;
+            if (net_tx_pump(&t) < 0) break;
+        }
+        CHECK(net_tx_pending(&t) == 0 && ng == LEN + sizeof tail, "queue drains completely");
+        CHECK(ng == LEN + sizeof tail && memcmp(got, data, LEN) == 0 && memcmp(got + LEN, tail, sizeof tail) == 0,
+              "stream is intact: frame then tail, no byte lost, duplicated or reordered");
+        CHECK(net_tx_queue_stalled_ms(&t) == 0, "empty queue: no stall");
+        free(got);
+        net_tx_queue_free(&t);
+        CHECK(net_tx_pending(&t) == 0 && net_tx_room(&t) == 0, "freed queue reports nothing");
+        close(sv[0]); close(sv[1]);
+    }
+
+    /* 5b. Ring wrap-around: a small queue filled and drained in odd sizes keeps every byte in order. */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 600);
+        net_tx_queue_enable(&t, 5000);
+        int fl = 1; ioctl(sv[1], FIONBIO, &fl);
+        int fl0 = 1; ioctl(sv[0], FIONBIO, &fl0);
+        static unsigned char src[400000], dst[400000];
+        for (size_t i = 0; i < sizeof src; i++) src[i] = (unsigned char)(i * 13 + (i >> 7));
+        size_t put = 0, got = 0;
+        int bad = 0;
+        unsigned seed = 7;
+        while (got < sizeof src && !bad) {
+            seed = seed * 1103515245u + 12345u;
+            size_t n = 1 + (seed >> 8) % 3000;
+            if (put + n > sizeof src) n = sizeof src - put;
+            if (n && net_tx_room(&t) >= n) {
+                if (net_tx_write_all(&t, src + put, n) != 0) bad = 1; else put += n;
+            }
+            if (net_tx_pump(&t) < 0) bad = 1;
+            ssize_t r = read(sv[1], dst + got, 700);
+            if (r > 0) got += (size_t)r;
+        }
+        CHECK(!bad && got == sizeof src && memcmp(src, dst, sizeof src) == 0,
+              "400 KB through a 5000-byte ring in random sizes arrives intact (wrap-around)");
+        net_tx_queue_free(&t);
+        close(sv[0]); close(sv[1]);
+    }
+
+    /* 6. Queue mode: a write that does not fit the queue fails with ENOBUFS; what was queued is still intact. */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 600);
+        net_tx_queue_enable(&t, 8 * 1024);
+        int rc = net_tx_write_all(&t, data, LEN);
+        CHECK(rc == -1 && errno == ENOBUFS, "overflow of the queue fails with ENOBUFS");
+        net_tx_queue_free(&t);
+        close(sv[0]); close(sv[1]);
+    }
+
+    /* 7. Queue mode: a closed peer is an error from pump/write, never a SIGPIPE. */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 600);
+        net_tx_queue_enable(&t, 256 * 1024);
+        net_tx_write_all(&t, data, LEN);
+        close(sv[1]);
+        int rc = -2;
+        for (int i = 0; i < 100 && rc != -1; i++) rc = net_tx_pump(&t);
+        CHECK(rc == -1 && (errno == EPIPE || errno == ECONNRESET), "pump reports a vanished peer");
+        net_tx_queue_free(&t);
+        close(sv[0]);
+    }
+
+    /* 8. Without a queue everything above is unchanged: queue accessors are inert. */
+    {
+        int sv[2]; pair(sv);
+        net_tx_t t; net_tx_init(&t, sv[0], 300);
+        CHECK(net_tx_pending(&t) == 0 && net_tx_room(&t) == 0 && net_tx_queue_cap(&t) == 0 && net_tx_pump(&t) == 0,
+              "blocking mode has no queue");
         close(sv[0]); close(sv[1]);
     }
 

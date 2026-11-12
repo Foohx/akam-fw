@@ -86,6 +86,12 @@ static uint64_t rand_u64(void)
 /* -------------------------------------------------------------------------
  * Client connection context conforming to SmolRTSP_Controller interface
  * ------------------------------------------------------------------------- */
+/* Private send queue of an RTSP/TCP client (net_tx.h), allocated at PLAY. The kernel buffer takes the first
+ * ~240 KB of a frame; the queue takes the rest, so it only has to hold the part of the biggest keyframe
+ * (the encoder ring is 777600 bytes, a 720p keyframe is about 130 KB) that does not fit the socket, plus a
+ * little audio and RTCP. A frame that does not fit the room left is dropped (tx_pace_no_room), never torn. */
+#define TX_QUEUE_BYTES (256 * 1024)
+
 typedef struct {
     int socket_fd;
     struct sockaddr_storage addr;
@@ -606,6 +612,8 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
     if (media) {
         client_set_playing(self, true);
         tx_pace_init(&self->pace); /* a new PLAY starts with a clean pacing state */
+        if (self->is_tcp && net_tx_queue_enable(&self->tx, TX_QUEUE_BYTES) < 0)
+            printf("[ak_rtsp] no memory for the TCP send queue: this client keeps blocking writes\n");
         if (self->nal_transport) {
             self->need_idr = true;
             self->idr_wait_frames = 0;
@@ -932,25 +940,46 @@ static int send_video_frame(Client *client)
      * backlog and is not paced. */
     if (client->is_tcp) {
         tx_pace_event_t ev;
-        size_t backlog = tx_pace_backlog(client->tx.fd);
+        size_t kq = tx_pace_backlog(client->tx.fd);
+        size_t kcap = tx_pace_cap(tx_pace_sndbuf(client->tx.fd));
+        size_t qcap = net_tx_queue_cap(&client->tx);
+        size_t backlog = kq + net_tx_pending(&client->tx); /* what the peer has yet to take */
         tx_pace_cfg_t pcfg = {
             .base = tx_pace_base(video_kbps()),
-            .cap = tx_pace_cap(tx_pace_sndbuf(client->tx.fd)),
+            .cap = kcap ? kcap + qcap : 0, /* the queue extends the kernel buffer */
             .stall_ms = TX_PACE_STALL_MS,
             .max_skip_ms = tx_pace_max_skip_ms(video_gop_frames() / (video_fps() ? video_fps() : 1)),
         };
         tx_pace_verdict_t pv = tx_pace_decide(&client->pace, &pcfg, backlog, (size_t)req.len,
                                               req.frame_type_raw == FRAME_TYPE_I, ms_ts_now(), &ev);
+        if (pv == TX_PACE_SEND && qcap) {
+            /* Never start a frame that cannot be queued completely: a part would tear the interleaved
+             * stream. Wire size = payload + 4 B interleave + 12 B RTP + 2 B FU-A per ~1400 B packet. */
+            size_t need = (size_t)req.len + (size_t)req.len / 64 + 256;
+            size_t kfree = kcap > kq ? kcap - kq : 0;
+            if (need > net_tx_room(&client->tx) + kfree) {
+                pv = tx_pace_no_room(&client->pace, backlog, ms_ts_now(), &ev);
+                /* Bigger than the kernel buffer plus the whole queue: it can never be sent, so the stream
+                 * stays in SKIP mode until the max-skip limit drops the client. Say so (at most every 10 s). */
+                static int64_t last_big_ms;
+                int64_t now_ms = ms_ts_now();
+                if (need > qcap + kcap && (last_big_ms == 0 || now_ms - last_big_ms >= TX_PACE_LOG_MS)) {
+                    last_big_ms = now_ms;
+                    printf("[ak_rtsp] frame of %d bytes cannot fit the TCP send room (%zu bytes): video is skipped\n",
+                           req.len, qcap + kcap);
+                }
+            }
+        }
         if (pv != TX_PACE_SEND) {
             send_it = false;
             ctl_sys_note_video_skipped();
         }
         if (pv == TX_PACE_DROP_CLIENT && !client->drop_reason)
             client->drop_reason = ev.drop_reason; /* the client loop ends the session after this frame */
-        if (ev.log_it && ev.entered)
+        if (ev.log_enter && ev.entered)
             printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
                    backlog);
-        if (ev.log_it && ev.left)
+        if (ev.log_leave && ev.left)
             printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", ev.run_skipped);
     }
     if (send_it && client->need_idr) {
@@ -1435,7 +1464,8 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
         swdog_mode((client.is_playing || client.bc_playing) ? SWDOG_FETCH : SWDOG_IDLE);
         struct pollfd pfds[2 + RTSP_BUSY_NFDS];
         pfds[0].fd = client_fd;
-        pfds[0].events = POLLIN;
+        /* POLLOUT only while the private send queue holds bytes: the loop wakes when the socket can take them. */
+        pfds[0].events = POLLIN | (net_tx_pending(&client.tx) ? POLLOUT : 0);
         pfds[0].revents = 0;
         pfds[1].fd = client.bc_playing ? client.bc_rtp_fd : -1; /* UDP backchannel; -1 is ignored */
         pfds[1].events = POLLIN;
@@ -1465,7 +1495,20 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
 
         if (poll_ret > 0 && (pfds[1].revents & POLLIN)) bc_udp_receive(&client, &idle);
 
-        if (poll_ret > 0 && (pfds[0].revents != 0)) {
+        /* Private send queue (RTSP/TCP): drain what the socket takes now. A peer that has taken nothing for the
+         * stall budget is gone, exactly as for a blocking write. */
+        if (net_tx_pending(&client.tx)) {
+            if (net_tx_pump(&client.tx) < 0) {
+                perror("send (queued)");
+                client.tx_fail = true;
+            } else if (net_tx_queue_stalled_ms(&client.tx) >= TX_STALL_BUDGET_MS) {
+                client.tx_fail = true;
+            }
+            if (client.tx_fail && !client.drop_reason) client.drop_reason = "TCP write failed or stalled";
+            if (client.drop_reason) break;
+        }
+
+        if (poll_ret > 0 && (pfds[0].revents & ~POLLOUT) != 0) {
             /* rtsp_in guarantees room for at least one byte here: a request
              * that fills the buffer is answered/dropped below, '$' frames are
              * consumed as they complete. recv() is never asked for 0 bytes
@@ -1600,6 +1643,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     bc_stop(&client);
     VCALL(DYN(Client, SmolRTSP_Droppable, &client), drop);
     rtsp_busy_close_all(&busy);
+    net_tx_queue_free(&client.tx);
     close(client_fd);
     printf("[ak_rtsp] Client connection closed\n");
 }

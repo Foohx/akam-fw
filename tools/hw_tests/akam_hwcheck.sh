@@ -300,6 +300,12 @@ check_procs() {
         p=$(pids_of $n)
         if [ -n "$p" ]; then pass "$n running (pid $p)"; else warn "$n not running"; fi
     done
+    # Kernel log: "ak_rtsp klog" (shown as akam_klog) drops the LED driver's trace and collapses repeats; the stock
+    # klogd is the fallback when it cannot start and works, but floods syslog.
+    p=$(pids_of akam_klog)
+    if [ -n "$p" ]; then pass "kernel log filter akam_klog running (pid $p)"
+    elif [ -n "$(pids_of klogd)" ]; then warn "stock klogd runs instead of the kernel log filter: syslog fills with LED and encoder noise"
+    else warn "no kernel log reader (akam_klog, klogd): kernel messages do not reach syslog"; fi
     for n in anyka_ipc telnetd utelnetd tcpsvd ftpd; do
         p=$(pids_of $n)
         if [ -z "$p" ]; then pass "$n absent"

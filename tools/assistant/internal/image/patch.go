@@ -288,6 +288,32 @@ func patchDropCaches(in []byte) (out []byte, changed bool, reason string) {
 	return in, false, "sbin/drop_caches.sh has no 'sleep 5' line: not patched"
 }
 
+// klogdNew replaces "klogd -n &": restart the filter when a signal kills it (up to 5 times), run the stock klogd
+// when it cannot start or after the last crash. Identical to KLOG_NEW in build_firmware.sh.
+const klogdNew = `{ _k=0; while [ "$_k" -lt 5 ]; do /usr/bin/ak_rtsp klog; [ $? -ge 128 ] || break; _k=$((_k + 1)); sleep $((_k * 2)); done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)`
+
+var klogdRe = regexp.MustCompile(`^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$`)
+
+// patchKlogd is the sed of build_firmware.sh on sbin/main.sh: "klogd -n &" becomes the kernel log filter with
+// the stock klogd as fallback. changed=false means "left as it is"; reason says why when the layout is unknown.
+func patchKlogd(in []byte) (out []byte, changed bool, reason string) {
+	lines := strings.Split(string(in), "\n")
+	found := false
+	for i, l := range lines {
+		if m := klogdRe.FindStringSubmatch(l); m != nil {
+			lines[i] = m[1] + klogdNew
+			found = true
+		}
+	}
+	switch {
+	case found:
+		return []byte(strings.Join(lines, "\n")), true, ""
+	case strings.Contains(string(in), "ak_rtsp klog"):
+		return in, false, ""
+	}
+	return in, false, "sbin/main.sh has no 'klogd -n &' line: kernel log filter not installed (stock klogd runs unfiltered)"
+}
+
 var errNoSh = errors.New("no sh on this computer")
 
 // shSyntax runs `sh -n` on the script (read from standard input, nothing is written to disk): the syntax

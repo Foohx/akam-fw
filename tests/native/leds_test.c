@@ -267,6 +267,14 @@ static void test_auto_machine(void)
     leds_tick(&l);
     CHECK(!strcmp(bright(), "1"), "stays solid");
     CHECK(leds_get_state(&l) == LEDS_ST_ON, "state on");
+    {   /* The vendor driver logs every write: a solid LED must not be rewritten. A sentinel survives only
+         * when no write happens. */
+        char p[200]; path_of(p, sizeof(p), g_led, "brightness"); put(p, "sentinel");
+        for (int i = 0; i < 5; i++) leds_tick(&l);
+        leds_apply(&l);
+        CHECK(!strcmp(bright(), "sentinel"), "solid auto and re-apply do not rewrite the LED (got '%s')", bright());
+        put(p, "1");
+    }
 
     /* Wi-Fi lost: blink; back: solid */
     g_net = 0;
