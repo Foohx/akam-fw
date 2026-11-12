@@ -26,6 +26,10 @@ type RTSPServer struct {
 	mu sync.Mutex
 	// Refuse551 answers DESCRIBE with 551 (the camera does not offer talk).
 	Refuse551 bool
+	// Busy answers DESCRIBE with 503 (another client is connected: the camera serves one at a time),
+	// with the Retry-After header when RetryAfter is not empty.
+	Busy       bool
+	RetryAfter string
 	// NoBackchannel serves an SDP without the sendonly audio track.
 	NoBackchannel bool
 	// Codec is the payload type the SDP offers first: "PCMU" (default) or "PCMA".
@@ -215,6 +219,7 @@ func (s *RTSPServer) serve(c net.Conn) {
 			s.describeRequire = hdr["require"]
 		}
 		refuse, nobc, codec := s.Refuse551, s.NoBackchannel, s.Codec
+		busy, retryAfter := s.Busy, s.RetryAfter
 		s.mu.Unlock()
 		cseq := hdr["cseq"]
 		reply := func(code int, text string, extra string, body string) {
@@ -253,6 +258,14 @@ func (s *RTSPServer) serve(c net.Conn) {
 		}
 		switch method {
 		case "DESCRIBE":
+			if busy {
+				extra := ""
+				if retryAfter != "" {
+					extra = "Retry-After: " + retryAfter + "\r\n"
+				}
+				reply(503, "Service Unavailable", extra, "")
+				continue
+			}
 			if refuse || !have { // no stream password, no talk (the camera never offers it)
 				reply(551, "Option not supported", "", "")
 				continue
@@ -289,6 +302,13 @@ func (s *RTSPServer) DescribeRequire() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.describeRequire
+}
+
+// SetBusy makes DESCRIBE answer 503 (with Retry-After when retryAfter is not empty), or stops doing so.
+func (s *RTSPServer) SetBusy(busy bool, retryAfter string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Busy, s.RetryAfter = busy, retryAfter
 }
 
 // Configure sets the server's behaviour under its lock.

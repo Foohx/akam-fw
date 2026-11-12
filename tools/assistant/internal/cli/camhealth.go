@@ -373,3 +373,11 @@ func (a *App) readHealthOf(c *camssh.Client, withClock bool) camHealth {
 	}
 	return h
 }
+
+// readCamNtp reads the time sync state (on/off and whether the last sync worked) into h, so that the
+// clock report is the same wherever it is shown.
+func (a *App) readCamNtp(c *camssh.Client, h *camHealth) {
+	if res, err := a.run(c, remoteNtp("status"), nil, ""); err == nil && res.Status == 0 {
+		h.ntp, h.ntpSync = parseNtpStatus(string(res.Stdout))
+	}
+}

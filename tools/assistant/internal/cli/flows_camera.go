@@ -52,7 +52,7 @@ func (a *App) discoverDial() camssh.DialFunc { return camssh.DialFunc(a.Hooks.Di
 func (a *App) probeCamera(ip string) (discover.Camera, gossh.PublicKey, bool) {
 	p := a.ports()
 	open := a.probe(ip, p.Telnet, p.SSH, p.RTSP, p.CTL)
-	kind := discover.Classify(open, p)
+	kind := discover.ClassifyHost(a.Ctx, ip, open, p, a.Hooks.Discover.Dial)
 	if kind != discover.Akam && kind != discover.Stock && kind != discover.Partial {
 		return discover.Camera{}, nil, false
 	}

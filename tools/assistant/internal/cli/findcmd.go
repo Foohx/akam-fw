@@ -251,7 +251,7 @@ func (a *App) cmdFindCamera() error {
 		return a.UI.Fail(fmt.Sprintf("%s does not answer on any expected port.", ip),
 			fmt.Sprintf("check the address in your router; the camera needs about 2 minutes after power-on; the backup card must be in the camera (telnet appears on port %d); the PC and the camera must be on the same network.", p.Telnet))
 	}
-	kind := discover.Classify(open, p)
+	kind := discover.ClassifyHost(a.Ctx, ip, open, p, a.Hooks.Discover.Dial)
 	tel := "0"
 	switch kind {
 	case discover.Stock:

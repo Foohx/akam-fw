@@ -109,6 +109,13 @@ func (a *App) talkClient(ctx context.Context, ip, user, pass string, src rtsp.PC
 	if !errors.As(err, &te) {
 		return a.UI.Fail(err.Error(), "")
 	}
+	if te.Busy {
+		hint := "stop the other client (an NVR, Home Assistant, go2rtc, a viewer app) or talk through it; see docs/troubleshooting.md (Talk)."
+		if te.RetryAfter != "" {
+			hint = fmt.Sprintf("the camera suggests trying again in %s (Retry-After); or %s", te.RetryAfter, hint)
+		}
+		return a.UI.Fail("the camera is busy: it serves one video client at a time and another client is connected to it.", hint)
+	}
 	switch te.Code {
 	case rtsp.CodeNet:
 		return a.UI.Fail(fmt.Sprintf("the camera did not answer on port %d.", a.Env.PortRTSP), fmt.Sprintf("check %s status and the network.", Prog))

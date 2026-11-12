@@ -399,3 +399,24 @@ func TestS16LESource(t *testing.T) {
 		t.Errorf("end: %d %v", n, err)
 	}
 }
+
+func TestTalkBusyCameraIsReported(t *testing.T) {
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		tmp := make([]byte, 4096)
+		_, _ = c.Read(tmp)
+		io.WriteString(c, "RTSP/1.0 503 Service Unavailable\r\nCSeq: 1\r\nRetry-After: 30\r\n\r\n")
+		time.Sleep(100 * time.Millisecond)
+	}()
+	err := Talk(context.Background(), TalkConfig{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, User: "u", Password: "pw", Source: &SliceSource{S: Tone(1)}, Unpaced: true})
+	var te *TalkError
+	if !errors.As(err, &te) || !te.Busy || te.RetryAfter != "30" || te.Code != CodeProto {
+		t.Fatalf("err=%v %+v", err, te)
+	}
+}
