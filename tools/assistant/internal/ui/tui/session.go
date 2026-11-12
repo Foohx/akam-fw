@@ -65,10 +65,11 @@ type sessState struct {
 	cancel     chan struct{} // closed by the first Ctrl-C on a running flow: stop asking, finish
 	cancelOnce sync.Once
 	send       func(tea.Msg)
+	boardKeys  chan boardEv // keys of the board for the flow (board.go)
 }
 
 func newSessState() *sessState {
-	return &sessState{done: make(chan struct{}), cancel: make(chan struct{}), send: func(tea.Msg) {}}
+	return &sessState{done: make(chan struct{}), cancel: make(chan struct{}), send: func(tea.Msg) {}, boardKeys: make(chan boardEv, 16)}
 }
 
 func (s *sessState) stop() { s.cancelOnce.Do(func() { close(s.cancel) }) }
@@ -109,6 +110,8 @@ type sessModel struct {
 	steps []step
 	total int
 	prog  *progress
+
+	board *boardView // the persistent list of the home and the chooser, nil when none
 
 	queue    []*ask // the first one is on screen
 	frame    int
@@ -228,6 +231,10 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prog = nil
 	case msgHeader:
 		m.hdr = v.h
+	case msgBoardSet:
+		m.setBoard(v.b)
+	case msgBoardClose:
+		m.board = nil
 	case msgStripIfEmpty:
 		if m.strip == nil {
 			e := v.e
@@ -256,6 +263,9 @@ func (m *sessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *sessModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.strip = nil // any key clears the result strip
 	q := m.current()
+	if q == nil && m.board != nil {
+		return m.boardKey(k)
+	}
 	if q == nil {
 		if k.String() != "ctrl+c" {
 			return m, nil
@@ -388,6 +398,9 @@ func (m *sessModel) footer() string {
 	if q := m.current(); q != nil {
 		return " " + th.Footer(q.keys()...)
 	}
+	if m.board != nil {
+		return m.boardFooter()
+	}
 	if m.stopping {
 		return " " + th.Footer("Ctrl-C", "quit now")
 	}
@@ -491,6 +504,8 @@ func (m *sessModel) panel(rows, w int) []string {
 			// question and the highlighted answer must never be the part that is cut off.
 			lines = append([]string{lines[0]}, lines[len(lines)-(rows-1):]...)
 		}
+	} else if m.board != nil {
+		lines = m.boardLines(rows, w)
 	} else {
 		lines = m.head(w)
 		if len(lines) > rows {
