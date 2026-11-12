@@ -199,6 +199,11 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 	deps := func(out func(string)) flash.Deps {
 		return flash.Deps{Dial: a.dialFlash(ip), Out: out, Ctx: a.Ctx}
 	}
+	op := a.op()
+	defer op.end()
+	op.plan("Check the camera (nothing is written)", "Confirm in the red box", "Write the flash and read it back")
+	op.start(0)
+	op.status("built-in SSH reflash precheck (runs from the camera's RAM, writes nothing)")
 	a.UI.Say("  Precheck: uploads two small scripts to the camera's RAM and checks it; nothing is written to flash.")
 	a.UI.Say("  Running: built-in SSH reflash precheck")
 	logPre := filepath.Join(a.St.Dir, "reflash-precheck.log")
@@ -210,6 +215,9 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 	if err != nil {
 		return a.UI.Fail("the precheck failed (see above).", "nothing was written to the camera.")
 	}
+	op.done(0, "nothing was written")
+	op.start(1)
+	op.status("waiting for your answer in the red box")
 	a.UI.Blank()
 	a.UI.Warn(label + " over SSH has NO UART safety net. If the power is cut or the write is interrupted, the APP partition")
 	a.UI.Warn("is half written and only a UART cable can recover it. Keep the camera powered and do not touch it.")
@@ -219,13 +227,21 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 		return a.UI.Fail("not confirmed.", "nothing was written.")
 	}
 	logFl := filepath.Join(a.St.Dir, "reflash.log")
+	op.done(1, "confirmed")
+	op.start(2)
+	op.status("built-in SSH reflash: writes /dev/mtd7 (APP), then reads it back. It cannot be interrupted safely.")
+	op.writing(true)
 	a.UI.Say("  Running: built-in SSH reflash")
 	a.UI.Say("  (full output: " + logFl + ")")
 	out, done = a.flashSink(logFl)
 	a.Log.Line("CMD flash %s md5=%s", ip, md5)
 	err = flash.Flash(plan, conf, deps(out))
 	done()
+	op.writing(false)
 	a.Log.Line("RC flash err=%v", err)
+	if err == nil {
+		op.done(2, "read-back md5 matches")
+	}
 	if err != nil {
 		return a.UI.Fail("the SSH reflash failed or could not be verified.",
 			fmt.Sprintf("DO NOT power-cycle yet. Read %s and docs/akam_v1_flash_and_restore.md (Reflashing over SSH).", logFl))
@@ -599,11 +615,13 @@ func (a *App) cmdVerify() error {
 	a.UI.Blank()
 	a.UI.Say("  Now the real test: without the card. By hand:")
 	a.UI.Say("    1. unplug the camera's USB-C power  2. take the microSD card out  3. plug the power back in.")
-	ans, err := a.UI.Prompt("  Press Enter when the camera is powered again (or q to stop):", "")
+	stopped, err := a.handsDone("Power-cycle the camera by hand (the assistant never does it)",
+		[]string{"Unplug the camera's USB-C power", "Take the microSD card out", "Plug the power back in"},
+		"  Press Enter when the camera is powered again (or q to stop):")
 	if err != nil {
 		return a.UI.Fail("no input.", fmt.Sprintf("run %s step verify again.", Prog))
 	}
-	if ans == "q" {
+	if stopped {
 		return a.UI.Fail("stopped.", fmt.Sprintf("run %s step verify again when ready.", Prog))
 	}
 	if !a.waitPort(ip, a.Env.PortSSH, wait, "the camera to boot without the card and answer on SSH") {

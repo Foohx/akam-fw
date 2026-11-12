@@ -45,6 +45,12 @@ func (a *App) cmdGetKit() error {
 	a.stepBanner("get-kit")
 	dry := a.UI.Dry()
 	kitPath := a.Opt.Kit
+	op := a.op()
+	defer op.end()
+	verifyItem := 0 // index of "Verify and unpack" in the operation
+	if kitPath != "" {
+		op.plan("Verify and unpack the kit")
+	}
 	if kitPath == "" {
 		ver := strings.TrimPrefix(a.Opt.Version, "v")
 		if ver == "" {
@@ -75,7 +81,11 @@ func (a *App) cmdGetKit() error {
 				return a.UI.Fail("cannot create "+dl+": "+err.Error(), "")
 			}
 		}
-		for _, f := range []string{"akam-kit-" + ver + ".tar.xz", "SHA256SUMS"} {
+		op.plan("Download the kit", "Download the checksums (SHA256SUMS)", "Download the signature", "Verify and unpack the kit")
+		verifyItem = 3
+		for i, f := range []string{"akam-kit-" + ver + ".tar.xz", "SHA256SUMS"} {
+			op.start(i)
+			op.status("HTTPS GET " + base + "/" + f + "   (nothing from it is run)")
 			lim := int64(kit.MaxKitDownload)
 			if f == "SHA256SUMS" {
 				lim = kit.MaxSmallDownload
@@ -91,6 +101,7 @@ func (a *App) cmdGetKit() error {
 					fmt.Sprintf("check your network and retry, or use a kit you already have: %s get-kit --kit FILE.", Prog))
 			}
 		}
+		op.start(2)
 		sig := filepath.Join(dl, "SHA256SUMS.sig")
 		if err := a.download(base+"/SHA256SUMS.sig", sig, kit.MaxSmallDownload); err != nil {
 			_ = os.Remove(sig)
@@ -126,6 +137,8 @@ func (a *App) cmdGetKit() error {
 		return nil
 	}
 
+	op.start(verifyItem)
+	op.status("checking SHA256SUMS, the signature and the archive layout (read only; nothing from the kit is run)")
 	unsigned := a.Opt.AllowUnsigned
 	_ = os.RemoveAll(ext)
 	a.UI.Say(fmt.Sprintf("  Verifying %s (read-only; nothing from the kit is run).", kitPath))
@@ -177,6 +190,7 @@ func (a *App) cmdGetKit() error {
 	_ = a.St.Set("kit_unsigned_ok", u)
 	_ = a.St.Set("kit_version", man["akam_version"])
 	_ = a.St.MarkDone("get-kit")
+	op.done(verifyItem, "format "+fmtv)
 	a.UI.Good(fmt.Sprintf("  Kit verified (format %s, sha256 %s...).", fmtv, sha[:12]))
 	if a.Opt.ExpectSHA256 == "" {
 		a.UI.Say("  Tip: compare that sha256 with the one in the release notes, or pass --expect-sha256 HEX.")

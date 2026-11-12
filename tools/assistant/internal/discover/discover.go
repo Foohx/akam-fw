@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -205,6 +206,13 @@ func Subnets(ifaces func() ([]net.Interface, error), addrs func(*net.Interface) 
 // Scan probes the four camera ports of every host of the subnet: at most `conc` dials at once,
 // `timeout` each. Hosts with at least one open port are returned, sorted by address.
 func Scan(ctx context.Context, sn Subnet, ports Ports, conc int, timeout time.Duration, dial DialFunc) []Host {
+	return ScanProgress(ctx, sn, ports, conc, timeout, dial, nil)
+}
+
+// ScanProgress is Scan that also calls progress(done, total) after each probe finished (total is
+// ScanCount(sn)). The calls may come from several goroutines at once; progress must be cheap and safe
+// for that. A nil progress is Scan.
+func ScanProgress(ctx context.Context, sn Subnet, ports Ports, conc int, timeout time.Duration, dial DialFunc, progress func(done, total int)) []Host {
 	if dial == nil {
 		dial = realDial(timeout)
 	}
@@ -216,6 +224,8 @@ func Scan(ctx context.Context, sn Subnet, ports Ports, conc int, timeout time.Du
 	var mu sync.Mutex
 	var found []Host
 	var wg sync.WaitGroup
+	var probed atomic.Int64
+	total := ScanCount(sn)
 	for _, ip := range sn.Hosts() {
 		ipS := ip.String()
 		for _, p := range plist {
@@ -224,6 +234,9 @@ func Scan(ctx context.Context, sn Subnet, ports Ports, conc int, timeout time.Du
 			go func() {
 				defer wg.Done()
 				defer func() { <-sem }()
+				if progress != nil {
+					defer func() { progress(int(probed.Add(1)), total) }()
+				}
 				if ctx.Err() != nil {
 					return
 				}

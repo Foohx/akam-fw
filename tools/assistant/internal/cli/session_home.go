@@ -256,11 +256,31 @@ func chooserRow(r discover.Row, checking map[string]bool, now time.Time) ui.Boar
 	return row
 }
 
+func (c *boardCtl) setStatus(s string) {
+	c.ch.mu.Lock()
+	c.status = s
+	c.ch.mu.Unlock()
+}
+
+func (c *boardCtl) getStatus() string {
+	c.ch.mu.Lock()
+	defer c.ch.mu.Unlock()
+	return c.status
+}
+
+// scanProgress puts the percentage of the running scan on the status line (the calls come from the
+// scan's goroutines; the caller only reports when the percentage changes).
+func (c *boardCtl) scanProgress(label string, pct int) {
+	s := fmt.Sprintf("%s  %d %%", label, pct)
+	c.setStatus(s)
+	c.show(s)
+}
+
 // run is chooser.run on a board: the status line, Esc listened for (it cancels the search through the
 // context every probe and the scan already honour), the board drawn again as rows arrive.
 func (c *boardCtl) run(status string, fn func()) {
 	a := c.a
-	c.status = status
+	c.setStatus(status)
 	c.show(status)
 	outer := a.Ctx
 	if outer == nil {
@@ -288,7 +308,7 @@ func (c *boardCtl) run(status string, fn func()) {
 	stopped := ctx.Err() != nil
 	cancel()
 	a.Ctx = outer
-	c.status = ""
+	c.setStatus("")
 	if stopped {
 		c.ch.setNote("  (stopped)")
 	}
@@ -303,7 +323,8 @@ func (a *App) chooseCameraBoard(bd ui.Boarder) (bool, error) {
 	ch := &chooser{known: a.knownCameras()}
 	c := &boardCtl{a: a, bd: bd, ch: ch}
 	ch.run = c.run
-	ch.onChange = func() { c.show(c.status) }
+	ch.onChange = func() { c.show(c.getStatus()) }
+	ch.progress = c.scanProgress
 	defer bd.CloseBoard()
 	for {
 		c.show("")

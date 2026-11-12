@@ -83,6 +83,7 @@ type capBuf struct {
 	b    bytes.Buffer
 	max  int64
 	over bool
+	on   func(n int64) // called with the bytes held so far (nil: none)
 }
 
 var errOverCap = errors.New("the camera sent more bytes than the partition holds")
@@ -92,7 +93,11 @@ func (w *capBuf) Write(p []byte) (int, error) {
 		w.over = true
 		return 0, errOverCap
 	}
-	return w.b.Write(p)
+	n, err := w.b.Write(p)
+	if w.on != nil {
+		w.on(int64(w.b.Len()))
+	}
+	return n, err
 }
 
 // runCapped runs a read-only command and keeps at most max bytes of its output: a camera that sends
@@ -114,6 +119,11 @@ func (a *App) runCapped(c *camssh.Client, cmd string, max int64) ([]byte, int, e
 
 // bkSSHRead streams partition n once and returns its bytes and sha256.
 func (a *App) bkSSHRead(c *camssh.Client, n int, size int64) ([]byte, string, error) {
+	return a.bkSSHReadP(c, n, size, nil)
+}
+
+// bkSSHReadP is bkSSHRead reporting the bytes received so far to on (nil: none).
+func (a *App) bkSSHReadP(c *camssh.Client, n int, size int64, on func(int64)) ([]byte, string, error) {
 	cmd := remoteReadMtd(n)
 	if why := forbiddenRemote(cmd); why != "" {
 		return nil, "", errors.New(why)
@@ -121,7 +131,7 @@ func (a *App) bkSSHRead(c *camssh.Client, n int, size int64) ([]byte, string, er
 	a.Log.Line("CMD ssh root@%s %s", c.Host, cmd)
 	ctx, cancel := context.WithTimeout(a.Ctx, 300*time.Second)
 	defer cancel()
-	w := &capBuf{max: size}
+	w := &capBuf{max: size, on: on}
 	w.b.Grow(int(size))
 	res, err := c.RunStream(ctx, cmd, w)
 	switch {
@@ -142,21 +152,25 @@ func (a *App) bkSSHRead(c *camssh.Client, n int, size int64) ([]byte, string, er
 // mtdblock6 (CONFIG, read/write while the camera runs) may differ: it is read again twice at most,
 // then the last first-read is used, like the telnet route.
 func (a *App) bkSSHReadAll(c *camssh.Client, caps [8]int64) (data [8][]byte, configDiffers bool, err error) {
+	op := a.op()
 	for n := 0; n < 8; n++ {
 		redo := 0
 		for {
+			op.start(opBkRead0 + n)
+			op.status(fmt.Sprintf("%s   (runs on the camera, read only)", remoteReadMtd(n)))
 			a.UI.Say(fmt.Sprintf("  Reading mtdblock%d (read 1 of 2) ...", n))
-			d1, h1, err := a.bkSSHRead(c, n, caps[n])
+			d1, h1, err := a.bkSSHReadP(c, n, caps[n], op.bytes(0, 2*caps[n]))
 			if err != nil {
 				return data, false, a.UI.Fail(err.Error()+".", "nothing was changed on the camera and nothing was written here; try again.")
 			}
 			a.UI.Say(fmt.Sprintf("  Reading mtdblock%d (read 2 of 2) ...", n))
-			_, h2, err := a.bkSSHRead(c, n, caps[n])
+			_, h2, err := a.bkSSHReadP(c, n, caps[n], op.bytes(caps[n], 2*caps[n]))
 			if err != nil {
 				return data, false, a.UI.Fail(err.Error()+".", "nothing was changed on the camera and nothing was written here; try again.")
 			}
 			data[n] = d1
 			if h1 == h2 {
+				op.done(opBkRead0+n, "read twice, identical")
 				break
 			}
 			if n != 6 {
@@ -165,6 +179,7 @@ func (a *App) bkSSHReadAll(c *camssh.Client, caps [8]int64) (data [8][]byte, con
 			if redo >= 2 {
 				a.UI.Warn("mtdblock6 (CONFIG) still differs between the two reads. It is a live read/write filesystem and Akam never uses it: continuing with the first read.")
 				configDiffers = true
+				op.done(opBkRead0+n, "differs (live partition), first read kept")
 				break
 			}
 			redo++
@@ -222,6 +237,13 @@ func (a *App) backupSSH() error {
 	if err != nil {
 		return err
 	}
+	op := a.op()
+	defer op.end()
+	items := []string{"Connect over SSH", "Check the partition table"}
+	for n := 0; n < 8; n++ {
+		items = append(items, fmt.Sprintf("Read mtdblock%d twice", n))
+	}
+	op.plan(append(items, "Save the backup on this PC")...)
 	a.UI.Say("  This camera runs Akam: this saves what is on the camera now. It cannot recreate the original (stock) firmware.")
 	if a.UI.Dry() {
 		for _, l := range []string{
@@ -232,15 +254,19 @@ func (a *App) backupSSH() error {
 		}
 		return nil
 	}
+	op.start(0)
 	c, err := a.connect(ip, "cannot log in to the camera over SSH.", "check the camera address and the SSH key (run: "+Prog+" verify).")
 	if err != nil {
 		return err
 	}
 	defer c.Close()
+	op.done(0, ip)
+	op.start(1)
 	caps, layout, err := a.bkSSHLayout(c)
 	if err != nil {
 		return err
 	}
+	op.done(1, "8 partitions, supported layout")
 	kernel := ""
 	if out, status, err := a.runCapped(c, remoteKernelInfo, 1024); err == nil && status == 0 {
 		ls := strings.Split(strings.TrimRight(textsafe.Clean(string(out)), "\n"), "\n")
@@ -254,6 +280,8 @@ func (a *App) backupSSH() error {
 		return err
 	}
 	c.Close()
+	op.start(opBkWrite)
+	op.status("writing on this PC; the camera is not touched")
 	pcdir, parents := a.bkPCDir()
 	a.UI.Say("  Writing the verified dump to this PC: " + pcdir)
 	if probs := a.backupValidate(pcdir); len(probs) > 0 {
@@ -283,8 +311,15 @@ func (a *App) backupSSH() error {
 		return a.UI.Fail("writing the backup failed: "+err.Error()+".", "nothing was kept; free some space and run the backup again.")
 	}
 	a.backupSecure(pcdir, true)
+	op.done(opBkWrite, "8 partitions and SHA256SUMS")
 	a.setState("ssh_backup_dir", pcdir) // the update flow's backup gate re-verifies this folder
 	a.UI.Good("  Backup saved and verified (both reads of every partition match). SHA256SUMS written: " + pcdir)
 	a.UI.Warn("This backup holds your Wi-Fi password and the camera's secrets: keep it private, and copy it to a second medium.")
 	return nil
 }
+
+// Items of the SSH backup operation: connect, layout, eight partitions, the copy on this PC.
+const (
+	opBkRead0 = 2
+	opBkWrite = 10
+)

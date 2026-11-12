@@ -244,3 +244,30 @@ func TestSSHBannerReadsOnlyTheFirstLine(t *testing.T) {
 		t.Errorf("%q %v", got, err)
 	}
 }
+
+// ScanProgress reports every probe once, never more than the total, and ends at the total; the
+// result is the same as Scan's.
+func TestScanProgressCountsEveryProbe(t *testing.T) {
+	_, cidr, _ := net.ParseCIDR("192.0.2.0/28")
+	sn := Subnet{Iface: "eth0", CIDR: cidr}
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) { return nil, errors.New("closed") }
+	var calls, last, bad atomic.Int64
+	got := ScanProgress(context.Background(), sn, Ports{Telnet: 24, SSH: 22, RTSP: 554, CTL: 8091}, 8, time.Second, dial, func(done, total int) {
+		calls.Add(1)
+		if total != ScanCount(sn) || done < 1 || done > total {
+			bad.Add(1)
+		}
+		for {
+			l := last.Load()
+			if int64(done) <= l || last.CompareAndSwap(l, int64(done)) {
+				break
+			}
+		}
+	})
+	if len(got) != 0 {
+		t.Errorf("hosts: %v", got)
+	}
+	if want := int64(ScanCount(sn)); calls.Load() != want || last.Load() != want || bad.Load() != 0 {
+		t.Errorf("calls=%d last=%d bad=%d, want %d", calls.Load(), last.Load(), bad.Load(), want)
+	}
+}
