@@ -198,9 +198,33 @@ func TestClockOfferWithTimeSyncOn(t *testing.T) {
 	e.rememberCamera("salon", "127.0.0.1")
 	t.Setenv("AKAM_FORCE_TTY", "1")
 	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
-	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false) // never set: the offer stays with time sync on
 	r := e.run("3\n\n8\n9\n", "--camera", "salon")
 	contains(t, r.err, "Time sync is on and corrects the clock shortly")
 	notContains(t, r.err, "lost at the next reboot")
 	contains(t, r.out, "time sync should correct it shortly.")
+}
+
+// A camera that keeps its time with NTP is the better reference: a difference with this computer
+// must never lead to overwriting the camera clock (a PC with a wrong clock once set a camera 1 h wrong).
+func TestOptionsClockNtpOnNeverOffersToOverwrite(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.rememberCamera("salon", "127.0.0.1")
+	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
+	t.Setenv("AKAM_FORCE_TTY", "1")
+	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	r := e.run("3\n8\n9\n", "--camera", "salon")
+	contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong", "difference 1 hour(s)")
+	notContains(t, r.err, "Set the camera clock")
+	// the same through "ntp status"
+	r = e.run("", "--camera", "salon", "ntp", "status")
+	contains(t, r.out, "may be wrong")
+	// the clock never set: the offer stays, even with time sync on
+	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false)
+	r = e.run("3\n\n8\n9\n", "--camera", "salon")
+	contains(t, r.err, "Set the camera clock from this computer now?")
+	if len(e.cam.ClockSets()) != 0 {
+		t.Errorf("clock set: %v", e.cam.ClockSets())
+	}
 }

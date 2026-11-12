@@ -87,6 +87,11 @@ func TestClockReport(t *testing.T) {
 		{"edge", camHealth{timeSet: "1", camEpoch: now - 120, pcEpoch: now}, "Clock: set, -120 s", false},
 		{"off", camHealth{timeSet: "1", camEpoch: now - 3600*5, pcEpoch: now}, "off by 5 hour(s)", true},
 		{"unreadable", camHealth{timeSet: "1"}, "Clock: set.", false},
+		{"ntp off, 1 h off", camHealth{timeSet: "1", ntp: "off", camEpoch: now - 3600, pcEpoch: now}, "off by 1 hour(s)", true},
+		{"ntp on, 1 h off: no offer", camHealth{timeSet: "1", ntp: "on", camEpoch: now - 3600, pcEpoch: now}, "may be wrong", false},
+		{"ntp on, 1 h off: both times and difference", camHealth{timeSet: "1", ntp: "on", camEpoch: now - 3600, pcEpoch: now}, "difference 1 hour(s)", false},
+		{"ntp on, unset: offer", camHealth{timeSet: "0", ntp: "on", camEpoch: 946684900, pcEpoch: now}, "Clock: not set", true},
+		{"ntp on, reads 2000: offer", camHealth{ntp: "on", camEpoch: 946684900, pcEpoch: now}, "reads 2000-01-01", true},
 	} {
 		l, offer := clockReport(c.h)
 		if !strings.Contains(strings.Join(l, "\n"), c.want) || offer != c.offer {

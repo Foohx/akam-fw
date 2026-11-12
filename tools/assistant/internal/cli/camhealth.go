@@ -154,12 +154,31 @@ func clockReport(h camHealth) (lines []string, offer bool) {
 	if pc < minPlausibleEpoch { // this computer cannot be the reference
 		return append(lines, pcClockNote(pc)), false
 	}
+	// Time sync is on and the camera clock is plausibly set: the camera is the better reference. A
+	// difference then most likely means this computer is wrong, so never offer to overwrite the camera.
+	if h.ntp == "on" && !clockUnset(h) {
+		return append(lines,
+			"The camera keeps its time with NTP (time sync is on), so its clock is probably right and the clock or time zone of this computer may be wrong.",
+			fmt.Sprintf("Camera %s UTC, this computer %s UTC (difference %s). The camera clock is not offered to be set from this computer: check the clock and time zone of this computer.",
+				time.Unix(h.camEpoch, 0).UTC().Format("2006-01-02 15:04:05"), time.Unix(pc, 0).UTC().Format("2006-01-02 15:04:05"), humanSeconds(absInt64(h.camEpoch-pc)))), false
+	}
 	return lines, true
 }
 
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// clockUnset is true when the camera says nothing set its clock, or it reads before minPlausibleEpoch.
+func clockUnset(h camHealth) bool {
+	return h.timeSet == "0" || (h.camEpoch > 0 && h.camEpoch < minPlausibleEpoch)
+}
+
 func clockReportRaw(h camHealth) (lines []string, offer bool) {
-	unset := h.timeSet == "0" || (h.camEpoch > 0 && h.camEpoch < minPlausibleEpoch)
-	if unset {
+	if clockUnset(h) {
 		l := "Clock: not set (the camera has no battery clock and starts in 2000 until something sets it)"
 		if h.camEpoch > 0 {
 			l += "; it reads " + time.Unix(h.camEpoch, 0).UTC().Format("2006-01-02 15:04:05") + " UTC"
