@@ -201,6 +201,58 @@ check_onvif_ports() {
     fi
 }
 
+# ---------------------------------------------------------------- MQTT (G17)
+# MQTT is off by default (akam_mqtt.sh): no file, or enabled=0, means ak_rtsp has no MQTT thread and no socket, so it
+# must hold no outbound TCP connection. On, it holds exactly one (to the broker). "Outbound" = a TCP socket of ak_rtsp
+# (found through its /proc/<pid>/fd inodes) in state ESTABLISHED or SYN_SENT whose local port is ephemeral (32768 and
+# up); RTSP and control-port clients are accepted on 554 and 8091 and do not count. Prints the number, or "?".
+tcp_outbound_of_pid() {
+    [ -d "$ROOT/proc/$1/fd" ] && [ -r "$ROOT/proc/net/tcp" ] || { echo "?"; return; }
+    : > "$WORK/akino"
+    # shellcheck disable=SC2012  # the socket links are named socket:[inode]: ls -l shows the link target, find would not
+    ls -l "$ROOT/proc/$1/fd" 2>/dev/null | while read -r _l; do
+        case $_l in
+            *"socket:["*"]"*) _i=${_l##*socket:[}; echo "${_i%%]*}" >> "$WORK/akino" ;;
+        esac
+    done
+    _n=0
+    while read -r _sl _la _ra _st _q _tr _rt _uid _to _ino _rest; do
+        case $_sl in *:) ;; *) continue ;; esac
+        case $_st in 01 | 02) ;; *) continue ;; esac
+        _lp=$((0x${_la##*:}))
+        [ "$_lp" -ge 32768 ] || continue
+        if grep -qx "$_ino" "$WORK/akino" 2>/dev/null; then _n=$((_n + 1)); fi
+    done < "$ROOT/proc/net/tcp"
+    echo "$_n"
+}
+check_mqtt() {
+    section "MQTT"
+    mf=${AKAM_MQTT_FILE:-$ROOT/etc/config/akam/mqtt}
+    mon=0
+    if [ -r "$mf" ]; then
+        while IFS= read -r ml || [ -n "$ml" ]; do
+            case $ml in enabled=1) mon=1 ;; esac
+        done < "$mf"
+    fi
+    mp=$(pids_of ak_rtsp)
+    mp=${mp%% *}
+    if [ -z "$mp" ]; then unk "ak_rtsp not running: MQTT not checked"; return; fi
+    mn=$(tcp_outbound_of_pid "$mp")
+    if [ "$mn" = "?" ]; then unk "the sockets of ak_rtsp are not readable: MQTT not checked"; return; fi
+    if [ "$mon" = 1 ]; then
+        case $mn in
+            1) pass "MQTT is on: ak_rtsp holds one outbound TCP connection (the broker)" ;;
+            0) warn "MQTT is on but ak_rtsp holds no outbound TCP connection (broker unreachable or backing off: akam_mqtt.sh status)" ;;
+            *) fail "MQTT is on but ak_rtsp holds $mn outbound TCP connections (one expected)" ;;
+        esac
+    else
+        case $mn in
+            0) pass "MQTT is off: ak_rtsp holds no outbound TCP connection" ;;
+            *) fail "MQTT is off but ak_rtsp holds $mn outbound TCP connection(s): no socket is allowed (akam_mqtt.sh status)" ;;
+        esac
+    fi
+}
+
 check_ports() {
     section "listening sockets"
     if ! collect_listen; then
@@ -867,6 +919,7 @@ esac
 echo "akam_hwcheck: read-only check; results are evidence, not validation"
 check_ports
 check_udp
+check_mqtt
 check_procs
 check_proc_allowlist
 check_cpu
@@ -879,6 +932,7 @@ section "manual tests still to do (not automated)"
 cat <<'MSG'
     - microphone audible, night mode/IR cut, H.264 1080p stream in a player
     - 80/tcp and 3702/udp: closed by default; open only after ./akam onvif enable
+    - MQTT (./akam mqtt set): off = ak_rtsp holds no outbound TCP connection; on = exactly one (to the broker)
     - 8091: LIST / GET from the PC (read-only), SET refused, SET after akam_debug.sh on
     - SSH login by key from another machine, and persistence across a power cut
     - boot without microSD, Wi-Fi auto-reconnect, Telnet never reachable

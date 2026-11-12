@@ -30,6 +30,7 @@
 "/sbin/akam_debug.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_hostname.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_lockdown.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
+"/sbin/akam_mqtt.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_net.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_ntp.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_onvif.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)

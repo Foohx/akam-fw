@@ -45,7 +45,7 @@ procedures behind it are in the [documentation index](README.md#manual-procedure
 
 Inside the APP image: `anyka_ipc` (Tuya) removed; `ak_rtsp` started through `ak_rtsp_wrapper.sh` from a
 single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` links; `akam_ssh.sh`,
-`akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh`, `akam_net.sh` and `akam_ntp.sh`; `sbin/service.sh` and `sbin/ethernet.sh` patched; Dropbear license and a `MANIFEST.txt`.
+`akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh`, `akam_net.sh`, `akam_ntp.sh` and `akam_mqtt.sh`; `sbin/service.sh` and `sbin/ethernet.sh` patched; Dropbear license and a `MANIFEST.txt`.
 
 ## 3. Services after Akam
 
@@ -57,6 +57,7 @@ single-entry `_ht_process.ini`; `dropbearmulti` with `dropbear` / `dropbearkey` 
 | 23/tcp, 24/tcp | Telnet | Closed, never re-enabled |
 | 21/tcp | FTP | Closed |
 | 80/tcp (or the chosen port) | ONVIF device and media service of `ak_rtsp` | **Closed by default.** Open, LAN only, after `./akam onvif enable` (needs the video password) |
+| none (outbound only) | MQTT client of `ak_rtsp`, one TCP connection to the broker you configured | **Off by default.** No listening port ever; one outgoing connection to your broker (usually 1883) after `./akam mqtt set` ([MQTT](mqtt.md)) |
 | 3702/udp | ONVIF WS-Discovery (multicast `239.255.255.250`) | Closed by default; open with ONVIF, LAN only |
 
 No cloud endpoint is needed: the Tuya client is removed. Running with no Internet route at all has not

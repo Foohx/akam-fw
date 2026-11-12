@@ -30,6 +30,7 @@
 #include "swdog.h"
 #include "version.h"
 #include "onvif_device.h"
+#include "mqtt_svc.h"
 
 #ifndef CONTROL_PORT
 #define CONTROL_PORT 8091   /* the host test builds with another port */
@@ -356,6 +357,11 @@ static void do_list(cli_t *c)
         onvif_svc_state(os, sizeof(os));
         reply(c, "onvif.state=%s", os);
     }
+    {
+        char ms[MQTT_STATE_MAX];
+        mqtt_svc_state(ms, sizeof(ms));
+        reply(c, "mqtt.state=%s", ms);
+    }
     reply(c, ".");
 }
 
@@ -395,6 +401,13 @@ static void do_get(cli_t *c, const char *param)
         char os[ONVIF_STATE_MAX];
         onvif_svc_state(os, sizeof(os));
         reply(c, "onvif.state=%s", os);
+    }
+    else if (!strcmp(param, "mqtt.state") || !strcmp(param, "mqtt.stats") || !strcmp(param, "mqtt.test")) {
+        char ms[96];
+        if (!strcmp(param, "mqtt.state")) mqtt_svc_state(ms, sizeof(ms));
+        else if (!strcmp(param, "mqtt.stats")) mqtt_svc_stats(ms, sizeof(ms));
+        else mqtt_svc_test_result(ms, sizeof(ms));
+        reply(c, "%s=%s", param, ms);
     }
     else if (!strcmp(param, "ctl.debug_remaining")) {
         pthread_mutex_lock(&g_dbg_lock);
@@ -579,6 +592,23 @@ int control_get_setting(const char *key, char *out, size_t cap)
     return rc;
 }
 
+/* Value (text, without "key=") of any key the camera knows: picture keys, night.mode, night.state, the LED, audio and
+ * talk keys and the metrics. The reader of the MQTT module (mqtt_ops.c). 0, or -1 for an unknown key. */
+int control_get_value(const char *key, char *out, size_t cap)
+{
+    char line[160];
+    if (control_get_setting(key, out, cap) == 0) return 0;
+    if (!strcmp(key, "night.state")) { snprintf(out, cap, "%s", night_is_night() ? "night" : "day"); return 0; }
+    if (ctl_sys_get(key, out, cap) == 0) return 0;
+    if (ledsys_ctl_get(key, line, sizeof(line)) == 0 || audio_out_ctl_get(key, line, sizeof(line)) == 0) {
+        size_t kl = strlen(key);
+        if (strncmp(line, key, kl) != 0 || line[kl] != '=') return -1;   /* "ERR unknown param ..." */
+        snprintf(out, cap, "%s", line + kl + 1);
+        return 0;
+    }
+    return -1;
+}
+
 /* Write the four picture values to flash now (what a loopback SET does after each change). 0, or -1 (errno). */
 int control_persist_picture(void)
 {
@@ -685,6 +715,18 @@ static void handle_control_client(cli_t *c)
                 (void)onvif_svc_reload(os, sizeof(os));
                 reply(c, "OK onvif.state=%s", os);
             }
+        } else if (!strcasecmp(cmd, "MQTT")) {
+            /* loopback only, like ONVIF: reload starts/stops the MQTT client from its files; test connects once */
+            char *a1 = strtok_r(NULL, " ", &sp);
+            if (!c->loopback) reply(c, "ERR MQTT commands are only allowed from the camera");
+            else if (a1 && !strcasecmp(a1, "reload")) {
+                char ms[MQTT_STATE_MAX];
+                (void)mqtt_svc_reload(ms, sizeof(ms));
+                reply(c, "OK mqtt.state=%s", ms);
+            } else if (a1 && !strcasecmp(a1, "test")) {
+                if (mqtt_svc_test_start() == 0) reply(c, "OK mqtt.test=running");
+                else reply(c, "ERR no valid MQTT configuration");
+            } else reply(c, "ERR usage: MQTT reload|test");
         } else if (!strcasecmp(cmd, "DEBUG")) {
             char *a1 = strtok_r(NULL, " ", &sp);
             char *a2 = strtok_r(NULL, " ", &sp);

@@ -1,0 +1,8 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+MQTT: forget
+  WOULD ask: Delete the saved MQTT settings and password from the camera? [y/N] (default: No)
+  WOULD run over SSH on the camera: /usr/sbin/akam_mqtt.sh forget
+--- stderr ---

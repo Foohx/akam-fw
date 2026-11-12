@@ -1,0 +1,9 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+MQTT: set
+  WOULD ask the broker address, port, user name and password (the password is not shown and goes on stdin, never in a command line).
+  WOULD ask: Turn MQTT on with these settings? [y/N] (default: No)
+  WOULD run over SSH on the camera: /usr/sbin/akam_mqtt.sh set <host> <port> <user> (password on stdin)
+--- stderr ---

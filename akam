@@ -105,6 +105,12 @@ Commands:
                      ONVIF for NVRs and apps (ONVIF Device Manager, Frigate, Home Assistant): off by default.
                      'enable' (asks first, needs the stream password: rtsp-auth set) opens TCP PORT (default 80)
                      and UDP 3702 on your network; 'disable' closes them. Over SSH. Default: status
+  mqtt [status | set | disable | forget | test]
+                     optional MQTT client for Home Assistant (a broker on your network): off by default, over SSH.
+                       set: asks the broker address, port, user name and password (not shown), then asks (default No)
+                         whether to turn it on; the camera connects OUT (no new open port), in plain TCP
+                       disable: stop (the settings stay); forget: stop and delete the settings and the password
+                       test: one connection attempt with the saved settings; status (default): on or off, the broker
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
                      'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
@@ -293,6 +299,7 @@ case $CMD in
     debug) cmd_debug ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     ntp) cmd_ntp ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     onvif) cmd_onvif ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
+    mqtt) cmd_mqtt ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     audio) cmd_audio ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     picture) cmd_picture ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;
     video) cmd_video ${ARGS[@]+"${ARGS[@]:1}"} || rc=$? ;;

@@ -506,6 +506,46 @@ has "wakeups: 3 threads x 60 switches in 2 s = 90/s" 'ak_rtsp pid 101 wakeups 90
 run t37 "$R1" "$S1"
 hasnt "wakeups: no per-thread data, nothing invented" 'wakeups' "$WORK/t37.out"
 
+# 38. MQTT: off = no outbound TCP connection of ak_rtsp, on = exactly one ---------------------------------------
+tcp_conn() { printf '   1: 0900A8C0:%04X 0A00A8C0:075B %s 00000000:00000000 00:00000000 00000000     0        0 %s 1 0\n' "$2" "$3" "$4" >> "$1/proc/net/tcp"; }
+sock_of() { mkdir -p "$1/proc/$2/fd"; ln -s "socket:[$3]" "$1/proc/$2/fd/$4"; }
+R38=$WORK/r38; mkroot "$R38"
+sock_of "$R38" 101 900 3                                    # an RTSP client accepted on 554 does not count
+tcp_conn "$R38" 554 01 900
+run t38 "$R38" "$WORK/s20"
+has "mqtt off, only a client on 554: PASS" '^PASS +MQTT is off: ak_rtsp holds no outbound TCP connection' "$WORK/t38.out"
+R39=$WORK/r39; mkroot "$R39"
+sock_of "$R39" 101 901 3
+tcp_conn "$R39" 40001 01 901
+run t39 "$R39" "$WORK/s20"
+has "mqtt off but an outbound connection: FAIL" '^FAIL +MQTT is off but ak_rtsp holds 1 outbound' "$WORK/t39.out"
+R40=$WORK/r40; mkroot "$R40"
+mkdir -p "$R40/etc/config/akam"; printf 'enabled=1\nhost=192.0.2.10\nport=1883\nuser=u\n' > "$R40/etc/config/akam/mqtt"
+sock_of "$R40" 101 902 3
+tcp_conn "$R40" 40002 01 902
+run t40 "$R40" "$WORK/s20"
+has "mqtt on with one outbound connection: PASS" '^PASS +MQTT is on: ak_rtsp holds one outbound TCP connection' "$WORK/t40.out"
+hasnt "mqtt on: the password file and the host are not printed" '192\.0\.2\.10' "$WORK/t40.out"
+R41=$WORK/r41; mkroot "$R41"
+mkdir -p "$R41/etc/config/akam"; printf 'enabled=1\nhost=h\n' > "$R41/etc/config/akam/mqtt"
+mkdir -p "$R41/proc/101/fd"
+run t41 "$R41" "$WORK/s20"
+has "mqtt on, no connection (backoff): WARN" '^WARN +MQTT is on but ak_rtsp holds no outbound' "$WORK/t41.out"
+R42=$WORK/r42; mkroot "$R42"
+mkdir -p "$R42/etc/config/akam"; printf 'enabled=1\nhost=h\n' > "$R42/etc/config/akam/mqtt"
+sock_of "$R42" 101 903 3; sock_of "$R42" 101 904 4
+tcp_conn "$R42" 40003 01 903; tcp_conn "$R42" 40004 02 904
+run t42 "$R42" "$WORK/s20"
+has "mqtt on with two outbound connections: FAIL" '^FAIL +MQTT is on but ak_rtsp holds 2 outbound' "$WORK/t42.out"
+R43=$WORK/r43; mkroot "$R43"
+mkdir -p "$R43/etc/config/akam"; printf 'enabled=0\nhost=h\n' > "$R43/etc/config/akam/mqtt"
+sock_of "$R43" 101 905 3
+tcp_conn "$R43" 40005 01 905
+run t43 "$R43" "$WORK/s20"
+has "mqtt enabled=0 with a connection: FAIL" '^FAIL +MQTT is off but ak_rtsp holds 1 outbound' "$WORK/t43.out"
+run t44 "$R1" "$S1"
+has "mqtt: no fd directory for ak_rtsp: UNKNOWN, not a guess" '^UNKNOWN +the sockets of ak_rtsp are not readable' "$WORK/t44.out"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

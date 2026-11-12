@@ -41,6 +41,8 @@ type Options struct {
 	NoOnvifHelper bool
 	// NoNtpHelper makes akam_ntp.sh "not found" (an older image).
 	NoNtpHelper bool
+	// NoMqttHelper makes akam_mqtt.sh "not found" (an older image).
+	NoMqttHelper bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
 	// MtdRead, when set, may change what one `dd if=/dev/mtdblockN` read streams: n is the partition,
@@ -165,6 +167,15 @@ case "$1 $2" in
     "DEBUG status")
         if [ -f "$f" ]; then echo "ctl.debug=1 remaining=$(( $(cat "$f") * 60 ))"; else echo "ctl.debug=0"; fi ;;
     "ONVIF reload") echo "OK" ;;
+    "MQTT reload") echo "OK mqtt.state=connecting" ;;
+    "MQTT test") echo "OK mqtt.test=running" ;;
+    "GET mqtt.state")
+        if grep -qx 'enabled=1' "$AKAM_ROOT/etc/config/akam/mqtt" 2>/dev/null; then echo "mqtt.state=connected"; else echo "mqtt.state=off"; fi ;;
+    "GET mqtt.test")
+        # a broker that refuses one password: the password file says what the test sees
+        if [ "$(cat "$AKAM_ROOT/etc/config/akam/mqtt_pass" 2>/dev/null)" = "reject-me-please" ]; then
+            echo "mqtt.test=error:refused_credentials"
+        else echo "mqtt.test=ok"; fi ;;
     *) echo "ERR unknown command" ;;
 esac
 `
@@ -422,6 +433,12 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 			return c.onvif(f[1:], stdout, stderr)
 		case "akam_ntp.sh":
 			return c.ntp(f[1:], stdout, stderr)
+		case "akam_mqtt.sh":
+			if c.opts.NoMqttHelper {
+				fmt.Fprintf(stderr, "sh: %s: not found\n", f[0])
+				return 127
+			}
+			return c.runScript(name, f[1:], stdin, stdout, stderr)
 		case "akam_rtsp_auth.sh", "akam_hostname.sh", "akam_debug.sh":
 			if name == "akam_hostname.sh" && c.opts.NoHostnameHelper {
 				fmt.Fprintf(stderr, "sh: %s: not found\n", f[0])

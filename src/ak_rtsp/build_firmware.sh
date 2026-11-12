@@ -12,7 +12,7 @@
 #      KEEP_PATCHED=1; the Akam install/patch steps below run in both cases)
 #   2. de-Tuyafication: remove anyka_ipc, install ak_rtsp + wrapper + ini
 #   3. Akam: install dropbearmulti (+ dropbear/dropbearkey symlinks),
-#      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, akam_hostname.sh, akam_debug.sh, akam_onvif.sh, akam_net.sh, akam_ntp.sh, LICENSE.dropbear, MANIFEST.txt;
+#      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, akam_hostname.sh, akam_debug.sh, akam_onvif.sh, akam_net.sh, akam_ntp.sh, akam_mqtt.sh, LICENSE.dropbear, MANIFEST.txt;
 #      patch sbin/service.sh (telnet/ftp off)
 #   4. safety checks (modes, no private key), mksquashfs, round-trip verify,
 #      size guard (BEFORE padding), pad to exactly 5242880 bytes, report,
@@ -605,12 +605,12 @@ BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null 
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh; do
     [ "$(stat -c %a "$PATCHED/$f")" = 755 ] || die "$f is not mode 755"
 done
 BADW="$(find "$PATCHED/local/akam" \( -type f -o -type d \) -perm /022 2>/dev/null)"
 [ -z "$BADW" ] || die "group/other-writable files in local/akam: $BADW"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/service.sh; do
+for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh sbin/service.sh; do
     if [ ! -e "$PATCHED/$f" ] || [ -n "$(find "$PATCHED/$f" -perm /022)" ]; then
         die "$f is group/other-writable or missing"
     fi
@@ -703,7 +703,7 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
+    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
     echo "ak_rtsp sha256:     $SHA_AK"

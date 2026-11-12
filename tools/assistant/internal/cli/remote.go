@@ -20,6 +20,7 @@ const (
 	debugCmd    = "/usr/sbin/akam_debug.sh"
 	onvifCmd    = "/usr/sbin/akam_onvif.sh"
 	ntpCmd      = "/usr/sbin/akam_ntp.sh"
+	mqttCmd     = "/usr/sbin/akam_mqtt.sh"
 )
 
 // restartVideoCmd is the ONE command that kills a process: it stops ak_rtsp (the video service), which its
@@ -74,6 +75,9 @@ func remoteDebug(action string, minutes string) string {
 
 func remoteOnvif(args ...string) string { return onvifCmd + " " + strings.Join(args, " ") }
 
+// remoteMqtt is the MQTT helper. The broker password is never an argument: it goes on stdin (see mqttSet).
+func remoteMqtt(args ...string) string { return mqttCmd + " " + strings.Join(args, " ") }
+
 // remoteRegister reads the camera's name and the md5 of its APP partition (read-only).
 func remoteRegister() string {
 	return `echo "REG_HOSTNAME=$(hostname)"; echo "REG_MTD7_MD5=$(dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum | cut -d" " -f1)"`
@@ -86,6 +90,8 @@ func allRemoteCommands() []string {
 		remoteRtspAuth("status"), remoteRtspAuth("show"), remoteRtspAuth("set-creds"), remoteRtspAuth("disable"),
 		remoteDebug("on", "60"), remoteDebug("off", ""), remoteDebug("status", ""),
 		remoteOnvif("enable", "80"), remoteOnvif("disable"), remoteOnvif("status"),
+		remoteMqtt("status"), remoteMqtt("set", "192.0.2.10", "1883", "bob"), remoteMqtt("set", "broker.lan", "1883", "-"),
+		remoteMqtt("disable"), remoteMqtt("forget"), remoteMqtt("test"),
 		remoteRegister(), remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
 		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)),
 	}

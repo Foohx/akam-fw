@@ -325,6 +325,8 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdDebug(args)
 	case "onvif":
 		return a.cmdOnvif(args)
+	case "mqtt":
+		return a.cmdMqtt(args)
 	case "audio":
 		return a.cmdAudio(args)
 	case "picture":

@@ -20,6 +20,7 @@ type optSnap struct {
 	vals     map[string]camopt.OptionState
 	fw, host string
 	onvifOn  bool
+	mqtt     string // on | off | unknown
 	rtsp     string // enabled | disabled | invalid | unknown
 	ntp      string // on | off | unknown
 	health   camHealth
@@ -74,6 +75,7 @@ func (a *App) readOptions(c *camssh.Client) optSnap {
 	snap.health = readCamHealth(func(k string) string { return ctl.Get(k, raw) })
 	a.readCamClock(c, &snap.health)
 	snap.onvifOn, _ = a.onvifFlag(c)
+	snap.mqtt = a.mqttState(c)
 	snap.rtsp, _ = a.rtspStatus(c)
 	snap.ntp = "unknown"
 	if res, err := a.run(c, remoteNtp("status"), nil, ""); err == nil && res.Status == 0 {
@@ -142,7 +144,7 @@ func groupSummary(group string, s optSnap) string {
 		if name == "" {
 			name = "n/a"
 		}
-		return fmt.Sprintf("ONVIF: %s   NTP: %s   name: %s   Wi-Fi: %s (read-only)", onOff(s.onvifOn), s.ntp, name, ssid)
+		return fmt.Sprintf("ONVIF: %s   NTP: %s   name: %s   Wi-Fi: %s (read-only)   MQTT: %s", onOff(s.onvifOn), s.ntp, name, ssid, s.mqtt)
 	case "Security":
 		t := map[string]string{"enabled": "on", "disabled": "off"}[s.rtsp]
 		if t == "" {
@@ -393,6 +395,7 @@ func (a *App) networkScreen(c *camssh.Client, snap optSnap) {
 		fmt.Sprintf("NTP: %s  (set the time servers, or turn it off)", snap.ntp),
 		fmt.Sprintf("Host name: %s  (applies at the next power cycle)", orDash(snap.host)),
 		fmt.Sprintf("Wi-Fi: %s  (read-only: changing it needs the flash card)", ssid),
+		fmt.Sprintf("MQTT / Home Assistant: %s  (set the broker, or turn it off)", snap.mqtt),
 		"Back",
 	}
 	i, err := a.UI.Pick("Network:", items)
@@ -426,6 +429,12 @@ func (a *App) networkScreen(c *camssh.Client, snap optSnap) {
 			return
 		}
 		e = a.cmdHostname(s)
+	case 4:
+		if snap.mqtt == "on" {
+			e = a.cmdMqtt([]string{"disable"})
+		} else {
+			e = a.cmdMqtt([]string{"set"})
+		}
 	case 3:
 		a.UI.Say("  The Wi-Fi name and password are written to the flash card when the camera is installed; a wrong value would lock the camera out of your network, so they cannot be changed from here.")
 	}

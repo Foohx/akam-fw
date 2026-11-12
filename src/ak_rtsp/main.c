@@ -32,6 +32,8 @@
 #include "rtsp.h"
 #include "cred.h"
 #include "onvif_cfg.h"
+#include "mqtt_svc.h"
+#include "mqtt_ops.h"
 #include "swdog.h"
 #include "klog.h"
 #include "version.h"
@@ -350,6 +352,15 @@ int main(int argc, char **argv)
         printf("[ak_rtsp] onvif.state=%s\n", ostate);
     }
 
+    /* MQTT is opt-in too (/etc/config/akam/mqtt): same rule, started after the stream is up. Off: no thread, no
+     * socket. On: one thread that connects out to the configured broker and never touches the video path. */
+    {
+        char mstate[MQTT_STATE_MAX];
+        mqtt_svc_set_ops(&mqtt_ops_camera);
+        mqtt_svc_reload(mstate, sizeof(mstate));
+        printf("[ak_rtsp] mqtt.state=%s\n", mstate);
+    }
+
     for (;;) {
         swdog_beat(SWDOG_BEAT_MAIN);
         swdog_mode(SWDOG_FETCH);
@@ -398,6 +409,7 @@ int main(int argc, char **argv)
     close(server_fd);
 
 err:
+    mqtt_svc_stop();
     onvif_svc_stop();
     ledsys_stop();
     night_stop();

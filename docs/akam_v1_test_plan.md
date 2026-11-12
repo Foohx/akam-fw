@@ -89,6 +89,24 @@ Known, not a test failure: the image is grainier than the stock firmware's (impr
 | 16 | Image fits in APP | `build_report.txt` free bytes, and a successful flash | [x] 2026-11-08 (2.7 MB free) |
 | 17 | Restore documented and (your decision) rehearsed | [Flash and restore](akam_v1_flash_and_restore.md) | [ ] documented, not rehearsed |
 
+### MQTT (optional, needs a camera and a broker)
+
+Not run on a camera yet. Use a test broker (see [MQTT and Home Assistant](mqtt.md#5-try-it-without-a-broker-a-temporary-mosquitto-on-your-computer)) or Home
+Assistant with its Mosquitto add-on. Steps M1 to M8 are the MQTT part of the spec 07 hardware plan (H1 to H7 there).
+
+| # | Check | How | Done |
+|---|---|---|---|
+| M1 | Off by default: no thread, no socket | Fresh image, no MQTT file: `akam_hwcheck.sh` says `MQTT is off: ak_rtsp holds no outbound TCP connection`; `ls /proc/$(pidof ak_rtsp)/task` has the same number of threads as an image without MQTT (record both) | [ ] |
+| M2 | `./akam mqtt set` then `mqtt test` | Wrong password: test says refused; right password: test says ok; `mqtt status` shows `state: connected` | [ ] |
+| M3 | Home Assistant entities | One device `akam-XXXX` with all entities of [the table](mqtt.md#3-what-home-assistant-gets); the MAC merges it with the ONVIF device if both are on | [ ] |
+| M4 | Controls work both ways | Each select, number, switch and button in Home Assistant changes the real LED, IR LEDs, night mode, volume (hear it), picture (see it), talk switch, beep; a change made with `./akam led status off` shows up in Home Assistant within about 2 s | [ ] |
+| M5 | Sensors plausible | Compare CPU load with `top`, Wi-Fi signal with `iwconfig` or `./akam status`, frame rate and bitrate with `./akam video show`; temperature present or absent as the camera reports | [ ] |
+| M6 | Availability | Kill `ak_rtsp` on the camera (the wrapper restarts it) or unplug it: the device shows unavailable within about 90 s (last will), then available again | [ ] |
+| M7 | Broker restart | Stop and start the broker: the camera reconnects (delay 5 s growing to 60 s) and publishes discovery again | [ ] |
+| M8 | One outbound connection, video untouched | `akam_hwcheck.sh` says `MQTT is on: ak_rtsp holds one outbound TCP connection`; frame rate (`video.fps_actual`) and bitrate unchanged compared with MQTT off, over a 10 minute stream; free memory and `ak_rtsp` VmRSS recorded with MQTT off and on (budget: the delta must stay under 100 KB) | [ ] |
+| M9 | Hostile input | `mosquitto_pub` to `BASE/volume/set` with `101`, `-1`, `5;reboot`, an empty and a 10 KB payload, to `BASE/reboot/set`, `BASE/uptime/set` and a retained `BASE/beep/set PRESS`: nothing changes, the camera stays connected | [ ] |
+| M10 | Broker down at boot | Enable MQTT, power cycle with the broker stopped: the stream and ONVIF come up as usual, MQTT state is `error:connect`, and it connects once the broker is back | [ ] |
+
 ---
 
 ## 2. Post-flash procedure

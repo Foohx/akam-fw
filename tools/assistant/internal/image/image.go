@@ -328,7 +328,7 @@ func hasPrivateKeyPEM(data []byte) bool {
 
 // requiredModes are the files that must be mode 755 in the image.
 var requiredModes = []string{"bin/ak_rtsp", "bin/dropbearmulti", "sbin/ak_rtsp_wrapper.sh", "sbin/akam_ssh.sh", "sbin/akam_lockdown.sh",
-	"sbin/akam_rtsp_auth.sh", "sbin/akam_hostname.sh", "sbin/akam_debug.sh", "sbin/akam_onvif.sh", "sbin/akam_net.sh", "sbin/akam_ntp.sh"}
+	"sbin/akam_rtsp_auth.sh", "sbin/akam_hostname.sh", "sbin/akam_debug.sh", "sbin/akam_onvif.sh", "sbin/akam_net.sh", "sbin/akam_ntp.sh", "sbin/akam_mqtt.sh"}
 
 func (b *builder) safety(root *squashfs.Node) error {
 	var bad []string
