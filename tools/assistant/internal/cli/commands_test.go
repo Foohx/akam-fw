@@ -435,6 +435,17 @@ func TestFindCamera(t *testing.T) {
 	r = e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")
 	expectRC(t, r, 1)
 	contains(t, r.err, "only SSH answers.")
+
+	// only SSH answers, but it is OpenSSH: a plain server, not a camera that is starting
+	o := newEnv(t, func(op *testfake.Options) { op.SSHVersion = "SSH-2.0-OpenSSH_9.6p1 Debian-3" })
+	seedDone(o, "doctor", "prepare-backup-sd")
+	t.Setenv("AKAM_PORT_SSH", itoa(o.cam.SSHPort()))
+	t.Setenv("AKAM_PORT_RTSP", freeClosedPort(t))
+	t.Setenv("AKAM_PORT_CTL", freeClosedPort(t))
+	r = o.runRaw("", "--no-color", "--state-dir", o.state, "--ip", "127.0.0.1", "find-camera")
+	expectRC(t, r, 1)
+	notContains(t, r.err, "only SSH answers")
+	contains(t, r.err, "this is not Akam")
 }
 
 func TestFindCameraTypedAddressAndNothingFound(t *testing.T) {

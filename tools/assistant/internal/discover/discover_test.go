@@ -93,7 +93,12 @@ func TestScanFindsHostsAndRespectsTheConcurrencyLimit(t *testing.T) {
 		for _, p := range open[host] {
 			if p == port {
 				a, b := net.Pipe()
-				b.Close()
+				go func() { // the SSH server says who it is first
+					if port == "22" {
+						b.Write([]byte("SSH-2.0-dropbear_2026.94\r\n"))
+					}
+					b.Close()
+				}()
 				return a, nil
 			}
 		}
@@ -183,5 +188,59 @@ func TestMDNSLookup(t *testing.T) {
 	}
 	if _, err := MDNSLookup(context.Background(), "nobody.local", "127.0.0.1:9", 100*time.Millisecond); err == nil {
 		t.Error("an unanswered query succeeded")
+	}
+}
+
+// bannerDial serves one fixed first line on every connection (an SSH server saying who it is).
+func bannerDial(banner string) DialFunc {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			b.Write([]byte(banner))
+			b.Close()
+		}()
+		return a, nil
+	}
+}
+
+func TestIsDropbear(t *testing.T) {
+	for b, want := range map[string]bool{
+		"SSH-2.0-dropbear_2026.94": true, "SSH-2.0-dropbear_fake": true, "SSH-2.0-Dropbear": true,
+		"SSH-2.0-OpenSSH_9.6p1 Ubuntu": false, "SSH-2.0-dropbear-like-but-not": true, "SSH-2.0-libssh_0.10": false,
+		"": false, "HTTP/1.1 400 Bad Request": false, "SSH-2.0": false,
+	} {
+		if IsDropbear(b) != want {
+			t.Errorf("%q: %v", b, !want)
+		}
+	}
+}
+
+func TestClassifyHostOnlyDropbearIsPartial(t *testing.T) {
+	p := Ports{Telnet: 24, SSH: 22, RTSP: 554, CTL: 8091}
+	ctx := context.Background()
+	for _, c := range []struct {
+		name string
+		dial DialFunc
+		open []int
+		want Kind
+	}{
+		{"dropbear", bannerDial("SSH-2.0-dropbear_2026.94\r\n"), []int{22}, Partial},
+		{"openssh", bannerDial("SSH-2.0-OpenSSH_9.6p1 Debian-3\r\n"), []int{22}, Unknown},
+		{"not ssh", bannerDial("220 FTP ready\r\n"), []int{22}, Unknown},
+		{"silent", bannerDial(""), []int{22}, Unknown},
+		{"refused", func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }, []int{22}, Unknown},
+		{"akam is never demoted", bannerDial("SSH-2.0-OpenSSH_9.6\r\n"), []int{22, 554, 8091}, Akam},
+		{"stock is never demoted", bannerDial("SSH-2.0-OpenSSH_9.6\r\n"), []int{24, 22}, Stock},
+	} {
+		if got := ClassifyHost(ctx, "192.0.2.9", c.open, p, c.dial); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSSHBannerReadsOnlyTheFirstLine(t *testing.T) {
+	got, err := SSHBanner(context.Background(), "192.0.2.9", 22, time.Second, bannerDial("SSH-2.0-dropbear_2026.94\r\nmore"))
+	if err != nil || got != "SSH-2.0-dropbear_2026.94" {
+		t.Errorf("%q %v", got, err)
 	}
 }

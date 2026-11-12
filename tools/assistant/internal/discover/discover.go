@@ -5,12 +5,16 @@
 package discover
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -61,7 +65,7 @@ type Kind string
 const (
 	Stock   Kind = "stock"   // maintenance telnet open: stock firmware with the toolkit card
 	Akam    Kind = "akam"    // SSH, video and control ports open, telnet closed
-	Partial Kind = "partial" // only SSH answers (Akam still starting)
+	Partial Kind = "partial" // only SSH answers, and its banner is Dropbear (Akam still starting)
 	Unknown Kind = "unknown"
 )
 
@@ -88,6 +92,58 @@ func Classify(open []int, p Ports) Kind {
 		return Partial
 	}
 	return Unknown
+}
+
+// bannerTimeout bounds the read of the SSH identification string.
+const bannerTimeout = 1500 * time.Millisecond
+
+// SSHBanner connects to host:port and reads the server identification string (the first line, at most
+// 255 bytes), nothing else: no key exchange, no login. The connection is dropped at once.
+func SSHBanner(ctx context.Context, host string, port int, timeout time.Duration, dial DialFunc) (string, error) {
+	if timeout <= 0 {
+		timeout = bannerTimeout
+	}
+	if dial == nil {
+		dial = realDial(timeout)
+	}
+	c, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := dial(c, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	line, err := bufio.NewReaderSize(io.LimitReader(conn, 255), 256).ReadString('\n')
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "SSH-") {
+		return line, nil
+	}
+	if err == nil {
+		err = errors.New("not an SSH identification string")
+	}
+	return "", err
+}
+
+// IsDropbear tells whether a banner is the one of Dropbear (the SSH server of every Akam camera):
+// "SSH-2.0-dropbear_2026.94". OpenSSH or anything else is not.
+func IsDropbear(banner string) bool {
+	parts := strings.SplitN(banner, "-", 3) // SSH, 2.0, software[ comments]
+	return len(parts) == 3 && strings.HasPrefix(strings.ToLower(parts[2]), "dropbear")
+}
+
+// ClassifyHost is Classify, then, for a host where only SSH-like ports answer (Partial), a read of the
+// SSH banner: a plain server (OpenSSH, ...) is not a camera starting up, so it is Unknown. Only a
+// Dropbear banner keeps Partial.
+func ClassifyHost(ctx context.Context, host string, open []int, p Ports, dial DialFunc) Kind {
+	k := Classify(open, p)
+	if k != Partial {
+		return k
+	}
+	if b, err := SSHBanner(ctx, host, p.SSH, bannerTimeout, dial); err != nil || !IsDropbear(b) {
+		return Unknown
+	}
+	return Partial
 }
 
 // Host is one scan result.
@@ -193,7 +249,7 @@ func Scan(ctx context.Context, sn Subnet, ports Ports, conc int, timeout time.Du
 	wg.Wait()
 	for i := range found {
 		sort.Slice(found[i].Open, func(a, b int) bool { return rank(plist, found[i].Open[a]) < rank(plist, found[i].Open[b]) })
-		found[i].Kind = Classify(found[i].Open, ports)
+		found[i].Kind = ClassifyHost(ctx, found[i].IP, found[i].Open, ports, dial)
 	}
 	sort.Slice(found, func(a, b int) bool { return ipLess(found[a].IP, found[b].IP) })
 	return found

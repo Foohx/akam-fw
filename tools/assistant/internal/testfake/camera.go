@@ -44,6 +44,9 @@ type Options struct {
 	NoNtpHelper bool
 	// NoMqttHelper makes akam_mqtt.sh "not found" (an older image).
 	NoMqttHelper bool
+	// SSHVersion is the SSH identification string the server sends (default "SSH-2.0-dropbear_fake", like
+	// the camera's Dropbear); a test may make the host look like a plain OpenSSH server.
+	SSHVersion string
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
 	// CtlAnswerLimit, when above 0, makes the control port answer only that many lines and then stay
@@ -296,6 +299,9 @@ func (c *Camera) handleSSH(nc net.Conn) {
 			return nil, errors.New("key refused")
 		},
 		ServerVersion: "SSH-2.0-dropbear_fake",
+	}
+	if c.opts.SSHVersion != "" {
+		cfg.ServerVersion = c.opts.SSHVersion
 	}
 	c.hostKeyMu.Lock()
 	cfg.AddHostKey(c.hostSigner)
