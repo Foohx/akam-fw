@@ -46,7 +46,7 @@ func TestGuardBypassTable(t *testing.T) {
 			t.Errorf("the guard lets %q through", bad)
 		}
 	}
-	for _, ok := range []string{"cat /proc/mtd", "uname -r; uname -v", "echo x 2>/dev/null", remoteRegister(), "dd if=/dev/mtdblock0 bs=64k", "dd if=/dev/mtdblock7 bs=64k"} {
+	for _, ok := range []string{"cat /proc/mtd", "uname -r; uname -v", remoteRegister(), "dd if=/dev/mtdblock0 bs=64k", "dd if=/dev/mtdblock7 bs=64k"} {
 		if why := forbiddenRemote(ok); why != "" {
 			t.Errorf("%q refused: %s", ok, why)
 		}

@@ -32,7 +32,7 @@ var procMtdRe = regexp.MustCompile(`^mtd([0-7]): ([0-9a-f]{8}) ([0-9a-f]{8}) "([
 // of each partition as the camera reports it (the cap of its read).
 func (a *App) bkSSHLayout(c *camssh.Client) ([8]int64, string, error) {
 	var caps [8]int64
-	out, status, err := a.runCapped(c, "cat /proc/mtd", 4096)
+	out, status, err := a.runCapped(c, remoteMtdList, 4096)
 	if err != nil || status != 0 {
 		return caps, "", a.UI.Fail("cannot read /proc/mtd on the camera.", "check the SSH session and run the backup again.")
 	}
@@ -242,7 +242,7 @@ func (a *App) backupSSH() error {
 		return err
 	}
 	kernel := ""
-	if out, status, err := a.runCapped(c, "uname -r; uname -v", 1024); err == nil && status == 0 {
+	if out, status, err := a.runCapped(c, remoteKernelInfo, 1024); err == nil && status == 0 {
 		ls := strings.Split(strings.TrimRight(textsafe.Clean(string(out)), "\n"), "\n")
 		if len(ls) >= 2 {
 			kernel = strings.TrimSpace(ls[0]) + " " + strings.TrimSpace(ls[1])
