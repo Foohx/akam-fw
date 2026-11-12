@@ -246,7 +246,7 @@ eq "invalid file: status exit 3" "$rc" 3
 contains "invalid file: INVALID shown" "$out" "INVALID"
 for bad in 'enabled=1\n' 'host=h\n' 'enabled=1\nhost=h\nport=0\n' 'enabled=1\nhost=h\nport=99999\n' 'enabled=1\nenabled=1\nhost=h\n' \
     'enabled=1\nhost=h\nbogus=1\n' 'enabled=1\nhost=h\n\n' 'enabled=1\nhost=h\nuser=a b\n' 'enabled=1\nhost=h\ninterval=5\n' \
-    'enabled=1\nhost=h\ndiscovery=1\n' 'enabled=1\nhost=h\nbase_topic=/x\n' 'enabled=1\nhost=h\npass=secret\n'; do
+    'enabled=1\nhost=h\ndiscovery=1\n' 'enabled=1\nhost=h\nbase_topic=/x\n' 'enabled=1\nhost=h\npass=secret\n' 'enabled=1\nhost=h\nuser=-\n'; do
     # shellcheck disable=SC2059
     printf "$bad" >"$CFG"
     run status >/dev/null

@@ -1144,7 +1144,7 @@ RTSP_AUTH_MIN_PASS=8
 RTSP_AUTH_MAX_PASS=128
 
 rtsp_user_valid() {
-    case $1 in '' | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
+    case $1 in '' | - | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
     [ "${#1}" -le 32 ]
 }
 
@@ -1952,7 +1952,7 @@ mqtt_port_ok() {
     [ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 mqtt_user_ok() {
-    case $1 in '' | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
+    case $1 in '' | - | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
     [ "${#1}" -le 32 ]
 }
 
@@ -1984,6 +1984,7 @@ mqtt_set() {
     ui_say "  MQTT lets the camera publish its state to a broker (for example Home Assistant) and take a few commands from it."
     ui_say "  The camera connects out to the broker: no new port is opened on the camera. The connection is plain TCP,"
     ui_say "  so the broker password travels in clear on your network. The broker must be on your own network."
+    ui_say "  Use its IP address, or a name your router's DNS knows: names ending in .local (mDNS) do not work on the camera."
     ui_prompt "  Broker address (host name or IPv4 address):" "" || { ui_fail "no broker address." "nothing was changed."; return 1; }
     host=$ANSWER
     [ -n "$host" ] || { ui_fail "no broker address." "nothing was changed."; return 1; }

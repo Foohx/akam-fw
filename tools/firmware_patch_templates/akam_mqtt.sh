@@ -66,7 +66,7 @@ valid_host() {
 
 valid_user() {
     case $1 in
-        '' | *[!A-Za-z0-9._@+-]*) return 1 ;;
+        '' | - | *[!A-Za-z0-9._@+-]*) return 1 ;;   # a lone - is the "no user" marker of set, never a name
     esac
     [ "${#1}" -le "$USER_MAX" ]
 }

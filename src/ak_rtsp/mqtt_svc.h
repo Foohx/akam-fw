@@ -6,7 +6,7 @@
  *   enabled=0|1            required
  *   host=NAME              required: a host name or IPv4 address (A-Z a-z 0-9 . -), 1 to 63 characters
  *   port=N                 1 to 65535 (default 1883)
- *   user=NAME              0 to 32 of A-Z a-z 0-9 . _ @ + - (default none)
+ *   user=NAME              0 to 32 of A-Z a-z 0-9 . _ @ + - (default none; a lone - is refused)
  *   client_id=ID           1 to 32 of A-Z a-z 0-9 _ - (default: the hostname)
  *   base_topic=T           A-Z a-z 0-9 _ - and /, 1 to 64, no leading, trailing or double / (default akam/<hostname>)
  *   discovery=on|off       Home Assistant discovery documents (default on)
@@ -58,6 +58,12 @@ extern const char *mqtt_pass_path;
  * seconds, the period of the change scan, how long a PINGREQ or the CONNECT may stay unanswered). */
 typedef struct { unsigned backoff_min_ms, backoff_max_ms, keepalive_s, tick_ms, ping_reply_ms, connack_ms; } mqtt_svc_tune_t;
 extern mqtt_svc_tune_t mqtt_svc_tune;
+
+#ifndef MQTT_NO_DNS
+#include <netinet/in.h>
+/* TEST-ONLY: replaces the system name resolver (runs in a detached helper thread). NULL in production. */
+extern int (*mqtt_svc_resolver)(const char *host, struct in_addr *out);
+#endif
 
 /* The camera access (production: mqtt_ops.c). Must be set before the first reload; with none the module stays off. */
 void mqtt_svc_set_ops(const mqtt_ops_t *ops);

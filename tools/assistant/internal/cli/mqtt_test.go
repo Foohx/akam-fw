@@ -158,6 +158,7 @@ func TestMqttInputIsValidatedBeforeAnythingIsSent(t *testing.T) {
 		{"h\nabc\n", "invalid port."},
 		{"h\n1883\nbad user\n", "invalid user name."},
 		{"h\n1883\na:b\n", "invalid user name."},
+		{"h\n1883\n-\n", "invalid user name."},
 		{"h\n1883\n" + strings.Repeat("u", 33) + "\n", "invalid user name."},
 		{"h\n1883\nbob\n" + long + "\n", "the password is too long."},
 		{"h\n1883\nbob\nab\tc\n", "control character"},

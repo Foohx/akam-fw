@@ -28,6 +28,7 @@
 #define CONNECT_TIMEOUT_MS 10000
 #define SEND_TIMEOUT_MS 5000
 #define THREAD_STACK 65536
+#define DNS_WAIT_MS 20000    /* longest wait for a name lookup */
 
 const char *mqtt_cfg_path = MQTT_CFG_PATH;
 const char *mqtt_pass_path = MQTT_PASS_PATH;
@@ -107,7 +108,7 @@ int mqtt_cfg_parse(const char *text, size_t len, mqtt_cfg_t *out)
             c.port = (int)x;
             break;
         case K_USER:
-            if (vl > 32 || !in_set(v, vl, "._@+-", 0)) return -1;
+            if (vl > 32 || !in_set(v, vl, "._@+-", 0) || (vl == 1 && v[0] == '-')) return -1;   /* "-" means "none" in the helper */
             memcpy(c.user, v, vl);
             break;
         case K_ID:
@@ -292,32 +293,113 @@ static int wait_fd(int fd, short ev, int timeout_ms, int wake)
     }
 }
 
-/* The broker address: an IPv4 literal, or (unless built with -DMQTT_NO_DNS, which saves about 14 KB of the static
- * binary) a name that the system resolver knows. 0 and *sa, or -1. */
-static int resolve(const mqtt_cfg_t *cfg, struct sockaddr_in *sa)
+#ifndef MQTT_NO_DNS
+/* TEST-ONLY hook (mqtt_svc.h): replaces the system resolver. */
+int (*mqtt_svc_resolver)(const char *host, struct in_addr *out);
+
+static int sys_resolve(const char *host, struct in_addr *out)
+{
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) return -1;
+    *out = ((struct sockaddr_in *)(void *)res->ai_addr)->sin_addr;
+    freeaddrinfo(res);
+    return 0;
+}
+
+/* A name lookup can block for 10 to 30 s on a dead resolver and cannot be cancelled, so it runs in a short detached
+ * thread that fills a heap slot; the MQTT thread polls the slot together with the wake pipe. A stop or reload therefore
+ * never waits for DNS: the helper is abandoned and frees the slot itself when it finally returns. */
+typedef struct {
+    pthread_mutex_t mu;
+    int             done, abandoned, ok;
+    struct in_addr  addr;
+    char            host[64];
+} dns_job_t;
+
+static void dns_job_free(dns_job_t *j)
+{
+    pthread_mutex_destroy(&j->mu);
+    free(j);
+}
+
+static void *dns_main(void *arg)
+{
+    dns_job_t *j = arg;
+    struct in_addr a;
+    int ok = (mqtt_svc_resolver ? mqtt_svc_resolver : sys_resolve)(j->host, &a) == 0;
+    pthread_mutex_lock(&j->mu);
+    j->ok = ok;
+    if (ok) j->addr = a;
+    j->done = 1;
+    int drop = j->abandoned;
+    pthread_mutex_unlock(&j->mu);
+    if (drop) dns_job_free(j);
+    return NULL;
+}
+
+static int resolve_name(const char *host, int wake, struct in_addr *out, const char **reason)
+{
+    pthread_t t;
+    pthread_attr_t at;
+    dns_job_t *j = calloc(1, sizeof(*j));
+    if (!j) { *reason = "dns"; return -1; }
+    pthread_mutex_init(&j->mu, NULL);
+    snprintf(j->host, sizeof(j->host), "%s", host);
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, THREAD_STACK);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    int rc = pthread_create(&t, &at, dns_main, j);
+    pthread_attr_destroy(&at);
+    if (rc != 0) { dns_job_free(j); *reason = "dns"; return -1; }
+    int64_t end = now_ms() + DNS_WAIT_MS;
+    int res = -1, stopped = 0;
+    for (;;) {
+        pthread_mutex_lock(&j->mu);
+        int done = j->done;
+        pthread_mutex_unlock(&j->mu);
+        if (done || now_ms() >= end) break;
+        struct pollfd p = { wake, POLLIN, 0 };
+        (void)poll(&p, wake >= 0 ? 1 : 0, 20);
+        if (wake >= 0 && (p.revents & POLLIN)) { stopped = 1; break; }
+    }
+    pthread_mutex_lock(&j->mu);
+    if (j->done) {
+        if (j->ok) { *out = j->addr; res = 0; }
+        pthread_mutex_unlock(&j->mu);
+        dns_job_free(j);
+    } else {
+        j->abandoned = 1;                         /* the helper frees the slot when the lookup returns */
+        pthread_mutex_unlock(&j->mu);
+    }
+    if (res != 0) *reason = stopped ? "stopped" : "dns";
+    return res;
+}
+#endif
+
+/* The broker address: an IPv4 literal, or (unless built with -DMQTT_NO_DNS, which saves about 16 KB of the static
+ * binary) a name that the system resolver knows. 0 and *sa, or -1 with *reason. */
+static int resolve(const mqtt_cfg_t *cfg, int wake, struct sockaddr_in *sa, const char **reason)
 {
     memset(sa, 0, sizeof(*sa));
     sa->sin_family = AF_INET;
     sa->sin_port = htons((uint16_t)cfg->port);
     if (inet_pton(AF_INET, cfg->host, &sa->sin_addr) == 1) return 0;
 #ifdef MQTT_NO_DNS
+    (void)wake;
+    *reason = "dns";
     return -1;
 #else
-    struct addrinfo hints, *res = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(cfg->host, NULL, &hints, &res) != 0 || !res) return -1;
-    sa->sin_addr = ((struct sockaddr_in *)(void *)res->ai_addr)->sin_addr;
-    freeaddrinfo(res);
-    return 0;
+    return resolve_name(cfg->host, wake, &sa->sin_addr, reason);
 #endif
 }
 
 static int dial(const mqtt_cfg_t *cfg, int wake, const char **reason)
 {
     struct sockaddr_in sa;
-    if (resolve(cfg, &sa) != 0) { *reason = "dns"; return -1; }
+    if (resolve(cfg, wake, &sa, reason) != 0) return -1;
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) { *reason = "connect"; return -1; }
     int one = 1;
@@ -380,23 +462,27 @@ static int pump(conn_t *c, int timeout_ms)
     return (int)n;
 }
 
+static void consume(conn_t *c, size_t n)
+{
+    memmove(c->rx, c->rx + n, c->rxlen - n);
+    c->rxlen -= n;
+}
+
 /* The next whole packet in rx: 1 (p filled, drop it with consume()), 0 none yet, -1 malformed stream. */
 static int next_pkt(conn_t *c, mqtt_pkt_t *p)
 {
     int r = mqtt_frame(c->rx, c->rxlen, RX_CAP - 5, p);
     if (r > 0) return 1;
     if (r == -2) {                                    /* well formed but too big to keep: skip it */
-        c->skip = p->total > c->rxlen ? p->total - c->rxlen : 0;
+        if (p->total <= c->rxlen) {                   /* all of it is here: the next packet may start right behind */
+            consume(c, p->total);
+            return next_pkt(c, p);
+        }
+        c->skip = p->total - c->rxlen;
         c->rxlen = 0;
         return 0;
     }
     return r;
-}
-
-static void consume(conn_t *c, size_t n)
-{
-    memmove(c->rx, c->rx + n, c->rxlen - n);
-    c->rxlen -= n;
 }
 
 static const char *connack_reason(int rc)
@@ -504,6 +590,7 @@ static int handle_packet(conn_t *c, const mqtt_pkt_t *p)
         int idx = mqtt_ha_command(&g_ha, m.topic, m.tlen, m.payload, m.plen, m.retain);
         sync_counters();
         if (idx >= 0 && pub_state(c, (size_t)idx, 1) != 0) return -1;
+        if (idx < 0 && g_ha.reject_idx >= 0 && pub_state(c, (size_t)g_ha.reject_idx, 1) != 0) return -1;   /* HA shows the real value */
         return 0;
     }
     case MQTT_PINGRESP: case MQTT_SUBACK: case MQTT_PUBACK: case 5: case 7: case MQTT_UNSUBACK:

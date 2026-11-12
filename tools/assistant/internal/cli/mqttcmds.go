@@ -161,6 +161,7 @@ func (a *App) mqttSet(c *camssh.Client) error {
 	a.UI.Say("  MQTT lets the camera publish its state to a broker (for example Home Assistant) and take a few commands from it.")
 	a.UI.Say("  The camera connects out to the broker: no new port is opened on the camera. The connection is plain TCP,")
 	a.UI.Say("  so the broker password travels in clear on your network. The broker must be on your own network.")
+	a.UI.Say("  Use its IP address, or a name your router's DNS knows: names ending in .local (mDNS) do not work on the camera.")
 	host, err := a.UI.Prompt("  Broker address (host name or IPv4 address):", "")
 	if err != nil || host == "" {
 		return a.UI.Fail("no broker address.", "nothing was changed.")
@@ -179,7 +180,7 @@ func (a *App) mqttSet(c *camssh.Client) error {
 	if err != nil {
 		return a.UI.Fail("no input.", "nothing was changed.")
 	}
-	if user != "" && !mqttUserRe.MatchString(user) {
+	if user != "" && (user == "-" || !mqttUserRe.MatchString(user)) {
 		return a.UI.Fail("invalid user name.", fmt.Sprintf("use 1 to %d letters, digits or . _ @ + - (no spaces, no colon); nothing was changed.", mqttUserMax))
 	}
 	pw := ""

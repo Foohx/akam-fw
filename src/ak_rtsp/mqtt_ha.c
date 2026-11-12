@@ -119,6 +119,7 @@ int mqtt_ha_init(mqtt_ha_t *h, const mqtt_ops_t *ops, const char *base, const ch
 {
     char v[64];
     memset(h, 0, sizeof(*h));
+    h->reject_idx = -1;
     h->ops = ops;
     h->discovery = discovery;
     ops->hostname(h->host);
@@ -364,6 +365,7 @@ int mqtt_ha_command(mqtt_ha_t *h, const char *topic, size_t tlen, const uint8_t 
     char id[24], pl[MQTT_HA_VAL_MAX], val[24], msg[96];
     const char *rest;
     size_t rl, il;
+    h->reject_idx = -1;
     /* not ours: BASE/<id>/set only */
     if (tlen <= bl + 5 || memcmp(topic, h->base, bl) != 0 || topic[bl] != '/') return -2;
     if (memcmp(topic + tlen - 4, "/set", 4) != 0) return -2;
@@ -377,6 +379,7 @@ int mqtt_ha_command(mqtt_ha_t *h, const char *topic, size_t tlen, const uint8_t 
     for (size_t i = 0; i < N_ENT; i++)
         if (is_cmd(&g_ent[i]) && !strcmp(g_ent[i].id, id)) { idx = i; break; }
     if (idx == N_ENT || !h->present[idx]) { h->invalid++; return -1; }
+    h->reject_idx = (int)idx;                    /* until the command is applied */
     if (retained) { h->invalid++; return -1; }   /* a retained command would replay at every reconnect */
     if (plen == 0 || plen >= sizeof(pl)) { h->invalid++; return -1; }
     for (size_t i = 0; i < plen; i++)
@@ -385,10 +388,18 @@ int mqtt_ha_command(mqtt_ha_t *h, const char *topic, size_t tlen, const uint8_t 
     pl[plen] = '\0';
     if (command_value(&g_ent[idx], pl, val, sizeof(val)) != 0) { h->invalid++; return -1; }
     msg[0] = '\0';
-    if (h->ops->set(g_ent[idx].key, val, (g_ent[idx].flags & F_PERSIST) ? 1 : 0, msg, sizeof(msg)) != 0) {
+    int saved = (g_ent[idx].flags & F_PERSIST) ? 1 : 0;
+    int64_t now = h->ops->now_ms ? h->ops->now_ms() : 0;
+    if (saved && h->ops->now_ms && h->have_persist && now - h->last_persist_ms < MQTT_HA_PERSIST_GAP_MS) {
+        h->invalid++;                             /* flash wear: one saved change per window */
+        return -1;
+    }
+    if (h->ops->set(g_ent[idx].key, val, saved, msg, sizeof(msg)) != 0) {
         h->invalid++;
         return -1;
     }
+    if (saved) { h->last_persist_ms = now; h->have_persist = 1; }
+    h->reject_idx = -1;
     h->applied++;
     return (int)idx;
 }

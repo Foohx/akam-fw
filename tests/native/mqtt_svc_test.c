@@ -80,8 +80,11 @@ static int f_set(const char *key, const char *value, int persist, char *msg, siz
 }
 static void f_host(char *out) { strcpy(out, "akam-0f0f"); }
 static const char *f_ver(void) { return "b1-test"; }
-static const mqtt_ops_t g_ops = { f_get, f_set, f_host, f_ver };
+static int64_t f_now(void);
+static const mqtt_ops_t g_ops = { f_get, f_set, f_host, f_ver, f_now };
 static int set_calls(void) { pthread_mutex_lock(&g_cam_mu); int n = g_set_calls; pthread_mutex_unlock(&g_cam_mu); return n; }
+
+static int64_t f_now(void) { return now_ms(); }
 
 /* ------------------------------------------------------------------ fake broker */
 #define MAXREC 600
@@ -364,6 +367,15 @@ static int count_dir(const char *path)
 static int tasks(void) { return count_dir("/proc/self/task"); }
 static int fds(void) { return count_dir("/proc/self/fd"); }
 
+static int g_dns_mode;
+static int slow_resolver(const char *host, struct in_addr *out)
+{
+    (void)host;
+    if (g_dns_mode == 1) usleep(1500000);
+    if (g_dns_mode == 2) return -1;
+    out->s_addr = htonl(INADDR_LOOPBACK);
+    return 0;
+}
 static char g_dir[256], g_cfg[300], g_pass[300];
 static void write_file(const char *path, const char *text, mode_t mode)
 {
@@ -378,6 +390,13 @@ static void write_cfg(const char *extra)
 {
     char t[600];
     snprintf(t, sizeof(t), "enabled=1\nhost=127.0.0.1\nport=%d\n%s", B.port, extra);
+    write_file(g_cfg, t, 0600);
+}
+
+static void write_cfg_host(const char *host, const char *extra)
+{
+    char t[600];
+    snprintf(t, sizeof(t), "enabled=1\nhost=%s\nport=%d\n%s", host, B.port, extra);
     write_file(g_cfg, t, 0600);
 }
 
@@ -411,7 +430,7 @@ static void test_parser(void)
         { "enabled=1\nhost=h\ninterval=1e2\n", "interval junk" }, { "enabled=1\nhost=h\n\n", "blank line" },
         { "enabled=1\nhost=h\njunk\n", "no equals" }, { "enabled = 1\nhost=h\n", "spaces" }, { " enabled=1\nhost=h\n", "leading space" },
         { "enabled=1\nhost=h\n#c\n", "comment" }, { "enabled=1\nhost=h\npass=secret\n", "pass is not a config key" },
-        { "enabled=1\nhost=h\nuser=a\xff\n", "user high byte" },
+        { "enabled=1\nhost=h\nuser=a\xff\n", "user high byte" }, { "enabled=1\nhost=h\nuser=-\n", "user is a lone dash" },
     };
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         if (mqtt_cfg_parse(bad[i].t, strlen(bad[i].t), &c) == 0) fprintf(stderr, "  accepted: %s\n", bad[i].why);
@@ -546,7 +565,11 @@ static void test_session(void)
     broker_publish("other/topic", "x", 1, 0, 0);
     usleep(200000);
     CHECK(set_calls() == calls);
-    CHECK(pub_find(base, "akam/akam-0f0f/volume/state", NULL, 0, NULL) < 0);
+    /* a rejected command republishes the entity's real value (the UI snaps back), never the rejected one */
+    {
+        int k = pub_find(base, "akam/akam-0f0f/volume/state", v, sizeof(v), NULL);
+        CHECK(k >= 0 && !strcmp(v, "42"));
+    }
     mqtt_svc_state(st, sizeof(st));
     CHECK_STR(st, "connected");
     char stats[120];
@@ -568,6 +591,40 @@ static void test_session(void)
         mqtt_svc_state(st, sizeof(st));
         CHECK_STR(st, "connected");
     }
+
+    /* an oversized packet (total 639 bytes, just over the keep limit) followed by a command in the same read: the
+     * first read holds the whole big packet plus one byte of the next one, which must not be lost */
+    {
+        uint8_t pk[800];
+        size_t o = 0;
+        const char *tp = "akam/akam-0f0f/volume/set";
+        size_t tl = strlen(tp), plen = 609, body = 2 + tl + plen;
+        pk[o++] = 0x30; pk[o++] = (uint8_t)((body & 0x7f) | 0x80); pk[o++] = (uint8_t)(body >> 7);
+        pk[o++] = 0; pk[o++] = (uint8_t)tl;
+        memcpy(pk + o, tp, tl); o += tl;
+        memset(pk + o, '7', plen); o += plen;
+        pk[o++] = 0x30; pk[o++] = (uint8_t)(2 + tl + 2); pk[o++] = 0; pk[o++] = (uint8_t)tl;
+        memcpy(pk + o, tp, tl); o += tl;
+        pk[o++] = '2'; pk[o++] = '1';
+        base = BGET(npub);
+        calls = set_calls();
+        bw(pk, o);
+        CHECK(WAIT_FOR(set_calls() == calls + 1 && !strcmp(g_set_val, "21"), 3000));
+        mqtt_svc_state(st, sizeof(st));
+        CHECK_STR(st, "connected");
+        CHECK(BGET(protocol_errors) == 0);
+    }
+
+    /* saved changes (LED here) are limited to one per window: the second is rejected and its state is republished */
+    base = BGET(npub);
+    calls = set_calls();
+    broker_publish("akam/akam-0f0f/status_led/set", "on", 2, 0, 0);
+    broker_publish("akam/akam-0f0f/ir_led/set", "off", 3, 0, 0);
+    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/ir_led/state", v, sizeof(v), &retain) >= 0, 3000));
+    CHECK(!strcmp(v, "auto") && retain == 1);                     /* still the real value */
+    CHECK(set_calls() == calls + 1 && !strcmp(g_set_key, "led.status"));
+    CHECK(pub_find(base, "akam/akam-0f0f/status_led/state", v, sizeof(v), NULL) >= 0 && !strcmp(v, "on"));
+    kv_set("led.status", "auto");
 
     /* QoS 1 delivery: PUBACK comes back */
     broker_publish("akam/akam-0f0f/brightness/set", "-5", 2, 0, 1);
@@ -725,6 +782,36 @@ static void test_failures(void)
         }
         CHECK(tasks() == t0 && fds() == f0);
     }
+
+    /* name lookups: a slow resolver never makes stop or reload wait; a fast one connects; a failing one says dns */
+    mqtt_svc_resolver = slow_resolver;
+    g_dns_mode = 1;                                             /* 1.5 s, then 127.0.0.1 */
+    write_cfg_host("slow.test", "user=bob\n");
+    {
+        int64_t t1 = now_ms();
+        mqtt_svc_reload(st, sizeof(st));
+        usleep(100000);
+        mqtt_svc_stop();
+        CHECK(now_ms() - t1 < 1000);
+        t1 = now_ms();
+        mqtt_svc_reload(st, sizeof(st));
+        usleep(100000);
+        mqtt_svc_reload(st, sizeof(st));                         /* reload during the lookup */
+        CHECK(now_ms() - t1 < 1000);
+        mqtt_svc_stop();
+    }
+    usleep(1800000);                                            /* the abandoned helpers finish and free their slots */
+    CHECK(tasks() == t0 && fds() == f0);
+    g_dns_mode = 0;                                             /* immediate 127.0.0.1 */
+    mqtt_svc_reload(st, sizeof(st));
+    CHECK(wait_state("connected", 3000));
+    mqtt_svc_stop();
+    g_dns_mode = 2;                                             /* immediate failure */
+    mqtt_svc_reload(st, sizeof(st));
+    CHECK(wait_state("error:dns", 3000));
+    mqtt_svc_stop();
+    mqtt_svc_resolver = NULL;
+    CHECK(tasks() == t0 && fds() == f0);
 
     /* a reload while running restarts with the new file; a reload to "off" stops it */
     write_cfg("user=bob\ndiscovery=off\n");

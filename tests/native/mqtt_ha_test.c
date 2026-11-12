@@ -54,7 +54,10 @@ static int f_set(const char *key, const char *value, int persist, char *msg, siz
 }
 static void f_host(char *out) { strcpy(out, "akam-0f0f"); }
 static const char *f_ver(void) { return "b12-abc1234"; }
-static const mqtt_ops_t g_ops = { f_get, f_set, f_host, f_ver };
+static int64_t g_now = 1000;
+static int64_t f_now(void) { return g_now; }
+static const mqtt_ops_t g_ops = { f_get, f_set, f_host, f_ver, NULL };
+static const mqtt_ops_t g_ops_clk = { f_get, f_set, f_host, f_ver, f_now };
 
 /* ------------------------------------------------------------------ strict JSON validator (objects of strings, numbers, arrays, objects) */
 typedef struct { const char *p, *end; int err; int depth; } js_t;
@@ -454,6 +457,28 @@ static void test_commands(void)
     CHECK(mqtt_ha_command(&h, "akam/akam-0f0f/volume/set", 25, (const uint8_t *)"33", 2, 0) == -2);
 }
 
+/* Saved changes: one per window; sliders are never limited; the rejected entity is reported for a state republish. */
+static void test_rate_limit(void)
+{
+    mqtt_ha_t h;
+    mqtt_ha_init(&h, &g_ops_clk, "", "", 1);
+    g_now = 5000;
+    g_set_calls = 0;
+    CHECK(cmd(&h, "status_led", "on", 0) == (int)idx_of("status_led") && g_set_calls == 1 && h.reject_idx == -1);
+    g_now = 5000 + MQTT_HA_PERSIST_GAP_MS - 1;
+    CHECK(cmd(&h, "ir_led", "off", 0) == -1 && g_set_calls == 1 && h.reject_idx == (int)idx_of("ir_led"));
+    CHECK(cmd(&h, "night_mode", "day", 0) == -1 && cmd(&h, "talk", "OFF", 0) == -1 && g_set_calls == 1);
+    CHECK(cmd(&h, "volume", "10", 0) == (int)idx_of("volume") && cmd(&h, "beep", "PRESS", 0) >= 0 && g_set_calls == 3);   /* RAM-only: free */
+    CHECK(h.invalid >= 3 && h.reject_idx == -1);
+    g_now = 5000 + MQTT_HA_PERSIST_GAP_MS;
+    CHECK(cmd(&h, "ir_led", "off", 0) == (int)idx_of("ir_led") && g_set_calls == 4);
+    CHECK(cmd(&h, "night_mode", "day", 0) == -1);                /* the window restarted */
+    /* a failed or invalid saved command does not start a window */
+    mqtt_ha_init(&h, &g_ops_clk, "", "", 1);
+    g_now = 100000;
+    CHECK(cmd(&h, "status_led", "blink", 0) == -1 && cmd(&h, "status_led", "on", 0) >= 0);
+}
+
 /* Random topics and payloads: the setter must only ever see an allow-listed key with a value of the right shape. */
 static uint32_t g_rng = 99;
 static uint32_t rnd(void) { g_rng = g_rng * 1664525u + 1013904223u; return g_rng >> 8; }
@@ -509,6 +534,7 @@ int main(void)
     test_discovery();
     test_state();
     test_commands();
+    test_rate_limit();
     test_fuzz();
     if (g_failed) { fprintf(stderr, "mqtt_ha_test: %d FAILED\n", g_failed); return 1; }
     printf("mqtt_ha_test: OK\n");

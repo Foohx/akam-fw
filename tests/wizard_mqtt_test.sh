@@ -112,7 +112,7 @@ check "no user: no password question, user none" bash -c '[ "$1" -eq 0 ] && ! gr
 
 # validation: nothing sent
 : >"$STUB_DIR/ssh.log"
-for in in 'bad host\n' '-h\n' 'h\n0\n' 'h\n65536\n' 'h\nabc\n' 'h\n1883\nbad user\n' 'h\n1883\nbob\nab\tc\n' '\n'; do
+for in in 'bad host\n' '-h\n' 'h\n0\n' 'h\n65536\n' 'h\nabc\n' 'h\n1883\nbad user\n' 'h\n1883\n-\n' 'h\n1883\nbob\nab\tc\n' '\n'; do
     # shellcheck disable=SC2059
     printf -- "$in"'y\n' | a_tty "$S" mqtt set >"$T/v" 2>&1
     check "invalid input refused: ${in//\\n/|}" test $? -ne 0

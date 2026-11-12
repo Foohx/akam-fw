@@ -30,7 +30,14 @@ typedef struct {
     int         (*set)(const char *key, const char *value, int persist, char *msg, size_t cap);
     void        (*hostname)(char *out);       /* >= 33 bytes */
     const char *(*version)(void);
+    int64_t     (*now_ms)(void);              /* monotonic milliseconds; NULL = no rate limit on saved changes */
 } mqtt_ops_t;
+
+/* Saved (flash) changes: at most one per MQTT_HA_PERSIST_GAP_MS for the whole module. The LED and IR setters write flash on
+ * every change and cannot be told to stay in RAM, so a further saved command inside the window is REJECTED (counted in
+ * `invalid`, and the entity's state is published again so Home Assistant shows the real value). Sliders are RAM-only and
+ * never limited. */
+#define MQTT_HA_PERSIST_GAP_MS 10000
 
 typedef struct {
     char     base[72];
@@ -44,6 +51,9 @@ typedef struct {
     uint8_t  present[MQTT_HA_MAX_ENT];       /* optional entities the camera really has */
     uint8_t  have[MQTT_HA_MAX_ENT];          /* a state was published */
     char     last[MQTT_HA_MAX_ENT][MQTT_HA_VAL_MAX];
+    int64_t  last_persist_ms;
+    int      have_persist;
+    int      reject_idx;                     /* entity of the last rejected command (-1 none): the caller republishes its state */
     unsigned invalid;                        /* rejected commands, for the stats */
     unsigned applied;
 } mqtt_ha_t;

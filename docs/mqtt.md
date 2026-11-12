@@ -25,7 +25,7 @@ of Home Assistant pointed at it. Then, from your computer:
 ./akam mqtt set        # or: akam mqtt set   (the native assistant)
 ```
 
-It asks, in order: the broker address (an IPv4 address or a host name your router resolves), the port (Enter = 1883), the
+It asks, in order: the broker address (an IPv4 address, or a host name your router's DNS resolves; names ending in `.local` do not work, the camera has no mDNS), the port (Enter = 1883), the
 user name (empty = none), the password (not shown), and finally **"Turn MQTT on with these settings? [y/N]"** (Enter = No).
 Nothing is sent before that yes. The password goes to the camera on the standard input of the SSH command, never in a
 command line, a log or the saved state. Then it can run a connection test.
@@ -75,7 +75,7 @@ integration's device when both are used). The MAC is part of the discovery messa
 | Frame rate, Video bitrate | sensors | `video.fps_actual`, `video.bitrate` | fps, kbit/s |
 | Clock set | binary sensor (diagnostic) | `sys.time_set` | ON when the camera clock is believable (the camera has no clock of its own: see `./akam ntp`) |
 
-The LED, IR, night mode and talk choices are saved on the camera like the same settings made with `./akam led`. The
+The LED, IR, night mode and talk choices are saved on the camera like the same settings made with `./akam led`. To protect the flash, **at most one saved change is accepted per 10 seconds**: a second one inside the window is ignored (counted as rejected) and the entity is published again with its real value, so Home Assistant snaps back; wait 10 seconds and repeat. The
 volume and the four picture sliders are applied **in RAM only** (a slider drag must not write flash many times): they go
 back to the saved values at the next reboot; save them with `./akam audio volume N` or `./akam picture ...`.
 
