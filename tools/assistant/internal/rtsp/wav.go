@@ -4,17 +4,32 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+
+	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 )
 
 // ErrNotWAV means the stream does not start with a RIFF/WAVE header.
 var ErrNotWAV = errors.New("not a WAV file")
 
+// maxFmtChunk bounds the "fmt " chunk: a real one is 16, 18 or 40 bytes; the size in the header is
+// never trusted for an allocation.
+const maxFmtChunk = 256
+
 // ReadWAV decodes a PCM WAV (8, 16, 24 or 32 bit integer, or 32 bit float; any channel count and
-// sample rate) into 8 kHz mono signed 16-bit samples: channels are averaged, the rate is
-// converted by linear interpolation (with a box average when going down, against aliasing).
-func ReadWAV(r io.Reader) ([]int16, error) {
+// sample rate up to audio.MaxRate) into 8 kHz mono signed 16-bit samples: channels are averaged and
+// the rate goes through audio.Resampler (low-pass, then box average). The data is streamed frame by
+// frame: sizes in the header are only limits, never allocation sizes, so a header claiming more
+// than the file holds just ends at the end of the file. At most audio.MaxSeconds of audio are
+// decoded. It never panics on bad input.
+func ReadWAV(r io.Reader) (pcm []int16, err error) {
+	defer func() {
+		if x := recover(); x != nil {
+			pcm, err = nil, fmt.Errorf("damaged WAV data (%v)", x)
+		}
+	}()
 	br := bufio.NewReader(r)
 	var hdr [12]byte
 	if _, err := io.ReadFull(br, hdr[:]); err != nil || string(hdr[:4]) != "RIFF" || string(hdr[8:12]) != "WAVE" {
@@ -24,22 +39,24 @@ func ReadWAV(r io.Reader) ([]int16, error) {
 		format, channels, bits uint16
 		rate                   uint32
 		haveFmt                bool
-		data                   []byte
+		dataSize               int64
 	)
+	bad := errors.New("unreadable WAV header")
+find:
 	for {
 		var ch [8]byte
 		if _, err := io.ReadFull(br, ch[:]); err != nil {
-			break
+			return nil, errors.New("unreadable WAV header: no audio data")
 		}
-		size := binary.LittleEndian.Uint32(ch[4:8])
+		size := int64(binary.LittleEndian.Uint32(ch[4:8])) // int64: size+size&1 cannot wrap
 		switch string(ch[:4]) {
 		case "fmt ":
-			if size < 16 {
-				return nil, errors.New("unreadable WAV header")
+			if size < 16 || size > maxFmtChunk {
+				return nil, bad
 			}
 			buf := make([]byte, size+size&1)
 			if _, err := io.ReadFull(br, buf); err != nil {
-				return nil, errors.New("unreadable WAV header")
+				return nil, bad
 			}
 			format = binary.LittleEndian.Uint16(buf[0:2])
 			channels = binary.LittleEndian.Uint16(buf[2:4])
@@ -51,27 +68,21 @@ func ReadWAV(r io.Reader) ([]int16, error) {
 			haveFmt = true
 		case "data":
 			if !haveFmt {
-				return nil, errors.New("unreadable WAV header")
+				return nil, bad
 			}
-			if size == 0 || size == 0xFFFFFFFF {
-				b, _ := io.ReadAll(br) // streamed WAV: until the end
-				data = b
-			} else {
-				data = make([]byte, size)
-				n, _ := io.ReadFull(br, data)
-				data = data[:n]
-			}
-			goto decode
+			dataSize = size
+			break find
 		default:
-			if _, err := io.CopyN(io.Discard, br, int64(size)+int64(size&1)); err != nil {
-				return nil, errors.New("unreadable WAV header")
+			if _, err := io.CopyN(io.Discard, br, size+size&1); err != nil {
+				return nil, bad
 			}
 		}
 	}
-	return nil, errors.New("unreadable WAV header: no audio data")
-decode:
 	if channels == 0 || rate == 0 {
-		return nil, errors.New("unreadable WAV header")
+		return nil, bad
+	}
+	if rate > audio.MaxRate {
+		return nil, fmt.Errorf("the sample rate (%d Hz) is not supported", rate)
 	}
 	bps := int(bits) / 8
 	switch {
@@ -80,81 +91,43 @@ decode:
 	default:
 		return nil, errors.New("this WAV format is not supported (use PCM 8, 16, 24 or 32 bit, or 32 bit float)")
 	}
+	var src io.Reader = br
+	if dataSize != 0 && dataSize != 0xFFFFFFFF { // 0 or all ones: streamed WAV, until the end
+		src = io.LimitReader(br, dataSize)
+	}
 	frame := bps * int(channels)
-	n := len(data) / frame
-	mono := make([]float64, n)
-	for i := 0; i < n; i++ {
+	maxFrames := int64(audio.MaxSeconds) * int64(rate)
+	rs := audio.NewResampler(int(rate))
+	buf := make([]byte, frame)
+	var out []int16
+	for n := int64(0); ; n++ {
+		if _, err := io.ReadFull(src, buf); err != nil {
+			break // end of data (a partial last frame is dropped)
+		}
+		if n >= maxFrames {
+			return nil, fmt.Errorf("the audio is longer than %d minutes", audio.MaxSeconds/60)
+		}
 		var sum float64
 		for c := 0; c < int(channels); c++ {
-			o := i*frame + c*bps
+			o := c * bps
 			var v float64
 			switch {
 			case format == 3:
-				v = float64(math.Float32frombits(binary.LittleEndian.Uint32(data[o:]))) * 32768
+				v = float64(math.Float32frombits(binary.LittleEndian.Uint32(buf[o:]))) * 32768
 			case bits == 8:
-				v = (float64(data[o]) - 128) * 256
+				v = (float64(buf[o]) - 128) * 256
 			case bits == 16:
-				v = float64(int16(binary.LittleEndian.Uint16(data[o:])))
+				v = float64(int16(binary.LittleEndian.Uint16(buf[o:])))
 			case bits == 24:
-				v = float64(int32(uint32(data[o])<<8|uint32(data[o+1])<<16|uint32(data[o+2])<<24)>>8) / 256
+				v = float64(int32(uint32(buf[o])<<8|uint32(buf[o+1])<<16|uint32(buf[o+2])<<24)>>8) / 256
 			default:
-				v = float64(int32(binary.LittleEndian.Uint32(data[o:]))) / 65536
+				v = float64(int32(binary.LittleEndian.Uint32(buf[o:]))) / 65536
 			}
 			sum += v
 		}
-		mono[i] = sum / float64(channels)
+		out = rs.Push(sum/float64(channels), out)
 	}
-	return resample8k(mono, int(rate)), nil
-}
-
-func clamp16(v float64) int16 {
-	if v > 32767 {
-		return 32767
-	}
-	if v < -32768 {
-		return -32768
-	}
-	return int16(math.Round(v))
-}
-
-// resample8k converts mono samples at rate to 8000 Hz.
-func resample8k(in []float64, rate int) []int16 {
-	if rate == 8000 {
-		out := make([]int16, len(in))
-		for i, v := range in {
-			out[i] = clamp16(v)
-		}
-		return out
-	}
-	ratio := float64(rate) / 8000
-	n := int(float64(len(in)) / ratio)
-	out := make([]int16, n)
-	for i := 0; i < n; i++ {
-		pos := float64(i) * ratio
-		if ratio > 1 { // going down: average the source samples of this output sample
-			lo, hi := int(pos), int(pos+ratio)
-			if hi > len(in) {
-				hi = len(in)
-			}
-			if hi <= lo {
-				hi = lo + 1
-			}
-			var s float64
-			for k := lo; k < hi && k < len(in); k++ {
-				s += in[k]
-			}
-			out[i] = clamp16(s / float64(hi-lo))
-			continue
-		}
-		j := int(pos)
-		f := pos - float64(j)
-		v := in[j]
-		if j+1 < len(in) {
-			v = in[j]*(1-f) + in[j+1]*f
-		}
-		out[i] = clamp16(v)
-	}
-	return out
+	return out, nil
 }
 
 // Tone returns seconds of a 1 kHz tone at 8 kHz, -16 dBFS, like the camera's own beep.
