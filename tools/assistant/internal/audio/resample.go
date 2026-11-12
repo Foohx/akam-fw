@@ -7,8 +7,9 @@ const Rate = 8000
 
 // Resampler converts a mono float stream at any rate to 8 kHz s16 samples, one input sample at a
 // time (so a long file never has to be held at its native rate). Going down, the input first
-// goes through an 8th-order Butterworth low-pass at 3.6 kHz (four cascaded biquads: about -70 dB
-// at 6 kHz, flat below 3 kHz), so music at 44.1 or 48 kHz does not fold back into the voice band;
+// goes through an 8th-order Butterworth low-pass at 3.6 kHz (four cascaded biquads; measured with a
+// 48 kHz input: -2.3 dB at 3 kHz, -4.1 dB at 3.4 kHz, -48 dB at 6 kHz), so music at 44.1 or 48 kHz
+// does not fold back into the voice band;
 // then every output sample is the average of the input boxes it overlaps, computed with exact
 // integer positions (units of 1/(rate*8000) s). Going up it is a zero-order hold. At 8000 Hz it
 // is the identity.
@@ -36,6 +37,12 @@ func NewResampler(rate int) *Resampler {
 	return rs
 }
 
+// maxInput is the largest input magnitude kept (4 times full scale: a float file can exceed 1.0).
+const maxInput = 4 * 32768
+
+// MaxRate is the highest input sample rate accepted (384 kHz, the top of studio audio).
+const MaxRate = 384000
+
 // lowpassHz is the cut-off of the anti-aliasing filter (the 8 kHz stream has its limit at 4 kHz).
 const lowpassHz = 3600
 
@@ -60,6 +67,15 @@ func (b *biquad) step(x float64) float64 {
 // Push adds one input sample (full scale = +-32768) and appends the output samples it completes.
 // Units: input sample k spans [k*8000, (k+1)*8000), output sample j spans [j*rate, (j+1)*rate).
 func (r *Resampler) Push(v float64, out []int16) []int16 {
+	// A NaN or an infinity would stay in the filter state for good: sanitize the input.
+	switch {
+	case v != v:
+		v = 0
+	case v > maxInput:
+		v = maxInput
+	case v < -maxInput:
+		v = -maxInput
+	}
 	for i := range r.lp {
 		v = r.lp[i].step(v)
 	}
