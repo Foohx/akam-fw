@@ -14,7 +14,7 @@ func TestVideoShowAndSet(t *testing.T) {
 	r := e.run("", "video")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Video settings", "  Bitrate cap: 1536 kbit/s (500 to 3000; the default is 1536).",
-		"  Frame rate: 15 per second (10 or 15; the default is 15).", "  Key frame every 2 second(s) (1 to 4; the default is 2).",
+		"  Frame rate: 15 per second (10, 15, 20 or 25; the default is 15).", "  Key frame every 2 second(s) (1 to 4; the default is 2).",
 		"  Measured now: 1480 kbit/s, 150 (tenths of a frame per second).",
 		"  Resolution and flip/mirror cannot be changed in this version")
 	notContains(t, r.out, "not running yet")
@@ -78,7 +78,7 @@ func TestVideoRestartIsTheOnlyKillAndMatchesTheExactCommand(t *testing.T) {
 func TestVideoRefusesBadWordsBeforeTouchingTheCamera(t *testing.T) {
 	e := newEnv(t)
 	for _, bad := range [][]string{{"video", "bitrate", "499"}, {"video", "bitrate", "3001"}, {"video", "bitrate", "x"}, {"video", "bitrate"},
-		{"video", "bitrate", "1234567"}, {"video", "fps", "12"}, {"video", "fps", "010"}, {"video", "gop", "0"}, {"video", "gop", "5"},
+		{"video", "bitrate", "1234567"}, {"video", "fps", "12"}, {"video", "fps", "30"}, {"video", "fps", "010"}, {"video", "gop", "0"}, {"video", "gop", "5"},
 		{"video", "fps", "10", "fps", "15"}, {"video", "show", "gop", "2"}, {"video", "flip"}, {"video", "mirror", "on"}, {"video", "resolution"}, {"video", "zoom"}} {
 		expectRC(t, e.run("", bad...), 2)
 	}

@@ -29,7 +29,7 @@ func (a *App) videoShow(c *camssh.Client) error {
 	}
 	pend, mbr, mfps := st[3].Value, st[4].Value, st[5].Value
 	a.UI.Say(fmt.Sprintf("  Bitrate cap: %s kbit/s (%d to %d; the default is 1536).", br.Value, camopt.VideoKbpsMin, camopt.VideoKbpsMax))
-	a.UI.Say(fmt.Sprintf("  Frame rate: %s per second (10 or 15; the default is 15).", fps.Value))
+	a.UI.Say(fmt.Sprintf("  Frame rate: %s per second (10, 15, 20 or 25; the default is 15).", fps.Value))
 	a.UI.Say(fmt.Sprintf("  Key frame every %s second(s) (%d to %d; the default is 2).", gop.Value, camopt.VideoGopMin, camopt.VideoGopMax))
 	if pend == "1" {
 		a.UI.Warn("these values are saved but not running yet: they apply at the next restart of the video service.")
@@ -78,7 +78,7 @@ func (a *App) cmdVideo(args []string) error {
 			case "bitrate":
 				msg = fmt.Sprintf("video bitrate needs a whole number of kbit/s from %d to %d", camopt.VideoKbpsMin, camopt.VideoKbpsMax)
 			case "fps":
-				msg = "video fps needs 10 or 15"
+				msg = "video fps needs 10, 15, 20 or 25"
 			default:
 				msg = fmt.Sprintf("video gop needs a whole number of seconds from %d to %d", camopt.VideoGopMin, camopt.VideoGopMax)
 			}

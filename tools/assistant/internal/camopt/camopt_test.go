@@ -77,7 +77,7 @@ func TestApplyReportsAppliesAndSaved(t *testing.T) {
 func TestValidatorsRejectBadValues(t *testing.T) {
 	bad := []Change{
 		{"video.bitrate_cfg", "499"}, {"video.bitrate_cfg", "3001"}, {"video.bitrate_cfg", "12e3"}, {"video.bitrate_cfg", ""},
-		{"video.bitrate_cfg", "1 ; reboot"}, {"video.fps_cfg", "12"}, {"video.fps_cfg", "010"}, {"video.gop_cfg", "0"}, {"video.gop_cfg", "5"},
+		{"video.bitrate_cfg", "1 ; reboot"}, {"video.fps_cfg", "12"}, {"video.fps_cfg", "30"}, {"video.fps_cfg", "5"}, {"video.fps_cfg", "010"}, {"video.gop_cfg", "0"}, {"video.gop_cfg", "5"},
 		{"audio.mic_enable", "on"}, {"led.status", "blue"}, {"isp.contrast", "51"}, {"net.ssid", "x"}, {"nope", "1"},
 	}
 	for _, c := range bad {
@@ -89,7 +89,7 @@ func TestValidatorsRejectBadValues(t *testing.T) {
 			t.Errorf("%v: something was sent although a change was invalid", c)
 		}
 	}
-	for _, c := range []Change{{"video.bitrate_cfg", "500"}, {"video.bitrate_cfg", "3000"}, {"video.fps_cfg", "10"}, {"video.gop_cfg", "4"}, {"isp.sharpness", "-50"}} {
+	for _, c := range []Change{{"video.bitrate_cfg", "500"}, {"video.bitrate_cfg", "3000"}, {"video.fps_cfg", "10"}, {"video.fps_cfg", "15"}, {"video.fps_cfg", "20"}, {"video.fps_cfg", "25"}, {"video.gop_cfg", "4"}, {"isp.sharpness", "-50"}} {
 		if _, err := Validate(c.ID, c.Value); err != nil {
 			t.Errorf("%v: %v", c, err)
 		}

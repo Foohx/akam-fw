@@ -1686,7 +1686,7 @@ video_show() {
         return 1
     fi
     ui_say "  Bitrate cap: $br kbit/s ($VIDEO_KBPS_MIN to $VIDEO_KBPS_MAX; the default is 1536)."
-    ui_say "  Frame rate: $fps per second (10 or 15; the default is 15)."
+    ui_say "  Frame rate: $fps per second (10, 15, 20 or 25; the default is 15)."
     ui_say "  Key frame every $gop second(s) (1 to 4; the default is 2)."
     if [ "$pend" = 1 ]; then
         ui_warn "these values are saved but not running yet: they apply at the next restart of the video service."
@@ -1713,7 +1713,7 @@ cmd_video() {
                 keys+=(video.bitrate_cfg); vals+=("$((10#$2))"); shift 2
                 ;;
             fps)
-                case ${2:-} in 10 | 15) ;; *) echo "akam: video fps needs 10 or 15 (see ./akam help)" >&2; return 2 ;; esac
+                case ${2:-} in 10 | 15 | 20 | 25) ;; *) echo "akam: video fps needs 10, 15, 20 or 25 (see ./akam help)" >&2; return 2 ;; esac
                 for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != video.fps_cfg ] || { echo "akam: video fps given twice (see ./akam help)" >&2; return 2; }; done
                 keys+=(video.fps_cfg); vals+=("$2"); shift 2
                 ;;
