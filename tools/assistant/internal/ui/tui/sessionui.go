@@ -231,10 +231,18 @@ func cleanRow(r ui.FormRow) ui.FormRow {
 // Form edits rows in place (ui.Former). It returns when the user leaves the form, after the pending
 // changes were applied. apply runs off the screen goroutine; a panic in it is an error of that row.
 func (s *sessionUI) Form(title string, rows []ui.FormRow, apply func(id, value string) (ui.FormRow, error)) error {
-	clean := make([]ui.FormRow, len(rows))
-	for i, r := range rows {
+	_, err := s.FormKeys(ui.FormSpec{Title: title, Rows: rows, Apply: apply})
+	return err
+}
+
+// FormKeys is Form with keys (ui.FormKeyer): pressing one applies what is pending, closes the form and
+// reports the key and the group shown.
+func (s *sessionUI) FormKeys(spec ui.FormSpec) (ui.FormResult, error) {
+	clean := make([]ui.FormRow, len(spec.Rows))
+	for i, r := range spec.Rows {
 		clean[i] = cleanRow(r)
 	}
+	apply := spec.Apply
 	safe := func(id, value string) (row ui.FormRow, err error) {
 		defer func() {
 			if p := recover(); p != nil {
@@ -247,8 +255,13 @@ func (s *sessionUI) Form(title string, rows []ui.FormRow, apply func(id, value s
 	if apply == nil {
 		safe = nil
 	}
-	_, err := s.ask(&Form{Title: textsafe.Clean(title), Rows: clean, Apply: safe})
-	return err
+	keys := make([]ui.FormKey, len(spec.Keys))
+	for i, k := range spec.Keys {
+		keys[i] = ui.FormKey{Key: textsafe.Clean(k.Key), Label: textsafe.Clean(k.Label)}
+	}
+	f := &Form{Title: textsafe.Clean(spec.Title), Rows: clean, Apply: safe, Keys: keys, StartGroup: textsafe.Clean(spec.Group)}
+	_, err := s.ask(f)
+	return ui.FormResult{Key: f.Key, Group: f.ShownGroup()}, err
 }
 
 // Details shows a long text in a scrollable pane (ui.Detailer).

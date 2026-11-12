@@ -172,6 +172,9 @@ func (a *App) flowOptions() error {
 		return err
 	}
 	defer c.Close()
+	if fk, ok := a.UI.(ui.FormKeyer); ok {
+		return a.optionsForm(c, ip, fk)
+	}
 	offerClock := true
 	for {
 		snap := a.readOptions(c)

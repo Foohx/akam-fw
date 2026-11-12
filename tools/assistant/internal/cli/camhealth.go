@@ -293,6 +293,13 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 		return
 	}
 	a.UI.Say("  The clock is used by ONVIF clients (their login checks the time) and by video time stamps.")
+	a.clockAsk(c, h)
+}
+
+// clockAsk is the question "Set the camera clock from this computer now?" (default No) and what follows
+// its answer. The caller decides whether it may be asked: clockOffer on the plain path, the t key of
+// the options form (spec 12, 4.5), never unprompted there.
+func (a *App) clockAsk(c *camssh.Client, h camHealth) {
 	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? " + clockLostNote(h)); !ok {
 		if h.ntp != "on" {
 			a.UI.Say(fmt.Sprintf("  Clock left as it is. Time sync keeps it right across reboots: %s ntp set pool.ntp.org", a.camCmd()))
