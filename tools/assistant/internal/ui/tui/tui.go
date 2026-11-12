@@ -7,8 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -21,9 +19,9 @@ type UI struct {
 
 // New wraps a Plain. Use it only on a real terminal (the caller checks).
 func New(p *ui.Plain) *UI {
-	// Only 16-colour attributes are used, so there is no need to ask the terminal for its
-	// background colour (that query waits for an answer some terminals never give).
-	lipgloss.SetHasDarkBackground(true)
+	// The theme uses CompleteColor values only (mid tones readable on both backgrounds), so the
+	// terminal background is never queried: that query waits for an answer some terminals never give.
+	SetTheme(NewTheme(CurrentEnv(p.ErrFile)))
 	return &UI{Plain: p}
 }
 

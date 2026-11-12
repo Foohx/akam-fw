@@ -17,7 +17,10 @@ import (
 
 var updateGolden = flag.Bool("update-flows", false, "rewrite the golden files of the full-screen flows")
 
-func init() { lipgloss.SetColorProfile(termenv.Ascii) }
+func init() {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	tui.SetTheme(tui.NewTheme(tui.Env{Profile: termenv.Ascii, ASCII: true})) // fixed glyphs and no colour, whatever the host
+}
 
 func flowGolden(t *testing.T, name, got string) {
 	t.Helper()

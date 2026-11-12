@@ -1,10 +1,10 @@
 Akam - camera: salon
 ------------------------------------------------------------------------------
-  done     1. Check this computer
-> todo     2. Get the Akam kit
-  blocked  3. Prepare the backup microSD card
-  stale    4. Find the camera on your network
-  tool     Camera: show LEDs
+   [ok] done     1. Check this computer
+ > [~] todo      2. Get the Akam kit
+   [-] blocked   3. Prepare the backup microSD card
+   [!] stale     4. Find the camera on your network
+                 Camera: show LEDs
 
 
 
@@ -21,4 +21,4 @@ Akam - camera: salon
 
   Why: the prebuilt kit means no compiling. Risk: none (download + signatur...
 
-  up/down or j/k move, Enter runs, ? help, q quits
+  up/down move   Enter run   ? help   q quit
