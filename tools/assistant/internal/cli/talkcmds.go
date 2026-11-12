@@ -76,7 +76,7 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 	if !rtspUserValid(user) {
 		return "", "", a.UI.Fail("could not read the stream user name from the camera.", fmt.Sprintf("check %s rtsp-auth status.", Prog))
 	}
-	pass = os.Getenv("AKAM_RTSP_PASSWORD")
+	pass = a.envSecret("AKAM_RTSP_PASSWORD")
 	if a.Opt.PasswordFile != "" && pass == "" {
 		b, rerr := os.ReadFile(a.Opt.PasswordFile)
 		if rerr != nil {
@@ -84,8 +84,6 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 		}
 		pass = strings.TrimRight(strings.SplitN(string(b), "\n", 2)[0], "\r")
 	}
-	// no child process (ffmpeg, arecord) may inherit it
-	os.Unsetenv("AKAM_RTSP_PASSWORD")
 	if pass == "" {
 		pass, err = a.UI.Secret(fmt.Sprintf("  Stream password of user %s (not shown):", user))
 		if err != nil {
@@ -269,6 +267,44 @@ func (a *App) micProbe(secs int) (audio.Choice, error) {
 // 48 kHz, but the camera speaker needs far less: longer files should be cut).
 const maxSayFile = 256 << 20
 
+var (
+	errSayTooLarge   = errors.New("file too large")
+	errSayNotRegular = errors.New("not a regular file")
+)
+
+// readSayFile reads an audio file for say: the opened handle must be a regular file (so a FIFO or a
+// device cannot block or fill the memory), and at most maxSayFile bytes are read whatever its size
+// is when it is read (the file may grow after the check).
+func readSayFile(path string) ([]byte, error) {
+	// opening a FIFO for reading blocks until a writer comes: look before opening, then check the handle
+	if pre, perr := os.Stat(path); perr == nil && !pre.Mode().IsRegular() {
+		return nil, errSayNotRegular
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, errSayNotRegular
+	}
+	if st.Size() > maxSayFile {
+		return nil, errSayTooLarge
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxSayFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSayFile {
+		return nil, errSayTooLarge
+	}
+	return data, nil
+}
+
 func (a *App) cmdSay(args []string) error {
 	if len(args) != 1 || args[0] == "" {
 		return usageErr(fmt.Sprintf("akam: say needs one audio file (see %s help)", Prog))
@@ -283,11 +319,13 @@ func (a *App) cmdSay(args []string) error {
 		a.UI.Say(fmt.Sprintf("  WOULD decode %s to 8 kHz mono (built in for WAV, MP3, FLAC and Ogg Vorbis; ffmpeg for anything else) and send it to rtsp://%s:%d (stream password needed).", file, ip, a.Env.PortRTSP))
 		return nil
 	}
-	if st, serr := os.Stat(file); serr == nil && st.Size() > maxSayFile {
-		return a.UI.Fail(fmt.Sprintf("%s is too large (%d MiB; the limit is %d MiB).", file, st.Size()>>20, maxSayFile>>20), "cut it first, or convert it with ffmpeg to a smaller file.")
-	}
-	data, rerr := os.ReadFile(file)
-	if rerr != nil {
+	data, rerr := readSayFile(file)
+	switch {
+	case errors.Is(rerr, errSayTooLarge):
+		return a.UI.Fail(fmt.Sprintf("%s is too large (the limit is %d MiB).", file, maxSayFile>>20), "cut it first, or convert it with ffmpeg to a smaller file.")
+	case errors.Is(rerr, errSayNotRegular):
+		return a.UI.Fail(fmt.Sprintf("%s is not a regular file.", file), "give the path of an audio file (not a pipe, a device or a directory).")
+	case rerr != nil:
 		return a.UI.Fail(fmt.Sprintf("cannot read %s.", file), "give the path of an audio file.")
 	}
 	var src rtsp.PCMSource

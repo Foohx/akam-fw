@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/childenv"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"io"
 	"net/http"
@@ -71,6 +72,7 @@ type App struct {
 	Streams    Streams
 	Hooks      Hooks
 	Ctx        context.Context
+	envSecrets map[string]string // AKAM_*PASS* read once at start-up (the environment no longer has them)
 
 	camIP        string
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)
@@ -160,7 +162,7 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 	defer lock.Release()
 
 	secrets := &state.Secrets{}
-	a := &App{Opt: opt, Env: LoadEnv(), Cams: cams, Secrets: secrets, Version: version, Streams: st, Hooks: hooks}
+	a := &App{envSecrets: childenv.Take(), Opt: opt, Env: LoadEnv(), Cams: cams, Secrets: secrets, Version: version, Streams: st, Hooks: hooks}
 	var cancel context.CancelFunc
 	a.Ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
@@ -475,6 +477,7 @@ func (a *App) dialPort(ip string, port int) (*camssh.Client, error) {
 			p, err := a.UI.Secret(fmt.Sprintf("  Passphrase of the SSH key %s (not shown):", a.keyPath()))
 			if err == nil {
 				a.passphrase = &p
+				a.Secrets.Add(p)
 			}
 			return p, err
 		},
@@ -550,4 +553,22 @@ func joinNonEmpty(parts ...string) string {
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+// envSecret is the value an AKAM_*PASS* variable had at start-up (they are removed from the
+// environment in Run, so no child process can inherit them). Without Run (internal tests) it
+// reads the environment.
+func (a *App) envSecret(name string) string {
+	if a.envSecrets == nil {
+		return os.Getenv(name)
+	}
+	return a.envSecrets[name]
+}
+
+// setState stores one value of the state and warns when it is refused or cannot be written (the
+// step then has to be repeated: a later gate would otherwise fail without saying why).
+func (a *App) setState(key, val string) {
+	if err := a.St.Set(key, val); err != nil {
+		a.UI.Warn(fmt.Sprintf("could not save '%s' in the state (%v); a later step may ask for this one again.", key, err))
+	}
 }

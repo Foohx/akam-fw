@@ -146,8 +146,7 @@ func (p *Plain) Secret(prompt string) (string, error) {
 			return "", err
 		}
 	}
-	p.Secrets.Add(s)
-	return s, nil
+	return s, nil // the caller registers it once it has validated it (state.Secrets.Add)
 }
 
 // AskYN is host_confirm: [y/N] on a terminal, never auto-confirms, refuses without a terminal.

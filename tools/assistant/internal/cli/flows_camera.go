@@ -352,7 +352,7 @@ func (a *App) selectRow(ch *chooser, r discover.Row) (bool, error) {
 			_ = a.St.Set("camera_telnet", "1")
 		}
 	} else {
-		_ = a.St.Set("camera_ip", ip)
+		a.setState("camera_ip", ip)
 	}
 	a.UI.Good(fmt.Sprintf("  Camera: %s at %s.", name, ip))
 	return true, nil

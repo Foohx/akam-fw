@@ -387,13 +387,13 @@ func (a *App) hwcheck(ip string) bool {
 	}
 	defer c.Close()
 	a.UI.Say("  Copying akam_hwcheck.sh to the camera's RAM (/tmp, nothing is installed) ...")
-	res, err := a.run(c, "cat > /tmp/akam_hwcheck.sh", strings.NewReader(string(body)), "'cat > /tmp/akam_hwcheck.sh' < akam_hwcheck.sh")
+	res, err := a.run(c, remoteHwcheckPut, strings.NewReader(string(body)), "'cat > /tmp/akam_hwcheck.sh' < akam_hwcheck.sh")
 	if err != nil || res.Status != 0 {
 		a.UI.Fail("cannot copy akam_hwcheck.sh over SSH.", "")
 		return false
 	}
 	a.UI.Say("  Running it (read-only) ...")
-	res, err = a.run(c, "sh /tmp/akam_hwcheck.sh", nil, "")
+	res, err = a.run(c, remoteHwcheckRun, nil, "")
 	if err != nil {
 		a.UI.Err(err.Error())
 		return false
@@ -409,7 +409,7 @@ func (a *App) hwcheck(ip string) bool {
 // onvifFlag is cam_onvif_flag: "enabled=1|0" and "port=N" written by akam_onvif.sh; absent = off.
 func (a *App) onvifFlag(c *camssh.Client) (on bool, port int) {
 	port = 80
-	res, err := a.run(c, "cat "+onvifFlagFile+" 2>/dev/null", nil, "")
+	res, err := a.run(c, remoteOnvifFlag, nil, "")
 	if err != nil {
 		return false, port
 	}
@@ -534,12 +534,12 @@ func (a *App) wifiGate(ip string) bool {
 	}
 	defer c.Close()
 	a.UI.Say("  Checking that the camera will keep its Wi-Fi after the card is removed ...")
-	res, err := a.run(c, "cat > /tmp/akam_preflight.sh", strings.NewReader(string(body)), "'cat > /tmp/akam_preflight.sh' < preflight_check.sh")
+	res, err := a.run(c, remotePreflightPut, strings.NewReader(string(body)), "'cat > /tmp/akam_preflight.sh' < preflight_check.sh")
 	if err != nil || res.Status != 0 {
 		a.UI.Fail("cannot copy preflight_check.sh over SSH.", "do not remove the card yet.")
 		return false
 	}
-	res, err = a.run(c, "sh /tmp/akam_preflight.sh --ensure-wifi", nil, "")
+	res, err = a.run(c, remotePreflightRun, nil, "")
 	if err != nil {
 		a.UI.Err(err.Error())
 		return false

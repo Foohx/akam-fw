@@ -8,6 +8,7 @@ package audio
 import (
 	"context"
 	"errors"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/childenv"
 	"io"
 	"os/exec"
 	"runtime"
@@ -36,6 +37,25 @@ type Exec struct {
 	// Builtin is the in-process microphone of this OS (PulseAudio / PipeWire, WASAPI); nil when
 	// there is none (macOS) or in tests. It comes after Shell and before ffmpeg and arecord.
 	Builtin MicBackend
+	// SoundServerUp tells whether `pactl info` answers; nil runs the real pactl (2 s timeout, no secret
+	// in its environment). Tests set it so that nothing real is started.
+	SoundServerUp func() bool
+}
+
+// pactlInfo runs `pactl info` with a 2 s deadline and without the AKAM_*PASS* variables.
+func pactlInfo() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "pactl", "info")
+	cmd.Env = childenv.Env()
+	return cmd.Run() == nil
+}
+
+func (e *Exec) soundServerUp() bool {
+	if e.SoundServerUp != nil {
+		return e.SoundServerUp()
+	}
+	return pactlInfo()
 }
 
 // Choice is the microphone source picked by Choose.
@@ -86,7 +106,7 @@ func (e *Exec) MicCommand(seconds int) ([]string, error) {
 	switch goos {
 	case "linux":
 		switch {
-		case e.look("ffmpeg") && e.look("pactl") && exec.Command("pactl", "info").Run() == nil:
+		case e.look("ffmpeg") && e.look("pactl") && e.soundServerUp():
 			cmd = []string{"ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "pulse", "-i", "default"}
 		case e.look("arecord"):
 			cmd = []string{"arecord", "-q", "-t", "raw", "-f", "S16_LE", "-r", "8000", "-c", "1"}
@@ -167,6 +187,7 @@ type Proc struct {
 // is killed when ctx ends or Close is called.
 func Start(ctx context.Context, argv []string) (*Proc, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = childenv.Env() // no AKAM_*PASS* in the child
 	cmd.Stdin = nil
 	cmd.Stderr = nil
 	setProcAttr(cmd)

@@ -169,9 +169,9 @@ func TestWAVStereoAndResample(t *testing.T) {
 	if len(out) != 800 {
 		t.Fatalf("len %d, want 800", len(out))
 	}
-	for i, v := range out {
-		if v != 2000 {
-			t.Fatalf("sample %d = %d, want 2000", i, v)
+	for i, v := range out[200:] { // after the start-up of the anti-aliasing filter
+		if v < 1990 || v > 2010 {
+			t.Fatalf("sample %d = %d, want about 2000", 200+i, v)
 		}
 	}
 	// 8-bit, 44.1 kHz mono: silence stays silence

@@ -64,11 +64,19 @@ func decodeMP3(data []byte) ([]int16, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unreadable MP3: %w", err)
 	}
+	if d.SampleRate() <= 0 || d.SampleRate() > MaxRate {
+		return nil, fmt.Errorf("the MP3 sample rate (%d Hz) is not supported", d.SampleRate())
+	}
 	rs := NewResampler(d.SampleRate())
+	maxIn := int64(MaxSeconds) * int64(d.SampleRate())
+	var in int64
 	var out []int16
 	buf := make([]byte, 4096*4) // stereo 16-bit frames, always
 	for {
 		n, rerr := d.Read(buf)
+		if in += int64(n / 4); in > maxIn {
+			return nil, errTooLong
+		}
 		for i := 0; i+4 <= n; i += 4 {
 			l := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
 			r := int16(uint16(buf[i+2]) | uint16(buf[i+3])<<8)
@@ -102,8 +110,13 @@ func decodeFLAC(data []byte) ([]int16, error) {
 	if info.SampleRate == 0 || info.NChannels == 0 || info.BitsPerSample == 0 || info.BitsPerSample > 32 {
 		return nil, errors.New("unreadable FLAC header")
 	}
+	if info.SampleRate > MaxRate {
+		return nil, fmt.Errorf("the FLAC sample rate (%d Hz) is not supported", info.SampleRate)
+	}
 	scale := math.Ldexp(1, 16-int(info.BitsPerSample)) // to 16-bit full scale
 	rs := NewResampler(int(info.SampleRate))
+	maxIn := int64(MaxSeconds) * int64(info.SampleRate)
+	var in int64
 	var out []int16
 	for {
 		fr, ferr := st.ParseNext()
@@ -120,6 +133,9 @@ func decodeFLAC(data []byte) ([]int16, error) {
 			continue
 		}
 		n := len(fr.Subframes[0].Samples)
+		if in += int64(n); in > maxIn {
+			return nil, errTooLong
+		}
 		for i := 0; i < n; i++ {
 			var sum float64
 			for _, sf := range fr.Subframes {
@@ -140,19 +156,27 @@ func decodeFLAC(data []byte) ([]int16, error) {
 }
 
 func decodeOgg(data []byte) ([]int16, error) {
+	if err := checkVorbisHeaders(data); err != nil { // before the library sizes tables from the headers
+		return nil, err
+	}
 	r, err := oggvorbis.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("unreadable Ogg file (only Vorbis audio is built in): %w", err)
 	}
 	ch := r.Channels()
-	if ch <= 0 || r.SampleRate() <= 0 {
+	if ch <= 0 || r.SampleRate() <= 0 || r.SampleRate() > MaxRate {
 		return nil, errors.New("unreadable Ogg Vorbis header")
 	}
 	rs := NewResampler(r.SampleRate())
+	maxIn := int64(MaxSeconds) * int64(r.SampleRate())
+	var in int64
 	var out []int16
 	buf := make([]float32, 4096*ch)
 	for {
 		n, rerr := r.Read(buf)
+		if in += int64(n / ch); in > maxIn {
+			return nil, errTooLong
+		}
 		for i := 0; i+ch <= n; i += ch {
 			var sum float64
 			for c := 0; c < ch; c++ {

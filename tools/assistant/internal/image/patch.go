@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/childenv"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -326,6 +327,7 @@ func shSyntax(script []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, sh, "-n")
+	cmd.Env = childenv.Env()
 	cmd.Stdin = bytes.NewReader(script)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -44,7 +44,55 @@ func (s *Secrets) Add(v string) {
 	s.mu.Unlock()
 }
 
-// Has reports whether text contains a registered secret.
+// substringMin is the shortest secret matched as a substring. A shorter one ("a", "1234") would
+// match inside ordinary words and numbers (and refuse or garble harmless text), so it only
+// matches as a whole token: not glued to a letter, digit or underscore on either side.
+const substringMin = 8
+
+func isWordByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= 0x80
+}
+
+// secretAt returns the index of the first match of secret v in text at or after from, or -1.
+func secretAt(text, v string, from int) int {
+	for from <= len(text) {
+		i := strings.Index(text[from:], v)
+		if i < 0 {
+			return -1
+		}
+		i += from
+		if len(v) >= substringMin {
+			return i
+		}
+		end := i + len(v)
+		if (i == 0 || !isWordByte(text[i-1]) || !isWordByte(v[0])) && (end == len(text) || !isWordByte(text[end]) || !isWordByte(v[len(v)-1])) {
+			return i
+		}
+		from = i + 1
+	}
+	return -1
+}
+
+// replaceSecret replaces the matches of v in text by ***.
+func replaceSecret(text, v string) string {
+	var b strings.Builder
+	from, last := 0, 0
+	for {
+		i := secretAt(text, v, from)
+		if i < 0 {
+			break
+		}
+		b.WriteString(text[last:i])
+		b.WriteString("***")
+		last = i + len(v)
+		from = last
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+// Has reports whether text contains a registered secret (a secret of 8 bytes or more anywhere, a
+// shorter one as a whole token).
 func (s *Secrets) Has(text string) bool {
 	if s == nil {
 		return false
@@ -52,7 +100,7 @@ func (s *Secrets) Has(text string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, v := range s.list {
-		if strings.Contains(text, v) {
+		if secretAt(text, v, 0) >= 0 {
 			return true
 		}
 	}
@@ -67,7 +115,7 @@ func (s *Secrets) Redact(text string) string {
 	if s != nil {
 		s.mu.Lock()
 		for _, v := range s.list {
-			text = strings.ReplaceAll(text, v, "***")
+			text = replaceSecret(text, v)
 		}
 		s.mu.Unlock()
 	}

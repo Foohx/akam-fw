@@ -25,7 +25,7 @@ const (
 
 // restartVideoCmd is the ONE command that kills a process: it stops ak_rtsp (the video service), which its
 // wrapper starts again by itself. pidof matches the exact name only; nothing else, and never the watchdog,
-// is touched. It is the single exception of forbiddenRemote, by exact string, and it is only sent by
+// is touched. It is one of the exact strings the guard (forbiddenRemote) allows, and it is only sent by
 // restartVideo below, after a yes/no that defaults to No (spec 11, Q8).
 const restartVideoCmd = `p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p`
 
@@ -97,12 +97,20 @@ func allRemoteCommands() []string {
 	}
 }
 
-var forbiddenRe = regexp.MustCompile(`(?i)\b(reboot|poweroff|halt|shutdown|init\s+[0-6]|telinit|killall|pkill|kill)\b|\bdd\b[^|;&]*\b(seek|conv|oflag|skip)=|\bdd\b[^|;&]*\bof\s*=|watchdog|flash_tool|flashcp|flash_erase|nandwrite|mtd_debug|sysrq|/dev/mtd[0-9]*\s*$|\bof=|>\s*/dev/mtd|akam_reflash|i-understand-no-uart`)
+// The fixed command lines that are not built from a helper (every one of them is sent by exactly one
+// function; the guard below allows exactly these strings).
+const (
+	remoteMtdList      = "cat /proc/mtd"
+	remoteKernelInfo   = "uname -r; uname -v"
+	remoteHwcheckPut   = "cat > /tmp/akam_hwcheck.sh"
+	remoteHwcheckRun   = "sh /tmp/akam_hwcheck.sh"
+	remotePreflightPut = "cat > /tmp/akam_preflight.sh"
+	remotePreflightRun = "sh /tmp/akam_preflight.sh --ensure-wifi"
+	remoteOnvifFlag    = "cat " + onvifFlagFile + " 2>/dev/null"
+)
 
 // remoteDateSetRe is the one form of `date` that sets the clock (see remoteDateSet); nothing can be chained.
 var remoteDateSetRe = regexp.MustCompile(`^date -u -s '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}'$`)
-
-var dateWordRe = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_.-])date($|[^A-Za-z0-9_.-])`)
 
 // remoteReadRe is the ONE read-only form of a flash read that is allowed on its own: dd with an
 // input and a block size, never an of=. The partition number is a single digit 0..7.
@@ -117,31 +125,33 @@ func remoteReadMtd(n int) string {
 	return fmt.Sprintf("dd if=/dev/mtdblock%d bs=64k", n)
 }
 
-// forbiddenRemote reports why a command would break the safety rule (empty when fine).
-func forbiddenRemote(cmd string) string {
-	if cmd == restartVideoCmd || cmd == remoteDateRead() || remoteDateSetRe.MatchString(cmd) {
-		return ""
+// helperRe is the other allowed shape: one of the helper scripts of the image, then arguments made of
+// [A-Za-z0-9._@:+-] only, separated by single spaces. No quote, backslash, $, ;, &, |, <, >, newline or
+// space inside an argument, so nothing can be chained, substituted or redirected.
+var helperRe = func() *regexp.Regexp {
+	var alt []string
+	for _, h := range []string{hostnameCmd, rtspAuthCmd, debugCmd, onvifCmd, ntpCmd, mqttCmd} {
+		alt = append(alt, regexp.QuoteMeta(h))
 	}
-	// `date` can set the clock (-s, --set, or a bare MMDDhhmm): only the two exact forms above pass.
-	if dateWordRe.MatchString(cmd) {
-		return fmt.Sprintf("forbidden camera command: %s", cmd)
-	}
-	if remoteReadRe.MatchString(cmd) {
-		return ""
-	}
-	if forbiddenRe.MatchString(cmd) {
-		return fmt.Sprintf("forbidden camera command: %s", cmd)
-	}
-	// A flash device may only appear in the exact commands above (the anchored read, the register
-	// read): anything else naming one (tee, cp, a glob, a chained command after a read...) is refused.
-	if cmd != remoteRegister() && strings.Contains(strings.ToLower(cmd), "/dev/mt") {
-		return fmt.Sprintf("forbidden camera command: %s", cmd)
-	}
-	if strings.Contains(strings.ReplaceAll(cmd, "/dev/null", ""), "/dev/") && redirectDevRe.MatchString(strings.ReplaceAll(cmd, "/dev/null", "")) {
-		return fmt.Sprintf("forbidden camera command: %s", cmd)
-	}
-	return ""
+	return regexp.MustCompile(`\A(?:` + strings.Join(alt, "|") + `)(?: [A-Za-z0-9._@:+-]+)*\z`)
+}()
+
+// fixedRemote is the set of exact command lines allowed besides the helpers.
+var fixedRemote = map[string]bool{
+	restartVideoCmd: true, "true": true, remoteTestX(hostnameCmd): true,
+	remoteDateRead(): true, remoteRegister(): true,
+	remoteMtdList: true, remoteKernelInfo: true,
+	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
 }
 
-// redirectDevRe is a redirection or tee into a device node (the /dev/null sink is removed first).
-var redirectDevRe = regexp.MustCompile(`>\s*/dev/|\btee\b[^|;&]*/dev/`)
+// forbiddenRemote is an ALLOW-list: it returns "" only for a command line the assistant itself
+// builds (an exact string of fixedRemote, the anchored partition read, the date set form, or a
+// helper script with plain arguments) and a reason for everything else. A deny-list cannot work
+// here: quoting (re”boot), escapes, eval, other tools (rm, mtd) and any new spelling get past it,
+// while harmless words (a host named "watchdog") are refused by it.
+func forbiddenRemote(cmd string) string {
+	if fixedRemote[cmd] || remoteDateSetRe.MatchString(cmd) || remoteReadRe.MatchString(cmd) || helperRe.MatchString(cmd) {
+		return ""
+	}
+	return fmt.Sprintf("forbidden camera command: %s", cmd)
+}

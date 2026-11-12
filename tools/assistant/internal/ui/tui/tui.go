@@ -88,8 +88,7 @@ func (u *UI) Secret(prompt string) (string, error) {
 	if m.Cancelled {
 		return "", ui.ErrNoInput
 	}
-	u.Secrets.Add(m.Value())
-	return m.Value(), nil
+	return m.Value(), nil // the caller registers it once it has validated it
 }
 
 func (u *UI) Pick(title string, items []string) (int, error) {

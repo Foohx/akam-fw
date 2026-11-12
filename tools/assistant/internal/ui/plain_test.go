@@ -93,11 +93,12 @@ func TestPromptSecretPick(t *testing.T) {
 	if v, err := p.Prompt("x", "d"); v != "d" || err != nil {
 		t.Errorf("rehearsal default: %q %v", v, err)
 	}
-	// a secret is registered so that no log or state can hold it
+	// Secret only reads: the caller registers the value after validating it, so a rejected
+	// input (empty, a typo) does not become a "secret" that blocks harmless text
 	p, _, _ = newPlain("s3cr3t-value\n", true, false)
 	v, _ := p.Secret("Password:")
-	if v != "s3cr3t-value" || !p.Secrets.Has("xx s3cr3t-value yy") {
-		t.Error("secret not registered")
+	if v != "s3cr3t-value" || p.Secrets.Has("xx s3cr3t-value yy") {
+		t.Error("Secret must not register what it reads")
 	}
 	p, out, _ := newPlain("9\n0\n2\n", true, false)
 	i, err := p.Pick("Which?", []string{"a", "b", "c"})

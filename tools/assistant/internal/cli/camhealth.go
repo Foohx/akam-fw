@@ -34,6 +34,15 @@ const clockToleranceSec = 120
 // boots in 2000), the same rule as sys.time_set on the camera.
 const minPlausibleEpoch = 1704067200
 
+// pcNow is the time of this computer (a variable for tests).
+var pcNow = time.Now
+
+// pcClockNote is the line said instead of the clock offer when the clock of this computer is not
+// plausible (a dead battery gives 1970 or 2000): setting the camera from it would make it worse.
+func pcClockNote(pc int64) string {
+	return "The clock of this computer reads " + time.Unix(pc, 0).UTC().Format("2006-01-02") + " UTC, which cannot be right, so the camera clock is not offered to be set from it: fix the clock of this computer first (or turn time sync on)."
+}
+
 // camHealth is what the camera said; -1 or "" is "not answered" (an older image).
 type camHealth struct {
 	rssi, rate           int    // dBm (negative; 0 unknown), Mb/s
@@ -134,6 +143,21 @@ func numOrQ(v int) string {
 
 // clockReport is the clock line, and whether it is worth offering to set it from this PC.
 func clockReport(h camHealth) (lines []string, offer bool) {
+	lines, offer = clockReportRaw(h)
+	if !offer {
+		return lines, false
+	}
+	pc := h.pcEpoch
+	if pc == 0 {
+		pc = pcNow().Unix()
+	}
+	if pc < minPlausibleEpoch { // this computer cannot be the reference
+		return append(lines, pcClockNote(pc)), false
+	}
+	return lines, true
+}
+
+func clockReportRaw(h camHealth) (lines []string, offer bool) {
 	unset := h.timeSet == "0" || (h.camEpoch > 0 && h.camEpoch < minPlausibleEpoch)
 	if unset {
 		l := "Clock: not set (the camera has no battery clock and starts in 2000 until something sets it)"
@@ -227,7 +251,11 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 
 // setCamClock sets the camera clock to the time of this PC (UTC, so the time zone does not matter).
 func (a *App) setCamClock(c *camssh.Client, ntp string) {
-	now := time.Now().UTC()
+	now := pcNow().UTC()
+	if now.Unix() < minPlausibleEpoch {
+		a.UI.Warn(pcClockNote(now.Unix()))
+		return
+	}
 	res, err := a.run(c, remoteDateSet(now), nil, "")
 	if err != nil || res.Status != 0 {
 		a.UI.Warn("the camera did not accept the new time (the clock is unchanged).")
