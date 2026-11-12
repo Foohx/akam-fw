@@ -29,10 +29,12 @@
 #define SEND_TIMEOUT_MS 5000
 #define THREAD_STACK 65536
 #define DNS_WAIT_MS 20000    /* longest wait for a name lookup */
+#define DNS_HELPERS_MAX 4    /* abandoned (still blocked) name-lookup threads allowed at once */
+#define PKT_MAX 65536        /* a packet this large or larger is a protocol error, not something to skip */
 
 const char *mqtt_cfg_path = MQTT_CFG_PATH;
 const char *mqtt_pass_path = MQTT_PASS_PATH;
-mqtt_svc_tune_t mqtt_svc_tune = { 5000, 60000, 60, 2000, 10000, 10000 };
+mqtt_svc_tune_t mqtt_svc_tune = { 5000, 60000, 60, 2000, 10000, 10000, 60000 };
 
 static const mqtt_ops_t *g_ops;
 void mqtt_svc_set_ops(const mqtt_ops_t *ops) { g_ops = ops; }
@@ -214,6 +216,7 @@ static volatile int g_stop;
 static mqtt_cfg_t g_cfg;
 static char g_pass[MQTT_PASS_MAX + 1];
 static mqtt_ha_t g_ha;
+static mqtt_ha_limits_t g_lim;                                 /* command rate limits: kept across sessions and reloads */
 static uint8_t g_tx[TX_CAP];
 
 static void set_state(const char *s)
@@ -268,7 +271,7 @@ typedef struct {
     int     wake;                 /* read end of the wake pipe, -1 for the one-shot test */
     uint8_t rx[RX_CAP];
     size_t  rxlen, skip;
-    int64_t last_rx;
+    int64_t last_rx, last_tx;      /* last byte received / last packet fully sent (keepalive drivers) */
 } conn_t;
 
 /* Wait for events on fd (and the wake pipe): 1 ready, 0 timeout, -1 error, -2 stop requested. */
@@ -288,7 +291,7 @@ static int wait_fd(int fd, short ev, int timeout_ms, int wake)
             return -1;
         }
         if (r == 0) return 0;
-        if (n == 2 && (p[1].revents & POLLIN)) return -2;
+        if (n == 2 && p[1].revents) return -2;           /* data, hangup or error on the wake pipe: stop */
         if (p[0].revents & (ev | POLLERR | POLLHUP | POLLNVAL)) return 1;
     }
 }
@@ -325,6 +328,20 @@ static void dns_job_free(dns_job_t *j)
     free(j);
 }
 
+/* lookup threads alive (running or abandoned). A mutex, not __atomic_*: ARMv5 has no atomic instructions and the
+ * static build has no libatomic. */
+static int g_dns_helpers;
+static pthread_mutex_t g_dns_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int dns_helpers_add(int d)
+{
+    pthread_mutex_lock(&g_dns_mu);
+    g_dns_helpers += d;
+    int n = g_dns_helpers;
+    pthread_mutex_unlock(&g_dns_mu);
+    return n;
+}
+
 static void *dns_main(void *arg)
 {
     dns_job_t *j = arg;
@@ -337,6 +354,7 @@ static void *dns_main(void *arg)
     int drop = j->abandoned;
     pthread_mutex_unlock(&j->mu);
     if (drop) dns_job_free(j);
+    dns_helpers_add(-1);
     return NULL;
 }
 
@@ -344,8 +362,14 @@ static int resolve_name(const char *host, int wake, struct in_addr *out, const c
 {
     pthread_t t;
     pthread_attr_t at;
+    /* a dead resolver blocks every helper for 10 to 30 s: never pile up more than DNS_HELPERS_MAX of them */
+    if (dns_helpers_add(1) > DNS_HELPERS_MAX) {
+        dns_helpers_add(-1);
+        *reason = "dns";
+        return -1;
+    }
     dns_job_t *j = calloc(1, sizeof(*j));
-    if (!j) { *reason = "dns"; return -1; }
+    if (!j) { dns_helpers_add(-1); *reason = "dns"; return -1; }
     pthread_mutex_init(&j->mu, NULL);
     snprintf(j->host, sizeof(j->host), "%s", host);
     pthread_attr_init(&at);
@@ -353,7 +377,7 @@ static int resolve_name(const char *host, int wake, struct in_addr *out, const c
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     int rc = pthread_create(&t, &at, dns_main, j);
     pthread_attr_destroy(&at);
-    if (rc != 0) { dns_job_free(j); *reason = "dns"; return -1; }
+    if (rc != 0) { dns_job_free(j); dns_helpers_add(-1); *reason = "dns"; return -1; }
     int64_t end = now_ms() + DNS_WAIT_MS;
     int res = -1, stopped = 0;
     for (;;) {
@@ -433,6 +457,7 @@ static int send_all(conn_t *c, const uint8_t *b, size_t n)
         }
         return -1;
     }
+    c->last_tx = now_ms();
     return 0;
 }
 
@@ -474,6 +499,7 @@ static int next_pkt(conn_t *c, mqtt_pkt_t *p)
     int r = mqtt_frame(c->rx, c->rxlen, RX_CAP - 5, p);
     if (r > 0) return 1;
     if (r == -2) {                                    /* well formed but too big to keep: skip it */
+        if (p->total >= PKT_MAX) return -1;           /* an MQTT broker here never sends that much: protocol error */
         if (p->total <= c->rxlen) {                   /* all of it is here: the next packet may start right behind */
             consume(c, p->total);
             return next_pkt(c, p);
@@ -564,6 +590,7 @@ static int announce(conn_t *c)
         for (size_t i = 0; i < n; i++) {
             int dl = mqtt_ha_discovery(&g_ha, i, t, sizeof(t), doc, sizeof(doc));
             if (dl > 0 && pub(c, t, doc, 1) != 0) return -1;
+            if (dl == 0 && pub(c, t, "", 1) != 0) return -1;   /* absent entity: clear any retained document of an earlier run */
         }
     }
     int sn = mqtt_enc_subscribe(g_tx, sizeof(g_tx), 1, f);
@@ -593,7 +620,13 @@ static int handle_packet(conn_t *c, const mqtt_pkt_t *p)
         if (idx < 0 && g_ha.reject_idx >= 0 && pub_state(c, (size_t)g_ha.reject_idx, 1) != 0) return -1;   /* HA shows the real value */
         return 0;
     }
-    case MQTT_PINGRESP: case MQTT_SUBACK: case MQTT_PUBACK: case 5: case 7: case MQTT_UNSUBACK:
+    case MQTT_SUBACK: {
+        uint16_t pid;
+        int rc;
+        if (mqtt_dec_suback(p, &pid, &rc) != 0) return -1;
+        return rc == 0x80 ? -2 : 0;                   /* the broker refused the command subscription */
+    }
+    case MQTT_PINGRESP: case MQTT_PUBACK: case 5: case 7: case MQTT_UNSUBACK:
         return 0;
     default:
         return -1;                                    /* CONNECT, SUBSCRIBE, PINGREQ... from a broker: not MQTT */
@@ -605,7 +638,9 @@ static void say_bye(conn_t *c)
     char t[MQTT_HA_TOPIC_MAX];
     if (mqtt_ha_status_topic(&g_ha, t, sizeof(t)) >= 0) {
         int n = mqtt_enc_publish(g_tx, sizeof(g_tx), t, "offline", 7, 1);
-        if (n > 0) (void)send(c->fd, g_tx, (size_t)n, MSG_NOSIGNAL | MSG_DONTWAIT);
+        /* DISCONNECT makes the broker drop the will, so it is only sent once "offline" is fully on the wire; after a
+         * partial write the socket close fires the will instead and the state is never left at "online" */
+        if (n > 0 && send(c->fd, g_tx, (size_t)n, MSG_NOSIGNAL | MSG_DONTWAIT) != (ssize_t)n) return;
     }
     int n = mqtt_enc_disconnect(g_tx, sizeof(g_tx));
     if (n > 0) (void)send(c->fd, g_tx, (size_t)n, MSG_NOSIGNAL | MSG_DONTWAIT);
@@ -624,9 +659,10 @@ static int session(const mqtt_cfg_t *cfg, const char *pass, char *reason, size_t
     c->wake = g_wake[0];
 
     char status[MQTT_HA_TOPIC_MAX], id[40];
-    if (mqtt_ha_init(&g_ha, g_ops, cfg->base, cfg->prefix, cfg->discovery) != 0 ||
-        mqtt_ha_status_topic(&g_ha, status, sizeof(status)) < 0) {
-        snprintf(reason, rcap, "config");
+    int ir = mqtt_ha_init(&g_ha, g_ops, cfg->base, cfg->prefix, cfg->discovery);
+    mqtt_ha_use_limits(&g_ha, &g_lim);
+    if (ir != 0 || mqtt_ha_status_topic(&g_ha, status, sizeof(status)) < 0) {
+        snprintf(reason, rcap, ir == -2 ? "mac" : "config");   /* "mac": Wi-Fi not up yet, retried with the backoff */
         free(c);
         return 0;
     }
@@ -666,13 +702,14 @@ static int session(const mqtt_cfg_t *cfg, const char *pass, char *reason, size_t
     int64_t next_sensor = now + (int64_t)cfg->interval * 1000;
     int64_t ping_sent = 0;
     size_t n = mqtt_ha_count();
-    c->last_rx = now;
+    c->last_rx = c->last_tx = now;
     why = "closed";
     if (announce(c) != 0) goto out;
 
     while (!g_stop) {
         int64_t wake_at = next_tick < next_sensor ? next_tick : next_sensor;
-        int64_t ping_at = ping_sent ? ping_sent + mqtt_svc_tune.ping_reply_ms : c->last_rx + ka_ms / 2;
+        int64_t idle_since = c->last_rx < c->last_tx ? c->last_rx : c->last_tx;   /* quiet in either direction */
+        int64_t ping_at = ping_sent ? ping_sent + mqtt_svc_tune.ping_reply_ms : idle_since + ka_ms / 2;
         if (ping_at < wake_at) wake_at = ping_at;
         now = now_ms();
         int wait = wake_at > now ? (int)(wake_at - now) : 0;
@@ -685,12 +722,14 @@ static int session(const mqtt_cfg_t *cfg, const char *pass, char *reason, size_t
             int q = next_pkt(c, &p);
             if (q < 0) { why = "protocol"; goto out; }
             if (q == 0) break;
-            if (handle_packet(c, &p) != 0) { why = "protocol"; goto out; }
+            int hp = handle_packet(c, &p);
+            if (hp == -2) { why = "subscribe"; goto out; }
+            if (hp != 0) { why = "protocol"; goto out; }
             consume(c, p.total);
         }
         now = now_ms();
         if (ping_sent && now - ping_sent >= mqtt_svc_tune.ping_reply_ms) { why = "timeout"; goto out; }
-        if (!ping_sent && now - c->last_rx >= ka_ms / 2) {
+        if (!ping_sent && (now - c->last_rx >= ka_ms / 2 || now - c->last_tx >= ka_ms / 2)) {
             int pn = mqtt_enc_pingreq(g_tx, sizeof(g_tx));
             if (pn < 0 || send_all(c, g_tx, (size_t)pn) != 0) goto out;
             ping_sent = now;
@@ -728,11 +767,13 @@ static void *thread_main(void *arg)
     (void)arg;
     /* below the video threads: a busy single core serves the stream first */
     (void)setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 5);
-    set_state("connecting");
     while (!g_stop) {
+        int64_t t0 = now_ms();
         int ok = session(&g_cfg, g_pass, reason, sizeof(reason));
         if (g_stop) break;
-        if (ok) attempt = 0;
+        /* restart the backoff only after a connection that held: a broker that accepts and drops at once (bad ACL,
+         * duplicate client id) must not be hammered every backoff_min */
+        if (ok && now_ms() - t0 >= (int64_t)mqtt_svc_tune.stable_ms) attempt = 0;
         set_state_err(reason[0] ? reason : "closed");
         rng = rng * 1664525u + 1013904223u;
         unsigned d = mqtt_backoff_ms(attempt, rng >> 8, mqtt_svc_tune.backoff_min_ms, mqtt_svc_tune.backoff_max_ms);
@@ -795,11 +836,12 @@ int mqtt_svc_reload(char *state, size_t cap)
     } else if (mqtt_pass_load(pass, sizeof(pass)) != 0) {
         set_state("off");
         rc = -1;
-    } else if (start_locked(&cfg, pass) != 0) {
-        set_state_err("thread");
-        rc = -1;
     } else {
-        set_state("connecting");
+        set_state("connecting");                      /* before the thread exists: it may reach "connected" at once */
+        if (start_locked(&cfg, pass) != 0) {
+            set_state_err("thread");
+            rc = -1;
+        }
     }
     memset(pass, 0, sizeof(pass));
     if (state && cap) mqtt_svc_state(state, cap);

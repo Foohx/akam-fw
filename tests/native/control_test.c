@@ -46,10 +46,17 @@ void night_set_persist(int on) { g_night_persist = on; }
 int  g_imgq_persist = -1;
 void imgq_set_persist(int on) { g_imgq_persist = on; }
 int  night_is_night(void) { return 0; }
-int  isp_set_saturation(int v) { (void)v; return 0; }
-int  isp_set_contrast(int v) { (void)v; return 0; }
-int  isp_set_brightness(int v) { (void)v; return 0; }
-int  isp_set_sharpness(int v) { (void)v; return 0; }
+/* isp_cfg_lock stubs: the real setters read-modify-write baselines the night thread frees under this lock, so
+ * a setter called without it is the H1 race. Each stub counts such a call. */
+static pthread_mutex_t g_stub_isp_mu = PTHREAD_MUTEX_INITIALIZER;
+static volatile int    g_isp_held, g_isp_unlocked_calls;
+void isp_cfg_lock(void)   { pthread_mutex_lock(&g_stub_isp_mu); g_isp_held = 1; }
+void isp_cfg_unlock(void) { g_isp_held = 0; pthread_mutex_unlock(&g_stub_isp_mu); }
+static int stub_isp_set(int v) { (void)v; if (!g_isp_held) g_isp_unlocked_calls++; return 0; }
+int  isp_set_saturation(int v) { return stub_isp_set(v); }
+int  isp_set_contrast(int v) { return stub_isp_set(v); }
+int  isp_set_brightness(int v) { return stub_isp_set(v); }
+int  isp_set_sharpness(int v) { return stub_isp_set(v); }
 int  night_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  night_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void night_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "night.stub=1"); }
@@ -90,8 +97,14 @@ void onvif_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_onvif_state); }
 void onvif_svc_stop(void) {}
 /* mqtt_svc stub: the real service is tested in mqtt_svc_test.c */
 static char g_mqtt_state[MQTT_STATE_MAX] = "off";
-static int  g_mqtt_reloads, g_mqtt_tests;
-int  mqtt_svc_reload(char *s, size_t c) { g_mqtt_reloads++; snprintf(g_mqtt_state, sizeof(g_mqtt_state), "connecting"); snprintf(s, c, "%s", g_mqtt_state); return 0; }
+static int  g_mqtt_reloads, g_mqtt_tests, g_mqtt_fail;
+int  mqtt_svc_reload(char *s, size_t c)
+{
+    g_mqtt_reloads++;
+    snprintf(g_mqtt_state, sizeof(g_mqtt_state), "%s", g_mqtt_fail ? "error:thread" : "connecting");
+    snprintf(s, c, "%s", g_mqtt_state);
+    return g_mqtt_fail ? -1 : 0;
+}
 void mqtt_svc_state(char *s, size_t c) { snprintf(s, c, "%s", g_mqtt_state); }
 void mqtt_svc_stats(char *s, size_t c) { snprintf(s, c, "published=1 received=2 applied=3 rejected=4 connects=5"); }
 void mqtt_svc_test_result(char *s, size_t c) { snprintf(s, c, "%s", g_mqtt_tests ? "running" : "idle"); }
@@ -437,6 +450,8 @@ static void test_server(void)
         CHECK_STR(out, "isp.brightness=0\n");
         ask(c, "SET isp.contrast 0", out, sizeof(out));
         CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+        /* H1: every isp.* setter ran under isp_cfg_lock (8091 SET, ONVIF path and the saved-picture apply) */
+        CHECK(g_isp_unlocked_calls == 0);
     }
     /* control_apply_setting is the entry point of the ONVIF Imaging service: same code as SET, persist is explicit */
     {
@@ -496,6 +511,12 @@ static void test_server(void)
     ask(c, "mqtt reload", out, sizeof(out));
     CHECK_STR(out, "OK mqtt.state=connecting\n");
     CHECK(g_mqtt_reloads == 1);
+    g_mqtt_fail = 1;                                         /* a failed start is an ERR, not a blind OK */
+    ask(c, "mqtt reload", out, sizeof(out));
+    CHECK_STR(out, "ERR mqtt.state=error:thread\n");
+    g_mqtt_fail = 0;
+    ask(c, "mqtt reload", out, sizeof(out));
+    g_mqtt_reloads = 1;
     ask(c, "GET mqtt.state", out, sizeof(out));
     CHECK_STR(out, "mqtt.state=connecting\n");
     ask(c, "GET mqtt.stats", out, sizeof(out));

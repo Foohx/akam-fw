@@ -75,9 +75,21 @@ integration's device when both are used). The MAC is part of the discovery messa
 | Frame rate, Video bitrate | sensors | `video.fps_actual`, `video.bitrate` | fps, kbit/s |
 | Clock set | binary sensor (diagnostic) | `sys.time_set` | ON when the camera clock is believable (the camera has no clock of its own: see `./akam ntp`) |
 
-The LED, IR, night mode and talk choices are saved on the camera like the same settings made with `./akam led`. To protect the flash, **at most one saved change is accepted per 10 seconds**: a second one inside the window is ignored (counted as rejected) and the entity is published again with its real value, so Home Assistant snaps back; wait 10 seconds and repeat. The
+The LED, IR, night mode and talk choices are saved on the camera like the same settings made with `./akam led`. The
 volume and the four picture sliders are applied **in RAM only** (a slider drag must not write flash many times): they go
-back to the saved values at the next reboot; save them with `./akam audio volume N` or `./akam picture ...`.
+back to the saved values at the next reboot, and a later saved change of another setting does not make them permanent; save
+them with `./akam audio volume N` or `./akam picture ...`.
+
+**Rate limits** (all are token buckets; a command refused by a limit is counted in `rejected` and never applied):
+
+| Limit | Rule |
+|---|---|
+| Every command (any entity) | burst of 10, then 5 per second. An excess command is dropped **without** a state publish, so a flood cannot make the camera publish back |
+| Saved (flash) changes: LED, IR, night mode, talk | burst of 4, then one more every 30 seconds. A Home Assistant scene that sets all four fits in the burst. A refused one is published again with its real value, so Home Assistant snaps back |
+| Beep | at most one every 2 seconds |
+
+A command that asks for the value the camera already has is acknowledged without writing anything and costs no token.
+The limits survive a reconnect (a new session does not refill the buckets), so reconnecting is no way around them.
 
 ### Topics
 
@@ -153,6 +165,8 @@ When you are done: `./akam mqtt forget`, stop the broker, close the firewall por
 | `dns` | the name could not be resolved. Use the broker's IPv4 address (a `.local` name does not work: the camera has no mDNS) |
 | `connect` | nothing answered at that address and port: wrong address, wrong port, broker down, firewall |
 | `timeout` | the broker did not answer in time (also: a TLS port, where the broker waits for a handshake) |
+| `mac` | the camera does not know its Wi-Fi MAC address yet (Wi-Fi not up): nothing is published until it does, retried automatically |
+| `subscribe` | the broker refused the command subscription (an ACL that forbids `BASE/+/set`) |
 | `closed` | the broker closed the connection (a user limit, a client id clash, an ACL) |
 | `protocol` | the answer was not MQTT |
 | `refused_credentials`, `refused_not_authorized` | wrong user or password, or the user has no rights |

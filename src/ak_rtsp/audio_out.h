@@ -91,7 +91,8 @@ typedef struct audio_out {
 
     /* settings (written by the control thread, read by the playback thread) */
     volatile int enabled;       /* 0/1 */
-    volatile int volume;        /* 0..100 */
+    volatile int volume;        /* 0..100, what plays now */
+    int          saved_volume;  /* 0..100, what ao_save_config() writes: a RAM-only volume (persist 0) never reaches flash */
     volatile int gain;          /* 0..5 */
     volatile int source;        /* 4 (default, stock) or 6 (experiment) */
     volatile int amp_mode;      /* enum ao_amp_mode */

@@ -160,13 +160,12 @@ static void test_init(void)
     kv_set("sys.temp", "unknown");
     kv_set("net.wifi_rssi", "-61");
 
-    /* an unknown MAC falls back to the host name */
+    /* an unknown MAC is not replaced by the (renamable) host name: init asks the caller to retry later */
     kv_set("net.mac", "unknown");
-    mqtt_ha_init(&h, &g_ops, "", "", 1);
-    CHECK_STR(h.node, "akam_akam-0f0f");
+    CHECK(mqtt_ha_init(&h, &g_ops, "", "", 1) == -2);
     CHECK(h.mac[0] == '\0');
     kv_set("net.mac", "AA:BB:CC:DD:EE:0F");              /* upper case is not what ctl_sys reports: refused, no half-trusted id */
-    mqtt_ha_init(&h, &g_ops, "", "", 1);
+    CHECK(mqtt_ha_init(&h, &g_ops, "", "", 1) == -2);
     CHECK(h.mac[0] == '\0');
     kv_set("net.mac", "aa:bb:cc:dd:ee:0f");
 
@@ -258,6 +257,7 @@ static void test_discovery(void)
     kv_set("sys.temp", "unknown");
     mqtt_ha_init(&h, &g_ops, "", "", 1);
     CHECK(mqtt_ha_discovery(&h, 17, t, sizeof(t), d, sizeof(d)) == 0);
+    CHECK_STR(t, "homeassistant/sensor/akam_aabbccddee0f/temperature/config");   /* topic filled: cleared with an empty payload */
     /* buffers too small are refused, never overrun */
     mqtt_ha_discovery(&h, 0, t, sizeof(t), d, sizeof(d));
     size_t full = strlen(d);
@@ -394,6 +394,7 @@ static void test_commands(void)
     for (size_t i = 0; i < sizeof(k_cmds) / sizeof(k_cmds[0]); i++) {
         const cmd_t *c = &k_cmds[i];
         g_set_calls = 0;
+        if (c->ok) kv_set(c->key, "?");                /* a command equal to the current value is not applied */
         int r = cmd(&h, c->id, c->payload, 0);
         if (c->ok) {
             CHECK(r == (int)idx_of(c->id));
@@ -457,26 +458,71 @@ static void test_commands(void)
     CHECK(mqtt_ha_command(&h, "akam/akam-0f0f/volume/set", 25, (const uint8_t *)"33", 2, 0) == -2);
 }
 
-/* Saved changes: one per window; sliders are never limited; the rejected entity is reported for a state republish. */
+/* Saved changes: burst then slow refill; sliders only under the global command bucket; the rejected entity is
+ * reported for a state republish; a command equal to the current value is free; the state survives re-init. */
 static void test_rate_limit(void)
 {
     mqtt_ha_t h;
+    static mqtt_ha_limits_t lim;
+    memset(&lim, 0, sizeof(lim));
+    kv_set("led.status", "auto"); kv_set("night.ir_led", "auto"); kv_set("night.mode", "auto");
+    kv_set("audio.talk_enable", "1"); kv_set("audio.out_volume", "60");
     mqtt_ha_init(&h, &g_ops_clk, "", "", 1);
+    mqtt_ha_use_limits(&h, &lim);
     g_now = 5000;
     g_set_calls = 0;
+    /* a scene of four saved changes fits in the burst (all different from the current values) */
     CHECK(cmd(&h, "status_led", "on", 0) == (int)idx_of("status_led") && g_set_calls == 1 && h.reject_idx == -1);
-    g_now = 5000 + MQTT_HA_PERSIST_GAP_MS - 1;
-    CHECK(cmd(&h, "ir_led", "off", 0) == -1 && g_set_calls == 1 && h.reject_idx == (int)idx_of("ir_led"));
-    CHECK(cmd(&h, "night_mode", "day", 0) == -1 && cmd(&h, "talk", "OFF", 0) == -1 && g_set_calls == 1);
-    CHECK(cmd(&h, "volume", "10", 0) == (int)idx_of("volume") && cmd(&h, "beep", "PRESS", 0) >= 0 && g_set_calls == 3);   /* RAM-only: free */
-    CHECK(h.invalid >= 3 && h.reject_idx == -1);
-    g_now = 5000 + MQTT_HA_PERSIST_GAP_MS;
+    CHECK(cmd(&h, "ir_led", "off", 0) == (int)idx_of("ir_led"));
+    CHECK(cmd(&h, "night_mode", "day", 0) == (int)idx_of("night_mode"));
+    CHECK(cmd(&h, "talk", "OFF", 0) == (int)idx_of("talk") && g_set_calls == 4);
+    /* the fifth is refused, its state is to be republished */
+    CHECK(cmd(&h, "status_led", "off", 0) == -1 && g_set_calls == 4 && h.reject_idx == (int)idx_of("status_led"));
+    /* the same value as now costs nothing and is not written again, even with an empty bucket */
     CHECK(cmd(&h, "ir_led", "off", 0) == (int)idx_of("ir_led") && g_set_calls == 4);
-    CHECK(cmd(&h, "night_mode", "day", 0) == -1);                /* the window restarted */
-    /* a failed or invalid saved command does not start a window */
+    /* RAM-only commands are free of the flash bucket */
+    unsigned inv = h.invalid;
+    g_now += 1000;
+    CHECK(cmd(&h, "volume", "10", 0) == (int)idx_of("volume") && g_set_calls == 5 && h.invalid == inv);
+    CHECK(cmd(&h, "beep", "PRESS", 0) >= 0 && g_set_calls == 6);
+    CHECK(cmd(&h, "beep", "PRESS", 0) == -1 && g_set_calls == 6 && h.reject_idx == -1);   /* 1 per 2 s, no republish */
+    g_now += MQTT_HA_BEEP_GAP_MS;
+    CHECK(cmd(&h, "beep", "PRESS", 0) >= 0 && g_set_calls == 7);
+    /* one token comes back after the refill time */
+    g_now += MQTT_HA_PERSIST_REFILL_MS;
+    CHECK(cmd(&h, "status_led", "off", 0) == (int)idx_of("status_led") && g_set_calls == 8);
+    CHECK(cmd(&h, "status_led", "on", 0) == -1);
+    /* a reconnect (new init, same limits) does not refill the bucket */
     mqtt_ha_init(&h, &g_ops_clk, "", "", 1);
+    mqtt_ha_use_limits(&h, &lim);
+    CHECK(cmd(&h, "status_led", "auto", 0) == -1 && g_set_calls == 8);
+    /* a failed or invalid saved command does not take a token */
+    memset(&lim, 0, sizeof(lim));
     g_now = 100000;
-    CHECK(cmd(&h, "status_led", "blink", 0) == -1 && cmd(&h, "status_led", "on", 0) >= 0);
+    for (int i = 0; i < 10; i++) { g_now += 1000; CHECK(cmd(&h, "status_led", "blink", 0) == -1); }
+    for (int i = 0; i < 4; i++) { g_now += 1000; CHECK(cmd(&h, i % 2 ? "ir_led" : "night_mode", i % 2 ? "auto" : "night", 0) >= 0); }
+}
+
+/* Global command bucket: a flood of RAM-only commands is cut at the burst, refills at 5/s, and is not answered. */
+static void test_flood(void)
+{
+    mqtt_ha_t h;
+    static mqtt_ha_limits_t lim;
+    memset(&lim, 0, sizeof(lim));
+    mqtt_ha_init(&h, &g_ops_clk, "", "", 1);
+    mqtt_ha_use_limits(&h, &lim);
+    g_now = 200000;
+    g_set_calls = 0;
+    int ok = 0;
+    for (int i = 0; i < 40; i++) ok += cmd(&h, "sharpness", i % 2 ? "10" : "11", 0) >= 0;
+    CHECK(ok == MQTT_HA_CMD_BURST && g_set_calls == MQTT_HA_CMD_BURST);
+    CHECK(h.invalid == 30 && h.reject_idx == -1);                /* dropped, nothing to republish */
+    g_now += 1000;                                               /* 5 tokens back */
+    ok = 0;
+    for (int i = 0; i < 40; i++) ok += cmd(&h, "contrast", i % 2 ? "10" : "11", 0) >= 0;
+    CHECK(ok == MQTT_HA_CMD_PER_S);
+    g_now -= 5000;                                               /* a clock going backwards refills nothing */
+    CHECK(cmd(&h, "contrast", "3", 0) == -1);
 }
 
 /* Random topics and payloads: the setter must only ever see an allow-listed key with a value of the right shape. */
@@ -522,9 +568,7 @@ static void test_fuzz(void)
         if (g_set_calls) {
             CHECK(r >= 0 && allowed_key(g_set_key));
             for (const char *c = g_set_val; *c; c++) CHECK((*c >= '0' && *c <= '9') || *c == '-' || (*c >= 'a' && *c <= 'z'));
-        } else {
-            CHECK(r < 0);
-        }
+        }                                                  /* no setter call: rejected, or the value was the current one */
     }
 }
 
@@ -535,6 +579,7 @@ int main(void)
     test_state();
     test_commands();
     test_rate_limit();
+    test_flood();
     test_fuzz();
     if (g_failed) { fprintf(stderr, "mqtt_ha_test: %d FAILED\n", g_failed); return 1; }
     printf("mqtt_ha_test: OK\n");

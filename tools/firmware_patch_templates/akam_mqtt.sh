@@ -26,6 +26,8 @@
 # which this script sends after every change. An older ak_rtsp answers "ERR unknown command": the settings are saved
 # and apply at the next reboot.
 #
+# The password only ever passes through the shell built-in printf and a pipe (checked with `type printf`).
+#
 # POSIX sh for the camera's BusyBox 1.30.1: no tr, no mktemp, no stat (ls -ld instead). Paths are prefixed by
 # $AKAM_ROOT (empty on the camera) so the host test can run the script in a fake root.
 
@@ -37,7 +39,8 @@ PASS_FILE=${AKAM_MQTT_PASS_FILE:-$AKAM_DIR/mqtt_pass}
 AKAM_RTSP_BIN=${AKAM_RTSP_BIN:-/usr/bin/ak_rtsp}
 USER_MAX=32
 PASS_MAX=128
-TEST_TRIES=${AKAM_MQTT_TEST_TRIES:-15}
+# One test attempt can take 20 s (name lookup) + 10 s (connect) + 10 s (CONNACK): 45 one-second polls cover it.
+TEST_TRIES=${AKAM_MQTT_TEST_TRIES:-45}
 
 die() {
     echo "akam_mqtt: $*" >&2
@@ -130,6 +133,7 @@ write_private() {
     mkdir -p "$AKAM_DIR" 2>/dev/null || { echo "akam_mqtt: cannot create $AKAM_DIR (is /etc/config writable?)" >&2; return 1; }
     chmod 700 "$AKAM_DIR" 2>/dev/null
     _tmp=$1.new.$$
+    rm -f "$1".new.* 2>/dev/null   # leftovers of an interrupted run (another PID): they may hold a password
     rm -f "$_tmp"
     cat >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; echo "akam_mqtt: cannot write $_tmp" >&2; return 1; }
     chmod 600 "$_tmp" 2>/dev/null
@@ -162,7 +166,8 @@ ctl() {
 reload() {
     ctl MQTT reload
     case $REPLY in
-        OK*) echo "Applied now (ak_rtsp reloaded the setting)."; return 0 ;;
+        "OK mqtt.state="*) echo "Applied now: ak_rtsp reloaded the setting, the MQTT state is ${REPLY#OK mqtt.state=}."; return 0 ;;
+        OK*) echo "Applied now: ak_rtsp reloaded the setting."; return 0 ;;
         *"unknown command"*) echo "Saved. This ak_rtsp is older and cannot reload: reboot the camera to apply."; return 0 ;;
     esac
     if [ "$CTL_RC" -ne 0 ] || [ -z "$REPLY" ]; then
@@ -212,8 +217,17 @@ do_set() {
     C_HOST=$_host
     C_PORT=$_port
     C_USER=$_user
-    # the password first: a crash in between must not leave "enabled" with a stale password
+    # Never let a password reach a broker it was not meant for: first the NEW host with enabled=0, then the password,
+    # then enabled=1. A crash or a reload in between leaves MQTT off, never the old host with the new password and
+    # never the new host (enabled) with the old password.
+    write_cfg 0 || exit 1
     if [ -n "$_pw" ]; then
+        # printf must be the shell built-in (BusyBox ash: yes): an external printf would show the password in the
+        # process list
+        case $(type printf 2>/dev/null) in
+            *builtin*) ;;
+            *) _pw=; echo "akam_mqtt: this shell's printf is not a built-in; refusing to pass the password on a command line." >&2; exit 1 ;;
+        esac
         printf '%s\n' "$_pw" | write_private "$PASS_FILE" || exit 1
     else
         rm -f "$PASS_FILE"

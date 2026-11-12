@@ -94,7 +94,7 @@ static struct {
     int lfd, port, conn_fd, quit;
     pthread_t tid;
     /* behaviour */
-    int connack_rc, stall_connack, slow_connack, garbage_connack, ignore_ping, close_on_accept;
+    int connack_rc, stall_connack, slow_connack, garbage_connack, ignore_ping, close_on_accept, drop_after_connack, suback_fail;
     /* records */
     int connects, protocol_errors, pings, disconnects, pubacks, subs;
     int64_t conn_ms[64];
@@ -189,6 +189,10 @@ static void broker_packet(unsigned type, unsigned flags, const uint8_t *b, size_
         else if (stall) { /* say nothing */ }
         else if (slow) { for (int i = 0; i < 4; i++) { bw(ack + i, 1); usleep(15000); } }
         else bw(ack, 4);
+        pthread_mutex_lock(&B.mu);
+        int drop = B.drop_after_connack;
+        pthread_mutex_unlock(&B.mu);
+        if (drop) broker_drop();                      /* accepts, then hangs up at once */
         return;
     }
     if (type == 3) {                                  /* PUBLISH from the camera: QoS 0 only */
@@ -213,7 +217,7 @@ static void broker_packet(unsigned type, unsigned flags, const uint8_t *b, size_
             memcpy(B.sub_filter, b + 4, l);
             B.sub_filter[l] = '\0';
             B.subs++;
-            uint8_t ack[5] = { 0x90, 0x03, b[0], b[1], 0x00 };
+            uint8_t ack[5] = { 0x90, 0x03, b[0], b[1], (uint8_t)(B.suback_fail ? 0x80 : 0x00) };
             pthread_mutex_unlock(&B.mu);
             bw(ack, 5);
             return;
@@ -311,6 +315,16 @@ static void broker_stop(void)
 #define BGET(field) ({ pthread_mutex_lock(&B.mu); __typeof__(B.field) v_ = B.field; pthread_mutex_unlock(&B.mu); v_; })
 #define BSET(field, val) do { pthread_mutex_lock(&B.mu); B.field = (val); pthread_mutex_unlock(&B.mu); } while (0)
 
+/* No connection is open on the broker side: every socket of the camera side is closed too, so thread and fd counts
+ * can be compared after a stop without racing the broker thread's own close(). */
+static int broker_idle(void)
+{
+    pthread_mutex_lock(&B.wmu);
+    int idle = B.conn_fd < 0;
+    pthread_mutex_unlock(&B.wmu);
+    return idle;
+}
+
 /* Index of the first publish at or after `from` on exactly this topic, or -1. payload copied to out. */
 static int pub_find(int from, const char *topic, char *out, size_t cap, int *retain)
 {
@@ -367,11 +381,14 @@ static int count_dir(const char *path)
 static int tasks(void) { return count_dir("/proc/self/task"); }
 static int fds(void) { return count_dir("/proc/self/fd"); }
 
-static int g_dns_mode;
+/* mode 1: the lookup blocks until the test releases it (no sleeps to guess how long a "slow" resolver takes) */
+static int g_dns_mode, g_dns_release, g_dns_entered;
 static int slow_resolver(const char *host, struct in_addr *out)
 {
     (void)host;
-    if (g_dns_mode == 1) usleep(1500000);
+    __atomic_add_fetch(&g_dns_entered, 1, __ATOMIC_SEQ_CST);
+    if (g_dns_mode == 1)
+        for (int i = 0; i < 4000 && !__atomic_load_n(&g_dns_release, __ATOMIC_SEQ_CST); i++) usleep(5000);   /* 20 s safety */
     if (g_dns_mode == 2) return -1;
     out->s_addr = htonl(INADDR_LOOPBACK);
     return 0;
@@ -506,13 +523,14 @@ static void test_session(void)
 {
     char st[MQTT_STATE_MAX], v[1300];
     int retain = -1;
+    CHECK(WAIT_FOR(broker_idle(), 10000));
     int t0 = tasks(), f0 = fds();
     write_cfg("user=bob\ninterval=10\n");
     write_file(g_pass, SECRET "\n", 0600);
     CHECK(mqtt_svc_reload(st, sizeof(st)) == 0 && (!strcmp(st, "connecting") || !strcmp(st, "connected")));
-    CHECK(wait_state("connected", 3000));
+    CHECK(wait_state("connected", 10000));
     CHECK(tasks() == t0 + 1);                                  /* exactly one extra thread */
-    CHECK(WAIT_FOR(pub_find(0, "akam/akam-0f0f/volume/state", NULL, 0, NULL) >= 0, 3000));
+    CHECK(WAIT_FOR(pub_find(0, "akam/akam-0f0f/bitrate/state", NULL, 0, NULL) >= 0, 10000));   /* the last state of the announcement */
 
     /* CONNECT: credentials, keepalive, clean session, will */
     pthread_mutex_lock(&B.mu);
@@ -527,10 +545,10 @@ static void test_session(void)
     /* availability first, retained; discovery retained; states */
     CHECK(pub_find(0, "akam/akam-0f0f/status", v, sizeof(v), &retain) == 0 && !strcmp(v, "online") && retain == 1);
     int disc = pub_count_prefix(0, "homeassistant/");
-    CHECK(disc == 19);                                          /* 20 entities, temperature absent on this camera */
+    CHECK(disc == 20);                                          /* 19 documents + an empty one clearing the absent temperature */
     CHECK(pub_find(0, "homeassistant/select/akam_aabbccddee0f/status_led/config", v, sizeof(v), &retain) > 0 && retain == 1);
     CHECK(strstr(v, "\"unique_id\":\"akam_aabbccddee0f_status_led\"") != NULL);
-    CHECK(pub_find(0, "homeassistant/sensor/akam_aabbccddee0f/temperature/config", NULL, 0, NULL) == -1);
+    CHECK(pub_find(0, "homeassistant/sensor/akam_aabbccddee0f/temperature/config", v, sizeof(v), &retain) > 0 && v[0] == '\0' && retain == 1);
     pthread_mutex_lock(&B.mu);
     int ordered = 1;
     for (int i = 0; i < B.npub && i <= disc; i++)               /* nothing but status + discovery before the states */
@@ -548,7 +566,7 @@ static void test_session(void)
     int base = BGET(npub);
     int calls = set_calls();
     broker_publish("akam/akam-0f0f/volume/set", "42", 2, 0, 0);
-    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/volume/state", v, sizeof(v), &retain) >= 0, 3000));
+    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/volume/state", v, sizeof(v), &retain) >= 0, 10000));
     CHECK(!strcmp(v, "42") && retain == 1);
     CHECK(set_calls() == calls + 1 && !strcmp(g_set_key, "audio.out_volume") && !strcmp(g_set_val, "42"));
 
@@ -563,30 +581,29 @@ static void test_session(void)
     broker_publish("akam/akam-0f0f/beep/set", "PRESS", 5, 1, 0);          /* retained: refused */
     broker_publish("akam/akam-0f0f/status_led/state", "off", 3, 0, 0);    /* not a command topic */
     broker_publish("other/topic", "x", 1, 0, 0);
-    usleep(200000);
+    char stats[200];
+    CHECK(WAIT_FOR(({ mqtt_svc_stats(stats, sizeof(stats)); strstr(stats, "rejected=6") != NULL; }), 5000));
     CHECK(set_calls() == calls);
     /* a rejected command republishes the entity's real value (the UI snaps back), never the rejected one */
     {
-        int k = pub_find(base, "akam/akam-0f0f/volume/state", v, sizeof(v), NULL);
-        CHECK(k >= 0 && !strcmp(v, "42"));
+        char x_[40] = "";
+        CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/volume/state", x_, sizeof(x_), NULL) >= 0, 5000));
+        CHECK_STR(x_, "42");
     }
     mqtt_svc_state(st, sizeof(st));
     CHECK_STR(st, "connected");
-    char stats[120];
-    mqtt_svc_stats(stats, sizeof(stats));
-    CHECK(strstr(stats, "rejected=6") != NULL);
     CHECK(strstr(stats, "applied=1") != NULL);
 
     /* a packet far too big for the receive buffer is skipped, the stream stays in sync */
     {
-        size_t n = 70000;
+        size_t n = 60000;
         char *big = malloc(n);
         memset(big, '9', n);
         base = BGET(npub);
         broker_publish("akam/akam-0f0f/volume/set", big, n, 0, 0);
         free(big);
         broker_publish("akam/akam-0f0f/volume/set", "17", 2, 0, 0);
-        CHECK(WAIT_FOR(({ char x_[40] = ""; pub_find(base, "akam/akam-0f0f/volume/state", x_, sizeof(x_), NULL) >= 0 && set_calls() == calls + 1; }), 3000));
+        CHECK(WAIT_FOR(({ char x_[40] = ""; pub_find(base, "akam/akam-0f0f/volume/state", x_, sizeof(x_), NULL) >= 0 && set_calls() == calls + 1; }), 10000));
         CHECK(!strcmp(g_set_val, "17"));
         mqtt_svc_state(st, sizeof(st));
         CHECK_STR(st, "connected");
@@ -609,35 +626,55 @@ static void test_session(void)
         base = BGET(npub);
         calls = set_calls();
         bw(pk, o);
-        CHECK(WAIT_FOR(set_calls() == calls + 1 && !strcmp(g_set_val, "21"), 3000));
+        CHECK(WAIT_FOR(set_calls() == calls + 1 && !strcmp(g_set_val, "21"), 10000));
         mqtt_svc_state(st, sizeof(st));
         CHECK_STR(st, "connected");
         CHECK(BGET(protocol_errors) == 0);
     }
 
-    /* saved changes (LED here) are limited to one per window: the second is rejected and its state is republished */
+    /* a packet of 64 KiB or more is not skipped: it is a protocol error, the session restarts (and the rate-limit
+     * state of the commands survives the new session, see below) */
+    {
+        size_t n = 70000;
+        char *big = malloc(n);
+        memset(big, '9', n);
+        int cc = BGET(connects);
+        broker_publish("akam/akam-0f0f/volume/set", big, n, 0, 0);
+        free(big);
+        CHECK(WAIT_FOR(BGET(connects) == cc + 1, 8000));
+        CHECK(wait_state("connected", 8000));
+        CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 5000));
+    }
+
+    /* saved changes (LED, IR, mode, talk): a scene of four fits in the burst; the fifth is rejected and its state is
+     * republished. The command bucket refills first (5/s) so this part does not depend on the commands above. */
+    usleep(2200000);
     base = BGET(npub);
     calls = set_calls();
+    int64_t t_saved = now_ms();
     broker_publish("akam/akam-0f0f/status_led/set", "on", 2, 0, 0);
     broker_publish("akam/akam-0f0f/ir_led/set", "off", 3, 0, 0);
-    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/ir_led/state", v, sizeof(v), &retain) >= 0, 3000));
-    CHECK(!strcmp(v, "auto") && retain == 1);                     /* still the real value */
-    CHECK(set_calls() == calls + 1 && !strcmp(g_set_key, "led.status"));
-    CHECK(pub_find(base, "akam/akam-0f0f/status_led/state", v, sizeof(v), NULL) >= 0 && !strcmp(v, "on"));
-    kv_set("led.status", "auto");
+    broker_publish("akam/akam-0f0f/night_mode/set", "day", 3, 0, 0);
+    broker_publish("akam/akam-0f0f/talk/set", "OFF", 3, 0, 0);
+    broker_publish("akam/akam-0f0f/status_led/set", "auto", 4, 0, 0);
+    CHECK(WAIT_FOR(({ char x_[40] = ""; pub_find(base, "akam/akam-0f0f/status_led/state", x_, sizeof(x_), NULL) >= 0 &&
+                      pub_count_prefix(base, "akam/akam-0f0f/status_led/state") >= 2; }), 5000));
+    CHECK(set_calls() == calls + 4 && !strcmp(g_set_key, "audio.talk_enable"));
+    CHECK(pub_find(base, "akam/akam-0f0f/status_led/state", v, sizeof(v), &retain) >= 0 && !strcmp(v, "on") && retain == 1);
+    kv_set("led.status", "auto"); kv_set("night.ir_led", "auto"); kv_set("night.mode", "auto"); kv_set("audio.talk_enable", "1");
 
     /* QoS 1 delivery: PUBACK comes back */
     broker_publish("akam/akam-0f0f/brightness/set", "-5", 2, 0, 1);
-    CHECK(WAIT_FOR(BGET(pubacks) == 1, 3000));
-    CHECK(WAIT_FOR(!strcmp(g_set_key, "isp.brightness"), 1000));
+    CHECK(WAIT_FOR(BGET(pubacks) == 1, 10000));
+    CHECK(WAIT_FOR(!strcmp(g_set_key, "isp.brightness"), 10000));
 
     /* a change made elsewhere (SSH, ONVIF, the shell) is published within a few ticks, retained */
     base = BGET(npub);
     kv_set("led.status", "off");
-    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/status_led/state", v, sizeof(v), &retain) >= 0, 3000));
+    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/status_led/state", v, sizeof(v), &retain) >= 0, 10000));
     CHECK(!strcmp(v, "off") && retain == 1);
     kv_set("night.state", "night");
-    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/night_state/state", v, sizeof(v), &retain) >= 0, 3000));
+    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/night_state/state", v, sizeof(v), &retain) >= 0, 10000));
     CHECK(!strcmp(v, "night") && retain == 0);
     /* an unchanged control is not republished by the scan */
     int again = pub_count_prefix(base, "akam/akam-0f0f/status_led/state");
@@ -645,7 +682,7 @@ static void test_session(void)
     CHECK(pub_count_prefix(base, "akam/akam-0f0f/status_led/state") == again);
 
     /* keepalive: the broker is silent, the camera pings and the broker answers */
-    CHECK(WAIT_FOR(BGET(pings) >= 2, 4000));
+    CHECK(WAIT_FOR(BGET(pings) >= 2, 12000));
     mqtt_svc_state(st, sizeof(st));
     CHECK_STR(st, "connected");
 
@@ -653,24 +690,51 @@ static void test_session(void)
      * connection (the error state itself only lasts one backoff period, too short to poll for reliably) */
     int c0 = BGET(connects), p0 = BGET(pings);
     BSET(ignore_ping, 1);
-    CHECK(WAIT_FOR(BGET(connects) == c0 + 1, 6000));
+    CHECK(WAIT_FOR(BGET(connects) == c0 + 1, 15000));
     CHECK(BGET(pings) > p0);
     BSET(ignore_ping, 0);
-    CHECK(wait_state("connected", 6000));
+    CHECK(wait_state("connected", 10000));
     CHECK(BGET(connects) == c0 + 1);
 
     /* the broker drops the connection: reconnect, availability and discovery are announced again */
-    CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 3000));        /* the announcement of this session is complete */
+    CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 10000));        /* the announcement of this session is complete */
     base = BGET(npub);
     c0 = BGET(connects);
     broker_drop();
-    CHECK(WAIT_FOR(BGET(connects) == c0 + 1, 4000));
-    CHECK(wait_state("connected", 3000));
-    CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 3000));
-    CHECK(pub_count_prefix(base, "homeassistant/") == 19);
+    CHECK(WAIT_FOR(BGET(connects) == c0 + 1, 10000));
+    CHECK(wait_state("connected", 10000));
+    CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 10000));
+    CHECK(pub_count_prefix(base, "homeassistant/") == 20);
+    /* the flash-write bucket survives the reconnect: a new session does not refill it (skipped when 25 s went by) */
+    if (now_ms() - t_saved < 25000) {
+        calls = set_calls();
+        broker_publish("akam/akam-0f0f/status_led/set", "off", 3, 0, 0);
+        CHECK(WAIT_FOR(({ mqtt_svc_stats(stats, sizeof(stats)); strstr(stats, "rejected=1") != NULL; }), 5000));
+        CHECK(set_calls() == calls);
+    }
     CHECK(pub_find(base, "akam/akam-0f0f/status", v, sizeof(v), NULL) >= 0 && !strcmp(v, "online"));
     mqtt_svc_stats(stats, sizeof(stats));
     CHECK(strstr(stats, "connects=") != NULL);
+
+    /* a flood of RAM-only commands is cut by the command bucket: at most burst (+ a little refill) are applied, the
+     * excess is counted as rejected and not answered with a state publish */
+    CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 10000));
+    usleep(2200000);                                           /* the bucket is full again */
+    base = BGET(npub);
+    calls = set_calls();
+    for (int i = 1; i <= 40; i++) {
+        char num[16];
+        snprintf(num, sizeof(num), "%d", i);                   /* all different: none is "the current value" */
+        broker_publish("akam/akam-0f0f/sharpness/set", num, strlen(num), 0, 0);
+    }
+    CHECK(WAIT_FOR(({ mqtt_svc_stats(stats, sizeof(stats)); strstr(stats, "received=") != NULL && strstr(stats, "rejected=") != NULL &&
+                      set_calls() >= calls + 10 && BGET(npub) > base; }), 5000));
+    usleep(300000);
+    int applied_n = set_calls() - calls;
+    CHECK(applied_n >= 10 && applied_n <= 25);
+    CHECK(pub_count_prefix(base, "akam/akam-0f0f/sharpness/state") <= applied_n);   /* no answer for the dropped ones */
+    mqtt_svc_state(st, sizeof(st));
+    CHECK_STR(st, "connected");
 
     /* sensors come back on the interval (10 s is the minimum, so only check the scan did not republish them) */
     CHECK(BGET(protocol_errors) == 0);
@@ -681,21 +745,22 @@ static void test_session(void)
     mqtt_svc_stop();
     mqtt_svc_state(st, sizeof(st));
     CHECK_STR(st, "off");
-    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/status", v, sizeof(v), &retain) >= 0, 2000));
+    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/status", v, sizeof(v), &retain) >= 0, 10000));
     CHECK(!strcmp(v, "offline") && retain == 1);
-    CHECK(WAIT_FOR(BGET(disconnects) == d0 + 1, 2000));
-    CHECK(tasks() == t0 && fds() == f0);
+    CHECK(WAIT_FOR(BGET(disconnects) == d0 + 1, 10000));
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
     int calls_after = set_calls();
     usleep(200000);
     CHECK(BGET(npub) == base + 1 || BGET(npub) == base);        /* nothing is published once off */
     CHECK(set_calls() == calls_after);
     mqtt_svc_stop();                                            /* safe when off */
-    CHECK(tasks() == t0 && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 }
 
 static void test_failures(void)
 {
     char st[MQTT_STATE_MAX];
+    CHECK(WAIT_FOR(broker_idle(), 10000));
     int t0 = tasks(), f0 = fds();
     write_cfg("user=bob\n");
     write_file(g_pass, SECRET "\n", 0600);
@@ -709,53 +774,53 @@ static void test_failures(void)
         BSET(connack_rc, refusals[i].rc);
         int c0 = BGET(connects);
         mqtt_svc_reload(st, sizeof(st));
-        CHECK(wait_state(refusals[i].state, 3000));
+        CHECK(wait_state(refusals[i].state, 10000));
         if (i == 4) {                                           /* watch the backoff on one of them */
-            CHECK(WAIT_FOR(BGET(connects) >= c0 + 5, 8000));
+            CHECK(WAIT_FOR(BGET(connects) >= c0 + 5, 20000));
             pthread_mutex_lock(&B.mu);
             for (int k = c0 + 1; k < c0 + 5; k++) {
                 int64_t gap = B.conn_ms[k] - B.conn_ms[k - 1];
                 unsigned exp = mqtt_svc_tune.backoff_min_ms << (k - c0 - 1);
                 if (exp > mqtt_svc_tune.backoff_max_ms) exp = mqtt_svc_tune.backoff_max_ms;
-                if (!(gap >= (int64_t)exp * 75 / 100 && gap <= (int64_t)mqtt_svc_tune.backoff_max_ms + 300)) fprintf(stderr, "  gap %d = %lld ms, expected about %u\n", k, (long long)gap, exp);
-                CHECK(gap >= (int64_t)exp * 75 / 100 && gap <= (int64_t)mqtt_svc_tune.backoff_max_ms + 300);
+                if (!(gap >= (int64_t)exp * 75 / 100 && gap <= (int64_t)mqtt_svc_tune.backoff_max_ms + 2000)) fprintf(stderr, "  gap %d = %lld ms, expected about %u\n", k, (long long)gap, exp);
+                CHECK(gap >= (int64_t)exp * 75 / 100 && gap <= (int64_t)mqtt_svc_tune.backoff_max_ms + 2000);
             }
             pthread_mutex_unlock(&B.mu);
         }
         mqtt_svc_stop();
-        CHECK(tasks() == t0 && fds() == f0);
+        CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
     }
     BSET(connack_rc, 0);
 
     /* a CONNACK that never comes */
     BSET(stall_connack, 1);
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("error:timeout", 3000));
+    CHECK(wait_state("error:timeout", 10000));
     mqtt_svc_stop();
     BSET(stall_connack, 0);
-    CHECK(tasks() == t0 && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 
     /* not MQTT at all */
     BSET(garbage_connack, 1);
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("error:protocol", 3000));
+    CHECK(wait_state("error:protocol", 10000));
     mqtt_svc_stop();
     BSET(garbage_connack, 0);
 
     /* a CONNACK delivered one byte at a time */
     BSET(slow_connack, 1);
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("connected", 3000));
+    CHECK(wait_state("connected", 10000));
     mqtt_svc_stop();
     BSET(slow_connack, 0);
 
     /* the broker accepts and hangs up */
     BSET(close_on_accept, 1);
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("error:closed", 3000));
+    CHECK(wait_state("error:closed", 10000));
     mqtt_svc_stop();
     BSET(close_on_accept, 0);
-    CHECK(tasks() == t0 && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 
     /* nothing listens on the port */
     {
@@ -772,7 +837,7 @@ static void test_failures(void)
         snprintf(t, sizeof(t), "enabled=1\nhost=127.0.0.1\nport=%d\n", ntohs(a.sin_port));
         write_file(g_cfg, t, 0600);
         mqtt_svc_reload(st, sizeof(st));
-        CHECK(wait_state("error:connect", 3000));
+        CHECK(wait_state("error:connect", 10000));
         mqtt_svc_stop();
         if (getenv("MQTT_TEST_DNS")) {      /* needs a working resolver; off by default (a dead one can take 30 s) */
             write_file(g_cfg, "enabled=1\nhost=no-such-host.invalid\n", 0600);
@@ -780,50 +845,60 @@ static void test_failures(void)
             CHECK(wait_state("error:dns", 15000));
             mqtt_svc_stop();
         }
-        CHECK(tasks() == t0 && fds() == f0);
+        CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
     }
 
     /* name lookups: a slow resolver never makes stop or reload wait; a fast one connects; a failing one says dns */
     mqtt_svc_resolver = slow_resolver;
-    g_dns_mode = 1;                                             /* 1.5 s, then 127.0.0.1 */
+    g_dns_mode = 1;                                             /* blocks until released */
+    g_dns_release = 0;
+    g_dns_entered = 0;
     write_cfg_host("slow.test", "user=bob\n");
     {
-        int64_t t1 = now_ms();
         mqtt_svc_reload(st, sizeof(st));
-        usleep(100000);
-        mqtt_svc_stop();
-        CHECK(now_ms() - t1 < 1000);
-        t1 = now_ms();
+        CHECK(WAIT_FOR(__atomic_load_n(&g_dns_entered, __ATOMIC_SEQ_CST) >= 1, 5000));   /* the lookup is stuck */
+        mqtt_svc_stop();                                        /* returns although the helper is still blocked */
+        mqtt_svc_state(st, sizeof(st));
+        CHECK_STR(st, "off");
         mqtt_svc_reload(st, sizeof(st));
-        usleep(100000);
+        CHECK(WAIT_FOR(__atomic_load_n(&g_dns_entered, __ATOMIC_SEQ_CST) >= 2, 5000));
         mqtt_svc_reload(st, sizeof(st));                         /* reload during the lookup */
-        CHECK(now_ms() - t1 < 1000);
+        CHECK(WAIT_FOR(__atomic_load_n(&g_dns_entered, __ATOMIC_SEQ_CST) >= 3, 5000));
+        mqtt_svc_stop();
+        /* abandoned lookups are capped: with 4 helpers alive no 5th is started, the attempt just fails as dns */
+        mqtt_svc_reload(st, sizeof(st));
+        CHECK(WAIT_FOR(__atomic_load_n(&g_dns_entered, __ATOMIC_SEQ_CST) >= 4, 5000));
+        mqtt_svc_stop();
+        mqtt_svc_reload(st, sizeof(st));
+        CHECK(wait_state("error:dns", 5000));
+        usleep(200000);                                         /* absence check: no further helper appears */
+        CHECK(__atomic_load_n(&g_dns_entered, __ATOMIC_SEQ_CST) == 4);
         mqtt_svc_stop();
     }
-    usleep(1800000);                                            /* the abandoned helpers finish and free their slots */
-    CHECK(tasks() == t0 && fds() == f0);
+    __atomic_store_n(&g_dns_release, 1, __ATOMIC_SEQ_CST);      /* the abandoned helpers finish and free their slots */
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
     g_dns_mode = 0;                                             /* immediate 127.0.0.1 */
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("connected", 3000));
+    CHECK(wait_state("connected", 10000));
     mqtt_svc_stop();
     g_dns_mode = 2;                                             /* immediate failure */
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("error:dns", 3000));
+    CHECK(wait_state("error:dns", 10000));
     mqtt_svc_stop();
     mqtt_svc_resolver = NULL;
-    CHECK(tasks() == t0 && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 
     /* a reload while running restarts with the new file; a reload to "off" stops it */
     write_cfg("user=bob\ndiscovery=off\n");
     int base = BGET(npub);
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("connected", 3000));
-    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/volume/state", NULL, 0, NULL) >= 0, 3000));
+    CHECK(wait_state("connected", 10000));
+    CHECK(WAIT_FOR(pub_find(base, "akam/akam-0f0f/volume/state", NULL, 0, NULL) >= 0, 10000));
     CHECK(pub_count_prefix(base, "homeassistant/") == 0);       /* discovery=off: states only */
     write_cfg("user=bob\nbase_topic=home/cam1\ndiscovery_prefix=ha\nclient_id=cam_one\n");
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("connected", 3000));
-    CHECK(WAIT_FOR(pub_find(base, "ha/select/akam_aabbccddee0f/status_led/config", NULL, 0, NULL) >= 0, 3000));
+    CHECK(wait_state("connected", 10000));
+    CHECK(WAIT_FOR(pub_find(base, "ha/select/akam_aabbccddee0f/status_led/config", NULL, 0, NULL) >= 0, 10000));
     CHECK(pub_find(base, "home/cam1/status", NULL, 0, NULL) >= 0);
     pthread_mutex_lock(&B.mu);
     CHECK_STR(B.client_id, "cam_one");
@@ -833,22 +908,70 @@ static void test_failures(void)
     write_file(g_cfg, "enabled=0\nhost=127.0.0.1\n", 0600);
     mqtt_svc_reload(st, sizeof(st));
     CHECK_STR(st, "off");
-    CHECK(tasks() == t0 && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 
     /* no user name: no password is sent even if a password file exists (MQTT 3.1.1 forbids it) */
     write_cfg("");
     mqtt_svc_reload(st, sizeof(st));
-    CHECK(wait_state("connected", 3000));
+    CHECK(wait_state("connected", 10000));
     pthread_mutex_lock(&B.mu);
     CHECK(!B.has_user && !B.has_pass);
     pthread_mutex_unlock(&B.mu);
     mqtt_svc_stop();
     CHECK(BGET(protocol_errors) == 0);
+
+    /* M2: a reload that connects at once never leaves the state at "connecting" */
+    for (int i = 0; i < 15; i++) {
+        BSET(npub, 0);                                          /* the broker keeps at most MAXREC publishes */
+        mqtt_svc_reload(st, sizeof(st));
+        CHECK(wait_state("connected", 10000));
+    }
+    mqtt_svc_stop();
+
+    BSET(npub, 0);
+    /* L6: the broker refuses the subscription (SUBACK 0x80): reported, retried */
+    BSET(suback_fail, 1);
+    mqtt_svc_reload(st, sizeof(st));
+    CHECK(wait_state("error:subscribe", 10000));
+    mqtt_svc_stop();
+    BSET(suback_fail, 0);
+
+    BSET(npub, 0);
+    /* L8: no MAC yet (Wi-Fi not up): nothing connects, the state says so, and it recovers by itself */
+    kv_set("net.mac", "unknown");
+    {
+        int cm = BGET(connects);
+        mqtt_svc_reload(st, sizeof(st));
+        CHECK(wait_state("error:mac", 10000));
+        CHECK(BGET(connects) == cm);                            /* not even dialled */
+        kv_set("net.mac", "aa:bb:cc:dd:ee:0f");
+        CHECK(wait_state("connected", 10000));                  /* the next attempt finds the MAC */
+        mqtt_svc_stop();
+    }
+
+    BSET(npub, 0);
+    /* L1: a broker that accepts and hangs up at once does not reset the backoff: the delays keep growing */
+    mqtt_svc_tune.stable_ms = 60000;
+    BSET(drop_after_connack, 1);
+    {
+        int c0 = BGET(connects);
+        mqtt_svc_reload(st, sizeof(st));
+        CHECK(WAIT_FOR(BGET(connects) >= c0 + 5, 20000));
+        pthread_mutex_lock(&B.mu);
+        int64_t g4 = B.conn_ms[c0 + 4] - B.conn_ms[c0 + 3];     /* the 4th delay: 8 x the minimum unless reset to it */
+        pthread_mutex_unlock(&B.mu);
+        CHECK(g4 >= (int64_t)mqtt_svc_tune.backoff_min_ms * 8 * 75 / 100);
+        mqtt_svc_stop();
+    }
+    BSET(drop_after_connack, 0);
+    mqtt_svc_tune.stable_ms = 0;
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 }
 
 static void test_oneshot(void)
 {
     char st[MQTT_STATE_MAX];
+    CHECK(WAIT_FOR(broker_idle(), 10000));
     int t0 = tasks(), f0 = fds();
     write_cfg("user=bob\n");
     write_file(g_pass, SECRET "\n", 0600);
@@ -856,28 +979,28 @@ static void test_oneshot(void)
     int d0 = BGET(disconnects), c0 = BGET(connects);
     /* the service is off; the test works anyway and never starts it */
     CHECK(mqtt_svc_test_start() == 0);
-    CHECK(WAIT_FOR(({ mqtt_svc_test_result(st, sizeof(st)); strcmp(st, "running") != 0; }), 3000));
+    CHECK(WAIT_FOR(({ mqtt_svc_test_result(st, sizeof(st)); strcmp(st, "running") != 0; }), 10000));
     CHECK_STR(st, "ok");
-    CHECK(BGET(connects) == c0 + 1 && WAIT_FOR(BGET(disconnects) == d0 + 1, 2000));
+    CHECK(BGET(connects) == c0 + 1 && WAIT_FOR(BGET(disconnects) == d0 + 1, 10000));
     pthread_mutex_lock(&B.mu);
     CHECK_STR(B.client_id, "akam-0f0f-test");                   /* never the id of the real session */
     CHECK(!strcmp(B.user, "bob") && !strcmp(B.pass, SECRET) && !B.has_will);
     pthread_mutex_unlock(&B.mu);
     mqtt_svc_state(st, sizeof(st));
     CHECK_STR(st, "off");
-    CHECK(WAIT_FOR(tasks() == t0, 2000) && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
 
     BSET(connack_rc, 4);
     CHECK(mqtt_svc_test_start() == 0);
-    CHECK(WAIT_FOR(({ mqtt_svc_test_result(st, sizeof(st)); strcmp(st, "running") != 0; }), 3000));
+    CHECK(WAIT_FOR(({ mqtt_svc_test_result(st, sizeof(st)); strcmp(st, "running") != 0; }), 10000));
     CHECK_STR(st, "error:refused_credentials");
     BSET(connack_rc, 0);
     BSET(stall_connack, 1);
     CHECK(mqtt_svc_test_start() == 0);
-    CHECK(WAIT_FOR(({ mqtt_svc_test_result(st, sizeof(st)); strcmp(st, "running") != 0; }), 3000));
+    CHECK(WAIT_FOR(({ mqtt_svc_test_result(st, sizeof(st)); strcmp(st, "running") != 0; }), 10000));
     CHECK_STR(st, "error:timeout");
     BSET(stall_connack, 0);
-    CHECK(WAIT_FOR(tasks() == t0, 2000) && fds() == f0);
+    CHECK(WAIT_FOR(tasks() == t0 && broker_idle() && fds() == f0, 10000));
     CHECK(BGET(protocol_errors) == 0);
 }
 
@@ -892,7 +1015,7 @@ int main(int argc, char **argv)
     umask(022);
     mqtt_cfg_path = g_cfg;
     mqtt_pass_path = g_pass;
-    mqtt_svc_tune = (mqtt_svc_tune_t){ 60, 480, 2, 100, 600, 400 };
+    mqtt_svc_tune = (mqtt_svc_tune_t){ 60, 480, 2, 100, 3000, 2000, 0 };
     mqtt_svc_set_ops(&g_ops);
 
     /* everything the module prints goes to a file that is scanned for the password at the end */

@@ -2,8 +2,8 @@
  * documents, the state values and the command allow-list. Pure logic: it reads and writes the camera only through
  * the mqtt_ops_t table, so tests/native/mqtt_ha_test.c and mqtt_svc_test.c run it on the host with a fake camera.
  *
- * Topics (BASE = the configured base topic, default akam/<hostname>; NODE = akam_<mac without colons>, or the
- * hostname when the MAC is unknown):
+ * Topics (BASE = the configured base topic, default akam/<hostname>; NODE = akam_<mac without colons>; with no MAC
+ * known mqtt_ha_init() fails with -2 and the caller retries later):
  *   BASE/status                  availability: "online" (retained) / "offline" (retained, also the will)
  *   BASE/<entity>/state          state of the entity (controls retained, sensors not)
  *   BASE/<entity>/set            command topic (select, number, switch, button only)
@@ -33,11 +33,29 @@ typedef struct {
     int64_t     (*now_ms)(void);              /* monotonic milliseconds; NULL = no rate limit on saved changes */
 } mqtt_ops_t;
 
-/* Saved (flash) changes: at most one per MQTT_HA_PERSIST_GAP_MS for the whole module. The LED and IR setters write flash on
- * every change and cannot be told to stay in RAM, so a further saved command inside the window is REJECTED (counted in
- * `invalid`, and the entity's state is published again so Home Assistant shows the real value). Sliders are RAM-only and
- * never limited. */
-#define MQTT_HA_PERSIST_GAP_MS 10000
+/* Command rate limits (all token buckets, evaluated with ops->now_ms; NULL now_ms = no limits):
+ *  - every command: burst MQTT_HA_CMD_BURST, refilled MQTT_HA_CMD_PER_S per second. An excess command is counted in
+ *    `invalid`, NOT applied and NOT answered with a state publish (so a flood cannot make the camera publish back).
+ *  - saved (flash) changes: burst MQTT_HA_PERSIST_BURST, one token back every MQTT_HA_PERSIST_REFILL_MS. A Home
+ *    Assistant scene that sets LED + IR + night mode + talk fits in the burst; sustained use is one change per 30 s
+ *    (about 2900 flash writes a day at the very most, and a flood is cut to that). A command whose value already is the
+ *    current one is applied without touching the setter and costs no token. A refused saved command is counted in
+ *    `invalid` and the entity's state is published again so Home Assistant shows the real value.
+ *  - beep: at most one per MQTT_HA_BEEP_GAP_MS.
+ * The state lives in an mqtt_ha_limits_t (a zeroed one starts full) that survives mqtt_ha_init(), so a reconnect (a new session) does not refill
+ * the buckets: the owner passes its own static one with mqtt_ha_use_limits() after every init. */
+#define MQTT_HA_CMD_BURST 10
+#define MQTT_HA_CMD_PER_S 5
+#define MQTT_HA_PERSIST_BURST 4
+#define MQTT_HA_PERSIST_REFILL_MS 30000
+#define MQTT_HA_BEEP_GAP_MS 2000
+
+typedef struct {
+    int64_t cmd_milli, cmd_ms;               /* tokens (x1000) and the time of the last refill */
+    int64_t persist_milli, persist_ms;
+    int64_t beep_ms;
+    int     have_beep;
+} mqtt_ha_limits_t;
 
 typedef struct {
     char     base[72];
@@ -51,16 +69,19 @@ typedef struct {
     uint8_t  present[MQTT_HA_MAX_ENT];       /* optional entities the camera really has */
     uint8_t  have[MQTT_HA_MAX_ENT];          /* a state was published */
     char     last[MQTT_HA_MAX_ENT][MQTT_HA_VAL_MAX];
-    int64_t  last_persist_ms;
-    int      have_persist;
+    mqtt_ha_limits_t  own_lim;               /* used until mqtt_ha_use_limits() */
+    mqtt_ha_limits_t *lim;
     int      reject_idx;                     /* entity of the last rejected command (-1 none): the caller republishes its state */
     unsigned invalid;                        /* rejected commands, for the stats */
     unsigned applied;
 } mqtt_ha_t;
 
-/* base and prefix may be "" (defaults akam/<hostname> and homeassistant). Returns 0, or -1 when a topic would not
- * be valid or would be too long. */
+/* base and prefix may be "" (defaults akam/<hostname> and homeassistant). Returns 0, -1 when a topic would not
+ * be valid or would be too long, -2 when the MAC address is not known yet (retry later). */
 int  mqtt_ha_init(mqtt_ha_t *h, const mqtt_ops_t *ops, const char *base, const char *prefix, int discovery);
+
+/* Keep the rate-limit state in *lim (static in the caller) across mqtt_ha_init() calls. Call after every init. */
+void mqtt_ha_use_limits(mqtt_ha_t *h, mqtt_ha_limits_t *lim);
 
 /* 1 when s is a usable base topic or prefix: 1 to maxlen of A-Z a-z 0-9 _ - and /, no leading, trailing or double /. */
 int mqtt_ha_topic_ok(const char *s, size_t maxlen);
@@ -76,7 +97,8 @@ int mqtt_ha_status_topic(const mqtt_ha_t *h, char *out, size_t cap);
 /* "BASE/+/set": the one subscription that covers every command topic. */
 int mqtt_ha_cmd_filter(const mqtt_ha_t *h, char *out, size_t cap);
 /* Discovery topic and document of entity i. Returns the payload length, -1 when it does not fit, 0 when the entity
- * is not present (nothing to publish). */
+ * is not present: topic is filled and the caller publishes an EMPTY retained payload there to remove a document an
+ * earlier run left in the broker (e.g. a Wi-Fi signal entity after the camera went wired). */
 int mqtt_ha_discovery(const mqtt_ha_t *h, size_t i, char *topic, size_t tcap, char *payload, size_t pcap);
 
 /* State of entity i: reads the camera and fills topic, text and retain. Returns 1 when there is something to
