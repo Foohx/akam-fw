@@ -200,8 +200,9 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, 
 		return Result{}, err
 	}
 	defer s.Close()
-	var out, errb bytes.Buffer
-	s.Stdout, s.Stderr = &out, &errb
+	// A camera (or anything answering as one) can send for ever: only the first bytes are kept.
+	out, errb := &limitBuf{max: maxRunStdout}, &limitBuf{max: maxRunStderr}
+	s.Stdout, s.Stderr = out, errb
 	if stdin != nil {
 		s.Stdin = stdin
 	}
@@ -212,7 +213,7 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, 
 		s.Close()
 		return Result{}, ctx.Err()
 	case err := <-done:
-		res := Result{Stdout: out.Bytes(), Stderr: errb.Bytes()}
+		res := Result{Stdout: out.b, Stderr: errb.b}
 		if err != nil {
 			var ee *gossh.ExitError
 			if errors.As(err, &ee) {
@@ -295,11 +296,25 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// limitBuf keeps the first 4 KiB written to it and drops the rest.
-type limitBuf struct{ b []byte }
+// Limits of what Run keeps of a command's output (the helpers print a few lines).
+const (
+	maxRunStdout = 1 << 20
+	maxRunStderr = 64 << 10
+)
+
+// limitBuf keeps the first max bytes written to it (4 KiB when max is 0) and drops the rest; the
+// writer always reports success, so the command is not stopped.
+type limitBuf struct {
+	b   []byte
+	max int
+}
 
 func (l *limitBuf) Write(p []byte) (int, error) {
-	if room := 4096 - len(l.b); room > 0 {
+	limit := l.max
+	if limit == 0 {
+		limit = 4096
+	}
+	if room := limit - len(l.b); room > 0 {
 		if len(p) < room {
 			room = len(p)
 		}

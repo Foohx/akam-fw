@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/textsafe"
 	"regexp"
 	"strconv"
 	"strings"
@@ -450,8 +451,9 @@ func (a *App) rtspAuthDisable(c *camssh.Client, ip string) error {
 	res, err := a.rtspRemote(c, nil, "disable")
 	if err == nil {
 		// the helper's own words go to the terminal, like ssh without redirection
-		if o := string(res.Stdout) + string(res.Stderr); o != "" {
-			fmt.Fprint(a.out(), o)
+		// (cleaned: a camera must not be able to move the cursor or hide lines on the terminal)
+		if o := strings.TrimRight(textsafe.Clean(string(res.Stdout)+string(res.Stderr)), "\n"); o != "" {
+			a.UI.Say(o)
 		}
 	}
 	if err != nil || res.Status != 0 {
