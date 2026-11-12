@@ -46,7 +46,7 @@ func TestPictureNumber(t *testing.T) {
 }
 
 func TestNamesAndHosts(t *testing.T) {
-	for _, ok := range []string{"salon", "a", "cam-1", "192.168.1.50", "host.local"} {
+	for _, ok := range []string{"salon", "a", "cam-1", "192.0.2.50", "host.local"} {
 		if !validHost(ok) {
 			t.Errorf("host %q refused", ok)
 		}

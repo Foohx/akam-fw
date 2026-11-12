@@ -103,9 +103,9 @@ case $out in *"sys.time_set: 0"*) ok "status: clock before 2024 reported as not 
 
 # 2. set: validates, writes 0600 in a 0700 directory, lines are exact
 new_env set
-out=$(run_ntp set pool.ntp.org 192.168.1.1)
-case $out in *"Time sync on, servers: pool.ntp.org 192.168.1.1"*) ok "set: confirms" ;; *) ko "set: $out" ;; esac
-eq "set: file content" "$(cat "$(CONF)")" "$(printf 'server=pool.ntp.org\nserver=192.168.1.1')"
+out=$(run_ntp set pool.ntp.org 192.0.2.1)
+case $out in *"Time sync on, servers: pool.ntp.org 192.0.2.1"*) ok "set: confirms" ;; *) ko "set: $out" ;; esac
+eq "set: file content" "$(cat "$(CONF)")" "$(printf 'server=pool.ntp.org\nserver=192.0.2.1')"
 eq "set: file mode 600" "$(ls -l "$(CONF)" | cut -c1-10)" "-rw-------"
 eq "set: directory mode 700" "$(ls -ld "$E/etc/config/akam" | cut -c1-10)" "drwx------"
 eq "set: no temporary file left" "$(ls "$E/etc/config/akam" | wc -l | tr -d ' ')" 1

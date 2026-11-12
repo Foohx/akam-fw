@@ -48,7 +48,7 @@ cams_known() {
     done
 }
 
-# cams_summary NAME: "3/9 steps done  192.168.1.50" read from the camera's state file.
+# cams_summary NAME: "3/9 steps done  192.0.2.50" read from the camera's state file.
 cams_summary() {
     local f n ip last st
     f=$(cams_dir "$1")/state

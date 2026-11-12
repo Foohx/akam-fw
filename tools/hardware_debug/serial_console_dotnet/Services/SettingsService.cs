@@ -17,7 +17,7 @@ namespace serial_console_dotnet.Services
         public string ConnectionType { get; set; } = "serial";
         public string SerialPort { get; set; } = "";
         public string BaudRate { get; set; } = "115200";
-        public string TelnetHost { get; set; } = "192.168.1.1";
+        public string TelnetHost { get; set; } = "192.0.2.1";
         public string TelnetPort { get; set; } = "23";
         public string TelnetUsername { get; set; } = "root";
         public string TelnetPassword { get; set; } = "admin";

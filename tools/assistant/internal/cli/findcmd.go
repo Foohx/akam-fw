@@ -121,7 +121,7 @@ func (a *App) askIP() (string, error) {
 		}
 	}
 	if !validHost(ip) {
-		return "", a.UI.Fail(fmt.Sprintf("'%s' is not a valid address.", ip), "type the IPv4 address, for example 192.168.1.50")
+		return "", a.UI.Fail(fmt.Sprintf("'%s' is not a valid address.", ip), "type the IPv4 address, for example 192.0.2.50")
 	}
 	return ip, nil
 }

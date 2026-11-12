@@ -140,6 +140,16 @@ while IFS= read -r f; do
 done < <(git ls-files -s | awk '$1 == "120000" { sub(/^[^\t]*\t/, ""); print }')
 echo "tracked symlinks: $links"
 
+# No private 192.168 address (RFC 1918 class C) in tracked files: examples use RFC 5737 documentation ranges
+# (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24). Exceptions: tools/ci/ip_allowlist.txt.
+ipbad=0
+while IFS= read -r f; do
+    in_list "$f" "$HERE/ip_allowlist.txt" && continue
+    ipbad=$((ipbad + 1))
+    note_fail "private 192.168 address in tracked file, use an RFC 5737 documentation range (192.0.2.x, 198.51.100.x, 203.0.113.x) or list the file in tools/ci/ip_allowlist.txt: $f"
+done < <(git grep -l -E '192[.]168[.]')
+echo "tracked private-address files: $ipbad"
+
 # ---------------------------------------------------------------- summary
 echo
 if [ "$FAILED" -eq 0 ]; then

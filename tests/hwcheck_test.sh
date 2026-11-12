@@ -111,13 +111,13 @@ stub "$S1" netstat 'echo "Active Internet connections (only servers)"
 echo "Proto Recv-Q Send-Q Local Address           Foreign Address         State"
 echo "tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN"
 echo "tcp        0      0 0.0.0.0:554             0.0.0.0:*               LISTEN"
-echo "tcp        0      0 192.168.1.9:8091        0.0.0.0:*               LISTEN"'
+echo "tcp        0      0 192.0.2.9:8091        0.0.0.0:*               LISTEN"'
 stub "$S1" nc 'cat >/dev/null; echo "PARAM_A 1"; echo "PARAM_B 2"'
 stub "$S1" free 'echo "free stub"'
 run t1 "$R1" "$S1"
 has "netstat: source reported" 'source: netstat' "$WORK/t1.out"
 has "netstat: port 22 pass" '^PASS +port 22 listening' "$WORK/t1.out"
-has "netstat: 8091 address info" '8091 listen address: 192.168.1.9' "$WORK/t1.out"
+has "netstat: 8091 address info" '8091 listen address: 192.0.2.9' "$WORK/t1.out"
 has "netstat: port 23 closed" '^PASS +port 23 closed' "$WORK/t1.out"
 has "processes: ak_rtsp running" '^PASS +ak_rtsp running \(pid 101\)' "$WORK/t1.out"
 has "processes: lockdown matched via argv1" '^PASS +akam_lockdown running \(pid 103\)' "$WORK/t1.out"

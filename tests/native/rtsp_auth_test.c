@@ -231,7 +231,7 @@ static void test_state_machine(void)
     CHECK(res.delay_ms == 0 && res.log[0] == '\0', "plain challenge: no delay, nothing logged");
     CHECK(!rtsp_auth_session_ok(&db, &c), "unauthenticated connection is not valid once auth is on");
 
-    const char *uri = "rtsp://192.168.1.50:554/";
+    const char *uri = "rtsp://192.0.2.50:554/";
     hdr_digest(hdr, sizeof(hdr), USER, PASSWORD, nonce, "DESCRIBE", uri, NULL, NULL);
     req(&c, "DESCRIBE", hdr);
     CHECK(res.verdict == RTSP_AUTH_ALLOW, "right response -> 200 path");
@@ -482,12 +482,12 @@ static void test_logs(void)
     CHECK(strstr(transcript, "bad credentials") != NULL, "failures are logged (reason only)");
 
     char out[256];
-    rtsp_auth_redact_uri("rtsp://admin:" PASSWORD "@192.168.1.50:554/stream", out, sizeof(out));
-    CHECK(strcmp(out, "rtsp://***@192.168.1.50:554/stream") == 0, "URI with user:password@ redacted");
+    rtsp_auth_redact_uri("rtsp://admin:" PASSWORD "@192.0.2.50:554/stream", out, sizeof(out));
+    CHECK(strcmp(out, "rtsp://***@192.0.2.50:554/stream") == 0, "URI with user:password@ redacted");
     rtsp_auth_redact_uri("rtsp://adm@in:p@ss@host/", out, sizeof(out));
     CHECK(strcmp(out, "rtsp://***@host/") == 0, "'@' inside the password");
-    rtsp_auth_redact_uri("rtsp://192.168.1.50:554/a@b", out, sizeof(out));
-    CHECK(strcmp(out, "rtsp://192.168.1.50:554/a@b") == 0, "'@' in the path left alone");
+    rtsp_auth_redact_uri("rtsp://192.0.2.50:554/a@b", out, sizeof(out));
+    CHECK(strcmp(out, "rtsp://192.0.2.50:554/a@b") == 0, "'@' in the path left alone");
     rtsp_auth_redact_uri("*", out, sizeof(out));
     CHECK(strcmp(out, "*") == 0, "plain URI unchanged");
     rtsp_auth_redact_uri("rtsp://u:p@h/", out, 8);

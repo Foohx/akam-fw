@@ -139,7 +139,7 @@ cam_ask_ip() {
         ui_prompt "  Camera IP address${def:+ [$def]}:" "$def" || { ui_fail "no input." "pass --ip ADDRESS"; return 1; }
         CAM_IP=$ANSWER
     fi
-    cam_valid_host "$CAM_IP" || { ui_fail "'$CAM_IP' is not a valid address." "type the IPv4 address, for example 192.168.1.50"; return 1; }
+    cam_valid_host "$CAM_IP" || { ui_fail "'$CAM_IP' is not a valid address." "type the IPv4 address, for example 192.0.2.50"; return 1; }
 }
 
 cmd_find_camera() {

@@ -43,7 +43,7 @@ static void put_req(bytes_t *b, const char *method, unsigned cseq,
 {
     char h[512];
     size_t bl = body ? strlen(body) : 0;
-    int n = snprintf(h, sizeof(h), "%s rtsp://192.168.1.2/stream RTSP/1.0\r\n"
+    int n = snprintf(h, sizeof(h), "%s rtsp://192.0.2.2/stream RTSP/1.0\r\n"
                      "CSeq: %u\r\n%s", method, cseq, extra ? extra : "");
     if (bl) n += snprintf(h + n, sizeof(h) - (size_t)n, "Content-Length: %zu\r\n", bl);
     n += snprintf(h + n, sizeof(h) - (size_t)n, "\r\n");

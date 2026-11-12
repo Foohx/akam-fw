@@ -180,7 +180,7 @@ binary for a side-by-side comparison:
 
 ```bash
 AKAM_USE_BIN=1 ./akam led            # runs tools/assistant/bin/akam led (or $AKAM_BIN)
-tools/assistant/bin/akam --ip 192.168.1.50 audio volume 30
+tools/assistant/bin/akam --ip 192.0.2.50 audio volume 30
 ```
 
 Both programs keep their progress in the same folder (`~/.local/state/akam`, `AKAM_STATE_DIR`,

@@ -219,7 +219,7 @@ func ipLess(a, b string) bool {
 // ScanCount is the number of dials a Scan of the subnet makes.
 func ScanCount(sn Subnet) int { return len(sn.Hosts()) * 4 }
 
-// Describe is "192.168.1.0/24 (eth0, 254 addresses, 1016 connections)".
+// Describe is "192.0.2.0/24 (eth0, 254 addresses, 1016 connections)".
 func (s Subnet) Describe() string {
 	return fmt.Sprintf("%s%s (%s, %d addresses)", s.CIDR, s.cutNote(), s.Iface, len(s.Hosts()))
 }

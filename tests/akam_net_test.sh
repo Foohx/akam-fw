@@ -61,7 +61,7 @@ EOF
 cat >"$STUBS/ifconfig" <<'EOF'
 #!/bin/sh
 echo "wlan0     Link encap:Ethernet  HWaddr 00:11:22:33:44:55"
-[ -e "$FAKE/ip_up" ] && echo "          inet addr:192.168.1.50  Bcast:192.168.1.255  Mask:255.255.255.0"
+[ -e "$FAKE/ip_up" ] && echo "          inet addr:192.0.2.50  Bcast:192.0.2.255  Mask:255.255.255.0"
 exit 0
 EOF
 cat >"$STUBS/sleep" <<'EOF'
