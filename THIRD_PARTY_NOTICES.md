@@ -89,7 +89,7 @@ notices ship in the image (`LICENSE.musl`, `LICENSE.zig`).
 
 The native assistant binary links the Go modules below, downloaded unchanged by
 `tools/build/bootstrap.sh` into `tools/.toolchain/go/mod` (not stored in git; each module has its
-licence file in its directory there) and pinned by the checksums of `tools/assistant/go.sum`. Only MIT and BSD-3-Clause code is linked; GPL tools are never linked or
+licence file in its directory there) and pinned by the checksums of `tools/assistant/go.sum`. Only MIT, BSD-3-Clause, Apache-2.0 and Unlicense (public domain) code is linked; GPL tools are never linked or
 embedded (`ffmpeg` is only run when the user has it). Test-only code adds no module.
 
 | Module | Version | Licence | Used for |
@@ -99,6 +99,14 @@ embedded (`ffmpeg` is only run when the user has it). Test-only code adds no mod
 | golang.org/x/term | v0.48.0 | BSD-3-Clause | hidden password input, terminal detection |
 | golang.org/x/text | v0.43.0 | BSD-3-Clause | width tables used by the terminal libraries |
 | github.com/ulikunitz/xz | v0.5.17 | BSD-3-Clause | in-process decoding of the kit (.tar.xz) |
+| github.com/hajimehoshi/go-mp3 | v0.3.4 | Apache-2.0 | in-process MP3 decoding (`akam say`) |
+| github.com/mewkiz/flac | v1.0.14 | Unlicense (public domain) | in-process FLAC decoding (`akam say`) |
+| github.com/mewkiz/pkg | v0.0.0-20250417130911-3f050ff8c56d | Unlicense (public domain) | helpers of the FLAC decoder |
+| github.com/mewpkg/term | v0.0.0-20241026122259-37a80af23985 | Unlicense (public domain) | linked with the FLAC decoder (terminal helpers it does not use here) |
+| github.com/icza/bitio | v1.1.0 | Apache-2.0 | bit reader of the FLAC decoder |
+| github.com/jfreymuth/oggvorbis | v1.0.5 | MIT | in-process Ogg Vorbis decoding (`akam say`) |
+| github.com/jfreymuth/vorbis | v1.0.2 | MIT | Vorbis decoder (oggvorbis) |
+| github.com/jfreymuth/pulse | v0.1.3 | MIT | PulseAudio / PipeWire client for the built-in microphone (`akam talk`, Linux builds only) |
 | github.com/charmbracelet/bubbletea | v1.3.10 | MIT | full-screen menu and widgets |
 | github.com/charmbracelet/lipgloss | v1.1.0 | MIT | terminal styling |
 | github.com/charmbracelet/colorprofile | v0.2.3-0.20250311203215-f60798e515dc | MIT | colour support detection (lipgloss) |
