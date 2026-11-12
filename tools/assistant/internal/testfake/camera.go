@@ -1,7 +1,8 @@
 // Package testfake is the fake camera of the tests: an in-process SSH server that runs the real
 // camera helper scripts (tools/firmware_patch_templates) in a temporary root file system, a fake
-// control port 8091 reached through direct-tcpip (and also listening on a real port, for port
-// probes), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
+// control port 8091 reached the way the real camera allows it (the exec command
+// `nc -w 2 127.0.0.1 8091`; direct-tcpip is refused like Dropbear built without forwarding; the port
+// also listens on a real loopback port, for port probes), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
 // listens outside the loopback, never runs anything but the closed set of commands below, and
 // removes everything it started when the test ends.
 package testfake
@@ -311,35 +312,7 @@ func (c *Camera) handleSSH(nc net.Conn) {
 			}
 			c.wg.Add(1)
 			go func() { defer c.wg.Done(); c.session(ch, creqs, nc) }()
-		case "direct-tcpip":
-			var p struct {
-				Host     string
-				Port     uint32
-				OrigHost string
-				OrigPort uint32
-			}
-			if gossh.Unmarshal(nch.ExtraData(), &p) != nil || p.Host != "127.0.0.1" || p.Port != 8091 {
-				_ = nch.Reject(gossh.Prohibited, "only 127.0.0.1:8091 is forwarded")
-				continue
-			}
-			ch, creqs, err := nch.Accept()
-			if err != nil {
-				continue
-			}
-			go gossh.DiscardRequests(creqs)
-			up, err := net.Dial("tcp", c.ctlLn.Addr().String())
-			if err != nil {
-				ch.Close()
-				continue
-			}
-			c.wg.Add(1)
-			go func() {
-				defer c.wg.Done()
-				defer up.Close()
-				defer ch.Close()
-				go io.Copy(up, ch)
-				io.Copy(ch, up)
-			}()
+		// Like the camera's Dropbear (DROPBEAR_SVR_LOCALTCPFWD 0): no direct-tcpip, no forwarding of any kind.
 		default:
 			_ = nch.Reject(gossh.UnknownChannelType, "no")
 		}
@@ -387,6 +360,8 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 	switch {
 	case cmd == "true":
 		return 0
+	case cmd == "nc -w 2 127.0.0.1 8091":
+		return c.ncCtl(stdin, stdout)
 	case cmd == "test -x /usr/sbin/akam_hostname.sh":
 		if c.opts.NoHostnameHelper {
 			return 1
@@ -660,6 +635,23 @@ func (c *Camera) handleCtl(nc net.Conn) {
 		c.mu.Unlock()
 		fmt.Fprintf(nc, "%s\n", reply)
 	}
+}
+
+// ncCtl emulates busybox `nc -w 2 127.0.0.1 8091` on the camera: stdin goes to the control port, what
+// the port sends goes to stdout. nc ends when the server closes, or 2 s after stdin ended.
+func (c *Camera) ncCtl(stdin io.Reader, stdout io.Writer) int {
+	up, err := net.Dial("tcp", c.ctlLn.Addr().String())
+	if err != nil {
+		return 1
+	}
+	defer up.Close()
+	go func() {
+		_, _ = io.Copy(up, stdin)
+		time.Sleep(2 * time.Second) // -w 2
+		up.Close()
+	}()
+	_, _ = io.Copy(stdout, up)
+	return 0
 }
 
 // CtlValue reads a control value (tests).

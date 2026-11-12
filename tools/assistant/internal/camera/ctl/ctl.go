@@ -1,48 +1,51 @@
 // Package ctl speaks the camera's control port (8091, spec 04) the way the bash wizard does
 // through `printf 'GET...\n' | nc -w 2 127.0.0.1 8091` on the camera: one GET/SET line each,
-// answers without the asynchronous LOG lines. The connection is an SSH direct-tcpip to the
-// camera's own loopback, so the camera accepts writes (loopback trust model, unchanged).
+// answers without the asynchronous LOG lines. The camera's Dropbear has no TCP forwarding
+// (DROPBEAR_SVR_LOCALTCPFWD 0), so the lines travel as the stdin of an SSH exec session running
+// busybox nc on the camera's own loopback (loopback trust model, unchanged).
 package ctl
 
 import (
-	"bufio"
-	"net"
 	"regexp"
 	"strings"
 	"time"
 )
 
-// Idle is how long to wait for the next answer (nc -w 2).
-const Idle = 2 * time.Second
-
 // Port is the control port.
 const Port = 8091
 
-// Exchange sends every line, then reads answers until one per line arrived (LOG lines never
-// count and are dropped), the camera closes the connection, or nothing came for idle.
-func Exchange(conn net.Conn, lines []string, idle time.Duration) []string {
-	defer conn.Close()
+// Timeout bounds one whole exchange (send and answers), so a hung camera cannot hang the assistant.
+const Timeout = 10 * time.Second
+
+// NcCommand is the command run on the camera: busybox nc, giving up after 2 s of silence.
+const NcCommand = "nc -w 2 127.0.0.1 8091"
+
+// Input is the stdin of NcCommand: every line, then QUIT so the server closes at once.
+func Input(lines []string) string {
 	var b strings.Builder
 	for _, l := range lines {
 		b.WriteString(l)
 		b.WriteString("\n")
 	}
-	_ = conn.SetWriteDeadline(time.Now().Add(idle))
-	if _, err := conn.Write([]byte(b.String())); err != nil {
-		return nil
-	}
-	r := bufio.NewReader(conn)
+	b.WriteString("QUIT\n")
+	return b.String()
+}
+
+// Answers filters what nc printed: CRLF trimmed, empty and LOG lines dropped, the "OK bye" answer to
+// QUIT removed, and at most one answer kept per line sent.
+func Answers(stdout string, sent int) []string {
 	var out []string
-	for len(out) < len(lines) {
-		_ = conn.SetReadDeadline(time.Now().Add(idle))
-		l, err := r.ReadString('\n')
-		l = strings.TrimRight(l, "\r\n")
+	for _, l := range strings.Split(stdout, "\n") {
+		l = strings.TrimRight(l, "\r")
 		if l != "" && !strings.HasPrefix(l, "LOG ") {
 			out = append(out, l)
 		}
-		if err != nil {
-			break
-		}
+	}
+	if n := len(out); n > 0 && out[n-1] == "OK bye" {
+		out = out[:n-1]
+	}
+	if len(out) > sent {
+		out = out[:sent]
 	}
 	return out
 }

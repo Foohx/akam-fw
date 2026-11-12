@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
 
@@ -143,6 +144,7 @@ var fixedRemote = map[string]bool{
 	remoteDateRead(): true, remoteRegister(): true,
 	remoteMtdList: true, remoteKernelInfo: true,
 	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
+	ctl.NcCommand: true,
 }
 
 // forbiddenRemote is an ALLOW-list: it returns "" only for a command line the assistant itself

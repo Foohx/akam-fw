@@ -1,6 +1,6 @@
 // Package ssh is the built-in SSH client of the assistant (replacing the ssh binary): user root,
 // public-key login with the dedicated key, host-key pinning in Akam's own known_hosts file, command
-// execution with optional stdin, and direct-tcpip forwards to the camera's loopback.
+// execution with optional stdin. It uses no forwarding (the camera's Dropbear has none).
 package ssh
 
 import (
@@ -102,6 +102,21 @@ func Dial(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	raw, err := net.DialTimeout("tcp", addr, cfg.Timeout)
+	if err != nil {
+		closeSigner()
+		return nil, err
+	}
+	// The handshake has a deadline, but not while a person reads the host-key fingerprint: the
+	// deadline is suspended while Confirm waits and restarted afterwards.
+	if confirm := cfg.Confirm; confirm != nil {
+		cfg.Confirm = func(nh NewHostKey) (bool, error) {
+			_ = raw.SetDeadline(time.Time{})
+			defer func() { _ = raw.SetDeadline(time.Now().Add(cfg.Timeout)) }()
+			return confirm(nh)
+		}
+	}
 	sc := &gossh.ClientConfig{
 		User:              "root",
 		Auth:              []gossh.AuthMethod{gossh.PublicKeys(signer)},
@@ -109,12 +124,6 @@ func Dial(cfg Config) (*Client, error) {
 		HostKeyAlgorithms: []string{gossh.KeyAlgoED25519},
 		Timeout:           cfg.Timeout,
 		ClientVersion:     "SSH-2.0-akam",
-	}
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	raw, err := net.DialTimeout("tcp", addr, cfg.Timeout)
-	if err != nil {
-		closeSigner()
-		return nil, err
 	}
 	_ = raw.SetDeadline(time.Now().Add(cfg.Timeout))
 	cc, chans, reqs, err := gossh.NewClientConn(raw, addr, sc)
@@ -321,11 +330,6 @@ func (l *limitBuf) Write(p []byte) (int, error) {
 		l.b = append(l.b, p[:room]...)
 	}
 	return len(p), nil
-}
-
-// Forward opens a direct-tcpip channel to host:port as seen from the camera (loopback).
-func (c *Client) Forward(host string, port int) (net.Conn, error) {
-	return c.conn.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
 // ---- host key pinning ----

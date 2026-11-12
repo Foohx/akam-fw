@@ -1,76 +1,27 @@
 package ctl
 
 import (
-	"bufio"
-	"net"
 	"strings"
 	"testing"
-	"time"
 )
 
-// serve runs handler on a real loopback connection (a net.Pipe has no buffer, so a server that
-// speaks first would deadlock against a client that writes first).
-func serve(t *testing.T, handler func(c net.Conn)) net.Conn {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+func TestInputEndsWithQuit(t *testing.T) {
+	if got := Input([]string{"GET a", "SET b 1"}); got != "GET a\nSET b 1\nQUIT\n" {
+		t.Errorf("input: %q", got)
 	}
-	go func() {
-		defer ln.Close()
-		c, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer c.Close()
-		handler(c)
-	}()
-	a, err := net.Dial("tcp", ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { a.Close(); ln.Close() })
-	return a
 }
 
-func TestExchangeDropsLogLinesAndStopsAfterOneAnswerPerLine(t *testing.T) {
-	conn := serve(t, func(c net.Conn) {
-		io := bufio.NewReader(c)
-		c.Write([]byte("LOG [early] hello\n"))
-		l1, _ := io.ReadString('\n')
-		c.Write([]byte("LOG [middle]\n"))
-		l2, _ := io.ReadString('\n')
-		if l1 != "GET led.status\n" || l2 != "GET night.ir_led\n" {
-			c.Write([]byte("ERR got " + l1 + l2))
-			return
-		}
-		c.Write([]byte("led.status=auto\nLOG [x]\nnight.ir_led=off\n"))
-		time.Sleep(time.Second) // the camera keeps the connection open
-	})
-	start := time.Now()
-	out := Exchange(conn, []string{"GET led.status", "GET night.ir_led"}, 2*time.Second)
-	if time.Since(start) > 900*time.Millisecond {
-		t.Error("waited for the idle timeout although every answer had arrived")
-	}
+func TestAnswersDropsLogByeAndBlank(t *testing.T) {
+	out := Answers("LOG [early] hello\r\nled.status=auto\r\n\nLOG [x]\nnight.ir_led=off\nOK bye\n", 2)
 	if len(out) != 2 || Get("led.status", out) != "auto" || Get("night.ir_led", out) != "off" {
-		t.Errorf("answers: %v", out)
+		t.Errorf("answers: %q", out)
 	}
-}
-
-func TestExchangeToleratesSilenceAndEarlyClose(t *testing.T) {
-	conn := serve(t, func(c net.Conn) { time.Sleep(300 * time.Millisecond) }) // never answers
-	start := time.Now()
-	out := Exchange(conn, []string{"GET led.status"}, 100*time.Millisecond)
-	if len(out) != 0 || time.Since(start) > time.Second {
-		t.Errorf("out=%v after %v", out, time.Since(start))
+	// a missing answer: the QUIT reply must not take its place
+	if out = Answers("led.status=on\nOK bye\n", 2); len(out) != 1 {
+		t.Errorf("answers: %q", out)
 	}
-	conn = serve(t, func(c net.Conn) {
-		bufio.NewReader(c).ReadString('\n')
-		c.Write([]byte("led.status=on\n"))
-	}) // closes after one answer out of two
-	out = Exchange(conn, []string{"GET led.status", "GET led.state"}, time.Second)
-	if len(out) != 1 || Get("led.status", out) != "on" || Get("led.state", out) != "" {
-		t.Errorf("out=%v", out)
+	if out = Answers("", 1); len(out) != 0 {
+		t.Errorf("answers: %q", out)
 	}
 }
 
