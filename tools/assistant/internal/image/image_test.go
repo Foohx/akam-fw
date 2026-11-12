@@ -50,7 +50,7 @@ func fixtureTree(t testing.TB, variant string) *squashfs.Node {
 		return root
 	}
 	fx := filepath.Join(repoRoot(t), "tests", "fixtures")
-	root := nodeFromDir(t, filepath.Join(fx, "app_fake"))
+	root := nodeFromDir(t, appFakeCopy(t, filepath.Join(fx, "app_fake")))
 	if variant != "app_fake" {
 		b, err := os.ReadFile(filepath.Join(fx, variant, "sbin", "service.sh"))
 		if err != nil {

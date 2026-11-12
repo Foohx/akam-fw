@@ -132,6 +132,14 @@ while IFS= read -r f; do
 done < <(git ls-files)
 echo "tracked files: $bad forbidden"
 
+# No symlink may ever be tracked (git mode 120000). Tests that need one create it in a temp dir.
+links=0
+while IFS= read -r f; do
+    links=$((links + 1))
+    note_fail "tracked symlink (git mode 120000), never commit symlinks; create it at test time in a temp dir: $f"
+done < <(git ls-files -s | awk '$1 == "120000" { sub(/^[^\t]*\t/, ""); print }')
+echo "tracked symlinks: $links"
+
 # ---------------------------------------------------------------- summary
 echo
 if [ "$FAILED" -eq 0 ]; then

@@ -10,7 +10,7 @@ REPO=$(cd "$HERE/.." && pwd)
 BUILD=$REPO/src/ak_rtsp/build_firmware.sh
 MAKE=$REPO/tools/release/make_kit.sh
 ASSEMBLE=$REPO/tools/image/assemble_from_kit.sh
-FIXTURE=$REPO/tests/fixtures/app_fake
+FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 PART=5242880
 
 for t in tar xz sha256sum mksquashfs unsquashfs; do
@@ -18,6 +18,10 @@ for t in tar xz sha256sum mksquashfs unsquashfs; do
 done
 
 WORK=$(mktemp -d)
+# The repository tracks no symlink: build the fixture's lib/libfake.so link in a throw-away copy.
+FIXTURE=$WORK/app_fake
+cp -a "$FIXTURE_SRC" "$FIXTURE"
+ln -s libfake.so.1 "$FIXTURE/lib/libfake.so"
 trap '[ -n "${KEEP:-}" ] || { chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"; }' EXIT
 PASS=0
 FAIL=0

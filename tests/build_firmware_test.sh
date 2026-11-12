@@ -8,7 +8,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 BUILD=$REPO/src/ak_rtsp/build_firmware.sh
-FIXTURE=$REPO/tests/fixtures/app_fake
+FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 TARGET=5242880
 
 for t in mksquashfs unsquashfs sha256sum; do
@@ -16,6 +16,10 @@ for t in mksquashfs unsquashfs sha256sum; do
 done
 
 WORK=$(mktemp -d)
+# The repository tracks no symlink: build the fixture's lib/libfake.so link in a throw-away copy.
+FIXTURE=$WORK/app_fake
+cp -a "$FIXTURE_SRC" "$FIXTURE"
+ln -s libfake.so.1 "$FIXTURE/lib/libfake.so"
 trap '[ -n "${KEEP:-}" ] || rm -rf "$WORK"' EXIT
 PASS=0
 FAIL=0

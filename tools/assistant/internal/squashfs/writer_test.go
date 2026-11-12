@@ -346,6 +346,9 @@ func TestWriterAppFakeFixtures(t *testing.T) {
 		if _, err := os.Stat(src); err != nil {
 			t.Skipf("fixture %s: %v", name, err)
 		}
+		if name == "app_fake" {
+			src = appFakeCopy(t, src)
+		}
 		t.Run(name, func(t *testing.T) {
 			root := treeFromDir(t, src, testTime)
 			img, _, err := Build(root, Options{Time: testTime, AllTime: true})

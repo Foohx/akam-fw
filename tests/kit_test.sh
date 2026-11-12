@@ -15,6 +15,11 @@ for t in tar xz sha256sum ssh-keygen; do
 done
 
 WORK=$(mktemp -d)
+# The repository tracks no symlink: build the fixture's lib/libfake.so link in a throw-away copy.
+FIXTURE_SRC=$REPO/tests/fixtures/app_fake
+FIXTURE=$WORK/app_fake
+cp -a "$FIXTURE_SRC" "$FIXTURE"
+ln -s libfake.so.1 "$FIXTURE/lib/libfake.so"
 trap '[ -n "${KEEP:-}" ] || rm -rf "$WORK"' EXIT
 PASS=0
 FAIL=0
@@ -285,7 +290,6 @@ check "a private key in a shipped file stops make_kit" bash -c "
     ! MUSL_COPYRIGHT='$WORK/badlic/COPYRIGHT' bash '$MAKE' --out '$WORK/o9' >'$WORK/bad.out' 2>&1 && grep -q 'forbidden content' '$WORK/bad.out'"
 
 # image_files.txt is the single list; build_firmware.sh must install exactly the same files.
-FIXTURE=$REPO/tests/fixtures/app_fake
 check "fixture APP tree exists" test -d "$FIXTURE/sbin"
 DRIFT=$WORK/drift
 mkdir -p "$DRIFT"
