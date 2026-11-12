@@ -33,7 +33,7 @@ Only the Linux amd64 paths have been exercised on a real camera, and only in par
 
 ### Home screen
 
-`akam` with no command opens the home screen (on a terminal: arrows or `j`/`k`, Enter, `?` help, `c` camera, `q`; with
+`akam` with no command opens the home screen (on a terminal: arrows or `j`/`k`, Enter, digits 1 to 8, `?` details, `c` camera, `q`; in the camera list `s` scan, `o` ONVIF search, `t` type an address, `r` recheck, `f` forget, Esc back; with
 `--plain`, `AKAM_PLAIN=1` or without a terminal: a plain menu or the status table).
 
 | Entry | What it does |
@@ -199,7 +199,7 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `talk [SECONDS\|test]`, `say FILE` | RTSP + Digest + ONVIF audio backchannel + G.711 in Go; `talk test` and `say file.wav` need no other program (any rate or channel count; 8/16/24/32-bit PCM or float). The microphone and files that are not WAV need `arecord` or `ffmpeg` (optional, found automatically, nothing else uses them) |
 | `forget-host-key IP` | forget a camera's pinned SSH host key (asks first) |
 | `doctor` | what this program found on your computer (optional tools included) |
-| menu (`akam` alone) | on a terminal, a full-screen menu (arrows or `j`/`k`, Enter, `?`, `q`); with `--plain`, `AKAM_PLAIN=1` or without a terminal, the status table |
+| menu (`akam` alone) | on a terminal, a full-screen menu (arrows or `j`/`k`, Enter, digits 1 to 8, `?` details, `c` camera, `q`; no "Press Enter" prompts: results show on a strip that any key clears); with `--plain`, `AKAM_PLAIN=1` or without a terminal, the status table |
 
 | `get-kit` | downloads `akam-kit-X.tar.xz`, `SHA256SUMS`, `SHA256SUMS.sig` (HTTPS only, TLS 1.2+, a redirect to http is refused, 3 tries), checks the sha256, the OpenSSH signature (SSHSIG, principal and namespace `akam-release`, keys of `tools/release/allowed_signers` built in; there is no environment override in a release binary: `AKAM_ALLOWED_SIGNERS`, `AKAM_KIT_URL_BASE`, `AKAM_FLASH_TOOL`, `AKAM_FLASH_SCRIPTS_DIR`, `AKAM_PORT_SSH2`, `AKAM_REFLASH_*` and `AKAM_FORCE_TTY` are test hooks, read only by a build with `-tags akamtest`; downloads are capped at 256 MiB and 1 MiB for the checksum files, the archive at 1 GiB decompressed / 200 MiB of content / 10000 entries), the archive layout and the kit's MANIFEST exactly like `verify_kit.sh`, and extracts it to `<state dir>/kit`. `--kit FILE`, `--version`, `--expect-sha256`, `--allow-unsigned` keep their meaning. Today's `allowed_signers` holds no key, so a signed kit is refused; an unsigned one needs the yes/no "Unsigned kit" (default No, refused without a terminal) or `--allow-unsigned`. Nothing from a kit is run. The `.tar.xz` is decoded in process (`ulikunitz/xz`, no `xz` program needed): before any byte is decoded the stream structure is checked (exactly one stream with one LZMA2 block, dictionary at most 64 MiB, declared size at most 1 GiB) |
 | `update [--image FILE]` | flashes a new image over SSH, no card: precheck (writes nothing), the red box and one yes/no (default No), upload to the camera's RAM, sha256 on both sides, md5 by the camera script, a second Dropbear from RAM on port 2222, detached flash, polled log, independent read-back md5 of `/dev/mtd7`. The camera-side scripts are those of `tools/flash_scripts` (or the kit's `scripts/flash`), unchanged. It never reboots: power-cycle by hand |

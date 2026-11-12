@@ -1,0 +1,56 @@
+# Assistant screen: manual test checklist
+
+A short check of the `akam` home screen and its main screens on the terminals people really use. The automated tests cover
+the logic and the layout; only a person can say whether colours, glyphs and keys feel right in a real terminal. Nothing
+here touches a camera: use `--dry-run` where a step would write (the red box then does not open) or press `n`/Esc at every
+question. For hardware tests see the [hardware test plan](assistant_hardware_test_plan.md).
+
+## Terminals to run
+
+| # | Terminal | Notes |
+|---|----------|-------|
+| 1 | Windows 10, conhost (the classic console window, `akam.exe` from cmd or PowerShell) | uses the console's VT mode; try a raster font and Consolas |
+| 2 | Windows 10, Windows Terminal | PowerShell and cmd tabs |
+| 3 | macOS Terminal.app | also iTerm2 if you have it |
+| 4 | A Linux terminal (gnome-terminal, konsole, xterm...) | |
+| 5 | tmux (inside any of the above, `TERM=screen-256color` or `tmux-256color`) | resize the pane while the program runs |
+| 6 | 16 colours: `TERM=linux` on the Linux console, or `TERM=xterm` with a 16-colour palette | glyphs fall back to ASCII on the Linux console |
+| 7 | No colour: `NO_COLOR=1 akam` (PowerShell: `$env:NO_COLOR=1`) | the screen must stay readable and keep its structure |
+| 8 | Small window: 60 columns by 16 lines, then 40 by 8 | |
+
+Also run once with `AKAM_ASCII=1` (forces ASCII glyphs) and once with `--plain` (no screen, line-by-line text).
+
+## What to look at, per screen
+
+Write PASS, FAIL or SKIP (why) and what you saw. "Fits" means nothing wraps badly, nothing is cut mid-word at the right edge
+and no stray characters (`?`, boxes, `[`...) appear.
+
+| Screen | How to get there | Keys to press | Expected |
+|--------|------------------|---------------|----------|
+| Home | run `akam` | Up/Down, `j`/`k`, a digit 1 to 8 (shortcut, then answer `n` or Esc to the first question), `?`, `q` | Header (product, camera name, address, badges) over a list; one line of keys at the bottom; the selected row is clearly marked; the status colours (ok, warning, error) differ and each has a word or glyph, not colour alone; `?` opens details and Esc closes them; `q` quits; nothing says "Press Enter" |
+| Camera chooser and scan | `c` on the home | `s` then `n` (no packet is sent), `s` then `y` (scan of your own network; stop with Esc), `o` then `n`, `t` (type an address, Esc), Esc | Empty state tells you to press `s` or `t`; the question defaults to No (Enter, Esc, `q` all mean No); the scan shows a status line with a percentage and rows appear as cameras answer; Esc stops it at once and goes back |
+| Options form | choose "Camera options" (needs a camera, or use `--dry-run` with a remembered camera) | Up/Down, Left/Right or Space on a choice, type a number and Enter, `p` (password row is hidden), Esc | Six groups (Video, Picture, LED, Audio, Network, Security) on one screen that scrolls; a change shows `SET ...` then a one-line result; typed passwords never show, not even as `*`; Esc leaves without asking anything |
+| Backup progress | "Back up / restore", then back up (a camera, or `--dry-run`) | Esc once while reading, `?`, resize the window | Steps listed with a spinner on the current one; a bar with size, elapsed time and time left; Esc says it stops after the current step and nothing on the camera changes; `?` shows the log and Esc closes it; the bar redraws cleanly after a resize |
+| Red box | "Prepare the backup microSD card" or "Update this camera" until the box (use a spare card; or `--dry-run`, where it must **not** open and only a `WOULD ask` line shows) | Enter, Esc, `q`, Ctrl-C, then run again and press `y` only on a card you can erase | The box is red (bold uppercase title in no-colour and ASCII), shows the command, and No is highlighted; Enter, Esc, `q` and Ctrl-C all mean No and nothing happens; waiting a minute changes nothing; only `y` (or Left then Enter) means yes |
+| Error screen | stop a camera (or type a wrong address in the chooser) and run "Update this camera" | `l`, Esc, `r`, `c` | Red title in words, what happened, what to do, a muted technical line; `l` opens the log tail, Esc closes only the log; `r` retries; `c` offers another camera; Esc goes back home; no password or key appears anywhere |
+| Write in progress (hardware plan only) | during a flash write | Esc, Ctrl-C, `q` | Nothing stops or quits; the footer says the write cannot be interrupted safely; the keys work again when it ends |
+
+## Checks that apply to every screen
+
+- **Colour:** in 256 colours the palette is readable on both a light and a dark background; in 16 colours the red box and
+  errors are still red (not invisible); with `NO_COLOR=1` there is no escape-sequence colour at all and warnings still read
+  as warnings (`[!]`, `[x]`, `[ok]` or words).
+- **Glyphs:** boxes and spinner look right (UTF-8), or fall back to plain ASCII on the Linux console and with `AKAM_ASCII=1`.
+- **Width:** a camera name with accents or CJK characters keeps the columns aligned.
+- **Resize:** shrink and grow the window while on the home, the chooser and the form. The screen redraws without leftovers.
+  At 40 by 8 it keeps its title and its key line.
+- **Keys:** arrow keys, Enter, Esc, `q`, `?`, Ctrl-C and the mouse wheel do what the key line says. On Windows conhost also try
+  Esc while typing in a field. In tmux check that Esc is not delayed for a long time (set `escape-time 10` if it is).
+- **Quit:** `q` or Ctrl-C leaves the terminal as it found it: cursor visible, no colour left on, no alternate screen stuck, typed
+  characters echoed again.
+- **No camera needed for safety:** on the red box never press `y` unless you meant to; the tester must be able to read the
+  command in the box before answering.
+
+## Report
+
+Record the terminal name and version, `akam version`, the OS, and for each FAIL a screenshot or the exact text on screen.

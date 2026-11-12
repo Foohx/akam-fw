@@ -93,8 +93,10 @@ explicit yes, and a different flash layout is refused.
    ```
    Its first step checks your PC and prints the exact command to paste if a tool is missing. Then it
    guides you through everything and remembers where you stopped.
-3. **Follow the menu**, one step after the other. Arrow keys (or `j`/`k`) and Enter to run a step, `?`
-   to read what it does and what it risks, `q` to quit (your progress is kept).
+3. **Follow the menu**, one step after the other. Arrow keys (or `j`/`k`) and Enter to run a step (digits 1 to 8 are
+   shortcuts), `?` to read what it does and what it risks, `c` to change camera, `q` to quit (your progress is kept). Nothing waits
+   for a "Press Enter": a result shows on one line under the menu and any key clears it. In a camera list, `s` scans
+   the network and `o` searches with ONVIF (each asks first), `t` types an address, `r` rechecks, `f` forgets, Esc goes back.
 
 That is all. The first run asks for a short name for your camera (for example `salon`). `./akam help`
 lists every command; add `--dry-run` to rehearse without changing anything. The menu (in colour on a

@@ -12,6 +12,7 @@ Akam. These pages are for when you want details, want to do a step by hand, or s
 - [Tested hardware](tested-hardware.md): the camera model and units validated, and how to report yours.
 - [Test plan and status](akam_v1_test_plan.md): what was validated on hardware, what is still to check, the post-flash check script.
 - [Assistant hardware test plan](assistant_hardware_test_plan.md): tickable checklists for Windows, macOS and Linux with the native `akam` binary.
+- [Assistant screen manual test](assistant_tui_manual_test.md): what to look at and which keys to press on each terminal (Windows, macOS, Linux, tmux, 16 colours, `NO_COLOR`, small windows).
 - [Installing the `akam` binary](assistant_install.md): downloads, checks, SmartScreen and Gatekeeper steps.
 - [Release notes draft](release_notes_draft.md): what the assistant release contains and which targets are untested.
 
