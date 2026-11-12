@@ -114,7 +114,7 @@ func Catalog() []Option {
 		enum("audio.talk_enable", "Audio", "Talk (two-way)", PersistCamera, Now, "0", "1"),
 		enum("audio.mic_enable", "Audio", "Microphone", PersistCamera, NextPowerCycle, "0", "1"),
 		num("video.bitrate_cfg", "Video", "Bitrate (kbit/s)", VideoKbpsMin, VideoKbpsMax, PersistCamera, VideoRestart),
-		enum("video.fps_cfg", "Video", "Frame rate", PersistCamera, VideoRestart, "10", "15"),
+		enum("video.fps_cfg", "Video", "Frame rate", PersistCamera, VideoRestart, "10", "15", "20", "25"),
 		num("video.gop_cfg", "Video", "Key frame interval (s)", VideoGopMin, VideoGopMax, PersistCamera, VideoRestart),
 		{ID: "video.cfg_pending", Group: "Video", Label: "Settings not running yet", Kind: Int, Key: "video.cfg_pending", Persisted: PersistNone, ReadOnly: true},
 		{ID: "video.bitrate", Group: "Video", Label: "Measured bitrate (kbit/s)", Kind: Int, Key: "video.bitrate", Persisted: PersistNone, ReadOnly: true},

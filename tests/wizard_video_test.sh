@@ -56,7 +56,7 @@ while IFS= read -r line; do
             v=${3:-}
             case $key in
                 video.bitrate_cfg) { case $v in '' | *[!0-9]*) false ;; *) [ "$v" -ge 500 ] && [ "$v" -le 3000 ] ;; esac; } || { echo "ERR invalid $key value (want 500..3000 kbit/s)"; continue; } ;;
-                video.fps_cfg) case $v in 10 | 15) ;; *) echo "ERR invalid $key value (want 10 or 15)"; continue ;; esac ;;
+                video.fps_cfg) case $v in 10 | 15 | 20 | 25) ;; *) echo "ERR invalid $key value (want 10, 15, 20 or 25)"; continue ;; esac ;;
                 video.gop_cfg) case $v in 1 | 2 | 3 | 4) ;; *) echo "ERR invalid $key value (want 1..4 seconds)"; continue ;; esac ;;
                 *) echo "ERR $key is read-only"; continue ;;
             esac
@@ -134,6 +134,10 @@ check "bitrate 900: other settings untouched" test "$(cam video.fps_cfg)" = 15 -
 printf '\n' | a_tty "$S" video fps 10 >"$T/n.out" 2>&1
 check "fps 10 + Enter: saved, not restarted" bash -c '[ "$(cat "$1")" = 10 ] && [ "$2" -eq 0 ]' _ "$CAM/video.fps_cfg" "$(killed)"
 check "fps 10 + Enter: asks with a default of No" has "$T/n.out" "Restart the video service now?"
+printf '\n' | a_tty "$S" video fps 20 >"$T/n20.out" 2>&1
+check "fps 20: saved" test "$(cam video.fps_cfg)" = 20
+printf '\n' | a_tty "$S" video fps 25 >"$T/n25.out" 2>&1
+check "fps 25: saved" test "$(cam video.fps_cfg)" = 25
 printf 'n\n' | a_tty "$S" video gop 3 >"$T/n2.out" 2>&1
 check "gop 3 + n: saved, not restarted" bash -c '[ "$(cat "$1")" = 3 ] && [ "$2" -eq 0 ]' _ "$CAM/video.gop_cfg" "$(killed)"
 printf 'y\n' | a_tty "$S" video bitrate 1200 gop 4 >"$T/y.out" 2>&1

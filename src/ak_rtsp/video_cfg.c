@@ -19,7 +19,7 @@ void video_cfg_defaults(video_cfg_t *c)
     c->gop_s = VIDEO_GOP_S_DEF;
 }
 
-int video_cfg_fps_ok(long fps) { return fps == VIDEO_FPS_LOW || fps == VIDEO_FPS_HIGH; }
+int video_cfg_fps_ok(long fps) { return fps == 10 || fps == 15 || fps == 20 || fps == 25; }
 
 int video_cfg_num(const char *s, long *out)
 {
@@ -132,7 +132,15 @@ const video_cfg_t *video_cfg_active(void) { return &g_active; }
 int video_fps(void) { return g_active.fps; }
 int video_kbps(void) { return g_active.bitrate; }
 int video_gop_frames(void) { return g_active.gop_s * g_active.fps; }
-int video_day_vts(void) { return g_active.fps == VIDEO_FPS_LOW ? 3426 : 2284; }
+int video_day_vts(void)
+{
+    switch (g_active.fps) { /* 34260 / fps; 10 and 15 are the stock values */
+    case 10: return 3426;
+    case 20: return 1713;
+    case 25: return 1370;
+    default: return 2284;
+    }
+}
 
 void video_cfg_reset_for_test(void)
 {

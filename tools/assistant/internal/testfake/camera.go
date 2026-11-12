@@ -618,13 +618,13 @@ func (c *Camera) handleCtl(nc net.Conn) {
 				case "video.bitrate_cfg":
 					lo, hi = 500, 3000
 				case "video.fps_cfg":
-					lo, hi = 10, 15
+					lo, hi = 10, 25
 				case "video.gop_cfg":
 					lo, hi = 1, 4
 				}
 				if hi == 0 {
 					reply = "ERR " + f[1] + " is read-only"
-				} else if err != nil || n < lo || n > hi || (f[1] == "video.fps_cfg" && n != 10 && n != 15) {
+				} else if err != nil || n < lo || n > hi || (f[1] == "video.fps_cfg" && n != 10 && n != 15 && n != 20 && n != 25) {
 					reply = "ERR invalid " + f[1] + " value"
 				} else {
 					c.ctl[f[1]] = f[2]

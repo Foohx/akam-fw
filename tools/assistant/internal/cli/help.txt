@@ -41,8 +41,8 @@ Commands:
                      reboot). reset puts the four numbers back to 0. Several words can be combined. Default: show.
   video [show | bitrate N | fps N | gop N]
                      the video encoder settings, over SSH. Default: show. bitrate is the cap in kbit/s (500 to 3000,
-                     default 1536); fps is 10 or 15 (default 15); gop is the key frame interval in seconds (1 to 4,
-                     default 2). Saved on the camera, applied at the next restart of the video service: you are
+                     default 1536); fps is 10, 15, 20 or 25 (default 15; night mode always runs at 10); gop is the key
+                     frame interval in seconds (1 to 4, default 2). Saved on the camera, applied at the next restart of the video service: you are
                      asked (default No) whether to restart it now (the stream stops for a few seconds).
                      Resolution and flip/mirror are not available.
   debug [on [MINUTES] | off | status]

@@ -2,12 +2,15 @@
  *
  * File /etc/config/akam/video, mode 0600, written atomically, key=value lines (LF, a trailing CR is tolerated):
  *   bitrate=N   VBR+ ceiling in kbit/s, whole number VIDEO_KBPS_MIN..VIDEO_KBPS_MAX (default ENC_KBPS)
- *   fps=N       10 or 15 (default ENC_FPS). Only the two pairs {fps, VTS} that the code already sends to the ISP
- *               (ae.c, night.c: 15 fps / VTS 2284 by day, 10 fps / VTS 3426 at night) are allowed: the sensor
- *               frame rate is changed together with the encoder one, so the encoder never receives frames faster
- *               than it is told to expect.
+ *   fps=N       10, 15, 20 or 25 (default ENC_FPS). Only the pairs {fps, VTS} listed in video_day_vts() are allowed
+ *               (VTS = 34260 / fps: 10 -> 3426, 15 -> 2284, 20 -> 1713, 25 -> 1370; checked on a real camera: exactly
+ *               that frame rate over RTSP, no encoder error). The sensor frame rate is changed together with the
+ *               encoder one, so the encoder never receives frames faster than it is told to expect. 30 fps (VTS
+ *               1142) was tested and is refused: the picture was dark, grainy and nearly grey. A higher rate
+ *               shortens the longest exposure (frame time), so dim scenes get darker and night mode starts earlier;
+ *               night mode itself always runs at 10 fps / VTS 3426 (night.c).
  *   gop=S       key frame interval in whole seconds, VIDEO_GOP_S_MIN..VIDEO_GOP_S_MAX (default 2 s: ENC_GOP frames
- *               at the default 15 fps). The encoder gets S * fps frames.
+ *               at the default 15 fps). The encoder gets S * fps frames (S * 25 = 100 at most).
  * An absent file, or an absent key, means the compiled-in default: the behaviour is then exactly the one of a build
  * without this module. A bad line (unknown key, bad number, out of range) is skipped with one log line and its key
  * keeps the default; nothing else is affected.
@@ -31,7 +34,7 @@
 #define VIDEO_KBPS_MIN 500
 #define VIDEO_KBPS_MAX 3000
 #define VIDEO_FPS_LOW 10
-#define VIDEO_FPS_HIGH 15
+#define VIDEO_FPS_HIGH 25 /* allowed: 10, 15, 20, 25 (30 is refused, see above) */
 #define VIDEO_GOP_S_MIN 1
 #define VIDEO_GOP_S_MAX 4
 #define VIDEO_GOP_S_DEF (ENC_GOP / ENC_FPS)
