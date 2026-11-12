@@ -12,7 +12,6 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/childenv"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +23,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
@@ -53,7 +53,7 @@ type Hooks struct {
 	// Discovery hooks (find-camera).
 	Discover DiscoverHooks
 	// HTTP is the client of get-kit and of the toolkit download; nil uses the real one (HTTPS only, TLS 1.2 or newer).
-	HTTP *http.Client
+	HTTP *kit.Client
 	// SD is the microSD card layer; nil uses the real one (guards on /sys, writes through `akam sd-helper`).
 	SD sdcard.Backend
 }

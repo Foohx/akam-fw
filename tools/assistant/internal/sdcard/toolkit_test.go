@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit/kittest"
 )
 
 func tarball(files map[string][]byte, extra func(*tar.Writer)) []byte {
@@ -41,7 +43,7 @@ func TestEnsureToolkitDownloadsAndChecksThePin(t *testing.T) {
 	defer srv.Close()
 	withPin(t, tree, srv)
 	dir := filepath.Join(t.TempDir(), "tk")
-	got, err := EnsureToolkit(context.Background(), srv.Client(), dir, nil)
+	got, err := EnsureToolkit(context.Background(), kittest.ClientFor(srv), dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +52,7 @@ func TestEnsureToolkitDownloadsAndChecksThePin(t *testing.T) {
 	}
 	// second call: from disk, no download
 	srv.Close()
-	if _, err := EnsureToolkit(context.Background(), srv.Client(), dir, nil); err != nil {
+	if _, err := EnsureToolkit(context.Background(), kittest.ClientFor(srv), dir, nil); err != nil {
 		t.Errorf("second: %v", err)
 	}
 }
@@ -63,7 +65,7 @@ func TestEnsureToolkitRefusesAWrongTree(t *testing.T) {
 	defer srv.Close()
 	withPin(t, tree, srv)
 	dir := filepath.Join(t.TempDir(), "tk")
-	if _, err := EnsureToolkit(context.Background(), srv.Client(), dir, nil); err == nil {
+	if _, err := EnsureToolkit(context.Background(), kittest.ClientFor(srv), dir, nil); err == nil {
 		t.Fatal("a tree with another hash was accepted")
 	}
 	if _, err := LoadToolkit(dir); err == nil {
@@ -80,7 +82,7 @@ func TestEnsureToolkitRefusesLinksAndPlainHTTP(t *testing.T) {
 	}))
 	defer srv.Close()
 	withPin(t, tree, srv)
-	if _, err := EnsureToolkit(context.Background(), srv.Client(), filepath.Join(t.TempDir(), "tk"), nil); err == nil {
+	if _, err := EnsureToolkit(context.Background(), kittest.ClientFor(srv), filepath.Join(t.TempDir(), "tk"), nil); err == nil {
 		t.Error("a link in the archive was accepted")
 	}
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(tarball(tree, nil)) }))
