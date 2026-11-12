@@ -283,7 +283,7 @@ func (a *App) backupSSH() error {
 		return a.UI.Fail("writing the backup failed: "+err.Error()+".", "nothing was kept; free some space and run the backup again.")
 	}
 	a.backupSecure(pcdir, true)
-	_ = a.St.Set("ssh_backup_dir", pcdir) // the update flow's backup gate re-verifies this folder
+	a.setState("ssh_backup_dir", pcdir) // the update flow's backup gate re-verifies this folder
 	a.UI.Good("  Backup saved and verified (both reads of every partition match). SHA256SUMS written: " + pcdir)
 	a.UI.Warn("This backup holds your Wi-Fi password and the camera's secrets: keep it private, and copy it to a second medium.")
 	return nil

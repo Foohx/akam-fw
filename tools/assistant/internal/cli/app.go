@@ -477,6 +477,7 @@ func (a *App) dialPort(ip string, port int) (*camssh.Client, error) {
 			p, err := a.UI.Secret(fmt.Sprintf("  Passphrase of the SSH key %s (not shown):", a.keyPath()))
 			if err == nil {
 				a.passphrase = &p
+				a.Secrets.Add(p)
 			}
 			return p, err
 		},
@@ -562,4 +563,12 @@ func (a *App) envSecret(name string) string {
 		return os.Getenv(name)
 	}
 	return a.envSecrets[name]
+}
+
+// setState stores one value of the state and warns when it is refused or cannot be written (the
+// step then has to be repeated: a later gate would otherwise fail without saying why).
+func (a *App) setState(key, val string) {
+	if err := a.St.Set(key, val); err != nil {
+		a.UI.Warn(fmt.Sprintf("could not save '%s' in the state (%v); a later step may ask for this one again.", key, err))
+	}
 }

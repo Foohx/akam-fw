@@ -328,6 +328,7 @@ func (a *App) sshChoosePubkey() (string, error) {
 		if err != nil || p2 != p1 {
 			return "", a.UI.Fail("the passphrases differ.", "run this step again.")
 		}
+		a.Secrets.Add(p1)
 	}
 	var pp []byte
 	if p1 != "" {

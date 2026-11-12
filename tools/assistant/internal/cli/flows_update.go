@@ -295,11 +295,11 @@ func (a *App) installImage() error {
 		return err
 	}
 	abs := f
-	_ = a.St.Set("image_path", abs)
-	_ = a.St.Set("image_sha", fileSHA(f))
-	_ = a.St.Set("image_md5", md5)
-	_ = a.St.Set("image_kit_sha", a.kitCurrentSHA())
-	_ = a.St.Set("image_backup_sha", a.backupCurrentSHA())
+	a.setState("image_path", abs)
+	a.setState("image_sha", fileSHA(f))
+	a.setState("image_md5", md5)
+	a.setState("image_kit_sha", a.kitCurrentSHA())
+	a.setState("image_backup_sha", a.backupCurrentSHA())
 	_ = a.St.MarkDone("image")
 	a.UI.Warn("this image was built elsewhere: it must come from YOUR backup of THIS camera. The red box of the flash step shows its md5; compare it with the one printed where you built it.")
 	a.UI.Good("  Image recorded: " + strings.TrimSpace(abs))
