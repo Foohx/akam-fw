@@ -264,3 +264,27 @@ func TestClockNtpOnWithoutASuccessfulSyncStillOffers(t *testing.T) {
 		t.Errorf("clock set: %v", e.cam.ClockSets())
 	}
 }
+
+// video show, ntp status and the options screen must tell the same story about the clock.
+func TestVideoShowClockAgreesWithNtpStatusAndOptions(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.rememberCamera("salon", "127.0.0.1")
+	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	// time sync off: the offset is shown by all three
+	r := e.run("", "--camera", "salon", "video", "show")
+	contains(t, r.out, "Clock: off by 1 hour(s)")
+	notContains(t, r.out, "Clock: set.")
+	r = e.run("", "--camera", "salon", "ntp", "status")
+	contains(t, r.out, "Clock: off by 1 hour(s)")
+	// time sync on and working: the same warning everywhere
+	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
+	e.cam.SetClock(time.Now().Add(-time.Hour), true)
+	for _, args := range [][]string{{"video", "show"}, {"ntp", "status"}} {
+		r = e.run("", append([]string{"--camera", "salon"}, args...)...)
+		contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong")
+	}
+	t.Setenv("AKAM_FORCE_TTY", "1")
+	r = e.run("3\n8\n9\n", "--camera", "salon")
+	contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong")
+}

@@ -43,7 +43,9 @@ func (a *App) videoShow(c *camssh.Client) error {
 		}
 		a.UI.Say(fmt.Sprintf("  Measured now: %s kbit/s, %s (tenths of a frame per second).", mbr, mfps))
 	}
-	a.showHealth(a.readHealthOf(c, false))
+	h := a.readHealthOf(c, true) // the same clock report as the options screen and ntp status
+	a.readCamNtp(c, &h)
+	a.showHealth(h)
 	a.UI.Say("  Resolution and flip/mirror cannot be changed in this version (docs/troubleshooting.md, video settings).")
 	return nil
 }
