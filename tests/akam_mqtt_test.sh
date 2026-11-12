@@ -83,8 +83,10 @@ contains "status: ak_rtsp state shown" "$out" "state: connected"
 
 # --- set
 : >"$FAKE_LOG"
+mkdir -p "$D"; echo stale-secret >"$PW.new.4242"; echo stale >"$CFG.new.4242"    # leftovers of an interrupted run
 out=$(runpw "$SECRET" set 192.0.2.10 1883 bob); rc=$?
 eq "set: exit 0" "$rc" 0
+eq "set: stale temp files of an interrupted run are removed" "$(exists "$PW.new.4242")$(exists "$CFG.new.4242")" "nono"
 eq "set: file content" "$(cat "$CFG")" "$(printf 'enabled=1\nhost=192.0.2.10\nport=1883\nuser=bob')"
 eq "set: file mode 0600" "$(perm "$CFG")" "-rw-------"
 eq "set: password file mode 0600" "$(perm "$PW")" "-rw-------"
@@ -92,6 +94,7 @@ eq "set: directory mode 0700" "$(ls -ld "$D" | cut -c1-10)" "drwx------"
 eq "set: password file holds the password" "$(cat "$PW")" "$SECRET"
 eq "set: reload sent" "$(cat "$FAKE_LOG")" "ctl MQTT reload"
 contains "set: says applied" "$out" "Applied now"
+contains "set: reports the real state, not a blind OK" "$out" "the MQTT state is connecting"
 contains "set: warns about plain TCP" "$out" "plain TCP"
 lacks "set: the password is not printed" "$out" "$SECRET"
 lacks "set: the password is not in the settings file" "$(cat "$CFG")" "$SECRET"
