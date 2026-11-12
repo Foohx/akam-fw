@@ -1391,8 +1391,8 @@ Reproducibility: the script is run twice and compared; a second machine's build 
 ### 8.2 Checksums and signature
 
 Users verify with `sha256sum -c` (Linux), `shasum -a 256 -c` (macOS), `Get-FileHash -Algorithm SHA256` (Windows), and optionally
-`ssh-keygen -Y verify`. `internal/kit/allowed_signers` is still a placeholder (2.2 row 29): the maintainer publishes the release public key in
-the README and the release notes and adds the line **before** the first signed release (Q10).
+`ssh-keygen -Y verify`. `internal/kit/allowed_signers` is still a placeholder (2.2 row 29): the maintainer commits the release public key (with the embedded copy) and quotes it in
+the README and the release notes **before** building the first signed release (Q10; `tools/release/make_release.sh` refuses to build without it). One combined `SHA256SUMS` covers the kit and the assistant files.
 
 ### 8.3 Unsigned binaries (signing later)
 

@@ -50,8 +50,11 @@ refuses a release build while the file has no key line or the embedded copy diff
 
 ### 1. Prepare the commit
 
-Date the `CHANGELOG.md` section (`## X.Y.Z (YYYY-MM-DD)`), finish `docs/release_notes_draft.md`, review
-`supported_hardware.txt`, commit. The tree must then be clean.
+Set the version in the release commit: `AKAM_WIZARD_VERSION` default in `./akam` and `var version` in
+`tools/assistant/cmd/akam/main.go` must both equal `X.Y.Z` (`make_release.sh` refuses otherwise). Date the
+`CHANGELOG.md` section (`## X.Y.Z (YYYY-MM-DD)`), finish `docs/release_notes_draft.md` (it keeps the `<version>`, `<sha256>`,
+`<date>` and `<key>` placeholders; the build fills them), review `supported_hardware.txt`, commit. The tree must then
+be clean, and the tag `vX.Y.Z` must not exist yet.
 
 ### 2. Build everything
 
@@ -59,16 +62,21 @@ Date the `CHANGELOG.md` section (`## X.Y.Z (YYYY-MM-DD)`), finish `docs/release_
 tools/release/make_release.sh X.Y.Z          # output: dist/release/vX.Y.Z/ (git-ignored)
 ```
 
-`X.Y.Z` is plain semver, no `v`. The script refuses a dirty tree, a bad version and a placeholder key; runs
+`X.Y.Z` is plain semver, no `v`. The script refuses a dirty tree, a bad version, an existing tag, a default version
+that is not `X.Y.Z`, a placeholder key, a directory that already holds a signature, and the build overrides
+(`AKAM_ALLOW_ANY_GO`, `AKAM_STRIP`, `ZIG`, `AKAM_TARGETS`, ...); runs
 `make_kit.sh` (`AKAM_KIT_VERSION=X.Y.Z`) and `build_assistant.sh` (`AKAM_VERSION=X.Y.Z`); gathers in
 `dist/release/vX.Y.Z/` the kit tarball, the six assistant binaries and archives, `LICENSE`,
 `THIRD_PARTY_NOTICES.md`, `akam-X.Y.Z-src.tar.gz` (`git archive --prefix=akam-X.Y.Z/ HEAD`) and ONE combined
 `SHA256SUMS` (sorted, `sha256sum` format); checks every line; runs `verify_kit.sh --allow-unsigned` on the kit;
-refuses any camera image or dump (`*.squashfs`, `*.bin`, `*.img`, `mtd*`, ...); and prints the next commands.
+refuses any camera image or dump (`*.squashfs`, `*.sqfs`, `*.bin`, `*.img`, `mtd*`, ...); writes the filled release notes
+to `dist/release/vX.Y.Z-notes.md` (from `docs/release_notes_draft.md`: version, kit sha256, date, key, absolute links); and
+prints the next commands.
 
 `tools/release/make_release.sh X.Y.Z --test` is a development run: a dirty tree and any version string are
-allowed, the output goes to `dist/release/vX.Y.Z-test/` with `TEST_BUILD_NOT_PUBLISHABLE.txt`, the kit is
-`kit_grade=test`, and the directory can never be checked as signed. The gathering and the refusals are covered
+allowed, everything is stamped `X.Y.Z-test` (kit, binaries, directory `dist/release/vX.Y.Z-test/`), the kit is
+`kit_grade=test`, and the directory holds `TEST_BUILD_NOT_PUBLISHABLE.txt` (listed in `SHA256SUMS`): `sign_kit.sh`
+refuses it and `--check-signed` can never pass. The gathering and the refusals are covered
 by `tests/release_test.sh` on synthetic fixtures (`tools/release/gather_release.sh`).
 
 ### 3. Sign
@@ -87,29 +95,40 @@ tools/release/verify_kit.sh dist/release/vX.Y.Z/akam-kit-X.Y.Z.tar.xz
 ```
 
 `--check-signed` checks that `SHA256SUMS.sig` verifies against `tools/release/allowed_signers`, that the embedded
-copy is identical, that every binary contains the key (so it was built after the key was committed), every
-`SHA256SUMS` line, and that `verify_kit.sh` accepts the kit without `--allow-unsigned`.
+copy is identical, that all six binaries contain the key (so they were built after the key was committed) and that
+`akam-linux-amd64 version` reports `X.Y.Z` (on a Linux amd64 host), every `SHA256SUMS` line, that the kit and the source
+tarball come from the current commit, that the notes file has no placeholder left and quotes the kit sha256 and the key,
+and that `verify_kit.sh` accepts the kit without `--allow-unsigned`.
 
-### 5. Draft release
+### 5. Hardware check of the release kit (maintainer, by hand)
+
+Build an image from THIS kit (not from a development tree): `./akam get-kit --kit dist/release/vX.Y.Z/akam-kit-X.Y.Z.tar.xz`,
+then `./akam image`. Flash ONE validated camera, with a verified stock backup and a UART adapter at hand, only on the
+maintainer's explicit go. Then run `./akam verify` (it runs `tools/hw_tests/akam_hwcheck.sh` on the camera: ports, processes, no UDP listener) and check the RTSP stream.
+Put what was really validated, on which build, in the release notes (`docs/release_notes_draft.md`, committed before step 2).
+If anything fails, fix it and start over with a new version: do not touch a built or signed release.
+
+### 6. Draft release
 
 Push the release commit, then create a draft; the tag `vX.Y.Z` is created on that commit when you publish.
 `make_release.sh` prints this command with the exact file list:
 
 ```sh
-gh release create vX.Y.Z --draft --title "Akam X.Y.Z" --notes-file docs/release_notes_draft.md \
+gh release create vX.Y.Z --draft --title "Akam X.Y.Z" --notes-file dist/release/vX.Y.Z-notes.md \
     --target <release commit sha> <every file of dist/release/vX.Y.Z/, including SHA256SUMS and SHA256SUMS.sig>
 ```
 
-Put the kit's sha256 (`grep akam-kit dist/release/vX.Y.Z/SHA256SUMS`) in the release notes and `CHANGELOG.md`, so
-users can cross-check it from another channel (`verify_kit.sh --expect-sha256 <first 12 hex>`). Never attach a
-firmware image or a dump.
+The kit sha256 and the key are already in the generated notes, so users can cross-check them from another channel
+(`verify_kit.sh --expect-sha256 <first 12 hex>`). Never attach a firmware image or a dump. After the tag exists, a
+follow-up commit puts the kit sha256 in `CHANGELOG.md` and bumps the two default versions (`./akam`,
+`tools/assistant/cmd/akam/main.go`) to the next `-dev`.
 
-### 6. Review and publish
+### 7. Review and publish
 
 Review the draft on GitHub: file list (kit, 6 binaries, 6 archives, `LICENSE`, `THIRD_PARTY_NOTICES.md`, source,
 `SHA256SUMS`, `SHA256SUMS.sig`), notes, the key and the sha256 quoted. Download one file and check it as a user
-would ([docs/assistant_install.md](../../docs/assistant_install.md)). Publish the draft. Later additions:
-`gh release upload vX.Y.Z <file>` (then re-sign: the combined `SHA256SUMS` must list every file).
+would ([docs/assistant_install.md](../../docs/assistant_install.md)). Publish the draft. A published release is never modified: a
+problem means a new version (`make_release.sh` refuses an existing tag and a directory holding a signature).
 
 ## Details: the kit (`make_kit.sh`)
 

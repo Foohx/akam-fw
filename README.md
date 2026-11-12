@@ -29,7 +29,7 @@ from your backup, flash, check. No compiling.
   switching.
 - **Port 8091:** read-only metrics (`sys.*`, `net.*`, `video.*`, `rtsp.*`) for the network. Changes are only
   accepted from the camera itself, or from the network after `./akam debug on` (loopback and timed).
-- **ONVIF Profile S (optional, off by default):** WS-Discovery, device, media and imaging services for NVRs and
+- **ONVIF Profile S (optional, off by default; implemented and checked against real clients, not conformance-certified):** WS-Discovery, device, media and imaging services for NVRs and
   ONVIF Device Manager. Needs the video password (`./akam rtsp-auth set`, re-run it once after an update so the
   ONVIF login copy exists). Host-tested only so far, see [testing status](docs/testing-status.md).
 - **Settings you can change:** video bitrate, frame rate and key frame interval; brightness, contrast,
@@ -77,8 +77,9 @@ explicit yes, and a different flash layout is refused.
 - the camera, and a 2.4 GHz Wi-Fi network it can join;
 - a **microSD card** and a **USB card reader** (cheap readers sometimes fail:
   [troubleshooting](docs/troubleshooting.md#no-medium-found-with-a-usb-card-reader));
-- a **Linux PC**: Arch, Debian 12 or Ubuntu 24.04 (all tested in containers). macOS and Windows are
-  not supported;
+- a **Linux PC**: Arch, Debian 12 or Ubuntu 24.04 (all tested in containers) for the bash wizard. The
+  experimental `akam` assistant binary also exists for Windows and macOS (only Linux and an earlier Windows build
+  have met a real camera: [testing status](docs/testing-status.md));
 - optional but wise: a UART adapter, the safety net if a flash goes wrong ([UART guide](docs/hardware_and_uart.md)).
 
 ## Quick start

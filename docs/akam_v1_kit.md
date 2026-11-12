@@ -65,7 +65,7 @@ Outcomes:
 
 An unsigned kit is only protected against download corruption, not against a
 malicious replacement on the same server. Compare the kit's sha256 with the one
-in the release notes, the `CHANGELOG.md` and the tag message (another channel):
+in the release notes (another channel; the `CHANGELOG.md` gets it in a commit after the release):
 `--expect-sha256 <first 12 hex digits>` (at least 8). The signature is only worth what the
 copy of the repository and public key you hold is worth.
 

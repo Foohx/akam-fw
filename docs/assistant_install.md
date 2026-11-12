@@ -1,7 +1,8 @@
 # Installing the `akam` binary (Windows, macOS, Linux)
 
 The `akam` binary is the single-file version of the setup wizard. It is **experimental**: on Linux the bash wizard
-(`./akam` in the repository) remains the reference, and the Windows and macOS binaries are **built, not hardware-tested**
+(`./akam` in the repository) remains the reference. Linux amd64 is partly tested on real cameras; an earlier Windows amd64 build was tested
+on a real camera, the current full-screen interface build is pending its Windows test; macOS and arm64 are **built, not hardware-tested**
 ([test status](testing-status.md), [hardware test plan](assistant_hardware_test_plan.md)). What it does:
 [tools/assistant/README.md](../tools/assistant/README.md).
 
@@ -31,8 +32,19 @@ shasum -a 256 -c --ignore-missing SHA256SUMS    # macOS
 Get-FileHash -Algorithm SHA256 .\akam-windows-amd64.exe    # Windows: compare by eye with SHA256SUMS
 ```
 
-Optional signature check (same scheme as the kit, namespace and principal `akam-release`; the maintainer publishes the
-public key with the release): `ssh-keygen -Y verify`. A binary that is not signed yet only has this check.
+Signature check (same scheme as the kit, namespace and principal `akam-release`). Download `SHA256SUMS` and `SHA256SUMS.sig`
+next to your file. Take the public key from the release notes (and compare it with the README and `tools/release/allowed_signers`
+in the source), then:
+
+```bash
+echo 'akam-release namespaces="akam-release" ssh-ed25519 AAAA...<key from the release notes>' > allowed_signers
+ssh-keygen -Y verify -f allowed_signers -I akam-release -n akam-release -s SHA256SUMS.sig < SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+The first command must print `Good "akam-release" signature`; the second shows `OK` for your file. `SHA256SUMS` lists every file of the
+release. GitHub's automatic "Source code" archives are **not** covered: use `akam-X.Y.Z-src.tar.gz`. `tools/release/verify_kit.sh`
+(for the camera kit) needs GNU tools, so it runs on Linux; `akam get-kit` does the same checks on every system.
 
 ## Unsigned binaries
 
