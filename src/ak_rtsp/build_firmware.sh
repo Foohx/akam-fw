@@ -526,7 +526,8 @@ fi
 # The stock sbin/main.sh starts "klogd -n &", which forwards every kernel line to syslog. The vendor LED
 # driver prints a line per brightness write and the encoder driver prints bursts of identical errors, so
 # the 3 x 200 KB syslog files rotate every few minutes. "ak_rtsp klog" (src/ak_rtsp/klog.h) drops the LED
-# trace and collapses repeats. It is restarted (2 s, 4 s, ... up to 5 times) when a signal kills it; the stock
+# trace and collapses repeats. It is restarted (2 s, 4 s, ... up to 5 crashes in a row) when a signal kills it; a run that lasted over 60 s
+# resets the count, and SIGTERM/SIGINT (143/130, someone asked for the stop) restarts after 1 s without counting; the stock
 # klogd runs only when it cannot start (exit code other than a signal: no /proc/kmsg, binary missing) or after
 # the 5th crash.
 # A different layout is left untouched with a warning.
@@ -537,7 +538,7 @@ if [ ! -f "$MAINSH" ]; then
     warn "sbin/main.sh not found in the APP tree: kernel log filter not installed"
 elif grep -qE "$KLOG_RE" "$MAINSH"; then
     # shellcheck disable=SC2016  # the text is written to main.sh as it is, nothing expands here
-    KLOG_NEW='{ _k=0; while [ "$_k" -lt 5 ]; do /usr/bin/ak_rtsp klog; [ $? -ge 128 ] || break; _k=$((_k + 1)); sleep $((_k * 2)); done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)'
+    KLOG_NEW='{ _k=0; while [ "$_k" -lt 5 ]; do read _a _ </proc/uptime; /usr/bin/ak_rtsp klog; _r=$?; [ $_r -ge 128 ] || break; read _b _ </proc/uptime; [ $((${_b%.*}+0 - (${_a%.*}+0))) -gt 60 ] && _k=0; if [ $_r -eq 143 ] || [ $_r -eq 130 ]; then sleep 1; else _k=$((_k + 1)); sleep $((_k * 2)); fi; done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)'
     sed -E -i "s@$KLOG_RE@\\1${KLOG_NEW//&/\\&}@" "$MAINSH"
     sh -n "$MAINSH" || die "sbin/main.sh fails sh -n after the klogd patch"
 elif grep -q 'ak_rtsp klog' "$MAINSH"; then

@@ -70,7 +70,7 @@ func TestVideoRestartIsTheOnlyKillAndMatchesTheExactCommand(t *testing.T) {
 			t.Errorf("watchdog in %q", c)
 		}
 	}
-	if len(kills) != 1 || kills[0] != `p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p` {
+	if len(kills) != 1 || kills[0] != `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done` {
 		t.Errorf("kill commands: %q", kills)
 	}
 }

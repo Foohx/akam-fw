@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 typedef struct {
     const char *sock_path;
     int fd; /* datagram socket to syslogd, -1 when not connected */
+    long quiet_until_ms; /* no waiting for room before this time (a wait just timed out) */
 } sink_t;
 
 static long mono_s(void)
@@ -29,31 +31,56 @@ static long mono_s(void)
     return (long)ts.tv_sec;
 }
 
-/* "<prio>kernel: text" is what busybox klogd sends: syslogd files it under kern.<level>. Never blocks and
- * never fails the filter: without syslogd the line is lost (as it would be for klogd) and the connection is
- * retried on the next line. */
-static void sink_emit(void *user, int prio, const char *text)
+#define SEND_WAIT_MS   300  /* longest wait for room in the syslogd socket for one line */
+#define SEND_QUIET_MS 1000  /* after a wait that timed out, lines are dropped without waiting for this long */
+
+static long mono_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* "<prio>kernel: text" is what busybox klogd sends: syslogd files it under kern.<level>. Never blocks for
+ * long and never fails the filter. A full socket (the unix datagram queue holds about 11 messages, a boot
+ * dmesg or an oops fills it at once) is waited for with poll(POLLOUT), bounded; when syslogd is stuck for
+ * longer, lines are dropped quickly instead of stalling the reader, and the core counts them. Without
+ * syslogd the line is lost (as it would be for klogd) and the connection is retried on the next line.
+ * Returns 1 when the line was queued to syslogd. */
+static int sink_emit(void *user, int prio, const char *text)
 {
     sink_t *s = user;
     char buf[LINE_MAX_BYTES + 32];
     int n = snprintf(buf, sizeof(buf), "<%d>kernel: %.*s", prio & 7, LINE_MAX_BYTES, text);
-    if (n <= 0) return;
+    if (n <= 0) return 0;
     for (int attempt = 0; attempt < 2; attempt++) {
         if (s->fd < 0) {
             int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-            if (fd < 0) return;
+            if (fd < 0) return 0;
             struct sockaddr_un sa;
             memset(&sa, 0, sizeof(sa));
             sa.sun_family = AF_UNIX;
             snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", s->sock_path);
-            if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(fd); return; }
+            if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(fd); return 0; }
             s->fd = fd;
         }
-        if (send(s->fd, buf, (size_t)n, MSG_DONTWAIT) >= 0) return;
-        if (errno == EAGAIN || errno == EINTR) return; /* syslogd is slow: this line is lost, the socket is fine */
+        for (;;) {
+            if (send(s->fd, buf, (size_t)n, MSG_DONTWAIT) >= 0) return 1;
+            if (errno == EINTR) continue;
+            if (errno != EAGAIN) break;
+            long now = mono_ms();
+            if (now < s->quiet_until_ms) return 0; /* syslogd was stuck a moment ago: do not stall again */
+            struct pollfd p = { s->fd, POLLOUT, 0 };
+            int r = poll(&p, 1, SEND_WAIT_MS);
+            if (r > 0) continue;
+            if (r < 0 && errno == EINTR) continue;
+            s->quiet_until_ms = mono_ms() + SEND_QUIET_MS;
+            return 0; /* still full: this line is lost, the socket is fine */
+        }
         close(s->fd); /* syslogd restarted (stale socket): reconnect and send this same line once more */
         s->fd = -1;
     }
+    return 0;
 }
 
 int klog_run(const char *kmsg_path, const char *sock_path, long window_s)
@@ -61,7 +88,7 @@ int klog_run(const char *kmsg_path, const char *sock_path, long window_s)
     int in = open(kmsg_path, O_RDONLY | O_CLOEXEC);
     if (in < 0) return 1;
 
-    sink_t sink = { sock_path, -1 };
+    sink_t sink = { sock_path, -1, 0 };
     klog_t k;
     klog_init(&k, sink_emit, &sink, window_s);
 
@@ -145,6 +172,9 @@ int klog_main(int argc, char **argv)
             return 2;
         }
     }
+    /* same exe as the streamer: `kill -USR1 $(pidof ak_rtsp)` (frame grab) must not reach this process */
+    signal(SIGUSR1, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
     rename_process(argv);
     for (int i = 1; i < argc; i++) memset(argv[i], 0, strlen(argv[i])); /* cmdline reads just "akam_klog" */
     return klog_run(kmsg, sock, window);

@@ -24,10 +24,11 @@ const (
 )
 
 // restartVideoCmd is the ONE command that kills a process: it stops ak_rtsp (the video service), which its
-// wrapper starts again by itself. pidof matches the exact name only; nothing else, and never the watchdog,
-// is touched. It is the single exception of forbiddenRemote, by exact string, and it is only sent by
+// wrapper starts again by itself. pidof also lists the kernel log filter (same binary, renamed akam_klog in
+// its cmdline), so the loop skips it by cmdline; nothing else, and never the watchdog, is touched. It is the
+// single exception of forbiddenRemote, by exact string, and it is only sent by
 // restartVideo below, after a yes/no that defaults to No (spec 11, Q8).
-const restartVideoCmd = `p=$(pidof ak_rtsp); [ -n "$p" ] && kill $p`
+const restartVideoCmd = `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`
 
 // restartVideo asks (default No) and, on yes, restarts the video service. It reports whether it did.
 func (a *App) restartVideo(c *camssh.Client) bool {
