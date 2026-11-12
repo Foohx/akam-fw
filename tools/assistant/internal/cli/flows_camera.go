@@ -26,6 +26,50 @@ type chooser struct {
 	found []discover.Camera
 	keys  map[string]gossh.PublicKey // host key presented by an address (from the SSH handshake only)
 	note  string                     // what the last search covered, shown in the title
+
+	// Only the session board (session_home.go) sets these; the plain chooser leaves them nil.
+	mu       sync.Mutex // guards found, keys, checking and note against the probe goroutines
+	checking map[string]bool
+	onChange func()                         // the rows changed: draw them again
+	run      func(status string, fn func()) // runs a search with a status line and Esc listened for
+}
+
+// snapshot is a copy of the rows' inputs, safe to read while probes answer.
+func (ch *chooser) snapshot() ([]discover.Known, []discover.Camera, map[string]bool) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	chk := map[string]bool{}
+	for k, v := range ch.checking {
+		chk[k] = v
+	}
+	return append([]discover.Known(nil), ch.known...), append([]discover.Camera(nil), ch.found...), chk
+}
+
+func (ch *chooser) setNote(s string) {
+	ch.mu.Lock()
+	ch.note = s
+	ch.mu.Unlock()
+}
+
+func (ch *chooser) getNote() string {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.note
+}
+
+// search runs fn as a search of the board chooser (status line, Esc stops), or just runs it.
+func (ch *chooser) search(status string, fn func()) {
+	if ch.run == nil {
+		fn()
+		return
+	}
+	ch.run(status, fn)
+}
+
+func (ch *chooser) changed() {
+	if ch.onChange != nil {
+		ch.onChange()
+	}
 }
 
 // knownCameras reads the remembered cameras from the state folders. The pinned host key is the one
@@ -74,9 +118,19 @@ func (a *App) probeCamera(ip string) (discover.Camera, gossh.PublicKey, bool) {
 
 // probeMany checks addresses in parallel (at most 8 at a time).
 func (a *App) probeMany(ips []string, ch *chooser) {
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
+	if ch.onChange != nil {
+		ch.mu.Lock()
+		if ch.checking == nil {
+			ch.checking = map[string]bool{}
+		}
+		for _, ip := range ips {
+			ch.checking[ip] = true
+		}
+		ch.mu.Unlock()
+		ch.changed()
+	}
 	for _, ip := range ips {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -84,18 +138,23 @@ func (a *App) probeMany(ips []string, ch *chooser) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			cam, key, ok := a.probeCamera(ip)
-			if !ok {
-				return
+			if ok {
+				ch.addFound(cam, key)
 			}
-			mu.Lock()
-			ch.addFound(cam, key)
-			mu.Unlock()
+			if ch.onChange != nil {
+				ch.mu.Lock()
+				delete(ch.checking, ip)
+				ch.mu.Unlock()
+				ch.changed()
+			}
 		}()
 	}
 	wg.Wait()
 }
 
 func (ch *chooser) addFound(cam discover.Camera, key gossh.PublicKey) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	for _, f := range ch.found {
 		if f.IP == cam.IP {
 			return
@@ -154,6 +213,9 @@ const rowHeader = "Name           Address           Kind            Firmware    
 // chooseCamera is the chooser screen. It returns true when a camera was chosen (its state is then the
 // current one and its address is recorded).
 func (a *App) chooseCamera() (bool, error) {
+	if bd, ok := a.UI.(ui.Boarder); ok {
+		return a.chooseCameraBoard(bd)
+	}
 	if err := a.UI.RequireTTY("choosing a camera"); err != nil {
 		return false, err
 	}
@@ -186,17 +248,7 @@ func (a *App) chooseCamera() (bool, error) {
 		}
 		switch i - nrows {
 		case 0:
-			var ips []string
-			for _, k := range ch.known {
-				ips = append(ips, k.IP)
-			}
-			if len(ips) == 0 {
-				a.UI.Say("  No remembered camera has an address yet.")
-				continue
-			}
-			a.Log.Line("CMD probe remembered cameras %s", strings.Join(ips, " "))
-			a.probeMany(ips, ch)
-			ch.note = "  (remembered cameras checked just now)"
+			a.recheckKnown(ch)
 		case 1:
 			a.chooserScan(ch)
 		case 2:
@@ -217,6 +269,23 @@ func (a *App) chooseCamera() (bool, error) {
 			}
 		}
 	}
+}
+
+// recheckKnown looks again at the remembered cameras (4 ports each).
+func (a *App) recheckKnown(ch *chooser) {
+	var ips []string
+	for _, k := range ch.known {
+		ips = append(ips, k.IP)
+	}
+	if len(ips) == 0 {
+		a.UI.Say("  No remembered camera has an address yet.")
+		return
+	}
+	a.Log.Line("CMD probe remembered cameras %s", strings.Join(ips, " "))
+	ch.search("Checking the remembered cameras", func() {
+		a.probeMany(ips, ch)
+	})
+	ch.setNote("  (remembered cameras checked just now)")
 }
 
 func (a *App) scanPorts() []int {
@@ -242,14 +311,16 @@ func (a *App) chooserScan(ch *chooser) {
 		}
 		a.Log.Line("CMD scan %s ports %v", sn.CIDR, a.scanPorts())
 		t0 := time.Now()
-		hosts := discover.Scan(a.Ctx, sn, a.ports(), 64, 2*time.Second, h.Dial)
-		var ips []string
-		for _, ho := range hosts {
-			ips = append(ips, ho.IP)
-		}
-		a.probeMany(ips, ch)
-		ch.note = fmt.Sprintf("  (scanned %s in %d s)", sn.CIDR, int(time.Since(t0).Seconds()))
-		if len(ch.found) == 0 {
+		ch.search(fmt.Sprintf("Scanning %s on %d ports", sn.CIDR, len(a.scanPorts())), func() {
+			hosts := discover.Scan(a.Ctx, sn, a.ports(), 64, 2*time.Second, h.Dial)
+			var ips []string
+			for _, ho := range hosts {
+				ips = append(ips, ho.IP)
+			}
+			a.probeMany(ips, ch)
+		})
+		ch.setNote(fmt.Sprintf("  (scanned %s in %d s)", sn.CIDR, int(time.Since(t0).Seconds())))
+		if _, found, _ := ch.snapshot(); len(found) == 0 {
 			a.UI.Say("  Nothing that looks like a camera answered on those ports.")
 		}
 	}
@@ -268,22 +339,24 @@ func (a *App) chooserWSD(ch *chooser) {
 	}
 	a.Log.Line("CMD ws-discovery probe -> %s", target)
 	var found []discover.Found
-	var err error
-	if h.WSDTarget == "" {
-		found, err = a.wsdEachInterface(target)
-	} else {
-		found, err = discover.WSDiscover(a.Ctx, target, 2*time.Second)
-	}
-	if err != nil {
-		a.UI.Warn("the search failed: " + err.Error())
-	}
-	var ips []string
-	for _, f := range found {
-		if isIPv4(f.IP) {
-			ips = append(ips, f.IP)
+	ch.search("Searching with ONVIF discovery", func() {
+		var err error
+		if h.WSDTarget == "" {
+			found, err = a.wsdEachInterface(target)
+		} else {
+			found, err = discover.WSDiscover(a.Ctx, target, 2*time.Second)
 		}
-	}
-	a.probeMany(ips, ch)
+		if err != nil {
+			a.UI.Warn("the search failed: " + err.Error())
+		}
+		var ips []string
+		for _, f := range found {
+			if isIPv4(f.IP) {
+				ips = append(ips, f.IP)
+			}
+		}
+		a.probeMany(ips, ch)
+	})
 	if len(found) == 0 {
 		a.UI.Say("  No camera answered the discovery.")
 	}
@@ -308,8 +381,9 @@ func (a *App) chooserType(ch *chooser) {
 		a.UI.Say(fmt.Sprintf("  '%s' is at %s.", v, r))
 		v = r
 	}
-	a.probeMany([]string{v}, ch)
-	for _, f := range ch.found {
+	ch.search("Looking at "+v, func() { a.probeMany([]string{v}, ch) })
+	_, found, _ := ch.snapshot()
+	for _, f := range found {
 		if f.IP == v {
 			return
 		}
@@ -420,6 +494,7 @@ func (a *App) useCamera(name string) error {
 	a.Cams.Name = name
 	a.Opt.IP = ""
 	a.camIP = ""
+	a.live = nil
 	if err := a.reopen(); err != nil {
 		return err
 	}
@@ -443,7 +518,11 @@ func (a *App) forgetCameraScreen(ch *chooser) {
 	if err != nil || i >= len(ch.known) {
 		return
 	}
-	k := ch.known[i]
+	a.forgetKnown(ch.known[i])
+}
+
+// forgetKnown asks, then forgets the address and the pinned host key of k.
+func (a *App) forgetKnown(k discover.Known) {
 	a.UI.Say(fmt.Sprintf("  This forgets the address (%s) and the SSH host key pinned for %s. Its progress, logs and backups are kept.", k.IP, k.Name))
 	ok, _ := a.UI.AskYN(fmt.Sprintf("  Forget the address and host key of %s?", k.Name))
 	if !ok {
