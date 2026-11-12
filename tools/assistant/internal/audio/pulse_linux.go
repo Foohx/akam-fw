@@ -74,15 +74,16 @@ func (b *pulseBackend) Open(ctx context.Context) (io.ReadCloser, error) {
 	ps.watchContext(ctx)
 	// A server that vanishes mid-talk would leave a reader blocked for ever: poll the stream and
 	// end the pipe with a clear error.
+	every, stallAfter := pulseWatchEvery, pulseStallAfter // read once: tests change them
 	go func() {
-		t := time.NewTicker(pulseWatchEvery)
+		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
 			select {
 			case <-ps.done:
 				return
 			case <-t.C:
-				stalled := !busy.Load() && time.Since(time.Unix(0, last.Load())) > pulseStallAfter
+				stalled := !busy.Load() && time.Since(time.Unix(0, last.Load())) > stallAfter
 				if lost() || stalled {
 					ps.Fail(errors.New("lost the connection to the PulseAudio / PipeWire server"))
 					return
