@@ -231,7 +231,14 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin io.Reader) (Result, 
 		s.Stdin = stdin
 	}
 	done := make(chan error, 1)
-	go func() { done <- s.Run(cmd) }()
+	go func() {
+		defer func() { // a panic of a writer callback ends this call, not the program (and its terminal)
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("internal error in the SSH session: %v", r)
+			}
+		}()
+		done <- s.Run(cmd)
+	}()
 	select {
 	case <-ctx.Done():
 		s.Close()
@@ -280,7 +287,14 @@ func (c *Client) RunStream(ctx context.Context, cmd string, out io.Writer) (Resu
 	})
 	s.Stderr = &errb
 	done := make(chan error, 1)
-	go func() { done <- s.Run(cmd) }()
+	go func() {
+		defer func() { // a panic of a writer callback ends this call, not the program (and its terminal)
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("internal error in the SSH session: %v", r)
+			}
+		}()
+		done <- s.Run(cmd)
+	}()
 	select {
 	case <-ctx.Done():
 		s.Close()

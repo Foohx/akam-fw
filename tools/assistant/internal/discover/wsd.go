@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Foohx/akam-fw/tools/assistant/internal/guard"
 )
 
 // WSDTarget is the WS-Discovery multicast address.
@@ -86,7 +88,7 @@ func WSDiscoverEach(ctx context.Context, goos string, ifaces []Iface, target str
 	var out []Found
 	seen := map[string]bool{}
 	var firstErr error
-	var wg sync.WaitGroup
+	var wg guard.Group
 	sent := 0
 	for _, ifc := range ifaces {
 		if !ifc.Eligible(goos) || ifc.Flags&net.FlagMulticast == 0 {
@@ -97,9 +99,8 @@ func WSDiscoverEach(ctx context.Context, goos string, ifaces []Iface, target str
 			continue
 		}
 		sent++
-		wg.Add(1)
-		go func(lc net.ListenConfig) {
-			defer wg.Done()
+		lc := multicastConfig(nets[0].IP.To4())
+		wg.Go(func() {
 			got, err := wsdOn(ctx, lc, target, wait)
 			mu.Lock()
 			defer mu.Unlock()
@@ -112,7 +113,7 @@ func WSDiscoverEach(ctx context.Context, goos string, ifaces []Iface, target str
 					out = append(out, f)
 				}
 			}
-		}(multicastConfig(nets[0].IP.To4()))
+		})
 	}
 	wg.Wait()
 	if len(out) > 0 || sent == 0 {

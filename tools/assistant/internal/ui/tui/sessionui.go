@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +14,25 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
+// FlowPanic is what runSession panics with when the flow panicked: the value and the stack of the flow
+// goroutine, taken where it happened.
+type FlowPanic struct {
+	Value any
+	Stack []byte
+}
+
+func (p *FlowPanic) Error() string {
+	return fmt.Sprintf("%v\n\ngoroutine stack of the flow:\n%s", p.Value, p.Stack)
+}
+
+// Unwrap lets errors.As find an error the flow panicked with.
+func (p *FlowPanic) Unwrap() error {
+	e, _ := p.Value.(error)
+	return e
+}
+
 // errInterrupted is returned by a session the user left while the flow was still busy.
-var errInterrupted = errors.New("interrupted")
+var errInterrupted = ui.ErrInterrupted
 
 // graceDefault is how long Session waits for the flow after the program ended (a flow blocked in a
 // question is released at once; one busy in a long operation is not waited for any longer).
@@ -370,6 +387,18 @@ func (s *sessionUI) FormKeys(spec ui.FormSpec) (ui.FormResult, error) {
 	}
 	f := &Form{Title: textsafe.Clean(spec.Title), Rows: clean, Apply: safe, Keys: keys, StartGroup: textsafe.Clean(spec.Group)}
 	_, err := s.ask(f)
+	// An Apply still running (the form was left with a second Esc, or the program ended) must return
+	// before the flow goes on: the flow may close the connection it uses or read the options again.
+	wd := make(chan struct{})
+	go func() { f.pending.Wait(); close(wd) }()
+	select {
+	case <-wd:
+	case <-s.st.done: // the program is gone: wait for a running call, but not for ever
+		select {
+		case <-wd:
+		case <-time.After(graceDefault):
+		}
+	}
 	return ui.FormResult{Key: f.Key, Group: f.ShownGroup()}, err
 }
 
@@ -427,7 +456,11 @@ func runSession(th *Theme, base ui.UI, logf func(string, ...any), o sessionOpts,
 	go func() {
 		defer close(flowDone)
 		defer func() {
-			flowPanic = recover()
+			if r := recover(); r != nil {
+				// The stack is taken here, where the panic is still on it: raised again from runSession it
+				// would show the wrong goroutine.
+				flowPanic = &FlowPanic{Value: r, Stack: debug.Stack()}
+			}
 			p.Send(msgFlowDone{}) // returns at once when the program has ended
 		}()
 		flowErr = fn(sui)
