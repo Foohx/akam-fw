@@ -41,7 +41,7 @@ func TestFlowFilesHaveNoDirectDestructiveCalls(t *testing.T) {
 }
 
 func TestRestartVideoIsOnlyCalledFromAuditedPlaces(t *testing.T) {
-	allowed := map[string]bool{"remote.go": true, "optcmds.go": true, "flows_options.go": true}
+	allowed := map[string]bool{"remote.go": true, "optcmds.go": true, "flows_options.go": true, "flows_options_form.go": true}
 	all, _ := filepath.Glob("*.go")
 	for _, f := range all {
 		if strings.HasSuffix(f, "_test.go") || allowed[f] {

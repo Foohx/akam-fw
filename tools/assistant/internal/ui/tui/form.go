@@ -37,6 +37,10 @@ type Form struct {
 
 	Done bool
 
+	Keys       []ui.FormKey // one-letter actions: the form closes and reports the key (Key)
+	StartGroup string       // the group shown first
+	Key        string       // the key that closed the form ("" for Esc)
+
 	real     []string // the last value Apply confirmed (or the initial one) of each row
 	rowErr   []string // why the last apply of the row failed
 	dirty    []bool   // edited, not yet applied
@@ -105,7 +109,21 @@ func (m *Form) start() {
 	for i, r := range m.Rows {
 		m.real[i] = r.Value
 	}
+	for j, g := range m.groups() {
+		if g == m.StartGroup {
+			m.group = j
+		}
+	}
 	m.focus = m.firstVisible()
+}
+
+// ShownGroup is the group being shown ("" when the rows have none).
+func (m *Form) ShownGroup() string {
+	m.start()
+	if gs := m.groups(); len(gs) > 0 {
+		return gs[min(m.group, len(gs)-1)]
+	}
+	return ""
 }
 
 // groups lists the group names in order of appearance; empty when no row has one.
@@ -281,6 +299,16 @@ func (m *Form) key(k tea.KeyMsg) tea.Cmd {
 	}
 	i := m.focus
 	r := m.Rows[i]
+	if m.hasKey(k.String()) {
+		m.Key = k.String()
+		m.closing = true
+		m.gen++ // apply what is pending now, then close
+		if m.inflight >= 0 || m.anyDirty() {
+			return m.flush()
+		}
+		m.Done = true
+		return nil
+	}
 	switch k.String() {
 	case "esc", "ctrl+c", "q":
 		m.closing = true
@@ -337,6 +365,15 @@ func (m *Form) key(k tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *Form) hasKey(s string) bool {
+	for _, k := range m.Keys {
+		if k.Key == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Form) move(d int) {
@@ -465,6 +502,9 @@ func (m *Form) keys() []string {
 	}
 	if m.focus < len(m.Rows) && m.editable(m.focus) && m.Rows[m.focus].Kind != ui.FormEnum {
 		k = append(k, "Enter", "type a value")
+	}
+	for _, fk := range m.Keys {
+		k = append(k, fk.Key, fk.Label)
 	}
 	return append(k, "?", "details", "Esc", "back")
 }

@@ -136,6 +136,28 @@ type Former interface {
 	Form(title string, rows []FormRow, apply func(id, value string) (FormRow, error)) error
 }
 
+// FormKey is a one-letter action of a form (Label is its footer text): pressing it closes the form
+// and reports the key, so the caller can run a question or a screen and open the form again.
+type FormKey struct{ Key, Label string }
+
+// FormSpec is a Form with keys. Group is the group shown first (empty: the first one).
+type FormSpec struct {
+	Title string
+	Rows  []FormRow
+	Apply func(id, value string) (FormRow, error)
+	Keys  []FormKey
+	Group string
+}
+
+// FormResult tells how a form ended: Key is the FormKey pressed ("" when the user left with Esc) and
+// Group the group that was shown.
+type FormResult struct{ Key, Group string }
+
+// FormKeyer is a Former whose forms can carry keys (the session implements it).
+type FormKeyer interface {
+	FormKeys(spec FormSpec) (FormResult, error)
+}
+
 // Detailer shows a long text in a scrollable pane and returns when the user closes it.
 type Detailer interface{ Details(title, text string) }
 
