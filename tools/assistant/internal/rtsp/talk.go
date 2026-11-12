@@ -27,9 +27,35 @@ const (
 type TalkError struct {
 	Code int
 	Msg  string
+	// Busy is set when the camera answered 503: it serves one RTSP client at a time and another one
+	// is connected. RetryAfter is the Retry-After header of that answer, when there was one.
+	Busy       bool
+	RetryAfter string
 }
 
 func (e *TalkError) Error() string { return e.Msg }
+
+// busyErr is the failure for a 503 answer to the named request.
+func busyErr(method string, r *response) *TalkError {
+	e := terr(CodeProto, "%s answered 503", method)
+	e.Busy = true
+	e.RetryAfter = sanitizeHeader(r.h("Retry-After"))
+	return e
+}
+
+// sanitizeHeader keeps a short printable value of a header the camera sent (it is shown to the user).
+func sanitizeHeader(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) > 40 {
+		v = v[:40]
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e {
+			return -1
+		}
+		return r
+	}, v)
+}
 
 func terr(code int, format string, a ...any) *TalkError {
 	return &TalkError{Code: code, Msg: fmt.Sprintf(format, a...)}
@@ -323,6 +349,8 @@ func Talk(ctx context.Context, cfg TalkConfig) error {
 		return terr(CodeLogin, "the camera asks for a password: set AKAM_RTSP_PASSWORD")
 	case r.code == 401:
 		return terr(CodeLogin, "login refused (wrong user or password)")
+	case r.code == 503:
+		return busyErr("DESCRIBE", r)
 	case r.code != 200:
 		return terr(CodeProto, "DESCRIBE answered %d", r.code)
 	}
@@ -358,6 +386,9 @@ func Talk(ctx context.Context, cfg TalkConfig) error {
 	}
 	if r.code == 551 || r.code == 404 {
 		return terr(CodeRefused, "the camera refused the talk track (%d)", r.code)
+	}
+	if r.code == 503 {
+		return busyErr("SETUP", r)
 	}
 	if r.code != 200 {
 		return terr(CodeProto, "SETUP answered %d", r.code)
@@ -400,6 +431,9 @@ func Talk(ctx context.Context, cfg TalkConfig) error {
 	r, err = c.request("PLAY", base, "Require: "+backchannelTag+"\r\nRange: npt=0.000-\r\n")
 	if err != nil {
 		return terr(CodeNet, "no answer to PLAY")
+	}
+	if r.code == 503 {
+		return busyErr("PLAY", r)
 	}
 	if r.code != 200 {
 		return terr(CodeProto, "PLAY answered %d", r.code)

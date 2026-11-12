@@ -235,3 +235,18 @@ func TestTalkMicrophone(t *testing.T) {
 		expectRC(t, e.run("", bad...), 2)
 	}
 }
+
+// A second client while another one is connected: the camera answers 503; the text says why.
+func TestTalkAndSayExplainABusyCamera(t *testing.T) {
+	e := talkEnv(t)
+	e.pass = talkPass
+	e.cam.RTSP.SetBusy(true, "")
+	r := e.run("", "talk", "test")
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "the camera is busy: it serves one video client at a time and another client is connected to it.", "docs/troubleshooting.md (Talk)")
+	notContains(t, r.err, "status 5")
+	e.cam.RTSP.SetBusy(true, "30")
+	r = e.run("", "say", wavFile(t, 8000, 1, make([]int16, 800)))
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "the camera is busy", "again in 30 (Retry-After)", "docs/troubleshooting.md (Talk)")
+}
