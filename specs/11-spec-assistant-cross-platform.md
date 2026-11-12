@@ -84,7 +84,7 @@ Decisions the coordinator must take are collected in section 9, each with a reco
 | 3.7 / 10.1 "first Windows release is files-only SD" | **replaced**: full raw SD writing on Windows and macOS, with a files-only fallback kept as an escape hatch (4.4.9) | the user asked for automation on every OS (R4) |
 | 10.2 "image stays in bash" | **kept as the default until a gate passes**, then replaced by a native builder (4.8) | R1 and R3(d) need it; interim `--image FILE` |
 | 9 "P4 = macOS and Windows" | this phase is P4 and goes further (guided flows, options, discovery) | R3 |
-| 7.1 release names `akam-X.Y.Z-<os>-<arch>` | `akam-<os>-<arch>[.exe]`, version in the release tag `assistant-vX.Y.Z` (8.1) | R8 |
+| 7.1 release names `akam-X.Y.Z-<os>-<arch>` | `akam-<os>-<arch>[.exe]`, version in the release tag `vX.Y.Z` shared with the kit (8.1; amended: one unified release) | R8 |
 
 ---
 
@@ -1370,7 +1370,7 @@ native builder gate), then restore to stock from the backup.
 
 ### 8.1 Artifacts and names
 
-Release tag `assistant-vX.Y.Z` (separate from kit tags, spec 09 10.1). Per release, files named without version:
+Release tag `vX.Y.Z`, shared with the kit (amended from the separate `assistant-vX.Y.Z` of spec 09 10.1: `get-kit` looks under `vX.Y.Z`, and one release holds one `SHA256SUMS`). Per release, files named without version:
 
 ```
 akam-linux-amd64        akam-linux-arm64

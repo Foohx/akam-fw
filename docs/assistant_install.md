@@ -7,7 +7,7 @@ The `akam` binary is the single-file version of the setup wizard. It is **experi
 
 ## Files of a release
 
-Release tag `assistant-vX.Y.Z` (separate from the kit tags). Names carry no version:
+One release tag `vX.Y.Z` holds the camera kit and the assistant. Names carry no version:
 
 | Target | Raw binary | Archive |
 |---|---|---|
@@ -15,7 +15,7 @@ Release tag `assistant-vX.Y.Z` (separate from the kit tags). Names carry no vers
 | macOS Intel, Apple silicon | `akam-darwin-amd64`, `akam-darwin-arm64` | `.tar.gz` |
 | Windows amd64, arm64 | `akam-windows-amd64.exe`, `akam-windows-arm64.exe` | `.zip` |
 
-Also `LICENSE`, `THIRD_PARTY_NOTICES.md`, `SHA256SUMS` and `SHA256SUMS.sig`. An archive keeps the executable bit on Unix;
+Also `akam-kit-X.Y.Z.tar.xz` (the camera kit), the source tarball, `LICENSE`, `THIRD_PARTY_NOTICES.md`, and ONE `SHA256SUMS` (all files) with `SHA256SUMS.sig`. An archive keeps the executable bit on Unix;
 a raw download does not. `akam licenses` prints the notices even for a binary downloaded alone.
 
 ## Check the download

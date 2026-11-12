@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased: project renamed from Camyn to Akam
+## 0.1.0 (unreleased)
+
+First public release; the project was renamed from Camyn to Akam. Date this heading when the release is built.
 
 ### Added
 
