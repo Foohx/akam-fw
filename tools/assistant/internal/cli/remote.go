@@ -147,7 +147,7 @@ var fixedRemote = map[string]bool{
 // forbiddenRemote is an ALLOW-list: it returns "" only for a command line the assistant itself
 // builds (an exact string of fixedRemote, the anchored partition read, the date set form, or a
 // helper script with plain arguments) and a reason for everything else. A deny-list cannot work
-// here: quoting (re''boot), escapes, eval, other tools (rm, mtd) and any new spelling get past it,
+// here: quoting (re”boot), escapes, eval, other tools (rm, mtd) and any new spelling get past it,
 // while harmless words (a host named "watchdog") are refused by it.
 func forbiddenRemote(cmd string) string {
 	if fixedRemote[cmd] || remoteDateSetRe.MatchString(cmd) || remoteReadRe.MatchString(cmd) || helperRe.MatchString(cmd) {
