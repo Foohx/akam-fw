@@ -112,7 +112,9 @@ It then:
 4. generates the ed25519 host key `dropbear_ed25519_host_key` on the **first** boot (it may wait for
    entropy, so the first SSH connection can come late *(assumed)*);
 5. validates the card's keys and installs them atomically as `/etc/config/dropbear/authorized_keys`
-   (0600, root) when they differ from the stored copy;
+   (0600, root), **only when the card's keys changed since the last import** (the md5 of the validated list is kept in
+   `/etc/config/dropbear/.card_keys_hash`; no stored hash, as on the first boot, means import). A card left in the
+   camera therefore does not undo a key change made over SSH, and a card with other keys still replaces the list;
 6. makes sure a login shell is accepted (section 4);
 7. starts `dropbear` on port 22 with `-r <hostkey> -D /etc/config/dropbear -P /tmp/dropbear.pid -T 3 -E`.
 
@@ -134,8 +136,10 @@ ed25519 fingerprint with the one the camera computes (from the UART console):
 
 ### Changing keys later
 
-Put a new `akam/authorized_keys` on the card and power cycle. A valid file **replaces** the whole
-stored list. This is the only route of the bash wizard and the way back if you are locked out. A camera that
+Put a new `akam/authorized_keys` on the card and power cycle. A valid file whose keys **changed since the last
+import** (the card's content is remembered by its md5, see "First boot") **replaces** the whole stored list: this is
+the recovery route. The same card put back unchanged is not imported again (an image from before this rule imports
+the card at every boot). This is the only route of the bash wizard and the way back if you are locked out. A camera that
 still accepts one of its keys can be changed without a card, with the assistant (next section).
 
 ### Change the key over SSH
@@ -167,10 +171,29 @@ Safe by construction. In this order, and nothing is saved before step 4:
 5. Akam asks, default No, **"Remove the old key from this camera?"**. No keeps both keys working. Yes removes only the
    lines holding exactly the old key (type and key, the comment is ignored) over a login made with the new key, then
    logs in with the new key once more. The key just verified is never removed, and the list is never left empty
-   (the helper refuses with `REFUSED_LAST_KEY`).
+   (the helper refuses with `REFUSED_LAST_KEY`). Only the answer `removed` counts as a removal.
 
-If step 3 fails, the key just added is taken out again and the camera still accepts the old key; if the
-check after a removal fails, the old key is put back. The camera is never left with a key list you cannot use.
+The helper checks its work: every write error is tracked and the new file is validated (it must hold exactly the
+expected ed25519 keys, at least one) **before** it replaces the list; a login copy that differs from the stored list
+makes it stop with `OUT_OF_SYNC` and change nothing (a power cycle makes them agree); if the copy Dropbear reads
+cannot be refreshed, the old list is put back. Lines are compared on the key only (CRs and an option prefix are ignored).
+
+If step 3 fails, the key this run added is taken out again (a key that was already there is never removed) and the
+assistant checks, with a new login, that the current key still works; if the check after a removal fails, the old key
+is put back. These are checked steps, not a guarantee: if the camera or the network fails in the middle, or the
+rollback itself cannot run, the message says what could not be confirmed, and the flash card route is the way back.
+A mistyped passphrase at the check login is asked again up to three times before anything is undone.
+The private key must be the one of its `.pub` file (a mismatched pair is refused), for the new key and for the key
+that logged in, and a path is expanded (`~`), made absolute and must end in `.pub`.
+
+**A provisioning card left in the camera.** The helper reports whether a card with `akam/authorized_keys` is in
+the camera, and the assistant warns before saving and before the removal question: remove the card, or a card
+whose keys changed will replace the key list at the next boot (an image from before the "changed since the last
+import" rule replaces it at every boot, which undoes the change).
+
+If a key named `~/.ssh/akam-NAME` already exists and you ask for a key for this camera only, Akam shows when
+it was made and its fingerprint and asks (default No) whether to use it; No offers another name. After
+`rename-camera` the key keeps its file name and shows as `custom (~/.ssh/akam-OLDNAME)`.
 The write is shown to the screen as a write: the full-screen assistant refuses to stop it half way, and no
 passphrase or key line is written to the activity log (the key goes over standard input).
 

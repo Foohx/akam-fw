@@ -290,7 +290,7 @@ func TestKeyChangeRollsBackWhenTheNewKeyDoesNotLogIn(t *testing.T) {
 	expectRC(t, r, 1)
 	contains(t, r.out, "Key added (added).", "The new key was taken out of the camera again.")
 	contains(t, r.err, "the new key does not work")
-	contains(t, r.err+r.out, "the key was not changed.", "the camera still accepts your current key; nothing was saved here.")
+	contains(t, r.err+r.out, "the key was not changed.", "the camera still accepts your current key (checked); nothing was saved here.")
 	if list, _ := e.cam.AuthorizedKeys(); list != listBefore {
 		t.Errorf("rollback left the list changed:\n%s", list)
 	}
@@ -601,9 +601,9 @@ func TestFirstInstallNeverOverwritesAnExistingKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(own)
-	r := w.run("2\ny\n", "prepare-flash-sd", "--device", w.img)
+	r := w.run("2\ny\ny\n", "prepare-flash-sd", "--device", w.img)
 	expectRC(t, r, 0)
-	contains(t, r.out, "Using ~/.ssh/akam-default.pub")
+	contains(t, r.out, "A key for the name default already exists: ~/.ssh/akam-default (created ", "Using ~/.ssh/akam-default.pub")
 	if after, _ := os.ReadFile(own); string(after) != string(before) {
 		t.Error("an existing key was overwritten")
 	}
@@ -717,4 +717,251 @@ func pubComment(t *testing.T, pubFile string) string {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// ---------------------------------------------------------------- fix round (security review)
+
+func newWorkKey(t *testing.T, e *env, name string) string {
+	t.Helper()
+	p := filepath.Join(e.home, ".ssh", name)
+	if err := camssh.GenerateKey(p, name, nil); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// After the removal the new key stops logging in: the old key is put back, the camera is not locked out.
+func TestKeyChangePutsTheOldKeyBackWhenTheNewOneFailsAfterTheRemoval(t *testing.T) {
+	e := newEnv(t, func(o *testfake.Options) { o.BreakNewKeyAfterRemove = true })
+	e.needHelpers()
+	e.useSharedKey()
+	work := newWorkKey(t, e, "id_work")
+	oldLine := pubLine(t, sharedPub(e))
+	r := e.keyRun("y\ny\n", "key", "use", work+".pub")
+	expectRC(t, r, 1)
+	contains(t, r.err, "the new key no longer logs in after the removal")
+	contains(t, r.err+r.out, "the old key was put back.")
+	list, _ := e.cam.AuthorizedKeys()
+	found := false
+	for _, l := range keyLinesOf(t, list) {
+		if l == oldLine {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the old key was not put back: %q", list)
+	}
+	if !canLogin(t, e, e.key, "") {
+		t.Error("the old key must log in")
+	}
+}
+
+// The camera shows another host key at the check login: the check fails, the add is undone.
+func TestKeyChangeRefusesAChangedHostKeyAtTheCheckLogin(t *testing.T) {
+	e := newEnv(t, func(o *testfake.Options) { o.RotateHostKeyAfterAdd = true })
+	e.needHelpers()
+	e.useSharedKey()
+	work := newWorkKey(t, e, "id_work")
+	before, _ := e.cam.AuthorizedKeys()
+	r := e.keyRun("y\n", "key", "use", work+".pub")
+	expectRC(t, r, 1)
+	contains(t, r.err, "the new key does not work", "CHANGED")
+	if list, _ := e.cam.AuthorizedKeys(); list != before {
+		t.Errorf("the add was not undone:\n%s", list)
+	}
+	if v := e.readState("ssh_pubkey"); v != sharedPub(e) {
+		t.Errorf("state changed to %q", v)
+	}
+}
+
+func TestKeyUseExpandsTildeAndRelativePathsAndNeedsDotPub(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	work := newWorkKey(t, e, "id_work")
+	// ~ expands
+	r := e.keyRun("y\n\n", "key", "use", "~/.ssh/id_work.pub")
+	expectRC(t, r, 0)
+	if v := e.readState("ssh_pubkey"); v != work+".pub" {
+		t.Errorf("ssh_pubkey = %q, want the absolute path", v)
+	}
+	// a relative path is saved as an absolute one
+	e.useSharedKey()
+	other := newWorkKey(t, e, "id_rel")
+	t.Chdir(filepath.Dir(other))
+	r = e.keyRun("y\n\n", "key", "use", "id_rel.pub")
+	expectRC(t, r, 0)
+	if v := e.readState("ssh_pubkey"); v != other+".pub" || !filepath.IsAbs(v) {
+		t.Errorf("ssh_pubkey = %q, want %q", v, other+".pub")
+	}
+	// a file that does not end in .pub is refused before anything is sent
+	e.useSharedKey()
+	b, _ := os.ReadFile(other + ".pub")
+	bad := filepath.Join(e.home, "pubkey_no_suffix")
+	os.WriteFile(bad, b, 0o644)
+	n := authkeysCommands(e)
+	r = e.keyRun("y\n", "key", "use", bad)
+	expectRC(t, r, 1)
+	contains(t, r.err, "does not end in .pub")
+	if authkeysCommands(e) != n {
+		t.Error("the camera was written to")
+	}
+}
+
+func TestPubkeyOptionOfTheCardStepIsAbsoluteAndDotPub(t *testing.T) {
+	w := newKeyCardWorld(t)
+	b, _ := os.ReadFile(w.key + ".pub")
+	bad := filepath.Join(w.home, "nosuffix")
+	os.WriteFile(bad, b, 0o644)
+	r := w.run("y\n", "prepare-flash-sd", "--device", w.img, "--pubkey", bad)
+	expectRC(t, r, 1)
+	contains(t, r.err, "does not end in .pub")
+	w.untouched(t)
+	t.Chdir(filepath.Dir(w.key))
+	r = w.run("y\n", "prepare-flash-sd", "--device", w.img, "--pubkey", "akam.pub")
+	expectRC(t, r, 0)
+	if v := w.readState("ssh_pubkey"); v != w.key+".pub" {
+		t.Errorf("ssh_pubkey = %q", v)
+	}
+}
+
+// A .pub that is not the public half of the private key is refused before the camera is touched.
+func TestKeyChangeRefusesAMismatchedPair(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	a := newWorkKey(t, e, "id_a")
+	b := newWorkKey(t, e, "id_b")
+	pb, _ := os.ReadFile(b + ".pub")
+	if err := os.WriteFile(a+".pub", pb, 0o644); err != nil { // a's private key with b's public key
+		t.Fatal(err)
+	}
+	r := e.keyRun("y\n", "key", "use", a+".pub")
+	expectRC(t, r, 1)
+	contains(t, r.err+r.out, "does not match the public key")
+	if n := authkeysCommands(e); n != 0 {
+		t.Errorf("%d helper commands were sent", n)
+	}
+	if list, _ := e.cam.AuthorizedKeys(); len(keyLinesOf(t, list)) != 1 {
+		t.Errorf("list: %q", list)
+	}
+}
+
+// The .pub beside the key that logged in must be that key.
+func TestKeyChangeRefusesWhenTheCurrentPubFileIsNotTheLoginKey(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	other := newWorkKey(t, e, "id_other")
+	pb, _ := os.ReadFile(other + ".pub")
+	if err := os.WriteFile(sharedPub(e), pb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	work := newWorkKey(t, e, "id_work")
+	r := e.keyRun("y\n", "key", "use", work+".pub")
+	expectRC(t, r, 1)
+	contains(t, r.err+r.out, "is not the key that just logged in")
+	if n := authkeysCommands(e); n != 0 {
+		t.Errorf("%d helper commands were sent", n)
+	}
+}
+
+func TestKeyChangeWarnsAboutACardLeftInTheCamera(t *testing.T) {
+	e := newEnv(t, func(o *testfake.Options) { o.CardPresent = true })
+	e.needHelpers()
+	e.useSharedKey()
+	work := newWorkKey(t, e, "id_work")
+	r := e.keyRun("y\nn\n", "key", "use", work+".pub")
+	expectRC(t, r, 0)
+	const w = "a card with keys (akam/authorized_keys) is in the camera: remove it, or a card whose keys changed will replace the key list at the next boot"
+	if n := strings.Count(r.out, w); n != 2 {
+		t.Errorf("warned %d times, want 2 (before saving and before the removal question):\n%s", n, r.out)
+	}
+	// no card: no warning
+	e2 := newEnv(t)
+	e2.needHelpers()
+	e2.useSharedKey()
+	w2 := newWorkKey(t, e2, "id_work")
+	r = e2.keyRun("y\nn\n", "key", "use", w2+".pub")
+	expectRC(t, r, 0)
+	notContains(t, r.out, "a card with keys")
+}
+
+// The helper refuses when its login copy disagrees with the stored list: the camera is left as it was.
+func TestKeyChangeStopsWhenTheCameraListsDisagree(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	work := newWorkKey(t, e, "id_work")
+	home := filepath.Join(e.cam.Root, "tmp", "akam_home", "authorized_keys")
+	orig, _ := os.ReadFile(home)
+	if err := os.WriteFile(home, append(orig, []byte("# stray\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := e.cam.AuthorizedKeys()
+	r := e.keyRun("y\n", "key", "use", work+".pub")
+	expectRC(t, r, 1)
+	contains(t, r.err+r.out, "login copy of its key list differs from the stored list")
+	if list, _ := e.cam.AuthorizedKeys(); list != before {
+		t.Errorf("the list changed:\n%s", list)
+	}
+	if v := e.readState("ssh_pubkey"); v != sharedPub(e) {
+		t.Errorf("state: %q", v)
+	}
+}
+
+// The helper cannot refresh the login copy: it puts the old list back itself, so there is nothing left
+// to roll back and no key is ever removed by the assistant.
+func TestKeyChangeUndoneByTheHelperWhenTheLoginCopyCannotBeWritten(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("needs an unprivileged user (a read-only directory must refuse writes)")
+	}
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	work := newWorkKey(t, e, "id_work")
+	dir := filepath.Join(e.cam.Root, "tmp", "akam_home")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	before, _ := e.cam.AuthorizedKeys()
+	r := e.keyRun("y\n", "key", "use", work+".pub")
+	expectRC(t, r, 1)
+	contains(t, r.err+r.out, "the camera did not take the new key")
+	if list, _ := e.cam.AuthorizedKeys(); list != before {
+		t.Errorf("the helper did not put the old list back:\n%s", list)
+	}
+	for _, c := range e.cam.Commands() {
+		if c == "sh /tmp/akam_authkeys.sh remove" {
+			t.Error("the assistant removed a key after a failed add")
+		}
+	}
+	if v := e.readState("ssh_pubkey"); v != sharedPub(e) {
+		t.Errorf("state: %q", v)
+	}
+}
+
+// A key file of this name that already exists is never taken silently.
+func TestKeyUseNewAsksBeforeReusingAnExistingKeyOfThatName(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	own := newWorkKey(t, e, "akam-default")
+	before, _ := os.ReadFile(own)
+	// no: another name that does not exist yet is made (create y, no passphrase y), then add y, keep the old key
+	r := e.keyRun("n\nsalon2\ny\n\ny\ny\n\n", "key", "use-new")
+	expectRC(t, r, 0)
+	contains(t, r.out, "A key for the name default already exists: ~/.ssh/akam-default (created ", "fingerprint "+camssh.PubFingerprint(own+".pub"))
+	contains(t, r.err, "Is it the key of this camera? Use it? [y/N]")
+	second := filepath.Join(e.home, ".ssh", "akam-salon2")
+	if _, err := os.Stat(second); err != nil {
+		t.Errorf("the key of the other name was not made: %v", err)
+	}
+	if after, _ := os.ReadFile(own); string(after) != string(before) {
+		t.Error("the existing key was touched")
+	}
+	if v := e.readState("ssh_pubkey"); v != second+".pub" {
+		t.Errorf("ssh_pubkey = %q", v)
+	}
 }

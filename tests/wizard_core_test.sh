@@ -531,8 +531,21 @@ check "ssh key: choice 2 creates ~/.ssh/akam-default (comment akam-default), not
 # an existing key of the shared name is used, never recreated or overwritten
 state_unset_key ssh_pubkey
 : >"$T/keygen.log"
-PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'2\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k8.out" 2>&1
-check "ssh key: an existing ~/.ssh/akam-default is used as it is (no ssh-keygen)" bash -c '[ ! -s "$1" ] && grep -q "Using ~/.ssh/akam-default.pub" "$2"' _ "$T/keygen.log" "$T/k8.out"
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'2\ny\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k8.out" 2>&1
+check "ssh key: an existing ~/.ssh/akam-default is asked about, then used as it is (no ssh-keygen)" bash -c '[ ! -s "$1" ] && grep -q "A key for the name default already exists: ~/.ssh/akam-default (created " "$2" && grep -q "Using ~/.ssh/akam-default.pub" "$2"' _ "$T/keygen.log" "$T/k8.out"
+# answering No offers another name, which is made (and the old file is left alone)
+state_unset_key ssh_pubkey
+: >"$T/keygen.log"
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'2\nn\nsalon9\ny\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k9.out" 2>&1
+check "ssh key: refusing the existing key offers another name (akam-salon9 is made)" bash -c 'grep -q "ssh-keygen -t ed25519 -f $2/.ssh/akam-salon9 -C akam-salon9" "$1" && [ "$(grep -m1 ^ssh_pubkey= "$3" | cut -d= -f2)" = "$2/.ssh/akam-salon9.pub" ]' _ "$T/keygen.log" "$KH" "$T/st/state"
+rm -f "$KH/.ssh/akam-salon9" "$KH/.ssh/akam-salon9.pub"
+# --pubkey: a file that does not end in .pub is refused, a relative path becomes absolute
+state_unset_key ssh_pubkey
+cp "$PUB" "$KH/nosuffix"
+AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey "$KH/nosuffix" --ssid N >"$T/k10.out" 2>&1
+check "ssh key: --pubkey must end in .pub" bash -c '[ "$1" -ne 0 ] || exit 1; grep -q "does not end in .pub" "$2"' _ $? "$T/k10.out"
+(cd "$KH/.ssh" && AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey id_work.pub --ssid N >"$T/k11.out" 2>&1)
+check "ssh key: a relative --pubkey is saved as an absolute path" bash -c '[ "$(grep -m1 ^ssh_pubkey= "$1" | cut -d= -f2)" = "$2/.ssh/id_work.pub" ]' _ "$T/st/state" "$KH"
 rm -f "$KH/.ssh/akam-default" "$KH/.ssh/akam-default.pub"
 state_unset_key ssh_pubkey
 HOME=$KH AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid N >"$T/k5.out" 2>&1

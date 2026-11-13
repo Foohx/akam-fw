@@ -18,7 +18,7 @@ func TestGuardIsAnAllowListNotADenyList(t *testing.T) {
 		remoteRtspAuth("set-creds"), remoteDebug("on", "60"), remoteOnvif("enable", "80"),
 		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), restartVideoCmd,
 		remoteMtdList, remoteKernelInfo, remoteHwcheckPut, remoteHwcheckRun, remotePreflightPut, remotePreflightRun, remoteOnvifFlag,
-		remoteAuthkeysPut, remoteAuthkeysAdd, remoteAuthkeysRemove,
+		remoteAuthkeysPut, remoteAuthkeysAdd, remoteAuthkeysRemove, remoteAuthkeysCard,
 		remoteTestX(hostnameCmd), remoteTrue(), remoteRegister(), remoteReadMtd(3),
 	} {
 		if why := forbiddenRemote(ok); why != "" {

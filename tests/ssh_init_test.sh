@@ -142,13 +142,40 @@ ssh_run start
 check "daemon relaunched after reboot" test -s "$R/tmp/dropbear.pid"
 check "host key unchanged after reboot" test "$(cat "$D/dropbear_ed25519_host_key")" = "$HK1"
 check "no keygen after reboot" test ! -e "$R/etc/config/keygen_count"
-check "log says unchanged" grep -q 'authorized_keys unchanged' "$R/tmp/akam_ssh.log"
+check "log says the card keys are unchanged since the last import" grep -q 'SD keys unchanged since the last import' "$R/tmp/akam_ssh.log"
+check "the card hash is kept in CONFIG (0600)" test "$(mode_of "$D/.card_keys_hash")" = 600
 # key replaced on SD -> CONFIG follows
 printf '%s\n' "$K2" >"$R/mnt/akam/authorized_keys"
 killdb
 rm -rf "$R/tmp"/*
 ssh_run start
 check "authorized_keys replaced by new SD content" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K2")
+killdb
+# a key change made over SSH (the list differs from the card) must survive a reboot with the SAME card still in
+printf '%s\n' "$K1" >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "same card left in: the key list changed over SSH is kept at reboot" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K1")
+check "  ... and the log says why" grep -q 'a key change made over SSH survives' "$R/tmp/akam_ssh.log"
+killdb
+# a card whose keys CHANGED replaces the list again (the documented recovery route)
+printf '%s\n%s\n' "$K1" "$K2" >"$R/mnt/akam/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "a changed card replaces the list" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+killdb
+# the same card put back later (hash of the last import) is not imported again; the older card is a change
+printf '%s\n' "$K2" >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "the card of the last import does not overwrite a later list" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K2")
+killdb
+# no stored hash (first boot of this feature, firmware upgraded): the card is imported once, then remembered
+rm -f "$D/.card_keys_hash"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "no stored hash: the card is imported (first boot behaviour unchanged)" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+check "  ... and its hash is stored" test -s "$D/.card_keys_hash"
 killdb
 
 echo "== 3. concurrent start: one daemon"

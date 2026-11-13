@@ -18,14 +18,16 @@ import (
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The three fixed command lines of the key change (see remote.go: the guard allows exactly these).
+// The fixed command lines of the key change (see remote.go: the guard allows exactly these).
 const (
 	remoteAuthkeysPut    = "cat > /tmp/akam_authkeys.sh"
 	remoteAuthkeysAdd    = "sh /tmp/akam_authkeys.sh add"
 	remoteAuthkeysRemove = "sh /tmp/akam_authkeys.sh remove"
+	remoteAuthkeysCard   = "sh /tmp/akam_authkeys.sh card"
 )
 
 // tilde writes a path under the home folder as ~/...: it is what the menus and the docs show.
@@ -59,13 +61,22 @@ func (a *App) keyRowText() string {
 	return keyKindText(camssh.KindOf(pub, a.Cams.Name), pub)
 }
 
-// keyBrief is the kind of key of another camera, read from its own state ("" when none was chosen).
+// keyBrief is the key of another camera for the chooser, read from its own state: the kind
+// ("shared", "this camera only", "custom") and a short fingerprint ("" when no key was chosen).
 func (a *App) keyBrief(camera string) string {
 	pub := a.Cams.ReadKey(camera, "ssh_pubkey")
 	if pub == "" {
 		return ""
 	}
-	return camssh.KindOf(pub, camera)
+	kind := map[string]string{camssh.KindShared: "shared", camssh.KindOwn: "this camera only", camssh.KindCustom: "custom"}[camssh.KindOf(pub, camera)]
+	if fp := camssh.PubFingerprint(pub); fp != "" {
+		short := fp
+		if len(short) > len("SHA256:")+8 {
+			short = short[:len("SHA256:")+8]
+		}
+		kind += " " + short
+	}
+	return kind
 }
 
 // keyShow prints which key this camera uses. It reads only this PC.
@@ -93,6 +104,20 @@ func (a *App) keyShow() error {
 	}
 	a.UI.Say(fmt.Sprintf("  Change it: %s key use-shared | use-new | use FILE.pub   (other cameras are never touched)", Prog))
 	return nil
+}
+
+// normPub makes the path of a public key file usable: ~ is expanded and the path is made absolute (a
+// relative path would be saved in the state and mean something else from another folder).
+func normPub(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		h, err := os.UserHomeDir()
+		if err != nil || h == "" {
+			return "", fmt.Errorf("cannot expand ~ in %s: no home folder", p)
+		}
+		p = filepath.Join(h, p[1:])
+	}
+	return filepath.Abs(p)
 }
 
 // cmdKey is the "key" command: show, use-shared, use-new, use FILE.pub.
@@ -123,7 +148,11 @@ func (a *App) cmdKey(args []string) error {
 		if len(args) != 2 || args[1] == "" || strings.HasPrefix(args[1], "-") {
 			return bad
 		}
-		ch = keyChoice{kind: camssh.KindCustom, pub: args[1]}
+		p, err := normPub(args[1])
+		if err != nil {
+			return a.UI.Fail(err.Error(), "")
+		}
+		ch = keyChoice{kind: camssh.KindCustom, pub: p}
 	default:
 		return bad
 	}
@@ -171,19 +200,70 @@ func (a *App) askKeyChoice() (keyChoice, bool) {
 	if err != nil || strings.TrimSpace(p) == "" {
 		return keyChoice{}, false
 	}
-	return keyChoice{kind: camssh.KindCustom, pub: strings.TrimSpace(p)}, true
+	np, err := normPub(p)
+	if err != nil {
+		a.UI.Err(err.Error())
+		return keyChoice{}, false
+	}
+	return keyChoice{kind: camssh.KindCustom, pub: np}, true
+}
+
+// keyOwn gives the key of this camera only. When ~/.ssh/akam-NAME already exists it is never taken
+// silently: the user is told when it was made and its fingerprint, and asked (default No) whether it is
+// really the one; otherwise another name is offered. dest is "the card" or "the camera" (wording).
+func (a *App) keyOwn(dest string) (pub, pass string, err error) {
+	name := a.Cams.Name
+	for try := 0; ; try++ {
+		pub = camssh.OwnKeyPath(name) + ".pub"
+		priv := strings.TrimSuffix(pub, ".pub")
+		if !exists(pub) && !exists(priv) {
+			pass, err = a.keyEnsure(pub, "akam-"+name, true, dest)
+			return pub, pass, err
+		}
+		if a.St.Get("ssh_pubkey") == pub { // the key this camera already uses: no question
+			pass, err = a.keyEnsure(pub, "akam-"+name, false, dest)
+			return pub, pass, err
+		}
+		when := "an unknown date"
+		if st, serr := os.Stat(priv); serr == nil {
+			when = st.ModTime().Format("2006-01-02")
+		}
+		fp := camssh.PubFingerprint(pub)
+		if fp == "" {
+			fp = "no readable public key"
+		}
+		a.UI.Say(fmt.Sprintf("  A key for the name %s already exists: %s (created %s, fingerprint %s).", name, tilde(priv), when, fp))
+		if a.confirm("  Is it the key of this camera? Use it?") {
+			pass, err = a.keyEnsure(pub, "akam-"+name, false, dest)
+			return pub, pass, err
+		}
+		if try >= 2 {
+			return "", "", a.UI.Fail("no key chosen.", "choose another key, or remove the old file yourself if it is not needed.")
+		}
+		nn, perr := a.UI.Prompt("  Another name for the key file (a-z, 0-9, '-'; empty cancels):", "")
+		nn = strings.TrimSpace(nn)
+		if perr != nil || nn == "" {
+			return "", "", a.UI.Fail("no key chosen.", "run this step again.")
+		}
+		if !state.NameValid(nn) {
+			a.UI.Say("  That is not a valid name.")
+			continue
+		}
+		name = nn
+	}
 }
 
 // keyEnsure makes sure the key pair behind pub exists: it uses it when it does, and creates it (asking
-// first, then the passphrase) when it does not and mayCreate (a key the user named is never created). The passphrase of a key made here is returned, so the
-// check login of a key change need not ask it again.
-func (a *App) keyEnsure(pub, comment string, mayCreate bool) (pass string, err error) {
+// first, then the passphrase) when it does not and mayCreate (a key the user named is never created). The
+// passphrase of a key made here is returned, so the check login of a key change need not ask it again.
+// dest is where the public key goes ("the card" or "the camera").
+func (a *App) keyEnsure(pub, comment string, mayCreate bool, dest string) (pass string, err error) {
 	priv := strings.TrimSuffix(pub, ".pub")
 	if exists(pub) {
 		if err := pubkeyCheck(a, pub); err != nil {
 			return "", err
 		}
-		a.UI.Say(fmt.Sprintf("  Using %s (its private key stays on this PC; only the .pub goes to the camera).", tilde(pub)))
+		a.UI.Say(fmt.Sprintf("  Using %s (its private key stays on this PC; only the .pub goes to %s).", tilde(pub), dest))
 		if !exists(priv) {
 			a.UI.Warn("the private key " + tilde(priv) + " is not on this computer: you could not log in with this key.")
 		}
@@ -242,8 +322,10 @@ func (a *App) keyCreate(priv, comment string) (string, error) {
 }
 
 // authLine is the line sent to akam_authkeys.sh for a public key: type, key and a comment the script accepts.
+var commentRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,40}$`)
+
 func authLine(k gossh.PublicKey, comment string) string {
-	if !regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,40}$`).MatchString(comment) {
+	if !commentRe.MatchString(comment) {
 		comment = "akam"
 	}
 	return camssh.AuthorizedLine(k, comment)
@@ -264,9 +346,54 @@ func pubComment(path string) string {
 	return c
 }
 
+// loadPair loads the private key behind pub and requires it to be the key of the .pub file: a pair that
+// does not match would put a key on the camera that no login can use. The passphrase is asked up to
+// three times (it is never asked when pass already holds it, or an ssh-agent has the key).
+func (a *App) loadPair(pub string, want gossh.PublicKey, pass *string) error {
+	priv := strings.TrimSuffix(pub, ".pub")
+	var s gossh.Signer
+	var err error
+	for try := 0; try < 3; try++ {
+		var closeFn func()
+		s, closeFn, err = camssh.LoadSigner(priv, func() (string, error) {
+			if pass != nil && *pass != "" {
+				return *pass, nil
+			}
+			p, e := a.UI.Secret(fmt.Sprintf("  Passphrase of the SSH key %s (not shown):", tilde(priv)))
+			if e == nil && pass != nil {
+				*pass = p
+			}
+			return p, e
+		})
+		if err == nil {
+			closeFn()
+			break
+		}
+		if !strings.Contains(err.Error(), "was refused") {
+			break
+		}
+		if pass != nil {
+			*pass = ""
+		}
+		a.UI.Warn("the passphrase was refused.")
+	}
+	if err != nil {
+		return a.UI.Fail("cannot use the private key "+tilde(priv)+": "+err.Error()+".", "nothing was changed on the camera.")
+	}
+	if pass != nil && *pass != "" {
+		a.Secrets.Add(*pass)
+	}
+	if !sameKey(s.PublicKey(), want) {
+		return a.UI.Fail(fmt.Sprintf("the private key %s does not match the public key %s.", tilde(priv), tilde(pub)),
+			"a key that cannot log in is never put on the camera; nothing was changed.")
+	}
+	return nil
+}
+
 // authkeysRun sends one add or remove of akam_authkeys.sh over c and returns the result word
-// (AUTHKEYS=...). The key line goes through standard input, never on the command line or in a log.
-func (a *App) authkeysRun(c *camssh.Client, script []byte, mode, line, fp string) (string, error) {
+// (AUTHKEYS=...) and the card state (CARD=...). The key line goes through standard input, never on
+// the command line or in a log.
+func (a *App) authkeysRun(c *camssh.Client, script []byte, mode, line, fp string) (word string, err error) {
 	if res, err := a.run(c, remoteAuthkeysPut, bytes.NewReader(script), "'cat > /tmp/akam_authkeys.sh' < akam_authkeys.sh"); err != nil || res.Status != 0 {
 		if err == nil {
 			err = fmt.Errorf("the copy of the helper to the camera's RAM failed (status %d)", res.Status)
@@ -281,7 +408,6 @@ func (a *App) authkeysRun(c *camssh.Client, script []byte, mode, line, fp string
 	if err != nil {
 		return "", err
 	}
-	word := ""
 	for _, l := range strings.Split(string(res.Stdout), "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "AUTHKEYS="); ok {
 			word = v
@@ -297,10 +423,52 @@ func (a *App) authkeysRun(c *camssh.Client, script []byte, mode, line, fp string
 	return word, nil
 }
 
+// cardState asks the camera whether a card with akam/authorized_keys is in it: "present", "absent" or
+// "unknown" (the helper could not tell; also when the helper did not answer).
+func (a *App) cardState(c *camssh.Client, script []byte) string {
+	if res, err := a.run(c, remoteAuthkeysPut, bytes.NewReader(script), "'cat > /tmp/akam_authkeys.sh' < akam_authkeys.sh"); err != nil || res.Status != 0 {
+		return "unknown"
+	}
+	res, err := a.run(c, remoteAuthkeysCard, nil, "")
+	if err != nil {
+		return "unknown"
+	}
+	for _, l := range strings.Split(string(res.Stdout), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "CARD="); ok {
+			switch v {
+			case "present", "absent":
+				return v
+			}
+		}
+	}
+	return "unknown"
+}
+
+// warnCard says what a card left in the camera does to the key list.
+func (a *App) warnCard(state string) {
+	switch state {
+	case "present":
+		a.UI.Warn("a card with keys (akam/authorized_keys) is in the camera: remove it, or a card whose keys changed will replace the key list at the next boot (an older firmware replaces it at every boot).")
+	case "unknown":
+		a.UI.Warn("the camera could not tell whether a card with keys is in it: if there is one, remove it, or a changed card will replace the key list at the next boot.")
+	}
+}
+
 // verifyKeyLogin opens a NEW login with the key at priv (the host key must already be pinned and
-// must match) and runs a trivial command.
+// must match) and runs a trivial command. A mistyped passphrase is asked again, up to three times.
 func (a *App) verifyKeyLogin(ip, priv string, pass *string) error {
-	nc, err := a.dialKey(ip, priv, pass)
+	var nc *camssh.Client
+	var err error
+	for try := 0; try < 3; try++ {
+		nc, err = a.dialKey(ip, priv, pass)
+		if err == nil || !strings.Contains(err.Error(), "was refused") {
+			break
+		}
+		if pass != nil {
+			*pass = ""
+		}
+		a.UI.Warn("the passphrase was refused; try again.")
+	}
 	if err != nil {
 		return err
 	}
@@ -313,6 +481,16 @@ func (a *App) verifyKeyLogin(ip, priv string, pass *string) error {
 		return fmt.Errorf("the check command ended with status %d", res.Status)
 	}
 	return nil
+}
+
+// currentKeyWorks checks that the camera still takes the key of the open session c (a new login).
+func (a *App) currentKeyWorks(ip string) bool {
+	nc, err := a.dial(ip)
+	if err != nil {
+		return false
+	}
+	nc.Close()
+	return true
 }
 
 // keyChange changes the key of the current camera: ch (nil or zero: ask), the camera address, and an
@@ -356,11 +534,27 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 	if err != nil {
 		return a.UI.Fail("akam_authkeys.sh is not available: "+err.Error(), "")
 	}
+	// The key of the open session is the one that matters: the .pub beside the private key must be it.
+	oldKey := c.PublicKey()
 	oldPriv := a.keyPath()
 	oldPub := oldPriv + ".pub"
-	newPass, err := a.keyEnsure(ch.pub, a.keyCommentFor(ch.kind), ch.kind != camssh.KindCustom)
-	if err != nil {
-		return err
+	if f, ferr := camssh.ParsePubFile(oldPub); ferr == nil && oldKey != nil && !sameKey(f, oldKey) {
+		return a.UI.Fail(fmt.Sprintf("the public key %s is not the key that just logged in (%s).", tilde(oldPub), gossh.FingerprintSHA256(oldKey)),
+			"fix or remove that .pub file, or pass --identity FILE; nothing was changed.")
+	}
+	var newPass string
+	switch ch.kind {
+	case camssh.KindOwn:
+		var pub string
+		if pub, newPass, err = a.keyOwn("the camera"); err != nil {
+			return err
+		}
+		ch.pub = pub
+		ch.kind = camssh.KindOf(pub, a.Cams.Name)
+	default:
+		if newPass, err = a.keyEnsure(ch.pub, a.keyCommentFor(ch.kind), ch.kind != camssh.KindCustom, "the camera"); err != nil {
+			return err
+		}
 	}
 	if err := pubkeyCheck(a, ch.pub); err != nil {
 		return err
@@ -375,26 +569,35 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 		return a.UI.Fail(err.Error(), "")
 	}
 	newFP := gossh.FingerprintSHA256(newKey)
-	oldKey, oldErr := camssh.ParsePubFile(oldPub)
-	if oldErr == nil && sameKey(oldKey, newKey) {
+	if oldKey != nil && sameKey(oldKey, newKey) {
 		a.UI.Say(fmt.Sprintf("  Camera %s already uses this key (%s): nothing to do.", a.Cams.Name, newFP))
 		if a.St.Get("ssh_pubkey") != ch.pub {
 			a.setState("ssh_pubkey", ch.pub)
 		}
 		return nil
 	}
+	// The private key must be the one of the .pub (the session key already proved itself by logging in).
+	if err := a.loadPair(ch.pub, newKey, &newPass); err != nil {
+		return err
+	}
+	oldFP := ""
+	if oldKey != nil {
+		oldFP = gossh.FingerprintSHA256(oldKey)
+	}
 
 	// What will change, and the question (default No).
 	a.UI.Blank()
 	a.UI.Bold(fmt.Sprintf("Change the SSH key of camera %s", a.Cams.Name))
 	a.UI.Say("  New key:     " + keyKindText(ch.kind, ch.pub) + "  " + newFP)
-	if oldErr == nil {
-		a.UI.Say("  Current key: " + keyKindText(camssh.KindOf(oldPub, a.Cams.Name), oldPub) + "  " + gossh.FingerprintSHA256(oldKey))
+	if oldKey != nil {
+		a.UI.Say("  Current key: " + keyKindText(camssh.KindOf(oldPub, a.Cams.Name), oldPub) + "  " + oldFP)
 	}
 	a.UI.Say("  1. The new public key is ADDED to the camera's key list (the current key keeps working).")
 	a.UI.Say("  2. Akam logs in again with the new key. Only if that works is it remembered for this camera.")
 	a.UI.Say("  3. You are then asked whether to remove the current key from the camera (default No).")
-	a.UI.Say("  If anything fails the camera still accepts the current key. Your other cameras are not touched.")
+	a.UI.Say("  If a step fails Akam undoes what it added and checks that the current key still works. Your other cameras are not touched.")
+	card := a.cardState(c, script)
+	a.warnCard(card)
 	if !a.confirm("  Add the new key to this camera now?") {
 		a.UI.Say("  Nothing was changed on the camera.")
 		return nil
@@ -413,14 +616,19 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 	newLine := authLine(newKey, pubComment(ch.pub))
 	word, err := a.authkeysRun(c, script, "add", newLine, newFP)
 	if err != nil || (word != "added" && word != "present") {
+		op.writing(false)
 		if err == nil {
 			err = fmt.Errorf("unexpected answer %q", word)
 		}
-		if word != "" { // the helper ran and failed: a half-done add (the copy Dropbear reads) is undone too
-			a.keyRollback(ip, c, script, newLine, newFP)
+		switch word {
+		case "OUT_OF_SYNC":
+			return a.UI.Fail("the camera's login copy of its key list differs from the stored list, so nothing was changed.",
+				"a power cycle of the camera makes them agree; then run this again.")
+		case "ADDED_BUT_HOME_FAILED":
+			a.UI.Warn("the new key is in the camera's stored list, but the copy Dropbear reads could not be updated and the list could not be put back.")
+			return a.UI.Fail("the key change is incomplete.", "the current key is not touched; a power cycle makes the lists agree. Nothing was saved here.")
 		}
-		op.writing(false)
-		return a.UI.Fail("the camera did not take the new key: "+err.Error()+".", "the current key still works; nothing was saved here.")
+		return a.UI.Fail("the camera did not take the new key: "+err.Error()+".", "nothing was changed on the camera; nothing was saved here.")
 	}
 	op.done(0, word)
 	op.start(1)
@@ -428,11 +636,15 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 	a.UI.Say("  Key added (" + word + "). Logging in again with the new key ...")
 	if verr := a.verifyKeyLogin(ip, newPriv, &newPass); verr != nil {
 		a.UI.Err("the new key does not work: " + verr.Error())
-		if word == "added" {
+		if word == "added" { // only what THIS run added is taken out; a key that was already there stays
 			a.keyRollback(ip, c, script, newLine, newFP)
 		}
 		op.writing(false)
-		return a.UI.Fail("the key was not changed.", "the camera still accepts your current key; nothing was saved here.")
+		if a.currentKeyWorks(ip) {
+			return a.UI.Fail("the key was not changed.", "the camera still accepts your current key (checked); nothing was saved here.")
+		}
+		return a.UI.Fail("the key was not changed, and the current key could not be checked afterwards.",
+			"check the camera and your network; if you are locked out use the flash card route. Nothing was saved here.")
 	}
 	op.done(1, "works")
 	op.start(2)
@@ -449,34 +661,34 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 		a.UI.Say("  (--pubkey / --identity still overrides it for runs that pass them.)")
 	}
 
-	// The old key: only offered when it is known, and never the one just verified.
-	if oldErr != nil {
-		a.UI.Say("  The old key's public file was not found, so its removal is not offered; both keys keep working on the camera.")
+	// The old key: offered whenever it is known (the session key), and never the one just verified.
+	if oldKey == nil {
+		a.UI.Say("  The old key is not known, so its removal is not offered; both keys keep working on the camera.")
 		return nil
 	}
-	oldFP := gossh.FingerprintSHA256(oldKey)
 	a.UI.Blank()
 	a.UI.Say(fmt.Sprintf("  The camera still accepts the old key (%s).", oldFP))
 	a.UI.Say("  No keeps both keys working. Yes removes only that key from THIS camera; other cameras keep their lists.")
+	a.warnCard(card)
 	if !a.confirm("  Remove the old key from this camera?") {
 		a.UI.Say("  The old key was left on the camera.")
 		return nil
 	}
-	return a.keyRemoveOld(ip, script, oldKey, newPriv, &newPass, oldFP)
+	return a.keyRemoveOld(ip, script, oldKey, newKey, newPriv, &newPass, oldFP)
 }
 
 // keyRollback takes a key we just added out of the camera's list again (the check login failed). The
 // session c still holds the current key; if it is gone a new login with the current key is tried.
 func (a *App) keyRollback(ip string, c *camssh.Client, script []byte, line, fp string) {
 	word, err := a.authkeysRun(c, script, "remove", line, fp)
-	if err != nil {
+	if err != nil && word == "" {
 		if nc, derr := a.dial(ip); derr == nil {
 			defer nc.Close()
 			word, err = a.authkeysRun(nc, script, "remove", line, fp)
 		}
 	}
 	if err != nil || (word != "removed" && word != "absent") {
-		a.UI.Warn(fmt.Sprintf("could not take the new key (%s) out of the camera again; it does no harm, and the current key still works. Remove it later with the card route if you want.", fp))
+		a.UI.Warn(fmt.Sprintf("could not take the new key (%s) out of the camera again; it does no harm. Remove it later with the card route if you want.", fp))
 		return
 	}
 	if word == "removed" {
@@ -485,8 +697,11 @@ func (a *App) keyRollback(ip string, c *camssh.Client, script []byte, line, fp s
 }
 
 // keyRemoveOld removes the old key over a login made with the NEW key, then proves the new key still
-// logs in. If that proof fails the old key is put back.
-func (a *App) keyRemoveOld(ip string, script []byte, oldKey gossh.PublicKey, newPriv string, newPass *string, oldFP string) error {
+// logs in. If that proof fails the old key is put back. Only the word "removed" means it was removed.
+func (a *App) keyRemoveOld(ip string, script []byte, oldKey, newKey gossh.PublicKey, newPriv string, newPass *string, oldFP string) error {
+	if sameKey(oldKey, newKey) { // never the key just verified
+		return a.UI.Fail("the old key is the new key; it is not removed.", "nothing was changed.")
+	}
 	nc, err := a.dialKey(ip, newPriv, newPass)
 	if err != nil {
 		return a.UI.Fail("could not log in with the new key to remove the old one: "+err.Error()+".", "the old key was left on the camera.")
@@ -501,13 +716,20 @@ func (a *App) keyRemoveOld(ip string, script []byte, oldKey gossh.PublicKey, new
 	oldLine := authLine(oldKey, "akam")
 	word, err := a.authkeysRun(nc, script, "remove", oldLine, oldFP)
 	switch {
-	case err != nil && word == "REFUSED_LAST_KEY":
+	case word == "REFUSED_LAST_KEY":
 		return a.UI.Fail("the old key is the only key on the camera, so it was not removed.", "nothing was changed.")
-	case err != nil:
-		return a.UI.Fail("the old key could not be removed: "+err.Error()+".", "both keys may still work; nothing was saved wrongly.")
-	case word == "absent":
+	case word == "OUT_OF_SYNC":
+		return a.UI.Fail("the camera's login copy of its key list differs from the stored list, so nothing was removed.", "a power cycle makes them agree; both keys keep working.")
+	case word == "absent" && err == nil:
 		a.UI.Say("  The old key was not in the camera's list any more.")
 		return nil
+	case word == "REMOVED_BUT_HOME_FAILED":
+		return a.UI.Fail("the old key was taken out of the stored list, but the copy Dropbear reads was not updated.", "it may still log in until the next power cycle; the new key works.")
+	case err != nil || word != "removed":
+		if err == nil {
+			err = fmt.Errorf("unexpected answer %q", word)
+		}
+		return a.UI.Fail("the old key was not removed: "+err.Error()+".", "nothing was changed on the camera; both keys keep working.")
 	}
 	op.done(0, word)
 	op.start(1)
