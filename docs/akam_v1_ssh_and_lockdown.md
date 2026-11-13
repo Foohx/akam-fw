@@ -19,15 +19,41 @@ Wi-Fi reconnect.
 
 ## 1. Generate a dedicated key
 
-Use a key made only for this camera (one key per camera; never reuse your everyday key):
+Use a key made for Akam, not your everyday key:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/akam -C "akam"
 ```
 
-Set a passphrase. (The wizard offers your existing ed25519 keys to choose from if `~/.ssh/akam.pub` is
-missing, or creates this dedicated one.) This creates `~/.ssh/akam` (private, stays on your PC, never copied anywhere) and
-`~/.ssh/akam.pub` (public). Only **ed25519** keys are accepted by Akam V1.
+Set a passphrase. This creates `~/.ssh/akam` (private, stays on your PC, never copied anywhere) and
+`~/.ssh/akam.pub` (public). Only **ed25519** keys are accepted by Akam V1. You do not have to run this yourself:
+the assistant and the wizard make the key when you choose it (next section).
+
+### Shared key or one key per camera
+
+`./akam prepare-flash-sd` asks, once per camera, **"Which SSH key should open this camera?"**:
+
+1. **Shared key `~/.ssh/akam` (all your cameras)**, the default (Enter). One key, one passphrase, every camera.
+   Made when it does not exist yet.
+2. **A key for this camera only `~/.ssh/akam-<camera-name>`**. Made now (comment `akam-<camera-name>`).
+   If a camera is lost, stolen or its key leaks, only that camera is concerned.
+3. One of the ed25519 public keys already in `~/.ssh` (listed after the two above).
+
+`--pubkey FILE` skips the question, and so does a key already chosen for the camera. A key file that exists is
+used as it is and **never overwritten**. The choice is remembered per camera (state key `ssh_pubkey`); the
+public key goes to the card (`akam/authorized_keys`), the private key never leaves your PC.
+
+How a key is made:
+
+- The **bash wizard** runs `ssh-keygen -t ed25519` (it asks the passphrase itself).
+- The **Go assistant** needs no external tool (Windows, macOS and Linux alike): it generates the ed25519 pair
+  itself, asks the passphrase **twice** without echo (an empty one is accepted only after an explicit warning and a
+  yes, default No), writes the private key in the OpenSSH format with mode 600 (on Windows the file is restricted to
+  your account, and a key that cannot be protected is deleted) and the `.pub` file with mode 644. A key
+  with a passphrase is signed through `ssh-agent` when it holds it.
+
+`./akam key show` (assistant) tells which key a camera uses: shared, this camera only, or custom, with the SHA256
+fingerprint. `./akam status` and the camera chooser show it too.
 
 ## 2. Put the public key on the microSD card
 
@@ -102,7 +128,46 @@ ed25519 fingerprint with the one the camera computes (from the UART console):
 ### Changing keys later
 
 Put a new `akam/authorized_keys` on the card and power cycle. A valid file **replaces** the whole
-stored list.
+stored list. This is the only route of the bash wizard and the way back if you are locked out. A camera that
+still accepts one of its keys can be changed without a card, with the assistant (next section).
+
+### Change the key over SSH
+
+Only the **Go assistant** does this; the bash wizard cannot (use the card). In the camera options, group Security,
+the row **SSH key** shows `shared (~/.ssh/akam)`, `this camera only (~/.ssh/akam-NAME)` or `custom (PATH)`, and the
+key `k` changes it; on the command line:
+
+```text
+./akam key show                  which key this camera uses (and its fingerprint)
+./akam key use-shared            use the shared key ~/.ssh/akam (made if missing)
+./akam key use-new               use a key for this camera only ~/.ssh/akam-NAME (made if missing)
+./akam key use FILE.pub          use another ed25519 key you already have
+```
+
+Safe by construction. In this order, and nothing is saved before step 4:
+
+1. Akam logs in with the **current** key, then makes the new key if needed (never over an existing file) and asks a
+   yes/no, default No, that says what will change.
+2. It copies `akam_authkeys.sh` to the camera's RAM (`/tmp`, nothing is installed) and **adds** the new public key
+   to `/etc/config/dropbear/authorized_keys`: a temp file in the same folder (mode 600), synced, moved into place.
+   A line already there is not added twice, and the other lines are kept. The helper also refreshes the copy of
+   the file that Dropbear reads (see "If you cannot log in": root's HOME is a tmpfs copy made at boot); without that
+   the new key would work only after the next power cycle.
+3. A **new** SSH connection is opened with the new key. The camera's host key must still match the pinned one (a first
+   contact is never accepted here), and a trivial command must run.
+4. Only then the new key is saved for **this camera**. Other cameras (even those that share the old key) keep their
+   own state and their own key lists.
+5. Akam asks, default No, **"Remove the old key from this camera?"**. No keeps both keys working. Yes removes only the
+   lines holding exactly the old key (type and key, the comment is ignored) over a login made with the new key, then
+   logs in with the new key once more. The key just verified is never removed, and the list is never left empty
+   (the helper refuses with `REFUSED_LAST_KEY`).
+
+If step 3 fails, the key just added is taken out again and the camera still accepts the old key; if the
+check after a removal fails, the old key is put back. The camera is never left with a key list you cannot use.
+The write is shown to the screen as a write: the full-screen assistant refuses to stop it half way, and no
+passphrase or key line is written to the activity log (the key goes over standard input).
+
+`--identity FILE` overrides the saved key for a run that passes it (it is also the "current key" of that run).
 
 ### Host key change after a CONFIG wipe
 
