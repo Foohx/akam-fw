@@ -94,7 +94,7 @@ func TestParseArgs(t *testing.T) {
 }
 
 func TestHelpMentionsEveryCommandOfThisPhase(t *testing.T) {
-	for _, w := range []string{"find-camera", "hostname", "rtsp-auth", "led ", "audio ", "picture ", "debug ", "onvif ", "talk ", "say FILE", "status", "cameras", "rename-camera", "register", "version", "self-test", "forget-host-key", "--trust-new-host-key", "--plain", "--state-dir"} {
+	for _, w := range []string{"find-camera", "hostname", "rtsp-auth", "led ", "audio ", "picture ", "debug ", "onvif ", "talk ", "say FILE", "status", "cameras", "rename-camera", "register", "version", "self-test", "forget-host-key", "--trust-new-host-key", "--plain", "--state-dir", "releases ", "--stock", "--include-prereleases", "Which firmware?"} {
 		if !strings.Contains(helpText, w) {
 			t.Errorf("help lacks %q", w)
 		}

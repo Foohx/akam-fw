@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
 // Step metadata, copied from steps_host.sh so the status table is identical.
@@ -241,6 +242,9 @@ func (a *App) statusTable() {
 		mode = "rehearsal"
 	}
 	a.UI.Bold(fmt.Sprintf("Akam setup progress (%s; camera: %s; state: %s)", mode, a.Cams.Name, a.St.File))
+	if fw := a.St.Get("fw_source"); fw != "" { // only after a firmware was chosen here and written
+		a.UI.Say("  Firmware source: " + ui.Sanitize(fw))
+	}
 	var b strings.Builder
 	for i, s := range state.Steps {
 		st := a.stepStatus(s)

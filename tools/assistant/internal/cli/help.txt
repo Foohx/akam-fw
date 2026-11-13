@@ -17,7 +17,10 @@ Commands:
   prepare-flash-sd   prepare the microSD card used to flash the camera
   flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
   verify             check SSH, ports and hardware, then the same without the card
-  update             flash a new image over SSH (no card)
+  update             flash a new image over SSH (no card). Choose the firmware with --version X.Y.Z (a published
+                     release), --kit FILE, --image FILE or --stock (back to the original); without one, the menu
+                     asks "Which firmware?"
+  releases           list the Akam versions published on GitHub, newest first (read only; --include-prereleases)
   hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
                      applied at the next power cycle (needs a firmware that has akam_hostname.sh)
   rtsp-auth [set|disable|status]
@@ -88,14 +91,18 @@ Commands:
 Options:
   --dry-run          rehearse: show every command, change nothing, ask nothing
   --kit FILE         use a local kit (tarball with SHA256SUMS next to it, or folder)
-  --version X.Y.Z    release to download for get-kit
+  --version X.Y.Z    release to download for get-kit, or to put on the camera with update
   --allow-unsigned   accept a kit without a signature (checksum only)
   --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
   --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)
   --backup-copy DIR  also copy the backup folder to DIR (another medium) and check the copy
   --ip ADDRESS       the camera's IP address (find-camera asks otherwise)
   --identity FILE    your SSH private key (default: ~/.ssh/akam, or --pubkey without .pub)
-  --image FILE       image for update (default: the one built by the image step)
+  --image FILE       image for update (default: the one built by the image step; exactly 5242880 bytes)
+  --stock            update: put the original (stock) firmware back from your verified backup (the restore
+                     command with all its gates; never tested on a real camera)
+  --include-prereleases
+                     releases and the firmware list: also show prereleases (hidden by default)
   --manual-telnet    never drive the camera's telnet shell: the wizard prints each command and
                      you paste it in your own telnet window (also automatic after 2 failures)
   --out DIR          where the image is written (default ~/akam-image-<name>-<date>)

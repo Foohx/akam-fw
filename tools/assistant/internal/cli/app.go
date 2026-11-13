@@ -74,6 +74,8 @@ type App struct {
 	Ctx        context.Context
 	envSecrets map[string]string // AKAM_*PASS* read once at start-up (the environment no longer has them)
 
+	rel          *relCache // the release list of this session (fwsource.go)
+	cliFW        fwSource  // the firmware named on the command line (zero: none): the chooser is skipped
 	camIP        string
 	live         *liveHealth     // what a flow read of the chosen camera this session (header badges)
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)
@@ -167,6 +169,7 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 
 	secrets := &state.Secrets{}
 	a := &App{envSecrets: childenv.Take(), Opt: opt, Env: LoadEnv(), Cams: cams, Secrets: secrets, Version: version, Streams: st, Hooks: hooks}
+	a.cliFW = fwFromOptions(opt)
 	var cancel context.CancelFunc
 	a.Ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
@@ -358,6 +361,8 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdGetKit()
 	case "update":
 		return a.cmdUpdate()
+	case "releases":
+		return a.cmdReleases()
 	case "restore":
 		return a.cmdRestore()
 	case "verify":

@@ -267,7 +267,15 @@ func (a *App) afterFlash() {
 
 // ---------------------------------------------------------------- update
 
+// cmdUpdate is `update`. Without a choice it writes the image on record (or --image FILE). The firmware can
+// be chosen on the command line: --version X.Y.Z (a published release, downloaded and verified), --kit FILE
+// (a kit you have, verified), --image FILE (an image you built), --stock (back to the original firmware:
+// the restore command, with all its gates).
 func (a *App) cmdUpdate() error {
+	if a.Opt.Stock {
+		a.fwPending(fwSource{Kind: fwStock})
+		return a.cmdRestore()
+	}
 	a.banner("Update Akam with a new image (SSH, no card)")
 	ip, err := a.camNeedIP()
 	if err != nil {
@@ -277,6 +285,22 @@ func (a *App) cmdUpdate() error {
 	if img == "" {
 		img = a.St.Get("image_path")
 	}
+	if src := a.cliFW; src.Kind == fwRelease || src.Kind == fwKit || (src.Kind == fwImage && (a.Opt.Kit != "" || a.Opt.Version != "")) {
+		_, cur := a.currentFirmware(ip, true)
+		a.fwPending(src)
+		if img, err = a.prepareFirmware(src, cur, false); err != nil {
+			return err
+		}
+	} else if img != "" {
+		a.fwPending(fwSource{Kind: fwImage, Path: img})
+	}
+	return a.updateWrite(ip, img)
+}
+
+// updateWrite is the part of the update that touches the camera: the image gate, the backup gate, the red
+// box and the write. The firmware that was chosen is recorded once the write is verified.
+func (a *App) updateWrite(ip, img string) error {
+	var err error
 	if a.UI.Dry() {
 		if img == "" {
 			img = "<image>"
@@ -299,6 +323,7 @@ func (a *App) cmdUpdate() error {
 	}
 	_ = a.St.Set("flash_md5", md5)
 	_ = a.St.ClearDone("verify")
+	a.fwCommit()
 	a.afterFlash()
 	return nil
 }
@@ -358,6 +383,8 @@ func (a *App) cmdRestore() error {
 	}
 	_ = a.St.ClearDone("flash")
 	_ = a.St.ClearDone("verify")
+	a.fwPending(fwSource{Kind: fwStock})
+	a.fwCommit()
 	a.UI.Blank()
 	a.UI.Good(fmt.Sprintf("  Restore written and verified (read-back md5 = %s).", md5))
 	a.UI.Say("  Power-cycle the camera BY HAND (unplug the USB-C power, wait 5 seconds, plug it back).")
