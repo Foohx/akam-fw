@@ -211,7 +211,13 @@ func (c *boardCtl) show(status string) {
 		}}
 	now := time.Now()
 	for _, r := range rows {
-		b.Rows = append(b.Rows, chooserRow(r, checking, now))
+		row := chooserRow(r, checking, now)
+		if r.Name != "" {
+			if k := c.a.keyBrief(r.Name); k != "" {
+				row.Note = strings.TrimSpace(row.Note + "  SSH key: " + k)
+			}
+		}
+		b.Rows = append(b.Rows, row)
 	}
 	if status != "" {
 		b.Status, b.StatusLevel = status, "info"

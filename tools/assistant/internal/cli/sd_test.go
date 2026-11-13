@@ -263,7 +263,7 @@ func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := w.run("n\n", "prepare-flash-sd", "--device", w.img)
+	r := w.run("1\nn\n", "prepare-flash-sd", "--device", w.img)
 	expectRC(t, r, 1)
 	w.untouched(t)
 	r = w.run("y\n", "prepare-flash-sd", "--device", w.img)

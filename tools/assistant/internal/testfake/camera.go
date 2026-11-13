@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,6 +61,17 @@ type Options struct {
 	ProcMtd string
 	// Flash selects the behaviour of the reflash emulation (see flash.go); zero is a healthy camera.
 	Flash FlashOptions
+	// FreezeAuth makes the SSH server ignore later changes of its key list: only AuthorizedKey logs in
+	// (a camera whose login copy of authorized_keys is never refreshed, or a Dropbear that rejects
+	// the new key). The files are still changed by akam_authkeys.sh.
+	FreezeAuth bool
+	// CardPresent puts a provisioning card with akam/authorized_keys in the camera (the key helper reports it).
+	CardPresent bool
+	// BreakNewKeyAfterRemove makes every key but AuthorizedKey stop logging in once a key was removed with
+	// akam_authkeys.sh (a camera that refuses the new key after the old one was taken out).
+	BreakNewKeyAfterRemove bool
+	// RotateHostKeyAfterAdd gives the camera a new host key right after a key was added with akam_authkeys.sh.
+	RotateHostKeyAfterAdd bool
 }
 
 // Camera is one running fake camera.
@@ -73,6 +85,7 @@ type Camera struct {
 	fl                   flashState
 	hostKeyMu            sync.Mutex
 	hostSigner           gossh.Signer
+	denyOthers           atomic.Bool
 
 	mu        sync.Mutex
 	commands  []string
@@ -221,6 +234,24 @@ func New(t testing.TB, opts Options) *Camera {
 	if err := os.WriteFile(filepath.Join(c.Root, "bin", "true_cmd"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// Like the camera after akam_ssh.sh: the persistent key list, and the tmpfs copy Dropbear reads.
+	keyLine := gossh.MarshalAuthorizedKey(opts.AuthorizedKey)
+	for _, d := range []string{filepath.Join("etc", "config", "dropbear"), filepath.Join("tmp", "akam_home")} {
+		if err := os.MkdirAll(filepath.Join(c.Root, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(c.Root, d, "authorized_keys"), keyLine, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if opts.CardPresent {
+		if err := os.MkdirAll(filepath.Join(c.Root, "mnt", "akam"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(c.Root, "mnt", "akam", "authorized_keys"), keyLine, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var err error
 	if c.sshLn, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
 		t.Fatal(err)
@@ -293,7 +324,7 @@ func (c *Camera) handleSSH2(nc net.Conn) {
 func (c *Camera) handleSSH(nc net.Conn) {
 	cfg := &gossh.ServerConfig{
 		PublicKeyCallback: func(_ gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
-			if bytes.Equal(key.Marshal(), c.opts.AuthorizedKey.Marshal()) {
+			if c.keyAllowed(key) {
 				return nil, nil
 			}
 			return nil, errors.New("key refused")
@@ -327,6 +358,41 @@ func (c *Camera) handleSSH(nc net.Conn) {
 			_ = nch.Reject(gossh.UnknownChannelType, "no")
 		}
 	}
+}
+
+// keyAllowed is Dropbear's check: the login copy of the key list (tmp/akam_home/authorized_keys, the
+// directory Dropbear is started with), read at every login.
+func (c *Camera) keyAllowed(key gossh.PublicKey) bool {
+	if c.opts.FreezeAuth || c.denyOthers.Load() {
+		return bytes.Equal(key.Marshal(), c.opts.AuthorizedKey.Marshal())
+	}
+	b, err := os.ReadFile(filepath.Join(c.Root, "tmp", "akam_home", "authorized_keys"))
+	if err != nil {
+		return false
+	}
+	for len(bytes.TrimSpace(b)) > 0 {
+		k, _, _, rest, err := gossh.ParseAuthorizedKey(b)
+		if err != nil {
+			break
+		}
+		if bytes.Equal(k.Marshal(), key.Marshal()) {
+			return true
+		}
+		b = rest
+	}
+	return false
+}
+
+// AuthorizedKeys returns the persistent key list of the camera (etc/config/dropbear/authorized_keys)
+// and its mode.
+func (c *Camera) AuthorizedKeys() (string, os.FileMode) {
+	p := filepath.Join(c.Root, "etc", "config", "dropbear", "authorized_keys")
+	b, _ := os.ReadFile(p)
+	st, err := os.Stat(p)
+	if err != nil {
+		return string(b), 0
+	}
+	return string(b), st.Mode().Perm()
 }
 
 func (c *Camera) session(ch gossh.Channel, reqs <-chan *gossh.Request, nc net.Conn) {
@@ -370,6 +436,24 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 	switch {
 	case cmd == "true":
 		return 0
+	case cmd == "cat > /tmp/akam_authkeys.sh":
+		b, _ := io.ReadAll(stdin)
+		if err := os.WriteFile(filepath.Join(c.Root, "tmp", "akam_authkeys.sh"), b, 0o600); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case cmd == "sh /tmp/akam_authkeys.sh add" || cmd == "sh /tmp/akam_authkeys.sh remove" || cmd == "sh /tmp/akam_authkeys.sh card":
+		mode := strings.TrimPrefix(cmd, "sh /tmp/akam_authkeys.sh ")
+		var out bytes.Buffer
+		st := c.runScriptFile(filepath.Join(c.Root, "tmp", "akam_authkeys.sh"), []string{mode}, stdin, io.MultiWriter(stdout, &out), stderr)
+		if st == 0 && mode == "remove" && strings.Contains(out.String(), "AUTHKEYS=removed") && c.opts.BreakNewKeyAfterRemove {
+			c.denyOthers.Store(true)
+		}
+		if st == 0 && mode == "add" && strings.Contains(out.String(), "AUTHKEYS=added") && c.opts.RotateHostKeyAfterAdd {
+			c.RotateHostKey()
+		}
+		return st
 	case cmd == "nc -w 2 127.0.0.1 8091":
 		return c.ncCtl(stdin, stdout)
 	case cmd == "test -x /usr/sbin/akam_hostname.sh":
@@ -438,7 +522,10 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 
 // runScript runs a real helper script of the checkout in the fake root (argv, never a shell line).
 func (c *Camera) runScript(name string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	script := filepath.Join(TemplatesDir(), name)
+	return c.runScriptFile(filepath.Join(TemplatesDir(), name), args, stdin, stdout, stderr)
+}
+
+func (c *Camera) runScriptFile(script string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", append([]string{script}, args...)...)

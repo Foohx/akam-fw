@@ -142,13 +142,101 @@ ssh_run start
 check "daemon relaunched after reboot" test -s "$R/tmp/dropbear.pid"
 check "host key unchanged after reboot" test "$(cat "$D/dropbear_ed25519_host_key")" = "$HK1"
 check "no keygen after reboot" test ! -e "$R/etc/config/keygen_count"
-check "log says unchanged" grep -q 'authorized_keys unchanged' "$R/tmp/akam_ssh.log"
+check "log says the card keys are unchanged since the last import" grep -q 'SD keys unchanged since the last import' "$R/tmp/akam_ssh.log"
+check "the card hash is kept in CONFIG (0600)" test "$(mode_of "$D/.card_keys_hash")" = 600
 # key replaced on SD -> CONFIG follows
 printf '%s\n' "$K2" >"$R/mnt/akam/authorized_keys"
 killdb
 rm -rf "$R/tmp"/*
 ssh_run start
 check "authorized_keys replaced by new SD content" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K2")
+killdb
+# a key change made over SSH (the list differs from the card) must survive a reboot with the SAME card still in
+printf '%s\n' "$K1" >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "same card left in: the key list changed over SSH is kept at reboot" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K1")
+check "  ... and the log says why" grep -q 'a key change made over SSH survives' "$R/tmp/akam_ssh.log"
+killdb
+# a card whose keys CHANGED replaces the list again (the documented recovery route)
+printf '%s\n%s\n' "$K1" "$K2" >"$R/mnt/akam/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "a changed card replaces the list" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+killdb
+# the same card put back later (hash of the last import) is not imported again; the older card is a change
+printf '%s\n' "$K2" >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "the card of the last import does not overwrite a later list" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K2")
+killdb
+# no stored hash (first boot of this feature, firmware upgraded): the card is imported once, then remembered
+rm -f "$D/.card_keys_hash"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "no stored hash: the card is imported (first boot behaviour unchanged)" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+check "  ... and its hash is stored" test -s "$D/.card_keys_hash"
+killdb
+# RECOVERY with the same card: after a key change over SSH, a boot WITHOUT the card forgets the last import,
+# so the same card put back is imported again (boot once without it, then with it)
+printf '%s\n' "$K2" >"$D/authorized_keys"      # the list was changed over SSH; the card (K1+K2) is still in
+rm -rf "$R/tmp"/*
+ssh_run start
+check "same card left in continuously: not imported" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K2")
+killdb
+mv "$R/mnt/akam/authorized_keys" "$WORK/card.saved"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "a boot that sees no card forgets the last import" test ! -e "$D/.card_keys_hash"
+check "  ... and logs it" grep -q 'last card import is forgotten' "$R/tmp/akam_ssh.log"
+check "  ... and the list is untouched" cmp -s "$D/authorized_keys" <(printf '%s\n' "$K2")
+killdb
+cp "$WORK/card.saved" "$R/mnt/akam/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "the SAME card put back after a card-less boot is imported (recovery route)" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+killdb
+# a mount that merely FAILED is not "no card": the import is not forgotten
+mkdir -p "$R/dev"
+: >"$R/dev/mmcblk0p1"
+mv "$R/mnt/akam/authorized_keys" "$WORK/card.saved"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "card present but unmountable (unknown): the last import is kept" test -s "$D/.card_keys_hash"
+killdb
+rm -f "$R/dev/mmcblk0p1"
+cp "$WORK/card.saved" "$R/mnt/akam/authorized_keys"
+# an unusable stored list (comments only) never counts as the current list: the card is imported even if unchanged
+printf '# nothing here\n' >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "an unchanged card is imported when the stored list holds no key" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+killdb
+# without a card and without any valid key the camera says so
+mv "$R/mnt/akam/authorized_keys" "$WORK/card.saved"
+printf '# nothing here\n' >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "no valid key at all: the WARNING is logged" grep -q 'WARNING: no authorized key' "$R/tmp/akam_ssh.log"
+killdb
+cp "$WORK/card.saved" "$R/mnt/akam/authorized_keys"
+# a hash path that is a directory is repaired, not trusted
+rm -f "$D/.card_keys_hash"
+mkdir "$D/.card_keys_hash"
+rm -rf "$R/tmp"/*
+ssh_run start
+check "a hash path that is a directory is replaced by the hash file" test -f "$D/.card_keys_hash"
+killdb
+# without md5sum the card is still imported (and the lack is logged)
+mkdir -p "$WORK/nomd5"
+printf '#!/bin/sh\nexit 127\n' >"$WORK/nomd5/md5sum"
+chmod +x "$WORK/nomd5/md5sum"
+rm -f "$D/.card_keys_hash"
+printf '%s\n' "$K2" >"$D/authorized_keys"
+rm -rf "$R/tmp"/*
+PATH="$WORK/nomd5:$PATH" ssh_run start
+check "no usable md5sum: the card is imported as before" cmp -s "$D/authorized_keys" <(printf '%s\n%s\n' "$K1" "$K2")
+check "  ... and the lack is logged" grep -q 'could not compute the md5' "$R/tmp/akam_ssh.log"
 killdb
 
 echo "== 3. concurrent start: one daemon"
@@ -390,6 +478,24 @@ else
     check "SD key provisioned into the ephemeral dir" test -s "$R/tmp/akam_dropbear/authorized_keys"
     killdb
     chmod 755 "$R/etc/config"
+fi
+
+echo "== 9n. the dropbear directory EXISTS but cannot be written (a failed redirection must not end the script)"
+new_root t9n
+if [ "$(id -u)" = 0 ]; then
+    echo "  skip - running as root, chmod cannot make a dir read-only"
+else
+    mkdir -p "$R/etc/config/dropbear"
+    printf '%s\n' "$K2" >"$R/etc/config/dropbear/authorized_keys"
+    chmod 500 "$R/etc/config/dropbear"
+    printf '%s\n' "$K1" >"$R/mnt/akam/authorized_keys"
+    ssh_run start
+    check "dropbear started in ephemeral mode" test -s "$R/tmp/dropbear.pid"
+    check "ephemeral host key in tmp" test -s "$R/tmp/akam_dropbear/dropbear_ed25519_host_key"
+    check "the script did not stop at the failed write test (fallback logged)" grep -q 'not writable' "$R/tmp/akam_ssh.log"
+    check "the card key was provisioned into the ephemeral dir" test -s "$R/tmp/akam_dropbear/authorized_keys"
+    killdb
+    chmod 700 "$R/etc/config/dropbear"
 fi
 
 echo "== 9a. pidfile pointing at a non-dropbear process is stale"
