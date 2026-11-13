@@ -28,9 +28,9 @@ type fw struct {
 	dir     string
 }
 
-func newFlashWorld(t *testing.T, fo testfake.FlashOptions) *fw {
+func newFlashWorld(t *testing.T, fo testfake.FlashOptions, more ...func(*testfake.Options)) *fw {
 	t.Helper()
-	e := newEnv(t, func(o *testfake.Options) { o.Flash = fo })
+	e := newEnv(t, append([]func(*testfake.Options){func(o *testfake.Options) { o.Flash = fo }}, more...)...)
 	e.flashTest = true
 	w := &fw{env: e, dir: t.TempDir()}
 	w.imgData = validImage(t)
@@ -67,6 +67,7 @@ func (w *fw) unchanged(t *testing.T) {
 // (a reboot, a kill, a second flash path) fails the test.
 var closedSet = []*regexp.Regexp{
 	regexp.MustCompile(`^true$`),
+	regexp.MustCompile(`^cat /usr/local/akam/MANIFEST\.txt 2>/dev/null$`), // the version the image states (read only)
 	regexp.MustCompile(`^busy=0\nfor f in /tmp/akam_reflash/worker\.pid `),
 	regexp.MustCompile(`^umask 077; cat > '/tmp/akam_reflash/(akam_reflash_ssh\.sh|flash_guard\.sh|flash_tool|image\.squashfs)'$`),
 	regexp.MustCompile(`^sh '/tmp/akam_reflash/akam_reflash_ssh\.sh' (precheck|prepare --md5 [0-9a-f]{32})$`),

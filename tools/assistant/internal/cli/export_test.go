@@ -21,7 +21,7 @@ func HomeMenu(version, name, ip, kind, fw string, hotkey bool) (string, []ui.Men
 // FirmwareLabels exposes the lines of the "Which firmware?" list (update or install, the version the
 // camera runs, the releases newest first, the kits already downloaded, the recorded image, a verified stock
 // backup) to the tests, including the full-screen list.
-func FirmwareLabels(update bool, cur string, versions, downloaded []string, built string, stockOK bool) []string {
+func FirmwareLabels(update bool, cur string, versions, downloaded []string, built string, stockOK bool, flags ...bool) []string {
 	mode := fwInstall
 	if update {
 		mode = fwUpdate
@@ -31,7 +31,14 @@ func FirmwareLabels(update bool, cur string, versions, downloaded []string, buil
 		rels = append(rels, kit.Release{Version: v, Tag: "v" + v})
 	}
 	var out []string
-	for _, c := range fwChoices(mode, cur, rels, downloaded, built, stockOK) {
+	l := fwList{Mode: mode, Cur: cur, Rels: rels, Downloaded: downloaded, Built: built, StockOK: stockOK}
+	if len(flags) > 0 { // builtFirst, retry
+		l.BuiltFirst = flags[0]
+	}
+	if len(flags) > 1 {
+		l.Retry = flags[1]
+	}
+	for _, c := range fwChoices(l) {
 		out = append(out, c.label)
 	}
 	return out

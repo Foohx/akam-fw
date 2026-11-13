@@ -5,15 +5,14 @@ package cli
 // (the kit to download or open, the image to import); the returned function puts the options back, so a
 // later action of the same session starts clean. proceed is false when the user went back.
 func (a *App) installFirmware() (restore func(), proceed bool) {
-	sv, sk, si := a.Opt.Version, a.Opt.Kit, a.Opt.Image
-	restore = func() { a.Opt.Version, a.Opt.Kit, a.Opt.Image = sv, sk, si }
+	sv, sk, si, sb := a.Opt.Version, a.Opt.Kit, a.Opt.Image, a.Opt.Builder
+	restore = func() { a.Opt.Version, a.Opt.Kit, a.Opt.Image, a.Opt.Builder = sv, sk, si, sb }
 	if a.cliFW.Kind == fwStock {
 		_ = a.UI.Fail("--stock puts the original firmware back on an Akam camera: it belongs to the update.", "choose 'Update this camera', or run: "+Prog+" --stock update")
 		return restore, false
 	}
 	if a.cliFW.Kind != "" {
-		a.fwPending(a.cliFW) // the steps already read --version, --kit and --image
-		return restore, true
+		return restore, true // the steps already read --version, --kit and --image
 	}
 	if a.UI.Dry() || a.St.Get("mode") == "source" || (a.installState("get-kit") == "done" && a.installState("image") == "done") {
 		return restore, true // nothing to choose: a rehearsal asks nothing, a source checkout has its own kit, both steps are done
@@ -23,18 +22,16 @@ func (a *App) installFirmware() (restore func(), proceed bool) {
 		a.UI.Say("  No firmware chosen. Nothing was changed.")
 		return restore, false
 	}
-	a.fwPending(src)
 	switch src.Kind {
 	case fwRelease:
 		a.Opt.Version, a.Opt.Kit = src.Version, ""
-		if !(a.installState("get-kit") == "done" && a.St.Get("mode") == "kit" && a.St.Get("kit_version") == src.Version) {
-			_ = a.St.ClearDone("get-kit")
-		}
+		_ = a.St.ClearDone("get-kit") // the kit is downloaded and verified again: a recorded one is never reused
 	case fwKit:
 		a.Opt.Version, a.Opt.Kit = "", src.Path
 		_ = a.St.ClearDone("get-kit")
 	case fwImage:
 		a.Opt.Image = src.Path
+		a.Opt.Builder = "" // the chosen image wins over --builder native
 		if a.St.Get("image_path") != src.Path {
 			_ = a.St.ClearDone("image")
 		}

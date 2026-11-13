@@ -273,7 +273,6 @@ func (a *App) afterFlash() {
 // the restore command, with all its gates).
 func (a *App) cmdUpdate() error {
 	if a.Opt.Stock {
-		a.fwPending(fwSource{Kind: fwStock})
 		return a.cmdRestore()
 	}
 	a.banner("Update Akam with a new image (SSH, no card)")
@@ -287,12 +286,9 @@ func (a *App) cmdUpdate() error {
 	}
 	if src := a.cliFW; src.Kind == fwRelease || src.Kind == fwKit || (src.Kind == fwImage && (a.Opt.Kit != "" || a.Opt.Version != "")) {
 		_, cur := a.currentFirmware(ip, true)
-		a.fwPending(src)
 		if img, err = a.prepareFirmware(src, cur, false); err != nil {
 			return err
 		}
-	} else if img != "" {
-		a.fwPending(fwSource{Kind: fwImage, Path: img})
 	}
 	return a.updateWrite(ip, img)
 }
@@ -323,7 +319,7 @@ func (a *App) updateWrite(ip, img string) error {
 	}
 	_ = a.St.Set("flash_md5", md5)
 	_ = a.St.ClearDone("verify")
-	a.fwCommit()
+	a.fwRecord(img)
 	a.afterFlash()
 	return nil
 }
@@ -383,8 +379,7 @@ func (a *App) cmdRestore() error {
 	}
 	_ = a.St.ClearDone("flash")
 	_ = a.St.ClearDone("verify")
-	a.fwPending(fwSource{Kind: fwStock})
-	a.fwCommit()
+	a.fwRecordStock()
 	a.UI.Blank()
 	a.UI.Good(fmt.Sprintf("  Restore written and verified (read-back md5 = %s).", md5))
 	a.UI.Say("  Power-cycle the camera BY HAND (unplug the USB-C power, wait 5 seconds, plug it back).")
@@ -670,6 +665,7 @@ func (a *App) cmdVerify() error {
 		return a.UI.Fail("akam_hwcheck.sh reported a failure without the card.", "")
 	}
 	_ = a.St.MarkDone("verify")
+	a.fwNoteBuild(ip)
 	a.UI.Good("  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off.")
 	a.verifyHostname(nil, ip)
 	a.rtspAuthOffer(ip)

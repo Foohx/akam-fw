@@ -106,7 +106,6 @@ func (a *App) flowUpdate() error {
 			return nil
 		}
 	}
-	a.fwPending(src)
 	if src.Kind == fwStock {
 		// back to the original firmware: the restore flow, with every one of its gates (verified stock backup,
 		// the red box, default No)
@@ -226,9 +225,6 @@ func (a *App) flowInstall() error {
 		if a.UI.Dry() && next == "verify" {
 			return nil
 		}
-		if next == "flash" && a.installState("flash") == "done" {
-			a.fwCommit() // the camera now runs what was chosen
-		}
 		if a.installState(next) != "done" {
 			a.UI.Say("  '" + next + "' is not finished. Nothing else was started.")
 			return nil
@@ -312,6 +308,7 @@ func (a *App) installImage() error {
 	abs := f
 	a.setState("image_path", abs)
 	a.setState("image_sha", fileSHA(f))
+	a.setState("image_origin", "imported:"+fileSHA(f)) // not built here: the source is "image:PATH", never a release
 	a.setState("image_md5", md5)
 	a.setState("image_kit_sha", a.kitCurrentSHA())
 	a.setState("image_backup_sha", a.backupCurrentSHA())

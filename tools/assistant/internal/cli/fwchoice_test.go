@@ -48,15 +48,16 @@ func relList(items ...string) []byte { return []byte("[" + strings.Join(items, "
 
 // fwAPI serves the release list and the kit of version 1.0.0 (the one kittest builds).
 type fwAPI struct {
-	srv      *httptest.Server
-	kb       kittest.Built
-	mu       sync.Mutex
-	listHits int
-	listCode int
-	list     []byte
-	hits     []string // kit download paths
-	query    string
-	accept   string
+	srv       *httptest.Server
+	kb        kittest.Built
+	mu        sync.Mutex
+	listHits  int
+	listCode  int
+	failFirst int // the first N list requests are refused with 403
+	list      []byte
+	hits      []string // kit download paths
+	query     string
+	accept    string
 }
 
 func newFwAPI(t *testing.T, list []byte) *fwAPI {
@@ -67,6 +68,11 @@ func newFwAPI(t *testing.T, list []byte) *fwAPI {
 		defer a.mu.Unlock()
 		if r.URL.Path == "/repos/Foohx/akam-fw/releases" {
 			a.listHits++
+			if a.failFirst > 0 {
+				a.failFirst--
+				w.WriteHeader(403)
+				return
+			}
 			a.query, a.accept = r.URL.RawQuery, r.Header.Get("Accept")
 			w.WriteHeader(a.listCode)
 			_, _ = w.Write(a.list)
@@ -123,9 +129,9 @@ func newFwWorldBuilt(t *testing.T, list []byte, stateExtra string) *fwWorld {
 	return newFwWorldKit(t, list, stateExtra, "source")
 }
 
-func newFwWorldKit(t *testing.T, list []byte, stateExtra, imageKit string) *fwWorld {
+func newFwWorldKit(t *testing.T, list []byte, stateExtra, imageKit string, opts ...func(*testfake.Options)) *fwWorld {
 	t.Helper()
-	w := &fwWorld{fw: newFlashWorld(t, testfake.FlashOptions{}), api: newFwAPI(t, list), bk: backupFixture(t)}
+	w := &fwWorld{fw: newFlashWorld(t, testfake.FlashOptions{}, opts...), api: newFwAPI(t, list), bk: backupFixture(t)}
 	useAPI(t, w.env, w.api)
 	app, _ := hashOf(filepath.Join(w.bk, "mtdblock7.bin"))
 	isha, _ := hashOf(w.img)
@@ -220,14 +226,15 @@ func TestReleaseListNeverReachesTheNetworkInATestBuild(t *testing.T) {
 }
 
 func TestChooserShowsTheListAndDefaultsToTheLatest(t *testing.T) {
-	w := newFwWorldBuilt(t, relList(relJSON("v1.0.0", false, false), relJSON("v2.0.0", false, false), relJSON("v0.9.0", false, false)), "fw_version=0.9.0\n")
-	// Enter = the first item: Akam 2.0.0, which this server does not carry
+	// no image valid for any kit: the default is the latest release (which this server does not carry)
+	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false), relJSON("v2.0.0", false, false), relJSON("v0.9.0", false, false)), "fw_version=0.9.0\n")
 	r := w.update("\n9\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Which firmware?  (the camera runs: b35-2af81c5; Akam 0.9.0 installed here)",
+		"Asking GitHub for the releases (read only)",
 		"1) Akam 2.0.0 (latest)", "2) Akam 1.0.0  - older", "3) Akam 0.9.0  - older  - on the camera now",
-		"4) The image already built from your backup (", "5) A kit file or folder...", "6) An image file you built (.squashfs)...",
-		"7) Stock firmware (from your backup)  - never tested on a real camera", "8) Back",
+		"4) A kit file or folder...", "5) An image file you built (.squashfs)...",
+		"6) Stock firmware (from your backup)  - never tested on a real camera", "7) Back",
 		"release v2.0.0 was not found")
 	if got := strings.Join(w.api.hits, " "); got != "/v2.0.0/akam-kit-2.0.0.tar.xz" {
 		t.Errorf("downloads: %s", got)
@@ -235,6 +242,76 @@ func TestChooserShowsTheListAndDefaultsToTheLatest(t *testing.T) {
 	w.unchanged(t)
 	if w.readState("fw_source") != "" {
 		t.Error("a firmware that was never written was recorded")
+	}
+}
+
+// This computer cannot build an image (no --builder native) and one is already built and valid: that image is
+// the first row and the default, as before the chooser existed; the releases follow.
+func TestBuiltImageIsTheDefaultWhenNoBuilderIsAvailable(t *testing.T) {
+	w := newFwWorldBuilt(t, relList(relJSON("v2.0.0", false, false), relJSON("v1.0.0", false, false)), "")
+	r := w.update("\ny\n\n9\n")
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "1) The image already built from your backup (", "2) Akam 2.0.0 (latest)", "3) Akam 1.0.0  - older",
+		"Updating: WRITES THE CAMERA FLASH", "Image md5 written and read back: "+w.imgMD5)
+	if w.api.kitHits() != 0 {
+		t.Error("Enter downloaded a kit although an image was ready")
+	}
+	if !bytes.Equal(w.cam.Mtd7(), w.imgData) || w.readState("fw_source") != "image:"+w.img {
+		t.Errorf("source %q", w.readState("fw_source"))
+	}
+}
+
+// The latest release needs an image that cannot be built here: the kit is verified, the choice is refused with
+// an update-specific message, and NOTHING of the previous kit, kit state or image is touched.
+func TestReleaseWithoutAnImageLeavesTheStateUntouched(t *testing.T) {
+	w := newFwWorldKit(t, relList(relJSON("v1.0.0", false, false)), "", "0000000000000000000000000000000000000000000000000000000000000000")
+	// a previous kit folder that must survive
+	kitDir := filepath.Join(w.state, "kit")
+	if err := os.MkdirAll(kitDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(kitDir, "MARK"), []byte("previous kit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"mode", "kit_path", "kit_sha", "kit_format", "kit_unsigned_ok", "kit_version", "step_get_kit_done", "image_path", "image_sha", "image_kit_sha", "step_image_done"}
+	snap := func() string {
+		var out []string
+		for _, k := range keys {
+			out = append(out, k+"="+w.readState(k))
+		}
+		return strings.Join(out, "\n")
+	}
+	before := snap()
+	r := w.update("1\ny\n9\n")
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "Kit verified", "Akam 1.0.0 is verified, but this program cannot build its image on this computer",
+		"the image for this kit cannot be built here: nothing was changed", "get-kit --version 1.0.0", "step image, then update again")
+	notContains(t, r.out+r.err, "choose 'Set up a new camera'", "WRITES THE CAMERA FLASH")
+	w.unchanged(t)
+	if got := snap(); got != before {
+		t.Errorf("the state changed:\n--- before ---\n%s\n--- after ---\n%s", before, got)
+	}
+	if b, err := os.ReadFile(filepath.Join(kitDir, "MARK")); err != nil || string(b) != "previous kit" {
+		t.Errorf("the previous kit folder is gone: %v", err)
+	}
+	if _, err := os.Stat(kitDir + ".keep"); err == nil {
+		t.Error("a leftover kit.keep")
+	}
+}
+
+// A kit that is already recorded with the same version is not trusted: the release is downloaded and verified
+// again, whatever was recorded (even a local unsigned kit).
+func TestRecordedKitOfTheSameVersionIsNeverReused(t *testing.T) {
+	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
+	w.writeState(readAll(t, filepath.Join(w.state, "state")) + "mode=kit\nkit_version=1.0.0\nkit_unsigned_ok=1\nkit_path=/somewhere/else/akam-kit-1.0.0.tar.xz\n")
+	r := w.update("1\ny\n\n9\n")
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "ok: signature valid", "Kit verified")
+	if w.api.kitHits() != 3 {
+		t.Errorf("downloads %v", w.api.hits)
+	}
+	if w.readState("kit_unsigned_ok") != "0" || w.readState("fw_source") != "release:1.0.0" {
+		t.Errorf("unsigned %q source %q", w.readState("kit_unsigned_ok"), w.readState("fw_source"))
 	}
 }
 
@@ -419,7 +496,8 @@ func TestDownloadedKitIsListedAndVerifiedAgain(t *testing.T) {
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) {
 		t.Fatal("not written")
 	}
-	if got := w.readState("fw_source"); got != "kit:"+filepath.Join(dl, "akam-kit-1.0.0.tar.xz") {
+	// a kit kept in the downloads folder IS the download of that release: the recorded source is a fact
+	if got := w.readState("fw_source"); got != "release:1.0.0" {
 		t.Errorf("fw_source %q", got)
 	}
 	// tampered after the download: refused, nothing written
@@ -675,8 +753,8 @@ func TestInstallChooserOffersNoStockAndFeedsGetKit(t *testing.T) {
 	if got := strings.Join(a.hits, " "); !strings.HasPrefix(got, "/v1.0.0/akam-kit-1.0.0.tar.xz") {
 		t.Errorf("downloads: %q", got)
 	}
-	if e.readState("fw_choice") != "release:1.0.0" || e.readState("fw_source") != "" {
-		t.Errorf("choice %q source %q", e.readState("fw_choice"), e.readState("fw_source"))
+	if e.readState("fw_source") != "" {
+		t.Errorf("source %q recorded before any write", e.readState("fw_source"))
 	}
 	// Back: nothing happens
 	a2 := newFwAPI(t, relList(relJSON("v1.0.0", false, false)))
@@ -709,9 +787,6 @@ func TestInstallWithAnImageChoiceAsksForAKit(t *testing.T) {
 	if a.kitHits() == 0 {
 		t.Error("the kit was not downloaded")
 	}
-	if e.readState("fw_choice") != "image:"+img {
-		t.Errorf("choice %q", e.readState("fw_choice"))
-	}
 }
 
 // A source checkout has its own kit: the first install shows no chooser there.
@@ -739,6 +814,11 @@ func TestChoiceLabelsForTheFullScreenList(t *testing.T) {
 	}
 	if l := cli.FirmwareLabels(false, "", []string{"1.0.0"}, nil, "", true); strings.Contains(strings.Join(l, "|"), "Stock") || strings.Contains(strings.Join(l, "|"), "already built") {
 		t.Errorf("install list: %v", l)
+	}
+	// no builder here and an image already built: it comes first (the default); a failed list adds "Try again"
+	l0 := cli.FirmwareLabels(true, "", []string{"2.0.0"}, nil, "/x/ak.squashfs", false, true, true)
+	if l0[0] != "The image already built from your backup (ak.squashfs)" || l0[1] != "Akam 2.0.0 (latest)" || l0[len(l0)-2] != "Try again to read the releases" {
+		t.Errorf("builtFirst/retry: %v", l0)
 	}
 	many := make([]string, 20)
 	for i := range many {

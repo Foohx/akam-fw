@@ -81,28 +81,45 @@ func fwFromOptions(o *Options) fwSource {
 	return fwSource{}
 }
 
-// fwPending keeps what was chosen until the camera was really written: only then does it become the
-// camera's fw_source (shown by status).
-func (a *App) fwPending(s fwSource) {
-	if r := s.record(); r != "" {
-		a.setState("fw_choice", r)
+// fwRecord records what the camera runs after img was written and read back. It states facts, not what
+// was chosen: an image built here from a kit is "release:X.Y.Z" (that kit is the download of release X.Y.Z)
+// or "kit:PATH"; any other image, including one imported with --image or chosen from a release row, is
+// "image:PATH" with no version.
+func (a *App) fwRecord(img string) {
+	src, ver := "image:"+stateLine(img), ""
+	if sha := fileSHA(img); sha != "" && sha == a.St.Get("image_sha") && a.stepStatus("image") == "done" &&
+		a.St.Get("image_origin") != "imported:"+sha && a.St.Get("mode") == "kit" {
+		if kv, p := a.St.Get("kit_version"), a.St.Get("kit_path"); kv != "" {
+			ver = kv
+			if p == a.downloadedKitPath(kv) && a.St.Get("kit_unsigned_ok") != "1" {
+				src = "release:" + kv
+			} else {
+				src = "kit:" + stateLine(p)
+			}
+		}
 	}
+	a.setState("fw_source", src)
+	a.setState("fw_version", ver)
+	a.setState("fw_build", "") // learned at the next verify, once the camera runs the new image
 }
 
-// fwCommit records the firmware the camera now runs: the pending choice (set by whoever decided what is
-// written, just before the write).
-func (a *App) fwCommit() {
-	r := a.St.Get("fw_choice")
-	if r == "" {
+// fwRecordStock records the stock firmware after a verified restore.
+func (a *App) fwRecordStock() {
+	a.setState("fw_source", "stock")
+	a.setState("fw_version", "")
+	a.setState("fw_build", "")
+}
+
+// fwNoteBuild remembers the build id the camera reports once it runs the written image (after verify). The
+// recorded fw_version is believed only while the camera still reports that build: another build means
+// something else was installed since (see currentFirmware).
+func (a *App) fwNoteBuild(ip string) {
+	if a.St.Get("fw_source") == "" || a.St.Get("fw_build") != "" || a.UI.Dry() {
 		return
 	}
-	a.setState("fw_source", r)
-	v := ""
-	if strings.HasPrefix(r, "release:") || strings.HasPrefix(r, "kit:") {
-		v = a.St.Get("kit_version")
+	if id, err := discover.Identify(a.Ctx, ip, a.ports().CTL, a.Hooks.Discover.Dial); err == nil && id.Version != "" {
+		a.setState("fw_build", ui.Sanitize(id.Version))
 	}
-	a.setState("fw_version", v)
-	_ = a.St.Set("fw_choice", "")
 }
 
 // ---------------------------------------------------------------- the list of releases
@@ -137,6 +154,7 @@ func (a *App) releaseList() ([]kit.Release, error) {
 	if !ok {
 		rc.err = errors.New("no network in a test build")
 	} else {
+		a.UI.Say("  Asking GitHub for the releases (read only) ...")
 		ctx, cancel := context.WithTimeout(a.Ctx, 20*time.Second)
 		a.Log.Line("CMD list releases %s/repos/%s/releases", base, kitRepo)
 		rc.list, rc.err = kit.ListReleases(ctx, a.Hooks.HTTP, base, kitRepo, a.Opt.IncludePre)
@@ -147,6 +165,20 @@ func (a *App) releaseList() ([]kit.Release, error) {
 	}
 	a.rel = rc
 	return rc.list, rc.err
+}
+
+// releaseListReport is releaseList with what the user needs to read: a line before the wait, and the reason
+// when the list is missing or empty.
+func (a *App) releaseListReport() ([]kit.Release, error) {
+	rels, err := a.releaseList()
+	if err != nil {
+		if a.Ctx.Err() == nil {
+			a.UI.Warn("could not read the list of releases: " + releaseProblem(err) + ". Kits and images on this computer can still be chosen.")
+		}
+	} else if len(rels) == 0 {
+		a.UI.Say("  No Akam release is published on GitHub yet (only releases with a signed kit are listed).")
+	}
+	return rels, err
 }
 
 // releaseProblem is the sentence that explains why the list is missing (never raw network text).
@@ -262,15 +294,53 @@ func (a *App) currentFirmware(ip string, live bool) (text, ver string) {
 	if v, ok := kit.ExtractVersion(raw); ok {
 		return raw, v
 	}
+	join := func(s string) string {
+		if raw == "" {
+			return s
+		}
+		return raw + "; " + s
+	}
+	// the image carries the manifest of its kit: that is the camera's own word, read over SSH (read only)
+	if live && !a.UI.Dry() && ip != "" {
+		if v := a.cameraAkamVersion(ip); v != "" {
+			return join("Akam " + v), v
+		}
+	}
+	// else what this assistant installed, believed only while the camera still reports the build seen after
+	// the write (another build means something else was installed since)
 	if v := a.St.Get("fw_version"); v != "" {
+		if b := a.St.Get("fw_build"); b != "" && raw != "" && raw != b {
+			return raw, ""
+		}
 		if _, ok := kit.ParseVersion(v); ok {
-			if raw == "" {
-				return "Akam " + v + " (installed here)", v
-			}
-			return raw + "; Akam " + v + " installed here", v
+			return join("Akam " + v + " installed here"), v
 		}
 	}
 	return raw, ""
+}
+
+// cameraAkamVersion reads akam_version from the manifest the image carries (/usr/local/akam/MANIFEST.txt, the
+// kit's own MANIFEST.txt) over SSH. "" when the camera cannot be reached, the file is absent (an image built
+// before it was read this way, or by hand) or the version is not a plain X.Y.Z (a source build).
+func (a *App) cameraAkamVersion(ip string) string {
+	c, err := a.dial(ip)
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	r, err := a.run(c, remoteManifest, nil, "")
+	if err != nil || r.Status != 0 {
+		return ""
+	}
+	for _, l := range strings.Split(string(r.Stdout), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "akam_version="); ok {
+			if _, ok := kit.ParseVersion(v); ok {
+				return strings.TrimPrefix(v, "v")
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------- the chooser
@@ -292,11 +362,29 @@ const (
 
 const maxOlderShown = 12
 
-// fwChoices builds the list of the chooser. cur is the X.Y.Z the camera runs ("" when unknown), downloaded
-// the kits kept in the downloads folder, built the image recorded by the image step ("" when it is not
-// valid), stockOK that a stock backup verifies.
-func fwChoices(mode fwMode, cur string, rels []kit.Release, downloaded []string, built string, stockOK bool) []fwChoice {
+// fwList is what the chooser shows: Cur is the X.Y.Z the camera runs ("" when unknown), Downloaded the kits
+// kept in the downloads folder, Built the image recorded by the image step ("" when it is not valid),
+// BuiltFirst puts that image first (it is then the default: this computer cannot build the image of a new
+// release), StockOK that a stock backup verifies, Retry that the release list failed (adds "Try again").
+type fwList struct {
+	Mode       fwMode
+	Cur        string
+	Rels       []kit.Release
+	Downloaded []string
+	Built      string
+	BuiltFirst bool
+	StockOK    bool
+	Retry      bool
+}
+
+// fwChoices builds the rows of the chooser.
+func fwChoices(l fwList) []fwChoice {
+	mode, cur, rels, downloaded, built, stockOK := l.Mode, l.Cur, l.Rels, l.Downloaded, l.Built, l.StockOK
 	var out []fwChoice
+	builtRow := fwChoice{label: "The image already built from your backup (" + filepath.Base(built) + ")", src: fwSource{Kind: fwImage, Path: built}, act: "built"}
+	if mode == fwUpdate && built != "" && l.BuiltFirst {
+		out = append(out, builtRow)
+	}
 	older := 0
 	for i, r := range rels {
 		l := "Akam " + r.Version
@@ -325,8 +413,8 @@ func fwChoices(mode fwMode, cur string, rels []kit.Release, downloaded []string,
 	for _, v := range downloaded {
 		out = append(out, fwChoice{label: "Kit already downloaded: " + v, src: fwSource{Kind: fwKit, Version: v}})
 	}
-	if mode == fwUpdate && built != "" {
-		out = append(out, fwChoice{label: "The image already built from your backup (" + filepath.Base(built) + ")", src: fwSource{Kind: fwImage, Path: built}, act: "built"})
+	if mode == fwUpdate && built != "" && !l.BuiltFirst {
+		out = append(out, builtRow)
 	}
 	out = append(out, fwChoice{label: "A kit file or folder...", act: "kitfile"})
 	if mode != fwKitOnly {
@@ -334,6 +422,9 @@ func fwChoices(mode fwMode, cur string, rels []kit.Release, downloaded []string,
 	}
 	if mode == fwUpdate && stockOK {
 		out = append(out, fwChoice{label: "Stock firmware (from your backup)  - never tested on a real camera", src: fwSource{Kind: fwStock}})
+	}
+	if l.Retry {
+		out = append(out, fwChoice{label: "Try again to read the releases", act: "retry"})
 	}
 	return append(out, fwChoice{label: "Back", act: "back"})
 }
@@ -353,14 +444,9 @@ func (a *App) stockBackupDir() string {
 // pickFirmware shows "Which firmware?" until a source is chosen (ok) or the user goes back. cur is the
 // X.Y.Z the camera runs; curText the text it reports.
 func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
-	rels, err := a.releaseList()
-	if err != nil {
-		if a.Ctx.Err() != nil {
-			return fwSource{}, false
-		}
-		a.UI.Warn("could not read the list of releases: " + releaseProblem(err) + ". Kits and images on this computer can still be chosen.")
-	} else if len(rels) == 0 {
-		a.UI.Say("  No Akam release is published on GitHub yet (only releases with a signed kit are listed).")
+	rels, relErr := a.releaseListReport()
+	if relErr != nil && a.Ctx.Err() != nil {
+		return fwSource{}, false
 	}
 	stockOK := mode == fwUpdate && a.stockBackupDir() != ""
 	title := "Which firmware?"
@@ -376,7 +462,8 @@ func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
 		built = p
 	}
 	for {
-		items := fwChoices(mode, cur, rels, downloaded, built, stockOK)
+		items := fwChoices(fwList{Mode: mode, Cur: cur, Rels: rels, Downloaded: downloaded, Built: built,
+			BuiltFirst: built != "" && !a.canBuildImage(), StockOK: stockOK, Retry: relErr != nil})
 		labels := make([]string, len(items))
 		for i, it := range items {
 			labels[i] = it.label
@@ -390,6 +477,12 @@ func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
 		case "back":
 			return fwSource{}, false
 		case "none":
+			continue
+		case "retry":
+			a.rel = nil
+			if rels, relErr = a.releaseListReport(); relErr != nil && a.Ctx.Err() != nil {
+				return fwSource{}, false
+			}
 			continue
 		case "kitfile":
 			p, ok := a.askKitPath()
@@ -410,7 +503,9 @@ func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
 		if c.src.Kind == fwStock {
 			a.UI.Warn("the stock firmware restore has never been tried on a real camera. It writes the APP partition from your verified backup, through the same red box as Restore.")
 		}
-		if c.src.Kind == fwRelease {
+		if (c.src.Kind == fwRelease || c.src.Kind == fwKit) && c.src.Version != "" && mode != fwKitOnly {
+			// the version is known from the list or the folder name: ask before anything is downloaded or replaced
+			// (a kit that only supplies the flash tools is never a downgrade)
 			if !a.downgradeOK(c.src.Version, cur) {
 				continue
 			}
@@ -515,32 +610,18 @@ func (a *App) prepareFirmware(src fwSource, cur string, ask bool) (string, error
 		return "", nil
 	}
 	switch src.Kind {
-	case fwRelease:
-		if !src.Checked && !a.downgradeOK(src.Version, cur) {
-			return "", a.UI.Fail("downgrade not confirmed.", "nothing was changed.")
-		}
-		if !(a.stepStatus("get-kit") == "done" && a.St.Get("mode") == "kit" && a.St.Get("kit_version") == src.Version) || a.UI.Dry() {
-			if err := a.runGetKit(src.Version, ""); err != nil {
-				return "", err
-			}
-		}
-	case fwKit:
-		if err := a.runGetKit("", src.Path); err != nil {
-			return "", err
-		}
-		if kv := a.St.Get("kit_version"); !a.UI.Dry() && !a.downgradeOK(kv, cur) {
-			return "", a.UI.Fail("downgrade not confirmed.", "nothing was changed.")
-		}
+	case fwRelease, fwKit:
+		return a.prepareKit(src, cur)
 	case fwImage:
 		switch {
 		case a.Opt.Kit != "" || a.Opt.Version != "":
 			if err := a.cmdGetKit(); err != nil {
 				return "", err
 			}
-		case a.stepStatus("get-kit") != "done" && ask && !a.UI.Dry():
+		case a.stepStatus("get-kit") != "done" && ask:
 			// the flash tools come from a kit: ask which one rather than guess
 			a.UI.Say("  The image is written with the flash tools of a kit, and no kit is ready yet.")
-			ks, ok := a.pickFirmware(fwKitOnly, "", cur)
+			ks, ok := a.pickFirmware(fwKitOnly, "", "")
 			if !ok {
 				return "", a.UI.Fail("no kit chosen.", "nothing was changed.")
 			}
@@ -550,18 +631,70 @@ func (a *App) prepareFirmware(src fwSource, cur string, ask bool) (string, error
 		}
 		return src.Path, nil
 	}
+	return "", a.UI.Fail("no firmware to prepare.", "")
+}
+
+// canBuildImage tells whether this program can build the image itself (--builder native, experimental). By
+// default the image is built by the bash wizard from a source checkout, or elsewhere and imported.
+func (a *App) canBuildImage() bool { return a.Opt.Builder == "native" }
+
+// prepareKit downloads or opens the kit of a release or a kit file and makes the image for it ready, all or
+// nothing: the kit is verified again every time (a recorded kit of the same version is never trusted), the
+// downgrade question is asked about the version the kit itself states, and when the image cannot be made
+// (no builder here, a refusal, a failure) the previous kit and kit state come back untouched.
+func (a *App) prepareKit(src fwSource, cur string) (img string, err error) {
+	if src.Kind == fwRelease && !src.Checked && !a.downgradeOK(src.Version, cur) {
+		return "", a.UI.Fail("downgrade not confirmed.", "nothing was changed.")
+	}
+	txn := a.kitBegin()
+	defer func() {
+		if err != nil {
+			txn.rollback()
+		} else {
+			txn.commit()
+		}
+	}()
+	if src.Kind == fwRelease {
+		err = a.runGetKit(src.Version, "")
+	} else {
+		err = a.runGetKit("", src.Path)
+	}
+	if err != nil {
+		a.UI.Say("  The kit was not used: nothing was changed, the previous kit and image stay as they were.")
+		return "", err
+	}
+	kv := a.St.Get("kit_version")
+	switch {
+	case src.Kind == fwRelease && kv != src.Version:
+		return "", a.UI.Fail(fmt.Sprintf("the kit of release v%s says it is version %s: it is not used.", src.Version, ui.Sanitize(kv)),
+			"nothing was changed. Download it again, or report it if it persists.")
+	case src.Kind == fwKit && !src.Checked && !a.downgradeOK(kv, cur):
+		return "", a.UI.Fail("downgrade not confirmed.", "nothing was changed.")
+	}
 	if a.stepStatus("image") != "done" {
+		if !a.canBuildImage() {
+			return "", a.imageNeededFailure(kv)
+		}
 		sv := a.Opt.Image
 		a.Opt.Image = ""
-		err := a.installImage()
+		err = a.installImage()
 		a.Opt.Image = sv
 		if err != nil {
 			return "", err
 		}
 	}
-	img := a.St.Get("image_path")
+	img = a.St.Get("image_path")
 	if img == "" {
 		return "", a.UI.Fail("no image to write.", "build it from your backup, or pass --image FILE.")
 	}
 	return img, nil
+}
+
+// imageNeededFailure explains, for the update, that the kit is fine but its image cannot be built here.
+func (a *App) imageNeededFailure(kv string) error {
+	v := ui.Sanitize(kv)
+	a.UI.Say(fmt.Sprintf("  Akam %s is verified, but this program cannot build its image on this computer: the image is built from YOUR stock backup,", v))
+	a.UI.Say("  by the bash wizard from a source checkout on Linux or WSL, or with --builder native (experimental).")
+	return a.UI.Fail("the image for this kit cannot be built here: nothing was changed (the previous kit and image stay as they were).",
+		fmt.Sprintf("on Linux or WSL run %s get-kit --version %s, then %s step image, then update again and choose 'The image already built from your backup'; or pass --image FILE.", Prog, v, Prog))
 }

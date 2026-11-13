@@ -1076,6 +1076,7 @@ func (a *App) cmdFlash() error {
 	_ = a.St.Set("flash_route", route)
 	_ = a.St.ClearDone("verify")
 	_ = a.St.MarkDone("flash")
+	a.fwRecord(img)
 	a.afterFlash()
 	return nil
 }

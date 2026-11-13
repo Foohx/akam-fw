@@ -38,6 +38,10 @@ type Options struct {
 	AuthorizedKey gossh.PublicKey
 	// NoHostnameHelper makes "test -x /usr/sbin/akam_hostname.sh" fail (an older image).
 	NoHostnameHelper bool
+	// Manifest is the text of /usr/local/akam/MANIFEST.txt of the image ("" : the file is absent).
+	Manifest string
+	// FwVersion replaces the fw.version of port 8091 ("" : b35-2af81c5).
+	FwVersion string
 	// NoOnvifHelper makes akam_onvif.sh "not found".
 	NoOnvifHelper bool
 	// NoNtpHelper makes akam_ntp.sh "not found" (an older image).
@@ -207,6 +211,9 @@ func New(t testing.TB, opts Options) *Camera {
 			"fw.version": "b35-2af81c5", "sys.hostname": "akam-01",
 			"net.wifi_rssi": "-55", "net.wifi_rate": "72", "night.state": "day", "sys.time_set": "1",
 		}}
+	if opts.FwVersion != "" {
+		c.ctl["fw.version"] = opts.FwVersion
+	}
 	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2"}
 	c.Root = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(c.Root, "etc", "config"), 0o700); err != nil {
@@ -385,6 +392,12 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 		}
 		c.ctl["video.cfg_pending"] = "0"
 		c.mu.Unlock()
+		return 0
+	case cmd == "cat /usr/local/akam/MANIFEST.txt 2>/dev/null":
+		if c.opts.Manifest == "" {
+			return 1
+		}
+		io.WriteString(stdout, c.opts.Manifest)
 		return 0
 	case cmd == "date +%s":
 		fmt.Fprintln(stdout, c.clockNow().Unix())
