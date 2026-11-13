@@ -185,7 +185,18 @@ func (a *App) saveTemplate(f *profile.File) error {
 	g := f.Clone()
 	g.Unset(profile.SavedAt)
 	_ = g.Set(profile.SavedAt, cfgNow())
-	return profile.Save(a.globalPlace(), profile.Settings, g)
+	if err := profile.Save(a.globalPlace(), profile.Settings, g); err != nil {
+		return err
+	}
+	// a saved password follows the settings it was typed for: another user or broker drops it
+	if sec, err := profile.LoadOrNew(a.globalPlace(), profile.Secrets); err == nil && !sec.Empty() {
+		if dropped := pruneStale(sec, g); len(dropped) > 0 {
+			if err := profile.Save(a.globalPlace(), profile.Secrets, sec); err == nil {
+				a.UI.Say("  Removed the saved " + strings.Join(dropped, " and ") + ": it no longer matches the settings.")
+			}
+		}
+	}
+	return nil
 }
 
 // cfgEditGlobal edits the template without any camera: a form in the session, a list in plain.
@@ -324,14 +335,28 @@ func (a *App) templateSecrets() {
 		a.UI.Say("  Nothing was saved.")
 		return
 	}
+	set, _ := profile.LoadOrNew(a.globalPlace(), profile.Settings)
+	saved := false
 	switch i {
 	case 0:
-		if pw, ok := a.walletPassword("video password", "", rtspMinPass); ok {
-			sec.Vals[profile.AuthPassword] = pw
+		user := set.Get(profile.AuthUser)
+		if user == "" {
+			a.UI.Say("  The template has no video user name yet: set it in the form first (a password belongs to its user).")
+			return
+		}
+		if pw, ok := a.walletPassword("video password", "user "+user, profile.BoundAuth(sec, user), sec.Has(profile.AuthPassword), rtspMinPass); ok {
+			sec.Vals[profile.AuthPassword], sec.Vals[profile.AuthPasswordUser] = pw, user
+			saved = true
 		}
 	case 1:
-		if pw, ok := a.walletPassword("MQTT password", "", 1); ok {
-			sec.Vals[profile.MQTTPassword] = pw
+		host, user := set.Get(profile.MQTTHost), set.Get(profile.MQTTUser)
+		if host == "" || user == "" {
+			a.UI.Say("  The template has no MQTT broker and user name yet: set them in the form first (a password belongs to them).")
+			return
+		}
+		if pw, ok := a.walletPassword("MQTT password", "broker "+host+", user "+user, profile.BoundMQTT(sec, host, user), sec.Has(profile.MQTTPassword), 1); ok {
+			sec.Vals[profile.MQTTPassword], sec.Vals[profile.MQTTPasswordHost], sec.Vals[profile.MQTTPasswordUser] = pw, host, user
+			saved = true
 		}
 	case 2:
 		ssid, err := a.UI.Prompt("  Wi-Fi network name (SSID, 2.4 GHz):", sec.Get(profile.WifiSSID))
@@ -353,6 +378,11 @@ func (a *App) templateSecrets() {
 			return
 		}
 		sec = n
+		saved = true
+	}
+	if !saved {
+		a.UI.Say("  Nothing was saved.")
+		return
 	}
 	if err := profile.Save(p, profile.Secrets, sec); err != nil {
 		a.UI.Err("could not save: " + err.Error())

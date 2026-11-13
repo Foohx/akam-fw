@@ -3,6 +3,7 @@ package profile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,9 +28,6 @@ const (
 	cameraSettings = "camera.conf"
 	cameraSecrets  = "camera.secrets"
 )
-
-// CameraFiles are the per-camera file names (the rename of the default camera moves them).
-var CameraFiles = []string{cameraSettings, cameraSecrets}
 
 // Place is one pair of files: the settings and the secrets.
 type Place struct {
@@ -70,12 +68,21 @@ func Load(p Place, k Kind) (*File, error) {
 }
 
 func load(p Place, k Kind) (*File, error) {
-	b, err := os.ReadFile(p.path(k))
+	fh, err := os.Open(p.path(k))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNone
 	}
 	if err != nil {
 		return nil, err
+	}
+	defer fh.Close()
+	// never read more than the format allows: a huge file is refused, not loaded
+	b, err := io.ReadAll(io.LimitReader(fh, maxFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if k == Secrets && !fsutil.IsPrivateFile(p.path(k)) {
+		return nil, fmt.Errorf("%s is readable by other accounts: restrict it (chmod 600) or delete it with config forget-secrets", p.path(k))
 	}
 	f, err := Parse(b, k)
 	if err != nil {
@@ -112,12 +119,22 @@ func Save(p Place, k Kind, f *File) error {
 	if err := fsutil.PrivateMkdir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	if err := fsutil.AtomicWrite(path, f.Marshal(), 0o600); err != nil {
+	// private from the first byte, and the temporary file is restricted before it replaces the old one
+	tmp := fmt.Sprintf("%s.new.%d", path, os.Getpid())
+	if err := fsutil.WritePrivateFile(tmp, f.Marshal()); err != nil {
 		return err
 	}
-	if err := fsutil.PrivateFileStrict(path); err != nil {
-		_ = os.Remove(path)
+	if err := fsutil.PrivateFileStrict(tmp); err != nil {
+		_ = os.Remove(tmp)
 		return err
+	}
+	if err := fsutil.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if !fsutil.IsPrivateFile(path) {
+		_ = os.Remove(path)
+		return fmt.Errorf("%s is not private after writing", path)
 	}
 	return nil
 }

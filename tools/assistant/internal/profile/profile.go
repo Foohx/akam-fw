@@ -81,6 +81,11 @@ const (
 	MQTTPassword = "mqtt.password"
 	WifiSSID     = "wifi.ssid"
 	WifiPassword = "wifi.password"
+	// A saved password belongs to the setting it was typed for: the video password to its user, the MQTT
+	// password to its broker and user. It is used only while the settings still say the same (see Bound*).
+	AuthPasswordUser = "auth.password_user"
+	MQTTPasswordHost = "mqtt.password_host"
+	MQTTPasswordUser = "mqtt.password_user"
 )
 
 var (
@@ -105,30 +110,42 @@ func TopicValid(s string, max int) bool { return len(s) <= max && topicRe.MatchS
 // IDValid is the grammar of an MQTT client id.
 func IDValid(s string) bool { return idRe.MatchString(s) }
 
-func port(s string) bool {
+// canon says s is a whole number written the one way (no sign, no leading zero).
+func canon(s string) (int, bool) {
 	n, err := strconv.Atoi(s)
-	return digitsRe.MatchString(s) && err == nil && n >= 1 && n <= 65535
+	return n, err == nil && strconv.Itoa(n) == s
+}
+
+func port(s string) bool {
+	n, ok := canon(s)
+	return ok && n >= 1 && n <= 65535
+}
+
+// onvifPort refuses the ports the camera uses for something else (FTP, telnet, SSH, RTSP, control port).
+func onvifPort(s string) bool {
+	n, ok := canon(s)
+	return port(s) && ok && !(n >= 21 && n <= 24) && n != 554 && n != 8091
 }
 
 // validators of the settings keys that are not option IDs of camopt.
 var settingCheck = map[string]func(string) error{
 	OnvifEnabled: oneOf("0", "1"),
-	OnvifPort:    func(v string) error { return need(port(v), "a port from 1 to 65535") },
+	OnvifPort:    func(v string) error { return need(onvifPort(v), "a port from 1 to 65535 other than 21 to 24, 554 and 8091") },
 	NTPEnabled:   oneOf("0", "1"),
 	NTPServers:   func(v string) error { return camopt.ValidNTPServers(strings.Split(v, ",")) },
 	MQTTEnabled:  oneOf("0", "1"),
 	MQTTHost:     func(v string) error { return need(HostValid(v), "a host name or an IPv4 address") },
 	MQTTPort:     func(v string) error { return need(port(v), "a port from 1 to 65535") },
 	MQTTUser: func(v string) error {
-		return need(v == "" || UserValid(v), "empty or 1 to 32 of letters, digits . _ @ + -")
+		return need(v == "" || (v != "-" && UserValid(v)), "empty or 1 to 32 of letters, digits . _ @ + -")
 	},
 	MQTTBaseTopic: func(v string) error { return need(TopicValid(v, 64), "a topic of letters, digits _ - and /") },
 	MQTTClientID:  func(v string) error { return need(idRe.MatchString(v), "1 to 32 of letters, digits _ -") },
 	MQTTDiscovery: oneOf("on", "off"),
 	MQTTPrefix:    func(v string) error { return need(TopicValid(v, 32), "a topic of letters, digits _ - and /") },
 	MQTTInterval: func(v string) error {
-		n, err := strconv.Atoi(v)
-		return need(digitsRe.MatchString(v) && err == nil && n >= 10 && n <= 300, "seconds from 10 to 300")
+		n, ok := canon(v)
+		return need(ok && n >= 10 && n <= 300, "seconds from 10 to 300")
 	},
 	AuthEnabled: oneOf("0", "1"),
 	AuthUser:    func(v string) error { return need(UserValid(v), "1 to 32 of letters, digits . _ @ + -") },
@@ -143,6 +160,26 @@ var secretCheck = map[string]func(string) error{
 	MQTTPassword: func(v string) error { return need(v != "" && len(v) <= 128, "1 to 128 printable characters") },
 	WifiSSID:     func(v string) error { return need(v != "" && len(v) <= 32, "1 to 32 printable characters") },
 	WifiPassword: func(v string) error { return need(v != "" && len(v) <= 128, "1 to 128 printable characters") },
+
+	AuthPasswordUser: func(v string) error { return need(UserValid(v), "a user name") },
+	MQTTPasswordHost: func(v string) error { return need(HostValid(v), "a host name or an IPv4 address") },
+	MQTTPasswordUser: func(v string) error { return need(UserValid(v), "a user name") },
+}
+
+// BoundAuth returns the saved video password when it was saved for this user ("" otherwise).
+func BoundAuth(sec *File, user string) string {
+	if sec == nil || user == "" || sec.Get(AuthPasswordUser) != user {
+		return ""
+	}
+	return sec.Get(AuthPassword)
+}
+
+// BoundMQTT returns the saved MQTT password when it was saved for this broker and user.
+func BoundMQTT(sec *File, host, user string) string {
+	if sec == nil || user == "" || sec.Get(MQTTPasswordHost) != host || sec.Get(MQTTPasswordUser) != user {
+		return ""
+	}
+	return sec.Get(MQTTPassword)
 }
 
 func need(ok bool, what string) error {
@@ -165,17 +202,19 @@ func oneOf(vals ...string) func(string) error {
 
 func hasControl(s string) bool {
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+		if r < 0x20 || (r >= 0x7f && r < 0xa0) {
 			return true
 		}
 	}
 	return false
 }
 
-// optionKey says whether k is the ID of an option of the control port that a screen edits.
+// optionKey says whether k is the ID of an option of the control port that a screen edits and the camera
+// keeps. The options that go back to their default at a reboot (night.mode, img.wb) are not part of a
+// config: a saved value would look applied and be gone at the next power cycle.
 func optionKey(k string) (camopt.Option, bool) {
 	o, ok := camopt.Find(k)
-	return o, ok && o.Key != "" && !o.ReadOnly
+	return o, ok && o.Key != "" && !o.ReadOnly && o.Persisted == camopt.PersistCamera
 }
 
 // KnownSetting reports whether k is a key of the settings file this build understands.
@@ -194,7 +233,7 @@ func IsSecret(k string) bool { _, ok := secretCheck[k]; return ok }
 func OptionIDs() []string {
 	var ids []string
 	for _, o := range camopt.Catalog() {
-		if o.Key != "" && !o.ReadOnly {
+		if _, ok := optionKey(o.ID); ok {
 			ids = append(ids, o.ID)
 		}
 	}
@@ -246,6 +285,9 @@ func (f *File) Clone() *File {
 }
 
 func (f *File) check(k, v string) error {
+	if len(k)+1+len(v) > maxLine {
+		return fmt.Errorf("%s: longer than %d bytes", k, maxLine)
+	}
 	if strings.ContainsAny(v, "\r\n") || hasControl(v) {
 		return fmt.Errorf("%s: a value is one line without control characters", k)
 	}
@@ -260,7 +302,10 @@ func (f *File) check(k, v string) error {
 		return nil
 	}
 	if o, ok := optionKey(k); ok {
-		_, err := camopt.Validate(o.ID, v)
+		n, err := camopt.Validate(o.ID, v)
+		if err == nil && n != v {
+			return fmt.Errorf("%s: write the number as %s", o.Label, n)
+		}
 		return err
 	}
 	fn, ok := settingCheck[k]
@@ -324,6 +369,11 @@ func Parse(data []byte, k Kind) (*File, error) {
 		known := KnownSetting(key)
 		if k == Secrets {
 			known = IsSecret(key)
+			if KnownSetting(key) {
+				return nil, fmt.Errorf("line %d: %s is a setting: it does not belong in a secrets file", n, key)
+			}
+		} else if IsSecret(key) {
+			return nil, fmt.Errorf("line %d: %s is a secret: it does not belong in a settings file", n, key)
 		}
 		if !known {
 			if !extraRe.MatchString(key) {
@@ -350,7 +400,7 @@ func order() []string {
 	return append(ks, OnvifEnabled, OnvifPort, NTPEnabled, NTPServers,
 		MQTTEnabled, MQTTHost, MQTTPort, MQTTUser, MQTTBaseTopic, MQTTClientID, MQTTDiscovery, MQTTPrefix, MQTTInterval,
 		AuthEnabled, AuthUser, KeyKind, KeyPath, SavedFrom, SavedAt,
-		AuthPassword, MQTTPassword, WifiSSID, WifiPassword)
+		AuthPassword, AuthPasswordUser, MQTTPassword, MQTTPasswordHost, MQTTPasswordUser, WifiSSID, WifiPassword)
 }
 
 // Marshal writes the file: the version line, then the known keys in a fixed order, then the unknown ones.

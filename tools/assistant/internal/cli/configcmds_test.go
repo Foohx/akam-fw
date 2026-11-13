@@ -178,7 +178,7 @@ func TestConfigSecretsAndWifiAreOptInAndNeverLeak(t *testing.T) {
 	in := "y\n" + pwStream + "\n" + pwStream + "\n" + pwMqtt + "\n" + pwMqtt + "\ny\n\n" + pwWifi + "\n"
 	r = e.cr("y\n"+in, "config", "save-global") // replace the existing global config? yes
 	expectRC(t, r, 0)
-	contains(t, r.out, "Secrets saved in a private file (video password: set   MQTT password: set   Wi-Fi: set, network \"HomeNet\")")
+	contains(t, r.out, "Secrets saved in a private file (video password: set   MQTT password: set   Wi-Fi: set)")
 	sec, err := profile.Load(e.globalPlace(), profile.Secrets)
 	if err != nil || sec.Get(profile.AuthPassword) != pwStream || sec.Get(profile.MQTTPassword) != pwMqtt || sec.Get(profile.WifiPassword) != pwWifi || sec.Get(profile.WifiSSID) != "HomeNet" {
 		t.Fatalf("secrets: %v %v", sec, err)
@@ -194,7 +194,7 @@ func TestConfigSecretsAndWifiAreOptInAndNeverLeak(t *testing.T) {
 	// show never prints a value
 	r2 := e.cr("", "config", "show", "--global")
 	expectRC(t, r2, 0)
-	contains(t, r2.out, "video password: set   MQTT password: set   Wi-Fi: set, network \"HomeNet\"")
+	contains(t, r2.out, "video password: set   MQTT password: set   Wi-Fi: set")
 	e.noSecretsAnywhere(r, pwStream, pwMqtt, pwWifi)
 	e.noSecretsAnywhere(r2, pwStream, pwMqtt, pwWifi)
 }
@@ -216,7 +216,7 @@ func TestConfigReplacingTheGlobalConfigAsksAndDefaultsToNo(t *testing.T) {
 	r := e.cr("\n", "config", "save-global")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Left as it was.")
-	contains(t, r.err, "Replace it with the settings of camera salon? [y/N]")
+	contains(t, r.err, "Replace it with the settings of camera salon (read now over SSH)? [y/N]")
 	if e.loadCfg(e.globalPlace()).Get("led.status") != "on" {
 		t.Error("replaced without a yes")
 	}
@@ -230,7 +230,7 @@ func TestConfigForgetSecrets(t *testing.T) {
 	e.writeSecrets(e.cameraPlace("salon"), profile.MQTTPassword, pwMqtt)
 	r := e.cr("\n", "config", "forget-secrets", "--global") // Enter = No
 	expectRC(t, r, 0)
-	contains(t, r.out, "Left as it was.", "Wi-Fi: set, network \"Net\"")
+	contains(t, r.out, "Left as it was.", "Wi-Fi: set")
 	notContains(t, r.out+r.err, pwWifi)
 	if !profile.Exists(e.globalPlace(), profile.Secrets) {
 		t.Fatal("deleted without a yes")
@@ -360,7 +360,7 @@ func TestConfigApplyHelpersSecretsAndOrder(t *testing.T) {
 	e.writeCfg(e.globalPlace(), "auth.enabled", "1", "auth.user", "viewer", "onvif.enabled", "1", "onvif.port", "8080",
 		"ntp.enabled", "1", "ntp.servers", "pool.ntp.org,192.0.2.1",
 		"mqtt.enabled", "1", "mqtt.host", "broker.lan", "mqtt.port", "1884", "mqtt.user", "bob", "mqtt.base_topic", "home/akam/salon", "mqtt.discovery", "off")
-	e.writeSecrets(e.globalPlace(), profile.AuthPassword, pwStream, profile.MQTTPassword, pwMqtt, profile.WifiSSID, "Net", profile.WifiPassword, pwWifi)
+	e.writeSecrets(e.globalPlace(), profile.AuthPassword, pwStream, profile.AuthPasswordUser, "viewer", profile.MQTTPassword, pwMqtt, profile.MQTTPasswordHost, "broker.lan", profile.MQTTPasswordUser, "bob", profile.WifiSSID, "Net", profile.WifiPassword, pwWifi)
 	r := e.cr("y\n", "config", "apply", "--global")
 	expectRC(t, r, 0)
 	// the diff names the passwords but never shows them
@@ -393,7 +393,7 @@ func TestConfigApplyHelpersSecretsAndOrder(t *testing.T) {
 		t.Errorf("order: %v", order)
 	}
 	// secrets: not in argv, the log, the output; and the Wi-Fi was never applied to the running camera
-	e.noSecretsAnywhere(r, pwStream, pwMqtt, pwWifi, "HomeNet")
+	e.noSecretsAnywhere(r, pwStream, pwMqtt, pwWifi)
 	for _, c := range e.cam.Commands() {
 		if strings.Contains(strings.ToLower(c), "wifi") || strings.Contains(c, "wpa_supplicant") {
 			t.Errorf("the Wi-Fi was sent to a running camera: %s", c)
@@ -406,13 +406,18 @@ func TestConfigApplyHelpersSecretsAndOrder(t *testing.T) {
 	b, _ := os.ReadFile(e.cameraPlace("salon").Settings)
 	notContains(t, string(b), pwStream, pwMqtt, pwWifi)
 	// same config again: the passwords cannot be compared, so nothing is re-sent unless asked
-	n := len(e.cam.Commands())
+	n := writesToTheCamera(e)
 	r = e.cr("", "config", "apply", "--global")
 	contains(t, r.out, "Nothing to change")
+	if writesToTheCamera(e) != n {
+		t.Error("an identical config wrote to the camera")
+	}
 	r = e.cr("y\n", "config", "apply", "--global", "--include-secrets")
 	expectRC(t, r, 0)
 	contains(t, r.out, "password: not comparable", "2 change(s)")
-	_ = n
+	if writesToTheCamera(e) <= n {
+		t.Error("--include-secrets sent nothing")
+	}
 }
 
 func TestConfigApplyAsksForAPasswordThatIsNotSaved(t *testing.T) {
@@ -568,7 +573,7 @@ func TestConfigCopyFromAnotherCameraLiveAndOffline(t *testing.T) {
 	}
 	r = e.cr("y\n", "config", "apply", "--from", "garage", "--only", "led")
 	expectRC(t, r, 0)
-	contains(t, r.out, "WARNING: camera garage is not reachable (no address is known for it): using the settings last saved for it on this computer",
+	contains(t, r.out, "WARNING: camera garage is not read live (no address is known for it): using the settings last saved for it on this computer",
 		"Config: camera garage (as last saved on this computer).", "Front LED", "auto  ->  on", "applied")
 	if got := sets(e); got != "SET led.status on" {
 		t.Errorf("sets: %s", got)
@@ -603,7 +608,7 @@ func TestConfigSaveGlobalFromAnotherCamera(t *testing.T) {
 	// offline (no address): its last saved settings; the Wi-Fi question offers to take its saved Wi-Fi
 	r := e.cr("y\n", "config", "save-global", "--from", "garage")
 	expectRC(t, r, 0)
-	contains(t, r.out, "camera garage is not reachable", "using the settings last saved for it on this computer (saved 2026-01-02 03:04 UTC)")
+	contains(t, r.out, "camera garage is not read live", "using the settings last saved for it on this computer (saved 2026-01-02 03:04 UTC)")
 	g := e.loadCfg(e.globalPlace())
 	if g.Get("led.status") != "off" || g.Get("saved.from") != "camera garage" {
 		t.Errorf("%v", g.Vals)

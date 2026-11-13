@@ -432,12 +432,17 @@ func (a *App) hwcheck(ip string) bool {
 
 // onvifFlag is cam_onvif_flag: "enabled=1|0" and "port=N" written by akam_onvif.sh; absent = off.
 func (a *App) onvifFlag(c *camssh.Client) (on bool, port int) {
-	port = 80
 	res, err := a.run(c, remoteOnvifFlag, nil, "")
 	if err != nil {
-		return false, port
+		return false, 80
 	}
-	for _, l := range strings.Split(string(res.Stdout), "\n") {
+	return parseOnvifFlag(string(res.Stdout))
+}
+
+// parseOnvifFlag reads the text of the flag file: "enabled=1" and "port=N" (nothing: off, port 80).
+func parseOnvifFlag(out string) (on bool, port int) {
+	port = 80
+	for _, l := range strings.Split(out, "\n") {
 		l = strings.TrimSuffix(l, "\r")
 		switch {
 		case l == "enabled=1":

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/profile"
 )
 
 // akam mqtt [status | set | disable | forget | test]: the optional MQTT client of the camera (Home Assistant
@@ -137,6 +138,7 @@ func (a *App) cmdMqtt(args []string) error {
 			return err
 		}
 		a.UI.Good("  MQTT is off and the settings are deleted. In Home Assistant, delete the device by hand if you do not want it any more.")
+		a.secretsAfterSet(profile.MQTTPassword, "", "", "", false)
 	case "disable":
 		if err := a.mqttRemote(c, nil, "disable"); err != nil {
 			return err
@@ -214,6 +216,7 @@ func (a *App) mqttSet(c *camssh.Client) error {
 		return err
 	}
 	a.UI.Good("  MQTT is on. Home Assistant finds the camera by itself (MQTT integration, discovery on).")
+	a.secretsAfterSet(profile.MQTTPassword, host, user, pw, user != "") // a copy saved for this camera is now out of date
 	a.UI.Say(fmt.Sprintf("  Check it with: %s mqtt test    Turn it off with: %s mqtt disable", Prog, Prog))
 	if ok, _ := a.UI.AskYN("  Test the connection to the broker now?"); ok {
 		return a.mqttRemote(c, nil, "test")

@@ -194,3 +194,107 @@ func TestCameraPlacesAreSeparate(t *testing.T) {
 		t.Errorf("%v", g)
 	}
 }
+
+func TestNumbersArePlainAndPortsAreSafe(t *testing.T) {
+	for _, in := range []string{"video.bitrate_cfg=02000", "video.bitrate_cfg=+2000", "mqtt.port=01883", "mqtt.interval=030",
+		"onvif.port=21", "onvif.port=24", "onvif.port=554", "onvif.port=8091", "onvif.port=0", "onvif.port=70000", "mqtt.user=-"} {
+		if _, err := Parse([]byte("akam_config_version=1\n"+in+"\n"), Settings); err == nil {
+			t.Errorf("%s was accepted", in)
+		}
+	}
+	for _, in := range []string{"video.bitrate_cfg=2000", "mqtt.port=1883", "onvif.port=8080", "mqtt.user=bob"} {
+		if _, err := Parse([]byte("akam_config_version=1\n"+in+"\n"), Settings); err != nil {
+			t.Errorf("%s: %v", in, err)
+		}
+	}
+}
+
+func TestSetRefusesWhatParseRefuses(t *testing.T) {
+	f := New(Settings)
+	if err := f.Set(KeyPath, "/"+strings.Repeat("a", 600)+".pub"); err == nil {
+		t.Error("a path longer than a line was accepted by Set")
+	}
+	if err := f.Set(AuthPassword, "correct horse"); err == nil {
+		t.Error("a secret key was accepted in a settings file")
+	}
+	if err := f.Set("video.bitrate_cfg", "02000"); err == nil {
+		t.Error("a number written with a leading zero was accepted")
+	}
+	if err := f.Set(AuthUser, "bob\u0085"); err == nil {
+		t.Error("a C1 control character was accepted")
+	}
+	s := New(Secrets)
+	if err := s.Set(WifiPassword, "pass\u009bword1"); err == nil {
+		t.Error("a C1 control character was accepted in a secret")
+	}
+	if _, err := Parse([]byte("akam_config_version=1\nauth.password=correct horse\n"), Settings); err == nil {
+		t.Error("a secret in a settings file was kept as an unknown key")
+	}
+	if _, err := Parse([]byte("akam_config_version=1\nvideo.fps_cfg=15\n"), Secrets); err == nil {
+		t.Error("a setting in a secrets file was kept as an unknown key")
+	}
+}
+
+func TestRAMOnlyOptionsAreUnknownKeys(t *testing.T) {
+	f, err := Parse([]byte("akam_config_version=1\nnight.mode=night\nimg.wb=manual\n"), Settings)
+	if err != nil || f.Has("night.mode") || f.Has("img.wb") || len(f.Extra) != 2 {
+		t.Errorf("%v %v", f, err)
+	}
+	for _, id := range OptionIDs() {
+		if id == "night.mode" || id == "img.wb" {
+			t.Errorf("%s is in a config", id)
+		}
+	}
+}
+
+func TestPasswordsBelongToTheirSettings(t *testing.T) {
+	s := New(Secrets)
+	mustSet(t, s, AuthPassword, "correct horse", AuthPasswordUser, "viewer", MQTTPassword, "pw", MQTTPasswordHost, "broker.lan", MQTTPasswordUser, "bob")
+	if BoundAuth(s, "viewer") != "correct horse" || BoundAuth(s, "other") != "" || BoundAuth(s, "") != "" {
+		t.Error("BoundAuth")
+	}
+	if BoundMQTT(s, "broker.lan", "bob") != "pw" || BoundMQTT(s, "other.lan", "bob") != "" || BoundMQTT(s, "broker.lan", "eve") != "" {
+		t.Error("BoundMQTT")
+	}
+	legacy := New(Secrets)
+	mustSet(t, legacy, AuthPassword, "correct horse")
+	if BoundAuth(legacy, "viewer") != "" {
+		t.Error("a password with no recorded user was used")
+	}
+}
+
+func TestLoadRefusesAHugeFileAndAFileOthersCanRead(t *testing.T) {
+	p := Global(filepath.Join(t.TempDir(), "s"))
+	if err := os.MkdirAll(filepath.Dir(p.Settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Settings, []byte("akam_config_version=1\n"+strings.Repeat("# x\n", 40000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p, Settings); err == nil || !strings.Contains(err.Error(), "larger") {
+		t.Errorf("huge file: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		s := New(Secrets)
+		mustSet(t, s, WifiSSID, "n", WifiPassword, "hunter2hunter2")
+		if err := os.WriteFile(p.Secrets, s.Marshal(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p, Secrets); err == nil || !strings.Contains(err.Error(), "readable by other accounts") {
+			t.Errorf("group-readable secrets: %v", err)
+		}
+		// a save puts it right: private, and no temporary file is left
+		if err := Save(p, Secrets, s); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p, Secrets); err != nil {
+			t.Error(err)
+		}
+		ents, _ := os.ReadDir(filepath.Dir(p.Settings))
+		for _, e := range ents {
+			if strings.Contains(e.Name(), ".new.") {
+				t.Errorf("temporary file left: %s", e.Name())
+			}
+		}
+	}
+}

@@ -2,9 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"errors"
 	"strings"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camopt"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/profile"
@@ -96,6 +98,10 @@ type cfgSrc struct {
 	desc  string // for the user: "the global config", "camera salon (read now over SSH)", ...
 	set   *profile.File
 	sec   *profile.File // never nil
+	// ssid is the Wi-Fi name the camera reports (the default of the Wi-Fi question); missing is what a live
+	// read could not give (the settings are then incomplete, and say so)
+	ssid    string
+	missing []string
 }
 
 // loadPlace reads both files of a place; the secrets file is optional.
@@ -132,24 +138,35 @@ func savedStamp(set *profile.File) string {
 
 // cameraSource reads the settings of camera name: live when it answers (read-only, over SSH with that
 // camera's own key and its pinned host key, never a first contact), else what was last saved for it on this
-// computer. It says which one it used. live is false for the saved file.
+// computer. It says which one it used and what could not be read. A camera whose host key changed, whose
+// control port said nothing, or that calls itself by another name than the one this computer knows is not used live.
 func (a *App) cameraSource(name string) (*cfgSrc, error) {
 	p := a.cameraPlace(name)
 	sec, err := profile.LoadOrNew(p, profile.Secrets) // the secrets of that camera (opt-in), whatever the settings say
 	if err != nil {
 		return nil, a.UI.Fail(err.Error(), "fix or delete that file ("+Prog+" config forget-secrets --camera "+name+").")
 	}
-	var live *profile.File
+	var live *cfgRead
 	var why string
+	read := func(c *camssh.Client, other bool) {
+		defer c.Close()
+		r := a.cfgReadLive(c, name)
+		switch {
+		case !r.ctlOK:
+			why = "its control port did not answer"
+		case other && a.hostMismatch(c, name):
+			why = "it calls itself by another name than the one this computer knows (is the address still the same camera?)"
+		default:
+			live = &r
+		}
+	}
 	if name == a.Cams.Name {
 		ip, err := a.camNeedIP()
 		if err != nil {
 			return nil, err
 		}
-		c, err := a.connectTools(ip)
-		if err == nil {
-			defer c.Close()
-			live = a.cfgReadLive(c, name).f
+		if c, err := a.connectTools(ip); err == nil {
+			read(c, false)
 		} else {
 			why = "it did not answer"
 		}
@@ -159,27 +176,45 @@ func (a *App) cameraSource(name string) (*cfgSrc, error) {
 		pass := ""
 		keyPriv := camssh.KeyPathFor("", "", a.Cams.ReadKey(name, "ssh_pubkey"))
 		c, err := a.dialKey(ip, keyPriv, &pass)
-		if err == nil {
-			defer c.Close()
-			live = a.cfgReadLive(c, name).f
-		} else {
+		var hk *camssh.HostKeyChangedError
+		switch {
+		case err == nil:
+			read(c, true)
+		case errors.As(err, &hk):
+			a.UI.Err(fmt.Sprintf("REMOTE HOST IDENTIFICATION HAS CHANGED for camera %s (%s): it now shows %s. It is not read.", name, ip, hk.Fingerprint))
+			why = "its SSH host key changed"
+		case errors.Is(err, camssh.ErrHostKeyRefused):
+			why = "its SSH host key is not remembered yet (connect to it once: " + Prog + " --camera " + name + " config show, or find-camera)"
+		default:
 			why = "it did not answer"
 		}
 	}
 	if live != nil {
 		a.UI.Say(fmt.Sprintf("  Using the settings camera %s has right now (read over SSH).", name))
-		return &cfgSrc{label: "camera:" + name, desc: "camera " + name + " (read now over SSH)", set: live, sec: sec}, nil
+		a.reportMissing(*live)
+		return &cfgSrc{label: "camera:" + name, desc: "camera " + name + " (read now over SSH)", set: live.f, sec: sec, ssid: live.ssid, missing: live.missing}, nil
 	}
 	set, err := profile.Load(p, profile.Settings)
 	if err != nil {
 		if err == profile.ErrNone {
 			return nil, a.UI.Fail(fmt.Sprintf("camera %s cannot be read (%s) and nothing was saved for it on this computer.", name, why),
-				fmt.Sprintf("switch it on and on your network, or run '%s config save-local --camera %s' once it answers.", Prog, name))
+				fmt.Sprintf("switch it on and on your network, or run '%s --camera %s config save-local' once it answers.", Prog, name))
 		}
 		return nil, a.UI.Fail(err.Error(), "fix or delete that file.")
 	}
-	a.UI.Warn(fmt.Sprintf("camera %s is not reachable (%s): using the settings last saved for it on this computer (%s).", name, why, orUnknown(savedStamp(set))))
+	a.UI.Warn(fmt.Sprintf("camera %s is not read live (%s): using the settings last saved for it on this computer (%s).", name, why, orUnknown(savedStamp(set))))
 	return &cfgSrc{label: "camera:" + name, desc: "camera " + name + " (as last saved on this computer)", set: set, sec: sec}, nil
+}
+
+// hostMismatch is true when the camera behind c reports a host name and this computer knows another one for
+// camera name (both non-empty).
+func (a *App) hostMismatch(c *camssh.Client, name string) bool {
+	want := a.Cams.ReadKey(name, "camera_host")
+	if want == "" {
+		return false
+	}
+	got := ctl.Get("sys.hostname", a.ctlExchange(c, "GET sys.hostname"))
+	return got != "" && camopt.SafeValue(got) && got != want
 }
 
 func orUnknown(s string) string {
@@ -195,7 +230,8 @@ func orUnknown(s string) string {
 type cfgRead struct {
 	f       *profile.File
 	ssid    string   // the Wi-Fi name the camera reports (a default for the Wi-Fi question)
-	missing []string // what this image could not tell (an older image)
+	missing []string // what could not be read (an older image, a helper that did not answer)
+	ctlOK   bool     // the control port answered at least one option: false means ak_rtsp said nothing
 }
 
 // cfgHelper runs one helper command of the camera through the guard and returns its cleaned output and
@@ -237,10 +273,13 @@ func (a *App) cfgReadLive(c *camssh.Client, cam string) cfgRead {
 		}
 	}
 	for _, st := range camopt.Read(a.exchanger(c)) {
+		if !st.Unavailable {
+			r.ctlOK = true
+		}
 		if st.ID == "net.ssid" && !st.Unavailable {
 			r.ssid = st.Value
 		}
-		if st.Key == "" || st.ReadOnly {
+		if !profile.KnownSetting(st.ID) {
 			continue
 		}
 		if st.Unavailable {
@@ -249,7 +288,9 @@ func (a *App) cfgReadLive(c *camssh.Client, cam string) cfgRead {
 		}
 		set(st.ID, st.Value)
 	}
-	if on, port := a.onvifFlag(c); on {
+	if res, err := a.run(c, remoteOnvifFlag, nil, ""); err != nil {
+		r.missing = append(r.missing, "ONVIF") // a read that failed is not "off"
+	} else if on, port := parseOnvifFlag(string(res.Stdout)); on {
 		set(profile.OnvifEnabled, "1")
 		set(profile.OnvifPort, fmt.Sprint(port))
 	} else {
@@ -387,6 +428,16 @@ type cfgChange struct {
 func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bool) (ch []cfgChange, skipped []string) {
 	use := func(g string) bool { return only == nil || only[g] }
 	lv := func(k string) string { return live.Get(k) }
+	// a group the camera could not be read for is left out (never compared with an empty value)
+	readable := func(g, k, label string) bool {
+		if live.Has(k) {
+			return true
+		}
+		if use(g) {
+			skipped = append(skipped, label+": could not be read from the camera, so it is left out")
+		}
+		return false
+	}
 	// 1. the options of the control port
 	for _, id := range profile.OptionIDs() {
 		g := profile.GroupOf(id)
@@ -403,7 +454,7 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		}
 	}
 	// 2. the video password (before ONVIF, which needs it)
-	if use("auth") && want.Has(profile.AuthEnabled) {
+	if use("auth") && want.Has(profile.AuthEnabled) && readable("auth", profile.AuthEnabled, "Video password") {
 		switch {
 		case want.Get(profile.AuthEnabled) == "0":
 			if lv(profile.AuthEnabled) == "1" {
@@ -415,13 +466,14 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		default:
 			user := want.Get(profile.AuthUser)
 			differs := lv(profile.AuthEnabled) != "1" || lv(profile.AuthUser) != user
-			if differs || (withSecrets && sec.Has(profile.AuthPassword)) {
+			stored := profile.BoundAuth(sec, user) != ""
+			if differs || (withSecrets && stored) {
 				from := "off"
 				if lv(profile.AuthEnabled) == "1" {
 					from = "on, user " + lv(profile.AuthUser)
 				}
 				pw := "password: asked"
-				if sec.Has(profile.AuthPassword) {
+				if stored {
 					pw = "password: set (from the config)"
 				}
 				if !differs {
@@ -432,7 +484,7 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		}
 	}
 	// 3. ONVIF
-	if use("onvif") && want.Has(profile.OnvifEnabled) {
+	if use("onvif") && want.Has(profile.OnvifEnabled) && readable("onvif", profile.OnvifEnabled, "ONVIF") {
 		port := want.Get(profile.OnvifPort)
 		if port == "" {
 			port = "80"
@@ -451,7 +503,7 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		}
 	}
 	// 4. time sync
-	if use("ntp") && want.Has(profile.NTPEnabled) {
+	if use("ntp") && want.Has(profile.NTPEnabled) && readable("ntp", profile.NTPEnabled, "Time sync") {
 		switch {
 		case want.Get(profile.NTPEnabled) == "0":
 			if lv(profile.NTPEnabled) == "1" {
@@ -468,7 +520,7 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		}
 	}
 	// 5. MQTT
-	if use("mqtt") && want.Has(profile.MQTTEnabled) {
+	if use("mqtt") && want.Has(profile.MQTTEnabled) && readable("mqtt", profile.MQTTEnabled, "MQTT") {
 		if want.Get(profile.MQTTEnabled) == "0" {
 			if lv(profile.MQTTEnabled) == "1" {
 				ch = append(ch, cfgChange{Op: opMqttOff, Group: "mqtt", Label: "MQTT", From: "on, " + lv(profile.MQTTHost) + ":" + lv(profile.MQTTPort), To: "off"})
@@ -482,7 +534,8 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 			}
 			user := want.Get(profile.MQTTUser)
 			differs := lv(profile.MQTTEnabled) != "1" || lv(profile.MQTTHost) != want.Get(profile.MQTTHost) || lv(profile.MQTTPort) != port || lv(profile.MQTTUser) != user
-			if differs || (withSecrets && sec.Has(profile.MQTTPassword)) {
+			stored := user != "" && profile.BoundMQTT(sec, want.Get(profile.MQTTHost), user) != ""
+			if differs || (withSecrets && stored) {
 				from := "off"
 				if lv(profile.MQTTEnabled) == "1" {
 					from = fmt.Sprintf("on, %s:%s, user %s", lv(profile.MQTTHost), lv(profile.MQTTPort), orDash(lv(profile.MQTTUser)))
@@ -490,7 +543,7 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 				to := fmt.Sprintf("on, %s:%s, user %s", want.Get(profile.MQTTHost), port, orDash(user))
 				switch {
 				case user == "":
-				case sec.Has(profile.MQTTPassword):
+				case stored:
 					to += ", password: set (from the config)"
 				default:
 					to += ", password: asked"
@@ -560,12 +613,12 @@ func (a *App) cfgPasswords(ch []cfgChange, sec *profile.File) (todo []cfgChange,
 		var ok bool
 		switch x.Op {
 		case opAuthSet:
-			pw, ok = a.cfgPassword("video password", sec.Get(profile.AuthPassword), rtspMinPass)
+			pw, ok = a.cfgPassword("video password", profile.BoundAuth(sec, x.Want.Get(profile.AuthUser)), rtspMinPass)
 			pws["auth"] = pw
 		case opMqttSet:
 			ok = true
 			if x.Want.Get(profile.MQTTUser) != "" {
-				pw, ok = a.cfgPassword("MQTT password", sec.Get(profile.MQTTPassword), 0)
+				pw, ok = a.cfgPassword("MQTT password", profile.BoundMQTT(sec, x.Want.Get(profile.MQTTHost), x.Want.Get(profile.MQTTUser)), 0)
 				pws["mqtt"] = pw
 			}
 		default:
@@ -586,13 +639,20 @@ func (a *App) cfgApply(c *camssh.Client, ip string, ch []cfgChange, pws map[stri
 	var out []cfgOutcome
 	done := func(o cfgOutcome) { out = append(out, o) }
 	op := a.op()
-	defer op.end()
-	items := make([]string, len(ch))
+	// The panel lists what this function sends. The key change has its own panel and its own questions, so it
+	// runs after this one is closed (two panels are never nested).
+	var panel []int // indexes in ch of the items on the panel
+	pos := map[int]int{}
+	var items []string
 	for i, x := range ch {
-		items[i] = x.Label
+		if x.Op != opKey {
+			pos[i] = len(panel)
+			panel = append(panel, i)
+			items = append(items, x.Label)
+		}
 	}
 	op.plan(items...)
-	// every control-port change goes in one exchange (camopt.Apply), the others one by one, the key last
+	// every control-port change goes in one exchange (camopt.Apply), the others one by one
 	var ctlIdx []int
 	var changes []camopt.Change
 	for i, x := range ch {
@@ -602,7 +662,7 @@ func (a *App) cfgApply(c *camssh.Client, ip string, ch []cfgChange, pws map[stri
 		}
 	}
 	if len(changes) > 0 {
-		op.start(ctlIdx[0])
+		op.start(pos[ctlIdx[0]])
 		for _, x := range changes {
 			o, _ := camopt.Find(x.ID)
 			a.UI.Say(fmt.Sprintf("  WILL send: SET %s %s", o.Key, x.Value))
@@ -635,21 +695,32 @@ func (a *App) cfgApply(c *camssh.Client, ip string, ch []cfgChange, pws map[stri
 				}
 			}
 			done(o)
-			op.done(i, o.state)
+			op.done(pos[i], o.state)
 		}
 	}
 	for i, x := range ch {
-		if x.Op == opCtl {
+		if x.Op == opCtl || x.Op == opKey {
 			continue
 		}
 		if a.stopRequested() {
 			done(cfgOutcome{ch: x, state: "skipped", note: "stopped before it was sent"})
 			continue
 		}
-		op.start(i)
+		op.start(pos[i])
 		o := a.cfgRunOne(c, ip, x, pws, op)
 		done(o)
-		op.done(i, o.state)
+		op.done(pos[i], o.state)
+	}
+	op.end()
+	for _, x := range ch {
+		if x.Op != opKey {
+			continue
+		}
+		if a.stopRequested() {
+			done(cfgOutcome{ch: x, state: "skipped", note: "stopped before it was sent"})
+			continue
+		}
+		done(a.cfgRunOne(c, ip, x, pws, op))
 	}
 	return out
 }
@@ -717,6 +788,7 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 		out, good := a.cfgHelper(c, remoteRtspAuth("set-creds"), payload)
 		if good {
 			o.state, o.note = "applied", "on; players that are watching log in again"
+			a.secretsAfterSet(profile.AuthPassword, "", x.Want.Get(profile.AuthUser), pw, false)
 			return o
 		}
 		return fail(firstLine(out))
@@ -750,6 +822,9 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 		out, good := a.cfgHelper(c, remoteMqtt("set", x.Want.Get(profile.MQTTHost), x.Value, userArg), []byte(pw+"\n"))
 		if good {
 			o.state, o.note = "applied", "on"
+			if user != "" {
+				a.secretsAfterSet(profile.MQTTPassword, x.Want.Get(profile.MQTTHost), user, pw, false)
+			}
 			return o
 		}
 		return fail(firstLine(out))
@@ -777,14 +852,17 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 				return fail("the key file " + tilde(ch.pub) + " is not on this computer")
 			}
 		}
+		before := a.St.Get("ssh_pubkey")
 		if err := a.keyChange(&ch, ip, c); err != nil {
 			return fail("the key was not changed (see above)")
 		}
-		if a.St.Get("ssh_pubkey") != ch.pub {
+		// what counts is what the camera now uses: the key flow may have settled on another file name
+		after := a.St.Get("ssh_pubkey")
+		if after == before {
 			o.state, o.note = "skipped", "not changed (not confirmed)"
 			return o
 		}
-		o.state, o.note = "applied", keyKindText(ch.kind, ch.pub)
+		o.state, o.note = "applied", keyKindText(camssh.KindOf(after, a.Cams.Name), after)
 		return o
 	}
 	return fail("unknown change")

@@ -83,10 +83,7 @@ func secretsSummary(sec *profile.File) string {
 	}
 	w := "not set"
 	if sec.Has(profile.WifiPassword) {
-		w = "set"
-		if sec.Has(profile.WifiSSID) {
-			w += `, network "` + ui.Sanitize(sec.Get(profile.WifiSSID)) + `"`
-		}
+		w = "set" // the network name is never printed or logged either
 	}
 	return fmt.Sprintf("video password: %s   MQTT password: %s   Wi-Fi: %s", yn(profile.AuthPassword), yn(profile.MQTTPassword), w)
 }
@@ -173,7 +170,9 @@ func sourceText(s string) string {
 // ---------------------------------------------------------------- saving
 
 // askWallet asks the two opt-in questions (passwords, Wi-Fi) and returns the secrets to keep. have holds what the
-// source already knows (its saved secrets). Nothing is asked without a terminal. defSSID is the network the camera
+// source already knows (its saved secrets). A saved password is offered again only while it still belongs to the
+// settings being saved (the same video user, the same broker and user); a yes then offers to keep it or to type a
+// new one, never reuses it silently. Nothing is asked without a terminal. defSSID is the network the camera
 // reports (the default of the Wi-Fi name).
 func (a *App) askWallet(set, have *profile.File, defSSID, where string) (*profile.File, bool) {
 	out := profile.New(profile.Secrets)
@@ -182,20 +181,22 @@ func (a *App) askWallet(set, have *profile.File, defSSID, where string) (*profil
 		return out, false
 	}
 	any := false
-	needAuth := set.Get(profile.AuthEnabled) == "1"
-	needMqtt := set.Get(profile.MQTTUser) != "" && set.Get(profile.MQTTEnabled) == "1"
+	authUser := set.Get(profile.AuthUser)
+	mqttHost, mqttUser := set.Get(profile.MQTTHost), set.Get(profile.MQTTUser)
+	needAuth := set.Get(profile.AuthEnabled) == "1" && authUser != ""
+	needMqtt := set.Get(profile.MQTTEnabled) == "1" && mqttUser != "" && mqttHost != ""
 	if needAuth || needMqtt {
 		a.UI.Say("  The camera cannot tell its passwords: to keep them in " + where + " you type them here.")
 		if ok, _ := a.UI.AskYN("  Also keep the video and MQTT passwords in " + where + "? " + walletWarning); ok {
 			if needAuth {
-				if pw, ok := a.walletPassword("video password", have.Get(profile.AuthPassword), rtspMinPass); ok {
-					out.Vals[profile.AuthPassword] = pw
+				if pw, ok := a.walletPassword("video password", "user "+authUser, profile.BoundAuth(have, authUser), have.Has(profile.AuthPassword), rtspMinPass); ok {
+					out.Vals[profile.AuthPassword], out.Vals[profile.AuthPasswordUser] = pw, authUser
 					any = true
 				}
 			}
 			if needMqtt {
-				if pw, ok := a.walletPassword("MQTT password", have.Get(profile.MQTTPassword), 1); ok {
-					out.Vals[profile.MQTTPassword] = pw
+				if pw, ok := a.walletPassword("MQTT password", "broker "+mqttHost+", user "+mqttUser, profile.BoundMQTT(have, mqttHost, mqttUser), have.Has(profile.MQTTPassword), 1); ok {
+					out.Vals[profile.MQTTPassword], out.Vals[profile.MQTTPasswordHost], out.Vals[profile.MQTTPasswordUser] = pw, mqttHost, mqttUser
 					any = true
 				}
 			}
@@ -229,14 +230,20 @@ func (a *App) askWallet(set, have *profile.File, defSSID, where string) (*profil
 	return out, any
 }
 
-// walletPassword takes a saved password of the source when there is one, else asks it twice.
-func (a *App) walletPassword(what, have string, min int) (string, bool) {
-	if have != "" {
-		a.Secrets.Add(have)
-		a.UI.Say("  " + strings.ToUpper(what[:1]) + what[1:] + ": taken from the secrets already saved for that config.")
-		return have, true
+// walletPassword returns the password to keep. bound is the saved one when it belongs to these settings (for is
+// what it belongs to, in words); present says a saved one exists that does not belong to them. A usable saved
+// one is offered (default No); No, or none, means type a new one (twice, not shown).
+func (a *App) walletPassword(what, for_, bound string, present bool, min int) (string, bool) {
+	title := strings.ToUpper(what[:1]) + what[1:]
+	if bound != "" {
+		a.Secrets.Add(bound)
+		if ok, _ := a.UI.AskYN("  A " + what + " saved for " + for_ + " is available. Keep it? (No: type a new one)"); ok {
+			return bound, true
+		}
+	} else if present {
+		a.UI.Say("  The " + what + " saved earlier was for other settings: it is not reused.")
 	}
-	pw, err := a.UI.Secret(fmt.Sprintf("  %s (not shown, empty keeps none):", strings.ToUpper(what[:1])+what[1:]))
+	pw, err := a.UI.Secret(fmt.Sprintf("  %s (not shown, empty keeps none):", title))
 	if err != nil || pw == "" {
 		return "", false
 	}
@@ -251,6 +258,61 @@ func (a *App) walletPassword(what, have string, min int) (string, bool) {
 	}
 	a.Secrets.Add(pw)
 	return pw, true
+}
+
+// pruneStale drops the saved passwords that no longer belong to the settings next to them (another video
+// user, another broker or user). It reports what it dropped.
+func pruneStale(sec, set *profile.File) (dropped []string) {
+	drop := func(label string, keys ...string) {
+		for _, k := range keys {
+			sec.Unset(k)
+		}
+		dropped = append(dropped, label)
+	}
+	if sec.Has(profile.AuthPassword) && profile.BoundAuth(sec, set.Get(profile.AuthUser)) == "" {
+		drop("video password", profile.AuthPassword, profile.AuthPasswordUser)
+	}
+	if sec.Has(profile.MQTTPassword) && profile.BoundMQTT(sec, set.Get(profile.MQTTHost), set.Get(profile.MQTTUser)) == "" {
+		drop("MQTT password", profile.MQTTPassword, profile.MQTTPasswordHost, profile.MQTTPasswordUser)
+	}
+	return dropped
+}
+
+// secretsAfterSet is called when a password was just set on the current camera: a copy saved for this camera
+// on this computer is now stale. With ask (a command, outside any panel) the user may keep it up to date
+// (default No); otherwise, and on No, the stale copy is removed. pw "" only removes.
+func (a *App) secretsAfterSet(key, host, user, pw string, ask bool) {
+	if a.UI.Dry() {
+		return
+	}
+	p := a.cameraPlace(a.Cams.Name)
+	sec, err := profile.LoadOrNew(p, profile.Secrets)
+	if err != nil || !sec.Has(key) {
+		return
+	}
+	what := map[string]string{profile.AuthPassword: "video", profile.MQTTPassword: "MQTT"}[key]
+	if ask && pw != "" && a.UI.Interactive() {
+		if ok, _ := a.UI.AskYN("  A " + what + " password is saved for this camera on this computer. Update it to the new one? " + walletWarning); ok {
+			if key == profile.AuthPassword {
+				sec.Vals[key], sec.Vals[profile.AuthPasswordUser] = pw, user
+			} else {
+				sec.Vals[key], sec.Vals[profile.MQTTPasswordHost], sec.Vals[profile.MQTTPasswordUser] = pw, host, user
+			}
+			if profile.Save(p, profile.Secrets, sec) == nil {
+				a.UI.Say("  Updated.")
+			}
+			return
+		}
+	}
+	for _, k := range map[string][]string{
+		profile.AuthPassword: {profile.AuthPassword, profile.AuthPasswordUser},
+		profile.MQTTPassword: {profile.MQTTPassword, profile.MQTTPasswordHost, profile.MQTTPasswordUser},
+	}[key] {
+		sec.Unset(k)
+	}
+	if profile.Save(p, profile.Secrets, sec) == nil {
+		a.UI.Say("  The " + what + " password saved for this camera on this computer was out of date: removed.")
+	}
 }
 
 // cfgSaveTo writes src as the config of place p (settings; then the secrets the user opted in to).
@@ -271,8 +333,13 @@ func (a *App) cfgSaveTo(p profile.Place, src *cfgSrc, ssid, where string) error 
 		a.UI.Warn(err.Error() + " - the secrets file was left alone.")
 		return nil
 	}
+	// a password saved for other settings than the ones just saved must not stay next to them
+	pruned := pruneStale(oldSec, set)
 	got, any := a.askWallet(set, src.sec, ssid, where)
-	if !any {
+	for k, v := range got.Vals {
+		oldSec.Vals[k] = v
+	}
+	if !any && len(pruned) == 0 {
 		if oldSec.Empty() {
 			a.UI.Say("  No password and no Wi-Fi saved.")
 		} else {
@@ -280,13 +347,15 @@ func (a *App) cfgSaveTo(p profile.Place, src *cfgSrc, ssid, where string) error 
 		}
 		return nil
 	}
-	for k, v := range got.Vals {
-		oldSec.Vals[k] = v
-	}
 	if err := profile.Save(p, profile.Secrets, oldSec); err != nil {
 		return a.UI.Fail("could not save the secrets: "+err.Error(), "they were not saved.")
 	}
-	a.UI.Good("  Secrets saved in a private file (" + secretsSummary(oldSec) + ").")
+	if len(pruned) > 0 {
+		a.UI.Say("  Removed the saved " + strings.Join(pruned, " and ") + ": it no longer matches these settings.")
+	}
+	if any {
+		a.UI.Good("  Secrets saved in a private file (" + secretsSummary(oldSec) + ").")
+	}
 	return nil
 }
 
@@ -312,17 +381,21 @@ func (a *App) cfgCurrentLive() (*cfgSrc, string, error) {
 	}
 	defer c.Close()
 	r := a.cfgReadLive(c, a.Cams.Name)
+	if !r.ctlOK {
+		return nil, "", a.UI.Fail("the camera's control port did not answer, so its settings cannot be read.",
+			"nothing was recorded; wait for the camera (a video restart takes a few seconds) and try again.")
+	}
 	a.reportMissing(r)
 	sec, _ := profile.LoadOrNew(a.cameraPlace(a.Cams.Name), profile.Secrets)
 	if sec == nil {
 		sec = profile.New(profile.Secrets)
 	}
-	return &cfgSrc{label: "camera:" + a.Cams.Name, desc: "camera " + a.Cams.Name, set: r.f, sec: sec}, r.ssid, nil
+	return &cfgSrc{label: "camera:" + a.Cams.Name, desc: "camera " + a.Cams.Name, set: r.f, sec: sec, missing: r.missing}, r.ssid, nil
 }
 
 func (a *App) reportMissing(r cfgRead) {
 	if len(r.missing) > 0 {
-		a.UI.Say("  This camera's image did not answer for: " + strings.Join(r.missing, ", ") + " (an older image; they are left out).")
+		a.UI.Say("  Could not be read from this camera: " + strings.Join(r.missing, ", ") + " (an older image or a helper that did not answer). They are left out, not guessed.")
 	}
 }
 
@@ -338,25 +411,26 @@ func (a *App) cfgSaveGlobal(from string) error {
 		return nil
 	}
 	var src *cfgSrc
-	ssid := ""
 	var err error
-	if from == "" {
-		if src, ssid, err = a.cfgCurrentLive(); err != nil {
-			return err
-		}
-	} else {
-		if !state.NameExists(from) || !state.CameraExists(a.Cams.Base, from) {
-			return a.UI.Fail("no camera called '"+from+"' on this computer.", "see "+Prog+" cameras.")
-		}
-		if src, err = a.cameraSource(from); err != nil {
-			return err
-		}
+	name := from
+	if name == "" {
+		name = a.Cams.Name // live when it answers, else what was last saved for it (it says which)
+	} else if !state.NameExists(from) || !state.CameraExists(a.Cams.Base, from) {
+		return a.UI.Fail("no camera called '"+from+"' on this computer.", "see "+Prog+" cameras.")
 	}
+	if src, err = a.cameraSource(name); err != nil {
+		return err
+	}
+	ssid := src.ssid
 	if profile.Exists(a.globalPlace(), profile.Settings) {
 		if err := a.UI.RequireTTY("replacing the global config"); err != nil {
 			return err
 		}
-		if ok, _ := a.UI.AskYN("  A global config already exists. Replace it with the settings of " + src.desc + "?"); !ok {
+		q := "  A global config already exists. Replace it with the settings of " + src.desc + "?"
+		if len(src.missing) > 0 {
+			q = "  A global config already exists. Replace it with the settings of " + src.desc + ", WITHOUT " + strings.Join(src.missing, ", ") + " (not read)?"
+		}
+		if ok, _ := a.UI.AskYN(q); !ok {
 			a.UI.Say("  Left as it was.")
 			return nil
 		}
@@ -447,7 +521,7 @@ func (a *App) cfgApplyCmd(global bool, from string, only map[string]bool, withSe
 			return a.UI.Fail(err.Error(), "fix or delete that file.")
 		}
 	default:
-		if !state.CameraExists(a.Cams.Base, from) {
+		if !state.NameExists(from) || !state.CameraExists(a.Cams.Base, from) {
 			return a.UI.Fail("no camera called '"+from+"' on this computer.", "see "+Prog+" cameras.")
 		}
 		if src, err = a.cameraSource(from); err != nil {
@@ -469,6 +543,10 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 	}
 	defer c.Close()
 	r := a.cfgReadLive(c, a.Cams.Name)
+	if !r.ctlOK {
+		return a.UI.Fail("the camera's control port did not answer, so its settings cannot be compared.",
+			"nothing was sent; wait a few seconds (a video restart takes the port down for a moment) and try again.")
+	}
 	a.reportMissing(r)
 	ch, skipped := cfgDiff(r.f, src.set, src.sec, only, withSecrets)
 	a.UI.Say(fmt.Sprintf("  Config: %s. Camera: %s (settings read just now).", src.desc, a.Cams.Name))
@@ -477,7 +555,7 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 	}
 	if len(ch) == 0 {
 		a.UI.Good("  Nothing to change: the camera already has these settings" + onlyNote(only) + ".")
-		a.cfgSettle(c, src, true, 0, only)
+		a.cfgSettle(c, src, true, only)
 		return nil
 	}
 	a.UI.Say(fmt.Sprintf("  %d change(s) from the camera's current settings:", len(ch)))
@@ -518,6 +596,8 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 	}
 	applied, failed, restart, power := a.cfgReport(out)
 	a.UI.Say(fmt.Sprintf("  %d applied, %d failed, %d not applied.", applied, failed, len(out)-applied-failed))
+	// what the camera has now is recorded BEFORE the restart question: the control port is down for a moment after it
+	a.cfgSettle(c, src, failed == 0 && applied == len(out), only)
 	if power {
 		a.UI.Say("  A change above applies at the next power cycle: unplug the USB-C power, wait 5 seconds, plug it back (the assistant never does it for you).")
 	}
@@ -529,7 +609,6 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 			a.UI.Say("  Not restarted: the new values apply at the next restart of the video service or the next reboot.")
 		}
 	}
-	a.cfgSettle(c, src, failed == 0 && len(declined) == 0 && applied > 0, applied, only)
 	if failed > 0 {
 		return ui.ErrFailed
 	}
@@ -548,27 +627,37 @@ func onlyNote(only map[string]bool) string {
 	return " (" + strings.Join(g, ", ") + " only)"
 }
 
-// cfgSettle records what the camera has now as its local config and where it came from. When the user
-// restricted the groups, or something failed, the source is "local": the camera does not wholly follow that config.
-func (a *App) cfgSettle(c *camssh.Client, src *cfgSrc, clean bool, applied int, only map[string]bool) {
+// cfgSettle records what the camera has now as its local config and where it came from. clean says every
+// change was applied (none failed, was declined or stopped). When it is not, or the groups were restricted, the
+// source is "local" (the camera does not wholly follow that config) and a pending first-install choice stays pending.
+func (a *App) cfgSettle(c *camssh.Client, src *cfgSrc, clean bool, only map[string]bool) {
 	if a.UI.Dry() {
 		return
 	}
+	whole := clean && only == nil
 	label := "local"
-	if clean && only == nil {
+	if whole {
 		label = src.label
 	}
-	if label != "local" || applied > 0 || a.St.Get(keyConfigSource) == "" {
-		a.setState(keyConfigSource, label)
+	a.setState(keyConfigSource, label)
+	if whole {
+		_ = a.St.Unset(keyConfigPending)
 	}
-	_ = a.St.Unset(keyConfigPending)
 	a.cfgRecordLocal(c)
 }
 
 // cfgRecordLocal writes camera.conf from a fresh read of the camera (settings only: a password or the Wi-Fi is
-// kept on this computer only when the user said so through save-local or save-global).
+// kept on this computer only when the user said so through save-local or save-global). A read in which the
+// control port said nothing never replaces the file: it would erase the LED, picture, video and audio settings.
 func (a *App) cfgRecordLocal(c *camssh.Client) {
 	r := a.cfgReadLive(c, a.Cams.Name)
+	if !r.ctlOK {
+		a.UI.Warn("the camera's control port did not answer: its settings were NOT recorded on this computer (the earlier record is kept). Run '" + Prog + " config save-local' when it is back.")
+		return
+	}
+	if len(r.missing) > 0 {
+		a.UI.Say("  Not recorded (could not be read): " + strings.Join(r.missing, ", ") + ".")
+	}
 	_ = r.f.Set(profile.SavedAt, cfgNow())
 	if err := profile.Save(a.cameraPlace(a.Cams.Name), profile.Settings, r.f); err != nil {
 		a.UI.Warn("could not record this camera's settings on this computer: " + err.Error())
@@ -576,3 +665,4 @@ func (a *App) cfgRecordLocal(c *camssh.Client) {
 	}
 	a.UI.Say("  The camera's settings were recorded on this computer (" + Prog + " config show).")
 }
+

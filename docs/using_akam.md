@@ -63,16 +63,16 @@ hand, or by an earlier version) is recorded without redoing anything:
 
 A **config** is a copy of the settings of a camera, kept on **this computer**, that you can use again on another camera. It holds:
 
-- the **settings** of the Options screen: video (bitrate, frame rate, key frame interval), picture, LED and IR, audio, ONVIF on or off and its port, time sync (NTP), MQTT (broker, port, user, topic and options), the video password on or off and its user name;
+- the **settings** of the Options screen that the camera keeps across a reboot: video (bitrate, frame rate, key frame interval), picture, LED and IR, audio, ONVIF on or off and its port, time sync (NTP), MQTT (broker, port, user, topic and options), the video password on or off and its user name;
 - the **SSH key choice**: shared (`~/.ssh/akam`), a key of its own for the camera (`~/.ssh/akam-<name>`), or a custom key file;
 - optionally, in a separate private file: the **video password**, the **MQTT password**, and the **Wi-Fi** name and password (to prepare the card of a new camera without typing them again).
 
-It never holds the camera's host name (that is the camera's identity), and nothing is ever synchronised: a config is applied only when you ask, and a camera keeps its own settings.
+It never holds the camera's host name (that is the camera's identity) nor `night.mode` and the white balance (they go back to their default at every reboot), and nothing is ever synchronised: a config is applied only when you ask, and a camera keeps its own settings.
 
 | Config | Where it is | What it is for |
 |---|---|---|
 | **Global** | `profiles/global.conf` (+ `global.secrets`) in the state folder | the default template: offered when you set up a new camera, and applied on request |
-| **Local** | `camera.conf` (+ `camera.secrets`) in the camera's own state folder | what was last read from, or applied to, that camera. It wins for that camera |
+| **Local** | `camera.conf` (+ `camera.secrets`) in the camera's own state folder | what was last read from, or applied to, that camera. Nothing is applied from the global config unless you ask, so the camera simply keeps these |
 | **Copy** | nothing new | take the settings of another camera, live if it answers, else its local config |
 
 `akam status` and the camera chooser say where the settings of a camera came from (`local (from global)`, `local (from camera salon)`, `local`), and the Options screen shows it in its title (`settings: local (from global)`).
@@ -83,7 +83,7 @@ The Wi-Fi password was never kept on this computer before. **It still is not, un
 
 > Also keep the Wi-Fi name and password in the global config? They are stored on this computer in a private file; anyone with access to your account can read it. [y/N]
 
-They go in `global.secrets` or `camera.secrets` (mode 600, restricted to your account on Windows), never in the settings file, the state file, the log, a command line or the screen (`config show` says `set` or `not set`). The camera cannot tell its passwords, so you type them when you keep them. Delete them at any time:
+They go in `global.secrets` or `camera.secrets` (mode 600, restricted to your account on Windows), never in the settings file, the state file, the log, a command line or the screen (`config show` says `set` or `not set`, and the Wi-Fi name is not printed or logged either). The camera cannot tell its passwords, so you type them when you keep them. A saved password is kept **with what it belongs to** (the video password with its user name, the MQTT password with its broker and user) and is used only while the settings still say the same: when you save again with another user or broker the old password is removed, and a yes on a matching one asks "Keep it? (No: type a new one)". After `rtsp-auth set` or `mqtt set` on a camera whose saved password is now out of date, you are asked (default No) whether to update it; otherwise it is removed. Delete them at any time:
 
 ```bash
 ./akam config forget-secrets --global        # the global config's passwords and Wi-Fi
@@ -110,7 +110,9 @@ The Wi-Fi is only ever used to prepare the card of a new camera. It is never app
 - A password cannot be read back from a camera, so it is sent only together with the setting that needs it (turning the video password on, changing its user, a new MQTT broker); `--include-secrets` sends the saved ones again. A password that the config does not hold is asked.
 - Taking the video password off, and changing the SSH key, each ask their own question (default No). The key change is the same flow as `./akam key use ...`: the new key is added, proven with a second login, and only then remembered.
 - `--only` takes `video,picture,led,audio,onvif,ntp,mqtt,auth,key`.
-- A failed item does not stop the others; the exit status is 1 if any failed.
+- A failed item does not stop the others; the exit status is 1 if any failed. What the camera could not be read for (an older image, a helper that did not answer) is listed and left out of the comparison, never treated as "off"; when the control port says nothing at all, nothing is compared, saved or recorded (and a source camera is then replaced by its last saved config, with a warning).
+- The result is recorded as the camera's local config **before** the video restart question (the port is down for a moment after a restart), and a read that got nothing never overwrites the record.
+- Copying from another camera reads it over SSH with its own key and its remembered host key; a changed host key, a host name that is not the one this computer knows, or an unknown host key stop the live read (it says why and uses the last saved config).
 
 In the full-screen assistant, **Configs** on the home screen (key `9`) does all of this from a menu, and **Edit the global config** is a form like the Options screen that needs no camera.
 

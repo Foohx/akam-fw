@@ -292,6 +292,9 @@ func (a *App) dispatch(cmd string) error {
 	if len(a.Opt.Args) > 1 {
 		args = a.Opt.Args[1:]
 	}
+	if o := a.Opt; cmd != "config" && (o.CfgGlobal || o.CfgSecrets || o.CfgFrom != "" || o.CfgOnly != "") {
+		return usageErr("akam: --global, --from, --only and --include-secrets are options of the config command (see " + Prog + " help)")
+	}
 	switch cmd {
 	case "":
 		return a.cmdMenu()
