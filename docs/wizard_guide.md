@@ -56,7 +56,9 @@ Good to know:
 
 - The wizard never runs `sudo` itself, shows every command before running it and never reboots the camera: you unplug
   and replug the power yourself. It never keeps your Wi-Fi password in its own state or log files and never puts it on a
-  command line; the password is written only to the cards it prepares (in clear text) and to the camera.
+  command line; the password is written only to the cards it prepares (in clear text) and to the camera. Only the Go
+  assistant can save it for you, in a separate private file, and only after a yes (default No) when you save a
+  [config](using_akam.md#configs-global-local-copy); the bash wizard never does.
 - **SSH key:** `prepare-flash-sd` asks "Which SSH key should open this camera?": the shared key `~/.ssh/akam` (the default,
   one key for all your cameras), a key for this camera only (`~/.ssh/akam-<camera-name>`), or one of your ed25519 keys. A key
   that is missing is created with `ssh-keygen` (it asks the passphrase) after a yes; an existing file is never overwritten.

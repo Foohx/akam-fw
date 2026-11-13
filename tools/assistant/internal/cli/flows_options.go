@@ -181,7 +181,7 @@ func (a *App) flowOptions() error {
 	for {
 		snap := a.readOptions(c)
 		a.UI.Blank()
-		a.UI.Bold(fmt.Sprintf("Camera options - %s (%s)%s", a.Cams.Name, ip, fwSuffix(snap.fw)))
+		a.UI.Bold(fmt.Sprintf("Camera options - %s (%s)%s%s", a.Cams.Name, ip, fwSuffix(snap.fw), a.settingsSuffix()))
 		a.showHealth(snap.health)
 		if offerClock {
 			a.clockOffer(c, snap.health)

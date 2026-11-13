@@ -80,7 +80,7 @@ func TestChooserSameCameraNewAddress(t *testing.T) {
 			e.fakeLAN("192.0.2.99")
 			// home: 5 = find cameras; chooser: 1 row (the moved camera is found, so the scan row comes first), 3 = scan
 			// the scan question is answered y, then the row 1 is chosen; the re-pin question follows; 9 quits the home
-			r := e.noIP("5\n3\ny\n1\n"+tc.answer+"9\n", "--camera", "salon")
+			r := e.noIP("5\n3\ny\n1\n"+tc.answer+"10\n", "--camera", "salon")
 			expectRC(t, r, 0)
 			contains(t, r.out, "Cameras on your network", "Name           Address           Kind            Firmware         Remembered",
 				"salon", "192.0.2.99", "yes: salon (was 192.0.2.21)", "Camera: salon at 192.0.2.99.")
@@ -131,13 +131,13 @@ func TestChooserScanDefaultsToNo(t *testing.T) {
 	e.fakeLAN("192.0.2.21")
 	inner := e.disc.Dial
 	e.disc.Dial = func(ctx context.Context, n, a string) (net.Conn, error) { dials.Add(1); return inner(ctx, n, a) }
-	r := e.noIP("5\n2\n7\n9\n", "--camera", "salon") // check remembered (4 ports), then back
+	r := e.noIP("5\n2\n7\n10\n", "--camera", "salon") // check remembered (4 ports), then back
 	expectRC(t, r, 0)
 	if dials.Load() == 0 {
 		t.Error("checking the remembered camera dialled nothing")
 	}
 	dials.Store(0)
-	r = e.noIP("5\n3\n\n7\n9\n", "--camera", "salon") // scan, Enter = No
+	r = e.noIP("5\n3\n\n7\n10\n", "--camera", "salon") // scan, Enter = No
 	expectRC(t, r, 0)
 	if n := dials.Load(); n != 0 {
 		t.Errorf("%d connections before a yes", n)
@@ -151,7 +151,7 @@ func TestChooserNewCameraIsNamed(t *testing.T) {
 	e.cam.SetCtl("sys.hostname", "evil\x1b[2Jcam")
 	e.fakeLAN("192.0.2.57")
 	// find (5) > type an address (4 with no rows: after the 4 fixed actions, index 4) ; bad name, then salon
-	r := e.noIP("5\n4\n192.0.2.57\n1\nBad Name\nsalon\n9\n", "--camera", "first")
+	r := e.noIP("5\n4\n192.0.2.57\n1\nBad Name\nsalon\n10\n", "--camera", "first")
 	expectRC(t, r, 0)
 	contains(t, r.out, "(evilcam)", "'Bad Name' is not valid", "Camera: salon at 192.0.2.57.")
 	notContains(t, r.out, "\x1b")
@@ -167,12 +167,12 @@ func TestChooserNewCameraIsNamed(t *testing.T) {
 func TestChooserForget(t *testing.T) {
 	e := newEnv(t)
 	e.rememberCamera("salon", "192.0.2.21")
-	r := e.noIP("5\n6\n1\n\n7\n9\n", "--camera", "salon") // forget > salon > Enter (No)
+	r := e.noIP("5\n6\n1\n\n7\n10\n", "--camera", "salon") // forget > salon > Enter (No)
 	expectRC(t, r, 0)
 	if e.readStateOf("salon", "camera_ip") == "" {
 		t.Error("forgotten without a yes")
 	}
-	r = e.noIP("5\n6\n1\ny\n7\n9\n", "--camera", "salon")
+	r = e.noIP("5\n6\n1\ny\n7\n10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	if e.readStateOf("salon", "camera_ip") != "" || e.readStateOf("salon", "camera_kind") != "akam" {
 		t.Errorf("ip=%q kind=%q", e.readStateOf("salon", "camera_ip"), e.readStateOf("salon", "camera_kind"))

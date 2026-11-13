@@ -31,7 +31,7 @@ func TestChooserNeverRepinsOverADifferentPinnedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(kh)
-	r := e.noIP("5\n3\ny\n1\ny\n9\n", "--camera", "salon")
+	r := e.noIP("5\n3\ny\n1\ny\n10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	notContains(t, r.err, "Same camera, new address")
 	contains(t, r.out+r.err, "already has a DIFFERENT SSH host key pinned")
@@ -161,7 +161,7 @@ func TestImageImportIsStructurallyChecked(t *testing.T) {
 				keep = append(keep, l)
 			}
 			fw.writeState(strings.Join(keep, "\n"))
-			r := fw.run("1\n9\n", "--camera", "default", "--image", bad)
+			r := fw.run("1\n10\n", "--camera", "default", "--image", bad)
 			contains(t, r.out+r.err, tc.want)
 			if fw.readState("step_image_done") != "" || fw.readState("image_path") != "" {
 				t.Error("an invalid image was recorded")
@@ -176,7 +176,7 @@ func TestBackupRootRefusesControlCharacters(t *testing.T) {
 	akamState(e, "")
 	bad := filepath.Join(t.TempDir(), "x\x01y")
 	os.MkdirAll(bad, 0o700)
-	r := e.run("4\n4\n2\n"+bad+"\n3\n5\n9\n", "--camera", "default")
+	r := e.run("4\n4\n2\n"+bad+"\n3\n5\n10\n", "--camera", "default")
 	expectRC(t, r, 0)
 	contains(t, r.out, "That is not a usable path")
 	if e.readState("backup_root") != "" {

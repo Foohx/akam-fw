@@ -76,6 +76,7 @@ func homeScreen(h homeInfo) (string, []homeItem) {
 		it("settings", "6  Settings", "Backup folder, state folder, licences.", ""),
 		it("doctor", "7  Check this computer", "What works here, what is missing.", ""),
 		it("camera", "8  Change camera", "Choose another camera."+map[bool]string{true: " (shortcut: c)"}[h.Hotkey], "c"),
+		it("configs", "9  Configs", "Global, local and copied settings of cameras.", ""),
 	}
 	return strings.Join(homeHeader(h), "\n"), items
 }
@@ -187,6 +188,8 @@ func (a *App) homeAction(act string) error {
 		return err
 	case "settings":
 		return a.flowSettings()
+	case "configs":
+		return a.flowConfigs()
 	case "doctor":
 		return a.cmdDoctor()
 	}

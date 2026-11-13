@@ -79,7 +79,9 @@ port and setting: [using Akam day to day](docs/using_akam.md).
 `./akam help` lists every command; add `--dry-run` to rehearse without changing anything. The menu, the steps and
 the risk of each one: [wizard guide](docs/wizard_guide.md). The wizard never keeps your Wi-Fi password in its own state or log files and never puts it on a command line;
 it is written only to the cards the wizard prepares (in clear text: erase them with `./akam wipe-sd`) and to the
-camera. Keep your backup private, on two media.
+camera. The one exception is the Go assistant's saved configs, and only if you say yes (default No) each time you
+save one: the Wi-Fi and the passwords then go in a separate private file on your computer
+([Configs](docs/using_akam.md#configs-global-local-copy); `./akam config forget-secrets` deletes it). Keep your backup private, on two media.
 
 ## Daily use and details
 
