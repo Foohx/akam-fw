@@ -456,7 +456,13 @@ func validHost(s string) bool {
 
 // keyPath is cam_key.
 func (a *App) keyPath() string {
-	return camssh.KeyPathFor(a.Opt.Identity, a.Opt.Pubkey, a.St.Get("ssh_pubkey"))
+	pub := a.Opt.Pubkey
+	if pub != "" {
+		if np, err := normPub(pub); err == nil { // ~ expanded and absolute, as the card step saved it
+			pub = np
+		}
+	}
+	return camssh.KeyPathFor(a.Opt.Identity, pub, a.St.Get("ssh_pubkey"))
 }
 
 func (a *App) knownHostsFile() string { return filepath.Join(a.Cams.Base, "known_hosts") }

@@ -391,8 +391,9 @@ func (a *App) loadPair(pub string, want gossh.PublicKey, pass *string) error {
 }
 
 // authkeysRun sends one add or remove of akam_authkeys.sh over c and returns the result word
-// (AUTHKEYS=...) and the card state (CARD=...). The key line goes through standard input, never on
-// the command line or in a log.
+// (AUTHKEYS=...). The word is read from whatever the camera printed, even when the session then failed
+// (a dropped connection after the helper ran must not be reported as "nothing changed"). The key line goes
+// through standard input, never on the command line or in a log.
 func (a *App) authkeysRun(c *camssh.Client, script []byte, mode, line, fp string) (word string, err error) {
 	if res, err := a.run(c, remoteAuthkeysPut, bytes.NewReader(script), "'cat > /tmp/akam_authkeys.sh' < akam_authkeys.sh"); err != nil || res.Status != 0 {
 		if err == nil {
@@ -405,13 +406,13 @@ func (a *App) authkeysRun(c *camssh.Client, script []byte, mode, line, fp string
 		cmd = remoteAuthkeysRemove
 	}
 	res, err := a.run(c, cmd, strings.NewReader(line+"\n"), fmt.Sprintf("'%s' < key line (%s)", cmd, fp))
-	if err != nil {
-		return "", err
-	}
 	for _, l := range strings.Split(string(res.Stdout), "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "AUTHKEYS="); ok {
 			word = v
 		}
+	}
+	if err != nil {
+		return word, err
 	}
 	if res.Status != 0 && word == "" {
 		word = "FAILED"
@@ -596,8 +597,6 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 	a.UI.Say("  2. Akam logs in again with the new key. Only if that works is it remembered for this camera.")
 	a.UI.Say("  3. You are then asked whether to remove the current key from the camera (default No).")
 	a.UI.Say("  If a step fails Akam undoes what it added and checks that the current key still works. Your other cameras are not touched.")
-	card := a.cardState(c, script)
-	a.warnCard(card)
 	if !a.confirm("  Add the new key to this camera now?") {
 		a.UI.Say("  Nothing was changed on the camera.")
 		return nil
@@ -606,6 +605,10 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 		a.UI.Warn("Stopped. Nothing was changed on the camera.")
 		return ui.ErrFailed
 	}
+	// Only after the yes (a read-only probe, but it may mount the card for a moment): a card left in the
+	// camera can undo the change at the next boot, so say so before the key is saved.
+	card := a.cardState(c, script)
+	a.warnCard(card)
 
 	op := a.op()
 	defer op.end()
@@ -674,7 +677,7 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 		a.UI.Say("  The old key was left on the camera.")
 		return nil
 	}
-	return a.keyRemoveOld(ip, script, oldKey, newKey, newPriv, &newPass, oldFP)
+	return a.keyRemoveOld(ip, script, oldKey, newKey, newPriv, &newPass, oldFP, pubComment(oldPub))
 }
 
 // keyRollback takes a key we just added out of the camera's list again (the check login failed). The
@@ -698,7 +701,7 @@ func (a *App) keyRollback(ip string, c *camssh.Client, script []byte, line, fp s
 
 // keyRemoveOld removes the old key over a login made with the NEW key, then proves the new key still
 // logs in. If that proof fails the old key is put back. Only the word "removed" means it was removed.
-func (a *App) keyRemoveOld(ip string, script []byte, oldKey, newKey gossh.PublicKey, newPriv string, newPass *string, oldFP string) error {
+func (a *App) keyRemoveOld(ip string, script []byte, oldKey, newKey gossh.PublicKey, newPriv string, newPass *string, oldFP, oldComment string) error {
 	if sameKey(oldKey, newKey) { // never the key just verified
 		return a.UI.Fail("the old key is the new key; it is not removed.", "nothing was changed.")
 	}
@@ -713,7 +716,7 @@ func (a *App) keyRemoveOld(ip string, script []byte, oldKey, newKey gossh.Public
 	op.start(0)
 	op.writing(true)
 	defer op.writing(false)
-	oldLine := authLine(oldKey, "akam")
+	oldLine := authLine(oldKey, oldComment) // put back with its own comment if it has to be
 	word, err := a.authkeysRun(nc, script, "remove", oldLine, oldFP)
 	switch {
 	case word == "REFUSED_LAST_KEY":

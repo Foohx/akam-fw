@@ -119,9 +119,11 @@ log_mode() {
 filter_keys() {
     _src=$1
     _dst=$2
-    : >"$_dst"
+    # a failed redirection of a special builtin ends an ash script: do it in a subshell
+    ( : >"$_dst" ) 2>/dev/null || return 1
     _n=0
     _bad=0
+    _werr=0
     _cr=$(printf '\r')
     while IFS= read -r _line || [ -n "$_line" ]; do
         # Strip CRs (DOS line endings) in pure shell: no "tr" on the camera.
@@ -134,13 +136,17 @@ filter_keys() {
                 ;;
         esac
         if printf '%s\n' "$_line" | grep -Eq '^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{43,}={0,2}( [^[:cntrl:]]*)?$'; then
-            printf '%s\n' "$_line" >>"$_dst"
+            printf '%s\n' "$_line" >>"$_dst" 2>/dev/null || _werr=1
             _n=$((_n + 1))
         else
             _bad=$((_bad + 1))
         fi
     done <"$_src"
     log "SD keys: $_n accepted, $_bad rejected"
+    if [ "$_werr" != 0 ]; then
+        log "writing the validated SD keys failed: not using them"
+        return 1
+    fi
     [ "$_n" -gt 0 ]
 }
 
@@ -178,6 +184,7 @@ find_mounted_sd() {
 # Sets _sdmnt (to be unmounted by the caller) and _sdfile. Never fatal.
 mount_sd_ro() {
     _sdmnt=$TMP_DIR/akam_sd
+    _sd_pos=0   # 1 when it is KNOWN that no card key file is there (not when a mount merely failed)
     if ! mkdir -p "$_sdmnt" 2>/dev/null; then
         log "SD not mounted and cannot create $_sdmnt"
         return 1
@@ -195,12 +202,16 @@ mount_sd_ro() {
                 return 0
             fi
             log "SD mounted ($1 $2) but no akam/authorized_keys on it"
+            _sd_pos=1
             umount "$_sdmnt" 2>/dev/null
         else
             log "mount -t $1 -o ro $2 $_sdmnt failed: $_err"
         fi
     done
-    [ "$_found" = 1 ] || log "SD not mounted and no /dev/mmcblk0p1 or /dev/mmcblk0 device node"
+    if [ "$_found" != 1 ]; then
+        _sd_pos=1
+        log "SD not mounted and no /dev/mmcblk0p1 or /dev/mmcblk0 device node"
+    fi
     return 1
 }
 
@@ -208,6 +219,7 @@ provision_keys() {
     _sdfile=$SD_DIR/authorized_keys
     _sdmnt=
     _sd_seen=
+    _sd_pos=0
     if [ ! -f "$_sdfile" ] && [ -f "$LEGACY_SD_DIR/authorized_keys" ]; then
         _sdfile=$LEGACY_SD_DIR/authorized_keys
         log_legacy_sd "$_sdfile"
@@ -216,7 +228,7 @@ provision_keys() {
         if find_mounted_sd; then
             :
         elif [ -n "$_sd_seen" ]; then
-            :   # card is mounted, the file is just not on it (logged above)
+            _sd_pos=1   # card is mounted, the file is just not on it (logged above)
         elif [ "${AKAM_SD_AUTOMOUNT:-1}" = 1 ]; then
             mount_sd_ro || _sdmnt=
             [ -f "$_sdfile" ] || _sdmnt=
@@ -224,6 +236,13 @@ provision_keys() {
     fi
     if [ ! -f "$_sdfile" ]; then
         log "no authorized_keys on the SD card, keeping existing authorized_keys"
+        # A boot that positively sees no card key file forgets the last import: a card put back later
+        # (the recovery route: boot once without it, then with it) is imported again, even with the same
+        # keys. Not done when a mount merely failed (unknown): that is not "no card".
+        if [ "$_sd_pos" = 1 ] && { [ -e "$DB_DIR/.card_keys_hash" ] || [ -L "$DB_DIR/.card_keys_hash" ]; }; then
+            rm -rf "$DB_DIR/.card_keys_hash"
+            log "no card: the last card import is forgotten (a card put back is imported again)"
+        fi
         return 0
     fi
     install_keys
@@ -234,10 +253,17 @@ provision_keys() {
     return 0
 }
 
+# has_valid_key FILE: the file holds at least one ssh-ed25519 line (an empty, comment-only or garbage list
+# cannot log anybody in, so it never counts as "the current list").
+has_valid_key() {
+    [ -s "$1" ] && grep -Eq '(^|[[:space:]])ssh-ed25519 AAAAC3NzaC1lZDI1NTE5' "$1" 2>/dev/null
+}
+
 # save_card_hash HASH: remember which card key list was imported last (atomic, 0600).
 save_card_hash() {
     [ -n "$1" ] || return 0
     _hn=$DB_DIR/.card_keys_hash.new.$$
+    if [ -d "$DB_DIR/.card_keys_hash" ]; then rm -rf "$DB_DIR/.card_keys_hash"; fi
     if echo "$1" >"$_hn" 2>/dev/null && chmod 600 "$_hn" && mv -f "$_hn" "$DB_DIR/.card_keys_hash"; then
         :
     else
@@ -254,11 +280,20 @@ install_keys() {
         # list, kept next to authorized_keys): a card left in the camera must not undo a key change
         # made over SSH (akam key use-*) at every boot. A new card, with other keys, still replaces
         # the list: that is the recovery route. No stored hash (first boot, older firmware): import.
-        _h=$(md5sum <"$_new" 2>/dev/null | cut -d' ' -f1)
+        _h=$(md5sum <"$_new" 2>/dev/null)
+        _h=${_h%% *}
+        case "$_h" in
+            *[!0-9a-f]*) _h= ;;
+        esac
+        [ "${#_h}" -eq 32 ] || {
+            [ -z "$_h" ] || _h=
+            log "could not compute the md5 of the SD keys: importing them without remembering the import"
+        }
         _hf=$DB_DIR/.card_keys_hash
+        if [ -d "$_hf" ]; then rm -rf "$_hf"; fi
         _hold=
         [ -f "$_hf" ] && read -r _hold <"$_hf" 2>/dev/null
-        if [ -n "$_h" ] && [ "$_h" = "$_hold" ] && [ -s "$AUTHKEYS" ]; then
+        if [ -n "$_h" ] && [ "$_h" = "$_hold" ] && has_valid_key "$AUTHKEYS"; then
             log "SD keys unchanged since the last import, keeping the current authorized_keys (a key change made over SSH survives)"
             rm -f "$_new"
         elif [ -f "$AUTHKEYS" ] && cmp -s "$_new" "$AUTHKEYS"; then
@@ -296,7 +331,7 @@ fix_perms() {
 wait_config_writable() {
     _i=0
     while [ "$_i" -lt "$WAIT_TRIES" ]; do
-        if mkdir -p "$DB_DIR" 2>/dev/null && : >"$DB_DIR/.rwtest" 2>/dev/null; then
+        if mkdir -p "$DB_DIR" 2>/dev/null && ( : >"$DB_DIR/.rwtest" ) 2>/dev/null; then
             rm -f "$DB_DIR/.rwtest"
             return 0
         fi
@@ -348,7 +383,7 @@ prepare_home() {
     chmod 700 "$_home" 2>/dev/null
     chmod 755 "$_pwd" 2>/dev/null
     if ! grep -q "^root:[^:]*:[^:]*:[^:]*:[^:]*:$_home:" "$_pw" 2>/dev/null; then
-        [ -e "$_pw" ] || : >"$_pw" 2>/dev/null
+        [ -e "$_pw" ] || ( : >"$_pw" ) 2>/dev/null
         if grep -q '^root:' "$_pw" 2>/dev/null; then
             sed "s|^\\(root:[^:]*:[^:]*:[^:]*:[^:]*:\\)[^:]*:|\\1$_home:|" "$_pw" >"$_pwn" 2>/dev/null
         else
@@ -416,7 +451,7 @@ do_start() {
         return 0
     fi
 
-    : >"$LOG" 2>/dev/null
+    ( : >"$LOG" ) 2>/dev/null
     log "start (pid $$)"
 
     if [ ! -x "$BIN_DIR/dropbear" ] || [ ! -x "$BIN_DIR/dropbearkey" ]; then
@@ -461,7 +496,7 @@ do_start() {
 
     provision_keys
     [ "$_persistent" = 1 ] && fix_perms
-    if [ ! -s "$AUTHKEYS" ]; then
+    if ! has_valid_key "$AUTHKEYS"; then
         log "WARNING: no authorized key, nobody can log in (put authorized_keys on the SD card)"
     fi
 

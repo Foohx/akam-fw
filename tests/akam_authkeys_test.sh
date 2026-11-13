@@ -159,6 +159,11 @@ for SH in "${SHELLS[@]}"; do
     check "remove: a CRLF line is matched, the option-prefixed key is kept" bash -c '[ "$1" = "AUTHKEYS=removed" ] && grep -q "no-pty ssh-ed25519 $2" "$3" && ! grep -q "$4" "$3"' _ "$OUT" "$kb" "$DB/authorized_keys" "$ka"
     run remove "$WORK/kb.pub"
     check "remove: a malformed blob does not count as another key (last key refused)" bash -c '[ "$1" = "AUTHKEYS=REFUSED_LAST_KEY" ]' _ "$OUT"
+    # a line with leading blanks or tab separators is not a key for Dropbear: it does not count and is not matched
+    { printf ' ssh-ed25519 %s lead\n' "$ka"; printf 'ssh-ed25519\t%s tab\n' "$kb"; printf 'ssh-ed25519 %s ok\n' "$ka"; } >"$DB/authorized_keys"
+    cp "$DB/authorized_keys" "$HOMEK"
+    run remove "$WORK/ka.pub"
+    check "a key with only blank/tab-separated copies is the last key (refused)" bash -c '[ "$1" = "AUTHKEYS=REFUSED_LAST_KEY" ]' _ "$OUT"
     # stale temp files of a dead run are cleaned
     echo junk >"$DB/.authorized_keys.new.999"
     run add "$WORK/kc.pub"
@@ -166,11 +171,13 @@ for SH in "${SHELLS[@]}"; do
 
     # ---- the card state is reported (H2b)
     mkdir -p "$R/mnt/akam"
-    run add "$WORK/kc.pub"
+    run card "$WORK/empty"
     check "no card: CARD=absent" test "$CARD" = "CARD=absent"
     cp "$WORK/ka.pub" "$R/mnt/akam/authorized_keys"
-    run add "$WORK/kc.pub"
+    run card "$WORK/empty"
     check "a card with akam/authorized_keys: CARD=present" test "$CARD" = "CARD=present"
+    run add "$WORK/kc.pub"
+    check "add and remove print no CARD line (no probe, no mount)" test -z "$CARD"
     ALLC=$(AKAM_ROOT=$R "${SHCMD[@]}" "$SCRIPT" card </dev/null)
     check "mode card: read-only query, prints CARD=present" test "$ALLC" = "CARD=present"
     rm -f "$R/mnt/akam/authorized_keys"
@@ -179,6 +186,17 @@ for SH in "${SHELLS[@]}"; do
     echo "/dev/mmcblk0p1 /media/sd vfat rw 0 0" >"$WORK/mounts"
     ALLC=$(AKAM_PROC_MOUNTS=$WORK/mounts AKAM_ROOT=$R "${SHCMD[@]}" "$SCRIPT" card </dev/null)
     check "a card mounted elsewhere is found through /proc/mounts" test "$ALLC" = "CARD=present"
+    # a card that is in but not mounted is mounted read-only for a moment, and always unmounted again
+    mkdir -p "$R/dev" "$WORK/stubs"
+    : >"$R/dev/mmcblk0p1"
+    printf '#!/bin/sh\nmkdir -p "$6/akam" && echo k >"$6/akam/authorized_keys" && echo "mount $6" >>"%s"\n' "$WORK/mount.log" >"$WORK/stubs/mount"
+    printf '#!/bin/sh\necho "umount $1" >>"%s"; rm -rf "$1/akam"\n' "$WORK/mount.log" >"$WORK/stubs/umount"
+    chmod +x "$WORK/stubs/mount" "$WORK/stubs/umount"
+    : >"$WORK/mount.log"
+    ALLC=$(PATH="$WORK/stubs:$PATH" AKAM_PROC_MOUNTS=/nonexistent AKAM_ROOT=$R "${SHCMD[@]}" "$SCRIPT" card </dev/null)
+    check "an unmounted card is probed read-only: CARD=present" test "$ALLC" = "CARD=present"
+    check "  ... and unmounted again, the mount point removed" bash -c '[ "$(grep -c "^umount " "$1")" = 1 ] && [ ! -d "$2"/tmp/akam_authkeys_sd.* ]' _ "$WORK/mount.log" "$R"
+    rm -f "$R/dev/mmcblk0p1"
     rm -rf "$R/media/sd/akam"
     mkdir -p "$R/media/sd"
     ALLC=$(AKAM_PROC_MOUNTS=$WORK/mounts AKAM_ROOT=$R "${SHCMD[@]}" "$SCRIPT" card </dev/null)
