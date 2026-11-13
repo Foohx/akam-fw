@@ -65,7 +65,8 @@ hand, or by an earlier version) is recorded without redoing anything:
 |---|---|
 | `doctor`, `get-kit`, `build` | check this PC, download and verify the prebuilt kit, or build from source |
 | `prepare-backup-sd`, `find-camera`, `backup`, `image`, `prepare-flash-sd`, `flash`, `verify` | the installation steps, in order |
-| `update`, `restore` | flash a newer image over SSH, or put your original APP back |
+| `update`, `restore` | flash a newer image over SSH, or put your original APP back. Go assistant: `update [--version X.Y.Z \| --kit FILE \| --image FILE \| --stock]` ([choose your firmware](wizard_guide.md#choosing-your-firmware-go-assistant-only)) |
+| `releases` | Go assistant: the Akam versions published on GitHub, newest first (`--include-prereleases`) |
 | `wipe-sd` | erase a card that holds your Wi-Fi password |
 | `status`, `step NAME` | show every step; run one step again |
 | `cameras`, `rename-camera NEW`, `register` | work with several cameras |
@@ -87,7 +88,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 
 | I want to... | Command |
 |---|---|
-| flash a newer image | `./akam update` (`--image FILE` for a specific one) |
+| flash a newer image | `./akam update` (`--image FILE` for a specific one). Go assistant: it asks "Which firmware?" (the latest release by default, an older one, a kit or an image you have, or the stock firmware), or `./akam update --version X.Y.Z`, `./akam releases` to list ([details](wizard_guide.md#choosing-your-firmware-go-assistant-only)) |
 | change the camera's network name (what your router lists) | `./akam hostname [NAME]` (default: the camera's name), applied at the next power cycle |
 | ask for a user and password on the stream (off by default) | `./akam rtsp-auth set` (also `status`, `disable`) |
 | turn the front LED off or make it a status light, or keep the infrared LEDs dark at night | `./akam led` shows both; `./akam led status on\|off\|auto`, `./akam led ir auto\|off` |
@@ -98,7 +99,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | change brightness, contrast, saturation, sharpness, white balance or day/night mode | `./akam picture` shows them; `./akam picture brightness N` (also `contrast`, `saturation`, `sharpness`, N from -50 to 50), `wb conf\|manual`, `night auto\|day\|night`, `reset` (all of them are saved on the camera) |
 | lower the bitrate or frame rate, or change the key frame interval of the video | `./akam video` shows them; `./akam video bitrate N` (500 to 3000 kbit/s, default 1536), `fps 10\|15\|20\|25` (default 15; higher rates make dim light darker and grainier and start night mode earlier, see [troubleshooting](troubleshooting.md)), `gop N` (key frame every N seconds, 1 to 4, default 2). Saved on the camera and applied when the video service restarts (it offers to restart it for you; the stream stops for a few seconds). Resolution and flip/mirror are not available yet |
 | make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager); off by default | `./akam onvif enable [PORT]` (asks first; needs the video password), `./akam onvif status`, `./akam onvif disable` ([ONVIF](onvif.md)) |
-| go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](../README.md#important-disclaimer-and-risks)) |
+| go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](../README.md#important-disclaimer-and-risks)). Go assistant: also `./akam update --stock`, or "Stock firmware (from your backup)" in the firmware list; the same gates, never tested on a real camera |
 
 The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
 has no Wi-Fi, blink slowly while someone watches the video, and stay solid otherwise; the default `on`

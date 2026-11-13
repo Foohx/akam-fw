@@ -78,3 +78,38 @@ and a backup over SSH. The Windows and macOS binaries are **built, not hardware-
 or in WSL for now ([install and unsigned-binary steps](assistant_install.md), [hardware test plan](assistant_hardware_test_plan.md)).
 It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
 `AKAM_USE_BIN=1 ./akam ...`.
+
+### Choosing your firmware (Go assistant only)
+
+"Set up a new camera" and "Update this camera" ask **Which firmware?** before anything is downloaded, built or
+written. The list (a full-screen list, or numbered in `--plain`; Enter takes the first row) holds:
+
+| Row | What it does |
+|---|---|
+| `Akam X.Y.Z (latest)` (the default) | the newest release published on GitHub, downloaded and verified by its signature |
+| `Akam X.Y.Z  - older` | an earlier release, to go back. If it is older than what the camera runs, you get a warning (settings files saved by the newer version may not be understood; your backup stays valid) and one yes/no, default No |
+| `Kit already downloaded: X.Y.Z` | a kit kept in `<state folder>/downloads/`; it is verified again before it is used |
+| `A kit file or folder...` | a kit you have, by path; verified exactly like a download |
+| `An image file you built (.squashfs)...` | an image you built yourself: exactly 5 242 880 bytes, md5 shown, checked as a squashfs. This program did not build it, so it asks you to take responsibility (default No) |
+| `Stock firmware (from your backup)` | update only, on an Akam camera, and only when a verified backup of the **stock** firmware exists. It is the restore flow with all its gates (the backup re-hashed, the red box, default No). **Never tested on a real camera.** |
+
+The title shows what the camera runs now (the camera reports a build id such as `b35-2af81c5`; when the assistant itself
+installed a release, it also says which). The list of releases is only advice read from GitHub (HTTPS, at most 1 MiB,
+once per session): nothing in it is trusted, and a kit is never used without its SHA256SUMS and signature check. If GitHub
+cannot be reached (offline, rate limit), the list says so and the local rows stay available. Prereleases are hidden unless
+you pass `--include-prereleases`. In a source checkout (`mode=source`) the first install shows no list: the kit comes from
+the checkout. A release or a kit needs an image built from it and from your own stock backup: until the native builder is
+the default, on Linux that is `./akam step image` (or `--builder native`, experimental); the update then continues with the
+image on record. Naming a firmware on the command line skips the list:
+
+```bash
+./akam releases [--include-prereleases]            # the published versions, newest first
+./akam update --version 0.2.0                      # a release (verified like get-kit)
+./akam update --kit akam-kit-0.2.0.tar.xz          # a kit you have
+./akam update --image my.squashfs                  # an image you built
+./akam update --stock                              # back to the original firmware (restore, same gates)
+```
+
+`./akam status` then shows `Firmware source:` (`release:X.Y.Z`, `kit:PATH`, `image:PATH` or `stock`), recorded only after
+the camera was written and read back. The bash wizard keeps its current options (`--kit`, `--version`, `--image`,
+`./akam restore`) and has no list, no `releases` and no `--stock`.
