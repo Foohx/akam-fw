@@ -645,6 +645,7 @@ func (a *App) cmdVerify() error {
 	_ = a.St.MarkDone("verify")
 	a.UI.Good("  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off.")
 	a.verifyHostname(nil, ip)
+	a.cfgApplyPending() // the config chosen at the start of the install, if any (differences shown, one yes/no)
 	a.rtspAuthOffer(ip)
 	a.wipeOffer()
 	a.onvifOffer(ip)

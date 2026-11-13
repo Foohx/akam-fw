@@ -155,7 +155,7 @@ func (a *App) optionsForm(c *camssh.Client, ip string, fk ui.FormKeyer) error {
 			keys = append(keys, ui.FormKey{Key: "t", Label: "set clock"})
 		}
 		res, err := fk.FormKeys(ui.FormSpec{
-			Title: fmt.Sprintf("Camera options - %s (%s)%s", a.Cams.Name, ip, fwSuffix(snap.fw)),
+			Title: fmt.Sprintf("Camera options - %s (%s)%s%s", a.Cams.Name, ip, fwSuffix(snap.fw), a.settingsSuffix()),
 			Rows:  a.optionRows(snap),
 			Apply: func(id, value string) (ui.FormRow, error) { return a.applyOne(c, id, value) },
 			Keys:  keys,

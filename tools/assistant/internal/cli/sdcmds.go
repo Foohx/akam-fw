@@ -143,6 +143,11 @@ func (a *App) sdGetWifi() (ssid, pass string, err error) {
 	if a.UI.Dry() {
 		return ssid, pass, nil
 	}
+	if ssid == "" && pass == "" {
+		if s, p, ok := a.cfgWifiOffer(); ok { // the Wi-Fi saved in the config chosen for this camera
+			return s, p, nil
+		}
+	}
 	if ssid == "" {
 		if ssid, err = a.UI.Prompt("  Wi-Fi network name (SSID, 2.4 GHz):", ""); err != nil {
 			return "", "", ui.ErrFailed
@@ -289,6 +294,11 @@ func (a *App) sshChoosePubkey() (string, error) {
 	if cur := a.St.Get("ssh_pubkey"); cur != "" && exists(cur) {
 		a.UI.Say("  SSH key (chosen before): " + cur)
 		return cur, nil
+	}
+	if !a.UI.Dry() {
+		if p, ok := a.cfgKeyOffer(); ok { // the SSH key choice of the config chosen for this camera
+			return p, nil
+		}
 	}
 	shared := camssh.SharedKeyPath() + ".pub"
 	own := camssh.OwnKeyPath(a.Cams.Name) + ".pub"

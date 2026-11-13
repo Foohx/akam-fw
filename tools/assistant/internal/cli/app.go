@@ -154,6 +154,10 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 		errln("akam: cannot use the state directory " + base + ": " + err.Error())
 		return ExitFail
 	}
+	if cmd == "config" && opt.Camera != "" && !state.CameraExists(base, opt.Camera) {
+		errln("akam: config: no camera called '" + opt.Camera + "' on this computer (see " + Prog + " cameras)")
+		return ExitUsage
+	}
 	lock, ok, err := state.Acquire(base)
 	if err != nil {
 		errln("akam: cannot lock " + base + ": " + err.Error())
@@ -337,6 +341,8 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdOnvif(args)
 	case "key":
 		return a.cmdKey(args)
+	case "config":
+		return a.cmdConfig(args)
 	case "mqtt":
 		return a.cmdMqtt(args)
 	case "audio":

@@ -249,6 +249,9 @@ func (a *App) statusTable() {
 		}
 		a.UI.Say(line)
 	}
+	if t := sourceText(a.St.Get(keyConfigSource)); t != "" { // only once a config was chosen or applied
+		a.UI.Say("  Settings: " + t)
+	}
 	var b strings.Builder
 	for i, s := range state.Steps {
 		st := a.stepStatus(s)

@@ -120,17 +120,22 @@ func (a *App) homeBoard() (ui.Board, []string) {
 		{"find", "Find cameras", "remembered, scan, typed address"},
 		{"settings", "Settings", "backup folder, state folder, licences"},
 		{"doctor", "Check this computer", "what works here, what is missing"},
+		{"configs", "Configs", "global, local, copy"},
 	}
 	b := ui.Board{DetailMuted: true,
 		Keys: []ui.BoardKey{{Key: "Enter", Word: "open"}, {Key: "c", Word: "camera"}, {Key: "8"}, {Key: "q", Word: "quit"}},
 		Help: []string{
-			"Enter opens the highlighted line; the digits 1 to 7 pick a line directly, c chooses another camera.",
+			"Enter opens the highlighted line; the digits 1 to 7 and 9 pick a line directly, c chooses another camera.",
 			"Every action shows what it will do first and asks one yes/no (default No). The home screen itself sends nothing to the network.",
 		},
 	}
 	acts := make([]string, len(rs))
 	for i, r := range rs {
-		b.Rows = append(b.Rows, ui.BoardRow{ID: r.act, Label: r.label, Detail: r.detail, Hot: fmt.Sprint(i + 1)})
+		hot := fmt.Sprint(i + 1)
+		if r.act == "configs" {
+			hot = "9" // 8 is the camera chooser
+		}
+		b.Rows = append(b.Rows, ui.BoardRow{ID: r.act, Label: r.label, Detail: r.detail, Hot: hot})
 		acts[i] = r.act
 	}
 	return b, acts
@@ -215,6 +220,9 @@ func (c *boardCtl) show(status string) {
 		if r.Name != "" {
 			if k := c.a.keyBrief(r.Name); k != "" {
 				row.Note = strings.TrimSpace(row.Note + "  SSH key: " + k)
+			}
+			if t := sourceText(c.a.Cams.ReadKey(r.Name, keyConfigSource)); t != "" {
+				row.Note = strings.TrimSpace(row.Note + "  settings: " + t)
 			}
 		}
 		b.Rows = append(b.Rows, row)
