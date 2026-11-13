@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -126,6 +127,12 @@ func newEnv(t *testing.T, opts ...func(*testfake.Options)) *env {
 		o(&fo)
 	}
 	e.cam = testfake.New(t, fo)
+	realDisksBefore := cli.RealDiskUses()
+	t.Cleanup(func() {
+		if n := cli.RealDiskUses() - realDisksBefore; n != 0 {
+			t.Errorf("the real disk layer was asked for %d times: this test must supply a fake card backend (Hooks.SD)", n)
+		}
+	})
 	t.Setenv("HOME", e.home)
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv("AKAM_STATE_DIR", "")
@@ -178,6 +185,9 @@ func (e *env) hooks() cli.Hooks {
 	}
 	h.HTTP = e.http
 	h.SD = e.sd
+	if h.SD == nil {
+		h.SD = noDisks{} // a test never lists or touches the real disks of the machine it runs on
+	}
 	h.Discover = e.disc
 	return h
 }
@@ -290,3 +300,16 @@ func listen(t *testing.T) int {
 	t.Cleanup(func() { ln.Close(); <-done })
 	return ln.Addr().(*net.TCPAddr).Port
 }
+
+// noDisks is the card backend of every test that did not bring its own: no card, nothing can be written.
+type noDisks struct{}
+
+func (noDisks) List() []sdcard.Candidate { return nil }
+func (noDisks) Check(string) (*sdcard.Candidate, error) {
+	return nil, errors.New("no disks in a test")
+}
+func (noDisks) NeedsElevation(*sdcard.Candidate) bool { return false }
+func (noDisks) Prepare(*sdcard.Candidate, []sdcard.File, sdcard.VerifySpec) ([]string, error) {
+	return nil, errors.New("no disks in a test")
+}
+func (noDisks) Wipe(*sdcard.Candidate) error { return errors.New("no disks in a test") }

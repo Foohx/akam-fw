@@ -109,7 +109,7 @@ func TestStepMenuNoPressEnter(t *testing.T) {
 func TestHomeFailureShownOnStrip(t *testing.T) {
 	e := newEnv(t)
 	e.http = &kit.Client{DialContext: noNet} // no network: every download is refused
-	s, _ := runWithMenu(t, e, []string{"Update this camera"}, "n\n", "--camera", "salon", "--ip", "127.0.0.1")
+	s, _ := runWithMenu(t, e, []string{"Update this camera"}, "n\n", "--camera", "salon", "--ip", "127.0.0.1", "--version", "9.9.9")
 	noPressEnter(t, s)
 	if len(s.views) < 2 {
 		t.Fatalf("want a second home screen, got %d", len(s.views))

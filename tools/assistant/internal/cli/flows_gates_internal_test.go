@@ -32,20 +32,20 @@ func funcBody(t *testing.T, file, name string) string {
 // is structure-checked before it is recorded or flashed.
 func TestEveryFlashPathRehashesTheBackupFirst(t *testing.T) {
 	for _, c := range []struct{ file, fn, gate, before string }{
-		{"flashcmds.go", "cmdUpdate", "a.backupGate()", "a.flashSSH("},
+		{"flashcmds.go", "updateWrite", "a.backupGate()", "a.flashSSH("},
 		{"flashcmds.go", "cmdRestore", "stockBackupProblem(", "a.flashSSH("},
 		{"flashcmds.go", "cmdRestore", "stockBackupProblem(", "a.flashTelnet("},
 		{"telnetcmds.go", "cmdFlash", "stockBackupProblem(", "a.flashSSH("},
 		{"telnetcmds.go", "cmdFlash", "stockBackupProblem(", "a.flashTelnet("},
 		{"sdcmds.go", "cmdPrepareFlashSD", "stockBackupProblem(", "a.sdConfirmErase("},
-		{"flashcmds.go", "cmdUpdate", "a.imageGateChecked(", "a.flashSSH("},
+		{"flashcmds.go", "updateWrite", "a.imageGateChecked(", "a.flashSSH("},
 		{"flashcmds.go", "cmdRestore", "a.imageGateChecked(", "a.flashSSH("},
 		{"flashcmds.go", "cmdRestore", "a.imageGateChecked(", "a.flashTelnet("},
 		{"telnetcmds.go", "cmdFlash", "a.imageGateChecked(", "a.flashSSH("},
 		{"telnetcmds.go", "cmdFlash", "a.imageGateChecked(", "a.flashTelnet("},
 		{"sdcmds.go", "cmdPrepareFlashSD", "a.imageSquashBytes(", "a.sdConfirmErase("},
-		{"flows_update.go", "flowUpdate", "a.backupGate()", "a.cmdUpdate()"},
-		{"flows_update.go", "flowUpdate", "a.imageGateChecked(", "a.cmdUpdate()"},
+		{"flows_update.go", "flowUpdate", "a.backupGate()", "a.updateWrite("},
+		{"flows_update.go", "flowUpdate", "a.imageGateChecked(", "a.updateWrite("},
 		{"flows_update.go", "installImage", "a.imageGateChecked(", `a.St.MarkDone("image")`},
 	} {
 		body := funcBody(t, c.file, c.fn)

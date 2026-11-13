@@ -91,24 +91,31 @@ func (a *App) flowUpdate() error {
 		{"Kit downloaded and verified", "next"}, {"Image checked", "todo"}, {"Backup checked", "todo"},
 		{"Pre-checks on the camera (writes nothing)", "todo"}, {"Write the image (the red box)", "todo"}, {"Verify, then you power-cycle", "todo"}})
 
-	// 1. kit
 	if a.stepStatus("doctor") != "done" {
 		if err := a.cmdDoctor(); err != nil {
 			return err
 		}
 	}
-	if a.stepStatus("get-kit") != "done" {
-		if err := a.cmdGetKit(); err != nil {
-			return err
+	// 1. which firmware: named on the command line, else chosen here ("Which firmware?")
+	curText, cur := a.currentFirmware(ip, true)
+	src := a.cliFW
+	if src.Kind == "" {
+		var ok bool
+		if src, ok = a.pickFirmware(fwUpdate, curText, cur); !ok {
+			a.UI.Say("  No firmware chosen. Nothing was changed.")
+			return nil
 		}
 	}
-	// 2. image
-	img := a.Opt.Image
-	if img == "" {
-		img = a.St.Get("image_path")
+	if src.Kind == fwStock {
+		// back to the original firmware: the restore flow, with every one of its gates (verified stock backup,
+		// the red box, default No)
+		return a.cmdRestore()
 	}
-	if img == "" {
-		return a.UI.Fail("no image to write.", "build it from your backup on Linux (./akam image from a source checkout) or pass --image FILE.")
+	// 2. the kit (downloaded or opened, verified, staged) and the image for it, or the image given
+	defer a.discardStaged()
+	img, err := a.prepareFirmware(src, cur, true)
+	if err != nil {
+		return err
 	}
 	md5, err := a.imageGateChecked(img)
 	if err != nil {
@@ -132,8 +139,8 @@ func (a *App) flowUpdate() error {
 	}
 	a.UI.Good("  Backup checked: " + dir + " (SHA256SUMS ok, re-hashed just now).")
 	// 4 to 6. pre-checks, the red box and the write are the update command's; it never power-cycles
-	a.Opt.Image = img
-	if err := a.cmdUpdate(); err != nil {
+	a.banner("Update Akam with a new image (SSH, no card)")
+	if err := a.updateWrite(ip, img); err != nil {
 		a.UI.Warn("If the write had started: DO NOT power-cycle the camera; the worker keeps running on the camera. Wait, then check it (Check this computer / verify).")
 		return err
 	}
@@ -188,6 +195,11 @@ func (a *App) installList(next string) []flowStep {
 // step that is done and still valid is skipped), stopping at the first failure.
 func (a *App) flowInstall() error {
 	a.banner("Set up a new camera - first install from the stock firmware")
+	restore, proceed := a.installFirmware()
+	defer restore()
+	if !proceed {
+		return nil
+	}
 	for {
 		next := ""
 		for _, s := range installSteps {
@@ -299,6 +311,7 @@ func (a *App) installImage() error {
 	abs := f
 	a.setState("image_path", abs)
 	a.setState("image_sha", fileSHA(f))
+	a.setState("image_origin", "imported:"+fileSHA(f)) // not built here: the source is "image:PATH", never a release
 	a.setState("image_md5", md5)
 	a.setState("image_kit_sha", a.kitCurrentSHA())
 	a.setState("image_backup_sha", a.backupCurrentSHA())

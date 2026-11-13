@@ -7,16 +7,19 @@ package cli
 
 import (
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -37,6 +40,11 @@ func ignoreSignals() func() {
 func (a *App) sd() sdcard.Backend {
 	if a.Hooks.SD != nil {
 		return a.Hooks.SD
+	}
+	if testhook.Compiled && testhook.Env("AKAM_REAL_DISKS") != "1" {
+		// A test build never lists, checks or writes the real disks of the machine it runs on: a test that needs
+		// a card supplies a fake backend (Hooks.SD); the guard below says so when none was given.
+		return denyRealDisks{}
 	}
 	return sdcard.NewSystem()
 }
@@ -474,3 +482,27 @@ func (a *App) cmdWipeSD() error {
 }
 
 var _ = assets.Names
+
+// denyRealDisks is the backend of a test build that was given none: it sees no card and refuses everything, so a
+// test can never reach a real device. The only thing it does is count the attempts (RealDiskUses).
+type denyRealDisks struct{}
+
+var realDiskUses atomic.Int64
+
+// RealDiskUses is how many times the real disk layer was asked for in a test build without a fake backend.
+func RealDiskUses() int64 { return realDiskUses.Load() }
+
+func (denyRealDisks) List() []sdcard.Candidate { realDiskUses.Add(1); return nil }
+func (denyRealDisks) Check(dev string) (*sdcard.Candidate, error) {
+	realDiskUses.Add(1)
+	return nil, errors.New("no real disk access in a test build")
+}
+func (denyRealDisks) NeedsElevation(*sdcard.Candidate) bool { return false }
+func (denyRealDisks) Prepare(*sdcard.Candidate, []sdcard.File, sdcard.VerifySpec) ([]string, error) {
+	realDiskUses.Add(1)
+	return nil, errors.New("no real disk access in a test build")
+}
+func (denyRealDisks) Wipe(*sdcard.Candidate) error {
+	realDiskUses.Add(1)
+	return errors.New("no real disk access in a test build")
+}

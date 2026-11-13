@@ -102,7 +102,7 @@ func allRemoteCommands() []string {
 		remoteMqtt("status"), remoteMqtt("set", "192.0.2.10", "1883", "bob"), remoteMqtt("set", "broker.lan", "1883", "-"),
 		remoteMqtt("disable"), remoteMqtt("forget"), remoteMqtt("test"),
 		remoteMqttOption("base_topic", "home/akam/salon"), remoteMqttOption("discovery", "off"),
-		remoteRegister(), remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
+		remoteRegister(), remoteManifest, remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
 		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), ctl.NcCommand,
 	}
 }
@@ -117,6 +117,8 @@ const (
 	remotePreflightPut = "cat > /tmp/akam_preflight.sh"
 	remotePreflightRun = "sh /tmp/akam_preflight.sh --ensure-wifi"
 	remoteOnvifFlag    = "cat " + onvifFlagFile + " 2>/dev/null"
+	// remoteManifest reads the manifest of the kit the image was built from (its akam_version)
+	remoteManifest = "cat /usr/local/akam/MANIFEST.txt 2>/dev/null"
 )
 
 // remoteDateSetRe is the one form of `date` that sets the clock (see remoteDateSet); nothing can be chained.
@@ -152,6 +154,7 @@ var fixedRemote = map[string]bool{
 	remoteDateRead(): true, remoteRegister(): true,
 	remoteMtdList: true, remoteKernelInfo: true,
 	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
+	remoteManifest:    true,
 	remoteAuthkeysPut: true, remoteAuthkeysAdd: true, remoteAuthkeysRemove: true, remoteAuthkeysCard: true,
 	ctl.NcCommand: true,
 }

@@ -262,6 +262,39 @@ func (s *Store) Set(key, val string) error {
 	return s.write(out)
 }
 
+// SetMany replaces several keys in ONE atomic write (a key with an empty value is removed): either every key
+// changes or none does. It refuses what Set refuses.
+func (s *Store) SetMany(kv [][2]string) error {
+	for _, e := range kv {
+		if !keyRe.MatchString(e[0]) {
+			return fmt.Errorf("state_set: bad key '%s'", e[0])
+		}
+		if strings.Contains(e[1], "\n") {
+			return fmt.Errorf("state_set: multi-line value for '%s'", e[0])
+		}
+		if s.secrets.Has(e[1]) {
+			return fmt.Errorf("state_set: refusing to store a secret in '%s'", e[0])
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.lines()
+	for _, e := range kv {
+		prefix := e[0] + "="
+		var next []string
+		for _, l := range out {
+			if !strings.HasPrefix(l, prefix) {
+				next = append(next, l)
+			}
+		}
+		if e[1] != "" {
+			next = append(next, prefix+e[1])
+		}
+		out = next
+	}
+	return s.write(out)
+}
+
 // Unset removes key.
 func (s *Store) Unset(key string) error {
 	s.mu.Lock()
