@@ -33,6 +33,8 @@ type Client struct {
 	Proxy func(u *url.URL) (*url.URL, error)
 	// DialContext opens the TCP connection (to the host or to the proxy); nil: a plain net.Dialer.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+	// Accept is sent as the Accept header when set (the release list asks for GitHub's JSON type).
+	Accept string
 }
 
 // NewHTTPClient is the download client: HTTPS only (also for redirects), TLS 1.2 or newer, and a
@@ -164,7 +166,11 @@ func (c *Client) once(ctx context.Context, u *url.URL) (*httpResponse, string, e
 		closeConn()
 		return nil, "", ctxOr(ctx, err)
 	}
-	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: akam\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n", u.RequestURI(), u.Host); err != nil {
+	accept := ""
+	if c.Accept != "" && !strings.ContainsAny(c.Accept, "\r\n") {
+		accept = "Accept: " + c.Accept + "\r\n"
+	}
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: akam\r\n%sAccept-Encoding: identity\r\nConnection: close\r\n\r\n", u.RequestURI(), u.Host, accept); err != nil {
 		return fail(err)
 	}
 	cr := &capReader{r: conn, n: maxHead}
