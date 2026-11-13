@@ -16,7 +16,7 @@ Anything marked "not yet" has **not** been run on a camera. Older, more detailed
   Indoor 1080p 3215672.3) and run with a home server pulling RTSP: 14.9 to 15 fps, TCP send queue 0 to 24 KB, 0 encoder errors. The klog
   filter works on hardware (syslog about 460 KB a day, about 1.5 days kept in RAM).
 - **Image "v7"** (adds 20 and 25 fps) flashed on one camera: 25 fps configured; night mode correctly drops to 10 fps; 0 encoder errors.
-  A RAM test delivered exactly 15, 20, 25 and 30 fps. The daytime measurement of the flashed 25 fps is **still pending**.
+  A RAM test delivered exactly 15, 20, 25 and 30 fps. On 2026-11-13 in daylight the flashed camera delivered exactly 25 fps (751 frames in 30 s), about 1.4 Mbit/s, 0 encoder errors and 0 skipped frames, with a picture as bright as at 15 fps.
 - **MQTT**: host-tested only. **Native image builder** (`akam image --builder native`): experimental, opt-in, never flashed.
 - **Assistant**: Linux amd64 partly tested on real cameras (SSH, 8091 options, `video show`, `led`, `ntp`, `talk`); update, restore, telnet
   backup and flash, the SD writer and first install were never run on hardware from the Go assistant. Windows amd64: an earlier build was
