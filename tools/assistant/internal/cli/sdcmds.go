@@ -20,8 +20,6 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-func camsshGenerate(path string, pass []byte) error { return camssh.GenerateKey(path, "akam", pass) }
-
 func md5sum(b []byte) [16]byte { return md5.Sum(b) }
 
 // ignoreSignals makes Ctrl-C, hangup and TERM harmless while a flash is being written.
@@ -281,6 +279,9 @@ func pubkeyCheck(a *App, path string) error {
 	return nil
 }
 
+// sshChoosePubkey is ssh_choose_pubkey: --pubkey, the key chosen before (state), else the question
+// "Which SSH key should open this camera?": the shared key ~/.ssh/akam (the default, made when it does
+// not exist), a key for this camera only (~/.ssh/akam-NAME, made now), or an ed25519 key of ~/.ssh.
 func (a *App) sshChoosePubkey() (string, error) {
 	if a.Opt.Pubkey != "" {
 		return a.Opt.Pubkey, nil
@@ -289,63 +290,35 @@ func (a *App) sshChoosePubkey() (string, error) {
 		a.UI.Say("  SSH key (chosen before): " + cur)
 		return cur, nil
 	}
-	h, _ := os.UserHomeDir()
-	def := filepath.Join(h, ".ssh", "akam.pub")
-	if exists(def) {
-		return def, nil
-	}
-	var cands []string
-	if !a.UI.Dry() {
-		ms, _ := filepath.Glob(filepath.Join(h, ".ssh", "*.pub"))
-		for _, f := range ms {
-			if b, err := os.ReadFile(f); err == nil && sdcard.CheckPubKey(b) == nil {
-				cands = append(cands, f)
-			}
-		}
-	}
-	if len(cands) > 0 {
-		items := append(append([]string{}, cands...), fmt.Sprintf("Create a new dedicated key (%s)", def))
-		a.UI.Say(fmt.Sprintf("  There is no %s. These ed25519 public keys exist in ~/.ssh:", def))
-		n, err := a.UI.Pick("Which SSH key should open the camera?", items)
-		if err != nil {
-			return "", a.UI.Fail("no key chosen.", "run this step again, or pass --pubkey FILE.")
-		}
-		if n < len(cands) {
-			a.UI.Say(fmt.Sprintf("  Using %s (its private key stays on this PC; only the .pub goes on the card).", cands[n]))
-			return cands[n], nil
-		}
-	} else {
-		a.UI.Say(fmt.Sprintf("  No SSH key at %s. Akam uses a dedicated key. The command to create it:", def))
-	}
+	shared := camssh.SharedKeyPath() + ".pub"
+	own := camssh.OwnKeyPath(a.Cams.Name) + ".pub"
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD create an ed25519 key %s (ssh-keygen -t ed25519 -f %s -C akam)", strings.TrimSuffix(def, ".pub"), strings.TrimSuffix(def, ".pub")))
-		return def, nil
-	}
-	if !a.confirm("  Create it now (you will be asked for a passphrase)?") {
-		return "", a.UI.Fail("no SSH key.", "create one, then pass --pubkey FILE.")
-	}
-	p1, err := a.UI.Secret("  Passphrase for the new key (empty for none, not shown):")
-	if err != nil {
-		return "", ui.ErrFailed
-	}
-	if p1 != "" {
-		p2, err := a.UI.Secret("  Same passphrase again:")
-		if err != nil || p2 != p1 {
-			return "", a.UI.Fail("the passphrases differ.", "run this step again.")
+		a.UI.Say(fmt.Sprintf("  WOULD ask: Which SSH key should open this camera? (the shared key %s, a key for this camera only %s, or a key of ~/.ssh)", tilde(shared), tilde(own)))
+		if !exists(shared) {
+			a.UI.Say(fmt.Sprintf("  WOULD create an ed25519 key %s (passphrase asked twice, written with mode 600)", tilde(strings.TrimSuffix(shared, ".pub"))))
 		}
-		a.Secrets.Add(p1)
+		return shared, nil
 	}
-	var pp []byte
-	if p1 != "" {
-		pp = []byte(p1)
+	cands := keyCandidates(shared, own)
+	items := []string{
+		fmt.Sprintf("Shared key %s (all your cameras)", tilde(strings.TrimSuffix(shared, ".pub"))),
+		fmt.Sprintf("A key for this camera only (%s)", tilde(strings.TrimSuffix(own, ".pub"))),
 	}
-	if err := os.MkdirAll(filepath.Dir(def), 0o700); err != nil {
-		return "", a.UI.Fail(err.Error(), "")
+	items = append(items, cands...)
+	n, err := a.UI.Pick("Which SSH key should open this camera?", items)
+	if err != nil {
+		return "", a.UI.Fail("no key chosen.", "run this step again, or pass --pubkey FILE.")
 	}
-	if err := camsshGenerate(strings.TrimSuffix(def, ".pub"), pp); err != nil {
-		return "", a.UI.Fail("creating the key failed: "+err.Error(), "")
+	switch {
+	case n == 0:
+		_, err = a.keyEnsure(shared, "akam", true)
+		return shared, err
+	case n == 1:
+		_, err = a.keyEnsure(own, "akam-"+a.Cams.Name, true)
+		return own, err
 	}
-	return def, nil
+	a.UI.Say(fmt.Sprintf("  Using %s (its private key stays on this PC; only the .pub goes on the card).", cands[n-2]))
+	return cands[n-2], nil
 }
 
 func (a *App) cmdPrepareFlashSD() error {

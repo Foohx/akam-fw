@@ -23,6 +23,7 @@ type optSnap struct {
 	mqtt     string // on | off | unknown
 	rtsp     string // enabled | disabled | invalid | unknown
 	ntp      string // on | off | unknown
+	key      string // the SSH key of this camera, as keyRowText reads it (this PC only)
 	health   camHealth
 }
 
@@ -85,6 +86,7 @@ func (a *App) readOptions(c *camssh.Client) optSnap {
 		}
 	}
 	snap.health.ntp = snap.ntp
+	snap.key = a.keyRowText()
 	return snap
 }
 
@@ -148,7 +150,7 @@ func groupSummary(group string, s optSnap) string {
 		if t == "" {
 			t = "unknown"
 		}
-		return "video password: " + t
+		return "video password: " + t + "   SSH key: " + s.key
 	}
 	return ""
 }
@@ -455,14 +457,18 @@ func (a *App) securityScreen(snap optSnap) {
 	if cur == "" {
 		cur = "unknown"
 	}
-	items := []string{"Set or change the video password", "Remove the video password (asks first)", "Back"}
+	items := []string{"Set or change the video password", "Remove the video password (asks first)",
+		"Change the SSH key of this camera (now: " + snap.key + ")", "Back"}
 	i, err := a.UI.Pick("Security - video password is "+cur+":", items)
-	if err != nil || i == 2 {
+	if err != nil || i == 3 {
 		return
 	}
-	if i == 0 {
+	switch i {
+	case 0:
 		a.reportFlowError(a.cmdRtspAuth("set"))
-		return
+	case 1:
+		a.reportFlowError(a.cmdRtspAuth("disable"))
+	default:
+		a.reportFlowError(a.keyChange(nil, "", nil))
 	}
-	a.reportFlowError(a.cmdRtspAuth("disable"))
 }

@@ -145,7 +145,7 @@ Options:
   --allow-unknown-stock-comp
                      allow a stock APP compression other than xz/gzip (expert)
   --device DEV       whole microSD disk, for example /dev/sdb
-  --pubkey FILE      SSH public key for the flash card (default ~/.ssh/akam.pub)
+  --pubkey FILE      SSH public key for the flash card (default: asked; the shared key ~/.ssh/akam.pub comes first)
   --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
   --profile P        doctor profile: kit | build | all
   --camera NAME      the camera to work on (a short name such as salon: a-z, 0-9, '-', at most 20).
@@ -277,6 +277,11 @@ case $CMD in
     rename-camera)
         if [ -z "${ARGS[1]:-}" ]; then echo "akam: rename-camera needs the new name" >&2; exit 2; fi
         cmd_rename_camera "${ARGS[1]}" || rc=$?
+        ;;
+    key)
+        echo "akam: changing the SSH key of a camera over SSH is only in the native assistant (tools/assistant/build.sh, then AKAM_USE_BIN=1 ./akam key ...)." >&2
+        echo "  What to do: with the bash wizard, put a new akam/authorized_keys on the flash card (docs/akam_v1_ssh_and_lockdown.md)." >&2
+        exit 2
         ;;
     register) cmd_register || rc=$? ;;
     doctor) cmd_doctor || rc=$? ;;
