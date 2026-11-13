@@ -204,6 +204,7 @@ check "assistant dir with a .sqfs is refused" fails_with 'forbidden' \
     bash "$GATHER" "$V" --kit-dir "$KIT" --assistant-dir "$WORK/ass_sq" --source "$WORK/src.tar.gz" --out "$WORK/o_q" --grade test
 
 echo "== make_release refusals (throw-away repository)"
+unset ZIG AKAM_ALLOW_ANY_GO AKAM_STRIP AKAM_TARGETS AKAM_KIT_NO_BUILD AKAM_KIT_ALLOW_DIRTY AKAM_ALLOW_DIRTY AKAM_KIT_CHECK_TIME32 AK_RTSP_BIN FLASH_TOOL_BIN DROPBEAR_MULTI
 R=$WORK/repo
 mkdir -p "$R/tools/release" "$R/tools/assistant/internal/kit"
 cp "$MAKEREL" "$GATHER" "$REPO/tools/release/verify_kit.sh" "$R/tools/release/"
@@ -225,6 +226,7 @@ check "--test with --check-signed is refused" fails_with 'exclude each other' ba
 check "a placeholder allowed_signers stops a release build" fails_with 'no ssh-ed25519 key line' bash "$M" 1.0.0 --out "$WORK/r1"
 check "a wizard default version that is not X.Y.Z stops a release build" fails_with 'set the version in the release commit' bash "$M" 1.0.1 --out "$WORK/r1a"
 check "build overrides are refused in release mode" fails_with 'AKAM_ALLOW_ANY_GO is set' env AKAM_ALLOW_ANY_GO=1 bash "$M" 1.0.0 --out "$WORK/r1b"
+check "a Zig other than the pinned one is refused in release mode" fails_with 'other than the pinned one' env ZIG=/nonexistent/zig bash "$M" 1.0.0 --out "$WORK/r1e"
 git -C "$R" tag v1.0.0
 check "an existing tag stops a release build" fails_with 'tag v1.0.0 already exists' bash "$M" 1.0.0 --out "$WORK/r1c"
 git -C "$R" tag -d v1.0.0 >/dev/null

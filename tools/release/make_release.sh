@@ -92,7 +92,14 @@ else
         die "the tag v$VERSION already exists: never rebuild a published release, use a new version"
     fi
     [ ! -e "$OUT/SHA256SUMS.sig" ] || die "$OUT holds a signature: never rebuild a signed release in place, use a new version"
-    for v in AKAM_ALLOW_ANY_GO AKAM_STRIP ZIG AKAM_TARGETS AKAM_KIT_NO_BUILD AKAM_KIT_ALLOW_DIRTY AKAM_ALLOW_DIRTY \
+    # ZIG is exported by tools/build/env.sh: the pinned Zig is fine, any other one is an override.
+    if [ -n "${ZIG:-}" ]; then
+        zv="$(sed -n 's/^ZIG_VERSION=//p' "$ROOT/tools/build/deps.lock" 2>/dev/null | head -1)" || zv=""
+        pz="$ROOT/tools/.toolchain/zig-$zv-x86_64-linux/zig"
+        [ -n "$zv" ] && [ -e "$pz" ] && [ "$(readlink -f -- "$ZIG")" = "$(readlink -f -- "$pz")" ] \
+            || die "ZIG is set to a Zig other than the pinned one ($ZIG): unset it for a release"
+    fi
+    for v in AKAM_ALLOW_ANY_GO AKAM_STRIP AKAM_TARGETS AKAM_KIT_NO_BUILD AKAM_KIT_ALLOW_DIRTY AKAM_ALLOW_DIRTY \
         AKAM_KIT_CHECK_TIME32 AK_RTSP_BIN FLASH_TOOL_BIN DROPBEAR_MULTI; do
         [ -z "${!v:-}" ] || die "$v is set: build overrides are for test builds, never for a release (unset it)"
     done
