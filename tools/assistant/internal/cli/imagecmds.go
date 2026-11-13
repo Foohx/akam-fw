@@ -86,14 +86,14 @@ func (a *App) buildNativeImage() error {
 
 // kitAuthText says how the kit was authenticated, as the report of the bash builder does.
 func (a *App) kitAuthText() (auth, info string) {
-	p := a.St.Get("kit_path")
+	p, unsignedKit := a.kitInUse()
 	if st, err := os.Stat(p); err == nil && st.IsDir() {
 		return "directory (consistency checked, not authenticated; --allow-unsigned)", ""
 	}
-	if a.St.Get("kit_unsigned_ok") == "1" {
-		return "UNSIGNED (checksum-only trust, --allow-unsigned)", "tarball sha256 " + a.St.Get("kit_sha")
+	if unsignedKit {
+		return "UNSIGNED (checksum-only trust, --allow-unsigned)", "tarball sha256 " + a.kitCurrentSHA()
 	}
-	return "signature verified", "tarball sha256 " + a.St.Get("kit_sha")
+	return "signature verified", "tarball sha256 " + a.kitCurrentSHA()
 }
 
 // imageEpoch is the time of the image: SOURCE_DATE_EPOCH, else the build time of the kit (reproducible), else now.
@@ -117,8 +117,9 @@ func imageEpoch(manifest map[string]string) (uint32, error) {
 // only a folder is checked against its own MANIFEST and SHA256SUMS (time64_gate=pass, release grade, every
 // sha256 and mode). Nothing from the kit is run.
 func (a *App) verifiedKit(kitDir string) (string, func(), error) {
-	opts := kit.Options{AllowedSigners: a.allowedSigners(), AllowUnsigned: a.St.Get("kit_unsigned_ok") == "1"}
-	if p := a.St.Get("kit_path"); p != "" {
+	kp, unsignedKit := a.kitInUse()
+	opts := kit.Options{AllowedSigners: a.allowedSigners(), AllowUnsigned: unsignedKit}
+	if p := kp; p != "" {
 		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
 			res, err := kit.VerifyTarball(p, opts)
 			if err != nil {
@@ -211,6 +212,13 @@ func (a *App) runNativeImage(kitDir, backupDir string) error {
 		return a.UI.Fail("cannot create "+dir+": "+err.Error(), "")
 	}
 	out := filepath.Join(dir, res.Name)
+	// the image is checked in memory before any file is written (a file with the final name is never a bad one)
+	if len(res.Image) != appPartitionBytes {
+		return a.UI.Fail(fmt.Sprintf("the built image is %d bytes, expected exactly %d.", len(res.Image), appPartitionBytes), "nothing was written.")
+	}
+	if err := a.imageSquashBytes(res.Image); err != nil {
+		return err
+	}
 	files := []struct {
 		name string
 		data []byte
@@ -231,10 +239,12 @@ func (a *App) runNativeImage(kitDir, backupDir string) error {
 	}
 	a.UI.Say("(the free-space figure is only meaningful for the real APP dump)")
 	if got := fileSHA(out); got != res.SHA256 {
-		return a.UI.Fail("the image written to "+out+" does not match the one that was built.", "do not use it; check the disk and run the command again.")
+		_ = os.Remove(out)
+		return a.UI.Fail("the image written to "+out+" does not match the one that was built (it was removed).", "do not use it; check the disk and run the command again.")
 	}
 	md5, err := a.imageGateChecked(out)
 	if err != nil {
+		_ = os.Remove(out)
 		return err
 	}
 	_ = a.St.Set("image_path", out)

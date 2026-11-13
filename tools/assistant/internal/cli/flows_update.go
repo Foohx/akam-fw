@@ -111,7 +111,8 @@ func (a *App) flowUpdate() error {
 		// the red box, default No)
 		return a.cmdRestore()
 	}
-	// 2. the kit (downloaded or opened, verified) and the image built from it, or the image given
+	// 2. the kit (downloaded or opened, verified, staged) and the image for it, or the image given
+	defer a.discardStaged()
 	img, err := a.prepareFirmware(src, cur, true)
 	if err != nil {
 		return err

@@ -32,11 +32,17 @@ func FirmwareLabels(update bool, cur string, versions, downloaded []string, buil
 	}
 	var out []string
 	l := fwList{Mode: mode, Cur: cur, Rels: rels, Downloaded: downloaded, Built: built, StockOK: stockOK}
-	if len(flags) > 0 { // builtFirst, retry
+	if len(flags) > 0 { // builtFirst, retry, imported, onCamera
 		l.BuiltFirst = flags[0]
 	}
 	if len(flags) > 1 {
 		l.Retry = flags[1]
+	}
+	if len(flags) > 2 {
+		l.BuiltImported = flags[2]
+	}
+	if len(flags) > 3 {
+		l.BuiltOnCamera = flags[3]
 	}
 	for _, c := range fwChoices(l) {
 		out = append(out, c.label)

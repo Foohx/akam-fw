@@ -74,8 +74,9 @@ type App struct {
 	Ctx        context.Context
 	envSecrets map[string]string // AKAM_*PASS* read once at start-up (the environment no longer has them)
 
-	rel          *relCache // the release list of this session (fwsource.go)
-	cliFW        fwSource  // the firmware named on the command line (zero: none): the chooser is skipped
+	rel          *relCache  // the release list of this session (fwsource.go)
+	staged       *stagedKit // a verified kit waiting to be installed (fwkit.go)
+	cliFW        fwSource   // the firmware named on the command line (zero: none): the chooser is skipped
 	camIP        string
 	live         *liveHealth     // what a flow read of the chosen camera this session (header badges)
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)
@@ -209,6 +210,9 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 	_ = a.St.Set("tool", "go")
 	_ = a.St.Set("tool_version", version)
 	a.Log.Line("CAMERA %s", cams.Name)
+	if !opt.DryRun {
+		a.recoverKit(true) // an interrupted kit swap is repaired under the lock, before anything reads the kit
+	}
 	dry := 0
 	if opt.DryRun {
 		dry = 1

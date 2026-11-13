@@ -23,8 +23,10 @@ func withManifest(v string) func(*testfake.Options) {
 func TestImportedImageIsNeverLabelledARelease(t *testing.T) {
 	sum := sha256.Sum256(validImage(t))
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "image_origin=imported:"+hex.EncodeToString(sum[:])+"\n")
-	r := w.update("1\ny\n\n9\n")
+	// 1 = Akam 1.0.0; y = "write that imported image anyway"; y = the red box
+	r := w.update("1\ny\ny\n\n9\n")
 	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "the image on record was imported, not built from Akam 1.0.0")
 	if !strings.Contains(r.out+r.err, "Image md5 written and read back") {
 		t.Fatal(r.out + r.err)
 	}

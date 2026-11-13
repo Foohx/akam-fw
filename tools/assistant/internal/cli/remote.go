@@ -146,7 +146,7 @@ var fixedRemote = map[string]bool{
 	remoteDateRead(): true, remoteRegister(): true,
 	remoteMtdList: true, remoteKernelInfo: true,
 	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
-	remoteManifest: true,
+	remoteManifest:    true,
 	remoteAuthkeysPut: true, remoteAuthkeysAdd: true, remoteAuthkeysRemove: true, remoteAuthkeysCard: true,
 	ctl.NcCommand: true,
 }

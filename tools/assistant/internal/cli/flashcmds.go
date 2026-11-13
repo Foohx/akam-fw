@@ -25,7 +25,14 @@ import (
 
 // ---------------------------------------------------------------- tools on this computer
 
-func (a *App) kitDir() string { return filepath.Join(a.Cams.Base, "kit") }
+// kitDir is the kit in use: the staged one while a kit is waiting to be installed (its flash tool writes the
+// image), else the installed one.
+func (a *App) kitDir() string {
+	if a.staged != nil {
+		return a.staged.newDir
+	}
+	return a.kitRealDir()
+}
 
 func exists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 
@@ -284,6 +291,7 @@ func (a *App) cmdUpdate() error {
 	if img == "" {
 		img = a.St.Get("image_path")
 	}
+	defer a.discardStaged() // a kit that was not installed (a refusal, a No at the red box, a failure) is thrown away
 	if src := a.cliFW; src.Kind == fwRelease || src.Kind == fwKit || (src.Kind == fwImage && (a.Opt.Kit != "" || a.Opt.Version != "")) {
 		_, cur := a.currentFirmware(ip, true)
 		if img, err = a.prepareFirmware(src, cur, false); err != nil {
@@ -319,6 +327,10 @@ func (a *App) updateWrite(ip, img string) error {
 	}
 	_ = a.St.Set("flash_md5", md5)
 	_ = a.St.ClearDone("verify")
+	if err := a.commitStaged(); err != nil { // the camera is written; only the kit bookkeeping failed
+		a.UI.Warn("the camera WAS written and read back; only the kit that went with it could not be installed on this computer.")
+		return err
+	}
 	a.fwRecord(img)
 	a.afterFlash()
 	return nil
