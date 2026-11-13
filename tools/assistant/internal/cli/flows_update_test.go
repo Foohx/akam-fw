@@ -33,7 +33,7 @@ func TestUpdateFlowEndToEnd(t *testing.T) {
 	bk := backupFixture(t)
 	w.seedUpdate(t, bk)
 	// home 2 = update; red box y; "verify now?" Enter (No); 9 = quit
-	r := w.homeRun("2\ny\n\n9\n", "--image", w.img)
+	r := w.homeRun("2\ny\n\n10\n", "--image", w.img)
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Update default (127.0.0.1)", "[next]  1  Kit downloaded and verified",
 		"Backup checked: "+bk+" (SHA256SUMS ok, re-hashed just now).",
@@ -48,7 +48,7 @@ func TestUpdateFlowEndToEnd(t *testing.T) {
 
 // Not confirmed in the red box: nothing is written, and the default of every question is No.
 func TestUpdateFlowDefaultsToNo(t *testing.T) {
-	for _, in := range []string{"2\n\n9\n", "2\nn\n9\n", "2\nq\n9\n"} {
+	for _, in := range []string{"2\n\n10\n", "2\nn\n10\n", "2\nq\n10\n"} {
 		w := newFlashWorld(t, testfake.FlashOptions{})
 		w.seedUpdate(t, backupFixture(t))
 		r := w.homeRun(in, "--image", w.img)
@@ -67,7 +67,7 @@ func TestUpdateFlowBackupGateRehashes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bk, "mtdblock3.bin"), []byte("rotten"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := w.homeRun("2\nn\ny\n9\n", "--image", w.img) // refuse the offered SSH backup; (the extra y must not flash)
+	r := w.homeRun("2\nn\ny\n10\n", "--image", w.img) // refuse the offered SSH backup; (the extra y must not flash)
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "no verified backup: SHA256SUMS does not match the files in "+bk,
 		"Back up this camera over SSH now? [y/N]", "the update needs a backup that verifies first.")
@@ -85,7 +85,7 @@ func TestUpdateFlowOffersAnSSHBackupFirst(t *testing.T) {
 	t.Setenv("AKAM_BACKUP_ROOT", root)
 	w.seedUpdate(t, "")
 	// 2 update; y = back up over SSH now; 1 = use the proposed folder; y = red box; Enter = no verify; 9 quit
-	r := w.homeRun("2\ny\n1\ny\n\n9\n", "--image", w.img)
+	r := w.homeRun("2\ny\n1\ny\n\n10\n", "--image", w.img)
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "no verified backup: no backup of this camera is recorded.",
 		"Where should the backup of the camera be kept?", "Suggested:  "+root, "Backup saved and verified",
@@ -109,7 +109,7 @@ func TestUpdateFlowOffersAnSSHBackupFirst(t *testing.T) {
 func TestUpdateFlowRefusesStockAndRehearses(t *testing.T) {
 	w := newFlashWorld(t, testfake.FlashOptions{})
 	w.writeState("camera_ip=127.0.0.1\ncamera_kind=stock\n")
-	r := w.homeRun("2\n9\n", "--image", w.img)
+	r := w.homeRun("2\n10\n", "--image", w.img)
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "this camera runs the stock firmware, not Akam")
 	w.unchanged(t)

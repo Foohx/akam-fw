@@ -456,8 +456,9 @@ func (a *App) cfgKeyOffer() (string, bool) {
 	case camssh.KindOwn:
 		pub, what = camssh.OwnKeyPath(a.Cams.Name)+".pub", "a key for this camera only ("+tilde(camssh.OwnKeyPath(a.Cams.Name))+")"
 	default:
-		pub = set.Get(profile.KeyPath)
-		if pub == "" || !exists(pub) {
+		n, err := normPub(set.Get(profile.KeyPath))
+		pub = n
+		if set.Get(profile.KeyPath) == "" || err != nil || !strings.HasSuffix(pub, ".pub") || !exists(pub) {
 			a.UI.Say("  Your config names a custom key file that is not on this computer: choose a key below.")
 			return "", false
 		}
@@ -466,10 +467,18 @@ func (a *App) cfgKeyOffer() (string, bool) {
 	if yes, _ := a.UI.AskYN("  Your config says this camera uses " + what + ". Use it?"); !yes {
 		return "", false
 	}
-	if set.Get(profile.KeyKind) != camssh.KindCustom {
-		if _, err := a.keyEnsure(pub, a.keyCommentFor(set.Get(profile.KeyKind)), true); err != nil {
+	switch set.Get(profile.KeyKind) {
+	case camssh.KindShared:
+		if _, err := a.keyEnsure(pub, "akam", true, "the card"); err != nil {
 			return "", false
 		}
+	case camssh.KindOwn:
+		// the same flow as the card question: it asks before reusing a key file that already has this name
+		p, _, err := a.keyOwn("the card")
+		if err != nil {
+			return "", false
+		}
+		pub = p
 	}
 	return pub, true
 }

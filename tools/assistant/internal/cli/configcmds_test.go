@@ -491,7 +491,7 @@ func TestConfigRefusesAFileItCannotRead(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(p.Settings), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for in, want := range map[string]string{"akam_config_version=9\n": "written by a newer akam", "led.status=on\n": "the first line must be", "akam_config_version=1\nled.status=purple\n": "line 2"} {
+	for in, want := range map[string]string{"akam_config_version=10\n": "written by a newer akam", "led.status=on\n": "the first line must be", "akam_config_version=1\nled.status=purple\n": "line 2"} {
 		if err := os.WriteFile(p.Settings, []byte(in), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -663,7 +663,7 @@ func TestFirstInstallOffersTheConfigAndFeedsTheCard(t *testing.T) {
 	w.writeCfg(w.globalPlace(), "led.status", "off", "key.kind", "own")
 	w.writeSecrets(w.globalPlace(), profile.WifiSSID, "Config Net", profile.WifiPassword, pwWifi)
 	// the first line answers "register this camera?" (No); 1 = set up; the choice: 1 global; key offer y -> create it (y, passphrase twice); Wi-Fi offer y; erase y
-	r := w.env.run("\n1\n1\ny\ny\nhunter2-pass\nhunter2-pass\ny\ny\n9\n", "--camera", "default", "--device", w.img)
+	r := w.env.run("\n1\n1\ny\ny\nhunter2-pass\nhunter2-pass\ny\ny\n10\n", "--camera", "default", "--device", w.img)
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "You have saved configs.", "Use a config for this camera?", "Global config (your default template)", "Keep camera defaults (no config)",
 		"Noted: Global config (your default template).",
@@ -712,7 +712,7 @@ func TestFirstInstallWifiOfferDefaultsToNo(t *testing.T) {
 
 func TestFirstInstallChoiceIsSkippedWhenThereIsNothingToChooseFrom(t *testing.T) {
 	w := newKeyCardWorld(t)
-	r := w.env.run("\n1\n9\n", "--camera", "default", "--device", w.img)
+	r := w.env.run("\n1\n10\n", "--camera", "default", "--device", w.img)
 	notContains(t, r.out+r.err, "Use a config for this camera?")
 	if w.readState("config_source") != "" {
 		t.Errorf("config_source %q", w.readState("config_source"))
@@ -722,12 +722,12 @@ func TestFirstInstallChoiceIsSkippedWhenThereIsNothingToChooseFrom(t *testing.T)
 func TestFirstInstallKeepCameraDefaultsAndTheChoiceIsAskedOnce(t *testing.T) {
 	w := newKeyCardWorld(t)
 	w.writeCfg(w.globalPlace(), "led.status", "off")
-	r := w.env.run("\n1\n2\n1\ny\n9\n", "--camera", "default", "--device", w.img) // 2 = keep camera defaults
+	r := w.env.run("\n1\n2\n1\ny\n10\n", "--camera", "default", "--device", w.img) // 2 = keep camera defaults
 	contains(t, r.out+r.err, "Use a config for this camera?")
 	if w.readState("config_source") != "local" || w.readState("config_pending") != "" {
 		t.Errorf("state: %q %q", w.readState("config_source"), w.readState("config_pending"))
 	}
-	r = w.env.run("\n1\n9\n", "--camera", "default", "--device", w.img)
+	r = w.env.run("\n1\n10\n", "--camera", "default", "--device", w.img)
 	notContains(t, r.out+r.err, "Use a config for this camera?")
 }
 
@@ -735,7 +735,7 @@ func TestFirstInstallCopyFromAnotherCameraIsOffered(t *testing.T) {
 	w := newKeyCardWorld(t)
 	w.rememberCamera("garage", "127.0.0.1")
 	w.writeCfg(w.cameraPlace("garage"), "led.status", "off")
-	r := w.env.run("\n1\n1\n9\n9\n", "--camera", "default", "--device", w.img)
+	r := w.env.run("\n1\n1\n9\n10\n", "--camera", "default", "--device", w.img)
 	contains(t, r.out+r.err, "Copy from camera garage")
 	if w.readState("config_source") != "camera:garage" || w.readState("config_pending") != "1" {
 		t.Errorf("state: %q %q", w.readState("config_source"), w.readState("config_pending"))
@@ -937,4 +937,12 @@ func TestVerifyAppliesThePendingConfigAfterAYes(t *testing.T) {
 	if w.readState("config_pending") != "" || w.readState("config_source") != "global" {
 		t.Errorf("state: pending=%q source=%q", w.readState("config_pending"), w.readState("config_source"))
 	}
+}
+
+// In the plain menu 9 is Configs and Quit is 10: the digits of the old menu still mean what they meant.
+func TestPlainHomeMenuNumbers(t *testing.T) {
+	e := cfgEnv(t)
+	r := e.cr("9\n9\n10\n") // Configs > Back > Quit
+	expectRC(t, r, 0)
+	contains(t, r.out, "9) Configs", "10) Quit", "Configs - global, local, copy")
 }

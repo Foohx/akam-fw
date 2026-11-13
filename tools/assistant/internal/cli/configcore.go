@@ -771,8 +771,9 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 		case camssh.KindOwn:
 			ch.pub = camssh.OwnKeyPath(a.Cams.Name) + ".pub"
 		default:
-			ch.pub = x.Value
-			if !exists(ch.pub) {
+			p, nerr := normPub(x.Value)
+			ch.pub = p
+			if nerr != nil || !strings.HasSuffix(p, ".pub") || !exists(ch.pub) {
 				return fail("the key file " + tilde(ch.pub) + " is not on this computer")
 			}
 		}
