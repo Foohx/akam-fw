@@ -43,6 +43,13 @@ the assistant and the wizard make the key when you choose it (next section).
 used as it is and **never overwritten**. The choice is remembered per camera (state key `ssh_pubkey`); the
 public key goes to the card (`akam/authorized_keys`), the private key never leaves your PC.
 
+The Go assistant can also keep this choice in a saved **config** (`key.kind=shared|own|custom`, plus `key.path` for a
+custom key) and offer it again for another camera, at the card step (a yes/no, default No) or on a running camera
+(`./akam config apply`, which goes through the key change below with its own confirmation, never silently). A config
+holds a key *choice*, never a key: the private key stays in `~/.ssh`. See
+[Configs](using_akam.md#configs-global-local-copy). The same page says where the Wi-Fi password may be kept:
+**only if you say yes** when you save a config (default No), in a private file on your PC; the bash wizard never keeps it.
+
 How a key is made:
 
 - The **bash wizard** runs `ssh-keygen -t ed25519` (it asks the passphrase itself).
