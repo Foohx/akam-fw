@@ -1,7 +1,7 @@
 # Akam V1: Build the Image From Your Own Dump (advanced, from source)
 
 **Advanced / manual procedure, and optional.** Most people use the prebuilt kit through `./akam` (see the
-[README](../README.md#quick-start)): `./akam get-kit` then `./akam image`. Build from source only to audit
+[README](../README.md#install-in-5-steps)): `./akam get-kit` then `./akam image`. Build from source only to audit
 or change the code, or if no kit is available (`./akam build` drives the same steps).
 
 All build steps run on the PC (Arch Linux x86-64 is the reference host) and never touch the camera.
@@ -10,7 +10,7 @@ Nothing here ships a vendor image: the APP tree comes from **your own** `mtdbloc
 
 Status: `tests/build_firmware_test.sh` builds an image from a **synthetic fixture** with stub binaries. Images
 built from a real dump (from the kit and from source) were flashed and validated on two cameras between
-2026-11-07 and 11-09 (see the [README status](../README.md#status-and-limits)).
+2026-11-07 and 11-09 (see the [testing status](testing-status.md)).
 
 ---
 

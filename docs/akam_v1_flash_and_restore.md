@@ -2,7 +2,7 @@
 
 > **Advanced / manual procedure (without the wizard).** `./akam flash`, `./akam update` and `./akam restore`
 > run these routes for you, with the same checks and a red yes/no (default No) before any write
-> ([README](../README.md#quick-start)). Use this page to understand them, audit them, or when you cannot run
+> ([README](../README.md#install-in-5-steps)). Use this page to understand them, audit them, or when you cannot run
 > the wizard.
 
 > **RISK.** Writing the SPI NOR can brick the camera. Restoring is **not guaranteed** to work (section

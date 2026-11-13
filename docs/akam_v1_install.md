@@ -1,7 +1,7 @@
 # Akam V1: Overview and Reference
 
 What Akam changes on the camera, which ports it opens, how the 8091 port works, how to harden the network,
-and the licences. To install, use `./akam` (see the [README](../README.md#quick-start)); the manual
+and the licences. To install, use `./akam` (see the [README](../README.md#install-in-5-steps)); the manual
 procedures behind it are in the [documentation index](README.md#manual-procedures-advanced-without-the-wizard).
 
 > Validated on two real cameras (LSC `3215672.3`, SI `D26228`); what was and was not tested on hardware is in
@@ -86,7 +86,7 @@ says `off`, `on:<port>`, `no_password` (enabled, video password on, but no valid
 `http_failed`, `discovery_failed`; fix it and run `./akam onvif enable` again). With the video password OFF the
 service still starts: reads are open and the changes (reboot, time, name) are refused. The file needs exactly the two
 keys; port 21 to 24, 554 and 8091 are refused. A camera name change applies to discovery at the next reload or boot.
-Not yet validated on hardware.
+Validated on one camera, see [ONVIF with ONVIF Device Manager](#onvif-with-onvif-device-manager) below.
 
 ### ONVIF with ONVIF Device Manager
 
@@ -146,7 +146,7 @@ Most keys are lost at the next boot. Two LED keys are saved on the camera and ap
 
 They are stored in `/etc/config/akam/leds`. A `SET` answers `OK key=value`, or `ERR ...` and changes nothing
 for a value that is not listed; if the file cannot be written the answer ends with `(not saved: ...)`.
-From the PC use `./akam led` (see the [README](../README.md#update-change-the-name-add-a-video-password));
+From the PC use `./akam led` (see the [README](using_akam.md#update-change-the-name-add-a-video-password));
 by hand: `printf 'SET led.status off\n' | nc -w 2 127.0.0.1 8091` on the camera (a write from the camera itself is
 always allowed). Full description:
 `specs/06-spec-leds.md`.

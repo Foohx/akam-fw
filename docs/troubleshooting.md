@@ -1,5 +1,12 @@
 # Troubleshooting
 
+**What this page is for:** something does not work (no network, no video, a password refused, a card problem)
+and you want the fix. Look for your symptom in the headings below.
+
+Words used here: **RTSP** is the protocol the camera uses to send its video (port 554); **ONVIF** is a standard
+that NVRs (network video recorders) and apps use to find a camera; **MQTT** is a messaging protocol used by home
+automation; **UART** is the serial port on the camera's board used for recovery.
+
 Real problems met while installing and using Akam, with their fixes. Start with `./akam doctor`
 (checks the tools on your PC) and `./akam status` (shows which step is done, todo or blocked). The
 wizard keeps a log in `~/.local/state/akam/` (it never contains your Wi-Fi password).
@@ -134,7 +141,7 @@ configuration examples are in [two-way audio](two_way_audio.md).
 - `./akam video` shows the saved values and warns "saved but not running yet" while they differ from what the running encoder uses.
 - Allowed values: bitrate 500 to 3000 kbit/s (it is a ceiling for the variable-bitrate encoder, not a fixed rate: a still scene stays well under it), fps 10, 15, 20 or 25 (the frame rates for which the sensor timing was checked on a real camera: it delivered exactly that rate over RTSP with no encoder error; 30 was tested too and is refused because the picture came out dark, grainy and nearly grey), key frame interval 1 to 4 seconds (shorter = quicker start of a viewer and faster recovery after a lost packet, bigger stream). A bad line in the file is ignored with a line in the log and that value stays at its default.
 - What a higher frame rate costs (20 or 25 fps): the longest exposure is one frame time, so it gets shorter (25 fps: 40 ms instead of 66 ms at 15 fps). In daylight the picture is the same as at 15 fps, but in dim light it gets darker and grainier, and night mode starts earlier. With a bitrate cap, each frame gets fewer bits at the same cap: raise the cap (`./akam video bitrate N`) if the Wi-Fi allows it, or the picture gets softer. Night mode always runs at 10 fps, whatever is configured. If dim scenes look worse than before, go back to `./akam video fps 15`.
-- Resolution (always 1920x1080) and flip/mirror (ceiling mount) cannot be changed in this version; ONVIF clients are told the configured bitrate, frame rate and GOP length.
+- Resolution (always 1920x1080) and flip/mirror (ceiling mount) cannot be changed in this version; ONVIF clients are told the configured bitrate, frame rate and GOP length (the key frame interval).
 - If the picture is wrong after a change (no video, a reboot loop): remove the file over SSH (`rm /etc/config/akam/video`) and restart `ak_rtsp`, or run `./akam video bitrate 1536 fps 15 gop 2`.
 
 ## VLC cannot open the stream, or hardware decoding fails
@@ -240,7 +247,7 @@ without it only 22, 554 and 8091 are.
   differs by more than 5 minutes, the WS-Security login is refused: fix the clock on either side.
 - With the video password off, ONVIF reads are open but reboot, time and name changes are always refused.
 - The device address to add by hand is `http://<camera-ip>/onvif/device_service` (add `:PORT` for a port other than
-  80). ONVIF is host-tested only so far, not yet validated on a camera: please report what ODM does.
+  80). ONVIF was validated on one camera with ONVIF Device Manager ([testing status](testing-status.md)): please report what your app does.
 
 **Check the whole ONVIF surface from a PC** (Python 3, standard library only, no install): replays what ONVIF Device
 Manager does on first contact (WS-Discovery, Device, Media and Imaging calls, the refusal of a request without a

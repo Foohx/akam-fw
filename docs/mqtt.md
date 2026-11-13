@@ -1,6 +1,10 @@
 # MQTT and Home Assistant
 
-Akam can publish the camera to an MQTT broker and take a few commands from it. Home Assistant finds the camera by itself
+*What this page is for: connecting the camera to Home Assistant or another home automation system. Skip it if you
+only want to watch the video.*
+
+**MQTT** is a light messaging protocol for home automation; a **broker** (for example Mosquitto) is the server that
+passes the messages around. Akam can publish the camera to an MQTT broker and take a few commands from it. Home Assistant finds the camera by itself
 (MQTT discovery): one device with its sensors and controls. It is **optional and off by default**. Without it the camera
 has no MQTT code running: no thread, no socket, no timer. The video stream (RTSP) and ONVIF work without it.
 

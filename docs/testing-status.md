@@ -5,7 +5,7 @@ This page separates three levels of evidence, so you know what to trust:
 - **Host tests**: the `tests/*.sh` scripts, run on a PC with fixtures, fake binaries and stubs. They check logic,
   parsing, limits and file formats. They say nothing about the real hardware, the real kernel or real clients.
 - **Validated in RAM**: a development build copied to `/tmp` on one camera and run from there, before the final image.
-- **Hardware validated**: the flashed image, running on the cameras listed in [tested hardware](tested-hardware.md).
+- **Hardware validated**: the flashed image, running on the cameras listed in [compatible cameras](compatible-cameras.md).
 
 Anything marked "not yet" has **not** been run on a camera. Older, more detailed checklists are in the
 [test plan](akam_v1_test_plan.md).
@@ -26,8 +26,9 @@ Anything marked "not yet" has **not** been run on a camera. Older, more detailed
 
 ## Hardware results in short
 
-**akam-01 was flashed with the image built 2026-11-11** (ONVIF, encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP,
-video config, quieter logs, review fixes). akam-02 is still on the 2026-11-10 image. Seen on akam-01:
+**Earlier results (2026-11-10 and 2026-11-11).** `akam-01` was flashed with the development image built 2026-11-11 (ONVIF,
+encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP, video config, quieter logs, review fixes); `akam-02` ran the image of
+2026-11-10. Both were reflashed with image "v6" on 2026-11-12 (see above). Seen on `akam-01` with the 2026-11-11 image:
 
 - a clean boot after a power cycle; ports 22, 554 and 8091 only by default, no UDP; settings kept across the flash;
 - ONVIF enabled, then validated with `tools/hw_tests/onvif_check.py`: 34 of 35 checks OK (the failure was a tool bug,
@@ -37,7 +38,7 @@ video config, quieter logs, review fixes). akam-02 is still on the 2026-11-10 im
 
 ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login with the stream user, live video plays, imaging changes are visible live (2026-11-11).
 
-**Hardware validated on two cameras** (firmware image built 2026-11-10, "v3 ctl"; akam-01 has since moved to the 2026-11-11 image):
+**Hardware validated on two cameras** (firmware image built 2026-11-10, "v3 ctl"; both cameras have since moved to image "v6"):
 
 - RTSP H.264 1080p 15 fps video plus microphone, with VLC, ffmpeg and go2rtc over TCP;
 - RTSP Digest authentication;
@@ -66,7 +67,7 @@ ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login wi
 | Front LED, IR LED | `leds_test.sh`, `wizard_led_test.sh` | Yes: status on, off, auto; IR auto | |
 | Automatic day/night switching | `night_logic_test.sh`, `isp_effects_test.sh`, `isp_blocks_test.sh`, `isp_block_diff_test.sh` | Yes, including the night probe and the IR back-on logic | Long runs across dusk and dawn are in the [test plan](akam_v1_test_plan.md) |
 | Picture settings (brightness, contrast, saturation, sharpness) | `isp_tune_test.sh`, `imgq_test.sh`, `wizard_picture_test.sh` | In RAM, one camera: persistence across a daemon restart and a forced night to day switch | Not yet checked on the final image |
-| Video config (bitrate, fps, gop) | `video_cfg_test.sh`, `video_apply_test.sh`, `wizard_video_test.sh` | In the flashed image of akam-01; not exercised on the camera yet | Applied at the next restart of the video service |
+| Video config (bitrate, fps, gop) | `video_cfg_test.sh`, `video_apply_test.sh`, `wizard_video_test.sh` | Frame rate: yes (image v7 on one camera: 25 fps measured in daylight on 2026-11-13, 10 fps in night mode; 15 fps on two). Bitrate and GOP: in the flashed image, not exercised on the camera yet | Applied at the next restart of the video service |
 | Port 8091 metrics, read-only from the network | `control_test.sh`, `ctl_sys_test.sh`, `http_srv_test.sh`, `wizard_core_test.sh` | Yes: reads work, `SET` refused remotely | |
 | Strict `SET` ranges (`ae.*`, `night.*`, `isp.*`) | `control_test.sh` | Not yet | |
 | Debug mode (`./akam debug on`) | `akam_debug_test.sh`, `wizard_debug_test.sh` | Not yet on the final image | Loopback `SET` and timed network `SET` |
@@ -76,7 +77,9 @@ ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login wi
 | Wrapper respawn backoff | `wrapper_backoff_test.sh` | Not yet | |
 | Wi-Fi supervisor | `akam_net_test.sh` | In the flashed image of akam-01 (clean boot, no fault injected) | |
 | Optional MQTT client with Home Assistant discovery (`mqtt.[ch]`, `mqtt_ha.[ch]`, `mqtt_svc.[ch]`, `akam_mqtt.sh`, `./akam mqtt`) | `mqtt_codec_test.sh` (golden bytes, remaining-length edges, malformed input, fuzz), `mqtt_ha_test.sh` (discovery documents, states, the command allow-list against hostile payloads), `mqtt_svc_test.sh` (a fake broker: dormant guarantee, CONNECT/will/discovery/state/commands, keepalive, drops, refusals with backoff, clean stop, one-shot test; ASan/UBSan), `control_test.sh`, `akam_mqtt_test.sh`, `wizard_mqtt_test.sh`, `hwcheck_test.sh`, `assistant_test.sh` | **Not yet.** Host only; no camera, no real broker | Off by default. Budget on the host build: +39 KB stripped (+23 KB without name resolution), +3 KB bss; RSS on the camera still to measure ([test plan](akam_v1_test_plan.md#mqtt-optional-needs-a-camera-and-a-broker)) |
-| Opt-in NTP | `akam_ntp_test.sh`, `wizard_ntp_test.sh` | In the flashed image of akam-01; not enabled or exercised yet | Camera clock starts in 1970 without it |
+| Opt-in NTP | `akam_ntp_test.sh`, `wizard_ntp_test.sh` | Yes, both cameras (image v6): enabled with `akam_ntp.sh set pool.ntp.org`, sync ok, clock offset 0 after a resync (2026-11-12) | Camera clock starts in 1970 without it |
+| First install from a stock camera (maintenance microSD card, scripted telnet backup, image from the kit, flash through the card, Wi-Fi saved on the camera) | `wizard_camera_test.sh`, `build_from_kit_test.sh`, `reflash_ssh_test.sh` | Yes, two cameras (see [test plan](akam_v1_test_plan.md): backup, flash through the maintenance telnet, boots without the card); with the bash wizard on Linux only | Not done from the Go assistant, Windows or macOS |
+| Akam to Akam update over SSH (`./akam update`) | `reflash_ssh_test.sh`, `flash_guard_test.sh` | Yes, two cameras: flash over SSH with md5 read-back, then a power cycle (see [test plan](akam_v1_test_plan.md)) | |
 | SSH key admin, Telnet and FTP off | `ssh_init_test.sh`, `lockdown_test.sh`, `hwcheck_test.sh` | Yes, two cameras | |
 | Flash over SSH with read-back, clean boot | `reflash_ssh_test.sh`, `flash_guard_test.sh`, `build_firmware_test.sh`, `preflight_test.sh` | Yes, two cameras, power cycle | |
 | Stack-protector build | none dedicated (compile flags; `build_firmware_test.sh` covers the image build) | Boot not yet tested | Canaries on the network parsers only |

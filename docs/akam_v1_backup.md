@@ -1,7 +1,7 @@
 # Akam V1: Back Up Your Camera First (manual, by UART)
 
 > **Advanced / manual procedure (without the wizard).** `./akam backup` does all of this for you, over
-> the maintenance telnet ([README](../README.md#quick-start)). Read on to understand it, audit it, or when
+> the maintenance telnet ([README](../README.md#install-in-5-steps)). Read on to understand it, audit it, or when
 > you cannot run the wizard.
 
 > **Do this before anything else.** Do not build, flash or even boot a modified image until you

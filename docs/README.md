@@ -3,18 +3,29 @@
 New here? Read the [README](../README.md) and run `./akam`: you do not need anything below to install
 Akam. These pages are for when you want details, want to do a step by hand, or something went wrong.
 
-## Help
+## Start here
 
-- [Troubleshooting](troubleshooting.md): real problems and their fixes (network, card reader, VLC, passwords, SSH).
-- [MQTT and Home Assistant](mqtt.md): the optional MQTT client with Home Assistant discovery (`./akam mqtt`), entities, security, a temporary Mosquitto to try it, hardware checks.
+1. [README](../README.md): what Akam is, the risks, and the install in 5 steps.
+2. [Compatible cameras](compatible-cameras.md): is my camera supported, and what do I get compared with the stock firmware.
+3. [The setup wizard](wizard_guide.md): the menu and what each install step does and risks.
+4. [Troubleshooting](troubleshooting.md): real problems and their fixes (network, card reader, VLC, passwords, SSH).
+
+## Use Akam
+
+- [Using Akam day to day](using_akam.md): every command and setting, open ports, watching the stream, updates, security notes.
+- [The setup wizard](wizard_guide.md): the menu, what each step does and risks, the native binary.
+- [Installing the `akam` binary](assistant_install.md): the experimental single-file assistant for Linux, Windows and macOS (a first install from Windows or macOS was never done on a real camera).
+- [ONVIF](onvif.md): NVRs and ONVIF apps (optional, off by default).
 - [Two-way audio](two_way_audio.md): talk through the camera speaker (`./akam talk`, go2rtc, Frigate, Home Assistant), settings, hardware check list.
+- [MQTT and Home Assistant](mqtt.md): the optional MQTT client with Home Assistant discovery (`./akam mqtt`), entities, security, a temporary Mosquitto to try it, hardware checks.
+
+## Tests and status
+
 - [Testing status](testing-status.md): what was tested on the host, in RAM and on hardware, feature by feature; how to run the host tests.
-- [Tested hardware](tested-hardware.md): the camera model and units validated, and how to report yours.
 - [Test plan and status](akam_v1_test_plan.md): what was validated on hardware, what is still to check, the post-flash check script.
 - [Assistant hardware test plan](assistant_hardware_test_plan.md): tickable checklists for Windows, macOS and Linux with the native `akam` binary.
 - [Assistant screen manual test](assistant_tui_manual_test.md): what to look at and which keys to press on each terminal (Windows, macOS, Linux, tmux, 16 colours, `NO_COLOR`, small windows).
-- [Installing the `akam` binary](assistant_install.md): downloads, checks, SmartScreen and Gatekeeper steps.
-- [Release notes draft](release_notes_draft.md): what the assistant release contains and which targets are untested.
+- [Release notes draft](release_notes_draft.md): the template of the release notes (camera kit and assistant): supported hardware, what was validated, known limits.
 
 ## Reference
 

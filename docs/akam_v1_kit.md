@@ -1,11 +1,14 @@
 # The Akam release kit
 
+*Who needs this page: only people who want to check what a release contains and verify it by hand.*
+
 `./akam get-kit` downloads and verifies the kit for you; this page explains what is inside and how the
 verification works, for people who want to check it by hand.
 
 The kit lets you build an Akam firmware image without installing a compiler,
 Zig, CMake or gdb. You only need `squashfs-tools` and your own dump of the
-camera's APP partition.
+camera's APP partition (the flash partition that holds the camera's application, the only one Akam rewrites; the
+flash is split into numbered MTD partitions, see the [flash map](flash_partition_map_and_rootfs.md)).
 
 ## What it is, and what it is not
 

@@ -1,12 +1,18 @@
 # Two-way audio: talk through the camera speaker
 
-Akam can play your voice, or an audio file, on the camera's speaker. It uses the standard **ONVIF audio
-backchannel** on the RTSP port (554): there is no extra port, and any client that speaks the standard
-(go2rtc, Frigate through go2rtc, Home Assistant's WebRTC card, some NVRs) can talk to the camera. The
+*What this page is for: speaking through the camera from your computer or from Home Assistant, Frigate or go2rtc.
+You need it only if you want sound to come out of the camera.*
+
+Akam can play your voice, or an audio file, on the camera's speaker.
+
+It uses the standard **ONVIF audio backchannel**. ONVIF is the standard that NVRs and apps use to talk to cameras;
+the backchannel is its way to send sound to the camera. It runs on the RTSP port (554, the camera's video port), so
+there is no extra port. Any client that speaks the standard (go2rtc, Frigate through go2rtc, Home Assistant's WebRTC
+card, some NVRs) can talk to the camera. The
 design is in [specs/07-spec-standard-protocols.md](../specs/07-spec-standard-protocols.md), step 1.
 
-**Status: implemented and tested on the PC (a loopback test runs the real server loop), not yet checked
-on a camera.** Please report what you hear.
+**Status: `talk` (the speaker) is validated on two cameras** (see [testing status](testing-status.md)). The
+rest (`say`, go2rtc and Frigate set-ups) follows the same path; please report what you hear.
 
 ## What you need
 
