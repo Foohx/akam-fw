@@ -7,21 +7,21 @@
 **Akam replaces the Tuya cloud software of the LSC Smart Indoor 1080p camera (sold at Action) with a small local
 firmware.** The camera then streams video and audio on your own network (RTSP, port 554): no cloud, no account, no
 app. A guided program, `./akam`, does the whole installation from a Linux PC: back up, build the image from your own
-backup, flash, check. No compiling. Only the APP partition is rewritten; U-Boot, the kernel and ROOTFS are never
-written.
+backup, flash, check. No compiling. Only the camera's application area (the APP partition) is rewritten; the boot
+loader and the system are never touched.
 
 > **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
 > [risks](#important-disclaimer-and-risks). The wizard makes you take a full backup first.
 
 ## Is my camera compatible?
 
-Read the article number and board label on the camera's label.
+Look at the back of the camera body, under the LSC logo: two codes such as `3215672.3  SI D26228`.
 
-| Camera | Article | Board label | Status |
+| Camera | Article | SI code | Status |
 |---|---|---|---|
 | LSC Smart Indoor 1080p | `3215672.3` | SI `D26228` | ✅ validated (2 units) |
 | LSC Smart Indoor 1080p | `3215672.2` | SI `B26101` / `C26101` | ⚠️ untested |
-| any other camera | | | ⚠️ untested, or refused if the flash layout differs |
+| any other camera | | | ❌ not supported: not expected to work; the wizard warns, and refuses a different flash layout |
 
 Full table (SoC, sensor, flash, stock firmware fingerprint) and the checks the wizard does:
 **[compatible cameras](docs/compatible-cameras.md)**.
@@ -34,11 +34,14 @@ On the validated camera, compared with the stock firmware ([feature-by-feature t
   One viewer at a time: put [go2rtc](https://github.com/AlexxIT/go2rtc) or MediaMTX in front for several.
 - **Talk through the camera speaker** (`./akam talk`, go2rtc, Frigate, Home Assistant) and **ONVIF** (NVRs, apps;
   optional, off by default, not certified).
-- **Camera settings:** day/night and infrared LEDs, status LED, picture, bitrate, key frames.
+- **Camera settings:** day/night and infrared LEDs, status LED, frame rate; picture, bitrate and key frames
+  (available, not yet checked on the flashed image).
 - **Home automation:** MQTT with Home Assistant discovery (optional, off by default, **host-tested only**) and an
-  opt-in clock (NTP).
+  opt-in clock (NTP, checked on both cameras).
 - **Safe by default:** SSH with a key only; Telnet and FTP closed; read-only metrics on port 8091.
-- **Not available:** Tuya/Smart Life app and cloud, motion detection, recording to microSD, vendor OTA updates.
+- **Not available:** the Tuya/Smart Life phone app, the cloud and remote viewing away from home, push
+  notifications, motion detection, recording to microSD, vendor OTA updates. Instead: VLC or ffplay on your network, Home
+  Assistant, an NVR (network video recorder) with ONVIF or RTSP, and a VPN into your home network for remote access.
 
 What was tested on a real camera and what only on a PC: [testing status](docs/testing-status.md). Every command,
 port and setting: [using Akam day to day](docs/using_akam.md).
@@ -49,7 +52,8 @@ port and setting: [using Akam day to day](docs/using_akam.md).
 - a **microSD card** and a **USB card reader** (cheap readers sometimes fail:
   [troubleshooting](docs/troubleshooting.md#no-medium-found-with-a-usb-card-reader));
 - a **Linux PC**: Arch, Debian 12 or Ubuntu 24.04 (all tested in containers) for the bash wizard. An experimental
-  single-file `akam` binary also exists for Windows and macOS ([install](docs/assistant_install.md),
+  single-file `akam` binary also exists for Windows and macOS, but a first install from Windows or macOS has never
+  been done on a real camera: use Linux ([install](docs/assistant_install.md),
   [what it does](docs/wizard_guide.md#native-binary-experimental));
 - optional but wise: a UART adapter (a serial cable to the camera's board), the safety net if a flash goes wrong
   ([UART guide](docs/hardware_and_uart.md)).
@@ -61,7 +65,9 @@ port and setting: [using Akam day to day](docs/using_akam.md).
    git clone https://github.com/Foohx/akam-fw && cd akam-fw
    ```
 2. **Run the wizard:** `./akam`. Its first step checks your PC and prints the exact command to paste if a tool is
-   missing. It asks a short name for your camera (for example `salon`) and remembers where you stopped.
+   missing. It asks a short name for your camera (for example `salon`) and remembers where you stopped. The wizard
+   downloads the **kit** (Akam's own files, checked by checksum and signature; it never contains a camera image).
+   Until the first release is published, use `./akam build` or `--kit FILE`.
 3. **Follow the menu**, one step after the other: check this PC, get the kit, prepare the backup card, find the
    camera, **back it up (all 8 partitions)**, build the image, prepare the flash card, flash, verify. Arrow keys and
    Enter run a step, `?` says what it does and what it risks, `q` quits (progress is kept).
@@ -71,8 +77,9 @@ port and setting: [using Akam day to day](docs/using_akam.md).
    SSH, ports and video. Watch the stream with `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/`.
 
 `./akam help` lists every command; add `--dry-run` to rehearse without changing anything. The menu, the steps and
-the risk of each one: [wizard guide](docs/wizard_guide.md). The wizard stores your Wi-Fi password only on the camera and
-on the cards it writes (erase them with `./akam wipe-sd`); keep your backup private, on two media.
+the risk of each one: [wizard guide](docs/wizard_guide.md). The wizard never keeps your Wi-Fi password in its own state or log files and never puts it on a command line;
+it is written only to the cards the wizard prepares (in clear text: erase them with `./akam wipe-sd`) and to the
+camera. Keep your backup private, on two media.
 
 ## Daily use and details
 
@@ -98,12 +105,15 @@ on the cards it writes (erase them with `./akam wipe-sd`); keep your backup priv
 
 Full matrix: [testing status](docs/testing-status.md). In short, on the two validated cameras:
 
-- **Validated on hardware** (image "v6", flashed 2026-11-12 and running 24/7 with a home server pulling RTSP, 14.9 to
-  15 fps, 0 encoder errors; "v7" with 20 and 25 fps on one camera, 25 fps measured in daylight on 2026-11-13): RTSP
-  with microphone, Digest login, ONVIF with a check tool and ONVIF Device Manager (one camera), talk, LEDs,
-  day/night, port 8091, SSH key admin with Telnet and FTP off, flash over SSH with read-back, clean boot.
-- **Host tests only:** MQTT and Home Assistant discovery, the Wi-Fi supervisor and respawn backoff under faults, NTP
-  in use, microphone off, the Go assistant's update, restore, telnet and card phases. The native image builder
+- **Validated on hardware** (two cameras, images of 2026-11-10 and 2026-11-11; both reflashed with "v6" on 2026-11-12 and
+  running continuously since at 14.9 to 15 fps with a home server pulling RTSP; one unit then moved to "v7": 25 fps
+  measured in daylight, 20 fps only in a RAM test): RTSP with microphone, Digest login, ONVIF with a check tool and
+  ONVIF Device Manager (one camera), talk, LEDs, day/night, port 8091, NTP, SSH key admin with Telnet and FTP off,
+  flash over SSH with read-back, clean boot.
+- **Not validated on a camera** (host tests, RAM tests or experimental): MQTT and Home Assistant discovery, picture
+  settings on the final image, bitrate and key frame settings, microphone off, `./akam restore` (never rehearsed),
+  the Go assistant's update, restore, telnet and card phases. The encoder-stall
+  self-exit and the Wi-Fi supervisor are in the image but were never triggered on hardware. The native image builder
   (`akam image --builder native`) is experimental and was never flashed.
 - **Known limits:** the image is grainier than the stock firmware's in dim light; one RTSP client at a time; talk needs
   the video password. Please report what you see on your camera.

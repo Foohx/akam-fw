@@ -5,11 +5,11 @@ off by default; the plain RTSP stream needs none of this.
 
 ONVIF is the standard that NVRs, ONVIF Device Manager, Synology Surveillance Station and Home Assistant use to
 find a camera on the network and pull its video. Akam implements the discovery (WS-Discovery), the device
-service and the media service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
-**This is part of the same release as the `onvif` command: an image built before it has no ONVIF at all
-(`./akam update` first), and `./akam onvif status` then says it does not know.** The firmware side is now wired
-(`ak_rtsp` starts and stops the ONVIF server and the discovery by itself from the flag file, no reboot). It is
-**validated on a real camera** (akam-01, 2026-11-11): ONVIF Device Manager on Windows finds it, logs in, plays the live
+service, the media service and the imaging service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
+An image built before the `onvif` command has no ONVIF at all (run `./akam update` first); `./akam onvif status`
+then says it does not know. The camera's video program (`ak_rtsp`) starts and stops the ONVIF server and the
+discovery by itself from a flag file, with no reboot. The imaging service lets apps read and change brightness,
+contrast and similar settings. It is **validated on a real camera** (akam-01, 2026-11-11): ONVIF Device Manager on Windows finds it, logs in, plays the live
 video and changes the image; `tools/hw_tests/onvif_check.py` passes 34/34. Other NVRs are not tried yet (steps in
 the [install notes](akam_v1_install.md#onvif-with-onvif-device-manager)).
 

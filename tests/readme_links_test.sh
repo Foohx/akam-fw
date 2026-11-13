@@ -53,7 +53,7 @@ for f in README.md docs/*.md; do
 done
 echo "  checked $N relative links"
 
-# Every ./akam command in README.md exists in `./akam help`.
+# Every ./akam command in README.md and the user pages exists in `./akam help`.
 HELP=$("$REPO/akam" help --no-color 2>&1 || true)
 CMDS=$(sed -n '/^Commands:/,/^Options:/p' <<<"$HELP" | awk '/^  [a-z]/ { print $1 }')
 [ -n "$CMDS" ] || bad "could not read the command list from ./akam help"
@@ -61,8 +61,8 @@ M=0
 while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
     M=$((M + 1))
-    grep -qxF -- "$cmd" <<<"$CMDS" || bad "README.md: './akam $cmd' is not in ./akam help"
-done < <(grep -o '\./akam [a-z][a-z-]*' README.md | awk '{ print $2 }' | sort -u | grep -vxF help || true)
+    grep -qxF -- "$cmd" <<<"$CMDS" || bad "'./akam $cmd' (README or a user page) is not in ./akam help"
+done < <(grep -oh '\./akam [a-z][a-z-]*' README.md docs/using_akam.md docs/wizard_guide.md docs/onvif.md docs/compatible-cameras.md | awk '{ print $2 }' | sort -u | grep -vxF help || true)
 echo "  checked $M distinct ./akam commands"
 
 if [ "$FAIL" -ne 0 ]; then

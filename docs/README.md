@@ -7,13 +7,14 @@ Akam. These pages are for when you want details, want to do a step by hand, or s
 
 1. [README](../README.md): what Akam is, the risks, and the install in 5 steps.
 2. [Compatible cameras](compatible-cameras.md): is my camera supported, and what do I get compared with the stock firmware.
-3. [Installing the `akam` binary](assistant_install.md): the single-file assistant for Linux, Windows and macOS (experimental).
+3. [The setup wizard](wizard_guide.md): the menu and what each install step does and risks.
 4. [Troubleshooting](troubleshooting.md): real problems and their fixes (network, card reader, VLC, passwords, SSH).
 
 ## Use Akam
 
 - [Using Akam day to day](using_akam.md): every command and setting, open ports, watching the stream, updates, security notes.
 - [The setup wizard](wizard_guide.md): the menu, what each step does and risks, the native binary.
+- [Installing the `akam` binary](assistant_install.md): the experimental single-file assistant for Linux, Windows and macOS (a first install from Windows or macOS was never done on a real camera).
 - [ONVIF](onvif.md): NVRs and ONVIF apps (optional, off by default).
 - [Two-way audio](two_way_audio.md): talk through the camera speaker (`./akam talk`, go2rtc, Frigate, Home Assistant), settings, hardware check list.
 - [MQTT and Home Assistant](mqtt.md): the optional MQTT client with Home Assistant discovery (`./akam mqtt`), entities, security, a temporary Mosquitto to try it, hardware checks.

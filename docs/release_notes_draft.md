@@ -2,7 +2,7 @@
 
 Draft. Not published. `tools/release/make_release.sh` writes the filled copy (`<version>`, `<sha256>`, `<date>`, `<key>`, absolute links) next to the release directory.
 
-First public release of Akam: open firmware add-ons for Anyka AK3918 IP cameras, and `akam`, the assistant that
+First public release of Akam: open firmware add-ons for the LSC Smart Indoor 1080p camera (Anyka AK3918AV130; the one model validated so far), and `akam`, the assistant that
 installs and manages them. It is **experimental**. Read the [kit documentation](akam_v1_kit.md) and keep a
 verified backup of your stock camera before you flash anything: a flash can brick a camera if the power is cut
 during the write.

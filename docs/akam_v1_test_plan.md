@@ -42,7 +42,7 @@ over SSH of the [flash guide](akam_v1_flash_and_restore.md)):
 - Wi-Fi connects by itself (station mode);
 - H.264 1080p video and an **L16 audio track** in the RTSP stream (`ffprobe`);
 - the **IR night image** is delivered;
-- port 8091: `GET` works from the PC, `SET` from the PC is refused (`ERR read-only mode`), `SET` over SSH from the camera works, and after `./akam debug on` a `SET` from the PC works until `./akam debug off`, the timeout or a reboot;
+- port 8091: `GET` works from the PC, `SET` from the PC is refused (`ERR read-only mode`), `SET` over SSH from the camera works (`./akam debug on`, then a `SET` from the PC until `debug off`, the timeout or a reboot, is not yet checked on the final image);
 - **Dropbear starts by itself** at boot;
 - **SSH as root by ed25519 key** works;
 - SSH still works **after a power cycle**, with the host key persisted (same fingerprint);

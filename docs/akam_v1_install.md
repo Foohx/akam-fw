@@ -86,7 +86,7 @@ says `off`, `on:<port>`, `no_password` (enabled, video password on, but no valid
 `http_failed`, `discovery_failed`; fix it and run `./akam onvif enable` again). With the video password OFF the
 service still starts: reads are open and the changes (reboot, time, name) are refused. The file needs exactly the two
 keys; port 21 to 24, 554 and 8091 are refused. A camera name change applies to discovery at the next reload or boot.
-Not yet validated on hardware.
+Validated on one camera, see [ONVIF with ONVIF Device Manager](#onvif-with-onvif-device-manager) below.
 
 ### ONVIF with ONVIF Device Manager
 

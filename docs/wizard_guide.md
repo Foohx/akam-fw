@@ -6,12 +6,12 @@ experimental single-file `akam` binary can and cannot do. To install Akam you on
 
 ## The menu
 
-**Follow the menu**, one step after the other. Arrow keys (or `j`/`k`) and Enter to run a step (digits 1 to 8 are
+**Follow the menu**, one step after the other. Arrow keys (or `j`/`k`) and Enter to run a step (digits 1 to 9 are
 shortcuts), `?` to read what it does and what it risks, `c` to change camera, `q` to quit (your progress is kept). Nothing waits
 for a "Press Enter": a result shows on one line under the menu and any key clears it. In a camera list, `s` scans
 the network and `o` searches with ONVIF (each asks first), `t` types an address, `r` rechecks, `f` forgets, Esc goes back.
 
-That is all. The first run asks for a short name for your camera (for example `salon`). `./akam help`
+The first run asks for a short name for your camera (for example `salon`). `./akam help`
 lists every command; add `--dry-run` to rehearse without changing anything. The menu (in colour on a
 real terminal; `--plain` or no terminal gives line-by-line prompts):
 
@@ -32,27 +32,11 @@ real terminal; `--plain` or no terminal gives line-by-line prompts):
  ↑↓ move  ⏎ run  ? help  r pick several  a run all  c camera  q quit
 ```
 
-Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`; the other settings commands (`led`, `audio`, `picture`, `video`, `onvif`, `ntp`, `debug`) are typed.
+Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`; the other settings commands (`led`, `audio`, `picture`, `video`, `onvif`, `ntp`, `mqtt`, `debug`) are typed.
 Before a step starts, the wizard shows what it does and asks **Start this step? [Y/n]**. Anything
 irreversible (erasing a card, writing the camera's flash) shows a **red box** that says exactly what
 will happen and asks one yes/no whose **default is No** (Enter, Esc and `q` mean No). Nothing has to be
 typed, and without a terminal these steps refuse to run.
-
-## Native binary (experimental)
-
-A single static binary version of the wizard is being written in Go ([tools/assistant](../tools/assistant/README.md),
-[plan](../specs/09-spec-assistant-binary.md)). It is **experimental: the bash wizard (`./akam`) remains the
-reference**. The binary covers the daily commands on a camera that already runs Akam (`status`, `led`, `audio`,
-`picture`, `video`, `debug`, `onvif`, `ntp`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`) with no SSH,
-`nc` or `akam-talk` to install, kit download and verification, `update`, `restore` and `verify` over SSH, and a
-first install through the maintenance telnet and a built-in microSD writer (`backup`, `flash`, `prepare-*-sd`,
-`wipe-sd`). The `image` step stays in the bash wizard. It has been tested on fake cameras and files only: the
-update, restore, verify, telnet backup and flash and SD writer phases were never run against a real camera or card.
-Phase 11 adds builds for Linux, Windows and macOS (amd64 and arm64), a home screen with a camera chooser and option screens,
-and a backup over SSH. The Windows and macOS binaries are **built, not hardware-tested**, and they import an image built on Linux
-or in WSL for now ([install and unsigned-binary steps](assistant_install.md), [hardware test plan](assistant_hardware_test_plan.md)).
-It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
-`AKAM_USE_BIN=1 ./akam ...`.
 
 ## What the wizard does
 
@@ -70,10 +54,27 @@ It shares the progress files with `./akam`. Build it with `tools/assistant/build
 
 Good to know:
 
-- The wizard never runs `sudo` itself, shows every command before running it, never stores your Wi-Fi
-  password and never reboots the camera: you unplug and replug the power yourself.
+- The wizard never runs `sudo` itself, shows every command before running it and never reboots the camera: you unplug
+  and replug the power yourself. It never keeps your Wi-Fi password in its own state or log files and never puts it on a
+  command line; the password is written only to the cards it prepares (in clear text) and to the camera.
 - **SSH key:** `~/.ssh/akam`, or you pick one of your ed25519 keys, or the wizard creates one.
 - **Wi-Fi:** `flash` and `verify` save it on the camera and never ask you to remove the card before
   ([if it fails](troubleshooting.md#the-camera-has-no-network-after-removing-the-card)).
 - Keep your backup (two copies, on two media) and never publish it: it holds your Wi-Fi credentials.
   The cards hold your Wi-Fi password in clear text: erase them with `./akam wipe-sd` when done.
+
+## Native binary (experimental)
+
+A single static binary version of the wizard is being written in Go ([tools/assistant](../tools/assistant/README.md),
+[plan](../specs/09-spec-assistant-binary.md)). It is **experimental: the bash wizard (`./akam`) remains the
+reference**. The binary covers the daily commands on a camera that already runs Akam (`status`, `led`, `audio`,
+`picture`, `video`, `debug`, `onvif`, `ntp`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`) with no SSH,
+`nc` or `akam-talk` to install, kit download and verification, `update`, `restore` and `verify` over SSH, and a
+first install through the maintenance telnet and a built-in microSD writer (`backup`, `flash`, `prepare-*-sd`,
+`wipe-sd`). The `image` step stays in the bash wizard by default; an experimental native image builder (`akam image --builder native`, opt-in) exists but was never flashed on a camera. It has been tested on fake cameras and files only: the
+update, restore, verify, telnet backup and flash and SD writer phases were never run against a real camera or card.
+Phase 11 adds builds for Linux, Windows and macOS (amd64 and arm64), a home screen with a camera chooser and option screens,
+and a backup over SSH. The Windows and macOS binaries are **built, not hardware-tested**, and they import an image built on Linux
+or in WSL for now ([install and unsigned-binary steps](assistant_install.md), [hardware test plan](assistant_hardware_test_plan.md)).
+It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
+`AKAM_USE_BIN=1 ./akam ...`.

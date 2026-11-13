@@ -20,6 +20,8 @@ how to watch the stream, how to update, and the security notes. Not installed ye
   ONVIF login copy exists). Checked on one real camera with a check tool and ONVIF Device Manager, see [testing status](testing-status.md).
 - **Settings you can change:** video bitrate, frame rate and key frame interval; brightness, contrast,
   saturation, sharpness, white balance and day/night mode; speaker volume, talk and microphone on/off.
+- **MQTT and Home Assistant (optional, off by default, host-tested only):** the camera connects out to your broker and
+  Home Assistant finds it by itself ([MQTT](mqtt.md)); `./akam mqtt set`, `test`, `status`, `disable`, `forget`.
 - **Time:** opt-in NTP (`./akam ntp set SERVER`); with it off the camera sends no time traffic and its clock
   starts in 1970.
 - **Robustness:** the video service exits by itself if the encoder stalls, the camera's wrapper restarts it with a
@@ -28,7 +30,7 @@ how to watch the stream, how to update, and the security notes. Not installed ye
 - **Install:** a guided wizard (`./akam`) from a Linux PC; only the APP partition is rewritten.
 
 What was tested on a real camera and what was only tested on a PC is listed in
-[docs/testing-status.md](testing-status.md); the units used are in
+[testing status](testing-status.md); the units used are in
 [compatible cameras](compatible-cameras.md).
 
 ## Open ports
@@ -74,6 +76,7 @@ hand, or by an earlier version) is recorded without redoing anything:
 | `picture [show \| brightness\|contrast\|saturation\|sharpness N \| wb \| night \| reset]` | the image |
 | `video [show \| bitrate N \| fps N \| gop N]` | encoder settings |
 | `onvif [enable [PORT] \| disable \| status]` | ONVIF, off by default |
+| `mqtt [set \| test \| status \| disable \| forget]` | publish the camera to an MQTT broker and Home Assistant, off by default ([MQTT](mqtt.md)) |
 | `ntp [status \| set SERVER... \| off]` | time synchronisation, off by default |
 | `debug [on [MINUTES] \| off \| status]` | let the network change settings on port 8091 for a while |
 | `talk [SECONDS \| test]`, `say FILE` | speak or play a sound through the camera speaker |
@@ -105,7 +108,7 @@ infrared LEDs ([details](akam_v1_install.md#led-settings)).
 `update` and `restore` write the camera's flash and ask the same red yes/no. The video password is a
 Digest login (works with VLC, ffmpeg, go2rtc and Frigate); it does not encrypt the video. `./akam
 rtsp-auth set` stores the password on the camera twice: as a hash for the Digest login, and in clear text in
-a file only root can read (`/etc/config/akam/credentials`), because the ONVIF login (a later step) cannot work
+a file only root can read (`/etc/config/akam/credentials`), because the ONVIF login (see [ONVIF](onvif.md)) cannot work
 from a hash. `./akam rtsp-auth status` says `ONVIF-ready` when that copy is there; `disable` removes both. Put it in the address: `rtsp://<user>:<password>@<camera-ip>:554/`, with
 special characters URL-encoded ([401 errors](troubleshooting.md#401-unauthorized-or-a-password-prompt-on-the-stream)).
 

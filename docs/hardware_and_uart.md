@@ -9,7 +9,7 @@ This guide documents the physical hardware, disassembly, and UART serial console
 ![Retail Box](../images/1.jpg)
 *Retail packaging: LSC Smart Connect Indoor IP Camera 1080p (Model 3215672.2 / SKU SI B26101).*
 
-This camera is an affordable indoor pan/tilt IP camera sold under the LSC Smart Connect brand at Action stores.
+This camera is an affordable indoor fixed (no pan or tilt) IP camera sold under the LSC Smart Connect brand at Action stores.
 
 | Front (on stand) | Back (on stand) | Back (capsule removed) |
 |:---:|:---:|:---:|
