@@ -303,6 +303,23 @@ func TestKeyChangeRollsBackWhenTheNewKeyDoesNotLogIn(t *testing.T) {
 	notContains(t, r.out, "The new key works")
 }
 
+// The key in use is never offered for removal: choosing it again changes nothing and removes nothing.
+func TestKeyChangeToTheKeyInUseIsANoOp(t *testing.T) {
+	e := newEnv(t)
+	e.needHelpers()
+	e.useSharedKey()
+	r := e.keyRun("y\ny\n", "key", "use-shared")
+	expectRC(t, r, 0)
+	contains(t, r.out, "already uses this key", camssh.PubFingerprint(sharedPub(e)))
+	notContains(t, r.err, "Remove the old key")
+	if n := authkeysCommands(e); n != 0 {
+		t.Errorf("%d key-list commands were sent", n)
+	}
+	if list, _ := e.cam.AuthorizedKeys(); len(keyLinesOf(t, list)) != 1 || !canLogin(t, e, e.key, "") {
+		t.Errorf("the only key was touched: %q", list)
+	}
+}
+
 func TestKeyChangeRefusesAKeyWithoutItsPrivateFile(t *testing.T) {
 	e := newEnv(t)
 	e.useSharedKey()

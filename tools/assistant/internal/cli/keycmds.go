@@ -341,9 +341,8 @@ func (a *App) keyChange(ch *keyChoice, ip string, c *camssh.Client) error {
 		defer c.Close()
 	}
 	if ch == nil || ch.pub == "" {
-		var ok bool
-		var got keyChoice
-		if got, ok = a.askKeyChoice(); !ok {
+		got, ok := a.askKeyChoice()
+		if !ok {
 			a.UI.Say("  Nothing was changed.")
 			return nil
 		}
@@ -414,10 +413,13 @@ func (a *App) keyRotate(ip string, c *camssh.Client, ch keyChoice) error {
 	newLine := authLine(newKey, pubComment(ch.pub))
 	word, err := a.authkeysRun(c, script, "add", newLine, newFP)
 	if err != nil || (word != "added" && word != "present") {
-		op.writing(false)
 		if err == nil {
 			err = fmt.Errorf("unexpected answer %q", word)
 		}
+		if word != "" { // the helper ran and failed: a half-done add (the copy Dropbear reads) is undone too
+			a.keyRollback(ip, c, script, newLine, newFP)
+		}
+		op.writing(false)
 		return a.UI.Fail("the camera did not take the new key: "+err.Error()+".", "the current key still works; nothing was saved here.")
 	}
 	op.done(0, word)
@@ -477,7 +479,9 @@ func (a *App) keyRollback(ip string, c *camssh.Client, script []byte, line, fp s
 		a.UI.Warn(fmt.Sprintf("could not take the new key (%s) out of the camera again; it does no harm, and the current key still works. Remove it later with the card route if you want.", fp))
 		return
 	}
-	a.UI.Say("  The new key was taken out of the camera again.")
+	if word == "removed" {
+		a.UI.Say("  The new key was taken out of the camera again.")
+	}
 }
 
 // keyRemoveOld removes the old key over a login made with the NEW key, then proves the new key still
