@@ -61,6 +61,8 @@ M=0
 while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
     M=$((M + 1))
+    # commands of the Go assistant only: the bash wizard has no `key` change and no configs (documented as such)
+    case $cmd in key | config) continue ;; esac
     grep -qxF -- "$cmd" <<<"$CMDS" || bad "'./akam $cmd' (README or a user page) is not in ./akam help"
 done < <(grep -oh '\./akam [a-z][a-z-]*' README.md docs/using_akam.md docs/wizard_guide.md docs/onvif.md docs/compatible-cameras.md | awk '{ print $2 }' | sort -u | grep -vxF help || true)
 echo "  checked $M distinct ./akam commands"
