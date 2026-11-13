@@ -117,7 +117,7 @@ A kit is always downloaded or opened and verified again (a recorded kit of the s
 staging folder: the recorded downloads, the kit folder and the state change only after every check passed (signature,
 downgrade question, image ready) and, in the update, after the camera was written and read back. A refusal, a failure, a No
 at the red box or an interruption leave the previous kit, its downloaded files, the state and the image as they were; a crash
-inside the final swap is repaired at the next start. An imported image on record is never presented as the image of a
+inside the final swap is repaired at the next start (the swap is judged from a marker file, `kit.swap`, never from the state of whichever camera is selected). With `--builder native` an image built for a refused kit stays on disk as a file but is not recorded. If the kit cannot be installed after a successful write, the camera is still recorded and you are told to run `get-kit` yourself. A rehearsal (`--dry-run`) never installs a kit. An imported image on record is never presented as the image of a
 release: it has its own row, and a release row asks (default No) before writing it. If the release list failed, "Try again to read the releases" asks again. Naming a firmware on the command line skips the list:
 
 ```bash

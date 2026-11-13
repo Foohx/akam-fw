@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"crypto/md5"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,7 +265,7 @@ func TestImageWithVersionStagesTheKitUntilTheWrite(t *testing.T) {
 
 // The image the camera already runs (same md5) is not the default row.
 func TestImageAlreadyOnTheCameraIsNoDefault(t *testing.T) {
-	w := newFwWorldBuilt(t, relList(relJSON("v2.0.0", false, false)), "image_md5=abc123\nflash_md5=abc123\n")
+	w := newFwWorldBuilt(t, relList(relJSON("v2.0.0", false, false)), "flash_md5="+fmt.Sprintf("%x", md5.Sum(validImage(t)))+"\n")
 	r := w.update("\n10\n")
 	contains(t, r.out+r.err, "1) Akam 2.0.0 (latest)", "The image already built from your backup (", "  - already on the camera")
 }

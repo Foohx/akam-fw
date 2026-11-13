@@ -87,15 +87,14 @@ func fwFromOptions(o *Options) fwSource {
 // "image:PATH" with no version.
 func (a *App) fwRecord(img string) {
 	src, ver := "image:"+stateLine(img), ""
+	kv, p, unsigned, kitMode := a.kitFacts() // the staged kit when its install failed after the write
 	if sha := fileSHA(img); sha != "" && sha == a.St.Get("image_sha") && a.stepStatus("image") == "done" &&
-		a.St.Get("image_origin") != "imported:"+sha && a.St.Get("mode") == "kit" {
-		if kv, p := a.St.Get("kit_version"), a.St.Get("kit_path"); kv != "" {
-			ver = kv
-			if p == a.downloadedKitPath(kv) && a.St.Get("kit_unsigned_ok") != "1" {
-				src = "release:" + kv
-			} else {
-				src = "kit:" + stateLine(p)
-			}
+		a.St.Get("image_origin") != "imported:"+sha && kitMode && kv != "" {
+		ver = kv
+		if p == a.downloadedKitPath(kv) && !unsigned {
+			src = "release:" + kv
+		} else {
+			src = "kit:" + stateLine(p)
 		}
 	}
 	a.setState("fw_source", src)
@@ -479,7 +478,12 @@ func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
 		built = p
 	}
 	// the image the camera already runs is no default: writing it again changes nothing
-	onCamera := built != "" && a.St.Get("image_md5") != "" && a.St.Get("image_md5") == a.St.Get("flash_md5")
+	onCamera := false
+	if built != "" && a.St.Get("flash_md5") != "" { // hashed now: the bash builder does not record image_md5
+		if b, err := os.ReadFile(built); err == nil && md5hex(b) == a.St.Get("flash_md5") {
+			onCamera = true
+		}
+	}
 	for {
 		items := fwChoices(fwList{Mode: mode, Cur: cur, Rels: rels, Downloaded: downloaded, Built: built,
 			BuiltFirst: built != "" && !a.canBuildImage() && !onCamera, BuiltImported: a.importedImageOnRecord(), BuiltOnCamera: onCamera,
@@ -664,6 +668,10 @@ func (a *App) prepareFirmware(src fwSource, cur string, ask bool) (string, error
 			return "", err
 		}
 		a.staged = s
+		if perr := a.kitPreflight(); perr != nil {
+			a.discardKit(s)
+			return "", a.UI.Fail("this kit cannot be installed: "+perr.Error()+".", "nothing was changed.")
+		}
 		return src.Path, nil
 	}
 	return "", a.UI.Fail("no firmware to prepare.", "")
@@ -672,6 +680,25 @@ func (a *App) prepareFirmware(src fwSource, cur string, ask bool) (string, error
 // canBuildImage tells whether this program can build the image itself (--builder native, experimental). By
 // default the image is built by the bash wizard from a source checkout, or elsewhere and imported.
 func (a *App) canBuildImage() bool { return a.Opt.Builder == "native" }
+
+// imageKeys are the state keys the image step records.
+var imageKeys = []string{"image_path", "image_sha", "image_md5", "image_kit_sha", "image_backup_sha", "image_origin", "step_image_done"}
+
+// snapshotImage returns the function that puts the image step's record back as it is now (an image built for
+// a kit that is then refused must not replace the one on record).
+func (a *App) snapshotImage() func() {
+	kv := map[string]string{}
+	for _, k := range imageKeys {
+		kv[k] = a.St.Get(k)
+	}
+	return func() {
+		var l [][2]string
+		for _, k := range imageKeys {
+			l = append(l, [2]string{k, kv[k]})
+		}
+		_ = a.St.SetMany(l)
+	}
+}
 
 // importedImageOnRecord is true when the image on record was imported (--image or a chosen file), not built
 // from a kit by this program or the bash wizard.
@@ -683,7 +710,8 @@ func (a *App) importedImageOnRecord() bool {
 // prepareKit stages the kit of a release or a kit file and makes the image for it ready, all or nothing: the
 // kit is verified again every time (a recorded kit of the same version is never trusted), the downgrade
 // question is asked about the version the kit itself states, and when the image cannot be made (no builder
-// here, a refusal, a failure) nothing recorded has changed. On success the staged kit waits in a.staged.
+// here, a refusal, a failure) nothing recorded has changed (an image built natively stays on disk as a file, but its
+// record is put back). On success the staged kit waits in a.staged.
 func (a *App) prepareKit(src fwSource, cur string) (img string, err error) {
 	if src.Kind == fwRelease && !src.Checked && !a.downgradeOK(src.Version, cur) {
 		return "", a.UI.Fail("downgrade not confirmed.", "nothing was changed.")
@@ -704,6 +732,9 @@ func (a *App) prepareKit(src fwSource, cur string) (img string, err error) {
 			a.discardKit(s)
 		}
 	}()
+	if perr := a.kitPreflight(); perr != nil { // what could fail at the final swap is checked before anything is asked
+		return "", a.UI.Fail("this kit cannot be installed: "+perr.Error()+".", "nothing was changed.")
+	}
 	kv := s.version
 	switch {
 	case src.Kind == fwRelease && kv != src.Version:
@@ -717,6 +748,7 @@ func (a *App) prepareKit(src fwSource, cur string) (img string, err error) {
 		if !a.canBuildImage() {
 			return "", a.imageNeededFailure(kv)
 		}
+		s.undo = a.snapshotImage() // a refusal later puts the recorded image back
 		sv := a.Opt.Image
 		a.Opt.Image = ""
 		err = a.installImage()

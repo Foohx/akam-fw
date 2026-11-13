@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
 // kitRepo is KIT_REPO of steps_host.sh.
@@ -44,7 +45,18 @@ func (a *App) cmdGetKit() error {
 	if err != nil || s == nil {
 		return err
 	}
-	return a.commitKit(s)
+	if a.UI.Dry() {
+		// A rehearsal verified a kit that exists; it is remembered in the rehearsal's own state, nothing is
+		// installed: neither the kit folder, nor the downloads, nor the real state.
+		_ = a.St.SetMany([][2]string{{"mode", "kit"}, {"kit_path", s.path}, {"kit_sha", s.sha}, {"kit_format", s.format},
+			{"kit_unsigned_ok", map[bool]string{true: "1", false: "0"}[s.unsigned]}, {"kit_version", s.version}})
+		_ = a.St.MarkDone("get-kit")
+		return nil
+	}
+	if err := a.commitKit(s); err != nil {
+		return a.UI.Fail(ui.Sanitize(err.Error())+".", "nothing was changed: the previous kit stays in use.")
+	}
+	return nil
 }
 
 // getKitStage is the staging half of get-kit (see getKitStageRaw); a failure removes what it unpacked.
@@ -157,10 +169,10 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 
 	ext := a.kitNewDir()
 	if dry {
-		ext = filepath.Join(a.Cams.Base, "kit.dry")
+		ext = "" // a rehearsal unpacks nothing: the verifier works in a private temporary folder
 	}
 	if statErr != nil { // rehearsal, nothing downloaded
-		a.UI.Say(fmt.Sprintf("  WOULD verify %s (SHA256SUMS, signature, safe archive layout, MANIFEST) and extract it to %s   (kit not downloaded in a rehearsal)", kitPath, ext))
+		a.UI.Say(fmt.Sprintf("  WOULD verify %s (SHA256SUMS, signature, safe archive layout, MANIFEST) and extract it to %s   (kit not downloaded in a rehearsal)", kitPath, a.kitRealDir()))
 		_ = a.St.Set("mode", "kit")
 		_ = a.St.Set("kit_path", kitPath)
 		_ = a.St.Set("kit_sha", "dry-run")
@@ -172,15 +184,26 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 	op.start(verifyItem)
 	op.status("checking SHA256SUMS, the signature and the archive layout (read only; nothing from the kit is run)")
 	unsigned := a.Opt.AllowUnsigned
-	_ = os.RemoveAll(ext)
-	a.UI.Say(fmt.Sprintf("  Verifying %s (read-only; nothing from the kit is run).", kitPath))
+	if ext != "" {
+		_ = os.RemoveAll(ext)
+	}
+	shown := kitPath
+	if staging != "" {
+		shown = finalTar // the staging folder is an internal detail
+	}
+	a.UI.Say(fmt.Sprintf("  Verifying %s (read-only; nothing from the kit is run).", shown))
 	opts := kit.Options{
 		AllowedSigners: a.allowedSigners(),
 		AllowUnsigned:  a.Opt.AllowUnsigned,
 		Expect:         a.Opt.ExpectSHA256,
 		ExtractTo:      ext,
-		Say:            func(s string) { a.UI.Say("  " + s) },
-		Warn:           func(s string) { fmt.Fprintln(a.Streams.Err, "WARNING: "+s) },
+		Say: func(s string) {
+			if ext != "" { // the unpack folders are internal details: name the places they end up in
+				s = strings.ReplaceAll(s, ext, a.kitRealDir())
+			}
+			a.UI.Say("  " + s)
+		},
+		Warn: func(s string) { fmt.Fprintln(a.Streams.Err, "WARNING: "+s) },
 	}
 	var man map[string]string
 	var err error
@@ -276,8 +299,10 @@ func (a *App) verifyKitDir(opts kit.Options, dir, ext string) (map[string]string
 		return nil, a.UI.Fail("the kit failed verification (see the message above).",
 			"do not use it. Download it again or get it from the official release page.")
 	}
-	if err := kit.CopyTree(dir, ext); err != nil {
-		return nil, a.UI.Fail("cannot copy the kit folder: "+err.Error(), "")
+	if ext != "" {
+		if err := kit.CopyTree(dir, ext); err != nil {
+			return nil, a.UI.Fail("cannot copy the kit folder: "+err.Error(), "")
+		}
 	}
 	return man, nil
 }

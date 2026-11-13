@@ -327,11 +327,14 @@ func (a *App) updateWrite(ip, img string) error {
 	}
 	_ = a.St.Set("flash_md5", md5)
 	_ = a.St.ClearDone("verify")
-	if err := a.commitStaged(); err != nil { // the camera is written; only the kit bookkeeping failed
-		a.UI.Warn("the camera WAS written and read back; only the kit that went with it could not be installed on this computer.")
-		return err
+	a.fwRecord(img) // from the staged kit's facts, so a failed install of the kit below does not change it
+	if err := a.commitStaged(); err != nil {
+		// The camera is written and verified; only the kit that went with it could not be installed on this PC.
+		// That is its own, milder message: the write is recorded from the staged kit's facts and the power-cycle
+		// instructions follow as for any good write.
+		a.UI.Warn("the camera was written and verified, but the kit that went with it is NOT installed on this computer (" + ui.Sanitize(err.Error()) +
+			"). Run: " + Prog + " get-kit --version X.Y.Z (or --kit FILE) when convenient; the next update needs it.")
 	}
-	a.fwRecord(img)
 	a.afterFlash()
 	return nil
 }
