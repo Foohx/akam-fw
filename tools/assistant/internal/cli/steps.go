@@ -11,6 +11,7 @@ import (
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
 // Step metadata, copied from steps_host.sh so the status table is identical.
@@ -134,6 +135,9 @@ func fileSHA(p string) string {
 }
 
 func (a *App) kitCurrentSHA() string {
+	if a.staged != nil { // a verified kit waiting to be installed
+		return a.staged.sha
+	}
 	p := a.St.Get("kit_path")
 	if a.St.Get("mode") == "source" {
 		return "source"
@@ -211,6 +215,9 @@ func (a *App) stepValidate(step string) string {
 
 // stepStatus is done | stale | blocked | todo.
 func (a *App) stepStatus(step string) string {
+	if step == "get-kit" && a.staged != nil {
+		return "done" // the kit that is staged counts: the image of it may be checked or built before it is installed
+	}
 	if a.St.IsMarked(step) {
 		if a.stepValidate(step) == "" {
 			return "done"
@@ -242,6 +249,14 @@ func (a *App) statusTable() {
 		mode = "rehearsal"
 	}
 	a.UI.Bold(fmt.Sprintf("Akam setup progress (%s; camera: %s; state: %s)", mode, a.Cams.Name, a.St.File))
+	if fw := a.St.Get("fw_source"); fw != "" { // only after a firmware was chosen here and written
+		line := "  Firmware source: " + ui.Sanitize(fw)
+		if d := a.St.Get("fw_source_at"); d != "" {
+			// an update by the bash wizard does not touch it: say when akam recorded it
+			line += "  (recorded by akam on " + ui.Sanitize(d) + ")"
+		}
+		a.UI.Say(line)
+	}
 	if a.St.Get("ssh_pubkey") != "" { // only once a key was chosen: a fresh camera prints exactly what the bash wizard does
 		line := "  SSH key: " + a.keyRowText()
 		if fp := camssh.PubFingerprint(a.keyPub()); fp != "" {

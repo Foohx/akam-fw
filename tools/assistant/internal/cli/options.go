@@ -20,6 +20,7 @@ type Options struct {
 	Builder                                                                string // --builder native|tools (the image step)
 	PasswordFile                                                           string
 	AllowUnsigned, AllowUnknownComp, ManualTelnet, Plain, DryRun, NoColor  bool
+	Stock, IncludePre                                                      bool // --stock (update: back to the stock firmware), --include-prereleases (releases, update)
 	UntestedOK                                                             bool // --i-understand-untested (the native image builder)
 	// TelnetNegotiate (hidden): answer telnet option negotiation (default: stay silent, as validated on hardware).
 	TelnetNegotiate bool
@@ -68,6 +69,10 @@ func ParseArgs(argv []string) (*Options, error) {
 			set(&o.Builder)
 		case "--telnet-negotiate": // hidden: not in the help text
 			o.TelnetNegotiate = true
+		case "--stock":
+			o.Stock = true
+		case "--include-prereleases":
+			o.IncludePre = true
 		case "--manual-telnet":
 			o.ManualTelnet = true
 		case "--kit":
@@ -136,6 +141,14 @@ func ParseArgs(argv []string) (*Options, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+	}
+	if o.Stock && (len(o.Args) == 0 || o.Args[0] != "help") {
+		if len(o.Args) > 0 && o.Args[0] != "update" {
+			return nil, usageErr("akam: --stock is for the update command (see " + Prog + " help)")
+		}
+		if o.Kit != "" || o.Version != "" || o.Image != "" {
+			return nil, usageErr("akam: --stock cannot be combined with --kit, --version or --image: choose one firmware (see " + Prog + " help)")
 		}
 	}
 	switch o.Builder {

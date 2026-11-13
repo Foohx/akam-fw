@@ -29,6 +29,9 @@ func TestInstallFlowResumesAtTheFlashAndNeverPowerCycles(t *testing.T) {
 	if fw.readState("step_flash_done") == "" {
 		t.Error("the flash step was not recorded")
 	}
+	if got := fw.readState("fw_source"); got != "image:"+fw.imgPath { // the plain flash path records what it wrote
+		t.Errorf("fw_source %q", got)
+	}
 	if fw.readState("step_verify_done") != "" {
 		t.Error("verify recorded without a yes")
 	}

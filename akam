@@ -299,7 +299,13 @@ case $CMD in
     find-camera) cmd_find_camera || rc=$? ;;
     flash) cmd_flash || rc=$? ;;
     verify) cmd_verify || rc=$? ;;
-    update) cmd_update || rc=$? ;;
+    update)
+        if [ -n "$OPT_VERSION$OPT_KIT" ]; then
+            echo "akam: update takes no --version or --kit in the bash wizard (it writes --image FILE or the image on record). Go assistant only: use the akam binary (AKAM_USE_BIN=1 ./akam update --version X.Y.Z, see docs/wizard_guide.md)." >&2
+            exit 2
+        fi
+        cmd_update || rc=$?
+        ;;
     hostname) cmd_hostname "${ARGS[1]:-}" || rc=$? ;;
     rtsp-auth) cmd_rtsp_auth "${ARGS[1]:-status}" || rc=$? ;;
     led)

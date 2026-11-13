@@ -470,6 +470,14 @@ check "update: empty stdin fails and starts no flash" bash -c '[ "$1" -ne 0 ] &&
 head -c 1000 /dev/urandom >"$T/short.img"
 printf 'y\n' | a "$S" --identity "$T/key" --image "$T/short.img" update >"$T/upd3.out" 2>&1
 check "update: an image of the wrong size is refused" bash -c '[ "$1" -ne 0 ] && grep -q "expected exactly 5242880" "$2"' _ $? "$T/upd3.out"
+for opt in --version --kit; do
+    : >"$STUB_DIR/reflash.log"
+    : >"$STUB_DIR/ssh.log"
+    a "$S" --identity "$T/key" "$opt" 1.0.0 --image "$IMG" update </dev/null >"$T/upd_opt.out" 2>&1
+    rc=$?
+    check "update: $opt is refused (Go assistant only), exit 2" bash -c '[ "$1" -eq 2 ] && grep -q "Go assistant only: use the akam binary" "$2"' _ "$rc" "$T/upd_opt.out"
+    check "update: $opt refused: nothing was sent to the camera (no ssh, no reflash)" bash -c '[ ! -s "$1" ] && [ ! -s "$2" ]' _ "$STUB_DIR/ssh.log" "$STUB_DIR/reflash.log"
+done
 
 # ------------------------------------------------------------------ verify (fake ssh + listeners)
 P_SSH=$(fc_free_port)

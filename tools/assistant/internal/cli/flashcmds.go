@@ -25,7 +25,14 @@ import (
 
 // ---------------------------------------------------------------- tools on this computer
 
-func (a *App) kitDir() string { return filepath.Join(a.Cams.Base, "kit") }
+// kitDir is the kit in use: the staged one while a kit is waiting to be installed (its flash tool writes the
+// image), else the installed one.
+func (a *App) kitDir() string {
+	if a.staged != nil {
+		return a.staged.newDir
+	}
+	return a.kitRealDir()
+}
 
 func exists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 
@@ -267,7 +274,14 @@ func (a *App) afterFlash() {
 
 // ---------------------------------------------------------------- update
 
+// cmdUpdate is `update`. Without a choice it writes the image on record (or --image FILE). The firmware can
+// be chosen on the command line: --version X.Y.Z (a published release, downloaded and verified), --kit FILE
+// (a kit you have, verified), --image FILE (an image you built), --stock (back to the original firmware:
+// the restore command, with all its gates).
 func (a *App) cmdUpdate() error {
+	if a.Opt.Stock {
+		return a.cmdRestore()
+	}
 	a.banner("Update Akam with a new image (SSH, no card)")
 	ip, err := a.camNeedIP()
 	if err != nil {
@@ -277,6 +291,20 @@ func (a *App) cmdUpdate() error {
 	if img == "" {
 		img = a.St.Get("image_path")
 	}
+	defer a.discardStaged() // a kit that was not installed (a refusal, a No at the red box, a failure) is thrown away
+	if src := a.cliFW; src.Kind == fwRelease || src.Kind == fwKit || (src.Kind == fwImage && (a.Opt.Kit != "" || a.Opt.Version != "")) {
+		_, cur := a.currentFirmware(ip, true)
+		if img, err = a.prepareFirmware(src, cur, false); err != nil {
+			return err
+		}
+	}
+	return a.updateWrite(ip, img)
+}
+
+// updateWrite is the part of the update that touches the camera: the image gate, the backup gate, the red
+// box and the write. The firmware that was chosen is recorded once the write is verified.
+func (a *App) updateWrite(ip, img string) error {
+	var err error
 	if a.UI.Dry() {
 		if img == "" {
 			img = "<image>"
@@ -299,6 +327,14 @@ func (a *App) cmdUpdate() error {
 	}
 	_ = a.St.Set("flash_md5", md5)
 	_ = a.St.ClearDone("verify")
+	a.fwRecord(img) // from the staged kit's facts, so a failed install of the kit below does not change it
+	if err := a.commitStaged(); err != nil {
+		// The camera is written and verified; only the kit that went with it could not be installed on this PC.
+		// That is its own, milder message: the write is recorded from the staged kit's facts and the power-cycle
+		// instructions follow as for any good write.
+		a.UI.Warn("the camera was written and verified, but the kit that went with it is NOT installed on this computer (" + ui.Sanitize(err.Error()) +
+			"). Run: " + Prog + " get-kit --version X.Y.Z (or --kit FILE) when convenient; the next update needs it.")
+	}
 	a.afterFlash()
 	return nil
 }
@@ -358,6 +394,7 @@ func (a *App) cmdRestore() error {
 	}
 	_ = a.St.ClearDone("flash")
 	_ = a.St.ClearDone("verify")
+	a.fwRecordStock()
 	a.UI.Blank()
 	a.UI.Good(fmt.Sprintf("  Restore written and verified (read-back md5 = %s).", md5))
 	a.UI.Say("  Power-cycle the camera BY HAND (unplug the USB-C power, wait 5 seconds, plug it back).")
@@ -648,6 +685,7 @@ func (a *App) cmdVerify() error {
 		return a.UI.Fail("akam_hwcheck.sh reported a failure without the card.", "")
 	}
 	_ = a.St.MarkDone("verify")
+	a.fwNoteBuild(ip)
 	a.UI.Good("  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off.")
 	a.verifyHostname(nil, ip)
 	a.cfgApplyPending() // the config chosen at the start of the install, if any (differences shown, one yes/no)
