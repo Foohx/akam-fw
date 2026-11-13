@@ -103,7 +103,7 @@ the default, on Linux that is `./akam step image` (or `--builder native`, experi
 image on record. Naming a firmware on the command line skips the list:
 
 ```bash
-./akam releases [--include-prereleases]            # the published versions, newest first
+akam releases [--include-prereleases]            # the published versions, newest first
 ./akam update --version 0.2.0                      # a release (verified like get-kit)
 ./akam update --kit akam-kit-0.2.0.tar.xz          # a kit you have
 ./akam update --image my.squashfs                  # an image you built

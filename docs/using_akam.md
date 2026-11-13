@@ -88,7 +88,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 
 | I want to... | Command |
 |---|---|
-| flash a newer image | `./akam update` (`--image FILE` for a specific one). Go assistant: it asks "Which firmware?" (the latest release by default, an older one, a kit or an image you have, or the stock firmware), or `./akam update --version X.Y.Z`, `./akam releases` to list ([details](wizard_guide.md#choosing-your-firmware-go-assistant-only)) |
+| flash a newer image | `./akam update` (`--image FILE` for a specific one). Go assistant: it asks "Which firmware?" (the latest release by default, an older one, a kit or an image you have, or the stock firmware), or `./akam update --version X.Y.Z`, `akam releases` to list ([details](wizard_guide.md#choosing-your-firmware-go-assistant-only)) |
 | change the camera's network name (what your router lists) | `./akam hostname [NAME]` (default: the camera's name), applied at the next power cycle |
 | ask for a user and password on the stream (off by default) | `./akam rtsp-auth set` (also `status`, `disable`) |
 | turn the front LED off or make it a status light, or keep the infrared LEDs dark at night | `./akam led` shows both; `./akam led status on\|off\|auto`, `./akam led ir auto\|off` |
