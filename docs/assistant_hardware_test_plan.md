@@ -9,7 +9,7 @@ not hardware-tested" or "partly tested". Current evidence:
 
 ## What you need
 
-- A spare camera on [supported hardware](tested-hardware.md) (stock, with the maintenance toolkit card route) and a camera that already
+- A spare camera on [supported hardware](compatible-cameras.md) (stock, with the maintenance toolkit card route) and a camera that already
   runs Akam. A UART adapter at hand for the flash tests ([UART notes](hardware_and_uart.md)).
 - One microSD reader of each kind (a built-in slot where the machine has one, a USB reader) and one plain USB stick.
 - A backup of any camera you use, kept on two media ([backup](akam_v1_backup.md)). A flash that is interrupted can brick a camera.

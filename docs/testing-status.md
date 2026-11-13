@@ -5,7 +5,7 @@ This page separates three levels of evidence, so you know what to trust:
 - **Host tests**: the `tests/*.sh` scripts, run on a PC with fixtures, fake binaries and stubs. They check logic,
   parsing, limits and file formats. They say nothing about the real hardware, the real kernel or real clients.
 - **Validated in RAM**: a development build copied to `/tmp` on one camera and run from there, before the final image.
-- **Hardware validated**: the flashed image, running on the cameras listed in [tested hardware](tested-hardware.md).
+- **Hardware validated**: the flashed image, running on the cameras listed in [compatible cameras](compatible-cameras.md).
 
 Anything marked "not yet" has **not** been run on a camera. Older, more detailed checklists are in the
 [test plan](akam_v1_test_plan.md).
@@ -26,8 +26,9 @@ Anything marked "not yet" has **not** been run on a camera. Older, more detailed
 
 ## Hardware results in short
 
-**akam-01 was flashed with the image built 2026-11-11** (ONVIF, encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP,
-video config, quieter logs, review fixes). akam-02 is still on the 2026-11-10 image. Seen on akam-01:
+**Earlier results (2026-11-10 and 2026-11-11).** `akam-01` was flashed with the development image built 2026-11-11 (ONVIF,
+encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP, video config, quieter logs, review fixes); `akam-02` ran the image of
+2026-11-10. Both were reflashed with image "v6" on 2026-11-12 (see above). Seen on `akam-01` with the 2026-11-11 image:
 
 - a clean boot after a power cycle; ports 22, 554 and 8091 only by default, no UDP; settings kept across the flash;
 - ONVIF enabled, then validated with `tools/hw_tests/onvif_check.py`: 34 of 35 checks OK (the failure was a tool bug,
@@ -37,7 +38,7 @@ video config, quieter logs, review fixes). akam-02 is still on the 2026-11-10 im
 
 ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login with the stream user, live video plays, imaging changes are visible live (2026-11-11).
 
-**Hardware validated on two cameras** (firmware image built 2026-11-10, "v3 ctl"; akam-01 has since moved to the 2026-11-11 image):
+**Hardware validated on two cameras** (firmware image built 2026-11-10, "v3 ctl"; both cameras have since moved to image "v6"):
 
 - RTSP H.264 1080p 15 fps video plus microphone, with VLC, ffmpeg and go2rtc over TCP;
 - RTSP Digest authentication;
@@ -66,7 +67,7 @@ ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login wi
 | Front LED, IR LED | `leds_test.sh`, `wizard_led_test.sh` | Yes: status on, off, auto; IR auto | |
 | Automatic day/night switching | `night_logic_test.sh`, `isp_effects_test.sh`, `isp_blocks_test.sh`, `isp_block_diff_test.sh` | Yes, including the night probe and the IR back-on logic | Long runs across dusk and dawn are in the [test plan](akam_v1_test_plan.md) |
 | Picture settings (brightness, contrast, saturation, sharpness) | `isp_tune_test.sh`, `imgq_test.sh`, `wizard_picture_test.sh` | In RAM, one camera: persistence across a daemon restart and a forced night to day switch | Not yet checked on the final image |
-| Video config (bitrate, fps, gop) | `video_cfg_test.sh`, `video_apply_test.sh`, `wizard_video_test.sh` | In the flashed image of akam-01; not exercised on the camera yet | Applied at the next restart of the video service |
+| Video config (bitrate, fps, gop) | `video_cfg_test.sh`, `video_apply_test.sh`, `wizard_video_test.sh` | Frame rate: yes (image v7 on one camera: 25 fps measured in daylight on 2026-11-13, 10 fps in night mode; 15 fps on two). Bitrate and GOP: in the flashed image, not exercised on the camera yet | Applied at the next restart of the video service |
 | Port 8091 metrics, read-only from the network | `control_test.sh`, `ctl_sys_test.sh`, `http_srv_test.sh`, `wizard_core_test.sh` | Yes: reads work, `SET` refused remotely | |
 | Strict `SET` ranges (`ae.*`, `night.*`, `isp.*`) | `control_test.sh` | Not yet | |
 | Debug mode (`./akam debug on`) | `akam_debug_test.sh`, `wizard_debug_test.sh` | Not yet on the final image | Loopback `SET` and timed network `SET` |

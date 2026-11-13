@@ -17,6 +17,8 @@ Released on <date>.
 
 ## Supported hardware
 
+See also the [compatible cameras](compatible-cameras.md) page for the full table and the stock-versus-Akam comparison.
+
 | Status | Device | Fingerprint |
 |---|---|---|
 | validated | LSC Smart Indoor 1080p 3215672.3 (board SI D26228), AK3918AV130 | kernel `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`; 8 MTD partitions, mtd7 = APP (`00500000`); stock APP squashfs xz, block 128 KiB, no BCJ; stock APP sha256 `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294`; BusyBox 1.30.1 |

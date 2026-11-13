@@ -39,7 +39,7 @@ tuning experiments are welcome.
   do dynamic AWB in the scenes tested either, but it matters if your lighting varies a lot.
 - **Two-way audio (Akam):** microphone to viewer works; playback through the camera's speaker (NVR "talk") is
   implemented in Akam with the ONVIF audio backchannel and needs the video password (see
-  [two-way audio](two_way_audio.md); not yet checked on a camera). The upstream project had none.
+  [two-way audio](two_way_audio.md); `talk` validated on two cameras). The upstream project had none.
 
 ## Hardware overview
 

@@ -1,5 +1,9 @@
 # Installing the `akam` binary (Windows, macOS, Linux)
 
+**What this page is for:** downloading and checking the single-file `akam` program, and getting past the
+"unknown publisher" warnings of Windows and macOS. You need it only if you do not use the bash wizard from the
+repository (Linux) or want a Windows or macOS PC.
+
 The `akam` binary is the single-file version of the setup wizard. It is **experimental**: on Linux the bash wizard
 (`./akam` in the repository) remains the reference. Linux amd64 is partly tested on real cameras; an earlier Windows amd64 build was tested
 on a real camera, the current full-screen interface build is pending its Windows test; macOS and arm64 are **built, not hardware-tested**
