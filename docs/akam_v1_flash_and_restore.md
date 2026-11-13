@@ -488,9 +488,10 @@ your backup, then power cycle by hand.
 Restoring the APP leaves CONFIG alone, so the `dropbear` directory and Wi-Fi settings stay. That is
 harmless for stock.
 
-Go assistant: `./akam update --stock` (or "Stock firmware (from your backup)" in the "Which firmware?" list of
-"Update this camera") runs the same restore command, over SSH when Akam runs, with the same gates (a backup of the stock
-firmware re-hashed now, the red box, default No). It has never been tried on a real camera
+Go assistant: `akam update --stock` (or "Stock firmware (from your backup)" in the "Which firmware?" list of
+"Update this camera") runs the same restore command with the same gates (a backup of the stock firmware re-hashed now, the
+red box, default No). Its route question defaults to No: the maintenance telnet and the card; answer yes to restore over SSH
+when Akam runs. It has never been tried on a real camera
 ([choose your firmware](wizard_guide.md#choosing-your-firmware-go-assistant-only)).
 
 ### Back to full stock
