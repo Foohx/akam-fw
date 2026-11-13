@@ -335,6 +335,8 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdDebug(args)
 	case "onvif":
 		return a.cmdOnvif(args)
+	case "key":
+		return a.cmdKey(args)
 	case "mqtt":
 		return a.cmdMqtt(args)
 	case "audio":
@@ -490,6 +492,31 @@ func (a *App) dialPort(ip string, port int) (*camssh.Client, error) {
 			return p, err
 		},
 		Confirm: a.confirmHostKey,
+	}
+	return camssh.Dial(cfg)
+}
+
+// dialKey opens an SSH login with the key at keyPath, on the camera's SSH port, only to a camera whose
+// host key is already pinned: it never accepts a first contact (a login with a second key is a check
+// of a camera already known, never a discovery). pass caches the passphrase of that key for the run.
+func (a *App) dialKey(ip, keyPath string, pass *string) (*camssh.Client, error) {
+	cfg := camssh.Config{
+		Host: ip, Port: a.Env.PortSSH, KeyPath: keyPath,
+		KnownHosts: a.knownHostsFile(), UserKnownHosts: userKnownHosts(), Alias: ip,
+		Timeout: 10 * time.Second,
+		Passphrase: func() (string, error) {
+			if pass != nil && *pass != "" {
+				return *pass, nil
+			}
+			p, err := a.UI.Secret(fmt.Sprintf("  Passphrase of the SSH key %s (not shown):", keyPath))
+			if err == nil {
+				if pass != nil {
+					*pass = p
+				}
+				a.Secrets.Add(p)
+			}
+			return p, err
+		},
 	}
 	return camssh.Dial(cfg)
 }
