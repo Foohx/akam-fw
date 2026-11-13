@@ -130,12 +130,14 @@ func onvifPort(s string) bool {
 // validators of the settings keys that are not option IDs of camopt.
 var settingCheck = map[string]func(string) error{
 	OnvifEnabled: oneOf("0", "1"),
-	OnvifPort:    func(v string) error { return need(onvifPort(v), "a port from 1 to 65535 other than 21 to 24, 554 and 8091") },
-	NTPEnabled:   oneOf("0", "1"),
-	NTPServers:   func(v string) error { return camopt.ValidNTPServers(strings.Split(v, ",")) },
-	MQTTEnabled:  oneOf("0", "1"),
-	MQTTHost:     func(v string) error { return need(HostValid(v), "a host name or an IPv4 address") },
-	MQTTPort:     func(v string) error { return need(port(v), "a port from 1 to 65535") },
+	OnvifPort: func(v string) error {
+		return need(onvifPort(v), "a port from 1 to 65535 other than 21 to 24, 554 and 8091")
+	},
+	NTPEnabled:  oneOf("0", "1"),
+	NTPServers:  func(v string) error { return camopt.ValidNTPServers(strings.Split(v, ",")) },
+	MQTTEnabled: oneOf("0", "1"),
+	MQTTHost:    func(v string) error { return need(HostValid(v), "a host name or an IPv4 address") },
+	MQTTPort:    func(v string) error { return need(port(v), "a port from 1 to 65535") },
 	MQTTUser: func(v string) error {
 		return need(v == "" || (v != "-" && UserValid(v)), "empty or 1 to 32 of letters, digits . _ @ + -")
 	},

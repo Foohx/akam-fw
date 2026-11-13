@@ -665,4 +665,3 @@ func (a *App) cfgRecordLocal(c *camssh.Client) {
 	}
 	a.UI.Say("  The camera's settings were recorded on this computer (" + Prog + " config show).")
 }
-
