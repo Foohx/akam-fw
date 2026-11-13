@@ -127,10 +127,11 @@ install_file() {
 # refresh_copy: the login copy of Dropbear (see the header) follows the persistent file.
 refresh_copy() {
     [ -d "$HOMEDIR" ] || return 0
-    cp "$KEYS" "$HOMEDIR/.authorized_keys.new.$$" 2>/dev/null && install_file "$HOMEDIR/.authorized_keys.new.$$" "$HOMEKEYS" || {
-        rm -f "$HOMEDIR/.authorized_keys.new.$$"
-        return 1
-    }
+    if cp "$KEYS" "$HOMEDIR/.authorized_keys.new.$$" 2>/dev/null && install_file "$HOMEDIR/.authorized_keys.new.$$" "$HOMEKEYS"; then
+        return 0
+    fi
+    rm -f "$HOMEDIR/.authorized_keys.new.$$"
+    return 1
 }
 
 fail_write() {

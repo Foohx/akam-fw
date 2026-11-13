@@ -1029,7 +1029,7 @@ pubkey_check() {
 # _ssh_tilde PATH: a path under $HOME written as ~/... (what the menus show).
 _ssh_tilde() {
     case $1 in
-        "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;;
+        "$HOME"/*) printf '~%s' "/${1#"$HOME"/}" ;;
         *) printf '%s' "$1" ;;
     esac
 }

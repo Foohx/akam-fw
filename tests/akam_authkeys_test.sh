@@ -2,6 +2,7 @@
 # Host-side test of tools/flash_scripts/akam_authkeys.sh (the script the assistant runs from the camera's
 # RAM to add or remove one SSH key), in a fake root. It runs under the pinned BusyBox ash when the
 # toolchain has it (the camera's shell), and under the host's sh. Nothing here touches a camera.
+# shellcheck disable=SC2016  # the bash -c scripts below are single-quoted on purpose
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
