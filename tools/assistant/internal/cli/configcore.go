@@ -61,8 +61,12 @@ func valueShown(k, v string) string {
 		return "-"
 	}
 	if o, ok := camopt.Find(k); ok {
-		if o.Kind == camopt.Enum && len(o.Values) == 2 && o.Values[0] == "0" && o.Values[1] == "1" {
-			return map[string]string{"0": "off", "1": "on"}[v]
+		if o.Kind == camopt.Enum {
+			for i, x := range o.Values {
+				if x == v {
+					return enumLabels(o)[i]
+				}
+			}
 		}
 		return v
 	}
@@ -76,13 +80,7 @@ func valueShown(k, v string) string {
 }
 
 // cfgKeys are the keys of a settings file in the order a screen shows them, without the bookkeeping ones.
-func cfgKeys() []string {
-	ks := profile.OptionIDs()
-	return append(ks, profile.OnvifEnabled, profile.OnvifPort, profile.NTPEnabled, profile.NTPServers,
-		profile.MQTTEnabled, profile.MQTTHost, profile.MQTTPort, profile.MQTTUser, profile.MQTTBaseTopic,
-		profile.MQTTClientID, profile.MQTTDiscovery, profile.MQTTPrefix, profile.MQTTInterval,
-		profile.AuthEnabled, profile.AuthUser, profile.KeyKind, profile.KeyPath)
-}
+func cfgKeys() []string { return profile.SettingKeys() }
 
 // ---------------------------------------------------------------- places and sources
 
@@ -232,6 +230,18 @@ type cfgRead struct {
 	ssid    string   // the Wi-Fi name the camera reports (a default for the Wi-Fi question)
 	missing []string // what could not be read (an older image, a helper that did not answer)
 	ctlOK   bool     // the control port answered at least one option: false means ak_rtsp said nothing
+	miss    []string // the settings keys, or the helper groups (onvif, ntp, mqtt, auth), that could not be read
+}
+
+// unread says whether the value of key k could not be read (its key, or the helper group it belongs to).
+func (r cfgRead) unread(k string) bool {
+	g := profile.GroupOf(k)
+	for _, m := range r.miss {
+		if m == k || (g != "" && m == g) {
+			return true
+		}
+	}
+	return false
 }
 
 // cfgHelper runs one helper command of the camera through the guard and returns its cleaned output and
@@ -270,6 +280,7 @@ func (a *App) cfgReadLive(c *camssh.Client, cam string) cfgRead {
 	set := func(k, v string) {
 		if err := r.f.Set(k, v); err != nil {
 			r.missing = append(r.missing, keyLabel(k))
+			r.miss = append(r.miss, k)
 		}
 	}
 	for _, st := range camopt.Read(a.exchanger(c)) {
@@ -284,12 +295,14 @@ func (a *App) cfgReadLive(c *camssh.Client, cam string) cfgRead {
 		}
 		if st.Unavailable {
 			r.missing = append(r.missing, st.Label)
+			r.miss = append(r.miss, st.ID)
 			continue
 		}
 		set(st.ID, st.Value)
 	}
 	if res, err := a.run(c, remoteOnvifFlag, nil, ""); err != nil {
 		r.missing = append(r.missing, "ONVIF") // a read that failed is not "off"
+		r.miss = append(r.miss, "onvif")
 	} else if on, port := parseOnvifFlag(string(res.Stdout)); on {
 		set(profile.OnvifEnabled, "1")
 		set(profile.OnvifPort, fmt.Sprint(port))
@@ -310,11 +323,13 @@ func (a *App) cfgReadLive(c *camssh.Client, cam string) cfgRead {
 		}
 	} else {
 		r.missing = append(r.missing, "Time sync")
+		r.miss = append(r.miss, "ntp")
 	}
 	if out, ok := a.cfgHelper(c, remoteMqtt("status"), nil); ok {
 		parseMqttStatus(out, set)
 	} else {
 		r.missing = append(r.missing, "MQTT")
+		r.miss = append(r.miss, "mqtt")
 	}
 	switch st, text := a.rtspStatus(c); st {
 	case "enabled":
@@ -327,6 +342,7 @@ func (a *App) cfgReadLive(c *camssh.Client, cam string) cfgRead {
 		set(profile.AuthEnabled, "0")
 	default:
 		r.missing = append(r.missing, "Video password")
+		r.miss = append(r.miss, "auth")
 	}
 	kind, path := a.keyOf(cam)
 	set(profile.KeyKind, kind)
@@ -417,6 +433,7 @@ type cfgChange struct {
 	From, To         string // shown to the user: never a secret
 	Key, Value       string // opCtl: the option ID and value; opMqttOpt: the helper option and value
 	Want             *profile.File
+	User             string // opMqttSet: the broker user that will be sent (the config's, else the one the camera has)
 	Secret           bool   // a password goes with it (from the secrets file or asked)
 	Own              string // when set, this change needs its own yes/no (default No) with this warning
 }
@@ -520,6 +537,7 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		}
 	}
 	// 5. MQTT
+	brokerQueued := false
 	if use("mqtt") && want.Has(profile.MQTTEnabled) && readable("mqtt", profile.MQTTEnabled, "MQTT") {
 		if want.Get(profile.MQTTEnabled) == "0" {
 			if lv(profile.MQTTEnabled) == "1" {
@@ -528,11 +546,17 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 		} else if !want.Has(profile.MQTTHost) {
 			skipped = append(skipped, "MQTT: the config has no broker address")
 		} else {
+			// a key the config does not have is not part of it: the camera keeps what it has (never "no user")
 			port := want.Get(profile.MQTTPort)
 			if port == "" {
-				port = "1883"
+				if port = lv(profile.MQTTPort); port == "" {
+					port = "1883"
+				}
 			}
 			user := want.Get(profile.MQTTUser)
+			if !want.Has(profile.MQTTUser) {
+				user = lv(profile.MQTTUser)
+			}
 			differs := lv(profile.MQTTEnabled) != "1" || lv(profile.MQTTHost) != want.Get(profile.MQTTHost) || lv(profile.MQTTPort) != port || lv(profile.MQTTUser) != user
 			stored := user != "" && profile.BoundMQTT(sec, want.Get(profile.MQTTHost), user) != ""
 			if differs || (withSecrets && stored) {
@@ -548,10 +572,20 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 				default:
 					to += ", password: asked"
 				}
-				ch = append(ch, cfgChange{Op: opMqttSet, Group: "mqtt", Label: "MQTT broker", From: from, To: to, Secret: user != "", Want: want, Value: port})
+				ch = append(ch, cfgChange{Op: opMqttSet, Group: "mqtt", Label: "MQTT broker", From: from, To: to, Secret: user != "", Want: want, Value: port, User: user})
+				brokerQueued = true
 			}
 		}
-		if want.Get(profile.MQTTEnabled) == "1" || live.Has(profile.MQTTHost) {
+		// the options need a broker saved on the camera, or one this apply saves
+		brokerThere := live.Has(profile.MQTTHost) || brokerQueued
+		hasOpt := false
+		for _, k := range []string{profile.MQTTBaseTopic, profile.MQTTClientID, profile.MQTTDiscovery, profile.MQTTPrefix, profile.MQTTInterval} {
+			hasOpt = hasOpt || (want.Has(k) && lv(k) != want.Get(k))
+		}
+		if hasOpt && !brokerThere {
+			skipped = append(skipped, "MQTT options: no broker is saved on the camera and the config has none to save")
+		}
+		if brokerThere {
 			for _, k := range []string{profile.MQTTBaseTopic, profile.MQTTClientID, profile.MQTTDiscovery, profile.MQTTPrefix, profile.MQTTInterval} {
 				if want.Has(k) && lv(k) != want.Get(k) {
 					from := lv(k)
@@ -566,6 +600,9 @@ func cfgDiff(live, want, sec *profile.File, only map[string]bool, withSecrets bo
 	// 6. the SSH key of this camera
 	if use("key") && want.Has(profile.KeyKind) {
 		wk, wp := want.Get(profile.KeyKind), want.Get(profile.KeyPath)
+		if n, err := normPub(wp); err == nil && wp != "" { // ~ and relative paths mean the file the camera is recorded with
+			wp = n
+		}
 		if wk != lv(profile.KeyKind) || (wk == "custom" && wp != lv(profile.KeyPath)) {
 			to := wk
 			if wk == "custom" {
@@ -617,8 +654,8 @@ func (a *App) cfgPasswords(ch []cfgChange, sec *profile.File) (todo []cfgChange,
 			pws["auth"] = pw
 		case opMqttSet:
 			ok = true
-			if x.Want.Get(profile.MQTTUser) != "" {
-				pw, ok = a.cfgPassword("MQTT password", profile.BoundMQTT(sec, x.Want.Get(profile.MQTTHost), x.Want.Get(profile.MQTTUser)), 0)
+			if x.User != "" {
+				pw, ok = a.cfgPassword("MQTT password", profile.BoundMQTT(sec, x.Want.Get(profile.MQTTHost), x.User), 0)
 				pws["mqtt"] = pw
 			}
 		default:
@@ -808,7 +845,7 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 		out, good := a.cfgHelper(c, remoteNtp(strings.Fields(x.Value)[0], strings.Fields(x.Value)[1:]...), nil)
 		return okRes(out, good)
 	case opMqttSet:
-		user := x.Want.Get(profile.MQTTUser)
+		user := x.User
 		pw := ""
 		if user != "" {
 			pw = pws["mqtt"]
@@ -839,18 +876,9 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 		out, good := a.cfgHelper(c, remoteMqtt("disable"), nil)
 		return okRes(out, good)
 	case opKey:
-		ch := keyChoice{kind: x.Key}
-		switch x.Key {
-		case camssh.KindShared:
-			ch.pub = camssh.SharedKeyPath() + ".pub"
-		case camssh.KindOwn:
-			ch.pub = camssh.OwnKeyPath(a.Cams.Name) + ".pub"
-		default:
-			p, nerr := normPub(x.Value)
-			ch.pub = p
-			if nerr != nil || !strings.HasSuffix(p, ".pub") || !exists(ch.pub) {
-				return fail("the key file " + tilde(ch.pub) + " is not on this computer")
-			}
+		ch, kerr := a.keyChoiceFor(x.Key, x.Value)
+		if kerr != nil {
+			return fail(kerr.Error())
 		}
 		before := a.St.Get("ssh_pubkey")
 		if err := a.keyChange(&ch, ip, c); err != nil {
@@ -866,6 +894,22 @@ func (a *App) cfgRunOne(c *camssh.Client, ip string, x cfgChange, pws map[string
 		return o
 	}
 	return fail("unknown change")
+}
+
+// keyChoiceFor is the key a config names: the shared key, the key of this camera only, or a key file (a custom
+// path may be written with ~ or relative; it must be a .pub file that exists on this computer).
+func (a *App) keyChoiceFor(kind, path string) (keyChoice, error) {
+	switch kind {
+	case camssh.KindShared:
+		return keyChoice{kind: kind, pub: camssh.SharedKeyPath() + ".pub"}, nil
+	case camssh.KindOwn:
+		return keyChoice{kind: kind, pub: camssh.OwnKeyPath(a.Cams.Name) + ".pub"}, nil
+	}
+	p, err := normPub(path)
+	if err != nil || path == "" || !strings.HasSuffix(p, ".pub") || !exists(p) {
+		return keyChoice{}, fmt.Errorf("the key file %s is not on this computer", tilde(p))
+	}
+	return keyChoice{kind: camssh.KindCustom, pub: p}, nil
 }
 
 // cfgReport prints what each change did and returns how many were applied and how many failed.

@@ -398,11 +398,16 @@ func Parse(data []byte, k Kind) (*File, error) {
 // order is the canonical order of the keys when a file is written (the option IDs first, in screen
 // order, then the other settings, then the secrets); the unknown keys follow, sorted.
 func order() []string {
-	ks := OptionIDs()
-	return append(ks, OnvifEnabled, OnvifPort, NTPEnabled, NTPServers,
+	ks := append(SettingKeys(), SavedFrom, SavedAt)
+	return append(ks, AuthPassword, AuthPasswordUser, MQTTPassword, MQTTPasswordHost, MQTTPasswordUser, WifiSSID, WifiPassword)
+}
+
+// SettingKeys are the keys of the settings a config holds, in the order a screen shows them (the option IDs
+// first, then ONVIF, time sync, MQTT, the video password, the SSH key); the bookkeeping keys are not among them.
+func SettingKeys() []string {
+	return append(OptionIDs(), OnvifEnabled, OnvifPort, NTPEnabled, NTPServers,
 		MQTTEnabled, MQTTHost, MQTTPort, MQTTUser, MQTTBaseTopic, MQTTClientID, MQTTDiscovery, MQTTPrefix, MQTTInterval,
-		AuthEnabled, AuthUser, KeyKind, KeyPath, SavedFrom, SavedAt,
-		AuthPassword, AuthPasswordUser, MQTTPassword, MQTTPasswordHost, MQTTPasswordUser, WifiSSID, WifiPassword)
+		AuthEnabled, AuthUser, KeyKind, KeyPath)
 }
 
 // Marshal writes the file: the version line, then the known keys in a fixed order, then the unknown ones.
