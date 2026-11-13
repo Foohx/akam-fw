@@ -67,8 +67,18 @@ func GenerateKey(path, comment string, passphrase []byte) error {
 	if err := fsutil.PrivateMkdir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+	// O_EXCL: a file (or a symlink) that appeared since the check above is never overwritten.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		return err
+	}
+	_, werr := f.Write(pemBytes)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(path)
+		return werr
 	}
 	// Windows: OpenSSH refuses a key other accounts can read; a key we cannot protect is not kept.
 	if err := fsutil.PrivateFileStrict(path); err != nil {
@@ -80,7 +90,76 @@ func GenerateKey(path, comment string, passphrase []byte) error {
 		return err
 	}
 	line := strings.TrimRight(string(gossh.MarshalAuthorizedKey(sp)), "\n") + " " + comment + "\n"
-	return os.WriteFile(path+".pub", []byte(line), 0o644)
+	pf, err := os.OpenFile(path+".pub", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		os.Remove(path)
+		return err
+	}
+	_, werr = pf.WriteString(line)
+	if cerr := pf.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(path)
+		os.Remove(path + ".pub")
+	}
+	return werr
+}
+
+// SharedKeyPath is the key every camera may share: ~/.ssh/akam (the private key; ".pub" beside it).
+func SharedKeyPath() string { return DefaultKeyPath() }
+
+// OwnKeyPath is the key of one camera only: ~/.ssh/akam-NAME (the private key).
+func OwnKeyPath(camera string) string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".ssh", "akam-"+camera)
+}
+
+// Key kinds reported by KindOf.
+const (
+	KindShared = "shared"
+	KindOwn    = "own"
+	KindCustom = "custom"
+)
+
+// KindOf says whether the public key file pub is the shared key, the key of this camera only, or
+// another one (a key the user chose).
+func KindOf(pub, camera string) string {
+	p := filepath.Clean(strings.TrimSuffix(pub, ".pub"))
+	switch p {
+	case filepath.Clean(SharedKeyPath()):
+		return KindShared
+	case filepath.Clean(OwnKeyPath(camera)):
+		return KindOwn
+	}
+	return KindCustom
+}
+
+// ParsePubFile reads a public key file (one line, any comment) and returns the key.
+func ParsePubFile(path string) (gossh.PublicKey, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	k, _, _, _, err := gossh.ParseAuthorizedKey(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s is not a public key: %w", path, err)
+	}
+	return k, nil
+}
+
+// PubFingerprint is the SHA256 fingerprint of the public key file ("" when it cannot be read).
+func PubFingerprint(pubPath string) string {
+	k, err := ParsePubFile(pubPath)
+	if err != nil {
+		return ""
+	}
+	return gossh.FingerprintSHA256(k)
+}
+
+// AuthorizedLine is "ssh-ed25519 BASE64 COMMENT" for k.
+func AuthorizedLine(k gossh.PublicKey, comment string) string {
+	return strings.TrimRight(string(gossh.MarshalAuthorizedKey(k)), "\n") + " " + comment
 }
 
 // LoadSigner reads a private key. A key with a passphrase is signed through the ssh-agent

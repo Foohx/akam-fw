@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -244,6 +245,13 @@ func (a *App) statusTable() {
 	a.UI.Bold(fmt.Sprintf("Akam setup progress (%s; camera: %s; state: %s)", mode, a.Cams.Name, a.St.File))
 	if fw := a.St.Get("fw_source"); fw != "" { // only after a firmware was chosen here and written
 		a.UI.Say("  Firmware source: " + ui.Sanitize(fw))
+	}
+	if a.St.Get("ssh_pubkey") != "" { // only once a key was chosen: a fresh camera prints exactly what the bash wizard does
+		line := "  SSH key: " + a.keyRowText()
+		if fp := camssh.PubFingerprint(a.keyPub()); fp != "" {
+			line += "  " + fp
+		}
+		a.UI.Say(line)
 	}
 	var b strings.Builder
 	for i, s := range state.Steps {

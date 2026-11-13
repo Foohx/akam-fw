@@ -68,6 +68,13 @@ Commands:
                          whether to turn it on; the camera connects OUT (no new open port), in plain TCP
                        disable: stop (the settings stay); forget: stop and delete the settings and the password
                        test: one connection attempt with the saved settings; status (default): on or off, the broker
+  key [show | use-shared | use-new | use FILE.pub]
+                     the SSH key that opens this camera (each camera can use the shared key ~/.ssh/akam, a key of its
+                     own ~/.ssh/akam-<name>, or any ed25519 key). Default: show (which key, its fingerprint).
+                     use-*: over SSH, adds the new public key to the camera, logs in again with it, and only then
+                     remembers it for THIS camera; then asks (default No) whether to remove the old key from the
+                     camera. If anything fails the camera still accepts the old key. Other cameras are not touched.
+                     A new key is made on this computer (ed25519, passphrase asked twice, private file mode 600).
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
                      'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
@@ -115,7 +122,7 @@ Options:
   --allow-unknown-stock-comp
                      allow a stock APP compression other than xz/gzip (expert)
   --device DEV       whole microSD disk, for example /dev/sdb
-  --pubkey FILE      SSH public key for the flash card (default ~/.ssh/akam.pub)
+  --pubkey FILE      SSH public key for the flash card (default: asked; the shared key ~/.ssh/akam.pub comes first)
   --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
   --profile P        doctor profile: kit | build | all
   --camera NAME      the camera to work on (a short name such as salon: a-z, 0-9, '-', at most 20).

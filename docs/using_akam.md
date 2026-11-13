@@ -80,6 +80,7 @@ hand, or by an earlier version) is recorded without redoing anything:
 | `mqtt [set \| test \| status \| disable \| forget]` | publish the camera to an MQTT broker and Home Assistant, off by default ([MQTT](mqtt.md)) |
 | `ntp [status \| set SERVER... \| off]` | time synchronisation, off by default |
 | `debug [on [MINUTES] \| off \| status]` | let the network change settings on port 8091 for a while |
+| `key [show \| use-shared \| use-new \| use FILE.pub]` | which SSH key opens this camera, and change it over SSH: the shared key `~/.ssh/akam`, a key for this camera only `~/.ssh/akam-<name>`, or any ed25519 key. Assistant only; adds the new key, checks it with a second login, saves it for this camera, then asks (default No) whether to remove the old one ([details](akam_v1_ssh_and_lockdown.md#change-the-key-over-ssh)) |
 | `talk [SECONDS \| test]`, `say FILE` | speak or play a sound through the camera speaker |
 
 ## Update, change the name, add a video password

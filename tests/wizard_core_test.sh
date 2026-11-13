@@ -476,7 +476,25 @@ check "both verifies passed" bash -c '[ "$(grep -c "VERIFY: OK" "$1")" -ge 2 ]' 
 check "no secret in the flash card run" bash -c '! grep -rq "$2" "$1" "$3" "$4"' _ "$T/f3.out" "$SENTINEL" "$T/st/state" "$T/st/akam.log"
 check "flash card recorded for this image" test "$(state_get flash_sd_image_sha)" = "$(state_get image_sha)"
 check "flash card device recorded (for the wipe offer)" test "$(state_get flash_sd_device)" = /dev/sdb
-# ---- SSH key choice: no ~/.ssh/akam.pub, but other ed25519 keys exist
+# ---- SSH key choice: the question "Which SSH key should open this camera?" (shared key, a key for this
+# camera only, or an existing ed25519 key of ~/.ssh). A stub ssh-keygen stands in for the real one: it needs
+# a terminal for the passphrase, and nothing here may touch a real key.
+KGBIN=$T/kgbin
+mkdir -p "$KGBIN"
+cat >"$KGBIN/ssh-keygen" <<EOF
+#!/usr/bin/env bash
+echo "ssh-keygen \$*" >>"$T/keygen.log"
+f="" c=""
+while [ \$# -gt 0 ]; do
+    case \$1 in -f) f=\$2; shift ;; -C) c=\$2; shift ;; esac
+    shift
+done
+echo "FAKE PRIVATE" >"\$f"
+chmod 600 "\$f"
+echo "\$(cut -d' ' -f1,2 "$PUB") \$c" >"\$f.pub"
+EOF
+chmod +x "$KGBIN/ssh-keygen"
+: >"$T/keygen.log"
 state_unset_key() { grep -v "^$1=" "$T/st/state" >"$T/st/state.n"; mv "$T/st/state.n" "$T/st/state"; }
 KH=$T/home_keys
 mkdir -p "$KH/.ssh"
@@ -485,8 +503,8 @@ echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ rsa-ignored' >"$KH/.ssh/id_rsa.pub"
 echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ other' >"$KH/.ssh/id_other.pub"
 state_unset_key ssh_pubkey
 : >"$STUB_LOG"
-HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'1\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k1.out" 2>&1
-check "ssh key: with no akam.pub the existing ed25519 keys are listed" bash -c 'grep -q "id_work.pub" "$1" && grep -q "id_other.pub" "$1" && grep -q "Create a new dedicated key" "$1"' _ "$T/k1.out"
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'3\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k1.out" 2>&1
+check "ssh key: the question offers the shared key, a key for this camera only, then the existing ed25519 keys" bash -c 'grep -q "Which SSH key should open this camera?" "$1" && grep -q "1) Shared key ~/.ssh/akam (all your cameras)" "$1" && grep -q "2) A key for this camera only (~/.ssh/akam-default)" "$1" && grep -q "3) .*id_other.pub" "$1" && grep -q "4) .*id_work.pub" "$1"' _ "$T/k1.out"
 check "ssh key: an rsa key is not offered" hasnt "$T/k1.out" id_rsa.pub
 check "ssh key: the chosen key goes to the card and is remembered in the state" bash -c 'grep -q "sd prepare --mode first-boot --device /dev/sdb --yes-i-confirmed /dev/sdb --pubkey '"$KH"'/.ssh/id_other.pub\|sd prepare --mode first-boot --device /dev/sdb --yes-i-confirmed /dev/sdb --pubkey '"$KH"'/.ssh/id_work.pub" "$1" && grep -q "^ssh_pubkey='"$KH"'/.ssh/id_" "$2"' _ "$STUB_LOG" "$T/st/state"
 REMEMBERED=$(state_get ssh_pubkey)
@@ -494,10 +512,41 @@ REMEMBERED=$(state_get ssh_pubkey)
 HOME=$KH AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k2.out" 2>&1
 check "ssh key: the choice is remembered (not asked again)" bash -c '! grep -q "Which SSH key" "$1" && grep -q "chosen before" "$1" && grep -q "pubkey $2" "$3"' _ "$T/k2.out" "$REMEMBERED" "$STUB_LOG"
 state_unset_key ssh_pubkey
-HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'3\nn' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k3.out" 2>&1
-check "ssh key: choosing 'create a new key' asks before creating it, and stops on no" bash -c '[ "$1" -ne 0 ] && grep -q "no SSH key" "$2"' _ $? "$T/k3.out"
-HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'9\n1\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k4.out" 2>&1
-check "ssh key: a number out of range is asked again" has "$T/k4.out" "Please type a number between 1 and 3"
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'1\nn' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k3.out" 2>&1
+check "ssh key: a key that does not exist is only created after a yes (here no: stops)" bash -c '[ "$1" -ne 0 ] && grep -q "no SSH key" "$2"' _ $? "$T/k3.out"
+check "ssh key: ... and nothing was created" bash -c '[ ! -s "$1" ] && [ ! -e "$2/.ssh/akam" ]' _ "$T/keygen.log" "$KH"
+HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'9\n3\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k4.out" 2>&1
+check "ssh key: a number out of range is asked again" has "$T/k4.out" "Please type a number between 1 and 4"
+state_unset_key ssh_pubkey
+# default (Enter) = the shared key, created when missing; the question names the comment akam
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'\ny\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k6.out" 2>&1
+check "ssh key: Enter picks the shared key and creates ~/.ssh/akam (comment akam)" bash -c 'grep -q "ssh-keygen -t ed25519 -f $2/.ssh/akam -C akam" "$1" && [ "$(grep -m1 ^ssh_pubkey= "$3" | cut -d= -f2)" = "$2/.ssh/akam.pub" ]' _ "$T/keygen.log" "$KH" "$T/st/state"
+check "ssh key: the shared key went to the card" has "$STUB_LOG" "--pubkey $KH/.ssh/akam.pub"
+# a key for this camera only: ~/.ssh/akam-<camera>, comment akam-<camera>
+state_unset_key ssh_pubkey
+rm -f "$KH/.ssh/akam" "$KH/.ssh/akam.pub"
+: >"$T/keygen.log"
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'2\ny\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k7.out" 2>&1
+check "ssh key: choice 2 creates ~/.ssh/akam-default (comment akam-default), not the shared key" bash -c 'grep -q "ssh-keygen -t ed25519 -f $2/.ssh/akam-default -C akam-default" "$1" && [ ! -e "$2/.ssh/akam.pub" ] && [ "$(grep -m1 ^ssh_pubkey= "$3" | cut -d= -f2)" = "$2/.ssh/akam-default.pub" ]' _ "$T/keygen.log" "$KH" "$T/st/state"
+# an existing key of the shared name is used, never recreated or overwritten
+state_unset_key ssh_pubkey
+: >"$T/keygen.log"
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'2\ny\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k8.out" 2>&1
+check "ssh key: an existing ~/.ssh/akam-default is asked about, then used as it is (no ssh-keygen)" bash -c '[ ! -s "$1" ] && grep -q "A key for the name default already exists: ~/.ssh/akam-default (created " "$2" && grep -q "Using ~/.ssh/akam-default.pub" "$2"' _ "$T/keygen.log" "$T/k8.out"
+# answering No offers another name, which is made (and the old file is left alone)
+state_unset_key ssh_pubkey
+: >"$T/keygen.log"
+PATH=$KGBIN:$PATH HOME=$KH AKAM_WIFI_PASS=$SENTINEL at $'2\nn\nsalon9\ny\ny' prepare-flash-sd --device /dev/sdb --ssid N >"$T/k9.out" 2>&1
+check "ssh key: refusing the existing key offers another name (akam-salon9 is made)" bash -c 'grep -q "ssh-keygen -t ed25519 -f $2/.ssh/akam-salon9 -C akam-salon9" "$1" && [ "$(grep -m1 ^ssh_pubkey= "$3" | cut -d= -f2)" = "$2/.ssh/akam-salon9.pub" ]' _ "$T/keygen.log" "$KH" "$T/st/state"
+rm -f "$KH/.ssh/akam-salon9" "$KH/.ssh/akam-salon9.pub"
+# --pubkey: a file that does not end in .pub is refused, a relative path becomes absolute
+state_unset_key ssh_pubkey
+cp "$PUB" "$KH/nosuffix"
+AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey "$KH/nosuffix" --ssid N >"$T/k10.out" 2>&1
+check "ssh key: --pubkey must end in .pub" bash -c '[ "$1" -ne 0 ] || exit 1; grep -q "does not end in .pub" "$2"' _ $? "$T/k10.out"
+(cd "$KH/.ssh" && AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey id_work.pub --ssid N >"$T/k11.out" 2>&1)
+check "ssh key: a relative --pubkey is saved as an absolute path" bash -c '[ "$(grep -m1 ^ssh_pubkey= "$1" | cut -d= -f2)" = "$2/.ssh/id_work.pub" ]' _ "$T/st/state" "$KH"
+rm -f "$KH/.ssh/akam-default" "$KH/.ssh/akam-default.pub"
 state_unset_key ssh_pubkey
 HOME=$KH AKAM_WIFI_PASS=$SENTINEL at 'y' prepare-flash-sd --device /dev/sdb --pubkey "$PUB" --ssid N >"$T/k5.out" 2>&1
 check "ssh key: --pubkey wins over everything and needs no question" bash -c '! grep -q "Which SSH key" "$1"' _ "$T/k5.out"

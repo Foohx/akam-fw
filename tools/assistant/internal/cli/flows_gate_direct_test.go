@@ -61,7 +61,7 @@ func TestPrepareFlashSDRefusesANonSquashfsImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newSDWorld(t)
 			seedFlashCard(t, w, tc.image, tc.stock)
-			r := w.run("y\ny\n", "prepare-flash-sd", "--device", w.img)
+			r := w.run("1\ny\ny\n", "prepare-flash-sd", "--device", w.img)
 			expectRC(t, r, 1)
 			contains(t, r.out+r.err, "this file is not a valid squashfs image", "do not flash it")
 			notContains(t, r.out+r.err, "sd_card: VERIFY")
@@ -132,7 +132,7 @@ func TestImageWithXattrsIsAccepted(t *testing.T) {
 	b = append(b, make([]byte, 5242880-len(b))...)
 	w := newSDWorld(t)
 	seedFlashCard(t, w, b, b) // as image and as stock APP
-	r := w.run("y\n", "prepare-flash-sd", "--device", w.img)
+	r := w.run("1\ny\n", "prepare-flash-sd", "--device", w.img)
 	expectRC(t, r, 0)
 	contains(t, r.out, "Image structure checked", "sd_card: VERIFY: OK")
 	notContains(t, r.out+r.err, "not a valid squashfs image")

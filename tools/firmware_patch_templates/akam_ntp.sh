@@ -241,7 +241,7 @@ write_file() {
     chmod 700 "$AKAM_DIR" 2>/dev/null
     _tmp=$NTP_FILE.new.$$
     rm -f "$_tmp"
-    : >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; die "cannot write $_tmp"; }
+    ( : >"$_tmp" ) 2>/dev/null || { rm -f "$_tmp"; die "cannot write $_tmp"; }
     for _s in "$@"; do printf 'server=%s\n' "$_s" >>"$_tmp"; done
     chmod 600 "$_tmp" 2>/dev/null
     sync

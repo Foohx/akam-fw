@@ -78,6 +78,7 @@ func (a *App) optionRows(snap optSnap) []ui.FormRow {
 				t = "unknown"
 			}
 			ro("Video password", t, "p sets, changes or removes it (removing asks first)")
+			ro("SSH key", snap.key, "k changes the SSH key of this camera (the old one stays unless you remove it)")
 		}
 	}
 	return rows
@@ -149,7 +150,7 @@ func (a *App) optionsForm(c *camssh.Client, ip string, fk ui.FormKeyer) error {
 		snap := a.readOptions(c)
 		a.noteHealth(snap.health)
 		_, offer := clockReport(snap.health)
-		keys := []ui.FormKey{{Key: "r", Label: "restart video"}, {Key: "n", Label: "network"}, {Key: "p", Label: "password"}}
+		keys := []ui.FormKey{{Key: "r", Label: "restart video"}, {Key: "n", Label: "network"}, {Key: "p", Label: "password"}, {Key: "k", Label: "SSH key"}}
 		if offer {
 			keys = append(keys, ui.FormKey{Key: "t", Label: "set clock"})
 		}
@@ -179,6 +180,8 @@ func (a *App) optionsForm(c *camssh.Client, ip string, fk ui.FormKeyer) error {
 			a.networkScreen(c, snap)
 		case "p":
 			a.securityScreen(snap)
+		case "k":
+			a.reportFlowError(a.keyChange(nil, ip, c))
 		default:
 			return nil
 		}

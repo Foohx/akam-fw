@@ -147,7 +147,8 @@ var fixedRemote = map[string]bool{
 	remoteMtdList: true, remoteKernelInfo: true,
 	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
 	remoteManifest: true,
-	ctl.NcCommand:  true,
+	remoteAuthkeysPut: true, remoteAuthkeysAdd: true, remoteAuthkeysRemove: true, remoteAuthkeysCard: true,
+	ctl.NcCommand: true,
 }
 
 // forbiddenRemote is an ALLOW-list: it returns "" only for a command line the assistant itself

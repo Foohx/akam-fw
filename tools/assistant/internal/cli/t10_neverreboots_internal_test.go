@@ -20,7 +20,7 @@ var rebootWords = regexp.MustCompile(`(?i)(^|[\s;&|(` + "`" + `'"$/])(reboot|pow
 // by hand are prose, not commands).
 func TestNeverReboots(t *testing.T) {
 	cmds := append(allRemoteCommands(), restartVideoCmd, remoteMtdList, remoteKernelInfo, remoteHwcheckPut, remoteHwcheckRun,
-		remotePreflightPut, remotePreflightRun, remoteOnvifFlag)
+		remotePreflightPut, remotePreflightRun, remoteOnvifFlag, remoteAuthkeysPut, remoteAuthkeysAdd, remoteAuthkeysRemove, remoteAuthkeysCard)
 	for _, c := range cmds {
 		if why := forbiddenRemote(c); why != "" {
 			t.Errorf("%q is refused by the allow-list: %s", c, why)

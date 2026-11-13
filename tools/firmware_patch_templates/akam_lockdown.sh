@@ -204,7 +204,7 @@ main() {
     trap 'exit 0' INT TERM HUP
     echo $$ >"$LOCKDIR/pid"
 
-    : >"$LOG" 2>/dev/null
+    ( : >"$LOG" ) 2>/dev/null
     log "start (pid $$)"
 
     _i=0

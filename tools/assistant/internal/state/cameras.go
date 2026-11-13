@@ -141,6 +141,22 @@ func (c *Cameras) Known() []string {
 
 var doneRe = regexp.MustCompile(`^step_[a-z_]*_done=`)
 
+// ReadKey returns one value of the state of camera name ("" when unset or unreadable), without
+// opening or creating anything: the chooser reads other cameras this way.
+func (c *Cameras) ReadKey(name, key string) string {
+	b, err := os.ReadFile(filepath.Join(c.DirOf(name), "state"))
+	if err != nil {
+		return ""
+	}
+	prefix := key + "="
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l[len(prefix):]
+		}
+	}
+	return ""
+}
+
 // Summary is "3/9 steps done  192.0.2.50  last: find-camera".
 func (c *Cameras) Summary(name string) string {
 	f := filepath.Join(c.DirOf(name), "state")
