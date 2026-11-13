@@ -24,8 +24,8 @@
 #   AUTHKEYS=ADDED_BUT_HOME_FAILED | REMOVED_BUT_HOME_FAILED the stored list WAS changed, the login
 #                                                             copy could not follow AND the old list could
 #                                                             not be put back (a power cycle makes them agree)
-#   CARD=present | absent | unknown                           a card with akam/authorized_keys is in the
-#                                                             camera (every mode prints it last)
+#   CARD=present | absent | unknown                           mode card only: a card with
+#                                                             akam/authorized_keys is in the camera
 #
 # The file is rewritten in a temp file of the SAME directory (mode 0600). Every write error is
 # tracked, and the temp file is checked (it must hold the expected number of ed25519 keys, at least
@@ -64,6 +64,20 @@ case "$MODE" in
 esac
 
 CR=$(printf '\r')
+TAB=$(printf '\t')
+
+_mnt=
+_mounted=0
+# cleanup_mnt: unmount (when mounted) and remove the private mount point of the card probe.
+cleanup_mnt() {
+    [ -n "$_mnt" ] || return 0
+    if [ "$_mounted" = 1 ]; then
+        umount "$_mnt" 2>/dev/null
+        _mounted=0
+    fi
+    rmdir "$_mnt" 2>/dev/null
+    _mnt=
+}
 
 # ---- is a provisioning card in? (same places as akam_ssh.sh: mounted somewhere, else mounted read-only
 # for a moment). Prints present | absent | unknown.
@@ -105,23 +119,27 @@ card_state() {
         echo absent
         return
     }
-    # a card is in but not mounted: look at it read-only for a moment, like the boot does
+    # a card is in but not mounted: look at it read-only for a moment, like the boot does. The mount
+    # is always undone (exit, Ctrl-C, hangup, TERM) by cleanup_mnt.
     _mnt=$TMPDIR_/akam_authkeys_sd.$$
+    trap cleanup_mnt EXIT
+    trap 'exit 1' INT TERM HUP
     mkdir -p "$_mnt" 2>/dev/null || {
+        _mnt=
         echo unknown
         return
     }
     for _fs in vfat exfat; do
         if mount -t "$_fs" -o ro "$_node" "$_mnt" 2>/dev/null; then
+            _mounted=1
             _r=absent
             if [ -f "$_mnt/akam/authorized_keys" ] || [ -f "$_mnt/camyn/authorized_keys" ]; then _r=present; fi
-            umount "$_mnt" 2>/dev/null
-            rmdir "$_mnt" 2>/dev/null
+            cleanup_mnt
             echo "$_r"
             return
         fi
     done
-    rmdir "$_mnt" 2>/dev/null
+    cleanup_mnt
     echo unknown
 }
 
@@ -130,9 +148,10 @@ if [ "$MODE" = card ]; then
     exit 0
 fi
 
-finish() { # WORD STATUS: print the result and the card state, exit
+finish() { # WORD STATUS: print the result, drop any temp file, exit
     echo "AUTHKEYS=$1"
-    echo "CARD=$(card_state)"
+    [ -z "${TMP:-}" ] || rm -f "$TMP"
+    [ -z "${OLD:-}" ] || rm -f "$OLD"
     exit "$2"
 }
 
@@ -167,6 +186,8 @@ line_key() {
     while [ "${_l%"$CR"}" != "$_l" ]; do _l=${_l%"$CR"}; done
     case "$_l" in
         '' | '#'*) return ;;
+        # leading blanks and tab separators: Dropbear does not read such a line as a key
+        ' '* | "$TAB"* | *"$TAB"*) return ;;
     esac
     set -f
     # shellcheck disable=SC2086

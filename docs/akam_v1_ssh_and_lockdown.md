@@ -112,9 +112,11 @@ It then:
 4. generates the ed25519 host key `dropbear_ed25519_host_key` on the **first** boot (it may wait for
    entropy, so the first SSH connection can come late *(assumed)*);
 5. validates the card's keys and installs them atomically as `/etc/config/dropbear/authorized_keys`
-   (0600, root), **only when the card's keys changed since the last import** (the md5 of the validated list is kept in
-   `/etc/config/dropbear/.card_keys_hash`; no stored hash, as on the first boot, means import). A card left in the
-   camera therefore does not undo a key change made over SSH, and a card with other keys still replaces the list;
+   (0600, root), **only when the card is imported anew**: when its keys changed since the last import (the md5 of the
+   validated list is kept in `/etc/config/dropbear/.card_keys_hash`), or when the card was put back after a boot
+   without it (a boot that positively sees no card key file forgets the hash), or when no hash is stored (the first
+   boot, or the first boot after upgrading to this image: a card left in is imported once). A card left in the camera
+   therefore does not undo a key change made over SSH, while a new card, or the same card put back, still replaces the list;
 6. makes sure a login shell is accepted (section 4);
 7. starts `dropbear` on port 22 with `-r <hostkey> -D /etc/config/dropbear -P /tmp/dropbear.pid -T 3 -E`.
 
@@ -138,8 +140,11 @@ ed25519 fingerprint with the one the camera computes (from the UART console):
 
 Put a new `akam/authorized_keys` on the card and power cycle. A valid file whose keys **changed since the last
 import** (the card's content is remembered by its md5, see "First boot") **replaces** the whole stored list: this is
-the recovery route. The same card put back unchanged is not imported again (an image from before this rule imports
-the card at every boot). This is the only route of the bash wizard and the way back if you are locked out. A camera that
+the recovery route. **Recovery with the same card** after a key change over SSH: power the camera on once WITHOUT
+the card (that boot forgets the last import), then put the card in and power cycle again; or change the keys on the
+card. A card left in continuously is not imported again, and a boot where the card could not be read (an unreadable
+card, a failed mount) does not count as "without the card". (An image from before this rule imports the card at every
+boot.) This is the only route of the bash wizard and the way back if you are locked out. A camera that
 still accepts one of its keys can be changed without a card, with the assistant (next section).
 
 ### Change the key over SSH
