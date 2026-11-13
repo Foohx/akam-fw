@@ -228,7 +228,7 @@ func TestReleaseListNeverReachesTheNetworkInATestBuild(t *testing.T) {
 func TestChooserShowsTheListAndDefaultsToTheLatest(t *testing.T) {
 	// no image valid for any kit: the default is the latest release (which this server does not carry)
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false), relJSON("v2.0.0", false, false), relJSON("v0.9.0", false, false)), "fw_version=0.9.0\n")
-	r := w.update("\n9\n")
+	r := w.update("\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Which firmware?  (the camera runs: b35-2af81c5; Akam 0.9.0 installed here)",
 		"Asking GitHub for the releases (read only)",
@@ -249,7 +249,7 @@ func TestChooserShowsTheListAndDefaultsToTheLatest(t *testing.T) {
 // the first row and the default, as before the chooser existed; the releases follow.
 func TestBuiltImageIsTheDefaultWhenNoBuilderIsAvailable(t *testing.T) {
 	w := newFwWorldBuilt(t, relList(relJSON("v2.0.0", false, false), relJSON("v1.0.0", false, false)), "")
-	r := w.update("\ny\n\n9\n")
+	r := w.update("\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "1) The image already built from your backup (", "2) Akam 2.0.0 (latest)", "3) Akam 1.0.0  - older",
 		"Updating: WRITES THE CAMERA FLASH", "Image md5 written and read back: "+w.imgMD5)
@@ -282,7 +282,7 @@ func TestReleaseWithoutAnImageLeavesTheStateUntouched(t *testing.T) {
 		return strings.Join(out, "\n")
 	}
 	before := snap()
-	r := w.update("1\ny\n9\n")
+	r := w.update("1\ny\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Kit verified", "Akam 1.0.0 is verified, but this program cannot build its image on this computer",
 		"the image for this kit cannot be built here: nothing was changed", "get-kit --version 1.0.0", "step image, then update again")
@@ -304,7 +304,7 @@ func TestReleaseWithoutAnImageLeavesTheStateUntouched(t *testing.T) {
 func TestRecordedKitOfTheSameVersionIsNeverReused(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
 	w.writeState(readAll(t, filepath.Join(w.state, "state")) + "mode=kit\nkit_version=1.0.0\nkit_unsigned_ok=1\nkit_path=/somewhere/else/akam-kit-1.0.0.tar.xz\n")
-	r := w.update("1\ny\n\n9\n")
+	r := w.update("1\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "ok: signature valid", "Kit verified")
 	if w.api.kitHits() != 3 {
@@ -318,7 +318,7 @@ func TestRecordedKitOfTheSameVersionIsNeverReused(t *testing.T) {
 func TestChooserBackWritesNothing(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
 	// 1 release, kit file, image file, stock, Back = 5
-	r := w.update("5\n9\n")
+	r := w.update("5\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "No firmware chosen. Nothing was changed.")
 	if w.api.kitHits() != 0 {
@@ -335,7 +335,7 @@ func TestChooserBackWritesNothing(t *testing.T) {
 func TestReleaseListIsAskedOncePerSession(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
 	// update, Back, update, Back, Quit
-	r := w.homeRun("2\n5\n2\n5\n9\n")
+	r := w.homeRun("2\n5\n2\n5\n10\n")
 	expectRC(t, r, 0)
 	if w.api.listHits != 1 {
 		t.Errorf("the list was asked %d times", w.api.listHits)
@@ -352,7 +352,7 @@ func TestChooserOfflineFallsBackToLocalChoices(t *testing.T) {
 		w := newFwWorldBuilt(t, relList(relJSON("v1.0.0", false, false)), "")
 		setup(w)
 		// built image, kit file, image file, stock, Back
-		r := w.update("5\n9\n")
+		r := w.update("5\n10\n")
 		expectRC(t, r, 0)
 		contains(t, r.out+r.err, "could not read the list of releases: ", "Kits and images on this computer can still be chosen.",
 			"1) The image already built from your backup (", "2) A kit file or folder...", "No firmware chosen.")
@@ -365,7 +365,7 @@ func TestChooserOfflineFallsBackToLocalChoices(t *testing.T) {
 
 func TestChooserNoReleasePublishedYet(t *testing.T) {
 	w := newFwWorldBuilt(t, relList(), "")
-	r := w.update("5\n9\n")
+	r := w.update("5\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "No Akam release is published on GitHub yet", "1) The image already built from your backup (")
 }
@@ -374,7 +374,7 @@ func TestChooserNoReleasePublishedYet(t *testing.T) {
 // is the one on record, then the red box; the source is recorded once the write is verified.
 func TestUpdateWithAReleaseWritesAndRecordsIt(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "fw_version=0.5.0\n")
-	r := w.update("1\ny\n\n9\n")
+	r := w.update("1\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Which firmware?", "1) Akam 1.0.0 (latest)", "ok: signature valid", "Kit verified (format 1,",
 		"Updating: WRITES THE CAMERA FLASH", "Image md5 written and read back: "+w.imgMD5)
@@ -395,7 +395,7 @@ func TestUpdateWithAReleaseWritesAndRecordsIt(t *testing.T) {
 // The red box still defaults to No: a chosen release is downloaded and verified, nothing is written.
 func TestUpdateWithAReleaseNeedsTheRedBoxYes(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
-	r := w.update("1\n\n9\n")
+	r := w.update("1\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "not confirmed.", "nothing was written.")
 	w.unchanged(t)
@@ -411,7 +411,7 @@ func TestReleaseKitIsVerifiedWhateverTheListSays(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz"), []byte("not the signed kit"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := w.update("1\ny\n9\n")
+	r := w.update("1\ny\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "the kit failed verification")
 	notContains(t, r.out+r.err, "WRITES THE CAMERA FLASH")
@@ -421,7 +421,7 @@ func TestReleaseKitIsVerifiedWhateverTheListSays(t *testing.T) {
 func TestDowngradeNeedsAnExplicitYes(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v2.0.0", false, false), relJSON("v1.0.0", false, false)), "fw_version=2.0.0\n")
 	// the camera runs 2.0.0: choosing 1.0.0 (item 2) asks; Enter = No goes back to the list; then Back
-	r := w.update("2\n\n6\n9\n")
+	r := w.update("2\n\n6\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "WARNING: Akam 1.0.0 is OLDER than the 2.0.0 on this camera: this is a downgrade.",
 		"Settings files saved by the newer version may not be understood by the older one. Your backup stays valid.",
@@ -432,7 +432,7 @@ func TestDowngradeNeedsAnExplicitYes(t *testing.T) {
 	w.unchanged(t)
 	// yes: it goes on (download, verify, image, red box answered No)
 	w = newFwWorld(t, relList(relJSON("v2.0.0", false, false), relJSON("v1.0.0", false, false)), "fw_version=2.0.0\n")
-	r = w.update("2\ny\n\n9\n")
+	r = w.update("2\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "this is a downgrade.", "Go back to Akam 1.0.0? [y/N]", "Kit verified", "not confirmed.")
 	if w.api.kitHits() != 3 {
@@ -441,7 +441,7 @@ func TestDowngradeNeedsAnExplicitYes(t *testing.T) {
 	w.unchanged(t)
 	// the latest or the same version is not a downgrade
 	w = newFwWorld(t, relList(relJSON("v2.0.0", false, false)), "fw_version=2.0.0\n")
-	r = w.update("1\n\n9\n")
+	r = w.update("1\n\n10\n")
 	notContains(t, r.out+r.err, "downgrade")
 }
 
@@ -489,7 +489,7 @@ func TestDownloadedKitIsListedAndVerifiedAgain(t *testing.T) {
 	// also junk that must not be listed
 	_ = os.MkdirAll(filepath.Join(w.state, "downloads", "9.9.9"), 0o700)
 	_ = os.MkdirAll(filepath.Join(w.state, "downloads", "bad name"), 0o700)
-	r := w.update("1\ny\n\n9\n")
+	r := w.update("1\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "1) Kit already downloaded: 1.0.0", "ok: signature valid", "Kit verified", "Updating: WRITES THE CAMERA FLASH")
 	notContains(t, r.out+r.err, "9.9.9", "bad name")
@@ -512,7 +512,7 @@ func TestDownloadedKitIsListedAndVerifiedAgain(t *testing.T) {
 		}
 		_ = os.WriteFile(filepath.Join(dl, f), b, 0o600)
 	}
-	r = w.update("1\ny\n9\n")
+	r = w.update("1\ny\n10\n")
 	contains(t, r.out+r.err, "the kit failed verification")
 	w.unchanged(t)
 }
@@ -521,7 +521,7 @@ func TestKitFileFromThePathPrompt(t *testing.T) {
 	w := newFwWorld(t, relList(), "")
 	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
 	// items: kit file(1), image file, stock, Back
-	r := w.update("1\n" + kitFile + "\ny\n\n9\n")
+	r := w.update("1\n" + kitFile + "\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Path of the kit (.tar.xz file or folder; empty: go back)", "ok: signature valid", "Kit verified", "WRITES THE CAMERA FLASH")
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) || w.readState("fw_source") != "kit:"+kitFile {
@@ -529,7 +529,7 @@ func TestKitFileFromThePathPrompt(t *testing.T) {
 	}
 	// a path that does not exist, then an empty one: back to the list
 	w = newFwWorld(t, relList(), "")
-	r = w.update("1\n/no/such/kit.tar.xz\n4\n9\n")
+	r = w.update("1\n/no/such/kit.tar.xz\n4\n10\n")
 	contains(t, r.out+r.err, "no such file or folder: /no/such/kit.tar.xz", "No firmware chosen.")
 	w.unchanged(t)
 }
@@ -559,7 +559,7 @@ func TestImageFileFromThePrompt(t *testing.T) {
 	sum := md5.Sum(w.imgData)
 	want := hex.EncodeToString(sum[:])
 	// items: kit file, image file(2), stock, Back(4). Enter at the question = No: not used, back to the list.
-	r := w.update("2\n" + mine + "\n\n4\n9\n")
+	r := w.update("2\n" + mine + "\n\n4\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Path of the image (.squashfs, exactly 5242880 bytes; empty: go back)",
 		"md5 "+want+".", "WARNING: this image was not built by this program: you take responsibility for what it contains.",
@@ -567,7 +567,7 @@ func TestImageFileFromThePrompt(t *testing.T) {
 	w.unchanged(t)
 	// yes, then the red box: No -> nothing written
 	w = newFwWorld(t, relList(), "")
-	r = w.update("2\n" + mine + "\ny\n\n9\n")
+	r = w.update("2\n" + mine + "\ny\n\n10\n")
 	contains(t, r.out+r.err, "Image structure checked", "Updating: WRITES THE CAMERA FLASH", "not confirmed.")
 	w.unchanged(t)
 	if w.readState("fw_source") != "" {
@@ -575,7 +575,7 @@ func TestImageFileFromThePrompt(t *testing.T) {
 	}
 	// yes and yes: written, recorded
 	w = newFwWorld(t, relList(), "")
-	r = w.update("2\n" + mine + "\ny\ny\n\n9\n")
+	r = w.update("2\n" + mine + "\ny\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Image md5 written and read back: "+want)
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) || w.readState("fw_source") != "image:"+mine {
@@ -590,7 +590,7 @@ func TestImageFileRefusals(t *testing.T) {
 	junk := filepath.Join(t.TempDir(), "junk.squashfs")
 	_ = os.WriteFile(junk, make([]byte, 5242880), 0o600) // the right size, not a squashfs
 	// wrong size: refused before any question; not a squashfs: refused by the structure check; a folder
-	r := w.update("2\n" + small + "\n2\n" + t.TempDir() + "\n2\n" + junk + "\ny\n9\n")
+	r := w.update("2\n" + small + "\n2\n" + t.TempDir() + "\n2\n" + junk + "\ny\n10\n")
 	contains(t, r.out+r.err, "that file is 13 bytes; an image is exactly 5242880. It is refused.", "no such file: ",
 		"this file is not a valid squashfs image")
 	notContains(t, r.out+r.err, "WRITES THE CAMERA FLASH")
@@ -599,7 +599,7 @@ func TestImageFileRefusals(t *testing.T) {
 
 func TestImageFlagOnTheCommandLineIsUnchanged(t *testing.T) {
 	w := newFwWorld(t, relList(), "")
-	r := w.update("y\n\n9\n", "--image", w.img)
+	r := w.update("y\n\n10\n", "--image", w.img)
 	expectRC(t, r, 0)
 	notContains(t, r.out+r.err, "Which firmware?", "you take responsibility")
 	if w.api.listHits != 0 {
@@ -614,25 +614,25 @@ func TestStockOptionOnlyWithAVerifiedStockBackup(t *testing.T) {
 	// no recorded backup
 	w := newFwWorld(t, relList(), "")
 	w.writeState(strings.ReplaceAll(readAll(t, filepath.Join(w.state, "state")), "backup_dir="+w.bk+"\n", ""))
-	r := w.update("9\n9\n")
+	r := w.update("9\n10\n")
 	notContains(t, r.out+r.err, "Stock firmware (from your backup)")
 	// a damaged backup
 	w = newFwWorld(t, relList(), "")
 	if err := os.WriteFile(filepath.Join(w.bk, "mtdblock3.bin"), []byte("rotten"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r = w.update("9\n9\n")
+	r = w.update("9\n10\n")
 	notContains(t, r.out+r.err, "Stock firmware (from your backup)")
 	// a backup of a camera that ran Akam is not the stock firmware
 	w = newFwWorld(t, relList(), "")
 	if err := os.WriteFile(filepath.Join(w.bk, "camera_info.txt"), []byte("kind=akam\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r = w.update("9\n9\n")
+	r = w.update("9\n10\n")
 	notContains(t, r.out+r.err, "Stock firmware (from your backup)")
 	// a verified one: offered, and never in the first install
 	w = newFwWorld(t, relList(), "")
-	r = w.update("9\n9\n")
+	r = w.update("9\n10\n")
 	contains(t, r.out+r.err, "Stock firmware (from your backup)  - never tested on a real camera")
 }
 
@@ -641,7 +641,7 @@ func TestStockOptionOnlyWithAVerifiedStockBackup(t *testing.T) {
 func TestStockChoiceGoesThroughTheRestoreFlow(t *testing.T) {
 	// items: kit file, image file, stock(3), Back
 	w := newFwWorld(t, relList(), "")
-	r := w.update("3\ny\n\n9\n")
+	r := w.update("3\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "WARNING: the stock firmware restore has never been tried on a real camera.",
 		"Restore the original (stock) APP from your backup", "Stock APP sha256: ", "Restoring: WRITES THE CAMERA FLASH", "not confirmed.")
@@ -651,11 +651,11 @@ func TestStockChoiceGoesThroughTheRestoreFlow(t *testing.T) {
 	}
 	// Enter at the route question is No too: the maintenance telnet is not reachable here, nothing is written
 	w = newFwWorld(t, relList(), "")
-	r = w.update("3\n\n\n9\n")
+	r = w.update("3\n\n\n10\n")
 	w.unchanged(t)
 	// yes: restored over SSH, recorded
 	w = newFwWorld(t, relList(), "")
-	r = w.update("3\ny\ny\n9\n")
+	r = w.update("3\ny\ny\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Restore written and verified")
 	app, _ := os.ReadFile(filepath.Join(w.bk, "mtdblock7.bin"))
@@ -694,7 +694,7 @@ func TestStockFlagAndItsGates(t *testing.T) {
 	ak.unchanged(t)
 	// the menu with --stock goes the same way
 	m := newFwWorld(t, relList(), "")
-	r = m.homeRun("2\ny\n\n9\n", "--stock")
+	r = m.homeRun("2\ny\n\n10\n", "--stock")
 	contains(t, r.out+r.err, "Restoring: WRITES THE CAMERA FLASH", "not confirmed.")
 	notContains(t, r.out+r.err, "Which firmware?")
 	m.unchanged(t)
@@ -761,13 +761,13 @@ func TestInstallChooserOffersNoStockAndFeedsGetKit(t *testing.T) {
 	e2 := newEnv(t)
 	useAPI(t, e2, a2)
 	e2.writeState("camera_ip=127.0.0.1\ncamera_kind=stock\ncamera_telnet=1\n")
-	r = e2.run("1\n4\n9\n", "--camera", "default")
+	r = e2.run("1\n4\n10\n", "--camera", "default")
 	contains(t, r.out+r.err, "No firmware chosen. Nothing was changed.")
 	if a2.kitHits() != 0 || e2.readState("step_get_kit_done") != "" {
 		t.Error("something ran after Back")
 	}
 	// --stock belongs to the update
-	r = e2.run("1\n9\n", "--camera", "default", "--stock")
+	r = e2.run("1\n10\n", "--camera", "default", "--stock")
 	contains(t, r.out+r.err, "--stock puts the original firmware back on an Akam camera: it belongs to the update.")
 }
 
@@ -795,7 +795,7 @@ func TestInstallInSourceModeShowsNoChooser(t *testing.T) {
 	e := newEnv(t)
 	useAPI(t, e, a)
 	e.writeState("mode=source\ncamera_ip=127.0.0.1\ncamera_kind=stock\nstep_doctor_done=" + doneAt + "step_get_kit_done=" + doneAt)
-	r := e.run("1\n9\n", "--camera", "default")
+	r := e.run("1\n10\n", "--camera", "default")
 	notContains(t, r.out+r.err, "Which firmware?")
 	if a.listHits != 0 {
 		t.Error("the list was asked")

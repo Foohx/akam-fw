@@ -55,7 +55,7 @@ func TestFailedDownloadOrVerificationLeavesTheRecordedKitAlone(t *testing.T) {
 		tarball := recordKit(t, w)
 		before := w.kitSnapshot(tarball)
 		damage(w)
-		r := w.update("2\ny\n9\n") // rows: the image already built (valid for the recorded kit), the release
+		r := w.update("2\ny\n10\n") // rows: the image already built (valid for the recorded kit), the release
 		expectRC(t, r, 0)
 		contains(t, r.out+r.err, "nothing was changed")
 		if after := w.kitSnapshot(tarball); after != before {
@@ -99,7 +99,7 @@ func TestKitIsInstalledOnlyAfterTheWrite(t *testing.T) {
 	_ = os.MkdirAll(kd, 0o700)
 	_ = os.WriteFile(filepath.Join(kd, "MARK"), []byte("previous"), 0o600)
 	// No at the red box: the previous kit folder and the kit state stay
-	r := w.update("1\n\n9\n")
+	r := w.update("1\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "not confirmed.")
 	if b, _ := os.ReadFile(filepath.Join(kd, "MARK")); string(b) != "previous" || w.readState("mode") != "source" {
@@ -109,7 +109,7 @@ func TestKitIsInstalledOnlyAfterTheWrite(t *testing.T) {
 		t.Error("kit.new left behind")
 	}
 	// Yes: the new kit is installed after the write, kit.old is gone
-	r = w.update("1\ny\n\n9\n")
+	r = w.update("1\ny\n\n10\n")
 	expectRC(t, r, 0)
 	if w.readState("mode") != "kit" || w.readState("kit_version") != "1.0.0" || w.readState("fw_source") != "release:1.0.0" {
 		t.Errorf("mode %q version %q source %q", w.readState("mode"), w.readState("kit_version"), w.readState("fw_source"))
@@ -225,14 +225,14 @@ func TestInstallFlagsApplyTheSameInvalidation(t *testing.T) {
 // An imported image on record is not passed off as the image of a release.
 func TestImportedImageOnRecordIsSaidAndAsked(t *testing.T) {
 	w := newFwWorldBuilt(t, relList(relJSON("v1.0.0", false, false)), "image_origin=imported:"+shaOf(validImage(t))+"\n")
-	r := w.update("9\n9\n")
+	r := w.update("9\n10\n")
 	contains(t, r.out+r.err, "1) The image you imported earlier (")
 	notContains(t, r.out+r.err, "already built from your backup")
 	// a release row with an imported image on record asks (default No) and changes nothing
 	w = newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "image_origin=imported:"+shaOf(validImage(t))+"\n")
 	tarball := recordKit(t, w)
 	before := w.kitSnapshot(tarball)
-	r = w.update("2\n\n9\n")
+	r = w.update("2\n\n10\n")
 	contains(t, r.out+r.err, "the image on record was imported, not built from Akam 1.0.0", "Write that imported image anyway? [y/N]",
 		"the imported image on record is not used.", "choose 'The image you imported earlier'")
 	if w.kitSnapshot(tarball) != before {
@@ -264,6 +264,6 @@ func TestImageWithVersionStagesTheKitUntilTheWrite(t *testing.T) {
 // The image the camera already runs (same md5) is not the default row.
 func TestImageAlreadyOnTheCameraIsNoDefault(t *testing.T) {
 	w := newFwWorldBuilt(t, relList(relJSON("v2.0.0", false, false)), "image_md5=abc123\nflash_md5=abc123\n")
-	r := w.update("\n9\n")
+	r := w.update("\n10\n")
 	contains(t, r.out+r.err, "1) Akam 2.0.0 (latest)", "The image already built from your backup (", "  - already on the camera")
 }

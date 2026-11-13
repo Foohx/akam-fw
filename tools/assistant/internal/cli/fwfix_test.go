@@ -24,7 +24,7 @@ func TestImportedImageIsNeverLabelledARelease(t *testing.T) {
 	sum := sha256.Sum256(validImage(t))
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "image_origin=imported:"+hex.EncodeToString(sum[:])+"\n")
 	// 1 = Akam 1.0.0; y = "write that imported image anyway"; y = the red box
-	r := w.update("1\ny\ny\n\n9\n")
+	r := w.update("1\ny\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "the image on record was imported, not built from Akam 1.0.0")
 	if !strings.Contains(r.out+r.err, "Image md5 written and read back") {
@@ -40,7 +40,7 @@ func TestImportedImageIsNeverLabelledARelease(t *testing.T) {
 func TestCameraVersionComesFromItsManifest(t *testing.T) {
 	w := newFwWorldKit(t, relList(relJSON("v2.0.0", false, false), relJSON("v1.0.0", false, false)), "", "", withManifest("# kit\nakam_version=2.0.0\nbuilt_utc=x\n"))
 	// no fw_version in the state: only the camera knows. 2 = Akam 1.0.0 -> downgrade, Enter = No, 6 = Back
-	r := w.update("2\n\n6\n9\n")
+	r := w.update("2\n\n6\n10\n")
 	contains(t, r.out+r.err, "the camera runs: b35-2af81c5; Akam 2.0.0)", "1) Akam 2.0.0 (latest)  - on the camera now", "this is a downgrade.", "No firmware chosen.")
 	notContains(t, r.out+r.err, "installed here")
 	if w.api.kitHits() != 0 {
@@ -49,15 +49,15 @@ func TestCameraVersionComesFromItsManifest(t *testing.T) {
 	w.unchanged(t)
 	// the manifest of a source build is not a version: unknown, no question
 	w = newFwWorldKit(t, relList(relJSON("v1.0.0", false, false)), "", "", withManifest("akam_version=v0.9-12-gabc1234-dirty\n"))
-	r = w.update("1\n\n9\n")
+	r = w.update("1\n\n10\n")
 	notContains(t, r.out+r.err, "downgrade", "Akam v0.9")
 	// no manifest (an older image): the recorded version is used while the build is the one seen after the write
 	w = newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "fw_version=2.0.0\nfw_build=b35-2af81c5\n")
-	r = w.update("1\n\n9\n")
+	r = w.update("1\n\n10\n")
 	contains(t, r.out+r.err, "Akam 2.0.0 installed here", "this is a downgrade.")
 	// another build than the one seen: something else was installed since, the recorded version is dropped
 	w = newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "fw_version=2.0.0\nfw_build=b12-0000000\n")
-	r = w.update("1\n\n9\n")
+	r = w.update("1\n\n10\n")
 	notContains(t, r.out+r.err, "installed here", "downgrade")
 }
 
@@ -67,7 +67,7 @@ func TestHostileCameraVersionTextIsNeverShownRaw(t *testing.T) {
 		o.FwVersion = "\x1b[31mevil\x1b]0;pwned\x07"
 		o.Manifest = "akam_version=\x1b[2J1.0.0\n"
 	})
-	r := w.update("2\n9\n")
+	r := w.update("2\n10\n")
 	out := r.out + r.err
 	if strings.ContainsAny(out, "\x1b\x07") {
 		t.Errorf("control characters on the screen: %q", out)
@@ -92,7 +92,7 @@ func TestRefusedDowngradeOfALocalKitChangesNothing(t *testing.T) {
 	}
 	before := snap()
 	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
-	r := w.update("1\n" + kitFile + "\nn\n9\n")
+	r := w.update("1\n" + kitFile + "\nn\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Kit verified", "this is a downgrade.", "Go back to Akam 1.0.0? [y/N]", "downgrade not confirmed.", "nothing was changed.")
 	if snap() != before {
@@ -109,7 +109,7 @@ func TestKitForAnImageAsksNoDowngradeQuestion(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "fw_version=2.0.0\n")
 	w.writeState(strings.ReplaceAll(readAll(t, filepath.Join(w.state, "state")), "step_get_kit_done="+doneAt, ""))
 	// 3 = image file; path; yes; then "Which kit?": 1 = Akam 1.0.0; the red box: No
-	r := w.update("3\n" + w.img + "\ny\n1\n\n9\n")
+	r := w.update("3\n" + w.img + "\ny\n1\n\n10\n")
 	contains(t, r.out+r.err, "Which kit? (it supplies the flash tools)", "Kit verified", "not confirmed.")
 	notContains(t, r.out+r.err, "downgrade", "Go back to Akam")
 	w.unchanged(t)
@@ -124,7 +124,7 @@ func TestChooserRefusesUnsignedAndTestGradeKits(t *testing.T) {
 		_ = os.WriteFile(f, append(append([]byte{}, w.api.kb.AllowedSigners...), other.AllowedSigners...), 0o600)
 		t.Setenv("AKAM_ALLOWED_SIGNERS", f)
 		before := w.readState("kit_sha") + w.readState("mode") + w.readState("step_get_kit_done")
-		r := w.update("1\n" + other.Tarball + "\nn\n9\n") // No to any "use it anyway" question
+		r := w.update("1\n" + other.Tarball + "\nn\n10\n") // No to any "use it anyway" question
 		expectRC(t, r, 0)
 		contains(t, r.out+r.err, "nothing was changed")
 		notContains(t, r.out+r.err, "WRITES THE CAMERA FLASH")
@@ -143,7 +143,7 @@ func TestTryAgainRowAfterAFailedList(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
 	w.api.failFirst = 1
 	// rows: kit file, image file, stock, Try again(4), Back(5); after the retry: 1.0.0, kit, image, stock, Back(5)
-	r := w.update("4\n5\n9\n")
+	r := w.update("4\n5\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "could not read the list of releases: GitHub refused the request (HTTP 403",
 		"4) Try again to read the releases", "1) Akam 1.0.0 (latest)")
@@ -185,7 +185,7 @@ func TestInstallImageChoiceWinsOverBuilderNative(t *testing.T) {
 	keep = append(keep, "mode=kit", "kit_path="+a.kb.Tarball, "kit_sha="+a.kb.TarSHA, "kit_version=1.0.0", "kit_format=1")
 	fw.writeState(strings.Join(keep, "\n") + "\n")
 	// 1 = set up; 3 = an image file; its path; yes; then the image step imports it
-	r := fw.run("1\n3\n"+fw.imgPath+"\ny\n9\n", "--camera", "default", "--builder", "native")
+	r := fw.run("1\n3\n"+fw.imgPath+"\ny\n10\n", "--camera", "default", "--builder", "native")
 	contains(t, r.out+r.err, "this image was built elsewhere", "Image recorded: ")
 	notContains(t, r.out+r.err, "EXPERIMENTAL")
 	if fw.readState("image_origin") != "imported:"+shaOf(fw.img) {
