@@ -19,7 +19,7 @@ func optionsHealth(t *testing.T, tune func(c *testfake.Camera)) (*env, result) {
 	if tune != nil {
 		tune(e.cam)
 	}
-	return e, e.run("3\n8\n9\n", "--camera", "salon")
+	return e, e.run("3\n8\n10\n", "--camera", "salon")
 }
 
 func TestOptionsShowsWifiLevels(t *testing.T) {
@@ -85,12 +85,12 @@ func TestOptionsClockSetAndOffAreOffered(t *testing.T) {
 	e.rememberCamera("salon", "127.0.0.1")
 	t.Setenv("AKAM_FORCE_TTY", "1")
 	// a clock that is set and right: shown, nothing asked
-	r := e.run("3\n8\n9\n", "--camera", "salon")
+	r := e.run("3\n8\n10\n", "--camera", "salon")
 	contains(t, r.out, "Clock: set, ")
 	notContains(t, r.err, "Set the camera clock")
 	// never set: asked, default No (Enter)
 	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false)
-	r = e.run("3\n\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n\n8\n10\n", "--camera", "salon")
 	contains(t, r.out, "Clock: not set", "reads 2000-01-01", "Clock left as it is.")
 	contains(t, r.err, "Set the camera clock from this computer now? It is lost at the next reboot unless time sync (NTP) is on. [y/N]")
 	if len(e.cam.ClockSets()) != 0 {
@@ -98,7 +98,7 @@ func TestOptionsClockSetAndOffAreOffered(t *testing.T) {
 	}
 	// yes: one date -s with the PC time, in UTC
 	before := time.Now().UTC().Add(-2 * time.Second)
-	r = e.run("3\ny\n8\n9\n", "--camera", "salon")
+	r = e.run("3\ny\n8\n10\n", "--camera", "salon")
 	sets := e.cam.ClockSets()
 	if len(sets) != 1 {
 		t.Fatalf("clock sets: %v\n%s", sets, r.out)
@@ -109,15 +109,15 @@ func TestOptionsClockSetAndOffAreOffered(t *testing.T) {
 	}
 	contains(t, r.out, "Camera clock set to "+sets[0]+" UTC.")
 	// now it is right: no question again
-	r = e.run("3\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n8\n10\n", "--camera", "salon")
 	notContains(t, r.err, "Set the camera clock")
 	// an hour off: asked again; two minutes or less: not
 	e.cam.SetClock(time.Now().Add(-time.Hour), true)
-	r = e.run("3\n\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n\n8\n10\n", "--camera", "salon")
 	contains(t, r.out, "Clock: off by 1 hour(s)")
 	contains(t, r.err, "Set the camera clock from this computer now?")
 	e.cam.SetClock(time.Now().Add(-90*time.Second), true)
-	r = e.run("3\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n8\n10\n", "--camera", "salon")
 	notContains(t, r.err, "Set the camera clock")
 	// no terminal: nothing is asked
 	t.Setenv("AKAM_FORCE_TTY", "")
@@ -200,7 +200,7 @@ func TestClockOfferWithTimeSyncOn(t *testing.T) {
 	t.Setenv("AKAM_FORCE_TTY", "1")
 	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
 	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false) // never set: the offer stays with time sync on
-	r := e.run("3\n\n8\n9\n", "--camera", "salon")
+	r := e.run("3\n\n8\n10\n", "--camera", "salon")
 	contains(t, r.err, "Time sync is on and corrects the clock shortly")
 	notContains(t, r.err, "lost at the next reboot")
 	contains(t, r.out, "time sync should correct it shortly.")
@@ -215,7 +215,7 @@ func TestOptionsClockNtpOnNeverOffersToOverwrite(t *testing.T) {
 	expectRC(t, e.run("", "--camera", "salon", "ntp", "set", "pool.ntp.org"), 0)
 	t.Setenv("AKAM_FORCE_TTY", "1")
 	e.cam.SetClock(time.Now().Add(-time.Hour), true)
-	r := e.run("3\n8\n9\n", "--camera", "salon")
+	r := e.run("3\n8\n10\n", "--camera", "salon")
 	contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong", "difference 1 hour(s)")
 	notContains(t, r.err, "Set the camera clock")
 	// the same through "ntp status"
@@ -223,7 +223,7 @@ func TestOptionsClockNtpOnNeverOffersToOverwrite(t *testing.T) {
 	contains(t, r.out, "may be wrong")
 	// the clock never set: the offer stays, even with time sync on
 	e.cam.SetClock(time.Date(2000, 1, 1, 0, 0, 30, 0, time.UTC), false)
-	r = e.run("3\n\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n\n8\n10\n", "--camera", "salon")
 	contains(t, r.err, "Set the camera clock from this computer now?")
 	if len(e.cam.ClockSets()) != 0 {
 		t.Errorf("clock set: %v", e.cam.ClockSets())
@@ -251,13 +251,13 @@ func TestClockNtpOnWithoutASuccessfulSyncStillOffers(t *testing.T) {
 	e.cam.SetClock(time.Now().Add(-time.Hour), true)
 	for _, log := range []string{"akam_ntp: sync failed (pass 2), next try in 60s", ""} {
 		e.cam.SetNtpLog(log)
-		r := e.run("3\n\n8\n9\n", "--camera", "salon")
+		r := e.run("3\n\n8\n10\n", "--camera", "salon")
 		contains(t, r.out, "Time sync is on but has not succeeded yet")
 		contains(t, r.err, "Set the camera clock from this computer now?", "Time sync is on but has not succeeded yet")
 		notContains(t, r.out, "may be wrong")
 	}
 	e.cam.SetNtpLog("akam_ntp: sync ok after 1 failed pass(es)")
-	r := e.run("3\n8\n9\n", "--camera", "salon")
+	r := e.run("3\n8\n10\n", "--camera", "salon")
 	contains(t, r.out, "may be wrong")
 	notContains(t, r.err, "Set the camera clock")
 	if len(e.cam.ClockSets()) != 0 {
@@ -285,6 +285,6 @@ func TestVideoShowClockAgreesWithNtpStatusAndOptions(t *testing.T) {
 		contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong")
 	}
 	t.Setenv("AKAM_FORCE_TTY", "1")
-	r = e.run("3\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n8\n10\n", "--camera", "salon")
 	contains(t, r.out, "Clock: off by 1 hour(s)", "keeps its time with NTP", "may be wrong")
 }

@@ -97,7 +97,7 @@ func TestFlashCommandRefusesANonSquashfsImage(t *testing.T) {
 func TestUpdateFlowSaysTheStructureCheckOnce(t *testing.T) {
 	w := newFlashWorld(t, testfake.FlashOptions{})
 	w.seedUpdate(t, backupFixture(t))
-	r := w.homeRun("2\ny\n\n9\n", "--image", w.img)
+	r := w.homeRun("2\ny\n\n10\n", "--image", w.img)
 	expectRC(t, r, 0)
 	if n := strings.Count(r.out+r.err, "Image structure checked"); n != 1 {
 		t.Errorf("structure line printed %d times", n)

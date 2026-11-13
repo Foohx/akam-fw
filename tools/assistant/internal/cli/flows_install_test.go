@@ -17,7 +17,7 @@ import (
 func TestInstallFlowResumesAtTheFlashAndNeverPowerCycles(t *testing.T) {
 	fw := newCardFlashWorld(t, testfake.StockOptions{}, nil)
 	// 1 = set up; "y" untested firmware; "y" red box; Enter = do not verify now; 9 = quit
-	r := fw.run("1\ny\ny\n\n9\n", "--camera", "default")
+	r := fw.run("1\ny\ny\n\n10\n", "--camera", "default")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "[done]  1  Check this computer", "[done]  3  Choose the backup folder", "[done]  8  Prepare the flash card",
 		"[next]  9  Write the camera flash", "Flash done and verified. The wizard NEVER power-cycles the camera.",
@@ -38,7 +38,7 @@ func TestInstallFlowResumesAtTheFlashAndNeverPowerCycles(t *testing.T) {
 }
 
 func TestInstallFlowRedBoxDefaultsToNo(t *testing.T) {
-	for _, in := range []string{"1\ny\n\n9\n", "1\ny\nn\n9\n", "1\ny\nq\n9\n"} {
+	for _, in := range []string{"1\ny\n\n10\n", "1\ny\nn\n10\n", "1\ny\nq\n10\n"} {
 		fw := newCardFlashWorld(t, testfake.StockOptions{}, nil)
 		before := fw.mtd7()
 		r := fw.run(in, "--camera", "default")
@@ -69,7 +69,7 @@ func TestInstallFlowImageImport(t *testing.T) {
 		keep = append(keep, l)
 	}
 	fw.writeState(strings.Join(keep, "\n"))
-	r := fw.run("1\n9\n", "--camera", "default")
+	r := fw.run("1\n10\n", "--camera", "default")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "[next]  7  Build the Akam image from your own backup", "Stopped at 'image'")
 	if fw.readState("step_image_done") != "" {
@@ -78,7 +78,7 @@ func TestInstallFlowImageImport(t *testing.T) {
 	// import: the md5 is printed, the red box of the flash step will show it again
 	sum := md5.Sum(fw.img)
 	want := hex.EncodeToString(sum[:])
-	r = fw.run("1\n9\n", "--camera", "default", "--image", fw.imgPath)
+	r = fw.run("1\n10\n", "--camera", "default", "--image", fw.imgPath)
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "md5 "+want, "this image was built elsewhere", "Image recorded: ")
 	if fw.readState("image_path") != fw.imgPath || fw.readState("image_sha") != shaOf(fw.img) || fw.readState("step_image_done") == "" {
@@ -88,7 +88,7 @@ func TestInstallFlowImageImport(t *testing.T) {
 	bad := filepath.Join(t.TempDir(), "bad.squashfs")
 	os.WriteFile(bad, []byte("short"), 0o600)
 	fw.writeState(strings.Join(keep, "\n"))
-	r = fw.run("1\n9\n", "--camera", "default", "--image", bad)
+	r = fw.run("1\n10\n", "--camera", "default", "--image", bad)
 	contains(t, r.out+r.err, "the image is 5 bytes, expected exactly 5242880.")
 	if fw.readState("step_image_done") != "" {
 		t.Error("a wrong-size image was recorded")

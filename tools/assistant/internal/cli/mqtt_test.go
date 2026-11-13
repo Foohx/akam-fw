@@ -214,11 +214,11 @@ func TestOptionsNetworkScreenOffersMqtt(t *testing.T) {
 	e := newEnv(t)
 	e.needHelpers()
 	e.rememberCamera("salon", "127.0.0.1")
-	r := e.run("3\n8\n9\n", "--camera", "salon")
+	r := e.run("3\n8\n10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "ONVIF: off", "MQTT: off")
 	// network > MQTT: the broker questions, default No at the end, nothing sent
-	r = e.run("3\n5\n5\n192.0.2.10\n\nbob\n"+mqttPass+"\n\n8\n9\n", "--camera", "salon")
+	r = e.run("3\n5\n5\n192.0.2.10\n\nbob\n"+mqttPass+"\n\n8\n10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "MQTT / Home Assistant: off", "Left as it was (MQTT off).")
 	if sentToCamera(e, "akam_mqtt.sh set") {

@@ -25,6 +25,9 @@ type Options struct {
 	// TelnetNegotiate (hidden): answer telnet option negotiation (default: stay silent, as validated on hardware).
 	TelnetNegotiate bool
 	Args            []string // command and its words
+	// The config command (config.go): --global, --from CAMERA, --only GROUPS, --include-secrets.
+	CfgGlobal, CfgSecrets bool
+	CfgFrom, CfgOnly      string
 }
 
 var negNum = regexp.MustCompile(`^-[0-9]`)
@@ -106,6 +109,14 @@ func ParseArgs(argv []string) (*Options, error) {
 			set(&o.TrustNewHostKey)
 		case "--password-file":
 			set(&o.PasswordFile)
+		case "--global":
+			o.CfgGlobal = true
+		case "--include-secrets":
+			o.CfgSecrets = true
+		case "--from":
+			set(&o.CfgFrom)
+		case "--only":
+			set(&o.CfgOnly)
 		case "--camera":
 			set(&o.Camera)
 			if err == nil && o.Camera == "" {

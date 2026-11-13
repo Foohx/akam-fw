@@ -239,7 +239,7 @@ func TestEscStopsScan(t *testing.T) {
 	if n.Load() == 0 {
 		t.Error("the scan never started")
 	}
-	if got := bs.last(); len(got.Rows) != 7 {
+	if got := bs.last(); len(got.Rows) != 8 {
 		t.Errorf("the home did not come back: %d rows", len(got.Rows))
 	}
 }
@@ -290,8 +290,8 @@ func TestSessionEndCancelsTheSearch(t *testing.T) {
 	}
 }
 
-// The home rows are the seven lines of the mockup, with the digits as hidden shortcuts and Enter
-// opening the row under the cursor.
+// The home rows are the seven lines of the mockup plus Configs, with the digits as hidden shortcuts (8 is
+// the camera chooser, so Configs is 9) and Enter opening the row under the cursor.
 func TestHomeBoardRows(t *testing.T) {
 	e := newEnv(t)
 	bs := &boardSession{keys: []string{"esc"}}
@@ -301,11 +301,15 @@ func TestHomeBoardRows(t *testing.T) {
 	var labels []string
 	for i, row := range b.Rows {
 		labels = append(labels, row.Label)
-		if row.Hot != string(rune('1'+i)) {
+		hot := string(rune('1' + i))
+		if row.Label == "Configs" {
+			hot = "9"
+		}
+		if row.Hot != hot {
 			t.Errorf("row %d hot key %q", i, row.Hot)
 		}
 	}
-	want := "Set up a new camera|Update this camera|Camera options|Back up / restore|Find cameras|Settings|Check this computer"
+	want := "Set up a new camera|Update this camera|Camera options|Back up / restore|Find cameras|Settings|Check this computer|Configs"
 	if strings.Join(labels, "|") != want {
 		t.Errorf("rows: %v", labels)
 	}

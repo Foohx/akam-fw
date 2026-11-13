@@ -80,6 +80,13 @@ func remoteOnvif(args ...string) string { return onvifCmd + " " + strings.Join(a
 // remoteMqtt is the MQTT helper. The broker password is never an argument: it goes on stdin (see mqttSet).
 func remoteMqtt(args ...string) string { return mqttCmd + " " + strings.Join(args, " ") }
 
+// remoteMqttOption sets one optional MQTT setting (a config applies them one by one). A topic holds "/", which
+// the general helper shape does not allow, so mqttOptionRe is the one extra shape the guard accepts.
+func remoteMqttOption(name, value string) string { return remoteMqtt("option", name, value) }
+
+// mqttOptionRe: `akam_mqtt.sh option NAME VALUE`, the value made of letters, digits, _ - and / only.
+var mqttOptionRe = regexp.MustCompile(`\A` + regexp.QuoteMeta(mqttCmd) + ` option (?:base_topic|discovery_prefix|client_id|discovery|interval) [A-Za-z0-9_/-]{1,64}\z`)
+
 // remoteRegister reads the camera's name and the md5 of its APP partition (read-only).
 func remoteRegister() string {
 	return `echo "REG_HOSTNAME=$(hostname)"; echo "REG_MTD7_MD5=$(dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum | cut -d" " -f1)"`
@@ -94,6 +101,7 @@ func allRemoteCommands() []string {
 		remoteOnvif("enable", "80"), remoteOnvif("disable"), remoteOnvif("status"),
 		remoteMqtt("status"), remoteMqtt("set", "192.0.2.10", "1883", "bob"), remoteMqtt("set", "broker.lan", "1883", "-"),
 		remoteMqtt("disable"), remoteMqtt("forget"), remoteMqtt("test"),
+		remoteMqttOption("base_topic", "home/akam/salon"), remoteMqttOption("discovery", "off"),
 		remoteRegister(), remoteManifest, remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
 		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), ctl.NcCommand,
 	}
@@ -157,7 +165,7 @@ var fixedRemote = map[string]bool{
 // here: quoting (re”boot), escapes, eval, other tools (rm, mtd) and any new spelling get past it,
 // while harmless words (a host named "watchdog") are refused by it.
 func forbiddenRemote(cmd string) string {
-	if fixedRemote[cmd] || remoteDateSetRe.MatchString(cmd) || remoteReadRe.MatchString(cmd) || helperRe.MatchString(cmd) {
+	if fixedRemote[cmd] || remoteDateSetRe.MatchString(cmd) || remoteReadRe.MatchString(cmd) || helperRe.MatchString(cmd) || mqttOptionRe.MatchString(cmd) {
 		return ""
 	}
 	return fmt.Sprintf("forbidden camera command: %s", cmd)

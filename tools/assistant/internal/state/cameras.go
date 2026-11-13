@@ -230,7 +230,7 @@ func (c *Cameras) MoveFiles(old, nw string) error {
 				return fmt.Errorf("could not keep a backup copy of %s/state: not moving anything", od)
 			}
 		}
-		for _, f := range []string{"state", "state.dry", "akam.log", "reflash.log", "reflash-precheck.log", "rtsp_auth.err"} {
+		for _, f := range []string{"state", "state.dry", "akam.log", "reflash.log", "reflash-precheck.log", "rtsp_auth.err", "camera.conf", "camera.secrets"} {
 			if exists(filepath.Join(od, f)) {
 				if err := fsutil.Rename(filepath.Join(od, f), filepath.Join(nd, f)); err != nil {
 					return err

@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/profile"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
@@ -416,6 +417,7 @@ func (a *App) rtspAuthSet(c *camssh.Client, ip string) error {
 			fmt.Sprintf("does this image have %s set-creds? Build and flash a current image (%s update).", rtspAuthCmd, Prog))
 	}
 	a.UI.Good(fmt.Sprintf("  The video stream now asks for a user name and password (user: %s).", user))
+	a.secretsAfterSet(profile.AuthPassword, "", user, pw, true) // a copy saved for this camera is now out of date
 	a.UI.Say("  This password is now also stored on the camera (a file only root can read) so that ONVIF can verify it.")
 	a.UI.Say("  Players that are watching are disconnected within a second and ask again.")
 	a.rtspStreamHint(user, ip)
@@ -463,6 +465,7 @@ func (a *App) rtspAuthDisable(c *camssh.Client, ip string) error {
 		return a.UI.Fail("the camera could not remove the credentials.", fmt.Sprintf("does this image have %s? (%s update)", rtspAuthCmd, Prog))
 	}
 	a.UI.Good("  The video stream is open again (no password; the copy stored for ONVIF is removed too).")
+	a.secretsAfterSet(profile.AuthPassword, "", "", "", false)
 	return nil
 }
 

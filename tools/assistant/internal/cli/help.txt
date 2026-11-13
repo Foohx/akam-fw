@@ -75,6 +75,25 @@ Commands:
                      remembers it for THIS camera; then asks (default No) whether to remove the old key from the
                      camera. If anything fails the camera still accepts the old key. Other cameras are not touched.
                      A new key is made on this computer (ed25519, passphrase asked twice, private file mode 600).
+  config [show | save-global | save-local | apply | edit-global | forget-secrets]
+                     the settings of a camera, saved on THIS computer: a global config (the default template for
+                     new cameras, profiles/global.conf) and, per camera, its local config (what was last read or
+                     applied). A config holds the Options settings (video, picture, LED, audio, ONVIF, time sync,
+                     MQTT, video password on/off and user name) and the SSH key choice. Passwords and the Wi-Fi are in
+                     a separate private file that exists only if you say yes (default No) each time you save.
+                       show [--global]: what is saved (passwords shown as set / not set, never their value)
+                       save-global [--from CAMERA]: read a camera now (or what was last saved for it) into the
+                         global config; asks (default No) to keep the passwords, and the Wi-Fi, in it
+                       save-local: record this camera's settings as its local config
+                       apply --global | --from CAMERA [--only video,picture,led,audio,onvif,ntp,mqtt,auth,key]
+                         [--include-secrets]: compare with the camera, show the differences, ask (default No),
+                         then send them as the Options screens do; the video restart is asked separately.
+                         A password is sent only with the setting that needs it (it cannot be read back).
+                         Wi-Fi is never applied to a running camera (it only prepares the card of a new one).
+                         The SSH key change and a removal of the video password each ask their own question.
+                       edit-global: edit the template without a camera (session; a list in plain)
+                       forget-secrets [--global]: delete the saved passwords and Wi-Fi of the global config, or of
+                         this camera (--camera NAME), from this computer. Nothing is synchronised, ever.
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
                      'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and

@@ -268,6 +268,8 @@ func (a *App) installRun(step string) error {
 			return nil
 		}
 		return a.cmdVerify()
+	case "prepare-flash-sd":
+		a.cfgInstallChoice() // which saved config this camera starts from (asked once, only if there is one)
 	}
 	return a.runStep(step)
 }

@@ -9,7 +9,7 @@ import (
 // listed, and quitting is the last number.
 func TestHomeScreenPlain(t *testing.T) {
 	e := newEnv(t)
-	r := e.run("9\n", "--camera", "salon")
+	r := e.run("10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Akam test  (", "Camera: salon  127.0.0.1  address known, not checked yet  (item 8 chooses another camera)",
 		"Set up a new camera  - First install from the stock firmware.",
@@ -20,7 +20,7 @@ func TestHomeScreenPlain(t *testing.T) {
 
 func TestHomeScreenNoCamera(t *testing.T) {
 	e := newEnv(t)
-	r := e.runRaw("9\n", "--no-color", "--state-dir", e.state, "--camera", "salon")
+	r := e.runRaw("10\n", "--no-color", "--state-dir", e.state, "--camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Camera: none (item 8 chooses one)")
 	if strings.Contains(r.out, "127.0.0.1") {

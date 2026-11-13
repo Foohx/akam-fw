@@ -115,7 +115,7 @@ func TestNoNetworkBeforeOnvifYes(t *testing.T) {
 			}
 		}()
 		e.disc.WSDTarget = pc.LocalAddr().String()
-		r := e.noIP("5\n4\n\n7\n9\n", "--camera", "salon") // find > ONVIF search > Enter (No) > back
+		r := e.noIP("5\n4\n\n7\n10\n", "--camera", "salon") // find > ONVIF search > Enter (No) > back
 		expectRC(t, r, 0)
 		time.Sleep(100 * time.Millisecond)
 		if pk.Load() != 0 {

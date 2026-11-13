@@ -91,24 +91,26 @@ type Camera struct {
 	hostSigner           gossh.Signer
 	denyOthers           atomic.Bool
 
-	mu        sync.Mutex
-	commands  []string
-	ctl       map[string]string
-	ctlSets   []string
-	ctlWords  []string // first word of every line received on the control port
-	onvifOn   bool
-	clockOff  time.Duration // camera clock minus the clock of the machine running the test
-	clockSets []string
-	ntpOn     bool
-	ntpList   string
-	ntpLog    string            // last log line of the helper ("" none)
-	vRun      map[string]string // the video values the running ak_rtsp uses (applied at its restart)
-	onvifPrt  string
-	restarts  int
-	mtdReads  [8]int
-	conns     []net.Conn
-	wg        sync.WaitGroup
-	done      chan struct{}
+	mu            sync.Mutex
+	commands      []string
+	ctl           map[string]string
+	ctlSets       []string
+	ctlWords      []string // first word of every line received on the control port
+	onvifOn       bool
+	clockOff      time.Duration // camera clock minus the clock of the machine running the test
+	clockSets     []string
+	ntpOn         bool
+	ntpList       string
+	ntpLog        string            // last log line of the helper ("" none)
+	vRun          map[string]string // the video values the running ak_rtsp uses (applied at its restart)
+	onvifPrt      string
+	restarts      int
+	ctlDown       bool // the control port answers nothing (ak_rtsp is down)
+	downOnRestart bool // a video restart takes the control port down until SetCtlDown(false)
+	mtdReads      [8]int
+	conns         []net.Conn
+	wg            sync.WaitGroup
+	done          chan struct{}
 
 	RTSP *RTSPServer
 }
@@ -471,6 +473,9 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 	case cmd == `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`:
 		c.mu.Lock()
 		c.restarts++
+		if c.downOnRestart {
+			c.ctlDown = true
+		}
 		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
 			c.vRun[k] = c.ctl[k]
 		}
@@ -677,7 +682,10 @@ func (c *Camera) onvif(args []string, stdout, stderr io.Writer) int {
 
 func (c *Camera) handleCtl(nc net.Conn) {
 	defer nc.Close()
-	if c.opts.NoCtl {
+	c.mu.Lock()
+	down := c.ctlDown
+	c.mu.Unlock()
+	if c.opts.NoCtl || down {
 		time.Sleep(50 * time.Millisecond)
 		return
 	}
@@ -896,4 +904,19 @@ func (c *Camera) ClockSets() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.clockSets...)
+}
+
+// SetCtlDown makes the control port answer nothing (true) or answer again (false): ak_rtsp is down.
+func (c *Camera) SetCtlDown(down bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ctlDown = down
+}
+
+// CtlDownAfterRestart makes every video restart take the control port down until SetCtlDown(false), like
+// the few seconds in which the killed ak_rtsp is not back yet.
+func (c *Camera) CtlDownAfterRestart(on bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.downOnRestart = on
 }
