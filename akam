@@ -111,6 +111,10 @@ Commands:
                          whether to turn it on; the camera connects OUT (no new open port), in plain TCP
                        disable: stop (the settings stay); forget: stop and delete the settings and the password
                        test: one connection attempt with the saved settings; status (default): on or off, the broker
+  key [show | use-shared | use-new | use FILE.pub]
+                     which SSH key opens this camera and changing it over SSH: only in the native assistant
+                     (tools/assistant/build.sh, then AKAM_USE_BIN=1 ./akam key ...). Here, put a new
+                     akam/authorized_keys on the flash card instead.
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
                      'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and

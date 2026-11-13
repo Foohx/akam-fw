@@ -76,6 +76,7 @@ type Config struct {
 // Client is a connected camera.
 type Client struct {
 	conn    *gossh.Client
+	pub     gossh.PublicKey // the key this login used
 	cleanup []func()
 	stop    chan struct{}
 	Host    string
@@ -147,7 +148,7 @@ func Dial(cfg Config) (*Client, error) {
 		return nil, classify(err)
 	}
 	_ = raw.SetDeadline(time.Time{})
-	c := &Client{conn: gossh.NewClient(cc, chans, reqs), stop: make(chan struct{}), Host: cfg.Host}
+	c := &Client{conn: gossh.NewClient(cc, chans, reqs), stop: make(chan struct{}), Host: cfg.Host, pub: signer.PublicKey()}
 	c.cleanup = append(c.cleanup, closeSigner)
 	go c.keepalive(cfg.Keepalive)
 	return c, nil
@@ -188,6 +189,9 @@ func (c *Client) keepalive(every time.Duration) {
 		}
 	}
 }
+
+// PublicKey is the key this login was made with (what the camera accepted).
+func (c *Client) PublicKey() gossh.PublicKey { return c.pub }
 
 // Close ends the connection.
 func (c *Client) Close() {

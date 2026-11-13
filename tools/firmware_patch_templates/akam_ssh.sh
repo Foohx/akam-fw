@@ -32,7 +32,9 @@
 #
 # Key policy: NO key is embedded in the firmware image. authorized_keys comes
 # only from the microSD file, is validated (ssh-ed25519 lines only, no options,
-# no "command="), and replaces the CONFIG copy when the content differs. The
+# no "command="), and replaces the CONFIG copy when the content CHANGED since the
+# last import (md5 kept in .card_keys_hash: a card left in the camera does not undo a
+# key change made over SSH; a card with other keys still replaces the list). The
 # file on the SD card is never modified or deleted.
 #
 # Permissions: Dropbear refuses authorized_keys if any path component is
@@ -232,18 +234,43 @@ provision_keys() {
     return 0
 }
 
+# save_card_hash HASH: remember which card key list was imported last (atomic, 0600).
+save_card_hash() {
+    [ -n "$1" ] || return 0
+    _hn=$DB_DIR/.card_keys_hash.new.$$
+    if echo "$1" >"$_hn" 2>/dev/null && chmod 600 "$_hn" && mv -f "$_hn" "$DB_DIR/.card_keys_hash"; then
+        :
+    else
+        rm -f "$_hn"
+        log "could not remember the card key hash (ignored)"
+    fi
+}
+
 # Validate $_sdfile and install it as authorized_keys.
 install_keys() {
     _new=$DB_DIR/.authorized_keys.new.$$
     if filter_keys "$_sdfile" "$_new"; then
-        if [ -f "$AUTHKEYS" ] && cmp -s "$_new" "$AUTHKEYS"; then
+        # The card is imported only when its keys CHANGED since the last import (md5 of the validated
+        # list, kept next to authorized_keys): a card left in the camera must not undo a key change
+        # made over SSH (akam key use-*) at every boot. A new card, with other keys, still replaces
+        # the list: that is the recovery route. No stored hash (first boot, older firmware): import.
+        _h=$(md5sum <"$_new" 2>/dev/null | cut -d' ' -f1)
+        _hf=$DB_DIR/.card_keys_hash
+        _hold=
+        [ -f "$_hf" ] && read -r _hold <"$_hf" 2>/dev/null
+        if [ -n "$_h" ] && [ "$_h" = "$_hold" ] && [ -s "$AUTHKEYS" ]; then
+            log "SD keys unchanged since the last import, keeping the current authorized_keys (a key change made over SSH survives)"
+            rm -f "$_new"
+        elif [ -f "$AUTHKEYS" ] && cmp -s "$_new" "$AUTHKEYS"; then
             log "authorized_keys unchanged"
+            save_card_hash "$_h"
             rm -f "$_new"
         else
             chmod 600 "$_new"
             chown 0:0 "$_new" 2>/dev/null || log "chown 0:0 failed (ignored)"
             sync
             if mv -f "$_new" "$AUTHKEYS"; then
+                save_card_hash "$_h"
                 log "authorized_keys installed from SD"
             else
                 log "could not install authorized_keys"

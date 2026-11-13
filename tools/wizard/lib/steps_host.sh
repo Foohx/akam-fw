@@ -1019,6 +1019,7 @@ pubkey_check() {
         ui_err "$1 is a PRIVATE key. Never put it on the card; use the .pub file."
         return 1
     fi
+    case $1 in *.pub) ;; *) ui_err "$1 does not end in .pub: give the PUBLIC key file."; return 1 ;; esac
     if [ "$(grep -c '' "$1")" -ne 1 ]; then ui_err "$1 must contain exactly one line"; return 1; fi
     case $(cut -d' ' -f1 "$1") in
         ssh-ed25519) ;;
@@ -1052,6 +1053,30 @@ _ssh_make_key() {
     run_cmd ssh-keygen -t ed25519 -f "$priv" -C "$comment" || return 1
 }
 
+# _ssh_own_key: SSH_PUB is the key of this camera only, ~/.ssh/akam-NAME. An existing file of that
+# name is never taken silently: say when it was made and ask (default No); else offer another name.
+_ssh_own_key() {
+    local name=$CAM_NAME pub priv try=0 when n2
+    while :; do
+        pub=$HOME/.ssh/akam-$name.pub
+        priv=${pub%.pub}
+        SSH_PUB=$pub
+        if [ ! -e "$pub" ] && [ ! -e "$priv" ]; then _ssh_make_key "$pub" "akam-$name"; return; fi
+        when=$(date -r "$priv" +%Y-%m-%d 2>/dev/null || echo "an unknown date")
+        ui_say "  A key for the name $name already exists: $(_ssh_tilde "$priv") (created $when)."
+        if ui_confirm "  Is it the key of this camera? Use it?"; then _ssh_make_key "$pub" "akam-$name"; return; fi
+        try=$((try + 1))
+        if [ "$try" -ge 3 ]; then ui_fail "no key chosen." "choose another key, or remove the old file yourself if it is not needed."; return 1; fi
+        printf '  Another name for the key file (a-z, 0-9, -; empty cancels): ' >&2
+        IFS= read -r n2 || n2=
+        if [ -z "$n2" ]; then ui_fail "no key chosen." "run this step again."; return 1; fi
+        case $n2 in
+            *[!a-z0-9-]* | -* | *-) ui_say "  That is not a valid name." ;;
+            *) name=$n2 ;;
+        esac
+    done
+}
+
 # ssh_choose_pubkey: sets SSH_PUB, the public key for the flash card, and remembers it in the state.
 # Order: --pubkey, the key chosen before (state), else the question "Which SSH key should open this
 # camera?": the shared key ~/.ssh/akam (the default, created when missing), a key for this camera only
@@ -1059,7 +1084,18 @@ _ssh_make_key() {
 ssh_choose_pubkey() {
     local shared=$HOME/.ssh/akam.pub own=$HOME/.ssh/akam-$CAM_NAME.pub cur f kind cands=() items=() n
     SSH_PUB=""
-    if [ -n "$OPT_PUBKEY" ]; then SSH_PUB=$OPT_PUBKEY; return 0; fi
+    if [ -n "$OPT_PUBKEY" ]; then
+        SSH_PUB=$OPT_PUBKEY
+        # ~ expanded and the path made absolute: it is saved in the state and must mean the same from any folder
+        # shellcheck disable=SC2088
+        case $SSH_PUB in
+            "~") SSH_PUB=$HOME ;;
+            "~/"*) SSH_PUB=$HOME/${SSH_PUB#"~/"} ;;
+            /*) ;;
+            *) SSH_PUB=$PWD/$SSH_PUB ;;
+        esac
+        return 0
+    fi
     cur=$(state_get ssh_pubkey)
     if [ -n "$cur" ] && [ -f "$cur" ]; then
         SSH_PUB=$cur
@@ -1084,7 +1120,7 @@ ssh_choose_pubkey() {
     n=$CHOICE_INDEX
     case $n in
         0) SSH_PUB=$shared; _ssh_make_key "$shared" akam ;;
-        1) SSH_PUB=$own; _ssh_make_key "$own" "akam-$CAM_NAME" ;;
+        1) _ssh_own_key ;;
         *)
             SSH_PUB=${cands[n - 2]}
             ui_say "  Using $SSH_PUB (its private key stays on this PC; only the .pub goes on the card)."

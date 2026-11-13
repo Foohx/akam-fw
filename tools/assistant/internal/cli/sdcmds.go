@@ -272,6 +272,10 @@ func pubkeyCheck(a *App, path string) error {
 		a.UI.Err(path + " is a PRIVATE key. Never put it on the card; use the .pub file.")
 		return ui.ErrFailed
 	}
+	if !strings.HasSuffix(path, ".pub") {
+		a.UI.Err(path + " does not end in .pub: give the PUBLIC key file.")
+		return ui.ErrFailed
+	}
 	if err := sdcard.CheckPubKey(b); err != nil {
 		a.UI.Err(fmt.Sprintf("%s: %v", path, err))
 		return ui.ErrFailed
@@ -284,7 +288,11 @@ func pubkeyCheck(a *App, path string) error {
 // not exist), a key for this camera only (~/.ssh/akam-NAME, made now), or an ed25519 key of ~/.ssh.
 func (a *App) sshChoosePubkey() (string, error) {
 	if a.Opt.Pubkey != "" {
-		return a.Opt.Pubkey, nil
+		p, err := normPub(a.Opt.Pubkey)
+		if err != nil {
+			return "", a.UI.Fail(err.Error(), "pass --pubkey FILE.pub.")
+		}
+		return p, nil
 	}
 	if cur := a.St.Get("ssh_pubkey"); cur != "" && exists(cur) {
 		a.UI.Say("  SSH key (chosen before): " + cur)
@@ -311,11 +319,11 @@ func (a *App) sshChoosePubkey() (string, error) {
 	}
 	switch {
 	case n == 0:
-		_, err = a.keyEnsure(shared, "akam", true)
+		_, err = a.keyEnsure(shared, "akam", true, "the card")
 		return shared, err
 	case n == 1:
-		_, err = a.keyEnsure(own, "akam-"+a.Cams.Name, true)
-		return own, err
+		pub, _, err := a.keyOwn("the card")
+		return pub, err
 	}
 	a.UI.Say(fmt.Sprintf("  Using %s (its private key stays on this PC; only the .pub goes on the card).", cands[n-2]))
 	return cands[n-2], nil
