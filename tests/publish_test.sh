@@ -67,6 +67,7 @@ done
 R=$S/rel/$tag
 case "$sub" in
     view)
+        [ -z "${GH_FAKE_VIEWERR:-}" ] || { echo "$GH_FAKE_VIEWERR" >&2; exit 1; }
         [ -d "$R" ] || { echo "release not found" >&2; exit 1; }
         case "$jq" in
             .isDraft) cat "$R/draft" ;;
@@ -109,6 +110,26 @@ case "$sub" in
 esac
 FAKE
 chmod +x "$WORK/bin/gh"
+# fake git: the remote ($GIT_FAKE_URL, tags in $GIT_FAKE_TAGS) is simulated, everything else is the real git
+cat >"$WORK/bin/git" <<'FAKE'
+#!/usr/bin/env bash
+args=("$@")
+[ "${1:-}" != -C ] || args=("${@:3}")
+case "${args[0]:-}" in
+    remote)
+        [ "${args[1]:-}" = get-url ] || exec git "$@"
+        echo "${GIT_FAKE_URL:-https://github.com/Foohx/akam-fw.git}"
+        ;;
+    ls-remote)
+        [ -z "${GIT_FAKE_LSFAIL:-}" ] || { echo "fatal: unable to access remote" >&2; exit 128; }
+        tag=${args[3]#refs/tags/}
+        if grep -qxF "$tag" "${GIT_FAKE_TAGS:-/dev/null}" 2>/dev/null; then printf '%s\trefs/tags/%s\n' 1111111111111111111111111111111111111111 "$tag"; fi
+        ;;
+    *) exec git "$@" ;;
+esac
+FAKE
+chmod +x "$WORK/bin/git"
+export AKAM_GIT="$WORK/bin/git" GIT_FAKE_TAGS="$WORK/remote_tags"
 export AKAM_GH="$WORK/bin/gh" GH_FAKE_STATE="$WORK/gh"
 mkdir -p "$GH_FAKE_STATE/rel"
 calls() { cat "$GH_FAKE_STATE/calls.log" 2>/dev/null || true; }
@@ -213,6 +234,15 @@ git -C "$R" add more
 git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -q -m more
 check "HEAD ahead of origin/main (not pushed) is refused" fails_with 'is not origin/main' bash "$P" draft "$FW"
 git -C "$R" reset -q --hard HEAD~1
+check "a tag that already exists on the remote is refused" fails_with 'tag firmware-v.* already exists on origin' env GIT_FAKE_TAGS="$WORK/tags_has" bash -c "echo firmware-v$V >'$WORK/tags_has'; bash '$P' draft '$FW'"
+check "a remote that cannot be asked about the tag is refused (fail closed)" fails_with 'cannot ask origin' env GIT_FAKE_LSFAIL=1 bash "$P" draft "$FW"
+check "--repo different from the origin repository is refused" fails_with 'remote origin is Foohx/akam-fw' bash "$P" draft "$FW" --repo Other/repo
+check "an origin that is not a GitHub URL is refused" fails_with 'cannot tell which GitHub repository' env GIT_FAKE_URL=/srv/git/akam.git bash "$P" draft "$FW"
+check "an ssh origin URL (git@github.com:O/N.git) is understood" bash -c "GIT_FAKE_URL=git@github.com:Foohx/akam-fw.git bash '$P' draft '$FW' --repo Foohx/akam-fw >/dev/null 2>&1 && grep -q 'release create' '$GH_FAKE_STATE/calls.log'"
+reset_gh
+check "a gh error other than 'not found' is not taken for 'no release' (fail closed)" fails_with 'cannot tell whether the release' env GH_FAKE_VIEWERR='HTTP 502: bad gateway' bash "$P" draft "$FW"
+check "  (nothing was created)" bash -c "! grep -qE 'release (create|edit|upload)' '$GH_FAKE_STATE/calls.log'"
+reset_gh
 check "no gh call was made by the refusals" bash -c "[ ! -s '$GH_FAKE_STATE/calls.log' ]"
 
 echo "== draft"
@@ -249,10 +279,13 @@ bash "$P" draft "$FW" >/dev/null 2>&1
 bash "$P" draft "$AS" >/dev/null 2>&1
 check "a key that is not the release key: refused before anything is published" fails_with 'does not verify|wrong key' bash "$P" sign-and-publish --key "$WORK/key2" "$FW" "$AS"
 check "  (nothing published, no signature uploaded)" bash -c "! grep -q 'draft=false' '$GH_FAKE_STATE/calls.log' && [ ! -e '$GH_FAKE_STATE/rel/$TAGF/assets/SHA256SUMS.sig' ]"
+check "a tag that appeared on the remote after the draft is refused, nothing signed or published" fails_with 'already exists on origin' env GIT_FAKE_TAGS="$WORK/tags_has" bash "$P" sign-and-publish --key "$WORK/key" "$FW" "$AS"
 check "a missing key file is refused" fails_with 'not found' bash "$P" sign-and-publish --key "$WORK/nokey" "$FW"
 printf 'tampered\n' >>"$GH_FAKE_STATE/rel/assistant-v$V/assets/LICENSE"
 check "a draft that differs from the local files is refused (run draft again)" fails_with 'differs from' bash "$P" sign-and-publish --key "$WORK/key" "$AS"
 check "  (nothing published)" bash -c "! grep -q 'draft=false' '$GH_FAKE_STATE/calls.log'"
+check "  (the second draft is wrong: neither release is published, even though the first one was fine)" bash -c "
+    ! bash '$P' sign-and-publish --key '$WORK/key' '$FW' '$AS' >/dev/null 2>&1 && ! grep -q 'draft=false' '$GH_FAKE_STATE/calls.log'"
 bash "$P" draft "$AS" >/dev/null 2>&1
 : >"$GH_FAKE_STATE/calls.log"
 check "signs both releases and publishes them" bash -c "bash '$P' sign-and-publish --key '$WORK/key' '$AS' '$FW' >'$WORK/sp.out' 2>&1"
@@ -264,6 +297,8 @@ check "  both are published; the assistant is Latest, the firmware is not" bash 
     [ \"\$(cat '$GH_FAKE_STATE/rel/firmware-v$V/draft')\" = false ] && [ \"\$(cat '$GH_FAKE_STATE/rel/assistant-v$V/draft')\" = false ] &&
     [ \"\$(cat '$GH_FAKE_STATE/rel/firmware-v$V/latest')\" = false ] && [ \"\$(cat '$GH_FAKE_STATE/rel/assistant-v$V/latest')\" = true ] &&
     grep -q 'release edit firmware-v$V .*--draft=false --latest=false' '$GH_FAKE_STATE/calls.log' && grep -q 'release edit assistant-v$V .*--draft=false --latest\$' '$GH_FAKE_STATE/calls.log'"
+check "  the final publish passes --target, --notes-file and --title again" bash -c "
+    grep -q 'release edit firmware-v$V .*--target $HEADR --notes-file .*firmware-v$V-notes.md --title Akam firmware $V --draft=false' '$GH_FAKE_STATE/calls.log'"
 check "  the firmware is published before the assistant (so the assistant stays Latest)" bash -c "
     f=\$(grep -n 'draft=false' '$GH_FAKE_STATE/calls.log' | grep firmware | cut -d: -f1); a=\$(grep -n 'draft=false' '$GH_FAKE_STATE/calls.log' | grep assistant | cut -d: -f1); [ \$f -lt \$a ]"
 check "  the URLs are printed" bash -c "grep -q 'published: https://example.invalid/releases/firmware-v$V' '$WORK/sp.out' && grep -q 'published: https://example.invalid/releases/assistant-v$V' '$WORK/sp.out'"

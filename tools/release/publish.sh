@@ -22,13 +22,19 @@
 # a firmware release is published with --latest=false. Firmware releases go first, so the assistant one stays the
 # latest. The URLs are printed. Refuses a test build, a dirty tree, a commit that is not origin/main.
 #
-# Environment: AKAM_GH (the gh program, default gh), AKAM_REMOTE (default origin), AKAM_PUBLISH_NO_FETCH=1 (do not
-# `git fetch` the remote first: tests).
+# Both commands refuse when the tag already exists on the remote (a tag is never reused) and when --repo (default
+# Foohx/akam-fw) is not the GitHub repository the remote points to. sign-and-publish checks every draft
+# against its local directory BEFORE it publishes any of them. The final publish passes the title, notes and
+# target commit again, so what is published is exactly what was verified.
+#
+# Environment: AKAM_GH (the gh program, default gh), AKAM_GIT (the git program, default git), AKAM_REMOTE
+# (default origin), AKAM_PUBLISH_NO_FETCH=1 (do not `git fetch` the remote first: tests).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 GH="${AKAM_GH:-gh}"
+GIT="${AKAM_GIT:-git}"
 REMOTE="${AKAM_REMOTE:-origin}"
 REPO="Foohx/akam-fw"
 KEY="$HOME/.ssh/akam_release"
@@ -58,7 +64,7 @@ case "$CMD" in
     *) echo "publish: unknown command '$CMD'" >&2; usage ;;
 esac
 command -v "$GH" >/dev/null 2>&1 || die "the gh program was not found (https://cli.github.com), or set AKAM_GH"
-command -v git >/dev/null 2>&1 || die "git is required"
+command -v "$GIT" >/dev/null 2>&1 || die "git is required"
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -93,20 +99,48 @@ load_release() {
 
 # The release must be built from the commit that origin/main points to now, from a clean tree.
 check_commit() {
-    [ -z "$(git -C "$ROOT" status --porcelain)" ] || die "the working tree is not clean"
+    [ -z "$("$GIT" -C "$ROOT" status --porcelain)" ] || die "the working tree is not clean"
     if [ "${AKAM_PUBLISH_NO_FETCH:-0}" != 1 ]; then
-        git -C "$ROOT" fetch --quiet "$REMOTE" main || die "cannot fetch $REMOTE main"
+        "$GIT" -C "$ROOT" fetch --quiet "$REMOTE" main || die "cannot fetch $REMOTE main"
     fi
     local main head
-    main="$(git -C "$ROOT" rev-parse --verify -q "refs/remotes/$REMOTE/main" || true)"
+    main="$("$GIT" -C "$ROOT" rev-parse --verify -q "refs/remotes/$REMOTE/main" || true)"
     [ -n "$main" ] || die "no $REMOTE/main in this checkout: push the release commit first"
-    head="$(git -C "$ROOT" rev-parse HEAD)"
+    head="$("$GIT" -C "$ROOT" rev-parse HEAD)"
     [ "$head" = "$main" ] || die "HEAD ($head) is not $REMOTE/main ($main): push the release commit and build from it"
     [ "$COMMIT" = "$main" ] || die "$DIR was built from $COMMIT, not from $REMOTE/main ($main): rebuild it (make_release.sh $FAM $VER)"
+    check_repo
+    check_tag_free
+}
+
+# --repo must be the GitHub repository the remote points to (https://github.com/O/N[.git] or git@github.com:O/N[.git]).
+check_repo() {
+    local url slug
+    url="$("$GIT" -C "$ROOT" remote get-url "$REMOTE" 2>/dev/null)" || die "no remote '$REMOTE' in this checkout"
+    url="${url%/}"
+    url="${url%.git}"
+    slug="$(printf '%s\n' "$url" | sed -n 's#^.*github\.com[:/]\([^/][^/]*/[^/][^/]*\)$#\1#p')"
+    [ -n "$slug" ] || die "cannot tell which GitHub repository the remote $REMOTE ($url) is"
+    [ "$slug" = "$REPO" ] || die "--repo is $REPO but the remote $REMOTE is $slug: refusing to publish to another repository"
+}
+
+# The tag is created by the publication itself: it must not exist on the remote (never reuse or move a tag).
+check_tag_free() {
+    local out
+    out="$("$GIT" -C "$ROOT" ls-remote --tags "$REMOTE" "refs/tags/$TAG")" || die "cannot ask $REMOTE whether the tag $TAG exists"
+    [ -z "$out" ] || die "the tag $TAG already exists on $REMOTE: never reuse a tag, use a new version"
 }
 
 gh_() { "$GH" "$@"; }
-remote_exists() { gh_ release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft >"$TMP/isdraft" 2>/dev/null; }
+# Is there a release $TAG? 0 yes (its isDraft is in $TMP/isdraft), 1 gh said "release not found". Any other gh error
+# (network, auth, rate limit...) stops the script: an unknown state is never taken for "does not exist".
+remote_exists() {
+    local rc=0
+    gh_ release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft >"$TMP/isdraft" 2>"$TMP/view.err" || rc=$?
+    [ "$rc" = 0 ] && return 0
+    if grep -qiE 'release not found|HTTP 404' "$TMP/view.err"; then return 1; fi
+    die "cannot tell whether the release $TAG exists on $REPO: $(head -c 300 "$TMP/view.err")"
+}
 remote_names() { gh_ release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort; }
 
 # Download every remote asset to $TMP/remote and fill $TMP/bad with the names that are missing or differ from the
@@ -174,12 +208,21 @@ do_sign() {
     bash "$HERE/gather_release.sh" --check-signed "$FAM" "$DIR" || die "$DIR does not pass --check-signed after signing"
 }
 
-do_publish() {
-    local n latest
+# Phase 1 of sign-and-publish (run for every directory before any is published): the draft exists, is still a draft
+# and holds exactly the local files, and the tag is free.
+do_verify() {
     check_commit
+    remote_exists || die "no draft $TAG on $REPO: run  tools/release/publish.sh draft $DIR  first"
+    [ "$(cat "$TMP/isdraft")" = true ] || die "$TAG is already published"
     compare_remote "$TMP/local.names"
     [ ! -s "$TMP/bad" ] || die "the draft $TAG differs from $DIR ($(tr '\n' ' ' <"$TMP/bad")): run  tools/release/publish.sh draft $DIR  again"
     [ -f "$DIR/SHA256SUMS.sig" ] || die "$DIR/SHA256SUMS.sig not found"
+}
+
+# Phase 2: upload the signature, compare everything once more, publish.
+do_publish() {
+    local latest
+    do_verify
     gh_ release upload "$TAG" "$DIR/SHA256SUMS.sig" --repo "$REPO" --clobber >/dev/null
     { cat "$TMP/local.names"; echo SHA256SUMS.sig; } | LC_ALL=C sort >"$TMP/all.names"
     compare_remote "$TMP/all.names"
@@ -187,7 +230,7 @@ do_publish() {
     [ "$(wc -l <"$TMP/remote.names" | tr -d ' ')" = "$(wc -l <"$TMP/all.names" | tr -d ' ')" ] || die "the draft holds assets that are not in $DIR"
     log "ok: the assets of $TAG (with the signature) match the local sha256"
     if [ "$FAM" = assistant ]; then latest=--latest; else latest=--latest=false; fi
-    gh_ release edit "$TAG" --repo "$REPO" --draft=false "$latest" >/dev/null
+    gh_ release edit "$TAG" --repo "$REPO" --target "$COMMIT" --notes-file "$NOTES" --title "$TITLE" --draft=false "$latest" >/dev/null
     log "published $TAG"
     echo "published: $(gh_ release view "$TAG" --repo "$REPO" --json url --jq .url)"
 }
@@ -206,6 +249,11 @@ case "$CMD" in
             load_release "$d"
             do_sign
             SIGNED+=("$d")
+        done
+        # Two phases: every draft must still match its directory before the first release goes public.
+        for d in "${SIGNED[@]}"; do
+            load_release "$d"
+            do_verify
         done
         for d in "${SIGNED[@]}"; do
             load_release "$d"

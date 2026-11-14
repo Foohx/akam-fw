@@ -131,7 +131,7 @@ if [ "${1:-}" = --check-signed ]; then
         log "ok: the kits and the source tarball come from commit $WANTC"
     fi
     [ -f "$NOTES" ] || die "$NOTES not found (make_release.sh writes it)"
-    if grep -nE '<(sha256|key|date|version)>' "$NOTES" >/dev/null; then die "$NOTES still has a placeholder (<sha256>, <key>, <date> or <version>)"; fi
+    if grep -nE '<(sha256|key|date|version|kits|changelog)>' "$NOTES" >/dev/null; then die "$NOTES still has a placeholder (<sha256>, <key>, <date>, <version>, <kits> or <changelog>)"; fi
     grep -qF "$blob" "$NOTES" || die "$NOTES does not quote the release public key"
     if [ "$FAM" = firmware ]; then
         while IFS= read -r kf; do
