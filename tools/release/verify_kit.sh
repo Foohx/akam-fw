@@ -20,7 +20,8 @@
 # file (content, mode, symlink target), no file may be missing or extra,
 # kit_format must be supported, time64_gate must be "pass", kit_grade must be
 # "release" (a "test" kit, built from a dirty tree or with stubs, needs
-# --allow-test-kit), and supported_hardware.txt must be present. The signature
+# --allow-test-kit), the MANIFEST must name a valid model (the archive directory is akam-kit-<model>-<version>) and
+# supported_hardware.txt must be present and be the registry entry of that model. The signature
 # cannot be checked on a directory: verify the tarball it came from.
 #
 # Options:
@@ -32,6 +33,7 @@
 #                           hex digits; cross-check against the release notes / CHANGELOG)
 #   --allow-test-kit        accept kit_grade=test (development kits only)
 #   --extract-to DIR        keep the verified tree in DIR (must not exist yet)
+#   --expect-model ID       also require the kit to be for this camera model (MANIFEST model=ID)
 # Exit: 0 verified, 1 verification failed, 2 usage/missing tool, 3 unsigned and
 # --allow-unsigned not given (everything else was fine).
 set -euo pipefail
@@ -53,6 +55,7 @@ SIG_GIVEN=0
 EXPECT=""
 EXPECT_GIVEN=0
 EXTRACT_TO=""
+EXPECT_MODEL=""
 INPUT=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -63,6 +66,7 @@ while [ $# -gt 0 ]; do
         --allow-test-kit) ALLOW_TEST=1 ;;
         --expect-sha256) [ $# -ge 2 ] || usage; EXPECT=$2; EXPECT_GIVEN=1; shift ;;
         --extract-to) [ $# -ge 2 ] || usage; EXTRACT_TO=$2; shift ;;
+        --expect-model) [ $# -ge 2 ] || usage; EXPECT_MODEL=$2; shift ;;
         -h | --help) usage ;;
         -*) echo "verify_kit: unknown option $1" >&2; usage ;;
         *) [ -z "$INPUT" ] || usage; INPUT=$1 ;;
@@ -192,7 +196,7 @@ list_and_extract() {
 
 # --- directory checks -------------------------------------------------------------------------
 verify_dir() {
-    local d=$1 m="$1/MANIFEST.txt" kf want ver
+    local d=$1 m="$1/MANIFEST.txt" kf want ver model
     [ -f "$m" ] || die "MANIFEST.txt missing in $d"
     [ -f "$d/SHA256SUMS" ] || die "SHA256SUMS missing in $d"
     if find "$d" ! -type f ! -type d ! -type l | grep -q .; then die "unexpected file type in the kit"; fi
@@ -205,8 +209,14 @@ verify_dir() {
     ver="$(sed -n 's/^akam_version=//p' "$m")"
     { [ -n "$ver" ] && [ "$(printf '%s\n' "$ver" | wc -l | tr -d ' ')" = 1 ]; } || die "MANIFEST.txt has no (single) akam_version"
     case "$ver" in *[!A-Za-z0-9._+-]*) die "MANIFEST.txt akam_version is not a plain version string" ;; esac
-    if [ -n "$TOP_EXPECTED" ] && [ "$TOP_EXPECTED" != "akam-kit-$ver" ]; then
-        die "archive directory $TOP_EXPECTED does not match MANIFEST akam_version $ver"
+    model="$(sed -n 's/^model=//p' "$m")"
+    { [ -n "$model" ] && [ "$(printf '%s\n' "$model" | wc -l | tr -d ' ')" = 1 ]; } || die "MANIFEST.txt has no (single) model"
+    printf '%s\n' "$model" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' || die "MANIFEST.txt model '$model' is not a valid model id"
+    if [ -n "$TOP_EXPECTED" ] && [ "$TOP_EXPECTED" != "akam-kit-$model-$ver" ]; then
+        die "archive directory $TOP_EXPECTED does not match MANIFEST model $model and akam_version $ver"
+    fi
+    if [ -n "$EXPECT_MODEL" ] && [ "$EXPECT_MODEL" != "$model" ]; then
+        die "this kit is for the camera model '$model', not '$EXPECT_MODEL': use the kit of your model"
     fi
     # Each of these keys must appear exactly once, with the expected value.
     local kv
@@ -267,8 +277,9 @@ verify_dir() {
     done
     want="$(sed -n 's/^supported_hardware_sha256=//p' "$m")"
     [ "$want" = "$(sha256_of "$d/supported_hardware.txt")" ] || die "supported_hardware_sha256 in MANIFEST.txt does not match supported_hardware.txt"
+    [ "$(sed -n 's/^model=//p' "$d/supported_hardware.txt")" = "$model" ] || die "supported_hardware.txt is not the registry entry of model $model"
     grep -qE '^validated\|' "$d/supported_hardware.txt" || die "supported_hardware.txt lists no validated target"
-    echo "ok: $n MANIFEST entries match (akam_version $ver, source $(sed -n 's/^source_commit=//p' "$m" | cut -c1-12))"
+    echo "ok: $n MANIFEST entries match (model $model, akam_version $ver, source $(sed -n 's/^source_commit=//p' "$m" | cut -c1-12))"
 }
 
 KIT_DIR=""

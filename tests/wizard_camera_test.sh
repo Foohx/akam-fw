@@ -53,7 +53,7 @@ CAM_A_ROOT=$FC_ROOT
 CAM_A_PORT=$FC_PORT
 APP_SHA=$(host_sha256 "$CAM_A_ROOT/dev/mtd7")
 {
-    grep -v -e '^#' -e '^validated' "$ROOT/tools/release/supported_hardware.txt"
+    grep -v -e '^#' -e '^validated' "$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt"
     echo "validated|Fake camera|AK3918AV130|4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025|8 partitions; mtd7=APP 00500000|squashfs xz block=131072 bcj=none|$APP_SHA|1.30.1"
 } >"$T/hw_validated.txt"
 export AKAM_HW_LIST=$T/hw_validated.txt
@@ -107,12 +107,12 @@ cp "$T/mtd.orig" "$CAM_A_ROOT/proc/mtd"
 # ------------------------------------------------------------------ backup: untested firmware needs an explicit yes (red box, default No)
 S=$(new_state bk_untested)
 { mark doctor prepare_backup_sd find_camera; echo camera_ip=127.0.0.1; echo camera_kind=stock; echo camera_telnet=1; } >"$S/state"
-printf 'n\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt.out" 2>&1
+printf 'n\n' | AKAM_HW_LIST="$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt" a "$S" backup >"$T/bk_unt.out" 2>&1
 check "backup: untested firmware answered no fails" bash -c '[ "$1" -ne 0 ] && grep -q "untested firmware not confirmed" "$2"' _ $? "$T/bk_unt.out"
 check "backup: that failure leaves the step undone" hasnt "$S/state" step_backup_done
 check "backup: the verdict is shown" has "$T/bk_unt.out" "Hardware verdict for this stock APP: untested"
 check "backup: the untested warning box shows the verdict and the APP sha and asks a yes/no (default No)" bash -c 'grep -q "Hardware verdict: untested" "$1" && grep -q "Stock APP sha256:" "$1" && grep -q "Continue with untested firmware? \[y/N\]" "$1"' _ "$T/bk_unt.out"
-printf '\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt3.out" 2>&1
+printf '\n' | AKAM_HW_LIST="$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt" a "$S" backup >"$T/bk_unt3.out" 2>&1
 check "backup: an empty answer to the untested question is No" bash -c '[ "$1" -ne 0 ] && ! grep -q "^step_backup_done=" "$2"' _ $? "$S/state"
 
 # ------------------------------------------------------------------ backup: the real thing (validated list)
@@ -145,7 +145,7 @@ check "backup: no stray partition file in the folder" bash -c 'ls "$1"/mtdblock*
 # ------------------------------------------------------------------ backup: untested with an explicit yes
 S=$(new_state bk_unt2)
 { mark doctor prepare_backup_sd find_camera; echo camera_ip=127.0.0.1; echo camera_kind=stock; echo camera_telnet=1; } >"$S/state"
-printf 'y\ny\n' | AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a "$S" backup >"$T/bk_unt2.out" 2>&1
+printf 'y\ny\n' | AKAM_HW_LIST="$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt" a "$S" backup >"$T/bk_unt2.out" 2>&1
 check "backup: untested firmware with an explicit yes goes on" bash -c 'grep -q "^step_backup_done=" "$1"' _ "$S/state"
 
 # ------------------------------------------------------------------ backup of an Akam camera is refused

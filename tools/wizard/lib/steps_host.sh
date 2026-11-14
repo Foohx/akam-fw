@@ -16,7 +16,7 @@ wiz_tool() { # name default
         verify_kit) v=${AKAM_VERIFY_KIT:-$ROOT/tools/release/verify_kit.sh} ;;
         assemble) v=${AKAM_ASSEMBLE:-$ROOT/tools/image/assemble_from_kit.sh} ;;
         sd_cli) v=${AKAM_SD_CLI:-$ROOT/tools/sd/sd_card.sh} ;;
-        hw_list) v=${AKAM_HW_LIST:-$ROOT/tools/release/supported_hardware.txt} ;;
+        hw_list) v=${AKAM_HW_LIST:-$ROOT/tools/release/models} ;; # a model registry directory (one file per model) or one file
         compat) v=${AKAM_KIT_COMPAT:-$ROOT/tools/wizard/kit_compat.txt} ;;
         reflash) v=${AKAM_REFLASH:-$ROOT/tools/flash_scripts/reflash_over_ssh.sh} ;;
         hwcheck) v=${AKAM_HWCHECK:-$ROOT/tools/hw_tests/akam_hwcheck.sh} ;;
@@ -452,26 +452,45 @@ download_file() {
     run_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -o "$2" "$1"
 }
 
+# kit_model_wanted: the camera model whose kit is wanted: --model, else the camera model found by the backup, else the
+# only model of the registry. Prints it; fails (no output) when several models exist and none is known.
+kit_model_wanted() {
+    local l n
+    if [ -n "$OPT_MODEL" ]; then printf '%s\n' "$OPT_MODEL"; return 0; fi
+    n=$(state_get camera_model)
+    if [ -n "$n" ]; then printf '%s\n' "$n"; return 0; fi
+    l=$(wiz_tool hw_list)
+    if [ -d "$l" ]; then
+        set -- "$l"/*.txt
+        if [ $# = 1 ] && [ -f "$1" ]; then basename "$1" .txt; return 0; fi
+    else
+        n=$(sed -n 's/^model=//p' "$l" | head -1)
+        if [ -n "$n" ]; then printf '%s\n' "$n"; return 0; fi
+    fi
+    return 1
+}
+
 cmd_get_kit() {
-    local kit=$OPT_KIT ver=$OPT_VERSION base dl f rc ext fmt sha vargs unsigned=0
+    local kit=$OPT_KIT ver=$OPT_VERSION model="" base dl f rc ext fmt sha vargs unsigned=0 kmodel
     step_need get-kit || return 1
     step_banner get-kit
     if [ -z "$kit" ]; then
         ver=${ver#v}
         if [ -z "$ver" ]; then
-            case $AKAM_WIZARD_VERSION in
-                *dev*)
-                    if [ "$UI_DRY" = 1 ]; then
-                        ver="X.Y.Z"
-                        ui_say "  (development checkout: using the placeholder version X.Y.Z)"
-                    else
-                        ui_fail "this development checkout has no release to download." \
-                            "pass --kit FILE for a kit you already have, or --version X.Y.Z to download that release, or run ./akam build."
-                        return 1
-                    fi
-                    ;;
-                *) ver=$AKAM_WIZARD_VERSION ;;
-            esac
+            # The wizard has its own version: the firmware version is a different number (firmware-vX.Y.Z releases).
+            if [ "$UI_DRY" = 1 ]; then
+                ver="X.Y.Z"
+                ui_say "  (no --version: using the placeholder version X.Y.Z)"
+            else
+                ui_fail "the bash wizard does not know which firmware release to download." \
+                    "pass --version X.Y.Z (a firmware release, see https://github.com/$KIT_REPO/releases), or --kit FILE for a kit you already have, or run ./akam build."
+                return 1
+            fi
+        fi
+        if ! model=$(kit_model_wanted); then
+            ui_fail "several camera models are supported and this camera's model is not known yet." \
+                "pass --model ID (for example $(basename "$(ls "$(wiz_tool hw_list)"/*.txt | head -1)" .txt)), or take the backup first so that the model is detected."
+            return 1
         fi
         case $ver in
             '' | *[!0-9A-Za-z._-]* | *..*)
@@ -479,18 +498,18 @@ cmd_get_kit() {
                 return 1
                 ;;
         esac
-        base="https://github.com/$KIT_REPO/releases/download/v$ver"
+        base="https://github.com/$KIT_REPO/releases/download/firmware-v$ver"
         dl="$BASE_DIR/downloads/$ver"
-        kit="$dl/akam-kit-$ver.tar.xz"
-        ui_say "  Downloading kit $ver from $base (HTTPS only; nothing from it is run before it is verified)."
+        kit="$dl/akam-kit-$model-$ver.tar.xz"
+        ui_say "  Downloading the $model kit $ver from $base (HTTPS only; nothing from it is run before it is verified)."
         run_cmd mkdir -p "$dl" || return 1
-        for f in "akam-kit-$ver.tar.xz" SHA256SUMS; do
+        for f in "akam-kit-$model-$ver.tar.xz" SHA256SUMS; do
             rc=0
             download_file "$base/$f" "$dl/$f" || rc=$?
             if [ "$rc" -ne 0 ]; then
                 if [ "$UI_DRY" != 1 ]; then rm -f "$dl/$f"; fi
                 if [ "$rc" -eq 22 ]; then
-                    ui_fail "release v$ver was not found ($f). Akam may not have published a release yet." \
+                    ui_fail "firmware release $ver was not found, or it has no kit for the model $model ($f)." \
                         "see https://github.com/$KIT_REPO/releases for the versions that exist, or use a kit you already have: ./akam get-kit --kit FILE (or build from source: ./akam build)."
                 else
                     ui_fail "download of $f failed (curl exit $rc)." \
@@ -521,6 +540,10 @@ cmd_get_kit() {
     vargs=(--extract-to "$ext")
     if [ -n "$OPT_ALLOW_UNSIGNED" ]; then vargs+=(--allow-unsigned); unsigned=1; fi
     if [ -n "$OPT_EXPECT_SHA256" ]; then vargs+=(--expect-sha256 "$OPT_EXPECT_SHA256"); fi
+    # the kit must be for the camera's model (known from the backup, or --model): verify_kit.sh checks MANIFEST model=
+    kmodel=${model:-$OPT_MODEL}
+    [ -n "$kmodel" ] || kmodel=$(state_get camera_model)
+    if [ -n "$kmodel" ]; then vargs+=(--expect-model "$kmodel"); fi
     if [ ! -e "$kit" ]; then
         ui_say "  WOULD run: $(wiz_tool verify_kit) ${vargs[*]} $kit   (kit not downloaded in a rehearsal)"
         state_set mode kit
@@ -561,6 +584,7 @@ cmd_get_kit() {
     state_set kit_format "$fmt"
     state_set kit_unsigned_ok "$unsigned"
     state_set kit_version "$(_kit_manifest_value "$ext" akam_version)"
+    state_set kit_model "$(_kit_manifest_value "$ext" model)"
     state_mark_done get-kit
     ui_good "  Kit verified (format $fmt, sha256 ${sha:0:12}...)."
     if [ -z "$OPT_EXPECT_SHA256" ]; then
@@ -859,6 +883,7 @@ backup_accept() {
     fi
     state_set backup_dir "$d"
     state_set backup_sha "$(host_sha256 "$d/mtdblock7.bin")"
+    state_set camera_model "$(hw_model "$(host_sha256 "$d/mtdblock7.bin")")"
     state_mark_done backup
     ui_good "  Backup folder accepted: $d"
 }
@@ -889,9 +914,31 @@ backup_import() {
 
 # ------------------------------------------------------------------ image
 # hw_verdict APPSHA: prints "status|device" from supported_hardware.txt (unknown -> untested).
+hw_records() { # the records of every model of the registry (comments and header lines dropped)
+    local l
+    l=$(wiz_tool hw_list)
+    if [ -d "$l" ]; then cat "$l"/*.txt; else cat "$l"; fi | grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' | grep '|'
+}
+# hw_model APPSHA: the model id (registry file name) whose records list this stock APP sha256; empty when unknown.
+hw_model() {
+    local l f
+    [ -n "$1" ] || return 0
+    l=$(wiz_tool hw_list)
+    if [ -d "$l" ]; then
+        for f in "$l"/*.txt; do
+            if grep -v '^[[:space:]]*#' "$f" | awk -F'|' -v h="$1" 'h != "" && $7 == h { f = 1 } END { exit !f }'; then
+                basename "$f" .txt
+                return 0
+            fi
+        done
+    else
+        grep -q -F -e "|$1|" "$l" && sed -n 's/^model=//p' "$l" | head -1
+    fi
+    return 0
+}
 hw_verdict() {
     local st
-    st=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$(wiz_tool hw_list)" | awk -F'|' -v h="$1" '$7 == h { print $1 "|" $2; exit }')
+    st=$(hw_records | awk -F'|' -v h="$1" '$7 == h { print $1 "|" $2; exit }')
     if [ -z "$st" ]; then st="untested|not in the supported hardware list (unknown stock APP)"; fi
     printf '%s\n' "$st"
 }

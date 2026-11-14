@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Build the Akam release kit: akam-kit-<version>.tar.xz + SHA256SUMS.
+# Build the Akam release kit of ONE camera model: akam-kit-<model>-<version>.tar.xz + SHA256SUMS.
 #
-#   tools/release/make_kit.sh [--out DIR] [--no-build]
+#   tools/release/make_kit.sh [--model ID] [--out DIR] [--no-build]
+#
+# --model ID: the model id (a file tools/release/models/ID.txt; default: the only model of the registry).
+# The kit carries that file as supported_hardware.txt and the id as "model=ID" in MANIFEST.txt.
 #
 # The kit holds ONLY Akam's own files: ARM binaries built here (ak_rtsp,
 # dropbearmulti, flash_tool), the image overlay (wrapper, ini, akam_*.sh), the
@@ -16,11 +19,11 @@
 #
 # Which Akam files go into the image (overlay, patch, links) is listed ONCE, in
 # tools/release/image_files.txt; tests/kit_test.sh checks build_firmware.sh against it.
-# tools/release/supported_hardware.txt is copied into the kit and hashed in MANIFEST.txt.
+# tools/release/models/<model>.txt is copied into the kit as supported_hardware.txt and hashed in MANIFEST.txt.
 #
 # Environment (all optional):
 #   SOURCE_DATE_EPOCH     build timestamp (default: commit date of HEAD)
-#   AKAM_KIT_VERSION      version string (default: git describe --always)
+#   AKAM_KIT_VERSION      firmware version string (default: git describe --always)
 #   AKAM_KIT_ALLOW_DIRTY=1  build from a dirty tree (never for a release)
 #   AKAM_KIT_NO_BUILD=1   same as --no-build: use the prebuilt inputs below
 #   Any of these, or AKAM_KIT_CHECK_TIME32, marks the kit "kit_grade=test" in
@@ -39,10 +42,12 @@ die() { echo "make_kit: error: $*" >&2; exit 1; }
 log() { echo "make_kit: $*"; }
 
 OUT="$ROOT/dist/kit"
+MODEL=""
 NO_BUILD="${AKAM_KIT_NO_BUILD:-0}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --out) [ $# -ge 2 ] || die "--out needs a directory"; OUT=$2; shift ;;
+        --model) [ $# -ge 2 ] || die "--model needs a model id"; MODEL=$2; shift ;;
         --no-build) NO_BUILD=1 ;;
         -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown argument: $1" ;;
@@ -74,7 +79,15 @@ case "$EPOCH" in '' | *[!0-9]*) die "SOURCE_DATE_EPOCH must be an integer" ;; es
 BUILT_UTC="$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 # shellcheck source=tools/build/deps.lock
 . "$ROOT/tools/build/deps.lock"
-KITNAME="akam-kit-$VERSION"
+MODELS_DIR="$HERE/models"
+if [ -z "$MODEL" ]; then
+    set -- "$MODELS_DIR"/*.txt
+    [ $# = 1 ] && [ -f "$1" ] || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
+    MODEL="$(basename "$1" .txt)"
+fi
+printf '%s\n' "$MODEL" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#MODEL}" -ge 3 ] && [ "${#MODEL}" -le 40 ] \
+    || die "bad model id '$MODEL' (lowercase a-z 0-9 and single '-', 3 to 40 characters)"
+KITNAME="akam-kit-$MODEL-$VERSION"
 # Always the pinned toolchain, never "whatever zig-* directory happens to be there".
 PINNED_ZIG_DIR="$ROOT/tools/.toolchain/zig-$ZIG_VERSION-x86_64-linux"
 PINNED_ZIG="$PINNED_ZIG_DIR/zig"
@@ -121,9 +134,10 @@ for e in "${LICENSES[@]}"; do
     [ -s "${e#*:}" ] || die "licence source for ${e%%:*} missing or empty: ${e#*:} (run tools/build/bootstrap.sh)"
 done
 IMAGE_FILES="$HERE/image_files.txt"
-SUPPORTED_HW="$HERE/supported_hardware.txt"
+SUPPORTED_HW="$MODELS_DIR/$MODEL.txt"
 [ -s "$IMAGE_FILES" ] || die "$IMAGE_FILES missing"
-[ -s "$SUPPORTED_HW" ] || die "$SUPPORTED_HW missing (the kit must say which hardware it is validated for)"
+[ -s "$SUPPORTED_HW" ] || die "$SUPPORTED_HW missing: unknown model '$MODEL' (the kit must say which hardware it is validated for)"
+[ "$(sed -n 's/^model=//p' "$SUPPORTED_HW")" = "$MODEL" ] || die "$SUPPORTED_HW has no 'model=$MODEL' header line"
 grep -qE '^validated\|' "$SUPPORTED_HW" || die "$SUPPORTED_HW lists no validated target"
 
 TMP="$(mktemp -d)"
@@ -234,6 +248,7 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
     echo "kit_format=$KIT_FORMAT"
     echo "kit_grade=$KIT_GRADE"
     echo "akam_version=$VERSION"
+    echo "model=$MODEL"
     echo "source_commit=$COMMIT"
     echo "built_utc=$BUILT_UTC"
     echo "deps_lock_sha256=$(sha "$ROOT/tools/build/deps.lock")"
