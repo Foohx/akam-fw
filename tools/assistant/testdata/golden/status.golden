@@ -1,0 +1,30 @@
+rc=0
+--- stdout ---
+Akam setup progress (real; camera: default; state: STATE/state)
+  1. [todo   ] doctor             Check this computer
+       Why: tools must be present before anything else. Risk: none (read-only).
+  2. [blocked] get-kit            Get the Akam kit
+       Why: the prebuilt kit means no compiling. Risk: none (download + signature check).
+       Waiting for: doctor
+  3. [blocked] prepare-backup-sd  Prepare the backup microSD card
+       Why: boots the camera into a rescue shell. Risk: ERASES the microSD card.
+       Waiting for: doctor
+  4. [blocked] find-camera        Find the camera on your network
+       Why: later steps need the camera address. Risk: none.
+       Waiting for: prepare-backup-sd
+  5. [blocked] backup             Back up the camera (all 8 partitions)
+       Why: the only way back to the original firmware. Risk: none for the camera; keep TWO copies.
+       Waiting for: find-camera
+  6. [blocked] image              Build the Akam image from your backup
+       Why: builds your Akam image from YOUR dump. Risk: none (files on this PC only).
+       Waiting for: get-kit backup
+  7. [blocked] prepare-flash-sd   Prepare the flash microSD card
+       Why: carries the image and your SSH key. Risk: ERASES the microSD card.
+       Waiting for: image
+  8. [blocked] flash              Flash the image to the camera
+       Why: installs Akam. Risk: WRITES the camera flash; a power cut can brick it.
+       Waiting for: prepare-flash-sd
+  9. [blocked] verify             Verify the result
+       Why: proves SSH and video work before you remove the card. Risk: none.
+       Waiting for: flash
+--- stderr ---

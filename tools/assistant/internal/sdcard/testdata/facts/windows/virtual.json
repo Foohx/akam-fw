@@ -1,0 +1,12 @@
+{
+  "facts": {
+    "os": "windows",
+    "path": "\\\\.\\PhysicalDrive5",
+    "name": "PhysicalDrive5",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "virtual": true
+  },
+  "refuse": "virtual"
+}

@@ -55,11 +55,34 @@ obj/
 # Local SmolRTSP checkout & firmware build workspace (see README prerequisites)
 # NOTE: smolrtsp must live at src/smolrtsp (sibling of src/ak_rtsp), not the repo root --
 # the Makefile's "../smolrtsp" include paths are relative to src/ak_rtsp/.
-/src/smolrtsp/
+/src/smolrtsp
 /src/ak_rtsp/app_extracted/
 /src/ak_rtsp/app_patched/
 /src/ak_rtsp/new_app_gzip.squashfs
+# build_firmware.sh outputs when FW_DIR is the default (they quote the stock service.sh)
+/src/ak_rtsp/service_sh.diff
+/src/ak_rtsp/build_report.txt
+/src/ak_rtsp/audit_remote_services.txt
+/src/ak_rtsp/ak_rtsp_firmware_*
+
+# Go assistant (tools/assistant): go.mod is not a Fortran module file; the build output bin/ stays ignored
+!/tools/assistant/go.mod
+/tools/assistant/bin/
 
 # OS Specific
 .DS_Store
 Thumbs.db
+
+# Native build: pinned toolchain/download cache and build outputs
+/tools/.toolchain
+/tools/.cache/
+/build/
+/dist/
+/src/ak_rtsp/*.o
+/src/ak_rtsp/isp_hook.so
+/src/ak_rtsp/isp_dump
+/src/ak_rtsp/new_app_*.squashfs
+
+# Synthetic test fixtures must stay tracked despite the bin/, *.bin and
+# *.squashfs rules above (keep this negation last).
+!/tests/fixtures/**

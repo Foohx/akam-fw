@@ -1,0 +1,18 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdb1",
+    "name": "sdb1",
+    "whole": false,
+    "size": 34359738368,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdb1",
+    "dev_num": "8:16",
+    "removable_raw": "1"
+  },
+  "refuse": "not a whole USB/SD disk node"
+}

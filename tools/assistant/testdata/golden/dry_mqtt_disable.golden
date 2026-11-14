@@ -1,0 +1,7 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+MQTT: disable
+  WOULD run over SSH on the camera: /usr/sbin/akam_mqtt.sh disable
+--- stderr ---

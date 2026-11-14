@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "ak_rtsp.h"
+#include "video_cfg.h"
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ircut.h"
@@ -22,15 +23,24 @@
 #endif
 #include "night.h"
 #include "control.h"
+#include "ctl_gate.h"
 #include "vi.h"
 #include "venc.h"
 #include "audio.h"
+#include "audio_out.h"
+#include "leds.h"
 #include "rtsp.h"
+#include "cred.h"
+#include "onvif_cfg.h"
+#include "mqtt_svc.h"
+#include "mqtt_ops.h"
+#include "swdog.h"
+#include "klog.h"
 #include "version.h"
 
 /* -------------------------------------------------------------------------
  * Frame grab — triggered by SIGUSR1
- * Send with: kill -USR1 $(pidof ak_rtsp)
+ * Send with: kill -USR1 $(pidof ak_rtsp)  (the kernel log filter, same exe, ignores SIGUSR1)
  * Saves 640×360 NV12 to /mnt/grab_NNNN.yuv; view with:
  *   ffplay -f rawvideo -video_size 640x360 -pixel_format nv12 /mnt/grab_0001.yuv
  * ------------------------------------------------------------------------- */
@@ -38,6 +48,15 @@ static volatile sig_atomic_t g_grab_request = 0;
 static int                   g_grab_counter = 0;
 
 static void sigusr1_handler(int sig) { (void)sig; g_grab_request = 1; }
+
+/* SIGTERM/SIGINT: switch the speaker amplifier off (async-signal-safe ioctl),
+ * then die by the same signal exactly as before the handler existed. */
+static void term_handler(int sig)
+{
+    audio_out_emergency_off();
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
 
 /* -------------------------------------------------------------------------
  * Global state definitions (declared extern in ak_rtsp.h)
@@ -163,10 +182,6 @@ static void close_devices(void)
  *
  * Init sequence:
  *   venc_reset_stale_channel  — clear any state left by a killed anyka_ipc
- *   open_devices              — open all /dev/* nodes
- *   isp_load_sensor_conf      — program GC20C3 I2C registers
- *   isp_pipeline_init         — program 24 ISP image-pipeline modules
- *   venc_reset_stale_channel  — clear any state left by a killed anyka_ipc
  *   open_isp_vi_devices       — open ISP + VI fds (VENC must NOT be open yet)
  *   isp_load_sensor_conf      — program GC20C3 I2C registers
  *   isp_pipeline_init         — program 24 ISP image-pipeline modules
@@ -186,55 +201,59 @@ static void close_devices(void)
  *   audio_start               — open /dev/pcmC0D0c, configure mic capture,
  *                               start its background read() thread
  *                               (non-fatal — video keeps working if this fails)
- *   accept loop               — serve one RTSP client at a time on port 554
+ *   accept loop               — serve RTSP on port 554 (one viewer at a time; a second one gets 503)
  * ------------------------------------------------------------------------- */
+/* Idle wait between ring drains while no RTSP client is connected. */
+#define IDLE_DRAIN_POLL_MS 20
+
 int main(int argc, char **argv)
 {
+    if (argc >= 2 && strcmp(argv[1], "klog") == 0)
+        return klog_main(argc, argv);
+    if (argc >= 3 && strcmp(argv[1], "ctl") == 0)
+        return ctl_client_run(8091, argc - 2, argv + 2, stdout);
+
+    /* Before any thread exists: the credentials state (htdigest db + failure limiter) and the plain-credential
+     * store are shared by the RTSP loop and the ONVIF HTTP thread, so both are set up once, here. */
+    rtsp_auth_shared_init();
+    cred_init(NULL, rtsp_auth_shared_db());
+
     /* Very first thing: tees stdout so the TCP tuning server's debug log
      * view gets the FULL boot log (ISP/VI/VENC init, not just ae/night's
      * own printf calls). See control.c for why this is a stdout tee rather
      * than per-callsite logging changes. */
     control_start();
 
-    int         no_isp_init       = 0;
     const char *grab_then_exit    = NULL;
     int i;
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--no-isp-init") == 0) {
-            no_isp_init = 1;
-        } else if (strcmp(argv[i], "--grab-then-exit") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--grab-then-exit") == 0 && i + 1 < argc) {
             grab_then_exit = argv[++i];
         }
     }
 
     print_build_info();
     signal(SIGUSR1, sigusr1_handler);
+    signal(SIGTERM, term_handler);
+    signal(SIGINT, term_handler);
+    /* A client closing mid-write must yield EPIPE, not kill the stream. */
+    signal(SIGPIPE, SIG_IGN);
 
+    /* Status LED and IR LED policy: the saved settings are applied now, so
+     * that in auto mode the LED blinks during the whole start-up. */
+    ledsys_start();
+
+    /* A respawn after a stall exit can block for ever in a driver call here; the kernel ends it instead, swdog_start()
+     * cancels the alarm once the stream is up. */
+    swdog_init_deadline(SWDOG_INIT_DEADLINE_S);
     venc_reset_stale_channel();
 
     /* Step 1: Open and configure the ISP and Video Input (VI) devices.
      * Starts capturing so the ISP-side bridge is initialized cleanly. */
     if (open_isp_vi_devices()    < 0) goto err;
 
-    if (no_isp_init) {
-        /* --no-isp-init DOES NOT WORK as a diagnostic.
-         *
-         * Intent was: skip isp_pipeline_init() to inherit anyka_ipc's converged
-         * ISP state and compare image quality.
-         *
-         * Why it fails: when anyka_ipc exits, the ISP kernel driver resets ALL
-         * its software-managed state (exposure attr, AE stats, etc.) to zero.
-         * The hardware silicon may retain register values, but the kernel driver
-         * structures are zeroed. Result: exp_type=0 (uninitialized zero = AUTO
-         * mode), priv[exp]=0, luma=0 permanently, hw_exp=256 stuck, NO FRAMES.
-         *
-         * Do not attempt to use --no-isp-init as a diagnostic again. */
-        printf("[ak_rtsp] --no-isp-init: WARNING — ISP kernel state reset on anyka_ipc exit.\n");
-        printf("[ak_rtsp]   Frames will not work. See main.c comment for explanation.\n");
-    } else {
-        if (isp_load_sensor_conf()   < 0) goto err;
-        if (isp_pipeline_init()      < 0) goto err;
-    }
+    if (isp_load_sensor_conf()   < 0) goto err;
+    if (isp_pipeline_init()      < 0) goto err;
 
     /* Must run before vi_set_channel_attr()/vi_start_capture() (STREAMON) --
      * matches anyka_ipc's own strace-confirmed ordering (it issues every ISP
@@ -243,6 +262,9 @@ int main(int argc, char **argv)
      * fps cache zeroed when the first frame interrupt landed, causing a
      * kernel "Division by zero" — see ae_init_isp_params()'s comment in
      * ae.c. */
+    /* Saved video settings (bitrate, fps, GOP): read once, before anything uses them (the sensor frame rate
+     * in ae_init_isp_params, then the encoder). Absent file = the compiled-in defaults. */
+    video_cfg_load();
     if (ae_init_isp_params()     < 0) goto err;
 
     ircut_init();
@@ -271,6 +293,7 @@ int main(int argc, char **argv)
     if (venc_activate()          < 0) goto err;
 
     night_start();  /* needs AE samples flowing, so start after ae_start() */
+    control_apply_saved_isp();  /* saved picture settings; the ISP and AE run now */
 
     /* Non-fatal: video streaming must keep working even if mic capture
      * fails to init (e.g. an audio device race — a supervisor-respawned
@@ -307,9 +330,40 @@ int main(int argc, char **argv)
         perror("listen"); close(server_fd); goto err;
     }
 
+    /* Non-blocking: a connection reset between poll() and accept() (here or in handle_client's G06 poll)
+     * must return EAGAIN, not park the thread (and the video session) until the next connection. */
+    {
+        int fl = fcntl(server_fd, F_GETFL, 0);
+        if (fl >= 0) fcntl(server_fd, F_SETFL, fl | O_NONBLOCK);
+    }
+    rtsp_set_listen_fd(server_fd);
     printf("[ak_rtsp] Listening on port %d...\n", RTSP_SERVER_PORT);
+    rtsp_auth_tick(true);
+    ledsys_boot_done();
+    swdog_beat(SWDOG_BEAT_MAIN);
+    swdog_start(audio_out_emergency_off); /* G01: stall watchdog, armed only now that the stream is up */
+
+    /* ONVIF is opt-in (flag file): started only now, after the video and RTSP are up, so it never delays them. Off:
+     * no thread, no socket. The HTTP server binds INADDR_ANY (works before the network is up) and WS-Discovery
+     * retries its multicast join every 5 s until Wi-Fi is there. */
+    {
+        char ostate[ONVIF_STATE_MAX];
+        onvif_svc_reload(ostate, sizeof(ostate));
+        printf("[ak_rtsp] onvif.state=%s\n", ostate);
+    }
+
+    /* MQTT is opt-in too (/etc/config/akam/mqtt): same rule, started after the stream is up. Off: no thread, no
+     * socket. On: one thread that connects out to the configured broker and never touches the video path. */
+    {
+        char mstate[MQTT_STATE_MAX];
+        mqtt_svc_set_ops(&mqtt_ops_camera);
+        mqtt_svc_reload(mstate, sizeof(mstate));
+        printf("[ak_rtsp] mqtt.state=%s\n", mstate);
+    }
 
     for (;;) {
+        swdog_beat(SWDOG_BEAT_MAIN);
+        swdog_mode(SWDOG_FETCH);
         struct pollfd pfd;
         pfd.fd     = server_fd;
         pfd.events = POLLIN;
@@ -325,23 +379,39 @@ int main(int argc, char **argv)
             vi_grab_sub_frame(path);
         }
 
-        int p = poll(&pfd, 1, 0);
-        if (p < 0 && errno != EINTR) { perror("poll"); continue; }
-        if (p <= 0) {
+        /* Block in poll() instead of spinning: with a zero timeout this loop
+         * issued poll() + a non-blocking GET_STREAM back to back with no
+         * sleep, pinning a CPU core (hot in the kernel) while idle.
+         * IDLE_DRAIN_POLL_MS is well under the frame period (66 ms at
+         * 15 fps) so the ring is still emptied every frame, and a pending
+         * accept() or SIGUSR1 wakes poll() immediately. */
+        int p = poll(&pfd, 1, IDLE_DRAIN_POLL_MS);
+        if (p < 0) {
+            if (errno != EINTR) { perror("poll"); usleep(10000); }
+            continue;
+        }
+        if (p == 0) {
             drain_venc_ring();
+            rtsp_auth_tick(false);
             continue;
         }
 
         struct sockaddr_storage client_addr;
         socklen_t addr_len = sizeof(client_addr);
         int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len);
-        if (client_fd < 0) { perror("accept"); continue; }
+        if (client_fd < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED) perror("accept");
+            continue;
+        }
         handle_client(client_fd, &client_addr, addr_len);
     }
 
     close(server_fd);
 
 err:
+    mqtt_svc_stop();
+    onvif_svc_stop();
+    ledsys_stop();
     night_stop();
 #ifdef AEC_CUSTOM
     aec_custom_stop();

@@ -8,12 +8,27 @@
 # immediately reads back each 4KB erase-block via the raw /dev/mtd7 char
 # device (not page-cached) and retries any mismatched chunk. This has been
 # confirmed safe running live over Telnet with WiFi/camera/ISP all active —
-# no bare UART recovery shell is required for this method.
+# on STOCK firmware only. On an Akam image the APP partition is mounted on /usr
+# and holds dropbear/watchdog, so flash from the UART init=/bin/sh shell with
+# this script and flash_tool on the SD card, never over SSH (flash_guard.sh
+# refuses; override AKAM_FLASH_I_KNOW=1). See docs/manual/flash-and-restore.md.
 #
 # Run: sh /mnt/install_with_flash_tool.sh
 
 DEV=/dev/mtd7
 TOOL=/mnt/flash_tool
+
+# Refuse to write APP from a context that depends on it (SSH, running from /usr).
+# No dirname: the bare UART init=/bin/sh rootfs has no dirname (it lives in the APP).
+case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esac
+if [ -r "$_g" ]; then
+    # shellcheck source=flash_guard.sh
+    . "$_g"
+    akam_flash_guard "$0" "$TOOL" || exit 1
+elif [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; then
+    echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
+    exit 1
+fi
 EXPECTSIZE=5242880
 
 if [ ! -f "$TOOL" ]; then

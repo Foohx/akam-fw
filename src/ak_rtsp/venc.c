@@ -8,8 +8,10 @@
 #include <stddef.h>
 
 #include "ak_rtsp.h"
+#include "video_cfg.h"
 #include "ak_ioctls.h"
 #include "venc.h"
+#include "imgq.h"
 
 /* DEBUG_IOCTL_DUMP (opt-in, off by default — see Makefile `debug-dump`
  * target): dumps our own VENC_IOCTL_CREATE_ENC payload to
@@ -65,7 +67,7 @@ void venc_reset_stale_channel(void)
  * Query the kernel for exact DMA block sizes the AL encoder needs.
  *
  * ioctl(g_venc_fd, VENC_IOCTL_QUERY_DMA, buf) on the GLOBAL /dev/venc fd.
- * This mirrors ak_venc_open_ex → venc_get_req_dma_block @ 0x001d0c88.
+ * This mirrors ak_venc_open_ex → venc_get_req_dma_block.
  *
  * Input struct (84 bytes = uint32_t[21]):
  *   offset  0 (uint32): profile_idc  (77=Main)
@@ -176,7 +178,7 @@ int venc_create_pool(void)
      *
      * Confirmed from run log: frame_offset=0xc62120a0, kv_base=0xc61f6000
      *   → ring offset = 0x1c0a0 = 115,872 bytes  (within 777,600-byte ring ✓)
-     * Using phys_base2 (0x81ad0000) gives a wild pointer → segfault. */
+     * Using phys_base2 gives a wild pointer → segfault. */
     g_venc_phys = pool.phys_base;   /* kernel virtual base — used for frame_offset arithmetic */
 
     g_venc_virt = mmap(NULL, ENC_VENC_SIZE, PROT_READ | PROT_WRITE,
@@ -225,21 +227,20 @@ int venc_create_encoder(void)
      * (0x40-0x5f) sub-struct at all — still the hardware-confirmed-safe
      * values below, per the crash history below. */
     req.enc.rc_mode          = VENC_RC_VBRP;
-    req.enc.fps              = ENC_FPS;
-    req.enc.goplen           = ENC_GOP;
+    req.enc.fps              = (uint16_t)video_fps();
+    req.enc.goplen           = video_gop_frames();
     req.enc.max_fps          = 0;    /* stock sends 0 for both channels (isp_hook_n.log) */
     req.enc.enc_level        = 40;   /* H.264 Level 4.0 */
     req.enc.qp_or_kbps       = 28;   /* VBR+: minqp (stock isp_hook_n.log capture) */
     req.enc.qp2              = 43;   /* VBR+: maxqp */
-    req.enc.max_kbps_vbrp    = 1536; /* VBR+: max_kbps */
+    req.enc.max_kbps_vbrp    = video_kbps(); /* VBR+: max_kbps */
     req.enc.initqp_vbrp      = 99;   /* VBR+: initqp — the "99" belongs here, not qp_or_kbps */
     req.smart.smart_mode     = 0;
     req.smart.smart_goplen   = 100;
     req.smart.smart_quality  = 50;
     /* REVERTED (2026-07-04) — hardware-tested and CRASHES THE KERNEL.
-     * A Ghidra trace of venc_check_and_format_rc_param (0x1d0a58) and its
-     * caller ht_video_codec_start_encode (0xbef60) appeared to show stock
-     * sending an all-zero rc struct (cub_size/minqp/maxqp/delta/I_P_B_pic_size
+     * Reading the stock rate-control formatting code appeared to show
+     * stock sending an all-zero rc struct (cub_size/minqp/maxqp/delta/I_P_B_pic_size
      * all 0, only rc_flag=1). Tried it on hardware with UART attached this
      * time — confirmed kernel Oops, not a graceful failure:
      *   dma_pool_alloc_obj+0x440 [ak_venc_adapter]
@@ -255,7 +256,7 @@ int venc_create_encoder(void)
      * with the macroblocking artifact this was trying to fix). Do NOT set
      * minqp==maxqp (or both zero) here again. The full crash dump and
      * follow-up plan (byte-exact runtime capture via the LD_PRELOAD hook
-     * instead of further guessing from Ghidra) is what led to the values
+     * instead of further guessing from the stock code) is what led to the values
      * below. */
     /* TRIED AND FAILED AGAIN (2026-07-04): setting rc.flag=0/rc.flag2=0/
      * rc.srd_threshold=0 (MMA/MVVRange disabled, minqp/maxqp left at the
@@ -263,29 +264,51 @@ int venc_create_encoder(void)
      * all-zero rc struct attempt above, confirmed via UART:
      *   dma_pool_alloc_obj+0x440 [ak_venc_adapter]
      *     <- venc_dma_pool_malloc <- AL_SchedulerCpu_CreateChannel
-     * A Ghidra trace through AKV_Encoder_Open_Ext (0x2eb7c) beforehand
+     * Reading the encoder open code beforehand
      * appeared to show flag/flag2/srd_threshold are independently gated
      * ("if nonzero, use; else skip") and don't feed any division — that
-     * trace was real but incomplete; it examined the wrong function
-     * relative to the actual crash site. This is now the THIRD time
-     * (across multiple sessions) that a plausible-looking Ghidra reasoning
-     * chain about this rc struct has been contradicted by hardware. A full
-     * disassembly-level pass ("RC struct div/0 — full disassembly-level
-     * root cause") found the panic is actually a NULL pointer dereference
+     * reading was incomplete. This is now the THIRD time
+     * (across multiple sessions) that a plausible-looking reading of the
+     * stock code about this rc struct has been contradicted by hardware. The
+     * panic is a NULL pointer dereference
      * in a DMA-pool free-list search (dma_pool_alloc_obj), not a literal
      * integer division — and the causal link from these specific ioctl
-     * fields to that pool exhaustion could NOT be conclusively closed this
-     * round. Do not retry
+     * fields to that pool exhaustion could NOT be conclusively closed. Do not retry
      * flag/flag2/srd_threshold changes without new evidence (e.g. the
-     * isp_hook.c CREATE_ENC byte capture) — Ghidra reasoning alone has now
-     * failed twice for this struct. Reverted to hardware-confirmed-safe. */
+     * isp_hook.c CREATE_ENC byte capture): reasoning from the stock code
+     * alone has now failed twice for this struct. Reverted to hardware-confirmed-safe. */
     req.rc_flag              = 1;
-    req.rc.cub_size          = 0;
-    req.rc.minqp             = 28;
-    req.rc.maxqp             = 43;
-    req.rc.srd_threshold     = 128;
-    req.rc.flag              = 1;   /* bEnableMMA = TRUE */
-    req.rc.flag2             = 40;  /* MVVRange_factor = 40 */
+    if (imgq_venc_rc_stock()) {
+        /* AKAM_VENC_RC=stock (specs/image-day-night-leds.md). Byte for byte the rc sub-struct of the stock
+         * application in the stock capture of 2026-11 (isp_hook.log, "STOCK CREATE_ENC chn_id=0"):
+         * rc_flag=1, rc.flag=1 and every other rc word zero. The two crashes recorded above both
+         * had rc.flag=0, i.e. MMA off while QUERY_DMA had sized the ring pool for MMA on (it sets
+         * bEnableMMA=1): the same pool shortfall that dma_pool_alloc_obj trips over. With rc.flag=1
+         * the pool matches, as it does in the stock application. Not hardware-tested on ak_rtsp.
+         *
+         * CRASH RISK, opt-in only: this is a hypothesis, not a proof. Two doubts remain. (1) minqp and maxqp
+         * are both 0 here, which the first crash note above suspected of a zero divisor (stock does send 0 / 0
+         * for channel 0, so the library must cope, but only with its own surrounding state). (2) the stock
+         * application's second channel sends rc.flag=0 and works, so the pool size depends on more than this
+         * flag (QUERY_DMA input). If this oopses, the camera reboots into the flashed firmware: run it from
+         * RAM (/tmp/akam_image) with the UART attached, never save it in /etc/config/akam/image before it
+         * has survived a test. */
+        req.rc.cub_size      = 0;
+        req.rc.minqp         = 0;
+        req.rc.maxqp         = 0;
+        req.rc.srd_threshold = 0;
+        req.rc.flag          = 1;   /* bEnableMMA = TRUE */
+        req.rc.flag2         = 0;   /* MVVRange_factor: the library default (40), as stock */
+    } else {
+        req.rc.cub_size      = 0;
+        req.rc.minqp         = 28;
+        req.rc.maxqp         = 43;
+        req.rc.srd_threshold = 128;
+        req.rc.flag          = 1;   /* bEnableMMA = TRUE */
+        req.rc.flag2         = 40;  /* MVVRange_factor = 40 */
+    }
+    printf("[ak_rtsp] venc rc sub-struct: %s (AKAM_VENC_RC=stock selects the stock application's)\n",
+           imgq_venc_rc_stock() ? "stock" : "legacy");
 
     /* Same log block format as anyka_ipc's own ht_video_codec.c:749-760
      * ("===========channel %d venc param===========" / width / height /
@@ -335,7 +358,7 @@ int venc_create_encoder(void)
  * encode_mode=1: kernel handles ISP→VENC DMA internally, no userspace
  * involvement needed per frame.
  *
- * Reversed from ak_venc_bind_vi_chn @ 0x001d65c0.
+ * Matches the stock firmware: ak_venc_bind_vi_chn.
  * IMPORTANT: must be called BEFORE CREATE_POOL/CREATE_ENC (see
  * smolrtsp_integration.md §C for the ordering constraint explanation).
  * ------------------------------------------------------------------------- */
@@ -360,7 +383,7 @@ int venc_bind_vi(void)
 
 /* -------------------------------------------------------------------------
  * Activate the encoder — starts frame production.
- * Reversed from ak_venc_bind_activate @ 0x001d68a8.
+ * Matches the stock firmware: ak_venc_bind_activate.
  * ------------------------------------------------------------------------- */
 int venc_activate(void)
 {

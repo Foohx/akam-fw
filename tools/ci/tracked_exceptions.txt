@@ -1,0 +1,1 @@
+# Tracked paths allowed despite the forbidden-file patterns in local_check.sh.

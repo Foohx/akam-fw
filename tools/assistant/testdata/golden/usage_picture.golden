@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: picture brightness needs a whole number from -50 to 50 (see ./akam help)

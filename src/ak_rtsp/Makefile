@@ -1,5 +1,7 @@
-CC      = zig cc -target arm-linux-musleabi -mcpu=arm926ej_s
-CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -g \
+ZIG    ?= zig
+CC      = $(ZIG) cc -target arm-linux-musleabi -mcpu=arm926ej_s
+CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -Wformat -Wformat-security -g \
+          -ffunction-sections -fdata-sections \
           -I. \
           -I../smolrtsp/include \
           -I../smolrtsp/build/_deps/slice99-src \
@@ -7,11 +9,29 @@ CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -g \
           -I../smolrtsp/build/_deps/interface99-src \
           -I../smolrtsp/build/_deps/metalang99-src/include \
           -DSMOLRTSP_WITH_H264
-LDFLAGS = -pthread -static
+LDFLAGS = -pthread -static -Wl,--gc-sections
+# make EXTRA_CFLAGS=-DMQTT_NO_DNS: the MQTT broker must then be an IPv4 address (saves about 14 KB, see mqtt_svc.c)
+CFLAGS += $(EXTRA_CFLAGS)
+
+# ONVIF is off the video path and opt-in: size over speed for its files only.
+ONVIF_OBJS = http_srv.o soap.o onvif.o onvif_cfg.o onvif_device.o onvif_media.o onvif_imaging.o wsd.o cred.o
+$(ONVIF_OBJS): CFLAGS += -Os
+
+# MQTT is off the video path and opt-in as well: size over speed, and stack canaries (it parses broker input).
+MQTT_OBJS = mqtt.o mqtt_ha.o mqtt_svc.o mqtt_ops.o
+$(MQTT_OBJS): CFLAGS += -Os
+
+# G17: stack canaries only on the parsers that read untrusted network input (ONVIF/SOAP/HTTP, RTSP auth,
+# the 8091 line parser). Everywhere would cost about 3 % of the stripped binary and a canary check on the
+# video/audio hot paths; here it costs under 1 %. Static non-PIE musl: no RELRO or PIE to turn on, and
+# musl ignores _FORTIFY_SOURCE, so those are deliberately not set.
+HARDENED_OBJS = $(ONVIF_OBJS) $(MQTT_OBJS) rtsp_auth.o control.o rtsp_in.o rtsp_busy.o rtp_in.o ctl_gate.o
+$(HARDENED_OBJS): CFLAGS += -fstack-protector-strong
 
 TARGET     = ak_rtsp
 TARGET_DBG = isp_dump
 TARGET_HOOK = isp_hook.so
+TARGET_STOCK = stock_hook.so
 TARGET_TOOL = flash_tool
 TARGET_DIV0 = patch_div0
 .DEFAULT_GOAL := all
@@ -20,10 +40,10 @@ TARGET_DIV0 = patch_div0
 # Build versioning
 #
 # build_number.txt  — persists the counter across builds (not committed)
-# version_info.h    — regenerated on every make by gen_version.ps1
+# version_info.h    — regenerated on every make by gen_version.sh
 #
 # version.o has a FORCE dependency so it always recompiles. Its recipe
-# calls gen_version.ps1 (pure PowerShell, no sh required) which:
+# calls gen_version.sh (POSIX sh) which:
 #   1. increments build_number.txt
 #   2. writes version_info.h with BUILD_NUMBER / BUILD_TIMESTAMP / GIT_HASH
 # -----------------------------------------------------------------------
@@ -32,27 +52,77 @@ BUILD_NUM_FILE := build_number.txt
 FORCE:
 .PHONY: FORCE all clean upload firmware
 
+# time32_shim.o replaces musl's clock_gettime()/timerfd_*(), which use time64
+# syscalls the camera's kernel acknowledges without executing. EVERY static
+# binary below must link it (see ../common/time32_shim.c).
+SHIM    = ../common/time32_shim.o
+
 ASM_SRCS = arm_atomics.S
 SRCS    = main.c \
           isp.c \
+          isp_blocks.c \
+          imgq.c \
           vi.c \
           venc.c \
           audio.c \
+          audio_out.c \
           rtsp.c \
+          h264_params.c \
+          rtp_clock.c \
+          net_tx.c \
+          tx_pace.c \
+          rtsp_in.c \
+          rtsp_idle.c \
+          rtsp_busy.c \
+          rtsp_sdp.c \
+          rtp_in.c \
+          audio_vad.c \
+          talk.c \
+          md5.c \
+          rtsp_auth.c \
+          sha1.c \
+          b64.c \
+          cred.c \
+          http_srv.c \
+          soap.c \
+          onvif.c \
+          onvif_cfg.c \
+          onvif_device.c \
+          onvif_media.c \
+          onvif_imaging.c \
+          wsd.c \
+          mqtt.c \
+          mqtt_ha.c \
+          mqtt_svc.c \
+          mqtt_ops.c \
           ircut.c \
+          leds.c \
+          ledsys.c \
           ae.c \
           aec_custom.c \
           night.c \
+          night_logic.c \
+          cfg_file.c \
+          g711.c \
+          audio_jitter.c \
           control.c \
+          swdog.c \
+          klog.c \
+          klog_run.c \
+          isp_tune.c \
+          video_cfg.c \
+          video_ctl.c \
+          ctl_gate.c \
+          ctl_sys.c \
           version.c \
           $(wildcard ../smolrtsp/src/*.c) \
           $(wildcard ../smolrtsp/src/types/*.c) \
           $(wildcard ../smolrtsp/src/writer/*.c) \
           $(wildcard ../smolrtsp/src/transport/*.c) \
           ../smolrtsp/src/nal/h264.c
-OBJS    = $(SRCS:.c=.o) $(ASM_SRCS:.S=.o)
+OBJS    = $(SRCS:.c=.o) $(ASM_SRCS:.S=.o) $(SHIM)
 
-all: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
+all: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0)
 
 # -----------------------------------------------------------------------
 # debug-dump — builds ak_rtsp with DEBUG_IOCTL_DUMP defined, so venc.c logs
@@ -92,14 +162,25 @@ $(TARGET_HOOK): isp_hook.c
 	$(CC) -std=gnu99 -mfloat-abi=soft -O1 -fPIC -shared -nostdlib -ffreestanding \
 	      -mcpu=arm926ej_s -o $@ $<
 
-$(TARGET_DBG): isp_dump.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+# stock_hook.so: capture of the stock anyka_ipc (speaker, GPIO, ISP), see docs/manual/stock-capture.md.
+# Includes isp_hook.c, needs no libc and no compiler-rt (no division by a variable,
+# no memcpy), exports only the hooked libc symbols, so the only undefined symbol left
+# is the weak __errno_location (checked by tests/stock_hook_test.sh).
+STOCK_FLAGS = -std=gnu99 -mfloat-abi=soft -O1 -Wall -Wextra -fPIC -shared -nostdlib \
+              -ffreestanding -fno-builtin -fno-stack-protector -fvisibility=hidden \
+              -fno-unwind-tables -fno-asynchronous-unwind-tables -rtlib=none -g0 \
+              -mcpu=arm926ej_s
+$(TARGET_STOCK): stock_hook.c isp_hook.c
+	$(CC) $(STOCK_FLAGS) -o $@ stock_hook.c
 
-$(TARGET_TOOL): flash_tool.c arm_atomics.S
+$(TARGET_DBG): isp_dump.c isp_blocks.c $(SHIM)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TARGET_DIV0): patch_div0.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+$(TARGET_TOOL): flash_tool.c arm_atomics.S $(SHIM)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TARGET_DIV0): patch_div0.c $(SHIM)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -110,40 +191,41 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# version.o — always rebuilt (FORCE). Calls gen_version.ps1 first to
+# version.o — always rebuilt (FORCE). Calls gen_version.sh first to
 # increment the counter and regenerate version_info.h, then compiles.
 version.o: version.c FORCE
-	pwsh -NoProfile -NonInteractive -File gen_version.ps1
+	./gen_version.sh
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	-pwsh -NoProfile -NonInteractive -Command "$$ErrorActionPreference='SilentlyContinue'; Get-ChildItem -Path '.' -Filter '*.o' | Remove-Item -Force; Get-ChildItem -Path '../smolrtsp' -Recurse -Filter '*.o' | Remove-Item -Force; Remove-Item -Force '$(TARGET)','$(TARGET_DBG)','$(TARGET_HOOK)','$(TARGET_TOOL)','$(TARGET_DIV0)','version_info.h'; exit 0"
+	rm -f *.o ../common/*.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
+	rm -f $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
 
 # -----------------------------------------------------------------------
 # firmware — builds the flashable, timestamped APP squashfs image
 # (ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs, written next to build_firmware.sh
-# unless FW_DIR is overridden). Rebuilds ak_rtsp natively first, then shells
-# out to WSL for build_firmware.sh (mksquashfs/unsquashfs aren't available on
-# Windows). Requires an app_extracted/ dump of your own camera's APP
-# partition — see docs/building_your_own_firmware.md for the full walkthrough
-# and what PATCHED/FW_DIR should point at.
+# unless FW_DIR is overridden). Rebuilds ak_rtsp first, then runs
+# build_firmware.sh (needs mksquashfs/unsquashfs on the host). Requires an
+# app_extracted/ dump of your own camera's APP partition — see
+# docs/manual/build.md for the full walkthrough and what
+# PATCHED/FW_DIR should point at.
 # -----------------------------------------------------------------------
 firmware: $(TARGET)
-	wsl -d Ubuntu -- bash -c 'cd "$$(wslpath "$(CURDIR)")" && bash build_firmware.sh'
+	bash build_firmware.sh
 
-# Upload binary + launch script to camera over FTP.
-# CAMERA_IP is this project's own dev camera on its LAN — override it for yours,
-# e.g. `make upload CAMERA_IP=192.168.1.50`. The root:admin credential assumes
-# you've set up the /etc/config/passwd backdoor from
-# docs/flash_partition_map_and_rootfs.md with that same password.
-CAMERA_IP = 192.168.50.4
+# Upload the binaries + launch scripts to the camera over SSH into /tmp.
+# CAMERA_IP has no default: `make upload CAMERA_IP=<camera address>`.
+# Plain `ssh ... 'cat > file'` is used instead of scp because OpenSSH >= 9
+# scp speaks SFTP, which Dropbear does not provide.
 FLASH_SCRIPTS = ../../tools/flash_scripts
 upload: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
-	curl -T $(TARGET) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_DBG) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_HOOK) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_TOOL) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(TARGET_DIV0) ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(FLASH_SCRIPTS)/start_rtsp.sh ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(FLASH_SCRIPTS)/install_with_flash_tool.sh ftp://$(CAMERA_IP)/mnt/ --user root:admin
-	curl -T $(FLASH_SCRIPTS)/quiet_and_flash_test.sh ftp://$(CAMERA_IP)/mnt/ --user root:admin
+	@test -n "$(CAMERA_IP)" || { echo "usage: make upload CAMERA_IP=<camera address>" >&2; exit 1; }
+	@set -e; \
+	for f in $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0) \
+	         $(FLASH_SCRIPTS)/start_rtsp.sh \
+	         $(FLASH_SCRIPTS)/flash_guard.sh \
+	         $(FLASH_SCRIPTS)/install_with_flash_tool.sh; do \
+	    b=$$(basename "$$f"); \
+	    echo "upload $$b"; \
+	    ssh "root@$(CAMERA_IP)" "cat > /tmp/$$b && chmod +x /tmp/$$b" < "$$f"; \
+	done

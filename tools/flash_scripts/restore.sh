@@ -1,6 +1,6 @@
 #!/bin/sh
 # restore.sh — restore ONLY the stock APP partition
-# (undoes install_custom_firmware.sh; leaves UBOOT/KERNEL/ROOTFS/CONFIG alone)
+# (undoes a flashed Akam APP image; leaves UBOOT/KERNEL/ROOTFS/CONFIG alone)
 # Expects: /mnt/original_firmware/mtdblock7.bin
 #
 # *** ONLY run this from a bare UART `init=/bin/sh` recovery shell. ***
@@ -10,6 +10,18 @@
 # is inherently safe from a normal Telnet session. Flashing while
 # WiFi/camera/ISP drivers are active corrupts the write via DMA contention
 # with the SPI-NOR controller.
+
+# Refuse to write APP from a context that depends on it (SSH, running from /usr).
+# No dirname: the bare UART init=/bin/sh rootfs has no dirname (it lives in the APP).
+case "$0" in */*) _g="${0%/*}/flash_guard.sh" ;; *) _g="./flash_guard.sh" ;; esac
+if [ -r "$_g" ]; then
+    # shellcheck source=flash_guard.sh
+    . "$_g"
+    akam_flash_guard "$0" || exit 1
+elif [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; then
+    echo "ERROR: flash_guard.sh not found next to $0 (copy it to the SD card too)." >&2
+    exit 1
+fi
 
 IMG=/mnt/original_firmware/mtdblock7.bin
 DEV=/dev/mtdblock7

@@ -1,0 +1,18 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdf",
+    "name": "sdf",
+    "whole": true,
+    "size": 274877906944,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdf",
+    "dev_num": "8:16",
+    "removable_raw": "1"
+  },
+  "refuse": "outside 128 MiB"
+}

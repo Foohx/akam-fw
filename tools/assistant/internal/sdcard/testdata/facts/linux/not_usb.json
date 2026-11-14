@@ -1,0 +1,18 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdd",
+    "name": "sdd",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "other",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdd",
+    "dev_num": "8:16",
+    "removable_raw": "1"
+  },
+  "refuse": "not USB"
+}

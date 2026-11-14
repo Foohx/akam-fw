@@ -1,0 +1,19 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdi",
+    "name": "sdi",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdi",
+    "dev_num": "8:16",
+    "removable_raw": "1",
+    "in_stack": "sdi is held by dm-0"
+  },
+  "refuse": "storage stack"
+}

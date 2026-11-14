@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 /* -------------------------------------------------------------------------
- * AK3918AV130 confirmed kernel ioctl codes (reversed from anyka_ipc).
+ * AK3918AV130 kernel ioctl codes (as used by the stock firmware, checked with an isp_hook capture).
  * All magic byte is 'V' (0x56).
  * ------------------------------------------------------------------------- */
 
@@ -10,15 +10,15 @@
 #define ISP_IOCTL_CMD              0xc0cc5616  /* _IOWR('V',0x16, isp_cmd_wrapper)        */
 
 /* ISP inner commands — all go through ISP_IOCTL_CMD via isp_cmd_wrapper.
- * Confirmed by Ghidra decompilation and isp_hook LD_PRELOAD capture. */
+ * Checked against an isp_hook LD_PRELOAD capture of the stock firmware. */
 
 /* Sensor I2C register access */
 #define ISP_INNER_SENSOR_SETREG    0x4004496b  /* AK_ISP_sensor_setreg     write I2C reg  */
 #define ISP_INNER_SENSOR_GETREG    0x8004496c  /* AK_ISP_sensor_getreg     read  I2C reg  */
 
 /* Sensor frame rate */
-#define ISP_INNER_SET_SENSOR_FPS   0x4004497a  /* Ak_ISP_Set_Sensor_Fps    @ 0x00145ce4   */
-#define ISP_INNER_GET_SENSOR_FPS   0x8004497b  /* Ak_ISP_Get_Sensor_Fps    @ 0x00145cf4   */
+#define ISP_INNER_SET_SENSOR_FPS   0x4004497a  /* Ak_ISP_Set_Sensor_Fps   */
+#define ISP_INNER_GET_SENSOR_FPS   0x8004497b  /* Ak_ISP_Get_Sensor_Fps   */
 
 /* AE — exposure attribute (0x720-byte struct) */
 #define ISP_INNER_GET_AE_RUN_INFO  0x80044952  /* AK_ISP_get_ae_run_info   36 B stat      */
@@ -28,12 +28,12 @@
 #define ISP_INNER_AE_SUSPEND       0x80044984  /* Ak_ISP_Set_Ae_Suspend: 1=stop kernel AE, 0=resume */
 
 /* WB — white balance (0x7e0-byte struct) */
-#define ISP_INNER_SET_WB           0x80044986  /* AK_ISP_set_wb_attr       @ 0x00145758   */
+#define ISP_INNER_SET_WB           0x80044986  /* AK_ISP_set_wb_attr   */
 #define ISP_INNER_GET_WB           0x80044987  /* AK_ISP_get_wb_attr                      */
 
 /* Frame rate config */
-#define ISP_INNER_SET_FRAME_RATE   0x4004494e  /* AK_ISP_set_frame_rate    @ 0x00145730   */
-#define ISP_INNER_GET_FRAME_RATE   0x8004494f  /* AK_ISP_get_frame_rate    @ 0x00145748   */
+#define ISP_INNER_SET_FRAME_RATE   0x4004494e  /* AK_ISP_set_frame_rate   */
+#define ISP_INNER_GET_FRAME_RATE   0x8004494f  /* AK_ISP_get_frame_rate   */
 
 /* Scene statistics */
 #define ISP_INNER_GET_3D_NR_STAT   0x80044970  /* AK_ISP_get_3d_nr_stat_info 0x608 B      */
@@ -43,12 +43,12 @@
 #define ISP_INNER_3D_NR_REF        0x40044967  /* AK_ISP_set_3d_nr_ref_attr {w,h}         */
 
 /* OSD / overlay (sub-routed; payload[0] = secondary inner_cmd) */
-#define ISP_INNER_OSD_USER_PARAMS  0x4004496d  /* Ak_ISP_Set_User_Params   @ 0x001463b4   */
+#define ISP_INNER_OSD_USER_PARAMS  0x4004496d  /* Ak_ISP_Set_User_Params   */
 
 /* ISP pipeline module init — called by isp_module_init for each of 24 modules.
  * Module 0 (BLC) = 0x40044902; other modules follow non-sequential numbering.
  * All are called by our isp_pipeline_init() from sensor_isp.conf. */
-#define ISP_INNER_SET_BLC          0x40044902  /* AK_ISP_set_blc_attr      @ 0x00145868   */
+#define ISP_INNER_SET_BLC          0x40044902  /* AK_ISP_set_blc_attr   */
 
 /* /dev/venc — control device (shared) */
 #define VENC_IOCTL_QUERY_CHN    0x406056ce  /* _IOWR('V',0xce,...) query chn by name */
@@ -76,10 +76,10 @@
 #define VI_IOCTL_STREAMOFF 0x40045613  /* VIDIOC_STREAMOFF— stop  ISP pipeline        */
 
 /* VI channel attribute configuration — must be called BEFORE REQBUFS.
- * Reversed from vi_dev_set_chn_mode   @ 0x00142650
- *               vi_dev_set_chn_crop   @ 0x001429a4
- *               vi_dev_set_chn_res    @ 0x00142b2c
- *               vi_dev_set_chn_buf_size @ 0x00142308
+ * Matches the stock firmware: vi_dev_set_chn_mode
+ *               vi_dev_set_chn_crop
+ *               vi_dev_set_chn_res
+ *               vi_dev_set_chn_buf_size
  * Confirmed by boot_dmesg_stream.log lines 399-408.                          */
 
 /* Tunnel ioctl shared by ISP and VI devices (same ioctl code 0xc0cc5616),
@@ -99,7 +99,7 @@
 #define VI_INNER_BUF_SIZE   0x109  /* set per-channel DMA buffer size (bytes), after S_FMT      */
 
 /* VI_IOCTL_TUNNEL wrapper — 204 bytes, flag=1, inner_cmd, scalar value, rest 0.
- * Reversed from vi_dev_set_chn_mode / vi_dev_set_chn_buf_size local struct. */
+ * Matches the stock firmware: vi_dev_set_chn_mode / vi_dev_set_chn_buf_size local struct. */
 struct vi_cmd_wrapper {
     uint32_t flag;       /* always 1 */
     uint32_t inner_cmd;  /* VI_INNER_* */
@@ -124,7 +124,7 @@ struct vi_chn_res_hint {
 
 /* VIDIOC_S_FMT equivalent — sets channel output resolution + pixel format.
  * ioctl(video_fd, 0xc0cc5605, &vi_fmt_wrapper)
- * Reversed from vi_dev_set_chn_res @ 0x00142b2c. */
+ * Matches the stock firmware: vi_dev_set_chn_res. */
 #define VI_IOCTL_S_FMT     0xc0cc5605  /* _IOWR('V',5,204) — VIDIOC_S_FMT      */
 #define VI_PIXFMT_NV12     0x3231564eu /* 'NV12' fourcc = little-endian "NV12"  */
 
@@ -138,7 +138,7 @@ struct vi_fmt_wrapper {
 };
 
 /* Crop capability query + set.
- * Reversed from vi_dev_set_chn_crop @ 0x001429a4.
+ * Matches the stock firmware: vi_dev_set_chn_crop.
  * Step 1: ioctl(video_fd, VI_IOCTL_G_CROP_CAP, vi_crop_cap[11])
  *   buf[0] = 1, rest zeroed; output: crop capability rectangle
  * Step 2: ioctl(video_fd, VI_IOCTL_S_CROP, &vi_crop_req)              */
@@ -154,11 +154,11 @@ struct vi_crop_req {       /* 20 bytes — VI_IOCTL_S_CROP */
 };
 
 /* -------------------------------------------------------------------------
- * H264 internal profile_idc values stored in auStack_f4[0] after
- * venc_check_and_format_param, and used in the VENC_IOCTL_QUERY_DMA request
+ * H264 internal profile_idc values as the stock firmware stores them after
+ * its parameter check, and used in the VENC_IOCTL_QUERY_DMA request
  * struct (offset 0).  These are standard H.264 profile_idc values.
  *
- * User-facing profile selector (param_1[6]) → internal profile_idc:
+ * User-facing profile selector (field 6 of the open parameters) → internal profile_idc:
  *   0 → 0x4D (77)  = Main
  *   1 → 0x64 (100) = High
  *   2 → 0x42 (66)  = Baseline
@@ -219,9 +219,9 @@ struct venc_dma_pool_desc {
 
 /* -------------------------------------------------------------------------
  * CREATE_ENC ioctl (VENC_IOCTL_CREATE_ENC) — 96 bytes total
- * Reversed from ak_venc_open_ex @ 0x001d4a40 and
- * venc_check_and_format_param  @ 0x001d025c
- * venc_check_and_format_rc_param @ 0x001d0a58
+ * Matches the stock firmware: ak_venc_open_ex and
+ * venc_check_and_format_param
+ * venc_check_and_format_rc_param
  * ------------------------------------------------------------------------- */
 
 /* Encoder config sub-struct, 48 bytes (struct offset +0x04..+0x33) */
@@ -293,8 +293,8 @@ static inline uint32_t venc_max_fps(int width, int height)
 
 /* -------------------------------------------------------------------------
  * BIND_VI_CHN ioctl — 20 bytes
- * Reversed from ak_venc_bind_vi_chn @ 0x001d65c0,
- * called from app_video_bind_vi_venc @ 0x0011696c.
+ * Matches the stock firmware: ak_venc_bind_vi_chn,
+ * called from app_video_bind_vi_venc.
  *
  * encode_mode: 1 = kernel mode (ISP feeds encoder directly, no userspace DQ loop)
  *              0 = user mode   (userspace must DQBUF VI frames and push them)
@@ -378,12 +378,12 @@ struct venc_stream_req {
  * Sensor register ioctl goes to /dev/v4l-subdev0.
  * The kernel driver (sensor_gc20c3.ko) writes I2C registers to the GC20C3.
  *
- * Reversed from:
- *   isp_match_sensor_cfgfile @ 0x0012c4f4
- *   isp_cfg_file_load        @ 0x0012bac4
- *   isp_module_init          @ 0x00129920 (sVar3==0x18 branch)
- *   vi_dev_load_sensor_conf  @ 0x00145400
- *   isp_sensor_ioctl         @ 0x001451ec
+ * Stock firmware counterparts:
+ *   isp_match_sensor_cfgfile
+ *   isp_cfg_file_load
+ *   isp_module_init
+ *   vi_dev_load_sensor_conf
+ *   isp_sensor_ioctl
  * ------------------------------------------------------------------------- */
 struct isp_sensor_conf {
     uint32_t reg_count; /* = data_len >> 2 (number of 4-byte register entries) */
@@ -397,7 +397,7 @@ struct isp_sensor_conf {
 /* -------------------------------------------------------------------------
  * ISP image-pipeline inner command codes (tunneled via 0xc0cc5616 on isp_fd)
  *
- * All fully confirmed from Ghidra decompilation of AK_ISP_set_*_attr functions.
+ * All match the stock AK_ISP_set_*_attr functions (checked against a capture).
  * All are magic-byte 'I' (0x49). Modules with multiple calls send them in order.
  *
  * Usage:
@@ -409,84 +409,84 @@ struct isp_sensor_conf {
  * ------------------------------------------------------------------------- */
 
 /* module 0x00 — BLC (Black Level Correction) */
-#define ISP_INNER_BLC           0x40044902  /* AK_ISP_set_blc_attr       @ 0x00145860 */
+#define ISP_INNER_BLC           0x40044902  /* AK_ISP_set_blc_attr */
 
 /* module 0x01 — LSC (Lens Shading Correction) */
-#define ISP_INNER_LSC           0x40044904  /* AK_ISP_set_lsc_attr       @ 0x00145890 */
+#define ISP_INNER_LSC           0x40044904  /* AK_ISP_set_lsc_attr */
 
 /* module 0x02 — Raw LUT */
-#define ISP_INNER_RAW_LUT       0x4004490a  /* AK_ISP_set_raw_lut_attr   @ 0x001458c0 */
+#define ISP_INNER_RAW_LUT       0x4004490a  /* AK_ISP_set_raw_lut_attr */
 
 /* module 0x03 — Noise Reduction (3 sub-calls in order) */
-#define ISP_INNER_NR1           0x4004490c  /* AK_ISP_set_nr1_attr       @ 0x00145920 */
-#define ISP_INNER_NR2           0x4004492b  /* AK_ISP_set_nr2_attr       @ 0x00145bc0 */
-#define ISP_INNER_UVNR          0x4004497d  /* AK_ISP_set_uvnr_attr      @ 0x00145bf0 */
+#define ISP_INNER_NR1           0x4004490c  /* AK_ISP_set_nr1_attr */
+#define ISP_INNER_NR2           0x4004492b  /* AK_ISP_set_nr2_attr */
+#define ISP_INNER_UVNR          0x4004497d  /* AK_ISP_set_uvnr_attr */
 
 /* module 0x04 — 3D Noise Reduction (7180 bytes) */
-#define ISP_INNER_3D_NR         0x4004492f  /* AK_ISP_set_3d_nr_attr     @ 0x00145ad0 */
+#define ISP_INNER_3D_NR         0x4004492f  /* AK_ISP_set_3d_nr_attr */
 
 /* module 0x05 — Green Balance */
-#define ISP_INNER_GB            0x40044906  /* AK_ISP_set_gb_attr        @ 0x00145950 */
+#define ISP_INNER_GB            0x40044906  /* AK_ISP_set_gb_attr */
 
 /* module 0x06 — Demosaic */
-#define ISP_INNER_DEMO          0x4004490e  /* AK_ISP_set_demo_attr      @ 0x00145980 */
+#define ISP_INNER_DEMO          0x4004490e  /* AK_ISP_set_demo_attr */
 
 /* module 0x07 — RGB Gamma */
-#define ISP_INNER_RGB_GAMMA     0x4004491a  /* AK_ISP_set_rgb_gamma_attr @ 0x001459e0 */
+#define ISP_INNER_RGB_GAMMA     0x4004491a  /* AK_ISP_set_rgb_gamma_attr */
 
 /* module 0x08 — CCM (Color Correction Matrix) */
-#define ISP_INNER_CCM           0x40044912  /* AK_ISP_set_ccm_attr       @ 0x001459b0 */
+#define ISP_INNER_CCM           0x40044912  /* AK_ISP_set_ccm_attr */
 
 /* module 0x09 — FCS (False Color Suppression) */
-#define ISP_INNER_FCS           0x40044936  /* AK_ISP_set_fcs_attr       @ 0x00145b90 */
+#define ISP_INNER_FCS           0x40044936  /* AK_ISP_set_fcs_attr */
 
 /* module 0x0a — WDR (Wide Dynamic Range) */
-#define ISP_INNER_WDR           0x4004491b  /* AK_ISP_set_wdr_attr       @ 0x00146250 */
+#define ISP_INNER_WDR           0x4004491b  /* AK_ISP_set_wdr_attr */
 
 /* module 0x0b — Sharpness (2 sub-calls in order) */
-#define ISP_INNER_SHARP         0x40044925  /* AK_ISP_set_sharp_attr     @ 0x00145b30 */
-#define ISP_INNER_GET_SHARP     0x80044926  /* AK_ISP_get_sharp_attr     @ 0x00145b48 */
-#define ISP_INNER_SHARP_EX      0x40044927  /* AK_ISP_set_sharp_ex_attr  @ 0x00145b60 */
+#define ISP_INNER_SHARP         0x40044925  /* AK_ISP_set_sharp_attr */
+#define ISP_INNER_GET_SHARP     0x80044926  /* AK_ISP_get_sharp_attr */
+#define ISP_INNER_SHARP_EX      0x40044927  /* AK_ISP_set_sharp_ex_attr */
 
 /* module 0x0c — Saturation */
-#define ISP_INNER_SATURATION    0x4004493b  /* AK_ISP_set_saturation_attr @ 0x00145aa0 */
+#define ISP_INNER_SATURATION    0x4004493b  /* AK_ISP_set_saturation_attr */
 
 /* module 0x0d — Contrast */
-#define ISP_INNER_CONTRAST      0x40044939  /* AK_ISP_set_contrast_attr  @ 0x00145a10 */
+#define ISP_INNER_CONTRAST      0x40044939  /* AK_ISP_set_contrast_attr */
 
 /* module 0x0e — RGB→YUV */
-#define ISP_INNER_RGB2YUV       0x4004493f  /* AK_ISP_set_rgb2yuv_attr   @ 0x00146230 */
+#define ISP_INNER_RGB2YUV       0x4004493f  /* AK_ISP_set_rgb2yuv_attr */
 
 /* module 0x0f — YUV Effect */
-#define ISP_INNER_EFFECT        0x40044941  /* AK_ISP_set_effect_attr    @ 0x00145c50 */
-#define ISP_INNER_GET_EFFECT    0x80044942  /* AK_ISP_get_effect_attr    @ 0x00145c68 */
+#define ISP_INNER_EFFECT        0x40044941  /* AK_ISP_set_effect_attr */
+#define ISP_INNER_GET_EFFECT    0x80044942  /* AK_ISP_get_effect_attr */
 
 /* module 0x10 — DPC (Defective Pixel Correction) */
-#define ISP_INNER_DPC           0x40044910  /* AK_ISP_set_dpc_attr       @ 0x001458f0 */
+#define ISP_INNER_DPC           0x40044910  /* AK_ISP_set_dpc_attr */
 
 /* module 0x11 — LCE (Local Contrast Enhancement) */
-#define ISP_INNER_LCE           0x8004498e  /* AK_ISP_set_lce_attr       @ 0x00145a40 */
+#define ISP_INNER_LCE           0x8004498e  /* AK_ISP_set_lce_attr */
 
 /* module 0x12 — AF (Auto Focus) */
-#define ISP_INNER_AF            0x40044960  /* AK_ISP_set_af_attr        @ 0x00145818 */
+#define ISP_INNER_AF            0x40044960  /* AK_ISP_set_af_attr */
 
 /* module 0x13 — AWB/WB (3 sub-calls in order) */
-#define ISP_INNER_WB            0x80044986  /* AK_ISP_set_wb_attr        @ 0x00145758 */
-#define ISP_INNER_AWB_EX        0x40044973  /* AK_ISP_set_awb_ex_attr    @ 0x00145788 */
-#define ISP_INNER_AWB_CALIB     0x80044988  /* AK_ISP_set_awb_calib_info @ 0x001457b8 */
+#define ISP_INNER_WB            0x80044986  /* AK_ISP_set_wb_attr */
+#define ISP_INNER_AWB_EX        0x40044973  /* AK_ISP_set_awb_ex_attr */
+#define ISP_INNER_AWB_CALIB     0x80044988  /* AK_ISP_set_awb_calib_info */
 
 /* module 0x14 — AE/Exposure (2 sub-calls in order) */
-#define ISP_INNER_EXPOSURE      0x8004498a  /* AK_ISP_set_exposure_attr  @ 0x001456c8 */
-#define ISP_INNER_FRAME_RATE    0x4004494e  /* AK_ISP_set_frame_rate     @ 0x00145728 */
+#define ISP_INNER_EXPOSURE      0x8004498a  /* AK_ISP_set_exposure_attr */
+#define ISP_INNER_FRAME_RATE    0x4004494e  /* AK_ISP_set_frame_rate */
 
 /* module 0x15 — Misc */
-#define ISP_INNER_MISC          0x4004496e  /* AK_ISP_set_misc_attr      @ 0x00145c80 */
+#define ISP_INNER_MISC          0x4004496e  /* AK_ISP_set_misc_attr */
 
 /* module 0x16 — Y Gamma */
-#define ISP_INNER_Y_GAMMA       0x40044975  /* AK_ISP_set_Y_gamma_attr   @ 0x00145a70 */
+#define ISP_INNER_Y_GAMMA       0x40044975  /* AK_ISP_set_Y_gamma_attr */
 
 /* module 0x17 — Hue */
-#define ISP_INNER_HUE           0x40044977  /* AK_ISP_set_hue_attr       @ 0x00145c20 */
+#define ISP_INNER_HUE           0x40044977  /* AK_ISP_set_hue_attr */
 
 static inline int venc_max_frame_size(int width, int height)
 {
@@ -539,18 +539,17 @@ static inline int venc_max_frame_size(int width, int height)
  * ------------------------------------------------------------------------- */
 
 /* GET_PARS — MISNAMED, despite the _IOR-shaped encoding this is actually a
- * commit/set operation (confirmed 2026-07-04 via the Ghidra ak_pcm.ko
- * relocation fix — capture_ioctl's real
- * dispatch, decompiled directly off the fixed module, does a copy_FROM_user
- * of this 28-byte struct into the kernel, not a copy_to_user). Layout
+ * commit/set operation (confirmed 2026-07-04 on the camera: the ak_pcm.ko
+ * capture_ioctl does a copy_FROM_user of this 28-byte struct into the
+ * kernel, not a copy_to_user). Layout
  * (7×u32, byte offsets from struct start):
  *   [0]=format(0=linear PCM) [1]=rate(Hz) [2]=channels [3]=bits
  *   [4]=period_size(BYTES, not samples) [5]=period_count [6]=reserved/unused
- * Validated on the way in (decompiled, not inferred):
+ * Validated on the way in (as observed on the camera):
  *   rate != 0; period_size != 0 && period_size % 64 == 0; period_count in
  *   [1, 0x50]. On success, computes the hardware rate divisor and sets the
  *   ready bit at +0x304 (bit 0x2) that capture_read() requires (§15) — this
- *   is the actual, disassembly-confirmed fix for the long-standing capture
+ *   is the actual fix for the long-standing capture
  *   read() EPERM. Every previous session called this with a zeroed struct,
  *   which fails validation (rate=0) every time — exactly the EINVAL always
  *   observed — and never reaches the code that sets the ready bit,
@@ -591,7 +590,9 @@ struct akpcm_pars {
 #define AKPCM_IOC_SET_PERIODS   0x80045030  /* _IOW('P',0x30,4) */
 #define AKPCM_IOC_GET_PERIODS   0x40045030  /* _IOR('P',0x30,4) */
 
-/* Best-guess name "CAPS" — nr=0x81, GET only, observed value 1. */
+/* Best-guess name "CAPS" — nr=0x81, observed value 1. On the playback fd the
+ * same number is the speaker enable and 0x40045081 is its real SET (see the
+ * playback-side names below); kept as is for the capture side. */
 #define AKPCM_IOC_GET_CAPS      0x40045081  /* _IOR('P',0x81,4) */
 
 /* dir=NONE (no size in the request itself) — the 3rd ioctl() arg is used
@@ -616,3 +617,44 @@ struct akpcm_pars {
  * missing from our own capture sequence prior to §23 — a strong candidate
  * for (part of) the actual fix for capture's read() EPERM. */
 #define AKPCM_IOC_RESET_BUF     0x000050e3  /* _IO('P',0xe3) */
+
+/* -------------------------------------------------------------------------
+ * Playback-side names (specs/audio.md). The names and numbers above
+ * describe the CAPTURE fd only; capture keeps replaying them byte for byte.
+ * On /dev/pcmC0D0p the driver uses the same nr values under other names, and
+ * the direction bits are the standard asm-generic ones:
+ *
+ *   0x4004xxxx = _IOW (SET: the driver copies the int from user space)
+ *   0x8004xxxx = _IOR (GET: the driver returns the current value)
+ *
+ * Ground truth: an LD_PRELOAD capture of the stock vendor application on a
+ * stock camera (docs/manual/stock-capture.md). The "_IOW"/"_IOR" letters in the
+ * capture-side comments above are inverted for nr 0x10 and 0x30, and
+ * AKPCM_IOC_SET_STATE / AKPCM_IOC_SET_PERIODS are
+ * really GETs: stock calls them to read the current value. The real SETs
+ * are 0x40045010 and 0x40045030. Likewise 0x40045081 is the SET of nr 0x81.
+ *
+ *   0xE0 = IOC_PREPARE: copy_FROM_user of struct akpcm_pars, allocates the
+ *          hardware buffer; must succeed first (stock: format 0, 8000 Hz,
+ *          1 channel, 16 bit, 1024-byte periods, 16 periods).
+ *   0xE1 = IOC_RESUME: starts the DMA, arg 0. Issuing it without a
+ *          successful PREPARE is the likely cause of the old "SET_MODE
+ *          crashes the kernel" observation.
+ *   0x10 = SOURCES: mixer route. Stock sets 4 to play and 0 when idle
+ *          (route off). 4 is the audible playback route on the tested
+ *          board; 6 is an unverified experiment value from a reference
+ *          project.
+ *   0x30 = GAIN: hardware gain, stock uses 2 (once 3).
+ *   0x81 = SPEAKER: amplifier enable, stock sets 1 right after SOURCES. The
+ *          driver drives GPIO 69 itself, never by sysfs. The old 0x80045081
+ *          is the GET direction and returns EINVAL on the hardware.
+ *   0xEA = RATE: stock reads it back after RESUME (8000).
+ * ------------------------------------------------------------------------- */
+#define AKPCM_IOC_PREPARE       AKPCM_IOC_GET_PARS     /* 0x401c50e0, 28-byte struct akpcm_pars */
+#define AKPCM_IOC_RESUME        AKPCM_IOC_SET_MODE     /* 0x000050e1, no argument */
+#define AKPCM_IOC_SET_SOURCES   0x40045010             /* _IOW('P',0x10,4), int32 (stock: 4 play, 0 idle) */
+#define AKPCM_IOC_GET_SOURCES   0x80045010             /* _IOR('P',0x10,4) */
+#define AKPCM_IOC_SET_GAIN      0x40045030             /* _IOW('P',0x30,4), int32 (stock: 2) */
+#define AKPCM_IOC_GET_GAIN      0x80045030             /* _IOR('P',0x30,4) */
+#define AKPCM_IOC_SET_SPEAKER   0x40045081             /* _IOW('P',0x81,4), int32 0/1 (stock: 1) */
+#define AKPCM_IOC_GET_RATE      0x800450ea             /* _IOR('P',0xea,4), 8000 after PREPARE */

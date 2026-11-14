@@ -1,317 +1,172 @@
-# LSC Smart Connect Indoor IP Camera (AK3918AV130) Custom Firmware
+# Akam: local firmware for the LSC Smart Indoor 1080p camera
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![SoC](https://img.shields.io/badge/SoC-Anyka%20AK3918AV130-orange.svg)]()
-[![Sensor](https://img.shields.io/badge/Sensor-GalaxyCore%20GC20C3%201080p-green.svg)]()
-[![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20PCM%20Audio-red.svg)]()
+[![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20L16%20Audio-red.svg)]()
 
-A standalone, 100% cloud-free custom firmware and native RTSP server for the **LSC Smart Connect Smart Indoor IP Camera 1080p HD** (Action SKU `SI B26101`, model `3215672.2`).
+## What is Akam?
 
-This project completely removes the proprietary Tuya cloud agent (`anyka_ipc`) and replaces it with a lightweight, reverse-engineered C application (`ak_rtsp`) that streams pristine 1080p H.264 video and synchronized audio directly to your local network (Home Assistant, Synology Surveillance Station, Frigate, go2rtc, VLC).
+Akam is an open-source replacement firmware for the **LSC Smart Indoor 1080p** IP camera (sold at Action, Anyka
+AK3918AV130 chip). It removes the Tuya cloud application and puts a small program in its place that works **only on
+your own network**: no cloud, no account, no phone app, no telemetry.
 
----
+It is for people who want to plug a cheap camera into their own setup: a video player, an NVR (network video
+recorder), Home Assistant or any tool that speaks standard protocols (RTSP, ONVIF, MQTT, SSH). The goals are a light
+firmware, standard protocols, easy home-automation integration, and features that are off until you turn them on.
 
-![Camera Front & PCB](images/1.jpg)
+A guided installer (`./akam`) does the whole job from your PC: back up the camera, build the image from your own
+backup, flash, check. Only the camera's application area (the APP partition) is rewritten. The boot loader, the
+kernel and the system are never touched.
 
----
+> **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
+> [risks](#important-disclaimer-and-risks). The installer makes you take a full backup first.
 
-## ⚠️ Important Disclaimer & Risks
+## Supported camera
 
-> ⚠️ **CAUTION: FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
->
-> - **Experimental Codebase:** This is the public release of a much larger private reverse-engineering project. The reverse engineering itself — reading UART logs, decompiling `anyka_ipc` in Ghidra, strace-capturing the stock RTSP session, cross-referencing ioctl structs, etc. — was done by hand over many sessions. This public repository (its structure, docs, and some cleanup/refactoring) was then compiled and organized with AI assistance from that original project. While core streaming and hardware drivers have been verified on test units, the codebase has **not been exhaustively tested by hand across all conditions or manufacturing batches** and carries inherent experimental risks.
-> - **Risk of Permanent Hardware Bricking:** Writing to the SPI NOR flash chip carries a real risk of permanently bricking your camera. In the worst case, a corrupted flash may result in an unrecoverable hard brick that can only be fixed by physically desoldering the flash chip and using an external SPI programmer (e.g. CH341A).
-> - **No Liability:** The authors and contributors of this repository accept **zero liability or responsibility** for damaged hardware, bricked cameras, data loss, or voided warranties.
-> - **Windows + WSL only.** Every tool, script, and workflow in this repo (the .NET serial console, the `zig cc` cross-build, the WSL `mksquashfs` packaging step) has only ever been developed and tested on Windows 11 with WSL/Ubuntu. Native Linux or macOS hosts, other WSL distros, or other cross-compilers may well work, but they are **completely untested** — you're on your own figuring out any path/tooling differences if you go that route.
-> - **Always make a complete flash backup** before attempting to flash any custom image.
-> - **Always double-check the flash verification logs** before disconnecting power.
-> - If flashing fails or reports errors, **DO NOT power cycle**—attempt to flash your stock backup immediately!
+| Camera | Article | SI code | Status |
+|---|---|---|---|
+| LSC Smart Indoor 1080p | `3215672.3` | SI `D26228` | validated on 2 units |
+| LSC Smart Indoor 1080p | `3215672.2` | SI `B26101` / `C26101` | untested |
+| any other camera | | | not supported |
 
----
+The codes are on the back of the camera body, under the LSC logo. Details, how to report a new model:
+[compatible cameras](docs/compatible-cameras.md).
 
-## Key Features
+## Features in short
 
-- **100% Cloud-Free (De-Tuyafied):** Tuya cloud daemons, MQTT beacons, and telemetry binaries are completely eliminated.
-- **Native SmolRTSP Streaming Engine:** Lightweight standalone C server (`ak_rtsp`, ~126 KB) built on [OpenIPC's SmolRTSP](https://github.com/OpenIPC/smolrtsp) library, interfacing directly with the Anyka hardware ISP and H.264 encoder.
-- **1080p High-Quality Video:** Full 1920x1080 resolution at 15–25 FPS with calibrated ISP parameters (color correction matrix, white balance gains, noise reduction, and VBR+ rate control).
-- **Synchronized Audio:** Captures from on-board microphone via `/dev/pcmC0D0c` streamed over RTP (L16 / 8000 Hz) with RTCP Sender Reports for jitter-free playback in VLC and NVRs.
-- **IR-Cut & Night Mode:** Dual GPIO solenoid pulse control for daytime IR-cut filtration and night vision illumination.
-- **Hardened MTD Flasher (`flash_tool`):** Chunked 4KB write/verify/retry flasher that avoids the SPI-NOR DMA corruption bugs common when writing flash over active network/camera drivers.
-- **Hardware Toolkit:** Includes an automated ESP32 U-Boot interceptor bridge and a high-performance Windows .NET 9 WinUI serial console.
+- **Video and sound:** RTSP H.264 1080p with microphone, 10/15/20/25 fps (default 15), optional password. One viewer
+  at a time: put [go2rtc](https://github.com/AlexxIT/go2rtc) or MediaMTX in front for several.
+- **Talk through the camera speaker** (ONVIF audio backchannel, `./akam talk`, go2rtc, Frigate, Home Assistant).
+- **ONVIF-compatible services** (off by default, not certified) and WS-Discovery for NVRs and apps.
+- **MQTT with Home Assistant discovery** (off by default, host-tested only).
+- **Camera controls:** day/night with infrared LEDs, status LED, picture settings, frame rate, bitrate.
+- **Safe by default:** SSH with a key only, Telnet and FTP closed, optional clock sync (NTP).
+- **Not provided:** the Tuya/Smart Life app, cloud and remote viewing, push notifications, motion detection,
+  recording to microSD, vendor updates. Use a VPN into your home network, an NVR or Home Assistant instead.
 
----
+The complete list with ports, defaults and test status: [features](docs/features.md).
 
-## 📷 Current Status & Image Quality
+## How it works, in 5 lines
 
-> ℹ️ **Image Quality Notice:**  
-> The custom firmware is fully functional and stable for continuous 24/7 streaming. However, **the dynamic image tuning (contrast, wide-dynamic range curves, and auto-exposure adjustments) is still somewhat behind the stock Tuya firmware's proprietary closed-source tuning**.  
-> We have calibrated the static white balance gains (`R=460, G=256, B=504`) to fix the raw sensor blue tint and tuned VBR+ rate control to minimize macroblocking, but there is ample room for future community improvement and tuning of the 24-module Anyka ISP pipeline! Pull requests and ISP tuning experiments are very welcome.
+1. The installer reads your camera's own firmware backup, made by you with a microSD card.
+2. Akam's **kit** (its own programs and scripts, signed, no vendor files) is downloaded.
+3. Your PC builds a new APP image from your backup plus the kit.
+4. The image is flashed to the APP partition, with read-back verification.
+5. Vendor files stay on your camera and in your private backup. They are never distributed.
 
-| | Stock Tuya (`anyka_ipc`) | This Firmware (`ak_rtsp`) |
-|---|:---:|:---:|
-| **Static scene** | ![Stock stable](images/video_out/anyka_stable.png) | ![Custom stable](images/video_out/ours_stable.png) |
-| **Motion** | ![Stock movement](images/video_out/anyka_movement.png) | ![Custom movement](images/video_out/ours_movement.png) |
+More: [how it works](docs/how-it-works.md).
 
-### Known Limitations
+## What you need
 
-- **No dynamic auto white balance (AWB).** White balance uses fixed, hand-calibrated gains
-  (see above) rather than tracking scene color temperature dynamically. In practice, the stock
-  Tuya firmware doesn't appear to do dynamic AWB either in the scenes tested so far, so this may
-  not be a real functional gap — but it's worth knowing if your lighting varies a lot.
-- **Two-way audio (speaker output) is not supported.** Microphone capture → RTP streaming
-  (camera-to-viewer audio) is fully working, but the reverse direction (playback through the
-  camera's on-board speaker, e.g. for NVR "talk" features) is not implemented. Out of scope for
-  now — may be revisited in the future.
+- the camera, and a 2.4 GHz Wi-Fi network it can join;
+- a **microSD card** and a **USB card reader** ([card reader problems](docs/troubleshooting.md#no-medium-found-with-a-usb-card-reader));
+- a **Linux PC** (Arch Linux, Debian 12 and Ubuntu 24.04 tested) for the bash wizard. A single-file `akam` program
+  also exists for Windows, macOS and Linux, but it is less tested: see the
+  [tested platforms](docs/assistant.md#tested-platforms);
+- optional but wise: a 3.3 V USB-UART adapter, the safety net if a flash goes wrong
+  ([hacking guide](docs/hacking.md#uart-access)).
 
----
+## Install quick start
 
-## Hardware Overview
+**Linux (reference):**
 
-| Component | Specification |
+```bash
+git clone https://github.com/Foohx/akam-fw && cd akam-fw
+./akam
+```
+
+**Windows, macOS, Linux (single binary):** download `akam` for your system from the
+[assistant release](https://github.com/Foohx/akam-fw/releases?q=assistant-v) (the one marked "Latest"), check it
+([steps](docs/assistant.md)), then run `akam`. The camera firmware has its own versions: the program downloads the kit
+of your camera model from the [firmware releases](https://github.com/Foohx/akam-fw/releases?q=firmware-v) itself and
+verifies it; you only download a firmware kit by hand to use `--kit`.
+
+The program checks your PC, remembers where you stopped, and walks you through: check the PC, get the kit, prepare
+the backup card, find the camera, **back it up (all 8 partitions)**, build the image, prepare the flash card, flash,
+verify. Arrow keys and Enter run a step, `?` explains it, `q` quits. Every risky step shows a red box with a yes/no
+whose **default is No**. You unplug and replug the camera's power yourself: the program never reboots it.
+
+`./akam help` lists every command; add `--dry-run` to rehearse. Step by step: [wizard guide](docs/wizard_guide.md).
+Watch the stream: `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/`.
+
+## Daily use
+
+| I want to... | Go to |
 |---|---|
-| **Retail Model** | LSC Smart Connect Smart Indoor IP Camera 1080p HD (Action) |
-| **Model / SKU** | `3215672.2` / `SI B26101` |
-| **PCB Revision** | `IPC280KG2-GNA-MAIN-V1.0` (Circular PCB, 2025-08-28) |
-| **SoC** | Anyka AK3918AV130 (ARM926EJ-S @ 400 MHz) |
-| **Image Sensor** | GalaxyCore GC20C3 (2MP 1/2.9" CMOS, I2C bus) |
-| **Flash Memory** | 8 MiB SPI NOR (`XM25QH64D` / Winbond SOIC-8) |
-| **Wireless** | Altobeam ATBM6012BX / ATBM6x3x USB WiFi |
-| **Power** | USB-C 5V / 1A |
+| change a setting, update, set a password, name the camera | [using Akam](docs/using_akam.md) |
+| talk through the speaker | [two-way audio](docs/two_way_audio.md) |
+| connect an NVR or ONVIF app | [ONVIF](docs/onvif.md) |
+| connect Home Assistant or MQTT | [MQTT](docs/mqtt.md) |
+| fix a problem | [troubleshooting](docs/troubleshooting.md) |
+| hack, build, debug | [hacking guide](docs/hacking.md) |
+| everything else | [documentation index](docs/README.md) |
 
-> ℹ️ **NOTE:** This repository is tailored for **Revision 2** (circular PCB, Anyka AK3918AV130). Older revisions with rectangular boards used different SoCs (AK3918EV200 or GK7102) which have different register maps and flash partitioning.
+## Important disclaimer and risks
 
----
+> **FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
+>
+> - **Experimental:** Akam is built on a reverse-engineering project and was written with AI assistance. It was
+>   validated on two cameras so far ([testing status](docs/testing-status.md)).
+> - **Risk of permanent bricking:** writing to the SPI NOR flash can brick the camera. In the worst case only an
+>   external SPI programmer (for example a CH341A) recovers it. **Restoring your backup is not guaranteed.**
+> - **No liability:** the authors and contributors accept no liability, to the extent the law allows, for damaged
+>   hardware, bricked cameras, data loss or voided warranties.
+> - **Always make and verify a complete 8-partition backup first**, and never publish it.
+> - **Never cut the power while a flash runs.** If a flash reports errors, do not power cycle: flash your stock
+>   backup immediately.
 
-## Step 0: MANDATORY — Dump Your Stock Firmware Backup!
+Legal notes (your device, privacy, radio, interoperability): [legal](docs/legal.md).
 
-Before doing anything else, connect to your camera shell (via UART or Telnet) and create a full backup of all 8 flash partitions:
+## Documentation
 
-```sh
-# 1. Mount SD card and create backup directory
-mount -t vfat /dev/mmcblk0p1 /mnt
-mkdir -p /mnt/original_firmware
+[Documentation index](docs/README.md): [features](docs/features.md), [how it works](docs/how-it-works.md),
+[hacking guide](docs/hacking.md), [assistant](docs/assistant.md), [testing status](docs/testing-status.md),
+[changelog](CHANGELOG.md). Contributors: [CONTRIBUTING](CONTRIBUTING.md). Vulnerabilities: [SECURITY](SECURITY.md).
+Technical specifications of the code (as built): [specs/](specs/README.md).
 
-# 2. Dump all partitions
-dd if=/dev/mtdblock0 of=/mnt/original_firmware/mtdblock0.bin bs=64k
-dd if=/dev/mtdblock1 of=/mnt/original_firmware/mtdblock1.bin bs=64k
-dd if=/dev/mtdblock2 of=/mnt/original_firmware/mtdblock2.bin bs=64k
-dd if=/dev/mtdblock3 of=/mnt/original_firmware/mtdblock3.bin bs=64k
-dd if=/dev/mtdblock4 of=/mnt/original_firmware/mtdblock4.bin bs=64k
-dd if=/dev/mtdblock5 of=/mnt/original_firmware/mtdblock5.bin bs=64k
-dd if=/dev/mtdblock6 of=/mnt/original_firmware/mtdblock6.bin bs=64k
-dd if=/dev/mtdblock7 of=/mnt/original_firmware/mtdblock7.bin bs=64k
-sync
-```
+## Release signing key
 
-Keep a copy of `/mnt/original_firmware/` safely on your computer!
-
----
-
-## Quick Installation Guide
-
-### Step 1: Prepare the MicroSD Card
-Format a MicroSD card as FAT32 and copy the following files:
-- `custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` (the padded firmware image — see
-  [Building Your Own Firmware](docs/building_your_own_firmware.md) for how to produce this)
-- `flash_tool` (pre-compiled binary from `src/ak_rtsp/`)
-- `tools/flash_scripts/install_with_flash_tool.sh`
-- `tools/flash_scripts/restore.sh` *(for safety fallback)*
-- `original_firmware/mtdblock*.bin` *(your stock backup)*
-
-### Step 2: Connect & Run Flashing Script
-Insert the SD card, connect to the camera over Telnet (or UART), mount the card, and execute:
-```sh
-mount -t vfat /dev/mmcblk0p1 /mnt
-sh /mnt/install_with_flash_tool.sh
-```
-
-### Step 3: Check Verification Output!
-> 🛑 **IMPORTANT: Always verify the tool output before powering down:**
-> ```text
-> FAULT SUMMARY: 0/1280 chunks needed retry, 0 total failed verify attempts.
-> Flashing and verification completed successfully!
-> ```
-> If any errors are displayed, **DO NOT DISCONNECT POWER!** Run `sh /mnt/restore.sh` to revert to your stock firmware image first.
-
-### Step 4: Power Cycle by Hand
-> ℹ️ **NOTE:** The software `reboot` command **does not work reliably** on this hardware platform.  
-> **Unplug and reconnect the USB-C power cable by hand** to power cycle the camera.
-
----
-
-## RTSP Stream URLs
-
-Once booted into the custom firmware, the camera serves RTSP on standard port 554.
-
-The custom `ak_rtsp` server is **path-agnostic** (it serves the 1080p video + audio stream on any requested path or root `/`):
-
-| Format | RTSP URL Example | Notes |
-|---|---|---|
-| **Root (Simplest)** | `rtsp://<camera-ip>:554/` | 1920x1080 H.264 + Synchronized L16 Audio |
-| **Named Path (Optional)** | `rtsp://<camera-ip>:554/live` or `/main_ch` | Any sub-path works interchangeably |
-
-*(Note: `rtsp://<camera-ip>:554/main_ch` was the legacy path used by the original Tuya firmware, which continues to work seamlessly).*
-
----
-
-## Repository Structure
+Releases are signed with this key (ssh-keygen, namespace and principal `akam-release`); the assistant refuses a kit
+it cannot verify against it. Fingerprint `SHA256:Az0SyH/Aoi3ZY/mtaIdM5qnfvJhmOite9qvZDIN3dCM`:
 
 ```
-.
-├── docs/                                # Technical Documentation & Guides
-│   ├── hardware_and_uart.md             # Disassembly, UART pads, U-Boot shell & photos
-│   ├── flash_partition_map_and_rootfs.md# Flash layout, stock boot traps, de-Tuyafication
-│   ├── firmware_building_and_flashing.md# Build guide & SPI-NOR DMA contention gotchas
-│   ├── camera_and_audio_pipeline.md     # ISP registers, div0 kernel fix, audio capture
-│   └── building_your_own_firmware.md    # WSL setup, dump/unsquash/patch/rebuild your own image
-├── images/                              # Hardware photographs and diagrams
-├── src/
-│   └── ak_rtsp/                         # Standalone C RTSP server & flash_tool source
-│       ├── Makefile                     # Cross-compilation Makefile (Zig / Anyka GCC)
-│       ├── build_firmware.sh            # Patches your own app_extracted/ dump & repacks squashfs
-│       ├── main.c                       # System bring-up and orchestration
-│       ├── isp.c / isp.h                # GC20C3 134-reg init & 24-module ISP pipeline
-│       ├── vi.c / vi.h                  # Video input channels (1080p slice mode)
-│       ├── venc.c / venc.h              # H.264 hardware encoder setup (VBR+)
-│       ├── rtsp.c / rtsp.h              # RTSP / RTP server & RTCP Sender Reports
-│       ├── audio.c / audio.h            # ALSA PCM mic capture & ring buffer
-│       ├── ircut.c / ircut.h            # IR-cut solenoid pulse controller
-│       ├── ae.c / night.c               # Hardware auto-exposure & day/night switching
-│       ├── flash_tool.c                 # Chunked verified MTD SPI-NOR flasher
-│       └── arm_atomics.S                # ARMv5TE legacy atomic stubs
-└── tools/
-    ├── flash_scripts/                   # Deployment and flash management scripts
-    │   ├── install_with_flash_tool.sh   # Primary proven Telnet/UART MTD flasher
-    │   ├── install_ak_rtsp_firmware.sh  # Bare UART fallback flasher
-    │   ├── pad_build.sh                 # SquashFS padding & timestamp naming script
-    │   ├── restore.sh                   # Restore stock APP partition
-    │   ├── restore_full_firmware.sh     # Restore ALL stock partitions
-    │   └── ...
-    ├── firmware_patch_templates/        # The actual de-Tuyafication patch (process.ini + wrapper)
-    └── hardware_debug/                  # Hardware tools
-        ├── lolin32_uart_bridge/         # ESP32 auto U-Boot interception firmware
-        └── serial_console_dotnet/       # WinUI 3 serial terminal with base64 transfer
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2qtKAhTkbHvkklqSiZAdGqq98kQiMmRzoOIBlmjPG1 akam-release
 ```
 
----
+How to check a download: [docs/assistant.md](docs/assistant.md).
 
-## Building from Source
+## License
 
-### Prerequisite: SmolRTSP
-`ak_rtsp` is **not** linked against a prebuilt SmolRTSP library — its `Makefile` compiles
-[OpenIPC's SmolRTSP](https://github.com/OpenIPC/smolrtsp) sources directly into the `ak_rtsp`
-binary, and expects to find them as a sibling directory: `../smolrtsp` relative to
-`src/ak_rtsp/` — i.e. checked out at **`src/smolrtsp`**, next to `src/ak_rtsp/` (not at the repo
-root). This is *not* included in this repository. Before building, clone it there and let CMake
-populate its own header-only dependencies (`slice99`, `datatype99`, `interface99`, `metalang99`)
-via FetchContent — you only need the *configure* step, not a full build:
+MIT, see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-```bash
-cd src
-git clone https://github.com/OpenIPC/smolrtsp.git
-cd smolrtsp
-cmake -S . -B build   # populates build/_deps/{slice99,datatype99,interface99,metalang99}-src
-```
+The licence covers Akam's own code and documentation only. The camera's original software (boot loader, Linux kernel
+and modules, system, Anyka and Tuya programs and libraries) belongs to its owners. Akam never distributes it: it stays
+on your camera and in your private backup, and the image is assembled on your own computer. Do not publish or share a
+backup, a dump or an image built from one.
 
-If you don't have (or don't want to install) CMake, you can populate the same four dependencies
-by hand instead — this was verified to produce an identical, working build:
-```bash
-cd src/smolrtsp
-mkdir -p build/_deps
-cd build/_deps
-for pair in "slice99:v0.7.8" "metalang99:v1.13.5" "datatype99:v1.6.5" "interface99:v1.0.2"; do
-    name="${pair%%:*}"; tag="${pair##*:}"
-    curl -sL "https://github.com/hirrolot/$name/archive/refs/tags/$tag.tar.gz" -o "$name.tar.gz"
-    mkdir -p "${name}-src"
-    tar xzf "$name.tar.gz" -C "${name}-src" --strip-components=1
-    rm "$name.tar.gz"
-done
-```
-(These are the exact versions SmolRTSP's own `CMakeLists.txt` `FetchContent_Declare` calls
-pinned at the time this project was built — check that file if the upstream repo has since
-bumped them.)
+Akam is an independent, non-commercial community project. It is not affiliated with, endorsed by or supported by
+Action, LSC Smart Connect, Tuya, Anyka, ONVIF, Home Assistant or any other company or project named here. Their names
+and trademarks belong to their owners and are used only to say what Akam works with.
 
-The resulting `src/smolrtsp/` tree (with `include/` and the populated `build/_deps/`) is exactly
-what `src/ak_rtsp/Makefile`'s include paths expect. **Verified working end-to-end** (both the
-CMake-less dependency fetch above and the full `make` build below were run against this exact
-repo and produced statically-linked ARM/EABI5 binaries with no errors). This has only been
-tested against the SmolRTSP revision available at the time this project was built — if the
-upstream repo has since diverged, some source-level adjustments in `src/ak_rtsp/rtsp.c`/`venc.c`
-may be needed.
+## Credits
 
-### Prerequisite: GNU Make for Windows
-`make` for compiling `ak_rtsp` is run **natively on Windows, not inside WSL** (WSL is only used
-for the separate squashfs-packaging step in
-[Building Your Own Firmware](docs/building_your_own_firmware.md)). Windows doesn't ship `make`,
-so you need a native GNU Make on your `PATH`. This project was built against
-[GnuWin32 Make](https://gnuwin32.sourceforge.net/packages/make.htm) (GNU Make 3.81, installed to
-`C:\Program Files (x86)\GnuWin32\bin\make.exe` via its standalone installer) — that's an old,
-unmaintained package but it's a plain native `.exe` with no MSYS/Cygwin runtime needed, which is
-why it was picked. If you'd rather use a maintained source, a package manager works too and any
-recent GNU Make version should be fine:
-```powershell
-winget install GnuWin32.Make      # or: choco install make   /   scoop install make
-```
-Whichever you use, make sure `make.exe` ends up on `PATH` (open a new terminal after installing
-and confirm with `make --version`).
+Akam is a fork of
+[FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware](https://github.com/FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware):
+the reverse-engineered `ak_rtsp` and `flash_tool` code, the hardware documentation and the photos are the upstream
+author's.
 
-### Compiling `ak_rtsp`
-You can cross-compile using [Zig](https://ziglang.org/) without needing complex toolchains installed:
+- **Anyka community:** [VGerris](https://github.com/VGerris/Anyka_ak3918_hacking_journey) and
+  [Lawliet95](https://github.com/Lawliet95/ANYKA-Tuya-Hacking-Journey-AK3918v200EN080-v200): earlier SoCs, useful for
+  ioctl naming and orientation.
+- **SmolRTSP (OpenIPC):** the RTSP library, [OpenIPC/smolrtsp](https://github.com/OpenIPC/smolrtsp).
+- **Action-Smart-Connect-Flasher (4ddict):** four `ak_rtsp` fixes ported into this tree
+  ([MIT](THIRD_PARTY_NOTICES.md)), from [4ddict/Action-Smart-Connect-Flasher](https://github.com/4ddict/Action-Smart-Connect-Flasher).
+- **lsc-tuya-toolkit (tasarren):** the microSD toolkit that opens the maintenance shell for the backup,
+  [tasarren/lsc-tuya-toolkit](https://github.com/tasarren/lsc-tuya-toolkit).
+- **Dropbear (Matt Johnston):** the SSH server, [mkj/dropbear](https://github.com/mkj/dropbear).
+- **Zig:** the cross-compiler, downloaded by the bootstrap and not redistributed.
 
-```powershell
-cd src/ak_rtsp
-make CC="zig cc -target arm-linux-musleabi -mcpu=arm926ej_s -static"
-```
+## Support
 
-### Compiling `flash_tool`
-```bash
-cd src/ak_rtsp
-zig cc -target arm-linux-musleabi -mcpu=arm926ej_s -static -O2 flash_tool.c -o flash_tool
-```
-
-### Running the .NET Serial Console & Tuning Suite
-```powershell
-cd tools/hardware_debug/serial_console_dotnet
-dotnet run -c Release
-```
-
----
-
-## Detailed Documentation
-
-- [Hardware & UART Connection Guide](docs/hardware_and_uart.md)
-- [Flash Partition Map & De-Tuyafication Details](docs/flash_partition_map_and_rootfs.md)
-- [Firmware Packaging & Flash DMA Gotchas](docs/firmware_building_and_flashing.md)
-- [Camera ISP, Audio & Div0 Fix Architecture](docs/camera_and_audio_pipeline.md)
-- [Serial Console & Live Camera Tuning App Guide](docs/serial_console_and_camera_tuning.md)
-- [Building Your Own Firmware From Your Own Dump](docs/building_your_own_firmware.md)
-
----
-
-## Methods & Approach
-
-This firmware exists because of a fairly standard embedded-RE toolchain, applied by hand over
-many sessions before this repo was compiled:
-
-1. **UART access first.** Solder to the 4 UART pads, capture the boot log, intercept U-Boot's
-   autoboot with a scripted Ctrl+C flood, and get a root shell via `init=/bin/sh` bootargs.
-2. **strace the stock behavior.** With the vendor's `anyka_ipc` running its factory RTSP demo
-   mode, `strace` every ioctl it makes against the ISP/VI/VENC/audio character devices. This is
-   the ground truth for every hardware init sequence this project reimplements — reversing from
-   a decompiler alone, without a real reference trace of a known-working session, would have
-   been far slower and less reliable.
-3. **Decompile in Ghidra.** Where the strace log alone doesn't explain a struct layout or ioctl
-   semantics (e.g. why a particular field has to be non-zero), decompile the relevant function
-   in `anyka_ipc` or a kernel module to confirm it directly.
-4. **Reimplement from scratch, verify against the trace.** `ak_rtsp` doesn't call into any
-   vendor `.so` — it drives the same character devices directly, with ioctl sequences derived
-   from steps 2–3, and its output is repeatedly checked byte-for-byte against captures of the
-   stock session (see `docs/camera_and_audio_pipeline.md`) whenever behavior diverged.
-5. **De-Tuyafy at the application layer.** Rather than replacing the kernel or rootfs, only the
-   APP partition's process list is patched to launch `ak_rtsp` instead of the vendor's Tuya
-   cloud client — see `docs/flash_partition_map_and_rootfs.md`.
-
-## Credits & Acknowledgements
-
-- **Anyka Community & Researchers:** Inspiration and reference implementations from [VGerris's Anyka Hacking Journey](https://github.com/VGerris/Anyka_ak3918_hacking_journey) and [Lawliet95's ANYKA Tuya Journey](https://github.com/Lawliet95/ANYKA-Tuya-Hacking-Journey-AK3918v200EN080-v200). Both cover earlier-generation Anyka SoCs (`AK3918EV200`/`GK7102`) with different register maps and flash layouts than this Revision 2 (`AK3918AV130`) hardware, but were valuable for general ioctl naming conventions and orientation.
-- **SmolRTSP (OpenIPC):** High-performance, lightweight RTSP library for embedded systems by [OpenIPC/smolrtsp](https://github.com/OpenIPC/smolrtsp).
+Akam is a personal, non-commercial project, provided with no warranty. If it is useful to you, you can
+[buy me a coffee](https://buymeacoffee.com/foohx). A donation does not buy support, features or priority.

@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# Builds the assistant: static (CGO_ENABLED=0), modules from tools/.toolchain/go/mod (filled by
+# `bash tools/build/bootstrap.sh`, checksum-verified by go.sum), reproducible flags.
+#
+#   tools/assistant/build.sh               this computer's OS/arch  -> tools/assistant/bin/akam
+#   tools/assistant/build.sh all           the six targets -> bin/<os>-<arch>/akam[.exe] (and bin/akam for this host)
+#   tools/assistant/build.sh flat DIR      the six targets -> DIR/akam-<os>-<arch>[.exe] (used by tools/release/build_assistant.sh)
+#   tools/assistant/build.sh test          go vet + go test ./... (what tests/assistant_test.sh runs)
+#   tools/assistant/build.sh vet-all [--link]  go vet (-tags akamtest) for the five non-host targets; --link also builds their test binaries (go test -c)
+#   tools/assistant/build.sh sizes [--by-package [os/arch]]
+#                                          sizes of the built binaries against the budget (hard 12 MiB, soft 11 MiB);
+#                                          --by-package: size per Go package of an unstripped build
+#   tools/assistant/build.sh repro [os/arch ...]   builds twice and compares the sha256 (default: all six)
+#   tools/assistant/build.sh notices       THIRD_PARTY_NOTICES.md lists every module linked into each target and its generated
+#                                          licence-text section is current
+#   tools/assistant/build.sh notices-gen   regenerates that section (licence texts copied from the pinned module sources)
+#
+# The Go used is the project-local official toolchain tools/.toolchain/go-<GO_VERSION>-<os>-<arch>/ when
+# bootstrap.sh installed it (GOROOT and PATH are set for this script only), else the go of PATH.
+# Everything Go writes (module cache, build cache, GOPATH) stays under tools/.toolchain/go/ (git-ignored):
+# nothing goes to ~/go or ~/.cache. VERSION=x.y.z sets the version shown by `akam version`.
+# Release-grade actions (all, flat, repro) refuse any Go other than GO_VERSION of tools/build/deps.lock;
+# AKAM_ALLOW_ANY_GO=1 overrides (the result is then not a release). `host` only warns.
+# AKAM_TARGETS="linux/amd64 windows/arm64" restricts `all`, `flat` and `repro` to some targets.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
+# shellcheck source=tools/lib/gotoolchain.sh
+. "$REPO/tools/lib/gotoolchain.sh"
+BUDGET_BYTES=$((12 * 1024 * 1024))
+SOFT_BYTES=$((11 * 1024 * 1024))
+VERSION=${VERSION:-0.1.0-dev}
+ALL_TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
+TARGETS=${AKAM_TARGETS:-$ALL_TARGETS}
+
+akam_use_pinned_go "$REPO" || true
+if ! command -v go >/dev/null 2>&1; then
+    echo "build.sh: Go is not installed (run: bash tools/build/bootstrap.sh, which installs the Go of GO_VERSION in tools/build/deps.lock)" >&2
+    exit 127
+fi
+TC="$REPO/tools/.toolchain/go"
+mkdir -p "$TC/path" "$TC/mod" "$TC/cache"
+export GOPATH="$TC/path" GOMODCACHE="$TC/mod" GOCACHE="$TC/cache"
+export GOFLAGS="-modcacherw -mod=readonly" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
+cd "$HERE"
+if ! go list -deps ./cmd/akam >/dev/null 2>&1; then
+    echo "build.sh: the Go modules are not in tools/.toolchain/go/mod yet; run: bash tools/build/bootstrap.sh" >&2
+    exit 1
+fi
+
+# The exact Go release pinned in tools/build/deps.lock (GO_VERSION).
+pinned_go() { akam_pinned_go_version "$REPO"; }
+have_go() { local v; v=$(go env GOVERSION); v=${v#go}; echo "${v%%[ -]*}"; }
+check_go() { # strict (1: refuse, 0: warn)
+    local want have
+    want=$(pinned_go)
+    have=$(have_go)
+    [ "$have" = "$want" ] && return 0
+    if [ "${AKAM_ALLOW_ANY_GO:-}" = 1 ]; then
+        echo "build.sh: warning: Go $have, but the pinned toolchain is Go $want (AKAM_ALLOW_ANY_GO=1: not a release build)" >&2
+        return 0
+    fi
+    if [ "$1" = 1 ]; then
+        echo "build.sh: refusing to build: this is Go $have but tools/build/deps.lock pins Go $want." >&2
+        echo "build.sh: run bash tools/build/bootstrap.sh (installs Go $want in tools/.toolchain/) or set AKAM_ALLOW_ANY_GO=1 for a non-release build." >&2
+        exit 1
+    fi
+    echo "build.sh: warning: Go $have, the pinned toolchain is Go $want (sizes and hashes may differ)" >&2
+}
+
+exe() { if [ "$1" = windows ]; then echo .exe; fi; }
+
+build_one() { # GOOS GOARCH OUT
+    mkdir -p "$(dirname "$3")"
+    # Never -tags akamtest here. The downloads use internal/kit's own HTTPS client: net/http is not linked.
+    GOOS=$1 GOARCH=$2 go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X main.version=$VERSION" -o "$3" ./cmd/akam
+}
+
+mib() { awk -v s="$1" 'BEGIN{printf "%.2f", s/1048576}'; }
+
+size_line() { # label file ; returns 1 above the hard budget
+    local sz verdict=ok
+    sz=$(wc -c <"$2" | tr -d ' ')
+    [ "$sz" -le "$SOFT_BYTES" ] || verdict="WARN (soft limit 11 MiB)"
+    [ "$sz" -le "$BUDGET_BYTES" ] || verdict=OVER
+    printf '%-40s %9d bytes  %5s MiB  (budget 12 MiB: %s)\n' "$1" "$sz" "$(mib "$sz")" "$verdict"
+    [ "$sz" -le "$BUDGET_BYTES" ]
+}
+
+sizes() {
+    local f n=0 rc=0
+    for f in "$HERE"/bin/akam "$HERE"/bin/*-*/akam "$HERE"/bin/*-*/akam.exe; do
+        [ -f "$f" ] || continue
+        n=$((n + 1))
+        size_line "${f#"$REPO"/}" "$f" || rc=1
+    done
+    [ "$n" -gt 0 ] || { echo "no binary built yet" >&2; return 1; }
+    return $rc
+}
+
+# Size per Go package from the symbol table of an UNSTRIPPED build (symbol sizes only: the sum is below the file size).
+by_package() { # GOOS GOARCH
+    local tmp
+    tmp=$(mktemp -d)
+    GOOS=$1 GOARCH=$2 go build -trimpath -buildvcs=false -ldflags "-X main.version=$VERSION" -o "$tmp/akam" ./cmd/akam
+    echo "size by package, $1/$2, unstripped build (symbol sizes only):"
+    go tool nm -size "$tmp/akam" | awk '
+        { sz = $2; name = $4
+          if (sz !~ /^[0-9]+$/ || name == "" || $3 ~ /^[Bb]$/) next   # bss takes no room in the file
+          if (name ~ /^(type:|go:)/) { pkg = "(type:/go: metadata)" }
+          else {
+              n = split(name, parts, "/"); last = parts[n]; d = index(last, ".")
+              if (d == 0) { pkg = "(unnamed)" }
+              else { pkg = substr(name, 1, length(name) - length(last)) substr(last, 1, d - 1) }
+          }
+          tot[pkg] += sz; all += sz }
+        END { for (p in tot) printf "%9d %s\n", tot[p], p; printf "%9d %s\n", all, "TOTAL (symbols)" }' |
+        sort -rn | head -n 25 | awk '{ printf "  %8.1f KiB  %s\n", $1/1024, $2 }'
+    rm -rf "$tmp"
+}
+
+NOTICES_BEGIN='<!-- BEGIN GENERATED: go-licences (tools/assistant/build.sh notices-gen) -->'
+NOTICES_END='<!-- END GENERATED: go-licences -->'
+
+mod_version() { go list -m -f '{{.Version}}' "$1"; }
+mod_dir() { echo "$GOMODCACHE/$1@$2"; }
+mod_licence_file() { # dir -> the licence file at the module root
+    local f
+    for f in LICENSE LICENSE.txt LICENSE.md COPYING; do
+        if [ -f "$1/$f" ]; then echo "$1/$f"; return 0; fi
+    done
+    return 1
+}
+# The MIT permission notice of a licence file (title and copyright lines dropped), whitespace-normalised.
+mit_body() { sed -n '/^Permission is hereby granted/,$p' "$1" | tr -s ' \n\t' '\n' | grep -v '^$' | tr '\n' ' '; }
+
+# The generated licence section, from the Go toolchain and the pinned module sources (stdout).
+notices_text() {
+    local rows path ver lic first="" line
+    echo "$NOTICES_BEGIN"
+    echo
+    echo "## Go modules: copyright notices and licence texts"
+    echo
+    echo "Generated by \`tools/assistant/build.sh notices-gen\` from the Go toolchain and the module sources pinned by"
+    echo "\`tools/assistant/go.sum\`; the texts below are copied verbatim from their licence files. A test fails when a linked"
+    echo "module is not listed above, or when this section drifts from those sources."
+    echo
+    echo "### The Go toolchain and standard library (Go $(have_go))"
+    echo
+    echo '```text'
+    cat "$(go env GOROOT)/LICENSE"
+    echo '```'
+    echo
+    echo "### golang.org/x/crypto, golang.org/x/sys, golang.org/x/term, golang.org/x/text"
+    echo
+    echo '```text'
+    cat "$(mod_licence_file "$(mod_dir golang.org/x/crypto "$(mod_version golang.org/x/crypto)")")"
+    echo '```'
+    echo
+    echo "### github.com/ulikunitz/xz"
+    echo
+    echo '```text'
+    cat "$(mod_licence_file "$(mod_dir github.com/ulikunitz/xz "$(mod_version github.com/ulikunitz/xz)")")"
+    echo '```'
+    echo
+    echo "### MIT modules"
+    echo
+    echo "Copyright lines of the MIT modules listed in the table above, copied from their licence files:"
+    echo
+    echo '```text'
+    rows=$(awk -F'|' '/^\| [a-z0-9.]+\/[^ ]+ \| v/ { l=$4; gsub(/^ +/,"",l); if (l ~ /^MIT/) { p=$2; v=$3; gsub(/ /,"",p); gsub(/ /,"",v); print p, v } }' "$REPO/THIRD_PARTY_NOTICES.md")
+    while read -r path ver; do
+        [ -n "$path" ] || continue
+        if lic=$(mod_licence_file "$(mod_dir "$path" "$ver")"); then
+            [ -n "$first" ] || first=$lic
+            line=$(grep -m1 '^[[:space:]]*Copyright' "$lic") || { echo "notices: no copyright line in $lic" >&2; return 1; }
+            [ "$(mit_body "$lic")" = "$(mit_body "$first")" ] || { echo "notices: the MIT text of $path differs from the others" >&2; return 1; }
+            echo "$path: ${line#"${line%%[![:space:]]*}"}"
+        else
+            echo "$path: MIT, as stated in its README; the module ships no licence file and no copyright line"
+        fi
+    done <<<"$rows"
+    echo '```'
+    echo
+    echo "The MIT permission notice below applies to each MIT module listed above, under its own copyright line."
+    echo
+    echo '```text'
+    sed -n '/^Permission is hereby granted/,$p' "$first"
+    echo '```'
+    echo
+    echo "### Unicode data"
+    echo
+    echo "The Unicode data tables embedded through golang.org/x/text, github.com/rivo/uniseg, github.com/mattn/go-runewidth and"
+    echo "Go's \`unicode\` package are derived from data files of Unicode, Inc., which are under the Unicode License v3"
+    echo "(https://www.unicode.org/license.txt)."
+    echo
+    echo "$NOTICES_END"
+}
+
+notices_gen() {
+    local f="$REPO/THIRD_PARTY_NOTICES.md" tmp
+    tmp=$(mktemp)
+    notices_text >"$tmp.sec"
+    if grep -qF "$NOTICES_BEGIN" "$f"; then
+        awk -v b="$NOTICES_BEGIN" -v e="$NOTICES_END" -v sec="$tmp.sec" '
+            $0 == b { while ((getline l < sec) > 0) print l; skip = 1; next }
+            $0 == e { skip = 0; next }
+            !skip { print }' "$f" >"$tmp"
+    else
+        { cat "$f"; echo; cat "$tmp.sec"; } >"$tmp"
+    fi
+    cat "$tmp" >"$f"
+    rm -f "$tmp" "$tmp.sec"
+    echo "notices-gen: updated $f (then run: go generate ./internal/assets)"
+}
+
+notices_current() { # succeeds when the generated section of THIRD_PARTY_NOTICES.md is current
+    local tmp rc=0
+    tmp=$(mktemp)
+    notices_text >"$tmp"
+    awk -v b="$NOTICES_BEGIN" -v e="$NOTICES_END" '$0 == b { p = 1 } p { print } $0 == e { p = 0 }' "$REPO/THIRD_PARTY_NOTICES.md" | cmp -s - "$tmp" || rc=1
+    rm -f "$tmp"
+    return $rc
+}
+
+notices() {
+    local t mods path ver rc=0 missing
+    for t in $ALL_TARGETS; do
+        mods=$(GOOS=${t%/*} GOARCH=${t#*/} go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}}{{end}}{{end}}' ./cmd/akam | sort -u)
+        missing=0
+        while read -r path ver; do
+            [ -n "$path" ] || continue
+            if ! grep -F "$path" "$REPO/THIRD_PARTY_NOTICES.md" | grep -qF "$ver"; then
+                echo "notices: $t links $path $ver, which THIRD_PARTY_NOTICES.md does not list (with that version)" >&2
+                missing=1
+            fi
+        done <<<"$mods"
+        echo "notices: $t: $(printf '%s\n' "$mods" | grep -c .) modules linked, $([ "$missing" = 0 ] && echo 'all listed' || echo 'SOME MISSING')"
+        [ "$missing" = 0 ] || rc=1
+    done
+    notices_current || { echo "notices: the generated licence section of THIRD_PARTY_NOTICES.md is missing or stale (run: tools/assistant/build.sh notices-gen)" >&2; rc=1; }
+    return $rc
+}
+
+vet_all() { # [--link]
+    local t tmp host
+    host="$(go env GOOS)/$(go env GOARCH)"
+    tmp=$(mktemp -d)
+    for t in $ALL_TARGETS; do
+        [ "$t" = "$host" ] && continue
+        echo "vet-all: $t"
+        GOOS=${t%/*} GOARCH=${t#*/} go vet -tags akamtest ./...
+        # vet type-checks the test files too; --link also builds (links) every test binary (slow: about a minute)
+        if [ "$1" = --link ]; then
+            GOOS=${t%/*} GOARCH=${t#*/} go test -tags akamtest -c -o "$tmp/" ./... >/dev/null
+            rm -rf "${tmp:?}"/*
+        fi
+    done
+    rm -rf "$tmp"
+}
+
+repro_one() { # os/arch ; the second build uses a fresh build cache when AKAM_REPRO_FRESH=1
+    local t=$1 tmp rc=0
+    tmp=$(mktemp -d)
+    build_one "${t%/*}" "${t#*/}" "$tmp/a"
+    if [ "${AKAM_REPRO_FRESH:-}" = 1 ]; then
+        GOCACHE="$tmp/cache" build_one "${t%/*}" "${t#*/}" "$tmp/b"
+    else
+        build_one "${t%/*}" "${t#*/}" "$tmp/b"
+    fi
+    if cmp -s "$tmp/a" "$tmp/b"; then
+        echo "reproducible: $t $(sha256sum "$tmp/a" | cut -d' ' -f1)"
+    else
+        echo "NOT reproducible: $t: two builds differ" >&2
+        rc=1
+    fi
+    chmod -R u+w "$tmp" 2>/dev/null || true
+    rm -rf "$tmp"
+    return $rc
+}
+
+case ${1:-host} in
+    host)
+        check_go 0
+        build_one "$(go env GOOS)" "$(go env GOARCH)" "$HERE/bin/akam"
+        sizes
+        ;;
+    all)
+        check_go 1
+        for t in $TARGETS; do build_one "${t%/*}" "${t#*/}" "$HERE/bin/${t%/*}-${t#*/}/akam$(exe "${t%/*}")"; done
+        build_one "$(go env GOOS)" "$(go env GOARCH)" "$HERE/bin/akam"
+        sizes
+        ;;
+    flat)
+        [ $# -eq 2 ] || { echo "usage: build.sh flat DIR" >&2; exit 2; }
+        check_go 1
+        for t in $TARGETS; do build_one "${t%/*}" "${t#*/}" "$2/akam-${t%/*}-${t#*/}$(exe "${t%/*}")"; done
+        ;;
+    test)
+        check_go 0
+        go vet -tags akamtest ./...
+        go test -tags akamtest -count=1 ./...
+        go test -count=1 ./internal/testhook   # release build: the test hooks are ignored
+        ;;
+    vet-all) check_go 0; vet_all "${2:-}" ;;
+    notices) notices ;;
+    notices-gen) notices_gen ;;
+    sizes)
+        if [ "${2:-}" = --by-package ]; then
+            t=${3:-$(go env GOOS)/$(go env GOARCH)}
+            by_package "${t%/*}" "${t#*/}"
+        else
+            sizes
+        fi
+        ;;
+    repro)
+        check_go 1
+        shift
+        rc=0
+        list=("$@")
+        [ ${#list[@]} -gt 0 ] || read -ra list <<<"$TARGETS"
+        for t in "${list[@]}"; do repro_one "$t" || rc=1; done
+        exit $rc
+        ;;
+    *)
+        echo "usage: build.sh [host | all | flat DIR | test | vet-all | sizes [--by-package [os/arch]] | repro [os/arch ...] | notices | notices-gen]" >&2
+        exit 2
+        ;;
+esac

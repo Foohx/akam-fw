@@ -1,0 +1,89 @@
+--- a/src/dbutil.c
++++ b/src/dbutil.c
+@@ -732,6 +732,46 @@
+ 	return c;
+ }
+ 
++#if defined(__linux__) && defined(__arm__)
++/* Akam: on the Anyka AK3918 (Linux 4.4, ARM926) the kernel acknowledges
++ * musl's clock_gettime64 syscall without filling the timespec, which made
++ * sessions drop with "Timeout before auth" in the same second. The build now
++ * also links src/common/time32_shim.c, which fixes clock_gettime() itself;
++ * this tick based clock stays as defence in depth. Dropbear only needs
++ * second-resolution monotonic time for its timeouts, so take it from the
++ * kernel tick counter: the raw times(2) syscall returns the 32-bit jiffies
++ * count, with no struct and no time_t width involved. It is accumulated into
++ * 64 bits (wrap safe) and starts above zero, because Dropbear treats a 0
++ * timestamp as "unset". */
++static int akam_ticks_now(struct timespec *now) {
++	static uint32_t last_ticks;
++	static uint64_t total_ticks;
++	static long hz;
++	register long r7 __asm__("r7") = 43; /* __NR_times */
++	register long r0 __asm__("r0") = 0;  /* NULL struct tms */
++	uint32_t ticks;
++
++	if (hz <= 0) {
++		hz = sysconf(_SC_CLK_TCK);
++		if (hz <= 0 || hz > 1000) {
++			hz = 0;
++			return -1;
++		}
++	}
++	__asm__ volatile ("svc 0" : "+r"(r0) : "r"(r7) : "memory");
++	ticks = (uint32_t)r0;
++	if (total_ticks == 0) {
++		total_ticks = (uint64_t)ticks + (uint64_t)hz;
++	} else {
++		total_ticks += (uint32_t)(ticks - last_ticks);
++	}
++	last_ticks = ticks;
++	now->tv_sec = (time_t)(total_ticks / (uint64_t)hz);
++	now->tv_nsec = (long)((total_ticks % (uint64_t)hz) * (1000000000UL / (unsigned long)hz));
++	return 0;
++}
++#endif
++
+ /* higher-resolution monotonic timestamp, falls back to gettimeofday */
+ void gettime_wrapper(struct timespec *now) {
+ 	struct timeval tv;
+@@ -743,6 +781,12 @@
+ 	}
+ #endif
+ 
++#if defined(__linux__) && defined(__arm__)
++	if (akam_ticks_now(now) == 0) {
++		return;
++	}
++#endif
++
+ #if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
+ 	/* POSIX monotonic clock. Newer Linux, BSD, MacOSX >10.12 */
+ 	if (clock_gettime(CLOCK_MONOTONIC, now) == 0) {
+@@ -750,23 +794,9 @@
+ 	}
+ #endif
+ 
+-#if defined(__linux__) && defined(SYS_clock_gettime)
+-	{
+-	/* Old linux toolchain - kernel might support it but not the build headers */
+-	/* Also glibc <2.17 requires -lrt which we neglect to add */
+-	static int linux_monotonic_failed = 0;
+-	if (!linux_monotonic_failed) {
+-		/* CLOCK_MONOTONIC isn't in some headers */
+-		int clock_source_monotonic = 1; 
+-		if (syscall(SYS_clock_gettime, clock_source_monotonic, now) == 0) {
+-			return;
+-		} else {
+-			/* Don't try again */
+-			linux_monotonic_failed = 1;
+-		}
+-	}
+-	}
+-#endif /* linux fallback clock_gettime */
++/* Akam: the raw clock_gettime system call fallback was removed: with a
++ * 64-bit time_t the legacy 32-bit kernel call cannot fill a struct timespec
++ * (and musl no longer even defines SYS_clock_gettime on 32-bit ARM). */
+ 
+ #if defined(HAVE_MACH_ABSOLUTE_TIME)
+ 	{

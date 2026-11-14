@@ -1,0 +1,12 @@
+ salon  192.0.2.41  Akam 1.4.2
++- ERASE THE SD CARD ----------------------------+
+ 3 lines hidden - enlarge the window to confirm
+| The camera is not touched. This cannot be      |
+| undone.                                        |
+|                                                |
+| Command:  mkfs.fat -F32 /dev/sdb1              |
+|                                                |
+| Erase the card?   ( ) Yes   (*) No             |
++------------------------------------------------+
+
+ n/Enter/Esc/q no

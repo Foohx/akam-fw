@@ -1,0 +1,10 @@
+Which firmware?  (the camera runs: b35-2af81c5; Akam 1.5.0 installed here)
+ > 1) Akam 2.0.0 (latest)
+   2) Akam 1.5.0  - older  - on the camera now
+   3) Akam 1.0.0  - older
+   4) Kit already downloaded: 1.0.0
+   5) The image already built from your backup (ak_rtsp_firmware.squashfs)
+   6) A kit file or folder...
+   7) An image file you built (.squashfs)...
+   8) Stock firmware (from your backup)  - never tested on a real camera
+  up/down move   Enter choose   1-9 jump   Esc cancel

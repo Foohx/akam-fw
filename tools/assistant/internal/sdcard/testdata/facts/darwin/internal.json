@@ -1,0 +1,12 @@
+{
+  "facts": {
+    "os": "darwin",
+    "path": "/dev/disk0",
+    "name": "disk0",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "internal": "yes"
+  },
+  "refuse": "internal disk"
+}

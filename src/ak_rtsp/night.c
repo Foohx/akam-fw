@@ -1,82 +1,112 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdint.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <time.h>
+#include <errno.h>
 
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ircut.h"
 #include "ae.h"
 #include "night.h"
+#include "night_logic.h"
+#include "imgq.h"
+#include "video_cfg.h"
 
 /* -------------------------------------------------------------------------
  * Auto day/night mode.
  *
- * Ghidra reverse-engineering of stock anyka_ipc (night_mode_check @
- * 0x0012583c, day_mode_check @ 0x00124aa0, driven by ht_night_mode_auto_th
- * @ 0x000d5abc) found it computes a synthetic "EV" from AE state
- * (ak_vpss_get_ev(): roughly gain_r/g/b * exposure_time) and compares
- * against config-driven thresholds from _ht_hw_settings.ini [night_mode]:
+ * The decision itself (when to go to night, when to come back) lives in night_logic.c, a pure state machine with
+ * its own host test; this file polls the AE, performs the switches (IR-cut filter, IR LED, frame rate, night /
+ * day ISP calibration), owns the live tuning and the 8091 keys. The reasoning is in night_logic.h and in
+ * specs/image-day-night-leds.md.
+ *
+ * Background: observing the stock anyka_ipc (night_mode_check, day_mode_check,
+ * driven by ht_night_mode_auto_th) showed a synthetic "EV" computed from the AE state
+ * (ak_vpss_get_ev(): roughly gain * exposure) compared with thresholds from _ht_hw_settings.ini [night_mode]:
  *   ps_soft_day_to_night_lum   = 6,300,000  (day->night trigger)
  *   ps_soft_night_to_day_lum   = 2,000,000  (night->day trigger)
  *   ps_soft_day/night_check_frame_num = 10  (consecutive confirming samples)
  *   ps_soft_auto_lock_time_ms  = 60,000     (anti-flap lock after a switch)
+ * A stock day/night capture (specs/image-day-night-leds.md) shows the day->night switch happens when the AE is saturated (exposure
+ * 16384 x ISP gain 1.5x = 6.29 M in Q8), and the night->day switch also depends on AWB statistics (the
+ * "non infrared ratio") which are not decoded here: see night_logic.h for what is done instead.
  *
- * We don't reproduce ak_vpss_get_ev()'s exact formula/units, so reusing
- * anyka_ipc's literal threshold numbers would be meaningless here. Instead
- * this uses hw_exp directly as the EV proxy (gain stayed 1.0x in every
- * ak_rtsp AE capture so far, so hw_exp is already the dominant brightness
- * driver) — thresholds below are picked relative to each frame-rate
- * config's VTS ceiling (2284 day / 3426 night) and NEED HARDWARE
- * CALIBRATION, unlike the AE dead-band tuning which had ground truth to
- * reverse from. The debounce/hysteresis/lock-timer *structure* mirrors
- * stock; the numbers are a starting point, not a confirmed match.
- *
- * Fresh isp_hook capture confirmed the coordinated switch stock performs:
- * IR-cut solenoid + WB table +
- * AK_ISP_set_frame_rate({15,2284,8,15} day <-> {10,3426,8,10} night) all
- * change together.
+ * Fresh isp_hook capture confirmed the coordinated switch stock performs: IR-cut solenoid + WB table +
+ * AK_ISP_set_frame_rate({15,2284,8,15} day <-> {10,3426,8,10} night) all change together.
  * ------------------------------------------------------------------------- */
 
-#define DAY_FPS            15
-#define DAY_VTS          2284
+/* The day frame rate and VTS come from video_cfg.h (15 / 2284 by default; 10, 20 or 25 when configured). Night is always 10 fps. */
 #define NIGHT_FPS          10
 #define NIGHT_VTS        3426
 
-/* hw_exp proxy thresholds — NEEDS CALIBRATION (see header comment above). */
-#define NIGHT_TRIGGER_HW_EXP   1800  /* day, hw_exp above this -> switch to night (approaching day VTS ceiling) */
-#define DAY_TRIGGER_HW_EXP      800  /* night, hw_exp below this -> switch to day */
-
-#define CONFIRM_SAMPLES    10        /* matches stock's ps_soft_day/night_check_frame_num */
-#define LOCK_MS         60000        /* matches stock's ps_soft_auto_lock_time_ms */
-#define POLL_US        100000        /* 100ms, matches stock's ht_night_mode_auto_th cadence */
+#define POLL_US        (NL_POLL_MS * 1000)  /* 100 ms, matches stock's ht_night_mode_auto_th cadence */
+#define STALE_POLLS    10                   /* no new AE sample for 1 s (it ticks at 15 Hz): treat as no sample */
 
 static volatile int g_night_running;
 static pthread_t    g_night_tid;
 
-/* Live-tunable thresholds + manual override, exposed for control.c. Same
- * whole-struct-copy convention as ae.c's g_tuning — see that file's comment
- * for why a mutex isn't used here. */
+/* Live-tunable thresholds + manual override, exposed for control.c.
+ * Guarded by g_night_lock below (unlike ae.c's g_tuning, which stays
+ * lock-free). */
 static night_tuning_t g_tuning = {
-    .trigger_hw_exp  = NIGHT_TRIGGER_HW_EXP,
-    .day_hw_exp      = DAY_TRIGGER_HW_EXP,
-    .confirm_samples = CONFIRM_SAMPLES,
-    .lock_ms         = LOCK_MS,
-    .override        = NIGHT_MODE_AUTO,
+    .trigger_hw_exp      = NIGHT_DEF_TRIGGER_HW_EXP,
+    .gain_pct            = NIGHT_DEF_GAIN_PCT,
+    .day_hw_exp          = NIGHT_DEF_DAY_HW_EXP,
+    .confirm_samples     = NIGHT_DEF_CONFIRM_SAMPLES,
+    .day_confirm_samples = NIGHT_DEF_DAY_CONFIRM,
+    .lock_ms             = NIGHT_DEF_LOCK_MS,
+    .min_night_ms        = NIGHT_DEF_MIN_NIGHT_MS,
+    .probe_ms            = NIGHT_DEF_PROBE_MS,
+    .probe_settle_ms     = NIGHT_DEF_PROBE_SETTLE_MS,
+    .override            = NIGHT_MODE_AUTO,
 };
+/* control.c updates g_tuning from a different pthread than night_loop().
+ * Protect the multi-field tuning snapshot and use a generation counter so a
+ * manual DAY/NIGHT/AUTO change invalidates stale debounce/lock state. */
+static pthread_mutex_t g_night_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned        g_mode_generation = 0;
 static volatile int g_is_night = 0;  /* current actual state, boot = day */
+static char            g_logic_status[256] = "mode=day (monitor not started)";  /* night.logic, under g_night_lock */
 
-void night_get_tuning(night_tuning_t *out) { *out = g_tuning; }
-void night_set_tuning(const night_tuning_t *in) { g_tuning = *in; }
-int  night_is_night(void) { return g_is_night; }
-
-static long long now_ms(void)
+static unsigned night_get_snapshot(night_tuning_t *out)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    unsigned generation;
+    pthread_mutex_lock(&g_night_lock);
+    *out = g_tuning;
+    generation = g_mode_generation;
+    pthread_mutex_unlock(&g_night_lock);
+    return generation;
 }
+
+void night_get_tuning(night_tuning_t *out)
+{
+    (void)night_get_snapshot(out);
+}
+
+static volatile int g_persist = 1;  /* control.c clears it for a network SET: RAM only, no flash write */
+void night_set_persist(int on) { g_persist = on ? 1 : 0; }
+
+int night_set_tuning(const night_tuning_t *in)
+{
+    int changed;
+    pthread_mutex_lock(&g_night_lock);
+    changed = g_tuning.override != in->override;
+    if (changed)
+        ++g_mode_generation;
+    g_tuning = *in;
+    pthread_mutex_unlock(&g_night_lock);
+    /* Saved only when the mode really changed (flash wear), like the picture settings. */
+    if (changed && g_persist && night_mode_save(NIGHT_CONF_FILE, in->override) < 0) {
+        int e = errno;
+        printf("[night] cannot save night.mode (lost at the next reboot): %s\n", strerror(e));
+        return e;
+    }
+    return 0;
+}
+int  night_is_night(void) { return g_is_night; }
 
 static void set_frame_rate(int fps, int vts)
 {
@@ -99,9 +129,8 @@ static void set_frame_rate(int fps, int vts)
     ae_set_tuning(&t);
 }
 
-static void switch_to_night(void)
+static void switch_to_night_locked(void)
 {
-    printf("[night] hw_exp sustained high -> switching to NIGHT mode\n");
     ircut_switch(1);
     set_frame_rate(NIGHT_FPS, NIGHT_VTS);
     /* Full night ISP calibration (2026-07-05) — replaces the old
@@ -134,13 +163,13 @@ static void switch_to_night(void)
         ae_get_tuning(&t);
         ae_set_tuning(&t);
     }
+    imgq_after_mode_switch(1);
 }
 
-static void switch_to_day(void)
+static void switch_to_day_locked(void)
 {
-    printf("[night] hw_exp sustained low -> switching to DAY mode\n");
     ircut_switch(0);
-    set_frame_rate(DAY_FPS, DAY_VTS);
+    set_frame_rate(video_fps(), video_day_vts());
     /* Restore the day ISP calibration (see switch_to_night()'s comment) —
      * replaces the old isp_set_wb_manual(460,256,504)-only restore. */
     if (isp_pipeline_init() != 0) {
@@ -155,62 +184,140 @@ static void switch_to_day(void)
         ae_get_tuning(&t);
         ae_set_tuning(&t);
     }
+    /* The day reload sent the file's WB block; img.wb=manual puts its own back. */
+    imgq_after_mode_switch(0);
+}
+
+/* The whole switch runs under the ISP configuration lock, and g_is_night changes before it is released, so an
+ * 8091 img.reload / img.wb / img.dump (isp_cfg_lock) never sees a half-switched ISP or a stale mode. */
+static void switch_to_night(void)
+{
+    isp_cfg_lock();
+    switch_to_night_locked();
+    g_is_night = 1;
+    isp_cfg_unlock();
+}
+
+static void switch_to_day(void)
+{
+    isp_cfg_lock();
+    switch_to_day_locked();
+    g_is_night = 0;
+    isp_cfg_unlock();
+}
+
+static void publish_status(const nl_state_t *nl, const night_tuning_t *t)
+{
+    char line[sizeof(g_logic_status)];
+    nl_status(nl, t, line, sizeof(line));
+    pthread_mutex_lock(&g_night_lock);
+    memcpy(g_logic_status, line, sizeof(g_logic_status));
+    pthread_mutex_unlock(&g_night_lock);
 }
 
 static void *night_loop(void *arg)
 {
     (void)arg;
-    int       confirm    = 0;
-    long long lock_until = 0;
+    nl_state_t nl;
+    unsigned   seen_mode_generation = 0;
+    int        have_mode_generation = 0;
+    unsigned   n = 0;
+    uint32_t   seen_seq = ae_stats_seq();
+    unsigned   stale = 0;
+    night_tuning_t t;
 
-    printf("[night] auto day/night monitor started (poll=%dms)\n", POLL_US / 1000);
+    printf("[night] auto day/night monitor started (poll=%dms)\n", NL_POLL_MS);
+    night_get_snapshot(&t);
+    nl_reset(&nl, &t, g_is_night);
 
     while (g_night_running) {
         usleep(POLL_US);
 
-        night_tuning_t t;
-        night_get_tuning(&t);
+        unsigned mode_generation = night_get_snapshot(&t);
 
-        /* Manual override from control.c takes priority over the auto
-         * threshold logic below — applied once per change, then idle. */
+        if (!have_mode_generation) {
+            seen_mode_generation = mode_generation;
+            have_mode_generation = 1;
+        } else if (mode_generation != seen_mode_generation) {
+            seen_mode_generation = mode_generation;
+            if (nl.mode == NL_PROBING)
+                ircut_ir_led_probe(0);
+            nl_reset(&nl, &t, g_is_night);
+            publish_status(&nl, &t);
+            printf("[night] mode changed -> reset confirm/lock/probe state\n");
+        }
+
         if (t.override == NIGHT_MODE_FORCE_DAY) {
-            if (g_is_night) { switch_to_day(); g_is_night = 0; confirm = 0; }
+            if (g_is_night)
+                switch_to_day();
             continue;
         }
+
         if (t.override == NIGHT_MODE_FORCE_NIGHT) {
-            if (!g_is_night) { switch_to_night(); g_is_night = 1; confirm = 0; }
+            if (!g_is_night)
+                switch_to_night();
             continue;
         }
 
-        long long now = now_ms();
-        if (now < lock_until) continue;  /* anti-flap lock active */
+        nl_sample_t s;
+        nl_limits_t lim;
+        int         have = 0, lum = 0;
+        have = ae_get_last_stats(&lum, &s.hw_exp, &s.sgain, &s.isp) == 0;
+        /* A sample that stopped being refreshed (AE frozen by ae.enabled=0, ioctl failing) says nothing about the
+         * light: in particular a probe must not end as "lit room" on the last IR lit value. */
+        uint32_t seq = ae_stats_seq();
+        if (seq != seen_seq) { seen_seq = seq; stale = 0; }
+        else if (stale < STALE_POLLS) stale++;
+        if (stale >= STALE_POLLS) have = 0;
+        s.lum = lum;
+        ae_get_limits(&lim.sgain_max, &lim.isp_max);
 
-        int      lum;
-        uint32_t hw_exp, hw_sgain, hw_isp;
-        if (ae_get_last_stats(&lum, &hw_exp, &hw_sgain, &hw_isp) != 0)
-            continue;  /* AE hasn't sampled yet */
+        char        why[sizeof(nl.last)];
+        nl_action_t act = nl_step(&nl, &t, have ? &s : NULL, &lim, ircut_ir_led_allowed(), why, sizeof(why));
 
-        int trigger = g_is_night ? (hw_exp < t.day_hw_exp)
-                                  : (hw_exp > t.trigger_hw_exp);
-
-        if (trigger) {
-            if (++confirm >= t.confirm_samples) {
-                if (g_is_night) switch_to_day(); else switch_to_night();
-                g_is_night = !g_is_night;
-                confirm    = 0;
-                lock_until = now + t.lock_ms;
-            }
-        } else {
-            confirm = 0;
+        switch (act) {
+        case NL_GO_NIGHT:
+            printf("[night] switching to NIGHT mode: %s\n", why);
+            switch_to_night();
+            printf("[night] transition complete -> state=night lock=%dms\n", t.lock_ms);
+            break;
+        case NL_GO_DAY:
+            printf("[night] switching to DAY mode: %s\n", why);
+            switch_to_day();
+            printf("[night] transition complete -> state=day lock=%dms\n", t.lock_ms);
+            break;
+        case NL_PROBE_START:
+            printf("[night] ambient light probe: %s\n", why);
+            ircut_ir_led_probe(1);
+            break;
+        case NL_PROBE_END:
+            printf("[night] %s\n", why);
+            ircut_ir_led_probe(0);
+            break;
+        default:
+            break;
         }
+        if (act != NL_NONE || (++n % 5) == 0)
+            publish_status(&nl, &t);
     }
 
+    if (nl.mode == NL_PROBING)
+        ircut_ir_led_probe(0);
     printf("[night] auto day/night monitor stopped\n");
     return NULL;
 }
 
 int night_start(void)
 {
+    /* Saved manual mode, applied before the monitor thread exists so its first decision already honours it
+     * (a forced mode never flips at boot). Skipped if a SET already changed the mode. */
+    night_override_t saved;
+    pthread_mutex_lock(&g_night_lock);
+    if (g_mode_generation == 0 && night_mode_load(NIGHT_CONF_FILE, &saved)) {
+        g_tuning.override = saved;
+        printf("[night] saved mode: %s\n", saved == NIGHT_MODE_FORCE_DAY ? "day" : "night");
+    }
+    pthread_mutex_unlock(&g_night_lock);
     g_night_running = 1;
     if (pthread_create(&g_night_tid, NULL, night_loop, NULL) != 0) {
         perror("[night] pthread_create");
@@ -224,4 +331,104 @@ void night_stop(void)
 {
     g_night_running = 0;
     pthread_join(g_night_tid, NULL);
+}
+
+/* ---- 8091 keys (see night.h) ---- */
+
+static int is_ours(const char *key)
+{
+    static const char *const keys[] = { "night.gain_pct", "night.day_confirm_samples", "night.min_night_ms",
+                                        "night.probe_ms", "night.probe_settle_ms", "night.ae", "night.logic" };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+        if (!strcmp(key, keys[i])) return 1;
+    return 0;
+}
+
+static void q8(char *out, size_t cap, uint32_t v)
+{
+    snprintf(out, cap, "%u.%02ux", v / 256u, (v % 256u) * 100u / 256u);
+}
+
+int night_ctl_get(const char *key, char *out, size_t cap)
+{
+    if (!is_ours(key)) return -1;
+    night_tuning_t t;
+    night_get_snapshot(&t);
+    if (!strcmp(key, "night.gain_pct"))                 snprintf(out, cap, "night.gain_pct=%u", t.gain_pct);
+    else if (!strcmp(key, "night.day_confirm_samples")) snprintf(out, cap, "night.day_confirm_samples=%d", t.day_confirm_samples);
+    else if (!strcmp(key, "night.min_night_ms"))        snprintf(out, cap, "night.min_night_ms=%d", t.min_night_ms);
+    else if (!strcmp(key, "night.probe_ms"))            snprintf(out, cap, "night.probe_ms=%d", t.probe_ms);
+    else if (!strcmp(key, "night.probe_settle_ms"))     snprintf(out, cap, "night.probe_settle_ms=%d", t.probe_settle_ms);
+    else if (!strcmp(key, "night.logic")) {
+        pthread_mutex_lock(&g_night_lock);
+        snprintf(out, cap, "night.logic=%s (read-only)", g_logic_status);
+        pthread_mutex_unlock(&g_night_lock);
+    } else {
+        /* night.ae: what the decision sees, live */
+        int lum;
+        nl_sample_t s;
+        nl_limits_t lim;
+        char sg[16], ip[16], ms[16], mi[16];
+        ae_get_limits(&lim.sgain_max, &lim.isp_max);
+        q8(ms, sizeof(ms), lim.sgain_max);
+        q8(mi, sizeof(mi), lim.isp_max);
+        if (ae_get_last_stats(&lum, &s.hw_exp, &s.sgain, &s.isp) != 0) {
+            snprintf(out, cap, "night.ae=no AE sample yet max_sgain=%s max_isp=%s (read-only)", ms, mi);
+        } else {
+            s.lum = lum;
+            q8(sg, sizeof(sg), s.sgain);
+            q8(ip, sizeof(ip), s.isp);
+            snprintf(out, cap, "night.ae=lum=%d hw_exp=%u sgain=%s isp=%s max_sgain=%s max_isp=%s saturated=%d "
+                               "(read-only)", lum, s.hw_exp, sg, ip, ms, mi, nl_saturated(&t, &s, &lim));
+        }
+    }
+    return 0;
+}
+
+void night_ctl_list(void (*emit)(void *arg, const char *line), void *arg)
+{
+    static const char *const keys[] = { "night.gain_pct", "night.day_confirm_samples", "night.min_night_ms",
+                                        "night.probe_ms", "night.probe_settle_ms", "night.ae", "night.logic" };
+    char line[320];
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+        if (night_ctl_get(keys[i], line, sizeof(line)) == 0) emit(arg, line);
+}
+
+static int parse_range(const char *val, long lo, long hi, long *out)
+{
+    char *end = NULL;
+    long v = strtol(val, &end, 10);
+    if (val[0] == '\0' || !end || *end != '\0' || v < lo || v > hi) return -1;
+    *out = v;
+    return 0;
+}
+
+int night_ctl_set(const char *key, const char *val, char *msg, size_t cap)
+{
+    if (!is_ours(key)) return -1;
+    if (!strcmp(key, "night.ae") || !strcmp(key, "night.logic")) {
+        snprintf(msg, cap, "ERR %s is read-only", key);
+        return 1;
+    }
+    long lo = 0, hi = 0;
+    if (!strcmp(key, "night.gain_pct"))                 { lo = 1;    hi = 100; }
+    else if (!strcmp(key, "night.day_confirm_samples")) { lo = 1;    hi = 36000; }
+    else if (!strcmp(key, "night.min_night_ms"))        { lo = 0;    hi = 86400000; }
+    else if (!strcmp(key, "night.probe_ms"))            { lo = 10000; hi = 86400000; }
+    else                                                { lo = 500;  hi = 60000; }  /* night.probe_settle_ms */
+    long v;
+    if (parse_range(val, lo, hi, &v) != 0) {
+        snprintf(msg, cap, "ERR invalid %s value %s (want an integer in [%ld,%ld])", key, val, lo, hi);
+        return 1;
+    }
+    night_tuning_t t;
+    night_get_snapshot(&t);
+    if (!strcmp(key, "night.gain_pct"))                 t.gain_pct = (uint32_t)v;
+    else if (!strcmp(key, "night.day_confirm_samples")) t.day_confirm_samples = (int)v;
+    else if (!strcmp(key, "night.min_night_ms"))        t.min_night_ms = (int)v;
+    else if (!strcmp(key, "night.probe_ms"))            t.probe_ms = (int)v;
+    else                                                t.probe_settle_ms = (int)v;
+    night_set_tuning(&t);
+    snprintf(msg, cap, "OK %s=%ld", key, v);
+    return 0;
 }

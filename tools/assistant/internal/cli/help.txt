@@ -1,0 +1,170 @@
+akam - guided setup for Akam (PC side)
+
+Usage: ./akam [options] [command]
+
+Commands:
+  (none)             home screen: choose the camera, set up, update, options, backup, settings
+                     (on a terminal: a full-screen menu, keys: arrows or j/k, Enter, ? help, c camera, q)
+  steps              the nine setup steps with their status, one at a time; resumes where you stopped
+  doctor             check this computer (tools); changes nothing
+  get-kit            download and verify the prebuilt kit (no compiling)
+  build              build from source instead (optional, needs more tools)
+  prepare-backup-sd  prepare the microSD card used to back up the camera
+  find-camera        find the camera (asks its IP address, checks the ports)
+  backup             back up the camera (double read, checked, copied to ~/akam-backup-<name>-<date>/),
+                     or accept a backup folder you made by hand (--backup-dir DIR)
+  image              build the Akam image from your backup
+  prepare-flash-sd   prepare the microSD card used to flash the camera
+  flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
+  verify             check SSH, ports and hardware, then the same without the card
+  update             flash a new image over SSH (no card). Choose the firmware with --version X.Y.Z (a published
+                     release), --kit FILE, --image FILE or --stock (back to the original); without one, the menu
+                     asks "Which firmware?"
+  releases           list the firmware releases published on GitHub for your camera model, newest first
+                     (read only; --include-prereleases)
+  hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
+                     applied at the next power cycle (needs a firmware that has akam_hostname.sh)
+  rtsp-auth [set|disable|status]
+                     password (Digest login) on the video stream, over SSH; off by default
+                     (typed here, never shown, sent to the camera only as a hash); default: status
+  led [show | status on|off|auto] [ir auto|off]
+                     the front LED and the infrared night LEDs, over SSH; saved on the camera. Default: show.
+                       status: on (as now), off, or auto (blinks while starting or without Wi-Fi, blinks
+                       slowly while someone watches the video, solid otherwise)
+                       ir: auto (IR LEDs light at night) or off (never lit; night mode still switches the image)
+  audio [show | volume 0-100 | beep | on | off | talk on|off | mic on|off]
+                     the camera's speaker and microphone, over SSH. Default: show (volume, speaker on/off,
+                     talk on/off, microphone on/off, playback underruns and drops). volume, talk and mic are
+                     saved on the camera; mic off never opens the microphone and removes the audio track from
+                     the stream (needs a reboot to apply); beep plays a
+                     short tone; off silences the speaker and keeps it off after a reboot; on may need a
+                     reboot of the camera to start the speaker. No confirmation is asked.
+  picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]
+                     the picture, over SSH. N is -50 to 50 (0 = unchanged); the four numbers, wb (/etc/config/akam/image)
+                     and night (/etc/config/akam/night) are saved on the camera and applied at every start.
+                     reset puts the four numbers back to 0. Several words can be combined. Default: show.
+  video [show | bitrate N | fps N | gop N]
+                     the video encoder settings, over SSH. Default: show. bitrate is the cap in kbit/s (500 to 3000,
+                     default 1536); fps is 10, 15, 20 or 25 (default 15; night mode always runs at 10); gop is the key
+                     frame interval in seconds (1 to 4, default 2). Saved on the camera, applied at the next restart of the video service: you are
+                     asked (default No) whether to restart it now (the stream stops for a few seconds).
+                     Resolution and flip/mirror are not available.
+  debug [on [MINUTES] | off | status]
+                     port 8091 is read-only for the network: 'on' lets the network change settings
+                     too (for the PC tuning tool) for MINUTES (default 60, up to 1440) or until
+                     'off' or a reboot; over SSH. Default: status
+  ntp [status | set SERVER... | off]
+                     time sync of the camera (it has no clock of its own and starts in the past), over SSH.
+                       set: 1 to 3 servers (host names or IPv4 addresses, for example ntp.example.net); the camera
+                       asks them at start-up and every 6 hours (UDP 123, outgoing only) and saves the choice
+                       off: stop and forget the servers (default: off, no traffic at all)
+                       status (default): servers, the camera's clock, whether it is believable
+  onvif [enable [PORT] | disable | status]
+                     ONVIF for NVRs and apps (ONVIF Device Manager, Frigate, Home Assistant): off by default.
+                     'enable' (asks first, needs the stream password: rtsp-auth set) opens TCP PORT (default 80)
+                     and UDP 3702 on your network; 'disable' closes them. Over SSH. Default: status
+  mqtt [status | set | disable | forget | test]
+                     optional MQTT client for Home Assistant (a broker on your network): off by default, over SSH.
+                       set: asks the broker address, port, user name and password (not shown), then asks (default No)
+                         whether to turn it on; the camera connects OUT (no new open port), in plain TCP
+                       disable: stop (the settings stay); forget: stop and delete the settings and the password
+                       test: one connection attempt with the saved settings; status (default): on or off, the broker
+  key [show | use-shared | use-new | use FILE.pub]
+                     the SSH key that opens this camera (each camera can use the shared key ~/.ssh/akam, a key of its
+                     own ~/.ssh/akam-<name>, or any ed25519 key). Default: show (which key, its fingerprint).
+                     use-*: over SSH, adds the new public key to the camera, logs in again with it, and only then
+                     remembers it for THIS camera; then asks (default No) whether to remove the old key from the
+                     camera. If anything fails the camera still accepts the old key. Other cameras are not touched.
+                     A new key is made on this computer (ed25519, passphrase asked twice, private file mode 600).
+  config [show | save-global | save-local | apply | edit-global | forget-secrets]
+                     the settings of a camera, saved on THIS computer: a global config (the default template for
+                     new cameras, profiles/global.conf) and, per camera, its local config (what was last read or
+                     applied). A config holds the Options settings (video, picture, LED, audio, ONVIF, time sync,
+                     MQTT, video password on/off and user name) and the SSH key choice. Passwords and the Wi-Fi are in
+                     a separate private file that exists only if you say yes (default No) each time you save.
+                       show [--global]: what is saved (passwords shown as set / not set, never their value)
+                       save-global [--from CAMERA]: read a camera now (or what was last saved for it) into the
+                         global config; asks (default No) to keep the passwords, and the Wi-Fi, in it
+                       save-local: record this camera's settings as its local config
+                       apply --global | --from CAMERA [--only video,picture,led,audio,onvif,ntp,mqtt,auth,key]
+                         [--include-secrets]: compare with the camera, show the differences, ask (default No),
+                         then send them as the Options screens do; the video restart is asked separately.
+                         A password is sent only with the setting that needs it (it cannot be read back).
+                         Wi-Fi is never applied to a running camera (it only prepares the card of a new one).
+                         The SSH key change and a removal of the video password each ask their own question.
+                       edit-global: edit the template without a camera (session; a list in plain)
+                       forget-secrets [--global]: delete the saved passwords and Wi-Fi of the global config, or of
+                         this camera (--camera NAME), from this computer. Nothing is synchronised, ever.
+  talk [SECONDS | test]
+                     speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
+                     'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
+                     ffmpeg or arecord; uses the ONVIF audio backchannel on port 554
+  say FILE           play an audio file on the camera's speaker (ffmpeg converts it)
+  restore            put the original APP back from your backup
+  wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)
+  step NAME          run one step again (doctor, get-kit, prepare-backup-sd,
+                     find-camera, backup, image, prepare-flash-sd, flash, verify)
+  status             show every step: done / todo / blocked
+  cameras            list the cameras you set up (one progress each); switch with --camera NAME
+  rename-camera NEW  give the current camera another name (its progress moves with it)
+  register           record a camera that ALREADY runs Akam, without redoing backup, image or flash:
+                     ./akam --camera NAME --ip ADDRESS [--backup-dir DIR] register
+  version            show the version of this program
+  self-test          offline checks of the built-in parts (G.711, Digest, state files); changes nothing
+  forget-host-key IP forget the remembered SSH host key of a camera (after a reinstall; asks first)
+  licenses           show the licences of the software built into this program
+  help               this text
+
+Options:
+  --dry-run          rehearse: show every command, change nothing, ask nothing
+  --kit FILE         use a local kit (tarball with SHA256SUMS next to it, or folder)
+  --version X.Y.Z    firmware release to download for get-kit, or to put on the camera with update
+  --model ID         camera model of the kit (default: the model found by the backup, or the only one)
+  --allow-unsigned   accept a kit without a signature (checksum only)
+  --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
+  --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)
+  --backup-copy DIR  also copy the backup folder to DIR (another medium) and check the copy
+  --ip ADDRESS       the camera's IP address (find-camera asks otherwise)
+  --identity FILE    your SSH private key (default: ~/.ssh/akam, or --pubkey without .pub)
+  --image FILE       image for update (default: the one built by the image step; exactly 5242880 bytes)
+  --stock            update: put the original (stock) firmware back from your verified backup (the restore
+                     command with all its gates; never tested on a real camera)
+  --include-prereleases
+                     releases and the firmware list: also show prereleases (hidden by default)
+  --manual-telnet    never drive the camera's telnet shell: the wizard prints each command and
+                     you paste it in your own telnet window (also automatic after 2 failures)
+  --out DIR          where the image is written (default ~/akam-image-<name>-<date>)
+  --builder native|tools
+                     image builder: tools = the bash wizard (Linux, the default there); native = built
+                     in this program from your backup (EXPERIMENTAL, not yet validated on hardware)
+  --i-understand-untested
+                     native builder: build even when the backup is not a validated target
+  --comp xz|gzip     override the stock APP compression (not recommended)
+  --allow-unknown-stock-comp
+                     allow a stock APP compression other than xz/gzip (expert)
+  --device DEV       whole microSD disk, for example /dev/sdb
+  --pubkey FILE      SSH public key for the flash card (default: asked; the shared key ~/.ssh/akam.pub comes first)
+  --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
+  --profile P        doctor profile: kit | build | all
+  --camera NAME      the camera to work on (a short name such as kitchen: a-z, 0-9, '-', at most 20).
+                     Each camera has its own progress and log; a new name starts a new camera. The
+                     name is used in the backup and image folders. The first menu run asks for it;
+                     progress made before this existed is the camera called "default".
+  --state-dir DIR    where progress and the logs are kept
+                     (default ${XDG_STATE_HOME:-~/.local/state}/akam)
+  --trust-new-host-key FP
+                     accept the first SSH host key of a camera when its SHA256 fingerprint is FP
+                     (without a terminal; a CHANGED key is always refused)
+  --password-file F  read the stream password for talk/say from the first line of F
+  --no-color         no colours (NO_COLOR works too)
+  --plain            line-based output and prompts, no full-screen menu or widgets
+                     (also automatic when not on a terminal; AKAM_PLAIN=1 does the same)
+
+A native binary (experimental) exists: see the releases. From a source checkout, build it with
+tools/assistant/build.sh and run it with AKAM_USE_BIN=1 ./akam ... (same arguments, same state files).
+
+Safety: the wizard itself never runs sudo (it prints the command; only the SD tool asks sudo
+for the disk work), shows every command before it runs, refuses destructive actions without a
+terminal, and never stores your Wi-Fi password. Erasing a card and writing the camera's flash
+each need your explicit yes in a red box (one yes/no, default No: Enter, Esc or q mean No).
+It never reboots or power-cycles the camera.

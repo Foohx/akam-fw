@@ -1,0 +1,21 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sdh",
+    "name": "sdh",
+    "whole": true,
+    "size": 34359738368,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sdh",
+    "dev_num": "8:16",
+    "removable_raw": "1",
+    "roles": [
+      "swap"
+    ]
+  },
+  "refuse": "swap"
+}

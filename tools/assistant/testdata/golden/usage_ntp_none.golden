@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: ntp set needs 1 to 3 servers, for example: ./akam ntp set ntp.example.net (see ./akam help)

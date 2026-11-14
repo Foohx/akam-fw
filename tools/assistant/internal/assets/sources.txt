@@ -1,0 +1,10 @@
+tools/flash_scripts/akam_reflash_ssh.sh
+tools/flash_scripts/flash_guard.sh
+tools/flash_scripts/preflight_check.sh
+tools/flash_scripts/install_with_flash_tool.sh
+tools/flash_scripts/restore.sh
+tools/hw_tests/akam_hwcheck.sh
+tools/release/models/lsc-indoor-1080p-ak3918.txt
+THIRD_PARTY_NOTICES.md
+tools/flash_scripts/akam_authkeys.sh
+LICENSE

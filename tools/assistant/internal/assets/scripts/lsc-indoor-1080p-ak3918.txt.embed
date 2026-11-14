@@ -1,0 +1,50 @@
+# Akam camera model registry entry (machine-readable). One file per model: tools/release/models/<model-id>.txt
+# The file name is the model id. The kit of a model carries ITS file as supported_hardware.txt and its id as
+# `model=<id>` in MANIFEST.txt; the assistant and the wizard embed/read every file of this directory.
+#
+# Model id rule: lowercase a-z, 0-9 and '-', 3 to 40 characters, no leading, trailing or double '-'.
+# Shape: <brand>-<form>-<resolution>-<soc>, e.g. lsc-indoor-1080p-ak3918. The id is stable: it is part of the
+# release asset names (akam-kit-<model>-X.Y.Z.tar.xz) and of every kit, so it is never renamed once released.
+# A new id is needed when the hardware or the flash layout differs (different board, SoC, partition table, stock
+# firmware family). The same hardware sold under another article number keeps its id (add the article below).
+#
+# Header lines (key=value, before the records; a tool that does not know a key ignores it):
+#   supported_hardware_format  1
+#   model     the model id (equal to the file name without .txt)
+#   name      display name
+#   articles  article numbers of the retail units, space separated
+#   soc       system on chip
+#   flash     flash chip size and type
+#   layout    partition table the installer requires: number of partitions, byte sizes, APP partition
+#
+# Records, one per line, fields separated by '|' (a '-' means "not known", no '|' inside a field):
+#
+#   status        validated | reported | untested
+#   device        retail model, with the label printed on the board when known
+#   soc           system on chip
+#   kernel        `uname -r` followed by `uname -v` on the camera
+#   mtd_layout    number of partitions; APP partition and its size (hex bytes)
+#   app_squashfs  stock APP squashfs: compressor, block size, BCJ filter
+#   app_sha256    sha256 of the stock APP partition dump (what the tools compare)
+#   busybox       BusyBox version on the camera
+#
+# validated : an Akam image built for this exact fingerprint was flashed and run
+#             on real hardware (boot, SSH, RTSP, Telnet off) by the maintainer.
+# reported  : someone else reported it working; not reproduced by the maintainer.
+# untested  : may or may not work. Akam makes no promise. A tool that reads this
+#             file must warn and ask for an explicit confirmation.
+# anything not listed below is unknown and must be treated like untested, EXCEPT
+# a different MTD layout, which must be refused.
+#
+# The sha256 of a stock APP dump is the dump of ONE camera: it is expected to be
+# identical on other units of the same firmware, which is still to be confirmed.
+supported_hardware_format=1
+model=lsc-indoor-1080p-ak3918
+name=LSC Smart Indoor 1080p
+articles=3215672.3
+soc=AK3918AV130
+flash=8 MiB SPI NOR
+layout=8 partitions; sizes 204800 4096 4096 65536 1572864 1032192 262144 5242880; APP=mtd7
+validated|LSC Smart Indoor 1080p 3215672.3 (board SI D26228)|AK3918AV130|4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025|8 partitions; mtd7=APP 00500000|squashfs xz block=131072 bcj=none|14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294|1.30.1
+untested|LSC Smart Indoor 1080p 3215672.2 (boards SI B26101 / C26101; run with ak_rtsp upstream, never with Akam)|AK3918AV130|-|-|-|-|-
+untested|any other device, kernel build or stock APP (including a stock APP compressed with gzip)|-|-|-|-|-|-

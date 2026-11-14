@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>DeviceIdentifier</key>
+	<string>disk6</string>
+	<key>DeviceNode</key>
+	<string>/dev/disk6</string>
+	<key>WholeDisk</key>
+	<true/>
+	<key>Internal</key>
+	<false/>
+	<key>RemovableMedia</key>
+	<false/>
+	<key>Removable</key>
+	<false/>
+	<key>VirtualOrPhysical</key>
+	<string>Virtual</string>
+	<key>SystemImage</key>
+	<true/>
+	<key>BusProtocol</key>
+	<string>Disk Image</string>
+	<key>TotalSize</key>
+	<integer>1073741824</integer>
+	<key>DeviceBlockSize</key>
+	<integer>512</integer>
+	<key>MediaName</key>
+	<string>Generic Card Reader Media</string>
+	<key>IORegistryEntryName</key>
+	<string>Generic Card Reader Media</string>
+	<key>DiskUUID</key>
+	<string>0D5F0E10-1111-2222-3333-444455556666</string>
+	<key>WritableMedia</key>
+	<true/>
+	<key>Writable</key>
+	<true/>
+	<key>ParentWholeDisk</key>
+	<string>disk6</string>
+</dict>
+</plist>

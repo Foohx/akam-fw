@@ -1,0 +1,48 @@
+# Pinned toolchain cache shared by every CI job (Zig, Go, BusyBox, SmolRTSP, Dropbear source, Go modules).
+# Key: runner OS + hash of tools/build/deps.lock, tools/build/bootstrap.sh and tools/assistant/go.sum (the Go build cache is NOT part
+# of it: go-tests caches that separately). Needs the repository checked out first.
+#   bootstrap: "true"  (job "toolchain")  restore, run tools/build/bootstrap.sh on a miss, save the result
+#              "false" (test jobs)        restore only; fails when the toolchain job did not provide it
+name: toolchain
+description: Restore (and when needed create) the pinned build toolchain
+inputs:
+  bootstrap:
+    description: "true: populate the cache on a miss; false: restore only"
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - id: save
+      if: inputs.bootstrap == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        # The "!" exclusion may be ineffective (the Go build cache could still end up in this cache); it is harmless.
+        path: |
+          tools/.toolchain
+          !tools/.toolchain/go/cache
+          tools/.cache
+          src/smolrtsp
+        key: toolchain-${{ runner.os }}-${{ hashFiles('tools/build/deps.lock', 'tools/build/bootstrap.sh', 'tools/assistant/go.sum') }}
+    - if: inputs.bootstrap == 'true' && steps.save.outputs.cache-hit != 'true'
+      shell: bash
+      run: bash tools/build/bootstrap.sh
+    - if: inputs.bootstrap != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          tools/.toolchain
+          !tools/.toolchain/go/cache
+          tools/.cache
+          src/smolrtsp
+        key: toolchain-${{ runner.os }}-${{ hashFiles('tools/build/deps.lock', 'tools/build/bootstrap.sh', 'tools/assistant/go.sum') }}
+        fail-on-cache-miss: true
+    # Host tools the tests probe with `command -v` (tools/build/check_host.sh lists the same kit/build tools). Test jobs
+    # only: the toolchain job just fills the cache. Packages of ubuntu-24.04; qemu-user provides qemu-arm,
+    # gdb-multiarch the ARM-capable gdb, ffmpeg the ffprobe of the RTSP cross-checks, libxml2-utils xmllint.
+    - if: inputs.bootstrap != 'true'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends \
+          squashfs-tools parted dosfstools fdisk util-linux gdb-multiarch qemu-user libxml2-utils ffmpeg \
+          binutils file bzip2 xz-utils openssl openssh-client python3 make

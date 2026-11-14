@@ -1,0 +1,69 @@
+# Pinned external build dependencies (sourceable by sh: KEY=value, no spaces).
+# Every download is verified against the sha256 below; a mismatch aborts.
+
+ZIG_VERSION=0.14.1
+# Per host: ZIG_URL_linux_<arch> / ZIG_SHA256_linux_<arch>. Hashes copied from
+# https://ziglang.org/download/index.json (field "shasum"). x86_64 is the reference host
+# (the only one that produces release kits); aarch64 Linux is supported for building only.
+ZIG_URL_linux_x86_64=https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+ZIG_SHA256_linux_x86_64=24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+ZIG_URL_linux_aarch64=https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz
+ZIG_SHA256_linux_aarch64=f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
+
+# Go toolchain for the native assistant (tools/assistant): the OFFICIAL release from https://go.dev/dl/.
+# GO_VERSION is the EXACT release used for release builds: tools/assistant/build.sh (all, flat, repro) and
+# tools/release/build_assistant.sh refuse any other `go version` unless AKAM_ALLOW_ANY_GO=1 (then the result
+# is not a release). bootstrap.sh downloads the archive of the host (GO_URL_<os>_<arch>, sha256-checked) into
+# tools/.toolchain/go-<version>-<os>-<arch>/ (project-local: never system-wide, never ~/go); build.sh and
+# the tests prefer it over the go of PATH. go.mod keeps `go 1.26.0` as the language minimum.
+# Modules are pinned by tools/assistant/go.sum (sumdb-verified). Hashes: field "sha256" of https://go.dev/dl/?mode=json.
+GO_VERSION=1.27.4
+GO_NOTE="release builds need exactly Go 1.27.4 (go.mod says 1.26.0); bootstrap.sh installs it in tools/.toolchain/"
+GO_URL_linux_amd64=https://go.dev/dl/go1.27.4.linux-amd64.tar.gz
+GO_SHA256_linux_amd64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
+GO_URL_linux_arm64=https://go.dev/dl/go1.27.4.linux-arm64.tar.gz
+GO_SHA256_linux_arm64=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92
+GO_URL_darwin_amd64=https://go.dev/dl/go1.27.4.darwin-amd64.tar.gz
+GO_SHA256_darwin_amd64=2b799377704ef12db39bd254995d5c348c9cc8d86562ca817724390e56c38f43
+GO_URL_darwin_arm64=https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz
+GO_SHA256_darwin_arm64=91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4
+GO_URL_windows_amd64=https://go.dev/dl/go1.27.4.windows-amd64.zip
+GO_SHA256_windows_amd64=178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e
+GO_URL_windows_arm64=https://go.dev/dl/go1.27.4.windows-arm64.zip
+GO_SHA256_windows_arm64=9e7a72565792b8ab370b37ac9ac109799237abacb39ff2f541c438b963c0cc64
+
+SMOLRTSP_URL=https://github.com/OpenIPC/smolrtsp.git
+SMOLRTSP_COMMIT=8ae3b5115f7a77c383080b51cb7fdba1046f862f
+
+# Header-only dependencies of SmolRTSP (same versions as its CMakeLists.txt).
+SLICE99_TAG=v0.7.8
+SLICE99_URL=https://github.com/hirrolot/slice99/archive/refs/tags/v0.7.8.tar.gz
+SLICE99_SHA256=07b06b29d06eb74798d85e34b2b50af330f5480e96457bcbfd20f5c6f61d1a30
+
+METALANG99_TAG=v1.13.5
+METALANG99_URL=https://github.com/hirrolot/metalang99/archive/refs/tags/v1.13.5.tar.gz
+METALANG99_SHA256=f3d1607d76b4b081d3295661c4c2b8d5fde4d5018b1aa409c84fb3a6660ffb90
+
+DATATYPE99_TAG=v1.6.5
+DATATYPE99_URL=https://github.com/hirrolot/datatype99/archive/refs/tags/v1.6.5.tar.gz
+DATATYPE99_SHA256=f38c077afdb91b7d754321be5d3c4a43ed5420c1ad51514d1de20023960f9a8e
+
+INTERFACE99_TAG=v1.0.2
+INTERFACE99_URL=https://github.com/hirrolot/interface99/archive/refs/tags/v1.0.2.tar.gz
+INTERFACE99_SHA256=8bd007c48cf05436ced60884e8e3a05ede46105f3efae9bf29e0f4d30f938f9e
+
+# Dropbear SSH server (tag DROPBEAR_2026.94 -> commit 28216cd9af822732a1549b78621c2ea9a76a0fe5).
+# Release tarball sha256 cross-checked: second download from dropbear.nl/mirror
+# (same hash), detached .asc verified with the release signing key below, and
+# the tarball tree is identical to the GitHub tag archive.
+DROPBEAR_VERSION=2026.94
+DROPBEAR_URL=https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.94.tar.bz2
+DROPBEAR_SHA256=e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81
+# Release signing key (https://matt.ucc.asn.au/dropbear/releases/dropbear-key-2015.asc)
+DROPBEAR_SIGNING_FPR=F7347EF2EE2E07A267628CA944931494F29C6773
+
+# Static x86_64 musl BusyBox, host-side ash tests only (never installed system-wide).
+# Upstream publishes no checksum/signature for it; the hash was computed on download.
+BUSYBOX_VERSION=1.35.0
+BUSYBOX_URL=https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
+BUSYBOX_SHA256=6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348

@@ -1,0 +1,24 @@
+Akam - camera: salon
+------------------------------------------------------------------------------
+   [ok] done     1. Check this computer
+   [~] todo      2. Get the Akam kit
+ > [-] blocked   3. Prepare the backup microSD card
+   [!] stale     4. Find the camera on your network
+                 Camera: show LEDs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Why: boots the camera into a rescue shell. Risk: ERASES the microSD card.
+  Enter runs the line. Every action shows what it will do first and asks one yes/no (default No).
+  up/down move   Enter run   ? help   q quit

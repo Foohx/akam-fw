@@ -1,0 +1,18 @@
+{
+  "facts": {
+    "os": "linux",
+    "path": "/dev/sde",
+    "name": "sde",
+    "whole": true,
+    "size": 67108864,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "unknown",
+    "model": "SD Reader",
+    "vendor": "Generic",
+    "serial": "S-sde",
+    "dev_num": "8:16",
+    "removable_raw": "1"
+  },
+  "refuse": "outside 128 MiB"
+}

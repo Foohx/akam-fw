@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Build a minimal static Dropbear multi-call binary for the Anyka AK3918
+# (ARMv5TE, soft-float, musl) with the pinned Zig toolchain.
+#
+#   tools/build/bootstrap.sh          # once: Zig + verified Dropbear archive
+#   tools/dropbear/build_dropbear.sh
+#
+# Output (git-ignored): dist/dropbear/{dropbearmulti,BUILDINFO.txt,LICENSE.dropbear}
+# Work tree (git-ignored, wiped on every run): build/dropbear/
+#
+# DROPBEAR_PROGRAMS overrides the programs linked into the multi-call binary
+# (default "dropbear dropbearkey"; scp is deliberately not included).
+# Options live in tools/dropbear/localoptions.h. The only source change is the
+# set of patches in tools/dropbear/patches/ (applied in name order, each one
+# must apply cleanly): see the header of each patch for why it exists.
+# src/common/time32_shim.c is compiled with the same flags and linked into the
+# multi-call binary: the camera's kernel does not execute musl's time64
+# clock_gettime syscall (docs/how-it-works.md). The final binary's
+# machine code is checked for it (gdb required, hard failure).
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$here/../.." && pwd)"
+# shellcheck source=tools/build/env.sh
+. "$root/tools/build/env.sh"
+# env.sh also sources deps.lock (DROPBEAR_* and ZIG_* variables).
+
+programs="${DROPBEAR_PROGRAMS:-dropbear dropbearkey}"
+archive="$root/tools/.cache/$(basename "$DROPBEAR_URL")"
+work="$root/build/dropbear"
+src="$work/src"
+wrap="$work/bin"
+dist="$root/dist/dropbear"
+jobs="$(nproc 2>/dev/null || echo 2)"
+
+die() { echo "build_dropbear: error: $*" >&2; exit 1; }
+log() { echo "build_dropbear: $*"; }
+
+[ -f "$archive" ] || die "$archive missing; run tools/build/bootstrap.sh"
+got="$(sha256sum "$archive" | cut -d' ' -f1)"
+[ "$got" = "$DROPBEAR_SHA256" ] || die "sha256 mismatch for $archive: expected $DROPBEAR_SHA256, got $got"
+
+# Fresh tree every time: no stale objects, reproducible result.
+rm -rf "$work"
+mkdir -p "$src" "$wrap" "$dist"
+tar -xjf "$archive" -C "$src" --strip-components=1
+cp "$here/localoptions.h" "$src/localoptions.h"
+
+# Pinned patches (strict: a patch that does not apply cleanly aborts the build).
+command -v patch >/dev/null || die "the 'patch' tool is required"
+shopt -s nullglob
+patches=("$here"/patches/*.patch)
+shopt -u nullglob
+for p in "${patches[@]}"; do
+    (cd "$src" && patch -p1 --forward --fuzz=0 --no-backup-if-mismatch -s <"$p") \
+        || die "patch $(basename "$p") does not apply to Dropbear $DROPBEAR_VERSION"
+    log "applied $(basename "$p")"
+done
+# The camera must not depend on clock_gettime(): the tick based clock has to be in.
+grep -q akam_ticks_now "$src/src/dbutil.c" || die "monotonic clock patch missing from dbutil.c"
+# No raw time syscall with a libc time struct may exist in the sources.
+if grep -nE 'syscall *\( *SYS_(clock_gettime|gettimeofday|time)' "$src"/src/*.c; then
+    die "raw time syscall left in the Dropbear sources (see above)"
+fi
+
+# autoconf wants plain program names, so wrap "zig cc/ar/ranlib" in tiny scripts.
+# The single quotes are intentional: "$@" must be expanded by the wrapper.
+printf '#!/bin/sh\nexec "%s" cc -target %s -mcpu=%s "$@"\n' "$ZIG" "$AKAM_TARGET" "$AKAM_MCPU" >"$wrap/cc"
+printf '#!/bin/sh\nexec "%s" ar "$@"\n' "$ZIG" >"$wrap/ar"
+printf '#!/bin/sh\nexec "%s" ranlib "$@"\n' "$ZIG" >"$wrap/ranlib"
+chmod 755 "$wrap/cc" "$wrap/ar" "$wrap/ranlib"
+
+# Strip absolute build paths from the binary (reproducibility).
+prefix_map="-ffile-prefix-map=$src=dropbear -ffile-prefix-map=$root=akam"
+cflags="-Os -mfloat-abi=soft -ffunction-sections -fdata-sections $prefix_map"
+
+# The shim is a plain object, linked explicitly (see its header for why that
+# beats libc.a's clock_gettime for a static link).
+shim_src="$root/src/common/time32_shim.c"
+shim_obj="$work/time32_shim.o"
+[ -f "$shim_src" ] || die "$shim_src missing"
+# shellcheck disable=SC2086  # cflags is a word list by design
+"$wrap/cc" $cflags -Wall -c -o "$shim_obj" "$shim_src" || die "cannot compile the time32 shim"
+
+log "configure"
+(
+    cd "$src"
+    ./configure --host=arm-linux-musleabi --enable-static \
+        --disable-zlib --disable-pam --disable-lastlog --disable-utmp --disable-utmpx \
+        --disable-wtmp --disable-wtmpx --disable-loginfunc --disable-pututline \
+        --disable-pututxline \
+        CC="$wrap/cc" AR="$wrap/ar" RANLIB="$wrap/ranlib" \
+        CFLAGS="$cflags" LDFLAGS="-static -Wl,--gc-sections" LTM_CFLAGS="-Os $prefix_map" \
+        >"$work/configure.log" 2>&1 || { tail -30 "$work/configure.log" >&2; die "configure failed (see $work/configure.log)"; }
+)
+
+log "make PROGRAMS=\"$programs\" MULTI=1"
+# shellcheck disable=SC2086  # PROGRAMS is a word list by design
+(cd "$src" && make -j"$jobs" PROGRAMS="$programs" MULTI=1 \
+    LDFLAGS="-static -Wl,--gc-sections $shim_obj" >"$work/make.log" 2>&1) \
+    || { tail -30 "$work/make.log" >&2; die "make failed (see $work/make.log)"; }
+
+# (After make: default_options_guard.h is generated by it.) Every option in localoptions.h must survive options.h/sanity.h unchanged.
+log "checking effective options"
+effective="$work/effective_defs.txt"
+(cd "$src" && echo '#include "includes.h"' | "$wrap/cc" -E -dM -x c -DLOCALOPTIONS_H_EXISTS -I. -Isrc -Ilibtomcrypt/src/headers -Ilibtommath - ) >"$effective" \
+    || die "could not preprocess includes.h"
+bad=0
+while read -r _ name value; do
+    case "$name" in AKAM_LOCALOPTIONS_H) continue ;; esac
+    eff="$(awk -v n="$name" '$1=="#define" && $2==n {print $3}' "$effective")"
+    if [ "$eff" != "$value" ]; then
+        echo "build_dropbear: option $name: wanted '$value', effective '${eff:-<undefined>}'" >&2
+        bad=1
+    fi
+done < <(grep -E '^#define [A-Z0-9_]+ [^ ]+$' "$here/localoptions.h")
+[ "$bad" = 0 ] || die "effective options differ from localoptions.h"
+
+multi="$src/dropbearmulti"
+[ -f "$multi" ] || die "dropbearmulti not produced"
+# The machine code must read clocks with the 32-bit syscall only.
+if [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
+    log "warning: time64 machine code check SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1)"
+else
+    "$root/tools/build/check_time32.sh" --require-263 "$multi" \
+        || die "time64 check failed for dropbearmulti (gdb is required; AKAM_ALLOW_UNCHECKED_TIME64=1 skips it)"
+fi
+size_before="$(stat -c %s "$multi")"
+sha_unstripped="$(sha256sum "$multi" | cut -d' ' -f1)"
+
+rm -f "$dist/dropbearmulti"
+"$ZIG" objcopy --strip-all "$multi" "$dist/dropbearmulti"
+chmod 755 "$dist/dropbearmulti"
+size_after="$(stat -c %s "$dist/dropbearmulti")"
+sha_stripped="$(sha256sum "$dist/dropbearmulti" | cut -d' ' -f1)"
+
+cp "$src/LICENSE" "$dist/LICENSE.dropbear"
+{
+    echo "dropbear_version=$DROPBEAR_VERSION"
+    echo "dropbear_archive_sha256=$DROPBEAR_SHA256"
+    echo "zig_version=$ZIG_VERSION"
+    echo "target=$AKAM_TARGET mcpu=$AKAM_MCPU soft-float static"
+    echo "programs=$programs"
+    # No absolute host paths in the file shipped inside the image (reproducible
+    # across checkouts, no user name leaked).
+    _cf="${cflags//$src/<dropbear-src>}"
+    echo "cflags=${_cf//$root/<akam-root>}"
+    echo "time32_shim_sha256=$(sha256sum "$shim_src" | cut -d' ' -f1)"
+    echo "localoptions_sha256=$(sha256sum "$here/localoptions.h" | cut -d' ' -f1)"
+    for p in "${patches[@]}"; do
+        echo "patch=$(basename "$p") sha256=$(sha256sum "$p" | cut -d' ' -f1)"
+    done
+    echo "size_unstripped=$size_before"
+    echo "size_stripped=$size_after"
+    echo "sha256_unstripped=$sha_unstripped"
+    echo "sha256_stripped=$sha_stripped"
+} >"$dist/BUILDINFO.txt"
+
+log "built $dist/dropbearmulti: $size_before bytes unstripped, $size_after stripped"
+log "sha256 (stripped) $sha_stripped"

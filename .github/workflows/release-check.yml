@@ -1,0 +1,39 @@
+# Read-only sanity check of a published release: downloads the assets and verifies the maintainer's
+# signature and every checksum, so a broken or truncated upload is noticed at once.
+# Releases are built and signed locally (tools/release/make_release.sh); this workflow holds no key,
+# builds nothing and uploads nothing. Expected duration: under a minute.
+name: release-check
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Only the public allowed_signers file is needed, taken from the tagged commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          sparse-checkout: tools/release/allowed_signers
+          sparse-checkout-cone-mode: false
+      - name: Download the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/assets" --pattern '*'
+      - name: Verify signature and checksums
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/assets"
+          ls -l
+          test -s SHA256SUMS && test -s SHA256SUMS.sig
+          ssh-keygen -Y verify -f "$GITHUB_WORKSPACE/tools/release/allowed_signers" \
+            -I akam-release -n akam-release -s SHA256SUMS.sig <SHA256SUMS
+          # SHA256SUMS lists every asset except itself and its signature.
+          sha256sum -c SHA256SUMS

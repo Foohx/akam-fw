@@ -7,6 +7,10 @@
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "ae.h"
+#include "control.h"
+#include "swdog.h"
+#include "video_cfg.h"
+#include "imgq.h"
 
 /* -------------------------------------------------------------------------
  * AE init — kernel-driven, ticked from userspace.
@@ -27,11 +31,10 @@
  * oscillation. Fix: don't suspend AE, don't write our own exposure values —
  * just tick GET_EXPOSURE like anyka_ipc does and let the on-chip AE run.
  *
- * AWB_EX struct size: 5124 bytes (0x1404), confirmed by Ghidra from
- * Isp_Struct_len table. isp_reapply_awb_ex() reads the correct payload from
+ * AWB_EX struct size: 5124 bytes (0x1404), the size the stock firmware sends. isp_reapply_awb_ex() reads the correct payload from
  * sensor_isp.conf (module 0x13, offset +0x7e4) — see isp.c.
  *
- * WB struct: 0x7e0 bytes, layout confirmed by Ghidra (ak_vpss_set_mwb_attr).
+ * WB struct: 0x7e0 bytes, layout as the stock ak_vpss_set_mwb_attr sends it.
  *   bytes  8-11: wb_type=1 (MANUAL)
  *   bytes 12-13: R_gain u16 (256=1x) = 460 (1.80x)
  *   bytes 14-15: G_gain u16 (256=1x) = 256 (reference)
@@ -40,7 +43,15 @@
 
 #define AE_TICK_US        66000 /* ~15Hz — matches anyka_ipc's GET_EXPOSURE tick rate */
 #define AE_WINDOW_TICKS       15 /* ~1s window (15 ticks @ ~66ms) for min/max/peak stats */
-#define AE_EXP_MAX        32767 /* exp_time_max ceiling (isp_pipeline_init default is a broken 2) */
+#define AE_QUIET_SUMMARY_WINDOWS 60 /* without DEBUG: one [ae] window line per this many windows */
+#define AE_QUIET_HUNTING_WINDOWS 10 /* ... or a HUNTING one, at most this often */
+/* NOTE (stock capture, specs/image-day-night-leds.md): pub[0] is the longest exposure (= the sensor VTS, 2284 day at 15 fps, 3426 night; day VTS = 34260 / fps) and
+ * pub[1] the SHORTEST (2 lines in the file): what ae_tuning_t calls exp_max is really exp_time_min; its
+ * default 2 is the stock value, a larger one only raises the shortest exposure (brighter, never grainier). */
+#define AE_EXP_MAX        32767 /* unused */
+#define AE_POLL_BUF        4096 /* >= the 0x608 bytes of GET_3D_NR_STAT */
+#define AE_POLL_3DNR_TICKS   12 /* img.poll: ~0.8 s at the 66 ms tick (stock: 401 reads in 330 s) */
+#define AE_POLL_FPS_TICKS     8 /* img.poll: ~0.5 s (stock: 636 reads in 335 s) */
 
 static volatile int g_ae_running;
 static pthread_t    g_ae_tid;
@@ -51,6 +62,7 @@ static volatile int      g_last_lum      = -1;
 static volatile uint32_t g_last_hw_exp   = 0;
 static volatile uint32_t g_last_hw_sgain = 0;
 static volatile uint32_t g_last_hw_isp   = 0;
+static volatile uint32_t g_stats_seq     = 0;  /* bumped by every ae_report_stats(): lets night.c tell a stale sample */
 
 int ae_get_last_stats(int *lum, uint32_t *hw_exp, uint32_t *hw_sgain, uint32_t *hw_isp)
 {
@@ -68,7 +80,10 @@ void ae_report_stats(int lum, uint32_t hw_exp, uint32_t hw_sgain, uint32_t hw_is
     g_last_hw_exp   = hw_exp;
     g_last_hw_sgain = hw_sgain;
     g_last_hw_isp   = hw_isp;
+    g_stats_seq++;
 }
+
+uint32_t ae_stats_seq(void) { return g_stats_seq; }
 
 /* Live-tunable AE parameters, exposed for control.c. Plain (non-volatile)
  * struct: written wholesale by ae_set_tuning() (control thread) and read
@@ -80,11 +95,24 @@ void ae_report_stats(int lum, uint32_t hw_exp, uint32_t hw_sgain, uint32_t hw_is
 /* Verified-working values from a live Camera Tuning tab session (2026-07-15)
  * -- confirmed stable on real hardware via the serial_console_dotnet app's
  * AE sliders, baked in as the new compile-time defaults for this deployment
- * (previously stable_range=hold_range=speed=10, exp_max=AE_EXP_MAX/32767). */
+ * (previously stable_range=hold_range=speed=10, exp_max=1039; the stock ISP value is 2, since a
+ * high ceiling stops AE from lowering exposure in bright scenes). */
 static ae_tuning_t g_tuning = { .stable_range = 4, .hold_range = 4, .speed = 7,
-                                 .exp_max = 1039, .enabled = 1 };
+                                 .exp_max = 2, .enabled = 1 };
 
 void ae_get_tuning(ae_tuning_t *out) { *out = g_tuning; }
+
+/* The AE's own gain ceilings (public part of the exposure block: sensor_gain_max pub[3], isp_gain_max pub[5], Q8),
+ * refreshed at every ae_set_tuning(), which night.c calls after every mode switch (the night subfile raises the
+ * ISP ceiling from 1.5x to 3.0x). night_logic.c derives its "AE saturated" gain test from them. 0 = not read yet. */
+static volatile uint32_t g_sgain_max;
+static volatile uint32_t g_isp_gain_max;
+
+void ae_get_limits(uint32_t *sgain_max, uint32_t *isp_gain_max)
+{
+    *sgain_max    = g_sgain_max;
+    *isp_gain_max = g_isp_gain_max;
+}
 
 int ae_set_tuning(const ae_tuning_t *in)
 {
@@ -98,6 +126,8 @@ int ae_set_tuning(const ae_tuning_t *in)
     pub[9]  = g_tuning.stable_range;
     pub[10] = g_tuning.hold_range;
     pub[11] = g_tuning.speed;
+    g_sgain_max    = pub[3];
+    g_isp_gain_max = pub[5];
     return isp_tunnel(ISP_INNER_SET_EXPOSURE, expo);
 }
 
@@ -188,18 +218,24 @@ int ae_init_isp_params(void)
 
     /* Manual WB — fixes blue cast. Day gains; night.c switches to neutral
      * gains when it engages night mode. */
-    if (isp_set_wb_manual(460, 256, 504) == 0)
+    if (imgq_wb_conf()) {
+        /* Stock never builds a WB block: it sends the one of sensor_isp.conf, colour-temperature
+         * tables included, which isp_pipeline_init() has just done. Keep it (img.wb=conf). */
+        printf("[ae] WB: keeping the sensor_isp.conf block (img.wb=conf)\n");
+    } else if (isp_set_wb_manual(460, 256, 504) == 0) {
         printf("[ae] SET_WB OK\n");
+    }
 
-    /* Frame timing — tells ISP AE the sensor's VTS (2284 lines per frame).
+    /* Frame timing — tells ISP AE the sensor's VTS (2284 lines per frame at 15 fps, 34260 / fps in general).
      * This is the DAY config; night.c reconfigures to {10fps, vts=3426}
-     * when it engages night mode (Ghidra + isp_hook-confirmed values from
-     * stock anyka_ipc). */
-    uint32_t frame_rate[4] = {15, 2284, 8, 15};
+     * when it engages night mode (values seen in an isp_hook capture of
+     * the stock firmware). */
+    const uint32_t cfg_fps = (uint32_t)video_fps(); /* 15 unless /etc/config/akam/video says 10, 20 or 25 (video_cfg.h) */
+    uint32_t frame_rate[4] = {cfg_fps, (uint32_t)video_day_vts(), 8, cfg_fps};
     if (isp_tunnel(ISP_INNER_SET_FRAME_RATE, frame_rate) == 0)
-        printf("[ae] SET_FRAME_RATE OK (15fps, vts=2284)\n");
+        printf("[ae] SET_FRAME_RATE OK (%ufps, vts=%d)\n", cfg_fps, video_day_vts());
 
-    uint32_t fps[4] = {15, 0, 0, 15};
+    uint32_t fps[4] = {cfg_fps, 0, 0, cfg_fps};
     if (isp_tunnel(ISP_INNER_SET_SENSOR_FPS, fps) == 0)
         printf("[ae] SET_SENSOR_FPS OK\n");
 
@@ -228,12 +264,14 @@ static void *ae_loop(void *arg)
     uint8_t  run_info[36];
     static uint8_t expo[0x720];
     int      tick = 0;
+    unsigned poll_n = 0;
 
     int      win_n = 0;
     int      lum_min = 256, lum_max = -1, lum_last = -1, lum_prev = -1;
     uint32_t exp_min = 0xffffffffu, exp_max = 0;
     int      reversals = 0;
     int      dir = 0; /* -1 falling, 0 unknown/flat, +1 rising */
+    int      since_log = AE_QUIET_SUMMARY_WINDOWS; /* the first window is logged */
 
     (void)arg;
     printf("[ae] hardware AE tick started (~15Hz GET_EXPOSURE, no writes, no suspend — "
@@ -241,6 +279,7 @@ static void *ae_loop(void *arg)
 
     while (g_ae_running) {
         usleep(AE_TICK_US);
+        swdog_beat(SWDOG_BEAT_AE);
 
         /* control.c's "ae.enabled=0" freezes exposure at whatever it
          * currently is (skip the tick entirely) for A/B testing AE on vs
@@ -263,6 +302,21 @@ static void *ae_loop(void *arg)
 
         ae_report_stats(lum, hw_exp, hw_sgain, hw_isp);
 
+        /* img.poll=1: the two statistics the stock application also reads while it streams (stock capture:
+         * 3D-NR statistics about every 0.8 s, sensor fps about every 0.5 s). The data is not used here. */
+        if (imgq_poll_stats()) {
+            static uint8_t stat[AE_POLL_BUF];
+            poll_n++;
+            if (poll_n % AE_POLL_3DNR_TICKS == 0) {
+                memset(stat, 0, sizeof(stat));
+                isp_tunnel(ISP_INNER_GET_3D_NR_STAT, stat);
+            }
+            if (poll_n % AE_POLL_FPS_TICKS == 0) {
+                memset(stat, 0, 256);
+                isp_tunnel(ISP_INNER_GET_SENSOR_FPS, stat);
+            }
+        }
+
         if (lum < lum_min) lum_min = lum;
         if (lum > lum_max) lum_max = lum;
         if (hw_exp < exp_min) exp_min = hw_exp;
@@ -282,16 +336,26 @@ static void *ae_loop(void *arg)
 
         uint32_t priv_exp = ((uint32_t *)expo)[1];
 
-        printf("[ae] window n=%2d  lum[min=%3d max=%3d last=%3d]  "
-               "hw_exp[min=%5u max=%5u]  reversals=%d  sgain=%.1fx isp=%.1fx priv_exp=%u%s\n",
-               win_n, lum_min, lum_max, lum_last, exp_min, exp_max, reversals,
-               hw_sgain/256.0f, hw_isp/256.0f, priv_exp,
-               (reversals >= 4 || lum_max - lum_min >= 100) ? "  <-- HUNTING" : "");
+        /* Log volume (the serial console and the log pipe cost CPU and wakeups): one line per ~1 s window only
+         * while the 8091 DEBUG mode is on (tuning); otherwise one summary every 60 windows, and a HUNTING window
+         * at most every 10 s. */
+        int hunting = reversals >= 4 || lum_max - lum_min >= 100;
+        since_log++;
+        if (control_debug_on() || since_log >= AE_QUIET_SUMMARY_WINDOWS ||
+            (hunting && since_log >= AE_QUIET_HUNTING_WINDOWS)) {
+            since_log = 0;
+            printf("[ae] window n=%2d  lum[min=%3d max=%3d last=%3d]  "
+                   "hw_exp[min=%5u max=%5u]  reversals=%d  sgain=%.1fx isp=%.1fx priv_exp=%u%s\n",
+                   win_n, lum_min, lum_max, lum_last, exp_min, exp_max, reversals,
+                   hw_sgain/256.0f, hw_isp/256.0f, priv_exp,
+                   hunting ? "  <-- HUNTING" : "");
+        }
 
         win_n = 0; lum_min = 256; lum_max = -1; lum_prev = -1;
         exp_min = 0xffffffffu; exp_max = 0; reversals = 0; dir = 0;
     }
 
+    swdog_disarm(SWDOG_BEAT_AE);
     printf("[ae] hardware AE tick stopped\n");
     return NULL;
 }

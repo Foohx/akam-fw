@@ -1,0 +1,154 @@
+/* Optional RTSP Digest authentication (RFC 2617, "MD5", no qop in the
+ * challenge; see specs/video-and-streaming.md). Pure logic: no sockets, no
+ * SmolRTSP, time and randomness passed in or hooked, so it is tested on the
+ * host (tests/native/rtsp_auth_test.c) and wired to the RTSP server in rtsp.c.
+ *
+ * Credentials live in a file on the camera's persistent CONFIG partition:
+ *   /etc/config/akam/rtsp_auth       one line:  user:akam:<HA1 in lowercase hex>
+ * with HA1 = MD5("user:akam:password"). The password itself is never stored.
+ * The file is read again on every protected request:
+ *   absent                -> RTSP_AUTH_OFF     (no authentication, the default)
+ *   present and valid     -> RTSP_AUTH_ON      (Digest required)
+ *   present, not valid    -> RTSP_AUTH_BROKEN  (fail closed: everything refused)
+ */
+#pragma once
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifndef RTSP_AUTH_PATH /* tests point it at a temporary file */
+#define RTSP_AUTH_PATH "/etc/config/akam/rtsp_auth"
+#endif
+#define RTSP_AUTH_REALM "akam"
+#define RTSP_AUTH_USER_MAX 32
+#define RTSP_AUTH_NONCE_HEX 32
+/* A nonce can be used to authenticate for this long after it was issued. */
+#define RTSP_AUTH_NONCE_LIFETIME_US (120LL * 1000000)
+/* Failed attempts on one connection before it is closed. */
+#define RTSP_AUTH_CONN_MAX_FAILS 5
+/* The process-wide failure counter is forgotten after this much quiet time. */
+#define RTSP_AUTH_FAIL_WINDOW_US (60LL * 1000000)
+
+typedef enum { RTSP_AUTH_OFF, RTSP_AUTH_ON, RTSP_AUTH_BROKEN } rtsp_auth_mode_t;
+
+/* Thread safety: one mutex inside rtsp_auth.c guards every db and the limiter counters; db_refresh, check,
+ * session_ok, db_mode, digest_verify, note_failure and note_success may be called from several threads (RTSP and
+ * the ONVIF HTTP server). They never sleep: the limiter delay is returned and the CALLER waits (the HTTP server
+ * defers the response instead of blocking its poll loop). rtsp_auth_conn_t is the caller's own. rtsp_auth_db_init
+ * must run before other threads start. */
+/* Credentials, shared by all connections (one per process). */
+typedef struct {
+    const char *path;
+    rtsp_auth_mode_t mode;
+    char user[RTSP_AUTH_USER_MAX + 1];
+    char ha1[33];
+    unsigned generation;     /* bumped whenever mode, user or HA1 changes */
+    bool loaded;
+    unsigned global_fails;   /* failed attempts in the current window */
+    int64_t last_fail_us;
+    /* what the file looked like when it was last read: while stat() shows the same, the file is not opened again
+     * (every ONVIF request and RTSP request asks for a refresh) */
+    bool sig_valid;
+    unsigned long long sig_ino, sig_size;
+    long long sig_mtime_s;
+    long sig_mtime_ns;
+    int sig_errno;           /* 0, or the errno of a stat() that failed */
+} rtsp_auth_db_t;
+
+/* State of one RTSP connection. */
+typedef struct {
+    bool has_nonce;
+    char nonce[RTSP_AUTH_NONCE_HEX + 1];
+    int64_t nonce_us;
+    bool authed;             /* proved the password against generation gen */
+    unsigned gen;
+    uint32_t last_nc;        /* highest nc seen (qop=auth responses only) */
+    unsigned fails;          /* failed attempts on this connection */
+} rtsp_auth_conn_t;
+
+typedef enum {
+    RTSP_AUTH_ALLOW,         /* serve the request */
+    RTSP_AUTH_DENY,          /* answer 401 with .challenge, after .delay_ms */
+    RTSP_AUTH_DROP,          /* answer 401 (if .challenge[0]) then close */
+} rtsp_auth_verdict_t;
+
+typedef struct {
+    rtsp_auth_verdict_t verdict;
+    char challenge[192];     /* WWW-Authenticate value; "" = none */
+    unsigned delay_ms;       /* sleep before answering (failed attempts) */
+    char log[112];           /* one journal line, "" = nothing to log; never a secret */
+} rtsp_auth_result_t;
+
+/* Randomness source, replaceable by tests: fills buf with n bytes, 0 = ok.
+ * The default reads getrandom() and falls back to /dev/urandom. */
+extern int (*rtsp_auth_rng)(void *buf, size_t n);
+
+void rtsp_auth_db_init(rtsp_auth_db_t *db, const char *path);
+/* Re-read the credentials file if it changed (inode, size or mtime; a file modified within the last 2 seconds is
+ * always read again, for file systems with a coarse mtime); returns the current mode. */
+rtsp_auth_mode_t rtsp_auth_db_refresh(rtsp_auth_db_t *db);
+/* Current mode without re-reading the file (locked read). */
+rtsp_auth_mode_t rtsp_auth_db_mode(rtsp_auth_db_t *db);
+/* Parse the content of a credentials file (exposed for tests): 0 = valid. */
+int rtsp_auth_parse_file(const char *text, size_t len, char *user, char *ha1);
+
+void rtsp_auth_conn_init(rtsp_auth_conn_t *c);
+
+/* Everything but OPTIONS needs credentials. */
+bool rtsp_auth_method_protected(const char *method);
+
+/* Decide on one request. hdr is the value of the Authorization header (not
+ * NUL terminated; NULL when the request has none). method is the request's
+ * method token. now_us is a monotonic clock. */
+void rtsp_auth_check(rtsp_auth_db_t *db, rtsp_auth_conn_t *c, const char *method,
+                     const char *hdr, size_t hdr_len, int64_t now_us,
+                     rtsp_auth_result_t *out);
+
+/* For a connection that is already streaming: false once its authentication
+ * no longer matches the configuration (auth enabled, or other credentials,
+ * since it connected), so that the stream is cut and the client must log in
+ * again. Re-reads the file. */
+bool rtsp_auth_session_ok(rtsp_auth_db_t *db, const rtsp_auth_conn_t *c);
+
+/* Copy uri into out with any "user[:password]@" part replaced by "***@", so
+ * that a client that puts its credentials in the URL cannot leak them into
+ * the journal. */
+void rtsp_auth_redact_uri(const char *uri, char *out, size_t cap);
+
+/* Digest response, exposed for tests. qop_nc may be NULL (RFC 2069 form). */
+void rtsp_auth_response(char out[33], const char *ha1, const char *nonce,
+                        const char *nc, const char *cnonce, const char *method,
+                        const char *uri);
+
+/* ---- Reuse by other protocols (ONVIF over HTTP, see cred.h) --------------
+ * The same credentials file, the same HA1, the same process-wide failure
+ * counter. The caller owns the nonce (issue it with rtsp_auth_new_nonce and
+ * keep it per connection) and the HTTP framing. */
+
+/* Fill out with a fresh random nonce (RTSP_AUTH_NONCE_HEX lowercase hex
+ * characters + NUL). 0 = ok, -1 = no random source. */
+int rtsp_auth_new_nonce(char out[RTSP_AUTH_NONCE_HEX + 1]);
+
+/* What a verified Digest header carried, for the caller's nonce checks. */
+typedef struct {
+    char nonce[64];
+    char nc[16];             /* "" when the client sent no qop */
+    char cnonce[128];
+    char uri[512];
+    bool qop;                /* qop=auth was used */
+} rtsp_auth_digest_t;
+
+/* Verify the value of an Authorization header (`Digest ...`, not NUL
+ * terminated) against the credentials of db (already refreshed by the caller;
+ * mode must be RTSP_AUTH_ON). Checks user, realm, algorithm and the response
+ * for method (the request's HTTP method) in constant time. Does NOT judge the
+ * nonce, nc or uri: that is the caller's job with out. 1 = credentials good,
+ * 0 = anything else (malformed, wrong user, wrong password, mode not ON). */
+int rtsp_auth_digest_verify(const rtsp_auth_db_t *db, const char *method, const char *hdr,
+                            size_t hdr_len, rtsp_auth_digest_t *out);
+
+/* Process-wide failure limiter shared by every protocol: count a failed
+ * attempt and return the delay (ms) to wait before answering it; and reset
+ * the counter after a good login. */
+unsigned rtsp_auth_note_failure(rtsp_auth_db_t *db, int64_t now_us);
+void rtsp_auth_note_success(rtsp_auth_db_t *db);

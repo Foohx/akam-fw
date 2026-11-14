@@ -1,0 +1,535 @@
+#!/bin/sh
+# akam_ssh.sh -- start Dropbear (public-key SSH, ed25519 only) at boot.
+#
+# Installed as /usr/sbin/akam_ssh.sh (mode 755) and launched in the background
+# by ak_rtsp_wrapper.sh. It must NEVER block or break ak_rtsp: every failure
+# path only logs and returns 0.
+#
+# Usage: akam_ssh.sh [start|status]      (default: start)
+#
+# Layout (all paths are prefixed by $AKAM_ROOT, empty on the camera; the
+# prefix and the variables below exist so the host-side test can run the
+# script in a fake root):
+#   /usr/bin/dropbear, /usr/bin/dropbearkey   binaries (from the Dropbear build)
+#   /etc/config/dropbear/                     persistent state (CONFIG, JFFS2), 0700
+#     dropbear_ed25519_host_key               host key, generated on first boot, 0600
+#     authorized_keys                         client keys, 0600, root:root
+#   <sd-mountpoint>/akam/authorized_keys     provisioning file on the microSD. The card
+#                                             is looked up where it is ALREADY mounted
+#                                             (/proc/mounts: /dev/mmcblk0p1 or
+#                                             /dev/mmcblk0 on a directory, e.g. /tmp/sd
+#                                             with the toolkit or /mnt), see
+#                                             find_mounted_sd. Only when it is not
+#                                             mounted anywhere it is mounted read-only
+#                                             on /tmp/akam_sd (see mount_sd_ro).
+#                                             DEPRECATED fallback (one release): a card
+#                                             prepared for the early-development image
+#                                             has camyn/authorized_keys instead; it is
+#                                             used (and logged as deprecated) only when
+#                                             akam/authorized_keys is absent.
+#   /tmp/akam_ssh.log                        one line per step, no secret logged
+#   /tmp/dropbear.pid, /tmp/akam_ssh.lock    runtime state
+#
+# Key policy: NO key is embedded in the firmware image. authorized_keys comes
+# only from the microSD file, is validated (ssh-ed25519 lines only, no options,
+# no "command="), and replaces the CONFIG copy when the content CHANGED since the
+# last import (md5 kept in .card_keys_hash: a card left in the camera does not undo a
+# key change made over SSH; a card with other keys still replaces the list). The
+# file on the SD card is never modified or deleted.
+#
+# Permissions: Dropbear refuses authorized_keys if any path component is
+# writable by group/others, so the directory is 0700, the file 0600, and a
+# umask of 077 is used for every write. Modes of /etc/config, /etc and / are
+# logged for diagnosis; they are not changed (the stock / and /etc are 0775 and
+# read-only: see prepare_home, which moves root's HOME instead).
+
+AKAM_ROOT=${AKAM_ROOT:-}
+CONFIG_DIR=${AKAM_CONFIG_DIR:-$AKAM_ROOT/etc/config}
+DB_DIR=$CONFIG_DIR/dropbear
+HOSTKEY=$DB_DIR/dropbear_ed25519_host_key
+AUTHKEYS=$DB_DIR/authorized_keys
+SD_DIR=${AKAM_SD_DIR:-$AKAM_ROOT/mnt/akam}
+LEGACY_SD_DIR=${AKAM_SD_DIR_LEGACY:-$AKAM_ROOT/mnt/camyn}
+BIN_DIR=${AKAM_BIN_DIR:-$AKAM_ROOT/usr/bin}
+TMP_DIR=${AKAM_TMP_DIR:-$AKAM_ROOT/tmp}
+SSH_PORT=${AKAM_SSH_PORT:-22}
+WAIT_TRIES=${AKAM_WAIT_TRIES:-30}
+LOG=$TMP_DIR/akam_ssh.log
+PIDFILE=$TMP_DIR/dropbear.pid
+LOCKDIR=$TMP_DIR/akam_ssh.lock
+
+# The log is RAM (/tmp). Dropbear's own stderr (-E, one line per connection and failed login) goes to the same file,
+# so a LAN host hammering port 22 would grow it without bound (G09). Trimmed IN PLACE (the file keeps its inode:
+# Dropbear holds it open with O_APPEND and goes on writing after a trim) to the last 50 lines when it passes 100
+# lines or 64 KiB. akam_lockdown.sh trims it again every minute, between two of our own log lines.
+LOG_MAX_LINES=100
+LOG_MAX_BYTES=65536
+LOG_KEEP_LINES=50
+
+log() {
+    echo "akam_ssh: $*" >>"$LOG" 2>/dev/null
+    if [ "$(wc -l <"$LOG" 2>/dev/null)" -gt "$LOG_MAX_LINES" ] 2>/dev/null ||
+        [ "$(wc -c <"$LOG" 2>/dev/null)" -gt "$LOG_MAX_BYTES" ] 2>/dev/null; then
+        tail -n "$LOG_KEEP_LINES" "$LOG" >"$LOG.tmp" 2>/dev/null && cat "$LOG.tmp" >"$LOG" 2>/dev/null
+        rm -f "$LOG.tmp"
+    fi
+}
+
+is_running() {
+    [ -s "$PIDFILE" ] || return 1
+    read -r _pid 2>/dev/null <"$PIDFILE" || return 1
+    case "$_pid" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$_pid" 2>/dev/null || return 1
+    # A stale pidfile whose PID was reused must not count as "running".
+    # (No "tr": the camera's BusyBox has no such applet. cmdline is NUL
+    # separated; grep -a reads it fine.)
+    grep -qa dropbear "${AKAM_PROC_DIR:-/proc}/$_pid/cmdline" 2>/dev/null && return 0
+    return 1
+}
+
+log_legacy_sd() {
+    log "DEPRECATED: using $1 from the former camyn/ folder; rename it to akam/ on the SD card (the camyn/ fallback is removed in the next release)"
+}
+
+# Look for the key file below the SD mount point $1: akam/ first, then the
+# deprecated camyn/ folder. Sets _sdfile and returns 0 when one exists.
+sd_pick() {
+    if [ -f "$1/akam/authorized_keys" ]; then
+        _sdfile=$1/akam/authorized_keys
+        return 0
+    fi
+    if [ -f "$1/camyn/authorized_keys" ]; then
+        _sdfile=$1/camyn/authorized_keys
+        log_legacy_sd "$_sdfile"
+        return 0
+    fi
+    return 1
+}
+
+log_mode() {
+    _m=$(stat -c '%a %u' "$1" 2>/dev/null) || _m=unknown
+    log "mode of $1: $_m"
+}
+
+# Validate the SD key file ($1) into $2. Accepts only plain
+# "ssh-ed25519 <base64> [comment]" lines. Returns 0 if at least one valid
+# line was written.
+filter_keys() {
+    _src=$1
+    _dst=$2
+    # a failed redirection of a special builtin ends an ash script: do it in a subshell
+    ( : >"$_dst" ) 2>/dev/null || return 1
+    _n=0
+    _bad=0
+    _werr=0
+    _cr=$(printf '\r')
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        # Strip CRs (DOS line endings) in pure shell: no "tr" on the camera.
+        while [ "${_line%"$_cr"}" != "$_line" ]; do _line=${_line%"$_cr"}; done
+        case "$_line" in
+            '' | '#'*) continue ;;
+            *command=*)
+                _bad=$((_bad + 1))
+                continue
+                ;;
+        esac
+        if printf '%s\n' "$_line" | grep -Eq '^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{43,}={0,2}( [^[:cntrl:]]*)?$'; then
+            printf '%s\n' "$_line" >>"$_dst" 2>/dev/null || _werr=1
+            _n=$((_n + 1))
+        else
+            _bad=$((_bad + 1))
+        fi
+    done <"$_src"
+    log "SD keys: $_n accepted, $_bad rejected"
+    if [ "$_werr" != 0 ]; then
+        log "writing the validated SD keys failed: not using them"
+        return 1
+    fi
+    [ "$_n" -gt 0 ]
+}
+
+# Find the SD card where it is already mounted. The stock boot mounts it on /mnt
+# and unmounts it lazily; the toolkit mounts it read-write on /tmp/sd and adds
+# file bind-mounts from it (their /proc/mounts source is the same device but
+# the target is a file: ignored, only directories count). Looks in
+# /proc/mounts (override: AKAM_PROC_MOUNTS) for /dev/mmcblk0p1 or /dev/mmcblk0
+# as the SOURCE of a mount on a directory.
+# Sets _sd_seen (mount point of the last card mount seen, empty if none) and,
+# when <mountpoint>/akam/authorized_keys (or the deprecated camyn/) exists, _sdfile; returns 0 then.
+find_mounted_sd() {
+    _sd_seen=
+    _mounts=${AKAM_PROC_MOUNTS:-/proc/mounts}
+    [ -r "$_mounts" ] || return 1
+    while read -r _msrc _mtgt _mrest; do
+        case "$_msrc" in
+            /dev/mmcblk0p1 | /dev/mmcblk0) ;;
+            *) continue ;;
+        esac
+        [ -d "$AKAM_ROOT$_mtgt" ] || continue
+        _sd_seen=$_mtgt
+        if sd_pick "$AKAM_ROOT$_mtgt"; then
+            log "SD card already mounted on $_mtgt ($_msrc), using $_sdfile"
+            return 0
+        fi
+        log "SD card mounted on $_mtgt ($_msrc) but no akam/authorized_keys there"
+    done <"$_mounts"
+    return 1
+}
+
+# Last resort when the card is not mounted anywhere: mount it read-only on a
+# private directory, same device and filesystem order as the stock
+# tf_mount.sh, just to read the key file. Every failure is logged.
+# Sets _sdmnt (to be unmounted by the caller) and _sdfile. Never fatal.
+mount_sd_ro() {
+    _sdmnt=$TMP_DIR/akam_sd
+    _sd_pos=0   # 1 when it is KNOWN that no card key file is there (not when a mount merely failed)
+    if ! mkdir -p "$_sdmnt" 2>/dev/null; then
+        log "SD not mounted and cannot create $_sdmnt"
+        return 1
+    fi
+    _found=0
+    for _try in "vfat $AKAM_ROOT/dev/mmcblk0p1" "exfat $AKAM_ROOT/dev/mmcblk0p1" \
+        "vfat $AKAM_ROOT/dev/mmcblk0" "exfat $AKAM_ROOT/dev/mmcblk0"; do
+        # shellcheck disable=SC2086
+        set -- $_try
+        [ -e "$2" ] || continue
+        _found=1
+        if _err=$(mount -t "$1" -o ro "$2" "$_sdmnt" 2>&1); then
+            if sd_pick "$_sdmnt"; then
+                log "SD mounted read-only ($1 $2) on $_sdmnt"
+                return 0
+            fi
+            log "SD mounted ($1 $2) but no akam/authorized_keys on it"
+            _sd_pos=1
+            umount "$_sdmnt" 2>/dev/null
+        else
+            log "mount -t $1 -o ro $2 $_sdmnt failed: $_err"
+        fi
+    done
+    if [ "$_found" != 1 ]; then
+        _sd_pos=1
+        log "SD not mounted and no /dev/mmcblk0p1 or /dev/mmcblk0 device node"
+    fi
+    return 1
+}
+
+provision_keys() {
+    _sdfile=$SD_DIR/authorized_keys
+    _sdmnt=
+    _sd_seen=
+    _sd_pos=0
+    if [ ! -f "$_sdfile" ] && [ -f "$LEGACY_SD_DIR/authorized_keys" ]; then
+        _sdfile=$LEGACY_SD_DIR/authorized_keys
+        log_legacy_sd "$_sdfile"
+    fi
+    if [ ! -f "$_sdfile" ]; then
+        if find_mounted_sd; then
+            :
+        elif [ -n "$_sd_seen" ]; then
+            _sd_pos=1   # card is mounted, the file is just not on it (logged above)
+        elif [ "${AKAM_SD_AUTOMOUNT:-1}" = 1 ]; then
+            mount_sd_ro || _sdmnt=
+            [ -f "$_sdfile" ] || _sdmnt=
+        fi
+    fi
+    if [ ! -f "$_sdfile" ]; then
+        log "no authorized_keys on the SD card, keeping existing authorized_keys"
+        # A boot that positively sees no card key file forgets the last import: a card put back later
+        # (the recovery route: boot once without it, then with it) is imported again, even with the same
+        # keys. Not done when a mount merely failed (unknown): that is not "no card".
+        if [ "$_sd_pos" = 1 ] && { [ -e "$DB_DIR/.card_keys_hash" ] || [ -L "$DB_DIR/.card_keys_hash" ]; }; then
+            rm -rf "$DB_DIR/.card_keys_hash"
+            log "no card: the last card import is forgotten (a card put back is imported again)"
+        fi
+        return 0
+    fi
+    install_keys
+    if [ -n "$_sdmnt" ]; then
+        umount "$_sdmnt" 2>/dev/null || log "could not unmount $_sdmnt (ignored)"
+        _sdmnt=
+    fi
+    return 0
+}
+
+# has_valid_key FILE: the file holds at least one ssh-ed25519 line (an empty, comment-only or garbage list
+# cannot log anybody in, so it never counts as "the current list").
+has_valid_key() {
+    [ -s "$1" ] && grep -Eq '(^|[[:space:]])ssh-ed25519 AAAAC3NzaC1lZDI1NTE5' "$1" 2>/dev/null
+}
+
+# save_card_hash HASH: remember which card key list was imported last (atomic, 0600).
+save_card_hash() {
+    [ -n "$1" ] || return 0
+    _hn=$DB_DIR/.card_keys_hash.new.$$
+    if [ -d "$DB_DIR/.card_keys_hash" ]; then rm -rf "$DB_DIR/.card_keys_hash"; fi
+    if echo "$1" >"$_hn" 2>/dev/null && chmod 600 "$_hn" && mv -f "$_hn" "$DB_DIR/.card_keys_hash"; then
+        :
+    else
+        rm -f "$_hn"
+        log "could not remember the card key hash (ignored)"
+    fi
+}
+
+# Validate $_sdfile and install it as authorized_keys.
+install_keys() {
+    _new=$DB_DIR/.authorized_keys.new.$$
+    if filter_keys "$_sdfile" "$_new"; then
+        # The card is imported only when its keys CHANGED since the last import (md5 of the validated
+        # list, kept next to authorized_keys): a card left in the camera must not undo a key change
+        # made over SSH (akam key use-*) at every boot. A new card, with other keys, still replaces
+        # the list: that is the recovery route. No stored hash (first boot, older firmware): import.
+        _h=$(md5sum <"$_new" 2>/dev/null)
+        _h=${_h%% *}
+        case "$_h" in
+            *[!0-9a-f]*) _h= ;;
+        esac
+        [ "${#_h}" -eq 32 ] || {
+            [ -z "$_h" ] || _h=
+            log "could not compute the md5 of the SD keys: importing them without remembering the import"
+        }
+        _hf=$DB_DIR/.card_keys_hash
+        if [ -d "$_hf" ]; then rm -rf "$_hf"; fi
+        _hold=
+        [ -f "$_hf" ] && read -r _hold <"$_hf" 2>/dev/null
+        if [ -n "$_h" ] && [ "$_h" = "$_hold" ] && has_valid_key "$AUTHKEYS"; then
+            log "SD keys unchanged since the last import, keeping the current authorized_keys (a key change made over SSH survives)"
+            rm -f "$_new"
+        elif [ -f "$AUTHKEYS" ] && cmp -s "$_new" "$AUTHKEYS"; then
+            log "authorized_keys unchanged"
+            save_card_hash "$_h"
+            rm -f "$_new"
+        else
+            chmod 600 "$_new"
+            chown 0:0 "$_new" 2>/dev/null || log "chown 0:0 failed (ignored)"
+            sync
+            if mv -f "$_new" "$AUTHKEYS"; then
+                save_card_hash "$_h"
+                log "authorized_keys installed from SD"
+            else
+                log "could not install authorized_keys"
+                rm -f "$_new"
+            fi
+        fi
+    else
+        log "no valid key on SD, keeping existing authorized_keys"
+        rm -f "$_new"
+    fi
+}
+
+fix_perms() {
+    chmod 700 "$DB_DIR" 2>/dev/null
+    [ -f "$AUTHKEYS" ] && chmod 600 "$AUTHKEYS" 2>/dev/null
+    [ -f "$HOSTKEY" ] && chmod 600 "$HOSTKEY" 2>/dev/null
+    chown 0:0 "$DB_DIR" 2>/dev/null
+    [ -f "$AUTHKEYS" ] && chown 0:0 "$AUTHKEYS" 2>/dev/null
+    [ -f "$HOSTKEY" ] && chown 0:0 "$HOSTKEY" 2>/dev/null
+    return 0
+}
+
+wait_config_writable() {
+    _i=0
+    while [ "$_i" -lt "$WAIT_TRIES" ]; do
+        if mkdir -p "$DB_DIR" 2>/dev/null && ( : >"$DB_DIR/.rwtest" ) 2>/dev/null; then
+            rm -f "$DB_DIR/.rwtest"
+            return 0
+        fi
+        _i=$((_i + 1))
+        sleep 1
+    done
+    return 1
+}
+
+# Dropbear (musl getusershell) refuses a login when /etc/shells EXISTS and does
+# not list the user's shell. If so, bind-mount a private list that has /bin/sh
+# over it (the real file is untouched). Never fatal; no file = musl default
+# list, which already contains /bin/sh.
+fix_shells() {
+    _shells=$AKAM_ROOT/etc/shells
+    [ -f "$_shells" ] || return 0
+    grep -qx /bin/sh "$_shells" 2>/dev/null && return 0
+    _sd=$TMP_DIR/akam
+    _sf=$_sd/shells
+    if mkdir -p "$_sd" 2>/dev/null && chmod 755 "$_sd" 2>/dev/null &&
+        echo /bin/sh >"$_sf" 2>/dev/null && chmod 644 "$_sf" 2>/dev/null &&
+        mount --bind "$_sf" "$_shells" 2>/dev/null; then
+        log "/etc/shells lacked /bin/sh, bind-mounted $_sf over it"
+    else
+        log "/etc/shells lacks /bin/sh and the bind mount failed (ignored); root login may be refused"
+    fi
+    return 0
+}
+
+# Dropbear walks from the authorized_keys directory up to root's HOME (or "/")
+# and ignores the key file if ANY directory on the way is writable by group or
+# others. On the real camera "/" and /etc come from the read-only ROOTFS
+# squashfs where they are mode 0775 (observed on the extracted stock tree), and
+# that cannot be changed at runtime: every key login would be refused. The walk
+# stops at root's HOME, so make HOME the key directory itself: a private 0700
+# directory on tmpfs holding a copy of authorized_keys, plus a private copy of
+# passwd (bind-mounted over /etc/passwd; the real file is untouched) whose root
+# entry has that HOME. If /etc/passwd has no root entry at all (dropbear would
+# reject every login as "nonexistent user") the private copy gets one.
+# Sets _keydir (the directory for -D): the tmpfs HOME when the bind mount took
+# effect, else the unchanged persistent directory. Never fatal.
+prepare_home() {
+    _keydir=$1
+    _home=$TMP_DIR/akam_home
+    _pw=$AKAM_ROOT/etc/passwd
+    _pwd=$TMP_DIR/akam
+    _pwn=$_pwd/passwd
+    mkdir -p "$_home" "$_pwd" 2>/dev/null || return 0
+    chmod 700 "$_home" 2>/dev/null
+    chmod 755 "$_pwd" 2>/dev/null
+    if ! grep -q "^root:[^:]*:[^:]*:[^:]*:[^:]*:$_home:" "$_pw" 2>/dev/null; then
+        [ -e "$_pw" ] || ( : >"$_pw" ) 2>/dev/null
+        if grep -q '^root:' "$_pw" 2>/dev/null; then
+            sed "s|^\\(root:[^:]*:[^:]*:[^:]*:[^:]*:\\)[^:]*:|\\1$_home:|" "$_pw" >"$_pwn" 2>/dev/null
+        else
+            { cat "$_pw" 2>/dev/null; echo "root:x:0:0:root:$_home:/bin/sh"; } >"$_pwn" 2>/dev/null
+        fi
+        chmod 644 "$_pwn" 2>/dev/null
+        if [ -s "$_pwn" ] && mount -o bind "$_pwn" "$_pw" 2>/dev/null &&
+            grep -q "^root:[^:]*:[^:]*:[^:]*:[^:]*:$_home:" "$_pw" 2>/dev/null; then
+            log "root HOME is now $_home (private passwd bind-mounted over $_pw)"
+        else
+            log "could not set root HOME to $_home, keeping $_keydir (login may be refused if / or /etc is group-writable)"
+            return 0
+        fi
+    fi
+    if [ -s "$AUTHKEYS" ]; then
+        if cp "$AUTHKEYS" "$_home/.authorized_keys.new" 2>/dev/null &&
+            chmod 600 "$_home/.authorized_keys.new" &&
+            mv -f "$_home/.authorized_keys.new" "$_home/authorized_keys"; then
+            chown 0:0 "$_home" "$_home/authorized_keys" 2>/dev/null
+            _keydir=$_home
+        else
+            log "could not copy authorized_keys to $_home, keeping $_keydir"
+            rm -f "$_home/.authorized_keys.new"
+        fi
+    else
+        rm -f "$_home/authorized_keys"
+        _keydir=$_home
+    fi
+    return 0
+}
+
+do_start() {
+    umask 077
+    mkdir -p "$TMP_DIR" 2>/dev/null
+
+    if ! mkdir "$LOCKDIR" 2>/dev/null; then
+        # Another instance is running; take over only a stale lock.
+        # The holder writes its pid just after mkdir: if the file is not there
+        # yet, give it a moment instead of declaring the lock stale.
+        _lp=
+        _try=0
+        while [ "$_try" -lt 3 ]; do
+            read -r _lp 2>/dev/null <"$LOCKDIR/pid"
+            case "$_lp" in
+                '' | *[!0-9]*) _lp= ;;
+            esac
+            [ -n "$_lp" ] && break
+            _try=$((_try + 1))
+            sleep 1
+        done
+        if [ -n "$_lp" ] && kill -0 "$_lp" 2>/dev/null; then
+            log "another instance holds the lock, exiting"
+            return 0
+        fi
+        rm -rf "$LOCKDIR"
+        mkdir "$LOCKDIR" 2>/dev/null || return 0
+    fi
+    # Also drop the read-only SD mount if we are killed while it is mounted.
+    trap 'rm -rf "$LOCKDIR"; [ -z "${_sdmnt:-}" ] || umount "$_sdmnt" 2>/dev/null' EXIT
+    trap 'exit 0' INT TERM HUP
+    echo $$ >"$LOCKDIR/pid"
+
+    if is_running; then
+        log "dropbear already running, nothing to do"
+        return 0
+    fi
+
+    ( : >"$LOG" ) 2>/dev/null
+    log "start (pid $$)"
+
+    if [ ! -x "$BIN_DIR/dropbear" ] || [ ! -x "$BIN_DIR/dropbearkey" ]; then
+        log "dropbear or dropbearkey missing/not executable in $BIN_DIR, giving up"
+        return 0
+    fi
+
+    log_mode "$CONFIG_DIR"
+    log_mode "$AKAM_ROOT/etc"
+    log_mode "$AKAM_ROOT/"
+
+    if wait_config_writable; then
+        _dir=$DB_DIR
+        _persistent=1
+        fix_perms
+    else
+        _dir=$TMP_DIR/akam_dropbear
+        _persistent=0
+        log "$CONFIG_DIR not writable, using ephemeral host key and authorized_keys in $_dir"
+        mkdir -p "$_dir" 2>/dev/null
+        chmod 700 "$_dir" 2>/dev/null
+        # Keep SD provisioning working (else nobody could log in at all).
+        DB_DIR=$_dir
+        AUTHKEYS=$_dir/authorized_keys
+    fi
+    _hostkey=$_dir/dropbear_ed25519_host_key
+
+    if [ ! -s "$_hostkey" ]; then
+        log "generating ed25519 host key (may wait for entropy)"
+        _tmpkey=$_dir/.hostkey.new.$$
+        rm -f "$_tmpkey"
+        if "$BIN_DIR/dropbearkey" -t ed25519 -f "$_tmpkey" >/dev/null 2>&1 && [ -s "$_tmpkey" ]; then
+            chmod 600 "$_tmpkey"
+            mv -f "$_tmpkey" "$_hostkey" && log "host key generated"
+            sync
+        else
+            rm -f "$_tmpkey"
+            log "host key generation failed, giving up"
+            return 0
+        fi
+    fi
+
+    provision_keys
+    [ "$_persistent" = 1 ] && fix_perms
+    if ! has_valid_key "$AUTHKEYS"; then
+        log "WARNING: no authorized key, nobody can log in (put authorized_keys on the SD card)"
+    fi
+
+    fix_shells
+    prepare_home "$_dir"
+
+    # Dropbear daemonizes itself (no -F); -E sends its log to stderr -> $LOG.
+    "$BIN_DIR/dropbear" -r "$_hostkey" -D "$_keydir" -p "$SSH_PORT" \
+        -P "$PIDFILE" -T 3 -E >/dev/null 2>>"$LOG" </dev/null
+    log "dropbear launcher returned status $? (daemon detached)"
+    return 0
+}
+
+do_status() {
+    if is_running; then
+        echo "akam_ssh: dropbear running (pid $_pid)"
+        return 0
+    fi
+    echo "akam_ssh: dropbear not running"
+    return 1
+}
+
+case "${1:-start}" in
+    start)
+        do_start
+        exit 0
+        ;;
+    status)
+        do_status
+        exit $?
+        ;;
+    *)
+        echo "usage: $0 [start|status]" >&2
+        exit 2
+        ;;
+esac

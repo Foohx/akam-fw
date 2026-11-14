@@ -1,0 +1,16 @@
+{
+  "facts": {
+    "os": "darwin",
+    "path": "/dev/disk4",
+    "name": "disk4",
+    "whole": true,
+    "size": 34359738368,
+    "sector_size": 512,
+    "bus": "nvme",
+    "removable": "no",
+    "internal": "yes",
+    "model": "Card Reader",
+    "dev_num": "14:4"
+  },
+  "refuse": "not a USB or SD"
+}

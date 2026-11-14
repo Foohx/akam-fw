@@ -34,12 +34,21 @@ int isp_tunnel(uint32_t inner_cmd, void *payload);
  * color is meaningless under IR illumination). */
 int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain);
 
+/* Lock for the multi-ioctl ISP re-configurations (night switch, img.* keys of the 8091 server). Not
+ * recursive; not taken by isp_tunnel() or by the single-ioctl getters/setters. */
+void isp_cfg_lock(void);
+void isp_cfg_unlock(void);
+/* 1 once the first isp_pipeline_init() has completed (the 8091 server starts before it). */
+int  isp_pipeline_ready(void);
+
+/* Re-send the WB block of the day (0) or night (1) subfile of sensor_isp.conf as it is in the file
+ * (the stock behaviour), instead of the hand-made manual block of isp_set_wb_manual(). */
+int isp_reapply_wb_conf(int night);
+
 /* Live-tunable picture controls (-50..50, matching anyka_ipc's own UI
- * slider range). All GET-modify-SET against real hardware, verified via
- * Ghidra disassembly (not just decompiled C, which proved unreliable for
- * exact field offsets/case numbers in this area — see isp.c's comments on
- * each function for the full trace and what's verified vs. what's a known
- * gap):
+ * slider range). All GET-modify-SET against real hardware, checked against
+ * a capture of the stock firmware (see isp.c's comments on each function for
+ * what is verified vs. what's a known gap):
  *   - saturation/contrast: small "effect" struct (module 0x0f).
  *   - brightness: the LIVE 0x720-byte exposure-attr struct ae.c's AE
  *     thread also polls — a different, riskier mechanism than the other
@@ -55,5 +64,6 @@ int isp_set_sharpness(int value);
 /* Forget cached picture-control baselines — call after any full pipeline
  * reload (isp_pipeline_init()/isp_pipeline_init_night()) so a subsequent
  * slider move computes its delta against the freshly-loaded calibration,
- * not a stale one captured before the reload. See isp.c for detail. */
+ * not a stale one captured before the reload. The reload also drops the applied values, so the non-zero ones are
+ * applied again here. See isp.c for detail. */
 void isp_reset_picture_baselines(void);

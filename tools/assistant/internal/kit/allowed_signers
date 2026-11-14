@@ -1,0 +1,8 @@
+# Akam release signing keys, in the ssh-keygen allowed_signers format.
+#
+# One line per public key. Key fingerprint:
+#   SHA256:Az0SyH/Aoi3ZY/mtaIdM5qnfvJhmOite9qvZDIN3dCM
+# The principal must stay "akam-release" and so must the namespace.
+# The same public key must also be quoted in README.md and in the release notes,
+# so that it can be cross-checked from another channel. Never put a private key here.
+akam-release namespaces="akam-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2qtKAhTkbHvkklqSiZAdGqq98kQiMmRzoOIBlmjPG1 akam-release

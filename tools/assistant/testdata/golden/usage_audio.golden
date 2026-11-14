@@ -1,0 +1,4 @@
+rc=2
+--- stdout ---
+--- stderr ---
+akam: audio volume needs a number from 0 to 100 (see ./akam help)

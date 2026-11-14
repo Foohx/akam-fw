@@ -6,6 +6,10 @@
  * Usage:
  *   isp_dump            — dumps all three structs
  *   isp_dump --watch    — loops every 1s (to watch AE converge live)
+ *   isp_dump --blocks [--all] [--conf FILE] [--out DIR]
+ *                       — reads the live ISP blocks and compares them with
+ *                         the day / night subfiles of sensor_isp.conf
+ *                         (works while ak_rtsp runs; see specs/image-day-night-leds.md)
  *
  * Build: compiled by Makefile as part of the ak_rtsp package.
  */
@@ -16,6 +20,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#include "isp_blocks.h"
 
 #define ISP_DEVICE          "/dev/isp-param-0"
 #define ISP_IOCTL_CMD       0xc0cc5616  /* _IOWR('V',0x16, isp_cmd_wrapper) */
@@ -112,14 +120,60 @@ static void dump_once(void)
     }
 }
 
+static int blocks_get(void *ctx, uint32_t cmd, void *buf)
+{
+    (void)ctx;
+    return isp_tunnel(cmd, buf);
+}
+
+static void blocks_emit(void *ctx, const char *line)
+{
+    (void)ctx;
+    printf("%s\n", line);
+}
+
+/* --blocks [--all] [--conf FILE] [--out DIR]: read the live ISP blocks back and compare them with the
+ * day and night subfiles of sensor_isp.conf (specs/image-day-night-leds.md). --out writes
+ * DIR/isp_blocks.bin in the format of the stock capture (tools/hw_tests/isp_block_diff.py reads it). */
+static int blocks_main(int argc, char **argv)
+{
+    const char *conf = "/tmp/sensor_isp.conf";
+    const char *out = NULL;
+    int all = 0;
+    for (int i = 2; i < argc; i++) {
+        if (!strcmp(argv[i], "--all")) all = 1;
+        else if (!strcmp(argv[i], "--conf") && i + 1 < argc) conf = argv[++i];
+        else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
+        else { fprintf(stderr, "isp_dump --blocks [--all] [--conf FILE] [--out DIR]\n"); return 2; }
+    }
+    FILE *bin = NULL;
+    if (out) {
+        char path[256];
+        mkdir(out, 0755);
+        snprintf(path, sizeof(path), "%s/isp_blocks.bin", out);
+        bin = fopen(path, "wb");
+        if (!bin) { fprintf(stderr, "cannot write %s: %s\n", path, strerror(errno)); return 1; }
+    }
+    isp_dump_opts_t o = { conf, all, bin, 0 };
+    int n = isp_blocks_dump(blocks_get, NULL, &o, blocks_emit, NULL);
+    if (bin) fclose(bin);
+    return n > 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     int watch = (argc > 1 && strcmp(argv[1], "--watch") == 0);
+    int blocks = (argc > 1 && strcmp(argv[1], "--blocks") == 0);
 
     g_fd = open(ISP_DEVICE, O_RDWR);
     if (g_fd < 0) {
         fprintf(stderr, "open %s: %s\n", ISP_DEVICE, strerror(errno));
         return 1;
+    }
+    if (blocks) {
+        int rc = blocks_main(argc, argv);
+        close(g_fd);
+        return rc;
     }
     printf("ISP fd=%d opened\n", g_fd);
 

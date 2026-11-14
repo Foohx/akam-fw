@@ -1,0 +1,14 @@
+{
+  "facts": {
+    "os": "darwin",
+    "path": "/dev/disk5",
+    "name": "disk5",
+    "whole": true,
+    "size": 34359738368,
+    "sector_size": 4096,
+    "bus": "usb",
+    "removable": "yes",
+    "internal": "no"
+  },
+  "refuse": "4096-byte logical sectors"
+}

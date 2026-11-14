@@ -8,25 +8,86 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <time.h>
 
 #include "ae.h"
 #include "night.h"
 #include "isp.h"
+#include "audio_out.h"
+#include "imgq.h"
+#include "isp_tune.h"
+#include "talk.h"
+#include "leds.h"
 #include "control.h"
+#include "video_ctl.h"
+#include "onvif_cfg.h"
+#include "ctl_gate.h"
+#include "ctl_sys.h"
+#include "swdog.h"
+#include "version.h"
+#include "onvif_device.h"
+#include "mqtt_svc.h"
 
-#define CONTROL_PORT 8091
+#ifndef CONTROL_PORT
+#define CONTROL_PORT 8091   /* the host test builds with another port */
+#endif
 
 static volatile int    g_control_running;
 static pthread_t       g_control_tid;
 static pthread_t       g_log_tid;
 static int             g_server_fd = -1;
 
-/* Single-client model — this is a debug/tuning tool, not a multi-user
- * service. A new connection replaces any existing one. */
-static pthread_mutex_t g_client_lock = PTHREAD_MUTEX_INITIALIZER;
-static int             g_client_fd = -1;
+/* Up to CTL_MAX_CLIENTS concurrent clients, one small thread each (a remote
+ * metrics reader must not kick the SSH helper that runs a command on the
+ * loopback). One slot is reserved for loopback peers (remote peers get at most
+ * CTL_MAX_REMOTE) so idle LAN connections cannot lock out the SSH helpers. A
+ * client that finds no slot for it gets "ERR busy" and is closed. g_slot_lock
+ * protects the table and the fds in it. */
+#define CTL_STACK_BYTES 65536
+#ifndef CTL_IDLE_TICK_S
+#define CTL_IDLE_TICK_S 10    /* recv wakes this often to check the idle limit (it depends on the DEBUG flag) */
+#endif
+#define CTL_SNDTIMEO_S  2     /* a reply to a stuck client gives up after this */
+
+typedef struct {
+    int             fd;        /* -1 = free */
+    int             loopback;  /* peer is 127.0.0.0/8 */
+    int             need_nl;   /* a LOG line was cut short: start the next one on a fresh line */
+    pthread_mutex_t wlock;     /* one writer at a time on this socket (replies vs LOG) */
+    int64_t         t0_ms;     /* connect time (absolute session cap of remote peers) */
+} cli_t;
+
+static pthread_mutex_t g_slot_lock = PTHREAD_MUTEX_INITIALIZER;
+static ctl_slots_t     g_slots;
+static cli_t           g_cli[CTL_MAX_CLIENTS] = {
+    { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 },
+    { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 },
+};
+
+/* RAM-only debug flag (writes from remote peers), off at every start. */
+static pthread_mutex_t g_dbg_lock = PTHREAD_MUTEX_INITIALIZER;
+static ctl_debug_t     g_dbg;
+
+static int64_t mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static int debug_active(void)
+{
+    pthread_mutex_lock(&g_dbg_lock);
+    int on = ctl_debug_active(&g_dbg, mono_ms());
+    pthread_mutex_unlock(&g_dbg_lock);
+    return on;
+}
+
+int control_debug_on(void) { return debug_active(); }
 
 static int             g_orig_stdout = -1; /* real stdout fd (serial console) */
 static int             g_log_pipe_r  = -1;
@@ -43,6 +104,45 @@ static int g_isp_contrast   = 0;
 static int g_isp_brightness = 0;
 static int g_isp_sharpness  = 0;
 
+/* Saved with the same four values after every successful isp.* SET (8091 SET only; the values come back at the
+ * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at 0
+ * removes the file: that is the default. Only for a local SET (loopback);
+ * a network SET changes the picture in RAM only. Called with g_set_lock held. */
+static int g_persist_isp;  /* set by do_set() under g_set_lock: only a local (SSH) SET writes flash */
+
+static const char *isp_persist_note(char *note, size_t cap)
+{
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
+    note[0] = '\0';
+    /* a slider dragged by the PC tool over the network (DEBUG) would write flash at every step: RAM only */
+    if (!g_persist_isp) return note;
+    if (isp_tune_save(ISP_TUNE_FILE, &t) < 0) snprintf(note, cap, " (not saved: %s)", strerror(errno));
+    return note;
+}
+
+/* One LOG line to every connected client, never blocking: a slot whose socket
+ * is busy or full simply misses the line. G05: the log holds client IPs, auth failures and request URIs, so
+ * only loopback peers get it, or every peer while DEBUG is on. */
+static void log_forward(const char *line)
+{
+    char   buf[1100];
+    int    n = snprintf(buf, sizeof(buf), "LOG %s\n", line);
+    if (n >= (int)sizeof(buf)) n = (int)sizeof(buf) - 1;
+    int dbg = debug_active(); /* before g_slot_lock: g_dbg_lock is never taken inside it */
+    pthread_mutex_lock(&g_slot_lock);
+    for (int i = 0; i < CTL_MAX_CLIENTS; i++) {
+        cli_t *c = &g_cli[i];
+        if (c->fd < 0 || !(c->loopback || dbg) || pthread_mutex_trylock(&c->wlock) != 0) continue;
+        if (c->need_nl && send(c->fd, "\n", 1, MSG_DONTWAIT | MSG_NOSIGNAL) == 1) c->need_nl = 0;
+        if (!c->need_nl) {
+            ssize_t w = send(c->fd, buf, (size_t)n, MSG_DONTWAIT | MSG_NOSIGNAL);
+            if (w > 0 && w < n) c->need_nl = 1;
+        }
+        pthread_mutex_unlock(&c->wlock);
+    }
+    pthread_mutex_unlock(&g_slot_lock);
+}
+
 /* -------------------------------------------------------------------------
  * stdout tee — captures every printf in the whole binary (not just ae.c/
  * night.c) without touching a single existing call site. control_start()
@@ -50,28 +150,65 @@ static int g_isp_sharpness  = 0;
  * exact same bytes back to the real stdout (serial console unaffected),
  * and additionally forwards complete lines to the connected control client
  * prefixed "LOG ".
+ *
+ * Nothing here may ever block another thread (G02):
+ *  - the pipe's write end is O_NONBLOCK: a printf that finds the pipe full
+ *    loses its line (stdio sets the stream error flag; this thread counts it
+ *    in g_log_dropped and clears the flag) instead of freezing its caller;
+ *  - the real stdout is written through a PRIVATE, non-blocking open file
+ *    description (reopened from /proc/self/fd), so O_NONBLOCK is not leaked to
+ *    stderr or to the wrapper, which share the original description; if the
+ *    reopen fails, a zero-timeout poll() guards each write instead;
+ *  - a write that cannot complete is dropped and counted (GET log.dropped).
  * ------------------------------------------------------------------------- */
+static volatile uint32_t g_log_dropped; /* lines/chunks lost to a full pipe or a stalled console */
+static int               g_console_nb = -1; /* private non-blocking console fd, -1 = use the poll guard */
+
+static void console_write(const char *buf, size_t len)
+{
+    int fd = g_console_nb >= 0 ? g_console_nb : g_orig_stdout;
+    if (fd < 0) return;
+    if (g_console_nb < 0) {
+        struct pollfd pf = { .fd = fd, .events = POLLOUT, .revents = 0 };
+        if (poll(&pf, 1, 0) <= 0 || !(pf.revents & POLLOUT)) { g_log_dropped++; return; }
+    }
+    while (len > 0) {
+        ssize_t w = write(fd, buf, len);
+        if (w > 0) { buf += w; len -= (size_t)w; continue; }
+        if (w < 0 && errno == EINTR) continue;
+        g_log_dropped++; /* EAGAIN (console busy), EPIPE, ENOSPC...: drop the rest, never wait */
+        return;
+    }
+}
+
 static void *log_pump(void *arg)
 {
     (void)arg;
     char   raw[512];
     char   line[1024];
     size_t line_len = 0;
+    sigset_t nopipe;
+
+    sigemptyset(&nopipe);
+    sigaddset(&nopipe, SIGPIPE); /* a dead console reader must give EPIPE here, not kill the process */
+    pthread_sigmask(SIG_BLOCK, &nopipe, NULL);
 
     for (;;) {
         ssize_t n = read(g_log_pipe_r, raw, sizeof(raw));
+        if (n < 0 && errno == EINTR) continue;
         if (n <= 0) break;  /* pipe write end closed = process exiting */
 
-        write(g_orig_stdout, raw, n);  /* unchanged passthrough to serial console */
+        if (ferror(stdout)) { /* a printf met the full pipe since the last pass */
+            clearerr(stdout);
+            g_log_dropped++;
+        }
+        console_write(raw, (size_t)n);  /* passthrough to the serial console, never blocking */
 
         for (ssize_t i = 0; i < n; i++) {
             char c = raw[i];
             if (c == '\n') {
                 line[line_len] = '\0';
-                pthread_mutex_lock(&g_client_lock);
-                if (g_client_fd >= 0)
-                    dprintf(g_client_fd, "LOG %s\n", line);
-                pthread_mutex_unlock(&g_client_lock);
+                log_forward(line);
                 line_len = 0;
             } else if (line_len < sizeof(line) - 1) {
                 line[line_len++] = c;
@@ -84,21 +221,30 @@ static void *log_pump(void *arg)
 /* -------------------------------------------------------------------------
  * Command protocol
  * ------------------------------------------------------------------------- */
-/* Locked against g_client_lock — log_pump() also writes to this fd from a
- * different thread (async LOG lines); without a shared lock the two could
- * interleave mid-line on the socket. */
-static void reply(int fd, const char *fmt, ...)
+/* Per-client write lock: LOG lines (log_forward) use the same lock, so a line
+ * is never cut in the middle by a reply. The send timeout bounds a stuck client. */
+static void send_locked(cli_t *c, const char *buf, size_t len)
 {
-    char buf[256];
+    pthread_mutex_lock(&c->wlock);
+    if (c->need_nl) { (void)send(c->fd, "\n", 1, MSG_NOSIGNAL); c->need_nl = 0; }
+    (void)send(c->fd, buf, len, MSG_NOSIGNAL);
+    pthread_mutex_unlock(&c->wlock);
+}
+
+/* Every reply is one line: a CR or LF inside a value (an SSID, say) becomes '?' so it
+ * can never forge a second line. */
+static void reply(cli_t *c, const char *fmt, ...)
+{
+    char buf[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     size_t len = strlen(buf);
+    for (size_t i = 0; i < len; i++)
+        if (buf[i] == '\r' || buf[i] == '\n') buf[i] = '?';
     if (len < sizeof(buf) - 1) { buf[len] = '\n'; len++; }
-    pthread_mutex_lock(&g_client_lock);
-    write(fd, buf, len);
-    pthread_mutex_unlock(&g_client_lock);
+    send_locked(c, buf, len);
 }
 
 static const char *night_mode_name(night_override_t m)
@@ -118,183 +264,508 @@ static int night_mode_parse(const char *s, night_override_t *out)
     return -1;
 }
 
-static void do_list(int fd)
+static void audio_list_emit(void *arg, const char *line)
+{
+    reply((cli_t *)arg, "%s", line);
+}
+
+/* Metric lines are collected under the ctl_sys lock and sent after it is released. */
+typedef struct { char buf[2048]; size_t len; int hide; } metric_buf_t;
+
+/* G05: identity data (Wi-Fi name, MAC) is not given to remote peers unless DEBUG is on; net.ip stays (a
+ * remote reader already knows it). Loopback readers (the wizard over SSH) see everything. */
+static int ident_hidden(const cli_t *c, const char *key)
+{
+    if (c->loopback || (strcmp(key, "net.ssid") && strcmp(key, "net.mac"))) return 0;
+    return !debug_active();
+}
+
+static void metric_emit(const char *key, const char *value, void *u)
+{
+    metric_buf_t *m = (metric_buf_t *)u;
+    if (m->hide && (!strcmp(key, "net.ssid") || !strcmp(key, "net.mac"))) value = "hidden";
+    size_t kl = strlen(key), vl = strlen(value);
+    if (m->len + kl + vl + 2 > sizeof(m->buf)) return;
+    memcpy(m->buf + m->len, key, kl);
+    m->len += kl;
+    m->buf[m->len++] = '=';
+    for (size_t i = 0; i < vl; i++) {
+        unsigned char ch = (unsigned char)value[i];
+        m->buf[m->len++] = (ch < 0x20 || ch == 0x7f) ? '?' : (char)ch;
+    }
+    m->buf[m->len++] = '\n';
+}
+
+static int clients_connected(void)
+{
+    pthread_mutex_lock(&g_slot_lock);
+    int n = ctl_slots_count(&g_slots);
+    pthread_mutex_unlock(&g_slot_lock);
+    return n;
+}
+
+static void do_list(cli_t *c)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
     night_tuning_t n; night_get_tuning(&n);
 
-    reply(fd, "ae.stable_range=%d",       a.stable_range);
-    reply(fd, "ae.hold_range=%d",         a.hold_range);
-    reply(fd, "ae.speed=%d",              a.speed);
-    reply(fd, "ae.exp_max=%d",            a.exp_max);
-    reply(fd, "ae.enabled=%d",            a.enabled);
-    reply(fd, "night.mode=%s",            night_mode_name(n.override));
-    reply(fd, "night.state=%s",           night_is_night() ? "night" : "day");
-    reply(fd, "night.trigger_hw_exp=%u",  n.trigger_hw_exp);
-    reply(fd, "night.day_hw_exp=%u",      n.day_hw_exp);
-    reply(fd, "night.confirm_samples=%d", n.confirm_samples);
-    reply(fd, "night.lock_ms=%d",         n.lock_ms);
-    reply(fd, "isp.saturation=%d",        g_isp_saturation);
-    reply(fd, "isp.contrast=%d",          g_isp_contrast);
-    reply(fd, "isp.brightness=%d",        g_isp_brightness);
-    reply(fd, "isp.sharpness=%d",         g_isp_sharpness);
+    reply(c, "ae.stable_range=%d",       a.stable_range);
+    reply(c, "ae.hold_range=%d",         a.hold_range);
+    reply(c, "ae.speed=%d",              a.speed);
+    reply(c, "ae.exp_max=%d",            a.exp_max);
+    reply(c, "ae.enabled=%d",            a.enabled);
+    reply(c, "night.mode=%s",            night_mode_name(n.override));
+    reply(c, "night.state=%s",           night_is_night() ? "night" : "day");
+    reply(c, "night.trigger_hw_exp=%u",  n.trigger_hw_exp);
+    reply(c, "night.day_hw_exp=%u",      n.day_hw_exp);
+    reply(c, "night.confirm_samples=%d", n.confirm_samples);
+    reply(c, "night.lock_ms=%d",         n.lock_ms);
+    reply(c, "isp.saturation=%d",        g_isp_saturation);
+    reply(c, "isp.contrast=%d",          g_isp_contrast);
+    reply(c, "isp.brightness=%d",        g_isp_brightness);
+    reply(c, "isp.sharpness=%d",         g_isp_sharpness);
     /* VENC QP is stock-matched ground truth but
      * not live-settable yet — no confirmed ioctl to update rc params on an
      * already-created encoder channel without a DEACTIVATE/CREATE_ENC
      * cycle. Reported for visibility only. */
-    reply(fd, "venc.minqp=28 (read-only)");
-    reply(fd, "venc.maxqp=43 (read-only)");
-    reply(fd, ".");
+    reply(c, "venc.minqp=28 (read-only)");
+    reply(c, "venc.maxqp=43 (read-only)");
+    night_ctl_list(audio_list_emit, c);
+    ledsys_ctl_list(audio_list_emit, c);
+    audio_out_ctl_list(audio_list_emit, c);
+    imgq_ctl_list(audio_list_emit, c);
+    talk_ctl_list(audio_list_emit, c);
+    video_ctl_list(audio_list_emit, c);
+    metric_buf_t *m = malloc(sizeof(*m));   /* 2 KB: not on the 64 KB client stack */
+    if (m) {
+        m->len = 0;
+        m->hide = ident_hidden(c, "net.mac");
+        ctl_sys_list(metric_emit, m);
+        if (m->len) send_locked(c, m->buf, m->len);
+        free(m);
+    }
+    reply(c, "ctl.clients=%d", clients_connected());
+    reply(c, "ctl.debug=%d",   debug_active());
+    reply(c, "fw.version=%s",  firmware_version());
+    {
+        char hn[33];
+        onvif_hostname_get(hn);
+        reply(c, "sys.hostname=%s", hn);
+    }
+    {
+        char os[ONVIF_STATE_MAX];
+        onvif_svc_state(os, sizeof(os));
+        reply(c, "onvif.state=%s", os);
+    }
+    {
+        char ms[MQTT_STATE_MAX];
+        mqtt_svc_state(ms, sizeof(ms));
+        reply(c, "mqtt.state=%s", ms);
+    }
+    reply(c, ".");
 }
 
-static void do_get(int fd, const char *param)
+static void do_get(cli_t *c, const char *param)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
     night_tuning_t n; night_get_tuning(&n);
 
-    if      (!strcmp(param, "ae.stable_range"))       reply(fd, "ae.stable_range=%d", a.stable_range);
-    else if (!strcmp(param, "ae.hold_range"))         reply(fd, "ae.hold_range=%d", a.hold_range);
-    else if (!strcmp(param, "ae.speed"))              reply(fd, "ae.speed=%d", a.speed);
-    else if (!strcmp(param, "ae.exp_max"))            reply(fd, "ae.exp_max=%d", a.exp_max);
-    else if (!strcmp(param, "ae.enabled"))            reply(fd, "ae.enabled=%d", a.enabled);
-    else if (!strcmp(param, "night.mode"))            reply(fd, "night.mode=%s", night_mode_name(n.override));
-    else if (!strcmp(param, "night.state"))           reply(fd, "night.state=%s", night_is_night() ? "night" : "day");
-    else if (!strcmp(param, "night.trigger_hw_exp"))  reply(fd, "night.trigger_hw_exp=%u", n.trigger_hw_exp);
-    else if (!strcmp(param, "night.day_hw_exp"))      reply(fd, "night.day_hw_exp=%u", n.day_hw_exp);
-    else if (!strcmp(param, "night.confirm_samples")) reply(fd, "night.confirm_samples=%d", n.confirm_samples);
-    else if (!strcmp(param, "night.lock_ms"))         reply(fd, "night.lock_ms=%d", n.lock_ms);
-    else if (!strcmp(param, "isp.saturation"))        reply(fd, "isp.saturation=%d", g_isp_saturation);
-    else if (!strcmp(param, "isp.contrast"))          reply(fd, "isp.contrast=%d", g_isp_contrast);
-    else if (!strcmp(param, "isp.brightness"))        reply(fd, "isp.brightness=%d", g_isp_brightness);
-    else if (!strcmp(param, "isp.sharpness"))         reply(fd, "isp.sharpness=%d", g_isp_sharpness);
-    else if (!strcmp(param, "venc.minqp"))            reply(fd, "venc.minqp=28 (read-only)");
-    else if (!strcmp(param, "venc.maxqp"))            reply(fd, "venc.maxqp=43 (read-only)");
-    else                                              reply(fd, "ERR unknown param %s", param);
+    if      (!strcmp(param, "ae.stable_range"))       reply(c, "ae.stable_range=%d", a.stable_range);
+    else if (!strcmp(param, "ae.hold_range"))         reply(c, "ae.hold_range=%d", a.hold_range);
+    else if (!strcmp(param, "ae.speed"))              reply(c, "ae.speed=%d", a.speed);
+    else if (!strcmp(param, "ae.exp_max"))            reply(c, "ae.exp_max=%d", a.exp_max);
+    else if (!strcmp(param, "ae.enabled"))            reply(c, "ae.enabled=%d", a.enabled);
+    else if (!strcmp(param, "night.mode"))            reply(c, "night.mode=%s", night_mode_name(n.override));
+    else if (!strcmp(param, "night.state"))           reply(c, "night.state=%s", night_is_night() ? "night" : "day");
+    else if (!strcmp(param, "night.trigger_hw_exp"))  reply(c, "night.trigger_hw_exp=%u", n.trigger_hw_exp);
+    else if (!strcmp(param, "night.day_hw_exp"))      reply(c, "night.day_hw_exp=%u", n.day_hw_exp);
+    else if (!strcmp(param, "night.confirm_samples")) reply(c, "night.confirm_samples=%d", n.confirm_samples);
+    else if (!strcmp(param, "night.lock_ms"))         reply(c, "night.lock_ms=%d", n.lock_ms);
+    else if (!strcmp(param, "isp.saturation"))        reply(c, "isp.saturation=%d", g_isp_saturation);
+    else if (!strcmp(param, "isp.contrast"))          reply(c, "isp.contrast=%d", g_isp_contrast);
+    else if (!strcmp(param, "isp.brightness"))        reply(c, "isp.brightness=%d", g_isp_brightness);
+    else if (!strcmp(param, "isp.sharpness"))         reply(c, "isp.sharpness=%d", g_isp_sharpness);
+    else if (!strcmp(param, "venc.minqp"))            reply(c, "venc.minqp=28 (read-only)");
+    else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=43 (read-only)");
+    else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
+    else if (!strcmp(param, "ctl.clients"))           reply(c, "ctl.clients=%d", clients_connected());
+    else if (!strcmp(param, "log.dropped"))           reply(c, "log.dropped=%u", (unsigned)g_log_dropped);
+    /* Not secret (the ONVIF DeviceInformation answers the same): readable by remote peers, no login. */
+    else if (!strcmp(param, "fw.version"))            reply(c, "fw.version=%s", firmware_version());
+    else if (!strcmp(param, "sys.hostname")) {
+        char hn[33];
+        onvif_hostname_get(hn);
+        reply(c, "sys.hostname=%s", hn);
+    }
+    else if (!strcmp(param, "onvif.state")) {
+        char os[ONVIF_STATE_MAX];
+        onvif_svc_state(os, sizeof(os));
+        reply(c, "onvif.state=%s", os);
+    }
+    else if (!strcmp(param, "mqtt.state") || !strcmp(param, "mqtt.stats") || !strcmp(param, "mqtt.test")) {
+        char ms[192];
+        if (!strcmp(param, "mqtt.state")) mqtt_svc_state(ms, sizeof(ms));
+        else if (!strcmp(param, "mqtt.stats")) mqtt_svc_stats(ms, sizeof(ms));
+        else mqtt_svc_test_result(ms, sizeof(ms));
+        reply(c, "%s=%s", param, ms);
+    }
+    else if (!strcmp(param, "ctl.debug_remaining")) {
+        pthread_mutex_lock(&g_dbg_lock);
+        int r = ctl_debug_remaining_s(&g_dbg, mono_ms());
+        pthread_mutex_unlock(&g_dbg_lock);
+        reply(c, "ctl.debug_remaining=%d", r);
+    } else {
+        char line[320], val[64];
+        if (night_ctl_get(param, line, sizeof(line)) == 0)          reply(c, "%s", line);
+        else if (ledsys_ctl_get(param, line, sizeof(line)) == 0)    reply(c, "%s", line);
+        else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(c, "%s", line);
+        else if (imgq_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
+        else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
+        else if (video_ctl_get(param, line, sizeof(line)) == 0)     reply(c, "%s", line);
+        else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, ident_hidden(c, param) ? "hidden" : val);
+        else                                                   reply(c, "ERR unknown param %s", param);
+    }
 }
 
-static void do_set(int fd, const char *param, const char *value)
+static void setmsg(char *resp, size_t cap, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(resp, cap, fmt, ap);
+    va_end(ap);
+}
+
+/* Strict decimal parse with a range (G16): no sign-less junk, no trailing text, no overflow. */
+static int ctl_parse_int(const char *s, long lo, long hi, long *out)
+{
+    char *end = NULL;
+    if (!s || !*s) return -1;
+    errno = 0;
+    long v = strtol(s, &end, 10);
+    if (errno || !end || *end || v < lo || v > hi) return -1;
+    *out = v;
+    return 0;
+}
+
+#define SET_INT(dst, key, lo, hi) do { long v_; \
+        if (ctl_parse_int(value, (lo), (hi), &v_) != 0) { \
+            setmsg(resp, cap, "ERR " key " range [%d,%d]", (int)(lo), (int)(hi)); return; } \
+        (dst) = (__typeof__(dst))v_; } while (0)
+
+/* The picture setters read-modify-write isp.c's cached baselines, which the day/night pipeline reload frees and
+ * invalidates under isp_cfg_lock() (night thread). Every caller therefore takes that lock around the setter.
+ * Order: g_set_lock -> isp_cfg_lock (the night thread never takes g_set_lock). */
+static int isp_set_locked(int (*fn)(int), int v)
+{
+    isp_cfg_lock();
+    int rc = fn(v);
+    isp_cfg_unlock();
+    return rc;
+}
+
+static void do_set_locked(char *resp, size_t cap, const char *param, const char *value)
 {
     ae_tuning_t    a; ae_get_tuning(&a);
     night_tuning_t n; night_get_tuning(&n);
 
     if (!strcmp(param, "ae.stable_range")) {
-        a.stable_range = atoi(value);
+        SET_INT(a.stable_range, "ae.stable_range", 0, 100);
         ae_set_tuning(&a);
-        reply(fd, "OK ae.stable_range=%d", a.stable_range);
+        setmsg(resp, cap, "OK ae.stable_range=%d", a.stable_range);
     } else if (!strcmp(param, "ae.hold_range")) {
-        a.hold_range = atoi(value);
+        SET_INT(a.hold_range, "ae.hold_range", 0, 100);
         ae_set_tuning(&a);
-        reply(fd, "OK ae.hold_range=%d", a.hold_range);
+        setmsg(resp, cap, "OK ae.hold_range=%d", a.hold_range);
     } else if (!strcmp(param, "ae.speed")) {
-        a.speed = atoi(value);
+        SET_INT(a.speed, "ae.speed", 0, 100);
         ae_set_tuning(&a);
-        reply(fd, "OK ae.speed=%d", a.speed);
+        setmsg(resp, cap, "OK ae.speed=%d", a.speed);
     } else if (!strcmp(param, "ae.exp_max")) {
-        a.exp_max = atoi(value);
+        SET_INT(a.exp_max, "ae.exp_max", 0, 32767);
         ae_set_tuning(&a);
-        reply(fd, "OK ae.exp_max=%d", a.exp_max);
+        setmsg(resp, cap, "OK ae.exp_max=%d", a.exp_max);
     } else if (!strcmp(param, "ae.enabled")) {
-        a.enabled = atoi(value) ? 1 : 0;
+        SET_INT(a.enabled, "ae.enabled", 0, 1);
         ae_set_tuning(&a);
-        reply(fd, "OK ae.enabled=%d", a.enabled);
+        setmsg(resp, cap, "OK ae.enabled=%d", a.enabled);
     } else if (!strcmp(param, "night.mode")) {
         night_override_t m;
         if (night_mode_parse(value, &m) != 0) {
-            reply(fd, "ERR invalid night.mode value %s (want auto|day|night)", value);
+            setmsg(resp, cap, "ERR invalid night.mode value %s (want auto|day|night)", value);
             return;
         }
         n.override = m;
-        night_set_tuning(&n);
-        reply(fd, "OK night.mode=%s", night_mode_name(m));
+        int e = night_set_tuning(&n);
+        setmsg(resp, cap, "OK night.mode=%s%s%s%s", night_mode_name(m), e ? " (not saved: " : "", e ? strerror(e) : "",
+               e ? ")" : "");
     } else if (!strcmp(param, "night.trigger_hw_exp")) {
-        n.trigger_hw_exp = (uint32_t)strtoul(value, NULL, 10);
+        SET_INT(n.trigger_hw_exp, "night.trigger_hw_exp", 0, 16384);
         night_set_tuning(&n);
-        reply(fd, "OK night.trigger_hw_exp=%u", n.trigger_hw_exp);
+        setmsg(resp, cap, "OK night.trigger_hw_exp=%u", n.trigger_hw_exp);
     } else if (!strcmp(param, "night.day_hw_exp")) {
-        n.day_hw_exp = (uint32_t)strtoul(value, NULL, 10);
+        SET_INT(n.day_hw_exp, "night.day_hw_exp", 0, 16384);
         night_set_tuning(&n);
-        reply(fd, "OK night.day_hw_exp=%u", n.day_hw_exp);
+        setmsg(resp, cap, "OK night.day_hw_exp=%u", n.day_hw_exp);
     } else if (!strcmp(param, "night.confirm_samples")) {
-        n.confirm_samples = atoi(value);
+        SET_INT(n.confirm_samples, "night.confirm_samples", 1, 36000);
         night_set_tuning(&n);
-        reply(fd, "OK night.confirm_samples=%d", n.confirm_samples);
+        setmsg(resp, cap, "OK night.confirm_samples=%d", n.confirm_samples);
     } else if (!strcmp(param, "night.lock_ms")) {
-        n.lock_ms = atoi(value);
+        SET_INT(n.lock_ms, "night.lock_ms", 0, 3600000);
         night_set_tuning(&n);
-        reply(fd, "OK night.lock_ms=%d", n.lock_ms);
+        setmsg(resp, cap, "OK night.lock_ms=%d", n.lock_ms);
     } else if (!strcmp(param, "isp.saturation")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { reply(fd, "ERR isp.saturation range [-50,50]"); return; }
-        if (isp_set_saturation(v) != 0) { reply(fd, "ERR isp_set_saturation failed"); return; }
+        int v;
+        SET_INT(v, "isp.saturation", -50, 50);
+        if (isp_set_locked(isp_set_saturation, v) != 0) { setmsg(resp, cap, "ERR isp_set_saturation failed"); return; }
         g_isp_saturation = v;
-        reply(fd, "OK isp.saturation=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.saturation=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.contrast")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { reply(fd, "ERR isp.contrast range [-50,50]"); return; }
-        if (isp_set_contrast(v) != 0) { reply(fd, "ERR isp_set_contrast failed"); return; }
+        int v;
+        SET_INT(v, "isp.contrast", -50, 50);
+        if (isp_set_locked(isp_set_contrast, v) != 0) { setmsg(resp, cap, "ERR isp_set_contrast failed"); return; }
         g_isp_contrast = v;
-        reply(fd, "OK isp.contrast=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.contrast=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.brightness")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { reply(fd, "ERR isp.brightness range [-50,50]"); return; }
-        if (isp_set_brightness(v) != 0) { reply(fd, "ERR isp_set_brightness failed"); return; }
+        int v;
+        SET_INT(v, "isp.brightness", -50, 50);
+        if (isp_set_locked(isp_set_brightness, v) != 0) { setmsg(resp, cap, "ERR isp_set_brightness failed"); return; }
         g_isp_brightness = v;
-        reply(fd, "OK isp.brightness=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.brightness=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "isp.sharpness")) {
-        int v = atoi(value);
-        if (v < -50 || v > 50) { reply(fd, "ERR isp.sharpness range [-50,50]"); return; }
-        if (isp_set_sharpness(v) != 0) { reply(fd, "ERR isp_set_sharpness failed"); return; }
+        int v;
+        SET_INT(v, "isp.sharpness", -50, 50);
+        if (isp_set_locked(isp_set_sharpness, v) != 0) { setmsg(resp, cap, "ERR isp_set_sharpness failed"); return; }
         g_isp_sharpness = v;
-        reply(fd, "OK isp.sharpness=%d", v);
+        char note[64];
+        setmsg(resp, cap, "OK isp.sharpness=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "venc.minqp") || !strcmp(param, "venc.maxqp")) {
-        reply(fd, "ERR %s is read-only in this version "
+        setmsg(resp, cap, "ERR %s is read-only in this version "
                   "(requires an encoder restart, not yet implemented)", param);
     } else {
-        reply(fd, "ERR unknown param %s", param);
+        char msg[160];
+        if (night_ctl_set(param, value, msg, sizeof(msg)) >= 0)          setmsg(resp, cap, "%s", msg);
+        else if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)    setmsg(resp, cap, "%s", msg);
+        else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) setmsg(resp, cap, "%s", msg);
+        else if (imgq_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
+        else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
+        else if (video_ctl_set(param, value, msg, sizeof(msg)) >= 0)     setmsg(resp, cap, "%s", msg);
+        else                                                        setmsg(resp, cap, "ERR unknown param %s", param);
     }
+}
+
+/* One mutex for every SET: isp.c keeps an unlocked baseline and the ae/night
+ * get-modify-set below must be atomic. SET is rare. Nothing under this lock calls
+ * back into control.c, and the LOG pump never takes it. The reply is sent after
+ * the unlock so a stuck client cannot hold it. */
+static pthread_mutex_t g_set_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* The one entry point for every SET, whatever the transport: the 8091 text protocol (do_set) and the ONVIF
+ * Imaging service (onvif_imaging.c). Same lock, same setters, same persistence rules: `persist` is true for a
+ * local (loopback) SET, which writes flash (isp_tune_save, night_set_persist, imgq_set_persist); false keeps the
+ * change in RAM. msg receives the one-line answer ("OK key=value" or "ERR ..."). Returns 0 for an OK answer,
+ * else -1. The answer is written under the lock; callers send it after the call returns. */
+int control_apply_setting(const char *key, const char *value, int persist, char *msg, size_t cap)
+{
+    msg[0] = '\0';
+    pthread_mutex_lock(&g_set_lock);
+    g_persist_isp = persist;
+    night_set_persist(persist);
+    imgq_set_persist(persist);
+    audio_out_set_persist(persist);
+    video_ctl_set_persist(persist);
+    do_set_locked(msg, cap, key, value);
+    pthread_mutex_unlock(&g_set_lock);
+    return strncmp(msg, "OK", 2) == 0 ? 0 : -1;
+}
+
+/* Current value (text) of the picture keys isp.brightness / contrast / saturation / sharpness and night.mode
+ * (auto|day|night). 0, or -1 for another key. */
+int control_get_setting(const char *key, char *out, size_t cap)
+{
+    int v, rc = 0;
+    pthread_mutex_lock(&g_set_lock);
+    if      (!strcmp(key, "isp.brightness")) v = g_isp_brightness;
+    else if (!strcmp(key, "isp.contrast"))   v = g_isp_contrast;
+    else if (!strcmp(key, "isp.saturation")) v = g_isp_saturation;
+    else if (!strcmp(key, "isp.sharpness"))  v = g_isp_sharpness;
+    else if (!strcmp(key, "night.mode")) {
+        night_tuning_t n; night_get_tuning(&n);
+        snprintf(out, cap, "%s", night_mode_name(n.override));
+        pthread_mutex_unlock(&g_set_lock);
+        return 0;
+    } else { rc = -1; v = 0; }
+    pthread_mutex_unlock(&g_set_lock);
+    if (rc == 0) snprintf(out, cap, "%d", v);
+    return rc;
+}
+
+/* Value (text, without "key=") of any key the camera knows: picture keys, night.mode, night.state, the LED, audio and
+ * talk keys and the metrics. The reader of the MQTT module (mqtt_ops.c). 0, or -1 for an unknown key. */
+int control_get_value(const char *key, char *out, size_t cap)
+{
+    char line[160];
+    if (control_get_setting(key, out, cap) == 0) return 0;
+    if (!strcmp(key, "night.state")) { snprintf(out, cap, "%s", night_is_night() ? "night" : "day"); return 0; }
+    if (ctl_sys_get(key, out, cap) == 0) return 0;
+    if (ledsys_ctl_get(key, line, sizeof(line)) == 0 || audio_out_ctl_get(key, line, sizeof(line)) == 0) {
+        size_t kl = strlen(key);
+        if (strncmp(line, key, kl) != 0 || line[kl] != '=') return -1;   /* "ERR unknown param ..." */
+        snprintf(out, cap, "%s", line + kl + 1);
+        return 0;
+    }
+    return -1;
+}
+
+/* Write the four picture values to flash now (what a loopback SET does after each change). 0, or -1 (errno). */
+int control_persist_picture(void)
+{
+    pthread_mutex_lock(&g_set_lock);
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
+    int rc = isp_tune_save(ISP_TUNE_FILE, &t);
+    pthread_mutex_unlock(&g_set_lock);
+    return rc < 0 ? -1 : 0;
+}
+
+static void do_set(cli_t *c, const char *param, const char *value)
+{
+    char resp[256];
+    (void)control_apply_setting(param, value, c->loopback, resp, sizeof(resp));
+    reply(c, "%s", resp);
+}
+
+/* Called once from main() after the ISP runs: applies the saved picture settings (absent file = nothing to do,
+ * nothing is written). Values are validated by isp_tune_load(). A value the ISP refuses is logged and the
+ * others still apply; the statics keep what was really applied. */
+void control_apply_saved_isp(void)
+{
+    isp_tune_t t;
+    if (!isp_tune_load(ISP_TUNE_FILE, &t)) return;
+    pthread_mutex_lock(&g_set_lock);
+    if (t.saturation && isp_set_locked(isp_set_saturation, t.saturation) == 0) g_isp_saturation = t.saturation;
+    if (t.contrast && isp_set_locked(isp_set_contrast, t.contrast) == 0)     g_isp_contrast = t.contrast;
+    if (t.brightness && isp_set_locked(isp_set_brightness, t.brightness) == 0) g_isp_brightness = t.brightness;
+    if (t.sharpness && isp_set_locked(isp_set_sharpness, t.sharpness) == 0)   g_isp_sharpness = t.sharpness;
+    pthread_mutex_unlock(&g_set_lock);
+    printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d\n",
+           g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness);
 }
 
 /* Blocking byte-at-a-time line reader — traffic on this protocol is tiny
- * (a human moving sliders), so simplicity wins over buffered-recv efficiency. */
-static int read_line(int fd, char *buf, size_t cap)
+ * (a human moving sliders), so simplicity wins over buffered-recv efficiency.
+ * The socket wakes every CTL_IDLE_TICK_S (SO_RCVTIMEO); the client is dropped
+ * once it sent nothing for ctl_idle_limit_s(): long for loopback or while DEBUG
+ * is on, short for a remote peer (it would otherwise hold a slot for 15 min). */
+static int read_line(cli_t *c, char *buf, size_t cap)
 {
-    size_t i = 0;
+    size_t  i = 0;
+    int64_t last = mono_ms();
+    int     cap_s = ctl_session_limit_s(c->loopback, debug_active());
     for (;;) {
-        char c;
-        ssize_t n = recv(fd, &c, 1, 0);
-        if (n <= 0) return -1;  /* EOF or error */
-        if (c == '\r') continue;
-        if (c == '\n') { buf[i] = '\0'; return (int)i; }
-        if (i < cap - 1) buf[i++] = c;
+        char c1;
+        /* A remote peer cannot hold a slot for ever by trickling one byte per idle period. */
+        if (cap_s && mono_ms() - c->t0_ms >= 1000LL * cap_s) return -1;
+        ssize_t n = recv(c->fd, &c1, 1, 0);
+        if (n == 0) return -1;  /* EOF */
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) &&
+                mono_ms() - last < 1000LL * ctl_idle_limit_s(c->loopback, debug_active()))
+                continue;
+            return -1;          /* error or idle timeout */
+        }
+        last = mono_ms();
+        if (c1 == '\r') continue;
+        if (c1 == '\n') { buf[i] = '\0'; return (int)i; }
+        if (i < cap - 1) buf[i++] = c1;
     }
 }
 
-static void handle_control_client(int fd)
+static void handle_control_client(cli_t *c)
 {
     char line[256];
     for (;;) {
-        int n = read_line(fd, line, sizeof(line));
+        int n = read_line(c, line, sizeof(line));
         if (n < 0) return;
         if (n == 0) continue;
 
-        char *cmd = strtok(line, " ");
+        char *sp = NULL; /* strtok_r: up to CTL_MAX_CLIENTS threads parse at once */
+        char *cmd = strtok_r(line, " ", &sp);
         if (!cmd) continue;
 
+        /* Read-only gate: writes only from loopback or while DEBUG is on. */
+        if (ctl_is_write_cmd(cmd) && !ctl_write_allowed(c->loopback, debug_active())) {
+            reply(c, "%s", CTL_READONLY_MSG);
+            continue;
+        }
+
         if (!strcasecmp(cmd, "LIST")) {
-            do_list(fd);
+            do_list(c);
         } else if (!strcasecmp(cmd, "GET")) {
-            char *param = strtok(NULL, " ");
-            if (!param) { reply(fd, "ERR GET requires a param name"); continue; }
-            do_get(fd, param);
+            char *param = strtok_r(NULL, " ", &sp);
+            if (!param) { reply(c, "ERR GET requires a param name"); continue; }
+            do_get(c, param);
         } else if (!strcasecmp(cmd, "SET")) {
-            char *param = strtok(NULL, " ");
-            char *value = strtok(NULL, " ");
-            if (!param || !value) { reply(fd, "ERR SET requires param and value"); continue; }
-            do_set(fd, param, value);
+            char *param = strtok_r(NULL, " ", &sp);
+            char *value = strtok_r(NULL, " ", &sp);
+            if (!param || !value) { reply(c, "ERR SET requires param and value"); continue; }
+            do_set(c, param, value);
+        } else if (!strcasecmp(cmd, "QUIT")) {
+            reply(c, "OK bye");
+            return;
+        } else if (!strcasecmp(cmd, "ONVIF")) {
+            /* loopback only, like DEBUG: starts/stops the HTTP server and WS-Discovery from the flag file */
+            char *a1 = strtok_r(NULL, " ", &sp);
+            if (!c->loopback) reply(c, "ERR ONVIF reload is only allowed from the camera");
+            else if (!a1 || strcasecmp(a1, "reload")) reply(c, "ERR usage: ONVIF reload");
+            else {
+                char os[ONVIF_STATE_MAX];
+                (void)onvif_svc_reload(os, sizeof(os));
+                reply(c, "OK onvif.state=%s", os);
+            }
+        } else if (!strcasecmp(cmd, "MQTT")) {
+            /* loopback only, like ONVIF: reload starts/stops the MQTT client from its files; test connects once */
+            char *a1 = strtok_r(NULL, " ", &sp);
+            if (!c->loopback) reply(c, "ERR MQTT commands are only allowed from the camera");
+            else if (a1 && !strcasecmp(a1, "reload")) {
+                char ms[MQTT_STATE_MAX];
+                int rr = mqtt_svc_reload(ms, sizeof(ms));
+                if (rr != 0) reply(c, "ERR mqtt.state=%s", ms);   /* thread start failed, or the password file is unusable */
+                else reply(c, "OK mqtt.state=%s", ms);
+            } else if (a1 && !strcasecmp(a1, "test")) {
+                if (mqtt_svc_test_start() == 0) reply(c, "OK mqtt.test=running");
+                else reply(c, "ERR no valid MQTT configuration");
+            } else reply(c, "ERR usage: MQTT reload|test");
+        } else if (!strcasecmp(cmd, "DEBUG")) {
+            char *a1 = strtok_r(NULL, " ", &sp);
+            char *a2 = strtok_r(NULL, " ", &sp);
+            char  out[96];
+            pthread_mutex_lock(&g_dbg_lock);
+            ctl_debug_command(&g_dbg, mono_ms(), c->loopback, a1, a2, out, sizeof(out));
+            pthread_mutex_unlock(&g_dbg_lock);
+            reply(c, "%s", out);
         } else {
-            reply(fd, "ERR unknown command %s", cmd);
+            reply(c, "ERR unknown command %s", cmd);
         }
     }
+}
+
+static void *control_client_thread(void *arg)
+{
+    int    idx = (int)(intptr_t)arg;
+    cli_t *c   = &g_cli[idx];
+    printf("[control] tuning client connected%s\n", c->loopback ? " (local)" : "");
+    handle_control_client(c);
+
+    pthread_mutex_lock(&g_slot_lock);
+    if (c->fd >= 0) { close(c->fd); c->fd = -1; }
+    ctl_slots_release(&g_slots, idx);
+    pthread_mutex_unlock(&g_slot_lock);
+    printf("[control] tuning client disconnected\n");
+    return NULL;
 }
 
 static void *control_accept_loop(void *arg)
@@ -315,36 +786,66 @@ static void *control_accept_loop(void *arg)
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("[control] bind"); close(server_fd); return NULL;
     }
-    if (listen(server_fd, 1) < 0) {
+    if (listen(server_fd, CTL_MAX_CLIENTS) < 0) {
         perror("[control] listen"); close(server_fd); return NULL;
     }
 
+    fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL) | O_NONBLOCK); /* a connection reset between poll and accept must not block */
     g_server_fd = server_fd;
     printf("[control] tuning server listening on port %d\n", CONTROL_PORT);
 
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, CTL_STACK_BYTES);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
     while (g_control_running) {
-        struct sockaddr_in client_addr;
+        struct sockaddr_storage client_addr;
         socklen_t alen = sizeof(client_addr);
+        swdog_beat(SWDOG_BEAT_CONTROL); /* G01 heartbeat: wake at least every 5 s */
+        struct pollfd apf = { .fd = server_fd, .events = POLLIN, .revents = 0 };
+        int pr = poll(&apf, 1, 5000);
+        /* Never fall through to a blocking accept() on EINTR (SIGUSR1 may land on this thread): the beat
+         * would go stale and the stall watchdog would restart a healthy camera. */
+        if (pr < 0 && errno != EINTR) usleep(100000);
+        if (pr <= 0) continue;
         int fd = accept(server_fd, (struct sockaddr *)&client_addr, &alen);
         if (fd < 0) {
-            if (errno == EINTR) continue;
-            break;  /* server_fd closed by control_stop() */
+            /* Only control_stop() ends the loop. EMFILE/ENOMEM/ECONNABORTED are transient: leaving here
+             * would kill port 8091 until restart and disarm the watchdog's control heartbeat. */
+            if (!g_control_running) break;
+            if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED)
+                usleep(100000);
+            continue;
         }
 
-        pthread_mutex_lock(&g_client_lock);
-        if (g_client_fd >= 0) close(g_client_fd);  /* single-client: replace previous */
-        g_client_fd = fd;
-        pthread_mutex_unlock(&g_client_lock);
-
-        printf("[control] tuning client connected\n");
-        handle_control_client(fd);
-
-        pthread_mutex_lock(&g_client_lock);
-        if (g_client_fd == fd) { close(fd); g_client_fd = -1; }
-        pthread_mutex_unlock(&g_client_lock);
-        printf("[control] tuning client disconnected\n");
+        pthread_mutex_lock(&g_slot_lock);
+        int lo  = ctl_peer_is_loopback((struct sockaddr *)&client_addr);
+        int idx = ctl_slots_acquire(&g_slots, lo);
+        if (idx >= 0) {
+            cli_t *c = &g_cli[idx];
+            struct timeval rt = { CTL_IDLE_TICK_S, 0 }, st = { CTL_SNDTIMEO_S, 0 };
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rt, sizeof(rt));
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &st, sizeof(st));
+            c->fd       = fd;
+            c->loopback = lo;
+            c->need_nl  = 0;
+            c->t0_ms    = mono_ms();
+            pthread_t t;
+            if (pthread_create(&t, &attr, control_client_thread, (void *)(intptr_t)idx) != 0) {
+                c->fd = -1;
+                ctl_slots_release(&g_slots, idx);
+                idx = -2;
+            }
+        }
+        pthread_mutex_unlock(&g_slot_lock);
+        if (idx < 0) {
+            if (idx == -1) (void)send(fd, "ERR busy\n", 9, MSG_DONTWAIT | MSG_NOSIGNAL);
+            close(fd);
+        }
     }
-
+    swdog_disarm(SWDOG_BEAT_CONTROL);
+    pthread_attr_destroy(&attr);
     return NULL;
 }
 
@@ -354,8 +855,14 @@ int control_start(void)
      * VI, VENC) reaches the tuning tab's debug view, not just ae/night's
      * own logging. */
     g_orig_stdout = dup(STDOUT_FILENO);
+    {
+        char self[32];
+        snprintf(self, sizeof(self), "/proc/self/fd/%d", g_orig_stdout);
+        g_console_nb = open(self, O_WRONLY | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+    }
     int pipefd[2];
     if (pipe(pipefd) != 0) { perror("[control] pipe"); return -1; }
+    fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL) | O_NONBLOCK); /* printf never waits on a full pipe */
     if (dup2(pipefd[1], STDOUT_FILENO) < 0) { perror("[control] dup2"); return -1; }
     close(pipefd[1]);
     g_log_pipe_r = pipefd[0];
@@ -383,19 +890,15 @@ void control_stop(void)
         close(g_server_fd);
         g_server_fd = -1;
     }
-    pthread_mutex_lock(&g_client_lock);
-    if (g_client_fd >= 0) {
-        /* shutdown() before close() — the accept thread may be blocked in
-         * recv() inside handle_control_client(); shutdown() forces that
-         * call to return cleanly instead of racing a bare close(). */
-        shutdown(g_client_fd, SHUT_RDWR);
-        close(g_client_fd);
-        g_client_fd = -1;
+    pthread_mutex_lock(&g_slot_lock);
+    for (int i = 0; i < CTL_MAX_CLIENTS; i++) {
+        /* shutdown() makes a client thread blocked in recv() return; the
+         * thread closes its own fd. */
+        if (g_cli[i].fd >= 0) shutdown(g_cli[i].fd, SHUT_RDWR);
     }
-    pthread_mutex_unlock(&g_client_lock);
+    pthread_mutex_unlock(&g_slot_lock);
     pthread_join(g_control_tid, NULL);
     /* log_pump isn't joined — it blocks on read() of the tee'd stdout pipe
      * and only returns when that pipe closes at process exit, which is
-     * always imminent by the time control_stop() runs. Acceptable for a
-     * debug tool's shutdown path. */
+     * always imminent by the time control_stop() runs. */
 }

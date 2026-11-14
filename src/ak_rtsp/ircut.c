@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "ircut.h"
 
@@ -12,7 +13,7 @@
  * drives the other.  To move the filter, both pins are asserted in opposite
  * polarity, then GPIO_A is released to the idle level after a 100ms pulse.
  *
- * Reversed from SetIrcutState @ 0x000d4580 / ircut_load_hw_config @ 0x000d54d4.
+ * Matches the stock firmware: SetIrcutState / ircut_load_hw_config.
  */
 #define IRCUT_GPIO_A        65
 #define IRCUT_GPIO_B_EN     66
@@ -63,7 +64,7 @@ static void gpio_set(int gpio, int value)
 
 /* Drive the solenoid to night or day position.
  *
- * Mirrors SetIrcutState @ 0x000d4580 for ircut_type=1 (IRCUT_LINE_TYPE_A_B):
+ * Mirrors SetIrcutState for ircut_type=1 (IRCUT_LINE_TYPE_A_B):
  *   Step 1 — assert both coils in opposite polarity to start movement
  *   Step 2 — release GPIO_A to its idle level after 100ms
  *   The filter takes ~100ms to travel; the second 100ms is settling time.
@@ -87,11 +88,11 @@ static void ircut_set_state(int night)
 
 /* Initialize IR cut filter and IR LED GPIOs, then fire the reset pulse.
  *
- * Mirrors the call chain in anyka_ipc:
- *   ht_night_mode_init @ 0x000d5e88
- *     → ircut_gpio_export_and_reset @ 0x000d57f4   (export GPIO A/B, reset pulse)
- *       → ircut_reset_pulse_once @ 0x000d4878      (night→day once per boot)
- *   → FUN_000d43e4 (export GPIO 70, set output)
+ * Same sequence as the stock firmware:
+ *   ht_night_mode_init
+ *     → ircut_gpio_export_and_reset   (export GPIO A/B, reset pulse)
+ *       → ircut_reset_pulse_once      (night→day once per boot)
+ *   → export GPIO 70 and set it as output (IR LED)
  *   → SetDayNightMode(0)                            (already in day state: no-op)
  *
  * The reset pulse is what causes the characteristic two solenoid clicks at
@@ -129,13 +130,67 @@ int ircut_init(void)
     return 0;
 }
 
+/* IR LED policy (night.ir_led, see leds.h). g_ir_lock orders the night
+ * thread's ircut_switch() against the control thread's setting change, so the
+ * GPIO never ends up lit while the policy says off. */
+static pthread_mutex_t g_ir_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_ir_allowed = 1;  /* night.ir_led=auto */
+static int g_ir_night   = 0;  /* last requested day/night position */
+static int g_ir_probe   = 0;  /* night.c is probing the ambient light: the IR LEDs are dark for a moment */
+
+void ircut_set_ir_led_allowed(int allowed)
+{
+    pthread_mutex_lock(&g_ir_lock);
+    g_ir_allowed = allowed ? 1 : 0;
+    /* Only touch the GPIO once it exists (ircut_init() exports GPIO 70 and
+     * drives it low; a previous run may have left it exported). "off" always
+     * drives it low, so an IR LED left lit by an earlier ak_rtsp that stopped
+     * during a night is darkened at start-up, before ircut_init() runs. "auto"
+     * lights it only in night mode. */
+    char path[64];
+    snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", IR_LED_GPIO);
+    if ((!g_ir_allowed || g_ir_night) && access(path, F_OK) == 0)
+        gpio_set(IR_LED_GPIO, g_ir_allowed && g_ir_night && !g_ir_probe);
+    pthread_mutex_unlock(&g_ir_lock);
+}
+
 /* Runtime day/night switch — filter position + IR LED together, matching
  * stock anyka_ipc's coordinated switch (night_mode_def=0 = NIGHT_MODE_IRLED
- * in _ht_hw_settings.ini: IR LED is part of night mode on this hardware). */
+ * in _ht_hw_settings.ini: IR LED is part of night mode on this hardware).
+ * With night.ir_led=off the filter still moves but the IR LED stays off. */
 void ircut_switch(int night)
 {
     ircut_set_state(night);
-    gpio_set(IR_LED_GPIO, night ? 1 : 0);
+    pthread_mutex_lock(&g_ir_lock);
+    g_ir_night = night ? 1 : 0;
+    g_ir_probe = 0;  /* a switch ends any probe: the LED follows the new position */
+    int led = night && g_ir_allowed;
+    gpio_set(IR_LED_GPIO, led);
+    pthread_mutex_unlock(&g_ir_lock);
     printf("[ak_rtsp] ircut: switched to %s mode (IR LED %s)\n",
-           night ? "NIGHT" : "DAY", night ? "on" : "off");
+           night ? "NIGHT" : "DAY", led ? "on" : "off");
+}
+
+/* 1 when the IR LEDs light in night mode (night.ir_led=auto). */
+int ircut_ir_led_allowed(void)
+{
+    pthread_mutex_lock(&g_ir_lock);
+    int a = g_ir_allowed;
+    pthread_mutex_unlock(&g_ir_lock);
+    return a;
+}
+
+/* night.c's ambient light probe (see night_logic.h): off=1 darkens the IR LEDs while the filter stays in the night
+ * position, off=0 gives them back (they light only in night mode with night.ir_led=auto, as ircut_switch()
+ * decides). ircut_switch() clears the probe, so a switch during a probe needs no restore. */
+void ircut_ir_led_probe(int off)
+{
+    pthread_mutex_lock(&g_ir_lock);
+    g_ir_probe = off ? 1 : 0;
+    if (g_ir_night) {
+        gpio_set(IR_LED_GPIO, g_ir_allowed && !g_ir_probe);
+        printf("[ak_rtsp] ircut: IR LED probe %s (IR LED %s)\n", off ? "start" : "end",
+               (g_ir_allowed && !g_ir_probe) ? "on" : "off");
+    }
+    pthread_mutex_unlock(&g_ir_lock);
 }
