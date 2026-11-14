@@ -558,15 +558,46 @@ func TestClientCancelsWhileWaitingForTheProxy(t *testing.T) {
 	}
 }
 
+// The server accepts the request and never answers until the test is over. The cancellation is sent once the
+// handler is running (no sleep to guess a duration from): the handler must NOT answer on the client's close
+// (r.Context().Done()), because then a complete, valid reply could win the race against the cancellation and
+// the fetch would succeed, which is a correct outcome for the client but not what this test is about.
 func TestClientCancelsWhileWaitingForTheServer(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+	}))
 	defer srv.Close()
+	defer close(release) // runs first: srv.Close waits for the handlers
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
-	start := time.Now()
+	defer cancel()
+	var cancelled atomic.Pointer[time.Time]
+	go func() {
+		select {
+		case <-entered:
+			now := time.Now()
+			cancelled.Store(&now)
+		case <-time.After(60 * time.Second):
+			t.Error("the request never reached the server")
+		}
+		cancel()
+	}()
 	err := kit.FetchLimit(ctx, kittest.ClientFor(srv), srv.URL+"/x", filepath.Join(t.TempDir(), "f"), 1<<10)
-	if !errors.Is(err, context.Canceled) || time.Since(start) > 3*time.Second {
-		t.Errorf("got %v after %v", err, time.Since(start))
+	end := time.Now()
+	at := cancelled.Load()
+	if at == nil {
+		t.Fatalf("returned %v before the request reached the server", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want context.Canceled, got %v", err)
+	}
+	if d := end.Sub(*at); d > 10*time.Second {
+		t.Errorf("cancellation took %v", d)
 	}
 }
 
