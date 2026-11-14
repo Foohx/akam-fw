@@ -289,7 +289,7 @@ static void test_machine(void)
           "end to end: GetDeviceInformation answered (password off: reads open)");
     CHECK(http_post(p1, "SystemReboot", b, sizeof(b)) != 0 && strstr(b, "NotAuthorized"),
           "password off: a write is refused");
-    CHECK(!strcmp(state(), want), "password off still starts ONVIF (spec 3.3)");
+    CHECK(!strcmp(state(), want), "password off still starts ONVIF (specs/onvif.md, section 3)");
     auth_on();
 
     /* reload with the same port keeps serving */

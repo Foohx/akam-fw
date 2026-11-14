@@ -11,14 +11,14 @@ shortcuts), `?` to read what it does and what it risks, `c` to change camera, `q
 for a "Press Enter": a result shows on one line under the menu and any key clears it. In a camera list, `s` scans
 the network and `o` searches with ONVIF (each asks first), `t` types an address, `r` rechecks, `f` forgets, Esc goes back.
 
-The first run asks for a short name for your camera (for example `salon`). `./akam help`
+The first run asks for a short name for your camera (for example `kitchen`). `./akam help`
 lists every command; add `--dry-run` to rehearse without changing anything. The menu (in colour on a
 real terminal; `--plain` or no terminal gives line-by-line prompts):
 
 ```text
-╭─ Akam · guided setup ───────────────────────────────── v1.0.0-dev  3/9 done ╮
-│ Host  Arch Linux x86_64        Camera  salon · no address yet · c to change │
-│ Kit   akam 1.0.0               Image   not built yet                        │
+╭─ Akam · guided setup ───────────────────────────────────── v0.1.0  3/9 done ╮
+│ Host  Arch Linux x86_64      Camera  kitchen · no address yet · c to change │
+│ Kit   akam 0.1.0               Image   not built yet                        │
 ╰─────────────────────────────────────────────────────────────────────────────╯
    ✔  1  Check this computer                                          done
    ●  2  Get the Akam kit                                             todo
@@ -123,7 +123,7 @@ release: it has its own row, and a release row asks (default No) before writing 
 ```bash
 akam releases [--include-prereleases]            # the published versions, newest first
 akam update --version 0.2.0                        # a release (verified like get-kit)
-akam update --kit akam-kit-0.2.0.tar.xz            # a kit you have
+akam update --kit akam-kit-lsc-indoor-1080p-ak3918-0.2.0.tar.xz            # a kit you have
 akam update --image my.squashfs                    # an image you built
 akam update --stock                                # back to the original firmware (restore, same gates)
 ```

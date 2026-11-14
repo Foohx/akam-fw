@@ -12,7 +12,7 @@ import (
 // watchdog or the magic SysRq key.
 var rebootWords = regexp.MustCompile(`(?i)(^|[\s;&|(` + "`" + `'"$/])(reboot|poweroff|halt|shutdown|init\s+[06]|telinit|watchdog|sysrq)([\s;&|)` + "`" + `'"-]|$)`)
 
-// TestNeverReboots (spec 6.4): the assistant never reboots or power-cycles a camera. (1) Every remote
+// TestNeverReboots (specs/installer.md, section 12): the assistant never reboots or power-cycles a camera. (1) Every remote
 // command it can build or send, and every fixed command string, passes the allow-list of remote.go and
 // holds no reboot word; the one process it kills is the video service, by its exact command. (2) No
 // string literal of the code that talks to the camera starts a reboot, a halt, a watchdog or SysRq

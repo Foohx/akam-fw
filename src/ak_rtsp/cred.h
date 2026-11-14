@@ -115,7 +115,7 @@ int cred_check_http_digest(const char *method, const char *hdr, size_t hdr_len,
 void cred_note_failure(unsigned *delay_ms);
 
 /* False only when the RTSP password is off (no htdigest file): ONVIF reads are
- * then open and changes refused (spec 3.3). True for a valid file AND for an
+ * then open and changes refused (specs/onvif.md, section 3). True for a valid file AND for an
  * invalid one (fail closed: authentication is required and nobody passes). */
 bool cred_auth_enabled(void);
 /* The mode behind it (the htdigest file, re-read): OFF, ON or BROKEN. */

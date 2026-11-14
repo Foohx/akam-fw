@@ -487,7 +487,7 @@ func (a *App) offerRepin(ch *chooser, name, oldIP, newIP string) {
 
 // askNewCameraName asks a short name for a camera that is not remembered yet.
 func (a *App) askNewCameraName() (string, bool) {
-	a.UI.Say(fmt.Sprintf("  Give this camera a short name, for example 'salon' (lowercase letters, digits and '-', at most %d).", state.NameMax))
+	a.UI.Say(fmt.Sprintf("  Give this camera a short name, for example 'kitchen' (lowercase letters, digits and '-', at most %d).", state.NameMax))
 	for {
 		v, err := a.UI.Prompt("  Camera name:", "")
 		if err != nil || v == "" {

@@ -13,7 +13,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// TestDangerNotAnsweredByBoardStripsOrFormTraffic (spec 6.4): everything the flow or the program can
+// TestDangerNotAnsweredByBoardStripsOrFormTraffic (specs/installer.md, section 12): everything the flow or the program can
 // send while a red box is open (a new board, a cleared panel, strips, operation steps, a header, other
 // keys than the answer keys) leaves the box open and unanswered.
 func TestDangerNotAnsweredByBoardStripsOrFormTraffic(t *testing.T) {

@@ -12,7 +12,7 @@ flash is split into numbered MTD partitions, see the [flash map](../how-it-works
 
 ## What it is, and what it is not
 
-The kit (`akam-kit-<version>.tar.xz`) holds **only Akam's own files**:
+The kit (`akam-kit-<model>-<version>.tar.xz`) holds **only Akam's own files**:
 
 | Path | Content |
 |---|---|
@@ -37,7 +37,7 @@ ARM CPU, and the scripts are only copied into the image or used on the camera.
 ## Verify before use
 
 ```sh
-tools/release/verify_kit.sh akam-kit-<version>.tar.xz
+tools/release/verify_kit.sh akam-kit-<model>-<version>.tar.xz
 ```
 
 Download `SHA256SUMS` and `SHA256SUMS.sig` into the same folder as the kit. The

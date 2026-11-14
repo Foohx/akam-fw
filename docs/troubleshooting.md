@@ -380,7 +380,7 @@ cycle the camera. With the microphone off the capture device is never opened and
 ## The camera clock is wrong (1970 or the build date)
 
 The camera has no battery clock: it starts in the past after every power cut. Nothing sets it unless you ask:
-`./akam ntp set pool.ntp.org` (or your router's address, up to 3 servers) makes it ask those servers at start-up
+`./akam ntp set ntp.example.net` (you choose the server: there is no default one; your router's address works, up to 3 servers) makes it ask those servers at start-up
 and every 6 hours (UDP 123, outgoing only); `./akam ntp status` shows the clock and `./akam ntp off` removes the
 setting. If `./akam ntp status` still shows a year near 1970, the camera cannot reach the server (outgoing UDP 123 is blocked, or the name does not resolve): try your router's address or an IPv4 address. Without a clock the WS-Security time window of ONVIF logins is not checked (the replay cache still is) and
 the RTCP sender reports carry a wrong date; the video itself is not affected. `GET sys.time_set` on port 8091 is

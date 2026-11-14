@@ -20,7 +20,7 @@ import (
 // cameras, rename-camera, register and the first-run questions (cameras.sh).
 
 func (a *App) askCameraName() (string, bool) {
-	a.UI.Say(fmt.Sprintf("  Give this camera a short name, for example 'salon' (lowercase letters, digits and '-', at most %d).", state.NameMax))
+	a.UI.Say(fmt.Sprintf("  Give this camera a short name, for example 'kitchen' (lowercase letters, digits and '-', at most %d).", state.NameMax))
 	a.UI.Say("  It is used for the backup and image folders and as the camera's network name. Several cameras can be set up, each with its own progress.")
 	for {
 		v, err := a.UI.Prompt("  Camera name [default]:", "default")

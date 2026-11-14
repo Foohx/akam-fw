@@ -152,7 +152,7 @@ func (e *env) countDial(n *atomic.Int32, block bool) {
 	}
 }
 
-// TestNoNetworkBeforeScanYes (spec 6.4): the home, the chooser and the scan key send nothing; the
+// TestNoNetworkBeforeScanYes (specs/installer.md, section 12): the home, the chooser and the scan key send nothing; the
 // scan question defaults to No and only a yes dials.
 func TestNoNetworkBeforeScanYes(t *testing.T) {
 	for _, tc := range []struct {

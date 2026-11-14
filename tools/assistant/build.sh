@@ -30,7 +30,7 @@ REPO=$(cd "$HERE/../.." && pwd)
 . "$REPO/tools/lib/gotoolchain.sh"
 BUDGET_BYTES=$((12 * 1024 * 1024))
 SOFT_BYTES=$((11 * 1024 * 1024))
-VERSION=${VERSION:-1.0.0-dev}
+VERSION=${VERSION:-0.1.0-dev}
 ALL_TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 TARGETS=${AKAM_TARGETS:-$ALL_TARGETS}
 

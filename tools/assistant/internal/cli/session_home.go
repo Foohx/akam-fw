@@ -37,7 +37,7 @@ func (a *App) camAddr() string {
 	return a.St.Get("camera_ip")
 }
 
-// healthBadges are the badges of a snapshot: ready, clock, Wi-Fi (spec 4.5).
+// healthBadges are the badges of a snapshot: ready, clock, Wi-Fi (specs/installer.md, section 10).
 func healthBadges(h camHealth) []ui.HeaderBadge {
 	b := []ui.HeaderBadge{{Level: "ok", Text: "ready"}}
 	switch {

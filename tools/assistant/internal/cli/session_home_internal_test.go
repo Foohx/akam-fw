@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// The header badges come from what a flow read: ready, clock, Wi-Fi (spec 4.5).
+// The header badges come from what a flow read: ready, clock, Wi-Fi (specs/installer.md, section 10).
 func TestHealthBadges(t *testing.T) {
 	now := time.Now().Unix()
 	for _, tc := range []struct {

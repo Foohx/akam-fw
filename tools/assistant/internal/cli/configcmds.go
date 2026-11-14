@@ -154,7 +154,7 @@ func (a *App) showSource() {
 	}
 }
 
-// sourceText is "local (from global)" for config_source=global, "local (from camera salon)", or "local".
+// sourceText is "local (from global)" for config_source=global, "local (from camera kitchen)", or "local".
 func sourceText(s string) string {
 	switch {
 	case s == "global":

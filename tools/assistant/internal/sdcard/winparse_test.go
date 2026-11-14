@@ -11,7 +11,7 @@ import (
 )
 
 // The buffers below are built from the documented layouts of the Windows structures, not captured: the
-// hardware plan (spec 7.3) checks them against a real machine.
+// hardware plan (docs/hardware-test-checklists.md) checks them against a real machine.
 
 func TestControlCodes(t *testing.T) {
 	for name, c := range map[string][2]uint32{

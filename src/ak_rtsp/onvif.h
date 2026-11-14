@@ -5,9 +5,9 @@
  * Body) in the service's table, ask the gate for its access class, then call the operation, which fills a response
  * template. Unknown operation: Receiver fault ter:Action / ter:ActionNotSupported (HTTP 500, as ONVIF Core pairs it).
  *
- * Access classes (spec 3.3):
+ * Access classes (specs/onvif.md, section 3):
  *   ONVIF_PRE    always open: GetSystemDateAndTime, GetCapabilities, GetServices, GetServiceCapabilities,
- *                GetScopes, GetHostname (the ONVIF pre-auth list of spec 3.1)
+ *                GetScopes, GetHostname (the ONVIF pre-auth list of specs/onvif.md, section 3)
  *   ONVIF_READ   needs a login when the RTSP password is ON, open when it is OFF
  *   ONVIF_WRITE  needs a login when ON, REFUSED (ter:NotAuthorized) when OFF
  * A login is a valid WS-Security UsernameToken (PasswordDigest) in the SOAP Header, or a valid HTTP Digest

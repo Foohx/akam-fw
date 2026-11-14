@@ -153,7 +153,7 @@ Options:
   --pubkey FILE      SSH public key for the flash card (default: asked; the shared key ~/.ssh/akam.pub comes first)
   --ssid NAME        Wi-Fi name (the password is asked without echo, or set AKAM_WIFI_PASS)
   --profile P        doctor profile: kit | build | all
-  --camera NAME      the camera to work on (a short name such as salon: a-z, 0-9, '-', at most 20).
+  --camera NAME      the camera to work on (a short name such as kitchen: a-z, 0-9, '-', at most 20).
                      Each camera has its own progress and log; a new name starts a new camera. The
                      name is used in the backup and image folders. The first menu run asks for it;
                      progress made before this existed is the camera called "default".
