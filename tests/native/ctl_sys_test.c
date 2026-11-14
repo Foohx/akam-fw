@@ -73,8 +73,8 @@ static int essid_is(const char *raw, size_t len, const char *want)
 
 int main(void)
 {
-    CHECK(essid_is("MyWifi\0", 4, "MyWifi"));            /* length counts the NUL (old WEXT driver) */
-    CHECK(essid_is("MyWifi", 3, "MyWifi"));
+    CHECK(essid_is("Net\0", 4, "Net"));            /* length counts the NUL (old WEXT driver) */
+    CHECK(essid_is("Net", 3, "Net"));
     CHECK(essid_is("a\nb", 3, "a?b"));
     CHECK(essid_is("x\0yz", 4, "x"));
 
