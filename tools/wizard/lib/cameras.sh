@@ -288,6 +288,7 @@ cmd_register() {
         OPT_BACKUP_DIR="$(cd "$OPT_BACKUP_DIR" && pwd)"
         state_set backup_dir "$OPT_BACKUP_DIR"
         state_set backup_sha "$(host_sha256 "$OPT_BACKUP_DIR/mtdblock7.bin")"
+        state_set camera_model "$(hw_model "$(host_sha256 "$OPT_BACKUP_DIR/mtdblock7.bin")")"
         state_mark_done backup
     fi
     state_mark_done flash

@@ -78,7 +78,7 @@ func nativeWorld(t *testing.T, answer string) (*App, *bytes.Buffer, string, stri
 			t.Fatal(err)
 		}
 	}
-	hwTxt := []byte("supported_hardware_format=1\nvalidated|Other camera|soc|Linux-x|8 partitions|squashfs xz block=131072 bcj=none|" + strings.Repeat("ab", 32) + "|1\n")
+	hwTxt := []byte("supported_hardware_format=1\nmodel=lsc-indoor-1080p-ak3918\nvalidated|Other camera|soc|Linux-x|8 partitions|squashfs xz block=131072 bcj=none|" + strings.Repeat("ab", 32) + "|1\n")
 	put("supported_hardware.txt", hwTxt)
 	put("bin/ak_rtsp", []byte("ak"))
 	put("bin/dropbearmulti", []byte("db"))
@@ -190,7 +190,7 @@ func writeKitManifest(t *testing.T, kd string, hw []byte, extra string) {
 		return nil
 	})
 	sort.Strings(files)
-	man := "kit_format=1\nkit_grade=release\nakam_version=t\nsource_commit=abc\nbuilt_utc=2023-11-14T22:13:20Z\ntarget=arm-linux-musleabi\n" +
+	man := "kit_format=1\nkit_grade=release\nakam_version=t\nmodel=lsc-indoor-1080p-ak3918\nsource_commit=abc\nbuilt_utc=2023-11-14T22:13:20Z\ntarget=arm-linux-musleabi\n" +
 		"time64_gate=pass\n" + extra + "supported_hardware_sha256=" + sumHex(hw) + "\n"
 	for _, f := range files {
 		b, _ := os.ReadFile(filepath.Join(kd, filepath.FromSlash(f)))

@@ -199,7 +199,11 @@ if [ -n "$KIT_ARG" ]; then
     DROPBEAR_DIR=""
 else
     MODE=source
-    SUPPORTED_HW="${AKAM_SUPPORTED_HARDWARE:-$ROOT/tools/release/supported_hardware.txt}" # env: tests only
+    SUPPORTED_HW="${AKAM_SUPPORTED_HARDWARE:-}" # env: tests only
+    if [ -z "$SUPPORTED_HW" ]; then # a source build has no kit: every model of the registry counts
+        SUPPORTED_HW="$TMP/supported_hardware.txt"
+        cat "$ROOT"/tools/release/models/*.txt >"$SUPPORTED_HW"
+    fi
     [ -f "$BINARY" ] || die "ak_rtsp binary not found at $BINARY (build it first: make -C src/ak_rtsp ak_rtsp, or set AK_RTSP_BIN)"
     # Dropbear: prebuilt, or build it with the pinned toolchain.
     DROPBEAR_MULTI="${DROPBEAR_MULTI:-$ROOT/dist/dropbear/dropbearmulti}"
@@ -379,7 +383,7 @@ case "$HW_VERDICT" in
         if [ "$UNTESTED_OK" = 1 ]; then
             warn "*** UNTESTED hardware/firmware ($HW_VERDICT: $HW_DETAIL). Building anyway (--i-understand-untested). Akam makes no promise that the result boots. ***"
         else
-            die "hardware/firmware is not validated ($HW_VERDICT: $HW_DETAIL). Akam is only validated for the targets in tools/release/supported_hardware.txt. If you accept the risk, repeat with --i-understand-untested."
+            die "hardware/firmware is not validated ($HW_VERDICT: $HW_DETAIL). Akam is only validated for the targets in tools/release/models/. If you accept the risk, repeat with --i-understand-untested."
         fi
         ;;
 esac

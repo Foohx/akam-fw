@@ -289,7 +289,7 @@ func TestSymlinkFailureFallsBackToCopyAndSidecar(t *testing.T) {
 	b := kittest.Build(t, t.TempDir(), kittest.Spec{
 		ManifestExtra: "link dropbearmulti 777 overlay/bin/dropbearkey\n",
 		TarMutate: func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/overlay/bin/dropbearkey", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "dropbearmulti"})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/overlay/bin/dropbearkey", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "dropbearmulti"})
 		},
 	})
 	to := filepath.Join(t.TempDir(), "kit")

@@ -33,3 +33,16 @@ func TestEmbeddedScriptsMatchTheRepo(t *testing.T) {
 		t.Errorf("%d sources but %d embedded files", n, len(Names()))
 	}
 }
+
+// Every model of the registry (tools/release/models/<id>.txt) is embedded: the assistant recognises cameras by it.
+func TestEveryRegistryModelIsEmbedded(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", "release", "models", "*.txt"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no model file found: %v", err)
+	}
+	for _, f := range files {
+		if _, err := Script(filepath.Base(f)); err != nil {
+			t.Errorf("%s is not embedded: add it to sources.txt and run go generate ./internal/assets", filepath.Base(f))
+		}
+	}
+}

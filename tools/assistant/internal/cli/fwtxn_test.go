@@ -18,7 +18,7 @@ func recordKit(t *testing.T, w *fwWorld) (tarball string) {
 	if err := os.MkdirAll(dl, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"akam-kit-1.0.0.tar.xz", "SHA256SUMS", "SHA256SUMS.sig"} {
+	for _, f := range []string{"akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz", "SHA256SUMS", "SHA256SUMS.sig"} {
 		b, _ := os.ReadFile(filepath.Join(w.api.kb.Dir, f))
 		if err := os.WriteFile(filepath.Join(dl, f), b, 0o600); err != nil {
 			t.Fatal(err)
@@ -27,7 +27,7 @@ func recordKit(t *testing.T, w *fwWorld) (tarball string) {
 	kd := filepath.Join(w.state, "kit")
 	_ = os.MkdirAll(kd, 0o700)
 	_ = os.WriteFile(filepath.Join(kd, "MARK"), []byte("recorded kit"), 0o600)
-	tarball = filepath.Join(dl, "akam-kit-1.0.0.tar.xz")
+	tarball = filepath.Join(dl, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	st := strings.ReplaceAll(readAll(t, filepath.Join(w.state, "state")), "mode=source\n", "mode=kit\n")
 	w.writeState(st + "kit_path=" + tarball + "\nkit_sha=" + w.api.kb.TarSHA + "\nkit_version=1.0.0\nkit_format=1\nkit_unsigned_ok=0\n")
 	return tarball
@@ -47,10 +47,12 @@ func (w *fwWorld) kitSnapshot(tarball string) string {
 // downloaded files or the image step.
 func TestFailedDownloadOrVerificationLeavesTheRecordedKitAlone(t *testing.T) {
 	for name, damage := range map[string]func(w *fwWorld){
-		"download fails": func(w *fwWorld) { _ = os.Remove(filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")) },
-		"sums fail":      func(w *fwWorld) { _ = os.WriteFile(filepath.Join(w.api.kb.Dir, "SHA256SUMS"), []byte("junk\n"), 0o600) },
+		"download fails": func(w *fwWorld) {
+			_ = os.Remove(filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz"))
+		},
+		"sums fail": func(w *fwWorld) { _ = os.WriteFile(filepath.Join(w.api.kb.Dir, "SHA256SUMS"), []byte("junk\n"), 0o600) },
 		"tarball is not the signed one": func(w *fwWorld) {
-			_ = os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz"), []byte("tampered"), 0o600)
+			_ = os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz"), []byte("tampered"), 0o600)
 		},
 	} {
 		w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
@@ -72,7 +74,7 @@ func TestFailedDownloadOrVerificationLeavesTheRecordedKitAlone(t *testing.T) {
 	w := newFwWorld(t, relList(), "")
 	tarball := recordKit(t, w)
 	before := w.kitSnapshot(tarball)
-	_ = os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz"), []byte("tampered"), 0o600)
+	_ = os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz"), []byte("tampered"), 0o600)
 	r := w.run("", "--camera", "default", "get-kit", "--version", "1.0.0")
 	expectRC(t, r, 1)
 	if after := w.kitSnapshot(tarball); after != before {
@@ -85,7 +87,7 @@ func TestInterruptedAtTheDowngradePromptChangesNothing(t *testing.T) {
 	w := newFwWorld(t, relList(), "fw_version=2.0.0\n")
 	tarball := recordKit(t, w)
 	before := w.kitSnapshot(tarball)
-	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
+	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	r := w.update("3\n" + kitFile + "\n") // rows: built image, downloaded kit, a kit file; no answer: the input ends at "Go back to Akam 1.0.0?"
 	contains(t, r.out+r.err, "Go back to Akam 1.0.0? [y/N]", "downgrade not confirmed.")
 	if after := w.kitSnapshot(tarball); after != before {
@@ -184,7 +186,7 @@ func TestUnremovableKitOldStopsTheInstall(t *testing.T) {
 		t.Skip("directory permissions are not enforced here (running as root?)")
 	}
 	before := w.readState("kit_sha") + w.readState("mode")
-	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
+	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	r := w.run("", "--camera", "default", "get-kit", "--kit", kitFile)
 	expectRC(t, r, 1)
 	contains(t, r.out+r.err, "cannot clear", "nothing was changed")
@@ -212,10 +214,10 @@ func TestInstallFlagsApplyTheSameInvalidation(t *testing.T) {
 	a2 := newFwAPI(t, relList(relJSON("v1.0.0", false, false)))
 	e2 := newEnv(t)
 	useAPI(t, e2, a2)
-	kept := filepath.Join(t.TempDir(), "akam-kit-1.0.0.tar.xz")
+	kept := filepath.Join(t.TempDir(), "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	kb, _ := os.ReadFile(a2.kb.Tarball)
 	_ = os.WriteFile(kept, kb, 0o600)
-	_ = os.Remove(filepath.Join(a2.kb.Dir, "akam-kit-1.0.0.tar.xz"))
+	_ = os.Remove(filepath.Join(a2.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz"))
 	e2.writeState("mode=kit\nkit_path=" + kept + "\nkit_sha=" + a2.kb.TarSHA + "\nkit_version=1.0.0\nkit_format=1\nkit_unsigned_ok=1\ncamera_ip=127.0.0.1\ncamera_kind=stock\ncamera_telnet=1\nstep_doctor_done=" + doneAt + "step_get_kit_done=" + doneAt)
 	r = e2.run("1\n", "--camera", "default", "--version", "1.0.0")
 	contains(t, r.out+r.err, "Nothing was changed: the previous kit stays in use.")

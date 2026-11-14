@@ -47,7 +47,7 @@ func TestSignedKitVerifies(t *testing.T) {
 			t.Errorf("%s: signer text %q", alg, r.SignedBy)
 		}
 		joined := strings.Join(said, "\n")
-		for _, w := range []string{"ok: akam-kit-1.0.0.tar.xz sha256 ", "ok: signature valid (", "ok: archive layout is safe", "ok: kit_format 1 is supported", "MANIFEST entries match (akam_version 1.0.0, source 0123456789ab)"} {
+		for _, w := range []string{"ok: akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz sha256 ", "ok: signature valid (", "ok: archive layout is safe", "ok: kit_format 1 is supported", "MANIFEST entries match (akam_version 1.0.0, source 0123456789ab)"} {
 			if !strings.Contains(joined, w) {
 				t.Errorf("missing %q in:\n%s", w, joined)
 			}
@@ -138,7 +138,7 @@ func TestSignatureRefusals(t *testing.T) {
 func TestChecksumRefusals(t *testing.T) {
 	b := kittest.Build(t, t.TempDir(), kittest.Spec{BadSumsLine: true})
 	_, err, _ := verify(t, b, nil)
-	wantFail(t, err, "sha256 mismatch for akam-kit-1.0.0.tar.xz")
+	wantFail(t, err, "sha256 mismatch for akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 
 	b = kittest.Build(t, t.TempDir(), kittest.Spec{})
 	if err := os.WriteFile(b.Sums, []byte(strings.Repeat("0", 64)+"  other.tar.xz\n"), 0o644); err != nil {
@@ -189,37 +189,37 @@ func TestArchiveRefusals(t *testing.T) {
 			*e = append(*e, kittest.Entry{Name: "/etc/passwd", Type: tar.TypeReg, Mode: 0o644})
 		}, "absolute or '..' paths"},
 		{"dotdot", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/../x", Type: tar.TypeReg, Mode: 0o644})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/../x", Type: tar.TypeReg, Mode: 0o644})
 		}, "absolute or '..' paths"},
 		{"space in a name", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/a b", Type: tar.TypeReg, Mode: 0o644})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/a b", Type: tar.TypeReg, Mode: 0o644})
 		}, "character outside"},
 		{"entry outside top", func(e *[]kittest.Entry) {
 			*e = append(*e, kittest.Entry{Name: "other/x", Type: tar.TypeReg, Mode: 0o644})
-		}, "entries outside akam-kit-1.0.0/"},
+		}, "entries outside akam-kit-lsc-indoor-1080p-ak3918-1.0.0/"},
 		{"duplicate", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/MANIFEST.txt", Type: tar.TypeReg, Mode: 0o644})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/MANIFEST.txt", Type: tar.TypeReg, Mode: 0o644})
 		}, "duplicate entries"},
 		{"setuid file", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/x", Type: tar.TypeReg, Mode: 0o4755})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/x", Type: tar.TypeReg, Mode: 0o4755})
 		}, "unexpected file mode"},
 		{"world writable file", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/x", Type: tar.TypeReg, Mode: 0o666})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/x", Type: tar.TypeReg, Mode: 0o666})
 		}, "unexpected file mode"},
 		{"dir mode", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/d/", Type: tar.TypeDir, Mode: 0o777})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/d/", Type: tar.TypeDir, Mode: 0o777})
 		}, "unexpected directory mode"},
 		{"hard link", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/h", Type: tar.TypeLink, Mode: 0o644, Linkname: "akam-kit-1.0.0/MANIFEST.txt"})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/h", Type: tar.TypeLink, Mode: 0o644, Linkname: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/MANIFEST.txt"})
 		}, "unexpected archive entry"},
 		{"device node", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/dev", Type: tar.TypeChar, Mode: 0o644})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/dev", Type: tar.TypeChar, Mode: 0o644})
 		}, "unexpected archive entry"},
 		{"other symlink", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/evil", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "/etc/passwd"})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/evil", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "/etc/passwd"})
 		}, "unexpected archive entry"},
 		{"dropbear link elsewhere", func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/overlay/bin/dropbearkey", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "../../etc/shadow"})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/overlay/bin/dropbearkey", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "../../etc/shadow"})
 		}, "unexpected archive entry"},
 		{"wrong top dir", func(e *[]kittest.Entry) {
 			for i := range *e {
@@ -252,7 +252,7 @@ func TestManifestRefusals(t *testing.T) {
 	})
 	t.Run("extra file", func(t *testing.T) {
 		b := kittest.Build(t, t.TempDir(), kittest.Spec{TarMutate: func(e *[]kittest.Entry) {
-			*e = append(*e, kittest.Entry{Name: "akam-kit-1.0.0/extra.txt", Type: tar.TypeReg, Mode: 0o644, Body: []byte("x")})
+			*e = append(*e, kittest.Entry{Name: "akam-kit-lsc-indoor-1080p-ak3918-1.0.0/extra.txt", Type: tar.TypeReg, Mode: 0o644, Body: []byte("x")})
 		}})
 		_, err, _ := verify(t, b, nil)
 		wantFail(t, err, "files differ from SHA256SUMS")
@@ -289,9 +289,42 @@ func TestManifestRefusals(t *testing.T) {
 		wantFail(t, err, "required file bin/flash_tool is not in the kit")
 	})
 	t.Run("no validated hardware", func(t *testing.T) {
-		b := kittest.Build(t, t.TempDir(), kittest.Spec{Files: map[string][]byte{"supported_hardware.txt": []byte("untested|x\n")}})
+		b := kittest.Build(t, t.TempDir(), kittest.Spec{Files: map[string][]byte{"supported_hardware.txt": []byte("model=lsc-indoor-1080p-ak3918\nuntested|x\n")}})
 		_, err, _ := verify(t, b, nil)
 		wantFail(t, err, "lists no validated target")
+	})
+	t.Run("hardware list of another model", func(t *testing.T) {
+		b := kittest.Build(t, t.TempDir(), kittest.Spec{Files: map[string][]byte{"supported_hardware.txt": []byte("model=other-model\nvalidated|x\n")}})
+		_, err, _ := verify(t, b, nil)
+		wantFail(t, err, "not the registry entry of model lsc-indoor-1080p-ak3918")
+	})
+	t.Run("two model lines", func(t *testing.T) {
+		b := kittest.Build(t, t.TempDir(), kittest.Spec{ManifestExtra: "model=other-model\n"})
+		_, err, _ := verify(t, b, nil)
+		wantFail(t, err, "no (single) model")
+	})
+	t.Run("kit for another model", func(t *testing.T) {
+		b := kittest.Build(t, t.TempDir(), kittest.Spec{Model: "other-model"})
+		if r, err, _ := verify(t, b, nil); err != nil {
+			t.Fatal(err)
+		} else {
+			if r.Manifest["model"] != "other-model" {
+				t.Errorf("model: %q", r.Manifest["model"])
+			}
+			r.Close()
+		}
+		_, err, _ := verify(t, b, func(o *kit.Options) { o.ExpectModel = "lsc-indoor-1080p-ak3918" })
+		wantFail(t, err, "camera model 'other-model', not 'lsc-indoor-1080p-ak3918'")
+		r, err, _ := verify(t, b, func(o *kit.Options) { o.ExpectModel = "other-model" })
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Close()
+	})
+	t.Run("bad model id", func(t *testing.T) {
+		b := kittest.Build(t, t.TempDir(), kittest.Spec{Model: "Bad_Model"})
+		_, err, _ := verify(t, b, nil)
+		wantFail(t, err, "not a valid model id")
 	})
 	t.Run("time64 gate", func(t *testing.T) {
 		b := kittest.Build(t, t.TempDir(), kittest.Spec{ManifestExtra: "time64_gate=fail\n"})

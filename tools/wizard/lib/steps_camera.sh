@@ -358,7 +358,7 @@ bk_fingerprint() {
     kfp="$(camsh_line 1 | tr -d '\r') $(camsh_line 2 | tr -d '\r')"
     BK_KERNEL=$kfp
     ui_say "  Kernel: $kfp"
-    if grep -v -e '^[[:space:]]*#' "$(wiz_tool hw_list)" | awk -F'|' -v k="$kfp" '$1 == "validated" && $4 == k { f = 1 } END { exit !f }'; then
+    if hw_records | awk -F'|' -v k="$kfp" '$1 == "validated" && $4 == k { f = 1 } END { exit !f }'; then
         ui_say "  The kernel build matches a validated entry of the supported hardware list."
     else
         ui_warn "this kernel build is not on the validated list ($(wiz_tool hw_list))."
@@ -466,7 +466,7 @@ cmd_backup() {
         ui_say "  read the kernel version, find the card and its free space, dd the 8 partitions twice,"
         ui_say "  check the 16 sizes, hash both runs on the camera and compare them (READS_IDENTICAL),"
         ui_say "  copy dump1 to ~/akam-backup-<name>-<date>/ over nc with size+hash checks (3 tries each),"
-        ui_say "  write SHA256SUMS, compare the stock APP hash with tools/release/supported_hardware.txt"
+        ui_say "  write SHA256SUMS, compare the stock APP hash with tools/release/models/"
         ui_say "  (a yes/no in a red box, default No, unless validated) and ask for a second copy on another medium."
         state_set backup_dir "<backup-dir>"
         state_set backup_sha dry-run

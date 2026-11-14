@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/backuploc"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/flash"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
@@ -151,15 +151,8 @@ func (a *App) confirm(q string) bool {
 
 // hwVerdict is hw_verdict: "status|device" for a stock APP hash (unknown: untested).
 func hwVerdict(appSHA string) (status, device string) {
-	b, _ := assets.Script("supported_hardware.txt")
-	for _, l := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(l) == "" || strings.HasPrefix(strings.TrimSpace(l), "#") {
-			continue
-		}
-		f := strings.Split(l, "|")
-		if len(f) >= 7 && f[6] == appSHA {
-			return f[0], f[1]
-		}
+	if _, r, ok := models.ByAppSHA(appSHA); ok {
+		return r.Status, r.Device
 	}
 	return "untested", "not in the supported hardware list (unknown stock APP)"
 }
@@ -389,21 +382,10 @@ func (a *App) bkFingerprint() string {
 	}
 	kfp := strings.TrimRight(a.tn.Line(1), "\r") + " " + strings.TrimRight(a.tn.Line(2), "\r")
 	a.UI.Say("  Kernel: " + kfp)
-	b, _ := assets.Script("supported_hardware.txt")
-	known := false
-	for _, l := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "#") {
-			continue
-		}
-		f := strings.Split(l, "|")
-		if len(f) >= 4 && f[0] == "validated" && f[3] == kfp {
-			known = true
-		}
-	}
-	if known {
+	if _, known := models.ByKernel(kfp); known {
 		a.UI.Say("  The kernel build matches a validated entry of the supported hardware list.")
 	} else {
-		a.UI.Warn("this kernel build is not on the validated list (tools/release/supported_hardware.txt).")
+		a.UI.Warn("this kernel build is not on the validated list (tools/release/models/).")
 	}
 	return kfp
 }
@@ -575,6 +557,14 @@ func (a *App) backupAccept(d string) error {
 	_ = a.St.Set("backup_sha", fileSHA(filepath.Join(d, "mtdblock7.bin")))
 	_ = a.St.MarkDone("backup")
 	a.UI.Good("  Backup folder accepted: " + d)
+	if id := a.detectModelFromBackup(d); id != "" {
+		a.UI.Say("  Camera model recognised from the stock firmware: " + models.Label(id) + ".")
+		if km := a.St.Get("kit_model"); km != "" && km != id {
+			a.UI.Warn(fmt.Sprintf("the kit on record is for %s, not for this camera. Get the right kit: %s get-kit.", models.Label(km), Prog))
+		}
+	} else {
+		a.UI.Say("  Camera model: not recognised (this stock firmware is not in the registry of this version).")
+	}
 	return nil
 }
 
@@ -649,7 +639,7 @@ func (a *App) cmdBackup() error {
 			"  read the kernel version, find the card and its free space, dd the 8 partitions twice,",
 			"  check the 16 sizes, hash both runs on the camera and compare them (READS_IDENTICAL),",
 			"  copy dump1 to <Documents>/Akam backups/<name>/<date>/ over nc with size+hash checks (3 tries each),",
-			"  write SHA256SUMS, compare the stock APP hash with tools/release/supported_hardware.txt",
+			"  write SHA256SUMS, compare the stock APP hash with tools/release/models/",
 			"  (a yes/no in a red box, default No, unless validated) and ask for a second copy on another medium."} {
 			a.UI.Say(l)
 		}

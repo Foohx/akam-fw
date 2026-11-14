@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func (a *App) cmdGetKit() error {
 		// A rehearsal verified a kit that exists; it is remembered in the rehearsal's own state, nothing is
 		// installed: neither the kit folder, nor the downloads, nor the real state.
 		_ = a.St.SetMany([][2]string{{"mode", "kit"}, {"kit_path", s.path}, {"kit_sha", s.sha}, {"kit_format", s.format},
-			{"kit_unsigned_ok", map[bool]string{true: "1", false: "0"}[s.unsigned]}, {"kit_version", s.version}})
+			{"kit_unsigned_ok", map[bool]string{true: "1", false: "0"}[s.unsigned]}, {"kit_version", s.version}, {"kit_model", s.model}})
 		_ = a.St.MarkDone("get-kit")
 		return nil
 	}
@@ -79,6 +80,7 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 	a.stepBanner("get-kit")
 	dry := a.UI.Dry()
 	kitPath := a.Opt.Kit
+	downloadModel := "" // the model whose kit is downloaded ("" for a kit given by --kit)
 	var dl, finalTar, staging, finalDL string
 	kept := false
 	keepStaging := &kept // set once the staged files are handed to the caller
@@ -89,32 +91,42 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 		op.plan("Verify and unpack the kit")
 	}
 	if kitPath == "" {
+		model, err := a.needModel()
+		if err != nil {
+			return nil, err
+		}
+		downloadModel = model
 		ver := strings.TrimPrefix(a.Opt.Version, "v")
 		if ver == "" {
-			if strings.Contains(a.Version, "dev") {
-				if dry {
-					ver = "X.Y.Z"
-					a.UI.Say("  (development checkout: using the placeholder version X.Y.Z)")
-				} else {
-					return nil, a.UI.Fail("this development checkout has no release to download.",
-						fmt.Sprintf("pass --kit FILE for a kit you already have, or --version X.Y.Z to download that release, or run %s build.", Prog))
-				}
+			// The firmware has its own version, unrelated to this program's: the newest firmware release that has
+			// a kit for the camera's model is used.
+			if dry {
+				ver = "X.Y.Z"
+				a.UI.Say("  (rehearsal: using the placeholder version X.Y.Z)")
 			} else {
-				ver = a.Version
+				rels, rerr := a.releaseList()
+				if rerr != nil || len(rels) == 0 {
+					return nil, a.UI.Fail("cannot tell which firmware release to download for "+models.Label(model)+".",
+						fmt.Sprintf("pass --version X.Y.Z (see https://github.com/%s/releases), or --kit FILE for a kit you already have, or run %s build.", kitRepo, Prog))
+				}
+				ver = rels[0].Version
+				a.UI.Say("  Newest firmware release for " + models.Label(model) + ": " + ver + ".")
 			}
 		}
 		if !validKitVersion(ver) {
-			return nil, a.UI.Fail(fmt.Sprintf("'%s' is not a valid version.", ver), fmt.Sprintf("use a number such as 1.0.0 (see https://github.com/%s/releases).", kitRepo))
+			return nil, a.UI.Fail(fmt.Sprintf("'%s' is not a valid version.", ver), fmt.Sprintf("use a number such as 0.1.0 (see https://github.com/%s/releases).", kitRepo))
 		}
-		base := fmt.Sprintf("https://github.com/%s/releases/download/v%s", kitRepo, ver)
+		tag := kit.ReleaseTag(ver)
+		kitFile := kit.KitFile(model, ver)
+		base := fmt.Sprintf("https://github.com/%s/releases/download/%s", kitRepo, tag)
 		if o := testhook.Env("AKAM_KIT_URL_BASE"); o != "" { // test hook; still HTTPS only
-			base = strings.TrimRight(o, "/") + "/v" + ver
+			base = strings.TrimRight(o, "/") + "/" + tag
 		}
 		dlFinal := filepath.Join(a.Cams.Base, "downloads", ver)
 		dl = filepath.Join(dlFinal, ".staging")
-		kitPath = filepath.Join(dl, "akam-kit-"+ver+".tar.xz")
-		finalTar = filepath.Join(dlFinal, "akam-kit-"+ver+".tar.xz")
-		a.UI.Say(fmt.Sprintf("  Downloading kit %s from %s (HTTPS only; nothing from it is run before it is verified).", ver, base))
+		kitPath = filepath.Join(dl, kitFile)
+		finalTar = filepath.Join(dlFinal, kitFile)
+		a.UI.Say(fmt.Sprintf("  Downloading the %s kit %s from %s (HTTPS only; nothing from it is run before it is verified).", model, ver, base))
 		if !dry {
 			_ = os.RemoveAll(dl) // nothing left over from an earlier attempt
 			if err := os.MkdirAll(dl, 0o700); err != nil {
@@ -129,7 +141,7 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 		}
 		op.plan("Download the kit", "Download the checksums (SHA256SUMS)", "Download the signature", "Verify and unpack the kit")
 		verifyItem = 3
-		for i, f := range []string{"akam-kit-" + ver + ".tar.xz", "SHA256SUMS"} {
+		for i, f := range []string{kitFile, "SHA256SUMS"} {
 			op.start(i)
 			op.status("HTTPS GET " + base + "/" + f + "   (nothing from it is run)")
 			lim := int64(kit.MaxKitDownload)
@@ -139,7 +151,7 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 			if err := a.download(base+"/"+f, filepath.Join(dl, f), lim); err != nil {
 				var he *kit.HTTPError
 				if errors.As(err, &he) && (he.Code == 404 || he.Code == 410) {
-					return nil, a.UI.Fail(fmt.Sprintf("release v%s was not found (%s). Akam may not have published a release yet.", ver, f),
+					return nil, a.UI.Fail(fmt.Sprintf("firmware release %s was not found, or it has no kit for %s (%s).", ver, models.Label(model), f),
 						fmt.Sprintf("see https://github.com/%s/releases for the versions that exist, or use a kit you already have: %s get-kit --kit FILE (or build from source: %s build).", kitRepo, Prog, Prog))
 				}
 				return nil, a.UI.Fail(fmt.Sprintf("download of %s failed (%v).", f, err),
@@ -234,7 +246,14 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 	} else {
 		sha = fileSHA(kitPath)
 	}
-	sk := &stagedKit{newDir: ext, path: kitPath, sha: sha, format: fmtv, unsigned: unsigned, version: man["akam_version"], staging: staging, finalDL: finalDL}
+	if downloadModel != "" && man["model"] != downloadModel {
+		return nil, a.UI.Fail(fmt.Sprintf("the downloaded kit is for the camera model %s, not %s.", models.Label(man["model"]), models.Label(downloadModel)),
+			"do not use it. Download it again or get it from the official release page.")
+	}
+	if p := a.kitModelProblem(man["model"]); p != "" {
+		return nil, a.UI.Fail(p, "use the kit of this camera's model: "+Prog+" releases lists the firmware that has one, or pass --kit FILE of the right kit.")
+	}
+	sk := &stagedKit{newDir: ext, path: kitPath, sha: sha, format: fmtv, unsigned: unsigned, version: man["akam_version"], model: man["model"], staging: staging, finalDL: finalDL}
 	if staging != "" { // a download: the staged files take the place of the recorded ones only at commit
 		sk.path = finalTar
 		sk.stagedPath = kitPath

@@ -91,7 +91,7 @@ func TestRefusedDowngradeOfALocalKitChangesNothing(t *testing.T) {
 		return strings.Join(o, "|")
 	}
 	before := snap()
-	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
+	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	r := w.update("1\n" + kitFile + "\nn\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Kit verified", "this is a downgrade.", "Go back to Akam 1.0.0? [y/N]", "downgrade not confirmed.", "nothing was changed.")

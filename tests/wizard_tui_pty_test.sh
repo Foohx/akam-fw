@@ -104,7 +104,7 @@ EOF
 new_state
 run menu 'expect:Check this computer' 'send:j' 'send:j' 'send:?' 'expect:What it does' 'send:x' 'expect:guided setup' 'send:q' 'expect:Progress is saved' -- "$AKAM" --state-dir "$T/st"
 check "menu: header names the project and version" has "$T/menu.txt" "Akam"
-check "menu: header shows the version" has "$T/menu.txt" "v1.0.0-dev"
+check "menu: header shows the version" has "$T/menu.txt" "v0.1.0"
 check "menu: header shows the detected host" has "$T/menu.txt" "Host"
 check "menu: header shows the camera line" has "$T/menu.txt" "Camera"
 check "menu: header shows the kit and image summary" bash -c 'grep -q "Kit" "$1" && grep -q "Image" "$1"' _ "$T/menu.txt"

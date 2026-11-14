@@ -12,7 +12,7 @@
 #
 # What it does: unpacks mtdblock7.bin (the stock APP squashfs) with unsquashfs as a normal
 # user, then runs build_firmware.sh --kit, which verifies the kit, compares your dump with
-# tools/release/supported_hardware.txt, builds the image with the SAME squashfs compression as
+# tools/release/models/<model>.txt, builds the image with the SAME squashfs compression as
 # your stock APP, checks it and pads it to the 5242880 byte APP partition.
 # File owners: the image is built with -all-root (mksquashfs), so the owner ids of the stock tree
 # (often 1000, lost when unpacking as a normal user) do not matter. Device nodes cannot be

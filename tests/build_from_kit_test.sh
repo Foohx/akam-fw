@@ -55,10 +55,10 @@ export SMOLRTSP_DIR=$S/smol MUSL_COPYRIGHT=$S/COPYRIGHT ZIG_LICENSE=$S/ZIGLICENS
 AKAM_KIT_NO_BUILD=1 AKAM_KIT_ALLOW_DIRTY=1 AKAM_KIT_VERSION=test1 AKAM_KIT_CHECK_TIME32=$S/gate_ok \
     AK_RTSP_BIN=$S/ak_rtsp FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti \
     bash "$MAKE" --out "$WORK/kitout" >"$WORK/make.log" 2>&1 || { cat "$WORK/make.log"; exit 1; }
-TB=$WORK/kitout/akam-kit-test1.tar.xz
+TB=$WORK/kitout/akam-kit-lsc-indoor-1080p-ak3918-test1.tar.xz
 mkdir -p "$WORK/kx"
 tar -xJf "$TB" -C "$WORK/kx"
-K=$WORK/kx/akam-kit-test1
+K=$WORK/kx/akam-kit-lsc-indoor-1080p-ak3918-test1
 
 # rehash_kit <dir>: recompute MANIFEST file lines, supported_hardware_sha256 and SHA256SUMS
 # after a test edited a kit file (so that only the intended defect remains).
@@ -218,7 +218,7 @@ echo "== 4. supported hardware list"
 # A kit whose supported_hardware.txt lists the fixture dump as validated.
 GZSHA=$(sha256sum "$WORK/bk_gz/mtdblock7.bin" | cut -d' ' -f1)
 VK=$(new_kit validated_kit)
-printf 'supported_hardware_format=1\nvalidated|fixture camera|SOC|4.4.302-cip94 #1 test|8 partitions; mtd7=APP 00500000|squashfs gzip block=131072 bcj=none|%s|1.30.1\n' "$GZSHA" >"$VK/supported_hardware.txt"
+printf 'supported_hardware_format=1\nmodel=lsc-indoor-1080p-ak3918\nvalidated|fixture camera|SOC|4.4.302-cip94 #1 test|8 partitions; mtd7=APP 00500000|squashfs gzip block=131072 bcj=none|%s|1.30.1\n' "$GZSHA" >"$VK/supported_hardware.txt"
 rehash_kit "$VK"
 check "validated fingerprint: builds without the flag" run "$WORK/v1" --kit "$VK" --allow-test-kit --allow-unsigned --stock-app "$WORK/bk_gz/mtdblock7.bin"
 check "  verdict validated in the report" grep -q '^hardware verdict: *validated' "$WORK/v1/build_report.txt"
@@ -245,7 +245,7 @@ refused "backup dir with 7 partitions (other MTD layout): refused" 'MTD layout' 
 mkdir -p "$WORK/bk_small"
 head -c 1000000 "$WORK/bk_gz/mtdblock7.bin" >"$WORK/bk_small/mtdblock7.bin"
 refused "APP dump of another size: refused even with the flag" 'MTD layout' "$WORK/v6" --kit "$VK" --allow-test-kit --allow-unsigned --stock-app "$WORK/bk_small/mtdblock7.bin" --i-understand-untested
-check "the real supported_hardware.txt lists the stock sha256 as validated" grep -q '^validated|.*|14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294|' "$REPO/tools/release/supported_hardware.txt"
+check "the real supported_hardware.txt lists the stock sha256 as validated" grep -q '^validated|.*|14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294|' "$REPO/tools/release/models/lsc-indoor-1080p-ak3918.txt"
 
 echo "== 4b. review hardening"
 refused "a kit DIRECTORY needs --allow-unsigned (cannot be authenticated)" 'cannot be authenticated' "$WORK/d1" --kit "$K" --allow-test-kit

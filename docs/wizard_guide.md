@@ -43,7 +43,7 @@ typed, and without a terminal these steps refuse to run.
 | Step | What happens | Risk |
 |---|---|---|
 | `doctor` | checks the tools on your PC | none |
-| `get-kit` | downloads the prebuilt kit, checks checksum and signature (`./akam build` builds from source instead) | none |
+| `get-kit` | downloads the prebuilt kit of your camera model (bash wizard: `--version X.Y.Z` of a firmware release is required; `--model ID` if several models exist), checks checksum and signature (`./akam build` builds from source instead) | none |
 | `prepare-backup-sd` | writes the backup toolkit to a microSD card | erases that card |
 | `find-camera` | asks the camera's address, probes its ports | none |
 | `backup` | copies the 8 flash partitions twice, compares them, stores them in `<Documents>/Akam backups/<name>/<date>` (private to your user) | none (read only) |

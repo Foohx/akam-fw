@@ -40,6 +40,7 @@ while [ $# -gt 1 ]; do
     case $1 in
         --extract-to) ext=$2; shift ;;
         --allow-unsigned) unsigned=1 ;;
+        --expect-model) echo "stub verify_kit expect-model=$2" >>"$STUB_LOG"; shift ;;
     esac
     shift
 done
@@ -48,7 +49,7 @@ if [ "${STUB_VK_RC:-0}" = 3 ] && [ "$unsigned" = 0 ]; then exit 3; fi
 [ "${STUB_VK_RC:-0}" = 1 ] && exit 1
 mkdir -p "$ext/bin"
 echo "flash_tool test binary" >"$ext/bin/flash_tool"
-printf 'kit_format=%s\nakam_version=1.0.0-test\n' "${STUB_KIT_FORMAT:-1}" >"$ext/MANIFEST.txt"
+printf 'kit_format=%s\nakam_version=1.0.0-test\nmodel=lsc-indoor-1080p-ak3918\n' "${STUB_KIT_FORMAT:-1}" >"$ext/MANIFEST.txt"
 exit 0
 EOF
 cat >"$STUBS/assemble.sh" <<'EOF'
@@ -262,7 +263,7 @@ a get-kit --version 1.0.0-test >"$T/dl1.out" 2>&1
 check "no release published: get-kit fails" test $? -ne 0
 check "  ... says the release was not found" has "$T/dl1.out" "was not found"
 check "  ... and suggests --kit FILE" has "$T/dl1.out" "--kit FILE"
-check "  ... downloaded over https only from the project releases" has "$STUB_LOG" "curl proto==https https://github.com/Foohx/akam-fw/releases/download/v1.0.0-test/akam-kit-1.0.0-test.tar.xz"
+check "  ... downloaded over https only from the project releases" has "$STUB_LOG" "curl proto==https https://github.com/Foohx/akam-fw/releases/download/firmware-v1.0.0-test/akam-kit-lsc-indoor-1080p-ak3918-1.0.0-test.tar.xz"
 check "  ... nothing was verified or run" bash -c '! grep -q "stub verify_kit" "$1"' _ "$STUB_LOG"
 check "  ... and nothing recorded" test -z "$(state_get step_get_kit_done)"
 STUB_CURL_MODE=neterr a get-kit --version 1.0.0-test >"$T/dl2.out" 2>&1
@@ -273,7 +274,7 @@ a get-kit >"$T/dl4.out" 2>&1
 check "a development checkout without --version suggests --kit FILE" has "$T/dl4.out" "--kit FILE"
 SRC=$T/relsrc
 mkdir -p "$SRC"
-echo "kit bytes" >"$SRC/akam-kit-1.0.0-test.tar.xz"
+echo "kit bytes" >"$SRC/akam-kit-lsc-indoor-1080p-ak3918-1.0.0-test.tar.xz"
 echo "sums" >"$SRC/SHA256SUMS"
 echo "sig" >"$SRC/SHA256SUMS.sig"
 : >"$STUB_LOG"
@@ -281,7 +282,13 @@ STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC a get-kit --version 1.0.0-test >"$T/dl5.out
 check "download + verification succeeds with a signed release" test $? -eq 0
 check "the downloaded kit went through verify_kit (checksum + signature)" has "$STUB_LOG" "stub verify_kit allow_unsigned=0"
 check "verify_kit ran after the downloads" bash -c '[ "$(grep -n "curl" "$1" | tail -1 | cut -d: -f1)" -lt "$(grep -n "stub verify_kit" "$1" | head -1 | cut -d: -f1)" ]' _ "$STUB_LOG"
-check "the kit path recorded is the downloaded file" has "$T/st/state" "kit_path=$T/st/downloads/1.0.0-test/akam-kit-1.0.0-test.tar.xz"
+check "the kit path recorded is the downloaded file" has "$T/st/state" "kit_path=$T/st/downloads/1.0.0-test/akam-kit-lsc-indoor-1080p-ak3918-1.0.0-test.tar.xz"
+check "the kit is verified for the model (the only one of the registry)" has "$STUB_LOG" "stub verify_kit expect-model=lsc-indoor-1080p-ak3918"
+check "the kit model is recorded" test "$(state_get kit_model)" = lsc-indoor-1080p-ak3918
+new_state
+a doctor >/dev/null 2>&1
+STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC a get-kit --model other-model --version 1.0.0-test >"$T/dl5b.out" 2>&1
+check "--model asks for another model's kit file: a release without it says so" has "$T/dl5b.out" "no kit for the model other-model"
 new_state
 a doctor >/dev/null 2>&1
 rm -f "$SRC/SHA256SUMS.sig"
@@ -322,14 +329,14 @@ a doctor >/dev/null 2>&1
 a get-kit --kit "$KIT" >/dev/null 2>&1
 at "y" backup --backup-dir "$BK" >/dev/null 2>&1
 OUT1=$T/img1
-AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" a image --out "$OUT1" >"$T/i1.out" 2>&1
+AKAM_HW_LIST="$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt" a image --out "$OUT1" >"$T/i1.out" 2>&1
 check "untested firmware without a terminal is refused" test $? -ne 0
 check "assemble not run for refused image" bash -c '! grep -q "^assemble" "$1"' _ "$STUB_LOG"
-AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" at "n" image --out "$OUT1" >"$T/i2.out" 2>&1
+AKAM_HW_LIST="$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt" at "n" image --out "$OUT1" >"$T/i2.out" 2>&1
 check "answering no to untested firmware is refused" test $? -ne 0
 check "untested warning is explicit" has "$T/i2.out" "NOT on the validated list"
 check "compression of the stock APP is shown" has "$T/i2.out" "Stock APP compression: xz"
-AKAM_HW_LIST="$ROOT/tools/release/supported_hardware.txt" at "y" image --out "$OUT1" >"$T/i3.out" 2>&1
+AKAM_HW_LIST="$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt" at "y" image --out "$OUT1" >"$T/i3.out" 2>&1
 check "untested firmware accepted after an explicit yes" test $? -eq 0
 check "assemble got --i-understand-untested" has "$STUB_LOG" "--i-understand-untested"
 check "image state recorded" test "$(state_get image_sha)" = "$(sha256sum "$OUT1/ak_rtsp_firmware_20260101_000000.squashfs" | cut -d' ' -f1)"

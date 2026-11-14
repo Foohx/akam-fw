@@ -57,6 +57,8 @@ type Options struct {
 	Expect string
 	// ExtractTo: copy the verified tree here (must not exist yet).
 	ExtractTo string
+	// ExpectModel: when set, the kit must be for this camera model (MANIFEST model=).
+	ExpectModel string
 	// Say and Warn print the "ok:" and WARNING lines (nil: discarded).
 	Say, Warn func(string)
 	// Decompress opens an .xz file as a stream (nil: XZReader, in process, with DefaultXZLimits).
@@ -549,8 +551,18 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 	if !versionRe.MatchString(ver[0]) {
 		return nil, fail("MANIFEST.txt akam_version is not a plain version string")
 	}
-	if topExpected != "" && topExpected != "akam-kit-"+ver[0] {
-		return nil, fail("archive directory %s does not match MANIFEST akam_version %s", topExpected, ver[0])
+	model := manifestValues(m, "model")
+	if len(model) != 1 || model[0] == "" {
+		return nil, fail("MANIFEST.txt has no (single) model")
+	}
+	if !ValidModel(model[0]) {
+		return nil, fail("MANIFEST.txt model '%s' is not a valid model id", model[0])
+	}
+	if topExpected != "" && topExpected != KitTop(model[0], ver[0]) {
+		return nil, fail("archive directory %s does not match MANIFEST model %s and akam_version %s", topExpected, model[0], ver[0])
+	}
+	if o.ExpectModel != "" && o.ExpectModel != model[0] {
+		return nil, fail("this kit is for the camera model '%s', not '%s': use the kit of your model", model[0], o.ExpectModel)
 	}
 	for _, kv := range [][2]string{{"time64_gate", "pass"}, {"target", "arm-linux-musleabi"}} {
 		v := manifestValues(m, kv[0])
@@ -722,6 +734,9 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 		}
 	}
 	hw, _ := os.ReadFile(filepath.Join(d, "supported_hardware.txt"))
+	if !regexp.MustCompile(`(?m)^model=` + regexp.QuoteMeta(model[0]) + `\r?$`).Match(hw) {
+		return nil, fail("supported_hardware.txt is not the registry entry of model %s", model[0])
+	}
 	hs := sha256.Sum256(hw)
 	if w := manifestValues(m, "supported_hardware_sha256"); len(w) == 0 || w[0] != hex.EncodeToString(hs[:]) {
 		return nil, fail("supported_hardware_sha256 in MANIFEST.txt does not match supported_hardware.txt")

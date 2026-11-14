@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"errors"
 	"fmt"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
 	"os"
 	"path/filepath"
 	"sort"
@@ -91,7 +92,7 @@ func (a *App) fwRecord(img string) {
 	if sha := fileSHA(img); sha != "" && sha == a.St.Get("image_sha") && a.stepStatus("image") == "done" &&
 		a.St.Get("image_origin") != "imported:"+sha && kitMode && kv != "" {
 		ver = kv
-		if p == a.downloadedKitPath(kv) && !unsigned {
+		if p == a.downloadedKitPath(a.kitModelInUse(), kv) && !unsigned {
 			src = "release:" + kv
 		} else {
 			src = "kit:" + stateLine(p)
@@ -130,9 +131,10 @@ func (a *App) fwNoteBuild(ip string) {
 
 // relCache is the release list of this session (asked once; a failure is remembered too).
 type relCache struct {
-	pre  bool
-	list []kit.Release
-	err  error
+	pre   bool
+	model string
+	list  []kit.Release
+	err   error
 }
 
 // apiBase is where the release list is asked. A test build may redirect it; with nothing set, a test
@@ -150,18 +152,22 @@ func (a *App) apiBase() (string, bool) {
 // releaseList is the usable releases, newest first, read from GitHub at most once per session (and per
 // --include-prereleases setting). Nothing it says is trusted: see kit/releases.go.
 func (a *App) releaseList() ([]kit.Release, error) {
-	if a.rel != nil && a.rel.pre == a.Opt.IncludePre {
+	model, merr := a.needModel()
+	if merr != nil {
+		return nil, merr
+	}
+	if a.rel != nil && a.rel.pre == a.Opt.IncludePre && a.rel.model == model {
 		return a.rel.list, a.rel.err
 	}
-	rc := &relCache{pre: a.Opt.IncludePre}
+	rc := &relCache{pre: a.Opt.IncludePre, model: model}
 	base, ok := a.apiBase()
 	if !ok {
 		rc.err = errors.New("no network in a test build")
 	} else {
-		a.UI.Say("  Asking GitHub for the releases (read only) ...")
+		a.UI.Say("  Asking GitHub for the firmware releases for " + models.Label(model) + " (read only) ...")
 		ctx, cancel := context.WithTimeout(a.Ctx, 20*time.Second)
 		a.Log.Line("CMD list releases %s/repos/%s/releases", base, kitRepo)
-		rc.list, rc.err = kit.ListReleases(ctx, a.Hooks.HTTP, base, kitRepo, a.Opt.IncludePre)
+		rc.list, rc.err = kit.ListReleases(ctx, a.Hooks.HTTP, base, kitRepo, a.Opt.IncludePre, model)
 		cancel()
 		if rc.err != nil && a.Ctx.Err() != nil {
 			rc.err = a.Ctx.Err()
@@ -180,7 +186,7 @@ func (a *App) releaseListReport() ([]kit.Release, error) {
 			a.UI.Warn("could not read the list of releases: " + releaseProblem(err) + ". Kits and images on this computer can still be chosen.")
 		}
 	} else if len(rels) == 0 {
-		a.UI.Say("  No Akam release is published on GitHub yet (only releases with a signed kit are listed).")
+		a.UI.Say("  No Akam firmware release is published on GitHub for this camera model yet (only releases with a signed kit for it are listed).")
 	}
 	return rels, err
 }
@@ -193,6 +199,8 @@ func releaseProblem(err error) string {
 		return "GitHub refused the request (HTTP " + fmt.Sprint(he.Code) + ": too many requests from this address, try again in a while)"
 	case errors.As(err, &he):
 		return fmt.Sprintf("GitHub answered HTTP %d", he.Code)
+	case errors.Is(err, ui.ErrFailed):
+		return "the camera model is not known (see above)"
 	case errors.Is(err, kit.ErrTooLarge), errors.Is(err, kit.ErrBadReleaseList):
 		return "GitHub's answer was not a list of releases"
 	}
@@ -202,6 +210,10 @@ func releaseProblem(err error) string {
 // downloadedKits lists the kits kept in the downloads folder of the assistant, newest first (by version).
 // Only the file name and the folder name are read here; the kit is verified when it is used.
 func (a *App) downloadedKits() []string {
+	model, ok := a.wantModel()
+	if !ok {
+		return nil
+	}
 	ents, err := os.ReadDir(filepath.Join(a.Cams.Base, "downloads"))
 	if err != nil {
 		return nil
@@ -212,7 +224,7 @@ func (a *App) downloadedKits() []string {
 		if !e.IsDir() || !validKitVersion(v) {
 			continue
 		}
-		if st, err := os.Stat(filepath.Join(a.Cams.Base, "downloads", v, "akam-kit-"+v+".tar.xz")); err == nil && st.Mode().IsRegular() {
+		if st, err := os.Stat(a.downloadedKitPath(model, v)); err == nil && st.Mode().IsRegular() {
 			out = append(out, v)
 		}
 	}
@@ -226,16 +238,26 @@ func (a *App) downloadedKits() []string {
 	return out
 }
 
-func (a *App) downloadedKitPath(v string) string {
-	return filepath.Join(a.Cams.Base, "downloads", v, "akam-kit-"+v+".tar.xz")
+// downloadedKitPath is where the downloaded kit of a model and version is kept.
+func (a *App) downloadedKitPath(model, v string) string { return a.downloadedKitFile(model, v) }
+
+// kitModelInUse is the model of the kit being installed (staged) or installed.
+func (a *App) kitModelInUse() string {
+	if s := a.staged; s != nil && s.model != "" {
+		return s.model
+	}
+	return a.St.Get("kit_model")
 }
 
 // cmdReleases is `akam releases`: the versions published on GitHub, newest first.
 func (a *App) cmdReleases() error {
-	a.banner("Akam releases published on GitHub (" + kitRepo + ")")
+	a.banner("Akam firmware releases published on GitHub (" + kitRepo + ")")
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD ask GitHub (HTTPS, read only) for the newest releases of " + kitRepo + ". Nothing is downloaded.")
 		return nil
+	}
+	if m, ok := a.wantModel(); ok {
+		a.UI.Say("  Camera model: " + models.Label(m) + ". Only releases with a kit for it are listed.")
 	}
 	list, err := a.releaseList()
 	if err != nil {
@@ -337,15 +359,19 @@ func (a *App) cameraAkamVersion(ip string) string {
 	if err != nil || r.Status != 0 {
 		return ""
 	}
+	ver := ""
 	for _, l := range strings.Split(string(r.Stdout), "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "akam_version="); ok {
+		l = strings.TrimSpace(l)
+		if v, ok := strings.CutPrefix(l, "akam_version="); ok && ver == "" {
 			if _, ok := kit.ParseVersion(v); ok {
-				return strings.TrimPrefix(v, "v")
+				ver = strings.TrimPrefix(v, "v")
 			}
-			return ""
+		}
+		if m, ok := strings.CutPrefix(l, "model="); ok && kit.ValidModel(m) {
+			a.recordModel(m) // the camera's own word: an Akam image carries the manifest of its kit
 		}
 	}
-	return ""
+	return ver
 }
 
 // ---------------------------------------------------------------- the chooser
@@ -522,7 +548,7 @@ func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
 			return fwSource{Kind: fwImage, Path: p}, true
 		}
 		if c.src.Kind == fwKit && c.src.Path == "" { // a kit of the downloads folder
-			c.src.Path = a.downloadedKitPath(c.src.Version)
+			c.src.Path = a.downloadedKitPath(a.wantedModel(), c.src.Version)
 		}
 		if c.src.Kind == fwStock {
 			a.UI.Warn("the stock firmware restore has never been tried on a real camera. It writes the APP partition from your verified backup, through the same red box as Restore.")

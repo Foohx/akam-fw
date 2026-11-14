@@ -75,8 +75,11 @@ git clone https://github.com/Foohx/akam-fw && cd akam-fw
 ./akam
 ```
 
-**Windows, macOS, Linux (single binary):** download `akam` for your system from the releases page, check it
-([steps](docs/assistant.md)), then run `akam`.
+**Windows, macOS, Linux (single binary):** download `akam` for your system from the
+[assistant release](https://github.com/Foohx/akam-fw/releases?q=assistant-v) (the one marked "Latest"), check it
+([steps](docs/assistant.md)), then run `akam`. The camera firmware has its own versions: the program downloads the kit
+of your camera model from the [firmware releases](https://github.com/Foohx/akam-fw/releases?q=firmware-v) itself and
+verifies it; you only download a firmware kit by hand to use `--kit`.
 
 The program checks your PC, remembers where you stopped, and walks you through: check the PC, get the kit, prepare
 the backup card, find the camera, **back it up (all 8 partitions)**, build the image, prepare the flash card, flash,

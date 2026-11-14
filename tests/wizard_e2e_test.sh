@@ -197,7 +197,7 @@ fc_start || { echo "cannot start the fake camera"; exit 1; }
 CAM_A=$FC_ROOT
 APP_SHA=$(host_sha256 "$CAM_A/dev/mtd7")
 {
-    grep -v -e '^#' -e '^validated' "$ROOT/tools/release/supported_hardware.txt"
+    grep -v -e '^#' -e '^validated' "$ROOT/tools/release/models/lsc-indoor-1080p-ak3918.txt"
     echo "validated|Fake camera|AK3918AV130|4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025|8 partitions; mtd7=APP 00500000|squashfs xz block=131072 bcj=none|$APP_SHA|1.30.1"
 } >"$T/hw_validated.txt"
 export AKAM_HW_LIST=$T/hw_validated.txt

@@ -3,7 +3,7 @@
 # Run ./akam help. All logic lives in tools/wizard/lib/*.sh; this file only dispatches.
 set -euo pipefail
 
-AKAM_WIZARD_VERSION=${AKAM_WIZARD_VERSION:-1.0.0-dev}
+AKAM_WIZARD_VERSION=${AKAM_WIZARD_VERSION:-0.1.0}
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Experimental native binary (tools/assistant): AKAM_USE_BIN=1 ./akam ARGS... runs it with the same
@@ -134,7 +134,8 @@ Commands:
 Options:
   --dry-run          rehearse: show every command, change nothing, ask nothing
   --kit FILE         use a local kit (tarball with SHA256SUMS next to it, or folder)
-  --version X.Y.Z    release to download for get-kit
+  --version X.Y.Z    firmware release to download for get-kit (required; see the firmware releases on GitHub)
+  --model ID         camera model of the kit (default: the camera model found by backup, or the only model)
   --allow-unsigned   accept a kit without a signature (checksum only)
   --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
   --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)
@@ -173,7 +174,7 @@ It never reboots or power-cycles the camera.
 EOF
 }
 
-OPT_KIT="" OPT_VERSION="" OPT_ALLOW_UNSIGNED="" OPT_EXPECT_SHA256="" OPT_BACKUP_DIR=""
+OPT_KIT="" OPT_MODEL="" OPT_VERSION="" OPT_ALLOW_UNSIGNED="" OPT_EXPECT_SHA256="" OPT_BACKUP_DIR=""
 OPT_OUT="" OPT_COMP="" OPT_ALLOW_UNKNOWN_COMP="" OPT_DEVICE="" OPT_PUBKEY="" OPT_SSID=""
 OPT_PROFILE="" OPT_BUILD=0
 OPT_CAMERA="" OPT_IP="" OPT_IDENTITY="" OPT_IMAGE="" OPT_BACKUP_COPY="" OPT_MANUAL_TELNET=0 OPT_PLAIN=0
@@ -190,6 +191,7 @@ while [ $# -gt 0 ]; do
         --allow-unknown-stock-comp) OPT_ALLOW_UNKNOWN_COMP=1 ;;
         --kit) need_val "$1" $#; OPT_KIT=$2; shift ;;
         --version) need_val "$1" $#; OPT_VERSION=$2; shift ;;
+        --model) need_val "$1" $#; OPT_MODEL=$2; shift ;;
         --expect-sha256) need_val "$1" $#; OPT_EXPECT_SHA256=$2; shift ;;
         --backup-dir) need_val "$1" $#; OPT_BACKUP_DIR=$2; shift ;;
         --backup-copy) need_val "$1" $#; OPT_BACKUP_COPY=$2; shift ;;
