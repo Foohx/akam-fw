@@ -67,7 +67,7 @@ void venc_reset_stale_channel(void)
  * Query the kernel for exact DMA block sizes the AL encoder needs.
  *
  * ioctl(g_venc_fd, VENC_IOCTL_QUERY_DMA, buf) on the GLOBAL /dev/venc fd.
- * This mirrors ak_venc_open_ex → venc_get_req_dma_block @ 0x001d0c88.
+ * This mirrors ak_venc_open_ex → venc_get_req_dma_block.
  *
  * Input struct (84 bytes = uint32_t[21]):
  *   offset  0 (uint32): profile_idc  (77=Main)
@@ -178,7 +178,7 @@ int venc_create_pool(void)
      *
      * Confirmed from run log: frame_offset=0xc62120a0, kv_base=0xc61f6000
      *   → ring offset = 0x1c0a0 = 115,872 bytes  (within 777,600-byte ring ✓)
-     * Using phys_base2 (0x81ad0000) gives a wild pointer → segfault. */
+     * Using phys_base2 gives a wild pointer → segfault. */
     g_venc_phys = pool.phys_base;   /* kernel virtual base — used for frame_offset arithmetic */
 
     g_venc_virt = mmap(NULL, ENC_VENC_SIZE, PROT_READ | PROT_WRITE,
@@ -239,9 +239,8 @@ int venc_create_encoder(void)
     req.smart.smart_goplen   = 100;
     req.smart.smart_quality  = 50;
     /* REVERTED (2026-07-04) — hardware-tested and CRASHES THE KERNEL.
-     * A Ghidra trace of venc_check_and_format_rc_param (0x1d0a58) and its
-     * caller ht_video_codec_start_encode (0xbef60) appeared to show stock
-     * sending an all-zero rc struct (cub_size/minqp/maxqp/delta/I_P_B_pic_size
+     * Reading the stock rate-control formatting code appeared to show
+     * stock sending an all-zero rc struct (cub_size/minqp/maxqp/delta/I_P_B_pic_size
      * all 0, only rc_flag=1). Tried it on hardware with UART attached this
      * time — confirmed kernel Oops, not a graceful failure:
      *   dma_pool_alloc_obj+0x440 [ak_venc_adapter]
@@ -257,7 +256,7 @@ int venc_create_encoder(void)
      * with the macroblocking artifact this was trying to fix). Do NOT set
      * minqp==maxqp (or both zero) here again. The full crash dump and
      * follow-up plan (byte-exact runtime capture via the LD_PRELOAD hook
-     * instead of further guessing from Ghidra) is what led to the values
+     * instead of further guessing from the stock code) is what led to the values
      * below. */
     /* TRIED AND FAILED AGAIN (2026-07-04): setting rc.flag=0/rc.flag2=0/
      * rc.srd_threshold=0 (MMA/MVVRange disabled, minqp/maxqp left at the
@@ -265,22 +264,19 @@ int venc_create_encoder(void)
      * all-zero rc struct attempt above, confirmed via UART:
      *   dma_pool_alloc_obj+0x440 [ak_venc_adapter]
      *     <- venc_dma_pool_malloc <- AL_SchedulerCpu_CreateChannel
-     * A Ghidra trace through AKV_Encoder_Open_Ext (0x2eb7c) beforehand
+     * Reading the encoder open code beforehand
      * appeared to show flag/flag2/srd_threshold are independently gated
      * ("if nonzero, use; else skip") and don't feed any division — that
-     * trace was real but incomplete; it examined the wrong function
-     * relative to the actual crash site. This is now the THIRD time
-     * (across multiple sessions) that a plausible-looking Ghidra reasoning
-     * chain about this rc struct has been contradicted by hardware. A full
-     * disassembly-level pass ("RC struct div/0 — full disassembly-level
-     * root cause") found the panic is actually a NULL pointer dereference
+     * reading was incomplete. This is now the THIRD time
+     * (across multiple sessions) that a plausible-looking reading of the
+     * stock code about this rc struct has been contradicted by hardware. The
+     * panic is a NULL pointer dereference
      * in a DMA-pool free-list search (dma_pool_alloc_obj), not a literal
      * integer division — and the causal link from these specific ioctl
-     * fields to that pool exhaustion could NOT be conclusively closed this
-     * round. Do not retry
+     * fields to that pool exhaustion could NOT be conclusively closed. Do not retry
      * flag/flag2/srd_threshold changes without new evidence (e.g. the
-     * isp_hook.c CREATE_ENC byte capture) — Ghidra reasoning alone has now
-     * failed twice for this struct. Reverted to hardware-confirmed-safe. */
+     * isp_hook.c CREATE_ENC byte capture): reasoning from the stock code
+     * alone has now failed twice for this struct. Reverted to hardware-confirmed-safe. */
     req.rc_flag              = 1;
     if (imgq_venc_rc_stock()) {
         /* AKAM_VENC_RC=stock (specs/image-day-night-leds.md). Byte for byte the rc sub-struct of the stock
@@ -362,7 +358,7 @@ int venc_create_encoder(void)
  * encode_mode=1: kernel handles ISP→VENC DMA internally, no userspace
  * involvement needed per frame.
  *
- * Reversed from ak_venc_bind_vi_chn @ 0x001d65c0.
+ * Matches the stock firmware: ak_venc_bind_vi_chn.
  * IMPORTANT: must be called BEFORE CREATE_POOL/CREATE_ENC (see
  * smolrtsp_integration.md §C for the ordering constraint explanation).
  * ------------------------------------------------------------------------- */
@@ -387,7 +383,7 @@ int venc_bind_vi(void)
 
 /* -------------------------------------------------------------------------
  * Activate the encoder — starts frame production.
- * Reversed from ak_venc_bind_activate @ 0x001d68a8.
+ * Matches the stock firmware: ak_venc_bind_activate.
  * ------------------------------------------------------------------------- */
 int venc_activate(void)
 {

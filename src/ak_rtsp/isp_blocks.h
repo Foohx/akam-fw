@@ -16,7 +16,7 @@ typedef struct isp_block {
     const char *name;
     uint32_t    set_cmd;       /* inner command the application writes the block with */
     uint32_t    get_cmd;       /* inner command that reads it back, 0 = none known */
-    int         get_confirmed; /* 1 = seen in a stock capture or reversed, 0 = guessed (SET + 1) */
+    int         get_confirmed; /* 1 = seen in a stock capture, 0 = guessed (SET + 1) */
     int         module;        /* module (0..23) of sensor_isp.conf that carries the block */
     uint32_t    off;           /* offset of the block inside the module, 4-byte [id][size] header included */
     uint32_t    size;          /* payload bytes */

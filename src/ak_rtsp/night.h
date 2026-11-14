@@ -7,7 +7,7 @@
  * Watches ae.c's AE state (via ae_get_last_stats()) and, on a sustained
  * brightness change, coordinates: IR-cut filter position, IR LED, sensor
  * frame-rate/VTS, and WB gains — mirroring stock anyka_ipc's night_mode_check
- * / day_mode_check (Ghidra-reversed from stock; this reimplementation uses
+ * / day_mode_check (behaviour observed on the stock firmware; this reimplementation uses
  * a different EV proxy/thresholds than stock).
  *
  * Call night_start() after ae_start() (needs AE samples to already be

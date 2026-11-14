@@ -1,7 +1,7 @@
 /* isp_hook.c — LD_PRELOAD ioctl interceptor for anyka_ipc ISP/VENC state capture.
  *
  * Logs to /tmp/isp_hook.log:
- *   - get_ae_run_info (0x80044952): windowed min/max/reversal-count summary,
+ *   - get_ae_run_info: windowed min/max/reversal-count summary,
  *     one line per ~1s (AE_WINDOW_N=15 samples @ ~15Hz) — format mirrors
  *     ak_rtsp/ae.c's ae_loop() exactly (lum[min max last], hw_exp[min max],
  *     reversals, <-- HUNTING flag) so the two logs are directly comparable:
@@ -9,24 +9,23 @@
  *     scene ak_rtsp does? A prior 1-in-30 raw-sample throttle was too coarse
  *     to see fast hunting (same mistake fixed in ak_rtsp/ae.c earlier).
  *   - set/get_exposure_attr (0x8004498a/8b) every N calls — shows private+public fields
- *   - ISP_INNER_SENSOR_SETREG (0x4004496b) every call — shows which GC20C3 I2C
+ *   - ISP_INNER_SENSOR_SETREG every call — shows which GC20C3 I2C
  *     registers anyka_ipc writes for gain/exposure, with exact values
  *   - VENC_IOCTL_CREATE_ENC (0x406056e0, added 2026-07-04): the raw 96-byte
  *     venc_create_enc_req payload anyka_ipc actually sends the kernel,
  *     labeled per-field to match ak_ioctls.h's struct layout, plus a raw hex
  *     word dump as a fallback in case the field offsets/labels are wrong.
- *     This exists because a pure Ghidra decompiled-stack trace of the
- *     equivalent userspace formatter (venc_check_and_format_rc_param) led to
- *     a value (all-zero rc struct) that panicked the kernel on real hardware.
- *     This capture reads the actual bytes off the
- *     wire instead of re-deriving them from decompiled stack layout.
+ *     This exists because deriving the rc struct from the stock
+ *     userspace formatter's code alone led to a value (all-zero rc struct)
+ *     that panicked the kernel on real hardware. This capture reads the
+ *     actual bytes off the wire instead.
  *     The actual field dump (added 2026-07-05) now lives in the shared
  *     venc_dump.h, also used by ak_rtsp/venc.c's DEBUG_IOCTL_DUMP build, so
  *     "what stock sent" and "what we sent" are always directly diffable.
  *   - AKPCM audio ioctl family (2026-07-04):
  *     generic catch-all for every ioctl whose magic/type byte is 'P' (0x50) —
  *     this covers all the akpcm (mic capture, /dev/akpcm_cdev1) ioctls
- *     reverse-engineered from libplat_ai.so (IOC_GET_PARS=0x401c50f2,
+ *     as used by libplat_ai.so (IOC_GET_PARS=0x401c50f2,
  *     IOC_PREPARE=0x804050f0, plus the no-arg 0x50e0/0x50e1/0x50e2 ones),
  *     decoded generically via the standard Linux _IOC(dir,type,nr,size)
  *     layout rather than hardcoded per-cmd, so any akpcm ioctl not yet
@@ -380,8 +379,8 @@ int ioctl(int fd, unsigned int req, void *arg)
     int ret = (int)_sc3(SYS_IOCTL, fd, (long)req, (long)arg);
 
     /* -- VENC CREATE_ENC: capture the exact wire-level rc/enc struct anyka_ipc
-     * sends, byte-for-byte, so we stop guessing this from Ghidra decompiled
-     * stack traces (which already crashed hardware once). Not throttled —
+     * sends, byte-for-byte, so we stop guessing this from the stock code
+     * (which already crashed hardware once). Not throttled —
      * this only fires a handful of times per boot (once per venc channel). */
     if (req == VENC_IOCTL_CREATE_ENC && arg) {
         /* Unconditional hit counter, logged before any field parsing, so a
@@ -659,7 +658,7 @@ int ioctl(int fd, unsigned int req, void *arg)
         return ret;
     }
 
-    /* -- get_ae_stat_info (0x80044991) -- */
+    /* -- get_ae_stat_info -- */
     if (w->inner_cmd == GET_AE_STAT_INFO && ret == 0) {
         int f = ISP_LOG_OPEN();
         if (f >= 0) {

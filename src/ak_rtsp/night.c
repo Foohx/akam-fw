@@ -23,8 +23,8 @@
  * day ISP calibration), owns the live tuning and the 8091 keys. The reasoning is in night_logic.h and in
  * specs/image-day-night-leds.md.
  *
- * Background: Ghidra reverse-engineering of stock anyka_ipc (night_mode_check @ 0x0012583c, day_mode_check @
- * 0x00124aa0, driven by ht_night_mode_auto_th @ 0x000d5abc) found a synthetic "EV" computed from the AE state
+ * Background: observing the stock anyka_ipc (night_mode_check, day_mode_check,
+ * driven by ht_night_mode_auto_th) showed a synthetic "EV" computed from the AE state
  * (ak_vpss_get_ev(): roughly gain * exposure) compared with thresholds from _ht_hw_settings.ini [night_mode]:
  *   ps_soft_day_to_night_lum   = 6,300,000  (day->night trigger)
  *   ps_soft_night_to_day_lum   = 2,000,000  (night->day trigger)

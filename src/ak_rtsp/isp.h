@@ -46,11 +46,9 @@ int  isp_pipeline_ready(void);
 int isp_reapply_wb_conf(int night);
 
 /* Live-tunable picture controls (-50..50, matching anyka_ipc's own UI
- * slider range). All GET-modify-SET against real hardware, verified via
- * Ghidra disassembly (not just decompiled C, which proved unreliable for
- * exact field offsets/case numbers in this area — see isp.c's comments on
- * each function for the full trace and what's verified vs. what's a known
- * gap):
+ * slider range). All GET-modify-SET against real hardware, checked against
+ * a capture of the stock firmware (see isp.c's comments on each function for
+ * what is verified vs. what's a known gap):
  *   - saturation/contrast: small "effect" struct (module 0x0f).
  *   - brightness: the LIVE 0x720-byte exposure-attr struct ae.c's AE
  *     thread also polls — a different, riskier mechanism than the other

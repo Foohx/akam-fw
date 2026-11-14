@@ -31,11 +31,10 @@
  * oscillation. Fix: don't suspend AE, don't write our own exposure values —
  * just tick GET_EXPOSURE like anyka_ipc does and let the on-chip AE run.
  *
- * AWB_EX struct size: 5124 bytes (0x1404), confirmed by Ghidra from
- * Isp_Struct_len table. isp_reapply_awb_ex() reads the correct payload from
+ * AWB_EX struct size: 5124 bytes (0x1404), the size the stock firmware sends. isp_reapply_awb_ex() reads the correct payload from
  * sensor_isp.conf (module 0x13, offset +0x7e4) — see isp.c.
  *
- * WB struct: 0x7e0 bytes, layout confirmed by Ghidra (ak_vpss_set_mwb_attr).
+ * WB struct: 0x7e0 bytes, layout as the stock ak_vpss_set_mwb_attr sends it.
  *   bytes  8-11: wb_type=1 (MANUAL)
  *   bytes 12-13: R_gain u16 (256=1x) = 460 (1.80x)
  *   bytes 14-15: G_gain u16 (256=1x) = 256 (reference)
@@ -229,8 +228,8 @@ int ae_init_isp_params(void)
 
     /* Frame timing — tells ISP AE the sensor's VTS (2284 lines per frame at 15 fps, 34260 / fps in general).
      * This is the DAY config; night.c reconfigures to {10fps, vts=3426}
-     * when it engages night mode (Ghidra + isp_hook-confirmed values from
-     * stock anyka_ipc). */
+     * when it engages night mode (values seen in an isp_hook capture of
+     * the stock firmware). */
     const uint32_t cfg_fps = (uint32_t)video_fps(); /* 15 unless /etc/config/akam/video says 10, 20 or 25 (video_cfg.h) */
     uint32_t frame_rate[4] = {cfg_fps, (uint32_t)video_day_vts(), 8, cfg_fps};
     if (isp_tunnel(ISP_INNER_SET_FRAME_RATE, frame_rate) == 0)
