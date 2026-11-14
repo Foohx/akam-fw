@@ -509,7 +509,7 @@ bash "$PATCH_ETH" "$PATCHED" || die "patch_ethernet_hostname.sh failed: the DHCP
 # The stock service.sh copies sbin/drop_caches.sh to /tmp and runs it forever: "sleep 5; sync; echo 3 >
 # /proc/sys/vm/drop_caches" (it also removes a stale /tmp/wpa_supplicant). Nothing depends on the 5 s
 # period; each pass is a wakeup plus a sync, and drop_caches is a no-op on this kernel
-# (see tools/flash_scripts/install_custom_firmware.sh). One pass per minute keeps the stock behaviour
+# (checked on the camera). One pass per minute keeps the stock behaviour
 # at a twelfth of the cost. A different layout is left untouched with a warning.
 echo "Slowing sbin/drop_caches.sh (5 s -> 60 s)..."
 DROPC="$PATCHED/sbin/drop_caches.sh"

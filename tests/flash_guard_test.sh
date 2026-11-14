@@ -83,8 +83,7 @@ outhas "deprecated override still prints the loud warning" "AKAM_FLASH_I_KNOW=1 
 run "deprecated override must be exactly 1" 1 mounts_stock /mnt/x.sh "" SSH_CONNECTION=x CAMYN_FLASH_I_KNOW=yes
 
 # Wiring: every APP-writing script refuses under SSH before doing anything else.
-for s in install_with_flash_tool quiet_and_flash_test restore install_custom_firmware \
-    install_padded_firmware install_ak_rtsp_firmware restore_full_firmware; do
+for s in install_with_flash_tool restore restore_full_firmware; do
     d=$WORK/sd_$s
     mkdir -p "$d"
     cp "$FS/$s.sh" "$FS/flash_guard.sh" "$d/"
@@ -110,8 +109,7 @@ for a in sh cat grep sed stat mount sleep kill dd touch sync echo ls ps mkdir mv
 done
 if [ "${#SHCMD[@]}" -gt 1 ]; then
     for a in dirname basename cut wc; do [ -e "$RB/$a" ] && ko "$a must not be in the fake rootfs"; done
-    for s in install_with_flash_tool quiet_and_flash_test restore install_custom_firmware \
-        install_padded_firmware install_ak_rtsp_firmware restore_full_firmware; do
+    for s in install_with_flash_tool restore restore_full_firmware; do
         d=$WORK/sd_$s
         cp "$FS/flash_guard.sh" "$d/"
         (cd "$d" && env -i PATH="$RB" SSH_CONNECTION=x AKAM_PROC_MOUNTS="$WORK/mounts_stock" \

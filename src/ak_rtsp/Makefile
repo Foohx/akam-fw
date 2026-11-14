@@ -224,8 +224,7 @@ upload: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0)
 	for f in $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_TOOL) $(TARGET_DIV0) \
 	         $(FLASH_SCRIPTS)/start_rtsp.sh \
 	         $(FLASH_SCRIPTS)/flash_guard.sh \
-	         $(FLASH_SCRIPTS)/install_with_flash_tool.sh \
-	         $(FLASH_SCRIPTS)/quiet_and_flash_test.sh; do \
+	         $(FLASH_SCRIPTS)/install_with_flash_tool.sh; do \
 	    b=$$(basename "$$f"); \
 	    echo "upload $$b"; \
 	    ssh "root@$(CAMERA_IP)" "cat > /tmp/$$b && chmod +x /tmp/$$b" < "$$f"; \

@@ -1,9 +1,5 @@
 # Tracked scripts with known shellcheck findings (legacy/upstream or pre-existing); do not add new ones.
-tools/flash_scripts/install_ak_rtsp_firmware.sh
-tools/flash_scripts/install_custom_firmware.sh
-tools/flash_scripts/install_padded_firmware.sh
 tools/flash_scripts/install_with_flash_tool.sh
-tools/flash_scripts/quiet_and_flash_test.sh
 tools/flash_scripts/restore_full_firmware.sh
 tools/flash_scripts/restore.sh
 tools/flash_scripts/start_rtsp.sh

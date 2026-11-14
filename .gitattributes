@@ -7,6 +7,3 @@
 *.embed text eol=lf
 *.txt text eol=lf
 tools/assistant/internal/assets/scripts/** text eol=lf
-
-# Not part of the source archives (git archive / GitHub "Source code"): assistant instruction file.
-tools/hardware_debug/serial_console_dotnet/CLAUDE.md export-ignore
