@@ -489,7 +489,7 @@ cmd_get_kit() {
         fi
         if ! model=$(kit_model_wanted); then
             ui_fail "several camera models are supported and this camera's model is not known yet." \
-                "pass --model ID (for example $(basename "$(ls "$(wiz_tool hw_list)"/*.txt | head -1)" .txt)), or take the backup first so that the model is detected."
+                "pass --model ID (one of the files of $(wiz_tool hw_list)), or take the backup first so that the model is detected."
             return 1
         fi
         case $ver in

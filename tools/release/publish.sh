@@ -58,7 +58,8 @@ case "$CMD" in
     *) echo "publish: unknown command '$CMD'" >&2; usage ;;
 esac
 command -v "$GH" >/dev/null 2>&1 || die "the gh program was not found (https://cli.github.com), or set AKAM_GH"
-command -v git >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1 || die "git and sha256sum are required"
+command -v git >/dev/null 2>&1 || die "git is required"
+command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
