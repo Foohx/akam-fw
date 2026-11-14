@@ -132,7 +132,7 @@ typedef struct audio_out {
 
 /* ---- engine (instance) -------------------------------------------------- */
 
-/* Defaults: enabled, volume 50, gain 2, source 4, amp auto. */
+/* Defaults: enabled, volume 100, gain 2, source 4, amp auto. */
 void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg);
 /* Reads <conf_dir>/audio_out (lines key=value: enable, volume, gain, source).
  * Absent file or bad lines keep the defaults. Returns 1 if the file was read. */

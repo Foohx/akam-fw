@@ -16,7 +16,7 @@
  * venc_rc=stock has crashed the kernel with other rc words before (see venc.c): keep it in /tmp/akam_image (a crash
  * then self-heals at the reboot), not in the saved file, until a hardware test has passed.
  * 8091 keys (LIST / GET / SET), debug keys: specs/control-port.md makes 8091 read-only remotely (loopback writes only), so the
- * img.* SETs follow whatever rule the 8091 read-only step applies to SET. They never write to flash:
+ * img.* SETs follow whatever rule the 8091 read-only step applies to SET. A loopback SET of img.wb is saved to /etc/config/akam/image (a remote one is refused); the other img.* keys never write to flash:
 
  *   img.venc_rc    read-only (decided when the encoder is created)
  *   img.wb         conf | manual     applies at once (day only for manual). Every night -> day switch re-sends the
