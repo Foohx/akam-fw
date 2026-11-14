@@ -8,7 +8,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// ErrorView is the error screen (spec 12, 4.7): a red title, what happened, what to do, a muted
+// ErrorView is the error screen (specs/installer.md): a red title, what happened, what to do, a muted
 // technical line. r retries (when offered), l shows the log tail in a pane, c asks for another camera,
 // Esc goes back. It is an overlay of the session, like the questions.
 type ErrorView struct {

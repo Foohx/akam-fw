@@ -302,7 +302,7 @@ fail:
  * session. */
 static void audio_init_playback(void)
 {
-    /* Speaker output (spec 05): when enabled and the device sequence works,
+    /* Speaker output (specs/audio.md): when enabled and the device sequence works,
      * audio_out owns the playback fd and its own thread, and the legacy
      * silence loop below is not used. When disabled, blocked by the crash
      * guard or failed, audio_out leaves nothing open and the legacy path

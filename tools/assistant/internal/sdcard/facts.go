@@ -3,7 +3,7 @@ package sdcard
 import "fmt"
 
 // Facts is what an OS inventory knows about one disk: a plain, JSON-serialisable struct with no decision in
-// it. Evaluate turns Facts into a verdict, so the rules are unit-tested on Linux for every OS (spec 11, 4.4.1).
+// it. Evaluate turns Facts into a verdict, so the rules are unit-tested on Linux for every OS (specs/installer.md).
 type Facts struct {
 	OS         string `json:"os"`   // "linux" | "darwin" | "windows"
 	Path       string `json:"path"` // /dev/sdb | /dev/disk4 | \\.\PhysicalDrive2

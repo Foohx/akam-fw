@@ -1,5 +1,5 @@
 // Package camopt is the catalog of the camera options and the small engine that reads and writes them
-// (spec 11, 4.5). It has no UI code: it returns structured states and applies a list of changes through
+// (specs/installer.md). It has no UI code: it returns structured states and applies a list of changes through
 // one control-port exchange, so that the command line and the option screens share the same validators.
 //
 // Two rules hold for every value:

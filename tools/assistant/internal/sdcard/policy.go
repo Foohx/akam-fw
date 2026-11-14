@@ -117,7 +117,7 @@ func Evaluate(f Facts, p Policy) (*Candidate, error) {
 		// fail closed: an internal flag the inventory could not read is not "external"
 		switch f.Internal {
 		case Yes:
-			// a Mac's built-in SD slot reports Internal: accepted on the protocol alone (spec 11, 4.4.4)
+			// a Mac's built-in SD slot reports Internal: accepted on the protocol alone (specs/installer.md)
 			if f.OS == "darwin" && f.Bus == "sd" {
 				break
 			}

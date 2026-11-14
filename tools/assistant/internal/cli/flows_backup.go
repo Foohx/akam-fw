@@ -14,7 +14,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// Backup location, backup and restore screens, settings (spec 11, 3.2, 3.7, 3.8).
+// Backup location, backup and restore screens, settings (specs/installer.md).
 
 // backupSuggestion is the folder the next backup would use and what to tell about it.
 type backupSuggestion struct {

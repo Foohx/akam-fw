@@ -2,7 +2,7 @@
 #include <pthread.h>
 #include <stddef.h>
 
-/* Front status LED and IR LED policy (specs/06-spec-leds.md).
+/* Front status LED and IR LED policy (specs/image-day-night-leds.md).
  *
  * led.status  on | off | auto   (default on: the LED is left as the system
  *                               set it, behaviour unchanged)

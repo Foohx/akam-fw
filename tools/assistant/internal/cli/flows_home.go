@@ -10,7 +10,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The home screen (spec 11, 3.1): which camera is chosen, what is known about it, and the main
+// The home screen (specs/installer.md): which camera is chosen, what is known about it, and the main
 // actions. Everything it starts is a flow written once against ui.UI.
 
 // homeInfo is what the header shows. It is read from the state of the chosen camera; the home screen

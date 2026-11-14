@@ -21,7 +21,7 @@
  * The decision itself (when to go to night, when to come back) lives in night_logic.c, a pure state machine with
  * its own host test; this file polls the AE, performs the switches (IR-cut filter, IR LED, frame rate, night /
  * day ISP calibration), owns the live tuning and the 8091 keys. The reasoning is in night_logic.h and in
- * specs/08-spec-image-quality.md (sections 3.4 and 11).
+ * specs/image-day-night-leds.md.
  *
  * Background: Ghidra reverse-engineering of stock anyka_ipc (night_mode_check @ 0x0012583c, day_mode_check @
  * 0x00124aa0, driven by ht_night_mode_auto_th @ 0x000d5abc) found a synthetic "EV" computed from the AE state
@@ -30,7 +30,7 @@
  *   ps_soft_night_to_day_lum   = 2,000,000  (night->day trigger)
  *   ps_soft_day/night_check_frame_num = 10  (consecutive confirming samples)
  *   ps_soft_auto_lock_time_ms  = 60,000     (anti-flap lock after a switch)
- * A stock day/night capture (specs/08) shows the day->night switch happens when the AE is saturated (exposure
+ * A stock day/night capture (specs/image-day-night-leds.md) shows the day->night switch happens when the AE is saturated (exposure
  * 16384 x ISP gain 1.5x = 6.29 M in Q8), and the night->day switch also depends on AWB statistics (the
  * "non infrared ratio") which are not decoded here: see night_logic.h for what is done instead.
  *

@@ -539,7 +539,7 @@ check_cpu() {
     sleep "$CPU_WINDOW"
     w2=$(proc_wakeups "$p")
     # G10: wakeups per second = voluntary context switches of all threads (each sleep that ended); the budget of
-    # specs/10 is about 80/s with no client, the estimate from the code is about 140/s before the cuts.
+    # specs/roadmap.md is about 80/s with no client, the estimate from the code is about 140/s before the cuts.
     if [ -n "$w1" ] && [ -n "$w2" ] && [ "$CPU_WINDOW" -gt 0 ]; then
         info "ak_rtsp pid $p wakeups $(( (w2 - w1) / CPU_WINDOW ))/s over ${CPU_WINDOW}s (voluntary context switches, all threads)"
     fi

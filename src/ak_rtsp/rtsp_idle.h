@@ -13,7 +13,7 @@
  * A talk-only session (audio backchannel playing, no video or microphone track
  * playing: it sends audio to the camera and receives nothing) is the exception:
  * it is dropped when no RTP packet has come for RTSP_IDLE_TALK_MS, so that a
- * silent talker does not hold the only slot (specs/07 section 1.2).
+ * silent talker does not hold the only slot (specs/audio.md).
  *
  * Pure state machine: the caller passes monotonic microseconds, so
  * tests/rtsp_idle_test.sh needs neither sleeps nor sockets. */

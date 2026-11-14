@@ -11,7 +11,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The error screen of the session (spec 12, 4.7). A flow still ends with Fail(msg, hint); the session
+// The error screen of the session (specs/installer.md). A flow still ends with Fail(msg, hint); the session
 // UI remembers it and, once the flow has returned to the home loop, the loop shows it as a screen: a
 // title, what happened, what to do, a muted technical line, with r retry, l log, c other camera, Esc.
 // Without a session (plain, one-shot commands) nothing here runs and Fail prints as before.

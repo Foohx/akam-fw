@@ -1,5 +1,5 @@
 /* Optional RTSP Digest authentication (RFC 2617, "MD5", no qop in the
- * challenge; see specs/03-spec-rtsp-auth.md). Pure logic: no sockets, no
+ * challenge; see specs/video-and-streaming.md). Pure logic: no sockets, no
  * SmolRTSP, time and randomness passed in or hooked, so it is tested on the
  * host (tests/native/rtsp_auth_test.c) and wired to the RTSP server in rtsp.c.
  *

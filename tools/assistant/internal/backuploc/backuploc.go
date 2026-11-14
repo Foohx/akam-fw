@@ -1,4 +1,4 @@
-// Package backuploc decides where the stock-camera backup goes (spec 11, 3.2 and 4.7). It is pure:
+// Package backuploc decides where the stock-camera backup goes (specs/installer.md). It is pure:
 // every fact about the computer (OS, home, environment, files, free space) is injected, so the
 // rules run in tests on any host.
 package backuploc

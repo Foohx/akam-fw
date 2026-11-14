@@ -1,5 +1,5 @@
 #pragma once
-/* RTP receive side of the ONVIF audio backchannel (specs/07 section 1).
+/* RTP receive side of the ONVIF audio backchannel (specs/audio.md).
  *
  * The client sends G.711 audio (PCMU PT 0, PCMA PT 8, 8 kHz mono) in RTP
  * packets, interleaved in the RTSP/TCP connection ('$' frames) or over UDP.

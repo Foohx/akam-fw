@@ -620,7 +620,7 @@ struct akpcm_pars {
 #define AKPCM_IOC_RESET_BUF     0x000050e3  /* _IO('P',0xe3) */
 
 /* -------------------------------------------------------------------------
- * Playback-side names (spec 05, section 1.2). The names and numbers above
+ * Playback-side names (specs/audio.md). The names and numbers above
  * describe the CAPTURE fd only; capture keeps replaying them byte for byte.
  * On /dev/pcmC0D0p the driver uses the same nr values under other names, and
  * the direction bits are the standard asm-generic ones:

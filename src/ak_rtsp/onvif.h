@@ -1,4 +1,4 @@
-/* ONVIF core glue (specs/07 section 3.2 and 3.3): the service table on top of http_srv, the SOAP dispatch, the
+/* ONVIF core glue (specs/onvif.md): the service table on top of http_srv, the SOAP dispatch, the
  * shared authentication gate and the device identity (UUID, MAC, interface address).
  *
  * Flow of one request (runs in the http_srv thread, must not block): find the operation (first element of the SOAP

@@ -8,7 +8,7 @@ import (
 )
 
 // Checklist is a list of physical actions (unplug, take the card out, plug back in) the user does by
-// hand (spec 12, 4.6, B3 and B4). One key acknowledges them all: Space or Enter. q, Esc and Ctrl-C
+// hand (specs/installer.md). One key acknowledges them all: Space or Enter. q, Esc and Ctrl-C
 // stop. The acknowledgement only means "go on and check": it authorises nothing destructive.
 type Checklist struct {
 	Title string

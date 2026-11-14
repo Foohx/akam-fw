@@ -298,7 +298,7 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 
 // clockAsk is the question "Set the camera clock from this computer now?" (default No) and what follows
 // its answer. The caller decides whether it may be asked: clockOffer on the plain path, the t key of
-// the options form (spec 12, 4.5), never unprompted there.
+// the options form (specs/installer.md), never unprompted there.
 func (a *App) clockAsk(c *camssh.Client, h camHealth) {
 	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? " + clockLostNote(h)); !ok {
 		if h.ntp != "on" {

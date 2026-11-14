@@ -10,7 +10,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The option screens (spec 11, 3.4) on top of internal/camopt: one screen per group, every value read
+// The option screens (specs/installer.md) on top of internal/camopt: one screen per group, every value read
 // in one exchange of the control port, values edited locally and validated by the same validators as
 // the command line, nothing sent before "apply". Options that go through a helper script of the camera
 // (video password, ONVIF, NTP, host name) call the existing commands, which keep their own yes/no.

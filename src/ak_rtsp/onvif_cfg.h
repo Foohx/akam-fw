@@ -1,4 +1,4 @@
-/* ONVIF on/off wiring (specs/07 section 3.3, specs/10 section 1): the opt-in flag file and the runtime start/stop of
+/* ONVIF on/off wiring (specs/onvif.md, specs/roadmap.md): the opt-in flag file and the runtime start/stop of
  * the HTTP server (onvif.c + http_srv.c) and WS-Discovery (wsd.c).
  *
  * Flag file /etc/config/akam/onvif, written by akam_onvif.sh: exactly two lines, `enabled=1|0` and `port=N`, any

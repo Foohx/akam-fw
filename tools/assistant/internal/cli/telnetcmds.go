@@ -408,7 +408,7 @@ func (a *App) bkFingerprint() string {
 	return kfp
 }
 
-// bkPCDir is bk_pc_dir: a new folder <Documents>/Akam backups/<camera>/<date>[-N] (spec 11, 3.2)
+// bkPCDir is bk_pc_dir: a new folder <Documents>/Akam backups/<camera>/<date>[-N] (specs/installer.md)
 // and the folders above it that must be private too.
 // With AKAM_BACKUP_ROOT (test hook) it is <root>/akam-backup-<name>-<date>[-N], the legacy layout.
 func (a *App) bkPCDir() (string, []string) {

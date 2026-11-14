@@ -1,4 +1,4 @@
-/* Saved video settings (specs/10 G11): bitrate cap, frame rate and GOP length, read once at start-up.
+/* Saved video settings (specs/roadmap.md): bitrate cap, frame rate and GOP length, read once at start-up.
  *
  * File /etc/config/akam/video, mode 0600, written atomically, key=value lines (LF, a trailing CR is tolerated):
  *   bitrate=N   VBR+ ceiling in kbit/s, whole number VIDEO_KBPS_MIN..VIDEO_KBPS_MAX (default ENC_KBPS)
@@ -18,7 +18,7 @@
  * The values are loaded once (video_cfg_load, first thing in main) and never change while ak_rtsp runs: the
  * encoder is created from them, and the SDP, ONVIF and the bitrate/GOP bookkeeping of rtsp.c report them. A change
  * of the file (./akam video, 8091 SET video.*_cfg) applies at the next start of ak_rtsp.
- * Not offered, on purpose (specs/10 G11): resolution (ISP crop, VI formats and the encoder DMA pool are sized for
+ * Not offered, on purpose (specs/roadmap.md): resolution (ISP crop, VI formats and the encoder DMA pool are sized for
  * 1920x1080 only) and mirror/flip (the ISP flip ioctl number is known, its payload and the sensor register
  * sequence are not). */
 #pragma once

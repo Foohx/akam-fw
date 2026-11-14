@@ -10,7 +10,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The home screen and the camera chooser inside the full-screen session (spec 12, 4.1 to 4.3). They
+// The home screen and the camera chooser inside the full-screen session (specs/installer.md). They
 // need a UI with a header (ui.HeaderSetter) and persistent lists (ui.Boarder); every other UI keeps
 // the Pick based screens of flows_home.go and flows_camera.go, byte for byte.
 //

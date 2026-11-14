@@ -5,7 +5,7 @@
 // with the writer of T11.14, pads it with 0xFF to the partition size and re-reads its own output before
 // returning. It never runs anything from the kit and never talks to a camera.
 //
-// EXPERIMENTAL: until the human gate of spec 11 (4.8 step 4) is recorded, the bash builder stays the
+// EXPERIMENTAL: until the human gate of specs/installer.md (a real camera flashed with the native image) is recorded, the bash builder stays the
 // default on Linux; this builder is opt-in (--builder native).
 package image
 

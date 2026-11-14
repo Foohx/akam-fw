@@ -46,7 +46,7 @@
 #define AE_WINDOW_TICKS       15 /* ~1s window (15 ticks @ ~66ms) for min/max/peak stats */
 #define AE_QUIET_SUMMARY_WINDOWS 60 /* without DEBUG: one [ae] window line per this many windows */
 #define AE_QUIET_HUNTING_WINDOWS 10 /* ... or a HUNTING one, at most this often */
-/* NOTE (stock capture, specs/08): pub[0] is the longest exposure (= the sensor VTS, 2284 day at 15 fps, 3426 night; day VTS = 34260 / fps) and
+/* NOTE (stock capture, specs/image-day-night-leds.md): pub[0] is the longest exposure (= the sensor VTS, 2284 day at 15 fps, 3426 night; day VTS = 34260 / fps) and
  * pub[1] the SHORTEST (2 lines in the file): what ae_tuning_t calls exp_max is really exp_time_min; its
  * default 2 is the stock value, a larger one only raises the shortest exposure (brighter, never grainier). */
 #define AE_EXP_MAX        32767 /* unused */

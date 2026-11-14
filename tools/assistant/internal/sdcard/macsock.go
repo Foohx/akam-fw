@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// The opt-in macOS elevation (AKAM_SD_ELEVATE=osascript, spec 11, 4.4.4). AppleScript cannot pass stdin, so the
+// The opt-in macOS elevation (AKAM_SD_ELEVATE=osascript, specs/installer.md). AppleScript cannot pass stdin, so the
 // request travels over a Unix socket:
 //
 //	parent (user)                                   helper (root, started by osascript)

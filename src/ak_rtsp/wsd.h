@@ -1,4 +1,4 @@
-/* WS-Discovery responder for ONVIF (spec 07 section 3.1 and 3.2): SOAP 1.2 over UDP, multicast group
+/* WS-Discovery responder for ONVIF (specs/onvif.md): SOAP 1.2 over UDP, multicast group
  * 239.255.255.250 port 3702. DORMANT until wsd_start(): no socket, no thread, no timer.
  *
  * One thread (niced +10), one poll() loop. It joins the multicast group (checked every 30 s, dropped and joined again every 5 minutes to send a fresh IGMP report, retried every 5 s

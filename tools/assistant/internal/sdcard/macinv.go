@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// macOS disk facts from `diskutil ... -plist` (spec 11, 4.4.4). Everything here is pure or goes through the
+// macOS disk facts from `diskutil ... -plist` (specs/installer.md). Everything here is pure or goes through the
 // Runner, so it is unit-tested on Linux with canned XML; only the thin *_darwin.go files touch the OS.
 // The decisions stay in Evaluate: this file only reads, and a fact that cannot be read is an error or an
 // Unknown, never a default that lets a disk through.

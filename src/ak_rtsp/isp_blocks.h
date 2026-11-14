@@ -1,7 +1,7 @@
 #pragma once
 /* ISP parameter blocks: the table of the 30 blocks the vendor application writes, the loader of the
  * day / night subfiles of sensor_isp.conf, and a dump that reads the live blocks back from the ISP
- * driver and compares them with the file (specs/08-spec-image-quality.md, section 6).
+ * driver and compares them with the file (specs/image-day-night-leds.md).
  *
  * Nothing here talks to the device by itself: the caller passes a "get" function (the ISP tunnel on
  * the camera, a fake in the host test), so the same code serves ak_rtsp (8091 key img.dump), the

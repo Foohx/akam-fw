@@ -316,7 +316,7 @@ static void op_set_time(onvif_call_t *c)
         return;
     }
     if (strcmp(type, "Manual") != 0) {
-        /* No NTP client in the image (spec 07 U13): only Manual. */
+        /* No NTP client in the image (specs/onvif.md): only Manual. */
         onvif_fault(c, 0, "ter:InvalidArgs", "ter:InvalidArgVal", "Only Manual date and time is supported (no NTP client)");
         return;
     }

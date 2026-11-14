@@ -6,7 +6,7 @@
 
 #include "audio_jitter.h"
 
-/* Speaker output through /dev/pcmC0D0p (specs/05-spec-audio-out.md, step A).
+/* Speaker output through /dev/pcmC0D0p (specs/audio.md, step A).
  *
  * ak_rtsp already owns the playback device for its whole life (the driver
  * refuses a second open) and used to write silence to it. When audio out is
@@ -53,7 +53,7 @@ enum ao_state {
 
 enum ao_amp_mode { AO_AMP_AUTO = 0, AO_AMP_ON, AO_AMP_OFF };
 
-/* Half-duplex rule of the backchannel (specs/07 section 1.4): half = the
+/* Half-duplex rule of the backchannel (specs/audio.md): half = the
  * microphone is replaced by silence while speech plays on the speaker, full =
  * never muted. */
 enum ao_duplex { AO_DUPLEX_HALF = 0, AO_DUPLEX_FULL };

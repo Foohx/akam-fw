@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Details is the "?" pane (spec 12, 4.7): a long text in a scrollable window. Up/Down (j/k) move by a
+// Details is the "?" pane (specs/installer.md): a long text in a scrollable window. Up/Down (j/k) move by a
 // line, PgUp/PgDn (Space) by a page, Home/End (g/G) jump. Esc, q, ? and Enter close it.
 type Details struct {
 	Title string

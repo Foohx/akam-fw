@@ -26,8 +26,8 @@ func funcBody(t *testing.T, file, name string) string {
 	return rest
 }
 
-// Every path that writes the camera flash or a flash card re-hashes the backup first (spec 11, section 9,
-// point 8). The restore, the flash and the flash card need the STOCK backup (stockBackupProblem refuses
+// Every path that writes the camera flash or a flash card re-hashes the backup first (specs/installer.md).
+// The restore, the flash and the flash card need the STOCK backup (stockBackupProblem refuses
 // kind=akam); the update accepts any verified backup (backupGate). An image that was not built by this run
 // is structure-checked before it is recorded or flashed.
 func TestEveryFlashPathRehashesTheBackupFirst(t *testing.T) {

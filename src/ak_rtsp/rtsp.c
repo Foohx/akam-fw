@@ -166,7 +166,7 @@ typedef struct {
     /* Digest authentication state of this connection (see rtsp_auth.h). */
     rtsp_auth_conn_t auth;
 
-    /* ONVIF audio backchannel (streamid=2, specs/07 section 1): the client
+    /* ONVIF audio backchannel (streamid=2, specs/audio.md): the client
      * sends G.711 RTP to the camera. Set up by SETUP, started by PLAY, ended by
      * TEARDOWN, RTCP BYE or the end of the connection. Interleaved (TCP) or UDP. */
     bool bc_setup;
@@ -404,7 +404,7 @@ static bool find_header_ci(const SmolRTSP_HeaderMap *m, const char *name, CharSl
 }
 
 /* ------------------------------------------------------------------------
- * ONVIF audio backchannel (specs/07 section 1)
+ * ONVIF audio backchannel (specs/audio.md)
  * ------------------------------------------------------------------------ */
 
 /* The request carries "Require: www.onvif.org/ver20/backchannel". */
@@ -1129,7 +1129,7 @@ static void send_audio_frame(Client *client)
         if (got <= 0) return; /* 0 = nothing new yet, -1 = audio not running */
     } while (rtp_astart_stale(&client->audio_start, t_end_us)); /* backlog */
 
-    /* Half duplex (specs/07 section 1.4): while speech from the backchannel
+    /* Half duplex (specs/audio.md): while speech from the backchannel
      * plays on the speaker the microphone goes out as silence. Only the samples
      * change; packets, lengths and timestamps stay exactly as without talk. */
     (void)talk_gate_mic(talk_global(), pcm, n_samples, rtp_mono_us());

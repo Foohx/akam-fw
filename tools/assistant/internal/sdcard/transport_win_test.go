@@ -14,7 +14,7 @@ import (
 )
 
 // The UAC transport and the framing it shares with the macOS socket, on Linux: the pipe is a net.Pipe, the UAC
-// prompt a function. The pipe's ACL and the real prompt are in the hardware plan (spec 11, 7.3).
+// prompt a function. The pipe's ACL and the real prompt are in the hardware plan (specs/installer.md).
 
 var paramsRe = regexp.MustCompile(`^sd-helper --pipe (\\\\\.\\pipe\\akam-sd-[0-9a-f]{32}) --nonce ([0-9a-f]{32})$`)
 

@@ -1,6 +1,6 @@
 #pragma once
 /* Energy gate for the half-duplex rule of the audio backchannel
- * (specs/07 section 1.4).
+ * (specs/audio.md).
  *
  * Standard clients (go2rtc, WebRTC cards) may keep the backchannel open and
  * send RTP continuously, silence included, for as long as the viewer looks at

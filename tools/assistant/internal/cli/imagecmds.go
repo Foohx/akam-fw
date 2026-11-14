@@ -21,7 +21,7 @@ import (
 //	native  the in-process builder (internal/image): opt-in with --builder native, EXPERIMENTAL
 //
 // The default is a policy, not a capability: tools on Linux and import elsewhere until the human gate of
-// spec 11 (4.8 step 4, a real camera flashed with the native image) is recorded in docs/akam_v1_test_plan.md.
+// specs/installer.md (a real camera flashed with the native image) is recorded in docs/akam_v1_test_plan.md.
 // Flipping the default after the gate is the one-line change of defaultBuilder.
 
 // defaultBuilder is the builder used without --builder.

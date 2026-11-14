@@ -283,7 +283,7 @@ int venc_create_encoder(void)
      * failed twice for this struct. Reverted to hardware-confirmed-safe. */
     req.rc_flag              = 1;
     if (imgq_venc_rc_stock()) {
-        /* AKAM_VENC_RC=stock (specs/08, section 4.1). Byte for byte the rc sub-struct of the stock
+        /* AKAM_VENC_RC=stock (specs/image-day-night-leds.md). Byte for byte the rc sub-struct of the stock
          * application in the stock capture of 2026-11 (isp_hook.log, "STOCK CREATE_ENC chn_id=0"):
          * rc_flag=1, rc.flag=1 and every other rc word zero. The two crashes recorded above both
          * had rc.flag=0, i.e. MMA off while QUERY_DMA had sized the ring pool for MMA on (it sets

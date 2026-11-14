@@ -16,7 +16,7 @@ import (
 )
 
 func TestDefaultBuilderPolicy(t *testing.T) {
-	// the default stays tools on Linux and import elsewhere until the hardware gate (spec 11, 4.8 step 4)
+	// the default stays tools on Linux and import elsewhere until the hardware gate (specs/installer.md)
 	for goos, want := range map[string]string{"linux": "tools", "windows": "import", "darwin": "import", "freebsd": "import"} {
 		if got := defaultBuilder(goos); got != want {
 			t.Errorf("%s: %s, want %s", goos, got, want)

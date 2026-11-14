@@ -1,5 +1,5 @@
 /* Credential store for the protocols that need the clear-text password
- * (ONVIF WS-Security PasswordDigest; later MQTT). specs/07 section 3.3, user
+ * (ONVIF WS-Security PasswordDigest; later MQTT). specs/onvif.md, user
  * decision U2. The RTSP Digest login keeps using its htdigest file
  * (rtsp_auth.h); `./akam rtsp-auth set` writes both.
  *

@@ -1,5 +1,5 @@
 #pragma once
-/* Session description and ONVIF backchannel negotiation (specs/07 section 1.2).
+/* Session description and ONVIF backchannel negotiation (specs/audio.md).
  *
  * Pure text and decision code, no SmolRTSP and no hardware, so that
  * tests/rtsp_sdp_test.sh can pin the bytes of the SDP:
@@ -40,7 +40,7 @@ typedef enum {
 
 /* required: the request carries the backchannel Require tag.
  * auth_on: RTSP Digest is enabled and its credentials file is valid (talk
- *          is never offered without a password: specs/07 decision U6/section 1.6).
+ *          is never offered without a password: specs/onvif.md).
  * available: audio out is enabled, its device is running and the talk soft
  *          switch (audio.talk_enable) is on. */
 rtsp_bc_decision_t rtsp_backchannel_decide(int required, int auth_on, int available);

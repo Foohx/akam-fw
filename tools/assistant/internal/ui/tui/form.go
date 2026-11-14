@@ -15,10 +15,10 @@ import (
 )
 
 // FormDebounce is the pause without a key before an edited row is applied: cycling a value does not
-// send every step (spec 12, 4.4).
+// send every step (specs/installer.md).
 const FormDebounce = 400 * time.Millisecond
 
-// Form edits the rows of a group of options in place (spec 12, 4.4). Enums are cycled with
+// Form edits the rows of a group of options in place (specs/installer.md). Enums are cycled with
 // left/right/Space, numbers move by 1 (left/right) or 10 (Shift, PgUp/PgDn) or are typed, texts are
 // edited inline. An edited row is applied FormDebounce after the last key by calling Apply off the
 // screen goroutine, one call at a time; when Apply refuses, the row snaps back to its real value and

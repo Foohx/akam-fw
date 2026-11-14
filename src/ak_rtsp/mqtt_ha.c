@@ -22,7 +22,7 @@ typedef struct {
     const char *id;       /* topic segment and unique id suffix */
     const char *name;
     const char *comp;     /* HA component */
-    const char *key;      /* camera key (specs/04 names) */
+    const char *key;      /* camera key (specs/control-port.md names) */
     const char *options;  /* select: comma separated */
     int         min, max; /* number */
     const char *unit;     /* JSON text, already escaped */

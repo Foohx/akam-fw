@@ -28,7 +28,7 @@ func winCard(t *testing.T, mutate func(*WinDescriptor, *WinGeometry, *WinLayout,
 	return f
 }
 
-// The Evaluate matrix for Windows (spec 11, T11.7).
+// The Evaluate matrix for Windows (specs/installer.md).
 func TestEvaluateWindowsMatrix(t *testing.T) {
 	type tc struct {
 		name   string

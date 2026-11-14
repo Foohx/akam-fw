@@ -1,4 +1,4 @@
-/* Minimal HTTP/1.1 server for the ONVIF services (spec 07 section 3.2 and 3.3).
+/* Minimal HTTP/1.1 server for the ONVIF services (specs/onvif.md).
  *
  * One thread, one poll() loop, non-blocking sockets, no thread per connection. DORMANT until http_srv_start():
  * no socket, no thread, no allocation. Limits: request line + headers 4 KB, body 16 KB (Content-Length required

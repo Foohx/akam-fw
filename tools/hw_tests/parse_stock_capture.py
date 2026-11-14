@@ -13,7 +13,7 @@ how often they changed, which words changed and when, which differ between the p
 day/night run), one time line of everything that matters for the day/night switch (prompts and
 notes, GPIO writes, AE state, ISP block changes) and anything that failed. --export-isp writes
 every dumped block as a file (vendor data: keep it private).
-Names of the 'P' (0x50) ioctls follow specs/05-spec-audio-out.md section 1.2; both candidate
+Names of the 'P' (0x50) ioctls follow specs/audio.md; both candidate
 names are shown where the spec is unsure (the numbers are the facts, the names are hypotheses).
 """
 import os

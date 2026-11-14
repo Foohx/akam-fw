@@ -811,7 +811,7 @@ static void test_ctl(void)
     free(ao);
 }
 
-/* Backchannel support (specs/07 section 1): availability, one feeder, silence does
+/* Backchannel support (specs/audio.md): availability, one feeder, silence does
  * not light the amp, talk settings and counters on 8091 keys. */
 static void test_talk_support(void)
 {

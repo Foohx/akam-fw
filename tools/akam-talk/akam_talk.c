@@ -1,5 +1,5 @@
 /* akam-talk: send audio to the speaker of an Akam camera over its RTSP port, with the
- * ONVIF audio backchannel (specs/07-spec-standard-protocols.md section 1).
+ * ONVIF audio backchannel (specs/audio.md).
  *
  *   akam-talk [options] rtsp://USER@HOST[:PORT]/PATH
  *

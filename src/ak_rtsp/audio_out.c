@@ -315,7 +315,7 @@ static int dev_ioctl_i32(audio_out_t *ao, const char *name, unsigned long req, i
 }
 
 /* SET_SPEAKER failures are logged and never retried every period; never fall
- * back to sysfs GPIO 69, the driver owns that line (spec 05, 3.2). Turning
+ * back to sysfs GPIO 69, the driver owns that line (specs/audio.md). Turning
  * the speaker off is not in the stock sequence (stock only mutes the route),
  * so a failure there is logged once only. */
 static void speaker_set(audio_out_t *ao, int on)
@@ -554,7 +554,7 @@ int ao_step(audio_out_t *ao)
     }
     if (ao->volume == 0) audible = 0; /* volume 0 = mute: amp stays off */
 
-    /* Amplifier policy (spec 05, 3.2): auto = on while audible, off after AO_AMP_HOLD_MS idle. */
+    /* Amplifier policy (specs/audio.md): auto = on while audible, off after AO_AMP_HOLD_MS idle. */
     if (audible) ao->last_audible_ms = now;
     int want;
     switch (ao->amp_mode) {

@@ -1,4 +1,4 @@
-// Package ctl speaks the camera's control port (8091, spec 04) the way the bash wizard does
+// Package ctl speaks the camera's control port (8091, specs/control-port.md) the way the bash wizard does
 // through `printf 'GET...\n' | nc -w 2 127.0.0.1 8091` on the camera: one GET/SET line each,
 // answers without the asynchronous LOG lines. The camera's Dropbear has no TCP forwarding
 // (DROPBEAR_SVR_LOCALTCPFWD 0), so the lines travel as the stdin of an SSH exec session running

@@ -1,4 +1,4 @@
-/* ONVIF Imaging service (version 2.0, namespace timg) at /onvif/imaging_service (specs/07 sections 3.1, 3.2).
+/* ONVIF Imaging service (version 2.0, namespace timg) at /onvif/imaging_service (specs/onvif.md).
  *
  * Video source token "vsrc". Mapping (the 8091 keys, through control_apply_setting so the code path, the lock and
  * the validation of an 8091 SET are the same):

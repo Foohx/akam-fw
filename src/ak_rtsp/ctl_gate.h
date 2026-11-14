@@ -2,7 +2,7 @@
 /* Pure logic of the control port (8091) read-only gate: who may write, the DEBUG
  * flag with its auto-off, the client slots. No sockets, no clock of its own (the
  * caller passes a monotonic time in ms), so tests/native/control_test.c runs it
- * on the host. See specs/07-spec-standard-protocols.md section 4. */
+ * on the host. See specs/control-port.md */
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>

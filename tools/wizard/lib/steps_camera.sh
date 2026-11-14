@@ -1133,11 +1133,11 @@ cmd_hostname() {
 
 # ------------------------------------------------------------------ rtsp-auth
 # Optional Digest login on the video stream (RTSP, port 554), managed over SSH with the camera
-# command akam_rtsp_auth.sh (specs/03-spec-rtsp-auth.md). The password is typed here, without
+# command akam_rtsp_auth.sh (specs/video-and-streaming.md). The password is typed here, without
 # echo, and sent as two lines (user, password) on the stdin of ssh to `akam_rtsp_auth.sh
 # set-creds`: the camera hashes it for the RTSP Digest login and keeps a plain-text copy
 # (/etc/config/akam/credentials, root only) because ONVIF WS-Security cannot work from the
-# hash (specs/07 section 3.3). The password is never in a command line, in the state file
+# hash (specs/onvif.md). The password is never in a command line, in the state file
 # or in the log.
 RTSP_AUTH_CMD=/usr/sbin/akam_rtsp_auth.sh
 RTSP_AUTH_MIN_PASS=8
@@ -1295,7 +1295,7 @@ cmd_rtsp_auth() {
 # ------------------------------------------------------------------ led
 # The front status LED and the infrared (night) LEDs, set over SSH through the camera's own control
 # port (8091, reached from the camera itself: 127.0.0.1) with the keys led.status and night.ir_led
-# (specs/06-spec-leds.md). The camera saves them, so they survive a reboot. Nothing secret, nothing
+# (specs/image-day-night-leds.md). The camera saves them, so they survive a reboot. Nothing secret, nothing
 # destructive: no confirmation is asked.
 #   ./akam led                      show both settings
 #   ./akam led status on|off|auto   front LED (auto: blinks while starting or without Wi-Fi, slowly
@@ -1663,7 +1663,7 @@ cmd_picture() {
 
 # video: bitrate cap, frame rate and key-frame interval are saved on the camera (/etc/config/akam/video, through
 # the 8091 keys video.bitrate_cfg / video.fps_cfg / video.gop_cfg) and applied when the video service (ak_rtsp)
-# starts: the encoder cannot be changed while it runs. Resolution and flip/mirror are not offered (specs/10 G11).
+# starts: the encoder cannot be changed while it runs. Resolution and flip/mirror are not offered (specs/roadmap.md).
 VIDEO_KBPS_MIN=500
 VIDEO_KBPS_MAX=3000
 
@@ -1771,7 +1771,7 @@ cmd_video() {
 # ------------------------------------------------------------------ debug
 # Port 8091 is read-only for the network: reads (LIST, GET, metrics) work, SET/SAVE/RESET are refused
 # unless the command comes from the camera itself (SSH helpers such as ./akam led) or the debug flag
-# is on (specs/07-spec-standard-protocols.md section 4). This command turns that RAM-only flag on or
+# is on (specs/control-port.md). This command turns that RAM-only flag on or
 # off over SSH with akam_debug.sh, for example to use the PC tuning tool. Off at every reboot.
 #   ./akam debug status        is it on, and for how long
 #   ./akam debug on [MINUTES]  allow writes from the network (default 60 minutes, 1 to 1440)
@@ -1825,7 +1825,7 @@ cmd_debug() {
 
 # ------------------------------------------------------------------ onvif
 # ONVIF (Profile S: discovery, device, media) lets NVRs and apps such as ONVIF Device Manager find the camera and
-# pull its stream (specs/07-spec-standard-protocols.md section 3). It is OFF by default: switching it on opens
+# pull its stream (specs/onvif.md). It is OFF by default: switching it on opens
 # TCP 80 (or the chosen port) and UDP 3702 on your network, and it needs the stream password. Done over SSH with
 # akam_onvif.sh, which writes /etc/config/akam/onvif and asks ak_rtsp to reload it.
 #   ./akam onvif status            on or off, the port, what the camera reports (read-only)
@@ -1931,7 +1931,7 @@ onvif_offer() {
 }
 
 # ------------------------------------------------------------------ mqtt
-# The optional MQTT client of the camera (Home Assistant discovery, specs/07-spec-standard-protocols.md section 2),
+# The optional MQTT client of the camera (Home Assistant discovery, specs/mqtt.md),
 # managed over SSH with akam_mqtt.sh. Off by default; the camera connects OUT to the broker (no new open port), in
 # plain TCP. The broker password is typed without echo and goes on the SSH standard input only.
 #   ./akam mqtt status    on or off, the broker, what the camera reports (read-only)
@@ -2066,7 +2066,7 @@ cmd_mqtt() {
 
 # ------------------------------------------------------------------ talk, say
 # Speak to the camera's speaker from this computer, with the ONVIF audio backchannel on the RTSP
-# port (specs/07-spec-standard-protocols.md section 1). The audio is captured or converted here
+# port (specs/audio.md). The audio is captured or converted here
 # (ffmpeg, or arecord on Linux) as 8 kHz mono and sent by akam-talk (tools/akam-talk), which logs
 # in with Digest. Talk needs the RTSP password: the camera never offers it without one. The
 # password is typed here (not shown) or taken from AKAM_RTSP_PASSWORD, and reaches akam-talk only

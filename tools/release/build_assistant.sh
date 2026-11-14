@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the assistant release files: six binaries, six archives, notices, SHA256SUMS (spec 11, section 8.1).
+# Build the assistant release files: six binaries, six archives, notices, SHA256SUMS (specs/installer.md).
 #
 #   tools/release/build_assistant.sh [--out DIR]
 #
@@ -109,7 +109,7 @@ for t in $TARGETS; do
     fi
 done
 
-# The archive budget is 5 MiB per target (spec 09 7.4)
+# The archive budget is 5 MiB per target (specs/installer.md)
 for a in "$OUT"/akam-*.tar.gz "$OUT"/akam-*.zip; do
     [ -f "$a" ] || continue
     [ "$(wc -c <"$a")" -le $((5 * 1024 * 1024)) ] || die "$(basename "$a") is larger than 5 MiB"

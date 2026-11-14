@@ -13,7 +13,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/blockio"
 )
 
-// winOpener implements the privileged steps of spec 11, 4.4.5 (helper only, elevated):
+// winOpener implements the privileged steps of specs/installer.md (helper only, elevated):
 //
 //	CheckNode  the node is \\.\PhysicalDriveN
 //	Unmount    per volume path: open the volume, check that every extent is on disk N, FSCTL_LOCK_VOLUME,

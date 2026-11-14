@@ -14,7 +14,7 @@
 
 #include "leds.h"
 
-/* Status LED and IR LED policy, see leds.h and specs/06-spec-leds.md. */
+/* Status LED and IR LED policy, see leds.h and specs/image-day-night-leds.md. */
 
 /* ------------------------------------------------------------------------
  * Names
