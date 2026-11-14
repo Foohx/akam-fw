@@ -55,7 +55,7 @@ next to your file. Take the public key from the release notes (and compare it wi
 in the source), then:
 
 ```bash
-echo 'akam-release namespaces="akam-release" ssh-ed25519 AAAA...<key from the release notes>' > allowed_signers
+echo 'akam-release namespaces="akam-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2qtKAhTkbHvkklqSiZAdGqq98kQiMmRzoOIBlmjPG1 akam-release' > allowed_signers
 ssh-keygen -Y verify -f allowed_signers -I akam-release -n akam-release -s SHA256SUMS.sig < SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 ```

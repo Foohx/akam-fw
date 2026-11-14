@@ -121,6 +121,17 @@ Legal notes (your device, privacy, radio, interoperability): [legal](docs/legal.
 [changelog](CHANGELOG.md). Contributors: [CONTRIBUTING](CONTRIBUTING.md). Vulnerabilities: [SECURITY](SECURITY.md).
 Technical specifications of the code (as built): [specs/](specs/README.md).
 
+## Release signing key
+
+Releases are signed with this key (ssh-keygen, namespace and principal `akam-release`); the assistant refuses a kit
+it cannot verify against it. Fingerprint `SHA256:Az0SyH/Aoi3ZY/mtaIdM5qnfvJhmOite9qvZDIN3dCM`:
+
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2qtKAhTkbHvkklqSiZAdGqq98kQiMmRzoOIBlmjPG1 akam-release
+```
+
+How to check a download: [docs/assistant.md](docs/assistant.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

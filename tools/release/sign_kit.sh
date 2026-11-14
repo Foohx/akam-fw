@@ -8,12 +8,13 @@
 # ssh-keygen: this script never reads, copies or stores the key, and it refuses
 # a key path inside the repository. ssh-keygen asks for the passphrase itself
 # (or uses ssh-agent). If tools/release/allowed_signers holds a key, the fresh
-# signature is verified against it.
+# signature is verified against it (tests point AKAM_ALLOWED_SIGNERS at their own file).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 die() { echo "sign_kit: error: $*" >&2; exit 1; }
+ALLOWED="${AKAM_ALLOWED_SIGNERS:-$HERE/allowed_signers}"
 
 { [ $# -ge 1 ] && [ $# -le 2 ]; } || { echo "usage: $0 <private-key-path> [dir-with-SHA256SUMS]" >&2; exit 2; }
 KEY=$1
@@ -30,8 +31,8 @@ ssh-keygen -Y sign -f "$KEY" -n akam-release "$DIR/SHA256SUMS" || die "ssh-keyge
 [ -s "$DIR/SHA256SUMS.sig" ] || die "no signature produced"
 echo "sign_kit: wrote $DIR/SHA256SUMS.sig"
 
-if grep -qvE '^[[:space:]]*(#|$)' "$HERE/allowed_signers"; then
-    ssh-keygen -Y verify -f "$HERE/allowed_signers" -I akam-release -n akam-release \
+if grep -qvE '^[[:space:]]*(#|$)' "$ALLOWED"; then
+    ssh-keygen -Y verify -f "$ALLOWED" -I akam-release -n akam-release \
         -s "$DIR/SHA256SUMS.sig" <"$DIR/SHA256SUMS" >/dev/null \
         || die "the signature does not verify against tools/release/allowed_signers (wrong key?)"
     echo "sign_kit: signature verifies against tools/release/allowed_signers"

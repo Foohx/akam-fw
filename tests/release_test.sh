@@ -148,7 +148,7 @@ for f in "$REL"/akam-linux-amd64 "$REL"/akam-linux-arm64 "$REL"/akam-darwin-amd6
     printf '%s\n' "$BLOB" >>"$f"
 done
 (cd "$REL" && LC_ALL=C find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS)
-check "sign_kit signs the combined SHA256SUMS" quiet bash "$SIGN" "$WORK/key" "$REL"
+check "sign_kit signs the combined SHA256SUMS" quiet env AKAM_ALLOWED_SIGNERS="$WORK/allowed" bash "$SIGN" "$WORK/key" "$REL"
 CS() { env AKAM_ALLOWED_SIGNERS="$WORK/allowed" AKAM_EMBEDDED_SIGNERS="$WORK/allowed" "$@"; }
 check "placeholder allowed_signers is refused" fails_with 'no ssh-ed25519 key line' \
     env AKAM_ALLOWED_SIGNERS="$WORK/allowed_empty" AKAM_EMBEDDED_SIGNERS="$WORK/allowed_empty" bash "$GATHER" --check-signed "$REL"

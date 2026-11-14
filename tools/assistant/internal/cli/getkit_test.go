@@ -98,14 +98,15 @@ func TestGetKitDownloadsAndVerifiesASignedKit(t *testing.T) {
 	expectRC(t, e.run("", "get-kit", "--version", "v1.0.0", "--expect-sha256", b.TarSHA[:12]), 0)
 }
 
-// Today's allowed_signers has no key: a signed kit is refused, exactly as verify_kit.sh does.
-func TestGetKitRefusesASignedKitWhileNoKeyIsPublished(t *testing.T) {
+// The embedded allowed_signers holds only the real release key: a kit signed by any other key (here the
+// test key of kittest) is refused, exactly as verify_kit.sh does.
+func TestGetKitRefusesAKitSignedByAnotherKey(t *testing.T) {
 	b := kittest.Build(t, t.TempDir(), kittest.Spec{})
 	ks := newKitServer(t, b, false)
 	e := getKitEnv(t, ks, nil)
 	r := e.run("", "get-kit", "--version", "1.0.0")
 	expectRC(t, r, 1)
-	contains(t, r.err+r.out, "verify_kit: FAIL: signature present but allowed_signers contains no public key (placeholder not replaced): cannot authenticate",
+	contains(t, r.err+r.out, "verify_kit: FAIL: INVALID signature on SHA256SUMS: no principal matched",
 		"the kit failed verification (see the message above).")
 	if e.readState("step_get_kit_done") != "" {
 		t.Error("marked done")

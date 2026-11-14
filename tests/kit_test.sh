@@ -118,7 +118,7 @@ check "unsigned kit: exit 3 with a WARNING" bash -c "
     rc=0; bash '$VERIFY' --allow-test-kit --allowed-signers '$WORK/allowed' '$TB' >'$WORK/v.out' 2>&1 || rc=\$?; [ \$rc = 3 ] && grep -q 'WARNING: no signature' '$WORK/v.out'"
 check "unsigned kit with --allow-unsigned: exit 0, says UNSIGNED" bash -c "
     bash '$VERIFY' --allow-test-kit --allow-unsigned '$TB' >'$WORK/v.out' 2>&1 && grep -q 'UNSIGNED' '$WORK/v.out'"
-check "sign_kit signs" rc_is 0 bash "$SIGN" "$WORK/key" "$WORK/o1"
+check "sign_kit signs" rc_is 0 env AKAM_ALLOWED_SIGNERS="$WORK/allowed" bash "$SIGN" "$WORK/key" "$WORK/o1"
 check "signed kit verifies" rc_is 0 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed" "$TB"
 check "  ... and says VERIFIED and signed" grep -q 'VERIFIED and signed' "$WORK/last.out"
 check "--expect-sha256 right prefix ok" rc_is 0 bash "$VERIFY" --allow-test-kit --allowed-signers "$WORK/allowed" \

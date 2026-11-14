@@ -1,14 +1,8 @@
 # Akam release signing keys, in the ssh-keygen allowed_signers format.
 #
-# PLACEHOLDER: no maintainer key has been published yet, so no signature can be
-# authenticated and tools/release/verify_kit.sh refuses a signed kit (an
-# unsigned kit needs --allow-unsigned).
-#
-# The maintainer adds ONE line per public key, below this comment:
-#
-#   akam-release namespaces="akam-release" ssh-ed25519 AAAA...base64... maintainer@example
-#
-# Get the key text with:  cat ~/.ssh/akam_release.pub   (starts with "ssh-ed25519 AAAA...")
+# One line per public key. Key fingerprint:
+#   SHA256:Az0SyH/Aoi3ZY/mtaIdM5qnfvJhmOite9qvZDIN3dCM
 # The principal must stay "akam-release" and so must the namespace.
 # The same public key must also be quoted in README.md and in the release notes,
 # so that it can be cross-checked from another channel. Never put a private key here.
+akam-release namespaces="akam-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2qtKAhTkbHvkklqSiZAdGqq98kQiMmRzoOIBlmjPG1 akam-release
