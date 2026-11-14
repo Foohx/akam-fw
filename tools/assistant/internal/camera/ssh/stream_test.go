@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,7 +84,9 @@ func TestRunStreamContextCancel(t *testing.T) {
 		<-release // the camera stalls before sending anything
 		return nil, false
 	}})
-	defer close(release)
+	var releaseOnce sync.Once
+	unstall := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unstall()
 	c, err := camssh.Dial(f.cfg(yes))
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +104,15 @@ func TestRunStreamContextCancel(t *testing.T) {
 	if time.Since(start) > 8*time.Second {
 		t.Error("the cancel took too long")
 	}
-	time.Sleep(200 * time.Millisecond)
-	if after := runtime.NumGoroutine(); after > before+2 {
+	// Let the fake camera finish its stalled read, so its goroutines are not counted, then wait (bounded) for the
+	// count to settle: a goroutine leaked by RunStream stays and still fails the check.
+	unstall()
+	after := runtime.NumGoroutine()
+	for deadline := time.Now().Add(5 * time.Second); after > before+2 && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		after = runtime.NumGoroutine()
+	}
+	if after > before+2 {
 		t.Errorf("goroutines: %d before, %d after", before, after)
 	}
 }
