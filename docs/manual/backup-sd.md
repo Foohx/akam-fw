@@ -1,10 +1,10 @@
-# Akam V1: Back Up the Camera with a microSD Root Shell (manual, no UART)
+# Back Up the Camera with a microSD Root Shell (manual, no UART)
 
 > **Advanced / manual procedure (without the wizard).** `./akam prepare-backup-sd`, `find-camera` and
-> `backup` do all of this for you ([README](../README.md#install-in-5-steps)). Read on to understand or audit what
+> `backup` do all of this for you ([README](../../README.md#install-quick-start)). Read on to understand or audit what
 > they do, or when you cannot run the wizard.
 
-This is an alternative to the UART route in [akam_v1_backup.md](akam_v1_backup.md). It gets a
+This is an alternative to the UART route in [backup by UART](backup-uart.md). It gets a
 root shell over Wi-Fi by booting the stock firmware from a prepared microSD card. The camera is not
 opened and **nothing is flashed**.
 
@@ -17,7 +17,7 @@ opened and **nothing is flashed**.
 >   (commit `b99baf2`), which prepares the same toolkit and runs a backup.
 > - **[Akam]** was written for Akam: Akam reproduces the flasher's stage 1 by hand, minus its Wi-Fi
 >   persistence, and adds a second read plus a hash comparison. The wizard's scripted version of this
->   procedure was run on two cameras (2026-11-07 to 11-09); the manual commands below are the same.
+>   procedure was run on two cameras; the manual commands below are the same.
 >
 > The toolkit was reverse-engineered on firmware `6.2863.123` (it says it "should work on any version,
 > as long as you tweak the config files"). The firmware version of your unit is unknown. The flasher
@@ -54,7 +54,7 @@ so it can be reproduced by hand without the persistent-Wi-Fi part. That is what 
 
 ## 2. Prerequisites
 
-- Camera: label `3215672.3`, SI `D26228` (see [akam_v1_backup.md](akam_v1_backup.md), section 3).
+- Camera: label `3215672.3`, SI `D26228` (see [backup by UART](backup-uart.md), section 3).
   Write the label down.
 - A microSD card. **[Toolkit]** FAT32 is required. **[Flasher]** "any small card is sufficient"; it creates
   one MBR partition of type `c` (FAT32 LBA). Akam needs about 17 MiB free for two dumps (8 MiB each).
@@ -74,7 +74,7 @@ The card's contents (Wi-Fi password in clear text) must be treated as secret. Se
 ## 3. Get the pinned toolkit and verify it
 
 **[Flasher]** pins the toolkit to commit `396db8a` (`Do not create dump dirs on each boot`,
-2026-02-25). Akam uses the same commit. Download it and **only read and copy files; never execute
+February 2026). Akam uses the same commit. Download it and **only read and copy files; never execute
 anything from it on the PC**.
 
 ```bash
@@ -236,7 +236,7 @@ cd ~ && sudo umount ~/akam-sdprep/mnt
 If, after about three minutes, nothing answers (section 7), unplug, put the card back in the PC and
 read `logs/*.log` on the card (`wifi.*.log`, `telnet.*.log`, `run.*.log`). The most common cause
 reported by the flasher is a wrong SSID or password. Do not improvise further on the camera; the UART
-route in [akam_v1_backup.md](akam_v1_backup.md) remains available.
+route in [backup by UART](backup-uart.md) remains available.
 
 ---
 
@@ -277,7 +277,7 @@ cat /proc/version
 cat /proc/mtd
 ```
 
-Compare `/proc/mtd` with the table in [akam_v1_backup.md](akam_v1_backup.md) section 2 (the same
+Compare `/proc/mtd` with the table in [backup by UART](backup-uart.md) section 2 (the same
 layout the flasher requires; these lines are what its `check_layout` greps for):
 
 ```sh
@@ -388,7 +388,7 @@ file dump1/mtdblock7.bin; unsquashfs -s dump1/mtdblock7.bin
 ```
 
 No output from the `cmp` loop means both dumps are byte-identical. The sizes must match
-[akam_v1_backup.md](akam_v1_backup.md) section 2 exactly, and the checklist in its section 7
+[backup by UART](backup-uart.md) section 2 exactly, and the checklist in its section 7
 applies (two independent copies on different media, `SHA256SUMS.pc` stored separately). The build
 guide expects the files as `mtdblockN.bin` in one directory; use `dump1/`.
 
@@ -432,7 +432,7 @@ empty files above (harmless, not verified). Then reformat the card (section 11).
 ## 11. Security notes
 
 - **Do not run stage 2 and do not flash anything.** This guide ends once the backup is verified.
-  Flashing is a separate step with its own guide ([flash and restore](akam_v1_flash_and_restore.md)).
+  Flashing is a separate step with its own guide ([flash and restore](flash-and-restore.md)).
   Do not run the flasher's `install.sh` (section 1) and do not put `decloud_flash.sh` on the card.
 - **Telnet on port 24 has no password and is unencrypted.** Anyone on your LAN or Wi-Fi can get a root
   shell on the camera for as long as the card is inserted and the camera is powered. Use a trusted

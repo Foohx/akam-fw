@@ -1,4 +1,4 @@
-# Akam V1: SSH Provisioning and Telnet/FTP Lockdown
+# SSH Provisioning and Telnet/FTP Lockdown
 
 Akam replaces the stock remote access (Telnet 23, FTP 21, and whatever the stock boot scripts
 open) with one service: **SSH on port 22, root login by public key only**, no password. The SSH
@@ -10,9 +10,8 @@ forwarding, RSA, ECDSA or DSS.
 > manual route.
 
 Status: SSH start, key login, persistence across power cuts and the Telnet/FTP lockdown were validated on
-two cameras (2026-11-07 to 11-09) and are covered on the build host by `tests/ssh_init_test.sh` and
-`tests/lockdown_test.sh`. Items marked *(assumed)* are hypotheses listed in the
-[test plan](akam_v1_test_plan.md#3-hypotheses-to-verify); one check remains: Telnet staying off after a
+two cameras and are covered on the build host by `tests/ssh_init_test.sh` and
+`tests/lockdown_test.sh`. Items marked *(assumed)* are hypotheses to verify on your camera; one check remains: Telnet staying off after a
 Wi-Fi reconnect.
 
 ---
@@ -26,7 +25,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/akam -C "akam"
 ```
 
 Set a passphrase. This creates `~/.ssh/akam` (private, stays on your PC, never copied anywhere) and
-`~/.ssh/akam.pub` (public). Only **ed25519** keys are accepted by Akam V1. You do not have to run this yourself:
+`~/.ssh/akam.pub` (public). Only **ed25519** keys are accepted by Akam. You do not have to run this yourself:
 the assistant and the wizard make the key when you choose it (next section).
 
 ### Shared key or one key per camera
@@ -47,7 +46,7 @@ The Go assistant can also keep this choice in a saved **config** (`key.kind=shar
 custom key) and offer it again for another camera, at the card step (a yes/no, default No) or on a running camera
 (`./akam config apply`, which goes through the key change below with its own confirmation, never silently). A config
 holds a key *choice*, never a key: the private key stays in `~/.ssh`. See
-[Configs](using_akam.md#configs-global-local-copy). The same page says where the Wi-Fi password may be kept:
+[Configs](../using_akam.md#configs-global-local-copy). The same page says where the Wi-Fi password may be kept:
 **only if you say yes** when you save a config (default No), in a private file on your PC; the bash wizard never keeps it.
 
 How a key is made:
@@ -250,7 +249,7 @@ and is empty after every reboot.
 
 Dropbear listens on all interfaces, port 22, public-key only (no password prompt exists in the
 binary). There is no rate limit beyond `-T 3` (three authentication attempts per connection). Keep
-the camera on a trusted segment (see [network hardening](akam_v1_install.md#5-network-hardening)).
+the camera on a trusted segment (see [network hardening](../using_akam.md)).
 
 ## 5. File transfer without `scp`
 
@@ -333,7 +332,7 @@ Telnet on port 23.
 | Layer 1 had no effect, only layer 2 acts | From the stock launch until the first pass of `akam_lockdown.sh`; on the order of tens of seconds *(estimate, not measured)* |
 | Daemons launched from ROOTFS (`rcS`, `inittab`, `rc.local`) | Until the first pass of the safety net after the wrapper starts; ROOTFS is not modified in V1, so this cannot be fixed without a decision to modify ROOTFS |
 
-Measure it on your unit with `akam_hwcheck.sh --boot-window` ([test plan](akam_v1_test_plan.md#2-post-flash-procedure)).
+Measure it on your unit with `akam_hwcheck.sh --boot-window` ([test plan](../hardware-test-checklists.md)).
 
 ## 7. Maintenance flag
 
@@ -380,15 +379,15 @@ normal use anyway**.
 The manual order (advanced). `./akam flash` then `./akam verify` follow the same sequence: card with the key,
 flash, SSH and checks, then a boot without the card.
 
-1. Wire UART first and keep it attached for the whole first test ([hardware_and_uart.md](hardware_and_uart.md)).
+1. Wire UART first and keep it attached for the whole first test ([hacking guide](../hacking.md#uart-access)).
    After the flash there is no network shell except SSH; UART is the fallback. Without UART, read
-   [what can and cannot be recovered](akam_v1_flash_and_restore.md#without-uart-what-can-be-recovered)
+   [what can and cannot be recovered](flash-and-restore.md#without-uart-what-can-be-recovered)
    and skip the flag in step 2.
 2. Prepare the card with `akam/authorized_keys`. **First-boot card (recommended, also without UART):**
    `tools/sd/prepare_first_boot_sd.sh` builds a card with the pinned toolkit payload (telnet 24) plus
    `AKAM_MAINTENANCE` plus `akam/authorized_keys`: the first boot then offers telnet 24 (kept alive by
    the RAM marker) and SSH 22. After SSH is validated, remove the card and reboot; telnet must be gone
-   ([flash guide](akam_v1_flash_and_restore.md#first-flash-without-uart-from-the-stock-firmware), step 5).
+   ([flash guide](flash-and-restore.md#first-flash-without-uart-from-the-stock-firmware), step 5).
    Do not put the flag on any other card that holds toolkit/flasher files.
 3. Flash, power cycle with the card inserted, and wait a few minutes for the first boot.
 4. Log in with `ssh -i ~/.ssh/akam ...`. Run `akam_hwcheck.sh` (it will WARN about the flag).
@@ -397,4 +396,4 @@ flash, SSH and checks, then a boot without the card.
    `akam_hwcheck.sh --boot-window` again; ports 21, 23 and 24 must be closed. Then remove the card
    and repeat the login (boot without a card).
 
-Details of each check: [test plan](akam_v1_test_plan.md).
+Details of each check: [test plan](../hardware-test-checklists.md).

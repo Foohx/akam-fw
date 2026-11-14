@@ -1,7 +1,7 @@
-# Akam V1: Back Up Your Camera First (manual, by UART)
+# Back Up Your Camera First (manual, by UART)
 
 > **Advanced / manual procedure (without the wizard).** `./akam backup` does all of this for you, over
-> the maintenance telnet ([README](../README.md#install-in-5-steps)). Read on to understand it, audit it, or when
+> the maintenance telnet ([README](../../README.md#install-quick-start)). Read on to understand it, audit it, or when
 > you cannot run the wizard.
 
 > **Do this before anything else.** Do not build, flash or even boot a modified image until you
@@ -9,7 +9,7 @@
 > image: the APP partition (`mtdblock7`) is the input of `build_firmware.sh`.
 >
 > Status: the dump commands are upstream's (`dd` per partition); the double read and the size and hash
-> checks are the ones the wizard runs, which were validated on two cameras (2026-11-07 to 11-09). The
+> checks are the ones the wizard runs, which were validated on two cameras. The
 > UART root shell itself is the route this page describes by hand.
 
 > **WARNING: never boot the camera with `.bin` files on the card.** The stock `service.sh` runs
@@ -27,14 +27,14 @@
 ## 1. What you need
 
 - A root shell on the stock firmware. The most dependable way on this camera is the UART console
-  with the `init=/bin/sh` boot (see [hardware_and_uart.md](hardware_and_uart.md), sections 4 to 6).
+  with the `init=/bin/sh` boot (see [hacking guide](../hacking.md#uart-access), sections 4 to 6).
   In that state Wi-Fi, ISP and video drivers are not running, which is also the quietest state for
   reading flash.
 - A FAT32 microSD card with enough free space (the 8 files total 8 MiB).
 - A PC to hold an independent copy.
 
 Without opening the camera, a root shell over Wi-Fi can be obtained with a prepared microSD card
-(no UART needed): see [akam_v1_backup_sd.md](akam_v1_backup_sd.md); this is the route the wizard
+(no UART needed): see [backup by microSD](backup-sd.md); this is the route the wizard
 uses. The stock firmware's own Telnet credentials are not known to this project.
 
 ---
@@ -78,7 +78,7 @@ are for `3215672.2` / `SI B26101` (untested with Akam). Check and write down:
 1. The label on the camera and the retail box: model number and the `SI` code. Compare with
    `D26228`. Whether your unit uses the same flash layout and APP contents as the validated one is what
    the partition table above and the dump itself will tell you.
-2. If you open the camera ([disassembly guide](hardware_and_uart.md)): the PCB marking (upstream:
+2. If you open the camera ([disassembly guide](../hacking.md#uart-access)): the PCB marking (upstream:
    `IPC280KG2-GNA-MAIN-V1.0`), the SoC (AK3918AV130) and the 8 MiB SPI NOR chip.
 3. The U-Boot / kernel boot log over UART (SoC name, `mtdparts`).
 
@@ -107,7 +107,7 @@ sync
 ```
 
 (The SPI-NOR DMA corruption described in
-[firmware_building_and_flashing.md](firmware_building_and_flashing.md) is reported by upstream for
+[flash_tool notes](../how-it-works.md#flash-writing-why-flash_tool-exists) is reported by upstream for
 **writing** with `dd`; no read problem is documented, but see the double-read check below.)
 
 ### Check the sizes on the camera
@@ -157,7 +157,7 @@ Verify:
   If the camera computed `sha256sum`, compare it with `SHA256SUMS.pc`.
 - `file mtdblock7.bin` reports a SquashFS filesystem; `unsquashfs -s mtdblock7.bin` prints its
   compression and block size (write both down, they are used in the
-  [build guide](akam_v1_build.md#6-compression-xz-default-or-gzip)).
+  [build guide](build.md#6-compression-xz-default-or-gzip)).
 
 ### Keep an independent copy
 
@@ -186,7 +186,7 @@ stock APP tree; do not publish those either.
 
 The Action-Smart-Connect-Flasher saves the 8 partitions in its first stage and checks sizes and MD5.
 Akam's first-camera procedure does not use that flasher (see
-[flash and restore](akam_v1_flash_and_restore.md#1-why-akams-own-procedure-and-not-the-flasher)), and you
+[flash and restore](flash-and-restore.md#1-why-akams-own-procedure-and-not-the-flasher)), and you
 should validate your backup yourself in any case, as above.
 
 ---
@@ -200,4 +200,4 @@ should validate your backup yourself in any case, as above.
 - [ ] At least two independent copies, outside Git.
 - [ ] `mtdblock7.bin` opens with `unsquashfs -s` on the PC.
 
-Next: [build the image from your dump](akam_v1_build.md).
+Next: [build the image from your dump](build.md).

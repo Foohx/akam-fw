@@ -1,14 +1,28 @@
-# Installing the `akam` binary (Windows, macOS, Linux)
+# The `akam` program: install, check, tested platforms
 
-**What this page is for:** downloading and checking the single-file `akam` program, and getting past the
-"unknown publisher" warnings of Windows and macOS. You need it only if you do not use the bash wizard from the
-repository (Linux) or want a Windows or macOS PC.
-
-The `akam` binary is the single-file version of the setup wizard. It is **experimental**: on Linux the bash wizard
-(`./akam` in the repository) remains the reference. Linux amd64 is partly tested on real cameras; an earlier Windows amd64 build was tested
-on a real camera, the current full-screen interface build is pending its Windows test; macOS and arm64 are **built, not hardware-tested**
-([test status](testing-status.md), [hardware test plan](assistant_hardware_test_plan.md)). What it does:
+`akam` is the single-file version of the setup wizard, written in Go, for Windows, macOS and Linux. On Linux, the bash
+wizard (`./akam` in the repository, see the [wizard guide](wizard_guide.md)) remains the **reference**: it is the one
+used for real installs and flashes. The Go program is **experimental**. What it does:
 [tools/assistant/README.md](../tools/assistant/README.md).
+
+## Tested platforms
+
+The bash wizard and the Go program were developed and tested on **Arch Linux**. "Built" means the binary compiles and
+passes the host tests of its operating-system layer. Nothing is called tested unless it ran against a real camera.
+
+| Platform | Binary built | Run on a real camera | What was tested | Never tested |
+|---|---|---|---|---|
+| Linux amd64 (Go program) | yes | partly | SSH, 8091 camera options, `video show`, `led`, `ntp`, `talk` | update, restore, telnet backup, flash, SD card writer, first install |
+| Linux arm64 | yes | no | host tests only | everything on hardware |
+| Windows amd64 | yes | an earlier build | discovery, options over SSH, talk with the PC microphone, clock offer | the current full-screen interface (test pending), SD card writer and UAC prompt, flash, first install |
+| Windows arm64 | yes | no | host tests only | everything on hardware |
+| macOS Intel (amd64) | yes | no | host tests only | everything on hardware |
+| macOS Apple silicon (arm64) | yes | no | host tests only | everything on hardware |
+| **Bash wizard, Linux** | n/a (scripts) | **yes, the reference** | real first installs (backup, image, flash), updates over SSH, verify, on two cameras | restore to stock (never rehearsed), Windows and macOS (not supported) |
+
+A **first install from Windows or macOS has never been done**. Until it is, install from Linux (or WSL2 for the build
+steps). Checklists for testers: [hardware test checklists](hardware-test-checklists.md#assistant-checklists).
+Evidence: [testing status](testing-status.md).
 
 ## Files of a release
 
