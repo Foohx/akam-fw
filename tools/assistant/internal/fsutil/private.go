@@ -59,6 +59,11 @@ func WritePrivateFile(path string, data []byte) error {
 		os.Remove(path)
 		return err
 	}
+	if err := f.Sync(); err != nil { // on disk before anything is renamed over a good file
+		f.Close()
+		os.Remove(path)
+		return err
+	}
 	if err := f.Close(); err != nil {
 		os.Remove(path)
 		return err

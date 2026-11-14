@@ -174,6 +174,12 @@ func templateSet(f *profile.File, k, value string) (*profile.File, error) {
 		value = map[string]string{"on": "1", "off": "0"}[value]
 	case profile.NTPServers:
 		value = strings.Join(strings.Fields(strings.ReplaceAll(value, ",", " ")), ",")
+	case profile.KeyPath:
+		p, err := normPub(value) // ~ and relative paths are written as the absolute file the camera is recorded with
+		if err != nil {
+			return f, err
+		}
+		value = p
 	}
 	if err := n.Set(k, value); err != nil {
 		return f, err
@@ -479,25 +485,23 @@ func (a *App) cfgKeyOffer() (string, bool) {
 	if set == nil || !set.Has(profile.KeyKind) {
 		return "", false
 	}
-	var pub, what string
-	switch k := set.Get(profile.KeyKind); k {
+	ch, err := a.keyChoiceFor(set.Get(profile.KeyKind), set.Get(profile.KeyPath))
+	if err != nil {
+		a.UI.Say("  Your config names a custom key file that is not on this computer: choose a key below.")
+		return "", false
+	}
+	pub := ch.pub
+	what := "the key " + tilde(strings.TrimSuffix(pub, ".pub"))
+	switch ch.kind {
 	case camssh.KindShared:
-		pub, what = camssh.SharedKeyPath()+".pub", "the shared key "+tilde(camssh.SharedKeyPath())
+		what = "the shared key " + tilde(camssh.SharedKeyPath())
 	case camssh.KindOwn:
-		pub, what = camssh.OwnKeyPath(a.Cams.Name)+".pub", "a key for this camera only ("+tilde(camssh.OwnKeyPath(a.Cams.Name))+")"
-	default:
-		n, err := normPub(set.Get(profile.KeyPath))
-		pub = n
-		if set.Get(profile.KeyPath) == "" || err != nil || !strings.HasSuffix(pub, ".pub") || !exists(pub) {
-			a.UI.Say("  Your config names a custom key file that is not on this computer: choose a key below.")
-			return "", false
-		}
-		what = "the key " + tilde(strings.TrimSuffix(pub, ".pub"))
+		what = "a key for this camera only (" + tilde(camssh.OwnKeyPath(a.Cams.Name)) + ")"
 	}
 	if yes, _ := a.UI.AskYN("  Your config says this camera uses " + what + ". Use it?"); !yes {
 		return "", false
 	}
-	switch set.Get(profile.KeyKind) {
+	switch ch.kind {
 	case camssh.KindShared:
 		if _, err := a.keyEnsure(pub, "akam", true, "the card"); err != nil {
 			return "", false

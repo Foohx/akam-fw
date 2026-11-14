@@ -291,6 +291,16 @@ func (a *App) secretsAfterSet(key, host, user, pw string, ask bool) {
 		return
 	}
 	what := map[string]string{profile.AuthPassword: "video", profile.MQTTPassword: "MQTT"}[key]
+	if pw != "" && sec.Get(key) == pw {
+		// the saved copy is the password that was just set: nothing is out of date; only its binding may move
+		if key == profile.AuthPassword {
+			sec.Vals[profile.AuthPasswordUser] = user
+		} else {
+			sec.Vals[profile.MQTTPasswordHost], sec.Vals[profile.MQTTPasswordUser] = host, user
+		}
+		_ = profile.Save(p, profile.Secrets, sec)
+		return
+	}
 	if ask && pw != "" && a.UI.Interactive() {
 		if ok, _ := a.UI.AskYN("  A " + what + " password is saved for this camera on this computer. Update it to the new one? " + walletWarning); ok {
 			if key == profile.AuthPassword {
@@ -555,7 +565,7 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 	}
 	if len(ch) == 0 {
 		a.UI.Good("  Nothing to change: the camera already has these settings" + onlyNote(only) + ".")
-		a.cfgSettle(c, src, true, only)
+		a.cfgSettle(c, src, len(skipped) == 0, only, &r)
 		return nil
 	}
 	a.UI.Say(fmt.Sprintf("  %d change(s) from the camera's current settings:", len(ch)))
@@ -589,6 +599,20 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 		go2 = append(go2, x)
 	}
 	go2, pws, noPw := a.cfgPasswords(go2, src.sec)
+	// the options of a broker that could not be saved (no password to send) have nothing to attach to
+	for _, x := range noPw {
+		if x.ch.Op == opMqttSet && !r.f.Has(profile.MQTTHost) {
+			var keep []cfgChange
+			for _, y := range go2 {
+				if y.Op == opMqttOpt {
+					declined = append(declined, cfgOutcome{ch: y, state: "skipped", note: "the broker settings were not applied"})
+					continue
+				}
+				keep = append(keep, y)
+			}
+			go2 = keep
+		}
+	}
 	out := append(a.cfgApply(c, ip, go2, pws), declined...)
 	out = append(out, noPw...)
 	for k := range pws {
@@ -597,7 +621,7 @@ func (a *App) cfgApplySource(src *cfgSrc, only map[string]bool, withSecrets bool
 	applied, failed, restart, power := a.cfgReport(out)
 	a.UI.Say(fmt.Sprintf("  %d applied, %d failed, %d not applied.", applied, failed, len(out)-applied-failed))
 	// what the camera has now is recorded BEFORE the restart question: the control port is down for a moment after it
-	a.cfgSettle(c, src, failed == 0 && applied == len(out), only)
+	a.cfgSettle(c, src, failed == 0 && applied == len(out) && len(skipped) == 0, only, nil)
 	if power {
 		a.UI.Say("  A change above applies at the next power cycle: unplug the USB-C power, wait 5 seconds, plug it back (the assistant never does it for you).")
 	}
@@ -628,38 +652,56 @@ func onlyNote(only map[string]bool) string {
 }
 
 // cfgSettle records what the camera has now as its local config and where it came from. clean says every
-// change was applied (none failed, was declined or stopped). When it is not, or the groups were restricted, the
-// source is "local" (the camera does not wholly follow that config) and a pending first-install choice stays pending.
-func (a *App) cfgSettle(c *camssh.Client, src *cfgSrc, clean bool, only map[string]bool) {
+// change was applied (none failed, was declined or stopped, and nothing in the config was left out). When it is
+// not, or the groups were restricted, the camera does not wholly follow that config: a first-install choice then
+// stays what it was (source and pending, so the offers and the next apply still work) and any other source
+// becomes "local". r is the read already made by the caller (nil: read again, after changes were sent).
+func (a *App) cfgSettle(c *camssh.Client, src *cfgSrc, clean bool, only map[string]bool, r *cfgRead) {
 	if a.UI.Dry() {
 		return
 	}
-	whole := clean && only == nil
-	label := "local"
-	if whole {
-		label = src.label
-	}
-	a.setState(keyConfigSource, label)
-	if whole {
+	switch {
+	case clean && only == nil:
+		a.setState(keyConfigSource, src.label)
 		_ = a.St.Unset(keyConfigPending)
+	case a.St.Get(keyConfigPending) == "1":
+		a.UI.Say("  The config chosen for this camera is NOT fully applied: it stays pending (" + Prog + " config apply " + map[bool]string{true: "--global", false: "--from " + strings.TrimPrefix(src.label, "camera:")}[src.label == "global"] + " to finish).")
+	default:
+		a.setState(keyConfigSource, "local")
 	}
-	a.cfgRecordLocal(c)
+	a.cfgRecordLocal(c, r)
 }
 
-// cfgRecordLocal writes camera.conf from a fresh read of the camera (settings only: a password or the Wi-Fi is
-// kept on this computer only when the user said so through save-local or save-global). A read in which the
-// control port said nothing never replaces the file: it would erase the LED, picture, video and audio settings.
-func (a *App) cfgRecordLocal(c *camssh.Client) {
-	r := a.cfgReadLive(c, a.Cams.Name)
+// cfgRecordLocal writes camera.conf from a read of the camera (settings only: a password or the Wi-Fi is kept
+// on this computer only when the user said so through save-local or save-global). A read in which the control
+// port said nothing never replaces the file: it would erase the LED, picture, video and audio settings. A
+// partial read keeps the earlier record's values for what it could not read.
+func (a *App) cfgRecordLocal(c *camssh.Client, r *cfgRead) {
+	if r == nil {
+		n := a.cfgReadLive(c, a.Cams.Name)
+		r = &n
+	}
 	if !r.ctlOK {
 		a.UI.Warn("the camera's control port did not answer: its settings were NOT recorded on this computer (the earlier record is kept). Run '" + Prog + " config save-local' when it is back.")
 		return
 	}
+	f := r.f.Clone()
 	if len(r.missing) > 0 {
-		a.UI.Say("  Not recorded (could not be read): " + strings.Join(r.missing, ", ") + ".")
+		if old, err := profile.Load(a.cameraPlace(a.Cams.Name), profile.Settings); err == nil {
+			kept := 0
+			for _, k := range cfgKeys() {
+				if !f.Has(k) && old.Has(k) && r.unread(k) {
+					_ = f.Set(k, old.Get(k))
+					kept++
+				}
+			}
+			a.UI.Say(fmt.Sprintf("  Could not be read: %s. %d value(s) of the earlier record were kept for them.", strings.Join(r.missing, ", "), kept))
+		} else {
+			a.UI.Say("  Not recorded (could not be read): " + strings.Join(r.missing, ", ") + ".")
+		}
 	}
-	_ = r.f.Set(profile.SavedAt, cfgNow())
-	if err := profile.Save(a.cameraPlace(a.Cams.Name), profile.Settings, r.f); err != nil {
+	_ = f.Set(profile.SavedAt, cfgNow())
+	if err := profile.Save(a.cameraPlace(a.Cams.Name), profile.Settings, f); err != nil {
 		a.UI.Warn("could not record this camera's settings on this computer: " + err.Error())
 		return
 	}

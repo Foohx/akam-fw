@@ -267,7 +267,7 @@ func TestAnUnconfirmedKeyChangeKeepsTheChoicePendingAndTheSourceLocal(t *testing
 	if e.readState("config_pending") != "1" {
 		t.Error("the choice was cleared although an item was declined")
 	}
-	if e.readState("config_source") != "local" {
+	if e.readState("config_source") != "global" { // a first-install choice stays what it was while it is pending
 		t.Errorf("config_source = %q", e.readState("config_source"))
 	}
 }
