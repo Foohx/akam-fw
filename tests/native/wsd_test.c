@@ -208,7 +208,10 @@ static unsigned num_after(const char *b, const char *key)
 /* Per-source limiter with an injected clock: deterministic, no sleeping. */
 static void test_src_limit(void)
 {
-    const uint32_t A = 0x0100007f, B = 0x0200007f;
+    /* The table is static and lives until the process ends: these buckets keep their fake clock (~1e6 ms) and an
+     * empty bucket. Never use 127.0.0.1 here: test_socket probes from it with the real CLOCK_MONOTONIC (the uptime),
+     * and on a freshly booted CI runner (uptime < 17 min) the stale bucket would make the daemon drop the probe. */
+    const uint32_t A = 0x0200007f, B = 0x0300007f; /* 127.0.0.2, 127.0.0.3 */
     long long t = 1000000;
     int ok = 0;
     for (int i = 0; i < 50; i++) ok += wsd_src_ok(A, t);

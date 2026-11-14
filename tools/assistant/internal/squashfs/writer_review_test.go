@@ -74,7 +74,11 @@ func TestTreeDropXattrs(t *testing.T) {
 // with ErrLimit, one byte below the image fails, and the cap equal to the image goes through.
 func TestWriteMaxSize(t *testing.T) {
 	root := dirN("", 0o755)
-	for i := 0; i < 40; i++ {
+	files := 40
+	if raceEnabled {
+		files = 10 // still 3 MB of incompressible data, far above MaxSize: see race_on_test.go
+	}
+	for i := 0; i < files; i++ {
 		root.Add(fileN(fmt.Sprintf("f%02d", i), 0o644, pseudoRandom(int64(i), 300000)))
 	}
 	if _, _, err := Build(root, Options{MaxSize: 100000}); !errors.Is(err, ErrLimit) {

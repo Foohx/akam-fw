@@ -707,6 +707,9 @@ func TestTruncationsAndCorruption(t *testing.T) {
 				i = b.inodeStart - 1
 				continue
 			}
+			if raceEnabled && i%4 != 0 { // every 4th byte under the race detector: see race_on_test.go
+				continue
+			}
 			c := clone(b)
 			c[i] ^= 0xff
 			exercise(c, int64(len(c)))

@@ -244,7 +244,11 @@ int main(int argc, char **argv)
 
     /* --- a child process (system()) inherits LD_PRELOAD: it must log one CHILD line only */
     if (getenv("HOOK_DRIVER_CHILD")) {
-        int rc = system("cat /dev/null; : reboot-marker");
+        /* The hook starts at the first call of open() in a process (not in a constructor). bash calls open() while it
+         * starts up, dash (/bin/sh on Debian and Ubuntu) never does for a plain command line, and its fork of cat
+         * is the one that logs. So the marker is an argument of cat itself (cat opens /dev/null first, then fails
+         * on the marker, and the `true` keeps the status 0): the test does not depend on the host's /bin/sh. */
+        int rc = system("cat /dev/null reboot-marker 2>/dev/null; true");
         CHECK(rc == 0, "child process runs normally under the inherited hook");
         /* system() / popen() of anyka_ipc itself are logged by the hook and forwarded to libc:
          * the return values, the output and errno are the real ones */

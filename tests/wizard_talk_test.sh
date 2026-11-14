@@ -92,6 +92,10 @@ new_state() { rm -rf "$T/st_$1"; mkdir -p "$T/st_$1"; chmod 700 "$T/st_$1"; echo
 # SAFETY: every case runs with a PATH of the stubs plus $T/minbin, which has NO ffmpeg, arecord or pactl:
 # a test can never reach the real microphone.
 a() { local st=$1; shift; PATH="$STUB_DIR/bin:$T/minbin" bash "$AKAM" --no-color --state-dir "$st" --ip 127.0.0.1 --identity "$T/key" "$@"; }
+# a_exec: like a, but replaces the shell: "( a_exec ... ) &" makes $! the pid of the wizard itself. A background
+# "a ..." would be a subshell around a function, and whether bash execs the last command of it (so that $! is the
+# wizard) depends on the bash version (5.2 on Ubuntu does not): a signal sent to $! would not reach the wizard.
+a_exec() { local st=$1; shift; PATH="$STUB_DIR/bin:$T/minbin" exec bash "$AKAM" --no-color --state-dir "$st" --ip 127.0.0.1 --identity "$T/key" "$@"; }
 reset() { : >"$STUB_DIR/ssh.log"; : >"$STUB_DIR/talk.log"; }
 PW='Tr0ub4dor&3-sentinel'
 
@@ -218,7 +222,7 @@ check "cleanup: no fifo folder left in the state folder" bash -c '! ls -d "$1"/t
 
 # SIGTERM to the wizard while it talks (akam-talk keeps reading, the capture sleeps)
 rm -f "$CAPPID" "$CAPCHILD"; reset
-AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a "$S" talk </dev/null >"$T/c3.out" 2>&1 &
+( AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a_exec "$S" talk </dev/null >"$T/c3.out" 2>&1 ) &
 wpid=$!
 for _ in $(seq 1 50); do [ -s "$CAPCHILD" ] && break; sleep 0.1; done
 kill -TERM "$wpid" 2>/dev/null
@@ -230,7 +234,7 @@ check "cleanup, SIGTERM: so is its child" gone "$(cat "$CAPCHILD")"
 # SIGKILL to the wizard while it talks: nothing of the wizard can run any more, a watchdog stops the capture
 # (akam-talk keeps reading the fifo, so the capture would never get a SIGPIPE by itself)
 rm -f "$CAPPID" "$CAPCHILD"; reset
-AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a "$S" talk </dev/null >"$T/c3k.out" 2>&1 &
+( AKAM_RTSP_PASSWORD=$PW AKAM_TALK_CAPTURE_CMD=$CAPCMD a_exec "$S" talk </dev/null >"$T/c3k.out" 2>&1 ) &
 wpid=$!
 for _ in $(seq 1 50); do [ -s "$CAPCHILD" ] && break; sleep 0.1; done
 kill -KILL "$wpid" 2>/dev/null
