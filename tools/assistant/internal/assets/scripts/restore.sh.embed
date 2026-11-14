@@ -1,6 +1,6 @@
 #!/bin/sh
 # restore.sh — restore ONLY the stock APP partition
-# (undoes install_custom_firmware.sh; leaves UBOOT/KERNEL/ROOTFS/CONFIG alone)
+# (undoes a flashed Akam APP image; leaves UBOOT/KERNEL/ROOTFS/CONFIG alone)
 # Expects: /mnt/original_firmware/mtdblock7.bin
 #
 # *** ONLY run this from a bare UART `init=/bin/sh` recovery shell. ***
