@@ -1,0 +1,139 @@
+# Akam CI. One rule: every check runs ONCE per change, on the code you can also run locally.
+#   - The logic lives in tools/ci/local_check.sh (--only GROUP) and tools/ci/changed_groups.sh, not in this file.
+#   - Runs on pull requests (any base) and on pushes to dev. main only receives PRs that already passed:
+#     no run on push to main. Newer pushes to the same ref cancel older runs.
+#   - Never builds release artifacts and never uploads any: releases are built and signed by the
+#     maintainer (tools/release/make_release.sh) with a key that never leaves their machine.
+#
+# Job graph (estimated wall clock, ubuntu-24.04; measure on the first runs and adjust):
+#
+#   lint ----------------------------------------------+        always, ~1 min, starts at once
+#   changes --> toolchain --> shell-tests  (47 tests) --+--> ci-ok   changes ~10 s; toolchain ~10 s warm cache,
+#                         |-> native-tests (47 tests) --+            ~3 min cold; the three test jobs run in parallel
+#                         '-> go-tests (vet, tests, 6 targets, race)  and only when their group changed
+#   docs-only change: lint + changes only (~1 min).   Go-only change: lint + go-tests.
+#
+# Tests stub the microphone, sound servers, ffmpeg, cameras and disks themselves; nothing here gives them
+# real devices (a runner has none).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Cheap checks, always: forbidden files, private-address literals, tracked symlinks, shellcheck, README links.
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash tools/ci/local_check.sh --only lint
+
+  # Which groups does this change touch? git diff against the merge base (PR) or the previous push (dev).
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      shell: ${{ steps.groups.outputs.shell }}
+      native: ${{ steps.groups.outputs.native }}
+      go: ${{ steps.groups.outputs.go }}
+      any: ${{ steps.groups.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the merge base needs history; the repository is small
+      - id: groups
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=$PR_BASE ;;
+            push) base=$PUSH_BEFORE ;; # all zeros or unknown commit (new branch, force push): everything runs
+            *) base="" ;;              # workflow_dispatch: everything runs
+          esac
+          bash tools/ci/changed_groups.sh "$base" | tee -a "$GITHUB_OUTPUT"
+          if grep -q '=true' "$GITHUB_OUTPUT"; then echo "any=true" >>"$GITHUB_OUTPUT"; else echo "any=false" >>"$GITHUB_OUTPUT"; fi
+
+  # Pinned toolchain (Zig, Go, BusyBox, SmolRTSP, Dropbear source, Go modules) restored from the cache;
+  # bootstrap.sh (non-interactive, sha256-checked downloads) runs only on a cache miss. Test jobs only restore.
+  toolchain:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/toolchain
+        with:
+          bootstrap: "true"
+
+  shell-tests:
+    needs: [changes, toolchain]
+    if: needs.changes.outputs.shell == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/toolchain
+      - run: bash tools/ci/local_check.sh --only shell
+
+  native-tests:
+    needs: [changes, toolchain]
+    if: needs.changes.outputs.native == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/toolchain
+      - run: bash tools/ci/local_check.sh --only native
+
+  # gofmt, go vet, go test, the six release targets (cross-build, size budget 12 MiB, reproducibility) via
+  # tests/assistant_test.sh, then go test -race. This is the only build in CI, and it is a sanity build:
+  # nothing is uploaded.
+  go-tests:
+    needs: [changes, toolchain]
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/toolchain
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/.toolchain/go/cache
+          key: gocache-${{ runner.os }}-${{ hashFiles('tools/assistant/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            gocache-${{ runner.os }}-${{ hashFiles('tools/assistant/go.sum') }}-
+            gocache-${{ runner.os }}-
+      - run: bash tools/ci/local_check.sh --only go,race
+
+  # Single status for branch protection: green when nothing failed (skipped groups are fine).
+  ci-ok:
+    if: always()
+    needs: [lint, changes, toolchain, shell-tests, native-tests, go-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) echo "CI failed" >&2; exit 1 ;;
+          esac

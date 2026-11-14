@@ -29,6 +29,13 @@ bash tests/readme_links_test.sh     # when you change documentation
 
 Details: [hacking guide](docs/hacking.md#tests).
 
+### CI
+
+GitHub CI (`.github/workflows/ci.yml`) runs on pull requests and on pushes to `dev`, and runs the same code as
+`local_check.sh`, one group at a time: `tools/ci/local_check.sh --only lint|shell|native|go|race`. `lint` always
+runs; `shell`, `native` and `go` run only when the diff touches them (`tools/ci/changed_groups.sh`; a docs-only
+change runs `lint` only). It builds and uploads no release: releases are built and signed locally.
+
 ## Style
 
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`...).
