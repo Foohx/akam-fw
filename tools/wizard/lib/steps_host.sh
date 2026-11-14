@@ -452,13 +452,24 @@ download_file() {
     run_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -o "$2" "$1"
 }
 
-# kit_model_wanted: the camera model whose kit is wanted: --model, else the camera model found by the backup, else the
-# only model of the registry. Prints it; fails (no output) when several models exist and none is known.
+# kit_model_wanted: the camera model whose kit is wanted: the camera model on record (found by the backup, or kept
+# from an earlier --model), else --model, else the model of the recorded backup's stock APP, else the only model of
+# the registry. Prints it. Fails (no output) with 1 when several models exist and none is known, with 2 when --model
+# differs from the model on record (the recorded one is a fact about this camera: --model never overrides it).
 kit_model_wanted() {
-    local l n
-    if [ -n "$OPT_MODEL" ]; then printf '%s\n' "$OPT_MODEL"; return 0; fi
+    local l n m
     n=$(state_get camera_model)
-    if [ -n "$n" ]; then printf '%s\n' "$n"; return 0; fi
+    if [ -n "$n" ]; then
+        if [ -n "$OPT_MODEL" ] && [ "$OPT_MODEL" != "$n" ]; then return 2; fi
+        printf '%s\n' "$n"
+        return 0
+    fi
+    if [ -n "$OPT_MODEL" ]; then printf '%s\n' "$OPT_MODEL"; return 0; fi
+    n=$(state_get backup_sha)
+    if [ -n "$n" ]; then
+        m=$(hw_model "$n")
+        if [ -n "$m" ]; then printf '%s\n' "$m"; return 0; fi
+    fi
     l=$(wiz_tool hw_list)
     if [ -d "$l" ]; then
         set -- "$l"/*.txt
@@ -470,27 +481,100 @@ kit_model_wanted() {
     return 1
 }
 
+# kit_latest_version MODEL: prints the newest firmware release (X.Y.Z) that has a kit for MODEL, read from the GitHub
+# API (HTTPS, read only, advice only: the kit that is then downloaded is verified exactly as for a typed version).
+# Same rules as the assistant (kit/releases.go): no draft, no prerelease, tag exactly firmware-vX.Y.Z, the kit of the
+# model, SHA256SUMS and SHA256SUMS.sig present; every page is capped at 8 MiB, at most 5 pages of 50 releases, and the
+# search stops once 10 usable releases are known. Needs curl and python3; fails (no output) without them or on any error.
+kit_latest_version() {
+    local model=$1 page url tmp found n
+    command -v python3 >/dev/null 2>&1 || return 1
+    tmp=$(mktemp) || return 1
+    found=$tmp.versions
+    : >"$found"
+    for page in 1 2 3 4 5; do
+        url="https://api.github.com/repos/$KIT_REPO/releases?per_page=50&page=$page"
+        log_line "CMD(ro) curl $url"
+        if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 2 --max-filesize 8388608 \
+            -H 'Accept: application/vnd.github+json' -o "$tmp" "$url" 2>/dev/null; then
+            [ "$page" -gt 1 ] && [ -s "$found" ] && break
+            rm -f "$tmp" "$found"
+            return 1
+        fi
+        n=$(python3 -I -c '
+import json, re, sys
+model, path, out = sys.argv[1:4]
+try:
+    rels = json.load(open(path))
+except Exception:
+    sys.exit(3)
+if not isinstance(rels, list):
+    sys.exit(3)
+tag = re.compile(r"^firmware-v((0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8}))$")
+with open(out, "a") as o:
+    for r in rels:
+        if not isinstance(r, dict) or r.get("draft") is not False or r.get("prerelease") is not False:
+            continue
+        m = tag.match(str(r.get("tag_name", "")))
+        if not m:
+            continue
+        names = {a.get("name") for a in (r.get("assets") or []) if isinstance(a, dict)}
+        if {"akam-kit-%s-%s.tar.xz" % (model, m.group(1)), "SHA256SUMS", "SHA256SUMS.sig"} <= names:
+            o.write(m.group(1) + "\n")
+print(len(rels))
+' "$model" "$tmp" "$found") || { rm -f "$tmp" "$found"; return 1; }
+        if [ "$n" -lt 50 ] || [ "$(wc -l <"$found" | tr -d ' ')" -ge 10 ]; then break; fi
+    done
+    n=$(LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n "$found" | tail -n 1)
+    rm -f "$tmp" "$found"
+    [ -n "$n" ] || return 1
+    printf '%s\n' "$n"
+}
+
+# record_model_from_backup SHA: state camera_model from the stock APP sha256 when the registry knows it. An unknown
+# APP never writes (and never erases) a model.
+record_model_from_backup() {
+    local m
+    m=$(hw_model "$1")
+    if [ -n "$m" ]; then state_set camera_model "$m"; fi
+    return 0
+}
+
 cmd_get_kit() {
     local kit=$OPT_KIT ver=$OPT_VERSION model="" base dl f rc ext fmt sha vargs unsigned=0 kmodel
     step_need get-kit || return 1
     step_banner get-kit
     if [ -z "$kit" ]; then
         ver=${ver#v}
+        rc=0
+        model=$(kit_model_wanted) || rc=$?
+        if [ "$rc" -eq 2 ]; then
+            ui_fail "this camera is recorded as the model $(state_get camera_model), but --model asks for $OPT_MODEL." \
+                "a kit only fits the model it was built for: drop --model, or use --camera NAME for a camera of that model."
+            return 1
+        elif [ "$rc" -ne 0 ]; then
+            ui_fail "several camera models are supported and this camera's model is not known yet." \
+                "pass --model ID (one of the files of $(wiz_tool hw_list)), or take the backup first so that the model is detected."
+            return 1
+        fi
         if [ -z "$ver" ]; then
             # The wizard has its own version: the firmware version is a different number (firmware-vX.Y.Z releases).
             if [ "$UI_DRY" = 1 ]; then
                 ver="X.Y.Z"
                 ui_say "  (no --version: using the placeholder version X.Y.Z)"
             else
-                ui_fail "the bash wizard does not know which firmware release to download." \
-                    "pass --version X.Y.Z (a firmware release, see https://github.com/$KIT_REPO/releases), or --kit FILE for a kit you already have, or run ./akam build."
-                return 1
+                ver=$(kit_latest_version "$model") || ver=""
+                if [ -n "$ver" ]; then
+                    ui_say "  Newest firmware release with a kit for $model: $ver (read from GitHub; the kit is verified before use)."
+                elif host_is_tty && ui_prompt "  Firmware version to download (see https://github.com/$KIT_REPO/releases, for example 1.0.0)?" "" && [ -n "$ANSWER" ]; then
+                    ver=$ANSWER
+                else
+                    ui_fail "cannot tell which firmware release to download for $model (GitHub did not answer, or python3 is missing)." \
+                        "pass --version X.Y.Z (a firmware release, see https://github.com/$KIT_REPO/releases), or --kit FILE for a kit you already have, or run ./akam build."
+                    return 1
+                fi
+                ver=${ver#v}
             fi
-        fi
-        if ! model=$(kit_model_wanted); then
-            ui_fail "several camera models are supported and this camera's model is not known yet." \
-                "pass --model ID (one of the files of $(wiz_tool hw_list)), or take the backup first so that the model is detected."
-            return 1
         fi
         case $ver in
             '' | *[!0-9A-Za-z._-]* | *..*)
@@ -541,8 +625,13 @@ cmd_get_kit() {
     if [ -n "$OPT_ALLOW_UNSIGNED" ]; then vargs+=(--allow-unsigned); unsigned=1; fi
     if [ -n "$OPT_EXPECT_SHA256" ]; then vargs+=(--expect-sha256 "$OPT_EXPECT_SHA256"); fi
     # the kit must be for the camera's model (known from the backup, or --model): verify_kit.sh checks MANIFEST model=
-    kmodel=${model:-$OPT_MODEL}
-    [ -n "$kmodel" ] || kmodel=$(state_get camera_model)
+    kmodel=$(state_get camera_model)
+    [ -n "$kmodel" ] || kmodel=${model:-$OPT_MODEL}
+    if [ -n "$OPT_MODEL" ] && [ -n "$kmodel" ] && [ "$OPT_MODEL" != "$kmodel" ]; then
+        ui_fail "this camera is recorded as the model $kmodel, but --model asks for $OPT_MODEL." \
+            "a kit only fits the model it was built for: drop --model."
+        return 1
+    fi
     if [ -n "$kmodel" ]; then vargs+=(--expect-model "$kmodel"); fi
     if [ ! -e "$kit" ]; then
         ui_say "  WOULD run: $(wiz_tool verify_kit) ${vargs[*]} $kit   (kit not downloaded in a rehearsal)"
@@ -883,7 +972,7 @@ backup_accept() {
     fi
     state_set backup_dir "$d"
     state_set backup_sha "$(host_sha256 "$d/mtdblock7.bin")"
-    state_set camera_model "$(hw_model "$(host_sha256 "$d/mtdblock7.bin")")"
+    record_model_from_backup "$(host_sha256 "$d/mtdblock7.bin")"
     state_mark_done backup
     ui_good "  Backup folder accepted: $d"
 }

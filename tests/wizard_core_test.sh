@@ -139,6 +139,15 @@ while [ $# -gt 0 ]; do
     shift
 done
 echo "curl proto=$proto $url" >>"$STUB_LOG"
+case $url in
+    https://api.github.com/*releases\?*) # the release list: page N is $STUB_CURL_SRC/api_releases_N.json
+        [ "${STUB_CURL_MODE:-notfound}" = ok ] || exit 22
+        page=${url##*page=}
+        [ -f "$STUB_CURL_SRC/api_releases_$page.json" ] || exit 22
+        cp "$STUB_CURL_SRC/api_releases_$page.json" "$out"
+        exit 0
+        ;;
+esac
 case ${STUB_CURL_MODE:-notfound} in
     notfound) exit 22 ;;
     neterr) exit 6 ;;
@@ -285,6 +294,43 @@ check "verify_kit ran after the downloads" bash -c '[ "$(grep -n "curl" "$1" | t
 check "the kit path recorded is the downloaded file" has "$T/st/state" "kit_path=$T/st/downloads/1.0.0-test/akam-kit-lsc-indoor-1080p-ak3918-1.0.0-test.tar.xz"
 check "the kit is verified for the model (the only one of the registry)" has "$STUB_LOG" "stub verify_kit expect-model=lsc-indoor-1080p-ak3918"
 check "the kit model is recorded" test "$(state_get kit_model)" = lsc-indoor-1080p-ak3918
+# no --version: the newest firmware release with a kit for the model is read from the (stubbed) GitHub API
+K=akam-kit-lsc-indoor-1080p-ak3918
+asset_list() { printf '{"name":"%s"},{"name":"SHA256SUMS"},{"name":"SHA256SUMS.sig"}' "$1"; }
+cat >"$SRC/api_releases_1.json" <<APIEOF
+[
+ {"tag_name":"firmware-v1.1.0","draft":true,"prerelease":false,"assets":[$(asset_list $K-1.1.0.tar.xz)]},
+ {"tag_name":"firmware-v1.0.5","draft":false,"prerelease":true,"assets":[$(asset_list $K-1.0.5.tar.xz)]},
+ {"tag_name":"assistant-v9.0.0","draft":false,"prerelease":false,"assets":[{"name":"akam-linux-amd64"}]},
+ {"tag_name":"firmware-v1.0.3","draft":false,"prerelease":false,"assets":[$(asset_list akam-kit-other-model-1.0.3.tar.xz)]},
+ {"tag_name":"firmware-v1.0.2-rc1","draft":false,"prerelease":false,"assets":[$(asset_list $K-1.0.2-rc1.tar.xz)]},
+ {"tag_name":"firmware-v1.0.1","draft":false,"prerelease":false,"assets":[$(asset_list $K-1.0.1.tar.xz)]},
+ {"tag_name":"firmware-v1.0.0","draft":false,"prerelease":false,"assets":[$(asset_list $K-1.0.0.tar.xz)]}
+]
+APIEOF
+echo "kit bytes 101" >"$SRC/$K-1.0.1.tar.xz"
+new_state
+a doctor >/dev/null 2>&1
+if command -v python3 >/dev/null 2>&1; then
+    STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC a get-kit >"$T/dl5c.out" 2>&1
+    check "no --version: the newest usable release for the model is chosen (no draft, prerelease, other model, odd tag)" has "$T/dl5c.out" "Newest firmware release with a kit for lsc-indoor-1080p-ak3918: 1.0.1"
+    check "  ... and that release is the one downloaded, over https" has "$STUB_LOG" "curl proto==https https://github.com/Foohx/akam-fw/releases/download/firmware-v1.0.1/$K-1.0.1.tar.xz"
+    check "  ... the list was asked from the GitHub API over https" has "$STUB_LOG" "https://api.github.com/repos/Foohx/akam-fw/releases?per_page=50&page=1"
+    check "  ... the kit went through verify_kit" test "$(state_get kit_path)" = "$T/st/downloads/1.0.1/$K-1.0.1.tar.xz"
+    new_state
+    a doctor >/dev/null 2>&1
+    STUB_CURL_MODE=neterr a get-kit >"$T/dl5d.out" 2>&1
+    check "no --version and GitHub unreachable: refused, asks for --version" has "$T/dl5d.out" "--version"
+else
+    echo "  skip - python3 not installed, release list not parsed" # (the wizard falls back to --version / a prompt)
+fi
+new_state
+a doctor >/dev/null 2>&1
+state_set_test() { printf '%s=%s\n' "$1" "$2" >>"$T/st/state"; }
+state_set_test camera_model lsc-indoor-1080p-ak3918
+STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC a get-kit --model other-model --version 1.0.0-test >"$T/dl5e.out" 2>&1
+check "--model that differs from the recorded camera model is refused" test $? -ne 0
+check "  ... with a clear message" has "$T/dl5e.out" "recorded as the model lsc-indoor-1080p-ak3918, but --model asks for other-model"
 new_state
 a doctor >/dev/null 2>&1
 STUB_CURL_MODE=ok STUB_CURL_SRC=$SRC a get-kit --model other-model --version 1.0.0-test >"$T/dl5b.out" 2>&1
