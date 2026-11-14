@@ -28,9 +28,15 @@ import (
 
 // relJSON is one release object of the API answer.
 func relJSON(tag string, draft, pre bool) string {
+	return relJSONFor(kittest.DefaultModel, tag, draft, pre)
+}
+
+// relJSONFor is relJSON for the kit of a given model. tag is the version with a v ("v1.0.0"): the release tag is
+// firmware-v1.0.0.
+func relJSONFor(model, tag string, draft, pre bool) string {
 	ver := strings.TrimPrefix(tag, "v")
 	return fmt.Sprintf(`{"tag_name":%q,"draft":%t,"prerelease":%t,"published_at":"2026-05-06T00:00:00Z","assets":[`+
-		`{"name":"akam-kit-%s.tar.xz"},{"name":"SHA256SUMS"},{"name":"SHA256SUMS.sig"}]}`, tag, draft, pre, ver)
+		`{"name":"akam-kit-%s-%s.tar.xz"},{"name":"SHA256SUMS"},{"name":"SHA256SUMS.sig"}]}`, "firmware-"+tag, draft, pre, model, ver)
 }
 
 var errNoNet = errors.New("no network in this test")
@@ -79,7 +85,7 @@ func newFwAPI(t *testing.T, list []byte) *fwAPI {
 			return
 		}
 		a.hits = append(a.hits, r.URL.Path)
-		if !strings.HasPrefix(r.URL.Path, "/v1.0.0/") {
+		if !strings.HasPrefix(r.URL.Path, "/firmware-v1.0.0/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -155,13 +161,13 @@ func TestReleasesCommandListsNewestFirst(t *testing.T) {
 	useAPI(t, e, a)
 	r := e.run("", "releases")
 	expectRC(t, r, 0)
-	contains(t, r.out, "Akam releases published on GitHub (Foohx/akam-fw)", "0.10.0       2026-05-06  latest", "0.2.0        2026-05-06",
+	contains(t, r.out, "Akam firmware releases published on GitHub (Foohx/akam-fw)", "0.10.0       2026-05-06  latest", "0.2.0        2026-05-06",
 		"update --version X.Y.Z", "Prereleases are hidden")
 	if strings.Index(r.out, "0.10.0") > strings.Index(r.out, "0.2.0") {
 		t.Error("not newest first")
 	}
 	notContains(t, r.out, "1.0.0", "rc1", "0.11.0")
-	if a.query != "per_page=30" || a.accept != "application/vnd.github+json" {
+	if a.query != "per_page=50" || a.accept != "application/vnd.github+json" {
 		t.Errorf("request: query %q accept %q", a.query, a.accept)
 	}
 	r = e.run("", "releases", "--include-prereleases")
@@ -231,12 +237,12 @@ func TestChooserShowsTheListAndDefaultsToTheLatest(t *testing.T) {
 	r := w.update("\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "Which firmware?  (the camera runs: b35-2af81c5; Akam 0.9.0 installed here)",
-		"Asking GitHub for the releases (read only)",
+		"Asking GitHub for the firmware releases for LSC Smart Indoor 1080p (lsc-indoor-1080p-ak3918) (read only)",
 		"1) Akam 2.0.0 (latest)", "2) Akam 1.0.0  - older", "3) Akam 0.9.0  - older  - on the camera now",
 		"4) A kit file or folder...", "5) An image file you built (.squashfs)...",
 		"6) Stock firmware (from your backup)  - never tested on a real camera", "7) Back",
-		"release v2.0.0 was not found")
-	if got := strings.Join(w.api.hits, " "); got != "/v2.0.0/akam-kit-2.0.0.tar.xz" {
+		"firmware release 2.0.0 was not found")
+	if got := strings.Join(w.api.hits, " "); got != "/firmware-v2.0.0/akam-kit-lsc-indoor-1080p-ak3918-2.0.0.tar.xz" {
 		t.Errorf("downloads: %s", got)
 	}
 	w.unchanged(t)
@@ -303,7 +309,7 @@ func TestReleaseWithoutAnImageLeavesTheStateUntouched(t *testing.T) {
 // again, whatever was recorded (even a local unsigned kit).
 func TestRecordedKitOfTheSameVersionIsNeverReused(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
-	w.writeState(readAll(t, filepath.Join(w.state, "state")) + "mode=kit\nkit_version=1.0.0\nkit_unsigned_ok=1\nkit_path=/somewhere/else/akam-kit-1.0.0.tar.xz\n")
+	w.writeState(readAll(t, filepath.Join(w.state, "state")) + "mode=kit\nkit_version=1.0.0\nkit_unsigned_ok=1\nkit_path=/somewhere/else/akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz\n")
 	r := w.update("1\ny\n\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "ok: signature valid", "Kit verified")
@@ -367,7 +373,7 @@ func TestChooserNoReleasePublishedYet(t *testing.T) {
 	w := newFwWorldBuilt(t, relList(), "")
 	r := w.update("5\n10\n")
 	expectRC(t, r, 0)
-	contains(t, r.out+r.err, "No Akam release is published on GitHub yet", "1) The image already built from your backup (")
+	contains(t, r.out+r.err, "No Akam firmware release is published on GitHub for this camera model yet", "1) The image already built from your backup (")
 }
 
 // Choosing the release of the kit that the image was built from: downloaded, verified by signature, the image
@@ -381,7 +387,7 @@ func TestUpdateWithAReleaseWritesAndRecordsIt(t *testing.T) {
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) {
 		t.Fatal("the image was not written")
 	}
-	if got := strings.Join(w.api.hits, " "); got != "/v1.0.0/akam-kit-1.0.0.tar.xz /v1.0.0/SHA256SUMS /v1.0.0/SHA256SUMS.sig" {
+	if got := strings.Join(w.api.hits, " "); got != "/firmware-v1.0.0/akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz /firmware-v1.0.0/SHA256SUMS /firmware-v1.0.0/SHA256SUMS.sig" {
 		t.Errorf("downloads: %s", got)
 	}
 	if w.readState("fw_source") != "release:1.0.0" || w.readState("fw_version") != "1.0.0" || w.readState("fw_choice") != "" {
@@ -408,7 +414,7 @@ func TestUpdateWithAReleaseNeedsTheRedBoxYes(t *testing.T) {
 // does not get that kit used.
 func TestReleaseKitIsVerifiedWhateverTheListSays(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "")
-	if err := os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz"), []byte("not the signed kit"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz"), []byte("not the signed kit"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r := w.update("1\ny\n10\n")
@@ -480,7 +486,7 @@ func TestDownloadedKitIsListedAndVerifiedAgain(t *testing.T) {
 	if err := os.MkdirAll(dl, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"akam-kit-1.0.0.tar.xz", "SHA256SUMS", "SHA256SUMS.sig"} {
+	for _, f := range []string{"akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz", "SHA256SUMS", "SHA256SUMS.sig"} {
 		b, _ := os.ReadFile(filepath.Join(w.api.kb.Dir, f))
 		if err := os.WriteFile(filepath.Join(dl, f), b, 0o600); err != nil {
 			t.Fatal(err)
@@ -505,9 +511,9 @@ func TestDownloadedKitIsListedAndVerifiedAgain(t *testing.T) {
 	w.http = &kit.Client{DialContext: noNet}
 	dl = filepath.Join(w.state, "downloads", "1.0.0")
 	_ = os.MkdirAll(dl, 0o700)
-	for _, f := range []string{"akam-kit-1.0.0.tar.xz", "SHA256SUMS", "SHA256SUMS.sig"} {
+	for _, f := range []string{"akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz", "SHA256SUMS", "SHA256SUMS.sig"} {
 		b, _ := os.ReadFile(filepath.Join(w.api.kb.Dir, f))
-		if f == "akam-kit-1.0.0.tar.xz" {
+		if f == "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz" {
 			b = append(b, 'x')
 		}
 		_ = os.WriteFile(filepath.Join(dl, f), b, 0o600)
@@ -519,7 +525,7 @@ func TestDownloadedKitIsListedAndVerifiedAgain(t *testing.T) {
 
 func TestKitFileFromThePathPrompt(t *testing.T) {
 	w := newFwWorld(t, relList(), "")
-	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
+	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	// items: kit file(1), image file, stock, Back
 	r := w.update("1\n" + kitFile + "\ny\n\n10\n")
 	expectRC(t, r, 0)
@@ -536,7 +542,7 @@ func TestKitFileFromThePathPrompt(t *testing.T) {
 
 func TestKitFlagOnTheCommandLine(t *testing.T) {
 	w := newFwWorld(t, relList(), "")
-	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-1.0.0.tar.xz")
+	kitFile := filepath.Join(w.api.kb.Dir, "akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz")
 	r := w.run("n\n", "--camera", "default", "update", "--kit", kitFile)
 	expectRC(t, r, 1)
 	contains(t, r.out+r.err, "Kit verified", "Updating: WRITES THE CAMERA FLASH", "not confirmed.")
@@ -750,7 +756,7 @@ func TestInstallChooserOffersNoStockAndFeedsGetKit(t *testing.T) {
 	r := e.run("1\n1\n", "--camera", "default")
 	contains(t, r.out+r.err, "Which firmware?", "1) Akam 1.0.0 (latest)", "2) A kit file or folder...", "3) An image file you built (.squashfs)...", "4) Back")
 	notContains(t, r.out+r.err, "Stock firmware")
-	if got := strings.Join(a.hits, " "); !strings.HasPrefix(got, "/v1.0.0/akam-kit-1.0.0.tar.xz") {
+	if got := strings.Join(a.hits, " "); !strings.HasPrefix(got, "/firmware-v1.0.0/akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz") {
 		t.Errorf("downloads: %q", got)
 	}
 	if e.readState("fw_source") != "" {

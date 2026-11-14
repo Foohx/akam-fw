@@ -264,6 +264,9 @@ func (a *App) statusTable() {
 		}
 		a.UI.Say(line)
 	}
+	if l := a.modelLine(); l != "" { // only once the model is known: a fresh camera prints exactly what the bash wizard does
+		a.UI.Say(l)
+	}
 	if t := sourceText(a.St.Get(keyConfigSource)); t != "" { // only once a config was chosen or applied
 		a.UI.Say("  Settings: " + t)
 	}

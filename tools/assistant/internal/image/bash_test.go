@@ -131,10 +131,10 @@ func makeKit(t *testing.T) string {
 	if err := os.MkdirAll(kx, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("tar", "-xJf", filepath.Join(work, "kitout", "akam-kit-test1.tar.xz"), "-C", kx).CombinedOutput(); err != nil {
+	if out, err := exec.Command("tar", "-xJf", filepath.Join(work, "kitout", "akam-kit-lsc-indoor-1080p-ak3918-test1.tar.xz"), "-C", kx).CombinedOutput(); err != nil {
 		t.Fatalf("tar: %v %s", err, out)
 	}
-	return filepath.Join(kx, "akam-kit-test1")
+	return filepath.Join(kx, "akam-kit-lsc-indoor-1080p-ak3918-test1")
 }
 
 func tail(b []byte) string {

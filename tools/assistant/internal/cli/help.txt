@@ -20,7 +20,8 @@ Commands:
   update             flash a new image over SSH (no card). Choose the firmware with --version X.Y.Z (a published
                      release), --kit FILE, --image FILE or --stock (back to the original); without one, the menu
                      asks "Which firmware?"
-  releases           list the Akam versions published on GitHub, newest first (read only; --include-prereleases)
+  releases           list the firmware releases published on GitHub for your camera model, newest first
+                     (read only; --include-prereleases)
   hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
                      applied at the next power cycle (needs a firmware that has akam_hostname.sh)
   rtsp-auth [set|disable|status]
@@ -117,7 +118,8 @@ Commands:
 Options:
   --dry-run          rehearse: show every command, change nothing, ask nothing
   --kit FILE         use a local kit (tarball with SHA256SUMS next to it, or folder)
-  --version X.Y.Z    release to download for get-kit, or to put on the camera with update
+  --version X.Y.Z    firmware release to download for get-kit, or to put on the camera with update
+  --model ID         camera model of the kit (default: the model found by the backup, or the only one)
   --allow-unsigned   accept a kit without a signature (checksum only)
   --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
   --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)

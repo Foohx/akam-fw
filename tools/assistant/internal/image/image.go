@@ -112,7 +112,7 @@ func Build(o Options) (*Result, error) {
 	b.say(fmt.Sprintf("Hardware check: %s (%s)", hv, hd))
 	if hv != "validated" {
 		if !o.UntestedOK {
-			return nil, fmt.Errorf("hardware/firmware is not validated (%s: %s). Akam is only validated for the targets in tools/release/supported_hardware.txt. If you accept the risk, repeat with --i-understand-untested", hv, hd)
+			return nil, fmt.Errorf("hardware/firmware is not validated (%s: %s). Akam is only validated for the targets in tools/release/models/. If you accept the risk, repeat with --i-understand-untested", hv, hd)
 		}
 		b.warn(fmt.Sprintf("*** UNTESTED hardware/firmware (%s: %s). Building anyway (--i-understand-untested). Akam makes no promise that the result boots. ***", hv, hd))
 	}

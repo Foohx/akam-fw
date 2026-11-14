@@ -14,14 +14,14 @@ const Prog = "./akam"
 
 // Options are the command-line flags (same names as ./akam help, plus --trust-new-host-key).
 type Options struct {
-	Kit, Version, ExpectSHA256, BackupDir, BackupCopy, IP, Identity, Image string
-	Out, Comp, Device, Pubkey, SSID, Profile, Camera, StateDir             string
-	TrustNewHostKey                                                        string
-	Builder                                                                string // --builder native|tools (the image step)
-	PasswordFile                                                           string
-	AllowUnsigned, AllowUnknownComp, ManualTelnet, Plain, DryRun, NoColor  bool
-	Stock, IncludePre                                                      bool // --stock (update: back to the stock firmware), --include-prereleases (releases, update)
-	UntestedOK                                                             bool // --i-understand-untested (the native image builder)
+	Kit, Version, Model, ExpectSHA256, BackupDir, BackupCopy, IP, Identity, Image string
+	Out, Comp, Device, Pubkey, SSID, Profile, Camera, StateDir                    string
+	TrustNewHostKey                                                               string
+	Builder                                                                       string // --builder native|tools (the image step)
+	PasswordFile                                                                  string
+	AllowUnsigned, AllowUnknownComp, ManualTelnet, Plain, DryRun, NoColor         bool
+	Stock, IncludePre                                                             bool // --stock (update: back to the stock firmware), --include-prereleases (releases, update)
+	UntestedOK                                                                    bool // --i-understand-untested (the native image builder)
 	// TelnetNegotiate (hidden): answer telnet option negotiation (default: stay silent, as validated on hardware).
 	TelnetNegotiate bool
 	Args            []string // command and its words
@@ -79,6 +79,8 @@ func ParseArgs(argv []string) (*Options, error) {
 			set(&o.Kit)
 		case "--version":
 			set(&o.Version)
+		case "--model":
+			set(&o.Model)
 		case "--expect-sha256":
 			set(&o.ExpectSHA256)
 		case "--backup-dir":

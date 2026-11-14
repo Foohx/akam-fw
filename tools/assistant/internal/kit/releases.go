@@ -17,26 +17,50 @@ import (
 // exactly as when a version is typed by hand, and nothing the list says (name, date, text) is shown
 // except a version number that passed the strict tag rule below.
 
-// MaxReleaseList caps the answer of the list (30 releases are about 100 KiB in practice).
-const MaxReleaseList = 1 << 20
+// MaxReleaseList caps the answer of the list (50 releases are about 200 KiB in practice).
+const MaxReleaseList = 2 << 20
 
-// ReleasesPerPage is the page size asked from the API: the newest 30 releases.
-const ReleasesPerPage = 30
+// ReleasesPerPage is the page size asked from the API: the newest 50 releases (firmware and assistant releases
+// share the list; only the firmware ones are used).
+const ReleasesPerPage = 50
+
+// FirmwareTagPrefix starts the tag of every firmware release (firmware-vX.Y.Z). The assistant has its own
+// releases (assistant-vX.Y.Z), which are never offered as a kit.
+const FirmwareTagPrefix = "firmware-v"
+
+// ErrBadModel: a camera model id that does not follow the naming rule.
+var ErrBadModel = errors.New("not a valid camera model id")
+
+var modelRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// ValidModel reports whether s is a camera model id: lowercase a-z, 0-9 and single '-', 3 to 40 characters
+// (tools/release/models/README in docs/compatible-cameras.md).
+func ValidModel(s string) bool { return len(s) >= 3 && len(s) <= 40 && modelRe.MatchString(s) }
+
+// KitFile is the file name of the kit of a model: akam-kit-<model>-<version>.tar.xz.
+func KitFile(model, ver string) string { return "akam-kit-" + model + "-" + ver + ".tar.xz" }
+
+// KitTop is the top-level directory of that kit: akam-kit-<model>-<version>.
+func KitTop(model, ver string) string { return "akam-kit-" + model + "-" + ver }
+
+// ReleaseTag is the tag of a firmware release: firmware-vX.Y.Z.
+func ReleaseTag(ver string) string { return FirmwareTagPrefix + strings.TrimPrefix(ver, "v") }
 
 // ErrBadReleaseList: the answer is not the JSON list of releases that was asked for.
 var ErrBadReleaseList = errors.New("the answer is not a list of releases")
 
-// Release is one usable release: a published, non-draft release whose tag is vX.Y.Z and that carries the
-// three files of a kit.
+// Release is one usable firmware release for a model: a published, non-draft release whose tag is
+// firmware-vX.Y.Z and that carries the kit of that model, SHA256SUMS and its signature.
 type Release struct {
-	Version    string // X.Y.Z, without the v
-	Tag        string // vX.Y.Z
+	Version    string // X.Y.Z, without the prefix
+	Tag        string // firmware-vX.Y.Z
 	Prerelease bool
 	Published  string // YYYY-MM-DD, or "" when the date did not look like one
 	Parts      [3]int
 }
 
 var tagRe = regexp.MustCompile(`^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
+var fwTagRe = regexp.MustCompile(`^firmware-v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
 var verRe = regexp.MustCompile(`(?:^|[^0-9.])(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:$|[^0-9.]|\.(?:$|[^0-9]))`)
 var dateRe = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}`)
 
@@ -91,11 +115,16 @@ type apiRelease struct {
 	} `json:"assets"`
 }
 
-// ParseReleases keeps the usable releases of the API answer, newest version first. A release is kept
-// when it is not a draft, its tag is exactly vX.Y.Z, it carries akam-kit-X.Y.Z.tar.xz, SHA256SUMS and
-// SHA256SUMS.sig, and (unless includePre) it is not marked as a prerelease. Anything else is skipped
-// silently: a malformed entry never hides the good ones, but an answer that is not a JSON array is an error.
-func ParseReleases(data []byte, includePre bool) ([]Release, error) {
+// ParseReleases keeps the usable firmware releases of the API answer for one camera model, newest version
+// first. A release is kept when it is not a draft, its tag is exactly firmware-vX.Y.Z, it carries
+// akam-kit-<model>-X.Y.Z.tar.xz, SHA256SUMS and SHA256SUMS.sig, and (unless includePre) it is not marked as a
+// prerelease. A release without a kit for this model (an older release, or a model that was dropped) is simply
+// not listed. Anything else (assistant releases, malformed entries) is skipped silently: it never hides the
+// good ones, but an answer that is not a JSON array is an error.
+func ParseReleases(data []byte, includePre bool, model string) ([]Release, error) {
+	if !ValidModel(model) {
+		return nil, ErrBadModel
+	}
 	if len(data) > MaxReleaseList {
 		return nil, ErrTooLarge
 	}
@@ -110,15 +139,15 @@ func ParseReleases(data []byte, includePre bool) ([]Release, error) {
 		if json.Unmarshal(item, &r) != nil {
 			continue // one malformed entry never hides the good ones
 		}
-		m := tagRe.FindStringSubmatch(r.Tag)
+		m := fwTagRe.FindStringSubmatch(r.Tag)
 		if m == nil || r.Draft || (r.Prerelease && !includePre) {
 			continue
 		}
-		ver := r.Tag[1:]
+		ver := strings.TrimPrefix(r.Tag, FirmwareTagPrefix)
 		if seen[ver] {
 			continue
 		}
-		want := map[string]bool{"akam-kit-" + ver + ".tar.xz": true, "SHA256SUMS": true, "SHA256SUMS.sig": true}
+		want := map[string]bool{KitFile(model, ver): true, "SHA256SUMS": true, "SHA256SUMS.sig": true}
 		for _, a := range r.Assets {
 			delete(want, a.Name)
 		}
@@ -195,12 +224,15 @@ func fetchBytesOnce(ctx context.Context, c *Client, url string, max int64) ([]by
 }
 
 // ListReleases asks the API at apiBase (https://api.github.com) for the newest releases of repo
-// ("owner/name") and returns the usable ones, newest first.
-func ListReleases(ctx context.Context, c *Client, apiBase, repo string, includePre bool) ([]Release, error) {
+// ("owner/name") and returns the usable firmware releases for the camera model, newest first.
+func ListReleases(ctx context.Context, c *Client, apiBase, repo string, includePre bool, model string) ([]Release, error) {
+	if !ValidModel(model) {
+		return nil, ErrBadModel
+	}
 	url := fmt.Sprintf("%s/repos/%s/releases?per_page=%d", strings.TrimRight(apiBase, "/"), repo, ReleasesPerPage)
 	b, err := FetchBytes(ctx, c, url, MaxReleaseList, "application/vnd.github+json")
 	if err != nil {
 		return nil, err
 	}
-	return ParseReleases(b, includePre)
+	return ParseReleases(b, includePre, model)
 }

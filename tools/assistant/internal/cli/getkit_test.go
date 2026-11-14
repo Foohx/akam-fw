@@ -28,7 +28,7 @@ func newKitServer(t *testing.T, b kittest.Built, noSig bool) *kitServer {
 		ks.hits = append(ks.hits, r.URL.Path)
 		ks.mu.Unlock()
 		name := filepath.Base(r.URL.Path)
-		if !strings.HasPrefix(r.URL.Path, "/v1.0.0/") || (noSig && name == "SHA256SUMS.sig") {
+		if !strings.HasPrefix(r.URL.Path, "/firmware-v1.0.0/") || (noSig && name == "SHA256SUMS.sig") {
 			http.NotFound(w, r)
 			return
 		}
@@ -68,8 +68,8 @@ func TestGetKitDownloadsAndVerifiesASignedKit(t *testing.T) {
 	r := e.run("", "get-kit", "--version", "1.0.0")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Step 2/9 - Get the Akam kit",
-		"Downloading kit 1.0.0 from "+ks.srv.URL+"/v1.0.0 (HTTPS only; nothing from it is run before it is verified).",
-		"ok: akam-kit-1.0.0.tar.xz sha256 "+b.TarSHA+" matches SHA256SUMS",
+		"Downloading the lsc-indoor-1080p-ak3918 kit 1.0.0 from "+ks.srv.URL+"/firmware-v1.0.0 (HTTPS only; nothing from it is run before it is verified).",
+		"ok: akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz sha256 "+b.TarSHA+" matches SHA256SUMS",
 		"ok: signature valid (Good \"akam-release\" signature for akam-release with ED25519 key SHA256:",
 		"ok: archive layout is safe", "ok: kit_format 1 is supported", "MANIFEST entries match (akam_version 1.0.0",
 		"Kit verified (format 1, sha256 "+b.TarSHA[:12]+"...).",
@@ -88,7 +88,7 @@ func TestGetKitDownloadsAndVerifiesASignedKit(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.state, "downloads", "1.0.0", "SHA256SUMS.sig")); err != nil {
 		t.Error("signature not kept")
 	}
-	if got := strings.Join(ks.hits, " "); got != "/v1.0.0/akam-kit-1.0.0.tar.xz /v1.0.0/SHA256SUMS /v1.0.0/SHA256SUMS.sig" {
+	if got := strings.Join(ks.hits, " "); got != "/firmware-v1.0.0/akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz /firmware-v1.0.0/SHA256SUMS /firmware-v1.0.0/SHA256SUMS.sig" {
 		t.Errorf("requests: %s", got)
 	}
 	// the state it leaves is a valid get-kit step
@@ -161,14 +161,14 @@ func TestGetKitRefusals(t *testing.T) {
 		e := getKitEnv(t, ks, &b)
 		r := e.run("", "get-kit", "--version", "9.9.9")
 		expectRC(t, r, 1)
-		contains(t, r.out+r.err, "release v9.9.9 was not found (akam-kit-9.9.9.tar.xz). Akam may not have published a release yet.")
+		contains(t, r.out+r.err, "firmware release 9.9.9 was not found, or it has no kit for LSC Smart Indoor 1080p (lsc-indoor-1080p-ak3918) (akam-kit-lsc-indoor-1080p-ak3918-9.9.9.tar.xz).")
 	})
 	t.Run("tampered download", func(t *testing.T) {
 		bad := kittest.Build(t, t.TempDir(), kittest.Spec{BadSumsLine: true})
 		e := getKitEnv(t, newKitServer(t, bad, false), &bad)
 		r := e.run("", "get-kit", "--version", "1.0.0")
 		expectRC(t, r, 1)
-		contains(t, r.out+r.err, "sha256 mismatch for akam-kit-1.0.0.tar.xz", "do not use it.")
+		contains(t, r.out+r.err, "sha256 mismatch for akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz", "do not use it.")
 	})
 	t.Run("expected sha256 differs", func(t *testing.T) {
 		e := getKitEnv(t, newKitServer(t, b, false), &b)
@@ -201,11 +201,11 @@ func TestGetKitRefusals(t *testing.T) {
 		expectRC(t, r, 1)
 		contains(t, r.out+r.err, "'1/../2' is not a valid version.")
 	})
-	t.Run("development checkout has no release", func(t *testing.T) {
+	t.Run("no --version and no list to ask", func(t *testing.T) {
 		e := getKitEnv(t, nil, &b)
 		r := e.runVersion("1.0.0-dev", "get-kit")
 		expectRC(t, r, 1)
-		contains(t, r.out+r.err, "this development checkout has no release to download.", "pass --kit FILE for a kit you already have")
+		contains(t, r.out+r.err, "cannot tell which firmware release to download", "pass --version X.Y.Z", "--kit FILE for a kit you already have")
 	})
 	t.Run("blocked before doctor", func(t *testing.T) {
 		e := newEnv(t)
@@ -252,11 +252,11 @@ func TestGetKitDryRun(t *testing.T) {
 	}
 	r := e.run("", "--dry-run", "get-kit", "--version", "1.0.0")
 	expectRC(t, r, 0)
-	contains(t, r.out, "REHEARSAL (--dry-run)", "WOULD download "+ks.srv.URL+"/v1.0.0/akam-kit-1.0.0.tar.xz", "WOULD verify ")
+	contains(t, r.out, "REHEARSAL (--dry-run)", "WOULD download "+ks.srv.URL+"/firmware-v1.0.0/akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz", "WOULD verify ")
 	if len(ks.hits) != 0 {
 		t.Errorf("a dry run downloaded: %v", ks.hits)
 	}
 	r = e.runVersion("1.0.0-dev", "--dry-run", "get-kit")
 	expectRC(t, r, 0)
-	contains(t, r.out, "(development checkout: using the placeholder version X.Y.Z)")
+	contains(t, r.out, "(rehearsal: using the placeholder version X.Y.Z)")
 }

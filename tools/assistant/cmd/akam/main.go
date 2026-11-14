@@ -15,7 +15,7 @@ import (
 )
 
 // version is set at build time: -ldflags "-X main.version=...".
-var version = "1.0.0-dev"
+var version = "0.1.0"
 
 // wantPlain is the capability decision: the plain interface with --plain or AKAM_PLAIN=1, when stdin
 // or stderr is not a terminal (tui.Decide), with TERM=dumb, and when the console refused ANSI/VT

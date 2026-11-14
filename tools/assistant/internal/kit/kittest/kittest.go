@@ -30,9 +30,13 @@ import (
 // Available reports whether a kit can be written and read: always, the .xz codec is in process.
 func Available() bool { return true }
 
+// DefaultModel is the camera model of a kit that does not say another one.
+const DefaultModel = "lsc-indoor-1080p-ak3918"
+
 // Spec describes the kit to build. The zero value is a valid release kit.
 type Spec struct {
 	Version string // default 1.0.0
+	Model   string // camera model id, default DefaultModel
 	Grade   string // default release
 	Format  string // default 1
 	// Files overrides or adds payload files (path inside the kit -> content, mode 644 unless it
@@ -90,8 +94,11 @@ func AllowedLine(s gossh.Signer) []byte {
 func shaHex(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
 // DefaultFiles is the payload a kit must carry.
-func DefaultFiles() map[string][]byte {
-	hw := []byte("# test list\nvalidated|Test camera|soc|kernel|8 partitions|xz|" + strings.Repeat("ab", 32) + "\n")
+func DefaultFiles() map[string][]byte { return DefaultFilesFor(DefaultModel) }
+
+// DefaultFilesFor is DefaultFiles for a kit of the given model (its supported_hardware.txt carries the model header).
+func DefaultFilesFor(model string) map[string][]byte {
+	hw := []byte("# test list\nmodel=" + model + "\nvalidated|Test camera|soc|kernel|8 partitions|xz|" + strings.Repeat("ab", 32) + "\n")
 	return map[string][]byte{
 		"bin/ak_rtsp":                       []byte("ak_rtsp stand-in\n"),
 		"bin/dropbearmulti":                 []byte("dropbearmulti stand-in\n"),
@@ -138,6 +145,9 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	if sp.Version == "" {
 		sp.Version = "1.0.0"
 	}
+	if sp.Model == "" {
+		sp.Model = DefaultModel
+	}
 	if sp.Grade == "" {
 		sp.Grade = "release"
 	}
@@ -147,7 +157,7 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	if sp.HashAlg == "" {
 		sp.HashAlg = "sha256"
 	}
-	files := DefaultFiles()
+	files := DefaultFilesFor(sp.Model)
 	for k, v := range sp.Files {
 		if v == nil {
 			delete(files, k)
@@ -155,7 +165,7 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 			files[k] = v
 		}
 	}
-	top := "akam-kit-" + sp.Version
+	top := kit.KitTop(sp.Model, sp.Version)
 	var names []string
 	for k := range files {
 		names = append(names, k)
@@ -163,7 +173,7 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	sort.Strings(names)
 	hw := files["supported_hardware.txt"]
 	var man strings.Builder
-	fmt.Fprintf(&man, "kit_format=%s\nkit_grade=%s\nakam_version=%s\nsource_commit=0123456789abcdef0123\ntarget=arm-linux-musleabi\ntime64_gate=pass\nsupported_hardware_sha256=%s\n", sp.Format, sp.Grade, sp.Version, shaHex(hw))
+	fmt.Fprintf(&man, "kit_format=%s\nkit_grade=%s\nakam_version=%s\nmodel=%s\nsource_commit=0123456789abcdef0123\ntarget=arm-linux-musleabi\ntime64_gate=pass\nsupported_hardware_sha256=%s\n", sp.Format, sp.Grade, sp.Version, sp.Model, shaHex(hw))
 	for _, n := range names {
 		fmt.Fprintf(&man, "file %s %o %s\n", shaHex(files[n]), modeFor(n), n)
 	}
@@ -234,7 +244,7 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	b := Built{Dir: dir, Tarball: filepath.Join(dir, "akam-kit-"+sp.Version+".tar.xz"), Sums: filepath.Join(dir, "SHA256SUMS"), Sig: filepath.Join(dir, "SHA256SUMS.sig")}
+	b := Built{Dir: dir, Tarball: filepath.Join(dir, kit.KitFile(sp.Model, sp.Version)), Sums: filepath.Join(dir, "SHA256SUMS"), Sig: filepath.Join(dir, "SHA256SUMS.sig")}
 	if err := os.WriteFile(b.Tarball, xzOut, 0o644); err != nil {
 		t.Fatal(err)
 	}

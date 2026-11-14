@@ -33,6 +33,7 @@ type stagedKit struct {
 	sha        string
 	format     string
 	version    string
+	model      string // the camera model the kit is built for (MANIFEST model=)
 	unsigned   bool
 	undo       func() // puts back what building the image changed in the state (a refused or failed choice)
 }
@@ -185,7 +186,7 @@ func (a *App) commitKit(s *stagedKit) error {
 		}
 	}
 	if err := a.St.SetMany([][2]string{{"mode", "kit"}, {"kit_path", s.path}, {"kit_sha", s.sha}, {"kit_format", s.format},
-		{"kit_unsigned_ok", map[bool]string{true: "1", false: "0"}[s.unsigned]}, {"kit_version", s.version},
+		{"kit_unsigned_ok", map[bool]string{true: "1", false: "0"}[s.unsigned]}, {"kit_version", s.version}, {"kit_model", s.model},
 		{"step_get_kit_done", time.Now().UTC().Format("2006-01-02T15:04:05Z")}}); err != nil {
 		if restoreDL != nil {
 			restoreDL()
