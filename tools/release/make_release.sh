@@ -65,7 +65,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-[ -n "$FAMILY" ] && [ -n "$VERSION" ] || die "$USAGE"
+{ [ -n "$FAMILY" ] && [ -n "$VERSION" ]; } || die "$USAGE"
 case "$FAMILY" in firmware | assistant) ;; *) die "the first argument is the release family: firmware or assistant (got '$FAMILY')" ;; esac
 if [ "$TEST" = 1 ] && [ "$CHECK" = 1 ]; then die "--test and --check-signed exclude each other: a test build is never signed"; fi
 case "$VERSION" in '' | *[!A-Za-z0-9._+-]*) die "bad version '$VERSION'" ;; esac
@@ -118,7 +118,7 @@ else
     if [ -n "${ZIG:-}" ]; then
         zv="$(sed -n 's/^ZIG_VERSION=//p' "$ROOT/tools/build/deps.lock" 2>/dev/null | head -1)" || zv=""
         pz="$ROOT/tools/.toolchain/zig-$zv-x86_64-linux/zig"
-        [ -n "$zv" ] && [ -e "$pz" ] && [ "$(readlink -f -- "$ZIG")" = "$(readlink -f -- "$pz")" ] \
+        { [ -n "$zv" ] && [ -e "$pz" ] && [ "$(readlink -f -- "$ZIG")" = "$(readlink -f -- "$pz")" ]; } \
             || die "ZIG is set to a Zig other than the pinned one ($ZIG): unset it for a release"
     fi
     for v in AKAM_ALLOW_ANY_GO AKAM_STRIP AKAM_TARGETS AKAM_KIT_NO_BUILD AKAM_KIT_ALLOW_DIRTY AKAM_ALLOW_DIRTY \

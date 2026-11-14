@@ -205,7 +205,7 @@ func (m *sessModel) panelRows() int {
 	return max(m.h-6, 1)
 }
 
-// compact is the single column fallback of spec 4.1: under 60 columns or 14 lines.
+// compact is the single column fallback of specs/installer.md, section 10: under 60 columns or 14 lines.
 func (m *sessModel) compact() bool { return m.w < 60 || m.h < 14 }
 
 func (m *sessModel) current() *ask {

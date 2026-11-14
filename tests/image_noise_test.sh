@@ -39,9 +39,9 @@ echo "$out"
 col() { # label, column number (1 = label)
     printf '%s\n' "$out" | awk -v l="$1" -v c="$2" '$1 == l { print $c }'
 }
-# shellcheck disable=SC2329  # called through expect
+# shellcheck disable=SC2317,SC2329  # called through expect
 gt() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'; }
-# shellcheck disable=SC2329  # called through expect
+# shellcheck disable=SC2317,SC2329  # called through expect
 exit_is() { # expected code, command...
     local want=$1 rc=0
     shift

@@ -4,7 +4,7 @@
 #   tools/image/assemble_from_kit.sh --backup-dir DIR --kit KIT --out DIR [options]
 #
 #   --backup-dir DIR   your backup (mtdblock0.bin ... mtdblock7.bin); never modified
-#   --kit KIT          akam-kit-<version>.tar.xz (with SHA256SUMS next to it) or an extracted kit (a directory needs --allow-unsigned)
+#   --kit KIT          akam-kit-<model>-<version>.tar.xz (with SHA256SUMS next to it) or an extracted kit (a directory needs --allow-unsigned)
 #   --out DIR          where the image, its .sha256 and build_report.txt are written
 # Options passed to src/ak_rtsp/build_firmware.sh --kit:
 #   --allow-unsigned, --allow-test-kit, --recheck-time64, --comp gzip|xz,

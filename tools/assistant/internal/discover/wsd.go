@@ -261,7 +261,7 @@ func parseA(b []byte, want string) []net.IP {
 	return out
 }
 
-// MDNSLookup resolves name (for example salon.local) with one mDNS query to target.
+// MDNSLookup resolves name (for example kitchen.local) with one mDNS query to target.
 func MDNSLookup(ctx context.Context, name, target string, wait time.Duration) (net.IP, error) {
 	pc, err := net.ListenPacket("udp4", ":0")
 	if err != nil {

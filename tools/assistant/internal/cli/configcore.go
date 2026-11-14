@@ -93,7 +93,7 @@ func (a *App) cameraPlace(name string) profile.Place {
 // cfgSrc is a config to use: where it came from and what it holds.
 type cfgSrc struct {
 	label string // "global" | "camera:NAME" | "local": the value of config_source
-	desc  string // for the user: "the global config", "camera salon (read now over SSH)", ...
+	desc  string // for the user: "the global config", "camera kitchen (read now over SSH)", ...
 	set   *profile.File
 	sec   *profile.File // never nil
 	// ssid is the Wi-Fi name the camera reports (the default of the Wi-Fi question); missing is what a live
@@ -122,7 +122,7 @@ func (a *App) globalSource() (*cfgSrc, error) {
 	return &cfgSrc{label: "global", desc: "the global config", set: set, sec: sec}, nil
 }
 
-// savedStamp says when a file was saved ("saved 2026-11-13 from camera salon").
+// savedStamp says when a file was saved ("saved 2026-11-13 from camera kitchen").
 func savedStamp(set *profile.File) string {
 	s := ""
 	if v := set.Get(profile.SavedAt); v != "" {

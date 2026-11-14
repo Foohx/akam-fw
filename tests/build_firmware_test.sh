@@ -11,6 +11,9 @@ BUILD=$REPO/src/ak_rtsp/build_firmware.sh
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 TARGET=5242880
 
+# shellcheck source=tools/lib/host.sh
+. "$REPO/tools/lib/host.sh"
+
 for t in mksquashfs unsquashfs sha256sum; do
     command -v "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }
 done
@@ -165,7 +168,7 @@ check "override: stub build accepted" with_app "$FIXTURE" "$WORK/o5f"
 check "override warning recorded" grep -q 'time64 machine code check SKIPPED' "$WORK/o5f/build_report.txt"
 RA=$REPO/src/ak_rtsp/ak_rtsp
 RD=$REPO/dist/dropbear/dropbearmulti
-if command -v gdb >/dev/null 2>&1 && [ -f "$RA" ] && [ -f "$RD" ]; then
+if host_arm_gdb >/dev/null 2>&1 && [ -f "$RA" ] && [ -f "$RD" ]; then
     check "real ak_rtsp + dropbearmulti pass the gate" \
         with_app "$FIXTURE" "$WORK/o5g" AK_RTSP_BIN="$RA" DROPBEAR_MULTI="$RD" AKAM_ALLOW_UNCHECKED_TIME64=0
     check "gate ran on the installed files" grep -q 'check_time32: .*bin/dropbearmulti: ok' "$WORK/o5g.log"

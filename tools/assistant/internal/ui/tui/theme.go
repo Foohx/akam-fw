@@ -224,7 +224,7 @@ const (
 	BadgeMute
 )
 
-// maxBadgeWord is the longest word of a badge (spec 3.4).
+// maxBadgeWord is the longest word of a badge (specs/installer.md, section 10).
 const maxBadgeWord = 12
 
 // Badge is a coloured glyph plus one word, the word at most 12 columns.

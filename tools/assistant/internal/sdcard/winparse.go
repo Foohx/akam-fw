@@ -70,7 +70,7 @@ const (
 )
 
 // BusFacts maps a STORAGE_BUS_TYPE to the Facts bus name, whether the bus is virtual and the Internal flag
-// derived from it: USB, SD and MMC are the only buses a card is accepted on (spec 4.4.5), everything else is
+// derived from it: USB, SD and MMC are the only buses a card is accepted on (specs/installer.md, section 4.1), everything else is
 // either internal or unknown.
 func BusFacts(bus uint32) (name string, virtual bool, internal Tri) {
 	switch bus {

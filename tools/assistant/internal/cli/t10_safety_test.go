@@ -29,7 +29,7 @@ func (o orderWriter) Write(b []byte) (int, error) {
 	return o.w.Write(b)
 }
 
-// TestCommandShownBeforeRun (spec 6.4): the SET line of a change is in the transcript before the camera
+// TestCommandShownBeforeRun (specs/installer.md, section 12): the SET line of a change is in the transcript before the camera
 // receives it, asserted by counting the exchanges the fake camera has seen when the line is shown.
 func TestCommandShownBeforeRun(t *testing.T) {
 	e := formEnv(t)
@@ -56,7 +56,7 @@ func TestCommandShownBeforeRun(t *testing.T) {
 	}
 }
 
-// TestNoNetworkBeforeOnvifYes (spec 6.4, with TestNoNetworkBeforeScanYes): the ONVIF search of the
+// TestNoNetworkBeforeOnvifYes (specs/installer.md, section 12, with TestNoNetworkBeforeScanYes): the ONVIF search of the
 // chooser sends no packet at all (no WS-Discovery probe, no TCP dial) before an explicit yes, from the
 // board key and from the numbered menu; a yes sends exactly the probe.
 func TestNoNetworkBeforeOnvifYes(t *testing.T) {

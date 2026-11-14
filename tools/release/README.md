@@ -17,7 +17,8 @@ A kit contains only Akam's own files (ARM binaries built here, overlay scripts, 
 image or any vendor content: the user supplies their own APP dump. User-facing description:
 [docs/manual/kit.md](../../docs/manual/kit.md) and [docs/assistant.md](../../docs/assistant.md).
 
-There is no CI for releases. Everything below runs on the maintainer's Linux machine, except that an AI agent may
+CI never builds, signs or uploads a release (the only workflow that touches one is `.github/workflows/release-check.yml`: it only
+verifies the signature and checksums of an already published release). Everything below runs on the maintainer's Linux machine, except that an AI agent may
 prepare the commit, the builds and the draft: it cannot sign, because the key has a passphrase and never leaves the
 maintainer's PC.
 
@@ -186,7 +187,7 @@ never `-tags akamtest`), checks the binaries (no checkout or home path inside, f
 `THIRD_PARTY_NOTICES.md` and its own `SHA256SUMS`, which `make_release.sh` replaces by the combined one.
 Archives come from `mkarchive/` (standard library only):
 fixed mtime from `SOURCE_DATE_EPOCH` (default: commit date), owner 0/0, no user or group name, sorted entries.
-`AKAM_SIGN_WINDOWS` / `AKAM_SIGN_MACOS` are reserved hooks: nothing is signed yet (see spec 11, 8.3).
+`AKAM_SIGN_WINDOWS` / `AKAM_SIGN_MACOS` are reserved hooks: nothing is signed yet (see specs/installer.md, section 11).
 
 Reproducibility: run it twice (second time with `--out` elsewhere) and compare the two `SHA256SUMS`
 (`tests/assistant_test.sh` does this for two targets; `tools/assistant/build.sh repro` compares two builds of
@@ -215,7 +216,7 @@ or Unicode normalisation tables). The biggest remaining parts are the runtime, `
 Do not use UPX.
 
 Unlike the kit, the binaries are all published, including the platforms that no hardware test has covered yet:
-the release notes label each one `tested` or `untested` (spec 11, 7.3).
+the release notes label each one `tested` or `untested` (specs/installer.md, section 11, and docs/hardware-test-checklists.md).
 
 ## Camera models
 

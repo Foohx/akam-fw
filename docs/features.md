@@ -49,7 +49,7 @@ ONVIF. ONVIF is a trademark of ONVIF, Inc.
 |---|---|---|---|---|
 | SSH (Dropbear 2026.94) | on | TCP 22 | hardware-validated | Public-key login only, **ed25519 keys only**, no passwords, no SFTP, root only |
 | Telnet and FTP lockdown | closed | | hardware-validated | Patched at build time and double-checked by a helper script every minute |
-| NTP clock sync | off | outbound UDP 123 | hardware-validated | The camera has no clock chip and boots in the past. `./akam ntp set pool.ntp.org` |
+| NTP clock sync | off | outbound UDP 123 | hardware-validated | The camera has no clock chip and boots in the past. `./akam ntp set ntp.example.net` (no default server: you choose it, for example your router) |
 | DHCP host name | `akam-XXXX` | UDP 68 (client) | hardware-validated | `XXXX` = last 4 hex digits of the Wi-Fi MAC. Change with `./akam hostname` |
 | Wi-Fi supervisor | on | | in the image, never triggered on hardware | Restarts the Wi-Fi client or DHCP when the camera loses its address |
 | Encoder watchdog | on | | in the image, never triggered on hardware | The program exits and restarts if the encoder stalls for 30 s |

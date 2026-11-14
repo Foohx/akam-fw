@@ -39,7 +39,13 @@ MODEL_RE='[a-z0-9]+(-[a-z0-9]+)*'
 die() { echo "gather_release: error: $*" >&2; exit 1; }
 log() { echo "gather_release: $*"; }
 has_key() { grep -qE "$KEY_LINE_RE" "$1"; }
-is_kit_name() { printf '%s\n' "$1" | grep -qE "^akam-kit-$MODEL_RE-[0-9A-Za-z._+-]+\.tar\.xz$"; }
+# akam-kit-<model>-<version>.tar.xz; the model is 3 to 40 characters (ValidModel in the assistant, make_kit.sh).
+is_kit_name() {
+    printf '%s\n' "$1" | grep -qE "^akam-kit-$MODEL_RE-[0-9A-Za-z._+-]+\.tar\.xz$" || return 1
+    local m
+    m="$(printf '%s\n' "$1" | sed -E 's/^akam-kit-(.*)-[0-9A-Za-z._+]+\.tar\.xz$/\1/')"
+    [ "${#m}" -ge 3 ] && [ "${#m}" -le 40 ]
+}
 
 # The raw binary and the archive file names of the six targets.
 target_files() {
@@ -131,7 +137,7 @@ if [ "${1:-}" = --check-signed ]; then
         log "ok: the kits and the source tarball come from commit $WANTC"
     fi
     [ -f "$NOTES" ] || die "$NOTES not found (make_release.sh writes it)"
-    if grep -nE '<(sha256|key|date|version)>' "$NOTES" >/dev/null; then die "$NOTES still has a placeholder (<sha256>, <key>, <date> or <version>)"; fi
+    if grep -nE '<(sha256|key|date|version|kits|changelog)>' "$NOTES" >/dev/null; then die "$NOTES still has a placeholder (<sha256>, <key>, <date>, <version>, <kits> or <changelog>)"; fi
     grep -qF "$blob" "$NOTES" || die "$NOTES does not quote the release public key"
     if [ "$FAM" = firmware ]; then
         while IFS= read -r kf; do
@@ -204,11 +210,11 @@ if [ "$FAM" = firmware ]; then
         is_kit_name "$f" || die "unexpected file in the kit directory: $f"
     done < <(cd "$KITDIR" && LC_ALL=C find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
     refuse_images_in_tar "$SOURCE" z
-    [ -f "$ROOT/LICENSE" ] && [ -f "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in the repository"
+    { [ -f "$ROOT/LICENSE" ] && [ -f "$ROOT/THIRD_PARTY_NOTICES.md" ]; } || die "LICENSE or THIRD_PARTY_NOTICES.md missing in the repository"
     KNOWN=(LICENSE THIRD_PARTY_NOTICES.md SHA256SUMS "$MARKER")
 else
     [ -d "$ASSDIR" ] || die "--assistant-dir is not a directory"
-    [ -z "$KITDIR" ] && [ -z "$SOURCE" ] || die "--kit-dir and --source are for the firmware family"
+    { [ -z "$KITDIR" ] && [ -z "$SOURCE" ]; } || die "--kit-dir and --source are for the firmware family"
     # Assistant files: a whitelist. Anything else (an image, a dump, a stray file) stops the run.
     mapfile -t WANT < <(target_files; echo LICENSE; echo THIRD_PARTY_NOTICES.md)
     ASSFILES=()

@@ -207,7 +207,7 @@ check_onvif_ports() {
 # (found through its /proc/<pid>/fd inodes) in state ESTABLISHED or SYN_SENT whose local port is ephemeral (32768 and
 # up); RTSP and control-port clients are accepted on 554 and 8091 and do not count. Prints the number, or "?".
 tcp_outbound_of_pid() {
-    [ -d "$ROOT/proc/$1/fd" ] && [ -r "$ROOT/proc/net/tcp" ] || { echo "?"; return; }
+    { [ -d "$ROOT/proc/$1/fd" ] && [ -r "$ROOT/proc/net/tcp" ]; } || { echo "?"; return; }
     : > "$WORK/akino"
     # shellcheck disable=SC2012  # the socket links are named socket:[inode]: ls -l shows the link target, find would not
     ls -l "$ROOT/proc/$1/fd" 2>/dev/null | while read -r _l; do

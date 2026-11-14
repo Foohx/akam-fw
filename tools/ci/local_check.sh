@@ -14,6 +14,10 @@
 # so the groups together are "all".
 # Exit 0 only when every step passes. Prints "LOCAL CHECK: OK (N tests, M skipped)".
 # A test is counted as skipped when it exits 0 and prints a line starting with "skip:" or "SKIP:".
+# AKAM_CI=1 (set by GitHub CI, never by default): a test that skipped because a tool or the pinned toolchain is
+# missing (a line "skip..." that says "not installed", "absent", "missing", "no host C compiler"...) FAILS,
+# so a runner without gdb-multiarch, qemu-user, xmllint... cannot turn a safety gate into a silent pass.
+# Skips that depend on the host (running as root, no extracted APP dump, binaries not built) stay allowed.
 # Data files (next to this script):
 #   - tools/ci/shellcheck_legacy.txt: tracked scripts allowed to have findings (upstream or known)
 #   - tools/ci/tracked_exceptions.txt: tracked paths allowed despite the forbidden-file patterns
@@ -110,6 +114,8 @@ if [ -n "${AKAM_BUSYBOX:-}" ]; then
 else
     echo "pinned BusyBox absent (run tools/build/bootstrap.sh): camera-side tests may skip"
 fi
+# A skip line (any indentation) that names a missing tool or toolchain: a failure under AKAM_CI=1.
+CI_SKIP_FAIL='^[[:space:]]*skip(-part)?[: -].*(not installed|not available|absent|missing|not checked out|no host C compiler|no BusyBox|cannot encode|has no (zstd|lzo|lz4))'
 T_RUN=0
 T_PASS=0
 T_SKIP=0
@@ -119,7 +125,15 @@ trap 'rm -rf "$LOGDIR"' EXIT
 for t in "$REPO"/tests/*_test.sh; do
     [ -f "$t" ] || continue
     name=$(basename "$t")
-    want "$(test_group "$REPO/tests" "$name")" || continue
+    grp=$(test_group "$REPO/tests" "$name")
+    if [ "$grp" = unknown ]; then
+        # Every group run reports it: a new test must be classified in tools/ci/test_groups.txt.
+        T_RUN=$((T_RUN + 1))
+        T_FAIL=$((T_FAIL + 1))
+        note_fail "test $name is not listed in tools/ci/test_groups.txt (add a line 'lint|go|native|shell $name')"
+        continue
+    fi
+    want "$grp" || continue
     T_RUN=$((T_RUN + 1))
     bash "$t" >"$LOGDIR/$name.log" 2>&1 </dev/null
     rc=$?
@@ -128,6 +142,10 @@ for t in "$REPO"/tests/*_test.sh; do
         host_say red "FAIL  $name (exit $rc)"
         tail -n 25 "$LOGDIR/$name.log" | sed 's/^/      | /'
         note_fail "test $name"
+    elif [ "${AKAM_CI:-0}" = 1 ] && grep -q -i -E "$CI_SKIP_FAIL" "$LOGDIR/$name.log"; then
+        T_FAIL=$((T_FAIL + 1))
+        host_say red "FAIL  $name (AKAM_CI=1: skipped for a missing tool: $(grep -m1 -i -E "$CI_SKIP_FAIL" "$LOGDIR/$name.log"))"
+        note_fail "test $name skipped under AKAM_CI=1 (install the missing tool on the runner)"
     elif grep -q -e '^skip:' -e '^SKIP:' "$LOGDIR/$name.log"; then
         T_SKIP=$((T_SKIP + 1))
         host_say yellow "SKIP  $name ($(grep -m1 -e '^skip:' -e '^SKIP:' "$LOGDIR/$name.log"))"

@@ -33,7 +33,7 @@ Each camera has its own name, progress, log and folders. Switch with `./akam --c
 hand, or by an earlier version) is recorded without redoing anything:
 
 ```bash
-./akam --camera salon --ip 192.0.2.50 [--backup-dir DIR] register
+./akam --camera kitchen --ip 192.0.2.50 [--backup-dir DIR] register
 ```
 
 ## Configs: global, local, copy
@@ -54,7 +54,7 @@ It never holds the camera's host name (that is the camera's identity) nor `night
 | **Local** | `camera.conf` (+ `camera.secrets`) in the camera's own state folder | what was last read from, or applied to, that camera. Nothing is applied from the global config unless you ask, so the camera simply keeps these |
 | **Copy** | nothing new | take the settings of another camera, live if it answers, else its local config |
 
-`akam status` and the camera chooser say where the settings of a camera came from (`local (from global)`, `local (from camera salon)`, `local`), and the Options screen shows it in its title (`settings: local (from global)`).
+`akam status` and the camera chooser say where the settings of a camera came from (`local (from global)`, `local (from camera kitchen)`, `local`), and the Options screen shows it in its title (`settings: local (from global)`).
 
 ### Wi-Fi and passwords: your choice, each time
 
@@ -66,7 +66,7 @@ They go in `global.secrets` or `camera.secrets` (mode 600, restricted to your ac
 
 ```bash
 ./akam config forget-secrets --global        # the global config's passwords and Wi-Fi
-./akam --camera salon config forget-secrets  # one camera's
+./akam --camera kitchen config forget-secrets  # one camera's
 ```
 
 The Wi-Fi is only ever used to prepare the card of a new camera. It is never applied to a running camera (there is no command for that).
@@ -75,10 +75,10 @@ The Wi-Fi is only ever used to prepare the card of a new camera. It is never app
 
 ```bash
 ./akam config save-global                 # read this camera now into the global config (asks before replacing one)
-./akam config save-global --from salon    # ... or from another camera (live if it answers, else its saved config)
+./akam config save-global --from kitchen    # ... or from another camera (live if it answers, else its saved config)
 ./akam config show --global               # what the global config holds (passwords: set / not set)
 ./akam config apply --global              # compare with this camera, show the differences, ask, then apply
-./akam config apply --from salon          # copy the settings of camera salon to the current camera
+./akam config apply --from kitchen          # copy the settings of camera kitchen to the current camera
 ./akam config apply --global --only video,picture
 ./akam config save-local                  # record this camera's settings as its local config
 ./akam config show                        # this camera's local config
@@ -139,7 +139,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | talk through the camera speaker from this computer, or play a sound file on it | `./akam talk` (microphone, Ctrl-C stops), `./akam talk test`, `./akam say FILE`; needs the video password ([two-way audio](two_way_audio.md)) |
 | check or change the speaker volume, play a beep, switch the speaker, talk or the microphone on or off | `./akam audio` shows the settings; `./akam audio volume 0-100`, `beep`, `on`, `off`, `talk on\|off`, `mic on\|off` (saved on the camera; `mic off` removes the audio track from the stream and needs a reboot) |
 | publish the camera to Home Assistant or another MQTT broker, and take a few commands from it (off by default; the camera connects out, no new port) | `./akam mqtt set` (asks the broker, the password is not shown), then `mqtt test`; also `status`, `disable`, `forget` ([MQTT and Home Assistant](mqtt.md)) |
-| give the camera the right time (it has no clock of its own); off by default, no traffic unless you ask | `./akam ntp set pool.ntp.org` (1 to 3 servers; also `status`, `off`) |
+| give the camera the right time (it has no clock of its own); off by default, no traffic unless you ask | `./akam ntp set ntp.example.net` (you name 1 to 3 servers, there is no default one; also `status`, `off`) |
 | change brightness, contrast, saturation, sharpness, white balance or day/night mode | `./akam picture` shows them; `./akam picture brightness N` (also `contrast`, `saturation`, `sharpness`, N from -50 to 50), `wb conf\|manual`, `night auto\|day\|night`, `reset` (all of them are saved on the camera) |
 | lower the bitrate or frame rate, or change the key frame interval of the video | `./akam video` shows them; `./akam video bitrate N` (500 to 3000 kbit/s, default 1536), `fps 10\|15\|20\|25` (default 15; higher rates make dim light darker and grainier and start night mode earlier, see [troubleshooting](troubleshooting.md)), `gop N` (key frame every N seconds, 1 to 4, default 2). Saved on the camera and applied when the video service restarts (it offers to restart it for you; the stream stops for a few seconds). Resolution and flip/mirror are not available yet |
 | make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager); off by default | `./akam onvif enable [PORT]` (asks first; needs the video password), `./akam onvif status`, `./akam onvif disable` ([ONVIF](onvif.md)) |

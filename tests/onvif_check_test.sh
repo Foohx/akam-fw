@@ -112,7 +112,7 @@ failed_with() { [ "$RC" -eq 1 ] && has "$1"; }
 has() { grep -q -- "$1" "$WORK/out"; }
 hasnt() { ! grep -q -- "$1" "$WORK/out"; }
 start() { # mode -> sets PORT
-    [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null || true
+    if [ -n "$SRV_PID" ]; then kill "$SRV_PID" 2>/dev/null || true; fi
     rm -f "$WORK/port"
     python3 -I "$WORK/fake.py" "$WORK/port" "$1" &
     SRV_PID=$!

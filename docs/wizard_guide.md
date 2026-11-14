@@ -11,14 +11,14 @@ shortcuts), `?` to read what it does and what it risks, `c` to change camera, `q
 for a "Press Enter": a result shows on one line under the menu and any key clears it. In a camera list, `s` scans
 the network and `o` searches with ONVIF (each asks first), `t` types an address, `r` rechecks, `f` forgets, Esc goes back.
 
-The first run asks for a short name for your camera (for example `salon`). `./akam help`
+The first run asks for a short name for your camera (for example `kitchen`). `./akam help`
 lists every command; add `--dry-run` to rehearse without changing anything. The menu (in colour on a
 real terminal; `--plain` or no terminal gives line-by-line prompts):
 
 ```text
-╭─ Akam · guided setup ───────────────────────────────── v1.0.0-dev  3/9 done ╮
-│ Host  Arch Linux x86_64        Camera  salon · no address yet · c to change │
-│ Kit   akam 1.0.0               Image   not built yet                        │
+╭─ Akam · guided setup ───────────────────────────────────── v0.1.0  3/9 done ╮
+│ Host  Arch Linux x86_64      Camera  kitchen · no address yet · c to change │
+│ Kit   akam 0.1.0               Image   not built yet                        │
 ╰─────────────────────────────────────────────────────────────────────────────╯
    ✔  1  Check this computer                                          done
    ●  2  Get the Akam kit                                             todo
@@ -105,8 +105,8 @@ The version is read over SSH from the manifest the image carries (`/usr/local/ak
 built from a release kit state it; an image built from a source checkout states a git description, which is not a version).
 When that cannot be read (a camera flashed before this, an image built by hand), the version this assistant recorded after
 its own last write is used, and only while the camera still reports the build seen after that write; otherwise the version
-is unknown and **no downgrade warning can be given**. The list of releases is only advice read from GitHub (HTTPS, at most 1 MiB,
-once per session): nothing in it is trusted, and a kit is never used without its SHA256SUMS and signature check. If GitHub
+is unknown and **no downgrade warning can be given**. The list of releases is only advice read from GitHub (HTTPS, at most 8 MiB
+per page and 5 pages of 50 releases, once per session): nothing in it is trusted, and a kit is never used without its SHA256SUMS and signature check. If GitHub
 cannot be reached (offline, rate limit), the list says so and the local rows stay available. Prereleases are hidden unless
 you pass `--include-prereleases`. In a source checkout (`mode=source`) the first install shows no list: the kit comes from
 the checkout. A release or a kit needs an image built from it and from your own stock backup. Until the native builder is
@@ -123,7 +123,7 @@ release: it has its own row, and a release row asks (default No) before writing 
 ```bash
 akam releases [--include-prereleases]            # the published versions, newest first
 akam update --version 0.2.0                        # a release (verified like get-kit)
-akam update --kit akam-kit-0.2.0.tar.xz            # a kit you have
+akam update --kit akam-kit-lsc-indoor-1080p-ak3918-0.2.0.tar.xz            # a kit you have
 akam update --image my.squashfs                    # an image you built
 akam update --stock                                # back to the original firmware (restore, same gates)
 ```

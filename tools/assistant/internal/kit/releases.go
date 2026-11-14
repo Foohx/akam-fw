@@ -17,12 +17,22 @@ import (
 // exactly as when a version is typed by hand, and nothing the list says (name, date, text) is shown
 // except a version number that passed the strict tag rule below.
 
-// MaxReleaseList caps the answer of the list (50 releases are about 200 KiB in practice).
-const MaxReleaseList = 2 << 20
+// MaxReleaseList caps ONE page of the answer: 8 MiB. A page of 50 releases is a few hundred KiB, but each
+// release carries its notes (and a firmware release lists the assets of every model), so the cap is generous
+// on purpose; an answer longer than that is refused (ErrTooLarge), never truncated.
+const MaxReleaseList = 8 << 20
 
-// ReleasesPerPage is the page size asked from the API: the newest 50 releases (firmware and assistant releases
-// share the list; only the firmware ones are used).
+// ReleasesPerPage is the page size asked from the API (firmware and assistant releases share the list; only the
+// firmware ones are used). ListReleases follows the pages (page=1, 2, ...) while a page is full, up to
+// MaxReleasePages pages, and stops earlier once EnoughReleases usable releases for the model were found: the
+// newest firmware releases may sit behind a run of assistant releases.
 const ReleasesPerPage = 50
+
+// MaxReleasePages bounds the pagination; EnoughReleases ends it early.
+const (
+	MaxReleasePages = 5
+	EnoughReleases  = 10
+)
 
 // FirmwareTagPrefix starts the tag of every firmware release (firmware-vX.Y.Z). The assistant has its own
 // releases (assistant-vX.Y.Z), which are never offered as a kit.
@@ -122,18 +132,24 @@ type apiRelease struct {
 // not listed. Anything else (assistant releases, malformed entries) is skipped silently: it never hides the
 // good ones, but an answer that is not a JSON array is an error.
 func ParseReleases(data []byte, includePre bool, model string) ([]Release, error) {
+	out, _, err := parseReleasePage(data, includePre, model, map[string]bool{})
+	sortReleases(out)
+	return out, err
+}
+
+// parseReleasePage parses one page; seen (versions already kept, updated here) makes a version that shows up
+// twice count once. n is the number of entries of the page (usable or not), to tell a short last page.
+func parseReleasePage(data []byte, includePre bool, model string, seen map[string]bool) (out []Release, n int, err error) {
 	if !ValidModel(model) {
-		return nil, ErrBadModel
+		return nil, 0, ErrBadModel
 	}
 	if len(data) > MaxReleaseList {
-		return nil, ErrTooLarge
+		return nil, 0, ErrTooLarge
 	}
 	var raw []json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("%w (%s)", ErrBadReleaseList, "not a JSON array")
+		return nil, 0, fmt.Errorf("%w (%s)", ErrBadReleaseList, "not a JSON array")
 	}
-	var out []Release
-	seen := map[string]bool{}
 	for _, item := range raw {
 		var r apiRelease
 		if json.Unmarshal(item, &r) != nil {
@@ -164,6 +180,10 @@ func ParseReleases(data []byte, includePre bool, model string) ([]Release, error
 		}
 		out = append(out, rel)
 	}
+	return out, len(raw), nil
+}
+
+func sortReleases(out []Release) {
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i].Parts, out[j].Parts
 		for k := range a {
@@ -173,7 +193,6 @@ func ParseReleases(data []byte, includePre bool, model string) ([]Release, error
 		}
 		return false
 	})
-	return out, nil
 }
 
 // FetchBytes is one bounded HTTPS GET kept in memory (an answer longer than max is ErrTooLarge). Unlike
@@ -224,15 +243,36 @@ func fetchBytesOnce(ctx context.Context, c *Client, url string, max int64) ([]by
 }
 
 // ListReleases asks the API at apiBase (https://api.github.com) for the newest releases of repo
-// ("owner/name") and returns the usable firmware releases for the camera model, newest first.
+// ("owner/name") and returns the usable firmware releases for the camera model, newest first. It follows the
+// pages (page=N) while they are full, at most MaxReleasePages of them and not once EnoughReleases usable
+// releases were found; an error on a later page is returned only when nothing usable was found yet.
 func ListReleases(ctx context.Context, c *Client, apiBase, repo string, includePre bool, model string) ([]Release, error) {
 	if !ValidModel(model) {
 		return nil, ErrBadModel
 	}
-	url := fmt.Sprintf("%s/repos/%s/releases?per_page=%d", strings.TrimRight(apiBase, "/"), repo, ReleasesPerPage)
-	b, err := FetchBytes(ctx, c, url, MaxReleaseList, "application/vnd.github+json")
-	if err != nil {
-		return nil, err
+	var all []Release
+	seen := map[string]bool{}
+	for page := 1; page <= MaxReleasePages; page++ {
+		url := fmt.Sprintf("%s/repos/%s/releases?per_page=%d&page=%d", strings.TrimRight(apiBase, "/"), repo, ReleasesPerPage, page)
+		b, err := FetchBytes(ctx, c, url, MaxReleaseList, "application/vnd.github+json")
+		if err != nil {
+			if page > 1 && len(all) > 0 {
+				break // the newest releases are already known: a failure further back does not hide them
+			}
+			return nil, err
+		}
+		got, n, err := parseReleasePage(b, includePre, model, seen)
+		if err != nil {
+			if page > 1 && len(all) > 0 {
+				break
+			}
+			return nil, err
+		}
+		all = append(all, got...)
+		if n < ReleasesPerPage || len(all) >= EnoughReleases {
+			break
+		}
 	}
-	return ParseReleases(b, includePre, model)
+	sortReleases(all)
+	return all, nil
 }

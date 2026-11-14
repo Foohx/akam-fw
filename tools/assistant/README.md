@@ -129,7 +129,7 @@ when you are done.
 ### Interim image rule (Windows and macOS)
 
 The native squashfs builder is not available yet (reader merged; writer and assembly pending; the hardware gate of
-spec 11, section 4.8, must pass before any user flashes with it). Until then **on Windows and macOS you import an
+specs/installer.md, section 11 (Supported host platforms), must pass before any user flashes with it). Until then **on Windows and macOS you import an
 image built on Linux or in WSL**: build it with `./akam image` there, copy the 5 242 880-byte file, and pass
 `--image FILE`. The program checks the size and records the md5, which the red box shows before the flash. On Linux
 the default stays the bash `image` step.
@@ -269,7 +269,7 @@ partition (only active holders are seen). The Windows and macOS layers are descr
 
 ### Image building (spike result)
 
-The squashfs spike (specs/09, section 10.2) found no mature MIT/BSD pure-Go writer, so `image` stays in the bash
+The squashfs spike (specs/installer.md, section 6, Image build) found no mature MIT/BSD pure-Go writer, so `image` stays in the bash
 wizard (`mksquashfs`/`unsquashfs`, reported by `doctor`). `update` takes `--image FILE` or the image the bash step recorded.
 
 ### SSH and host keys

@@ -2,7 +2,7 @@
 # transfer: move files between the PC and the camera with bash /dev/tcp and the camera's BusyBox
 # `nc -l`. The PC always connects OUT (its firewall blocks inbound connections); the camera
 # listens. No netcat, python or telnet client is needed on the PC. Every transfer is verified
-# (size + hash computed on both sides) and retried, 3 tries by default (spec 2.5).
+# (size + hash computed on both sides) and retried, 3 tries by default (specs/installer.md, section 7.2).
 #
 #   xfer_put LOCAL REMOTE        PC -> camera   camera: nc -l -p 8765 > REMOTE     PC: cat > /dev/tcp
 #   xfer_get REMOTE LOCAL [SIZE [HASH]]

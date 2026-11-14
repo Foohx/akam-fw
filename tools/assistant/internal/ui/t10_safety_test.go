@@ -2,7 +2,7 @@ package ui
 
 import "testing"
 
-// TestPlainDangerDefaultsNo (spec 6.4): Enter, q, Esc, n, junk and the end of the input are all No; only
+// TestPlainDangerDefaultsNo (specs/installer.md, section 12): Enter, q, Esc, n, junk and the end of the input are all No; only
 // y / yes answers yes.
 func TestPlainDangerDefaultsNo(t *testing.T) {
 	for _, in := range []string{"", "\n", "n\n", "N\n", "q\n", "\x1b\n", "nope\n", "yy\n", " y\n", "1\n", "\x03\n", "\x04"} {

@@ -95,11 +95,11 @@ creds_state() {
     } <"$CRED_FILE" 2>/dev/null
     _cu=${_c1#user=}
     _cp=${_c2#pass=}
-    [ "$_cu" != "$_c1" ] && [ "$_cp" != "$_c2" ] || { _cp=; return 1; }
+    { [ "$_cu" != "$_c1" ] && [ "$_cp" != "$_c2" ]; } || { _cp=; return 1; }
     case $_cu in '' | *[!A-Za-z0-9._@+-]*) _cp=; return 1 ;; esac
     [ "${#_cu}" -le "$USER_MAX" ] || { _cp=; return 1; }
     case $_cp in *[[:cntrl:]]*) _cp=; return 1 ;; esac
-    [ "${#_cp}" -ge "$MIN_PASS" ] && [ "${#_cp}" -le "$MAX_PASS" ] || { _cp=; return 1; }
+    { [ "${#_cp}" -ge "$MIN_PASS" ] && [ "${#_cp}" -le "$MAX_PASS" ]; } || { _cp=; return 1; }
     _cp=
     CRED_MSG="set"
     return 0

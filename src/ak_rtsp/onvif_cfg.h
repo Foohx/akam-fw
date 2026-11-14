@@ -13,7 +13,7 @@
  * States (onvif_svc_state, "GET onvif.state"): off | on:<port> | no_password | error:<reason>.
  *   no_password: enabled, the RTSP password is ON (or its file is broken) but there are no valid clear-text
  *                credentials for the WS-Security login (cred.h): nothing is started. When the RTSP password is OFF
- *                ONVIF does start: reads are open and the writes are refused (spec 3.3, onvif.c).
+ *                ONVIF does start: reads are open and the writes are refused (specs/onvif.md, section 3, onvif.c).
  *   error:port_in_use | error:permission_denied | error:http_failed | error:discovery_failed.
  * The device name scope comes from the hostname at the time of the reload (a hostname change applies at the next
  * reload or start). The camera IP is not captured: XAddrs are built per request from the address that routes to

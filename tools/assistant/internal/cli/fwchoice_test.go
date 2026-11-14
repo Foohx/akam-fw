@@ -167,7 +167,7 @@ func TestReleasesCommandListsNewestFirst(t *testing.T) {
 		t.Error("not newest first")
 	}
 	notContains(t, r.out, "1.0.0", "rc1", "0.11.0")
-	if a.query != "per_page=50" || a.accept != "application/vnd.github+json" {
+	if a.query != "per_page=50&page=1" || a.accept != "application/vnd.github+json" {
 		t.Errorf("request: query %q accept %q", a.query, a.accept)
 	}
 	r = e.run("", "releases", "--include-prereleases")

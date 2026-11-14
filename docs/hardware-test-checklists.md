@@ -191,8 +191,8 @@ Repeat the daily-use checks of the Linux wizard and add:
 | H3b.3 | Move the camera (or add a wall) until the signal is below -70 dBm, open Camera options | level `weak` or `poor`, the warning names moving the camera or a repeater and, with the default video settings, `./akam video bitrate 1024 gop 1`; nothing changes on the camera | [ ] | |
 | H3b.4 | Same, in the dark (night mode, fps around 10) | the warning says the low frame rate at night is the exposure, not the Wi-Fi | [ ] | |
 | H3b.5 | Right after a power-up without time sync, open Camera options | `Clock: not set`; asked `Set the camera clock from this computer now?` with default No; Enter changes nothing; `y` sets it (also confirms busybox `date -u -s 'YYYY-MM-DD hh:mm:ss'` works on the camera), the next screen shows `Clock: set, +/-1 s` | [ ] | |
-| H3b.6 | Reboot the camera (by hand) with time sync off, then on | the clock is unset again when off; with `ntp set pool.ntp.org` it is right after a minute | [ ] | |
-| H3b.7 | End of `verify` of an install or update | time sync is offered, default No; `y` then Enter turns on `pool.ntp.org`, `y` then a LAN server address uses it | [ ] | |
+| H3b.6 | Reboot the camera (by hand) with time sync off, then on | the clock is unset again when off; with `ntp set ntp.example.net` (a server you chose; use a real one for the test) it is right after a minute | [ ] | |
+| H3b.7 | End of `verify` of an install or update | time sync is offered, default No; there is no default server: `y` asks for the server(s) to use, and an empty answer changes nothing; `y` then a LAN server address (or a server you name) uses it | [ ] | |
 
 ### H4 - End to end per OS
 

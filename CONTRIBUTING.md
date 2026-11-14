@@ -5,8 +5,8 @@ Thank you for helping. Akam is a small personal project: please keep changes foc
 ## Licence and sign-off
 
 - Contributions are under the [MIT licence](LICENSE) (inbound = outbound).
-- Every commit needs a `Signed-off-by:` line (`git commit -s`), by a **human**, following the
-  [Developer Certificate of Origin 1.1](https://developercertificate.org/). This also applies to changes written with
+- Every commit of a contribution submitted by pull request needs a `Signed-off-by:` line (`git commit -s`), by a
+  **human**, following the [Developer Certificate of Origin 1.1](https://developercertificate.org/). This also applies to changes written with
   AI assistance: the person who signs is responsible for them.
 
 ## What must never be committed

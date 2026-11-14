@@ -165,3 +165,28 @@ func TestBackupRecognisesTheModelFromTheStockAPP(t *testing.T) {
 	r = w.run("", "status")
 	contains(t, r.out, "Camera model: Fixture camera (fixture-cam-model)")
 }
+
+// With several models in the registry and none known, a non-interactive run names --model; the stock APP of a
+// recorded backup (backup_sha) is enough to know the model; --model is recorded in the state.
+func TestSeveralModelsKnownFromBackupShaOrAsked(t *testing.T) {
+	sha := strings.Repeat("ab", 32)
+	remove := models.AddForTests(models.Model{ID: "fixture-cam-model", Name: "Fixture camera",
+		Records: []models.Record{{Status: "validated", Device: "fixture", AppSHA: sha}}})
+	defer remove()
+	e := newEnv(t)
+	useAPI(t, e, newFwAPI(t, relList(relJSON("v1.0.0", false, false))))
+	r := e.run("", "releases")
+	expectRC(t, r, 1)
+	contains(t, r.out, "--model")
+	// the recorded backup's stock APP names the model
+	e.writeState("backup_sha=" + sha + "\n")
+	r = e.run("", "releases")
+	contains(t, r.out, "Camera model: Fixture camera")
+	// --model is recorded in the camera's state
+	e = newEnv(t)
+	useAPI(t, e, newFwAPI(t, relList(relJSON("v1.0.0", false, false))))
+	e.run("", "releases", "--model", lscModel)
+	if got := e.readState("camera_model"); got != lscModel {
+		t.Errorf("camera_model = %q, want %q", got, lscModel)
+	}
+}
