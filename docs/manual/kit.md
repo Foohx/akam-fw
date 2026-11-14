@@ -8,7 +8,7 @@ verification works, for people who want to check it by hand.
 The kit lets you build an Akam firmware image without installing a compiler,
 Zig, CMake or gdb. You only need `squashfs-tools` and your own dump of the
 camera's APP partition (the flash partition that holds the camera's application, the only one Akam rewrites; the
-flash is split into numbered MTD partitions, see the [flash map](flash_partition_map_and_rootfs.md)).
+flash is split into numbered MTD partitions, see the [flash map](../how-it-works.md#flash-map)).
 
 ## What it is, and what it is not
 
@@ -99,7 +99,7 @@ built with the same squashfs compression as your stock APP (xz or gzip).
 ## About the time64 check
 
 The camera's kernel acknowledges musl's 64-bit time syscalls without executing
-them, which would break every clock read ([kernel_time64](akam_v1_kernel_time64.md)).
+them, which would break every clock read ([the clock bug](../how-it-works.md#the-clock-bug-time64)).
 The maintainer's build refuses to produce a kit unless `ak_rtsp` and
 `dropbearmulti` pass `tools/build/check_time32.sh --require-263`; the verdict is
 written in `MANIFEST.txt`. You do not need `gdb` to use the kit.
@@ -107,11 +107,11 @@ written in `MANIFEST.txt`. You do not need `gdb` to use the kit.
 ## Build the kit yourself
 
 `tools/release/make_kit.sh` needs the full toolchain (see
-[akam_v1_build.md](akam_v1_build.md)). Two builds of the same commit with the same
+[build guide](build.md)). Two builds of the same commit with the same
 `SOURCE_DATE_EPOCH` and the same binaries give a byte-identical tarball. The
 binaries themselves embed a build number and timestamp, so recompiling gives
 different `ak_rtsp` bytes. Maintainer procedure:
-[tools/release/README.md](../tools/release/README.md).
+[tools/release/README.md](../../tools/release/README.md).
 
 ## Status
 

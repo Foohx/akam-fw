@@ -20,7 +20,7 @@ The camera gets its address by DHCP. Options:
 - look at your router's list of clients; the Wi-Fi chip's maker shows up as **AltoBeam**;
 - use the wizard's `find-camera` step (`./akam step find-camera`);
 - reserve a fixed address for the camera in your router, so it never changes
-  ([network hardening](akam_v1_install.md#5-network-hardening)).
+  ([network hardening](using_akam.md#network-hardening)).
 
 In this documentation the address is always written `<camera-ip>`.
 
@@ -194,14 +194,14 @@ connection, so its firewall is not the cause). Check that the PC and the camera 
 that the router's "AP isolation" or "client isolation" is off, and that the camera still answers
 (`ping <camera-ip>`). The wizard retries each file three times and checks size and hash. If it still
 fails, the dumps are on the card: copy them by hand and pass the folder with `--backup-dir`
-([manual backup](akam_v1_backup_sd.md#9-copy-to-the-pc-and-verify-there)).
+([manual backup](manual/backup-sd.md#9-copy-to-the-pc-and-verify-there)).
 
 ## `nc` stays waiting on a Telnet session
 
 When driving the maintenance Telnet by hand (`nc <camera-ip> 24`), `nc` does not exit by itself: it
 waits for the camera to close the connection. That is normal. Press `Ctrl+C` once you have the
 output you wanted. Telnet is only open while a maintenance card is in the camera
-([maintenance flag](akam_v1_ssh_and_lockdown.md#7-maintenance-flag)); with no card it is closed on
+([maintenance flag](manual/ssh-and-lockdown.md#7-maintenance-flag)); with no card it is closed on
 purpose.
 
 ## GitHub error 5xx while downloading (bootstrap or `get-kit`)
@@ -284,7 +284,7 @@ ssh-keygen -R <camera-ip>
 ```
 
 A CONFIG wipe also removes your key from the camera, so you need the first-boot card again. Details:
-[host key change after a CONFIG wipe](akam_v1_ssh_and_lockdown.md#host-key-change-after-a-config-wipe).
+[host key change after a CONFIG wipe](manual/ssh-and-lockdown.md#host-key-change-after-a-config-wipe).
 
 ## OpenSSH warns "not using a post-quantum key exchange algorithm"
 
@@ -295,7 +295,7 @@ your own ssh commands add `-o LogLevel=ERROR`.
 
 ## Speaker output: test the camera speaker by ear (step A)
 
-Work in progress (specs/05-spec-audio-out.md): this image makes `ak_rtsp` drive the camera speaker, with a
+Work in progress (specs/audio.md): this image makes `ak_rtsp` drive the camera speaker, with a
 built-in beep to check it. It is on by default and follows the sequence of the stock firmware (mono, 8 kHz,
 route 4, gain 2, taken from a capture of the stock application). It is **not validated end to end on
 hardware yet**: an earlier build used a wrong ioctl number for the amplifier and stayed silent, this one
@@ -443,4 +443,4 @@ up; if not, send that log.
 
 Run `./akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the
 project's repository with the step name and the (redacted) log. Never attach your backup or keys. For
-a camera that no longer boots, see [recovery](akam_v1_flash_and_restore.md#5-restore).
+a camera that no longer boots, see [recovery](manual/flash-and-restore.md#5-restore).

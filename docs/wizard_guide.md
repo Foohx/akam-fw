@@ -2,7 +2,7 @@
 
 This page is for people who want to know what `./akam` does at each step, how its menu works, and what the
 experimental single-file `akam` binary can and cannot do. To install Akam you only need the short steps in the
-[README](../README.md#install-in-5-steps).
+[README](../README.md#install-quick-start).
 
 ## The menu
 
@@ -64,7 +64,7 @@ Good to know:
   that is missing is created with `ssh-keygen` (it asks the passphrase) after a yes; an existing file is never overwritten.
   Changing the key of a camera that is already installed is not available in this bash wizard (use the card again, or the
   assistant: `akam key use-shared | use-new | use FILE.pub`, see
-  [SSH provisioning](akam_v1_ssh_and_lockdown.md#change-the-key-over-ssh)).
+  [SSH provisioning](manual/ssh-and-lockdown.md#change-the-key-over-ssh)).
 - **Wi-Fi:** `flash` and `verify` save it on the camera and never ask you to remove the card before
   ([if it fails](troubleshooting.md#the-camera-has-no-network-after-removing-the-card)).
 - Keep your backup (two copies, on two media) and never publish it: it holds your Wi-Fi credentials.
@@ -73,7 +73,7 @@ Good to know:
 ## Native binary (experimental)
 
 A single static binary version of the wizard is being written in Go ([tools/assistant](../tools/assistant/README.md),
-[plan](../specs/09-spec-assistant-binary.md)). It is **experimental: the bash wizard (`./akam`) remains the
+[plan](../specs/installer.md)). It is **experimental: the bash wizard (`./akam`) remains the
 reference**. The binary covers the daily commands on a camera that already runs Akam (`status`, `led`, `audio`,
 `picture`, `video`, `debug`, `onvif`, `ntp`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`) with no SSH,
 `nc` or `akam-talk` to install, kit download and verification, `update`, `restore` and `verify` over SSH, and a
@@ -82,7 +82,7 @@ first install through the maintenance telnet and a built-in microSD writer (`bac
 update, restore, verify, telnet backup and flash and SD writer phases were never run against a real camera or card.
 Phase 11 adds builds for Linux, Windows and macOS (amd64 and arm64), a home screen with a camera chooser and option screens,
 and a backup over SSH. The Windows and macOS binaries are **built, not hardware-tested**, and they import an image built on Linux
-or in WSL for now ([install and unsigned-binary steps](assistant_install.md), [hardware test plan](assistant_hardware_test_plan.md)).
+or in WSL for now ([install and unsigned-binary steps](assistant.md), [hardware test plan](hardware-test-checklists.md#assistant-checklists)).
 It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
 `AKAM_USE_BIN=1 ./akam ...`.
 

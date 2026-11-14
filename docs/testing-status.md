@@ -2,112 +2,76 @@
 
 This page separates three levels of evidence, so you know what to trust:
 
-- **Host tests**: the `tests/*.sh` scripts, run on a PC with fixtures, fake binaries and stubs. They check logic,
+- **Host tests:** the `tests/*.sh` scripts, run on a PC with fixtures, fake binaries and stubs. They check logic,
   parsing, limits and file formats. They say nothing about the real hardware, the real kernel or real clients.
-- **Validated in RAM**: a development build copied to `/tmp` on one camera and run from there, before the final image.
-- **Hardware validated**: the flashed image, running on the cameras listed in [compatible cameras](compatible-cameras.md).
+- **Validated in RAM:** a development build copied to `/tmp` on one camera and run from there, before the final image.
+- **Hardware validated:** the flashed image, running on the cameras of [compatible cameras](compatible-cameras.md).
 
-Anything marked "not yet" has **not** been run on a camera. Older, more detailed checklists are in the
-[test plan](akam_v1_test_plan.md).
+"Not yet" means **not run on a camera**. Checklists to tick on your own camera:
+[hardware test checklists](hardware-test-checklists.md).
 
-## Hardware results of 2026-11-12 (maintainer records)
+## Summary of the hardware results
 
-- **Image "v6"** (klog filter, RTSP/TCP backpressure `tx_pace`, ONVIF, watchdog, NTP, video config) flashed on two cameras (LSC Smart
-  Indoor 1080p 3215672.3) and run with a home server pulling RTSP: 14.9 to 15 fps, TCP send queue 0 to 24 KB, 0 encoder errors. The klog
-  filter works on hardware (syslog about 460 KB a day, about 1.5 days kept in RAM).
-- **Image "v7"** (adds 20 and 25 fps) flashed on one camera: 25 fps configured; night mode correctly drops to 10 fps; 0 encoder errors.
-  A RAM test delivered exactly 15, 20, 25 and 30 fps. On 2026-11-13 in daylight the flashed camera delivered exactly 25 fps (751 frames in 30 s), about 1.4 Mbit/s, 0 encoder errors and 0 skipped frames, with a picture as bright as at 15 fps.
-- **MQTT**: host-tested only. **Native image builder** (`akam image --builder native`): experimental, opt-in, never flashed.
-- **Assistant**: Linux amd64 partly tested on real cameras (SSH, 8091 options, `video show`, `led`, `ntp`, `talk`); update, restore, telnet
-  backup and flash, the SD writer and first install were never run on hardware from the Go assistant. Windows amd64: an earlier build was
-  tested on a real camera (discovery, options over SSH, talk with the PC microphone, clock offer); the new full-screen interface build is
-  pending its Windows test; the SD writer and flash are not tested. macOS and arm64: built, not hardware-tested.
-  Microphone capture is built in on Linux (PulseAudio or PipeWire) and on Windows (WASAPI); only macOS needs `ffmpeg`.
+Two cameras (LSC Smart Indoor 1080p `3215672.3`) were flashed with a recent image and ran continuously with a home
+server pulling RTSP.
 
-## Hardware results in short
-
-**Earlier results (2026-11-10 and 2026-11-11).** `akam-01` was flashed with the development image built 2026-11-11 (ONVIF,
-encoder-stall watchdog, Wi-Fi supervisor, opt-in NTP, video config, quieter logs, review fixes); `akam-02` ran the image of
-2026-11-10. Both were reflashed with image "v6" on 2026-11-12 (see above). Seen on `akam-01` with the 2026-11-11 image:
-
-- a clean boot after a power cycle; ports 22, 554 and 8091 only by default, no UDP; settings kept across the flash;
-- ONVIF enabled, then validated with `tools/hw_tests/onvif_check.py`: 34 of 35 checks OK (the failure was a tool bug,
-  since fixed); WS-Discovery; WSSE authentication with the camera clock unset (year 2000); imaging Set/Get with restore;
-  no flash write. Answers take 25 to 75 ms, with outliers of about 1 s on weak Wi-Fi (RSSI -70 dBm);
-- a second RTSP client gets 503 while one client streams (100 attempts), and the stream is unaffected.
-
-ONVIF Device Manager v2.2.250 on Windows: camera found by WS-Discovery, login with the stream user, live video plays, imaging changes are visible live (2026-11-11).
-
-**Hardware validated on two cameras** (firmware image built 2026-11-10, "v3 ctl"; both cameras have since moved to image "v6"):
-
-- RTSP H.264 1080p 15 fps video plus microphone, with VLC, ffmpeg and go2rtc over TCP;
-- RTSP Digest authentication;
-- ONVIF RTSP backchannel talk (speaker);
-- status LED on, off and auto, and the IR LED auto mode;
-- automatic day/night switching, including the night probe with the IR back-on logic;
-- port 8091 read-only from the network with its metrics (`sys.*`, `net.*`, `video.*`, `rtsp.*`); `SET` refused
-  remotely;
-- SSH key administration, with Telnet and FTP disabled;
-- flash over SSH with read-back verification, and a clean boot after a power cycle on both cameras.
-
-**Validated in RAM on one camera** (development build run from `/tmp`, before the final image):
-
-- a 15-minute soak: same process id throughout, no encoder-stall self-exit, load about 0.1;
-- picture settings persistence: a saturation value survived a daemon restart and a forced night to day switch.
+- **Video:** 15 fps measured on both cameras (14.9 to 15 fps, 0 encoder errors); 25 fps measured in daylight on one
+  (751 frames in 30 s, about 1.4 Mbit/s, 0 skipped frames); night mode correctly drops to 10 fps. A RAM test delivered
+  exactly 15, 20, 25 and 30 fps (30 is not offered).
+- **Boot and ports:** clean boot after a power cycle; only ports 22, 554 and 8091 listen by default, no UDP listener;
+  settings survive a flash.
+- **ONVIF-compatible services:** `tools/hw_tests/onvif_check.py` 34 of 34 checks (including RTSP Digest `DESCRIBE`),
+  WS-Discovery, WS-Security with the camera clock unset, imaging set and get with restore; ONVIF Device Manager on
+  Windows found the camera, logged in, played live video and changed the image. Answers take 18 to 75 ms, with
+  outliers of about 1 s on weak Wi-Fi.
+- **RTSP:** a second client gets 503 while one streams (100 attempts) and the stream is unaffected.
+- **Logs:** the kernel log filter works: syslog about 460 KB a day, about 1.5 days kept in RAM.
+- **RAM soak** (one camera, 15 minutes): same process throughout, no encoder-stall exit, load about 0.1.
 
 ## Matrix
 
-| Feature | Host tests | Hardware validated | Notes |
+| Feature | Host tests | Hardware | Notes |
 |---|---|---|---|
-| RTSP H.264 1080p 15 fps video and microphone | `rtsp_sdp_test.sh`, `rtsp_in_test.sh`, `rtp_in_test.sh`, `rtp_clock_test.sh`, `h264_params_test.sh`, `jitter_test.sh`, `rtsp_idle_test.sh`, `net_tx_test.sh` | Yes, two cameras (VLC, ffmpeg, go2rtc over TCP) | VLC over UDP can freeze behind a client firewall: use TCP |
-| RTSP Digest authentication | `rtsp_auth_test.sh`, `auth_thread_test.sh`, `rtsp_auth_cmd_test.sh`, `cred_test.sh`, `wizard_rtsp_auth_test.sh` | Yes, two cameras | Off by default |
-| Only one RTSP client, 503 for a second | `rtsp_busy_test.sh` | Yes, akam-01 (image of 2026-11-11): 100 attempts while one client streamed, each extra client got 503, the stream was unaffected | Use go2rtc in front for several viewers |
-| ONVIF backchannel talk (speaker) | `rtsp_backchannel_test.sh`, `talk_test.sh`, `audio_out_test.sh`, `audio_vad_test.sh`, `g711_test.sh`, `akam_talk_test.sh`, `wizard_talk_test.sh` | Yes, two cameras | Needs the video password |
-| Microphone off (`audio.mic_enable=0`) with the speaker | `audio_sup_test.sh`, `wizard_audio_test.sh` | Not yet | Capture supervisor with backoff is host-tested only |
-| Front LED, IR LED | `leds_test.sh`, `wizard_led_test.sh` | Yes: status on, off, auto; IR auto | |
-| Automatic day/night switching | `night_logic_test.sh`, `isp_effects_test.sh`, `isp_blocks_test.sh`, `isp_block_diff_test.sh` | Yes, including the night probe and the IR back-on logic | Long runs across dusk and dawn are in the [test plan](akam_v1_test_plan.md) |
-| Picture settings (brightness, contrast, saturation, sharpness) | `isp_tune_test.sh`, `imgq_test.sh`, `wizard_picture_test.sh` | In RAM, one camera: persistence across a daemon restart and a forced night to day switch | Not yet checked on the final image |
-| Video config (bitrate, fps, gop) | `video_cfg_test.sh`, `video_apply_test.sh`, `wizard_video_test.sh` | Frame rate: yes (image v7 on one camera: 25 fps measured in daylight on 2026-11-13, 10 fps in night mode; 15 fps on two). Bitrate and GOP: in the flashed image, not exercised on the camera yet | Applied at the next restart of the video service |
-| Port 8091 metrics, read-only from the network | `control_test.sh`, `ctl_sys_test.sh`, `http_srv_test.sh`, `wizard_core_test.sh` | Yes: reads work, `SET` refused remotely | |
+| RTSP H.264 1080p video and microphone (15 fps) | RTSP, RTP, SDP, jitter, TCP pacing tests | Yes, two cameras (VLC, ffmpeg, go2rtc over TCP) | VLC over UDP can freeze behind a client firewall: use TCP |
+| RTSP Digest authentication | auth and credential tests | Yes, two cameras | Off by default |
+| One RTSP client, 503 for a second | `rtsp_busy_test.sh` | Yes | Use go2rtc in front for several viewers |
+| Talk through the speaker (ONVIF backchannel) | backchannel, talk, G.711, VAD tests | Yes, two cameras | Needs the video password |
+| Microphone off with the speaker on | `audio_sup_test.sh`, `wizard_audio_test.sh` | Not yet | |
+| Status LED, IR LEDs | `leds_test.sh`, `wizard_led_test.sh` | Yes: status on, off, auto; IR auto | |
+| Automatic day/night switching | night logic and ISP tests | Yes, including the night probe | Long runs across dusk and dawn: not yet |
+| Picture settings (brightness, contrast, saturation, sharpness) | `isp_tune_test.sh`, `imgq_test.sh` | In RAM on one camera | Not yet on the final image |
+| Frame rate 10, 15, 20, 25 | `video_cfg_test.sh`, `video_apply_test.sh` | 15 and 25 yes; 20 in RAM only | |
+| Bitrate and key-frame interval | same | Not yet exercised | Applied at the next video restart |
+| Control port 8091, read-only from the network | `control_test.sh`, `ctl_sys_test.sh` | Yes: reads work, `SET` refused remotely | |
 | Strict `SET` ranges (`ae.*`, `night.*`, `isp.*`) | `control_test.sh` | Not yet | |
-| Debug mode (`./akam debug on`) | `akam_debug_test.sh`, `wizard_debug_test.sh` | Not yet on the final image | Loopback `SET` and timed network `SET` |
-| ONVIF Profile S (device, media, imaging, WS-Discovery, SystemReboot) | `onvif_test.sh`, `onvif_svc_test.sh`, `onvif_media_test.sh`, `soap_test.sh`, `wsd_test.sh`, `sha1_test.sh`, `akam_onvif_test.sh`, `wizard_onvif_test.sh` | Yes, akam-01: enabled, then `tools/hw_tests/onvif_check.py` 34/35 checks OK (the one failure was a bug of the tool, since fixed); on the 2026-11-11 image b36: `onvif_check.py --rtsp` 34/34 OK including RTSP Digest DESCRIBE (200, H264 SDP) and the camera clock set (offset -1 s); WS-Discovery answers; WSSE auth works with the camera clock unset (year 2000); imaging Set/Get with restore; no flash write | ONVIF Device Manager v2.2.250 on Windows (2026-11-11, akam-01, image b36): found by WS-Discovery, login with the stream user, pages browsed, live video plays, imaging changes (brightness/contrast) visible live; ak_rtsp never restarted. Off by default |
-| ONVIF check tool for a real camera (`tools/hw_tests/onvif_check.py`: Device, Media, Imaging, WS-Discovery, optional RTSP Digest DESCRIBE) | `onvif_check_test.sh` (fake ONVIF and RTSP server on 127.0.0.1) | Yes, once: most calls answer in 25-75 ms; the occasional 1 s outliers match Wi-Fi round-trip jitter (ping average 57 ms, maximum 224 ms, RSSI -70 dBm), so the slowness is the radio link, not the code; found the missing `fw.version` key; second run on b36: 34/34 OK, 18-50 ms; it also found its own bug (a second TCP connection for the Digest answer: the camera binds the nonce to the connection) | Run `python3 -I tools/hw_tests/onvif_check.py <camera-ip> --rtsp` (see [troubleshooting](troubleshooting.md#an-onvif-app-does-not-find-the-camera)) |
-| Encoder-stall self-exit | `swdog_test.sh` | In the flashed image of akam-01; no real stall seen yet | The 15-minute RAM soak saw no spurious exit |
+| Debug mode (`./akam debug on`) | `akam_debug_test.sh` | Not yet on the final image | |
+| ONVIF-compatible services and WS-Discovery | SOAP, WS-Discovery, SHA-1, ONVIF tests | Yes, one camera | Off by default. Not certified, not tested with the ONVIF test tool |
+| MQTT client with Home Assistant discovery | codec (with fuzzing), discovery, fake broker tests | **Not yet.** No camera, no real broker | Off by default |
+| Opt-in NTP | `akam_ntp_test.sh` | Yes, both cameras | The clock starts in 1970 without it |
+| First install from a stock camera (bash wizard) | `wizard_camera_test.sh`, `build_from_kit_test.sh` | Yes, two cameras: backup, flash through the maintenance telnet, boots without the card | Linux bash wizard only |
+| Update Akam to Akam over SSH | `reflash_ssh_test.sh`, `flash_guard_test.sh` | Yes, two cameras: md5 read-back, then a power cycle | |
+| SSH key admin, Telnet and FTP off | `ssh_init_test.sh`, `lockdown_test.sh` | Yes, two cameras | Telnet staying off after a Wi-Fi reconnect: not yet |
+| Restore to stock (`./akam restore`) | `reflash_ssh_test.sh` | **Never rehearsed** | No guarantee |
+| Encoder-stall self-exit, Wi-Fi supervisor | `swdog_test.sh`, `akam_net_test.sh` | In the image; never triggered | |
 | Wrapper respawn backoff | `wrapper_backoff_test.sh` | Not yet | |
-| Wi-Fi supervisor | `akam_net_test.sh` | In the flashed image of akam-01 (clean boot, no fault injected) | |
-| Optional MQTT client with Home Assistant discovery (`mqtt.[ch]`, `mqtt_ha.[ch]`, `mqtt_svc.[ch]`, `akam_mqtt.sh`, `./akam mqtt`) | `mqtt_codec_test.sh` (golden bytes, remaining-length edges, malformed input, fuzz), `mqtt_ha_test.sh` (discovery documents, states, the command allow-list against hostile payloads), `mqtt_svc_test.sh` (a fake broker: dormant guarantee, CONNECT/will/discovery/state/commands, keepalive, drops, refusals with backoff, clean stop, one-shot test; ASan/UBSan), `control_test.sh`, `akam_mqtt_test.sh`, `wizard_mqtt_test.sh`, `hwcheck_test.sh`, `assistant_test.sh` | **Not yet.** Host only; no camera, no real broker | Off by default. Budget on the host build: +39 KB stripped (+23 KB without name resolution), +3 KB bss; RSS on the camera still to measure ([test plan](akam_v1_test_plan.md#mqtt-optional-needs-a-camera-and-a-broker)) |
-| Opt-in NTP | `akam_ntp_test.sh`, `wizard_ntp_test.sh` | Yes, both cameras (image v6): enabled with `akam_ntp.sh set pool.ntp.org`, sync ok, clock offset 0 after a resync (2026-11-12) | Camera clock starts in 1970 without it |
-| First install from a stock camera (maintenance microSD card, scripted telnet backup, image from the kit, flash through the card, Wi-Fi saved on the camera) | `wizard_camera_test.sh`, `build_from_kit_test.sh`, `reflash_ssh_test.sh` | Yes, two cameras (see [test plan](akam_v1_test_plan.md): backup, flash through the maintenance telnet, boots without the card); with the bash wizard on Linux only | Not done from the Go assistant, Windows or macOS |
-| Akam to Akam update over SSH (`./akam update`) | `reflash_ssh_test.sh`, `flash_guard_test.sh` | Yes, two cameras: flash over SSH with md5 read-back, then a power cycle (see [test plan](akam_v1_test_plan.md)) | |
-| SSH key admin, Telnet and FTP off | `ssh_init_test.sh`, `lockdown_test.sh`, `hwcheck_test.sh` | Yes, two cameras | |
-| Flash over SSH with read-back, clean boot | `reflash_ssh_test.sh`, `flash_guard_test.sh`, `build_firmware_test.sh`, `preflight_test.sh` | Yes, two cameras, power cycle | |
-| Stack-protector build | none dedicated (compile flags; `build_firmware_test.sh` covers the image build) | Boot not yet tested | Canaries on the network parsers only |
-| Log caps and `drop_caches` every 60 s | `wrapper_backoff_test.sh`, `akam_net_test.sh`, `akam_ntp_test.sh` (log caps), `build_firmware_test.sh` and `kit_test.sh` (shipped files) | In the flashed image of akam-01 ("quieter logs"); caps not measured yet | |
-| Kernel log filter (`ak_rtsp klog`: LED trace dropped, repeats collapsed, priorities kept) | `klog_test.sh` (filter core with a fake clock, file-to-datagram-socket run), `leds_test.sh` (no rewrite of an unchanged LED), `hwcheck_test.sh`, `build_firmware_test.sh` and the assistant `image` tests (the `main.sh` patch) | Yes, two cameras (image v6, 2026-11-12): the filter works, syslog about 460 KB per day, about 1.5 days kept in RAM | Measure `/var/log/messages` growth per hour before and after |
-| UDP listener and process audit | `hwcheck_test.sh` | Yes, akam-01 by default: ports 22, 554 and 8091 only, no UDP listener | |
-| Configs: a global template, a local config per camera, copy from another camera (live or last saved), Wi-Fi and passwords kept only after a yes (`./akam config show\|save-global\|save-local\|apply\|edit-global\|forget-secrets`; Configs on the home screen; the first-install choice) | `assistant_test.sh` (`internal/profile` format, modes and atomic writes; the fake camera for save, diff, apply, partial failure, secrets never in output, log or command lines; first install feeding `prepare-flash-sd`; the form) | **Not yet** | Host-tested only: never run on a real camera. Go assistant only; the bash wizard has no configs. The MQTT options go through `akam_mqtt.sh option` (new allowed command shape) |
-| One SSH key per camera or shared (`prepare-flash-sd` question; `./akam key show\|use-shared\|use-new\|use`; options row "SSH key"): add, verify with a second login, rollback, optional removal of the old key | `akam_authkeys_test.sh` (camera script, BusyBox ash and sh, failing writes), `ssh_init_test.sh` (card imported only when changed), `wizard_core_test.sh` (bash question), `assistant_test.sh` (fake camera whose Dropbear reads the tmpfs copy of the key list) | **Not yet** | Host-tested only: never run on a real camera. The change over SSH exists in the Go assistant only; the bash wizard uses the card |
-| Go assistant, daily commands (experimental) | `assistant_test.sh` (fake cameras) | Partly, Linux amd64 on real cameras: SSH, 8091 options, `video show`, `led`, `ntp`, `talk`. Windows amd64: an earlier build ran on a real camera on 2026-11-12 (discovery, options over SSH, talk with the PC microphone, clock offer); the current full-screen interface build is pending its Windows test | The bash wizard is the reference |
-| Go assistant phases P2 and P3 (update, restore, verify, telnet backup and flash, SD writer) | `assistant_test.sh` (fake cameras, files as cards) | **Not yet.** Update, restore, telnet backup and flash, the SD writer and first install were never run on hardware from the Go assistant | Never run against a real camera or card |
-| Go assistant, choose your firmware (release list from GitHub, "Which firmware?" in Install and Update, downgrade question, local kit or image, stock firmware through the restore flow, `releases`, `update --version\|--kit\|--image\|--stock`) | `assistant_test.sh` (a TLS test server plays GitHub and the download address; fake cameras; synthetic kits), release-list parsing tests in `internal/kit` | **Not yet.** Host only: no real GitHub release exists yet (v0.1.0 is not published), and no update, restore or install from this chooser was run on a camera | The stock row is the restore flow, itself never run on hardware |
-| Go assistant, cross-platform layers (phase 11): Windows SD disk layer and UAC pipe, macOS SD disk layer and `osascript` elevation, Linux SD layer, backup location and private folders, options engine, discovery, backup over SSH, squashfs reader, home screen and guided flows, licences, six-target build | `assistant_test.sh` and `go test ./...` on Linux: each OS-specific layer is tested on fake system facts, parsers and pipes (Windows and macOS code is cross-compiled and vetted, not run on those systems) | Linux amd64: partly (see the first row). Windows amd64: an earlier build tested on one camera (2026-11-12); the **SD writer, UAC flow and flash are not tested**, nor the new interface. **macOS and arm64: built, not hardware-tested** | Built for six targets (Linux, Windows, macOS, amd64 and arm64). See the [assistant hardware test plan](assistant_hardware_test_plan.md) |
-| Squashfs gate for the native image builder (spec 11, 4.8) | reader and writer fixtures, round trips | Step 1 PASSED locally: the reader equals `unsquashfs` on a real stock APP dump and on an Akam image. Writer round trip on an Akam image PASSED (rewritten image about 13% larger). A stock image needs its xattrs dropped | Step 6 PASSED locally: the native builder (`akam image --builder native`) and the bash builder give the same tree (300 entries, 0 listing differences) from a real stock backup and a fresh release kit; the native squashfs is about 13% larger (2.92 MB vs 2.59 MB, Go xz encoder), well inside the 5.24 MB partition. Step 7 PASSED: the native image was loop-mounted read-only on a real camera (kernel 4.4.302) and all 117 files read back identical, no kernel error, no reboot. Not done: step 5 (QEMU) and step 8 (a flash on a spare camera with UART), so the native builder stays opt-in and experimental |
+| Kernel log filter | `klog_test.sh` | Yes | |
+| Configs, SSH key per camera (Go assistant) | `assistant_test.sh` | Not yet | Never run on a real camera |
+| Go assistant, daily commands | `assistant_test.sh` (fake cameras) | Partly: Linux amd64 and an earlier Windows build | See [tested platforms](assistant.md#tested-platforms) |
+| Go assistant, update, restore, telnet backup and flash, SD writer, firmware chooser | `assistant_test.sh` | **Not yet** | Never run on a real camera or card |
+| Native image builder (`akam image --builder native`) | reader and writer round trips | Partly: same file tree as the bash builder from a real backup; the image was mounted read-only on a real camera and 117 files read back identical. **Never flashed** | Experimental, opt-in |
+| No internet at all (isolated network) | | Not yet | |
 
 ## How to run the host tests
 
 ```bash
 bash tools/build/bootstrap.sh     # once: pinned toolchain (Zig, BusyBox, Go modules)
-tools/ci/local_check.sh           # shellcheck, every tests/*_test.sh, tracked-file hygiene
+tools/ci/local_check.sh           # shellcheck, every tests/*_test.sh, Go tests, tracked-file hygiene
 bash tests/readme_links_test.sh   # documentation links and `./akam` commands only
 ```
 
 A single test runs on its own, for example `bash tests/swdog_test.sh`. Without the bootstrap, tests that need the
 pinned BusyBox or compiler print `skip:` and are counted as skipped, not passed.
 
-## Known flaky tests under parallel load
-
-- `rtsp_backchannel_test.sh` and the thread-count check of `wsd_test.sh` can fail when the machine is busy; rerun
-  them alone before suspecting the code.
-- `control_test.sh` and `http_srv_test.sh` use fixed local ports: **do not run two `local_check.sh` at once** (nor
-  these tests in parallel), or they will fight over the ports.
+Known flaky under load: `rtsp_backchannel_test.sh` and the thread-count check of `wsd_test.sh` can fail on a busy
+machine (rerun alone). `control_test.sh` and `http_srv_test.sh` use fixed local ports: **do not run two
+`local_check.sh` at once**.
