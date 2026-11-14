@@ -19,7 +19,7 @@
 #     USER:akam:HA1        HA1 = md5hex("USER:akam:PASSWORD"), 32 lowercase hex
 # A second file, /etc/config/akam/credentials (same mode and directory), holds the
 # clear-text password for the protocols that cannot work from the hash (ONVIF
-# WS-Security PasswordDigest; specs/07 section 3.3, decision U2):
+# WS-Security PasswordDigest; specs/onvif.md):
 #     user=NAME
 #     pass=PASSWORD        (8 to 128 characters, no control character)
 # set, set-creds and disable keep the two files in step. The password is never put

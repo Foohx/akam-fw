@@ -13,7 +13,7 @@ import (
 	"golang.org/x/term"
 )
 
-// This file is the only place that names a colour or a glyph (spec 12, section 3). Widgets ask the
+// This file is the only place that names a colour or a glyph (specs/installer.md). Widgets ask the
 // Theme for a role (OK, Warn, Err, Accent, Info, Muted) and never hold a literal colour, so a palette
 // edit is one edit here, and a colour is never the only signal: every state also has a glyph or a word.
 
@@ -71,7 +71,7 @@ func CurrentEnv(out *os.File) Env {
 	return e
 }
 
-// Mode is the capability decision of spec 12, section 3.2.
+// Mode is the capability decision of specs/installer.md.
 type Mode int
 
 const (

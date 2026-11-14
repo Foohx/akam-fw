@@ -1,4 +1,4 @@
-/* Home Assistant side of the MQTT client (specs/07 section 2.2 and 2.3): the entity table, the MQTT discovery
+/* Home Assistant side of the MQTT client (specs/mqtt.md): the entity table, the MQTT discovery
  * documents, the state values and the command allow-list. Pure logic: it reads and writes the camera only through
  * the mqtt_ops_t table, so tests/native/mqtt_ha_test.c and mqtt_svc_test.c run it on the host with a fake camera.
  *

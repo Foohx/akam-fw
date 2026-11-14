@@ -1,4 +1,4 @@
-/* Minimal MQTT 3.1.1 packet codec (specs/07 section 2). Pure: no sockets, no clock, no allocation, no globals, so
+/* Minimal MQTT 3.1.1 packet codec (specs/mqtt.md). Pure: no sockets, no clock, no allocation, no globals, so
  * tests/native/mqtt_codec_test.c runs it on the host with golden bytes and malformed input.
  *
  * What the camera needs and nothing more: it is a client that connects (with a will), publishes at QoS 0 (retained

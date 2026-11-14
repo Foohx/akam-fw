@@ -298,11 +298,11 @@ func (a *App) clockOffer(c *camssh.Client, h camHealth) {
 
 // clockAsk is the question "Set the camera clock from this computer now?" (default No) and what follows
 // its answer. The caller decides whether it may be asked: clockOffer on the plain path, the t key of
-// the options form (spec 12, 4.5), never unprompted there.
+// the options form (specs/installer.md), never unprompted there.
 func (a *App) clockAsk(c *camssh.Client, h camHealth) {
 	if ok, _ := a.UI.AskYN("  Set the camera clock from this computer now? " + clockLostNote(h)); !ok {
 		if h.ntp != "on" {
-			a.UI.Say(fmt.Sprintf("  Clock left as it is. Time sync keeps it right across reboots: %s ntp set pool.ntp.org", a.camCmd()))
+			a.UI.Say(fmt.Sprintf("  Clock left as it is. Time sync keeps it right across reboots: %s ntp set SERVER", a.camCmd()))
 		} else {
 			a.UI.Say("  Clock left as it is; time sync should correct it shortly.")
 		}
@@ -331,15 +331,15 @@ func (a *App) setCamClock(c *camssh.Client, h camHealth) {
 func (a *App) ntpOffer(ip string) {
 	a.UI.Blank()
 	a.UI.Say("  Optional: time sync. The camera has no battery clock and starts in 2000; ONVIF apps need the right time.")
-	a.UI.Say("  Off by default. Turning it on makes the camera ask time servers (default pool.ntp.org, or a server on your network) over UDP 123, outgoing only.")
+	a.UI.Say("  Off by default. Turning it on makes the camera ask time servers (a server you choose: Akam sets none for you; for example your router or another server on your network) over UDP 123, outgoing only.")
 	a.UI.Say(fmt.Sprintf("  You can change your mind at any time: %s ntp set SERVER | off | status", a.camCmd()))
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD ask: Turn on time sync? [y/N] (default: No)")
-		a.UI.Say("  WOULD run over SSH on the camera: " + remoteNtp("set", "pool.ntp.org"))
+		a.UI.Say("  WOULD then ask for a time server (no default) and run over SSH on the camera: " + remoteNtp("set", "SERVER"))
 		return
 	}
 	if !a.UI.Interactive() {
-		a.UI.Say(fmt.Sprintf("  No terminal: time sync stays off. Run %s ntp set pool.ntp.org later.", a.camCmd()))
+		a.UI.Say(fmt.Sprintf("  No terminal: time sync stays off. Run %s ntp set SERVER later.", a.camCmd()))
 		return
 	}
 	c, err := a.connectTools(ip)
@@ -353,13 +353,15 @@ func (a *App) ntpOffer(ip string) {
 		return
 	}
 	if ok, _ := a.UI.AskYN("  Turn on time sync?"); !ok {
-		a.UI.Say(fmt.Sprintf("  Time sync left off. Run %s ntp set pool.ntp.org whenever you want it.", a.camCmd()))
+		a.UI.Say(fmt.Sprintf("  Time sync left off. Run %s ntp set SERVER whenever you want it.", a.camCmd()))
 		return
 	}
-	srv, err := a.UI.Prompt("  Time server (host name or IPv4 address; Enter for pool.ntp.org):", "pool.ntp.org")
+	a.UI.Say("  Akam does not pick a public server for you (the NTP Pool asks products not to hard-code its default zone): type the one you want.")
+	srv, err := a.UI.Prompt("  Time server (host name or IPv4 address; Enter to leave time sync off):", "")
 	srv = strings.TrimSpace(srv)
 	if err != nil || srv == "" {
-		srv = "pool.ntp.org"
+		a.UI.Say(fmt.Sprintf("  No server given: time sync stays off. Run %s ntp set SERVER later.", a.camCmd()))
+		return
 	}
 	if !camopt.ValidNTPServer(srv) {
 		a.UI.Say(fmt.Sprintf("  '%s' is not a host name or an IPv4 address: time sync stays off. Run %s ntp set SERVER later.", srv, a.camCmd()))

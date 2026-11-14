@@ -1,7 +1,7 @@
 #pragma once
 /* ISP parameter blocks: the table of the 30 blocks the vendor application writes, the loader of the
  * day / night subfiles of sensor_isp.conf, and a dump that reads the live blocks back from the ISP
- * driver and compares them with the file (specs/08-spec-image-quality.md, section 6).
+ * driver and compares them with the file (specs/image-day-night-leds.md).
  *
  * Nothing here talks to the device by itself: the caller passes a "get" function (the ISP tunnel on
  * the camera, a fake in the host test), so the same code serves ak_rtsp (8091 key img.dump), the
@@ -16,7 +16,7 @@ typedef struct isp_block {
     const char *name;
     uint32_t    set_cmd;       /* inner command the application writes the block with */
     uint32_t    get_cmd;       /* inner command that reads it back, 0 = none known */
-    int         get_confirmed; /* 1 = seen in a stock capture or reversed, 0 = guessed (SET + 1) */
+    int         get_confirmed; /* 1 = seen in a stock capture, 0 = guessed (SET + 1) */
     int         module;        /* module (0..23) of sensor_isp.conf that carries the block */
     uint32_t    off;           /* offset of the block inside the module, 4-byte [id][size] header included */
     uint32_t    size;          /* payload bytes */

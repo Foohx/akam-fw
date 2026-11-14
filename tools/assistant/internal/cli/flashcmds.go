@@ -259,7 +259,7 @@ func (a *App) flashSSH(ip, img, md5, label string) error {
 	}
 	if err != nil {
 		return a.UI.Fail("the SSH reflash failed or could not be verified.",
-			fmt.Sprintf("DO NOT power-cycle yet. Read %s and docs/akam_v1_flash_and_restore.md (Reflashing over SSH).", logFl))
+			fmt.Sprintf("DO NOT power-cycle yet. Read %s and docs/manual/flash-and-restore.md (Reflashing over SSH).", logFl))
 	}
 	a.UI.Good(fmt.Sprintf("  The camera confirmed the written image (read-back md5 = %s).", md5))
 	return nil
@@ -398,7 +398,7 @@ func (a *App) cmdRestore() error {
 	a.UI.Blank()
 	a.UI.Good(fmt.Sprintf("  Restore written and verified (read-back md5 = %s).", md5))
 	a.UI.Say("  Power-cycle the camera BY HAND (unplug the USB-C power, wait 5 seconds, plug it back).")
-	a.UI.Say("  CONFIG was not touched, so the Wi-Fi settings stay. Details: docs/akam_v1_flash_and_restore.md section 5.")
+	a.UI.Say("  CONFIG was not touched, so the Wi-Fi settings stay. Details: docs/manual/flash-and-restore.md section 5.")
 	return nil
 }
 
@@ -569,18 +569,18 @@ func (a *App) wifiVerdict(out string) bool {
 		return true
 	case "NO_CARD_CONFIG":
 		a.UI.Fail("the camera has no saved Wi-Fi (/etc/config/wpa_supplicant.conf) and the card holds no usable custom/configs/wifi.conf to create it from.",
-			fmt.Sprintf("without it the camera has NO network once the card is removed. Prepare the flash card again (%s step prepare-flash-sd), or create the file by hand: docs/akam_v1_install.md (Troubleshooting: no network after removing the card).", Prog))
+			fmt.Sprintf("without it the camera has NO network once the card is removed. Prepare the flash card again (%s step prepare-flash-sd), or create the file by hand: docs/troubleshooting.md.", Prog))
 	case "BAD_CHARS":
 		a.UI.Fail("the Wi-Fi name or password on the card holds a double quote, a backslash or a line break: the camera's wpa_supplicant.conf cannot be written safely from it.",
-			"create /etc/config/wpa_supplicant.conf by hand (docs/akam_v1_install.md, Troubleshooting), or use a Wi-Fi password without those characters.")
+			"create /etc/config/wpa_supplicant.conf by hand (docs/troubleshooting.md), or use a Wi-Fi password without those characters.")
 	case "BAD_PSK_LENGTH":
 		a.UI.Fail("the Wi-Fi password on the card is not 8 to 63 characters long, so it is not a WPA password.",
 			fmt.Sprintf("check the password, then prepare the card again (%s step prepare-flash-sd).", Prog))
 	case "UNSUPPORTED_SECURITY":
 		a.UI.Fail("the card's Wi-Fi settings use a security type other than WPA/WPA2-PSK (SECURITY=3) or open (SECURITY=1).",
-			"create /etc/config/wpa_supplicant.conf by hand for your network (docs/akam_v1_install.md, Troubleshooting).")
+			"create /etc/config/wpa_supplicant.conf by hand for your network (docs/troubleshooting.md).")
 	case "WRITE_FAILED":
-		a.UI.Fail("the camera could not write /etc/config/wpa_supplicant.conf.", "do not remove the card. Create the file by hand (docs/akam_v1_install.md, Troubleshooting).")
+		a.UI.Fail("the camera could not write /etc/config/wpa_supplicant.conf.", "do not remove the card. Create the file by hand (docs/troubleshooting.md).")
 	default:
 		a.UI.Fail("could not check the camera's saved Wi-Fi (no answer from preflight_check.sh --ensure-wifi).", "do not remove the card; run this step again.")
 	}
@@ -639,7 +639,7 @@ func (a *App) cmdVerify() error {
 	}
 	wait := a.Env.WaitSecs
 	if !a.waitPort(ip, a.Env.PortSSH, wait, "the camera to answer on SSH") {
-		return a.UI.Fail("the camera does not answer on SSH.", "it may still be starting (wait a minute and run this step again), the address may have changed (check your router), or the camera may have no network: see docs/akam_v1_flash_and_restore.md (Recovery). The step is NOT done.")
+		return a.UI.Fail("the camera does not answer on SSH.", "it may still be starting (wait a minute and run this step again), the address may have changed (check your router), or the camera may have no network: see docs/manual/flash-and-restore.md (Recovery). The step is NOT done.")
 	}
 	c, err := a.dial(ip)
 	if err != nil {
@@ -652,7 +652,7 @@ func (a *App) cmdVerify() error {
 	c.Close()
 	a.UI.Good("  SSH with your key works.")
 	if !a.hwcheck(ip) {
-		return a.UI.Fail("akam_hwcheck.sh reported a failure (lines above).", "do not remove the card yet; read docs/akam_v1_test_plan.md.")
+		return a.UI.Fail("akam_hwcheck.sh reported a failure (lines above).", "do not remove the card yet; read docs/hardware-test-checklists.md.")
 	}
 	if !a.portsCheck(ip, "card") {
 		return a.UI.Fail("unexpected port state.", "do not remove the card yet.")
@@ -676,10 +676,10 @@ func (a *App) cmdVerify() error {
 	}
 	if !a.waitPort(ip, a.Env.PortSSH, wait, "the camera to boot without the card and answer on SSH") {
 		return a.UI.Fail(fmt.Sprintf("the camera is not on the network %d seconds after the power-up without the card.", wait),
-			"most likely its Wi-Fi is not saved on the camera (no /etc/config/wpa_supplicant.conf): put the card back, power-cycle, run this step again (it creates the file) and see docs/akam_v1_install.md (Troubleshooting: no network after removing the card). Also check the address in your router: it may have changed.")
+			"most likely its Wi-Fi is not saved on the camera (no /etc/config/wpa_supplicant.conf): put the card back, power-cycle, run this step again (it creates the file) and see docs/troubleshooting.md. Also check the address in your router: it may have changed.")
 	}
 	if !a.portsCheck(ip, "closed") {
-		return a.UI.Fail("port check failed without the card.", "see docs/akam_v1_ssh_and_lockdown.md.")
+		return a.UI.Fail("port check failed without the card.", "see docs/manual/ssh-and-lockdown.md.")
 	}
 	if !a.hwcheck(ip) {
 		return a.UI.Fail("akam_hwcheck.sh reported a failure without the card.", "")

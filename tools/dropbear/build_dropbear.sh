@@ -15,7 +15,7 @@
 # must apply cleanly): see the header of each patch for why it exists.
 # src/common/time32_shim.c is compiled with the same flags and linked into the
 # multi-call binary: the camera's kernel does not execute musl's time64
-# clock_gettime syscall (docs/akam_v1_kernel_time64.md). The final binary's
+# clock_gettime syscall (docs/how-it-works.md). The final binary's
 # machine code is checked for it (gdb required, hard failure).
 set -euo pipefail
 

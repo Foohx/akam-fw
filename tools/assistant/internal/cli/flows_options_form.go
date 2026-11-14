@@ -9,7 +9,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The option screen of the session (spec 12, 4.4): one form, the groups side by side, every change sent
+// The option screen of the session (specs/installer.md): one form, the groups side by side, every change sent
 // at once through the one audited path (camopt.Apply of one Change, the same validation and log lines
 // as the plain screens). Plain keeps groupScreen and its "N pending, Apply, Discard".
 

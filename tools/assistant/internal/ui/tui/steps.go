@@ -11,7 +11,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The long-operation panel (spec 12, 4.6): a list of items with a spinner on the running one, a short
+// The long-operation panel (specs/installer.md): a list of items with a spinner on the running one, a short
 // note on the finished ones, muted pending ones, a progress bar with the speed and the time left when
 // the flow reports sizes, and the command that runs. It is fed by ui.Operator (flows that know their
 // items) and, without it, by the Banner "Step N/T" list and Progress calls of the session.

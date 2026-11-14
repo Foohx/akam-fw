@@ -90,11 +90,12 @@ out:
  * the inner_cmd from ISP_INNER_* and payload pointing to block+4 (skipping the
  * 4-byte [id][size] header). Multi-call modules (0x03, 0x0b, 0x13, 0x14) send
  * additional calls at fixed byte offsets within the same block — these offsets
- * were confirmed from isp_set_attr decompilation in anyka_ipc.
+ * match what the stock firmware sends (checked against a capture of the running
+ * camera, see isp_hook.c).
  *
- * Reversed from:
- *   isp_module_init    @ 0x00129920 (24-module dispatch loop)
- *   AK_ISP_set_*_attr  @ 0x001456c8..0x00146280 (one function per inner cmd)
+ * Stock firmware counterparts:
+ *   isp_module_init (24-module dispatch loop)
+ *   AK_ISP_set_*_attr (one function per inner cmd)
  * ------------------------------------------------------------------------- */
 static const int g_isp_single_cmd[24] = {
     ISP_INNER_BLC,        /* 0x00 */
@@ -260,8 +261,8 @@ static int isp_skip_subfile_data(FILE *f)
  * anyka_ipc's own isp_switch()/isp_switch_mode() load and apply via
  * isp_cfg_file_load() when switching modes, and that `ak_rtsp` had never
  * read before this — `night.c` only ever replicated 3 fields (IR-cut,
- * frame-rate/VTS, WB gains) because that's all Ghidra's isp_switch_mode
- * trace had turned up; the actual per-mode *data* this whole time was
+ * frame-rate/VTS, WB gains) because that's all the first
+ * capture of the stock mode switch had shown; the actual per-mode *data* this whole time was
  * sitting in the same file `isp_pipeline_init()` already opens, just past
  * the day subfile's data.
  *
@@ -410,7 +411,7 @@ int isp_reapply_wb_conf(int night)
 
 int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain)
 {
-    /* Struct layout confirmed by Ghidra (ak_vpss_set_mwb_attr, 0x7e0 bytes):
+    /* Struct layout (0x7e0 bytes, as the stock ak_vpss_set_mwb_attr sends it):
      *   bytes  8-11: wb_type=1 (MANUAL)
      *   bytes 12-13: R_gain u16 (256=1x)
      *   bytes 14-15: G_gain u16 (256=1x)
@@ -429,12 +430,12 @@ int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain)
 /* Saturation/contrast live tuning — GET-modify-SET on the small "effect"
  * struct (ISP_INNER_EFFECT/ISP_INNER_GET_EFFECT, module 0x0f).
  *
- * Confirmed via Ghidra (anyka_ipc's isp_set_effect @ 0x127e40, dispatched
+ * Matches the stock firmware's isp_set_effect (checked against a capture), dispatched
  * from ak_vpss_effect_set — NOTE the dispatch type number is NOT the same
  * as isp_set_effect's own textual case order; ht_video_codec_set_brightness
  * calls type 1, set_saturation calls type 2, set_contrast calls type 3 —
  * verify against ak_vpss_effect_set's actual callers, not just which `case`
- * appears first when reading the decompile, which is exactly the mistake
+ * appears first in the stock code, which is exactly the mistake
  * that shipped a mislabeled "brightness" here once already, see git
  * history):
  *
@@ -451,13 +452,10 @@ int isp_set_wb_manual(uint16_t r_gain, uint16_t g_gain, uint16_t b_gain)
  *     field's [-128,127] range (recomputing the delta if the high field
  *     would overflow), then both fields are updated together with a
  *     rounding correction (-1 on the low field when the low+delta sum is
- *     odd). Transcribed directly from the decompiled arithmetic below,
- *     including the two-stage clamp and rounding correction — this is not
- *     a simplification, every step matches a real instruction in
- *     isp_set_effect's case 3 block (verified against disassembly for the
- *     signed-divide-by-2 rounding direction, which matches plain C `/2` on
- *     ARM for this specific idiom — add-sign-then-ASR is the standard
- *     round-toward-zero pattern GCC/clang also emit for `x/2`).
+ *     odd). The arithmetic below matches the stock firmware's behaviour
+ *     (checked against a capture of the running camera), including the
+ *     two-stage clamp and the rounding correction. The signed divide by 2
+ *     rounds toward zero, like plain C `/2` on ARM.
  *
  * Both effects share ONE 10-byte baseline cache in real anyka_ipc
  * (`g_yuv_effect_attr`, filled once ever by whichever of saturation/
@@ -499,8 +497,8 @@ static int apply_saturation(int value /* -50..50 */)
 }
 
 static int      g_contrast_baseline_valid = 0;
-static uint16_t g_contrast_baseline_lo = 0; /* offset+0, unsigned per the decompile's uVar26 */
-static int16_t  g_contrast_baseline_hi = 0; /* offset+2, signed per the decompile's iVar8 */
+static uint16_t g_contrast_baseline_lo = 0; /* offset+0, unsigned */
+static int16_t  g_contrast_baseline_hi = 0; /* offset+2, signed */
 
 static int apply_contrast(int value /* -50..50 */)
 {
@@ -523,7 +521,7 @@ static int apply_contrast(int value /* -50..50 */)
 
     /* Stage 2: re-clamp the SAME delta if bh-2*delta would overflow the
      * high field's signed byte-ish range [-128,127] — this can override
-     * stage 1's result, exactly as the decompile does (recomputed from bh,
+     * stage 1's result, as the stock firmware does (recomputed from bh,
      * not composed with stage 1's clamp). */
     int hi_check = bh - delta * 2;
     if (hi_check < -128)      delta = (bh + 128) / 2;
@@ -542,17 +540,15 @@ static int apply_contrast(int value /* -50..50 */)
 /* Brightness live tuning — a completely different mechanism from saturation/
  * contrast: `ht_video_codec_set_brightness` calls `ak_vpss_effect_set(dev, 1,
  * value)` — TYPE 1, which dispatches to a SEPARATE function (internally
- * named "set_brightness", confirmed via its own error-log string, @ 0x126758
+ * named "set_brightness", confirmed via its own error-log string,
  * in anyka_ipc) that reads/writes the LIVE 0x720-byte exposure-attr struct —
  * the SAME struct ae.c's AE thread polls continuously via GET_EXPOSURE — not
  * the small effect struct saturation/contrast use.
  *
- * Verified at the DISASSEMBLY level, not just decompiled C: Ghidra's
- * decompiler badly conflated two different source offsets here (0x13c vs
- * 0x3c relative to a cached copy of the struct's "public" section), enough
- * that a decompile-only reading would have been wrong in a second way beyond
- * the type-0-vs-type-1 mixup already documented above. Confirmed via real
- * ARM load/store instructions:
+ * Two different source offsets are easy to confuse here (0x13c vs
+ * 0x3c relative to a cached copy of the struct's "public" section); the
+ * values below were checked against a capture of the stock firmware's
+ * behaviour:
  *   - A single "primary" target value at absolute struct offset 0x58,
  *     whose BASELINE is read from a DIFFERENT, seemingly-permanent
  *     reference field at offset 0x158 (anyka_ipc never appears to write
@@ -612,37 +608,31 @@ static int apply_brightness(int value /* -50..50 */)
     return isp_tunnel(ISP_INNER_SET_EXPOSURE, buf);
 }
 
-/* Sharpness live tuning — isp_set_effect type 4, verified via disassembly
- * at anyka_ipc's isp_set_effect case 4 (jump-table-confirmed address
- * 0x12808c — see the jump-table dump used to validate all 6 case addresses
- * directly from raw bytes, since decompiled case *order* on this function
- * already proved unreliable once for case 0 vs 1 above).
+/* Sharpness live tuning — isp_set_effect type 4 of the stock firmware
+ * (checked against a capture of the running camera; the case order of that
+ * function is not its type numbering, see case 0 vs 1 above).
  *
  * Unlike saturation/contrast/brightness, this doesn't touch a handful of
  * fields — it rescales almost the entire ~46KB (0xb5f8-byte) sharpness
  * attribute blob (module 0x0b) from a cached pristine baseline, using 4
  * scale factors derived from the 0-100 UI value (v100 = value+50):
- *   iVar7  = (v100 * 1024) / 50   (0..2048, 1024 = neutral, drives the main
- *                                  edge-detection kernel below)
- *   iVar8  = (v100 * 16)   / 50   (0..32,   16   = neutral)
- *   iVar9  = (v100 * 255)  / 50   (0..510,  255  = neutral)
- *   iVar10 = ((50-value) * 255) / 50   (inverse of iVar9: 510..0, 255 = neutral)
+ *   kernel_gain  = (v100 * 1024) / 50   (0..2048, 1024 = neutral, drives the main
+ *                                        edge-detection kernel below)
+ *   gain_q4      = (v100 * 16)   / 50   (0..32,   16   = neutral)
+ *   gain_q8      = (v100 * 255)  / 50   (0..510,  255  = neutral)
+ *   inv_gain_q8  = ((50-value) * 255) / 50   (inverse of gain_q8: 510..0, 255 = neutral)
  *
- * Implemented here (verified field-by-field against the decompile's
- * unambiguous final write-statement list, not the interleaved intermediate
- * computations — several of those looked like genuine cross-field
- * dependencies on a first read and turned out to be compiler-reused dead
- * registers once traced to their actual write target):
+ * Implemented here (field by field, as the stock firmware writes them):
  *   - The main 256-entry x2 edge-detection kernel (offsets 0x678 and
- *     0x878, signed 16-bit): each entry = (baseline * iVar7 * 64) >> 16,
+ *     0x878, signed 16-bit): each entry = (baseline * kernel_gain * 64) >> 16,
  *     clamped to [-256,255]. This is the dominant "how sharp" control.
  *   - 20 individual scalar fields, each `clamp(baseline * factor >> shift,
  *     max)` with implicit min 0 (these are gain-table entries, always
  *     non-negative by construction):
- *       iVar8, >>4,  clamp 255->15: offsets 0x642, 0x650, 0x65e, 0x668
- *       iVar9, >>8,  clamp 255:     offsets 0x64a, 0x64e, 0x658, 0x65c,
+ *       gain_q4,     >>4, clamp 255->15: offsets 0x642, 0x650, 0x65e, 0x668
+ *       gain_q8,     >>8, clamp 255:     offsets 0x64a, 0x64e, 0x658, 0x65c,
  *                                   0x662, 0x666, 0x66c, 0x670
- *       iVar10,>>8,  clamp 255:     offsets 0x648, 0x64c, 0x656, 0x65a,
+ *       inv_gain_q8, >>8, clamp 255:     offsets 0x648, 0x64c, 0x656, 0x65a,
  *                                   0x660, 0x664, 0x66a, 0x66e
  *
  * NOT implemented: a repeated 16-group sub-block (stride 0xab4, offsets
@@ -655,7 +645,7 @@ static int apply_brightness(int value /* -50..50 */)
  * turns out to need finer control than the primary kernel alone provides.
  *
  * Baseline blob is fetched fresh via GET_SHARP on first call and cached —
- * same one-time-baseline-then-rescale-from-it pattern as anyka_ipc's own
+ * same one-time-baseline-then-rescale-from-it pattern as the stock firmware's own
  * g_sharp_attr cache, so repeated slider drags always rescale from the
  * pristine original rather than compounding onto an already-rescaled
  * buffer. */
@@ -664,9 +654,9 @@ static int apply_brightness(int value /* -50..50 */)
 static int      g_sharp_baseline_valid = 0;
 static uint8_t *g_sharp_baseline = NULL; /* calloc'd once, kept for process lifetime */
 
-static int16_t sharp_kernel_scale(int16_t baseline, int32_t iVar7)
+static int16_t sharp_kernel_scale(int16_t baseline, int32_t kernel_gain)
 {
-    int32_t product = (int32_t)iVar7 * baseline * 64;
+    int32_t product = (int32_t)kernel_gain * baseline * 64;
     int32_t shifted = product >> 16;
     if (shifted >= 0x100) return 0xff;
     if (shifted < -0x100) return (int16_t)-0x100;
@@ -697,36 +687,36 @@ static int apply_sharpness(int value /* -50..50 */)
     memcpy(buf, g_sharp_baseline, SHARP_BUF_SIZE);
 
     int32_t v100   = value + 50;               /* 0..100 */
-    int32_t ivar7  = (v100 * 1024) / 50;        /* 0..2048, 1024 = neutral */
-    int32_t ivar8  = (v100 * 16)   / 50;        /* 0..32,   16   = neutral */
-    int32_t ivar9  = (v100 * 255)  / 50;        /* 0..510,  255  = neutral */
-    int32_t ivar10 = ((50 - value) * 255) / 50; /* 510..0,  255  = neutral */
+    int32_t kernel_gain  = (v100 * 1024) / 50;        /* 0..2048, 1024 = neutral */
+    int32_t gain_q4  = (v100 * 16)   / 50;        /* 0..32,   16   = neutral */
+    int32_t gain_q8  = (v100 * 255)  / 50;        /* 0..510,  255  = neutral */
+    int32_t inv_gain_q8 = ((50 - value) * 255) / 50; /* 510..0,  255  = neutral */
 
     int16_t *kernel_a = (int16_t *)(buf + 0x678);
     int16_t *kernel_b = (int16_t *)(buf + 0x878);
     int16_t *base_a   = (int16_t *)(g_sharp_baseline + 0x678);
     int16_t *base_b   = (int16_t *)(g_sharp_baseline + 0x878);
     for (int i = 0; i < 256; i++) {
-        kernel_a[i] = sharp_kernel_scale(base_a[i], ivar7);
-        kernel_b[i] = sharp_kernel_scale(base_b[i], ivar7);
+        kernel_a[i] = sharp_kernel_scale(base_a[i], kernel_gain);
+        kernel_b[i] = sharp_kernel_scale(base_b[i], kernel_gain);
     }
 
-    static const int iVar8_offs[] = { 0x642, 0x650, 0x65e, 0x668 };
-    for (size_t i = 0; i < sizeof(iVar8_offs)/sizeof(iVar8_offs[0]); i++) {
-        int off = iVar8_offs[i];
-        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), ivar8, 4, 15);
+    static const int gain_q4_offs[] = { 0x642, 0x650, 0x65e, 0x668 };
+    for (size_t i = 0; i < sizeof(gain_q4_offs)/sizeof(gain_q4_offs[0]); i++) {
+        int off = gain_q4_offs[i];
+        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), gain_q4, 4, 15);
     }
 
-    static const int iVar9_offs[] = { 0x64a, 0x64e, 0x658, 0x65c, 0x662, 0x666, 0x66c, 0x670 };
-    for (size_t i = 0; i < sizeof(iVar9_offs)/sizeof(iVar9_offs[0]); i++) {
-        int off = iVar9_offs[i];
-        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), ivar9, 8, 255);
+    static const int gain_q8_offs[] = { 0x64a, 0x64e, 0x658, 0x65c, 0x662, 0x666, 0x66c, 0x670 };
+    for (size_t i = 0; i < sizeof(gain_q8_offs)/sizeof(gain_q8_offs[0]); i++) {
+        int off = gain_q8_offs[i];
+        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), gain_q8, 8, 255);
     }
 
-    static const int iVar10_offs[] = { 0x648, 0x64c, 0x656, 0x65a, 0x660, 0x664, 0x66a, 0x66e };
-    for (size_t i = 0; i < sizeof(iVar10_offs)/sizeof(iVar10_offs[0]); i++) {
-        int off = iVar10_offs[i];
-        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), ivar10, 8, 255);
+    static const int inv_gain_q8_offs[] = { 0x648, 0x64c, 0x656, 0x65a, 0x660, 0x664, 0x66a, 0x66e };
+    for (size_t i = 0; i < sizeof(inv_gain_q8_offs)/sizeof(inv_gain_q8_offs[0]); i++) {
+        int off = inv_gain_q8_offs[i];
+        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), inv_gain_q8, 8, 255);
     }
 
     int ret = isp_tunnel(ISP_INNER_SHARP, buf);

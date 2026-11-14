@@ -82,9 +82,9 @@ Commands:
                      short tone; off silences the speaker and keeps it off after a reboot; on may need a
                      reboot of the camera to start the speaker. No confirmation is asked.
   picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]
-                     the picture, over SSH. N is -50 to 50 (0 = unchanged); the four numbers are saved on the
-                     camera and applied at every start. wb and night are not saved (back to the default at a
-                     reboot). reset puts the four numbers back to 0. Several words can be combined. Default: show.
+                     the picture, over SSH. N is -50 to 50 (0 = unchanged); the four numbers, wb (/etc/config/akam/image)
+                     and night (/etc/config/akam/night) are saved on the camera and applied at every start.
+                     reset puts the four numbers back to 0. Several words can be combined. Default: show.
   video [show | bitrate N | fps N | gop N]
                      the video encoder settings, over SSH. Default: show. bitrate is the cap in kbit/s (500 to 3000,
                      default 1536); fps is 10, 15, 20 or 25 (default 15; night mode always runs at 10); gop is the key
@@ -97,7 +97,7 @@ Commands:
                      'off' or a reboot; over SSH. Default: status
   ntp [status | set SERVER... | off]
                      time sync of the camera (it has no clock of its own and starts in the past), over SSH.
-                       set: 1 to 3 servers (host names or IPv4 addresses, for example pool.ntp.org); the camera
+                       set: 1 to 3 servers (host names or IPv4 addresses, for example ntp.example.net); the camera
                        asks them at start-up and every 6 hours (UDP 123, outgoing only) and saves the choice
                        off: stop and forget the servers (default: off, no traffic at all)
                        status (default): servers, the camera's clock, whether it is believable
@@ -284,7 +284,7 @@ case $CMD in
         ;;
     key)
         echo "akam: changing the SSH key of a camera over SSH is only in the native assistant (tools/assistant/build.sh, then AKAM_USE_BIN=1 ./akam key ...)." >&2
-        echo "  What to do: with the bash wizard, put a new akam/authorized_keys on the flash card (docs/akam_v1_ssh_and_lockdown.md)." >&2
+        echo "  What to do: with the bash wizard, put a new akam/authorized_keys on the flash card (docs/manual/ssh-and-lockdown.md)." >&2
         exit 2
         ;;
     register) cmd_register || rc=$? ;;

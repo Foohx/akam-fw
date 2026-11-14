@@ -134,7 +134,7 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 		fmt.Fprint(st.Out, helpText)
 		return ExitOK
 	case "licenses", "licences":
-		fmt.Fprint(st.Out, assets.Notices())
+		fmt.Fprint(st.Out, assets.Licenses())
 		return ExitOK
 	case "version":
 		fmt.Fprintf(st.Out, "akam %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())

@@ -20,7 +20,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// Backup of a camera that already runs Akam, over SSH (spec 11, 3.7, T11.11). It only reads: every
+// Backup of a camera that already runs Akam, over SSH (specs/installer.md). It only reads: every
 // partition is streamed twice with `dd if=/dev/mtdblockN bs=64k` (fixed words, N a number 0..7 that
 // this code produces), the two reads are compared (size and sha256), and the folder has the format of
 // the telnet route. Nothing is written to the camera, and nothing is written to this PC until the

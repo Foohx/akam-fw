@@ -734,7 +734,7 @@ cmd_prepare_backup_sd() {
     ui_say "  This card boots the camera into a temporary rescue shell (Telnet on port 24) so that"
     ui_say "  you can copy the original firmware. It holds your Wi-Fi password IN CLEAR TEXT:"
     ui_say "  treat the card as secret and wipe it when you are done (./akam wipe-sd)."
-    sd_need_cli "follow docs/akam_v1_backup_sd.md section 5 by hand, then run: ./akam step find-camera" || return 1
+    sd_need_cli "follow docs/manual/backup-sd.md section 5 by hand, then run: ./akam step find-camera" || return 1
     ui_require_tty "preparing the backup card" || return 1
     tk=$(sd_toolkit_dir)
     ui_say "  The SD tool uses the pinned LSC toolkit in $tk (downloaded once if missing, then"
@@ -880,7 +880,7 @@ backup_copy_to() {
     ui_good "  Copy checked: $dest matches SHA256SUMS."
 }
 
-# backup_import: --backup-dir DIR, a backup you made by hand (docs/akam_v1_backup_sd.md).
+# backup_import: --backup-dir DIR, a backup you made by hand (docs/manual/backup-sd.md).
 backup_import() {
     local d=$OPT_BACKUP_DIR
     step_banner backup
@@ -1136,7 +1136,7 @@ cmd_prepare_flash_sd() {
     pub=$SSH_PUB
     if [ -f "$pub" ] || [ "$UI_DRY" != 1 ]; then pubkey_check "$pub" || return 1; fi
     if [ "$UI_DRY" != 1 ]; then state_set ssh_pubkey "$pub"; fi
-    sd_need_cli "prepare the card by hand: see docs/akam_v1_ssh_and_lockdown.md and tools/sd/prepare_first_boot_sd.sh" || return 1
+    sd_need_cli "prepare the card by hand: see docs/manual/ssh-and-lockdown.md and tools/sd/prepare_first_boot_sd.sh" || return 1
     ui_require_tty "preparing the flash card" || return 1
     if [ "$(state_get mode)" = source ]; then ft=$ROOT/src/ak_rtsp/flash_tool; else ft=$BASE_DIR/kit/bin/flash_tool; fi
     if [ "$UI_DRY" != 1 ] && [ ! -s "$ft" ]; then

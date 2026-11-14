@@ -36,7 +36,7 @@ if [ "${CAMYN_FLASH_I_KNOW:-}" = "1" ] && [ "${AKAM_FLASH_I_KNOW:-}" != "1" ]; t
     AKAM_FLASH_I_KNOW=1
 fi
 
-_cfg_doc="docs/akam_v1_flash_and_restore.md, section 'Reflashing later: never over an SSH session'"
+_cfg_doc="docs/manual/flash-and-restore.md, section 'Reflashing later: never over an SSH session'"
 
 _cfg_under_usr() {
     case "$1" in

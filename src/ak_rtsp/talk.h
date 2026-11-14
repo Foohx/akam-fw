@@ -1,5 +1,5 @@
 #pragma once
-/* Talk session of the ONVIF audio backchannel (specs/07 section 1).
+/* Talk session of the ONVIF audio backchannel (specs/audio.md).
  *
  * One talker at a time sends G.711 RTP; this module validates and decodes it
  * (rtp_in.c), runs the speech gate of the half-duplex rule (audio_vad.c) and

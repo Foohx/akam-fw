@@ -157,7 +157,7 @@ strip_copy "$FLASH_TOOL_BIN" "$KIT/bin/flash_tool"
 GATE_TOOL="${AKAM_KIT_CHECK_TIME32:-$ROOT/tools/build/check_time32.sh}"
 log "time64 gate on ak_rtsp and dropbearmulti"
 if ! bash "$GATE_TOOL" --require-263 "$KIT/bin/ak_rtsp" "$KIT/bin/dropbearmulti"; then
-    die "time64 gate FAILED: the binaries would misbehave on the camera's kernel (docs/akam_v1_kernel_time64.md). No kit written."
+    die "time64 gate FAILED: the binaries would misbehave on the camera's kernel (docs/how-it-works.md). No kit written."
 fi
 GATE_DISASM="$(gdb --version 2>/dev/null | head -1 || true)"
 [ -n "$GATE_DISASM" ] || GATE_DISASM=unknown
@@ -215,11 +215,13 @@ done
 } >"$KIT/SOURCES.txt"
 chmod 644 "$KIT/SOURCES.txt"
 
-# --- content guard: no key, no image, no vendor blob ------------------------------------------
+# --- content guard: no key, no image, no vendor blob, no third-party toolkit file ------------------------------------------
 BAD="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$KIT" 2>/dev/null || true
     find "$KIT" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.pem' -o -name '*.squashfs' -o -name '*.img' -o -name '*.ko' \)
+    # lsc-tuya-toolkit (tasarren) has no licence file: it is never redistributed (THIRD_PARTY_NOTICES.md)
+    find "$KIT" \( -ipath '*tuya-toolkit*' -o -ipath '*/toolkit/*' -o -name 'toolkit' -o -ipath '*/sd_card/*' \)
     grep -rl --binary-files=binary -e 'hsqs' "$KIT/scripts" "$KIT/overlay" "$KIT/patches" "$KIT/licenses" 2>/dev/null || true) | sort -u)"
-[ -z "$BAD" ] || die "forbidden content in the kit (key, image or vendor file):
+[ -z "$BAD" ] || die "forbidden content in the kit (key, image, vendor or toolkit file):
 $BAD"
 [ "$(find "$KIT/bin" -type f -printf "%f\n" | LC_ALL=C sort | tr "\n" " ")" = 'ak_rtsp dropbearmulti flash_tool ' ] || die "unexpected content in bin/"
 

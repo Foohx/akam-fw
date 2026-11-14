@@ -7,3 +7,4 @@ tools/hw_tests/akam_hwcheck.sh
 tools/release/supported_hardware.txt
 THIRD_PARTY_NOTICES.md
 tools/flash_scripts/akam_authkeys.sh
+LICENSE

@@ -1,6 +1,6 @@
 package ui
 
-// The error screen of the full-screen session (spec 12, 4.7). A flow still calls Fail(msg, hint); the
+// The error screen of the full-screen session (specs/installer.md). A flow still calls Fail(msg, hint); the
 // session remembers it, and the home loop shows it as a screen once the flow has returned. Plain does
 // not implement any of this: Fail keeps its "ERROR: " and "What to do: " lines there.
 

@@ -1,6 +1,6 @@
 package ui
 
-// A board is a persistent list screen of the full-screen session (spec 12, 4.2 and 4.3): the home
+// A board is a persistent list screen of the full-screen session (specs/installer.md): the home
 // menu and the camera chooser. The flow owns its content and replaces it whenever something changes
 // (a probe answered), the session draws it in place and reports the keys the user presses.
 

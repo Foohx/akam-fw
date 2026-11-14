@@ -1,4 +1,4 @@
-/* Bounded SOAP 1.2 scanner and response template engine for the ONVIF services (spec 07 section 3.2).
+/* Bounded SOAP 1.2 scanner and response template engine for the ONVIF services (specs/onvif.md).
  * No XML library, no DOM, no allocation: every function works on a (pointer, length) range and never reads
  * outside it. Namespace prefixes are ignored (elements and attributes are matched by local name). DTDs
  * (<!DOCTYPE, <!ENTITY) are refused. Pure logic, tested on the host (tests/native/soap_test.c). */

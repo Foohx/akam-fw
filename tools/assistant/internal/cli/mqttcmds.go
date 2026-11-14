@@ -12,7 +12,7 @@ import (
 )
 
 // akam mqtt [status | set | disable | forget | test]: the optional MQTT client of the camera (Home Assistant
-// discovery, specs/07 section 2), managed over SSH with akam_mqtt.sh. Off by default. The broker password is
+// discovery, specs/mqtt.md), managed over SSH with akam_mqtt.sh. Off by default. The broker password is
 // typed without echo and travels on the SSH channel's standard input only: never in a command line, a log or
 // the state file.
 

@@ -1,7 +1,7 @@
 package sdcard
 
 // Windows disk facts: everything that can be decided without a system call lives here, untagged, so that it is
-// unit-tested on Linux with hand-built buffers (spec 11, 4.4.5 and 4.4.8). The IOCTL calls themselves are in
+// unit-tested on Linux with hand-built buffers (specs/installer.md). The IOCTL calls themselves are in
 // the *_windows.go files. Every parser bounds-checks every offset it follows and fails closed: a buffer that
 // does not say what a disk is makes the disk ineligible.
 

@@ -23,7 +23,7 @@
  * a client tells them apart by the "LOG " prefix, not by strict
  * request/response framing.
  *
- * See docs/serial_console_and_camera_tuning.md for the full
+ * See docs/hacking.md for the full
  * parameter list and the PC-side WinUI3 tuning tab that talks this protocol.
  *
  * Call control_start() as the very first thing in main() (before any other

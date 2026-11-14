@@ -209,7 +209,7 @@ R=$WORK/repo
 mkdir -p "$R/tools/release" "$R/tools/assistant/internal/kit"
 cp "$MAKEREL" "$GATHER" "$REPO/tools/release/verify_kit.sh" "$R/tools/release/"
 mkdir -p "$R/tools/assistant/cmd/akam" "$R/docs"
-printf "# Akam <version>\n" >"$R/docs/release_notes_draft.md"
+printf "# Akam <version>\n" >"$R/tools/release/release_notes_template.md"
 # shellcheck disable=SC2016  # literal text of the fixture script
 printf '#!/bin/sh\nAKAM_WIZARD_VERSION=${AKAM_WIZARD_VERSION:-1.0.0}\n' >"$R/akam"
 printf 'package main\n\nvar version = "1.0.0"\n' >"$R/tools/assistant/cmd/akam/main.go"

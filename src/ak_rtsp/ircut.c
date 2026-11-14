@@ -13,7 +13,7 @@
  * drives the other.  To move the filter, both pins are asserted in opposite
  * polarity, then GPIO_A is released to the idle level after a 100ms pulse.
  *
- * Reversed from SetIrcutState @ 0x000d4580 / ircut_load_hw_config @ 0x000d54d4.
+ * Matches the stock firmware: SetIrcutState / ircut_load_hw_config.
  */
 #define IRCUT_GPIO_A        65
 #define IRCUT_GPIO_B_EN     66
@@ -64,7 +64,7 @@ static void gpio_set(int gpio, int value)
 
 /* Drive the solenoid to night or day position.
  *
- * Mirrors SetIrcutState @ 0x000d4580 for ircut_type=1 (IRCUT_LINE_TYPE_A_B):
+ * Mirrors SetIrcutState for ircut_type=1 (IRCUT_LINE_TYPE_A_B):
  *   Step 1 — assert both coils in opposite polarity to start movement
  *   Step 2 — release GPIO_A to its idle level after 100ms
  *   The filter takes ~100ms to travel; the second 100ms is settling time.
@@ -88,11 +88,11 @@ static void ircut_set_state(int night)
 
 /* Initialize IR cut filter and IR LED GPIOs, then fire the reset pulse.
  *
- * Mirrors the call chain in anyka_ipc:
- *   ht_night_mode_init @ 0x000d5e88
- *     → ircut_gpio_export_and_reset @ 0x000d57f4   (export GPIO A/B, reset pulse)
- *       → ircut_reset_pulse_once @ 0x000d4878      (night→day once per boot)
- *   → FUN_000d43e4 (export GPIO 70, set output)
+ * Same sequence as the stock firmware:
+ *   ht_night_mode_init
+ *     → ircut_gpio_export_and_reset   (export GPIO A/B, reset pulse)
+ *       → ircut_reset_pulse_once      (night→day once per boot)
+ *   → export GPIO 70 and set it as output (IR LED)
  *   → SetDayNightMode(0)                            (already in day state: no-op)
  *
  * The reset pulse is what causes the characteristic two solenoid clicks at

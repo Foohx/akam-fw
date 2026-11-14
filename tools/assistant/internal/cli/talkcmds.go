@@ -19,7 +19,7 @@ import (
 )
 
 // talk and say: speak to the camera's speaker with the ONVIF audio backchannel on the RTSP port
-// (specs/07 section 1). RTSP, Digest, G.711 and WAV are built in; ffmpeg or arecord are only used
+// (specs/audio.md). RTSP, Digest, G.711 and WAV are built in; ffmpeg or arecord are only used
 // for the microphone and for files that are not WAV. The stream password is typed without echo,
 // or taken from AKAM_RTSP_PASSWORD / --password-file; it is never in an argument, the state, or
 // the log.

@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// winInventory reads the facts of a Windows disk by DeviceIoControl (spec 11, 4.4.5). It never decides: every
+// winInventory reads the facts of a Windows disk by DeviceIoControl (specs/installer.md). It never decides: every
 // fact it cannot read is an error, and an error makes the disk ineligible (fail closed). The query IOCTLs are
 // opened with access 0, so listing needs no administrator rights.
 type winInventory struct{}

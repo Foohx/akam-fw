@@ -187,7 +187,7 @@ func (a *App) cmdNtp(args []string) error {
 	case "set":
 		servers = args[1:]
 		if len(servers) < 1 || len(servers) > 3 {
-			return audioUsage(fmt.Sprintf("ntp set needs 1 to 3 servers, for example: %s ntp set pool.ntp.org", Prog))
+			return audioUsage(fmt.Sprintf("ntp set needs 1 to 3 servers, for example: %s ntp set ntp.example.net", Prog))
 		}
 		for _, s := range servers {
 			if !camopt.ValidNTPServer(s) {

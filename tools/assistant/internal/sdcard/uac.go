@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The Windows elevation (spec 11, 4.4.5): the unelevated program creates a named pipe that only the current user
+// The Windows elevation (specs/installer.md): the unelevated program creates a named pipe that only the current user
 // can open, starts itself again elevated through the UAC prompt (ShellExecuteExW, verb runas), and talks to that
 // helper over the pipe with the framing of frame.go:
 //

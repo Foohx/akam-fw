@@ -1,6 +1,6 @@
 #pragma once
-/* Read-only system, network and stream metrics for the control port (specs/07
- * section 4.2, key names of specs/04 section 3.1). Everything is collected
+/* Read-only system, network and stream metrics for the control port (specs/control-port.md,
+ * key names). Everything is collected
  * with open/read of small /proc and /sys files and a few ioctls on a datagram
  * socket: no fork, no popen, no malloc. The whole set is collected at most once
  * per second (monotonic clock) and shared by all callers; a value that cannot

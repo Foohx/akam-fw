@@ -9,7 +9,7 @@
  * simulated AE traces. Time is counted in polls, so it needs no clock source (a bad one once made the 60 s lock
  * expire within seconds on the camera, see night.c).
  *
- * Why this shape (specs/08-spec-image-quality.md, section 3.4 and the decisions of section 11):
+ * Why this shape (specs/image-day-night-leds.md and its decisions):
  *
  * DAY -> NIGHT, like the stock firmware: only when the AE is saturated, i.e. the exposure is at its ceiling AND
  *   the total gain (sensor gain x ISP gain) is at (gain_pct % of) the maximum the AE is allowed, for

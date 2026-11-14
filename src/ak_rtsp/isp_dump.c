@@ -9,7 +9,7 @@
  *   isp_dump --blocks [--all] [--conf FILE] [--out DIR]
  *                       — reads the live ISP blocks and compares them with
  *                         the day / night subfiles of sensor_isp.conf
- *                         (works while ak_rtsp runs; see specs/08)
+ *                         (works while ak_rtsp runs; see specs/image-day-night-leds.md)
  *
  * Build: compiled by Makefile as part of the ak_rtsp package.
  */
@@ -133,7 +133,7 @@ static void blocks_emit(void *ctx, const char *line)
 }
 
 /* --blocks [--all] [--conf FILE] [--out DIR]: read the live ISP blocks back and compare them with the
- * day and night subfiles of sensor_isp.conf (specs/08-spec-image-quality.md, section 6). --out writes
+ * day and night subfiles of sensor_isp.conf (specs/image-day-night-leds.md). --out writes
  * DIR/isp_blocks.bin in the format of the stock capture (tools/hw_tests/isp_block_diff.py reads it). */
 static int blocks_main(int argc, char **argv)
 {

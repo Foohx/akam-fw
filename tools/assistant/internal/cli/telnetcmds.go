@@ -408,7 +408,7 @@ func (a *App) bkFingerprint() string {
 	return kfp
 }
 
-// bkPCDir is bk_pc_dir: a new folder <Documents>/Akam backups/<camera>/<date>[-N] (spec 11, 3.2)
+// bkPCDir is bk_pc_dir: a new folder <Documents>/Akam backups/<camera>/<date>[-N] (specs/installer.md)
 // and the folders above it that must be private too.
 // With AKAM_BACKUP_ROOT (test hook) it is <root>/akam-backup-<name>-<date>[-N], the legacy layout.
 func (a *App) bkPCDir() (string, []string) {
@@ -452,7 +452,7 @@ func (a *App) bkManualFallbackHint() {
 	a.UI.Say("  The automatic transfer did not work. You still have the dumps on the card:")
 	a.UI.Say("  power the camera off, put the card in the PC, copy dump1/ to a folder, then run:")
 	a.UI.Say(fmt.Sprintf("      %s backup --backup-dir THAT_FOLDER", Prog))
-	a.UI.Say("  (docs/akam_v1_backup_sd.md section 9 shows how to check the copy)")
+	a.UI.Say("  (docs/manual/backup-sd.md section 9 shows how to check the copy)")
 }
 
 // backupCamera is backup_camera.
@@ -930,7 +930,7 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 		}
 		if ferr != nil {
 			_ = a.UI.Fail(fmt.Sprintf("the flash script did not finish (no end of output, %v).", ferr),
-				"DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery).")
+				"DO NOT power-cycle yet. Read the lines above; docs/manual/flash-and-restore.md (Recovery).")
 			if errors.Is(ferr, telnet.ErrTimeout) {
 				a.UI.Warn("no output for a long time: the write may STILL be running. The session is left open and nothing is sent again;")
 				a.UI.Warn(fmt.Sprintf("wait several minutes, then read the partition back by hand: dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum (must be %s).", md5))
@@ -955,7 +955,7 @@ func (a *App) flashTelnet(ip, imgPath, md5, label string) error {
 	closed = true
 	if sums != md5 {
 		return a.UI.Fail(fmt.Sprintf("the partition read back as md5 '%s', the image is %s.", sums, md5),
-			"DO NOT power-cycle. Run the flash again from this step or restore (docs/akam_v1_flash_and_restore.md).")
+			"DO NOT power-cycle. Run the flash again from this step or restore (docs/manual/flash-and-restore.md).")
 	}
 	op.done(3, "md5 matches the image")
 	a.UI.Good(fmt.Sprintf("  Read-back md5 of /dev/mtd7 = image md5 (%s).", md5))

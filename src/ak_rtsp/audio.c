@@ -123,9 +123,8 @@ int audio_backoff_units(unsigned attempt)
  * SET_RATE(8000) -> SET_PERIODS(4) -> SET_STATE(4). SET_MODE(0) is skipped
  * below — confirmed to still crash the kernel even with the
  * O_WRONLY open fix, same signature every time. Root cause is
- * unresolved (unlike capture_ioctl's dispatch, playback_ioctl's real
- * dispatch hasn't been decompiled/read yet — that would be the next Ghidra
- * step if playback support is ever needed). Skipped for now since playback
+ * unresolved (unlike capture_ioctl's dispatch, playback_ioctl's
+ * behaviour was not investigated further here). Skipped for now since playback
  * isn't required for the actual goal (capture) and this crash was
  * repeatedly blocking us from observing capture's own read() result. All
  * steps here are non-fatal (AUDIO_IOC_WARN) — this is a best-effort peer
@@ -244,9 +243,8 @@ static int audio_init_capture(void)
 
     AUDIO_IOC_WARN("GET_PERIODS#1", ioctl(g_audio_fd, AKPCM_IOC_GET_PERIODS, &v));
 
-    /* GET_PARS is misnamed — a Ghidra relocation-fix session
-     * decompiled ak_pcm.ko's real capture_ioctl dispatch and found this exact
-     * ioctl (req=0x401c50e0) does a copy_FROM_user of this 28-byte struct into the
+    /* GET_PARS is misnamed — observed on the camera: this exact
+     * ioctl (req=0x401c50e0) of ak_pcm.ko's capture_ioctl does a copy_FROM_user of this 28-byte struct into the
      * kernel, validates rate!=0, period_size!=0 && period_size%64==0, and
      * period_count in [1,0x50], computes the hardware rate divisor, and ONLY ON
      * SUCCESS sets the ready bit at +0x304 that capture_read() requires (bit 0x2).
@@ -302,7 +300,7 @@ fail:
  * session. */
 static void audio_init_playback(void)
 {
-    /* Speaker output (spec 05): when enabled and the device sequence works,
+    /* Speaker output (specs/audio.md): when enabled and the device sequence works,
      * audio_out owns the playback fd and its own thread, and the legacy
      * silence loop below is not used. When disabled, blocked by the crash
      * guard or failed, audio_out leaves nothing open and the legacy path

@@ -6,7 +6,7 @@
 # sensor_gc20c3/ak_venc_adapter/ak_venc_bridge/ak_pcm and copied
 # /tmp/sensor_isp.conf.
 #
-# See docs/building_your_own_firmware.md for how this fits into the patched
+# See docs/manual/build.md for how this fits into the patched
 # APP squashfs tree.
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin
 

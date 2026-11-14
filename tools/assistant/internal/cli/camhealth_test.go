@@ -151,7 +151,7 @@ func TestVerifyOffersTimeSyncDefaultNo(t *testing.T) {
 	// Enter (power cycled), no password, no ONVIF, Enter = No to time sync
 	r := w.run("\nn\nn\n\n", "verify")
 	expectRC(t, r, 0)
-	contains(t, r.out+r.err, "Optional: time sync.", "pool.ntp.org", "Turn on time sync? [y/N]", "Time sync left off.")
+	contains(t, r.out+r.err, "Optional: time sync.", "Akam sets none for you", "Turn on time sync? [y/N]", "Time sync left off.")
 	for _, c := range w.cam.Commands() {
 		if strings.Contains(c, "akam_ntp.sh set") {
 			t.Errorf("time sync turned on without a yes: %q", c)
@@ -172,16 +172,15 @@ func TestVerifyTimeSyncYesWithLanServer(t *testing.T) {
 		t.Errorf("no ntp set: %q\n%s", w.cam.Commands(), r.out+r.err)
 	}
 	contains(t, r.out, "Time sync on, servers: 192.0.2.7")
-	// Enter on the server question: the default pool
+	// Enter on the server question: there is no default server, time sync stays off
 	w = newFlashWorld(t, testfake.FlashOptions{})
 	w.verifyWorld(t)
-	w.run("\nn\nn\ny\n\n", "verify")
-	found = false
+	r = w.run("\nn\nn\ny\n\n", "verify")
+	contains(t, r.out+r.err, "No server given: time sync stays off")
 	for _, c := range w.cam.Commands() {
-		found = found || c == "/usr/sbin/akam_ntp.sh set pool.ntp.org"
-	}
-	if !found {
-		t.Errorf("no default ntp set: %q", w.cam.Commands())
+		if strings.Contains(c, "akam_ntp.sh set") {
+			t.Errorf("a default time server was configured: %q", c)
+		}
 	}
 }
 
@@ -189,7 +188,7 @@ func TestVerifyDryRunMentionsTimeSync(t *testing.T) {
 	w := newFlashWorld(t, testfake.FlashOptions{})
 	w.verifyWorld(t)
 	r := w.run("", "--dry-run", "verify")
-	contains(t, r.out+r.err, "WOULD ask: Turn on time sync? [y/N] (default: No)", "WOULD run over SSH on the camera: /usr/sbin/akam_ntp.sh set pool.ntp.org")
+	contains(t, r.out+r.err, "WOULD ask: Turn on time sync? [y/N] (default: No)", "WOULD then ask for a time server (no default) and run over SSH on the camera: /usr/sbin/akam_ntp.sh set SERVER")
 }
 
 // With time sync on, the clock offer must not say the time is lost at the next reboot.

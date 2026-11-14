@@ -32,7 +32,7 @@
 #define DIV0_PADDR   (DIV0_VADDR - PAGE_OFFSET + PHYS_BASE)
 #define PAGE_SIZE    4096u
 
-/* "mov r12, sp" -- __div0()'s real first instruction, Ghidra-confirmed. */
+/* "mov r12, sp" -- __div0()'s real first instruction (checked in the firmware's libgcc). */
 static const uint8_t expected[4] = {0x0d, 0xc0, 0xa0, 0xe1};
 /* "mov pc, lr" -- return immediately, skipping printk()+dump_stack(). */
 static const uint8_t patched[4]  = {0x0e, 0xf0, 0xa0, 0xe1};

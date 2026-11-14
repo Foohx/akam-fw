@@ -12,7 +12,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The guided flows that chain existing commands: update of an Akam camera (spec 11, 3.5) and first
+// The guided flows that chain existing commands: update of an Akam camera (specs/installer.md) and first
 // install from a stock camera (3.6). They only add the order, the gates and the screens; every write
 // to the camera or to a card still goes through flash.Confirmation (the red box of flashConfirm) or the
 // SD red box, exactly as the single commands do.

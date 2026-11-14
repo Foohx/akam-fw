@@ -435,7 +435,7 @@ check_udp() {
 # ---------------------------------------------------------------- process allow-list (G14)
 # Everything running after boot must be one of ours, a stock piece we keep on purpose, or a short-lived tool our own
 # scripts call. Names are argv0, or argv1 for "sh script": directory and .sh removed (as find_pids). The vendor
-# daemons msgserver and cmdserver are kept deliberately (local IPC, docs/building_your_own_firmware.md) and are
+# daemons msgserver and cmdserver are kept deliberately (local IPC, docs/manual/build.md) and are
 # reported as WARN "review": whether they can go is a hardware decision. Kernel threads have no cmdline: skipped.
 PROC_ALLOW=" init syslogd klogd wpa_supplicant udhcpc watchdog ak_rtsp_wrapper ak_rtsp dropbear dropbearmulti sh ash sleep drop_caches ntpd timeout nice ps grep logger kill cat date wc tail sync mv "
 proc_name() { # name of the process in dir $1, empty when none
@@ -539,7 +539,7 @@ check_cpu() {
     sleep "$CPU_WINDOW"
     w2=$(proc_wakeups "$p")
     # G10: wakeups per second = voluntary context switches of all threads (each sleep that ended); the budget of
-    # specs/10 is about 80/s with no client, the estimate from the code is about 140/s before the cuts.
+    # specs/roadmap.md is about 80/s with no client, the estimate from the code is about 140/s before the cuts.
     if [ -n "$w1" ] && [ -n "$w2" ] && [ "$CPU_WINDOW" -gt 0 ]; then
         info "ak_rtsp pid $p wakeups $(( (w2 - w1) / CPU_WINDOW ))/s over ${CPU_WINDOW}s (voluntary context switches, all threads)"
     fi

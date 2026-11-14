@@ -17,7 +17,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The camera chooser (spec 11, 3.3). Written once against ui.UI: the table is the list of a Pick, so
+// The camera chooser (specs/installer.md). Written once against ui.UI: the table is the list of a Pick, so
 // the plain and the full-screen interface show the same lines. Network traffic only goes where the
 // user asked for it: a remembered camera is checked on request, the WS-Discovery search and the scan
 // of the local network each ask one yes/no (default No) that names what will be sent.

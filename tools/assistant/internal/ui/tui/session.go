@@ -14,7 +14,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// The session (spec 12, section 5.1) is one long-lived full-screen program: a header with the camera
+// The session (specs/installer.md) is one long-lived full-screen program: a header with the camera
 // and its health badges, a main panel, a result strip and a footer with the keys of the current screen.
 // The flows keep their code written against ui.UI and run in a goroutine; the sessionUI of
 // sessionui.go turns Say/Good/Warn/Err into entries of the transcript and the strip, and

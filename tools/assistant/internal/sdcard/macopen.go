@@ -8,7 +8,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/blockio"
 )
 
-// The macOS Opener (spec 11, 4.4.4): `diskutil unmountDisk force /dev/diskN`, then the raw node /dev/rdiskN
+// The macOS Opener (specs/installer.md): `diskutil unmountDisk force /dev/diskN`, then the raw node /dev/rdiskN
 // opened read-write through blockio.Aligned. The OS side (the open itself) is injected so the order of the
 // steps is tested on Linux; opener_darwin.go supplies the real one.
 

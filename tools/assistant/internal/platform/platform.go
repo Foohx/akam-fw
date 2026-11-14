@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 )
 
-// StateDirFor is the default state directory for a given OS (spec 11, 4.9.2), from injected facts:
+// StateDirFor is the default state directory for a given OS (specs/installer.md), from injected facts:
 //
 //	linux:   $XDG_STATE_HOME/akam, else <home>/.local/state/akam (shared with the bash wizard)
 //	darwin:  <home>/Library/Application Support/Akam

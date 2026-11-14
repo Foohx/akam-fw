@@ -32,6 +32,18 @@ func Notices() string {
 	return string(b)
 }
 
+// License is the MIT LICENSE of Akam itself (with the copyright lines of its upstream work), embedded so that
+// a bare binary carries it.
+func License() string {
+	b, _ := scripts.ReadFile("scripts/LICENSE.embed")
+	return string(b)
+}
+
+// Licenses is what `akam licenses` prints: Akam's own licence, then the third-party notices.
+func Licenses() string {
+	return "Akam (MIT)\n\n" + License() + "\n\n" + Notices()
+}
+
 // Names lists the embedded files.
 func Names() []string {
 	es, _ := scripts.ReadDir("scripts")
