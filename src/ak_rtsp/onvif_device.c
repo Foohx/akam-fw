@@ -548,7 +548,7 @@ static void op_get_users(onvif_call_t *c)
 
 /* The camera has a hardware watchdog with nowayout, fed by /usr/bin/watchdog, which must never be stopped; this
  * does not touch it: the kernel restart path takes the machine down and the hardware timer is the safety net if
- * it hangs. The docs (akam_v1_flash_and_restore.md) report the software reboot as unreliable on this hardware, so
+ * it hangs. The docs (docs/manual/flash-and-restore.md) report the software reboot as unreliable on this hardware, so
  * the hardware test H6 decides if SystemReboot is kept as is. */
 static void *reboot_thread(void *arg)
 {

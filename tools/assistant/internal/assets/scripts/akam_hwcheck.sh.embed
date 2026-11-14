@@ -435,7 +435,7 @@ check_udp() {
 # ---------------------------------------------------------------- process allow-list (G14)
 # Everything running after boot must be one of ours, a stock piece we keep on purpose, or a short-lived tool our own
 # scripts call. Names are argv0, or argv1 for "sh script": directory and .sh removed (as find_pids). The vendor
-# daemons msgserver and cmdserver are kept deliberately (local IPC, docs/building_your_own_firmware.md) and are
+# daemons msgserver and cmdserver are kept deliberately (local IPC, docs/manual/build.md) and are
 # reported as WARN "review": whether they can go is a hardware decision. Kernel threads have no cmdline: skipped.
 PROC_ALLOW=" init syslogd klogd wpa_supplicant udhcpc watchdog ak_rtsp_wrapper ak_rtsp dropbear dropbearmulti sh ash sleep drop_caches ntpd timeout nice ps grep logger kill cat date wc tail sync mv "
 proc_name() { # name of the process in dir $1, empty when none

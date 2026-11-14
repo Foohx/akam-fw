@@ -3,7 +3,7 @@
 # camera from an SSH session, WITHOUT UART and WITHOUT the SD card.
 # Runs ON the camera (POSIX sh, BusyBox 1.30.1: no tr, mktemp, nohup, flock).
 # Normally driven from the PC by reflash_over_ssh.sh, which uploads the files
-# to /tmp/akam_reflash/ first. Read docs/akam_v1_flash_and_restore.md
+# to /tmp/akam_reflash/ first. Read docs/manual/flash-and-restore.md
 # ("Reflashing over SSH, without UART") before using it: a write that is
 # interrupted half way leaves an APP that only UART can recover.
 #

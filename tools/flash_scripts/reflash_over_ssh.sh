@@ -8,7 +8,7 @@
 # HAND. It never reboots the camera.
 #
 # RISK: if the write is interrupted (power loss, crash) the APP partition is
-# half written and only UART can recover it. Read docs/akam_v1_flash_and_restore.md
+# half written and only UART can recover it. Read docs/manual/flash-and-restore.md
 # ("Reflashing over SSH, without UART"). Without --i-understand-no-uart the
 # script refuses to flash (--precheck-only is allowed).
 #
@@ -95,7 +95,7 @@ if [ "$confirm" -ne 1 ] && [ "$precheck_only" -ne 1 ]; then
 reflash_over_ssh: refusing to flash without --i-understand-no-uart.
 Flashing a running camera over SSH has no UART safety net: an interrupted
 write leaves a half-written APP that only UART can recover. Read
-docs/akam_v1_flash_and_restore.md first. Use --precheck-only to test the setup.
+docs/manual/flash-and-restore.md first. Use --precheck-only to test the setup.
 EOF
     exit 2
 fi

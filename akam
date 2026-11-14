@@ -284,7 +284,7 @@ case $CMD in
         ;;
     key)
         echo "akam: changing the SSH key of a camera over SSH is only in the native assistant (tools/assistant/build.sh, then AKAM_USE_BIN=1 ./akam key ...)." >&2
-        echo "  What to do: with the bash wizard, put a new akam/authorized_keys on the flash card (docs/akam_v1_ssh_and_lockdown.md)." >&2
+        echo "  What to do: with the bash wizard, put a new akam/authorized_keys on the flash card (docs/manual/ssh-and-lockdown.md)." >&2
         exit 2
         ;;
     register) cmd_register || rc=$? ;;

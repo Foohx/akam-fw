@@ -6,7 +6,7 @@ there is no thread, socket, timer or pipe.
 
 Status: **host-tested only** (packet codec with fuzzing, discovery documents, a fake broker, the helper script, the
 installers). It has never run on a real camera or against a real broker. The checks to make are in
-`docs/akam_v1_test_plan.md`. MQTT over TLS is not implemented.
+`docs/hardware-test-checklists.md`. MQTT over TLS is not implemented.
 
 ## 1. Properties
 

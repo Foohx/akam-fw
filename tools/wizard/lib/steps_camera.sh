@@ -413,7 +413,7 @@ bk_manual_fallback_hint() {
     ui_say "  The automatic transfer did not work. You still have the dumps on the card:"
     ui_say "  power the camera off, put the card in the PC, copy dump1/ to a folder, then run:"
     ui_say "      ./akam backup --backup-dir THAT_FOLDER"
-    ui_say "  (docs/akam_v1_backup_sd.md section 9 shows how to check the copy)."
+    ui_say "  (docs/manual/backup-sd.md section 9 shows how to check the copy)."
 }
 
 backup_camera() {
@@ -560,7 +560,7 @@ flash_ssh() {
         { ui_fail "not confirmed." "nothing was written."; return 1; }
     cam_run_flash_script "$STATE_DIR/reflash.log" bash "$(wiz_tool reflash)" "${args[@]}" --i-understand-no-uart ||
         { ui_fail "the SSH reflash failed or could not be verified." \
-            "DO NOT power-cycle yet. Read $STATE_DIR/reflash.log and docs/akam_v1_flash_and_restore.md (Reflashing over SSH)."; return 1; }
+            "DO NOT power-cycle yet. Read $STATE_DIR/reflash.log and docs/manual/flash-and-restore.md (Reflashing over SSH)."; return 1; }
     ui_good "  The camera confirmed the written image (read-back md5 = $md5)."
 }
 
@@ -661,11 +661,11 @@ cam_wifi_verdict() {
             ;;
         NO_CARD_CONFIG)
             ui_fail "the camera has no saved Wi-Fi (/etc/config/wpa_supplicant.conf) and the card holds no usable custom/configs/wifi.conf to create it from." \
-                "without it the camera has NO network once the card is removed. Prepare the flash card again (./akam step prepare-flash-sd), or create the file by hand: docs/akam_v1_install.md (Troubleshooting: no network after removing the card)."
+                "without it the camera has NO network once the card is removed. Prepare the flash card again (./akam step prepare-flash-sd), or create the file by hand: docs/troubleshooting.md."
             ;;
         BAD_CHARS)
             ui_fail "the Wi-Fi name or password on the card holds a double quote, a backslash or a line break: the camera's wpa_supplicant.conf cannot be written safely from it." \
-                "create /etc/config/wpa_supplicant.conf by hand (docs/akam_v1_install.md, Troubleshooting), or use a Wi-Fi password without those characters."
+                "create /etc/config/wpa_supplicant.conf by hand (docs/troubleshooting.md), or use a Wi-Fi password without those characters."
             ;;
         BAD_PSK_LENGTH)
             ui_fail "the Wi-Fi password on the card is not 8 to 63 characters long, so it is not a WPA password." \
@@ -673,11 +673,11 @@ cam_wifi_verdict() {
             ;;
         UNSUPPORTED_SECURITY)
             ui_fail "the card's Wi-Fi settings use a security type other than WPA/WPA2-PSK (SECURITY=3) or open (SECURITY=1)." \
-                "create /etc/config/wpa_supplicant.conf by hand for your network (docs/akam_v1_install.md, Troubleshooting)."
+                "create /etc/config/wpa_supplicant.conf by hand for your network (docs/troubleshooting.md)."
             ;;
         WRITE_FAILED)
             ui_fail "the camera could not write /etc/config/wpa_supplicant.conf." \
-                "do not remove the card. Create the file by hand (docs/akam_v1_install.md, Troubleshooting)."
+                "do not remove the card. Create the file by hand (docs/troubleshooting.md)."
             ;;
         *)
             ui_fail "could not check the camera's saved Wi-Fi (no answer from preflight_check.sh --ensure-wifi)." \
@@ -788,7 +788,7 @@ flash_telnet() {
         camsh_stream_set 0
         ui_progress_close
         if [ "$rc" -ne 0 ]; then
-            ui_fail "the flash script did not finish (no end of output, code $rc)." "DO NOT power-cycle yet. Read the lines above; docs/akam_v1_flash_and_restore.md (Recovery)."
+            ui_fail "the flash script did not finish (no end of output, code $rc)." "DO NOT power-cycle yet. Read the lines above; docs/manual/flash-and-restore.md (Recovery)."
             if [ "$rc" -eq 1 ]; then
                 ui_warn "no output for a long time: the write may STILL be running. The session is left open and nothing is sent again;"
                 ui_warn "wait several minutes, then read the partition back by hand: dd if=/dev/mtd7 bs=64k 2>/dev/null | md5sum (must be $md5)."
@@ -806,7 +806,7 @@ flash_telnet() {
     camsh_close
     if [ "$sums" != "$md5" ]; then
         ui_fail "the partition read back as md5 '$sums', the image is $md5." \
-            "DO NOT power-cycle. Run the flash again from this step or restore (docs/akam_v1_flash_and_restore.md)."
+            "DO NOT power-cycle. Run the flash again from this step or restore (docs/manual/flash-and-restore.md)."
         return 1
     fi
     ui_good "  Read-back md5 of /dev/mtd7 = image md5 ($md5)."
@@ -1039,12 +1039,12 @@ cmd_verify() {
     cam_need_ip || return 1
     cam_key
     cam_wait_port "$(cam_port ssh)" "${AKAM_WAIT_SECS:-240}" "the camera to answer on SSH" ||
-        { ui_fail "the camera does not answer on SSH." "it may still be starting (wait a minute and run this step again), the address may have changed (check your router), or the camera may have no network: see docs/akam_v1_flash_and_restore.md (Recovery). The step is NOT done."; return 1; }
+        { ui_fail "the camera does not answer on SSH." "it may still be starting (wait a minute and run this step again), the address may have changed (check your router), or the camera may have no network: see docs/manual/flash-and-restore.md (Recovery). The step is NOT done."; return 1; }
     cam_ssh_setup
     cam_show_fingerprint
     cam_ssh_ok || { ui_fail "SSH with $CAM_KEY was refused." "is this the key you put on the flash card (--identity FILE)? The step is NOT done: do not remove the card."; return 1; }
     ui_good "  SSH with your key works."
-    cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure (lines above)." "do not remove the card yet; read docs/akam_v1_test_plan.md."; return 1; }
+    cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure (lines above)." "do not remove the card yet; read docs/hardware-test-checklists.md."; return 1; }
     cam_ports_check card || { ui_fail "unexpected port state." "do not remove the card yet."; return 1; }
     ui_good "  Checks passed with the card in."
     # Hard gate: never invite the user to remove the card while the camera has no saved Wi-Fi.
@@ -1056,8 +1056,8 @@ cmd_verify() {
     if [ "$ANSWER" = q ]; then ui_fail "stopped." "run ./akam step verify again when ready."; return 1; fi
     cam_wait_port "$(cam_port ssh)" "${AKAM_WAIT_SECS:-240}" "the camera to boot without the card and answer on SSH" ||
         { ui_fail "the camera is not on the network ${AKAM_WAIT_SECS:-240} seconds after the power-up without the card." \
-            "most likely its Wi-Fi is not saved on the camera (no /etc/config/wpa_supplicant.conf): put the card back, power-cycle, run this step again (it creates the file) and see docs/akam_v1_install.md (Troubleshooting: no network after removing the card). Also check the address in your router: it may have changed."; return 1; }
-    cam_ports_check closed || { ui_fail "port check failed without the card." "see docs/akam_v1_ssh_and_lockdown.md."; return 1; }
+            "most likely its Wi-Fi is not saved on the camera (no /etc/config/wpa_supplicant.conf): put the card back, power-cycle, run this step again (it creates the file) and see docs/troubleshooting.md. Also check the address in your router: it may have changed."; return 1; }
+    cam_ports_check closed || { ui_fail "port check failed without the card." "see docs/manual/ssh-and-lockdown.md."; return 1; }
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure without the card." ""; return 1; }
     state_mark_done verify
     ui_good "  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off."
@@ -2454,5 +2454,5 @@ cmd_restore() {
     ui_blank
     ui_good "  Restore written and verified (read-back md5 = $md5)."
     ui_say "  Power-cycle the camera BY HAND (unplug the USB-C power, wait 5 seconds, plug it back)."
-    ui_say "  CONFIG was not touched, so the Wi-Fi settings stay. Details: docs/akam_v1_flash_and_restore.md section 5."
+    ui_say "  CONFIG was not touched, so the Wi-Fi settings stay. Details: docs/manual/flash-and-restore.md section 5."
 }

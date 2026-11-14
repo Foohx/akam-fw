@@ -519,7 +519,7 @@ func TestVerifyFailures(t *testing.T) {
 		w.verifyWorld(t)
 		r := w.run("\n", "verify")
 		expectRC(t, r, 1)
-		contains(t, r.out+r.err, "    FAIL ak_rtsp is not running", "akam_hwcheck.sh reported a failure (lines above).", "do not remove the card yet; read docs/akam_v1_test_plan.md.")
+		contains(t, r.out+r.err, "    FAIL ak_rtsp is not running", "akam_hwcheck.sh reported a failure (lines above).", "do not remove the card yet; read docs/hardware-test-checklists.md.")
 		if w.readState("step_verify_done") != "" {
 			t.Error("marked done")
 		}

@@ -628,7 +628,7 @@ struct akpcm_pars {
  *   0x8004xxxx = _IOR (GET: the driver returns the current value)
  *
  * Ground truth: an LD_PRELOAD capture of the stock vendor application on a
- * stock camera (docs/stock_capture.md). The "_IOW"/"_IOR" letters in the
+ * stock camera (docs/manual/stock-capture.md). The "_IOW"/"_IOR" letters in the
  * capture-side comments above are inverted for nr 0x10 and 0x30, and
  * AKPCM_IOC_SET_STATE / AKPCM_IOC_SET_PERIODS are
  * really GETs: stock calls them to read the current value. The real SETs

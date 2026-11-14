@@ -6,7 +6,7 @@
 # Builds src/ak_rtsp/stock_hook.so with the pinned Zig (run tools/build/bootstrap.sh once),
 # or takes a prebuilt one with --hook, and copies it with stock_capture.sh to
 # CARD_MOUNT_DIR/stock_capture/, plus a SHA256SUMS file the camera script checks.
-# Nothing else on the card is touched. See docs/stock_capture.md.
+# Nothing else on the card is touched. See docs/manual/stock-capture.md.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

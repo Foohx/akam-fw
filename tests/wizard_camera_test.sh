@@ -2,8 +2,8 @@
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for the camera steps of ./akam (find-camera, backup, flash, verify, update, restore)
 # against tools/wizard/fake_camera.sh on localhost, with fake ssh and reflash tools. The real camera
-# is never contacted. The fake shell's transcripts are reconstructed from docs/akam_v1_backup_sd.md
-# and docs/akam_v1_flash_and_restore.md, not recorded on hardware.
+# is never contacted. The fake shell's transcripts are reconstructed from docs/manual/backup-sd.md
+# and docs/manual/flash-and-restore.md, not recorded on hardware.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

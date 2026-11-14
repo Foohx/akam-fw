@@ -17,7 +17,7 @@
 # DIR (default dist/release/vX.Y.Z/): the kit tarball, the assistant binaries and archives, LICENSE,
 # THIRD_PARTY_NOTICES.md, the source tarball (git archive --prefix=akam-X.Y.Z/ HEAD) and ONE combined SHA256SUMS
 # (see gather_release.sh). It checks every line, runs verify_kit.sh --allow-unsigned on the kit, refuses any camera
-# image or dump, writes the filled release notes next to DIR (vX.Y.Z-notes.md, from docs/release_notes_draft.md:
+# image or dump, writes the filled release notes next to DIR (vX.Y.Z-notes.md, from tools/release/release_notes_template.md:
 # version, kit sha256, date, key, absolute links) and prints the next commands.
 # It never signs, never tags and never publishes.
 #
@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 ALLOWED="$HERE/allowed_signers"
 EMBEDDED="$ROOT/tools/assistant/internal/kit/allowed_signers"
-DRAFT="$ROOT/docs/release_notes_draft.md"
+DRAFT="$ROOT/tools/release/release_notes_template.md"
 REPO_URL="https://github.com/Foohx/akam-fw"
 KEY_LINE_RE='^akam-release namespaces="akam-release" ssh-ed25519 AAAA'
 die() { echo "make_release: error: $*" >&2; exit 1; }

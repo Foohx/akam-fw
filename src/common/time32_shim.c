@@ -5,7 +5,7 @@
  * The Anyka AK3918 runs a vendor Linux 4.4.302 kernel that has no time64
  * system calls, yet answers some of them with "success" instead of ENOSYS.
  * Measured on the camera (tests/native/time64_probe.c,
- * docs/akam_v1_kernel_time64.md):
+ * docs/how-it-works.md):
  *   - syscall 403 (clock_gettime64) returns 0 and does NOT write the
  *     timespec, at least for CLOCK_MONOTONIC and CLOCK_BOOTTIME;
  *   - syscall 263 (clock_gettime32) is correct for every clock.

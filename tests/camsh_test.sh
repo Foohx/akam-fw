@@ -2,7 +2,7 @@
 # Tests for tools/wizard/lib/camsh.sh against the fake camera (tools/wizard/fake_camera.sh):
 # end markers and exit codes, IAC and CR filtering, timeouts, reconnect, manual fallback after
 # 2 failures, empty stdin in manual mode, dry-run, prompt relay. Nothing leaves localhost.
-# The transcripts the fake reproduces are reconstructed from docs/akam_v1_backup_sd.md (section 8),
+# The transcripts the fake reproduces are reconstructed from docs/manual/backup-sd.md (section 8),
 # not recorded on a camera.
 # shellcheck disable=SC2016  # commands for the camera shell are single-quoted on purpose
 set -uo pipefail

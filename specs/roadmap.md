@@ -30,7 +30,7 @@ Status: this file is a list of gaps, not a promise or a schedule.
 
 ## 3. Hardware test debt
 
-Never seen on a camera (see `docs/testing-status.md` and `docs/akam_v1_test_plan.md`):
+Never seen on a camera (see `docs/testing-status.md` and `docs/hardware-test-checklists.md`):
 
 | Pri | Item |
 |---|---|

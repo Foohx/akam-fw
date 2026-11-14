@@ -157,7 +157,7 @@ strip_copy "$FLASH_TOOL_BIN" "$KIT/bin/flash_tool"
 GATE_TOOL="${AKAM_KIT_CHECK_TIME32:-$ROOT/tools/build/check_time32.sh}"
 log "time64 gate on ak_rtsp and dropbearmulti"
 if ! bash "$GATE_TOOL" --require-263 "$KIT/bin/ak_rtsp" "$KIT/bin/dropbearmulti"; then
-    die "time64 gate FAILED: the binaries would misbehave on the camera's kernel (docs/akam_v1_kernel_time64.md). No kit written."
+    die "time64 gate FAILED: the binaries would misbehave on the camera's kernel (docs/how-it-works.md). No kit written."
 fi
 GATE_DISASM="$(gdb --version 2>/dev/null | head -1 || true)"
 [ -n "$GATE_DISASM" ] || GATE_DISASM=unknown

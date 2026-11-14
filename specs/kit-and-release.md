@@ -118,7 +118,7 @@ equivalent (shellcheck, every `tests/*_test.sh`, tracked-file hygiene; it prints
 | Step | Tool | Result |
 |---|---|---|
 | Release key (once) | `ssh-keygen -t ed25519`, then one commit adding the key to `allowed_signers` and the assistant's embedded copy, and quoting it in the README and release notes | Trust anchor |
-| Prepare the commit | Set the version in `AKAM_WIZARD_VERSION` (`./akam`) and `var version` (`tools/assistant/cmd/akam/main.go`); date the `CHANGELOG.md` section; finish `docs/release_notes_draft.md`; review `supported_hardware.txt` | Clean tree, tag not yet existing |
+| Prepare the commit | Set the version in `AKAM_WIZARD_VERSION` (`./akam`) and `var version` (`tools/assistant/cmd/akam/main.go`); date the `CHANGELOG.md` section; finish `tools/release/release_notes_template.md`; review `supported_hardware.txt` | Clean tree, tag not yet existing |
 | Build | `tools/release/make_release.sh X.Y.Z` | `dist/release/vX.Y.Z/` |
 | Sign | `tools/release/sign_kit.sh <key> dist/release/vX.Y.Z` | `SHA256SUMS.sig` |
 | Check | `make_release.sh --check-signed X.Y.Z` and `verify_kit.sh` | Signed release accepted |

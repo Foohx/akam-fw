@@ -162,7 +162,7 @@ $(TARGET_HOOK): isp_hook.c
 	$(CC) -std=gnu99 -mfloat-abi=soft -O1 -fPIC -shared -nostdlib -ffreestanding \
 	      -mcpu=arm926ej_s -o $@ $<
 
-# stock_hook.so: capture of the stock anyka_ipc (speaker, GPIO, ISP), see docs/stock_capture.md.
+# stock_hook.so: capture of the stock anyka_ipc (speaker, GPIO, ISP), see docs/manual/stock-capture.md.
 # Includes isp_hook.c, needs no libc and no compiler-rt (no division by a variable,
 # no memcpy), exports only the hooked libc symbols, so the only undefined symbol left
 # is the weak __errno_location (checked by tests/stock_hook_test.sh).
@@ -207,7 +207,7 @@ clean:
 # unless FW_DIR is overridden). Rebuilds ak_rtsp first, then runs
 # build_firmware.sh (needs mksquashfs/unsquashfs on the host). Requires an
 # app_extracted/ dump of your own camera's APP partition — see
-# docs/building_your_own_firmware.md for the full walkthrough and what
+# docs/manual/build.md for the full walkthrough and what
 # PATCHED/FW_DIR should point at.
 # -----------------------------------------------------------------------
 firmware: $(TARGET)

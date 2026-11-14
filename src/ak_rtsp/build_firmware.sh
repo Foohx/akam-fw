@@ -7,7 +7,7 @@
 # This script does NOT ship a stock APP partition dump -- that's your
 # camera's proprietary Tuya firmware and can't be redistributed. You must
 # supply your own unsquashed dump as app_extracted/ (see
-# docs/building_your_own_firmware.md). Steps:
+# docs/manual/build.md). Steps:
 #   1. copy APP_EXTRACTED to $FW_DIR/app_patched/ (always from scratch, unless
 #      KEEP_PATCHED=1; the Akam install/patch steps below run in both cases)
 #   2. de-Tuyafication: remove anyka_ipc, install ak_rtsp + wrapper + ini
@@ -124,7 +124,7 @@ if [ ! -d "$APP_EXTRACTED" ]; then
     echo "FATAL: $APP_EXTRACTED not found." >&2
     echo "This must be your own unsquashed dump of the camera's stock APP" >&2
     echo "partition (mtdblock7) -- it is NOT included in this repo since it's" >&2
-    echo "the vendor's proprietary firmware. See docs/building_your_own_firmware.md" >&2
+    echo "the vendor's proprietary firmware. See docs/manual/build.md" >&2
     echo "for how to dump and unsquash your own, or set APP_EXTRACTED to point" >&2
     echo "at an existing extraction." >&2
     exit 1
@@ -579,7 +579,7 @@ TIME64_NOTE=""
 # --- 4. safety checks -------------------------------------------------------------
 echo "Checking tree..."
 # The camera's kernel acknowledges musl's time64 clock syscalls without executing
-# them (docs/akam_v1_kernel_time64.md). Hard gate, run on the files that are
+# them (docs/how-it-works.md). Hard gate, run on the files that are
 # actually in the image (stripped): no forbidden time64 syscall, and the 32-bit
 # clock_gettime (263) of src/common/time32_shim.c present. A missing gdb is a failure.
 # Kit mode: verify_kit.sh checked time64_gate=pass in the hashed MANIFEST and the sha256 of both

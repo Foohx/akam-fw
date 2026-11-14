@@ -15,7 +15,7 @@
 # FAKE_WIFI_SSID / FAKE_WIFI_PASS (the card's custom/configs/wifi.conf with --flash-card; the camera
 # starts WITHOUT /etc/config/wpa_supplicant.conf, like one never paired with the vendor app).
 #
-# What the shell looks like (reconstructed from docs/akam_v1_backup_sd.md, NOT recorded on a camera):
+# What the shell looks like (reconstructed from docs/manual/backup-sd.md, NOT recorded on a camera):
 #   - IAC negotiation bytes at connect, CRLF line endings on the echo of the typed line, "# " prompt;
 #   - paths /dev/mtd*, /proc/*, /tmp/*, /mnt, /etc/* are mapped into ROOT; the card is /tmp/sd;
 #   - `mount` lists the card, `mount --bind A B` links B to A, `uname -r/-v` answer, reboot and

@@ -11,7 +11,7 @@
 # on STOCK firmware only. On an Akam image the APP partition is mounted on /usr
 # and holds dropbear/watchdog, so flash from the UART init=/bin/sh shell with
 # this script and flash_tool on the SD card, never over SSH (flash_guard.sh
-# refuses; override AKAM_FLASH_I_KNOW=1). See docs/akam_v1_flash_and_restore.md.
+# refuses; override AKAM_FLASH_I_KNOW=1). See docs/manual/flash-and-restore.md.
 #
 # Run: sh /mnt/install_with_flash_tool.sh
 
