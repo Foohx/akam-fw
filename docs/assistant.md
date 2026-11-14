@@ -26,7 +26,9 @@ Evidence: [testing status](testing-status.md).
 
 ## Files of a release
 
-One release tag `vX.Y.Z` holds the camera kit and the assistant. Names carry no version:
+The assistant has its own releases, tagged `assistant-vX.Y.Z` (the one marked "Latest" on GitHub). The camera firmware is
+a separate release, `firmware-vX.Y.Z`, with its own version: one kit per camera model, the source, the licences and its own
+`SHA256SUMS` and `SHA256SUMS.sig`; `akam get-kit` downloads and verifies it for you. Names of the assistant files carry no version:
 
 | Target | Raw binary | Archive |
 |---|---|---|
@@ -34,7 +36,7 @@ One release tag `vX.Y.Z` holds the camera kit and the assistant. Names carry no 
 | macOS Intel, Apple silicon | `akam-darwin-amd64`, `akam-darwin-arm64` | `.tar.gz` |
 | Windows amd64, arm64 | `akam-windows-amd64.exe`, `akam-windows-arm64.exe` | `.zip` |
 
-Also `akam-kit-X.Y.Z.tar.xz` (the camera kit), the source tarball, `LICENSE`, `THIRD_PARTY_NOTICES.md`, and ONE `SHA256SUMS` (all files) with `SHA256SUMS.sig`. An archive keeps the executable bit on Unix;
+Also `LICENSE`, `THIRD_PARTY_NOTICES.md`, and ONE `SHA256SUMS` (all files of the release) with `SHA256SUMS.sig`. An archive keeps the executable bit on Unix;
 a raw download does not. `akam licenses` prints the notices even for a binary downloaded alone.
 
 ## Check the download
@@ -61,8 +63,11 @@ sha256sum -c --ignore-missing SHA256SUMS
 ```
 
 The first command must print `Good "akam-release" signature`; the second shows `OK` for your file. `SHA256SUMS` lists every file of the
-release. GitHub's automatic "Source code" archives are **not** covered: use `akam-X.Y.Z-src.tar.gz`. `tools/release/verify_kit.sh`
-(for the camera kit) needs GNU tools, so it runs on Linux; `akam get-kit` does the same checks on every system.
+release. GitHub's automatic "Source code" archives are **not** covered: use `akam-firmware-X.Y.Z-src.tar.gz` of the
+firmware release. A camera kit is checked the same way with the `SHA256SUMS` and `SHA256SUMS.sig` of its own
+(firmware) release, for example `sha256sum -c --ignore-missing SHA256SUMS` next to `akam-kit-<model>-X.Y.Z.tar.xz`;
+`tools/release/verify_kit.sh akam-kit-<model>-X.Y.Z.tar.xz` (`--expect-model <model>` to also check the camera model)
+needs GNU tools, so it runs on Linux; `akam get-kit` does the same checks on every system.
 
 ## Unsigned binaries
 

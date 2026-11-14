@@ -52,8 +52,10 @@ script checks, in this order:
    content; then every file in `MANIFEST.txt` and the kit's inner `SHA256SUMS`:
    content, mode, nothing missing, nothing extra;
 4. `kit_format` is one this version understands, the MANIFEST records
-   `time64_gate=pass` and `kit_grade=release`, and `supported_hardware.txt` is the one
-   the MANIFEST hashes.
+   `time64_gate=pass` and `kit_grade=release`, the MANIFEST names a camera model (`model=`,
+   the same as the archive directory `akam-kit-<model>-<version>` and as the header of
+   `supported_hardware.txt`; `--expect-model ID` also checks it is YOUR model), and
+   `supported_hardware.txt` is the one the MANIFEST hashes.
 
 Nothing from the kit is executed. The tarball is copied to a private temporary
 directory first, so the file that was hashed is the file that is extracted.
@@ -68,7 +70,7 @@ Outcomes:
 
 An unsigned kit is only protected against download corruption, not against a
 malicious replacement on the same server. Compare the kit's sha256 with the one
-in the release notes (another channel; the `CHANGELOG.md` gets it in a commit after the release):
+in the release notes of the firmware release (another channel):
 `--expect-sha256 <first 12 hex digits>` (at least 8). The signature is only worth what the
 copy of the repository and public key you hold is worth.
 
@@ -76,7 +78,8 @@ copy of the repository and public key you hold is worth.
 
 Akam is validated for **one** hardware and firmware combination. The machine-readable
 list is `supported_hardware.txt` (shipped in the kit, hash recorded in `MANIFEST.txt`;
-source: `tools/release/supported_hardware.txt`).
+source: the model file `tools/release/models/<model>.txt`, one per camera model; see
+[compatible cameras](../compatible-cameras.md#model-ids)).
 
 | Status | Device | Fingerprint |
 |---|---|---|

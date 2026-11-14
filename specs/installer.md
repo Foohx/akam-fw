@@ -51,11 +51,11 @@ step menu and the Go assistant opens a home screen. Every command that changes t
 | `cameras`, `rename-camera NEW`, `register` | Several cameras; record a camera that already runs Akam |
 | `key [show \| use-shared \| use-new \| use FILE.pub]` (G) | SSH key of one camera (see [network-time-security.md](network-time-security.md)) |
 | `config [show \| save-global \| save-local \| apply \| edit-global \| forget-secrets]` (G) | Saved settings (section 3) |
-| `releases` (G) | Lists the published versions, newest first (`--include-prereleases`) |
+| `releases` (G) | Lists the published firmware releases that have a kit for the camera's model, newest first (`--include-prereleases`) |
 | `forget-host-key IP` (G) | Forgets a pinned SSH host key (asks first) |
 | `licenses`, `version`, `self-test` (G) | Licences of the built-in software; version; offline checks |
 
-Global options: `--dry-run`, `--kit FILE`, `--version X.Y.Z`, `--allow-unsigned`, `--expect-sha256 H`, `--backup-dir DIR`,
+Global options: `--dry-run`, `--kit FILE`, `--version X.Y.Z` (a firmware release), `--model ID`, `--allow-unsigned`, `--expect-sha256 H`, `--backup-dir DIR`,
 `--backup-copy DIR`, `--ip ADDRESS`, `--identity FILE`, `--image FILE`, `--stock`, `--manual-telnet`, `--out DIR`,
 `--comp xz|gzip`, `--allow-unknown-stock-comp`, `--builder native|tools` (G), `--i-understand-untested`, `--device DEV`,
 `--pubkey FILE`, `--ssid NAME`, `--camera NAME`, `--state-dir DIR`, `--no-color`, `--plain`.
@@ -179,9 +179,10 @@ Bash path: `tools/image/assemble_from_kit.sh` unpacks `mtdblock7.bin` with `unsq
 `src/ak_rtsp/build_firmware.sh --kit`. Steps and gates:
 
 1. Verify the kit ([kit-and-release.md](kit-and-release.md)). A `kit_format` the installer does not know
-   (`tools/wizard/kit_compat.txt`, currently `1`) is refused.
-2. Fingerprint the stock APP (compressor, block size, BCJ filter, sha256) and compare with
-   `tools/release/supported_hardware.txt`: a record marked `validated` continues; anything else is "untested" and needs
+   (`tools/wizard/kit_compat.txt`, currently `1`) is refused, and so is a kit made for another camera model than the
+   camera's (section 9).
+2. Fingerprint the stock APP (compressor, block size, BCJ filter, sha256) and compare with the kit's
+   `supported_hardware.txt` (its model's entry of `tools/release/models/`): a record marked `validated` continues; anything else is "untested" and needs
    an explicit yes (`--i-understand-untested`). The whole `/proc/mtd` layout must match; a different one is always
    refused.
 3. Copy the tree, remove `anyka_ipc`, install the Akam files from `image_files.txt`, patch `service.sh`, `ethernet.sh`,
@@ -271,10 +272,26 @@ check card and address, remove the card, use the UART, then `restore`. SSH never
 
 ## 9. Firmware choice (Go assistant, host-tested only)
 
-`update` asks "Which firmware?" or takes `--version X.Y.Z` (a published release from GitHub), `--kit FILE`, `--image FILE`
-or `--stock`. `releases` lists versions newest first (prereleases hidden unless `--include-prereleases`). A downgrade asks
-a question. The downloader uses a small TLS client (not `net/http`). The stock choice is the restore flow.
+`update` asks "Which firmware?" or takes `--version X.Y.Z` (a published firmware release from GitHub), `--kit FILE`,
+`--image FILE` or `--stock`. `releases` lists versions newest first (prereleases hidden unless `--include-prereleases`). A
+downgrade asks a question. The downloader uses a small TLS client (not `net/http`). The stock choice is the restore flow.
 No release was published when this was written, so the chooser was only tested against a test server that plays GitHub.
+
+**Camera model and release filtering.** The assistant knows the camera models of `tools/release/models/` (embedded in the
+binary). It learns the model of a camera from facts it already reads: the sha256 of the stock APP of an accepted backup
+(`backup` records it as `camera_model` and says so), or the `model=` line of the MANIFEST that an Akam camera carries in
+`/usr/local/akam/MANIFEST.txt`. `akam status` shows `Camera model: <name> (<id>)` once known. A model that is not known
+yet is the only model of the registry; with several models, `--model ID` or a backup is needed.
+
+The GitHub release list is advice, never trust. It keeps only releases that are not drafts, whose tag is exactly
+`firmware-vX.Y.Z`, and that carry `akam-kit-<model>-X.Y.Z.tar.xz`, `SHA256SUMS` and `SHA256SUMS.sig` for the camera's model
+(prereleases only with `--include-prereleases`); assistant releases and releases without a kit for this model are simply
+not listed. The same list feeds `releases`, the chooser, `get-kit` without `--version` (the newest one) and the version
+checks. Downloaded kits are kept as `downloads/<ver>/akam-kit-<model>-<ver>.tar.xz`. A kit whose `model=` is not the
+camera's (or not `--model`'s) is refused with a clear message before anything is installed or written; when the camera's
+model is not known, nothing can be compared (the stock APP fingerprint check of the image step still applies). The bash
+wizard follows the same rule: its `get-kit` needs `--version` (the wizard version is not the firmware version), downloads
+from `firmware-vX.Y.Z`, passes `--expect-model` to `verify_kit.sh` and records `camera_model` at the backup.
 
 ## 10. Home screen and interface (Go)
 
