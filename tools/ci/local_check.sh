@@ -140,6 +140,12 @@ for t in "$REPO"/tests/*_test.sh; do
     if [ "$rc" -ne 0 ]; then
         T_FAIL=$((T_FAIL + 1))
         host_say red "FAIL  $name (exit $rc)"
+        # The tail is where a summary is; the failed checks themselves are often far above it (a CI log is all there is).
+        if [ "$(wc -l <"$LOGDIR/$name.log")" -gt 25 ] && grep -q -E 'FAIL|not ok' "$LOGDIR/$name.log"; then
+            echo "      | ---- failed checks (first 30):"
+            grep -n -E 'FAIL|not ok' "$LOGDIR/$name.log" | head -n 30 | sed 's/^/      | /'
+            echo "      | ---- last 25 lines:"
+        fi
         tail -n 25 "$LOGDIR/$name.log" | sed 's/^/      | /'
         note_fail "test $name"
     elif [ "${AKAM_CI:-0}" = 1 ] && grep -q -i -E "$CI_SKIP_FAIL" "$LOGDIR/$name.log"; then
