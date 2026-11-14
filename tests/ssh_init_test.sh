@@ -10,7 +10,12 @@ TPL=$REPO/tools/firmware_patch_templates
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
-    if command -v busybox >/dev/null 2>&1; then SH_UNDER_TEST="busybox sh"; else SH_UNDER_TEST="sh"; fi
+    # The pinned BusyBox first, like every other camera-side test: a system busybox (the CI runner image has the
+    # busybox-static one) may be built with FEATURE_PREFER_APPLETS, whose ash runs its own mount/umount applets
+    # instead of the stubs this test puts first in PATH.
+    if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
+    elif command -v busybox >/dev/null 2>&1; then SH_UNDER_TEST="busybox sh"
+    else SH_UNDER_TEST="sh"; fi
 fi
 read -r -a SHCMD <<<"$SH_UNDER_TEST"
 echo "shell under test: $SH_UNDER_TEST"
