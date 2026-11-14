@@ -313,6 +313,7 @@ func (a *App) cmdRegister() error {
 	if bdir != "" {
 		set("backup_dir", bdir)
 		set("backup_sha", fileSHA(filepath.Join(bdir, "mtdblock7.bin")))
+		a.detectModelFromBackup(bdir) // the stock APP names the camera model (as the bash register does)
 		_ = a.St.MarkDone("backup")
 	}
 	_ = a.St.MarkDone("flash")

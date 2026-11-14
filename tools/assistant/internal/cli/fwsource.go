@@ -92,7 +92,7 @@ func (a *App) fwRecord(img string) {
 	if sha := fileSHA(img); sha != "" && sha == a.St.Get("image_sha") && a.stepStatus("image") == "done" &&
 		a.St.Get("image_origin") != "imported:"+sha && kitMode && kv != "" {
 		ver = kv
-		if p == a.downloadedKitPath(a.kitModelInUse(), kv) && !unsigned {
+		if p == a.downloadedKitFile(a.kitModelInUse(), kv) && !unsigned {
 			src = "release:" + kv
 		} else {
 			src = "kit:" + stateLine(p)
@@ -224,7 +224,7 @@ func (a *App) downloadedKits() []string {
 		if !e.IsDir() || !validKitVersion(v) {
 			continue
 		}
-		if st, err := os.Stat(a.downloadedKitPath(model, v)); err == nil && st.Mode().IsRegular() {
+		if st, err := os.Stat(a.downloadedKitFile(model, v)); err == nil && st.Mode().IsRegular() {
 			out = append(out, v)
 		}
 	}
@@ -237,9 +237,6 @@ func (a *App) downloadedKits() []string {
 	})
 	return out
 }
-
-// downloadedKitPath is where the downloaded kit of a model and version is kept.
-func (a *App) downloadedKitPath(model, v string) string { return a.downloadedKitFile(model, v) }
 
 // kitModelInUse is the model of the kit being installed (staged) or installed.
 func (a *App) kitModelInUse() string {
@@ -548,7 +545,7 @@ func (a *App) pickFirmware(mode fwMode, curText, cur string) (fwSource, bool) {
 			return fwSource{Kind: fwImage, Path: p}, true
 		}
 		if c.src.Kind == fwKit && c.src.Path == "" { // a kit of the downloads folder
-			c.src.Path = a.downloadedKitPath(a.wantedModel(), c.src.Version)
+			c.src.Path = a.downloadedKitFile(a.wantedModel(), c.src.Version)
 		}
 		if c.src.Kind == fwStock {
 			a.UI.Warn("the stock firmware restore has never been tried on a real camera. It writes the APP partition from your verified backup, through the same red box as Restore.")

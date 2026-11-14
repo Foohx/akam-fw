@@ -118,7 +118,7 @@ func imageEpoch(manifest map[string]string) (uint32, error) {
 // sha256 and mode). Nothing from the kit is run.
 func (a *App) verifiedKit(kitDir string) (string, func(), error) {
 	kp, unsignedKit := a.kitInUse()
-	opts := kit.Options{AllowedSigners: a.allowedSigners(), AllowUnsigned: unsignedKit}
+	opts := kit.Options{AllowedSigners: a.allowedSigners(), AllowUnsigned: unsignedKit, ExpectModel: a.camModel()}
 	if p := kp; p != "" {
 		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
 			res, err := kit.VerifyTarball(p, opts)

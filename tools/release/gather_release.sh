@@ -39,7 +39,13 @@ MODEL_RE='[a-z0-9]+(-[a-z0-9]+)*'
 die() { echo "gather_release: error: $*" >&2; exit 1; }
 log() { echo "gather_release: $*"; }
 has_key() { grep -qE "$KEY_LINE_RE" "$1"; }
-is_kit_name() { printf '%s\n' "$1" | grep -qE "^akam-kit-$MODEL_RE-[0-9A-Za-z._+-]+\.tar\.xz$"; }
+# akam-kit-<model>-<version>.tar.xz; the model is 3 to 40 characters (ValidModel in the assistant, make_kit.sh).
+is_kit_name() {
+    printf '%s\n' "$1" | grep -qE "^akam-kit-$MODEL_RE-[0-9A-Za-z._+-]+\.tar\.xz$" || return 1
+    local m
+    m="$(printf '%s\n' "$1" | sed -E 's/^akam-kit-(.*)-[0-9A-Za-z._+]+\.tar\.xz$/\1/')"
+    [ "${#m}" -ge 3 ] && [ "${#m}" -le 40 ]
+}
 
 # The raw binary and the archive file names of the six targets.
 target_files() {

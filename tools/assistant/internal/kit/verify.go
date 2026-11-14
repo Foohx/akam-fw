@@ -734,8 +734,9 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 		}
 	}
 	hw, _ := os.ReadFile(filepath.Join(d, "supported_hardware.txt"))
-	if !regexp.MustCompile(`(?m)^model=` + regexp.QuoteMeta(model[0]) + `\r?$`).Match(hw) {
-		return nil, fail("supported_hardware.txt is not the registry entry of model %s", model[0])
+	if n := len(regexp.MustCompile(`(?m)^model=`).FindAll(hw, -1)); n != 1 ||
+		!regexp.MustCompile(`(?m)^model=`+regexp.QuoteMeta(model[0])+`\r?$`).Match(hw) {
+		return nil, fail("supported_hardware.txt is not the registry entry of model %s (exactly one model= line, equal to it)", model[0])
 	}
 	hs := sha256.Sum256(hw)
 	if w := manifestValues(m, "supported_hardware_sha256"); len(w) == 0 || w[0] != hex.EncodeToString(hs[:]) {

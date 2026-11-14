@@ -51,6 +51,7 @@ func TestParityWithVerifyKitSh(t *testing.T) {
 		{"missing payload", kittest.Spec{Files: map[string][]byte{"bin/flash_tool": nil}}, nil, nil},
 		{"no validated hardware", kittest.Spec{Files: map[string][]byte{"supported_hardware.txt": []byte("model=lsc-indoor-1080p-ak3918\nuntested|x\n")}}, nil, nil},
 		{"two model lines", kittest.Spec{ManifestExtra: "model=other-model\n"}, nil, nil},
+		{"two model lines in the hardware list", kittest.Spec{Files: map[string][]byte{"supported_hardware.txt": []byte("model=lsc-indoor-1080p-ak3918\nmodel=other-model\nvalidated|x\n")}}, nil, nil},
 		{"hardware list of another model", kittest.Spec{Files: map[string][]byte{"supported_hardware.txt": []byte("model=other-model\nvalidated|x\n")}}, nil, nil},
 		{"another model, accepted", kittest.Spec{Model: "other-model"}, nil, nil},
 		{"expected model mismatch", kittest.Spec{}, []string{"--expect-model", "other-model"}, func(o *kit.Options) { o.ExpectModel = "other-model" }},

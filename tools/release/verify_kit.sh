@@ -211,7 +211,7 @@ verify_dir() {
     case "$ver" in *[!A-Za-z0-9._+-]*) die "MANIFEST.txt akam_version is not a plain version string" ;; esac
     model="$(sed -n 's/^model=//p' "$m")"
     { [ -n "$model" ] && [ "$(printf '%s\n' "$model" | wc -l | tr -d ' ')" = 1 ]; } || die "MANIFEST.txt has no (single) model"
-    printf '%s\n' "$model" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' || die "MANIFEST.txt model '$model' is not a valid model id"
+    { printf '%s\n' "$model" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#model}" -ge 3 ] && [ "${#model}" -le 40 ]; } || die "MANIFEST.txt model '$model' is not a valid model id (lowercase a-z 0-9 and single '-', 3 to 40 characters)"
     if [ -n "$TOP_EXPECTED" ] && [ "$TOP_EXPECTED" != "akam-kit-$model-$ver" ]; then
         die "archive directory $TOP_EXPECTED does not match MANIFEST model $model and akam_version $ver"
     fi
