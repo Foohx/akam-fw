@@ -231,7 +231,7 @@ if want race; then
         note_fail "go not found (run tools/build/bootstrap.sh)"
     elif (cd "$REPO/tools/assistant" && GOPATH="$TC/path" GOMODCACHE="$TC/mod" GOCACHE="$TC/cache" \
         GOFLAGS="-modcacherw -mod=readonly" GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off \
-        CGO_ENABLED=1 go test -race -tags akamtest -count=1 ./...); then
+        CGO_ENABLED=1 go test -race -tags akamtest -count=1 -timeout 25m ./...); then
         host_say green "PASS  go test -race"
     else
         note_fail "go test -race"

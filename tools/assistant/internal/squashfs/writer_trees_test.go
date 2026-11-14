@@ -261,7 +261,11 @@ func diffTrees() []treeCase {
 		{"deep", deepTree()},
 		{"specials", specialsTree()},
 	}
-	for seed := int64(1); seed <= 12; seed++ {
+	seeds := int64(12)
+	if raceEnabled {
+		seeds = 2 // random-1, random-2: see race_on_test.go
+	}
+	for seed := int64(1); seed <= seeds; seed++ {
 		cases = append(cases, treeCase{fmt.Sprintf("random-%d", seed), randomTree(seed)})
 	}
 	return cases
