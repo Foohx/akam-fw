@@ -2,14 +2,14 @@
 
 These files are the patch applied on top of your own stock `app_extracted/`
 dump to produce the de-Tuyafied `app_patched/` tree. Used automatically by
-`src/ak_rtsp/build_firmware.sh` — see `docs/akam_v1_build.md` for the
+`src/ak_rtsp/build_firmware.sh` — see `docs/manual/build.md` for the
 full walkthrough. Listed here individually so the diff against stock is easy to read.
 
 | File | Installed as | Purpose |
 |---|---|---|
 | `_ht_process.ini` | `local/_ht_process.ini` | Single process entry launching the wrapper |
 | `ak_rtsp_wrapper.sh` | `sbin/ak_rtsp_wrapper.sh` | Starts the Akam helpers in the background, Wi-Fi, then `ak_rtsp` |
-| `akam_ssh.sh` | `sbin/akam_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/akam_v1_ssh_and_lockdown.md` |
+| `akam_ssh.sh` | `sbin/akam_ssh.sh` | Starts Dropbear (ed25519 key login), keys persisted in CONFIG; see `docs/manual/ssh-and-lockdown.md` |
 | `akam_lockdown.sh` | `sbin/akam_lockdown.sh` | Runtime safety net that kills telnet/FTP daemons |
 | `akam_rtsp_auth.sh` | `sbin/akam_rtsp_auth.sh` | Run over SSH: turns the optional RTSP Digest login on or off (`status`, `set`, `set-creds`, `disable`; also keeps the clear-text copy ONVIF needs in `/etc/config/akam/credentials`); see the README |
 | `akam_hostname.sh` | `sbin/akam_hostname.sh` | Network hostname (`set`, `show`, `status`, `reset`, `apply`); default `akam-XXXX` from the wlan0 MAC; stored in `/etc/config/akam/hostname` |
@@ -51,7 +51,7 @@ never flipped on), so removing their process entries changes nothing at runtime.
 
 **Do NOT** touch `cmdserver`/`msgserver` — they are not process-list entries (they're
 started directly from `service.sh`) and are pure local IPC, not Tuya cloud clients.
-Removing them causes a boot stall. See `docs/flash_partition_map_and_rootfs.md`.
+Removing them causes a boot stall. See `docs/how-it-works.md`.
 
 ## `ak_rtsp_wrapper.sh` → `app_patched/sbin/ak_rtsp_wrapper.sh`
 

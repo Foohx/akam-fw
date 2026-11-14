@@ -9,7 +9,7 @@ It uses the standard **ONVIF audio backchannel**. ONVIF is the standard that NVR
 the backchannel is its way to send sound to the camera. It runs on the RTSP port (554, the camera's video port), so
 there is no extra port. Any client that speaks the standard (go2rtc, Frigate through go2rtc, Home Assistant's WebRTC
 card, some NVRs) can talk to the camera. The
-design is in [specs/07-spec-standard-protocols.md](../specs/07-spec-standard-protocols.md), step 1.
+design is in [specs/audio.md](../specs/audio.md), step 1.
 
 **Status: `talk` (the speaker) is validated on two cameras** (see [testing status](testing-status.md)). The
 rest (`say`, go2rtc and Frigate set-ups) follows the same path; please report what you hear.
@@ -32,7 +32,7 @@ rest (`say`, go2rtc and Frigate set-ups) follows the same path; please report wh
 
 The native `akam` binary needs no external program for this on Linux and Windows: it decodes WAV, MP3, FLAC and Ogg
 Vorbis files itself and captures the microphone itself (PulseAudio / PipeWire on Linux, WASAPI on Windows; macOS still
-needs ffmpeg). See [assistant_install.md](assistant_install.md). The bash wizard (`./akam` without the binary) captures the microphone with `ffmpeg` (PulseAudio or PipeWire) or `arecord`, converts it to
+needs ffmpeg). See [the akam program](assistant.md). The bash wizard (`./akam` without the binary) captures the microphone with `ffmpeg` (PulseAudio or PipeWire) or `arecord`, converts it to
 8 kHz mono and sends it with `akam-talk`, a small C program in [tools/akam-talk](../tools/akam-talk/)
 (it is built once from source with your C compiler or the pinned Zig, or taken from
 `tools/akam-talk/bin/<os>-<cpu>/`). The password is asked without echo (or read from

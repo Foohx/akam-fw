@@ -4,14 +4,17 @@ This page is for people who want an NVR (network video recorder) or an ONVIF app
 off by default; the plain RTSP stream needs none of this.
 
 ONVIF is the standard that NVRs, ONVIF Device Manager, Synology Surveillance Station and Home Assistant use to
-find a camera on the network and pull its video. Akam implements the discovery (WS-Discovery), the device
-service, the media service and the imaging service of Profile S, so the camera shows up in those apps and they get its RTSP stream.
-An image built before the `onvif` command has no ONVIF at all (run `./akam update` first); `./akam onvif status`
-then says it does not know. The camera's video program (`ak_rtsp`) starts and stops the ONVIF server and the
-discovery by itself from a flag file, with no reboot. The imaging service lets apps read and change brightness,
-contrast and similar settings. It is **validated on a real camera** (akam-01, 2026-11-11): ONVIF Device Manager on Windows finds it, logs in, plays the live
-video and changes the image; `tools/hw_tests/onvif_check.py` passes 34/34. Other NVRs are not tried yet (steps in
-the [install notes](akam_v1_install.md#onvif-with-onvif-device-manager)).
+find a camera on the network and pull its video. Akam offers **ONVIF-compatible services (a subset of the ONVIF
+Profile S feature set: WS-Discovery, device, media, imaging)**, so the camera shows up in those apps and they get its
+RTSP stream. The imaging service lets apps read and change brightness, contrast and similar settings.
+
+> **Akam is not an ONVIF conformant product, has not been tested with the ONVIF test tool and is not listed by ONVIF.
+> ONVIF is a trademark of ONVIF, Inc.**
+
+It was checked on a real camera with a check tool (`tools/hw_tests/onvif_check.py`, 34 of 34 checks) and with ONVIF
+Device Manager on Windows (discovery, login, live video, image changes). Other NVRs are not tried yet. An image built
+before the `onvif` command has no ONVIF (run `./akam update` first). The camera's video program starts and stops the
+ONVIF server by itself from a flag file, with no reboot.
 
 - **Off by default.** Nothing listens on the ONVIF ports until you ask: `./akam onvif enable` (it asks a
   yes/no, default No; `verify` also offers it at the end). `./akam onvif disable` closes them again.
@@ -29,3 +32,18 @@ the [install notes](akam_v1_install.md#onvif-with-onvif-device-manager)).
   `error:port_in_use`). When ONVIF is off the camera runs no ONVIF thread and no socket; when it is on, two idle
   threads that wake up at most every 30 s. A new camera name (`./akam hostname`) shows in discovery at the next
   `./akam onvif enable` or reboot.
+
+## Try it with ONVIF Device Manager (Windows)
+
+1. Update the camera (`./akam update`), then set the video password, and **run it again even if a password already
+   exists**, so the clear-text copy that ONVIF needs is stored: `./akam rtsp-auth set`. `./akam rtsp-auth status` must
+   say `ONVIF-ready`.
+2. Turn ONVIF on: `./akam onvif enable` (default port 80, or `./akam onvif enable 8080`). `./akam onvif status` should
+   show `on:80`.
+3. In ODM the camera appears by itself through WS-Discovery (UDP multicast 239.255.255.250:3702, same subnet, the PC
+   firewall open for UDP 3702). Otherwise add it with `http://<camera-ip>/onvif/device_service`. The other services are
+   `/onvif/media_service` and `/onvif/imaging_service`.
+4. Log in with the video user name and password. The live view uses the camera's RTSP stream, so the one-client limit
+   applies (a second viewer gets 503: put go2rtc in front).
+
+With the video password off, ONVIF still starts but only answers read calls. Technical details: [`specs/onvif.md`](../specs/onvif.md).

@@ -192,8 +192,8 @@ To remove the camera from Home Assistant after `./akam mqtt forget`, delete the 
 | CPU | a check of about 13 values every 2 s and a publish of about 10 values every 30 s: well under 0.1 % of the single core |
 | Network | a few hundred bytes every 30 s, about 10 KB of discovery messages at each (re)connect |
 
-See `specs/07-spec-standard-protocols.md` (status notes) for the exact figures and what is still to measure on hardware.
+See `specs/audio.md` (status notes) for the exact figures and what is still to measure on hardware.
 
 ## 8. Hardware checks
 
-These need a camera and a broker; they are listed in the [test plan](akam_v1_test_plan.md#mqtt-optional-needs-a-camera-and-a-broker).
+These need a camera and a broker; they are listed in the [test plan](hardware-test-checklists.md).

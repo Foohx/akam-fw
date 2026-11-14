@@ -1,19 +1,19 @@
-# Akam V1: Flashing and Restoring (manual procedures)
+# Flashing and Restoring (manual procedures)
 
 > **Advanced / manual procedure (without the wizard).** `./akam flash`, `./akam update` and `./akam restore`
 > run these routes for you, with the same checks and a red yes/no (default No) before any write
-> ([README](../README.md#install-in-5-steps)). Use this page to understand them, audit them, or when you cannot run
+> ([README](../../README.md#install-quick-start)). Use this page to understand them, audit them, or when you cannot run
 > the wizard.
 
 > **RISK.** Writing the SPI NOR can brick the camera. Restoring is **not guaranteed** to work (section
-> 5). Do not start without a verified 8-partition backup ([backup guide](akam_v1_backup.md)). A UART
-> connection ([hardware_and_uart.md](hardware_and_uart.md)) is the only way back from an APP that does
+> 5). Do not start without a verified 8-partition backup ([backup guide](backup-uart.md)). A UART
+> connection ([hacking guide](../hacking.md#uart-access)) is the only way back from an APP that does
 > not boot; the [no-UART variant](#first-flash-without-uart-from-the-stock-firmware) below exists, but
 > read what it can and cannot recover (section 5) before choosing it.
 >
 > Status: `flash_tool` and `install_with_flash_tool.sh` were run on real cameras through the stock
-> telnet and the Akam maintenance telnet, with no chunk retries and a matching read-back md5 each time
-> (2026-11-07 to 11-09). The reflash over SSH from RAM (`reflash_over_ssh.sh`, no card) was also validated
+> telnet and the Akam maintenance telnet, with no chunk retries and a matching read-back md5 each time.
+> The reflash over SSH from RAM (`reflash_over_ssh.sh`, no card) was also validated
 > on hardware, through `./akam update`. **Restoring has not been rehearsed on a camera.**
 
 ---
@@ -28,7 +28,7 @@ a good tool, but Akam does **not** use it:
   boot script, or the lockdown patch.
 - It patches `ak_rtsp` sources on the fly. Its fourth patch (the `night.c` day/night override) is
   expected to **fail on this source tree**, where the flasher's fixes are already integrated
-  (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
+  (see [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)).
 - It talks to the camera through an unauthenticated Telnet shell on port 24, opened by an SD-card hook,
   which is exactly what Akam closes. A card left over from the flasher keeps that hook.
 - The flasher's own post-flash check does not look at SSH.
@@ -40,10 +40,10 @@ exact size).
 ## 2. What is written, and what never is
 
 - Only `/dev/mtd7` (APP, 5 242 880 bytes at `0x300000`) is written by the install script.
-- **UBOOT, ENV, ENVBK, DTB, KERNEL and ROOTFS are never written by Akam V1.** CONFIG is only written
+- **UBOOT, ENV, ENVBK, DTB, KERNEL and ROOTFS are never written by Akam.** CONFIG is only written
   by the camera itself at runtime (Dropbear keys).
 - Do not use `dd` to write `/dev/mtdblock7` on a running system: upstream documents silent corruption
-  from SPI-NOR DMA contention ([details](firmware_building_and_flashing.md#5-the-spi-nor-dma-contention-gotcha)).
+  from SPI-NOR DMA contention ([details](../how-it-works.md#flash-writing-why-flash_tool-exists)).
   `flash_tool` writes 4 KiB blocks to the raw `/dev/mtd7` and reads each back, retrying on mismatch.
 
 ## 3. Prepare the SD card
@@ -100,7 +100,7 @@ Three routes, from the least to the most hardware:
 ### UART route
 
 Get a root shell over the **UART console** with the `init=/bin/sh` boot
-([hardware_and_uart.md](hardware_and_uart.md#6-dropping-into-a-u-boot-root-shell)). Upstream reports
+([hacking guide](../hacking.md#uart-access)). Upstream reports
 `flash_tool` working live over Telnet with Wi-Fi and ISP active, but Akam recommends the bare shell
 for two reasons: it is the state upstream's restore script was always run in, and on a running camera
 the APP partition is mounted on `/usr`, so a live flash erases the filesystem that running programs
@@ -140,13 +140,13 @@ still fails, restore your backup (section 5) **before** powering off.
 Then power cycle **by hand**: unplug and replug USB-C. The software `reboot` command is unreliable on
 this hardware.
 
-After the boot, continue with the [test plan](akam_v1_test_plan.md#2-post-flash-procedure) and the
-[SSH guide](akam_v1_ssh_and_lockdown.md#8-test-order-keep-a-way-back-until-ssh-is-proven).
+After the boot, continue with the [test plan](../hardware-test-checklists.md) and the
+[SSH guide](ssh-and-lockdown.md#8-test-order-keep-a-way-back-until-ssh-is-proven).
 
 ### First flash without UART (from the stock firmware)
 
 This is the variant for a camera that has only been opened through the microSD toolkit shell of the
-[SD backup guide](akam_v1_backup_sd.md); it is what `./akam flash` does on a stock camera, and it was
+[SD backup guide](backup-sd.md); it is what `./akam flash` does on a stock camera, and it was
 validated on hardware. The flashing itself is the upstream path (`install_with_flash_tool.sh` run live
 over the toolkit's Telnet on **stock** firmware), so the stock `/usr` (APP) is mounted and in use while it
 is erased: if the write dies half-way, only UART or an SPI programmer recovers the APP.
@@ -285,8 +285,7 @@ partition is mounted on `/usr`, and everything Akam starts lives there: `dropbea
 (`/usr/bin`), `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, and the stock
 `/usr/bin/watchdog` that supervises the system. `flash_tool` erases `/dev/mtd7` in place while those
 programs are paged in from it. Expected consequences *(reasoned from the layout and from
-`quiet_and_flash_test.sh`, which exists because killing the watchdog stops the hardware timer from
-being fed; not tested)*:
+the fact that killing the watchdog stops the hardware timer from being fed; not tested)*:
 
 - the SSH session, or the shell running the flash, can die in the middle of the write;
 - `watchdog` or another process can fault when its pages are read back from a half-erased partition,
@@ -302,8 +301,8 @@ A partly written APP is recoverable only through UART (section 5), so use UART f
 UART is the only route with a safety net. Two no-UART routes are described below: the reflash over
 the **maintenance telnet** (card in the camera) and the **reflash over SSH from RAM** (no card; residual
 risk). Both were validated on hardware. The `make -C src/ak_rtsp upload`
-target copies `install_with_flash_tool.sh` and `quiet_and_flash_test.sh` into `/tmp` but does not flash;
-do not run those two from an SSH session on an Akam image (the guard refuses them).
+target copies `install_with_flash_tool.sh` into `/tmp` but does not flash;
+do not run it from an SSH session on an Akam image (the guard refuses it).
 
 **`flash_guard.sh`.** Every script that writes APP sources `flash_guard.sh` from its own directory, so
 copy it to the SD card next to the scripts (a missing file makes the script refuse to run). The guard
@@ -328,7 +327,7 @@ has two entry points:
 ### Reflashing over the maintenance telnet (validated on hardware)
 
 This is the procedure that was run on real Akam cameras (first from the stock firmware's telnet, then from
-the Akam maintenance telnet, 2026-11-08 onwards). Each time `flash_tool` needed **0 retries**,
+the Akam maintenance telnet). Each time `flash_tool` needed **0 retries**,
 the read-back md5 of `/dev/mtd7` matched the image, and the running system (including the stock
 `/usr/bin/watchdog`, which lives in the APP) survived the write. That is an observation on one unit,
 not a guarantee: see the residual risks of the SSH route, which apply here too.
@@ -395,7 +394,7 @@ erased), but it cannot make the write itself safe:
     is still about 78 %. Prefer the card route, and treat this one as a risk you accept deliberately.
   - **Mitigation evaluated, not implemented:** kill the daemon with `SIGKILL` and feed `/dev/watchdog`
     from a RAM BusyBox (`while :; do printf V; sleep 5; done > /dev/watchdog`, the pattern of
-    `start_rtsp.sh` and `quiet_and_flash_test.sh`). The device is exclusive-open, so the daemon cannot
+    `start_rtsp.sh`). The device is exclusive-open, so the daemon cannot
     be fed around; it has to die first, and `start_rtsp.sh` documents an `EBUSY` race when the feeder
     opens the device too early. The timer keeps running between the kill and the first feed, with an
     unknown timeout. It also removes the supervisor (nothing would respawn the wrapper). It has never
@@ -492,7 +491,7 @@ Go assistant: `akam update --stock` (or "Stock firmware (from your backup)" in t
 "Update this camera") runs the same restore command with the same gates (a backup of the stock firmware re-hashed now, the
 red box, default No). Its route question defaults to No: the maintenance telnet and the card; answer yes to restore over SSH
 when Akam runs. It has never been tried on a real camera
-([choose your firmware](wizard_guide.md#choosing-your-firmware-go-assistant-only)).
+([choose your firmware](../wizard_guide.md#choosing-your-firmware-go-assistant-only)).
 
 ### Back to full stock
 
@@ -505,9 +504,8 @@ likely way to hard-brick the camera. Akam never needs it unless something other 
 Akam rebuilds only APP, so the bootloader, kernel and ROOTFS are untouched and U-Boot should stay
 reachable:
 
-1. Attach UART (115200 8N1, 3.3 V) and interrupt U-Boot at power-on (the ESP32 bridge helps; the
-   window is about one second: [hardware_and_uart.md](hardware_and_uart.md#5-automated-u-boot-interception--bridge)).
-2. Boot the `init=/bin/sh` root shell as in [section 6 of that guide](hardware_and_uart.md#6-dropping-into-a-u-boot-root-shell).
+1. Attach UART (115200 8N1, 3.3 V) and interrupt U-Boot at power-on (the window is about one second; the upstream ESP32 bridge helps: [hacking guide](../hacking.md#uart-access)).
+2. Boot the `init=/bin/sh` root shell as in [section 6 of that guide](../hacking.md#uart-access).
    It uses `root=/dev/mtdblock5` (ROOTFS), which does not depend on APP.
 3. Mount `/proc` and the SD card, then run `restore.sh` as above.
 
@@ -547,7 +545,7 @@ your decision; a rehearsal is itself a flash write.
 
 ## 6. Checklist
 
-- [ ] Backup verified and copied off the SD card ([backup guide](akam_v1_backup.md)).
+- [ ] Backup verified and copied off the SD card ([backup guide](backup-uart.md)).
 - [ ] UART attached and a root shell obtained before flashing, **or** the no-UART risks above accepted
       and the pre-flash gates (`wpa_supplicant.conf`, `passwd`, `/proc/mtd`) passed.
 - [ ] Image hash checked on PC; same `md5sum` on the camera.

@@ -4,34 +4,13 @@ This page is for when Akam already runs on your camera: every setting and comman
 how to watch the stream, how to update, and the security notes. Not installed yet? Start with the
 [README](../README.md) and the [compatible cameras](compatible-cameras.md) page.
 
-## Features
+## What Akam offers
 
-- **Video and audio:** RTSP, H.264 1080p at 15 fps by default (10, 15, 20 or 25 selectable) plus the microphone, on port 554. Optional Digest login
-  (VLC, ffmpeg, go2rtc, Frigate). The camera serves **one RTSP client at a time**: a second one is answered
-  at once with `503 Service Unavailable`. To serve several viewers or record and watch together, put
-  [go2rtc](https://github.com/AlexxIT/go2rtc) (or MediaMTX) in front of the camera.
-- **Two-way audio:** the ONVIF audio backchannel on port 554 (go2rtc, Frigate, Home Assistant, `./akam talk`).
-- **LEDs and night:** front LED on, off or status light; infrared LEDs auto or off; automatic day/night
-  switching.
-- **Port 8091:** read-only metrics (`sys.*`, `net.*`, `video.*`, `rtsp.*`) for the network. Changes are only
-  accepted from the camera itself, or from the network after `./akam debug on` (loopback and timed).
-- **ONVIF Profile S (optional, off by default; implemented and checked against real clients, not conformance-certified):** WS-Discovery, device, media and imaging services for NVRs and
-  ONVIF Device Manager. Needs the video password (`./akam rtsp-auth set`, re-run it once after an update so the
-  ONVIF login copy exists). Checked on one real camera with a check tool and ONVIF Device Manager, see [testing status](testing-status.md).
-- **Settings you can change:** video bitrate, frame rate and key frame interval; brightness, contrast,
-  saturation, sharpness, white balance and day/night mode; speaker volume, talk and microphone on/off.
-- **MQTT and Home Assistant (optional, off by default, host-tested only):** the camera connects out to your broker and
-  Home Assistant finds it by itself ([MQTT](mqtt.md)); `./akam mqtt set`, `test`, `status`, `disable`, `forget`.
-- **Time:** opt-in NTP (`./akam ntp set SERVER`); with it off the camera sends no time traffic and its clock
-  starts in 1970.
-- **Robustness:** the video service exits by itself if the encoder stalls, the camera's wrapper restarts it with a
-  growing delay, and a supervisor brings the Wi-Fi back when it drops.
-- **Admin:** SSH with a key only; Telnet and FTP are off.
-- **Install:** a guided wizard (`./akam`) from a Linux PC; only the APP partition is rewritten.
-
-What was tested on a real camera and what was only tested on a PC is listed in
-[testing status](testing-status.md); the units used are in
-[compatible cameras](compatible-cameras.md).
+The complete list of features, ports, defaults and test status is on the [features](features.md) page. In short: RTSP
+video and microphone on port 554 (one client at a time), two-way audio, day/night and LED settings, a read-only
+control port on 8091, optional ONVIF-compatible services (not certified), optional MQTT with Home Assistant
+discovery, opt-in NTP, SSH with a key only. For several viewers, put
+[go2rtc](https://github.com/AlexxIT/go2rtc) or MediaMTX in front of the camera.
 
 ## Open ports
 
@@ -143,7 +122,7 @@ When you set up a new camera and you have saved configs, the assistant asks once
 | `mqtt [set \| test \| status \| disable \| forget]` | publish the camera to an MQTT broker and Home Assistant, off by default ([MQTT](mqtt.md)) |
 | `ntp [status \| set SERVER... \| off]` | time synchronisation, off by default |
 | `debug [on [MINUTES] \| off \| status]` | let the network change settings on port 8091 for a while |
-| `key [show \| use-shared \| use-new \| use FILE.pub]` | which SSH key opens this camera, and change it over SSH: the shared key `~/.ssh/akam`, a key for this camera only `~/.ssh/akam-<name>`, or any ed25519 key. Assistant only; adds the new key, checks it with a second login, saves it for this camera, then asks (default No) whether to remove the old one ([details](akam_v1_ssh_and_lockdown.md#change-the-key-over-ssh)) |
+| `key [show \| use-shared \| use-new \| use FILE.pub]` | which SSH key opens this camera, and change it over SSH: the shared key `~/.ssh/akam`, a key for this camera only `~/.ssh/akam-<name>`, or any ed25519 key. Assistant only; adds the new key, checks it with a second login, saves it for this camera, then asks (default No) whether to remove the old one ([details](manual/ssh-and-lockdown.md#change-the-key-over-ssh)) |
 | `config [show \| save-global \| save-local \| apply \| edit-global \| forget-secrets]` | the settings of a camera saved on this computer: a global template, a local config per camera, copy from another camera; passwords and Wi-Fi only if you say yes. Assistant only; see [Configs](#configs-global-local-copy) |
 | `talk [SECONDS \| test]`, `say FILE` | speak or play a sound through the camera speaker |
 
@@ -169,7 +148,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
 has no Wi-Fi, blink slowly while someone watches the video, and stay solid otherwise; the default `on`
 leaves the LED as it always was. `ir off` still switches the image to night mode but never lights the
-infrared LEDs ([details](akam_v1_install.md#led-settings)).
+infrared LEDs .
 
 `update` and `restore` write the camera's flash and ask the same red yes/no. The video password is a
 Digest login (works with VLC, ffmpeg, go2rtc and Frigate); it does not encrypt the video. `./akam
@@ -201,12 +180,12 @@ the SSH helpers always get in; a LAN peer can use 3 and is dropped after 2 minut
 **read-only from the network**: anyone on your LAN can read the state, nobody can change it. Changes
 (`SET`) are accepted from the camera itself (over SSH, as `./akam led` does) or, for a limited time, after
 `./akam debug on`, which the PC tuning tool needs. Raw changes are lost at the next boot; the settings made with `./akam led`, `audio`, `picture` (its four numbers) and `video` are saved on
-the camera ([details](akam_v1_install.md#4-the-8091-control-port)).
+the camera ([details](../specs/control-port.md)).
 
 ## Security notes
 
 - **Never expose ports 554, 8091 or 22 to the Internet:** no port forwarding, UPnP or DMZ. Use a VPN into
-  your LAN ([network hardening](akam_v1_install.md#5-network-hardening)).
+  your LAN ([network hardening](#network-hardening)).
 - The stream is open unless you set a password, and anyone on your network can occupy its single RTSP client
   slot (a second client gets `503 Service Unavailable` at once; several viewers: restream with go2rtc, see
   [troubleshooting](troubleshooting.md#only-one-viewer-works-at-a-time)): keep untrusted devices (guest
@@ -215,11 +194,28 @@ the camera ([details](akam_v1_install.md#4-the-8091-control-port)).
   only to the camera itself or while `akam_debug.sh` debug mode is on, and the Wi-Fi name and MAC address read
   as `hidden` for other machines (the IP address stays readable).
 - A card with a file named `AKAM_MAINTENANCE` is root access to the camera
-  ([details](akam_v1_ssh_and_lockdown.md#7-maintenance-flag)). Never publish your backup, images or keys.
+  ([details](manual/ssh-and-lockdown.md#7-maintenance-flag)). Never publish your backup, images or keys.
 - **Firmware updates from a card are not signed.** With the `AKAM_MAINTENANCE` flag on the card, the stock
   `tf_update.sh` flashes any `*.bin` it finds, with no signature or hash check; without the flag it never runs
   (checked by `tests/lockdown_test.sh`). There is no network update. Treat the flag as physical access.
 - **Saved configs:** a config holds no password unless you say yes when you save it (default No). Then the video password, the MQTT password and the Wi-Fi are in `global.secrets` / `camera.secrets` in the state folder, a private file in clear text: anyone with access to your account can read it. `./akam config forget-secrets` deletes them.
 - **A backup holds secrets:** the CONFIG partition has your Wi-Fi password and the ONVIF password in clear text.
   The wizard creates the backup folder private to your user (0700, files 0600): keep copies private too and
-  never upload them ([details](akam_v1_backup.md#never-publish-the-dump)).
+  never upload them ([details](manual/backup-uart.md#never-publish-the-dump)).
+
+## Network hardening
+
+- **No port forwarding** from your router to the camera, for any port. Reach it remotely, if you must, through a VPN
+  into your LAN.
+- **DHCP reservation** so that the camera keeps its address for your recorder and your SSH configuration.
+- **IoT VLAN or isolated Wi-Fi network** if your equipment supports it: let your recorder or viewer reach 554, your
+  admin PC reach 22 and 8091, and nothing else.
+- **Block outbound traffic** from the camera at the router. It needs only DHCP, and NTP (UDP 123 to your server) if you
+  enabled it. It has no cloud code and should not talk to any cloud.
+- Keep the private key `~/.ssh/akam` private, use a passphrase, and consider one key per camera.
+
+## Licences
+
+Akam is MIT ([LICENSE](../LICENSE), [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)). The image carries the
+Dropbear licence text. Your built images contain your camera's stock files, so they are **not distributable**: never
+publish them, your backups or any key. See [legal](legal.md).

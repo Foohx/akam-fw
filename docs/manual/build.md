@@ -1,16 +1,16 @@
-# Akam V1: Build the Image From Your Own Dump (advanced, from source)
+# Build the Image From Your Own Dump (advanced, from source)
 
 **Advanced / manual procedure, and optional.** Most people use the prebuilt kit through `./akam` (see the
-[README](../README.md#install-in-5-steps)): `./akam get-kit` then `./akam image`. Build from source only to audit
+[README](../../README.md#install-quick-start)): `./akam get-kit` then `./akam image`. Build from source only to audit
 or change the code, or if no kit is available (`./akam build` drives the same steps).
 
 All build steps run on the PC (Arch Linux x86-64 is the reference host) and never touch the camera.
 Nothing here ships a vendor image: the APP tree comes from **your own** `mtdblock7.bin`
-([backup guide](akam_v1_backup.md)).
+([backup guide](backup-uart.md)).
 
 Status: `tests/build_firmware_test.sh` builds an image from a **synthetic fixture** with stub binaries. Images
-built from a real dump (from the kit and from source) were flashed and validated on two cameras between
-2026-11-07 and 11-09 (see the [testing status](testing-status.md)).
+built from a real dump (from the kit and from source) were flashed and validated on two cameras
+(see the [testing status](../testing-status.md)).
 
 ---
 
@@ -36,7 +36,7 @@ default, adds `shellcheck`). `gdb` is a hard requirement of the time64 gate
 are optional. Debian does not put `/usr/sbin` in a user's `PATH`; the SD-card tools are looked up
 there too, since the scripts run them through `sudo`. macOS is not supported yet.
 
-Tested on 2026-11-08 in clean Docker containers (`debian:12`, `ubuntu:24.04`, mawk as `awk`,
+Tested in clean Docker containers (`debian:12`, `ubuntu:24.04`, mawk as `awk`,
 shellcheck 0.9.x): the packages `check_host.sh` asks for, then `bootstrap.sh`, `make` in
 `src/ak_rtsp`, `tools/dropbear/build_dropbear.sh`, `tools/build/check_time32.sh --require-263` on
 `ak_rtsp` and `dropbearmulti`, and `tools/ci/local_check.sh` (ends with `LOCAL CHECK: OK`).
@@ -87,7 +87,7 @@ bash tools/dropbear/build_dropbear.sh
 Output (git-ignored): `dist/dropbear/dropbearmulti`, `dist/dropbear/BUILDINFO.txt`,
 `dist/dropbear/LICENSE.dropbear`. The multi-call binary contains `dropbear` and `dropbearkey` only;
 `scp` and SFTP are intentionally absent (see the
-[SSH guide](akam_v1_ssh_and_lockdown.md#5-file-transfer-without-scp)). Options
+[SSH guide](ssh-and-lockdown.md#5-file-transfer-without-scp)). Options
 are fixed in `tools/dropbear/localoptions.h` (no password authentication, no forwarding, ed25519 only).
 Set `DROPBEAR_PROGRAMS` to change the program list. If you skip this step, `build_firmware.sh` runs it
 for you when `dist/dropbear/dropbearmulti` is missing.
@@ -114,7 +114,7 @@ grep -rnE 'telnetd|utelnetd|ftpd|tcpsvd|bftpd|vsftpd|dropbear|sshd|httpd|lighttp
 
 The lockdown patch assumes the daemons are started from `sbin/service.sh` in the APP. That holds on the
 validated units (Telnet and FTP were closed after boot); on another unit read the output above
-([test plan](akam_v1_test_plan.md#3-hypotheses-to-verify)).
+([test plan](../hardware-test-checklists.md)).
 
 ## 6. Compression: xz (default) or gzip
 
@@ -163,7 +163,7 @@ What the script does, in order: copies the tree to `$FW_DIR/app_patched/`; remov
 installs the wrapper and the single-entry `_ht_process.ini`, the stripped `ak_rtsp`, the stripped
 `dropbearmulti` (plus `dropbear` / `dropbearkey` symlinks), `akam_ssh.sh`, `akam_lockdown.sh`,
 the licence texts under `/usr/local/akam/` (`LICENSE.dropbear`, `.musl`, `.zig`, `.smolrtsp`, its four dependencies, `.akam`, `THIRD_PARTY_NOTICES.md`) and a `MANIFEST.txt`; patches `sbin/service.sh`
-([lockdown guide](akam_v1_ssh_and_lockdown.md#6-telnet-and-ftp-lockdown)); checks modes and refuses any
+([lockdown guide](ssh-and-lockdown.md#6-telnet-and-ftp-lockdown)); checks modes and refuses any
 private-key material in the tree; runs `mksquashfs -b 131072 -all-root -noappend`; unpacks the result
 and compares type, mode, symlink target and SHA-256 of every entry with the source tree; applies the
 size guard; pads with `0xFF` to the partition size; verifies the padding.
@@ -180,7 +180,7 @@ The APP partition is 5 242 880 bytes. The check runs on the SquashFS **before** 
 The padded image is then checked to be exactly 5 242 880 bytes, to start with the SquashFS bytes and to
 contain nothing but `0xFF` afterwards. The free space on a real APP is **unknown until you build from
 your dump** (the stock `anyka_ipc`, about 5.9 MB uncompressed, is removed; `ak_rtsp` stripped is about
-129 KB and `dropbearmulti` about 213 KB, see the [resource report](akam_v1_test_plan.md#4-resource-report)).
+129 KB and `dropbearmulti` about 213 KB, see the [resource report](../hardware-test-checklists.md)).
 
 ### Outputs in `FW_DIR`
 
@@ -211,7 +211,7 @@ sha256sum -c ak_rtsp_firmware_*.squashfs.sha256
 ```
 
 Copy the SHA-256 somewhere safe (it is checked again before flashing). Also keep the first
-`md5sum` the flashing script prints (see [flash guide](akam_v1_flash_and_restore.md)). The image
+`md5sum` the flashing script prints (see [flash guide](flash-and-restore.md)). The image
 embeds your stock APP tree: **do not publish it.**
 
-Next: [SSH provisioning and Telnet/FTP lockdown](akam_v1_ssh_and_lockdown.md).
+Next: [SSH provisioning and Telnet/FTP lockdown](ssh-and-lockdown.md).

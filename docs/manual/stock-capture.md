@@ -2,7 +2,7 @@
 
 > **Advanced / developer procedure.** Nothing here is needed to install or use Akam. It records how
 > the vendor app `anyka_ipc` drives the speaker, the ISP (image quality, grain) and the IR-cut /
-> IR LED day/night switch, so that `ak_rtsp` can do the same (see `specs/05-spec-audio-out.md`). It
+> IR LED day/night switch, so that `ak_rtsp` can do the same (see `specs/audio.md`). It
 > runs on a camera that is **still stock**, booted from the toolkit microSD, and writes **nothing to
 > flash**: no `/etc/config`, no MTD partition. A power cycle returns the camera to exactly what it
 > was.

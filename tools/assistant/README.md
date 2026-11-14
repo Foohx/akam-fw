@@ -2,7 +2,7 @@
 
 `akam` is the Go version of the guided setup program (`./akam`, bash, in the repository root). It is one
 static executable with no runtime dependency: SSH, the control port, the RTSP talk client, G.711 and
-WAV are built in. The plan is in [specs/09-spec-assistant-binary.md](../../specs/09-spec-assistant-binary.md).
+WAV are built in. The plan is in [specs/installer.md](../../specs/installer.md).
 
 **Status: phases P1 to P3 and phase 11 (cross-platform), experimental.** The binary does the daily commands on a
 camera that already runs Akam, gets and verifies the kit, updates or restores a camera over SSH, does the whole first
@@ -23,13 +23,13 @@ the verified kit.
 
 ## Phase 11: one binary for Linux, Windows and macOS (experimental)
 
-Plan: [specs/11-spec-assistant-cross-platform.md](../../specs/11-spec-assistant-cross-platform.md). The release has six
+Plan: [specs/installer.md](../../specs/installer.md). The release has six
 binaries: `akam-linux-amd64`, `akam-linux-arm64`, `akam-darwin-amd64`, `akam-darwin-arm64`, `akam-windows-amd64.exe` and
 `akam-windows-arm64.exe`. **All of them are experimental. The bash wizard (`./akam`) stays the reference on Linux.**
 Only the Linux amd64 paths have been exercised on a real camera, and only in part; the Windows and macOS binaries are
 **built and host-tested, not hardware-tested** (see [testing status](../../docs/testing-status.md) and the
-[hardware test plan](../../docs/assistant_hardware_test_plan.md)). Download, check and first run:
-[docs/assistant_install.md](../../docs/assistant_install.md).
+[hardware test plan](../../docs/hardware-test-checklists.md#assistant-checklists)). Download, check and first run:
+[docs/assistant.md](../../docs/assistant.md).
 
 ### Home screen
 
@@ -140,7 +140,7 @@ The binaries are not signed yet. Windows SmartScreen ("Windows protected your PC
 `Unblock-File .\akam-windows-amd64.exe` in PowerShell. macOS Gatekeeper: download with `curl -L -o` (no quarantine),
 or `xattr -d com.apple.quarantine ./akam-darwin-arm64`, or Control-click Open once, or System Settings, Privacy &
 Security, Allow Anyway; do not repack the arm64 binary. A raw Unix download needs `chmod +x`. Always compare the
-SHA256 with `SHA256SUMS` first. Details: [docs/assistant_install.md](../../docs/assistant_install.md).
+SHA256 with `SHA256SUMS` first. Details: [docs/assistant.md](../../docs/assistant.md).
 
 ### Safety rules (phase 11, on top of the list further down)
 
