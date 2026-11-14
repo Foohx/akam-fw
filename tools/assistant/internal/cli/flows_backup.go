@@ -302,6 +302,6 @@ func (a *App) flowSettings() error {
 			a.backupLocationScreen()
 			continue
 		}
-		fmt.Fprint(a.out(), assets.Notices())
+		fmt.Fprint(a.out(), assets.Licenses())
 	}
 }
