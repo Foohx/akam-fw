@@ -8,10 +8,13 @@
 # Job graph (estimated wall clock, ubuntu-24.04; measure on the first runs and adjust):
 #
 #   lint ----------------------------------------------+        always, ~1 min, starts at once
-#   changes --> toolchain --> shell-tests  (47 tests) --+--> ci-ok   changes ~10 s; toolchain ~10 s warm cache,
-#                         |-> native-tests (47 tests) --+            ~3 min cold; the three test jobs run in parallel
-#                         '-> go-tests (vet, tests, 6 targets, race)  and only when their group changed
+#   changes --> toolchain --> shell-tests  (49 tests) --+--> ci-ok   changes ~10 s; toolchain ~10 s warm cache,
+#                         |-> native-tests (46 tests) --+            ~3 min cold; the three test jobs run in parallel
+#                         '-> go-tests (1 test: vet, tests, 6 targets, race)  and only when their group changed
 #   docs-only change: lint + changes only (~1 min).   Go-only change: lint + go-tests.
+#
+# Counts are the groups of tools/ci/test_groups.txt (97 tests, plus 1 for lint). Runners also get the host tools the
+# tests probe (see .github/actions/toolchain), and AKAM_CI=1 turns a skip for a missing tool into a failure.
 #
 # Tests stub the microphone, sound servers, ffmpeg, cameras and disks themselves; nothing here gives them
 # real devices (a runner has none).
@@ -30,6 +33,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  AKAM_CI: "1" # tools/ci/local_check.sh: a test that skips for a missing tool fails
+
 defaults:
   run:
     shell: bash
@@ -41,6 +47,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # shellcheck 0.11.0 from the official release, sha256-pinned: CI lints with the same version as the maintainer
+      # (the ubuntu-24.04 package is 0.9.0 and reports different findings).
+      - name: Install shellcheck 0.11.0
+        env:
+          SC_URL: https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          SC_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/shellcheck.tar.xz" "$SC_URL"
+          echo "$SC_SHA256  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/sc" "$RUNNER_TEMP/bin"
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP/sc" --strip-components=1
+          install -m 0755 "$RUNNER_TEMP/sc/shellcheck" "$RUNNER_TEMP/bin/shellcheck"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/shellcheck" --version
       - run: bash tools/ci/local_check.sh --only lint
 
   # Which groups does this change touch? git diff against the merge base (PR) or the previous push (dev).
@@ -114,14 +135,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/toolchain
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Go build cache: one entry per go.sum and ISO week, saved only on pushes to dev (not on every PR run), so
+      # the cache is not rewritten (and the 10 GB quota not eaten) by every change.
+      - id: week
+        run: echo "week=$(date -u +%G-%V)" >>"$GITHUB_OUTPUT"
+      - id: gocache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: tools/.toolchain/go/cache
-          key: gocache-${{ runner.os }}-${{ hashFiles('tools/assistant/go.sum') }}-${{ github.sha }}
+          key: gocache-${{ runner.os }}-${{ hashFiles('tools/assistant/go.sum') }}-${{ steps.week.outputs.week }}
           restore-keys: |
             gocache-${{ runner.os }}-${{ hashFiles('tools/assistant/go.sum') }}-
             gocache-${{ runner.os }}-
       - run: bash tools/ci/local_check.sh --only go,race
+      - if: success() && github.event_name == 'push' && github.ref == 'refs/heads/dev' && steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/.toolchain/go/cache
+          key: gocache-${{ runner.os }}-${{ hashFiles('tools/assistant/go.sum') }}-${{ steps.week.outputs.week }}
 
   # Single status for branch protection: green when nothing failed (skipped groups are fine).
   ci-ok:

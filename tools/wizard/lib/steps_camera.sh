@@ -1544,7 +1544,7 @@ cmd_ntp() {
         status | off) [ $# -le 1 ] || { echo "akam: ntp $action takes no argument (see ./akam help)" >&2; return 2; } ;;
         set)
             shift
-            [ $# -ge 1 ] && [ $# -le 3 ] || { echo "akam: ntp set needs 1 to 3 servers, for example: ./akam ntp set ntp.example.net (see ./akam help)" >&2; return 2; }
+            { [ $# -ge 1 ] && [ $# -le 3 ]; } || { echo "akam: ntp set needs 1 to 3 servers, for example: ./akam ntp set ntp.example.net (see ./akam help)" >&2; return 2; }
             for s in "$@"; do
                 ntp_server_ok "$s" || { echo "akam: ntp set: '$s' is not a host name or an IPv4 address (see ./akam help)" >&2; return 2; }
             done
@@ -2358,14 +2358,14 @@ cmd_talk() {
 
 cmd_say() {
     local file=${1:-}
-    [ -n "$file" ] && [ $# -eq 1 ] || { echo "akam: say needs one audio file (see ./akam help)" >&2; return 2; }
+    { [ -n "$file" ] && [ $# -eq 1 ]; } || { echo "akam: say needs one audio file (see ./akam help)" >&2; return 2; }
     step_banner_free "Play a file on the camera"
     cam_need_ip || return 1
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD convert $file to 8 kHz mono (ffmpeg) and send it with akam-talk to rtsp://$CAM_IP:$TALK_URL_PORT (stream password needed)."
         return 0
     fi
-    [ -f "$file" ] && [ -r "$file" ] || { ui_fail "cannot read $file." "give the path of an audio file."; return 1; }
+    { [ -f "$file" ] && [ -r "$file" ]; } || { ui_fail "cannot read $file." "give the path of an audio file."; return 1; }
     talk_find_bin || return 1
     local conv=()
     if host_have ffmpeg; then

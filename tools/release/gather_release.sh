@@ -204,11 +204,11 @@ if [ "$FAM" = firmware ]; then
         is_kit_name "$f" || die "unexpected file in the kit directory: $f"
     done < <(cd "$KITDIR" && LC_ALL=C find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
     refuse_images_in_tar "$SOURCE" z
-    [ -f "$ROOT/LICENSE" ] && [ -f "$ROOT/THIRD_PARTY_NOTICES.md" ] || die "LICENSE or THIRD_PARTY_NOTICES.md missing in the repository"
+    { [ -f "$ROOT/LICENSE" ] && [ -f "$ROOT/THIRD_PARTY_NOTICES.md" ]; } || die "LICENSE or THIRD_PARTY_NOTICES.md missing in the repository"
     KNOWN=(LICENSE THIRD_PARTY_NOTICES.md SHA256SUMS "$MARKER")
 else
     [ -d "$ASSDIR" ] || die "--assistant-dir is not a directory"
-    [ -z "$KITDIR" ] && [ -z "$SOURCE" ] || die "--kit-dir and --source are for the firmware family"
+    { [ -z "$KITDIR" ] && [ -z "$SOURCE" ]; } || die "--kit-dir and --source are for the firmware family"
     # Assistant files: a whitelist. Anything else (an image, a dump, a stray file) stops the run.
     mapfile -t WANT < <(target_files; echo LICENSE; echo THIRD_PARTY_NOTICES.md)
     ASSFILES=()

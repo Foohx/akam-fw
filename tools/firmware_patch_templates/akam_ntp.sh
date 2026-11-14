@@ -260,7 +260,7 @@ stop_helper() {
 }
 
 do_set() {
-    [ "$#" -ge 1 ] && [ "$#" -le "$MAX_SERVERS" ] || { echo "akam_ntp: give 1 to $MAX_SERVERS servers" >&2; exit 2; }
+    { [ "$#" -ge 1 ] && [ "$#" -le "$MAX_SERVERS" ]; } || { echo "akam_ntp: give 1 to $MAX_SERVERS servers" >&2; exit 2; }
     for _s in "$@"; do
         valid_server "$_s" || { echo "akam_ntp: '$_s' is not a host name or IPv4 address; nothing changed." >&2; exit 2; }
     done

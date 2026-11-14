@@ -23,6 +23,9 @@ if ! . "$REPO/tools/build/env.sh" 2>/dev/null; then
     exit 0
 fi
 
+# shellcheck source=tools/lib/host.sh
+. "$REPO/tools/lib/host.sh"
+
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 PASS=0
@@ -86,7 +89,7 @@ check "users program builds with the shim" build_users "$WORK/users_shim" "$REPO
 check "users program builds without the shim" build_users "$WORK/users_stock"
 
 echo "== machine code: no unconditional time64 syscall in the shim builds"
-if command -v gdb >/dev/null 2>&1; then
+if host_arm_gdb >/dev/null 2>&1; then
     check "users_shim: only 32-bit clock syscalls, clock_gettime32 present" "$CHECK" --require-263 "$WORK/users_shim"
     check "users_stock (control): stock musl is caught loading clock_gettime64" bash -c "! '$CHECK' '$WORK/users_stock' >/dev/null 2>&1"
     # The gate must also see a number that is only loaded conditionally.

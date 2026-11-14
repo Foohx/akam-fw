@@ -82,10 +82,10 @@ BUILT_UTC="$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 MODELS_DIR="$HERE/models"
 if [ -z "$MODEL" ]; then
     set -- "$MODELS_DIR"/*.txt
-    [ $# = 1 ] && [ -f "$1" ] || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
+    { [ $# = 1 ] && [ -f "$1" ]; } || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
     MODEL="$(basename "$1" .txt)"
 fi
-printf '%s\n' "$MODEL" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#MODEL}" -ge 3 ] && [ "${#MODEL}" -le 40 ] \
+{ printf '%s\n' "$MODEL" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#MODEL}" -ge 3 ] && [ "${#MODEL}" -le 40 ]; } \
     || die "bad model id '$MODEL' (lowercase a-z 0-9 and single '-', 3 to 40 characters)"
 KITNAME="akam-kit-$MODEL-$VERSION"
 # Always the pinned toolchain, never "whatever zig-* directory happens to be there".

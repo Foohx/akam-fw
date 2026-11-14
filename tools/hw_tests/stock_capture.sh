@@ -314,7 +314,7 @@ do_watch() {
 do_note() {
     [ -n "$NOTE_TEXT" ] || die "note needs a text: note \"room dark now\"" 2
     pid=$(state_pid)
-    [ -n "$pid" ] && [ -d "$STATE/out" ] || die "no capture is running (nothing to attach a note to)" 1
+    { [ -n "$pid" ] && [ -d "$STATE/out" ]; } || die "no capture is running (nothing to attach a note to)" 1
     RUNDIR=$STATE/out
     T_NOW=$(tail -n 1 "$RUNDIR/timeline.log" 2>/dev/null | sed -n 's/^up=[0-9.]* t=\([0-9]*\) .*/\1/p')
     T_NOW=${T_NOW:-0}
@@ -545,7 +545,7 @@ wait_tick() {
 check_run_args() {
     secs=$1
     case $secs in '' | *[!0-9]*) die "SECONDS must be a number" 2 ;; esac
-    [ "$secs" -ge "$MIN_SECS" ] && [ "$secs" -le "$MAX_SECS" ] || die "SECONDS must be between $MIN_SECS and $MAX_SECS" 2
+    { [ "$secs" -ge "$MIN_SECS" ] && [ "$secs" -le "$MAX_SECS" ]; } || die "SECONDS must be between $MIN_SECS and $MAX_SECS" 2
     for ph in $PHASES; do
         [ "${ph%%:*}" -lt "$secs" ] || die "phase $ph is not before the end of the run (${secs}s)" 2
     done

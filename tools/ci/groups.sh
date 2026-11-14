@@ -5,15 +5,20 @@
 #   go      tests/assistant_test.sh (Go: fmt, vet, tests, six-target build, size budget, reproducibility)
 #   native  tests that compile and run C code (tests/native/, src/) with the host compiler or pinned Zig
 #   shell   every other tests/*_test.sh (wizard, camera-side ash, release scripts) and the wizard smoke runs
-# Every test belongs to exactly one group, so the groups together are "all".
+# Every test belongs to exactly one group, so the groups together are "all". The mapping is the explicit table
+# tools/ci/test_groups.txt (no guessing from the test's text): a test missing from it is group "unknown", which
+# makes local_check fail until the table is updated.
 
-# test_group <tests/ directory> <basename of a *_test.sh>: prints the group of that test.
+# test_group <tests/ directory> <basename of a *_test.sh>: prints lint, go, native, shell or unknown.
 test_group() {
-    case $2 in
-        readme_links_test.sh) echo lint ;;
-        assistant_test.sh) echo go ;;
-        *)
-            if grep -q -E 'tests/native|/src/|SRC=' "$1/$2" 2>/dev/null; then echo native; else echo shell; fi
-            ;;
-    esac
+    local table g f
+    table="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_groups.txt"
+    while read -r g f; do
+        case $g in '' | '#'*) continue ;; esac
+        if [ "$f" = "$2" ]; then
+            echo "$g"
+            return 0
+        fi
+    done <"$table"
+    echo unknown
 }
