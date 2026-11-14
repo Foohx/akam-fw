@@ -54,7 +54,7 @@ Commands:
                      'off' or a reboot; over SSH. Default: status
   ntp [status | set SERVER... | off]
                      time sync of the camera (it has no clock of its own and starts in the past), over SSH.
-                       set: 1 to 3 servers (host names or IPv4 addresses, for example pool.ntp.org); the camera
+                       set: 1 to 3 servers (host names or IPv4 addresses, for example ntp.example.net); the camera
                        asks them at start-up and every 6 hours (UDP 123, outgoing only) and saves the choice
                        off: stop and forget the servers (default: off, no traffic at all)
                        status (default): servers, the camera's clock, whether it is believable

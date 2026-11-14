@@ -1544,7 +1544,7 @@ cmd_ntp() {
         status | off) [ $# -le 1 ] || { echo "akam: ntp $action takes no argument (see ./akam help)" >&2; return 2; } ;;
         set)
             shift
-            [ $# -ge 1 ] && [ $# -le 3 ] || { echo "akam: ntp set needs 1 to 3 servers, for example: ./akam ntp set pool.ntp.org (see ./akam help)" >&2; return 2; }
+            [ $# -ge 1 ] && [ $# -le 3 ] || { echo "akam: ntp set needs 1 to 3 servers, for example: ./akam ntp set ntp.example.net (see ./akam help)" >&2; return 2; }
             for s in "$@"; do
                 ntp_server_ok "$s" || { echo "akam: ntp set: '$s' is not a host name or an IPv4 address (see ./akam help)" >&2; return 2; }
             done
