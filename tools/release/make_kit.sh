@@ -215,11 +215,13 @@ done
 } >"$KIT/SOURCES.txt"
 chmod 644 "$KIT/SOURCES.txt"
 
-# --- content guard: no key, no image, no vendor blob ------------------------------------------
+# --- content guard: no key, no image, no vendor blob, no third-party toolkit file ------------------------------------------
 BAD="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$KIT" 2>/dev/null || true
     find "$KIT" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.pem' -o -name '*.squashfs' -o -name '*.img' -o -name '*.ko' \)
+    # lsc-tuya-toolkit (tasarren) has no licence file: it is never redistributed (THIRD_PARTY_NOTICES.md)
+    find "$KIT" \( -ipath '*tuya-toolkit*' -o -ipath '*/toolkit/*' -o -name 'toolkit' -o -ipath '*/sd_card/*' \)
     grep -rl --binary-files=binary -e 'hsqs' "$KIT/scripts" "$KIT/overlay" "$KIT/patches" "$KIT/licenses" 2>/dev/null || true) | sort -u)"
-[ -z "$BAD" ] || die "forbidden content in the kit (key, image or vendor file):
+[ -z "$BAD" ] || die "forbidden content in the kit (key, image, vendor or toolkit file):
 $BAD"
 [ "$(find "$KIT/bin" -type f -printf "%f\n" | LC_ALL=C sort | tr "\n" " ")" = 'ak_rtsp dropbearmulti flash_tool ' ] || die "unexpected content in bin/"
 
