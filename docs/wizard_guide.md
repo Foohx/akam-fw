@@ -105,8 +105,8 @@ The version is read over SSH from the manifest the image carries (`/usr/local/ak
 built from a release kit state it; an image built from a source checkout states a git description, which is not a version).
 When that cannot be read (a camera flashed before this, an image built by hand), the version this assistant recorded after
 its own last write is used, and only while the camera still reports the build seen after that write; otherwise the version
-is unknown and **no downgrade warning can be given**. The list of releases is only advice read from GitHub (HTTPS, at most 1 MiB,
-once per session): nothing in it is trusted, and a kit is never used without its SHA256SUMS and signature check. If GitHub
+is unknown and **no downgrade warning can be given**. The list of releases is only advice read from GitHub (HTTPS, at most 8 MiB
+per page and 5 pages of 50 releases, once per session): nothing in it is trusted, and a kit is never used without its SHA256SUMS and signature check. If GitHub
 cannot be reached (offline, rate limit), the list says so and the local rows stay available. Prereleases are hidden unless
 you pass `--include-prereleases`. In a source checkout (`mode=source`) the first install shows no list: the kit comes from
 the checkout. A release or a kit needs an image built from it and from your own stock backup. Until the native builder is

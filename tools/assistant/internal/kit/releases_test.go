@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -163,7 +164,7 @@ func TestListReleasesAsksTheAPIAndParses(t *testing.T) {
 		t.Fatal(got, err)
 	}
 	r := s.reqs[0]
-	if r.URL.Path != "/repos/Foohx/akam-fw/releases" || r.URL.Query().Get("per_page") != "50" || r.Method != "GET" {
+	if r.URL.Path != "/repos/Foohx/akam-fw/releases" || r.URL.Query().Get("per_page") != "50" || r.URL.Query().Get("page") != "1" || r.Method != "GET" {
 		t.Errorf("request %s %s", r.Method, r.URL)
 	}
 	if r.Header.Get("Accept") != "application/vnd.github+json" || r.Header.Get("User-Agent") != "akam" {
@@ -237,5 +238,94 @@ func TestParseReleasesIsPerModel(t *testing.T) {
 	}
 	if kit.ReleaseTag("0.1.0") != "firmware-v0.1.0" || kit.KitFile(model, "0.1.0") != "akam-kit-lsc-indoor-1080p-ak3918-0.1.0.tar.xz" {
 		t.Error("tag and file names")
+	}
+}
+
+// pagedAPI serves one JSON page per request, by the page= parameter; an unknown page is an empty list.
+func pagedAPI(t *testing.T, pages ...[]byte) *apiServer {
+	t.Helper()
+	s := &apiServer{}
+	s.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.reqs = append(s.reqs, r)
+		s.mu.Unlock()
+		p, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if p >= 1 && p <= len(pages) {
+			_, _ = w.Write(pages[p-1])
+			return
+		}
+		_, _ = w.Write([]byte("[]"))
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// fullPage is ReleasesPerPage assistant releases (never usable as a kit) with an optional firmware release last.
+func fullPage(extra ...string) []byte {
+	var items []string
+	for i := 0; i < kit.ReleasesPerPage-len(extra); i++ {
+		items = append(items, rel(fmt.Sprintf("assistant-v1.0.%d", i), false, false, "SHA256SUMS"))
+	}
+	items = append(items, extra...)
+	return list(items...)
+}
+
+func TestListReleasesFollowsThePages(t *testing.T) {
+	// page 1: only assistant releases; the firmware releases are behind them
+	s := pagedAPI(t, fullPage(), fullPage(rel("firmware-v0.2.0", false, false, full("0.2.0")...)), list(rel("firmware-v0.1.0", false, false, full("0.1.0")...)))
+	got, err := kit.ListReleases(context.Background(), kittest.ClientFor(s.srv), s.srv.URL, "Foohx/akam-fw", false, model)
+	if err != nil || versions(got) != "0.2.0 0.1.0" {
+		t.Fatal(versions(got), err)
+	}
+	if len(s.reqs) != 3 || s.reqs[1].URL.Query().Get("page") != "2" || s.reqs[2].URL.Query().Get("page") != "3" {
+		t.Errorf("%d requests", len(s.reqs))
+	}
+}
+
+func TestListReleasesStopsAtAShortPageAndAtTheBound(t *testing.T) {
+	s := pagedAPI(t, list(rel("firmware-v0.1.0", false, false, full("0.1.0")...)))
+	if _, err := kit.ListReleases(context.Background(), kittest.ClientFor(s.srv), s.srv.URL, "Foohx/akam-fw", false, model); err != nil || len(s.reqs) != 1 {
+		t.Errorf("short page: %d requests, %v", len(s.reqs), err)
+	}
+	// endless full pages without a usable release: at most MaxReleasePages requests
+	var pages [][]byte
+	for i := 0; i < kit.MaxReleasePages+3; i++ {
+		pages = append(pages, fullPage())
+	}
+	s = pagedAPI(t, pages...)
+	got, err := kit.ListReleases(context.Background(), kittest.ClientFor(s.srv), s.srv.URL, "Foohx/akam-fw", false, model)
+	if err != nil || len(got) != 0 || len(s.reqs) != kit.MaxReleasePages {
+		t.Errorf("bound: %d releases, %d requests, %v", len(got), len(s.reqs), err)
+	}
+}
+
+func TestListReleasesStopsOnceEnoughAreFound(t *testing.T) {
+	var items []string
+	for i := 0; i < kit.ReleasesPerPage; i++ {
+		v := fmt.Sprintf("0.%d.0", i+1)
+		items = append(items, rel("firmware-v"+v, false, false, full(v)...))
+	}
+	page := list(items...)
+	s := pagedAPI(t, page, page, page)
+	got, err := kit.ListReleases(context.Background(), kittest.ClientFor(s.srv), s.srv.URL, "Foohx/akam-fw", false, model)
+	if err != nil || len(got) < kit.EnoughReleases || len(s.reqs) != 1 {
+		t.Errorf("%d releases, %d requests, %v", len(got), len(s.reqs), err)
+	}
+}
+
+func TestListReleasesALaterPageFailureKeepsWhatWasFound(t *testing.T) {
+	calls := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("page") == "1" {
+			_, _ = w.Write(fullPage(rel("firmware-v0.1.0", false, false, full("0.1.0")...)))
+			return
+		}
+		w.WriteHeader(403)
+	}))
+	defer srv.Close()
+	got, err := kit.ListReleases(context.Background(), kittest.ClientFor(srv), srv.URL, "Foohx/akam-fw", false, model)
+	if err != nil || versions(got) != "0.1.0" || calls != 2 {
+		t.Errorf("%v %v %d", versions(got), err, calls)
 	}
 }
