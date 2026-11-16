@@ -11,6 +11,9 @@
  *               night mode itself always runs at 10 fps / VTS 3426 (night.c).
  *   gop=S       key frame interval in whole seconds, VIDEO_GOP_S_MIN..VIDEO_GOP_S_MAX (default 2 s: ENC_GOP frames
  *               at the default 15 fps). The encoder gets S * fps frames (S * 25 = 100 at most).
+ *   minqp=N     lowest QP the rate control may use (lower = finer, more bits), VIDEO_QP_MIN..VIDEO_QP_MAX (default 28)
+ *   maxqp=N     highest QP (default 43). minqp < maxqp is required: a pair that breaks it is skipped as a whole
+ *               (both keys keep the defaults, one log line).
  * An absent file, or an absent key, means the compiled-in default: the behaviour is then exactly the one of a build
  * without this module. A bad line (unknown key, bad number, out of range) is skipped with one log line and its key
  * keeps the default; nothing else is affected.
@@ -38,17 +41,28 @@
 #define VIDEO_GOP_S_MIN 1
 #define VIDEO_GOP_S_MAX 4
 #define VIDEO_GOP_S_DEF (ENC_GOP / ENC_FPS)
+/* Encoder QP bounds (VBR+ minqp/maxqp of CREATE_ENC). Defaults are the stock _ht_hw_settings.ini values. The H.264
+ * range is 10..51 (ak_ioctls.h, venc_rc_cfg; the 2K library refuses > 51). min == max (or both 0) is refused: it
+ * crashed the kernel once (venc.c), so min < max is required. */
+#define VIDEO_QP_MIN 10
+#define VIDEO_QP_MAX 51
+#define VIDEO_MINQP_DEF 28
+#define VIDEO_MAXQP_DEF 43
 
 typedef struct {
     int bitrate; /* kbit/s */
     int fps;
     int gop_s;
+    int minqp;
+    int maxqp;
 } video_cfg_t;
 
 /* Defaults (the compiled-in constants). */
 void video_cfg_defaults(video_cfg_t *c);
 /* 1 when fps is one of the allowed values. */
 int video_cfg_fps_ok(long fps);
+/* 1 when the QP pair is acceptable (both in range, min < max). */
+int video_cfg_qp_ok(int minqp, int maxqp);
 /* Strict parse of one number: whole decimal, no sign, no spaces. 0 and *out set, else -1. */
 int video_cfg_num(const char *s, long *out);
 /* One key=value pair: 0 and the field set when key and value are valid, else -1 (unknown key or bad value). */
@@ -69,6 +83,8 @@ const video_cfg_t *video_cfg_active(void);
 int video_fps(void);
 int video_kbps(void);
 int video_gop_frames(void);
+int video_minqp(void);
+int video_maxqp(void);
 /* Frame time VTS the ISP wants with the active (day) frame rate. */
 int video_day_vts(void);
 /* TEST-ONLY: drop the loaded state so the next video_cfg_load reads again. */

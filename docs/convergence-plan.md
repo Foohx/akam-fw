@@ -118,6 +118,10 @@ machine of `akam2k_vlive.c` moves to `src/common/logic/vlive.c` (pure: takes the
   the path in the one test that builds it (`grep -l <file> tests/*.sh tests/native/*`), a mechanical change.
 - `make repro` (new, step 0) builds the 1080p binary reproducibly and prints a hash (2.5).
 
+Golden history: `caded296...` (step 0, before any move) then `ffa4da4c...` after `feature/1080p-qp-tuning` (QP keys
+`minqp`/`maxqp` in `video_cfg`): behaviour-identical by default; hash changes because of new code. The proof is not the
+hash but `tests/video_apply_test.sh`: with no settings file the 96-byte CREATE_ENC payload equals the pre-change fixture byte for byte.
+
 ### 2.5 Keeping the 1080p binary testable byte for byte
 
 Today it cannot be compared: `version.o` is forced to rebuild with `BUILD_TIMESTAMP` and an incrementing counter
@@ -349,3 +353,95 @@ stock, `state_led` pattern checks, button GPIO identification, the playback-sile
 3. 4a #11 and #1 (the CPU fix) with hardware validation; then 4a #7, #3.
 4. Step 5 (`hal_venc`, QP/rc settings) and the live-apply probes; adopt the quality defaults from the matrix.
 5. Steps 3, 4, 6, then 7 if the button exists, then 8 (registry/API), then 4b fixes on the 2K (flash-wear items 12-14 first).
+
+## 7. Parity porting plan (1080p to the level of the 2K), from section 3 step 3 on
+
+Directive: the 1080p reaches the same features and remote control as the 2K, each within its own hardware. The row-by-row
+state is in [parity-matrix.md](parity-matrix.md). Steps 0-2 (section 3) are done on `dev`: the 17 shared net/logic files
+and `klog audio_jitter audio_vad g711` are in `src/common`. This section replaces section 3 steps 3-8 with finer steps.
+
+### 7.1 Start condition (do not start earlier)
+
+Two branches touch the files this plan moves or edits. Start only after both merge to `dev`, then rebase:
+
+| In flight | Touches | Why it blocks |
+|---|---|---|
+| `integ/wifi-api` | 2K net/API files (`akam2k_netreg.c`, `akam2k_api.c`, `akam2k_settings.c`, `akam2k_httpd.c`) | P1-P3 and P8 move or reuse exactly these and their host tests |
+| `feature/1080p-qp-tuning` | `src/ak_rtsp` `video_cfg.c`, `venc.c` | P10 builds on the QP keys it introduces; P4-P9 edit the same Makefile |
+
+Even file moves that neither branch edits (`sha256 json_min api_sig api_keys api_limit`) conflict on the Makefiles and test
+paths: wait.
+
+### 7.2 Rules for every step
+
+- **Byte-identical (BI) for pure moves.** Moving a file the 1080p does not link cannot change its binary: prove it with
+  `tools/ci/repro_check.sh` (golden hash from step 0) and the 2K `make poc3` objects (`size`/hash). Moving a file the 1080p
+  already links keeps `SRCS` link order and per-object flags.
+- **Behaviour-identical by default (BC) for everything else.** New code is off or read-only until configured; with no new
+  setting the camera behaves exactly as today. Order of proof: host suite (`tools/ci/local_check.sh`), RAM run from `/tmp` on
+  **akam-01** (UART attached), 15 min soak, `video.fps_actual`, `ctl_sys` skipped counter, CPU of `ak_rtsp` equal to the
+  baseline (4a protocol), then akam-02, then the flashed image.
+- One step = one branch off `dev`, one reviewable diff (about 600 changed lines at most, moves excluded), merged locally after
+  its proof, never pushed. Rollback = `git revert` (BI) or the previous binary in `/tmp` (BC). Never touch `mtd0`.
+- `src/common` rule: no vendor header, no device path, no ioctl, a host test already runs it (section 2.1).
+- 2K first: a shared module is validated on the 2K camera (its owner; checklists A1-A9, `hardware-test-checklists.md`), then
+  bound to the 1080p. A 2K camera pass is not needed for BI moves.
+
+### 7.3 1080p constraints that shape the steps
+
+| Constraint | Consequence |
+|---|---|
+| One RTSP client slot, 777 KB encoder ring, 256 KiB TCP queue at PLAY | no feature adds a second video consumer; new threads stay off the video path; the API must not stall a keyframe being paced |
+| RAM 64 MiB, about 40 MiB usable (`specs/architecture.md`) | per step: binary and RSS delta measured on akam-01 (`VmRSS`, `MemAvailable` before/after) and recorded in the commit. Registry plus API gate: +56 KB binary, +64 KB RSS (`specs/control-api.md` s9; measured on the host only, camera RSS not measured). Small threads get 32-64 KiB stacks |
+| 8 MiB SPI NOR | no new periodic flash writes: every store call is skip-if-equal; the audit file is written rarely (limiter) |
+| CPU already near 90 % (81 % sys, section 4a) | do the CPU fix (4a #11, #1) before adding threads; each step reports CPU before/after |
+| Updates by SD card / maintenance flash (no hot appfs) | new modules ship inside the same `ak_rtsp` binary; no separate update path; rollback is the previous card image |
+| 2.4 GHz only, no PTZ, no NPU | `net.wifi_band`, `ptz.*`, `detect.*`, `track.*`, `zones.*` are absent from the 1080p descriptor, not stubs |
+| Static musl and raw ioctls (2K: dynamic uClibc and vendor libs) | drivers stay per model; only logic moves |
+
+### 7.4 Model descriptors (what each model binds)
+
+Shared modules take model data from a descriptor file, never from `#ifdef`:
+
+| Descriptor | 2K (`firmware/lsc-rotatable-2k-ak3918av130/app/`) | 1080p (`src/ak_rtsp/`) | Used by |
+|---|---|---|---|
+| lights | `akam2k_hal.c`: `ir` GPIO 48, `blue` GPIO 56 | `ak1080_hal.c` (new): `status` LEDCLASS `state_led`; IR emitter later | `light_logic`, `hal_light_sysfs` |
+| settings table | `akam2k_settings.c` (`st_def_t`) | `ak1080_settings.c` (new): `night.* ae.* isp.* video.* led.* sys.* net.hostname`, aliases for the 8091 names | `settings_reg`, API, MQTT |
+| venc limits and ops | `akam2k_video.h`, `akam2k_vlive.c` | `ak1080_venc.c` (new) over `venc.c` | `video_cfg`, `vlive` |
+| sys paths | `/proc`, wifi iface | same, iface name from config | `hal_sys` |
+| API env (clock, key file, version) | `a2k_api_env_t` in `akam2k_main.c` | equivalent struct in `main.c` | `api_*`, events |
+
+### 7.5 Ordered steps
+
+Sizes: S under 100 lines, M under 300, L up to 600 (moves excluded). BI/BC as in 7.2. HW = needs akam-01/akam-02.
+
+| # | Step | Moves / changes | Class | Size | Proof | HW |
+|---|---|---|---|---|---|---|
+| P0 | Re-baseline | after both branches merge: rebase, new golden hash, CPU baseline and `VmRSS` of akam-01 recorded here | BI | S | `repro_check.sh`, measurement | read only |
+| P1 | Pure moves, crypto/JSON | `sha256`, `json_min` from the 2K app to `src/common/logic`; both Makefiles via `common.mk`; test paths | BI | S | 2K objects equal, 1080p hash unchanged (not linked) | no |
+| P2 | Pure moves, API security | `api_sig`, `api_keys`, `api_limit` to `src/common/logic` | BI | S | same | no |
+| P3 | Pure moves, registry and system | `settings_reg`, `hal_sys`, `light_logic` + `hal_light.h` + `hal_light_sysfs`, `button_logic`, the events ring (pure part of `akam2k_apievt.c`), the store helper (skip-if-equal of `akam2k_store.c` over `cfg_file`) | BI | M | same, plus the 2K unit tests (`tests/rot2k_*`) on the new paths | no |
+| P4 | `sys.*` on the 1080p | `ctl_sys.c` calls `hal_sys_sample` every 10 s from an existing timer (no new thread); keys `sys.cpu_pct sys.load1_x100 sys.mem_*_kb sys.uptime_s net.wifi_rssi` read-only on 8091 and `LIST` | BC additive | S | `control_test.sh` (old keys byte-equal), RSS delta | yes |
+| P5 | `swdog` split | `swdog_st_*` pure half to `src/common/logic/swdog_core.c`, glue stays; the 2K capture watchdog adopts it in its own commit | BI (1080p), BC (2K) | M | `swdog_test.sh`, hash | 2K only |
+| P6 | LED engine on `state_led` | `ak1080_hal.c` status descriptor; `leds.c` rules re-expressed as `light_logic` calls; `status=on|off|auto`, `ir_led auto|off` and the `/etc/config/akam/leds` file keep their meaning; IR emitter added when `ledsys.c` is wrapped | BC | M | `leds_test.sh` plus an oracle comparing old and new write sequences; visual check on both cameras | yes |
+| P7 | Registry behind 8091 | `ak1080_settings.c`; `control.c` GET/SET/LIST become an adapter (aliases keep the old key names, errors and the write rule: loopback or debug flag); no new port | BC | L | 8091 contract test and `control_test.sh` pass unchanged; gate +56 KB / +64 KB measured | yes |
+| P8 | Signed API on the 1080p | generic parts of `akam2k_httpd.c`/`akam2k_api.c` (env-injected) go to `src/common/net` with events and audit; 1080p binds them. **Port 8092 opens only when a key exists**; off by default; 64 KiB thread stack; connection buffers malloc'd at accept | BC, off by default | L | the 134-check HTTP test runs with both models' env; budget measured; `video.fps_actual` and CPU unchanged under a flood of bad requests; 2K camera A1-A9 done first | yes |
+| P9 | MQTT generated from the registry | `mqtt_ops.c` entity list built from the registry; topics and HA discovery ids unchanged | BC | M | fake broker test equal; real broker run on the 2K first (still open) | yes, with broker |
+| P10 | Live video and QP | after `feature/1080p-qp-tuning`: `hal_venc` ops, `vlive` state machine to `src/common/logic`; probe SET_ATTR/SET_QP/IDR on akam-01 one ioctl at a time (`venc-live-params.md`), UART attached, RAM only; keys `video.min_qp max_qp rc kbps gop fps` live where the kernel accepts, else the restart path; defaults identical (28/43/VBR+) | BC, defaults identical | L | probe log, bitrate window, no oops, quality matrix 3b.4 | yes |
+| P11 | Hardware-bound features, only if the hardware exists | (a) second venc channel for `/stream1`, (b) button GPIO then `button_logic`, (c) JPEG snapshot. Investigation first; a negative result goes into the matrix as N/A | BC | S-M each | probe notes | yes |
+| P12 | Logs | one `log.*` read key family over the klog ring on both models | BC additive | S | host + camera read | yes |
+| P13 | Reverse parity (2K gaps) | opt-in ONVIF on the 2K from the generic stack, `klog` on the 2K, talk when the speaker path is solved | BC | L | per feature | 2K |
+
+Rationale: P1-P3 are free and unblock the rest (no 1080p binary change). P4 and P5 are small and additive and give the first
+camera numbers on shared code. P6 is visible and oracle-testable. The registry (P7) precedes the API (P8) and generated MQTT
+(P9) because both read its table. Video (P10) comes last of the risky ones: it is the only step on a kernel interface that has
+oopsed before.
+
+### 7.6 Per-step validation checklist (akam-01 first)
+
+1. Build from the branch, `make repro` hash recorded, host suite green, no new warnings.
+2. Copy to `/tmp/ak_rtsp` on akam-01 with UART attached, run from RAM (the wrapper respawns the installed binary).
+3. 15 min with one RTSP client: 14.9-15 fps, `ctl_sys` skipped 0, encoder errors 0, CPU within baseline, `VmRSS` delta recorded.
+4. The step's own check (key reads, LED sequence, API call with a test key), then a second client gets 503.
+5. akam-02 repeat; only then the flashed image and a power-cycle boot.
+6. Record the measured deltas in the commit message and mark the row verified-on-hardware in `parity-matrix.md`.

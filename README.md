@@ -87,7 +87,18 @@ verify. Arrow keys and Enter run a step, `?` explains it, `q` quits. Every risky
 whose **default is No**. You unplug and replug the camera's power yourself: the program never reboots it.
 
 `./akam help` lists every command; add `--dry-run` to rehearse. Step by step: [wizard guide](docs/wizard_guide.md).
-Watch the stream: `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/`.
+Watch the stream: `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/stream0`. Every Akam camera uses the same URLs:
+`rtsp://<ip>:554/stream0` (main) and, where the camera has a second encoder (the Rotatable 2K), `rtsp://<ip>:554/stream1` (sub).
+Frigate: detect on `stream1` (low load), record on `stream0`.
+
+```yaml
+cameras:
+  cam:
+    ffmpeg:
+      inputs:
+        - {path: "rtsp://<ip>:554/stream1", input_args: preset-rtsp-restream, roles: [detect]}
+        - {path: "rtsp://<ip>:554/stream0", input_args: preset-rtsp-restream, roles: [record]}
+```
 
 ## Daily use
 

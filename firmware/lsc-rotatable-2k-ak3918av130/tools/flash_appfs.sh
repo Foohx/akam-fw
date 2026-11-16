@@ -220,7 +220,7 @@ read -r -d '' HOT_REMOTE <<'AKAM_HOT_EOF' || true
 # NEVER writes flash, nvram or /config. Writes only under $D (/tmp/akam_hot). Overridable for the host test:
 # AKAM_PROC (/proc), AKAM_HOT_DIR, AKAM_MOUNTS (/proc/mounts), AKAM_MEMINFO, AKAM_SD (/mnt/sdcard), AKAM_FLASHDIR,
 # AKAM_DROP (drop_caches), AKAM_PANIC (panic_on_oom), AKAM_OOMFILE, AKAM_SOAK, AKAM_CONFIRM_S, AKAM_WORKER,
-# AKAM_FLASH_RES, AKAM_FLASH_LOG.
+# AKAM_FLASH_RES, AKAM_FLASH_LOG, AKAM_FEEDER_PID (/tmp/akam_feeder.pid: the pid file akam_net.sh's last resort reads).
 P=${AKAM_PROC:-/proc}
 D=${AKAM_HOT_DIR:-/tmp/akam_hot}
 UNSAFE='[^A-Za-z0-9_./:=@%+,-]'
@@ -511,6 +511,7 @@ cmd_feeder() {
         i=$((i + 1))
     done
     echo "$new" >"$D/feeder.pid"
+    echo "$new" >"${AKAM_FEEDER_PID:-/tmp/akam_feeder.pid}" # akam_net.sh's last resort kills the feeder named here, not the dead old one
     echo "feeder: running from /tmp (pid $new, soaked ${SOAK} s alone), old one(s) stopped:$olds_app"
 }
 
@@ -1221,7 +1222,7 @@ if [ "$HOT" = 1 ]; then
 flash_appfs: $( [ "$LIVE" = 1 ] && echo "DONE (live)." || echo "dry run finished, nothing was written." )
 flash_appfs: HOT UPDATE, (f) NOT done by this script:
   The new appfs is on mtd3 but this boot still has the OLD squashfs mounted: do not start anything from /appfs.
-  Reboot it yourself now (ssh $CAM reboot): the camera boots card-less into the new image. Keep the Akam SD card at hand:
+  Make NO network change (hostname, Wi-Fi band/country) before the reboot. Reboot it yourself now (ssh $CAM reboot): the camera boots card-less into the new image. Keep the Akam SD card at hand:
   inserted at power-up it overrides the flashed boot (recovery). A half-written mtd3 needs UART/CH341A.
 EOF
     exit 0
@@ -1230,6 +1231,7 @@ cat <<EOF
 
 flash_appfs: $( [ "$LIVE" = 1 ] && echo "DONE (live)." || echo "dry run finished, nothing was written." )
 flash_appfs: (f) NOT done by this script, staged reboot:
+  0. Make NO network change (hostname, Wi-Fi band/country) before the reboot.
   1. Seed /config/akam over SSH BEFORE flashing (wpa.conf, authorized_keys; do it before running this script if not done yet), see docs/porting/lsc-rotatable-2k/cardless-appfs.md.
   2. Reboot ONCE with the Akam SD card INSERTED: confirms the new appfs mounts and the SD override (recovery) works.
   3. Only then power off, remove the card, power on: card-less boot. Keep the card at hand for recovery.

@@ -13,6 +13,11 @@
 #include "akam2k_stream.h"
 
 #define A2K_RTSP_MAX_CLIENTS 4
+/* The one place the default RTSP port is set: 554, the same canonical URL as the 1080p (rtsp://<ip>:554/stream0).
+ * akam2k.conf `port` (-p) overrides it; the stock yy_cam's 8554 is not served. */
+#ifndef A2K_RTSP_PORT
+#define A2K_RTSP_PORT 554
+#endif
 
 /* Starts listening on `port` (all interfaces) and the accept thread. auth_path: the credentials file of
  * rtsp_auth.h ("user:akam:HA1" on one line; absent = no authentication). Returns 0 or -1 (logged). */

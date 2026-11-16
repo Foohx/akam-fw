@@ -79,7 +79,8 @@ func TestVideoRefusesBadWordsBeforeTouchingTheCamera(t *testing.T) {
 	e := newEnv(t)
 	for _, bad := range [][]string{{"video", "bitrate", "499"}, {"video", "bitrate", "3001"}, {"video", "bitrate", "x"}, {"video", "bitrate"},
 		{"video", "bitrate", "1234567"}, {"video", "fps", "12"}, {"video", "fps", "30"}, {"video", "fps", "010"}, {"video", "gop", "0"}, {"video", "gop", "5"},
-		{"video", "fps", "10", "fps", "15"}, {"video", "show", "gop", "2"}, {"video", "flip"}, {"video", "mirror", "on"}, {"video", "resolution"}, {"video", "zoom"}} {
+		{"video", "fps", "10", "fps", "15"}, {"video", "show", "gop", "2"}, {"video", "flip"}, {"video", "mirror", "on"}, {"video", "resolution"}, {"video", "zoom"},
+		{"video", "minqp", "9"}, {"video", "maxqp", "52"}, {"video", "minqp"}, {"video", "minqp", "40", "maxqp", "40"}, {"video", "minqp", "45", "maxqp", "30"}, {"video", "maxqp", "40", "maxqp", "41"}} {
 		expectRC(t, e.run("", bad...), 2)
 	}
 	if len(e.cam.CtlSets()) != 0 || len(e.cam.Commands()) != 0 {
@@ -181,4 +182,32 @@ func TestNewCommandsLeaveNoSecretOrStateFile(t *testing.T) {
 			t.Errorf("state: %s", b)
 		}
 	}
+}
+
+func TestVideoQpShowAndSet(t *testing.T) {
+	e := newEnv(t)
+	r := e.run("", "video")
+	expectRC(t, r, 0)
+	contains(t, r.out, "  Quantiser bounds: minqp 28, maxqp 43 (10 to 51, minqp below maxqp; the defaults are 28 and 43;")
+
+	// the pair is sent in the order the camera accepts: the new minqp 45 is not below the current maxqp 43, so maxqp goes first
+	r = e.run("\n", "video", "minqp", "45", "maxqp", "50")
+	expectRC(t, r, 0)
+	if got := strings.Join(e.cam.CtlSets(), "|"); got != "SET video.maxqp_cfg 50|SET video.minqp_cfg 45" {
+		t.Errorf("sets: %s", got)
+	}
+	contains(t, r.out, "  Saved on the camera.", "minqp 45, maxqp 50", "not running yet")
+
+	// and the other way round when lowering: minqp first
+	r = e.run("\n", "video", "maxqp", "40", "minqp", "20")
+	expectRC(t, r, 0)
+	sets := e.cam.CtlSets()
+	if got := strings.Join(sets[len(sets)-2:], "|"); got != "SET video.minqp_cfg 20|SET video.maxqp_cfg 40" {
+		t.Errorf("sets: %s", got)
+	}
+
+	// one key alone that the camera refuses: its answer is shown
+	r = e.run("\n", "video", "minqp", "40")
+	expectRC(t, r, 1)
+	contains(t, r.err, "refused", "minqp must stay below maxqp")
 }

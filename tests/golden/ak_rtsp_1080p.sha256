@@ -1,6 +1,9 @@
 # Golden sha256 of the stripped 1080p ak_rtsp, reproducible build (docs/convergence-plan.md 2.5).
 # Recorded from dev e9fcf7d, before any file move to src/common.
+# 2026-11-16, feature/1080p-qp-tuning: new hash ffa4da4c... (was caded296...). Behaviour-identical by default; hash changes
+# because of new code (video_cfg minqp/maxqp keys). Proof: tests/video_apply_test.sh, CREATE_ENC payload byte-identical to
+# tests/fixtures/video_apply_default.txt with no settings file.
 # Command (from the repo root, zig 0.14.1 x86_64-linux, the pinned one in tools/.toolchain):
 #   make -C src/ak_rtsp repro        (AKAM_REPRO=1, SOURCE_DATE_EPOCH=0, -ffile-prefix-map, -g0, zig objcopy --strip-all)
 # Check: tools/ci/repro_check.sh. A different zig changes the hash: update this file in the same commit as the pin.
-caded296c4e7ca86100abd7a8a5f60eefa9c869f9c87dc2ce8490cd67731e102  ak_rtsp.repro
+ffa4da4ce46393e26af770f8403521bf147f8826bebf3d8ad06e594fd9a81620  ak_rtsp.repro

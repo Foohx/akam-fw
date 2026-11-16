@@ -50,6 +50,28 @@ is tolerated):
 - Values never change while `ak_rtsp` runs. A change applies at the next start of `ak_rtsp`. The control port keys
   `video.bitrate_cfg`, `video.fps_cfg`, `video.gop_cfg` write the file (loopback only) and `video.cfg_pending` says
   whether the file differs from the running encoder.
+- `minqp` / `maxqp` (10 to 51, defaults 28 / 43, `minqp < maxqp` required): the QP bounds of the VBR+ rate control. They
+  go to both places of CREATE_ENC that carry them (`enc.qp_or_kbps`/`enc.qp2` at +0x28/+0x2a and, in the legacy rc
+  sub-struct, `rc.minqp`/`rc.maxqp` at +0x44/+0x46; the stock rc sub-struct of `AKAM_VENC_RC=stock` keeps its 0/0). A
+  pair that breaks the rule is dropped as a whole (both keys default, one log line); a SET that would break it is
+  refused (`./akam video` sends maxqp first when raising both). Lowering `minqp` lets the encoder spend more bits on P
+  frames (finer textures), which is the lever against key-frame pumping.
+- What the SDK offers for the encoder quality, from `src/ak_rtsp/ak_ioctls.h` (kernel ABI, byte-exact against the stock
+  capture) and the 2K `libmpi_venc.so` analysis (`docs/porting/lsc-rotatable-2k/venc-live-params.md`; the 1080p uses the
+  same kernel venc adapter, not proven for each ioctl):
+  rc mode `enc.rc_mode`: 0 AVBR, 1 default, 2 CBR, 5 VBR+ (stock and ours: VBR+); changing it moves the meaning of
+  `qp_or_kbps`/`qp2`, and one wrong rc struct has already oopsed the kernel (`venc.c`), so `rc` is NOT offered.
+  QP: `minqp` 10..51, `maxqp` 10..62 (H.264 library limit 51), `initqp` (`initqp_vbrp`, stock 99, not offered).
+  `rc.delta` (-12..+12, 0 today) exists in the struct, its meaning (I/P QP offset?) is not proven: not offered.
+  `rc.I_pic_size/P_pic_size/B_pic_size` exist, all 0. Target and max bitrate are one field in VBR+ (`max_kbps_vbrp`).
+  Separate I-frame QP bounds exist only as a live call in the 2K library (`ak_venc_set_iframe_param`, ioctl
+  0x401056f9, 16 bytes, `IFrame_minqp/maxQP`); not in the CREATE_ENC struct.
+  Live setters (2K library, same kernel ABI, UNTESTED on the 1080p and not used): `set_qp` ioctl 0x400c56fb `{id,min,max}`,
+  `reset_qp` 0x400456fc, `set_rc_type` 0x400456c5, `set_attr` 0x406056f2. The 1080p applies QP at the next
+  re-open of the encoder (video service restart), like bitrate and GOP.
+- Sharpening: the picture setting `isp.sharpness` (-50..50, saved in `/etc/config/akam`, `./akam options` Picture) is
+  already exposed (`isp_tune.c`); the finer ISP sharpening/edge-enhancement blocks are in the ISP conf the sensor
+  driver copies to `/tmp/sensor_isp.conf` (see `isp_blocks.c`), a later step.
 - The sensor frame rate is changed together with the encoder rate. Allowed pairs (frame time VTS = 34260 / fps):
   10 fps = 3426, 15 fps = 2284, 20 fps = 1713, 25 fps = 1370. The longest exposure equals the frame time, so a higher
   rate makes dim scenes darker and night mode start earlier.

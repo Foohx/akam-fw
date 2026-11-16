@@ -23,6 +23,7 @@
 #include "talk.h"
 #include "leds.h"
 #include "control.h"
+#include "video_cfg.h"
 #include "video_ctl.h"
 #include "onvif_cfg.h"
 #include "ctl_gate.h"
@@ -328,8 +329,8 @@ static void do_list(cli_t *c)
      * not live-settable yet — no confirmed ioctl to update rc params on an
      * already-created encoder channel without a DEACTIVATE/CREATE_ENC
      * cycle. Reported for visibility only. */
-    reply(c, "venc.minqp=28 (read-only)");
-    reply(c, "venc.maxqp=43 (read-only)");
+    reply(c, "venc.minqp=%d (read-only)", video_minqp());
+    reply(c, "venc.maxqp=%d (read-only)", video_maxqp());
     night_ctl_list(audio_list_emit, c);
     ledsys_ctl_list(audio_list_emit, c);
     audio_out_ctl_list(audio_list_emit, c);
@@ -385,8 +386,8 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "isp.contrast"))          reply(c, "isp.contrast=%d", g_isp_contrast);
     else if (!strcmp(param, "isp.brightness"))        reply(c, "isp.brightness=%d", g_isp_brightness);
     else if (!strcmp(param, "isp.sharpness"))         reply(c, "isp.sharpness=%d", g_isp_sharpness);
-    else if (!strcmp(param, "venc.minqp"))            reply(c, "venc.minqp=28 (read-only)");
-    else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=43 (read-only)");
+    else if (!strcmp(param, "venc.minqp"))            reply(c, "venc.minqp=%d (read-only)", video_minqp());
+    else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=%d (read-only)", video_maxqp());
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
     else if (!strcmp(param, "ctl.clients"))           reply(c, "ctl.clients=%d", clients_connected());
     else if (!strcmp(param, "log.dropped"))           reply(c, "log.dropped=%u", (unsigned)g_log_dropped);

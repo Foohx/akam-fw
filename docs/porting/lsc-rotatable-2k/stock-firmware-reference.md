@@ -64,7 +64,7 @@ this drops dev-bound routes (our decloud keeper restores them). → [decloud-fin
 | `[dsp]` | `ivs_hd_on_off`, `ivs_md_on_off`, `ivs_mt_on_off` | alarm switches (human / motion), **mt = auto-tracking with the motor (keep 0)** |
 | `[dsp]` | `ao_vol` | speaker volume |
 | `[cloud]` | `video_chnN_max_bit_rate` (note the spelling), `local_record_switch` | Tuya cloud media config, not the encoder |
-| `[rtsp]` | `rtsp_on_off` | 1 → RTSP on :8554 `/stream0` `/stream1`, **no auth** (HW) |
+| `[rtsp]` | `rtsp_on_off` | 1 → RTSP on :8554 `/stream0` `/stream1`, **no auth** (HW; stock fact, the Akam own app serves :554 instead, same paths) |
 | `[onvif]` | `onvif_on_off`, `onvif_username`, `onvif_password`, `onvif_server_port`, … | 1 → ONVIF on :5000, `admin` + empty password (HW) |
 | `[ptz]` | `ptz_pan_step_home` 1275, `ptz_tilt_step_home` 816 | motor home position |
 | `[net]` | `wifi_enable`, `wifi_en_gpio_no` 10, `wifi_en_gpio_polarity` 0, `wifi_is_need_write_mac` 0 | Wi-Fi power |

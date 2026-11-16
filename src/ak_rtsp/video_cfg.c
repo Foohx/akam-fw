@@ -9,7 +9,7 @@
 
 #include "video_cfg.h"
 
-static video_cfg_t g_active = { ENC_KBPS, ENC_FPS, VIDEO_GOP_S_DEF };
+static video_cfg_t g_active = { ENC_KBPS, ENC_FPS, VIDEO_GOP_S_DEF, VIDEO_MINQP_DEF, VIDEO_MAXQP_DEF };
 static int g_loaded;
 
 void video_cfg_defaults(video_cfg_t *c)
@@ -17,6 +17,13 @@ void video_cfg_defaults(video_cfg_t *c)
     c->bitrate = ENC_KBPS;
     c->fps = ENC_FPS;
     c->gop_s = VIDEO_GOP_S_DEF;
+    c->minqp = VIDEO_MINQP_DEF;
+    c->maxqp = VIDEO_MAXQP_DEF;
+}
+
+int video_cfg_qp_ok(int minqp, int maxqp)
+{
+    return minqp >= VIDEO_QP_MIN && maxqp <= VIDEO_QP_MAX && minqp < maxqp;
 }
 
 int video_cfg_fps_ok(long fps) { return fps == 10 || fps == 15 || fps == 20 || fps == 25; }
@@ -46,6 +53,12 @@ int video_cfg_set_key(video_cfg_t *c, const char *key, const char *val)
     } else if (!strcmp(key, "gop")) {
         if (v < VIDEO_GOP_S_MIN || v > VIDEO_GOP_S_MAX) return -1;
         c->gop_s = (int)v;
+    } else if (!strcmp(key, "minqp")) {
+        if (v < VIDEO_QP_MIN || v > VIDEO_QP_MAX) return -1;
+        c->minqp = (int)v;
+    } else if (!strcmp(key, "maxqp")) {
+        if (v < VIDEO_QP_MIN || v > VIDEO_QP_MAX) return -1;
+        c->maxqp = (int)v;
     } else {
         return -1;
     }
@@ -70,6 +83,11 @@ int video_cfg_parse(const char *text, size_t len, video_cfg_t *out)
         *eq = '\0';
         if (video_cfg_set_key(out, line, eq + 1) != 0) bad++;
     }
+    if (!video_cfg_qp_ok(out->minqp, out->maxqp)) { /* the pair as a whole, never one half */
+        out->minqp = VIDEO_MINQP_DEF;
+        out->maxqp = VIDEO_MAXQP_DEF;
+        bad++;
+    }
     return bad;
 }
 
@@ -89,6 +107,8 @@ int video_cfg_format(const video_cfg_t *c, char *out, size_t cap)
     EMIT("bitrate", bitrate)
     EMIT("fps", fps)
     EMIT("gop", gop_s)
+    EMIT("minqp", minqp)
+    EMIT("maxqp", maxqp)
 #undef EMIT
     return (int)n;
 }
@@ -112,7 +132,7 @@ int video_cfg_read(video_cfg_t *out)
         return -1;
     }
     int bad = video_cfg_parse(buf, (size_t)n, out);
-    if (bad) printf("[video] settings file: %d invalid line(s) ignored (valid keys: bitrate, fps, gop)\n", bad);
+    if (bad) printf("[video] settings file: %d invalid line(s) ignored (valid keys: bitrate, fps, gop, minqp, maxqp)\n", bad);
     return 0;
 }
 
@@ -123,15 +143,18 @@ void video_cfg_load(void)
     video_cfg_t c;
     video_cfg_read(&c);
     g_active = c;
-    printf("[video] settings: bitrate=%d kbps fps=%d gop=%d s (%d frames)%s\n", g_active.bitrate, g_active.fps,
-           g_active.gop_s, g_active.gop_s * g_active.fps,
-           (g_active.bitrate == ENC_KBPS && g_active.fps == ENC_FPS && g_active.gop_s == VIDEO_GOP_S_DEF) ? " (defaults)" : "");
+    printf("[video] settings: bitrate=%d kbps fps=%d gop=%d s (%d frames) qp=%d..%d%s\n", g_active.bitrate,
+           g_active.fps, g_active.gop_s, g_active.gop_s * g_active.fps, g_active.minqp, g_active.maxqp,
+           (g_active.bitrate == ENC_KBPS && g_active.fps == ENC_FPS && g_active.gop_s == VIDEO_GOP_S_DEF &&
+            g_active.minqp == VIDEO_MINQP_DEF && g_active.maxqp == VIDEO_MAXQP_DEF) ? " (defaults)" : "");
 }
 
 const video_cfg_t *video_cfg_active(void) { return &g_active; }
 int video_fps(void) { return g_active.fps; }
 int video_kbps(void) { return g_active.bitrate; }
 int video_gop_frames(void) { return g_active.gop_s * g_active.fps; }
+int video_minqp(void) { return g_active.minqp; }
+int video_maxqp(void) { return g_active.maxqp; }
 int video_day_vts(void)
 {
     switch (g_active.fps) { /* 34260 / fps; 10 and 15 are the stock values */

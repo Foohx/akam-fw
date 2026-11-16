@@ -107,7 +107,7 @@ PROC=$WORK/proc
 HD=$WORK/hot
 mkdir -p "$HD"
 echo 0 >"$WORK/panic"
-henv() { echo "AKAM_PROC=$PROC AKAM_HOT_DIR=$HD AKAM_MOUNTS=$WORK/mounts AKAM_MEMINFO=$WORK/meminfo AKAM_SD=$WORK/sd AKAM_FLASHDIR=$WORK/fd AKAM_DROP=$WORK/drop AKAM_PANIC=$WORK/panic AKAM_OOMFILE=$WORK/oom AKAM_SOAK=1 AKAM_CONFIRM_S=${CS:-3} AKAM_WORKER=${WK:-$WORK/fakeworker.sh} AKAM_RBWORKER=$WORK/fakerb.sh AKAM_FLASH_RES=$WORK/flash.result AKAM_FLASH_LOG=$WORK/flash.log"; }
+henv() { echo "AKAM_PROC=$PROC AKAM_HOT_DIR=$HD AKAM_MOUNTS=$WORK/mounts AKAM_MEMINFO=$WORK/meminfo AKAM_SD=$WORK/sd AKAM_FLASHDIR=$WORK/fd AKAM_DROP=$WORK/drop AKAM_PANIC=$WORK/panic AKAM_OOMFILE=$WORK/oom AKAM_SOAK=1 AKAM_CONFIRM_S=${CS:-3} AKAM_WORKER=${WK:-$WORK/fakeworker.sh} AKAM_RBWORKER=$WORK/fakerb.sh AKAM_FLASH_RES=$WORK/flash.result AKAM_FLASH_LOG=$WORK/flash.log AKAM_FEEDER_PID=$WORK/akam_feeder.pid"; }
 # shellcheck disable=SC2046  # henv is a word list of KEY=safe-path
 hh() { env $(henv) sh "$HELPER" "$@"; }
 # shellcheck disable=SC2046
@@ -259,6 +259,7 @@ check "feeder: the old feeder is dead" bash -c "! kill -0 $OLD 2>/dev/null"
 check "feeder: oom_score_adj -1000 (panic_on_oom 0)" bash -c "[ \"\$(cat '$WORK/oom')\" = -1000 ]"
 newf=$(cat "$HD/feeder.pid")
 check "feeder: the new one lives" kill -0 "$newf"
+check "feeder: the new pid is also in the akam_net.sh feeder pid file" test "$(cat "$WORK/akam_feeder.pid")" = "$newf"
 # fallback: the new feeder cannot start (exits at once), the old command (not present on the host) is not alive either
 rm -rf "$PROC" "$HD"; mkdir -p "$PROC" "$HD"
 printf '#!/bin/sh\nexit 1\n' >"$HD/busybox"

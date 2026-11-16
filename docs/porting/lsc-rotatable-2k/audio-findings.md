@@ -314,7 +314,7 @@ Next: the level check with a voice (speaking at 1 m). The RTSP track is implemen
 **Enable:** put `audio=1` in `akam/akam2k.conf` on the card (read once at boot by `own_app_run.sh`, passed as `--audio 1`), then reboot
 (or restart the supervisor). **Default is off** (privacy, Akam vision: opt-in): no key or `audio=0` means the capture device is never
 opened, no thread runs, the SDP is exactly what it was (video only). Any other value is ignored and logged by the supervisor. Both streams
-(`/stream0`, `/stream1`) then carry the track: `ffprobe rtsp://<ip>:8554/stream0` must show H.264 + `pcm_s16be 8000 Hz mono`.
+(`/stream0`, `/stream1`) then carry the track: `ffprobe rtsp://<ip>:554/stream0` must show H.264 + `pcm_s16be 8000 Hz mono`.
 
 **Design (all in `firmware/lsc-rotatable-2k-ak3918av130/app/`, nothing under `src/` touched):**
 

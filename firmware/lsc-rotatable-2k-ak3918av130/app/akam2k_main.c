@@ -12,7 +12,7 @@
  *   akam2k_rtsp --api-key new --scope read|write|admin --name LABEL | list | revoke ID|NAME [--force]   (key tool, no hardware touched)
  *   long forms: --port --main-kbps --sub-kbps --gop --auth --frames --seconds --detect --detect-hz --detect-threshold
  *
- * Defaults: port 8554, main 2000 kbit/s, sub 512 kbit/s, GOP 30 (2 s at 15 fps), credentials file
+ * Defaults: port 554 (A2K_RTSP_PORT: rtsp://<ip>:554/stream0 main, /stream1 sub), main 2000 kbit/s, sub 512 kbit/s, GOP 30 (2 s at 15 fps), credentials file
  * /mnt/sdcard/akam/rtsp.conf (absent = no authentication; see rtsp_auth.h for its one-line format).
  * Person detection (akam2k_detect.c) runs alongside the streams: -D (default 1), -H 1..10 inferences/s (default 5),
  * -T classify threshold 500..950 (default 700), --detect-on-count 1..10 (default 2), --detect-off-s 1..60 (default 3), --detect-debug (per-inference frame age/count/score, 1 line/s, default off);
@@ -431,7 +431,7 @@ int main(int argc, char **argv)
     const char *auth = DEFAULT_AUTH, *mqtt_conf = A2K_MQTT_CONF_DEFAULT, *zones_conf = A2K_ZONES_DEFAULT;
     a2k_night_cfg_t ncfg;
     a2k_image_cfg_t icfg;
-    int port = 8554, api_port = A2K_API_PORT, frames = 0, seconds = 0, ch, rc = 0, led_mode = A2K_LEDS_ON, audio_on = 0;
+    int port = A2K_RTSP_PORT, api_port = A2K_API_PORT, frames = 0, seconds = 0, ch, rc = 0, led_mode = A2K_LEDS_ON, audio_on = 0;
     const char *led_pat[A2K_RULE_N] = { 0 };
     a2k_ptz_cfg_t pcfg;
     a2k_vid_t vid_opt[A2K_VID_STREAMS], vid_base[A2K_VID_STREAMS];

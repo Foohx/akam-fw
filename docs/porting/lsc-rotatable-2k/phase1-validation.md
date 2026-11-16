@@ -19,8 +19,8 @@ add `--enable-param-conf` only if the RTSP/ONVIF ports are closed in the first r
   Host key fingerprint stable across two boots: `ssh-keyscan -t ed25519 192.0.2.50 | ssh-keygen -lf -` (compare).
   On the camera: `cat /mnt/sdcard/akam/akam_boot.log` (every step logged, `handed off to /appfs/script/start.sh`).
 - [ ] **2. RTSP.** Port, resolution, fps, codec of `/stream0` (main) and `/stream1` (sub):
-  `ffprobe -rtsp_transport tcp -hide_banner rtsp://192.0.2.50:8554/stream0` and `.../stream1`
-  (add `-show_streams -select_streams v` for fps and codec); play it: `ffplay -rtsp_transport tcp rtsp://192.0.2.50:8554/stream0`.
+  `ffprobe -rtsp_transport tcp -hide_banner rtsp://192.0.2.50:554/stream0` and `.../stream1`
+  (add `-show_streams -select_streams v` for fps and codec); play it: `ffplay -rtsp_transport tcp rtsp://192.0.2.50:554/stream0`.
   If the port is closed, the log's `listening TCP ports` line says what is open; then try `--enable-param-conf`
   (writes the jffs2 config partition after a backup to `akam/backup/param.conf.orig`; undo with
   `sh /mnt/sdcard/akam/restore_param.sh` and reboot).

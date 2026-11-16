@@ -221,7 +221,7 @@ func New(t testing.TB, opts Options) *Camera {
 			"audio.out_underruns": "0", "audio.out_drops": "0", "audio.out_test": "0",
 			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "0",
 			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "1",
-			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.cfg_pending": "0",
+			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43", "video.cfg_pending": "0",
 			"video.bitrate": "1480", "video.fps_actual": "150",
 			"fw.version": "b35-2af81c5", "sys.hostname": "akam-01",
 			"net.wifi_rssi": "-55", "net.wifi_rate": "72", "night.state": "day", "sys.time_set": "1",
@@ -229,7 +229,7 @@ func New(t testing.TB, opts Options) *Camera {
 	if opts.FwVersion != "" {
 		c.ctl["fw.version"] = opts.FwVersion
 	}
-	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2"}
+	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43"}
 	c.Root = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(c.Root, "etc", "config"), 0o700); err != nil {
 		t.Fatal(err)
@@ -476,7 +476,7 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 		if c.downOnRestart {
 			c.ctlDown = true
 		}
-		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
+		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.minqp_cfg", "video.maxqp_cfg"} {
 			c.vRun[k] = c.ctl[k]
 		}
 		c.ctl["video.cfg_pending"] = "0"
@@ -729,15 +729,20 @@ func (c *Camera) handleCtl(nc net.Conn) {
 					lo, hi = 10, 25
 				case "video.gop_cfg":
 					lo, hi = 1, 4
+				case "video.minqp_cfg", "video.maxqp_cfg":
+					lo, hi = 10, 51
 				}
 				if hi == 0 {
 					reply = "ERR " + f[1] + " is read-only"
 				} else if err != nil || n < lo || n > hi || (f[1] == "video.fps_cfg" && n != 10 && n != 15 && n != 20 && n != 25) {
 					reply = "ERR invalid " + f[1] + " value"
+				} else if (f[1] == "video.minqp_cfg" && n >= atoiOr(c.ctl["video.maxqp_cfg"])) ||
+					(f[1] == "video.maxqp_cfg" && n <= atoiOr(c.ctl["video.minqp_cfg"])) {
+					reply = "ERR " + f[1] + "=" + f[2] + " refused: minqp must stay below maxqp"
 				} else {
 					c.ctl[f[1]] = f[2]
 					pend := false
-					for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
+					for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.minqp_cfg", "video.maxqp_cfg"} {
 						if c.ctl[k] != c.vRun[k] {
 							pend = true
 						}
@@ -919,4 +924,9 @@ func (c *Camera) CtlDownAfterRestart(on bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.downOnRestart = on
+}
+
+func atoiOr(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }

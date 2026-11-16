@@ -78,11 +78,11 @@ cap of 20 failures per minute, so a flood cannot lock the owner out).
 | `image.mains_hz` | `50\|60` | RAM only |
 | `track.enabled` | bool | person tracking; persisted |
 | `video0.*`, `video1.*`: `kbps`, `max_kbps` (0 = auto), `fps`, `min_qp`, `max_qp`, `gop`, `rc` (`vbr\|cbr\|avbr`) | int / enum | ranges from `akam2k_video.h`; min QP <= max QP and peak >= target are checked for the whole PATCH; the capture thread applies live or re-opens that one channel; stored by the video module in `/config/akam/video` |
-| `net.hostname`, `net.wifi_country`, `net.wifi_band` | string / string / `auto\|2.4\|5` | see below |
+| `net.hostname`, `net.wifi_country`, `net.wifi_band` | string / string / `2.4\|5` (default 2.4); country `none` (default) or two capitals | see below |
 
 Read-only state: `sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_rssi`,
 `net.wifi_lq` (`-1000000` = not available yet; the sample is refreshed every 30 s), `rtsp.clients`, `detect.person`,
-`night.active`, `ptz.state` (`home|parked|moved|calibrating|unknown`), `ptz.pan`, `ptz.tilt` (`-1` unknown), `api.keys`.
+`night.active`, `net.apply`, `ptz.state` (`home|parked|moved|calibrating|unknown`), `ptz.pan`, `ptz.tilt` (`-1` unknown), `api.keys`.
 
 Persistence: `/config/akam/settings` (`key=value`, only keys that differ from the default), saved by the settings worker within a second of a
 change, limited to a burst of 4 writes then one per 30 s (flash wear), loaded at boot after `akam2k.conf`
@@ -90,8 +90,11 @@ change, limited to a burst of 4 writes then one per 30 s (flash wear), loaded at
 
 `net.*`: the app never spawns a process, so a change writes one request line into the RAM file `/tmp/akam_net.req`; the supervisor
 (`own_app_run.sh`) hands it to `akam_net.sh` (validation, persistence, Wi-Fi dead-man) within about 5 s. The reply says `applied` when the
-request was queued; `GET` shows the new value when the script finished (Wi-Fi: after the dead-man confirmed it, at most 60 s). One
-request at a time (a second one is refused until the first was taken).
+request was queued, NOT that it succeeded: `GET` shows the new value when the script finished (Wi-Fi: after the dead-man confirmed it,
+at most 60 s), and the read-only state `net.apply` says what became of the last request (`queued`, `pending`, `ok`, `refused`,
+`failed`, `reverted`, else `idle`). The API refuses at once (422 `check`) what `akam_net.sh` refuses: band `5` while the country is
+`none`, and country `none` while on band 5. Defaults without a net file: country `none`, band `2.4`. One request at a time (a
+second one is refused until the first was taken). Do not change the band while the router is restarting.
 
 Not in the registry yet (their live setters do not exist, phase 6): `mqtt.*`, `rtsp.streamN.enabled`, `audio.enabled`, `detect.enabled`,
 `night.mode`, `ptz.park/privacy/cal`, `zones.*`, tracking areas, `button.long_ms`. No secret setting exists; a secret would be

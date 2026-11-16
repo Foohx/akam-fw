@@ -68,6 +68,7 @@ shell rtsp_auth_cmd_test.sh
 native rtsp_auth_test.sh
 native rtsp_backchannel_test.sh
 native rtsp_busy_test.sh
+native rot2k_rtsp_ports_test.sh
 native rtsp_idle_test.sh
 native rtsp_in_test.sh
 native rtsp_sdp_test.sh

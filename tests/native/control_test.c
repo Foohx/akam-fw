@@ -72,6 +72,8 @@ int  talk_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (v
 void talk_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "talk.stub=4"); }
 int  video_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  video_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+int  video_minqp(void) { return 28; }
+int  video_maxqp(void) { return 43; }
 void video_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "video.stub=5"); }
 void video_ctl_set_persist(int on) { (void)on; }
 int  ledsys_ctl_get(const char *k, char *o, size_t c)

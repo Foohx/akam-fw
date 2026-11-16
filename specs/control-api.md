@@ -584,7 +584,9 @@ Decisions and departures from the earlier text:
 - **Global failure cap exemption:** a peer with a valid signature in the last 10 minutes is exempt from the global 20/min cap (its own lockout still applies),
   otherwise 20 spoofed-free failures from anywhere lock the owner out of the API for a minute.
 - **net.\* rows:** the app cannot spawn, so a change is a request line in `/tmp/akam_net.req` (one outstanding), taken by the supervisor within about 5 s; the value read back is
-  the persisted one. Reply `applied` means queued.
+  the persisted one. Reply `applied` means queued, not done: the state `net.apply` (`queued|pending|ok|refused|failed|reverted|idle`, from `/tmp/akam_net.res`
+  written by `akam_net.sh`) tells the outcome. `net.wifi_band` is `2.4|5` (default 2.4), `net.wifi_country` is `none` (default) or two capitals; band 5 without a
+  country (and removing the country on band 5) is refused by the registry check, as `akam_net.sh` does.
 - **Audit:** ring of 64 plus the last 20 writes in `/config/akam/audit` (0600, same limiter idea: burst 2 then 1 per 30 s) and one `a2k_log` line per request (the app log on
   the card); the separate `/tmp/akam_api.log` of 7.5 is not written.
 - **Registry subset:** only keys with an existing live setter are rows (see the user doc); `mqtt.*`, `rtsp.streamN.enabled`, `audio.enabled`, `detect.enabled`, `night.mode`,

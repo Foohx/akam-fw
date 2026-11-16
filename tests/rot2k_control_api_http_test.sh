@@ -178,11 +178,18 @@ check "while a slow client waits, others are served" bash -c "curl -sS --max-tim
 wait "$SLOWPID" || true
 [ "$(cat "$WORK/slow.out")" = "HTTP/1.1 408 Request Timeout" ] && ok "a head that never ends is answered 408 after 5 s" || ko "slow client ($(cat "$WORK/slow.out"))"
 # connection caps: 3 per peer, 4 in total
+# server-side observable: the number of socket fds the server process holds (accepted connections), no sleeping
+sockfds() { find "/proc/$SP/fd/" -maxdepth 1 -lname 'socket:*' 2>/dev/null | wc -l; }
+BASE_SOCK=$(sockfds)
 exec 7<>"/dev/tcp/127.0.0.1/$PORT"
 exec 8<>"/dev/tcp/127.0.0.1/$PORT"
 exec 9<>"/dev/tcp/127.0.0.1/$PORT"
-sleep 1 # the three must be accepted (a loaded host needs more than 0.3 s)
-check "a fourth connection from one peer is refused with 503" test "$(raw 'GET /akam/v1/hello HTTP/1.1\r\n\r\n')" = "HTTP/1.1 503 Service Unavailable"
+for _ in $(seq 1 300); do [ "$(sockfds)" -ge $((BASE_SOCK + 3)) ] && break; sleep 0.05; done
+[ "$(sockfds)" -ge $((BASE_SOCK + 3)) ] || ko "the server accepted only $(($(sockfds) - BASE_SOCK)) of the 3 connections"
+# send nothing: the server answers 503 at accept and closes; request bytes it never read would turn that close into a RST that can
+# swallow the reply on a loaded host
+refused4() { local out; out=$(exec 5<>"/dev/tcp/127.0.0.1/$PORT" && timeout 8 head -1 <&5 | tr -d '\r') || true; printf '%s' "$out"; }
+check "a fourth connection from one peer is refused with 503" test "$(refused4)" = "HTTP/1.1 503 Service Unavailable"
 exec 7>&- 8>&- 9>&-
 sleep 1.3
 check "connections freed: served again" bash -c "curl -sS --max-time 3 http://127.0.0.1:$PORT/akam/v1/hello | grep -q challenge"
@@ -311,17 +318,35 @@ req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.person":"2:150:150:0"}'
 want "a pattern setting is accepted" 200 '"led.person"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.person":"2:150"}'
 want "a bad pattern is refused" 422 'format|range'
+req "$WID" "$WSEC" GET /akam/v1/settings/net.wifi_band
+want "net.wifi_band defaults to 2.4 without a net file" 200 '"value":"2.4"'
+req "$WID" "$WSEC" GET /akam/v1/settings/net.wifi_country
+want "net.wifi_country defaults to none without a net file" 200 '"value":"none"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.wifi_band":"auto"}'
+want "band auto does not exist (422)" 422 'range|enum'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.wifi_band":"5"}'
+want "band 5 is refused while the country is none (not reported as applied)" 422 'check'
+check "...and nothing was queued" test ! -e "$D2/net.req"
+req "$WID" "$WSEC" GET /akam/v1/settings/net.apply
+want "net.apply is idle before any request" 200 '"value":"idle"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.hostname":"cam-salon"}'
 want "net.hostname is queued for the supervisor" 200 '"net.hostname":\{"ok":true'
+req "$WID" "$WSEC" GET /akam/v1/settings/net.apply
+want "net.apply says queued while the request file waits" 200 '"value":"queued"'
 check "the request line for akam_net.sh was written" bash -c "[ \"\$(cat '$D2/net.req')\" = 'hostname set cam-salon' ]"
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.hostname":"bad_name"}'
 want "an invalid hostname is refused before anything is queued" 422 'check|format'
-req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.wifi_band":"5"}'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.hostname":"cam-two"}'
 want "a second net request while the first is pending is refused" 422 'setter'
 rm -f "$D2/net.req"
 mkdir -p "$D2/net"
 printf 'cam-salon\n' >"$D2/net/hostname"
 printf 'wifi_country=DE\nwifi_band=5\n' >"$D2/net/net"
+printf 'refused wpa-conf\n' >"$D2/net.res"
+req "$WID" "$WSEC" GET /akam/v1/settings/net.apply
+want "net.apply reports the outcome akam_net.sh left (refused)" 200 '"value":"refused"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"net.wifi_country":"none"}'
+want "country none is refused while on band 5" 422 'check'
 req "$WID" "$WSEC" GET /akam/v1/settings/net.hostname
 want "net.* values are read from the persisted files" 200 '"value":"cam-salon"'
 req "$WID" "$WSEC" GET /akam/v1/settings/net.wifi_country

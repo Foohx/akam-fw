@@ -541,8 +541,8 @@ binary is exported by the **camera's** libc (see "Finding" below).
 
 **What it does.** The PoC-2 bring-up sequence for both VI channels, one encoder per channel (main 2304x1296 H.264 Main,
 VBR 2000 kbit/s max 2500, GOP 30, 15 fps; sub 640x360 Baseline, VBR 512 kbit/s, GOP 30), one capture thread per channel
-(pull, encode, copy into a bounded frame ring, release the encoder buffer at once). RTSP on port 8554:
-`rtsp://<ip>:8554/stream0` (main) and `/stream1` (sub), RTP/H.264 over **TCP interleaved** (a UDP SETUP gets
+(pull, encode, copy into a bounded frame ring, release the encoder buffer at once). RTSP on port 554:
+`rtsp://<ip>:554/stream0` (main) and `/stream1` (sub), RTP/H.264 over **TCP interleaved** (a UDP SETUP gets
 `461 Unsupported Transport`, so players fall back to TCP; UDP is not implemented in PoC-3), video only, SDP with
 `sprop-parameter-sets` taken from the first keyframe, up to 4 clients (the fifth gets `503`), one thread per client.
 A client starts on a keyframe: a keyframe still in the ring is used at once, otherwise `ak_venc_request_idr` is
@@ -589,17 +589,17 @@ Digest: no/wrong credentials 401, good ones play; SIGTERM and `--frames` exit 0 
 
 ### PoC-3 hardware procedure (the coordinator runs it, the camera stays on the PoC-1 stub)
 
-1. Copy: `scp akam2k_rtsp root@CAM:/tmp/` (RAM, not the card), `chmod 755 /tmp/akam2k_rtsp`. Port 8554 and the video HW
+1. Copy: `scp akam2k_rtsp root@CAM:/tmp/` (RAM, not the card), `chmod 755 /tmp/akam2k_rtsp`. Port 554 and the video HW
    must be free (no `yy_cam`; the stub's one `watchdog` feeder keeps the camera alive). Baseline `free`.
 2. Run: `LD_LIBRARY_PATH=/appfs/lib /tmp/akam2k_rtsp --seconds 120 > /tmp/a2k.log 2>&1 &` (add `-a /nonexistent`
    if a stray `akam/rtsp.conf` is on the card). Expected in the log: every bring-up step `= 0`, both
    `ak_venc_open_ex ... = 0`, then `stats` lines every 10 s (about 15.0 fps; about 2000 kbit/s main, about 500 kbit/s sub).
 3. From the host while it runs (stream0, then stream1, and both at once):
-   `ffprobe -hide_banner -rtsp_transport tcp rtsp://CAM:8554/stream0` (expect h264 Main 2304x1296, 15 fps) and
-   `.../stream1` (640x360). Grab a frame: `mkdir -p test-images/rot2k && ffmpeg -rtsp_transport tcp -i rtsp://CAM:8554/stream0 -frames:v 1 -y test-images/rot2k/$(date +%F)_poc3_stream0.jpg`
+   `ffprobe -hide_banner -rtsp_transport tcp rtsp://CAM:554/stream0` (expect h264 Main 2304x1296, 15 fps) and
+   `.../stream1` (640x360). Grab a frame: `mkdir -p test-images/rot2k && ffmpeg -rtsp_transport tcp -i rtsp://CAM:554/stream0 -frames:v 1 -y test-images/rot2k/$(date +%F)_poc3_stream0.jpg`
    and the same for stream1 (`..._poc3_stream1.jpg`). `test-images/rot2k/` is git-ignored locally: never commit the images.
    Measure fps and bitrate from the packet timestamps:
-   `ffprobe -v error -rtsp_transport tcp -select_streams v -show_entries packet=pts_time,size,flags -read_intervals %+30 -of csv=p=0 rtsp://CAM:8554/stream0 > s0.csv`
+   `ffprobe -v error -rtsp_transport tcp -select_streams v -show_entries packet=pts_time,size,flags -read_intervals %+30 -of csv=p=0 rtsp://CAM:554/stream0 > s0.csv`
    then fps = packets / (last pts - first pts), kbit/s = sum(size) * 8 / duration / 1000, keyframes = rows with a `K` flag
    (expect one per 2 s); compare with the camera's `stats` lines. Open a 2nd and 3rd viewer and kill one with Ctrl-C: the
    others must keep playing and the log shows `dropping client ... (N frames sent, M skipped)`.
@@ -610,7 +610,7 @@ Digest: no/wrong credentials 401, good ones play; SIGTERM and `--frames` exit 0 
    Abort: `TIMEOUT ... in step: X` (exit 124, step X is the finding), a crash line (exit 2), "no frame for 10 s" on a
    channel (the two threads pulling different VI channels concurrently is the main unverified point: if only one channel
    delivers, report which and the log), a reset or kernel oops. Do not loop after a failure: report the log first.
-   Optional auth check: put `cam:akam:<md5 of cam:akam:secret>` in `akam/rtsp.conf` and use `rtsp://cam:secret@CAM:8554/stream0`.
+   Optional auth check: put `cam:akam:<md5 of cam:akam:secret>` in `akam/rtsp.conf` and use `rtsp://cam:secret@CAM:554/stream0`.
 
 ### PoC-3 hardware result (2026-11-14, camera in PoC-1 mode, Bootlin-built binary)
 
@@ -644,7 +644,7 @@ itself, so an app crash loop cannot touch the busybox watchdog feeder or Wi-Fi):
   hash or missing applet = refuse and log (the card busybox 1.36.1 has `sha256sum`, checked under qemu-arm).
 - Options from `akam/akam2k.conf`, `key=value`, `#` comments; keys `main_kbps` 64..8000, `sub_kbps` 32..2000, `gop` 1..300,
   `port` 1..65535. Digits only, never evaluated; a bad line or key is logged and ignored (defaults = the app's: 2000 / 512
-  kbit/s, GOP 30, port 8554).
+  kbit/s, GOP 30, port 554).
 - stdout/stderr appended to `akam/akam2k.log`, copy-truncated at 256 KiB into `akam2k.log.1` (one generation, 512 KiB
   total), checked every 5 s and at each start. `oom_score_adj` 500 so the OOM killer prefers the app.
 - Restart on exit with backoff 2, 4, 8 ... 60 s (a run of 120 s or more resets it). More than 5 exits in 10 minutes:
@@ -664,7 +664,7 @@ or by removing the card):
    `busybox sha256sum akam/bin/akam2k_rtsp` equals the BUILDINFO `sha256`. Make sure no `akam/no_app` and no old `/tmp` app run.
 2. Reboot. Expected in `akam/akam_boot.log`: `own_app PoC-1 healthy`, `app supervisor started`, `akam2k_rtsp verified`,
    `akam2k_rtsp started, pid N`; `akam/akam2k.log` shows the bring-up steps `= 0` and `stats` lines.
-3. From the host: `ffprobe -rtsp_transport tcp rtsp://CAM:8554/stream0` and `/stream1` (2304x1296 Main, 640x360).
+3. From the host: `ffprobe -rtsp_transport tcp rtsp://CAM:554/stream0` and `/stream1` (2304x1296 Main, 640x360).
 4. `kill -9` the app once: expect `exited with status 137`, `restarting akam2k_rtsp in 2 s`, the streams back within
    a few seconds (new pid), SSH and Wi-Fi untouched, the feeder pid unchanged (`ps | grep watchdog`).
 5. After 10 minutes with one client: `akam/akam2k.log` stats (CPU about 5 %, VmRSS under 6 MB, VmHWM), `free`, log sizes
@@ -675,7 +675,7 @@ or by removing the card):
 ## Auto-start hardware result 2026-11-15 — PASS
 
 Card updated over SSH with the dev scripts + `make poc3-dist` binary (sha256 a8fdefae…, symcheck passed vs the 2K libc),
-then reboot: stub healthy at +18 s, supervisor verified the binary and started `akam2k_rtsp`; RTSP 8554 answered
+then reboot: stub healthy at +18 s, supervisor verified the binary and started `akam2k_rtsp`; RTSP 554 answered
 ~20 s after boot, stream0 Main 2304×1296. `kill -9` of the app → logged "exited with status 137", restarted 2 s later,
 RTSP back in ~6 s. RAM after restart: ~22 MB available. The camera is now an RTSP camera running only our code.
 
@@ -824,7 +824,7 @@ backoff), `PREFIX` = `discovery_prefix`.
 | `BASE/person/attributes` | JSON `{"score":812,"class":0,"box":[x1,y1,x2,y2],"heads":1,"head_score":640,"detection":"run","last_detection":"2026-11-15T09:46:40+00:00"}` (score 0..1000, box in the 320x192 detection frame; score, class and box are 0 while OFF; `detection` is `run`, `stopped` or `failed`, so a dead detection is visible) |
 | `BASE/person_score/state` | best person score in percent, `81.2` (sensor) |
 | `BASE/last_detection/state` | ISO 8601 UTC time of the last OFF to ON transition (sensor, device_class `timestamp`); not sent while the clock is unset |
-| `BASE/viewers/state` + `BASE/viewers/attributes` | RTSP clients (sensor); attributes `{"stream_main":"rtsp://<ip>:8554/stream0","stream_sub":"rtsp://<ip>:8554/stream1"}`, `<ip>` is the local address of the MQTT socket, never with credentials |
+| `BASE/viewers/state` + `BASE/viewers/attributes` | RTSP clients (sensor); attributes `{"stream_main":"rtsp://<ip>:554/stream0","stream_sub":"rtsp://<ip>:554/stream1"}`, `<ip>` is the local address of the MQTT socket, never with credentials |
 | `BASE/app_version/state` | the app version (diagnostic sensor); also `sw_version` of the device |
 
 The device block (identifiers `akam_<mac>`, MAC connection, name = host name, manufacturer `Akam`, model
@@ -1155,7 +1155,7 @@ Rule: after every step stop, report what was seen, and wait for feedback when a 
 1. **Build, install, defaults.** `make poc3-dist`, copy the binary, `.BUILDINFO` and `own_app_run.sh`, no day/night key in `akam/akam2k.conf` (or none of the new ones), check the sha256, reboot. Expect in `akam/akam2k.log`:
    `ak_vpss_effect_set(0, 7, 50) = 0`, `image: ... mains 50 Hz, 0 failure(s)`, `day/night: automatic, start in day (filter in)`, `ak_vi_switch_mode(0, 0) = 0`, `ak_vpss_set_soft_ps_param(0) = 0`. Streams at 15 fps, CPU as before.
    Over SSH `cat /sys/class/gpio/gpio24/value /sys/class/gpio/gpio25/value /sys/class/gpio/gpio48/value` must read `0 0 0` (coil released, IR off). **Pause: report.** If a `ak_*` call returns non-zero, report the code and stop.
-2. **Image statistics baseline (day, room lit or window).** Grab one main-stream frame (`ffmpeg -rtsp_transport tcp -i rtsp://<ip>:8554/stream0 -frames:v 1 day.png`) and compute the mean of the U and V planes and the mean luma
+2. **Image statistics baseline (day, room lit or window).** Grab one main-stream frame (`ffmpeg -rtsp_transport tcp -i rtsp://<ip>:554/stream0 -frames:v 1 day.png`) and compute the mean of the U and V planes and the mean luma
    (`ffmpeg ... -vf "signalstats" ...`: SATAVG, UAVG, VAVG). Colour pictures: SATAVG clearly above 10. Keep the numbers.
 3. **Force night, then day, by conf (the coordinator alone, lights off or the lens covered with a cloth).** Write `night=night`, reboot or restart the app. Expect the night sequence in the log (`IR LED`, `ak_vi_switch_mode(0, 1) = 0`) and
    `gpio48 = 1`; the coil pins read `0 0` again afterwards. Listen/look: a faint click of the IR-cut when the pulse runs, a red glow of the LEDs at the lens. Grab a frame: expect **mono** (SATAVG near 0, UAVG and VAVG near 128)

@@ -43,5 +43,18 @@ check "fps 10: SET_SENSOR_FPS is {10,0,0,10}" grep -qx 'TUNNEL 4004497a 0a000000
 enc=$(grep '^CREATE_ENC' "$WORK/default.txt" | cut -d' ' -f2)
 want="${enc:0:56}0a002800${enc:64:24}8403${enc:92}"
 check "CREATE_ENC: only fps 10, goplen 40, max_kbps 900 changed" grep -qx "CREATE_ENC $want" "$WORK/cfg.txt"
+
+# QP bounds 22..40 (0x16, 0x28): only enc.minqp (0x28), enc.maxqp (0x2a), rc.minqp (0x44) and rc.maxqp (0x46) change
+printf 'minqp=22\nmaxqp=40\n' >"$WORK/video"
+rec >"$WORK/qp.txt"
+want="${enc:0:80}16002800${enc:88:48}16002800${enc:144}"
+check "CREATE_ENC: only the four QP words changed (22, 40)" grep -qx "CREATE_ENC $want" "$WORK/qp.txt"
+# a pair that breaks min < max is dropped as a whole: payload identical to the default
+printf 'minqp=45\n' >"$WORK/video"
+rec >"$WORK/qpbad.txt"
+check "minqp 45 alone (>= default maxqp): payloads identical" cmp -s "$WORK/qpbad.txt" "$WORK/default.txt"
+printf 'minqp=28\nmaxqp=43\n' >"$WORK/video"
+rec >"$WORK/qpdef.txt"
+check "explicit default QP: payloads identical" cmp -s "$WORK/qpdef.txt" "$WORK/default.txt"
 if [ "$fails" -ne 0 ]; then echo "video_apply_test: $fails failed"; exit 1; fi
 echo "video_apply_test: all passed"

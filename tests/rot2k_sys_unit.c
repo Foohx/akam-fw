@@ -128,7 +128,7 @@ static void test_mqtt(void)
     CHECK(a2k_mqtt_state(&ids, A2K_E_SYS0 + 2, &d, -1, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "-62"), "rssi state");
     CHECK(a2k_mqtt_state(&ids, A2K_E_SYS0 + 3, &d, -1, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "300"), "uptime state");
     CHECK(a2k_mqtt_state(&ids, A2K_E_SYS0 + 4, &d, -1, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "1.05"), "load state");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_SYS0 + 2, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 1 &&
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_SYS0 + 2, &d, "", 554, t, sizeof t, doc, sizeof doc) == 1 &&
           !strcmp(t, "akam/test/sys_wifi_rssi/attributes") && !strcmp(doc, "{\"link_quality\":48}"), "rssi attributes: link quality (valid JSON)");
     d.sys.rssi_dbm = HAL_SYS_NA;
     d.sys.cpu_pct = HAL_SYS_NA;

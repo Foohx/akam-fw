@@ -10,11 +10,12 @@ static int fails;
 #define CHECK(c, msg) do { if (c) printf("  ok   - %s\n", msg); else { printf("  FAIL - %s\n", msg); fails++; } } while (0)
 
 static char last_key[64], last_val[64];
+static const char *mock_country = "FR", *mock_band = "2.4";
 static int nset, set_rc;
 
 static int b_get(const char *key, char *out, size_t cap)
 {
-    const char *v = !strcmp(key, "net.hostname") ? "cam-a" : !strcmp(key, "net.wifi_country") ? "FR" : "auto";
+    const char *v = !strcmp(key, "net.hostname") ? "cam-a" : !strcmp(key, "net.wifi_country") ? mock_country : mock_band;
     if (strlen(v) + 1 > cap)
         return ST_E_TOOBIG;
     strcpy(out, v);
@@ -66,9 +67,22 @@ int main(void)
     CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "5", &res) == 200 && !strcmp(last_val, "5"), "band 5");
     CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "2.4", &res) == 200, "band 2.4");
     CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "6", &res) != 200, "band 6 refused");
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "auto", &res) != 200 && res.err == ST_E_RANGE, "band auto refused (removed: 2.4 or 5)");
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "", &res) != 200, "empty band refused");
+
+    n = nset;
+    mock_country = "none";
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "5", &res) != 200 && res.err == ST_E_CHECK && nset == n, "band 5 refused while the country is none");
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "2.4", &res) == 200, "band 2.4 without a country");
+    mock_country = "FR";
+    mock_band = "5";
+    n = nset;
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_country", "none", &res) != 200 && res.err == ST_E_CHECK && nset == n, "country none refused while on band 5");
+    mock_band = "2.4";
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_country", "none", &res) == 200, "country none on band 2.4");
 
     set_rc = -1;
-    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "auto", &res) != 200 && res.err == ST_E_SETTER, "a failing backend is a setter error");
+    CHECK(streg_set(&r, ST_SRC_HTTP, AKEY_WRITE, "net.wifi_band", "5", &res) != 200 && res.err == ST_E_SETTER, "a failing backend is a setter error");
     set_rc = 0;
     CHECK(streg_get(&r, ST_SRC_HTTP, "net.hostname", out, sizeof out) == 5 && !strcmp(out, "cam-a"), "get goes through the backend");
     a2k_netreg_set_backend(NULL);

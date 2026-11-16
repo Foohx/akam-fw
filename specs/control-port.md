@@ -148,6 +148,8 @@ See [image-day-night-leds.md](image-day-night-leds.md) for ranges: `night.mode`,
 | `video.bitrate_cfg` | rw | 500 to 3000 (kbit/s) | file `video`, applies at next start |
 | `video.fps_cfg` | rw | 10, 15, 20, 25 | same |
 | `video.gop_cfg` | rw | 1 to 4 (seconds) | same |
+| `video.minqp_cfg` | rw | 10 to 51 (default 28) | same; minqp must stay below maxqp (a SET that breaks it is refused) |
+| `video.maxqp_cfg` | rw | 10 to 51 (default 43) | same |
 | `video.cfg_pending` | r | 1 when the saved file differs from the running encoder | - |
 
 These keys are writable only from loopback (nothing would apply them from the network). The answer says

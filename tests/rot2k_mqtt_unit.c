@@ -254,7 +254,7 @@ static int start_with(const char *conf)
 {
     write_file(g_conf, conf);
     write_file(g_pass, "" SECRET "\n"); /* the password lives in its own card file, next to the config */
-    return a2k_mqtt_start(g_conf, g_macf, 8554, viewers_fn);
+    return a2k_mqtt_start(g_conf, g_macf, 554, viewers_fn);
 }
 
 static const char *FULL = "enabled=1\nhost=192.0.2.10\nport=1884\nuser=" USER "\nclient_id=akam-test\n"
@@ -415,7 +415,7 @@ static void test_builders(void)
     CHECK(a2k_mqtt_state(&ids, A2K_E_ZONE0 + 1, &d, -1, t, sizeof t, v, sizeof v) == 1 &&
           !strcmp(t, "akam/test/person_drive_2/state") && !strcmp(v, "ON"), "zone 1 ON");
     CHECK(a2k_mqtt_state(&ids, A2K_E_ZONE0 + 2, &d, -1, t, sizeof t, v, sizeof v) == 0, "a zone past nzones has no state");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_ZONE0, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 0, "zones have no attributes");
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_ZONE0, &d, "", 554, t, sizeof t, doc, sizeof doc) == 0, "zones have no attributes");
     CHECK(a2k_mqtt_discovery(&ids, A2K_E_ZONE0, t, 10, doc, sizeof doc) == -1 &&
           a2k_mqtt_discovery(&ids, A2K_E_ZONE0, t, sizeof t, doc, 100) == -1, "small buffers: -1 for zone documents too");
 
@@ -431,19 +431,19 @@ static void test_builders(void)
     d.last_on_epoch = 0;
     CHECK(a2k_mqtt_state(&ids, A2K_E_LAST, &d, -1, t, sizeof t, v, sizeof v) == 0, "clock unknown: no last detection");
     d.last_on_epoch = 1763200000;
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_PERSON, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 1 &&
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_PERSON, &d, "", 554, t, sizeof t, doc, sizeof doc) == 1 &&
           !strcmp(t, "akam/test/person/attributes") &&
           !strcmp(doc, "{\"score\":812,\"class\":0,\"box\":[10,20,110,150],\"heads\":1,\"head_score\":640,"
                        "\"detection\":\"run\",\"last_detection\":\"2025-11-15T09:46:40+00:00\"}"), "person attributes (golden)");
     d.present = 0; d.score = 0; d.x1 = d.y1 = d.x2 = d.y2 = 0;
     CHECK(a2k_mqtt_state(&ids, A2K_E_PERSON, &d, -1, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "OFF"), "person OFF");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_PERSON, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 1 &&
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_PERSON, &d, "", 554, t, sizeof t, doc, sizeof doc) == 1 &&
           strstr(doc, "\"score\":0,\"class\":0,\"box\":[0,0,0,0]"), "OFF attributes: score and box zero");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_VIEWERS, &d, "192.0.2.50", 8554, t, sizeof t, doc, sizeof doc) == 1 &&
-          !strcmp(doc, "{\"stream_main\":\"rtsp://192.0.2.50:8554/stream0\",\"stream_sub\":\"rtsp://192.0.2.50:8554/stream1\"}"),
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_VIEWERS, &d, "192.0.2.50", 554, t, sizeof t, doc, sizeof doc) == 1 &&
+          !strcmp(doc, "{\"stream_main\":\"rtsp://192.0.2.50:554/stream0\",\"stream_sub\":\"rtsp://192.0.2.50:554/stream1\"}"),
           "stream URLs attributes (golden, no credentials)");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_VIEWERS, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 0, "unknown IP: no URL attributes");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_VIEWERS, &d, "1.2.3.4\"x", 8554, t, sizeof t, doc, sizeof doc) == 0, "hostile IP text refused");
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_VIEWERS, &d, "", 554, t, sizeof t, doc, sizeof doc) == 0, "unknown IP: no URL attributes");
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_VIEWERS, &d, "1.2.3.4\"x", 554, t, sizeof t, doc, sizeof doc) == 0, "hostile IP text refused");
     CHECK(a2k_mqtt_state(&ids, A2K_E_VIEWERS, &d, 3, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "3"), "viewers state");
     CHECK(a2k_mqtt_state(&ids, A2K_E_VERSION, &d, 0, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "0.1.0"), "version state");
     CHECK(a2k_mqtt_discovery(&ids, A2K_E_PERSON, t, 10, doc, sizeof doc) == -1, "small topic buffer: -1");
@@ -464,7 +464,7 @@ static void test_builders(void)
     CHECK(!strstr(doc, "command_topic"), "the night entity has no command topic");
     memset(&d, 0, sizeof d);
     CHECK(a2k_mqtt_state(&ids, A2K_E_NIGHT, &d, -1, t, sizeof t, v, sizeof v) == 0 &&
-          a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 0, "no day/night report yet: no state, no attributes");
+          a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 554, t, sizeof t, doc, sizeof doc) == 0, "no day/night report yet: no state, no attributes");
     d.dn.valid = 1;
     d.dn.night = 1;
     d.dn.mode = 0;
@@ -474,7 +474,7 @@ static void test_builders(void)
     snprintf(d.dn.why, sizeof d.dn.why, "night: the vendor day/night decision held 3 s");
     CHECK(a2k_mqtt_state(&ids, A2K_E_NIGHT, &d, -1, t, sizeof t, v, sizeof v) == 1 && !strcmp(t, "akam/test/night/state") && !strcmp(v, "ON"),
           "night state ON");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 1 && !strcmp(t, "akam/test/night/attributes") &&
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 554, t, sizeof t, doc, sizeof doc) == 1 && !strcmp(t, "akam/test/night/attributes") &&
           !strcmp(doc, "{\"mode\":\"auto\",\"ir_led\":\"on\",\"automatic\":\"ok\",\"switches\":2,\"last_switch\":"
                        "\"2025-11-15T09:46:40+00:00\",\"reason\":\"night: the vendor day/night decision held 3 s\"}"),
           "night attributes (golden)");
@@ -485,10 +485,10 @@ static void test_builders(void)
     d.dn.last_switch_epoch = 0;
     snprintf(d.dn.why, sizeof d.dn.why, "bad \"quote\" \\ and\ncontrol");
     CHECK(a2k_mqtt_state(&ids, A2K_E_NIGHT, &d, -1, t, sizeof t, v, sizeof v) == 1 && !strcmp(v, "OFF"), "night state OFF");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 8554, t, sizeof t, doc, sizeof doc) == 1 && strstr(doc, "\"mode\":\"night\"") &&
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 554, t, sizeof t, doc, sizeof doc) == 1 && strstr(doc, "\"mode\":\"night\"") &&
           strstr(doc, "\"automatic\":\"gave_up\"") && !strstr(doc, "last_switch") && strstr(doc, "\"reason\":\"bad \\\"quote\\\" \\\\ andcontrol\""),
           "attributes: forced mode, gave up, no time when the clock is unknown, the reason text is escaped");
-    CHECK(a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 8554, t, sizeof t, doc, 30) == 0, "a small attributes buffer: nothing");
+    CHECK(a2k_mqtt_attrs(&ids, A2K_E_NIGHT, &d, "", 554, t, sizeof t, doc, 30) == 0, "a small attributes buffer: nothing");
     ids.night = 0;
     CHECK(a2k_mqtt_state(&ids, A2K_E_NIGHT, &d, -1, t, sizeof t, v, sizeof v) == 0, "night off: no state");
 }
@@ -544,14 +544,14 @@ static void test_client(void)
     printf("== client: disabled cases\n");
     a2k_mqtt_test_set_net(&g_stub);
     reset_stub();
-    CHECK(a2k_mqtt_start("/nonexistent/mqtt", g_macf, 8554, NULL) == 1 && g_dials == 0, "no file: off, no dial, no thread");
+    CHECK(a2k_mqtt_start("/nonexistent/mqtt", g_macf, 554, NULL) == 1 && g_dials == 0, "no file: off, no dial, no thread");
     CHECK(start_with("enabled=0\nhost=192.0.2.10\n") == 1 && g_dials == 0, "enabled=0: off");
     CHECK(start_with("enabled=1\nhost=192.0.2.10\nbogus=1\nuser=u\n") == -1 && g_dials == 0,
           "invalid file: refused, no dial");
     CHECK(!log_has(SECRET), "the invalid file's content is not logged");
     write_file(g_conf, "enabled=1\nhost=192.0.2.10\nuser=u\n");
     write_file(g_pass, "bad\001pass\n");
-    CHECK(a2k_mqtt_start(g_conf, g_macf, 8554, NULL) == -1 && g_dials == 0, "unusable password file: MQTT stays off, no dial");
+    CHECK(a2k_mqtt_start(g_conf, g_macf, 554, NULL) == -1 && g_dials == 0, "unusable password file: MQTT stays off, no dial");
     CHECK(!log_has("bad") && log_has("mqtt_pass"), "the log names the file, never its content");
     a2k_mqtt_stop();
 
@@ -593,7 +593,7 @@ static void test_client(void)
     CHECK(sent_count("homeassistant/image/akam_aabbccddeeff/snapshot/config||1") == 1,
           "snapshots off: an empty retained config removes an image entity of an earlier run");
     CHECK(sent_count("homeassistant/binary_sensor/akam_aabbccddeeff/person_") == 0, "no zone: no zone entity");
-    CHECK(wait_sent("akam/test/viewers/state|2|0", 1) && wait_sent("akam/test/viewers/attributes|{\"stream_main\":\"rtsp://192.0.2.50:8554/stream0\"", 1),
+    CHECK(wait_sent("akam/test/viewers/state|2|0", 1) && wait_sent("akam/test/viewers/attributes|{\"stream_main\":\"rtsp://192.0.2.50:554/stream0\"", 1),
           "viewers and the stream URLs (local address of the socket) published");
     CHECK(wait_sent("akam/test/app_version/state|0.1.0|0", 1), "version published");
 
@@ -728,7 +728,7 @@ static void test_zones_snapshot(void)
     reset_stub();
     write_file(g_conf, "enabled=1\nhost=192.0.2.10\n");
     write_file(g_pass, "\n");
-    CHECK(a2k_mqtt_start(g_conf, g_macf, 8554, NULL) == 0 && wait_state("connected"), "connected without client_id");
+    CHECK(a2k_mqtt_start(g_conf, g_macf, 554, NULL) == 0 && wait_state("connected"), "connected without client_id");
     pthread_mutex_lock(&g_mu);
     {
         int found = 0;

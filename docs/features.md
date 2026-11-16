@@ -17,7 +17,7 @@ The evidence, test by test: [testing status](testing-status.md).
 
 | Feature | Default | Port | Status | Notes |
 |---|---|---|---|---|
-| RTSP 1.0 server, H.264 Main profile, 1920x1080 | on | TCP 554 | hardware-validated | Any URL path gives the same stream. TCP interleaved and UDP transports. **One client at a time**; a second one gets `503` |
+| RTSP 1.0 server, H.264 Main profile, 1920x1080 | on | TCP 554 | hardware-validated | Any URL path gives the same stream; the canonical form, shared with the Rotatable 2K, is `rtsp://<ip>:554/stream0` (main). The 1080p has no sub stream, so `/stream1` is the same picture. TCP interleaved and UDP transports. **One client at a time**; a second one gets `503` |
 | Frame rate | 15 fps | | hardware-validated (15, 25) | Only 10, 15, 20 or 25 fps. 20 fps was only seen in a RAM test. Night mode always runs at 10 fps. 30 fps is refused (picture too dark) |
 | Bitrate and key-frame interval | 1536 kbit/s, 2 s | | host-tested only | Bitrate 500 to 3000 kbit/s, key frames every 1 to 4 s. Applied at the next restart of the video service |
 | Microphone track | on | in the RTSP stream | hardware-validated | **L16** (raw 16-bit PCM, 8 kHz, mono), not G.711. Can be turned off (`./akam audio mic off`, host-tested only) |

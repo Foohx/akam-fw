@@ -2073,33 +2073,56 @@ check "net: akam_hostname.sh is the shared template, reused unchanged (not copie
 check "net: akam_net.sh and the stub parse" bash -c "sh -n '$NS' && sh -n '$FW/overlay/akam/own_app_stub.sh'"
 # new_net <name>: a fake camera: fake wpa_supplicant/udhcpc/hostname/ip driven by files in $N/tmp.
 #   wpa_supplicant: starts a sleeping daemon (pidfile from -P), "associates" unless $N/ap24only exists and the conf has the 5 GHz
-#                   freq_list, or $N/failstart_5 exists and the conf has it (refuses to start)
+#                   global freq_list, or $N/failstart_5 exists and the conf has it (refuses to start)
 #   udhcpc: records its arguments, a daemon too; the lease ($N/up) exists only when associated; "ip addr flush" drops it
 new_net() {
     N=$WORK/$1
-    mkdir -p "$N/tmp" "$N/config/akam" "$N/bin"
+    mkdir -p "$N/tmp" "$N/config/akam" "$N/bin" "$N/dm" "$N/sys/class/net/wlan0"
+    # daemons named like the real ones (the script checks /proc/PID/cmdline before it signals a pid)
+    for dn in wpa_supplicant udhcpc other; do cp -L "$(command -v sleep)" "$N/dm/$dn"; done
+    # the watchdog feeder is `busybox watchdog -F -t 5 -T 20 /dev/watchdog`: "watchdog" is argv[1], not the program name
+    printf '#!/bin/sh\ntrap "exit 0" TERM\nsleep 300 &\nwait\n' >"$N/dm/busybox"
+    chmod 755 "$N/dm/busybox"
+    echo 1 >"$N/sys/class/net/wlan0/carrier"
     printf 'ctrl_interface=/tmp/wpa_supplicant\nnetwork={\n ssid="x"\n psk="%s"\n}\n' "$SECRET" >"$N/config/akam/wpa.conf"
     cat >"$N/bin/wpa_supplicant" <<'EOS'
 #!/bin/sh
+# models wpa_supplicant 2.10 (strings + key tables of the camera binary: global country and freq_list, network scan_freq/freq_list)
 conf= pf=
 while [ $# -gt 0 ]; do
     case $1 in -c) conf=$2; shift ;; -P) pf=$2; shift ;; esac
     shift
 done
-echo "wpa_supplicant conf=$(grep -c . "$conf") 5g=$(grep -c '^freq_list=.*5180' "$conf") 24g=$(grep -c '^freq_list=.*2412' "$conf")" >>"$AKAM_ROOT/tmp/calls.log"
-if [ -e "$AKAM_ROOT/failstart_5" ] && grep -q '^freq_list=.*5180' "$conf"; then exit 1; fi
-rm -f "$AKAM_ROOT/assoc" "$AKAM_ROOT/up"
-if [ -e "$AKAM_ROOT/ap24only" ] && grep -q '^freq_list=.*5180' "$conf"; then :; else touch "$AKAM_ROOT/assoc"; fi
-sleep 300 >/dev/null 2>&1 &
-echo $! >"$pf"
+g5=$(grep -c '^freq_list=.*5180' "$conf")
+fl=$(grep -c '^[ 	]*scan_freq=' "$conf") # keys this model refuses: none are ever rendered (global country + freq_list only)
+echo "wpa_supplicant conf=$(grep -c . "$conf") 5g=$g5 fl=$fl" >>"$AKAM_ROOT/tmp/calls.log"
+if [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/failstart_5" ]; then exit 1; fi
+rm -f "$AKAM_ROOT/assoc"; [ -e "$AKAM_ROOT/flush_broken" ] || rm -f "$AKAM_ROOT/up"
+echo 0 >"$AKAM_ROOT/sys/class/net/wlan0/carrier"
+if [ "$fl" != 0 ] || [ -e "$AKAM_ROOT/dies_all" ] || { [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/dies_5" ]; }; then
+    # daemonizes, then dies while parsing: the parent still returns 0
+    ( : ) &
+    echo $! >"$pf"
+    wait
+    exit 0
+fi
+if [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/ap24only" ]; then :; elif [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/dies_late_5" ]; then :; else touch "$AKAM_ROOT/assoc"; echo 1 >"$AKAM_ROOT/sys/class/net/wlan0/carrier"; fi
+"$AKAM_ROOT/dm/wpa_supplicant" 300 >/dev/null 2>&1 &
+sp=$!
+echo $sp >"$pf"
+if [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/dies_late_5" ]; then
+    ( sleep 2; kill $sp 2>/dev/null ) >/dev/null 2>&1 &
+fi
 EOS
     cat >"$N/bin/udhcpc" <<'EOS'
 #!/bin/sh
 pf=
 for a in "$@"; do [ "${prev:-}" = -p ] && pf=$a; prev=$a; done
 echo "udhcpc $*" >>"$AKAM_ROOT/tmp/calls.log"
+[ ! -e "$AKAM_ROOT/udhcpc_fail" ] || exit 1
+if [ -e "$AKAM_ROOT/udhcpc_fail_name" ] && echo "$*" | grep -q "hostname:$(cat "$AKAM_ROOT/udhcpc_fail_name")\$"; then exit 1; fi
 [ ! -e "$AKAM_ROOT/assoc" ] || touch "$AKAM_ROOT/up"
-sleep 300 >/dev/null 2>&1 &
+"$AKAM_ROOT/dm/udhcpc" 300 >/dev/null 2>&1 &
 echo $! >"$pf"
 EOS
     cat >"$N/bin/hostname" <<'EOS'
@@ -2108,24 +2131,37 @@ if [ $# -eq 0 ]; then cat "$AKAM_ROOT/tmp/khost" 2>/dev/null; else echo "$1" >"$
 EOS
     cat >"$N/bin/ip" <<'EOS'
 #!/bin/sh
+echo "ip $*" >>"$AKAM_ROOT/tmp/ip.log"
 case "$1 $2" in
     "addr show") [ ! -e "$AKAM_ROOT/up" ] || echo "    inet 192.0.2.9/24 scope global wlan0" ;;
     "route show") [ ! -e "$AKAM_ROOT/up" ] || echo "192.0.2.0/24 dev wlan0 scope link" ;;
-    "addr flush") rm -f "$AKAM_ROOT/up" ;;
+    "addr flush") [ -e "$AKAM_ROOT/flush_broken" ] || rm -f "$AKAM_ROOT/up" ;;
+    "addr del") rm -f "$AKAM_ROOT/up" ;;
 esac
 exit 0
 EOS
-    chmod 755 "$N/bin/wpa_supplicant" "$N/bin/udhcpc" "$N/bin/hostname" "$N/bin/ip"
+    cat >"$N/bin/pidof" <<'EOS'
+#!/bin/sh
+# only the fake daemons of this camera (never a real process of the host)
+pgrep -f "^$AKAM_ROOT/dm/$1 " | tr '\n' ' '
+echo
+EOS
+    cat >"$N/bin/reboot" <<'EOS'
+#!/bin/sh
+echo reboot >>"$AKAM_ROOT/reboot.log"
+EOS
+    chmod 755 "$N/bin/wpa_supplicant" "$N/bin/udhcpc" "$N/bin/hostname" "$N/bin/ip" "$N/bin/pidof" "$N/bin/reboot"
     # first run: associated and leased, as after boot
     touch "$N/assoc" "$N/up"
-    sleep 300 >/dev/null 2>&1 &
+    "$N/dm/wpa_supplicant" 300 >/dev/null 2>&1 &
     echo $! >"$N/tmp/wpa.pid"
-    sleep 300 >/dev/null 2>&1 &
+    "$N/dm/udhcpc" 300 >/dev/null 2>&1 &
     echo $! >"$N/tmp/udhcpc.pid"
     OLDW=$(cat "$N/tmp/wpa.pid")
     OLDD=$(cat "$N/tmp/udhcpc.pid")
     export AKAM_ROOT=$N AKAM_NET_CFG=$N/config/akam AKAM_TMP_DIR=$N/tmp AKAM_WPAS=$N/bin/wpa_supplicant AKAM_IP=$N/bin/ip \
-        AKAM_HOSTNAME_CMD=$N/bin/hostname AKAM_HOSTNAME_SH=$HS AKAM_NET_DEADMAN=2 AKAM_NET_POLL=1 AKAM_NET_STOP_WAIT=2 AKAM_NET_FG=1 AKAM_SH="${SHCMD[*]}"
+        AKAM_HOSTNAME_CMD=$N/bin/hostname AKAM_HOSTNAME_SH=$HS AKAM_NET_DEADMAN=2 AKAM_NET_POLL=1 AKAM_NET_STOP_WAIT=2 AKAM_NET_ALIVE_WAIT=1 AKAM_NET_FG=1 AKAM_SH="${SHCMD[*]}" \
+        AKAM_PIDOF=$N/bin/pidof AKAM_NET_REBOOT_CMD=$N/bin/reboot AKAM_NET_FEEDER_PID=$N/tmp/akam_feeder.pid
     export PATH=$N/bin:$ORIG_PATH
 }
 net() { "${SHCMD[@]}" "$NS" "$@"; }
@@ -2150,29 +2186,96 @@ check "net hostname: apply (boot) sets the kernel name and prints it" test "$(ne
 check "net hostname: off forgets the name, back to akam-rot2k at once, DHCP renewed" bash -c "[ \"\$($(printf '%q ' "${SHCMD[@]}") '$NS' hostname off)\" = akam-rot2k ] && [ ! -e '$N/config/akam/hostname' ] && [ \"\$(cat '$N/tmp/khost')\" = akam-rot2k ] && tail -n1 '$N/tmp/calls.log' | grep -q 'hostname:akam-rot2k'"
 check "net hostname: usage error is status 2" test "$(net_rc hostname)" = 2 -a "$(net_rc wifi nope)" = 2 -a "$(net_rc)" = 2
 
-# --- Wi-Fi rendering
-check "net wifi: defaults country=FR band=auto" test "$(net wifi show | tr '\n' ' ')" = "country=FR band=auto "
+net_alive() { kill -0 "$(cat "$N/tmp/wpa.pid")" 2>/dev/null && echo y; }
+same_stock() { cmp -s "$N/tmp/wpa.conf" "$N/config/akam/wpa.conf" && echo y; }
+# --- hostname edge cases
+check "net hostname: an empty stored file means the default" bash -c ": >'$N/config/akam/hostname'; [ \"\$($(printf '%q ' "${SHCMD[@]}") '$NS' hostname show)\" = akam-rot2k ]"
+rm -f "$N/config/akam/hostname"
+: >"$N/tmp/calls.log"
+net hostname set same-cam >/dev/null
+: >"$N/tmp/calls.log"
+check "net hostname: setting the same name again does not restart DHCP" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' hostname set Same-Cam >/dev/null && [ ! -s '$N/tmp/calls.log' ]"
+touch "$N/udhcpc_fail"
+check "net hostname: no udhcpc starts at all (new or old name): status 1, the name is stored, LAST RESORT reset requested (no feeder: reboot)" test "$(net_rc hostname set other-cam)" = 1 -a "$(cat "$N/config/akam/hostname")" = other-cam -a "$(grep -c reboot "$N/reboot.log")" = 1
+rm -f "$N/udhcpc_fail" "$N/reboot.log"
+echo other2 >"$N/udhcpc_fail_name"
+: >"$N/tmp/calls.log"
+check "net hostname: udhcpc refuses the new name: restarted with the PREVIOUS name (status 1, no reset), a DHCP client keeps running" test "$(net_rc hostname set other2)" = 1 -a ! -e "$N/reboot.log" -a "$(tail -n1 "$N/tmp/calls.log" | grep -c 'hostname:other-cam$')" = 1 -a "$(grep -c 'hostname:other2$' "$N/tmp/calls.log")" = 3
+rm -f "$N/udhcpc_fail_name"
+check "net hostname: set and off ignore SIGHUP (the trap is set before udhcpc is restarted)" test "$(grep -c "trap '' HUP" "$NS")" -ge 3
+
+mkdir -p "$N/tmp/akam_net.lock"
+sleep 30 &
+LP=$!
+echo "$LP" >"$N/tmp/akam_net.lock/pid"
+check "net hostname: refused (status 4, nothing stored) while a Wi-Fi change holds the lock" test "$(net_rc hostname set busy-cam)" = 4 -a "$(net_rc hostname off)" = 4 -a "$(cat "$N/config/akam/hostname")" = other2
+kill "$LP" 2>/dev/null || true
+rm -rf "$N/tmp/akam_net.lock"
+check "net hostname: no usable /config (cannot create the directory): status 1, kernel name untouched, no DHCP restart" bash -c "echo keep >'$N/tmp/khost'; : >'$N/tmp/calls.log'; AKAM_NET_CFG=/proc/akam-nope/akam $(printf '%q ' "${SHCMD[@]}") '$NS' hostname set cam-x >/dev/null 2>&1; rc=\$?; [ \$rc = 1 ] && [ \"\$(cat '$N/tmp/khost')\" = keep ] && [ ! -s '$N/tmp/calls.log' ]"
+check "net wifi: no usable /config: show gives the defaults" bash -c "[ \"\$(AKAM_NET_CFG=/proc/akam-nope/akam $(printf '%q ' "${SHCMD[@]}") '$NS' wifi show | tr '\n' ' ')\" = 'country=none band=2.4 running=2.4 ' ]"
+echo my-cam >"$N/config/akam/hostname"
+
+# --- Wi-Fi rendering. band 2.4 (default) = the stock bytes
+check "net wifi: defaults country=none band=2.4" test "$(net wifi show | tr '\n' ' ')" = "country=none band=2.4 running=2.4 "
 rm -f "$N/tmp/wpa.conf"
 net wifi render
-check "net wifi render: 0600, the user's wpa.conf first and untouched, country=FR, no freq_list for auto" bash -c "[ \$(stat -c %a '$N/tmp/wpa.conf') = 600 ] && head -n 5 '$N/tmp/wpa.conf' | cmp -s - '$N/config/akam/wpa.conf' && grep -qx 'country=FR' '$N/tmp/wpa.conf' && ! grep -q freq_list '$N/tmp/wpa.conf'"
+check "net wifi render: default band 2.4 is BYTE-IDENTICAL to wpa.conf (cmp), 0600" bash -c "[ \$(stat -c %a '$N/tmp/wpa.conf') = 600 ] && cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf'"
+for legacy in 'wifi_band=auto' 'wifi_band=6' 'wifi_band=' 'wifi_band=2.4 5' 'wifi_band=junk
+wifi_band=5' 'wifi_band=5'; do
+    printf '%s\nwifi_country=DE\n' "$legacy" >"$N/config/akam/net"
+    case $legacy in 'wifi_band=5') continue ;; esac
+    net wifi render
+    check "net wifi: stored '$(echo "$legacy" | head -n1)' reads as 2.4, rendered byte-identical, country ignored on 2.4" bash -c "[ \"\$($(printf '%q ' "${SHCMD[@]}") '$NS' wifi show | tr '\n' ' ')\" = 'country=DE band=2.4 running=2.4 ' ] && cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf'"
+done
+printf 'wifi_country=DE\r\nwifi_band=auto\r\n' >"$N/config/akam/net"
+check "net wifi: a CRLF net file with the legacy auto reads as 2.4 (country DE)" test "$(net wifi show | tr '\n' ' ')" = "country=DE band=2.4 running=2.4 "
+printf 'wifi_country=DE\r\nwifi_band=5\r\n' >"$N/config/akam/net"
+check "net wifi: CRLF residue is stripped (DE, 5)" test "$(net wifi show | tr '\n' ' ')" = "country=DE band=5 running=2.4 "
 printf 'wifi_country=de\nwifi_band=5\n' >"$N/config/akam/net"
-check "net wifi: an invalid stored country (lowercase) falls back to FR, a valid band is kept" test "$(net wifi show | tr '\n' ' ')" = "country=FR band=5 "
-printf 'wifi_country=DE\nwifi_band=5\n' >"$N/config/akam/net"
+check "net wifi: a lowercase stored country is invalid = none, and band 5 without a country reads as 2.4" test "$(net wifi show | tr '\n' ' ')" = "country=none band=2.4 running=2.4 "
 net wifi render
-check "net wifi render: band 5 = DE + 5 GHz freq_list only" bash -c "grep -qx 'country=DE' '$N/tmp/wpa.conf' && grep -q '^freq_list=5180 .*5825' '$N/tmp/wpa.conf' && ! grep -q '2412' '$N/tmp/wpa.conf'"
-printf 'wifi_country=FR\nwifi_band=2.4\n' >"$N/config/akam/net"
-net wifi render
-check "net wifi render: band 2.4 = 2.4 GHz freq_list only" bash -c "grep -q '^freq_list=2412 .*2472' '$N/tmp/wpa.conf' && ! grep -q '5180' '$N/tmp/wpa.conf'"
-check "net wifi render: the user's wpa.conf is never modified and the secret never printed" test "$(cat "$N/config/akam/wpa.conf")" = "$USERCONF" -a -z "$(net wifi render 2>&1 | grep -F -- "$SECRET" || true)"
-rm -f "$N/config/akam/net"
-check "net wifi render: a missing wpa.conf fails (status 1), no conf written" bash -c "mv '$N/config/akam/wpa.conf' '$N/w'; rm -f '$N/tmp/wpa.conf'; $(printf '%q ' "${SHCMD[@]}") '$NS' wifi render 2>/dev/null; rc=\$?; mv '$N/w' '$N/config/akam/wpa.conf'; [ \$rc = 1 ] && [ ! -e '$N/tmp/wpa.conf' ]"
+check "net wifi render: stored 5 without a country renders the stock bytes" cmp -s "$N/tmp/wpa.conf" "$N/config/akam/wpa.conf"
 
-# --- runtime change, healthy
+# band 5 rendering on a rich conf: two networks, comments, a commented-out block, the user's own freq_list/country, no final newline
+printf 'ctrl_interface=/tmp/wpa_supplicant\ncountry=ZZ\n# network={\nnetwork={\n ssid="a b"\n scan_freq=2412\n psk="%s"\n}\n\nnetwork={\n\tssid="c"\n\tkey_mgmt=NONE\n  }  ' "$SECRET" >"$N/rich.conf"
+printf 'wifi_country=DE\nwifi_band=5\n' >"$N/config/akam/net"
+export AKAM_NET_WPA_SRC=$N/rich.conf
+net wifi render >"$WORK/net.out" 2>&1
+sz=$(stat -c %s "$N/rich.conf")
+check "net wifi render band 5: the user's conf is an untouched prefix (byte for byte, ssid/psk included), only country=DE and the 5 GHz freq_list are appended after it" bash -c "head -c $sz '$N/tmp/wpa.conf' | cmp -s - '$N/rich.conf' && [ \"\$(tail -c +$((sz + 1)) '$N/tmp/wpa.conf' | grep -v '^\$' | cut -c1-20 | tr '\n' '|')\" = 'country=DE|freq_list=5180 5200 |' ]"
+check "net wifi render band 5: the appended freq_list lists 5 GHz channels only (no 24xx), the render is quiet, 0600, the file ends with a newline" bash -c "grep '^freq_list=' '$N/tmp/wpa.conf' | tail -n1 | grep -q '^freq_list=5180 5200 5220 5240\$' && ! grep -q '^freq_list=.*24[0-9][0-9]' '$N/tmp/wpa.conf' && [ ! -s '$WORK/net.out' ] && [ \$(stat -c %a '$N/tmp/wpa.conf') = 600 ] && [ \"\$(tail -c1 '$N/tmp/wpa.conf' | od -An -c | tr -d ' ')\" = '\\n' ]"
+sed 's/$/\r/' "$N/rich.conf" >"$N/crlf.conf"
+export AKAM_NET_WPA_SRC=$N/crlf.conf
+net wifi render
+check "net wifi render band 5: a CRLF conf renders too, the appended keys are plain LF lines" bash -c "grep -qx 'country=DE' '$N/tmp/wpa.conf' && grep -q '^freq_list=5180' '$N/tmp/wpa.conf'"
+printf 'network={\n ssid="x"\n psk="%s"\n' "$SECRET" >"$N/open.conf"
+export AKAM_NET_WPA_SRC=$N/open.conf
+cp "$N/tmp/wpa.conf" "$N/before.conf"
+check "net wifi render band 5: an unterminated block is refused (status 1), the current /tmp/wpa.conf is untouched" test "$(net_rc wifi render)" = 1 -a "$(cmp -s "$N/tmp/wpa.conf" "$N/before.conf" && echo same)" = same
+check "net wifi set band 5 with an unterminated block in wpa.conf: refused up front (status 1), no restart, nothing saved" bash -c ": >'$N/tmp/calls.log'; rm -f '$N/config/akam/net'; printf 'wifi_country=DE\\nwifi_band=2.4\\n' >'$N/config/akam/net'; AKAM_NET_FG=1 $(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 5 >/dev/null 2>&1; rc=\$?; [ \$rc = 1 ] && [ ! -s '$N/tmp/calls.log' ] && grep -qx 'wifi_band=2.4' '$N/config/akam/net'"
+rm -f "$N/config/akam/net"
+unset AKAM_NET_WPA_SRC
+net wifi render
+check "net wifi render band 5 (plain conf): user's file is never modified, the secret never printed" test "$(cat "$N/config/akam/wpa.conf")" = "$USERCONF" -a -z "$(net wifi render 2>&1 | grep -F -- "$SECRET" || true)"
+rm -f "$N/config/akam/net"
+net wifi render
+check "net wifi render: a missing wpa.conf fails (status 1), no conf written" bash -c "mv '$N/config/akam/wpa.conf' '$N/w'; rm -f '$N/tmp/wpa.conf'; $(printf '%q ' "${SHCMD[@]}") '$NS' wifi render 2>/dev/null; rc=\$?; mv '$N/w' '$N/config/akam/wpa.conf'; [ \$rc = 1 ] && [ ! -e '$N/tmp/wpa.conf' ]"
+net wifi render
+
+# --- runtime change
 : >"$N/tmp/calls.log"
-check "net wifi set: invalid country / band refused (status 2), no restart" test "$(net_rc wifi set country F1)" = 2 -a "$(net_rc wifi set country FRA)" = 2 -a "$(net_rc wifi set band 6)" = 2 -a "$(net_rc wifi set band)" = 2 -a ! -s "$N/tmp/calls.log" -a ! -e "$N/config/akam/net"
+check "net wifi set: invalid values refused (status 2), no restart, nothing saved: bad country, auto, 6, missing, band 5 without a country" test "$(net_rc wifi set country F1)" = 2 -a "$(net_rc wifi set country FRA)" = 2 -a "$(net_rc wifi set band auto)" = 2 -a "$(net_rc wifi set band 6)" = 2 -a "$(net_rc wifi set band)" = 2 -a "$(net_rc wifi set band 5)" = 2 -a ! -s "$N/tmp/calls.log" -a ! -e "$N/config/akam/net"
+cp "$N/tmp/wpa.conf" "$N/stock.conf"
 OLDW=$(cat "$N/tmp/wpa.pid")
-check "net wifi set band 2.4 (healthy): status 0, saved after success, wpa_supplicant restarted with the 2.4 list, DHCP restarted" bash -c "[ \$($(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 2.4 >/dev/null 2>&1; echo \$?) = 0 ] && grep -qx 'wifi_band=2.4' '$N/config/akam/net' && grep -q 'wpa_supplicant.*24g=1' '$N/tmp/calls.log' && grep -q 'udhcpc -b -p' '$N/tmp/calls.log' && ! kill -0 $OLDW 2>/dev/null && kill -0 \$(cat '$N/tmp/wpa.pid')"
-check "net wifi set country de: uppercased, saved with the band kept" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' wifi set country de >/dev/null 2>&1 && grep -qx 'wifi_country=DE' '$N/config/akam/net' && grep -qx 'wifi_band=2.4' '$N/config/akam/net' && grep -qx 'country=DE' '$N/tmp/wpa.conf'"
+check "net wifi set country de on 2.4: saved at once (uppercased), NO restart, conf and processes untouched, the output says so" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' wifi set country de >'$WORK/net.out' 2>&1; rc=\$?; [ \$rc = 0 ] && grep -qx 'wifi_country=DE' '$N/config/akam/net' && grep -qx 'wifi_band=2.4' '$N/config/akam/net' && [ ! -s '$N/tmp/calls.log' ] && kill -0 $OLDW && cmp -s '$N/tmp/wpa.conf' '$N/stock.conf' && grep -q 'no effect on 2.4' '$WORK/net.out'"
+check "net wifi set country none on 2.4: saved, no restart" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' wifi set country none >/dev/null 2>&1; grep -qx 'wifi_country=none' '$N/config/akam/net' && [ ! -s '$N/tmp/calls.log' ]"
+check "net wifi set band 2.4 on 2.4: unchanged, nothing written or restarted" bash -c "m=\$(stat -c %Y '$N/config/akam/net'); $(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 2.4 >'$WORK/net.out' 2>&1; grep -q unchanged '$WORK/net.out' && [ ! -s '$N/tmp/calls.log' ]"
+net wifi set country DE >/dev/null 2>&1
+OLDW=$(cat "$N/tmp/wpa.pid")
+check "net wifi set band 5 (healthy): status 0, saved after success, wpa_supplicant restarted with the 5 GHz conf (global freq_list + country), DHCP restarted, old processes gone" bash -c "[ \$($(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 5 >/dev/null 2>&1; echo \$?) = 0 ] && grep -qx 'wifi_band=5' '$N/config/akam/net' && grep -qx 'wifi_country=DE' '$N/config/akam/net' && grep -q 'wpa_supplicant.*5g=1 fl=0' '$N/tmp/calls.log' && grep -q 'udhcpc -b -p' '$N/tmp/calls.log' && ! kill -0 $OLDW 2>/dev/null && kill -0 \$(cat '$N/tmp/wpa.pid') && grep -qx 'country=DE' '$N/tmp/wpa.conf'"
+check "net wifi set country none while on band 5 is refused (status 2), saved config unchanged" test "$(net_rc wifi set country none)" = 2 -a "$(grep -c 'wifi_country=DE' "$N/config/akam/net")" = 1
+check "net wifi set country fr while on band 5: restarted with country=FR, saved" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' wifi set country fr >/dev/null 2>&1; grep -qx 'wifi_country=FR' '$N/config/akam/net' && grep -qx 'country=FR' '$N/tmp/wpa.conf' && grep -qx 'wifi_band=5' '$N/config/akam/net'"
+check "net wifi set band 2.4 from 5 (healthy): the rendered conf is byte-identical to wpa.conf again (cmp), saved" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 2.4 >/dev/null 2>&1; cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf' && grep -qx 'wifi_band=2.4' '$N/config/akam/net' && grep -qx 'wifi_country=FR' '$N/config/akam/net' && kill -0 \$(cat '$N/tmp/wpa.pid')"
 
 # --- dead-man: the AP is 2.4 GHz only, band 5 loses the network
 touch "$N/ap24only"
@@ -2180,41 +2283,203 @@ OLDW=$(cat "$N/tmp/wpa.pid")
 : >"$N/tmp/calls.log"
 rc=$(net_rc wifi set band 5)
 check "net dead-man: band 5 on a 2.4-only AP is reverted (status 3)" test "$rc" = 3
-check "net dead-man: the saved config is unchanged (2.4, DE)" bash -c "grep -qx 'wifi_band=2.4' '$N/config/akam/net' && grep -qx 'wifi_country=DE' '$N/config/akam/net'"
-check "net dead-man: the previous conf is back in /tmp/wpa.conf and wpa_supplicant runs again with a lease" bash -c "grep -q '^freq_list=2412' '$N/tmp/wpa.conf' && ! grep -q 5180 '$N/tmp/wpa.conf' && kill -0 \$(cat '$N/tmp/wpa.pid') && [ -e '$N/up' ]"
+check "net dead-man: the saved config is unchanged (2.4, FR)" bash -c "grep -qx 'wifi_band=2.4' '$N/config/akam/net' && grep -qx 'wifi_country=FR' '$N/config/akam/net'"
+check "net dead-man: the previous conf (stock bytes) is back, wpa_supplicant runs again with a lease" bash -c "cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf' && kill -0 \$(cat '$N/tmp/wpa.pid') && [ -e '$N/up' ]"
 check "net dead-man: wpa_supplicant was restarted twice (try, revert), DHCP too" test "$(grep -c '^wpa_supplicant' "$N/tmp/calls.log")" = 2 -a "$(grep -c '^udhcpc' "$N/tmp/calls.log")" = 2
 check "net dead-man: logged" bash -c "grep -q 'NOT healthy' '$N/tmp/akam_net.log' && grep -q 'REVERTING' '$N/tmp/akam_net.log' && grep -q 'revert: wifi is back' '$N/tmp/akam_net.log'"
-# wpa_supplicant refusing the new conf
 rm -f "$N/ap24only"
+# wpa_supplicant that will not start with the 5 GHz conf
 touch "$N/failstart_5"
 : >"$N/tmp/calls.log"
 rc=$(net_rc wifi set band 5)
-check "net dead-man: a wpa_supplicant that does not start with the new conf is reverted, Wi-Fi not left down" test "$rc" = 3 -a -e "$N/up" -a "$(grep -c 'wifi_band=2.4' "$N/config/akam/net")" = 1
+check "net dead-man: a wpa_supplicant that will not start with the new conf is reverted at once, Wi-Fi not left down, saved unchanged" test "$rc" = 3 -a -e "$N/up" -a "$(grep -c 'wifi_band=2.4' "$N/config/akam/net")" = 1 -a "$(net_alive)" = y -a "$(same_stock)" = y
+rm -f "$N/failstart_5"
+# wpa_supplicant that daemonizes, then exits (what a refused conf does): immediate revert, not after the 60 s
+touch "$N/dies_5"
+: >"$N/tmp/calls.log"
+: >"$N/tmp/akam_net.log"
+s=$(date +%s)
+rc=$(AKAM_NET_DEADMAN=30 net_rc wifi set band 5)
+el=$(($(date +%s) - s))
+check "net dead-man: a wpa_supplicant that exits right after its start is reverted at once (status 3, well under the dead-man time)" test "$rc" = 3 -a "$el" -lt 15
+check "net dead-man: ... logged as a failure, wpa_supplicant runs with the stock bytes and a lease" bash -c "grep -q 'exited right after its start' '$N/tmp/akam_net.log' && grep -q 'FAILED' '$N/tmp/akam_net.log' && kill -0 \$(cat '$N/tmp/wpa.pid') && cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf' && [ -e '$N/up' ] && grep -qx 'wifi_band=2.4' '$N/config/akam/net'"
+rm -f "$N/dies_5"
+# a wpa_supplicant that dies LATER, while we wait for the lease
+touch "$N/dies_late_5"
+s=$(date +%s)
+rc=$(AKAM_NET_DEADMAN=30 net_rc wifi set band 5)
+el=$(($(date +%s) - s))
+check "net dead-man: a wpa_supplicant that dies while waiting for the lease is reverted at once (no 30 s wait)" test "$rc" = 3 -a "$el" -lt 15 -a "$(net_alive)" = y
+rm -f "$N/dies_late_5"
+check "net: no restart ever got a conf with a per-network key added by us (fl=0)" test "$(grep -c 'fl=[1-9]' "$N/tmp/calls.log")" = 0
+# revert chain: the saved band 5 itself stops working (starts refused): revert to 5 fails, falls to the stock 2.4 bytes and saves 2.4
+printf 'wifi_country=FR\nwifi_band=5\n' >"$N/config/akam/net"
+net wifi render
+touch "$N/failstart_5"
+: >"$N/tmp/akam_net.log"
+rc=$(net_rc wifi set country DE)
+check "net dead-man: previous band 5 fails too: falls back to the STOCK 2.4 bytes (status 3), running, saved as 2.4 (country kept)" test "$rc" = 3 -a -e "$N/up" -a "$(net_alive)" = y -a "$(same_stock)" = y -a "$(grep -c 'STOCK band 2.4' "$N/tmp/akam_net.log")" = 1 -a "$(grep -cx 'wifi_band=2.4' "$N/config/akam/net")" = 1 -a "$(grep -cx 'wifi_country=FR' "$N/config/akam/net")" = 1
 rm -f "$N/failstart_5"
 check "net: the user's wpa.conf is unchanged after all of it" test "$(cat "$N/config/akam/wpa.conf")" = "$USERCONF"
+# --- review round: the running conf comes back byte for byte, the last resort, link checks, stale pids, locks
+printf 'wifi_country=DE\nwifi_band=2.4\n' >"$N/config/akam/net"
+net wifi render
+printf '# running-marker\n' >>"$N/tmp/wpa.conf"
+cp "$N/tmp/wpa.conf" "$N/running.conf"
+printf '# source changed since boot\n' >>"$N/config/akam/wpa.conf"
+touch "$N/ap24only"
+rm -f "$N/reboot.log"
+rc=$(net_rc wifi set band 5)
+check "net revert: the conf that was RUNNING is restored byte for byte (not a re-render of a changed source), the copy is removed, no reset needed" test "$rc" = 3 -a "$(cmp -s "$N/tmp/wpa.conf" "$N/running.conf" && echo y)" = y -a ! -e "$N/tmp/wpa.conf.prev" -a "$(net_alive)" = y -a ! -e "$N/reboot.log"
+rm -f "$N/ap24only"
+printf '%s\n' "$USERCONF" >"$N/config/akam/wpa.conf"
+net wifi render
+USERCONF=$(cat "$N/config/akam/wpa.conf")
+# the card's wpa.conf next to the script wins over a stale /config/akam/wpa.conf
+mkdir -p "$N/card"
+cp "$NS" "$N/card/akam_net.sh"
+cp "$HS" "$N/card/akam_hostname.sh"
+printf 'ctrl_interface=/tmp/wpa_supplicant\n# card conf\nnetwork={\n ssid="card"\n psk="cardpsk"\n}\n' >"$N/card/wpa.conf"
+rm -f "$N/tmp/wpa.conf"
+"${SHCMD[@]}" "$N/card/akam_net.sh" wifi render
+check "net: wpa.conf next to the script (card mode) is the source, not a stale /config/akam/wpa.conf" cmp -s "$N/tmp/wpa.conf" "$N/card/wpa.conf"
+net wifi render
+# last resort: wpa_supplicant can not run at all after a change
+printf 'wifi_country=DE\nwifi_band=2.4\n' >"$N/config/akam/net"
+touch "$N/dies_all"
+rm -f "$N/reboot.log"
+: >"$N/tmp/akam_net.log"
+rc=$(net_rc wifi set band 5)
+check "net last resort: no wpa_supplicant can be kept running: status 3, the camera reset is requested (no feeder: reboot), saved file unchanged" test "$rc" = 3 -a "$(grep -c reboot "$N/reboot.log")" = 1 -a "$(grep -c 'LAST RESORT' "$N/tmp/akam_net.log")" = 1 -a "$(grep -cx 'wifi_band=2.4' "$N/config/akam/net")" = 1
+rm -f "$N/dies_all" "$N/reboot.log"
+"$N/dm/busybox" watchdog -F -t 5 -T 20 /dev/watchdog >/dev/null 2>&1 &
+WD=$!
+echo "$WD" >"$N/tmp/akam_feeder.pid"
+touch "$N/dies_all"
+rc=$(net_rc wifi set band 5)
+wait "$WD" 2>/dev/null || true
+check "net last resort: with a feeder, it is SIGKILLed like the stub's fail does (no reboot command)" test "$rc" = 3 -a ! -e "$N/reboot.log" -a "$(kill -0 "$WD" 2>/dev/null && echo alive)" = ""
+rm -f "$N/dies_all" "$N/tmp/akam_feeder.pid"
+net wifi fallback >/dev/null 2>&1
+touch "$N/udhcpc_fail"
+rm -f "$N/reboot.log"
+rc=$(net_rc wifi set band 5)
+check "net last resort: udhcpc that will not start counts as not healthy: reverted, still no client, reset requested" test "$rc" = 3 -a "$(grep -c reboot "$N/reboot.log")" = 1
+rm -f "$N/udhcpc_fail" "$N/reboot.log"
+net wifi render
+net_restart_ok() { net wifi fallback >/dev/null 2>&1; }
+net_restart_ok
+# link checks: a stale lease with no carrier is not "healthy"
+touch "$N/ap24only" "$N/flush_broken"
+: >"$N/tmp/ip.log"
+rc=$(net_rc wifi set band 5)
+check "net healthy: a stale lease without carrier is NOT healthy (reverted, status 3); a flush that leaves the address is followed by an explicit delete" test "$rc" = 3 -a "$(grep -c 'addr del' "$N/tmp/ip.log")" -ge 1
+rm -f "$N/ap24only" "$N/flush_broken"
+net_restart_ok
+# stale pidfile: wpa_supplicant is found by name, an unrelated live pid in the pidfile is never signalled
+"$N/dm/other" 300 >/dev/null 2>&1 &
+UNREL=$!
+echo "$UNREL" >"$N/tmp/wpa.pid"
+OLDW=$(pgrep -f "^$N/dm/wpa_supplicant " | head -n1)
+printf 'wifi_country=DE\nwifi_band=2.4\n' >"$N/config/akam/net"
+rc=$(net_rc wifi set band 5)
+check "net stop: a pidfile naming an unrelated process is ignored (it survives), the real wpa_supplicant is found by name and replaced" test "$rc" = 0 -a "$(kill -0 "$UNREL" 2>/dev/null && echo y)" = y -a "$(kill -0 "$OLDW" 2>/dev/null && echo y)" = ""
+kill "$UNREL" 2>/dev/null || true
+echo 999999 >"$N/tmp/wpa.pid"
+OLDW=$(pgrep -f "^$N/dm/wpa_supplicant " | head -n1)
+rc=$(net_rc wifi set band 2.4)
+check "net stop: a dead pid in the pidfile falls through to pidof (the running wpa_supplicant is replaced, none left over)" test "$rc" = 0 -a "$(kill -0 "$OLDW" 2>/dev/null && echo y)" = "" -a "$(pgrep -fc "^$N/dm/wpa_supplicant ")" = 1
+# lock directory without a pid
+mkdir -p "$N/tmp/akam_net.lock"
+rm -f "$N/tmp/akam_net.lock/pid"
+sleep 30 &
+LP=$!
+( sleep 1; echo "$LP" >"$N/tmp/akam_net.lock/pid" ) &
+check "net lock: a lock directory without a pid is a change starting up (busy), not a stale lock" test "$(net_rc hostname set busy-cam)" = 4
+kill "$LP" 2>/dev/null || true
+wait 2>/dev/null || true
+rm -rf "$N/tmp/akam_net.lock"
+mkdir -p "$N/tmp/akam_net.lock"
+check "net lock: ... one that stays without a pid for a few seconds is stale and taken over" test "$(net_rc hostname set takeover-cam)" = 0 -a ! -e "$N/tmp/akam_net.lock"
+# stale net.new.* of a power cut
+: >"$N/config/akam/net.new.4242"
+printf 'wifi_country=none\nwifi_band=2.4\n' >"$N/config/akam/net"
+net_rc wifi set country FR >/dev/null
+check "net save: stale net.new.* files are removed" test ! -e "$N/config/akam/net.new.4242" -a "$(grep -c wifi_country=FR "$N/config/akam/net")" = 1
+
 # fallback (boot)
 printf 'wifi_country=FR\nwifi_band=5\n' >"$N/config/akam/net"
+net wifi render
 net wifi fallback
-check "net wifi fallback: band auto rendered (the saved 5 stays in the file), restarted" bash -c "! grep -q freq_list '$N/tmp/wpa.conf' && grep -qx 'wifi_band=5' '$N/config/akam/net' && kill -0 \$(cat '$N/tmp/wpa.pid')"
+check "net wifi fallback (no save: this boot only): stock bytes, wpa_supplicant running, the saved band 5 is kept" bash -c "cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf' && grep -qx 'wifi_band=5' '$N/config/akam/net' && kill -0 \$(cat '$N/tmp/wpa.pid')"
+net wifi render
+net wifi fallback save
+check "net wifi fallback save: stock bytes rendered, wpa_supplicant running, band 2.4 saved (country kept), no lock left" bash -c "cmp -s '$N/tmp/wpa.conf' '$N/config/akam/wpa.conf' && grep -qx 'wifi_band=2.4' '$N/config/akam/net' && grep -qx 'wifi_country=FR' '$N/config/akam/net' && kill -0 \$(cat '$N/tmp/wpa.pid') && [ ! -e '$N/tmp/akam_net.lock' ]"
+# saved band != running band (boot fallback without save): show says so and `set band 5` retries instead of answering "unchanged"
+printf 'wifi_country=FR\nwifi_band=5\n' >"$N/config/akam/net"
+net wifi render
+net wifi fallback
+check "net wifi show: saved band 5 but running=2.4 after a no-save fallback" test "$(net wifi show | tr '\n' ' ')" = "country=FR band=5 running=2.4 "
+: >"$N/tmp/calls.log"
+rc=$(net_rc wifi set band 5)
+check "net wifi set band 5 while running 2.4 (saved 5): retried (restart, status 0), not answered unchanged" test "$rc" = 0 -a "$(grep -c unchanged "$WORK/net.out")" = 0 -a "$(grep -c '5g=1' "$N/tmp/calls.log")" = 1 -a "$(net wifi show | tr '\n' ' ')" = "country=FR band=5 running=5 "
+rc=$(net_rc wifi set band 5)
+check "net wifi set band 5 again (now running 5): unchanged, no restart" test "$rc" = 0 -a "$(grep -c unchanged "$WORK/net.out")" = 1 -a "$(grep -c '5g=1' "$N/tmp/calls.log")" = 1
+# result of the last request (state net.apply of the control API)
+rc=$(net_rc wifi set country none)
+check "net result: a refused request leaves 'refused' in akam_net.res" test "$rc" = 2 -a "$(sed 's/ .*//' "$N/tmp/akam_net.res")" = refused
+# stop_pid stops EVERY wpa_supplicant (a twin that is not in the pidfile too)
+"$N/dm/wpa_supplicant" 300 >/dev/null 2>&1 &
+TWIN=$!
+rc=$(net_rc wifi set band 2.4)
+check "net stop: every wpa_supplicant is stopped (the twin outside the pidfile too), one new one runs, result ok" test "$rc" = 0 -a "$(kill -0 "$TWIN" 2>/dev/null && echo y)" = "" -a "$(pgrep -fc "^$N/dm/wpa_supplicant ")" = 1 -a "$(cat "$N/tmp/akam_net.res")" = ok
+# a script run from the TMP dir never takes its own rendered $TMP/wpa.conf as the source
+cp "$NS" "$N/tmp/akam_net.sh"
+printf '# rendered leftovers\n' >"$N/tmp/wpa.conf"
+( unset AKAM_NET_WPA_SRC; "${SHCMD[@]}" "$N/tmp/akam_net.sh" wifi render ) >/dev/null 2>&1
+check "net: HERE/wpa.conf equal to the rendered \$TMP/wpa.conf is skipped (the source stays /config/akam/wpa.conf)" cmp -s "$N/tmp/wpa.conf" "$N/config/akam/wpa.conf"
+rm -f "$N/tmp/akam_net.sh"
+# a pid-less lock gets the 3 s grace in the detached path too (busy when its owner shows up, stale after the grace)
+mkdir -p "$N/tmp/akam_net.lock"
+rm -f "$N/tmp/akam_net.lock/pid"
+printf 'wifi_country=FR\nwifi_band=2.4\n' >"$N/config/akam/net"
+sleep 30 &
+LB=$!
+( sleep 1; echo "$LB" >"$N/tmp/akam_net.lock/pid" ) &
+check "net lock_busy: a lock whose pid appears within the 3 s grace is busy (status 4, detached path)" test "$(unset AKAM_NET_FG; net_rc wifi set band 5)" = 4
+kill "$LB" 2>/dev/null || true
+wait 2>/dev/null || true
+rm -rf "$N/tmp/akam_net.lock"
+net wifi render
 # detached run (the SSH session may die with the link)
-rm -f "$N/config/akam/net"
 unset AKAM_NET_FG
 : >"$N/tmp/calls.log"
 : >"$N/tmp/akam_net.log"
-check "net wifi set (detached): returns at once with 'pending'" bash -c "s=\$(date +%s); $(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 5 | grep -q pending && [ \$((\$(date +%s)-s)) -le 1 ]"
+# no wall-clock bound (a loaded host): the foreground path of a change never prints "pending", only the detached one does
+check "net wifi set (detached): returns with 'pending' (the worker does the change)" bash -c "$(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 5 | grep -q pending"
 i=0
-while ! grep -q 'healthy: saved' "$N/tmp/akam_net.log" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+while ! grep -q 'healthy: saved' "$N/tmp/akam_net.log" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
 check "net wifi set (detached): the worker finished, saved band 5" grep -qx 'wifi_band=5' "$N/config/akam/net"
+# detached worker immune to SIGHUP of its parent session
+: >"$N/tmp/akam_net.log"
+( trap '' PIPE; "${SHCMD[@]}" "$NS" wifi set band 2.4 >/dev/null 2>&1 ) &
+HP=$!
+wait "$HP" 2>/dev/null || true
+i=0
+while ! grep -q 'healthy: saved' "$N/tmp/akam_net.log" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
+check "net wifi set (detached): survives its launcher, band 2.4 saved" grep -qx 'wifi_band=2.4' "$N/config/akam/net"
 # lock
 mkdir -p "$N/tmp/akam_net.lock"
 sleep 30 &
 LP=$!
 echo "$LP" >"$N/tmp/akam_net.lock/pid"
-check "net wifi set: a running change holds the lock (status 4, detached too)" test "$(net_rc wifi set band 2.4)" = 4 -a "$(AKAM_NET_FG=1 net_rc wifi set band 2.4)" = 4
+check "net wifi set: a running change holds the lock (status 4, detached too), so does fallback" test "$(net_rc wifi set band 5)" = 4 -a "$(AKAM_NET_FG=1 net_rc wifi set band 5)" = 4 -a "$(net_rc wifi fallback)" = 4
 kill "$LP" 2>/dev/null || true
-check "net wifi set: a stale lock is taken over" test "$(AKAM_NET_FG=1 net_rc wifi set band auto)" = 0 -a ! -e "$N/tmp/akam_net.lock"
+check "net wifi set: a stale lock is taken over" test "$(AKAM_NET_FG=1 net_rc wifi set band 5)" = 0 -a ! -e "$N/tmp/akam_net.lock"
+check "net wifi set: no wpa.conf = nothing done (status 1)" bash -c "mv '$N/config/akam/wpa.conf' '$N/w'; AKAM_NET_FG=1 $(printf '%q ' "${SHCMD[@]}") '$NS' wifi set band 2.4 >/dev/null 2>&1; rc=\$?; mv '$N/w' '$N/config/akam/wpa.conf'; [ \$rc = 1 ] && grep -qx 'wifi_band=5' '$N/config/akam/net'"
+check "net wifi set country on 2.4 with no usable /config: status 1" bash -c "printf 'wifi_country=none\nwifi_band=2.4\n' >'$N/config/akam/net'; AKAM_NET_CFG=/proc/akam-nope/akam AKAM_NET_WPA_SRC='$N/config/akam/wpa.conf' AKAM_NET_FG=1 $(printf '%q ' "${SHCMD[@]}") '$NS' wifi set country DE >/dev/null 2>&1; [ \$? = 1 ]"
 pkill -f "$N" 2>/dev/null || true
-unset AKAM_NET_CFG AKAM_TMP_DIR AKAM_WPAS AKAM_HOSTNAME_CMD AKAM_HOSTNAME_SH AKAM_NET_DEADMAN AKAM_NET_POLL AKAM_NET_STOP_WAIT AKAM_NET_FG AKAM_SH
+unset AKAM_NET_CFG AKAM_TMP_DIR AKAM_WPAS AKAM_HOSTNAME_CMD AKAM_HOSTNAME_SH AKAM_NET_DEADMAN AKAM_NET_POLL AKAM_NET_STOP_WAIT AKAM_NET_FG AKAM_SH AKAM_NET_ALIVE_WAIT AKAM_PIDOF AKAM_NET_REBOOT_CMD AKAM_NET_FEEDER_PID
 
 # --- the stub: hostname + rendering at boot, band fallback
 new_stub_root st_net
@@ -2229,7 +2494,9 @@ chmod 755 "$STUBS/hostname"
 mkdir -p "$R/config/akam"
 echo Cam-Salon >"$R/config/akam/hostname"
 printf 'wifi_country=DE\nwifi_band=5\n' >"$R/config/akam/net"
-# a supplicant that only gets a route when the conf has no freq_list (the AP is not on the band)
+# a supplicant that only gets a route when the conf has no 5 GHz restriction (the AP is not on the band); it logs the
+# restriction count, the country line and whether the conf is the stock bytes. $R/die5 = daemonizes then dies on a 5 GHz conf,
+# $R/fail5 = exits 1 on it.
 cat >"$R/appfs/bin/wpa_supplicant" <<'EOS'
 #!/bin/sh
 conf= pf=
@@ -2237,28 +2504,89 @@ while [ $# -gt 0 ]; do
     case $1 in -c) conf=$2; shift ;; -P) pf=$2; shift ;; esac
     shift
 done
-echo "wpa_supplicant $(grep -c '^freq_list=' "$conf") $(grep '^country=' "$conf")" >>"$AKAM_ROOT/tmp/order.log"
-grep -q '^freq_list=' "$conf" || echo "default via 192.0.2.1 dev wlan0" >>"$AKAM_ROOT/tmp/routes"
-sleep 60 >/dev/null 2>&1 &
+g5=$(grep -c '^freq_list=' "$conf")
+same=0
+cmp -s "$conf" "$AKAM_ROOT/../sd_wpa.conf" && same=1
+echo "wpa_supplicant $g5 same=$same $(grep '^country=' "$conf")" >>"$AKAM_ROOT/tmp/order.log"
+if [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/fail5" ]; then exit 1; fi
+if [ "$g5" != 0 ] && [ -e "$AKAM_ROOT/die5" ]; then
+    ( : ) &
+    echo $! >"$pf"
+    wait
+    exit 0
+fi
+[ "$g5" != 0 ] || echo "default via 192.0.2.1 dev wlan0" >>"$AKAM_ROOT/tmp/routes"
+"$AKAM_ROOT/dm/wpa_supplicant" 60 >/dev/null 2>&1 &
 echo $! >"$pf"
 EOS
 chmod 755 "$R/appfs/bin/wpa_supplicant"
-export AKAM_WIFI_PRE_SLEEP=0 AKAM_WIFI_POST_SLEEP=0 AKAM_HEALTH_TRIES=20 AKAM_HEALTH_SLEEP=1 AKAM_HEALTH_BUDGET=4 AKAM_NET_STOP_WAIT=1
+mkdir -p "$R/dm"
+for dn in wpa_supplicant udhcpc; do cp -L "$(command -v sleep)" "$R/dm/$dn"; done
+printf '#!/bin/sh\necho\n' >"$STUBS/pidof"
+# shellcheck disable=SC2016  # the $ must reach the stub unexpanded
+printf '#!/bin/sh\necho reboot >>"$AKAM_ROOT/tmp/reboot.log"\n' >"$STUBS/reboot"
+chmod 755 "$STUBS/pidof" "$STUBS/reboot"
+export AKAM_PIDOF=$STUBS/pidof AKAM_NET_REBOOT_CMD=$STUBS/reboot AKAM_FALLBACK_SLEEP=1
+cp "$SDC/akam/wpa.conf" "$R/../sd_wpa.conf"
+export AKAM_WIFI_PRE_SLEEP=0 AKAM_WIFI_POST_SLEEP=0 AKAM_HEALTH_TRIES=20 AKAM_HEALTH_SLEEP=1 AKAM_HEALTH_BUDGET=8 AKAM_NET_STOP_WAIT=1 AKAM_NET_ALIVE_WAIT=1
 : >"$R/tmp/routes"
 run_stub
 i=0
 while ! grep -q 'own_app PoC-1 healthy' "$SDC/akam/akam_boot.log" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
 check "net stub: kernel hostname from /config/akam/hostname (lowercased)" test "$(cat "$R/tmp/khost")" = cam-salon
 check "net stub: udhcpc with the configured hostname" has "$R/tmp/order.log" "udhcpc -b -p $R/tmp/udhcpc.pid -i wlan0 -x hostname:cam-salon"
-check "net stub: first wpa_supplicant start has the rendered band conf (freq_list, country=DE)" has "$R/tmp/order.log" "wpa_supplicant 1 country=DE"
-check "net stub: no network on the saved band: falls back to band auto (second start without freq_list) and becomes healthy" bash -c "grep -q 'wpa_supplicant 0 country=DE' '$R/tmp/order.log' && grep -q 'falling back to band auto' '$SDC/akam/akam_boot.log' && grep -q 'own_app PoC-1 healthy' '$SDC/akam/akam_boot.log'"
-check "net stub: the saved band is still 5 in /config (only the boot fell back)" grep -qx 'wifi_band=5' "$R/config/akam/net"
+check "net stub: first wpa_supplicant start has the rendered 5 GHz conf (freq_list, country=DE)" has "$R/tmp/order.log" "wpa_supplicant 1 same=0 country=DE"
+check "net stub: no network on the saved band 5: falls back to the stock bytes (second start, same=1, no country) and becomes healthy" bash -c "grep -q 'wpa_supplicant 0 same=1 *\$' '$R/tmp/order.log' && grep -q 'falling back to band 2.4' '$SDC/akam/akam_boot.log' && grep -q 'own_app PoC-1 healthy' '$SDC/akam/akam_boot.log'"
+check "net stub: the timeout fallback is for THIS boot only: the saved band 5 stays in /config (a slow router after a power cut must not lose it)" bash -c "grep -qx 'wifi_band=5' '$R/config/akam/net' && grep -qx 'wifi_country=DE' '$R/config/akam/net'"
 check "net stub: wpa.conf in /tmp is 0600 and the secret is not in the card log" bash -c "[ \$(stat -c %a '$R/tmp/wpa.conf') = 600 ] && ! grep -qF -- '$SECRET' '$SDC/akam/akam_boot.log'"
 end_stub
 pkill -f "$R/tmp" 2>/dev/null || true
-unset AKAM_HOSTNAME_CMD AKAM_WIFI_PRE_SLEEP AKAM_WIFI_POST_SLEEP AKAM_HEALTH_BUDGET AKAM_NET_STOP_WAIT
+# band 5 and a supplicant that daemonizes then dies (refused conf): immediate fallback, no health wait, udhcpc started once
+printf 'wifi_country=DE\nwifi_band=5\n' >"$R/config/akam/net"
+touch "$R/die5"
+: >"$R/tmp/order.log"
+: >"$R/tmp/routes"
+: >"$SDC/akam/akam_boot.log"
+rm -f "$R/tmp/reboot.log"
+# a runtime change still holds the lock when the stub's fallback starts: it must wait, not fail (a failure resets the camera)
+mkdir -p "$R/tmp/akam_net.lock"
+"$R/dm/udhcpc" 4 >/dev/null 2>&1 &
+echo $! >"$R/tmp/akam_net.lock/pid"
+run_stub
+i=0
+while ! grep -q 'own_app PoC-1 healthy' "$SDC/akam/akam_boot.log" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+check "net stub: the fallback waited for the busy lock instead of failing (healthy, no reset)" bash -c "grep -q 'PoC-1 healthy' '$SDC/akam/akam_boot.log' && ! grep -q 'FAILED' '$SDC/akam/akam_boot.log' && [ ! -e '$R/tmp/reboot.log' ]"
+check "net stub: a 5 GHz supplicant that exits right after its start: immediate fallback to the stock bytes, healthy, DHCP started once" bash -c "grep -q 'falling back to band 2.4 at once' '$SDC/akam/akam_boot.log' && ! grep -q 'no network with the saved Wi-Fi band' '$SDC/akam/akam_boot.log' && grep -q 'wpa_supplicant 0 same=1' '$R/tmp/order.log' && [ \$(grep -c '^udhcpc' '$R/tmp/order.log') = 1 ] && grep -q 'PoC-1 healthy' '$SDC/akam/akam_boot.log' && grep -qx 'wifi_band=2.4' '$R/config/akam/net'"
+end_stub
+pkill -f "$R/tmp" 2>/dev/null || true
+# band 5 and a supplicant that will not start at all: stock bytes instead of the reset path
+rm -f "$R/die5"
+touch "$R/fail5"
+printf 'wifi_country=DE\nwifi_band=5\n' >"$R/config/akam/net"
+: >"$R/tmp/order.log"
+: >"$R/tmp/routes"
+: >"$SDC/akam/akam_boot.log"
+run_stub
+i=0
+while ! grep -q 'own_app PoC-1 healthy' "$SDC/akam/akam_boot.log" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+check "net stub: a 5 GHz supplicant that will not start: stock bytes started instead (healthy, not the reset path)" bash -c "grep -q 'falling back to band 2.4 at once' '$SDC/akam/akam_boot.log' && grep -q 'wpa_supplicant 0 same=1' '$R/tmp/order.log' && grep -q 'PoC-1 healthy' '$SDC/akam/akam_boot.log'"
+end_stub
+pkill -f "$R/tmp" 2>/dev/null || true
+rm -f "$R/fail5"
+# default band 2.4: the stub's wpa.conf is the stock copy and nothing is ever restarted
+printf 'wifi_country=DE\nwifi_band=2.4\n' >"$R/config/akam/net"
+: >"$R/tmp/order.log"
+: >"$R/tmp/routes"
+: >"$SDC/akam/akam_boot.log"
+run_stub
+i=0
+while ! grep -q 'own_app PoC-1 healthy' "$SDC/akam/akam_boot.log" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+check "net stub: band 2.4 (country DE saved): wpa.conf in /tmp is byte-identical to the card's, one wpa_supplicant start, no fallback" bash -c "cmp -s '$R/tmp/wpa.conf' '$SDC/akam/wpa.conf' && [ \$(grep -c '^wpa_supplicant' '$R/tmp/order.log') = 1 ] && ! grep -q 'falling back' '$SDC/akam/akam_boot.log'"
+end_stub
+pkill -f "$R/tmp" 2>/dev/null || true
+unset AKAM_HOSTNAME_CMD AKAM_WIFI_PRE_SLEEP AKAM_WIFI_POST_SLEEP AKAM_HEALTH_BUDGET AKAM_NET_STOP_WAIT AKAM_NET_ALIVE_WAIT AKAM_PIDOF AKAM_NET_REBOOT_CMD AKAM_FALLBACK_SLEEP
 rm -f "$STUBS/hostname"
-# band auto (default) keeps the full budget and never calls the fallback
+# no band file (default 2.4): full budget, never a fallback
 new_stub_root st_net2
 cp "$NS" "$SDC/akam/akam_net.sh"
 cp "$HS" "$SDC/akam/akam_hostname.sh"
@@ -2269,7 +2597,7 @@ echo "default via 192.0.2.1 dev wlan0" >"$R/tmp/routes"
 run_stub
 i=0
 while ! grep -q 'own_app PoC-1 healthy' "$SDC/akam/akam_boot.log" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-check "net stub: default (no files in /config): hostname akam-rot2k, healthy, no fallback" bash -c "grep -q 'hostname:akam-rot2k' '$R/tmp/order.log' && grep -q 'PoC-1 healthy' '$SDC/akam/akam_boot.log' && ! grep -q 'falling back' '$SDC/akam/akam_boot.log' && grep -qx 'country=FR' '$R/tmp/wpa.conf'"
+check "net stub: default (no files in /config): hostname akam-rot2k, healthy, no fallback" bash -c "grep -q 'hostname:akam-rot2k' '$R/tmp/order.log' && grep -q 'PoC-1 healthy' '$SDC/akam/akam_boot.log' && ! grep -q 'falling back' '$SDC/akam/akam_boot.log' && ! grep -q '^country=' '$R/tmp/wpa.conf'"
 end_stub
 unset AKAM_HOSTNAME_CMD
 rm -f "$STUBS/hostname_none"

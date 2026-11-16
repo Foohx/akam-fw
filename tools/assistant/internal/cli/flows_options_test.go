@@ -35,7 +35,7 @@ func TestOptionsVideoEditApplyAndRestartDefaultsToNo(t *testing.T) {
 	e.needHelpers()
 	e.rememberCamera("salon", "127.0.0.1")
 	// bitrate: 9999 is refused (range), 2000 kept; apply; restart question: Enter = No
-	r := e.run("3\n3\n1\n9999\n2000\n4\n\n6\n8\n10\n", "--camera", "salon")
+	r := e.run("3\n3\n1\n9999\n2000\n6\n\n8\n8\n10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Bitrate (kbit/s) needs a whole number from 500 to 3000.", "-> 2000 (pending)",
 		"WILL send: SET video.bitrate_cfg 2000", "Bitrate (kbit/s): 2000 (applies at the next restart of the video service; saved on the camera).",
@@ -49,7 +49,7 @@ func TestOptionsVideoEditApplyAndRestartDefaultsToNo(t *testing.T) {
 		t.Error("restarted without a yes")
 	}
 	// yes: the single audited restart, and only then
-	r = e.run("3\n3\n2\n1\n4\ny\n6\n8\n10\n", "--camera", "salon") // fps > 2nd value (15)... apply, yes
+	r = e.run("3\n3\n2\n1\n6\ny\n8\n8\n10\n", "--camera", "salon") // fps > 2nd value (15)... apply, yes
 	expectRC(t, r, 0)
 	if e.cam.VideoRestarts() != 1 {
 		t.Errorf("restarts: %d\n%s", e.cam.VideoRestarts(), r.out)

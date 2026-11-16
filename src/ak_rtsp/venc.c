@@ -231,8 +231,8 @@ int venc_create_encoder(void)
     req.enc.goplen           = video_gop_frames();
     req.enc.max_fps          = 0;    /* stock sends 0 for both channels (isp_hook_n.log) */
     req.enc.enc_level        = 40;   /* H.264 Level 4.0 */
-    req.enc.qp_or_kbps       = 28;   /* VBR+: minqp (stock isp_hook_n.log capture) */
-    req.enc.qp2              = 43;   /* VBR+: maxqp */
+    req.enc.qp_or_kbps       = (uint16_t)video_minqp(); /* default 28 */   /* VBR+: minqp (stock isp_hook_n.log capture) */
+    req.enc.qp2              = (uint16_t)video_maxqp(); /* default 43 */   /* VBR+: maxqp */
     req.enc.max_kbps_vbrp    = video_kbps(); /* VBR+: max_kbps */
     req.enc.initqp_vbrp      = 99;   /* VBR+: initqp — the "99" belongs here, not qp_or_kbps */
     req.smart.smart_mode     = 0;
@@ -301,8 +301,8 @@ int venc_create_encoder(void)
         req.rc.flag2         = 0;   /* MVVRange_factor: the library default (40), as stock */
     } else {
         req.rc.cub_size      = 0;
-        req.rc.minqp         = 28;
-        req.rc.maxqp         = 43;
+        req.rc.minqp         = (int16_t)video_minqp();
+        req.rc.maxqp         = (uint16_t)video_maxqp();
         req.rc.srd_threshold = 128;
         req.rc.flag          = 1;   /* bEnableMMA = TRUE */
         req.rc.flag2         = 40;  /* MVVRange_factor = 40 */

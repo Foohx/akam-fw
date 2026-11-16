@@ -108,7 +108,7 @@ onvif = 0
    5. Runs `/usr/bin/ak_rtsp` in the foreground and records its exit.
 5. `ak_rtsp` start order: stdout tee and control port, status LED, software watchdog arm, then ISP/VI/VENC
    initialisation, AE thread, night thread, audio capture, speaker, ONVIF and MQTT services (if enabled), and the RTSP
-   accept loop on port 554. Failure of audio, ONVIF or MQTT MUST NOT stop video.
+   accept loop on port 554. Every Akam camera MUST serve the canonical `rtsp://<ip>:554/stream0` (main) and, with a second encoder, `/stream1` (sub); the Rotatable 2K takes its port from one constant, `A2K_RTSP_PORT`, and serves only the paths `/stream0` and `/stream1`. Failure of audio, ONVIF or MQTT MUST NOT stop video.
 
 ## 5. Processes in a normal boot
 

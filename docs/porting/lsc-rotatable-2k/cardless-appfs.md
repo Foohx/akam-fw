@@ -80,7 +80,7 @@ Akam card with `own_app` and a `wpa.conf` (the normal one).
 | `dropbear_ed25519_host_key` | generated on first boot | generated |
 | `akam2k.conf`, `zones`, `mqtt`, `rtsp.conf`, `ntp` | same formats as on the card | app defaults / feature off |
 | `no_app`, `decloud` | empty flag files | app runs / no WAN block |
-| `hostname`, `net` | one-line hostname; `wifi_country=FR` / `wifi_band=auto\|2.4\|5` (see [net-settings.md](net-settings.md)) | `akam-rot2k`, FR, auto |
+| `hostname`, `net` | one-line hostname; `wifi_country=XX\|none` / `wifi_band=2.4\|5` (see [net-settings.md](net-settings.md)) | `akam-rot2k`, none, 2.4 |
 
 **One-time seeding over SSH, BEFORE flashing** (the camera is on the SD overlay now, `/config` is jffs2 and
 survives the appfs flash; `/config/akam` is a new directory, nothing existing is touched):
@@ -329,3 +329,5 @@ anywhere but over the flashed mtd3. A "mount /dev/mtdblock3 on /tmp/x" step was 
 Instead the risk is removed structurally: the image has the same kind as the stock squashfs (same superblock
 fields and flags, xz, 128 KiB, xattr table present, checked by `build_appfs.sh` against the backup) and the whole
 image is re-extracted and diffed on the host. The on-flash check is the byte-for-byte `cmp` of step (d).
+
+RTSP: the own app serves `rtsp://<ip>:554/stream0` (main) and `/stream1` (sub) only (strict paths), the same URL scheme as the 1080p; the stock yy_cam used :8554 (see stock-firmware-reference.md). Nothing else in the Akam image binds 554 (stock yy_cam does not run; dropbear is on 22; the 2K has no ONVIF).

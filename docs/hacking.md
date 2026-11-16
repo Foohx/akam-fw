@@ -67,6 +67,31 @@ You can test a new `ak_rtsp` without flashing anything. A power cycle brings bac
 
 Because the stock watchdog is stopped, the hardware watchdog may reboot the camera after a while: that is expected.
 
+### Try a new 1080p `ak_rtsp` on one camera with a rollback (RAM only, flash untouched)
+
+The wrapper (`ak_rtsp_wrapper.sh`) starts `/usr/bin/ak_rtsp` from the read-only squashfs and starts it again whenever it
+exits. So the old binary stays in the image and the new one is laid over it in RAM. Not run yet, read it before use, one
+camera, the other one stays untouched.
+
+1. Build: `make -C src/ak_rtsp ak_rtsp`. Check first that the camera busybox has `mount --bind` (`ssh root@<camera-ip> "mount --help 2>&1 | head -3"`); if not, use the `make upload` path below.
+2. Copy it to RAM: `ssh root@<camera-ip> 'cat > /tmp/ak_rtsp.new && chmod +x /tmp/ak_rtsp.new' < src/ak_rtsp/ak_rtsp`
+   and check `ssh root@<camera-ip> 'sha256sum /tmp/ak_rtsp.new'` against the PC.
+3. Lay it over the old one and restart the video service (the wrapper starts the process again, now the new binary):
+   `ssh root@<camera-ip> 'mount --bind /tmp/ak_rtsp.new /usr/bin/ak_rtsp && for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done'`
+4. Check: `./akam video show` and `ssh root@<camera-ip> 'cat /tmp/akam_wrapper.log; logread | grep -i "\[video\]"'`
+   (the log line `[video] settings: ... qp=28..43` proves the new binary runs).
+5. Set the QP, for example `./akam video minqp 22 maxqp 40` (answer yes to the restart), then capture 20 s with
+   `ffmpeg -rtsp_transport tcp -i rtsp://<camera-ip>:554/ -t 20 -c copy after.mkv` and compare with
+   `tools/video_quality.sh before.mkv` / `after.mkv` (capture `before.mkv` first, same scene).
+6. Rollback, any of these (each is enough):
+   - back to the defaults: `./akam video minqp 28 maxqp 43` (or `ssh root@<camera-ip> rm /etc/config/akam/video`, then restart);
+   - old binary: `ssh root@<camera-ip> 'umount /usr/bin/ak_rtsp && for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done'`;
+   - power cycle: the bind mount and `/tmp` are gone, the flashed image runs. A kernel oops while the encoder opens does
+     the same by itself (the camera reboots into the flashed image; remove `/etc/config/akam/video` if it keeps
+     failing, the file survives reboots). Never save an untested QP pair for long: min must stay below max (enforced).
+
+`make upload` + `start_rtsp.sh` (steps above) is the other path, with a card in the camera and the stock watchdog stopped.
+
 ## Tests
 
 ```bash

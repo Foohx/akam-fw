@@ -90,6 +90,8 @@ const (
 	VideoKbpsMax = 3000
 	VideoGopMin  = 1
 	VideoGopMax  = 4
+	VideoQpMin   = 10
+	VideoQpMax   = 51
 )
 
 // Catalog returns every option, in screen order.
@@ -116,6 +118,8 @@ func Catalog() []Option {
 		num("video.bitrate_cfg", "Video", "Bitrate (kbit/s)", VideoKbpsMin, VideoKbpsMax, PersistCamera, VideoRestart),
 		enum("video.fps_cfg", "Video", "Frame rate", PersistCamera, VideoRestart, "10", "15", "20", "25"),
 		num("video.gop_cfg", "Video", "Key frame interval (s)", VideoGopMin, VideoGopMax, PersistCamera, VideoRestart),
+		num("video.minqp_cfg", "Video", "Lowest quantiser (minqp)", VideoQpMin, VideoQpMax, PersistCamera, VideoRestart),
+		num("video.maxqp_cfg", "Video", "Highest quantiser (maxqp)", VideoQpMin, VideoQpMax, PersistCamera, VideoRestart),
 		{ID: "video.cfg_pending", Group: "Video", Label: "Settings not running yet", Kind: Int, Key: "video.cfg_pending", Persisted: PersistNone, ReadOnly: true},
 		{ID: "video.bitrate", Group: "Video", Label: "Measured bitrate (kbit/s)", Kind: Int, Key: "video.bitrate", Persisted: PersistNone, ReadOnly: true},
 		{ID: "video.fps_actual", Group: "Video", Label: "Measured frame rate (tenths)", Kind: Int, Key: "video.fps_actual", Persisted: PersistNone, ReadOnly: true},

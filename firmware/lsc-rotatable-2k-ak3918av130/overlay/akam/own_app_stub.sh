@@ -154,6 +154,7 @@ log own_app "stub start"
 "$SD/busybox" watchdog -F -t 5 -T 20 /dev/watchdog >/dev/null 2>&1 </dev/null &
 FEEDER=$!
 log own_app "watchdog feeder started, pid $FEEDER"
+echo "$FEEDER" >"$TMP/akam_feeder.pid" 2>/dev/null # akam_net.sh's last resort kills it like `fail` does
 
 # 1b) Wi-Fi power, exactly as stock yy_cam (yy_net_manager_wifi_init 0x2ac978 + yy_net_manager_wifi_insmod_driver
 #     0x2ac7dc, offline RE of yy_cam, see docs/porting/lsc-rotatable-2k/own-app-feasibility.md). The ATBM6132C is a
@@ -229,18 +230,34 @@ mkdir -p "$TMP" 2>/dev/null
 chmod 600 "$TMP/wpa.conf" 2>/dev/null
 
 # 3a) network settings (akam_net.sh + the shared akam_hostname.sh, both optional): hostname from /config/akam/hostname
-#     (default akam-rot2k) and, in the runtime /tmp/wpa.conf, the global keys country= / freq_list= from /config/akam/net
-#     appended to the user's untouched wpa.conf. Any failure keeps the plain copy above and the stock hostname.
+#     (default akam-rot2k) and the Wi-Fi band from /config/akam/net: 2.4 (default) leaves the runtime /tmp/wpa.conf
+#     byte-identical to the card's wpa.conf; 5 (needs a country) renders country= + freq_list=. Any failure keeps the
+#     plain copy above and the stock hostname.
 HN=akam-rot2k
+BAND5=0
+NET_DHCP=0
 NETSH=$AK/akam_net.sh
 net_env() { AKAM_NET_WPA_SRC=$AK/wpa.conf AKAM_HOSTNAME_SH=$AK/akam_hostname.sh AKAM_SH=$SH "$@"; }
 # shellcheck disable=SC2086  # SH may be "busybox sh" in the host test
 net_sh() { net_env $SH "$NETSH" "$@"; }
+# net_fallback [save]: `wifi fallback`; a busy lock (status 4: a runtime change is finishing) is waited for, never
+# taken as a failure (a failure resets the camera)
+net_fallback() {
+    nf=0
+    while :; do
+        net_sh wifi fallback "${1:-}" >/dev/null 2>&1
+        nfr=$?
+        { [ "$nfr" = 4 ] && [ "$nf" -lt "${AKAM_FALLBACK_TRIES:-10}" ]; } || return $nfr
+        nf=$((nf + 1))
+        sleep "${AKAM_FALLBACK_SLEEP:-3}"
+    done
+}
 if [ -f "$NETSH" ] && [ -f "$AK/akam_hostname.sh" ]; then
     nh=$(net_sh hostname apply 2>/dev/null)
     [ -z "$nh" ] || HN=$nh
     if net_sh wifi render >/dev/null 2>&1; then
         log own_app "network settings applied: hostname $HN, wifi $(net_sh wifi show 2>/dev/null | sed 's/$/ /' | sed 'N;s/\n//')"
+        ! net_sh wifi show 2>/dev/null | grep -q '^band=5$' || BAND5=1
     else
         log own_app "akam_net.sh wifi render failed: plain wpa.conf copy kept"
     fi
@@ -265,9 +282,29 @@ while [ "$a" -lt "$WPA_TRIES" ]; do
     log_wpa_tail
     [ "$a" -ge "$WPA_TRIES" ] || sleep "$WPA_SLEEP"
 done
+# A 5 GHz render must never cost the camera its network: a supplicant that will not start, or that exits within a few
+# seconds (it daemonizes before it parses the conf), is replaced at once by the stock 2.4 bytes (`wifi fallback`
+# saves band 2.4 (the band is broken), restarts wpa_supplicant and starts udhcpc itself).
+if [ "$BAND5" = 1 ]; then
+    if [ "$wpa_ok" = 1 ]; then
+        sleep "${AKAM_NET_ALIVE_WAIT:-3}"
+        wp=$(sed -n 1p "$TMP/wpa.pid" 2>/dev/null)
+        case $wp in '' | *[!0-9]*) wpa_ok=0 ;; *) kill -0 "$wp" 2>/dev/null || wpa_ok=0 ;; esac
+    fi
+    if [ "$wpa_ok" != 1 ]; then
+        log own_app "wpa_supplicant did not run with the 5 GHz conf: falling back to band 2.4 at once"
+        if net_fallback save; then
+            wpa_ok=1
+            NET_DHCP=1
+            BAND5=0
+        fi
+    fi
+fi
 [ "$wpa_ok" = 1 ] || fail "wpa_supplicant did not start after $WPA_TRIES attempts"
 log own_app "wpa_supplicant started (attempt $a)"
-udhcpc -b -p "$TMP/udhcpc.pid" -i "$IFACE" -x "hostname:$HN" >/dev/null 2>&1 || fail "udhcpc did not start"
+if [ "$NET_DHCP" != 1 ]; then
+    udhcpc -b -p "$TMP/udhcpc.pid" -i "$IFACE" -x "hostname:$HN" >/dev/null 2>&1 || fail "udhcpc did not start"
+fi
 log own_app "udhcpc started (hostname $HN)"
 
 # 5) health check
@@ -287,16 +324,18 @@ health_loop() { # health_loop <budget seconds from T0>
         sleep "$HEALTH_SLEEP"
     done
 }
-# A saved band (2.4 or 5) that no longer reaches the AP must not strand the camera: halfway through the budget the
-# stub renders band auto, restarts wpa_supplicant and udhcpc, and waits the rest. Only when a band is set.
+# A saved band 5 that no longer reaches the AP must not strand the camera: halfway through the budget the stub renders
+# the stock band 2.4 for THIS boot only (not saved: the router may just be slower than the camera after a power cut),
+# restarts wpa_supplicant and udhcpc, and waits the rest. Band 2.4 is the stock
+# conf: nothing to fall back to.
 FIRST_BUDGET=$HEALTH_BUDGET
-if [ -f "$NETSH" ] && [ -f "$AK/akam_hostname.sh" ] && ! net_sh wifi show 2>/dev/null | grep -q '^band=auto$'; then
+if [ "$BAND5" = 1 ]; then
     FIRST_BUDGET=$((HEALTH_BUDGET / 2))
 fi
 health_loop "$FIRST_BUDGET"
 if [ "$healthy" != 1 ] && [ "$FIRST_BUDGET" != "$HEALTH_BUDGET" ]; then
-    log own_app "no network with the saved Wi-Fi band after $FIRST_BUDGET s: falling back to band auto"
-    if net_sh wifi fallback >/dev/null 2>&1; then
+    log own_app "no network with the saved Wi-Fi band after $FIRST_BUDGET s: falling back to band 2.4"
+    if net_fallback; then
         health_loop "$HEALTH_BUDGET"
     else
         log own_app "wifi fallback failed"

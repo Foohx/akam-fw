@@ -31,7 +31,7 @@ static streg_t g_reg;
 static st_def_t g_defs[MAX_ROWS];
 static size_t g_nrows;
 static a2k_settings_cfg_t g_cfg;
-static char g_path[160], g_netdir[120], g_netreq[120];
+static char g_path[160], g_netdir[120], g_netreq[120], g_netres[128];
 static a2k_image_cfg_t g_img;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; /* guards g_img, g_sys, g_keys */
 static hal_sys_sample_t g_sys;
@@ -257,10 +257,25 @@ static int netb_get(const char *key, char *out, size_t cap)
     if (strcmp(key, "net.hostname") == 0)
         return net_read_value("hostname", NULL, out, cap) < 0 ? puts_(out, cap, "akam-rot2k") : (int)strlen(out);
     if (strcmp(key, "net.wifi_country") == 0)
-        return net_read_value("net", "wifi_country", out, cap) < 0 ? puts_(out, cap, "FR") : (int)strlen(out);
+        return net_read_value("net", "wifi_country", out, cap) < 0 ? puts_(out, cap, "none") : (int)strlen(out);
     if (strcmp(key, "net.wifi_band") == 0)
-        return net_read_value("net", "wifi_band", out, cap) < 0 ? puts_(out, cap, "auto") : (int)strlen(out);
+        return net_read_value("net", "wifi_band", out, cap) < 0 ? puts_(out, cap, "2.4") : (int)strlen(out);
     return -1;
+}
+
+/* net.apply: what became of the last net.* request. "queued" while the request file waits for the supervisor, else the first word of
+ * the result akam_net.sh left in the .res file (pending | ok | refused | reverted), "idle" when none. The PATCH reply only says queued. */
+static int net_apply_state(char *out, size_t cap)
+{
+    char buf[40];
+    int n = a2k_store_read(g_netreq, buf, sizeof buf);
+    if (n >= 0 || n == -2)
+        return puts_(out, cap, "queued");
+    n = a2k_store_read(g_netres, buf, sizeof buf);
+    if (n < 0)
+        return puts_(out, cap, "idle");
+    buf[strcspn(buf, " \r\n")] = '\0';
+    return puts_(out, cap, buf[0] && strspn(buf, "abcdefghijklmnopqrstuvwxyz") == strlen(buf) ? buf : "idle");
 }
 
 static int netb_set(const char *key, const char *val)
@@ -304,6 +319,7 @@ static int st_get(const char *key, char *out, size_t cap)
     if (strcmp(key, "net.wifi_rssi") == 0) return put(out, cap, have ? s.rssi_dbm : HAL_SYS_NA);
     if (strcmp(key, "net.wifi_lq") == 0) return put(out, cap, have ? s.link_quality : HAL_SYS_NA);
     if (strcmp(key, "api.keys") == 0) return put(out, cap, keys);
+    if (strcmp(key, "net.apply") == 0) return net_apply_state(out, cap);
     if (strcmp(key, "rtsp.clients") == 0) return put(out, cap, a2k_rtsp_clients());
     if (strcmp(key, "detect.person") == 0) return put(out, cap, a2k_apievt_person());
     if (strcmp(key, "night.active") == 0) {
@@ -392,6 +408,7 @@ static void build_table(void)
     row("ptz.state", ST_STRING, 1, 16, NULL, "unknown", 0, RO, st_get, NULL);
     row("ptz.pan", ST_INT, -1, 100000, NULL, "-1", 0, RO, st_get, NULL);
     row("ptz.tilt", ST_INT, -1, 100000, NULL, "-1", 0, RO, st_get, NULL);
+    row("net.apply", ST_STRING, 1, 16, NULL, "idle", 0, RO, st_get, NULL);
     row("api.keys", ST_INT, 0, AKEY_MAX, NULL, "0", 0, RO, st_get, NULL);
 }
 
@@ -739,6 +756,10 @@ int a2k_settings_start(const a2k_settings_cfg_t *cfg)
     snprintf(g_path, sizeof g_path, "%s", g_cfg.settings_path ? g_cfg.settings_path : A2K_SET_FILE);
     snprintf(g_netdir, sizeof g_netdir, "%s", g_cfg.net_dir ? g_cfg.net_dir : A2K_SET_NET_DIR);
     snprintf(g_netreq, sizeof g_netreq, "%s", g_cfg.net_req ? g_cfg.net_req : A2K_SET_NET_REQ);
+    {
+        size_t l = strlen(g_netreq);
+        snprintf(g_netres, sizeof g_netres, "%.*s.res", (int)(l > 4 && !strcmp(g_netreq + l - 4, ".req") ? l - 4 : l), g_netreq);
+    }
     if (g_cfg.image)
         g_img = *g_cfg.image;
     else

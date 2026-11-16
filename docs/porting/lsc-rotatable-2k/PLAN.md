@@ -115,7 +115,7 @@ the ISP is "isp2". So:
 and PTZ, **disabled by default** (cloud mode only; only Tuya port `6668` is open out of the box). They are enabled by:
 
 - **RTSP/ONVIF:** Tuya LAN **DP 237 = true**, or `/config/param.conf` `[rtsp] rtsp_on_off=1` + `[onvif] onvif_on_off=1`,
-  then restart `yy_cam`. Streams: `rtsp://<ip>:8554/stream0` (main 1080p), `/stream1` (sub). ONVIF:
+  then restart `yy_cam` (stock history: the stock app serves :8554, the Akam own app :554). Streams: `rtsp://<ip>:8554/stream0` (main 1080p), `/stream1` (sub). ONVIF:
   `http://<ip>:5000/onvif/device_service`, user `admin`, empty password (to be hardened).
 - **PTZ:** Tuya LAN **DP 119** (direction `0`–`7`) and **DP 116** (stop); also the native `/dev/ms41929` / `/dev/tymotor`.
   `param.conf [ptz] ptz_pan_step_home=1275 ptz_tilt_step_home=816`.
@@ -218,7 +218,7 @@ SSH**, writing **nothing** to flash. The same card is the rescue card. Everythin
 **Validation on real hardware** (one unit, call it `akam-rot-01`; user "go" required for each boot):
 
 - [ ] Card boots, telnet `root/root` works, SSH key login works, cloud is unreachable (camera still on LAN).
-- [ ] `rtsp://<ip>:8554/stream0` and `/stream1` play (ffmpeg/VLC); note real resolution/fps/codec.
+- [ ] `rtsp://<ip>:554/stream0` and `/stream1` play (ffmpeg/VLC); note real resolution/fps/codec.
 - [ ] ONVIF discovery + `GetStreamUri` + snapshot work; record the exact device-service URL and credentials.
 - [ ] PTZ moves via ONVIF **and** via the native path; capture pan/tilt ranges and step counts.
 - [ ] Reboot **without** the card → camera returns to untouched stock behaviour (proves reversibility).

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
@@ -28,6 +29,10 @@ func (a *App) videoShow(c *camssh.Client) error {
 			fmt.Sprintf("it may run an older Akam image without them (%s update), or its control port may be busy; try again.", Prog))
 	}
 	pend, mbr, mfps := st[3].Value, st[4].Value, st[5].Value
+	if q := camopt.Read(a.exchanger(c), "video.minqp_cfg", "video.maxqp_cfg"); !q[0].Unavailable && !q[1].Unavailable {
+		a.UI.Say(fmt.Sprintf("  Quantiser bounds: minqp %s, maxqp %s (%d to %d, minqp below maxqp; the defaults are 28 and 43; a lower minqp gives finer detail and larger frames).",
+			q[0].Value, q[1].Value, camopt.VideoQpMin, camopt.VideoQpMax))
+	}
 	a.UI.Say(fmt.Sprintf("  Bitrate cap: %s kbit/s (%d to %d; the default is 1536).", br.Value, camopt.VideoKbpsMin, camopt.VideoKbpsMax))
 	a.UI.Say(fmt.Sprintf("  Frame rate: %s per second (10, 15, 20 or 25; the default is 15).", fps.Value))
 	a.UI.Say(fmt.Sprintf("  Key frame every %s second(s) (%d to %d; the default is 2).", gop.Value, camopt.VideoGopMin, camopt.VideoGopMax))
@@ -71,14 +76,16 @@ func (a *App) cmdVideo(args []string) error {
 		case "show":
 			show = true
 			i++
-		case "bitrate", "fps", "gop":
-			id := map[string]string{"bitrate": "video.bitrate_cfg", "fps": "video.fps_cfg", "gop": "video.gop_cfg"}[w]
+		case "bitrate", "fps", "gop", "minqp", "maxqp":
+			id := map[string]string{"bitrate": "video.bitrate_cfg", "fps": "video.fps_cfg", "gop": "video.gop_cfg", "minqp": "video.minqp_cfg", "maxqp": "video.maxqp_cfg"}[w]
 			var msg string
 			switch w {
 			case "bitrate":
 				msg = fmt.Sprintf("video bitrate needs a whole number of kbit/s from %d to %d", camopt.VideoKbpsMin, camopt.VideoKbpsMax)
 			case "fps":
 				msg = "video fps needs 10, 15, 20 or 25"
+			case "minqp", "maxqp":
+				msg = fmt.Sprintf("video %s needs a whole number from %d to %d", w, camopt.VideoQpMin, camopt.VideoQpMax)
 			default:
 				msg = fmt.Sprintf("video gop needs a whole number of seconds from %d to %d", camopt.VideoGopMin, camopt.VideoGopMax)
 			}
@@ -100,6 +107,9 @@ func (a *App) cmdVideo(args []string) error {
 		default:
 			return audioUsage(fmt.Sprintf("video: unknown word '%s'", w))
 		}
+	}
+	if mn, mx := changeInt(changes, "video.minqp_cfg"), changeInt(changes, "video.maxqp_cfg"); mn > 0 && mx > 0 && mn >= mx {
+		return audioUsage(fmt.Sprintf("video: minqp (%d) must be below maxqp (%d)", mn, mx))
 	}
 	if show && len(changes) > 0 {
 		return audioUsage("video: show takes no other word")
@@ -129,6 +139,7 @@ func (a *App) cmdVideo(args []string) error {
 	defer c.Close()
 	if len(changes) > 0 {
 		restart := false
+		changes = a.orderQpChanges(c, changes)
 		for _, ch := range changes {
 			o, _ := camopt.Find(ch.ID)
 			// one SET at a time, like the bash wizard: the first refusal stops the command
@@ -154,6 +165,40 @@ func (a *App) cmdVideo(args []string) error {
 		}
 	}
 	return a.videoShow(c)
+}
+
+// changeInt returns the numeric value of the change for id, 0 when there is none.
+func changeInt(changes []camopt.Change, id string) int {
+	for _, c := range changes {
+		if c.ID == id {
+			n, _ := strconv.Atoi(c.Value)
+			return n
+		}
+	}
+	return 0
+}
+
+// orderQpChanges puts the two QP changes in an order the camera accepts one SET at a time (it keeps minqp below
+// maxqp after each): maxqp first when the new minqp is not below the maxqp the camera has now, else minqp first.
+func (a *App) orderQpChanges(c *camssh.Client, changes []camopt.Change) []camopt.Change {
+	if changeInt(changes, "video.minqp_cfg") == 0 || changeInt(changes, "video.maxqp_cfg") == 0 {
+		return changes
+	}
+	cur := camopt.Read(a.exchanger(c), "video.maxqp_cfg")
+	curMax, _ := strconv.Atoi(cur[0].Value)
+	maxFirst := !cur[0].Unavailable && changeInt(changes, "video.minqp_cfg") >= curMax
+	var qp, rest []camopt.Change
+	for _, ch := range changes {
+		if ch.ID == "video.minqp_cfg" || ch.ID == "video.maxqp_cfg" {
+			qp = append(qp, ch)
+		} else {
+			rest = append(rest, ch)
+		}
+	}
+	if (qp[0].ID == "video.maxqp_cfg") != maxFirst {
+		qp[0], qp[1] = qp[1], qp[0]
+	}
+	return append(rest, qp...)
 }
 
 // ctlResult shows what ctlSet shows for one engine result: nil when the camera accepted the value.
