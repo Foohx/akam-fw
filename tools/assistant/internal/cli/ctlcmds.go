@@ -370,7 +370,7 @@ func (a *App) pictureShow(c *camssh.Client) error {
 	if nm == "" {
 		nm = "unknown"
 	}
-	a.UI.Say(fmt.Sprintf("  Brightness %s, contrast %s, saturation %s, sharpness %s (each -50 to 50, 0 = unchanged). Saved on the camera.", br, co, sa, sh))
+	a.UI.Say(fmt.Sprintf("  Brightness %s, contrast %s, saturation %s, sharpness %s (each -50 to 50; 0 = unchanged, except sharpness: -15 is the default, 0 is the camera's own sharpening). Saved on the camera.", br, co, sa, sh))
 	a.UI.Say(fmt.Sprintf("  White balance: %s (conf = the camera's calibration, manual = Akam's own block). Saved on the camera.", wb))
 	a.UI.Say(fmt.Sprintf("  Day/night: %s (auto, day or night). Saved on the camera.", nm))
 	return nil
@@ -458,7 +458,7 @@ func (a *App) cmdPicture(args []string) error {
 	}
 	if reset {
 		keys = []string{"isp.brightness", "isp.contrast", "isp.saturation", "isp.sharpness"}
-		vals = []string{"0", "0", "0", "0"}
+		vals = []string{"0", "0", "0", "-15"}
 	}
 	a.banner("Picture settings")
 	ip, err := a.camNeedIP()
@@ -487,7 +487,7 @@ func (a *App) cmdPicture(args []string) error {
 			}
 		}
 		if reset {
-			a.UI.Good("  Done. Brightness, contrast, saturation and sharpness are back to 0 and the saved file is removed.")
+			a.UI.Good("  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed.")
 		} else {
 			a.UI.Good("  Done.")
 		}

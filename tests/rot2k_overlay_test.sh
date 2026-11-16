@@ -176,6 +176,16 @@ fail_case "/tmp/etc cannot be created" unwritable_tmp
 check "no set -e in akam_boot.sh" hasnt "$FW/overlay/akam_boot.sh" '^[[:space:]]*set -[a-z]*e'
 
 # ------------------------------------------------------------------------------- decloud.sh
+echo "== card-less boot links every image file (akam_flash_boot.sh step 1)"
+FB=$(mktemp -d)
+mkdir -p "$FB/img/bin" "$FB/fake"
+for f in busybox common.sh akam_api_key.sh akam_net.sh own_app_stub.sh dropbearmulti; do : >"$FB/img/$f"; done
+sed -n '/^# 1) the card-shaped tree/,/^) || say/p' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/appfs/akam_flash_boot.sh" >"$FB/step1.sh"
+check "flash boot step 1 extracted" test -s "$FB/step1.sh"
+IMG=$FB/img FAKE=$FB/fake sh -c 'say() { :; }; . "$0"' "$FB/step1.sh" >/dev/null 2>&1
+check "flash boot: akam_api_key.sh, akam_net.sh, bin are linked; busybox sits one level up" bash -c "[ -L '$FB/fake/akam/akam_api_key.sh' ] && [ -L '$FB/fake/akam/akam_net.sh' ] && [ -L '$FB/fake/akam/bin' ] && [ ! -e '$FB/fake/akam/busybox' ] && [ -L '$FB/fake/busybox' ]"
+rm -rf "$FB"
+
 echo "== decloud.sh"
 new_root dc
 run "$SDC/akam/decloud.sh" on
@@ -1182,6 +1192,31 @@ check "supervisor: bad track / button_long_ms / track_area values are ignored, a
 check "supervisor: the rejected values are logged and never evaluated" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 14 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
 end_sup
 
+# --- tracking tuning keys: track_return home|stay, track_return_delay_s, track_grace_s, track_band_pct, track_tilt, track_lead_pct
+new_root suptr3
+mk_app run
+cat >"$SDC/akam/akam2k.conf" <<'EOS'
+track_return = home
+track_return_delay_s = 0
+track_grace_s=5
+track_band_pct=10
+track_tilt=0
+track_lead_pct=0
+ptz_travel_budget_k=100
+ptz_travel_budget_k=5
+track_return=maybe
+track_return_delay_s=86401
+track_band_pct=1
+track_lead_pct=101
+track_tilt=2
+track_return=home;touch EVIL
+EOS
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: the track_return / delay / grace / band / tilt / lead keys become their options, bad ones are ignored" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--track-return home --track-return-delay-s 0 --track-grace-s 5 --track-band-pct 10 --track-tilt 0 --track-lead-pct 0 --ptz-travel-budget-k 100"
+check "supervisor: the bad tracking values were never evaluated" test ! -e "$SDC/akam/EVIL" -a ! -e EVIL
+end_sup
+
 # --- refusals: sha mismatch, no BUILDINFO hash, missing binary
 new_root sup3
 mk_app run
@@ -1587,6 +1622,14 @@ if command -v cc >/dev/null 2>&1; then
         ko "tracking wiring unit test does not compile"
     fi
     # shellcheck disable=SC2086
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -O1 $BT_SAN -pthread -I"$FW/app" -o "$WORK/track_sim" "$REPO/tests/rot2k_track_sim.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c" -lm; then
+        "$WORK/track_sim" >"$WORK/track_sim.out" 2>&1 || true
+        check "tracking simulation passes (walking person, constant / stop-and-go / reversal / dropouts, fake PTZ with realistic motion time: in frame up to 300 steps/s, no oscillation, return stay / home, soft range and rate limit kept)" grep -q 'rot2k track sim: 0 failed' "$WORK/track_sim.out"
+        grep 'FAIL' "$WORK/track_sim.out" || true
+    else
+        ko "tracking simulation does not compile"
+    fi
+    # shellcheck disable=SC2086
     if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -o "$WORK/zlive_unit" "$REPO/tests/rot2k_zlive_unit.c" "$FW/app/akam2k_zones.c" "$FW/app/akam2k_zlive.c" "$FW/app/akam2k_store.c"; then
         "$WORK/zlive_unit" >"$WORK/zlive_unit.out" 2>&1 || true
         check "live zones unit test passes (ignore rectangles, text forms, persistence, runtime file wins, applies at home only, atomic store)" grep -q 'rot2k zlive unit: 0 failed' "$WORK/zlive_unit.out"
@@ -1835,6 +1878,7 @@ app_hits() {
         strip_c_comments "$f" | { case "$(basename "$f")" in
             "$APP_AUDIO") sed -e 's/^#define PCM_CAPTURE "\/dev\/pcmC0D0c"$//' ;;
             akam2k_ptz_desc.c) sed -e 's|"/dev/tymotor"||' ;;
+            akam2k_settings.c) sed -e 's/sys\.flash_writes_[a-z]*//g' -e 's/"sys\.flash_writes_"//g' ;; # the /state counter names (read-only rows)
             *) cat ;;
         esac; } | grep -n -E "$pat" |
             grep -v -E 'fopen[[:space:]]*\(file, "r"\)' | sed "s|^|$f:|" || true
@@ -2041,7 +2085,7 @@ fi
 echo "== scene check: unit test (synthetic scenes: identical, shifted, rotated, other scene, uniform, lighting; reference file; boot decision)"
 if command -v cc >/dev/null 2>&1; then
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -I"$FW/app" -o "$WORK/scene_unit" "$REPO/tests/rot2k_scene_unit.c" "$FW/app/scene_check.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -I"$FW/app" -DFIXTURE_DIR="\"$REPO/tests/fixtures/scene\"" -o "$WORK/scene_unit" "$REPO/tests/rot2k_scene_unit.c" "$FW/app/scene_check.c"; then
         "$WORK/scene_unit" >"$WORK/scene_unit.out" 2>&1 || true
         check "scene check unit test passes" grep -q 'rot2k scene unit: 0 failed' "$WORK/scene_unit.out"
         grep 'FAIL' "$WORK/scene_unit.out" || true

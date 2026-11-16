@@ -56,5 +56,16 @@ check "minqp 45 alone (>= default maxqp): payloads identical" cmp -s "$WORK/qpba
 printf 'minqp=28\nmaxqp=43\n' >"$WORK/video"
 rec >"$WORK/qpdef.txt"
 check "explicit default QP: payloads identical" cmp -s "$WORK/qpdef.txt" "$WORK/default.txt"
+# ipdelta option (rc.delta, +0x48): 0 = default payload, 3 and -2 change only that word, nothing else
+rm -f "$WORK/video"
+TEST_IPDELTA=0 rec >"$WORK/ipd0.txt"
+check "ipdelta 0: payloads identical" cmp -s "$WORK/ipd0.txt" "$WORK/default.txt"
+TEST_IPDELTA=3 rec >"$WORK/ipd3.txt"
+want="${enc:0:144}03000000${enc:152}"
+check "ipdelta 3: only rc.delta changed" grep -qx "CREATE_ENC $want" "$WORK/ipd3.txt"
+TEST_IPDELTA=-2 rec >"$WORK/ipdm2.txt"
+want="${enc:0:144}feffffff${enc:152}"
+check "ipdelta -2: only rc.delta changed" grep -qx "CREATE_ENC $want" "$WORK/ipdm2.txt"
+check "ipdelta: the ISP payloads did not change" cmp -s <(grep ^TUNNEL "$WORK/ipd3.txt") <(grep ^TUNNEL "$WORK/default.txt")
 if [ "$fails" -ne 0 ]; then echo "video_apply_test: $fails failed"; exit 1; fi
 echo "video_apply_test: all passed"

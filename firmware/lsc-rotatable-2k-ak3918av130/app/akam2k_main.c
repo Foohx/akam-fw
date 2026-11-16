@@ -7,7 +7,7 @@
  *               [--image-brightness N] [--image-contrast N] [--image-sharpness N] [--mains-hz 50|60] [--wdr 0|1] [--audio 0|1]
  *               [--led auto|on|off] [--led-boot P] [--led-nowifi P] [--led-person P] [--led-stream P] [--led-night P] [--led-idle P]
  *               [--ptz-cal auto|off] [--ptz-park PAN:TILT] [--ptz-privacy 0|1]
- *               [--track 0|1] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
+ *               [--track 0|1] [--ptz-travel-budget-k 10..99999] [--track-return home|stay] [--track-return-delay-s N] [--track-grace-s N] [--track-band-pct 2..40] [--track-tilt 0|1] [--track-lead-pct 0..100] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
  *               [--ptz-scene-check 0|1] [--ptz-scene-min 0.80..0.99] [--api-port 0|1024..65535]
  *   akam2k_rtsp --api-key new --scope read|write|admin --name LABEL | list | revoke ID|NAME [--force]   (key tool, no hardware touched)
  *   long forms: --port --main-kbps --sub-kbps --gop --auth --frames --seconds --detect --detect-hz --detect-threshold
@@ -406,6 +406,13 @@ int main(int argc, char **argv)
         { "track-invert-tilt", required_argument, NULL, 1029 },
         { "ptz-scene-check", required_argument, NULL, 1030 },
         { "ptz-scene-min", required_argument, NULL, 1031 },
+        { "ptz-travel-budget-k", required_argument, NULL, 1038 },
+        { "track-return", required_argument, NULL, 1032 },
+        { "track-return-delay-s", required_argument, NULL, 1033 },
+        { "track-grace-s", required_argument, NULL, 1034 },
+        { "track-band-pct", required_argument, NULL, 1035 },
+        { "track-tilt", required_argument, NULL, 1036 },
+        { "track-lead-pct", required_argument, NULL, 1037 },
         { "video0-kbps", required_argument, NULL, 1100 },
         { "video0-max-kbps", required_argument, NULL, 1101 },
         { "video0-fps", required_argument, NULL, 1102 },
@@ -438,6 +445,7 @@ int main(int argc, char **argv)
     unsigned vid_set[A2K_VID_STREAMS] = { 0, 0 };
     int track_inv_pan = 1, track_inv_tilt = 0, scene_min = SC_MIN_DEFAULT;
     int ptz_on = 0, track_on = 0, button_long = BTN_LONG_DEFAULT_MS;
+    struct tl_cfg tune;
     char tarea_conf[A2K_TAREA_MAX * 48 + 1] = { 0 };
     int tarea_n = 0;
     long t_start;
@@ -455,6 +463,7 @@ int main(int argc, char **argv)
     a2k_image_defaults(&icfg);
     a2k_ptz_defaults(&pcfg);
     memset(vid_opt, 0, sizeof vid_opt);
+    tl_cfg_defaults(&tune);
     while ((ch = getopt_long(argc, argv, "p:m:s:g:a:n:t:D:H:T:", longopts, NULL)) != -1) {
         switch (ch) {
         case 'p': if (parse_int(optarg, 1, 65535, &port)) return usage(); break;
@@ -509,6 +518,13 @@ int main(int argc, char **argv)
         case 1029: if (parse_int(optarg, 0, 1, &track_inv_tilt)) return usage(); break;
         case 1030: if (parse_int(optarg, 0, 1, &pcfg.scene_check)) return usage(); break;
         case 1031: if ((scene_min = sc_parse_min(optarg)) < 0) return usage(); break;
+        case 1038: { int k; if (parse_int(optarg, 10, 99999, &k)) return usage(); pcfg.travel_budget = (unsigned long)k * 1000UL; break; }
+        case 1032: if (!strcmp(optarg, "home")) tune.return_home = 1; else if (!strcmp(optarg, "stay")) tune.return_home = 0; else return usage(); break;
+        case 1033: if (parse_int(optarg, 0, 86400, &tune.return_delay_s)) return usage(); break;
+        case 1034: if (parse_int(optarg, 0, 600, &tune.lost_grace_s)) return usage(); break;
+        case 1035: if (parse_int(optarg, 2, 40, &tune.deadband_pct)) return usage(); break;
+        case 1036: if (parse_int(optarg, 0, 1, &tune.tilt_enable)) return usage(); break;
+        case 1037: if (parse_int(optarg, 0, 100, &tune.lead_pct)) return usage(); break;
         case 1027: if (parse_int(optarg, BTN_LONG_MIN_MS, BTN_LONG_MAX_MS, &button_long)) return usage(); break;
         case 1120: if (parse_int(optarg, 0, 1, &cfg.video_live)) return usage(); break;
         case 1121: if (parse_int(optarg, 0, 1, &cfg.venc_test)) return usage(); break;
@@ -605,7 +621,7 @@ int main(int argc, char **argv)
     a2k_ptz_set_scene(a2k_scene_hooks());
     ptz_on = a2k_ptz_start(&pcfg) == 0;
     /* person tracking: off unless track=1; the detection thread feeds it (a no-op while it is off or the camera cannot be moved) */
-    a2k_track_run_start(track_on, tarea_conf, a2k_mqtt_resync, track_inv_pan, track_inv_tilt);
+    a2k_track_run_start(track_on, tarea_conf, a2k_mqtt_resync, track_inv_pan, track_inv_tilt, &tune);
     if (a2k_rtsp_start(port, auth, sp) < 0) {
         a2k_stop = 1;
         alarm(15);

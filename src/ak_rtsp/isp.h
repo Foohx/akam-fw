@@ -1,4 +1,6 @@
 #pragma once
+#include <stddef.h>
+#include <stdint.h>
 
 /* Load the GC20C3 sensor I2C register table from /tmp/sensor_isp.conf and
  * program it into the sensor via ioctl on /dev/v4l-subdev0. */
@@ -54,12 +56,16 @@ int isp_reapply_wb_conf(int night);
  *     thread also polls — a different, riskier mechanism than the other
  *     three; see isp_set_brightness()'s comment for the safety reasoning.
  *   - sharpness: rescales most of a ~46KB blob (module 0x0b) from a cached
- *     baseline; a secondary 16-group sub-block is a known, documented gap
- *     (not the dominant visual effect). */
+ *     baseline, on all 17 entries (sharp_all, default) or entry 0 only
+ *     (default isp.sharpness -15, see isp_tune.h). */
 int isp_set_saturation(int value);
 int isp_set_contrast(int value);
 int isp_set_brightness(int value);
 int isp_set_sharpness(int value);
+#define ISP_3DNR_COPY_SIZE 7180u /* bytes the kernel copies for the 3D_NR ioctl (the conf block has 7076) */
+uint8_t *isp_module_alloc(int mod, uint32_t size); /* zeroed module buffer, 3D_NR padded to 4 + 7180 bytes */
+void isp_set_sharp_all(int all); /* img.sharp_all: slider on all 17 entries (default 1; 0 = entry 0 only, the stock slider) */
+int  isp_get_sharp_all(void);
 
 /* Forget cached picture-control baselines — call after any full pipeline
  * reload (isp_pipeline_init()/isp_pipeline_init_night()) so a subsequent
@@ -67,3 +73,16 @@ int isp_set_sharpness(int value);
  * not a stale one captured before the reload. The reload also drops the applied values, so the non-zero ones are
  * applied again here. See isp.c for detail. */
 void isp_reset_picture_baselines(void);
+
+/* NR and sharpening knobs (isp_nr_ctl.c, isp_nr.h; specs/video-and-streaming.md 5.5.7). All with the ISP lock held.
+ * isp_nr_knob_set(knob, v): value already range-checked; >= 0 done (blocks sent, 0 = nothing to send), -1 ISP error
+ * (errno), ISP_NR_REFUSED (-2) the live table is not as decoded. The old value is kept on failure. */
+struct isp_nr_knobs;
+const struct isp_nr_knobs *isp_nr_knobs(void);
+int  isp_nr_knob_set(int knob, int v);
+int  isp_nr_knob_get(int knob);
+int  isp_nr_status(char *out, size_t cap);   /* GET img.nr */
+int  isp_nr_dump_live(void);                 /* SET img.dump nr: number of blocks read */
+void isp_nr_reset(void);
+void isp_nr_reapply(void);
+int  isp_sharp_refresh(void);                /* 1 sent, 0 nothing to send, -1, ISP_NR_REFUSED */

@@ -34,7 +34,7 @@ static struct {
     int bad_cmd, nmove, nstop, ninit1, ninit2, open_fail, cmds[256], ncmd;
     unsigned dirs;
     uint32_t first_ipos[2], last_lim[4], last_ipos[10];
-    struct { char path[96], data[128]; int present, fail; unsigned writes; } f[6];
+    struct { char path[96], data[128]; int present, fail; unsigned writes; } f[12];
     char log[8192];
     pthread_mutex_t gm;
     pthread_cond_t gc;
@@ -189,13 +189,15 @@ static void s_sleep(unsigned ms)
     pthread_mutex_unlock(&M.gm);
 }
 
+static int file_idx(const char *path, int create);
+static int file_writes(const char *path);
 static int file_idx(const char *path, int create)
 {
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 12; i++)
         if (!strcmp(M.f[i].path, path))
             return i;
     if (create)
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < 12; i++)
             if (!M.f[i].path[0]) {
                 snprintf(M.f[i].path, sizeof M.f[i].path, "%s", path);
                 return i;
@@ -214,6 +216,17 @@ static int s_load(const char *path, char *buf, unsigned cap)
         snprintf(buf, cap, "%s", M.f[i].data);
         n = (int)strlen(buf);
     }
+    pthread_mutex_unlock(&M.gm);
+    return n;
+}
+
+static int file_writes(const char *path)
+{
+    int i, n = 0;
+    pthread_mutex_lock(&M.gm);
+    i = file_idx(path, 0);
+    if (i >= 0)
+        n = M.f[i].writes;
     pthread_mutex_unlock(&M.gm);
     return n;
 }
@@ -278,13 +291,13 @@ void a2k_log(const char *fmt, ...)
     s_log(line);
 }
 
-static const hal_ptz_ops_t OPS = { s_open, s_ioctl, s_sleep, s_load, s_save, s_log, NULL, NULL };
+static const hal_ptz_ops_t OPS = { s_open, s_ioctl, s_sleep, s_load, s_save, s_log, NULL, NULL, NULL, NULL };
 
 static hal_ptz_t *mk(const char *conf)
 {
     char err[96] = "";
     hal_ptz_desc_t d = a2k_ptz_desc;
-    hal_ptz_t *p = hal_ptz_new(&d, &OPS, conf, POSF, err, sizeof err);
+    hal_ptz_t *p = hal_ptz_new(&d, &OPS, conf, err, sizeof err);
     if (!p)
         printf("  (hal_ptz_new: %s)\n", err);
     return p;
@@ -309,7 +322,6 @@ static hal_ptz_t *booted(int pan, int tilt)
     p = mk(NULL);
     if (!p || hal_ptz_start(p, HAL_PTZ_CAL_AUTO) != 0)
         return NULL;
-    hal_ptz_flush(p);
     return p;
 }
 
@@ -341,12 +353,12 @@ static void test_desc(void)
     CHECK(mk("pan_min=10\n") == NULL && mk("bogus=1\n") == NULL && mk("pan_min=400\npan_min=500\n") == NULL && mk("speed=1\n") == NULL,
           "a bad ptz.conf is refused (range margin, unknown key, repeated key, speed 1)");
     d.dir[0] = 9;
-    CHECK(hal_ptz_new(&d, &OPS, NULL, POSF, err, sizeof err) == NULL, "a direction word above 7 is refused");
+    CHECK(hal_ptz_new(&d, &OPS, NULL, err, sizeof err) == NULL, "a direction word above 7 is refused");
     {
         hal_ptz_desc_t dd = a2k_ptz_desc;
         dd.pan_park = 100;
         dd.tilt_park = 9999;
-        p = hal_ptz_new(&dd, &OPS, NULL, POSF, err, sizeof err);
+        p = hal_ptz_new(&dd, &OPS, NULL, err, sizeof err);
         CHECK(p && hal_ptz_desc(p)->pan_park == 300 && hal_ptz_desc(p)->tilt_park == 2100, "park pulled into the soft range");
     }
 }
@@ -354,7 +366,6 @@ static void test_desc(void)
 static void test_calibration(void)
 {
     hal_ptz_t *p;
-    unsigned w0;
     printf("== boot calibration (no saved position)\n");
     reset(2000, 700); /* the camera is somewhere, the driver is cold (0/0), no saved file */
     p = mk(NULL);
@@ -369,12 +380,7 @@ static void test_calibration(void)
     CHECK(hal_ptz_state(p) == HAL_PTZ_HOME && pos_is(p, 1275, 1300, 0), "state home, position 1275/1300");
     CHECK(strstr(M.log, "calibrating") && strstr(M.log, "calibrated, at home"), "logged");
     CHECK(!strcmp(get_file("/tmp/akam_ptz.frame"), "pan_min=300 pan_max=3650 tilt_min=300 tilt_max=2100\n"), "the frame file is written");
-    CHECK(!strcmp(get_file(POSF), "unknown\n") && hal_ptz_dirty(p), "the saved file says unknown until the flush");
-    hal_ptz_flush(p);
-    CHECK(!strcmp(get_file(POSF), "pan=1275 tilt=1300\n") && writes_of(POSF) == 2, "flush: the position, two writes in all (unknown, position)");
-    w0 = writes_of(POSF);
-    hal_ptz_flush(p);
-    CHECK(writes_of(POSF) == w0, "flushing again writes nothing");
+    CHECK(writes_of(POSF) == 0 && !strcmp(get_file(POSF), ""), "no ptz.pos on the flash: the position lives in RAM, not one write for the calibration");
     {
         unsigned long g = M.grind;
         CHECK(hal_ptz_goto(p, 3000, 1000) == 0 && hal_ptz_home(p) == 0 && M.grind == g, "after the calibration no motion ever reaches a stop");
@@ -415,7 +421,7 @@ static void test_skip_and_off(void)
     CHECK(M.ninit1 == 4 && M.nmove > 0 && M.last_lim[1] == 3351 && M.last_ipos[0] == 1275 - 299 && M.last_ipos[1] == 1300 - 299,
           "the calibration runs (4 inits), the final frame is declared at HOME, not at the saved position");
     CHECK(pos_is(p, 1275, 1300, 0) && hal_ptz_state(p) == HAL_PTZ_HOME && near_mech(1275, 1300, 15), "calibrated at home");
-    CHECK(strstr(M.log, "saved position is not trusted") != NULL, "logged");
+    CHECK(strstr(M.log, "home view is not proven") != NULL, "logged");
     reset(1275, 1750); /* the head was moved by hand while the saved file says home */
     put_file(POSF, "pan=1275 tilt=1300\n");
     p = mk(NULL);
@@ -488,7 +494,7 @@ static void test_motion(void)
         d.pan_park = 800;
         d.tilt_park = 900;
         reset(1275, 1300);
-        p = hal_ptz_new(&d, &OPS, NULL, POSF, err, sizeof err);
+        p = hal_ptz_new(&d, &OPS, NULL, err, sizeof err);
         CHECK(hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && hal_ptz_park(p) == 0 && hal_ptz_state(p) == HAL_PTZ_PARKED && pos_is(p, 800, 900, 4), "a configured park position (800:900)");
     }
     printf("== soft limits\n");
@@ -506,6 +512,10 @@ static void test_motion(void)
     CHECK(hal_ptz_goto(p, 299, 1000) == HAL_PTZ_EREFUSED && hal_ptz_goto(p, 3651, 1000) == HAL_PTZ_EREFUSED && hal_ptz_goto(p, 1000, 299) == HAL_PTZ_EREFUSED &&
           hal_ptz_goto(p, 1000, 2101) == HAL_PTZ_EREFUSED, "goto outside the soft range is refused, not clipped");
     CHECK(hal_ptz_goto(p, 1275, 1300) == 0 && hal_ptz_nudge(p, 120, -80) == 0 && pos_is(p, 1395, 1220, 5), "a small nudge is exact to a few steps");
+    CHECK(hal_ptz_nudge_sp(p, 100, 0, 2) == 0 && pos_is(p, 1495, 1220, 5) && hal_ptz_nudge_sp(p, -100, 0, 0) == 0 && pos_is(p, 1395, 1220, 5),
+          "a nudge at speed divisor 2 and at the default (0) is exact to a few steps");
+    CHECK(hal_ptz_nudge_sp(p, 100, 0, 1) != 0 && hal_ptz_nudge_sp(p, 100, 0, 21) != 0 && pos_is(p, 1395, 1220, 5),
+          "a nudge at speed divisor 1 or 21 is refused by the safe layer, nothing moves");
     CHECK(hal_ptz_step(p, HAL_PTZ_LEFT) == 0 && pos_is(p, 1195, 1220, 8) && hal_ptz_step(p, HAL_PTZ_DOWN) == 0 && pos_is(p, 1195, 1020, 8) &&
           hal_ptz_step(p, HAL_PTZ_RIGHT) == 0 && pos_is(p, 1395, 1020, 8) && hal_ptz_step(p, HAL_PTZ_UP) == 0 && pos_is(p, 1395, 1220, 8), "one button step = about 200 steps in each direction");
     CHECK(M.grind == g && M.bad_cmd == 0, "no step was ever made against a mechanical stop, no forbidden command word");
@@ -515,8 +525,7 @@ static void test_motion(void)
     M.stuck[0] = 1;
     CHECK(hal_ptz_step(p, HAL_PTZ_RIGHT) == HAL_PTZ_ESTALL && M.running[0] == 0, "a stuck axis: stall, motor stopped");
     CHECK(hal_ptz_state(p) == HAL_PTZ_UNKNOWN && hal_ptz_step(p, HAL_PTZ_LEFT) == HAL_PTZ_EREFUSED, "state unknown, further motion refused");
-    hal_ptz_flush(p);
-    CHECK(!strcmp(get_file(POSF), "unknown\n"), "the saved position stays 'unknown': the next boot calibrates");
+    CHECK(writes_of(POSF) == 0, "a stall writes nothing to the flash either (the next cold boot calibrates unless the home view is proven)");
 
     printf("== cancel\n");
     p = booted(1275, 1300);
@@ -545,24 +554,23 @@ static void test_motion(void)
 static void test_persistence(void)
 {
     hal_ptz_t *p;
-    unsigned w;
-    printf("== saved position: atomic and few writes\n");
+    int fail_before = fails;
+    printf("== the position is never written to the flash (RAM only)\n");
     p = booted(1275, 1300);
-    w = writes_of(POSF);
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < 20; i++)
         (void)hal_ptz_step(p, i & 1 ? HAL_PTZ_LEFT : HAL_PTZ_RIGHT);
-    CHECK(writes_of(POSF) == w + 1 && !strcmp(get_file(POSF), "unknown\n"), "ten moves in a burst: ONE write ('unknown' once), none in between");
-    hal_ptz_flush(p);
-    CHECK(writes_of(POSF) == w + 2 && !strncmp(get_file(POSF), "pan=", 4), "the flush writes the final position once");
-    M.f[file_idx(POSF, 0)].fail = 1;
-    (void)hal_ptz_step(p, HAL_PTZ_RIGHT);
-    CHECK(hal_ptz_state(p) != HAL_PTZ_UNKNOWN, "a failing 'unknown' write on a stale position refuses the move");
-    M.f[file_idx(POSF, 0)].fail = 0;
+    (void)hal_ptz_nudge(p, 30, -20);
+    (void)hal_ptz_goto(p, 2000, 1000);
+    (void)hal_ptz_home(p);
+    hal_ptz_close(p);
+    CHECK(writes_of(POSF) == 0 && file_writes("/config/akam/ptz.pos") == 0, "calibration, 20 steps, a nudge, goto, home, close: zero ptz.pos writes");
+    CHECK(file_writes("/config/akam/ptz.scene") == 0, "...and the engine never touches the scene reference by itself");
     reset(1275, 1300);
-    M.f[file_idx(POSF, 1)].fail = 1; /* the directory does not exist: no saved file at all */
+    M.f[file_idx(POSF, 1)].fail = 1; /* no writable /config/akam at all: nothing depends on it */
     p = mk(NULL);
-    CHECK(hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && hal_ptz_state(p) == HAL_PTZ_HOME && hal_ptz_step(p, HAL_PTZ_RIGHT) == 0 && strstr(M.log, "cannot save the position"),
-          "no writable /config/akam: still calibrates and moves, warns once");
+    CHECK(hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && hal_ptz_state(p) == HAL_PTZ_HOME && hal_ptz_step(p, HAL_PTZ_RIGHT) == 0,
+          "an unwritable /config/akam: still calibrates and moves (nothing is written there)");
+    (void)fail_before;
 }
 
 static void test_real_files(void)
@@ -650,13 +658,14 @@ static void test_thread(void)
     CHECK(!strcmp(a2k_ptz_state_name(HAL_PTZ_HOME), "home") && !strcmp(a2k_ptz_state_name(HAL_PTZ_PARKED), "parked") && !strcmp(a2k_ptz_state_name(HAL_PTZ_MOVED), "moved") &&
           !strcmp(a2k_ptz_state_name(HAL_PTZ_CALIBRATING), "calibrating") && !strcmp(a2k_ptz_state_name(HAL_PTZ_UNKNOWN), "unknown"), "state names");
     CHECK(a2k_ptz_command(A2K_PTZ_HOME) == -1 && a2k_ptz_nudge(1, 1) == -1 && a2k_ptz_toggle_park() == -1 && !a2k_ptz_privacy_active(), "not started: commands refused");
+    CHECK(a2k_ptz_nudge_sp(1, 1, 1) == -1 && a2k_ptz_nudge_sp(1, 1, 21) == -1 && a2k_ptz_nudge_sp(0, 0, 99) == 0, "a nudge speed outside 2..20 is refused before anything is queued (0 steps is a no-op)");
 
     /* calibration in progress: commands refused */
     reset(2000, 700);
     set_gate(1);
     a2k_ptz_defaults(&c);
     c.privacy = 1;
-    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf", POSF, 60);
+    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf");
     a2k_ptz_set_notify(on_notify);
     CHECK(a2k_ptz_start(&c) == 0, "start");
     CHECK(wait_blocked(), "the thread is inside the calibration");
@@ -667,16 +676,7 @@ static void test_thread(void)
     CHECK(wait_state(HAL_PTZ_HOME, 5000) && near_mech(1275, 1300, 12), "calibrated: state home");
     a2k_ptz_info(&i);
     CHECK(i.known && i.pan == 1275 && i.tilt == 1300 && !a2k_ptz_privacy_active(), "position published, privacy not active at home");
-    {
-        int ok = 0;
-        for (int t = 0; t < 400 && !ok; t++) {
-            pthread_mutex_lock(&M.gm);
-            ok = !strcmp(get_file(POSF), "pan=1275 tilt=1300\n");
-            pthread_mutex_unlock(&M.gm);
-            usleep(5000);
-        }
-        CHECK(ok, "the position is written after the motor has been quiet (flush delay)");
-    }
+    CHECK(file_writes(POSF) == 0, "the position is published from RAM: no ptz.pos write");
 
     /* park / home toggle and privacy */
     CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_PARKED, 5000) && a2k_ptz_privacy_active(), "toggle at home: parked, privacy active (video withheld)");
@@ -685,20 +685,31 @@ static void test_thread(void)
     CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_HOME, 5000) && !a2k_ptz_privacy_active(), "toggle when parked: home, privacy off");
     CHECK(g_nnotify >= 6 && !strcmp(a2k_ptz_state_name(g_notified.state), "home"), "the state changes were notified");
 
-    /* a nudge while moving is queued and summed; a new command cancels */
+    /* a nudge (tracking) is accepted only while idle: never queued behind a park / home (no un-park), never replacing one */
     set_gate(1);
     CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0 && wait_blocked(), "a park motion is running (held)");
-    CHECK(a2k_ptz_nudge(10, 0) == 0 && a2k_ptz_nudge(10, 0) == 0 && a2k_ptz_nudge(10, 0) == 0, "three nudges queued meanwhile");
+    CHECK(a2k_ptz_nudge(10, 0) == -1 && a2k_ptz_nudge_sp(10, 0, 2) == -1, "a nudge while a command runs is refused, not queued");
     set_gate(0);
-    CHECK(wait_state(HAL_PTZ_MOVED, 5000), "after the park: the nudge ran (30 steps right of the park: moved)");
+    CHECK(wait_state(HAL_PTZ_PARKED, 5000), "the park ended parked: no nudge ran after it (no un-park)");
+    usleep(300000);
+    /* flash wear, NEW policy: the position lives in RAM. 12 crossings of 6 nudges, a quiet time after each: ZERO ptz.pos writes (and no scene write: a
+     * tracking move never makes the home reference due, and nothing is dropped before a move). */
     {
-        int ok = 0;
-        for (int t = 0; t < 600 && !ok; t++) {
-            a2k_ptz_info(&i);
-            ok = i.state == HAL_PTZ_MOVED && i.known && i.pan >= 1300 && i.pan <= 1310;
-            usleep(5000);
+        int total = 0, k, j2;
+        unsigned long t0 = a2k_ptz_travel();
+        int w0 = file_writes(POSF);
+        for (k = 0; k < 12; k++) {
+            for (j2 = 0; j2 < 6; j2++) {
+                int tries;
+                for (tries = 0; tries < 800 && a2k_ptz_nudge(j2 & 1 ? -25 : 25, 0) != 0; tries++)
+                    usleep(5000);
+            }
+            usleep(100000);
         }
-        CHECK(ok, "the three nudges were added up: pan 1275 + 30");
+        total = file_writes(POSF) - w0;
+        printf("  info - ptz.pos writes for 12 crossings: %d\n", total);
+        CHECK(total == 0, "tracking bursts: zero ptz.pos writes across 12 crossings");
+        CHECK(a2k_ptz_travel() >= t0 + 12 * 3 * 25 && a2k_ptz_travel() < t0 + 20000, "the travel counter (steps since the calibration) grows with the motions");
     }
     set_gate(1);
     CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_blocked(), "a home motion is running (held)");
@@ -708,7 +719,7 @@ static void test_thread(void)
     CHECK(a2k_ptz_command(99) == -1 && a2k_ptz_command(-1) == -1, "an unknown command is refused");
     CHECK(a2k_ptz_command(A2K_PTZ_DOWN) == 0 && wait_state(HAL_PTZ_PARKED, 2000), "a button step at the bottom is refused by the soft limit, still parked");
     a2k_ptz_stop();
-    CHECK(!a2k_ptz_privacy_active() && !strncmp(get_file(POSF), "pan=1275 tilt=", 14) && atoi(get_file(POSF) + 14) <= 310, "stop: motor stopped, the position written");
+    CHECK(!a2k_ptz_privacy_active() && file_writes(POSF) == 0, "stop: motor stopped, nothing written to ptz.pos");
     CHECK(M.bad_cmd == 0, "no forbidden driver command word during the whole thread test");
     a2k_ptz_set_notify(NULL);
 
@@ -728,7 +739,7 @@ static void test_thread(void)
     CHECK(M.nmove == 0 && M.ninit1 == 0, "...and refused by the engine: no motion, no init");
     a2k_ptz_stop();
     reset(1275, 1300);
-    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf", POSF, 60);
+    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf");
     put_file("/config/akam/ptz.conf", "pan_min=5\n");
     a2k_ptz_defaults(&c);
     CHECK(a2k_ptz_start(&c) == -1 && M.ninit1 == 0 && M.nmove == 0 && strstr(M.log, "bad /config/akam/ptz.conf"), "a bad ptz.conf: PTZ off, the motor is never touched");
@@ -774,11 +785,10 @@ static int sc_commit(uint32_t pan, uint32_t tilt, int fresh)
     return sc_commit_rc;
 }
 static int sc_drop(void) { sc_ndrop++; return sc_drop_rc; }
-static const a2k_ptz_scene_t SCENE_HOOKS = { sc_boot, sc_capture, sc_commit, sc_drop };
+static const a2k_ptz_scene_t SCENE_HOOKS = { sc_boot, sc_capture, sc_commit, sc_drop, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 static int hk_check(uint32_t *pan, uint32_t *tilt) { sc_nboot++; sc_nmove_at_boot = M.nmove; *pan = sc_pan; *tilt = sc_tilt; return sc_verdict; }
 static int hk_drop(void) { sc_ndrop++; return sc_drop_rc; }
-static hal_ptz_t *g_cancel_hp;
-static int hk_drop_cancel(void) { sc_ndrop++; if (g_cancel_hp) hal_ptz_cancel(g_cancel_hp); return 0; }
+static int hk_check_mech(uint32_t *pan, uint32_t *tilt) { (void)pan; (void)tilt; sc_nboot++; sc_nmove_at_boot = M.nmove; return near_mech(1275, 1300, 15) ? 1 : 0; }
 
 static void sc_reset(int verdict, unsigned pan, unsigned tilt)
 {
@@ -808,55 +818,70 @@ static void test_scene(void)
     a2k_ptz_info_t i;
     char err[64];
     uint32_t a, b;
-    printf("== scene check: hal_ptz boot path\n");
+    printf("== scene check: hal_ptz boot path (the claim is HOME)\n");
     ops.cold_check = hk_check;
     ops.scene_drop = hk_drop;
-    sc_reset(1, 1500, 900);
-    reset(1500, 900); /* the head is where the saved reference says */
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
+    sc_reset(1, 1275, 1300);
+    reset(1275, 1300); /* the head is at home, the home reference matches */
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
     CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0, "match: start ok");
     CHECK(sc_nboot == 1 && sc_nmove_at_boot == 0 && M.nmove == 0 && M.grind == 0 && sc_ndrop == 0, "match: checked before any motor command, no motion, no calibration, nothing dropped");
-    CHECK(hal_ptz_pos(p, &a, &b) && a == 1500 && b == 900 && hal_ptz_state(p) == HAL_PTZ_MOVED, "match: the saved position is declared (trusted, not home)");
+    CHECK(hal_ptz_pos(p, &a, &b) && a == 1275 && b == 1300 && hal_ptz_state(p) == HAL_PTZ_HOME, "match: HOME is declared (trusted, state home)");
     CHECK(hal_ptz_verify_pos(p) == 0, "the counters agree with the declared position");
-    CHECK(hal_ptz_home(p) == 0 && near_mech(1275, 1300, 12), "match: the declared frame is right, home reaches the real home");
+    CHECK(hal_ptz_goto(p, 1800, 900) == 0 && hal_ptz_home(p) == 0 && near_mech(1275, 1300, 12), "match: the declared frame is right, a move and home reach the real home");
     CHECK(M.bad_cmd == 0 && strstr(M.log, "scene check passed"), "match: logged, only commands 0..7");
+    CHECK(writes_of(POSF) == 0 && sc_ndrop == 0, "no ptz.pos write, the reference is not dropped by moves");
     hal_ptz_close(p);
     hal_ptz_free(p);
 
-    sc_reset(0, 1500, 900);
-    reset(2500, 700); /* the head was turned while off */
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700); /* the head was turned while off (or the power cut came while it was away from home) */
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
     CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && near_mech(1275, 1300, 12) && M.grind > 0, "mismatch: the long calibration runs as before");
-    CHECK(sc_nboot == 1 && sc_nmove_at_boot == 0 && sc_ndrop == 1, "mismatch: checked first, the reference dropped before the calibration");
+    CHECK(sc_nboot == 1 && sc_nmove_at_boot == 0 && sc_ndrop == 0, "mismatch: checked first; the reference is NOT dropped (it is keyed to home: it stays valid)");
     hal_ptz_close(p);
     hal_ptz_free(p);
 
-    sc_reset(1, 100, 900); /* a match whose position is outside the soft range is not believed */
+    /* power cut while the head is AWAY from home: the "view" is the mechanical position, the claim home is only proven when the head is there */
+    {
+        hal_ptz_ops_t om = ops;
+        om.cold_check = hk_check_mech;
+        sc_reset(1, 1275, 1300);
+        reset(1275, 1300);
+        p = hal_ptz_new(&a2k_ptz_desc, &om, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind == 0 && M.nmove == 0 && hal_ptz_state(p) == HAL_PTZ_HOME, "cold boot with the head at home: claim home proven by the view, no calibration");
+        hal_ptz_free(p);
+        reset(2200, 800); /* the head had been moved away (tracking, a button) when the power was cut: RAM and the driver counters are gone */
+        p = hal_ptz_new(&a2k_ptz_desc, &om, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0 && near_mech(1275, 1300, 12) && hal_ptz_state(p) == HAL_PTZ_HOME && sc_ndrop == 0,
+              "cold boot with the head away from home (power cut away from home): the view does not prove home, FULL CALIBRATION, the reference is kept");
+        hal_ptz_free(p);
+    }
+
+    sc_reset(1, 1500, 900); /* a hook that answers another position than home: never believed */
     reset(1500, 900);
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
-    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && near_mech(1275, 1300, 12) && M.grind > 0, "a saved position outside the soft range: calibrates");
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && near_mech(1275, 1300, 12) && M.grind > 0 && strstr(M.log, "not the home position"), "a claim that is not the home position: calibrates");
     hal_ptz_close(p);
     hal_ptz_free(p);
 
-    sc_reset(1, 1275, 300); /* the saved position is the park position: never declared */
-    reset(1275, 300);
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
-    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && sc_nboot == 1 && M.grind > 0 && near_mech(1275, 1300, 12), "a saved position at the PARK position: the scene check is skipped, full calibration");
-    hal_ptz_close(p);
-    hal_ptz_free(p);
-    sc_reset(1, 1275 + 14, 300 + 14); /* within the state tolerance of the park */
-    reset(1289, 314);
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
-    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0, "...also within the park tolerance (15 steps)");
-    hal_ptz_close(p);
-    hal_ptz_free(p);
+    {
+        hal_ptz_desc_t d = a2k_ptz_desc;
+        d.tilt_park = d.tilt_home; /* home equal to the park position: the parked view is the least informative one, never claimed */
+        sc_reset(1, 1275, 1300);
+        reset(1275, 1300);
+        p = hal_ptz_new(&d, &ops, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0, "home == park: the claim is refused, full calibration");
+        hal_ptz_close(p);
+        hal_ptz_free(p);
+    }
 
-    sc_reset(1, 1500, 900);
-    reset(1500, 900);
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
+    sc_reset(1, 1275, 1300);
+    reset(1275, 1300);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
     CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_OFF) == 0 && sc_nboot == 0 && hal_ptz_state(p) == HAL_PTZ_UNKNOWN && M.nmove == 0, "cal off: no check, the motor untouched");
     CHECK(hal_ptz_verify_pos(p) == -1, "an untrusted position cannot be verified");
-    CHECK(hal_ptz_recalibrate(p) == 0 && near_mech(1275, 1300, 12) && sc_ndrop == 1 && hal_ptz_state(p) == HAL_PTZ_HOME, "recalibrate: the long calibration now, the reference dropped, at home");
+    CHECK(hal_ptz_recalibrate(p) == 0 && near_mech(1275, 1300, 12) && sc_ndrop == 0 && hal_ptz_state(p) == HAL_PTZ_HOME, "recalibrate: the long calibration now, the home reference is kept, at home");
     {
         unsigned long g = M.grind;
         M.cnt[0] += 60; /* the driver counters moved (a lost step burst, a hand): the cached position is no longer the real one */
@@ -874,44 +899,53 @@ static void test_scene(void)
     }
     hal_ptz_close(p);
     hal_ptz_free(p);
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
     CHECK(p && hal_ptz_recalibrate(p) == HAL_PTZ_EREFUSED, "recalibrate with the motor not open: refused");
     hal_ptz_free(p);
 
-    /* L3 residual: a shutdown cancel that arrives while the reference is being invalidated must not be wiped */
+    /* the reference is dropped (rarely, best effort) when a calibration FAILS, or when a position claimed by the scene check is lost */
+    sc_reset(0, 1275, 1300);
+    reset(1000, 1000);
+    M.stuck[1] = 1;
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) != 0 && hal_ptz_state(p) == HAL_PTZ_UNKNOWN && sc_ndrop == 1, "a calibration that fails (dead tilt axis): the home reference is dropped once");
+    hal_ptz_free(p);
+    sc_reset(0, 1275, 1300);
+    sc_drop_rc = -1;
+    reset(1000, 1000);
+    M.stuck[1] = 1;
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) != 0 && sc_ndrop == 1 && strstr(M.log, "could not be invalidated"), "...a drop that fails is logged, nothing else is refused or retried");
+    hal_ptz_free(p);
     {
-        hal_ptz_ops_t o3 = OPS;
-        o3.scene_drop = hk_drop_cancel;
-        sc_reset(0, 1500, 900);
-        reset(1500, 900);
-        p = hal_ptz_new(&a2k_ptz_desc, &o3, NULL, POSF, err, sizeof err);
-        g_cancel_hp = p;
-        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_OFF) == 0, "motor open, cal off");
-        {
-            int nm = M.nmove;
-            int rc = hal_ptz_recalibrate(p);
-            CHECK(rc != 0 && hal_ptz_state(p) != HAL_PTZ_HOME && hal_ptz_state(p) != HAL_PTZ_CALIBRATING, "a cancel during the drop aborts the recalibration (not wiped): position unknown");
-            CHECK(M.nmove == nm && !near_mech(1275, 1300, 12), "...the head was not walked to home");
-        }
-        g_cancel_hp = NULL;
-        hal_ptz_close(p);
+        sc_reset(0, 1275, 1300);
+        reset(2500, 700);
+        p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+        M.cancel_hp = p;
+        M.cancel_at = 6; /* a shutdown cancel in the middle of the calibration */
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) != 0 && sc_ndrop == 0, "a calibration cancelled by a shutdown: the reference is NOT dropped");
         hal_ptz_free(p);
     }
-
-    /* L2: the reference cannot be invalidated: fail closed */
-    sc_reset(0, 1500, 900);
-    sc_drop_rc = -1;
+    sc_reset(1, 1275, 1300);
+    reset(1275, 1300);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && sc_ndrop == 0, "claimed home (scene check)");
+    M.stuck[0] = 1;
+    CHECK(hal_ptz_step(p, HAL_PTZ_RIGHT) == HAL_PTZ_ESTALL && sc_ndrop == 1, "the claimed position is lost (stall): proven wrong, the reference is dropped (once)");
+    hal_ptz_free(p);
+    sc_reset(0, 1275, 1300);
     reset(2500, 700);
-    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, POSF, err, sizeof err);
-    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) != 0 && M.nmove == 0 && M.grind == 0 && hal_ptz_state(p) == HAL_PTZ_UNKNOWN && strstr(M.log, "cannot be invalidated"),
-          "drop fails at a cold boot: no calibration, the motor untouched, position unknown");
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0, "calibrated start");
+    M.stuck[0] = 1;
+    CHECK(hal_ptz_step(p, HAL_PTZ_RIGHT) == HAL_PTZ_ESTALL && sc_ndrop == 0, "a stall in a calibrated run says nothing about the reference: not dropped");
     hal_ptz_free(p);
 
     printf("== calibration: the second tilt sweep\n");
     {
         hal_ptz_ops_t o2 = OPS;
         reset(1900, 2300); /* the head at the top stop: the real travel (about 2300) is longer than the declared maximum 2160 */
-        p = hal_ptz_new(&a2k_ptz_desc, &o2, NULL, POSF, err, sizeof err);
+        p = hal_ptz_new(&a2k_ptz_desc, &o2, NULL, err, sizeof err);
         CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && near_mech(1275, 1300, 12), "from the top stop (tilt 2300): calibrated, the head really is at home (the bottom stop was reached)");
         CHECK(M.ninit1 == 4 && M.ninit2 == 4 && M.cmds[0] == 4 && M.cmds[1] == 4 && M.cmds[2] == 6, "four inits (stock, tilt re-declared, approach, final) and sweeps tilt down, tilt down again, pan left");
         CHECK(M.bad_cmd == 0, "only commands 0..7");
@@ -919,59 +953,84 @@ static void test_scene(void)
         hal_ptz_free(p);
     }
 
-    printf("== scene check: controller (hooks, capture, confirm, drop, recalibrate)\n");
+    printf("== scene check: controller (home reference after a calibration only; moves never touch it)\n");
     a2k_ptz_defaults(&c);
     CHECK(c.scene_check == 1, "ptz_scene_check defaults to 1");
-    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf", POSF, 60);
+    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf");
     a2k_ptz_test_set_scene_timing(60, 150, 0);
     a2k_ptz_set_scene(&SCENE_HOOKS);
-    /* match: no motion, no save (the reference on disk is still good) */
-    sc_reset(1, 1500, 900);
-    reset(1500, 900);
-    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_MOVED, 5000), "controller: boot with a matching scene");
+    /* a match: the head is at home, the reference is good: nothing is captured, nothing written, whatever moves follow */
+    sc_reset(1, 1275, 1300);
+    reset(1275, 1300);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 5000), "controller: boot with a matching home scene");
     usleep(400000);
     a2k_ptz_info(&i);
-    CHECK(M.nmove == 0 && i.known && i.pan == 1500 && i.tilt == 900 && sc_nsave == 0 && sc_ncap == 0 && sc_ndrop == 0, "no motion, position 1500/900 published, no new reference");
-    /* a command: the reference is dropped at its start, captured when quiet, written after the confirmation */
-    CHECK(a2k_ptz_nudge(100, 0) == 0 && wait_count(&sc_ndrop, 1, 3000), "a nudge: the reference is dropped when the motion starts");
-    CHECK(wait_count(&sc_nsave, 1, 3000) && sc_ncap == 1 && sc_save_pan >= 1595 && sc_save_pan <= 1605 && sc_save_tilt >= 895 && sc_save_tilt <= 905,
-          "quiet again: candidate captured, then the position written with it");
-    CHECK(sc_last_fresh == 0, "...not marked fresh (no calibration since the last write)");
-    /* M1: a motion during the confirmation window: nothing is written for the old candidate */
-    {
-        int ns = sc_nsave, nc = sc_ncap;
-        CHECK(a2k_ptz_nudge(100, 0) == 0 && wait_count(&sc_ncap, nc + 1, 3000), "another nudge: a new candidate");
-        CHECK(a2k_ptz_nudge(-60, 0) == 0, "a motion inside the confirmation window");
-        CHECK(wait_count(&sc_nsave, ns + 1, 3000) && sc_save_pan >= 1635 && sc_save_pan <= 1645, "the candidate of the old position is dropped; the write carries the NEW position (recaptured after the motion)");
+    CHECK(M.nmove == 0 && i.known && i.pan == 1275 && i.tilt == 1300 && sc_nsave == 0 && sc_ncap == 0 && sc_ndrop == 0, "no motion, position 1275/1300 published, no capture, no write, no drop");
+    CHECK(a2k_ptz_nudge(100, 0) == 0 && wait_state(HAL_PTZ_MOVED, 3000), "a nudge of 100 steps");
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "...and home again");
+    usleep(500000);
+    CHECK(sc_ndrop == 0 && sc_ncap == 0 && sc_nsave == 0, "moves: no drop before the motion, no capture after it, no reference write (it is keyed to home, it survives)");
+    sc_drop_rc = -1; /* even a drop that cannot be done would not refuse anything: it is not called */
+    CHECK(a2k_ptz_nudge(60, 0) == 0 && wait_state(HAL_PTZ_MOVED, 3000) && sc_ndrop == 0, "a motion with a failing drop hook runs (the hook is not used for moves)");
+    sc_drop_rc = 0;
+    a2k_ptz_stop();
+    /* travel budget: moves between the calibration and the (late) capture exceed it: no reference check */
+    a2k_ptz_test_set_scene_timing(500, 150, 0);
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700);
+    c.travel_budget = 100;
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "controller: calibrated start, travel budget 100 steps");
+    CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_state(HAL_PTZ_MOVED, 3000), "a button step away (200 steps)");
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "...and home again");
+    usleep(1500000);
+    CHECK(a2k_ptz_travel() >= 150 && sc_ncap == 0 && sc_nsave == 0, "over the budget: no scene reference captured nor saved");
+    a2k_ptz_stop();
+    c.travel_budget = 0;
+    /* L2: a lot of travel since the calibration (lost steps are possible): no reference is written in this run, whatever the budget option says */
+    a2k_ptz_test_set_scene_timing(500, 150, 0);
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "calibrated start (default budget)");
+    for (int k = 0; k < 3; k++) {
+        CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0 && wait_state(HAL_PTZ_PARKED, 8000) && a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 8000), "park and home (about 2000 steps)");
     }
-    /* M1: the view changed during the window: the scene module refuses the commit; nothing counts, retried then given up */
+    usleep(1500000);
+    CHECK(a2k_ptz_travel() > A2K_PTZ_REF_TRAVEL && sc_ncap == 0 && sc_nsave == 0, "over 3000 steps since the calibration: no reference captured nor written");
+    a2k_ptz_stop();
+    a2k_ptz_test_set_scene_timing(60, 150, 0);
+    /* never during / just after tracking: a tracking nudge defers the reference by the quiet period (10 min) */
+    a2k_ptz_test_set_scene_timing(500, 150, 0);
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && a2k_ptz_nudge(4, 0) == 0, "calibrated; a tracking nudge arrives before the capture");
+    usleep(300000);
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "...the head is at home again");
+    usleep(1500000);
+    CHECK(sc_ncap == 0 && sc_nsave == 0, "no capture, no write while a tracker is active or was just now (the reference stays due)");
+    a2k_ptz_stop();
+    a2k_ptz_test_set_scene_timing(60, 150, 0);
+    /* mismatch at boot: calibrate, then the home reference is captured and written, fresh; later moves leave it alone */
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && near_mech(1275, 1300, 12) && sc_nboot == 1 && sc_nmove_at_boot == 0, "mismatch: checked first, then calibrated");
+    CHECK(wait_count(&sc_nsave, 1, 4000) && sc_save_pan == 1275 && sc_save_tilt == 1300 && sc_last_fresh == 1 && sc_ndrop == 0 && sc_ncap == 1,
+          "...and the home view is captured once and written fresh (nothing dropped)");
     {
-        int ns = sc_nsave, nc = sc_ncommit;
-        sc_commit_rc = -1;
-        CHECK(a2k_ptz_nudge(40, 0) == 0 && wait_count(&sc_ncommit, nc + 1, 3000), "view changed during the window: commit attempted and refused");
-        usleep(800000);
-        CHECK(sc_nsave == ns && sc_ncommit - nc <= 3, "...no reference written, at most 3 attempts (no endless loop)");
-        sc_commit_rc = 0;
-    }
-    /* M1: the driver counters moved after the capture: the thread re-reads them and refuses to write */
-    {
-        int ns = sc_nsave, nc = sc_ncap, ncm = sc_ncommit;
-        CHECK(a2k_ptz_nudge(30, 0) == 0 && wait_count(&sc_ncap, nc + 1, 3000), "a nudge, the candidate captured");
-        pthread_mutex_lock(&M.gm);
-        M.cnt[1] += 80; /* the counters no longer agree with the cached position */
-        pthread_mutex_unlock(&M.gm);
+        int nc = sc_ncap, ns = sc_nsave;
+        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_state(HAL_PTZ_MOVED, 3000), "a move away (a button step)");
+        CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "back home");
         usleep(600000);
-        CHECK(sc_nsave == ns && sc_ncommit == ncm, "counters differ from the position: the commit is not even attempted, nothing written");
-        pthread_mutex_lock(&M.gm);
-        M.cnt[1] -= 80;
-        pthread_mutex_unlock(&M.gm);
+        CHECK(sc_ncap == nc && sc_nsave == ns && sc_ndrop == 0, "after the write: no new capture, no new write, no drop, however the head moves (the reference survives moves)");
     }
-    /* recalibrate button */
+    /* the Recalibrate button: the reference is checked again (fresh: the matched-boots counter restarts) */
     {
         int g0 = (int)M.grind, ns = sc_nsave;
         CHECK(a2k_ptz_command(A2K_PTZ_RECAL) == 0, "Recalibrate PTZ: queued");
-        CHECK(wait_state(HAL_PTZ_HOME, 20000) && near_mech(1275, 1300, 12) && (int)M.grind > g0, "...the long calibration ran, at home");
-        CHECK(wait_count(&sc_nsave, ns + 1, 4000) && sc_save_pan == 1275 && sc_save_tilt == 1300 && sc_last_fresh == 1, "...and saved at home once quiet, marked fresh (the matched-boots counter restarts)");
+        for (int t = 0; t < 4000 && (int)M.grind == g0; t += 5)
+            usleep(5000);
+        CHECK((int)M.grind > g0 && wait_state(HAL_PTZ_HOME, 20000) && near_mech(1275, 1300, 12), "...the long calibration ran, at home");
+        CHECK(wait_count(&sc_nsave, ns + 1, 4000) && sc_save_pan == 1275 && sc_save_tilt == 1300 && sc_last_fresh == 1 && sc_ndrop == 0,
+              "...checked again at home once quiet, marked fresh, nothing dropped");
     }
     set_gate(1);
     CHECK(a2k_ptz_command(A2K_PTZ_RECAL) == 0 && wait_blocked(), "recalibration held in its sweep");
@@ -983,42 +1042,60 @@ static void test_scene(void)
     a2k_ptz_stop();
     CHECK(M.bad_cmd == 0, "only commands 0..7");
 
-    /* an app restart in the same boot (adoption, no calibration): the reference is written NOT fresh (the on-disk count is kept) */
-    sc_reset(0, 1500, 900);
+    /* a motion inside the confirmation window voids the candidate; away from home nothing is captured; back at home the reference is retried */
+    a2k_ptz_test_set_scene_timing(60, 600, 0);
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&sc_ncap, 1, 3000), "calibrated, the home candidate is captured");
+    CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_state(HAL_PTZ_MOVED, 3000), "a motion (a button step) inside the confirmation window");
+    usleep(1000000);
+    CHECK(sc_nsave == 0 && sc_ncap == 1, "the candidate is void, the head is away from home: nothing written, nothing captured");
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000) && wait_count(&sc_nsave, 1, 4000) && sc_ncap == 2 && sc_last_fresh == 1,
+          "back at home: the reference is still due (a calibration ran, none was written): captured again and written");
+    a2k_ptz_stop();
+    a2k_ptz_test_set_scene_timing(60, 150, 0);
+    /* the view changed during the window: the scene module refuses the commit; at most 3 attempts */
+    sc_reset(0, 1275, 1300);
+    sc_commit_rc = -1;
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&sc_ncommit, 1, 4000), "view changed during the window: commit attempted and refused");
+    usleep(1200000);
+    CHECK(sc_nsave == 0 && sc_ncommit <= 3, "...no reference written, at most 3 attempts (no endless loop)");
+    a2k_ptz_stop();
+    sc_commit_rc = 0;
+    /* the driver counters moved after the capture: the thread re-reads them and refuses to write */
+    a2k_ptz_test_set_scene_timing(60, 400, 0);
+    sc_reset(0, 1275, 1300);
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&sc_ncap, 1, 3000), "calibrated, the candidate captured");
+    pthread_mutex_lock(&M.gm);
+    M.cnt[1] += 80; /* the counters no longer agree with the cached position */
+    pthread_mutex_unlock(&M.gm);
+    usleep(700000);
+    CHECK(sc_nsave == 0 && sc_ncommit == 0, "counters differ from the position: the commit is not even attempted, nothing written");
+    pthread_mutex_lock(&M.gm);
+    M.cnt[1] -= 80;
+    pthread_mutex_unlock(&M.gm);
+    a2k_ptz_stop();
+    a2k_ptz_test_set_scene_timing(60, 150, 0);
+
+    /* an app restart in the same boot (adoption, no calibration): nothing is due, nothing is written */
+    sc_reset(0, 1275, 1300);
     reset(2500, 700);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&sc_nsave, 1, 4000) && sc_last_fresh == 1, "boot with a calibration: written fresh");
     a2k_ptz_stop();
     {
         int g0 = (int)M.grind;
-        sc_reset(0, 1500, 900); /* the driver keeps its frame: the next start adopts it */
+        sc_reset(0, 1275, 1300); /* the driver keeps its frame: the next start adopts it */
         CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 5000) && (int)M.grind == g0 && sc_nboot == 0, "restart in the same boot: adopted, no calibration");
-        CHECK(a2k_ptz_nudge(60, 0) == 0 && wait_count(&sc_nsave, 1, 4000) && sc_last_fresh == 0, "after an adoption the reference is written NOT fresh (the matched-boots count is kept)");
+        CHECK(a2k_ptz_nudge(60, 0) == 0 && a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "a move and home again");
+        usleep(500000);
+        CHECK(sc_ncap == 0 && sc_nsave == 0 && sc_ndrop == 0, "after an adoption nothing is captured, written or dropped");
         a2k_ptz_stop();
     }
-    /* L2 at the controller: the invalidation fails, the motion is refused and nothing moves */
-    sc_reset(1, 1500, 900);
-    reset(1500, 900);
-    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_MOVED, 5000), "boot (match) for the fail-closed test");
-    sc_drop_rc = -1;
-    {
-        int nm = M.nmove;
-        CHECK(a2k_ptz_nudge(100, 0) == 0, "a nudge is queued");
-        usleep(400000);
-        a2k_ptz_info(&i);
-        CHECK(M.nmove == nm && i.known && i.pan == 1500 && sc_ndrop >= 1, "the reference cannot be invalidated: the motion is refused, the head did not move");
-    }
-    sc_drop_rc = 0;
-    CHECK(a2k_ptz_nudge(100, 0) == 0 && wait_count(&sc_ndrop, 2, 3000), "when the invalidation works again the motion runs");
-    a2k_ptz_stop();
 
-    /* mismatch at boot: calibrate, then a reference is captured and written, fresh */
-    sc_reset(0, 1500, 900);
-    reset(2500, 700);
-    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && near_mech(1275, 1300, 12) && sc_nboot == 1 && sc_nmove_at_boot == 0, "mismatch: checked first, then calibrated");
-    CHECK(sc_ndrop >= 1 && wait_count(&sc_nsave, 1, 4000) && sc_save_pan == 1275 && sc_save_tilt == 1300 && sc_last_fresh == 1, "...and the calibrated position gets a new reference (fresh)");
-    a2k_ptz_stop();
     /* a view with too little detail: nothing to write, no write, no retry */
-    sc_reset(0, 1500, 900);
+    sc_reset(0, 1275, 1300);
     sc_cap_rc = 1;
     reset(2500, 700);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "start (low detail view)");
@@ -1026,7 +1103,7 @@ static void test_scene(void)
     CHECK(sc_ncap == 1 && sc_ncommit == 0 && sc_nsave == 0, "low detail: captured once, no commit, no write");
     a2k_ptz_stop();
     /* a failing capture (no fresh frame): retried a few times, then given up */
-    sc_reset(0, 1500, 900);
+    sc_reset(0, 1275, 1300);
     sc_cap_rc = -1;
     reset(2500, 700);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "start (capture failing)");
@@ -1035,20 +1112,20 @@ static void test_scene(void)
     a2k_ptz_stop();
     /* shutdown commit: the candidate is settled (> 3 s old), the write waits for the confirmation delay (long) */
     a2k_ptz_test_set_scene_timing(60, 60000, 0);
-    sc_reset(0, 1500, 900);
+    sc_reset(0, 1275, 1300);
     reset(2500, 700);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "start for the shutdown commit");
     usleep(3400000);
     CHECK(sc_ncap == 1 && sc_nsave == 0, "candidate captured, the confirmation is still far away (60 s)");
     a2k_ptz_stop();
     CHECK(sc_nsave == 1 && sc_save_pan == 1275 && sc_save_tilt == 1300 && sc_last_fresh == 1, "app shutdown: the reference is written (on the PTZ thread) before it ends");
-    sc_reset(0, 1500, 900);
+    sc_reset(0, 1275, 1300);
     reset(2500, 700);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "start again");
     a2k_ptz_stop();
     CHECK(sc_nsave == 0 && sc_ncap == 0, "a stop right after the calibration (no settled candidate): nothing written");
     /* shutdown with the counters moved: not written */
-    sc_reset(0, 1500, 900);
+    sc_reset(0, 1275, 1300);
     reset(2500, 700);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "start for the shutdown / counters test");
     usleep(3400000);
@@ -1058,21 +1135,392 @@ static void test_scene(void)
     a2k_ptz_stop();
     CHECK(sc_nsave == 0 && sc_ncommit == 0, "shutdown with the counters off the cached position: nothing written");
     a2k_ptz_test_set_scene_timing(60, 150, 0);
-    /* ptz_scene_check = 0: no check, no capture, the drop still protects an old file */
+    /* ptz_scene_check = 0: no check, no capture, no write (an old reference on the flash is left alone: it is keyed to home) */
     c.scene_check = 0;
-    sc_reset(1, 1500, 900);
-    reset(1500, 900);
+    sc_reset(1, 1275, 1300);
+    reset(1275, 1300);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && sc_nboot == 0 && M.grind > 0, "ptz_scene_check=0: always calibrates, the check is not even run");
     usleep(500000);
-    CHECK(sc_nsave == 0 && sc_ncap == 0 && sc_ndrop >= 1, "...no reference is written, a stale one is dropped");
+    CHECK(sc_nsave == 0 && sc_ncap == 0 && sc_ndrop == 0, "...no reference is written, nothing is dropped");
     a2k_ptz_stop();
     c.scene_check = 1;
     /* ptz_cal=off: the recalibrate button never touches the motor */
     c.cal = HAL_PTZ_CAL_OFF;
-    sc_reset(1, 1500, 900);
-    reset(1500, 900);
+    sc_reset(1, 1275, 1300);
+    reset(1275, 1300);
     CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_UNKNOWN, 2000) && sc_nboot == 0 && a2k_ptz_command(A2K_PTZ_RECAL) == -1 && M.nmove == 0, "ptz_cal=off: no check, Recalibrate refused");
     a2k_ptz_stop();
+    a2k_ptz_set_scene(NULL);
+    a2k_ptz_test_set_scene_timing(0, 0, 0);
+}
+
+/* ------------------------------------------------------------------------------------------------ multi-view (featureless rest view) */
+static int mv_tab[8][2] = { { 150, 0 }, { -150, 0 }, { 0, -100 } };
+static int mv_n = 3;
+static int mv_ref_pan, mv_ref_tilt;       /* where the head REALLY was when the reference was taken (the "view" is the mechanical position) */
+static volatile int mv_probe_calls, mv_grind_at_probe, mv_probe_hits;
+static int mv_probe_log[8];
+static int mv_alt_rc[8];
+static volatile int mv_alt_calls, mv_commit_multi_calls, mv_confirm_calls;
+static volatile unsigned mv_mask, mv_cm_pan, mv_cm_tilt;
+static int mv_alt_pos[8][2];
+static volatile int mv_frames_valid_during, mv_nmove_log[8], mv_cancel_at; /* mv_cancel_at: the probe call number (1 based) that answers -1 */
+
+/* both frame files of the safe layer hold a valid frame (the driver "holds our frame": an app restart would adopt it) */
+static int frame_files_valid(void)
+{
+    int n = 0, i;
+    for (i = 0; i < 12; i++)
+        if ((!strcmp(M.f[i].path, PTZ_FRAME_PATH) || !strcmp(M.f[i].path, PTZ_APP_FRAME_PATH)) && M.f[i].present) {
+            struct ptzs_frame fr;
+            if (ptzs_frame_parse(M.f[i].data, &fr) == 0)
+                n++;
+        }
+    return n == 2;
+}
+
+static int mv_off(unsigned i, int *dp, int *dt)
+{
+    if ((int)i >= mv_n)
+        return -1;
+    *dp = mv_tab[i][0];
+    *dt = mv_tab[i][1];
+    return 0;
+}
+
+/* the live view equals the stored view of offset i exactly when the head really is at (reference + offset) */
+static int mv_probe(unsigned i)
+{
+    int dp = 0, dt = 0, hit;
+    if (mv_probe_calls < 8) {
+        mv_probe_log[mv_probe_calls] = (int)i;
+        mv_nmove_log[mv_probe_calls] = M.nmove;
+    }
+    mv_probe_calls++;
+    if (frame_files_valid())
+        mv_frames_valid_during = 1; /* the driver must not be adoptable while the position is only claimed */
+    if (mv_cancel_at && mv_probe_calls == mv_cancel_at)
+        return -1;
+    mv_grind_at_probe = (int)M.grind; /* no grinding (a stop hit) before / during the probe */
+    mv_off(i, &dp, &dt);
+    hit = near_mech(mv_ref_pan + dp, mv_ref_tilt + dt, 15);
+    if (hit)
+        mv_probe_hits++;
+    return hit;
+}
+
+static int mv_alt_capture(unsigned i)
+{
+    if (i < 8) {
+        mv_alt_pos[i][0] = M.mech[0];
+        mv_alt_pos[i][1] = M.mech[1];
+    }
+    mv_alt_calls++;
+    return i < 8 ? mv_alt_rc[i] : -1;
+}
+static int mv_alt_confirm(unsigned i) { (void)i; mv_confirm_calls++; return 0; }
+static int mv_commit_multi(uint32_t pan, uint32_t tilt, int fresh, unsigned mask)
+{
+    (void)fresh;
+    mv_cm_pan = pan;
+    mv_cm_tilt = tilt;
+    mv_mask = mask;
+    mv_commit_multi_calls++;
+    return 0;
+}
+static const a2k_ptz_scene_t MV_HOOKS = { sc_boot, sc_capture, sc_commit, sc_drop, mv_off, mv_probe, mv_off, mv_alt_capture, mv_alt_confirm, mv_commit_multi, NULL };
+
+static void mv_reset(void)
+{
+    mv_n = 3;
+    mv_tab[0][0] = 150; mv_tab[0][1] = 0;
+    mv_tab[1][0] = -150; mv_tab[1][1] = 0;
+    mv_tab[2][0] = 0; mv_tab[2][1] = -100;
+    mv_probe_calls = mv_grind_at_probe = mv_probe_hits = mv_frames_valid_during = mv_cancel_at = 0;
+    memset((void *)mv_nmove_log, 0, sizeof mv_nmove_log);
+    memset(mv_probe_log, -1, sizeof mv_probe_log);
+    memset(mv_alt_rc, 0, sizeof mv_alt_rc);
+    mv_alt_calls = mv_commit_multi_calls = mv_confirm_calls = 0;
+    mv_mask = mv_cm_pan = mv_cm_tilt = 0;
+}
+
+static void test_multiview(void)
+{
+    hal_ptz_ops_t ops = OPS;
+    hal_ptz_t *p;
+    a2k_ptz_cfg_t c;
+    a2k_ptz_info_t i;
+    char err[64];
+    uint32_t a, b;
+    printf("== multi-view: boot path (hal_ptz), declared position, small offset moves, probe\n");
+    ops.cold_check = hk_check;
+    ops.scene_drop = hk_drop;
+    ops.cold_offset = mv_off;
+    ops.cold_probe = mv_probe;
+
+    /* the head is where the reference says: the first offset matches, back at the claimed position, trusted, no calibration */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(1275, 1300);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0, "probe: start ok");
+    CHECK(sc_nboot == 1 && sc_nmove_at_boot == 0 && mv_probe_calls == 1 && mv_probe_hits == 1 && mv_probe_log[0] == 0, "the check ran before any motor command, the first offset was probed and matched");
+    CHECK(M.grind == 0 && M.cnt[0] != 0 && sc_ndrop == 0 && near_mech(1275, 1300, 12), "no calibration (no grinding), nothing dropped, the head is back at home");
+    CHECK(hal_ptz_pos(p, &a, &b) && a == 1275 && b == 1300 && hal_ptz_verify_pos(p) == 0 && hal_ptz_state(p) == HAL_PTZ_HOME, "home is trusted and the counters agree");
+    CHECK(strstr(M.log, "multi-view") && strstr(M.log, "scene check passed (multi-view)") && M.bad_cmd == 0, "logged, only commands 0..7");
+    CHECK(hal_ptz_goto(p, 1900, 900) == 0 && hal_ptz_home(p) == 0 && near_mech(1275, 1300, 12), "the declared frame is right: a move and home reach the real home");
+    CHECK(mv_frames_valid_during == 0 && frame_files_valid(), "the frame files were INVALID during the probe (a hard kill there cannot make a restart adopt the claim) and are written once it is proven");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+
+    /* the head was turned by hand: no offset matches, the long calibration runs; the offsets were small, nothing ground before it */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(2500, 700);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && near_mech(1275, 1300, 12) && M.grind > 0, "head turned: all offsets probed, none matches, full calibration, at home");
+    CHECK(mv_probe_calls == 3 && mv_probe_log[0] == 0 && mv_probe_log[1] == 1 && mv_probe_log[2] == 2 && sc_ndrop == 0, "the three offsets were probed in order; the reference is not dropped (keyed to home)");
+    CHECK(mv_frames_valid_during == 0, "failed probe: frame files invalid throughout");
+    CHECK(mv_nmove_log[1] - mv_nmove_log[0] >= 2 && mv_nmove_log[2] - mv_nmove_log[1] >= 2, "between two offsets the head goes back to the claimed position (never offset to offset: the travel from the real position stays one D)");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+
+    /* a shutdown (the probe answers -1): nothing else is moved and no calibration starts */
+    mv_reset();
+    mv_cancel_at = 1;
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(1275, 1300);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == HAL_PTZ_ECANCEL && M.grind == 0 && mv_probe_calls == 1 && sc_ndrop == 0 && !frame_files_valid(), "cancelled during the probe: no calibration, no further move, the position stays unproven, frame files invalid");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+
+    /* WORST CASE: the claim is wrong and the head sits at the edge of the soft range (pan 3650 / tilt 300): the probe moves (+150, -150, tilt -100)
+     * stay clear of the stops (the model's hard stops are at 4000 and 0): no click before the calibration starts */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(3650, 300);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls >= 1, "wrong claim, head at pan 3650 / tilt 300: probed, refused");
+    CHECK(mv_grind_at_probe == 0, "the offset moves did not click against a stop, even from the worst corner");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(300, 300); /* the other corner of the soft range */
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls == 3 && mv_grind_at_probe == 0, "wrong claim, head at pan 300 / tilt 300: three offsets (pan -150 -> real 150, tilt -100 -> real 200) never reach a stop");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+
+    /* an offset outside the soft range is skipped, an excessive one is refused whatever the hook says */
+    mv_reset();
+    sc_reset(2, 3600, 1300);
+    mv_ref_pan = 3600;
+    mv_ref_tilt = 1300;
+    reset(3600, 1300);
+    {
+        hal_ptz_desc_t d = a2k_ptz_desc;
+        d.pan_home = 3600; /* a home configured near the right end of the soft range */
+        p = hal_ptz_new(&d, &ops, NULL, err, sizeof err);
+    }
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_hits == 1 && mv_probe_calls == 1 && mv_probe_log[0] == 1 && near_mech(3600, 1300, 12) && M.grind == 0,
+          "home pan 3600: offset +150 is outside the soft range (3650): skipped; the offset -150 matches");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+    mv_reset();
+    mv_tab[0][0] = 900; /* a buggy hook asks for a long move */
+    mv_tab[1][0] = 0;
+    mv_tab[1][1] = 250;
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(1275, 1300);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls == 1 && mv_probe_log[0] == 2 && mv_probe_hits == 1 && M.grind == 0, "offsets of 900 / 250 steps are never moved (limit 200 per axis); only the sane third offset is probed");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+
+    /* home equal to the park position: never declared, even for a probe */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(1275, 1300);
+    {
+        hal_ptz_desc_t d = a2k_ptz_desc;
+        d.tilt_park = d.tilt_home;
+        p = hal_ptz_new(&d, &ops, NULL, err, sizeof err);
+    }
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls == 0 && M.grind > 0, "home == park: no probe, full calibration");
+    hal_ptz_close(p);
+    hal_ptz_free(p);
+
+    /* no probe hooks (the 1080p-like caller, or an old controller): an answer 2 is just "no" */
+    mv_reset();
+    {
+        hal_ptz_ops_t o2 = OPS;
+        o2.cold_check = hk_check;
+        o2.scene_drop = hk_drop;
+        sc_reset(2, 1275, 1300);
+        reset(1275, 1300);
+        p = hal_ptz_new(&a2k_ptz_desc, &o2, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0 && mv_probe_calls == 0, "answer 2 without probe hooks: full calibration");
+        hal_ptz_close(p);
+        hal_ptz_free(p);
+    }
+
+    /* R7: the probe attempts are bounded per boot (a RAM marker): a crash loop does not walk the head by an offset at every restart */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(2500, 700); /* the claim is wrong: no match, the calibration runs */
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls == 3, "attempt 1: three offsets probed");
+    hal_ptz_free(p);
+    {
+        /* an app restart that does not find our frame (a hard kill before the calibration ended is modelled by invalidating it) */
+        put_file("/tmp/akam_ptz_app.frame", "invalid\n");
+        put_file("/tmp/akam_ptz.frame", "invalid\n");
+        mv_probe_calls = 0;
+        M.mech[0] = 2500;
+        M.mech[1] = 700;
+        p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls == 3, "attempt 2: probed again");
+        hal_ptz_free(p);
+        put_file("/tmp/akam_ptz_app.frame", "invalid\n");
+        put_file("/tmp/akam_ptz.frame", "invalid\n");
+        mv_probe_calls = 0;
+        M.mech[0] = 2500;
+        M.mech[1] = 700;
+        p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && mv_probe_calls == 0 && M.grind > 0 && strstr(M.log, "attempts already made"), "attempt 3 in the same boot: no probe move, the calibration decides");
+        hal_ptz_free(p);
+    }
+    /* R6: a cancel that arrives between two probe moves is not lost to begin() clearing the flag */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(2500, 700);
+    p = hal_ptz_new(&a2k_ptz_desc, &ops, NULL, err, sizeof err);
+    M.cancel_hp = p; /* ... fired by the first sleep of the probe's first move */
+    M.cancel_at = 1;
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == HAL_PTZ_ECANCEL && M.grind == 0 && mv_probe_calls <= 1, "a shutdown cancel during the start / probe: ECANCEL, no calibration, no further offset");
+    hal_ptz_free(p);
+
+    printf("== multi-view: controller (boot probe, reference built at home, abort)\n");
+    a2k_ptz_defaults(&c);
+    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf");
+    a2k_ptz_test_set_scene_timing(60, 150, 0);
+    a2k_ptz_set_scene(&MV_HOOKS);
+    /* boot probe through the controller: matched, the position is published, no reference is rewritten */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(1275, 1300);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 5000), "controller: boot with a featureless saved view");
+    usleep(500000);
+    a2k_ptz_info(&i);
+    CHECK(mv_probe_hits == 1 && M.grind == 0 && i.known && i.pan == 1275 && i.tilt == 1300 && sc_ncap == 0 && sc_nsave == 0 && mv_commit_multi_calls == 0, "probe matched: home declared, no calibration, nothing re-captured (the stored views are still valid)");
+    a2k_ptz_stop();
+    /* boot probe fails -> calibration -> home -> the (featureless) rest view asks for the multi-view reference */
+    mv_reset();
+    sc_reset(2, 1275, 1300);
+    sc_cap_rc = 2; /* the rest view is featureless */
+    mv_ref_pan = 1275;
+    mv_ref_tilt = 1300;
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && near_mech(1275, 1300, 12), "controller: probe fails, calibrated, at home");
+    CHECK(wait_count(&mv_commit_multi_calls, 1, 6000), "the featureless rest view: the multi-view reference is built");
+    CHECK(mv_alt_calls == 3 && near_mech(1275, 1300, 12) && mv_mask == 7 && mv_cm_pan == 1275 && mv_cm_tilt == 1300, "three offset views kept, the head is back at home, written with the three views (mask 7)");
+    CHECK(mv_alt_pos[0][0] >= 1275 + 140 && mv_alt_pos[0][0] <= 1275 + 160 && mv_alt_pos[1][0] >= 1275 - 160 && mv_alt_pos[1][0] <= 1275 - 140 &&
+          mv_alt_pos[2][1] >= 1300 - 110 && mv_alt_pos[2][1] <= 1300 - 90 && mv_alt_pos[2][0] >= 1265 && mv_alt_pos[2][0] <= 1285, "views were kept at pan +150, pan -150, tilt -100 of the rest position");
+    CHECK(sc_ncommit == 0 && sc_nsave == 0 && sc_ndrop == 0 && M.bad_cmd == 0, "the plain commit is not used; the old reference is not touched before the new one is complete; only commands 0..7");
+    {
+        int n = mv_alt_calls;
+        usleep(700000);
+        CHECK(mv_alt_calls == n && mv_commit_multi_calls == 1, "built once, not again");
+        CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0 && wait_state(HAL_PTZ_PARKED, 5000) && a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "park, then home again");
+        usleep(1200000);
+        CHECK(sc_ncap == 1 && mv_alt_calls == n && mv_commit_multi_calls == 1, "back at home: not captured again, not rebuilt (no wiggle, no flash write at every return home)");
+        CHECK(a2k_ptz_command(A2K_PTZ_RECAL) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&mv_commit_multi_calls, 2, 8000), "after a recalibration (fresh reference) it is rebuilt");
+    }
+    a2k_ptz_stop();
+    /* a view that is featureless at an offset too is skipped (mask without it) */
+    mv_reset();
+    mv_alt_rc[1] = 1;
+    sc_reset(0, 1275, 1300);
+    sc_cap_rc = 2;
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&mv_commit_multi_calls, 1, 6000) && mv_mask == 5 && mv_alt_calls == 3, "a featureless offset view is not stored: mask 101");
+    a2k_ptz_stop();
+    /* nothing usable at any offset: nothing written, not retried */
+    mv_reset();
+    mv_alt_rc[0] = mv_alt_rc[1] = mv_alt_rc[2] = 1;
+    sc_reset(0, 1275, 1300);
+    sc_cap_rc = 2;
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&mv_alt_calls, 3, 6000), "all three offset views are featureless too");
+    usleep(500000);
+    CHECK(mv_commit_multi_calls == 0 && sc_nsave == 0 && near_mech(1275, 1300, 12), "nothing is written; the head is back at home");
+    {
+        int k;
+        for (k = 0; k < 5; k++) {
+            a2k_ptz_command(A2K_PTZ_PARK);
+            wait_state(HAL_PTZ_PARKED, 5000);
+            a2k_ptz_command(A2K_PTZ_HOME);
+            wait_state(HAL_PTZ_HOME, 5000);
+            usleep(700000);
+        }
+        CHECK(mv_alt_calls == 3 && mv_commit_multi_calls == 0, "a real failure (no usable view) is not retried at every return home (only a new calibration asks again, 3 tries per run at most)");
+    }
+    a2k_ptz_stop();
+    /* a command during the build abandons it: nothing written, the command runs */
+    mv_reset();
+    sc_reset(0, 1275, 1300);
+    sc_cap_rc = 2;
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && wait_count(&mv_alt_calls, 1, 6000), "the build is under way (first offset view kept)");
+    CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0, "the user parks the head");
+    usleep(1200000);
+    CHECK(mv_commit_multi_calls == 0 && wait_state(HAL_PTZ_PARKED, 5000), "the build was abandoned, the park command won, nothing written");
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000) && wait_count(&mv_commit_multi_calls, 1, 8000), "an interruption is not a failure: the reference stays due, back at home the build runs again and completes");
+    a2k_ptz_stop();
+    /* a tracker is active (a nudge): no excursion */
+    mv_reset();
+    sc_reset(0, 1275, 1300);
+    sc_cap_rc = 2;
+    reset(2500, 700);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && a2k_ptz_nudge(5, 0) == 0, "calibrated; a tracking nudge arrives");
+    usleep(300000);
+    a2k_ptz_command(A2K_PTZ_HOME);
+    usleep(1200000);
+    CHECK(mv_alt_calls == 0 && mv_commit_multi_calls == 0, "no multi-view excursion while a tracker moves the head");
+    a2k_ptz_stop();
+    /* not at home (the head was nudged away before the capture): no capture, no excursion for a featureless view */
+    mv_reset();
+    sc_reset(0, 1275, 1300);
+    sc_cap_rc = 2;
+    reset(2500, 700);
+    a2k_ptz_test_set_scene_timing(500, 150, 0);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && a2k_ptz_nudge(80, 0) == 0, "calibrated; a nudge before the capture");
+    usleep(1200000);
+    CHECK(sc_ncap == 0 && mv_alt_calls == 0 && mv_commit_multi_calls == 0, "away from home: nothing captured, no excursion, nothing stored");
+    a2k_ptz_stop();
+    a2k_ptz_test_set_scene_timing(60, 150, 0);
     a2k_ptz_set_scene(NULL);
     a2k_ptz_test_set_scene_timing(0, 0, 0);
 }
@@ -1088,6 +1536,7 @@ int main(void)
     test_real_files();
     test_thread();
     test_scene();
+    test_multiview();
     printf("rot2k hal_ptz unit: %d failed\n", fails);
     return fails ? 1 : 0;
 }

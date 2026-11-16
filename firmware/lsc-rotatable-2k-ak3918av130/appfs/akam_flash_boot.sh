@@ -37,8 +37,11 @@ say() { echo "akam_flash_boot: $*"; }
 (
     mkdir -p "$FAKE/akam" || exit 1
     ln -sf "$IMG/busybox" "$FAKE/busybox"
-    for f in common.sh decloud.sh akam_ntp.sh akam_hostname.sh akam_net.sh own_app_run.sh own_app_stub.sh start_ssh.sh dropbearmulti bin; do
-        ln -sfn "$IMG/$f" "$FAKE/akam/$f"
+    # every file the image ships in its akam dir (no hand list to forget: akam_api_key.sh was once missed)
+    for p in "$IMG"/*; do
+        f=${p##*/}
+        case $f in busybox | '*') continue ;; esac
+        ln -sfn "$p" "$FAKE/akam/$f"
     done
 ) || say "WARNING: could not build $FAKE"
 

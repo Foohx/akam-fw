@@ -1,8 +1,10 @@
 #pragma once
 
-/* Saved picture settings (isp.brightness / contrast / saturation / sharpness, each -50..50, 0 = neutral).
+/* Saved picture settings (isp.brightness / contrast / saturation / sharpness, each -50..50, 0 = neutral; the default
+ * sharpness is ISP_TUNE_DEFAULT_SHARPNESS, applied to all 16 SHARP groups, validated on akam-01 2026-11-16: the stock block
+ * amplifies sensor noise. A saved "sharpness=0" is the stock picture; a camera without a saved value gets the default).
  * File: key=value lines in ISP_TUNE_FILE, mode 0600, written atomically (tmp + fsync + rename) and only when
- * a value is changed over 8091; a file that is absent means defaults (all 0). Values outside the range, or
+ * a value is changed over 8091; a file that is absent means defaults (0, 0, 0 and the default sharpness). Values outside the range, or
  * that are not numbers, are ignored on load. control.c applies them once the ISP is up. */
 
 #ifndef ISP_TUNE_FILE
@@ -11,6 +13,7 @@
 
 #define ISP_TUNE_MIN (-50)
 #define ISP_TUNE_MAX 50
+#define ISP_TUNE_DEFAULT_SHARPNESS (-15)
 
 typedef struct {
     int brightness;
@@ -22,7 +25,7 @@ typedef struct {
 /* Fills `t` (defaults first, then every valid line of `path`). Returns 1 when the file existed, else 0. */
 int isp_tune_load(const char *path, isp_tune_t *t);
 
-/* Writes the file atomically; when every value is 0 it removes the file instead (same as the defaults).
+/* Writes the file atomically; when every value is the default it removes the file instead.
  * Returns 0, or -1 with errno set. */
 int isp_tune_save(const char *path, const isp_tune_t *t);
 

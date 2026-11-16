@@ -219,7 +219,7 @@ func New(t testing.TB, opts Options) *Camera {
 			"led.status": "auto", "led.state": "idle", "night.ir_led": "auto",
 			"audio.out_volume": "60", "audio.out_enable": "1", "audio.talk_enable": "1", "audio.out_state": "idle",
 			"audio.out_underruns": "0", "audio.out_drops": "0", "audio.out_test": "0",
-			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "0",
+			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "-15",
 			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "1",
 			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43", "video.cfg_pending": "0",
 			"video.bitrate": "1480", "video.fps_actual": "150",

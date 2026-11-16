@@ -63,6 +63,8 @@ ASM_SRCS = arm_atomics.S
 SRCS    = main.c \
           isp.c \
           isp_blocks.c \
+          isp_nr.c \
+          isp_nr_ctl.c \
           imgq.c \
           vi.c \
           venc.c \

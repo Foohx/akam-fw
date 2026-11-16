@@ -533,20 +533,19 @@ static void test_park_persist(void)
 static void test_app_invalidation(void)
 {
     const char *const good = "pan_min=300 pan_max=3650 tilt_min=300 tilt_max=1750\n";
-    printf("== the tool invalidates the app's frame and ptz.pos\n");
+    printf("== the tool invalidates the app's frame (and writes nothing to the flash)\n");
     model_ready();
-    CHECK(!strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "unknown\n"), "init invalidates the app frame file and writes unknown to ptz.pos");
+    CHECK(!strcmp(M.appframe, "invalid\n") && M.savedpos[0] == 0, "init invalidates the app frame file and writes NOTHING to the flash (no ptz.pos)");
     snprintf(M.appframe, sizeof(M.appframe), "%s", good); snprintf(M.savedpos, sizeof(M.savedpos), "pan=1275 tilt=1300\n");
-    CHECK(!strcmp(M.scene, "invalid\n"), "...and the app's scene reference (ptz.scene)");
+    CHECK(M.scene[0] == 0, "...nor to the app's scene reference (keyed to home: no flash write from the tool)");
     strcpy(M.scene, "scene1 x");
     CHECK(go("pos", 0, 0, 0, 0) == 0 && !strcmp(M.scene, "scene1 x"), "pos (read only) leaves the scene reference alone");
     CHECK(go("pos", 0, 0, 0, 0) == 0 && !strcmp(M.appframe, good) && !strcmp(M.savedpos, "pan=1275 tilt=1300\n"), "pos (read only) leaves them alone");
-    CHECK(go("move", "2", "200", "3", "3") == 0 && !strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "unknown\n"), "move invalidates them");
-    CHECK(!strcmp(M.scene, "invalid\n"), "...scene reference included");
+    CHECK(go("move", "2", "200", "3", "3") == 0 && !strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "pan=1275 tilt=1300\n") && !strcmp(M.scene, "scene1 x"), "move invalidates the app frame (RAM) only: ptz.pos and ptz.scene untouched");
     snprintf(M.appframe, sizeof(M.appframe), "%s", good); snprintf(M.savedpos, sizeof(M.savedpos), "pan=1275 tilt=1300\n");
-    CHECK(go("goto", "1300", "816", 0, 0) == 0 && !strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "unknown\n"), "goto invalidates them");
+    CHECK(go("goto", "1300", "816", 0, 0) == 0 && !strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "pan=1275 tilt=1300\n"), "goto invalidates the app frame only");
     snprintf(M.appframe, sizeof(M.appframe), "%s", good); snprintf(M.savedpos, sizeof(M.savedpos), "pan=1275 tilt=1300\n");
-    CHECK(go("park", 0, 0, 0, 0) == 0 && !strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "unknown\n"), "park invalidates them");
+    CHECK(go("park", 0, 0, 0, 0) == 0 && !strcmp(M.appframe, "invalid\n") && !strcmp(M.savedpos, "pan=1275 tilt=1300\n"), "park invalidates the app frame only");
 }
 
 static void test_frame(void)

@@ -17,7 +17,7 @@
 #      --snapshot/--snapshot-interval. Day/night and image: night auto|day|night (default auto) and ir_led auto|off (default
 #      auto) are the only WORDS accepted (exact match, passed as --night/--ir-led); image_brightness, image_contrast,
 #      image_sharpness 0..100 (default: not set, the ISP conf file values stay) and mains_hz 50 or 60 (default 50) are
-#      passed as --image-brightness/--image-contrast/--image-sharpness/--mains-hz; wdr 0|1 (default 1: WDR re-applied after every ISP mode switch, like the stock) is passed as --wdr; led auto|on|off (default on: the front blue LED stays as the system set it) and led_boot, led_nowifi, led_person, led_stream, led_night, led_idle (a pattern on | off | N:on_ms:off_ms:pause_ms; see hal-light.md) are passed as --led / --led-boot ...; audio 0|1 (default 0: OFF, the microphone is never opened and the streams carry no audio track; 1 adds an L16/8000 microphone track to both RTSP streams) is passed as --audio; ptz_cal auto|off (default auto: the motor calibrates at boot unless the scene check proves the head did not move; ptz_scene_check 0|1 (default 1) and ptz_scene_min 0.80..0.99 (default 0.90) are passed as --ptz-scene-check / --ptz-scene-min; track_invert_pan / track_invert_tilt 0|1 (default 1 / 0) as --track-invert-pan / --track-invert-tilt; off: never touched), ptz_park PAN:TILT (default 1275:300) and ptz_privacy 0|1 (default 0; 1: no video while parked) are passed as --ptz-cal/--ptz-park/--ptz-privacy. track 0|1 (default 0: person tracking off; 1 follows a person with the motor) is passed as --track; track_area_<name>=PMIN:PMAX:TMIN:TMAX (up to 4 named motor-step rectangles inside the soft range that limit the tracking; see tracking.md) as --track-area <name>=...; button_long_ms 1500..10000 (default 2000: how long the front button is held for park / home) as --button-long-ms. (The detection zones are NOT a key here: the app reads the optional card file akam/zones
+#      passed as --image-brightness/--image-contrast/--image-sharpness/--mains-hz; wdr 0|1 (default 1: WDR re-applied after every ISP mode switch, like the stock) is passed as --wdr; led auto|on|off (default on: the front blue LED stays as the system set it) and led_boot, led_nowifi, led_person, led_stream, led_night, led_idle (a pattern on | off | N:on_ms:off_ms:pause_ms; see hal-light.md) are passed as --led / --led-boot ...; audio 0|1 (default 0: OFF, the microphone is never opened and the streams carry no audio track; 1 adds an L16/8000 microphone track to both RTSP streams) is passed as --audio; ptz_cal auto|off (default auto: the motor calibrates at boot unless the scene check proves the head did not move; ptz_scene_check 0|1 (default 1) and ptz_scene_min 0.80..0.99 (default 0.90) are passed as --ptz-scene-check / --ptz-scene-min; track_invert_pan / track_invert_tilt 0|1 (default 1 / 0) as --track-invert-pan / --track-invert-tilt; off: never touched), ptz_park PAN:TILT (default 1275:300) and ptz_privacy 0|1 (default 0; 1: no video while parked) are passed as --ptz-cal/--ptz-park/--ptz-privacy. track 0|1 (default 0: person tracking off; 1 follows a person with the motor) is passed as --track; track_area_<name>=PMIN:PMAX:TMIN:TMAX (up to 4 named motor-step rectangles inside the soft range that limit the tracking; see tracking.md) as --track-area <name>=...; button_long_ms 1500..10000 (default 2000: how long the front button is held for park / home) as --button-long-ms; ptz_travel_budget_k 10..99999 (default 200: thousands of motor steps travelled since the last calibration after which no scene reference is saved, so the next cold boot calibrates) as --ptz-travel-budget-k; person tracking tuning: track_return home|stay (default stay), track_return_delay_s 0..86400 (default 30, home mode: wait after the lost-person grace), track_grace_s 0..600 (default 3), track_band_pct 2..40 (default 8), track_tilt 0|1 (default 0: opt-in until the tilt direction is verified), track_lead_pct 0..100 (default 70) as --track-return / --track-return-delay-s / --track-grace-s / --track-band-pct / --track-tilt / --track-lead-pct (see tracking.md). (The detection zones are NOT a key here: the app reads the optional card file akam/zones
 #      itself, see own-app-feasibility.md.) A bad line, an unknown key or an out-of-range value is logged and ignored
 #      (the default stays): a typo never keeps the camera from streaming. Values are digits only, never evaluated.
 #   3  the app runs with LD_LIBRARY_PATH=/appfs/lib (the camera's own vendor libs), stdout and stderr appended to
@@ -183,6 +183,14 @@ read_conf() {
                 esac
                 continue
                 ;;
+            track_return)
+                # person tracking, what to do when the person is gone: home | stay (default stay); an exact word, never evaluated
+                case $v in
+                    home | stay) ARGS="$ARGS --track-return $v" ;;
+                    *) log own_app "akam2k.conf line $n ignored: track_return must be home or stay" ;;
+                esac
+                continue
+                ;;
             ptz_scene_min)
                 # the scene check threshold: 0.80 .. 0.999 (the app parses it again and refuses anything else)
                 case $v in
@@ -268,6 +276,12 @@ read_conf() {
             audio) lo=0 hi=1 opt=--audio ;;
             ptz_privacy) lo=0 hi=1 opt=--ptz-privacy ;;
             track) lo=0 hi=1 opt=--track ;;
+            ptz_travel_budget_k) lo=10 hi=99999 opt=--ptz-travel-budget-k ;;
+            track_return_delay_s) lo=0 hi=86400 opt=--track-return-delay-s ;;
+            track_grace_s) lo=0 hi=600 opt=--track-grace-s ;;
+            track_band_pct) lo=2 hi=40 opt=--track-band-pct ;;
+            track_tilt) lo=0 hi=1 opt=--track-tilt ;;
+            track_lead_pct) lo=0 hi=100 opt=--track-lead-pct ;;
             track_invert_pan) lo=0 hi=1 opt=--track-invert-pan ;;
             track_invert_tilt) lo=0 hi=1 opt=--track-invert-tilt ;;
             ptz_scene_check) lo=0 hi=1 opt=--ptz-scene-check ;;

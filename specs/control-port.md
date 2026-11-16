@@ -101,7 +101,8 @@ Access: `r` read-only, `rw` read-write (write rule of section 3), `w` write-only
 | `ae.stable_range`, `ae.hold_range`, `ae.speed` | rw | 0 to 100 | RAM |
 | `ae.exp_max` | rw | 0 to 32767 | RAM |
 | `ae.enabled` | rw | 0 or 1 | RAM |
-| `isp.brightness`, `isp.contrast`, `isp.saturation`, `isp.sharpness` | rw | -50 to 50 | file `picture` |
+| `isp.brightness`, `isp.contrast`, `isp.saturation` | rw | -50 to 50 | file `picture` |
+| `isp.sharpness` | rw | -50 to 50, default -15 (all SHARP groups); 0 = stock | file `picture` |
 | `venc.minqp`, `venc.maxqp` | r | `28 (read-only)`, `43 (read-only)` (the suffix is part of the value) | - |
 
 A numeric `SET` is parsed strictly (whole decimal string, no trailing text, no overflow). An invalid value answers
@@ -112,7 +113,7 @@ A numeric `SET` is parsed strictly (whole decimal string, no trailing text, no o
 See [image-day-night-leds.md](image-day-night-leds.md) for ranges: `night.mode`, `night.state`, `night.trigger_hw_exp`,
 `night.day_hw_exp`, `night.confirm_samples`, `night.lock_ms`, `night.gain_pct`, `night.day_confirm_samples`,
 `night.min_night_ms`, `night.probe_ms`, `night.probe_settle_ms`, `night.ae`, `night.logic`, `night.ir_led`, and
-`img.venc_rc`, `img.wb`, `img.poll`, `img.reload`, `img.dump`. `led.status` and `led.state` are in the same file.
+`img.venc_rc`, `img.wb`, `img.poll`, `img.reload`, `img.dump`, `img.qp`, `img.sharp_all`, and the 1080p noise-reduction keys `img.nr2d_bias`, `img.uvnr_bias`, `img.nr3d_bias`, `img.sharp_bias` (0..4), `img.nr2d`, `img.uvnr` (50..400 %), `img.sharp_coring` (100..300 %), `img.nr3d_motion` (50..200 %), read-only `GET img.nr` (live exposure index, ISO level, NR tables of that level) and `SET img.dump nr`; all RAM only, defaults send nothing, details in [video-and-streaming.md](video-and-streaming.md) 5.5.7. `SET img.qp` is the only key with two values: `SET img.qp 28 43` or `SET img.qp 28,43`. `led.status` and `led.state` are in the same file.
 
 | Key | Acc | Values | Persist |
 |---|---|---|---|

@@ -29,6 +29,9 @@ reset_cam() {
     printf '1536\n' >"$CAM/video.bitrate_cfg"
     printf '15\n' >"$CAM/video.fps_cfg"
     printf '2\n' >"$CAM/video.gop_cfg"
+    printf '28\n' >"$CAM/video.minqp_cfg"
+    printf '43\n' >"$CAM/video.maxqp_cfg"
+    rm -f "$CAM/qp.log"
     printf '0\n' >"$CAM/video.cfg_pending"
     printf '1480\n' >"$CAM/video.bitrate"
     printf '147\n' >"$CAM/video.fps_actual"
@@ -47,7 +50,7 @@ while IFS= read -r line; do
     echo "LOG [ak_rtsp] noise before $1"
     key=${2:-}
     case $key in
-        video.bitrate_cfg | video.fps_cfg | video.gop_cfg | video.cfg_pending | video.bitrate | video.fps_actual) ;;
+        video.bitrate_cfg | video.fps_cfg | video.gop_cfg | video.minqp_cfg | video.maxqp_cfg | video.cfg_pending | video.bitrate | video.fps_actual) ;;
         *) echo "ERR unknown param $key"; continue ;;
     esac
     case $1 in
@@ -58,11 +61,16 @@ while IFS= read -r line; do
                 video.bitrate_cfg) { case $v in '' | *[!0-9]*) false ;; *) [ "$v" -ge 500 ] && [ "$v" -le 3000 ] ;; esac; } || { echo "ERR invalid $key value (want 500..3000 kbit/s)"; continue; } ;;
                 video.fps_cfg) case $v in 10 | 15 | 20 | 25) ;; *) echo "ERR invalid $key value (want 10, 15, 20 or 25)"; continue ;; esac ;;
                 video.gop_cfg) case $v in 1 | 2 | 3 | 4) ;; *) echo "ERR invalid $key value (want 1..4 seconds)"; continue ;; esac ;;
+                video.minqp_cfg | video.maxqp_cfg)
+                    { case $v in '' | *[!0-9]*) false ;; *) [ "$v" -ge 10 ] && [ "$v" -le 51 ] ;; esac; } || { echo "ERR invalid $key value (want 10..51)"; continue; }
+                    if [ "$key" = video.minqp_cfg ]; then lo=$v; hi=$(cat "$CAM/video.maxqp_cfg"); else lo=$(cat "$CAM/video.minqp_cfg"); hi=$v; fi
+                    [ "$lo" -lt "$hi" ] || { echo "ERR $key=$v refused: minqp must stay below maxqp"; continue; }
+                    echo "$key $v" >>"$CAM/qp.log" ;;
                 *) echo "ERR $key is read-only"; continue ;;
             esac
             [ "$mode" = nosave ] && { echo "ERR $key not saved: Read-only file system"; continue; }
             printf '%s\n' "$v" >"$CAM/$key"
-            if [ "$(cat "$CAM/video.bitrate_cfg")" = 1536 ] && [ "$(cat "$CAM/video.fps_cfg")" = 15 ] && [ "$(cat "$CAM/video.gop_cfg")" = 2 ]; then
+            if [ "$(cat "$CAM/video.bitrate_cfg")" = 1536 ] && [ "$(cat "$CAM/video.fps_cfg")" = 15 ] && [ "$(cat "$CAM/video.gop_cfg")" = 2 ] && [ "$(cat "$CAM/video.minqp_cfg")" = 28 ] && [ "$(cat "$CAM/video.maxqp_cfg")" = 43 ]; then
                 printf '0\n' >"$CAM/video.cfg_pending"
                 echo "OK $key=$v"
             else
@@ -159,6 +167,24 @@ check "no restart note from the camera: saved, no question, no kill" bash -c '[ 
 setmode normal
 reset_cam
 
+# ---- minqp / maxqp: same SET syntax, ordered so the camera accepts each step ----------------------
+reset_cam
+: >"$CAM/killed"
+printf 'n\n' | a_tty "$S" video minqp 22 maxqp 40 >"$T/q1.out" 2>&1
+check "minqp 22 maxqp 40: saved" test "$(cam video.minqp_cfg)" = 22 -a "$(cam video.maxqp_cfg)" = 40
+check "minqp 22 maxqp 40: minqp sent first (22 < 43)" bash -c '[ "$(head -1 "$1")" = "video.minqp_cfg 22" ]' _ "$CAM/qp.log"
+check "minqp 22 maxqp 40: asks to restart" has "$T/q1.out" "Restart the video service now?"
+a "$S" video </dev/null >"$T/q1s.out" 2>&1
+check "show: QP range" has "$T/q1s.out" "Quantiser (QP) range: 22 to 40"
+rm -f "$CAM/qp.log"
+printf 'n\n' | a_tty "$S" video minqp 45 maxqp 50 >"$T/q2.out" 2>&1
+check "minqp 45 maxqp 50 (min not below the current max 40): maxqp sent first, both saved" bash -c '[ "$(head -1 "$1")" = "video.maxqp_cfg 50" ] && [ "$(cat "$2")" = 45 ] && [ "$(cat "$3")" = 50 ]' _ "$CAM/qp.log" "$CAM/video.minqp_cfg" "$CAM/video.maxqp_cfg"
+printf 'y\n' | a_tty "$S" video minqp 28 maxqp 43 >"$T/q3.out" 2>&1
+check "back to 28/43: saved, nothing pending, no question" bash -c '[ "$(cat "$1")" = 28 ] && [ "$(cat "$2")" = 43 ] && ! grep -q "Restart the video service" "$3"' _ "$CAM/video.minqp_cfg" "$CAM/video.maxqp_cfg" "$T/q3.out"
+a "$S" --dry-run video minqp 22 </dev/null >"$T/q4.out" 2>&1
+check "dry-run minqp: WOULD send" has "$T/q4.out" "WOULD send: SET video.minqp_cfg 22"
+reset_cam
+
 # ---- camera cases -----------------------------------------------------------------------------
 setmode nosave
 a "$S" video bitrate 900 </dev/null >"$T/ns.out" 2>&1
@@ -176,7 +202,7 @@ check "camera unreachable: fails clearly, nothing changed" bash -c '[ "$1" -ne 0
 # ---- refusals: nothing reaches the camera ---------------------------------------------------------
 : >"$STUB_DIR/ssh.log"
 for bad in "bitrate" "bitrate 499" "bitrate 3001" "bitrate abc" "bitrate 5x" "bitrate -5" "bitrate 1.5" "bitrate 99999999" 'bitrate $(id)' "bitrate 1000; reboot" \
-    "fps" "fps 12" "fps 5" "fps 30" "fps 0" "fps 010" "gop" "gop 0" "gop 5" "gop x" \
+    "fps" "fps 12" "fps 5" "fps 30" "fps 0" "fps 010" "minqp" "minqp 9" "minqp 52" "minqp x" "minqp 020x" "maxqp" "maxqp 0" "maxqp 99" "minqp 40 maxqp 30" "minqp 30 maxqp 30" "minqp 30 minqp 31" "maxqp 40 maxqp 41" "gop" "gop 0" "gop 5" "gop x" \
     "flip" "flip h" "flip none" "mirror" "resolution 1280x720" "frob" "show bitrate 900" "bitrate 900 bitrate 1000" "fps 10 fps 15" "gop 1 gop 2"; do
     # shellcheck disable=SC2086  # word list on purpose
     a "$S" video $bad </dev/null >"$T/bad.out" 2>&1
@@ -197,7 +223,7 @@ check "dry-run: the camera was not contacted" test ! -s "$STUB_DIR/ssh.log"
 
 # ---- help ----------------------------------------------------------------------------------------
 a "$S" help >"$T/help.out" 2>&1
-check "help lists video" has "$T/help.out" "video [show | bitrate N | fps N | gop N]"
+check "help lists video" has "$T/help.out" "video [show | bitrate N | fps N | gop N | minqp N | maxqp N]"
 
 echo "wizard_video_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

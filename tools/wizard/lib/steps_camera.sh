@@ -1593,7 +1593,7 @@ picture_show() {
         ui_fail "the camera did not answer the picture settings." "its control port may be busy; try again."
         return 1
     fi
-    ui_say "  Brightness $br, contrast $co, saturation $sa, sharpness $sh (each -50 to 50, 0 = unchanged). Saved on the camera."
+    ui_say "  Brightness $br, contrast $co, saturation $sa, sharpness $sh (each -50 to 50; 0 = unchanged, except sharpness: -15 is the default, 0 is the camera's own sharpening). Saved on the camera."
     ui_say "  White balance: ${wb:-unknown} (conf = the camera's calibration, manual = Akam's own block). Saved on the camera."
     ui_say "  Day/night: ${nm:-unknown} (auto, day or night). Saved on the camera."
 }
@@ -1641,7 +1641,7 @@ cmd_picture() {
         return 2
     fi
     if [ "$reset" = 1 ]; then
-        keys=(isp.brightness isp.contrast isp.saturation isp.sharpness); vals=(0 0 0 0)
+        keys=(isp.brightness isp.contrast isp.saturation isp.sharpness); vals=(0 0 0 -15)
     fi
     step_banner_free "Picture settings"
     cam_need_ip || return 1
@@ -1656,7 +1656,7 @@ cmd_picture() {
     if [ "${#keys[@]}" -gt 0 ]; then
         local i
         for i in "${!keys[@]}"; do ctl_set "${keys[$i]}" "${vals[$i]}" || return 1; done
-        if [ "$reset" = 1 ]; then ui_good "  Done. Brightness, contrast, saturation and sharpness are back to 0 and the saved file is removed."; else ui_good "  Done."; fi
+        if [ "$reset" = 1 ]; then ui_good "  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed."; else ui_good "  Done."; fi
     fi
     picture_show
 }
@@ -1673,11 +1673,13 @@ video_num() { # WORD MIN MAX: a whole number MIN..MAX written with digits only
 }
 
 video_show() {
-    local out br fps gop pend mbr mfps
-    out=$(led_remote "GET video.bitrate_cfg" "GET video.fps_cfg" "GET video.gop_cfg" "GET video.cfg_pending" "GET video.bitrate" "GET video.fps_actual")
+    local out br fps gop pend mbr mfps qmn qmx
+    out=$(led_remote "GET video.bitrate_cfg" "GET video.fps_cfg" "GET video.gop_cfg" "GET video.minqp_cfg" "GET video.maxqp_cfg" "GET video.cfg_pending" "GET video.bitrate" "GET video.fps_actual")
     br=$(led_get video.bitrate_cfg "$out")
     fps=$(led_get video.fps_cfg "$out")
     gop=$(led_get video.gop_cfg "$out")
+    qmn=$(led_get video.minqp_cfg "$out")
+    qmx=$(led_get video.maxqp_cfg "$out")
     pend=$(led_get video.cfg_pending "$out")
     mbr=$(led_get video.bitrate "$out")
     mfps=$(led_get video.fps_actual "$out")
@@ -1688,6 +1690,7 @@ video_show() {
     ui_say "  Bitrate cap: $br kbit/s ($VIDEO_KBPS_MIN to $VIDEO_KBPS_MAX; the default is 1536)."
     ui_say "  Frame rate: $fps per second (10, 15, 20 or 25; the default is 15)."
     ui_say "  Key frame every $gop second(s) (1 to 4; the default is 2)."
+    [ -z "$qmn$qmx" ] || ui_say "  Quantiser (QP) range: ${qmn:-?} to ${qmx:-?} (10 to 51; the default is 28 to 43; lower = finer picture, bigger frames)."
     if [ "$pend" = 1 ]; then
         ui_warn "these values are saved but not running yet: they apply at the next restart of the video service."
     fi
@@ -1722,6 +1725,11 @@ cmd_video() {
                 for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != video.gop_cfg ] || { echo "akam: video gop given twice (see ./akam help)" >&2; return 2; }; done
                 keys+=(video.gop_cfg); vals+=("$((10#$2))"); shift 2
                 ;;
+            minqp | maxqp)
+                video_num "${2:-}" 10 51 || { echo "akam: video $1 needs a whole number from 10 to 51 (see ./akam help)" >&2; return 2; }
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != "video.${1}_cfg" ] || { echo "akam: video $1 given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=("video.${1}_cfg"); vals+=("$((10#$2))"); shift 2
+                ;;
             flip | mirror | resolution)
                 echo "akam: video $1 is not available: the camera's flip registers and a second resolution are not supported yet (see ./akam help)" >&2
                 return 2
@@ -1731,6 +1739,14 @@ cmd_video() {
     done
     if [ "$show" = 1 ] && [ "${#keys[@]}" -gt 0 ]; then
         echo "akam: video: show takes no other word (see ./akam help)" >&2
+        return 2
+    fi
+    local qmin="" qmax=""
+    for k in "${!keys[@]}"; do
+        case ${keys[$k]} in video.minqp_cfg) qmin=${vals[$k]} ;; video.maxqp_cfg) qmax=${vals[$k]} ;; esac
+    done
+    if [ -n "$qmin" ] && [ -n "$qmax" ] && [ "$qmin" -ge "$qmax" ]; then
+        echo "akam: video: minqp must be below maxqp (see ./akam help)" >&2
         return 2
     fi
     step_banner_free "Video settings"
@@ -1747,6 +1763,22 @@ cmd_video() {
         return 0
     fi
     rtsp_connect || return 1
+    if [ -n "$qmin" ] && [ -n "$qmax" ]; then
+        # the camera keeps minqp below maxqp after each SET: send maxqp first when the new minqp is not below its current maxqp
+        local curmax
+        curmax=$(led_get video.maxqp_cfg "$(led_remote "GET video.maxqp_cfg")")
+        if [ -n "$curmax" ] && [ "$qmin" -ge "$curmax" ]; then
+            local nk=() nv=() j
+            for j in "${!keys[@]}"; do
+                if [ "${keys[$j]}" = video.maxqp_cfg ]; then
+                    nk=("${keys[$j]}" ${nk[@]+"${nk[@]}"}); nv=("${vals[$j]}" ${nv[@]+"${nv[@]}"})
+                else
+                    nk+=("${keys[$j]}"); nv+=("${vals[$j]}")
+                fi
+            done
+            keys=("${nk[@]}"); vals=("${nv[@]}")
+        fi
+    fi
     if [ "${#keys[@]}" -gt 0 ]; then
         local i restart=0
         for i in "${!keys[@]}"; do

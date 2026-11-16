@@ -27,6 +27,7 @@ export STUB_DIR=$T/stub CAM=$T/cam
 mkdir -p "$STUB_DIR/bin" "$CAM"
 reset_cam() {
     for k in isp.brightness isp.contrast isp.saturation isp.sharpness; do printf '0\n' >"$CAM/$k"; done
+    printf -- '-15\n' >"$CAM/isp.sharpness"
     printf 'conf\n' >"$CAM/img.wb"
     printf 'auto\n' >"$CAM/night.mode"
 }
@@ -101,7 +102,7 @@ S=$(new_state p)
 # ---- show --------------------------------------------------------------------------------
 a "$S" picture </dev/null >"$T/show.out" 2>&1
 check "picture: succeeds" test $? -eq 0
-check "picture: the four numbers" has "$T/show.out" "Brightness 0, contrast 0, saturation 0, sharpness 0"
+check "picture: the four numbers" has "$T/show.out" "Brightness 0, contrast 0, saturation 0, sharpness -15"
 check "picture: white balance" has "$T/show.out" "White balance: conf"
 check "picture: night" has "$T/show.out" "Day/night: auto"
 check "picture: says wb is saved" has "$T/show.out" "own block). Saved on the camera."
@@ -144,9 +145,9 @@ check "several words" test "$(cam night.mode)" = day -a "$(cam isp.contrast)" = 
 a "$S" picture saturation 30 sharpness 4 </dev/null >/dev/null 2>&1
 a "$S" picture reset </dev/null >"$T/r.out" 2>&1
 check "reset: succeeds" test $? -eq 0
-check "reset: the four numbers are 0" bash -c 'for k in isp.brightness isp.contrast isp.saturation isp.sharpness; do [ "$(cat "$1/$k")" = 0 ] || exit 1; done' _ "$CAM"
+check "reset: 0, 0, 0 and the default sharpness -15" bash -c 'for k in isp.brightness isp.contrast isp.saturation; do [ "$(cat "$1/$k")" = 0 ] || exit 1; done; [ "$(cat "$1/isp.sharpness")" = -15 ]' _ "$CAM"
 check "reset: leaves wb and night alone" test "$(cam img.wb)" = conf -a "$(cam night.mode)" = day
-check "reset: says what it did" has "$T/r.out" "back to 0"
+check "reset: says what it did" has "$T/r.out" "sharpness to -15"
 
 # ---- camera cases -----------------------------------------------------------------------------
 setmode nosave

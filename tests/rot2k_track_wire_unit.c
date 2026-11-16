@@ -21,10 +21,20 @@ static a2k_ptz_info_t g_info;
 static int g_priv, g_nudges, g_homes, g_dx, g_dy, g_range_ok = 1;
 static void f_info(a2k_ptz_info_t *o) { *o = g_info; }
 static int f_range(int r[4]) { r[0] = 300; r[1] = 3650; r[2] = 300; r[3] = 1750; return g_range_ok ? 0 : -1; }
-static int f_nudge(int dx, int dy) { g_nudges++; g_dx = dx; g_dy = dy; return 0; }
+static int g_sp;
+static int f_nudge(int dx, int dy, int sp) { g_nudges++; g_dx = dx; g_dy = dy; g_sp = sp; return 0; }
 static int f_home(void) { g_homes++; return 0; }
 static int f_priv(void) { return g_priv; }
 static const a2k_track_ops_t OPS = { f_info, f_range, f_nudge, f_home, f_priv };
+
+/* the wiring cases below pin the sign mapping / safety gates with the slow 0.1.0 policy; the new one is in test_responsive and rot2k_track_sim.c */
+static void tinit(a2k_track_t *t, const char *path)
+{
+    struct tl_cfg c;
+    a2k_track_init(t, &OPS, path);
+    tl_cfg_legacy(&c);
+    (void)a2k_track_set_cfg(t, &c);
+}
 
 static void at(int state, int pan, int tilt)
 {
@@ -51,7 +61,7 @@ static void test_wiring(void)
     a2k_track_t t;
     struct tl_box b;
     printf("== wiring on a fake motor\n");
-    a2k_track_init(&t, &OPS, NULL);
+    tinit(&t, NULL);
     reset();
     b = person(290, 150); /* right of the centre, below it */
     see(&t, 1000, b);
@@ -203,7 +213,7 @@ static void test_areas_run(const char *dir)
     printf("== areas: editing, corners, persistence, clipping in the tracker\n");
     snprintf(p, sizeof p, "%s/track_areas", dir);
     reset();
-    a2k_track_init(&t, &OPS, p);
+    tinit(&t, p);
     CHECK(a2k_track_load(&t, conf3) == 2, "akam2k.conf areas loaded");
     a2k_track_areas_text(&t, txt, sizeof txt);
     CHECK(!strcmp(txt, "door=500:1500:500:1500;yard=1400:2400:400:1200"), "areas text");
@@ -232,7 +242,7 @@ static void test_areas_run(const char *dir)
               strstr(buf, "track_area_x=none:1\n"),
           "persisted (complete, enabled flag, incomplete as none)");
     /* a restart: the file wins over akam2k.conf */
-    a2k_track_init(&t2, &OPS, p);
+    tinit(&t2, p);
     CHECK(a2k_track_load(&t2, "track_area_other=1000:2000:1000:1500\n") == 4, "a restart reads the stored areas");
     a2k_track_areas(&t2, &a);
     CHECK(!strcmp(a.a[0].name, "door") && a.a[1].enabled == 0 && a.a[2].complete && !a.a[3].complete, "the file wins over the conf keys, enabled flags kept");
@@ -273,8 +283,44 @@ static void test_areas_run(const char *dir)
     CHECK(g_nudges == 1, "inside an enabled area: tracking works");
     a2k_track_destroy(&t);
     /* an area outside the soft range is dropped at load */
-    a2k_track_init(&t, &OPS, NULL);
+    tinit(&t, NULL);
     CHECK(a2k_track_load(&t, "track_area_far=100:200:100:200\ntrack_area_ok=1000:2000:1000:1500\n") == 1, "an area outside the soft range is dropped");
+    a2k_track_destroy(&t);
+}
+
+static void test_responsive(void)
+{
+    a2k_track_t t;
+    struct tl_box b = person(300, 96);
+    int home, delay;
+    printf("== responsive policy on the fake motor\n");
+    a2k_track_init(&t, &OPS, NULL);
+    a2k_track_set_enabled(&t, 1);
+    reset();
+    a2k_track_get_return(&t, &home, &delay);
+    CHECK(home == 0 && delay == 30, "defaults: stay, 30 s");
+    a2k_track_tick_ts(&t, 1000, 1000, &b, 1, 320, 192);
+    a2k_track_tick_ts(&t, 1200, 1200, &b, 1, 320, 192);
+    CHECK(g_nudges == 1 && g_dx > 0 && g_sp == 2, "two ticks (the acquire): one nudge, a large offset asks for the fast speed (divisor 2)");
+    reset();
+    g_info.motion_end_ms = 1500;
+    a2k_track_tick_ts(&t, 1600, 1400, &b, 1, 320, 192); /* captured during the motion */
+    a2k_track_tick_ts(&t, 1800, 1640, &b, 1, 320, 192); /* captured 140 ms after the end: still inside the 150 ms settle */
+    CHECK(g_nudges == 0, "frames captured during / right after the motion are dropped");
+    a2k_track_tick_ts(&t, 2000, 1800, &b, 1, 320, 192);
+    CHECK(g_nudges == 1, "the first settled frame corrects at once");
+    /* the return policy is live */
+    a2k_track_set_return(&t, 1, 5);
+    a2k_track_get_return(&t, &home, &delay);
+    CHECK(home == 1 && delay == 5, "set_return: home after 5 s");
+    reset();
+    at(HAL_PTZ_MOVED, 1500, 1200);
+    for (int i = 0; i < 35; i++)
+        a2k_track_tick_ts(&t, 3000 + i * 200, 0, NULL, 0, 320, 192);
+    CHECK(g_homes == 0, "grace 3 s + 5 s delay not over (seen at 2000, now 9800)");
+    for (int i = 0; i < 20; i++)
+        a2k_track_tick_ts(&t, 10000 + i * 200, 0, NULL, 0, 320, 192);
+    CHECK(g_homes == 1, "home once, 8 s after the last sighting");
     a2k_track_destroy(&t);
 }
 
@@ -284,6 +330,7 @@ int main(void)
     char cmd[300];
     if (!mkdtemp(dir)) { perror("mkdtemp"); return 2; }
     test_wiring();
+    test_responsive();
     test_areas_pure();
     test_areas_run(dir);
     snprintf(cmd, sizeof cmd, "rm -rf %s", dir);

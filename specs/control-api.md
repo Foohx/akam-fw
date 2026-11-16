@@ -72,6 +72,7 @@ Rules:
 | `rtsp.stream0.enabled`, `rtsp.stream1.enabled` | bool | default 1 | live | yes |
 | `audio.enabled` | bool | default 0 | live | yes |
 | `detect.enabled`, `track.enabled` | bool | track needs detect | live | yes |
+| `track.return`, `track.return_delay_s` | `stay|home` (default stay) / int 0..86400 (default 30) | return policy of the tracker | live | yes |
 | `led.mode`, `led.boot/nowifi/person/stream/night/idle` | enum / pattern | `auto|on|off`; patterns | live | yes |
 | `video0.kbps/max_kbps/fps/min_qp/max_qp/gop/rc` (and `video1.*`) | int/enum | `akam2k_video.h` ranges | live, else restart-component | yes |
 | `ptz.park`, `ptz.privacy`, `ptz.cal` | pattern/bool/enum | `PAN:TILT`, 0/1, `auto|off` | live | yes |
@@ -266,6 +267,8 @@ key change = stop + start (`restart_component`). The password stays in its 0600 
   reads `unknown`.
 - `track.enabled`: starts/stops the tracker; stopping holds the motor in place. Cross-field `check`: needs
   `detect.enabled`.
+- `track.return`, `track.return_delay_s`: what the camera does after the person is lost (3 s grace): `stay` where it was last seen (default,
+  never returns) or `home` after the delay (0 = right after the grace). Applied to the running tracker at once.
 
 ### 6.4 Video parameters
 Reuse `akam2k_video.h`: live setters first, else a **re-open of that channel only** with automatic rollback on failure;

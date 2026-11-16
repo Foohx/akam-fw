@@ -77,12 +77,14 @@ cap of 20 failures per minute, so a flood cannot lock the owner out).
 | `image.brightness`, `image.contrast`, `image.sharpness` | 0..100 | ISP picture, RAM only (reset by a restart) |
 | `image.mains_hz` | `50\|60` | RAM only |
 | `track.enabled` | bool | person tracking; persisted |
+| `track.return` | `stay\|home` (default `stay`) | what the camera does when the person is gone: stay where it was last seen, or go home; live, persisted (see tracking.md) |
+| `track.return_delay_s` | 0..86400 (default 30) | home mode: seconds after the lost-person grace (3 s, `track_grace_s`) before going home, 0 = right after the grace; live, persisted |
 | `video0.*`, `video1.*`: `kbps`, `max_kbps` (0 = auto), `fps`, `min_qp`, `max_qp`, `gop`, `rc` (`vbr\|cbr\|avbr`) | int / enum | ranges from `akam2k_video.h`; min QP <= max QP and peak >= target are checked for the whole PATCH; the capture thread applies live or re-opens that one channel; stored by the video module in `/config/akam/video` |
 | `net.hostname`, `net.wifi_country`, `net.wifi_band` | string / string / `2.4\|5` (default 2.4); country `none` (default) or two capitals | see below |
 
 Read-only state: `sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_rssi`,
 `net.wifi_lq` (`-1000000` = not available yet; the sample is refreshed every 30 s), `rtsp.clients`, `detect.person`,
-`night.active`, `net.apply`, `ptz.state` (`home|parked|moved|calibrating|unknown`), `ptz.pan`, `ptz.tilt` (`-1` unknown), `api.keys`.
+`night.active`, `net.apply`, `ptz.state` (`home|parked|moved|calibrating|unknown`), `ptz.pan`, `ptz.tilt` (`-1` unknown), `ptz.travel_since_cal` (steps since the last calibration), `sys.flash_writes_ptzpos` (always 0: the position lives in RAM), `sys.flash_writes_scene` (home reference files), `sys.flash_writes_store` (`/config` writes since the start, by source), `api.keys`.
 
 Persistence: `/config/akam/settings` (`key=value`, only keys that differ from the default), saved by the settings worker within a second of a
 change, limited to a burst of 4 writes then one per 30 s (flash wear), loaded at boot after `akam2k.conf`

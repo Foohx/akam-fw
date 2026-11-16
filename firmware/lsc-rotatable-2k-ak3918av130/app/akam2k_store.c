@@ -32,6 +32,9 @@ int a2k_store_read(const char *path, char *buf, size_t cap)
     return (int)n;
 }
 
+static volatile unsigned g_store_writes;
+unsigned a2k_store_writes(void) { return g_store_writes; }
+
 int a2k_store_write(const char *path, const char *text, size_t len)
 {
     return a2k_store_write_mode(path, text, len, 0);
@@ -74,5 +77,6 @@ int a2k_store_write_mode(const char *path, const char *text, size_t len, unsigne
         unlink(tmp);
         return -1;
     }
+    __atomic_add_fetch(&g_store_writes, 1u, __ATOMIC_RELAXED);
     return 0;
 }

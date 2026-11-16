@@ -319,15 +319,13 @@ static int ptz_frame_needed(struct ptzs_ctx *x, const struct ptzs_conf *cf)
 
 /* tool_invalidate: the head is about to move (or be re-declared) outside the app: the app must never trust its frame or its saved
  * position again (it calibrates at its next start). The app frame file is the one that matters (fail closed: refused when it cannot
- * be written); ptz.pos is a diagnostic, best effort (its directory may not exist). */
+ * be written). Nothing else is written: no flash write from the tool either (the home reference is keyed to home and needs no invalidation). */
 static int tool_invalidate(struct ptzs_ctx *x)
 {
     if (x->ops->save_file(PTZ_APP_FRAME_PATH, "invalid\n")) {
         fprintf(stderr, "akam_ptz: cannot write %s: %s\n", PTZ_APP_FRAME_PATH, strerror(errno));
         return 1;
     }
-    (void)x->ops->save_file(PTZ_SAVED_POS_PATH, "unknown\n");
-    (void)x->ops->save_file(PTZ_SCENE_PATH, "invalid\n"); /* best effort, like ptz.pos: the scene reference is never trusted again */
     return 0;
 }
 

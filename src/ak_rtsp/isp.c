@@ -9,6 +9,7 @@
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "isp_blocks.h"
+#include "isp_nr.h"
 
 /* -------------------------------------------------------------------------
  * ISP sensor init — parse /tmp/sensor_isp.conf, program GC20C3 via I2C
@@ -133,6 +134,15 @@ static const int g_isp_single_cmd[24] = {
  * is left immediately after the 24th module (i.e. at the sensor-register
  * section's own [u16 0x1c][u16 len] header) so a caller can keep parsing
  * from there (e.g. to locate a subsequent subfile). */
+/* Buffer for one module block of `size` bytes (header included). The 3D_NR ioctl copies 7180 bytes in the kernel
+ * (SET and GET) while the conf holds 7076 (the "3D NR rc" tail follows in the stock's own layout): the stock zero-fills
+ * that tail, so the buffer is at least 4 + 7180 bytes, zeroed, and the ioctl never reads past it. */
+uint8_t *isp_module_alloc(int mod, uint32_t size)
+{
+    if (mod == 0x04 && size < 4 + ISP_3DNR_COPY_SIZE) size = 4 + ISP_3DNR_COPY_SIZE;
+    return calloc(1, size);
+}
+
 static int isp_send_modules(FILE *f, const char *log_prefix)
 {
     int ret = 0;
@@ -149,7 +159,7 @@ static int isp_send_modules(FILE *f, const char *log_prefix)
             ret = -1; break;
         }
         uint32_t block_size = hdr[1];
-        uint8_t *block = malloc(block_size);
+        uint8_t *block = isp_module_alloc(mod, block_size);
         if (!block) { perror("isp_send_modules: malloc"); ret = -1; break; }
 
         memcpy(block, hdr, 4);
@@ -651,6 +661,11 @@ static int apply_brightness(int value /* -50..50 */)
  * buffer. */
 #define SHARP_BUF_SIZE 0xb5f8
 
+#define SHARP_GROUPS        17     /* entry 0 = manual (unused, all blocks are in linkage mode) + entries 1..16 = ISO levels 0..15
+                                    * (specs/video-and-streaming.md 5.5.1, isp_nr_layout.h); entry k at 0x4 + k * 0xab4 */
+#define SHARP_GROUP_STRIDE  0xab4
+
+static volatile int g_sharp_all = 1;   /* img.sharp_all: 1 = slider on all 17 entries (default), 0 = entry 0 only (the stock slider: the manual entry, no effect in linkage mode) */
 static int      g_sharp_baseline_valid = 0;
 static uint8_t *g_sharp_baseline = NULL; /* calloc'd once, kept for process lifetime */
 
@@ -669,7 +684,13 @@ static uint16_t sharp_field_scale(uint16_t baseline, int32_t factor, int shift, 
     return (uint16_t)(v > max ? max : v);
 }
 
-static int apply_sharpness(int value /* -50..50 */)
+/* Order of the SHARP edits (specs/video-and-streaming.md 5.5.7): pristine baseline -> img.sharp_bias (entries 1..16 take
+ * the vendor entry of a higher level) -> the slider (isp.sharpness, entry 0 or all 17 with sharp_all) -> img.sharp_coring,
+ * one SET. slider_on = 0 skips the slider (the knobs alone). Refuses (ISP_NR_REFUSED) when a knob is on and the live block
+ * is not as decoded. */
+static int g_sharp_sent; /* the block holds something other than the baseline (or an explicit slider SET was made) */
+
+static int sharp_send(int value /* -50..50 */, int slider_on)
 {
     if (!g_sharp_baseline_valid) {
         g_sharp_baseline = calloc(1, SHARP_BUF_SIZE);
@@ -681,48 +702,70 @@ static int apply_sharpness(int value /* -50..50 */)
         }
         g_sharp_baseline_valid = 1;
     }
+    const isp_nr_knobs_t *kn = isp_nr_knobs();
+    int bias = kn->v[ISP_KNOB_SHARP_BIAS], coring = kn->v[ISP_KNOB_CORING];
+    if ((bias != 0 || coring != 100) && isp_nr_sharp_check(g_sharp_baseline, SHARP_BUF_SIZE) != 0) return ISP_NR_REFUSED;
 
     uint8_t *buf = malloc(SHARP_BUF_SIZE);
     if (!buf) return -1;
-    memcpy(buf, g_sharp_baseline, SHARP_BUF_SIZE);
+    uint8_t *biased = NULL;
+    const uint8_t *src = g_sharp_baseline;      /* what the slider rescales: the baseline, or its biased copy */
+    if (bias != 0) {
+        biased = malloc(SHARP_BUF_SIZE);
+        if (!biased) { free(buf); return -1; }
+        isp_nr_sharp_bias(g_sharp_baseline, bias, biased);
+        src = biased;
+    }
+    memcpy(buf, src, SHARP_BUF_SIZE);
 
+    if (slider_on) {
     int32_t v100   = value + 50;               /* 0..100 */
     int32_t kernel_gain  = (v100 * 1024) / 50;        /* 0..2048, 1024 = neutral */
     int32_t gain_q4  = (v100 * 16)   / 50;        /* 0..32,   16   = neutral */
     int32_t gain_q8  = (v100 * 255)  / 50;        /* 0..510,  255  = neutral */
     int32_t inv_gain_q8 = ((50 - value) * 255) / 50; /* 510..0,  255  = neutral */
 
-    int16_t *kernel_a = (int16_t *)(buf + 0x678);
-    int16_t *kernel_b = (int16_t *)(buf + 0x878);
-    int16_t *base_a   = (int16_t *)(g_sharp_baseline + 0x678);
-    int16_t *base_b   = (int16_t *)(g_sharp_baseline + 0x878);
-    for (int i = 0; i < 256; i++) {
-        kernel_a[i] = sharp_kernel_scale(base_a[i], kernel_gain);
-        kernel_b[i] = sharp_kernel_scale(base_b[i], kernel_gain);
-    }
-
+    /* entry 0 is what the stock slider rescales (the manual entry, unused in linkage mode); with g_sharp_all the 16
+     * entries of the ISO levels 0..15 (kernel linkage tables, stride 0xab4, RE) get the same rescale. Default: all 17;
+     * sharp_all 0 = entry 0 only, which is the stock behaviour. */
+    int ngroups = g_sharp_all ? SHARP_GROUPS : 1;
     static const int gain_q4_offs[] = { 0x642, 0x650, 0x65e, 0x668 };
-    for (size_t i = 0; i < sizeof(gain_q4_offs)/sizeof(gain_q4_offs[0]); i++) {
-        int off = gain_q4_offs[i];
-        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), gain_q4, 4, 15);
-    }
-
     static const int gain_q8_offs[] = { 0x64a, 0x64e, 0x658, 0x65c, 0x662, 0x666, 0x66c, 0x670 };
-    for (size_t i = 0; i < sizeof(gain_q8_offs)/sizeof(gain_q8_offs[0]); i++) {
-        int off = gain_q8_offs[i];
-        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), gain_q8, 8, 255);
-    }
-
     static const int inv_gain_q8_offs[] = { 0x648, 0x64c, 0x656, 0x65a, 0x660, 0x664, 0x66a, 0x66e };
-    for (size_t i = 0; i < sizeof(inv_gain_q8_offs)/sizeof(inv_gain_q8_offs[0]); i++) {
-        int off = inv_gain_q8_offs[i];
-        *(uint16_t *)(buf + off) = sharp_field_scale(*(uint16_t *)(g_sharp_baseline + off), inv_gain_q8, 8, 255);
+    for (int g = 0; g < ngroups; g++) {
+        int gb = g * SHARP_GROUP_STRIDE;
+        int16_t *kernel_a = (int16_t *)(buf + 0x678 + gb);
+        int16_t *kernel_b = (int16_t *)(buf + 0x878 + gb);
+        const int16_t *base_a = (const int16_t *)(src + 0x678 + gb);
+        const int16_t *base_b = (const int16_t *)(src + 0x878 + gb);
+        for (int i = 0; i < 256; i++) {
+            kernel_a[i] = sharp_kernel_scale(base_a[i], kernel_gain);
+            kernel_b[i] = sharp_kernel_scale(base_b[i], kernel_gain);
+        }
+        for (size_t i = 0; i < sizeof(gain_q4_offs)/sizeof(gain_q4_offs[0]); i++) {
+            int off = gain_q4_offs[i] + gb;
+            *(uint16_t *)(buf + off) = sharp_field_scale(*(const uint16_t *)(src + off), gain_q4, 4, 15);
+        }
+        for (size_t i = 0; i < sizeof(gain_q8_offs)/sizeof(gain_q8_offs[0]); i++) {
+            int off = gain_q8_offs[i] + gb;
+            *(uint16_t *)(buf + off) = sharp_field_scale(*(const uint16_t *)(src + off), gain_q8, 8, 255);
+        }
+        for (size_t i = 0; i < sizeof(inv_gain_q8_offs)/sizeof(inv_gain_q8_offs[0]); i++) {
+            int off = inv_gain_q8_offs[i] + gb;
+            *(uint16_t *)(buf + off) = sharp_field_scale(*(const uint16_t *)(src + off), inv_gain_q8, 8, 255);
+        }
     }
+    }
+    isp_nr_sharp_coring(buf, coring);
 
     int ret = isp_tunnel(ISP_INNER_SHARP, buf);
+    if (ret == 0) g_sharp_sent = 1;
     free(buf);
+    free(biased);
     return ret;
 }
+
+static int apply_sharpness(int value /* -50..50 */) { return sharp_send(value, 1); }
 
 /* Last value each picture control was successfully applied with (0 = neutral). A pipeline reload resends the
  * file's raw calibration and silently drops them: isp_reset_picture_baselines() puts them back. */
@@ -732,6 +775,31 @@ int isp_set_saturation(int v) { int r = apply_saturation(v); if (r == 0) g_appli
 int isp_set_contrast(int v)   { int r = apply_contrast(v);   if (r == 0) g_applied_con = v; return r; }
 int isp_set_brightness(int v) { int r = apply_brightness(v); if (r == 0) g_applied_bri = v; return r; }
 int isp_set_sharpness(int v)  { int r = apply_sharpness(v);  if (r == 0) g_applied_sha = v; return r; }
+
+/* 1: the sharpness slider rescales the 15 per-ISO groups too; a non-zero slider is re-applied at once. Call with the ISP lock held. */
+void isp_set_sharp_all(int all)
+{
+    all = all ? 1 : 0;
+    if (all == g_sharp_all) return;
+    g_sharp_all = all;
+    if (g_applied_sha) isp_set_sharpness(g_applied_sha); /* now (or no longer) on all groups, from the pristine baseline */
+}
+int  isp_get_sharp_all(void)    { return g_sharp_all; }
+
+/* img.sharp_bias / img.sharp_coring changed (isp_nr_ctl.c, ISP lock held): re-send the SHARP block from the baseline with
+ * the slider (if one is applied) and the knobs. With everything at the default the pristine baseline goes back byte for
+ * byte, or nothing is sent when the block was never touched. Returns 1 = sent, 0 = nothing to send, -1, ISP_NR_REFUSED. */
+int isp_sharp_refresh(void)
+{
+    const isp_nr_knobs_t *kn = isp_nr_knobs();
+    int knobs_off = kn->v[ISP_KNOB_SHARP_BIAS] == 0 && kn->v[ISP_KNOB_CORING] == 100;
+    if (g_applied_sha) { int r = apply_sharpness(g_applied_sha); return r == 0 ? 1 : r; }
+    if (!knobs_off) { int r = sharp_send(0, 0); return r == 0 ? 1 : r; }
+    if (!g_sharp_sent || !g_sharp_baseline_valid) return 0;
+    if (isp_tunnel(ISP_INNER_SHARP, g_sharp_baseline) != 0) return -1;
+    g_sharp_sent = 0;
+    return 1;
+}
 
 /* Forget all cached picture-control baselines (saturation/contrast/
  * brightness/sharpness). Call this after any full ISP pipeline reload
@@ -749,10 +817,14 @@ void isp_reset_picture_baselines(void)
     g_contrast_baseline_valid   = 0;
     g_brightness_baseline_valid = 0;
     g_sharp_baseline_valid      = 0;
+    g_sharp_sent                = 0;
     free(g_sharp_baseline);
     g_sharp_baseline = NULL;
+    isp_nr_reset();
     if (g_applied_sat) isp_set_saturation(g_applied_sat);
     if (g_applied_con) isp_set_contrast(g_applied_con);
     if (g_applied_bri) isp_set_brightness(g_applied_bri);
     if (g_applied_sha) isp_set_sharpness(g_applied_sha);
+    else if (isp_sharp_refresh() < 0) fprintf(stderr, "[isp] sharpness knobs not re-applied after the reload\n");
+    isp_nr_reapply();
 }

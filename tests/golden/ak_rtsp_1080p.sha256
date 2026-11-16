@@ -3,7 +3,15 @@
 # 2026-11-16, feature/1080p-qp-tuning: new hash ffa4da4c... (was caded296...). Behaviour-identical by default; hash changes
 # because of new code (video_cfg minqp/maxqp keys). Proof: tests/video_apply_test.sh, CREATE_ENC payload byte-identical to
 # tests/fixtures/video_apply_default.txt with no settings file.
+# 2026-11-16, feature/1080p-image-quality: new hash aa5fb757... (was ffa4da4c...). Behaviour-identical by default; hash changes
+# because of new code (img.qp live QP key, img.sharp_all, ipdelta option). Proof: tests/video_apply_test.sh (CREATE_ENC
+# payload byte-identical to the default fixture with ipdelta 0, only rc.delta changes otherwise), tests/isp_effects_test.sh.
+# 2026-11-16, feature/1080p-sharp-default: new hash e50f020a... (was aa5fb757...). behaviour change: sharpness default -15 on all SHARP entries (17, incl. ISO level 15) and a 3D_NR send buffer of 7180 B with a zero tail (stock; was 7080, a 104-byte over-read),
+# validated on akam-01 2026-11-16 (also img.qp "MIN MAX" control parser fix). Stock: isp.sharpness 0 + img.sharp_all 0 (tests/isp_effects_test.sh).
+# 2026-11-16, feature/1080p-nr-keys: new hash 775e8674... (was e50f020a...). New code, default behaviour identical: the NR/SHARP knobs
+# (img.nr2d_bias ... img.nr3d_motion, GET img.nr, SET img.dump nr) send nothing while every key is at its default. Proof:
+# tests/isp_nr_test.sh (composer output memcmp-identical to the baseline, zero SETs at default), tests/isp_effects_test.sh.
 # Command (from the repo root, zig 0.14.1 x86_64-linux, the pinned one in tools/.toolchain):
 #   make -C src/ak_rtsp repro        (AKAM_REPRO=1, SOURCE_DATE_EPOCH=0, -ffile-prefix-map, -g0, zig objcopy --strip-all)
 # Check: tools/ci/repro_check.sh. A different zig changes the hash: update this file in the same commit as the pin.
-ffa4da4ce46393e26af770f8403521bf147f8826bebf3d8ad06e594fd9a81620  ak_rtsp.repro
+775e8674ca5777c5c6b8707bc931c522f6af6ced6cd9756101ff8dbd573f563b  ak_rtsp.repro

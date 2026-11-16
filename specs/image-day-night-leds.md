@@ -29,11 +29,20 @@ beyond the first comparisons.
 
 | Key | Range | Neutral | Saved |
 |---|---|---|---|
-| `isp.brightness`, `isp.contrast`, `isp.saturation`, `isp.sharpness` | -50 to 50 (integer) | 0 | `/etc/config/akam/picture` |
+| `isp.brightness`, `isp.contrast`, `isp.saturation` | -50 to 50 (integer) | 0 | `/etc/config/akam/picture` |
+| `isp.sharpness` | -50 to 50 (integer) | **-15** (all 16 ISO-level entries of the SHARP block, `img.sharp_all` 1); 0 = the stock picture | `/etc/config/akam/picture` |
 
 - The value is a delta from the hardware baseline captured at the first call. `0` leaves the file's block unchanged.
+- Sharpness default -15 (2026-11-16, measured on akam-01: the stock SHARP block amplifies sensor noise, see
+  [video-and-streaming.md](video-and-streaming.md) section 5.6). It is applied at every start, also when no `picture` file
+  exists. Migration: a camera with no saved sharpness gets -15 after the update. A saved value always wins: the file
+  written by `SET isp.sharpness N` (any N, including 0 for the stock picture) is read back as is, so a camera that
+  saved any picture setting before this change has a `sharpness=0` line and keeps the stock sharpness until
+  `./akam picture sharpness -15` (or `picture reset`, which now sets -15). Only a file without a `sharpness=` line gets -15.
+  Stock behaviour: `SET isp.sharpness 0` (saved) and `SET img.sharp_all 0` (RAM): the SHARP block is then never sent and is the
+  camera's own, byte for byte (`tests/isp_effects_test.sh`).
 - Saved file: four lines `brightness=`, `contrast=`, `saturation=`, `sharpness=`; written after every successful
-  loopback `SET` of any of the four; atomic; all four at 0 removes the file. A remote `SET` (debug mode) changes the
+  loopback `SET` of any of the four; atomic; all four at their defaults (0, 0, 0, -15) removes the file. A remote `SET` (debug mode) changes the
   picture in RAM only.
 - Applied at every start after the ISP runs (`control_apply_saved_isp`). A value the ISP refuses is logged and the others
   still apply.
@@ -190,6 +199,7 @@ then `/etc/config/akam/image` (saved), as `key=value` lines with `#` comments.
 | `venc_rc` (`AKAM_VENC_RC`) | `legacy`, `stock` | `legacy` | `CREATE_ENC` rate-control sub-struct: `legacy` keeps the values `ak_rtsp` always sent; `stock` sends exactly what the stock application sends. `stock` has not been tried without risk: other rate-control words crashed the kernel twice. Keep it in `/tmp/akam_image` (a crash then self-heals at reboot), never in the saved file, until a hardware test has passed |
 | `wb` (`AKAM_IMG_WB`) | `conf`, `manual` | `conf` | See section 1 |
 | `poll` (`AKAM_IMG_POLL`) | 0, 1 | 0 | 1 polls the 3D-NR statistics (about 1.2 Hz) and sensor fps (about 2 Hz) like stock |
+| `ipdelta` (`AKAM_VENC_IPDELTA`) | -12 to 12 | 0 | `rc.delta` of the `legacy` CREATE_ENC rc sub-struct (I/P QP offset). 0 = the payload always sent. Untested on hardware: keep it in `/tmp/akam_image` (RAM) first. See specs/video-and-streaming.md section 5 |
 
 Keys (read with `GET`, written with `SET` from loopback or in debug mode):
 
@@ -198,6 +208,8 @@ Keys (read with `GET`, written with `SET` from loopback or in debug mode):
 | `img.venc_rc` | ro | Active choice (fixed once the encoder exists) |
 | `img.wb` | rw | `conf` or `manual`, applies at once (needs the ISP pipeline to be initialised: otherwise `ERR ISP not initialised yet`). A loopback `SET` that changes the value is saved to the `image` file (the `wb=` line is replaced in place) |
 | `img.poll` | rw | 0 or 1, applies at once, not saved |
+| `img.qp` | rw | `SET img.qp MIN MAX` or `SET img.qp MIN,MAX` (10 <= MIN < MAX <= 51; the control port joins the two tokens): live QP bounds of the running encoder (VENC_IOCTL_SET_QP 0x400c56fb, 12 bytes), RAM only, a restart goes back to `video.minqp_cfg` / `video.maxqp_cfg`. Not hardware-tested on the 1080p (RE only, validated on the 2K). `GET` says `unchanged` until a first accepted SET |
+| `img.sharp_all` | rw | 1 (default) or 0, needs the ISP pipeline: the `isp.sharpness` slider rescales all 17 entries of the SHARP block (manual entry 0 and the 16 ISO levels); 0 = entry 0 only; 0 = group 0 only, the stock slider. A non-zero slider is re-applied at once. RAM only (a restart goes back to 1). See specs/video-and-streaming.md section 5.6 |
 | `img.reload` | wo | `1`: re-send the whole file for the current mode, reset picture baselines, re-apply the AE tuning |
 | `img.dump` | wo | `confirmed` or `all`: read the live ISP blocks, log one line per block against the file's day and night sub-files, write `/tmp/isp_live/isp_blocks.bin` |
 

@@ -277,7 +277,44 @@ int a2k_track_enabled(a2k_track_t *t)
     return e;
 }
 
+void a2k_track_set_return(a2k_track_t *t, int home, int delay_s)
+{
+    pthread_mutex_lock(&t->mu);
+    t->cfg.return_home = home ? 1 : 0;
+    t->tl.cfg.return_home = t->cfg.return_home;
+    if (delay_s >= 0 && delay_s <= 86400) {
+        t->cfg.return_delay_s = delay_s;
+        t->tl.cfg.return_delay_s = delay_s;
+    }
+    pthread_mutex_unlock(&t->mu);
+}
+
+void a2k_track_get_return(a2k_track_t *t, int *home, int *delay_s)
+{
+    pthread_mutex_lock(&t->mu);
+    *home = t->cfg.return_home;
+    *delay_s = t->cfg.return_delay_s;
+    pthread_mutex_unlock(&t->mu);
+}
+
+int a2k_track_set_cfg(a2k_track_t *t, const struct tl_cfg *c)
+{
+    int rc = tl_cfg_validate(c);
+    if (rc != 0)
+        return -1;
+    pthread_mutex_lock(&t->mu);
+    t->cfg = *c;
+    (void)tl_init(&t->tl, &t->cfg);
+    pthread_mutex_unlock(&t->mu);
+    return 0;
+}
+
 void a2k_track_tick(a2k_track_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int fw, int fh)
+{
+    a2k_track_tick_ts(t, now_ms, 0, boxes, n, fw, fh);
+}
+
+void a2k_track_tick_ts(a2k_track_t *t, int64_t now_ms, int64_t cap_ms, const struct tl_box *boxes, int n, int fw, int fh)
 {
     a2k_ptz_info_t i;
     struct tl_ptz p;
@@ -298,6 +335,8 @@ void a2k_track_tick(a2k_track_t *t, int64_t now_ms, const struct tl_box *boxes, 
     t->active = 1;
     memset(&p, 0, sizeof p);
     p.moving = moving;
+    p.cap_ms = cap_ms;
+    p.motion_end_ms = i.motion_end_ms;
     p.pan = (int)i.pan;
     p.tilt = (int)i.tilt;
     p.pan_min = r[0];
@@ -311,7 +350,7 @@ void a2k_track_tick(a2k_track_t *t, int64_t now_ms, const struct tl_box *boxes, 
         mdy = -o.dtilt;
         ok = a2k_tareas_clip(&t->areas, p.pan, p.tilt, mdx, mdy, &mdx, &mdy);
         if (ok && (mdx || mdy)) {
-            (void)t->ops.nudge(mdx, mdy);
+            (void)t->ops.nudge(mdx, mdy, o.speed);
             t->nudges++;
         }
     } else if (o.kind == TL_HOME) {

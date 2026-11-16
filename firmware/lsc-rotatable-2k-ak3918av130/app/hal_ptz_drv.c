@@ -70,7 +70,7 @@ static void d_log(const char *line)
 
 const hal_ptz_ops_t *hal_ptz_linux_ops(const char *dev)
 {
-    static const hal_ptz_ops_t ops = { d_open, d_ioctl, d_sleep, d_load, d_save, d_log, NULL, NULL };
+    static const hal_ptz_ops_t ops = { d_open, d_ioctl, d_sleep, d_load, d_save, d_log, NULL, NULL, NULL, NULL };
     g_dev = dev;
     return &ops;
 }

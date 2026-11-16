@@ -5,7 +5,8 @@
  * The engine reuses the validated safe-motion layer of the Rotatable 2K tool (ptz/akam_ptz_safe.h, hardware verified): soft range,
  * timed moves polled every 50 ms, stall detection, the shifted driver frame (the driver's own limits ARE the soft range, so a
  * killed process cannot walk the motor into a stop), goto. On top of it: boot calibration against the mechanical stops, the
- * saved position (atomic file, minimal flash writes), cancel.
+ * cancel. The position lives in RAM only: nothing about the motor is written to the flash (a cold boot proves HOME from the scene
+ * or calibrates).
  *
  * One motor per process; every call except hal_ptz_cancel() must come from ONE thread (akam2k_ptz.c).
  * Positions are "real" steps in the stock numbering (pan 0 = left stop, tilt 0 = bottom stop; pan + = right, tilt + = up). */
@@ -37,12 +38,23 @@ typedef struct hal_ptz_ops {
     int (*load_file)(const char *path, char *buf, unsigned cap); /* length, or -1 with errno (ENOENT = absent) */
     int (*save_file)(const char *path, const char *data);        /* atomic replace; 0 ok */
     void (*log)(const char *line);                               /* optional */
-    /* Optional scene check (scene_check.h): at a cold boot with cal auto, BEFORE any motor command, cold_check() answers "the head provably did
-     * not move while off": 1 and the saved position (declared to the driver, no motion, no calibration), else 0 (calibrate as usual).
-     * scene_drop() is called before every calibration: the saved reference is no longer valid. A saved position equal to the park position is never
-     * declared (the parked view is the least informative one): it calibrates. */
+    /* Optional scene check (scene_check.h): at a cold boot with cal auto, BEFORE any motor command, cold_check() answers "the head is provably
+     * at HOME": *pan / *tilt come in as the configured home and must come out unchanged (the reference is keyed to home; anything else is
+     * refused); 1 = proven (home declared to the driver, no motion, no calibration), else 0 (calibrate as usual). A home equal to the park
+     * position is never claimed (the parked view is the least informative one): it calibrates.
+     * scene_drop() is called, best effort and rarely, when the reference must not be used any more: a calibration failed (not a cancel), or the
+     * position claimed by the scene check was lost (stall, I/O error). It is NOT called before moves or calibrations: the reference is keyed
+     * to home, so moving the head away does not invalidate it. */
     int (*cold_check)(uint32_t *pan, uint32_t *tilt);
-    int (*scene_drop)(void); /* 0 ok, -1: the reference could not be invalidated: the calibration is refused (fail closed, like ptz.pos) */
+    /* Multi-view (optional, both or none). cold_check may answer 2 = "the saved view is featureless; stored views at nearby offsets may prove the
+     * position": *pan / *tilt = the claimed position. The claimed position is then declared to the driver (no motion), the head is moved by
+     * cold_offset(i) (a relative offset in steps, at most 200 per axis whatever the hook says; each target inside the soft range) with the
+     * safe-motion layer, cold_probe(i) says whether the live view there matches the stored one (1), and on a match the head goes back to the
+     * claimed position (trusted, no calibration). Anything else (no match at any offset, a refused or failed move, a cancel): the position is
+     * forgotten again and the full calibration runs. */
+    int (*cold_offset)(unsigned i, int *dpan, int *dtilt); /* 0: offset i is available, -1: not (i = 0..7 are asked) */
+    int (*cold_probe)(unsigned i); /* 1 match, 0 no match, -1 cancelled (shutdown): nothing more is moved, no calibration starts */
+    int (*scene_drop)(void); /* 0 ok, -1 not done (logged, nothing refused: a stale reference is only ever used when the live view matches it) */
 } hal_ptz_ops_t;
 
 /* The real driver for the node `dev`: open O_RDWR, ioctl, nanosleep, fopen + rename. */
@@ -55,14 +67,13 @@ enum { HAL_PTZ_OK = 0, HAL_PTZ_EIO = 1, HAL_PTZ_EREFUSED = 4, HAL_PTZ_ESTALL = 5
 typedef struct hal_ptz hal_ptz_t;
 
 /* conf_text: the optional ptz.conf (NULL = none): the soft range keys of akam_ptz_safe.h ("ptz.conf", strict). A bad one is
- * refused (-1, err filled) and nothing is created. pos_path: the saved position file. The descriptor is copied. */
-hal_ptz_t *hal_ptz_new(const hal_ptz_desc_t *d, const hal_ptz_ops_t *ops, const char *conf_text, const char *pos_path,
-                       char *err, size_t errcap);
+ * refused (-1, err filled) and nothing is created. The descriptor is copied. */
+hal_ptz_t *hal_ptz_new(const hal_ptz_desc_t *d, const hal_ptz_ops_t *ops, const char *conf_text, char *err, size_t errcap);
 void hal_ptz_free(hal_ptz_t *p);
 const hal_ptz_desc_t *hal_ptz_desc(const hal_ptz_t *p); /* the effective descriptor (after ptz.conf) */
 
 /* Forces the long calibration now (the Recalibrate button): from any state with the motor open, even when trusted. Same result as the
- * calibration of hal_ptz_start (home, trusted); the scene reference is dropped first. Refused (HAL_PTZ_EREFUSED) when the motor is not
+ * calibration of hal_ptz_start (home, trusted); the home reference stays (it is keyed to home). Refused (HAL_PTZ_EREFUSED) when the motor is not
  * open. Cancel (hal_ptz_cancel) aborts it like any calibration. */
 int hal_ptz_recalibrate(hal_ptz_t *p);
 /* Re-reads the driver counters (PTZ thread) and compares them with the cached position: 0 when the position is trusted, known and the counters agree
@@ -70,15 +81,16 @@ int hal_ptz_recalibrate(hal_ptz_t *p);
 int hal_ptz_verify_pos(hal_ptz_t *p);
 /* Full calibrations completed by this process (0 after an adoption, a scene-check match or cal off). */
 unsigned hal_ptz_cal_count(const hal_ptz_t *p);
+unsigned long hal_ptz_travel(const hal_ptz_t *p);   /* steps travelled by motions since the last calibration of this process (the mechanical wear budget) */
 
 /* Opens the motor and brings it to a known position: (1) the driver already holds our frame (process restart in the same boot: our frame
  * file in /tmp and non-zero counters; never after a stall or a use of akam_ptz): adopted; (2) cal auto otherwise, i.e. every
- * COLD BOOT: the optional scene check (ops.cold_check: the head provably did not move: the saved position is declared, no motion), else
- * the calibration (see hal_ptz.c), then home (the saved position file is a diagnostic only, never trusted: the head
- * can move outside the app); (3) cal off: nothing is touched, the state stays unknown and every motion is refused.
+ * COLD BOOT: the optional scene check (ops.cold_check: the head is provably at home: home is declared, no motion), else
+ * the calibration (see hal_ptz.c), then home (no position is stored on the flash: the head can move outside the app, and a power cut while
+ * it was away from home costs one calibration at the next boot); (3) cal off: nothing is touched, the state stays unknown and every motion is refused.
  * 0 ok (also for (4)), else an error (state unknown). Blocks for up to about a minute while calibrating. */
 int hal_ptz_start(hal_ptz_t *p, int cal);
-void hal_ptz_close(hal_ptz_t *p); /* stops the motor, writes the pending position, closes nothing else */
+void hal_ptz_close(hal_ptz_t *p); /* stops the motor, closes nothing else */
 
 /* Motions: 0 ok, HAL_PTZ_EREFUSED (soft limit, unknown position), ESTALL, EIO, ECANCEL (hal_ptz_cancel took effect). */
 int hal_ptz_goto(hal_ptz_t *p, uint32_t pan, uint32_t tilt);
@@ -86,6 +98,7 @@ int hal_ptz_home(hal_ptz_t *p);
 int hal_ptz_park(hal_ptz_t *p);
 int hal_ptz_step(hal_ptz_t *p, int dir);          /* one bounded step of desc.step steps in a logical direction */
 int hal_ptz_nudge(hal_ptz_t *p, int dx, int dy);  /* relative, in steps, clipped to the soft range */
+int hal_ptz_nudge_sp(hal_ptz_t *p, int dx, int dy, int speed); /* the same at a speed divisor (2..20, else refused by the safe layer; 0 = default) */
 
 /* Any thread: the running motion stops within about 50 ms and returns HAL_PTZ_ECANCEL (a cancel with nothing running is dropped by
  * the next motion). It also aborts a start in progress and a calibration (the motor is stopped, the position stays unknown): use it
@@ -99,9 +112,5 @@ void hal_ptz_mark(hal_ptz_t *p);
 
 int hal_ptz_state(const hal_ptz_t *p);            /* enum hal_ptz_state (HAL_PTZ_MOVED while a motion runs) */
 int hal_ptz_pos(const hal_ptz_t *p, uint32_t *pan, uint32_t *tilt); /* 1 known (filled), 0 unknown */
-/* Writes the position to the saved file when it differs from what is stored (the caller picks the moment: idle for a while). */
-void hal_ptz_flush(hal_ptz_t *p);
-unsigned hal_ptz_store_writes(const hal_ptz_t *p); /* saved-file writes so far (tests, flash wear) */
-int hal_ptz_dirty(const hal_ptz_t *p);             /* a position waits for hal_ptz_flush */
 
 #endif

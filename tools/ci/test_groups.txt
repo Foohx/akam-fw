@@ -36,6 +36,7 @@ native imgq_test.sh
 shell isp_block_diff_test.sh
 native isp_blocks_test.sh
 native isp_effects_test.sh
+native isp_nr_test.sh
 native isp_tune_test.sh
 native jitter_test.sh
 shell kit_test.sh
@@ -102,6 +103,7 @@ shell wizard_rtsp_auth_test.sh
 shell wizard_talk_test.sh
 shell wizard_tui_pty_test.sh
 shell wizard_tui_widgets_test.sh
+shell video_quality_test.sh
 shell wizard_video_test.sh
 shell wrapper_backoff_test.sh
 native wsd_test.sh

@@ -61,6 +61,10 @@
 #define VENC_IOCTL_BIND_VI_CHN    0x401456e1  /* _IOW('V',0xe1, venc_bind_vi_req[20]) */
 #define VENC_IOCTL_ACTIVATE       0x400456e2  /* _IOW('V',0xe2, uint32) start encoder */
 #define VENC_IOCTL_DEACTIVATE     0x400456f5  /* _IOW('V',0xf5, uint32) stop  encoder */
+/* Live QP bounds of a running encoder: 12 bytes {chn_id, minqp, maxqp}, minqp 10..51, maxqp <= 51, minqp <= maxqp.
+ * RE only: read in the ak_venc_adapter.ko dispatch (copy_from_user of 12 bytes) and in the 2K libmpi_venc ak_venc_set_qp
+ * (docs/porting/lsc-rotatable-2k/venc-live-params.md: returned 0 on the 2K). Never run on the 1080p: img.qp only. */
+#define VENC_IOCTL_SET_QP         0x400c56fb
 #define VENC_IOCTL_GET_STREAM     0x402056ea  /* _IOW('V',0xea, venc_stream_req[32]) */
 #define VENC_IOCTL_RELEASE_STREAM 0x402056ff  /* _IOW('V',0xff, venc_stream_req[32]) */
 

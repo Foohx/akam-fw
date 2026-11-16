@@ -23,6 +23,7 @@ int isp_tune_load(const char *path, isp_tune_t *t)
 {
     char buf[512];
     memset(t, 0, sizeof(*t));
+    t->sharpness = ISP_TUNE_DEFAULT_SHARPNESS;
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -49,7 +50,7 @@ int isp_tune_load(const char *path, isp_tune_t *t)
 
 int isp_tune_save(const char *path, const isp_tune_t *t)
 {
-    if (!t->brightness && !t->contrast && !t->saturation && !t->sharpness) {
+    if (!t->brightness && !t->contrast && !t->saturation && t->sharpness == ISP_TUNE_DEFAULT_SHARPNESS) {
         if (unlink(path) < 0 && errno != ENOENT) return -1;
         return 0;
     }

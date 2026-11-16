@@ -301,6 +301,7 @@ int venc_create_encoder(void)
         req.rc.flag2         = 0;   /* MVVRange_factor: the library default (40), as stock */
     } else {
         req.rc.cub_size      = 0;
+        req.rc.delta         = imgq_venc_ipdelta(); /* 0 unless the ipdelta option is set */
         req.rc.minqp         = (int16_t)video_minqp();
         req.rc.maxqp         = (uint16_t)video_maxqp();
         req.rc.srd_threshold = 128;
@@ -395,4 +396,13 @@ int venc_activate(void)
     }
     printf("[ak_rtsp] ACTIVATE OK\n");
     return 0;
+}
+
+/* Live QP bounds, see VENC_IOCTL_SET_QP in ak_ioctls.h. Does not touch the CREATE_ENC payload nor the saved settings. */
+int venc_set_qp_live(int minqp, int maxqp)
+{
+    if (g_chn0_fd < 0) { errno = ENODEV; return -1; }
+    if (minqp < 10 || maxqp > 51 || minqp > maxqp) { errno = EINVAL; return -1; }
+    uint32_t req[3] = { 0, (uint32_t)minqp, (uint32_t)maxqp };
+    return ioctl(g_chn0_fd, VENC_IOCTL_SET_QP, req);
 }

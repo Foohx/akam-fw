@@ -61,7 +61,7 @@ int a2k_tareas_fit(const a2k_tareas_t *t, const int r[4]);
 typedef struct {
     void (*info)(a2k_ptz_info_t *out);
     int (*range)(int r[4]);          /* soft range: pan_min, pan_max, tilt_min, tilt_max; 0 ok, -1 unknown */
-    int (*nudge)(int dx, int dy);
+    int (*nudge)(int dx, int dy, int speed); /* relative steps (right / up positive); speed divisor 2..20, 0 = the default */
     int (*home)(void);
     int (*privacy)(void);            /* 1: the video is hidden */
 } a2k_track_ops_t;
@@ -84,8 +84,15 @@ void a2k_track_destroy(a2k_track_t *t);
  * do not fit the soft range are dropped with a log line. Returns the number of areas. */
 int a2k_track_load(a2k_track_t *t, const char *conf);
 void a2k_track_set_enabled(a2k_track_t *t, int on);
+/* The return policy (live): home = 1 / stay = 0, and the delay in seconds after the lost-person grace before going home. */
+void a2k_track_set_return(a2k_track_t *t, int home, int delay_s);
+void a2k_track_get_return(a2k_track_t *t, int *home, int *delay_s);
+/* The tuning (init time, before the detection runs): replaces the policy config (areas and the switch are kept). -1 when invalid. */
+int a2k_track_set_cfg(a2k_track_t *t, const struct tl_cfg *c);
 int a2k_track_enabled(a2k_track_t *t);
-/* One detection tick; n = 0 when nobody is seen. Boxes in the detector frame fw x fh. */
+/* One detection tick; n = 0 when nobody is seen. Boxes in the detector frame fw x fh. cap_ms: when the frame was captured (same clock as
+ * now_ms; 0 = unknown): frames captured while the motor ran are dropped (a2k_ptz_info_t.motion_end_ms). */
+void a2k_track_tick_ts(a2k_track_t *t, int64_t now_ms, int64_t cap_ms, const struct tl_box *boxes, int n, int fw, int fh);
 void a2k_track_tick(a2k_track_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int fw, int fh);
 void a2k_track_areas(a2k_track_t *t, a2k_tareas_t *out);
 /* Area editing; 0 ok, -1 refused (full, bad or duplicate name, no such slot, position unknown, degenerate area). Each ok edit is persisted. */

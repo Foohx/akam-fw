@@ -98,16 +98,17 @@ static int             g_log_pipe_r  = -1;
  * "what did we last ask for"), so the logical -50..50 value the user set is
  * tracked here, same ownership pattern as ae_tuning_t/night_tuning_t but
  * without a matching isp_tuning_t struct. 0 = neutral/unchanged from stock
- * default (matches isp_set_* treating the value as a delta off the
+ * (sharpness: the default is ISP_TUNE_DEFAULT_SHARPNESS; matches isp_set_* treating the value as a delta off the
  * hardware/cached baseline captured at first call). */
 static int g_isp_saturation = 0;
 static int g_isp_contrast   = 0;
 static int g_isp_brightness = 0;
-static int g_isp_sharpness  = 0;
+static int g_isp_sharpness  = ISP_TUNE_DEFAULT_SHARPNESS;   /* applied at start by control_apply_saved_isp() */
 
 /* Saved with the same four values after every successful isp.* SET (8091 SET only; the values come back at the
- * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at 0
- * removes the file: that is the default. Only for a local SET (loopback);
+ * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at the defaults
+ * is no longer the default: sharpness 0 (stock) is saved as a line; the defaults (sharpness ISP_TUNE_DEFAULT_SHARPNESS,
+ * the rest 0) remove the file. Only for a local SET (loopback);
  * a network SET changes the picture in RAM only. Called with g_set_lock held. */
 static int g_persist_isp;  /* set by do_set() under g_set_lock: only a local (SSH) SET writes flash */
 
@@ -416,7 +417,7 @@ static void do_get(cli_t *c, const char *param)
         pthread_mutex_unlock(&g_dbg_lock);
         reply(c, "ctl.debug_remaining=%d", r);
     } else {
-        char line[320], val[64];
+        char line[480], val[64];
         if (night_ctl_get(param, line, sizeof(line)) == 0)          reply(c, "%s", line);
         else if (ledsys_ctl_get(param, line, sizeof(line)) == 0)    reply(c, "%s", line);
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(c, "%s", line);
@@ -644,7 +645,7 @@ static void do_set(cli_t *c, const char *param, const char *value)
 void control_apply_saved_isp(void)
 {
     isp_tune_t t;
-    if (!isp_tune_load(ISP_TUNE_FILE, &t)) return;
+    (void)isp_tune_load(ISP_TUNE_FILE, &t);   /* absent file: the defaults, sharpness ISP_TUNE_DEFAULT_SHARPNESS; applied, never written */
     pthread_mutex_lock(&g_set_lock);
     if (t.saturation && isp_set_locked(isp_set_saturation, t.saturation) == 0) g_isp_saturation = t.saturation;
     if (t.contrast && isp_set_locked(isp_set_contrast, t.contrast) == 0)     g_isp_contrast = t.contrast;
@@ -713,6 +714,12 @@ static void handle_control_client(cli_t *c)
             char *param = strtok_r(NULL, " ", &sp);
             char *value = strtok_r(NULL, " ", &sp);
             if (!param || !value) { reply(c, "ERR SET requires param and value"); continue; }
+            /* img.qp is the one key with two values ("MIN MAX", or "MIN,MAX" as one token): join them for imgq */
+            char pair[512];
+            if (!strcmp(param, "img.qp")) {
+                char *v2 = strtok_r(NULL, " ", &sp);
+                if (v2) { snprintf(pair, sizeof(pair), "%s %s", value, v2); value = pair; }
+            }
             do_set(c, param, value);
         } else if (!strcasecmp(cmd, "QUIT")) {
             reply(c, "OK bye");

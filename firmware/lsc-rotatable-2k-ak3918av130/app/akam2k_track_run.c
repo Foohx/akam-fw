@@ -24,19 +24,24 @@ static int real_range(int r[4])
 }
 
 static int real_home(void) { return a2k_ptz_command(A2K_PTZ_HOME); }
+static int real_nudge(int dx, int dy, int speed) { return a2k_ptz_nudge_sp(dx, dy, speed); }
 
-void a2k_track_run_start(int enabled, const char *conf_areas, void (*notify)(void), int invert_pan, int invert_tilt)
+void a2k_track_run_start(int enabled, const char *conf_areas, void (*notify)(void), int invert_pan, int invert_tilt, const struct tl_cfg *tune)
 {
-    static const a2k_track_ops_t ops = { a2k_ptz_info, real_range, a2k_ptz_nudge, real_home, a2k_ptz_privacy_active };
+    static const a2k_track_ops_t ops = { a2k_ptz_info, real_range, real_nudge, real_home, a2k_ptz_privacy_active };
     a2k_track_init(&g_t, &ops, A2K_STORE_TRACK);
     g_t.notify = notify;
+    if (tune)
+        g_t.cfg = *tune;
     g_t.cfg.invert_pan = invert_pan; /* the 2K binding: a person on one side must turn the camera TOWARD it (measured: not inverted = away) */
     g_t.cfg.invert_tilt = invert_tilt;
     (void)tl_init(&g_t.tl, &g_t.cfg);
     (void)a2k_track_load(&g_t, conf_areas);
     a2k_track_set_enabled(&g_t, enabled);
     g_up = 1;
-    a2k_log("track: invert_pan %d invert_tilt %d", invert_pan, invert_tilt);
+    a2k_log("track: invert_pan %d invert_tilt %d, band %d%%, tilt %d, lead %d%%, return %s after %d s + %d s grace", invert_pan, invert_tilt,
+            g_t.cfg.deadband_pct, g_t.cfg.tilt_enable, g_t.cfg.lead_pct, g_t.cfg.return_home ? "home" : "stay", g_t.cfg.return_delay_s,
+            g_t.cfg.lost_grace_s);
     a2k_log("track: person tracking %s", enabled ? "on" : "off (akam2k.conf track=1 or the Home Assistant switch turns it on)");
 }
 
@@ -50,8 +55,8 @@ void a2k_track_run_stop(void)
 
 a2k_track_t *a2k_track_run_get(void) { return g_up ? &g_t : 0; }
 
-void a2k_track_feed(int64_t now_ms, const struct tl_box *boxes, int n, int fw, int fh)
+void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *boxes, int n, int fw, int fh)
 {
     if (g_up)
-        a2k_track_tick(&g_t, now_ms, boxes, n, fw, fh);
+        a2k_track_tick_ts(&g_t, now_ms, cap_ms, boxes, n, fw, fh);
 }

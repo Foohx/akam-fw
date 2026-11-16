@@ -163,12 +163,42 @@ static int track_set(const char *key, const char *val, st_apply_t *eff)
     return 0;
 }
 
+/* ------------------------------------------------------------------ track.return, track.return_delay_s */
+static int tret_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int home = 0, delay = 30;
+    if (t)
+        a2k_track_get_return(t, &home, &delay);
+    if (strcmp(key, "track.return") == 0)
+        return puts_(out, cap, home ? "home" : "stay");
+    return put(out, cap, delay);
+}
+
+static int tret_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int home, delay;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    a2k_track_get_return(t, &home, &delay);
+    if (strcmp(key, "track.return") == 0)
+        home = strcmp(val, "home") == 0;
+    else
+        delay = atoi(val);
+    a2k_track_set_return(t, home, delay);
+    a2k_log("track: return %s, delay %d s (API)", home ? "home" : "stay", delay);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ video<N>.* */
 static const char *const VP_NAME[A2K_VP_N] = { "kbps", "max_kbps", "fps", "min_qp", "max_qp", "gop", "rc" };
 static const char *const OPT_RC[] = { "vbr", "cbr", "avbr", NULL };
 static const char *const OPT_AUTO[] = { "auto", "on", "off", NULL };
 static const char *const OPT_IR[] = { "auto", "off", NULL };
 static const char *const OPT_MAINS[] = { "50", "60", NULL };
+static const char *const OPT_TRET[] = { "stay", "home", NULL };
 static const char *const G_LED[] = { "led", NULL };
 static char g_vkey[A2K_VID_STREAMS][A2K_VP_N][20], g_vdef[A2K_VID_STREAMS][A2K_VP_N][12];
 
@@ -311,6 +341,14 @@ static int st_get(const char *key, char *out, size_t cap)
     have = g_have_sys;
     keys = g_keys;
     pthread_mutex_unlock(&g_mu);
+    if (strncmp(key, "sys.flash_writes_", 17) == 0) {
+        unsigned pos, scene;
+        a2k_ptz_wear_counts(&pos, &scene);
+        if (strcmp(key + 17, "ptzpos") == 0) return put(out, cap, pos);
+        if (strcmp(key + 17, "scene") == 0) return put(out, cap, scene);
+        return put(out, cap, a2k_store_writes());
+    }
+    if (strcmp(key, "ptz.travel_since_cal") == 0) return put(out, cap, (long)a2k_ptz_travel());
     if (strcmp(key, "sys.cpu_pct") == 0) return put(out, cap, have ? s.cpu_pct : HAL_SYS_NA);
     if (strcmp(key, "sys.load1_x100") == 0) return put(out, cap, have ? s.load1_x100 : HAL_SYS_NA);
     if (strcmp(key, "sys.mem_total_kb") == 0) return put(out, cap, have ? s.mem_total_kb : HAL_SYS_NA);
@@ -379,6 +417,8 @@ static void build_table(void)
     row("image.sharpness", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
     row("image.mains_hz", ST_ENUM, 0, 0, OPT_MAINS, "50", 0, RW, img_get, img_set);
     row("track.enabled", ST_BOOL, 0, 0, NULL, "0", 1, RW, track_get, track_set);
+    row("track.return", ST_ENUM, 0, 0, OPT_TRET, "stay", 1, RW, tret_get, tret_set);
+    row("track.return_delay_s", ST_INT, 0, 86400, NULL, "30", 1, RW, tret_get, tret_set);
     for (c = 0; c < A2K_VID_STREAMS; c++) {
         a2k_vid_t cur;
         a2k_vid_get(c, &cur);
@@ -408,6 +448,10 @@ static void build_table(void)
     row("ptz.state", ST_STRING, 1, 16, NULL, "unknown", 0, RO, st_get, NULL);
     row("ptz.pan", ST_INT, -1, 100000, NULL, "-1", 0, RO, st_get, NULL);
     row("ptz.tilt", ST_INT, -1, 100000, NULL, "-1", 0, RO, st_get, NULL);
+    row("ptz.travel_since_cal", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
+    row("sys.flash_writes_ptzpos", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
+    row("sys.flash_writes_scene", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
+    row("sys.flash_writes_store", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
     row("net.apply", ST_STRING, 1, 16, NULL, "idle", 0, RO, st_get, NULL);
     row("api.keys", ST_INT, 0, AKEY_MAX, NULL, "0", 0, RO, st_get, NULL);
 }

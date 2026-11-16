@@ -115,6 +115,20 @@ int a2k_track_enabled(a2k_track_t *t)
     (void)t;
     return g_track_on;
 }
+static int g_track_home, g_track_delay = 30;
+void a2k_track_get_return(a2k_track_t *t, int *home, int *delay_s)
+{
+    (void)t;
+    *home = g_track_home;
+    *delay_s = g_track_delay;
+}
+void a2k_track_set_return(a2k_track_t *t, int home, int delay_s)
+{
+    (void)t;
+    g_track_home = home;
+    g_track_delay = delay_s;
+    call("track.return %d %d", home, delay_s);
+}
 void a2k_track_set_enabled(a2k_track_t *t, int on)
 {
     (void)t;
@@ -126,6 +140,8 @@ int a2k_ptz_command(int cmd)
     call("ptz.cmd %d", cmd);
     return 0;
 }
+unsigned long a2k_ptz_travel(void) { return 1234; }
+void a2k_ptz_wear_counts(unsigned *pos, unsigned *scene) { *pos = 7; *scene = 3; }
 int a2k_ptz_nudge(int dx, int dy)
 {
     call("ptz.nudge %d %d", dx, dy);

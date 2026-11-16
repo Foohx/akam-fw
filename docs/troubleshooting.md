@@ -144,6 +144,16 @@ configuration examples are in [two-way audio](two_way_audio.md).
 - Resolution (always 1920x1080) and flip/mirror (ceiling mount) cannot be changed in this version; ONVIF clients are told the configured bitrate, frame rate and GOP length (the key frame interval).
 - If the picture is wrong after a change (no video, a reboot loop): remove the file over SSH (`rm /etc/config/akam/video`) and restart `ak_rtsp`, or run `./akam video bitrate 1536 fps 15 gop 2`.
 
+## The picture is softer than before, or too grainy (sharpness)
+
+Since the sharpness default changed, the 1080p camera runs with `isp.sharpness` -15 on every ISO level of its ISP sharpening. The stock
+sharpening amplifies the sensor noise, so the stream was grainy and heavy (about 8 KB per P frame on a still scene against 1.8 KB now).
+- Too soft for your taste: `./akam picture sharpness -5` (closer to stock) or `./akam picture sharpness 0` for the camera's own sharpening.
+  Values below -15 get softer quickly (-25 is already too soft on a knitted texture). The value is saved on the camera.
+- A camera that saved a picture setting before this change keeps its saved `sharpness=0` (the stock picture) until you run
+  `./akam picture sharpness -15` or `./akam picture reset` (reset sets sharpness -15, the rest 0).
+- Over SSH on the camera, until the next restart: `printf 'SET img.sharp_all 0\n' | nc -w 2 127.0.0.1 8091` puts the slider back on the unused manual entry only (the stock behaviour).
+
 ## VLC cannot open the stream, or hardware decoding fails
 
 - Missing plugins (seen on Arch): install `vlc-plugin-live555` (RTSP) and `vlc-plugin-ffmpeg`

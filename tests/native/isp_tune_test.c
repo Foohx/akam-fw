@@ -29,10 +29,11 @@ int main(int argc, char **argv)
 
     /* absent file: defaults, nothing created */
     CHECK(isp_tune_load(path, &t) == 0);
-    CHECK(!t.brightness && !t.contrast && !t.saturation && !t.sharpness);
+    CHECK(!t.brightness && !t.contrast && !t.saturation && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);
+    CHECK(ISP_TUNE_DEFAULT_SHARPNESS == -15);
     CHECK(access(dir, F_OK) != 0);
 
-    /* all zero never creates a file */
+    /* the defaults never create a file */
     CHECK(isp_tune_save(path, &t) == 0);
     CHECK(access(path, F_OK) != 0);
 
@@ -63,15 +64,22 @@ int main(int argc, char **argv)
     /* validation: out of range, junk, trailing text, unknown key, CRLF, missing '=' */
     put(path, "brightness=51\ncontrast=-51\nsaturation=abc\nsharpness=5x\nfoo=3\nnoequals\n");
     CHECK(isp_tune_load(path, &t) == 1);
-    CHECK(!t.brightness && !t.contrast && !t.saturation && !t.sharpness);
+    CHECK(!t.brightness && !t.contrast && !t.saturation && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);   /* junk: defaults */
     put(path, "brightness=10\r\ncontrast=-20\r\nsaturation=\nsharpness= 4\n");
     CHECK(isp_tune_load(path, &t) == 1);
     CHECK(t.brightness == 10 && t.contrast == -20 && t.saturation == 0);
     put(path, "");
     CHECK(isp_tune_load(path, &t) == 1 && !t.brightness);
 
-    /* all zero removes the file; a second removal is fine */
+    /* an explicitly saved sharpness 0 (stock) wins over the default: it is a file, and it loads back as 0 */
     isp_tune_t z = { 0, 0, 0, 0 };
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
+    CHECK(isp_tune_load(path, &t) == 1 && t.sharpness == 0);
+    put(path, "contrast=4\n");                                                   /* no sharpness line: the default */
+    CHECK(isp_tune_load(path, &t) == 1 && t.contrast == 4 && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);
+
+    /* the defaults remove the file; a second removal is fine */
+    z.sharpness = ISP_TUNE_DEFAULT_SHARPNESS;
     CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) != 0);
     CHECK(isp_tune_save(path, &z) == 0);
 

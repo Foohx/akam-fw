@@ -15,3 +15,7 @@ int venc_bind_vi(void);
 
 /* VENC_IOCTL_ACTIVATE — start frame production. */
 int venc_activate(void);
+
+/* VENC_IOCTL_SET_QP on the running channel 0 (img.qp). 0 on success, -1 (errno set) when refused or no encoder yet.
+ * The caller has validated 10 <= min <= max <= 51. Not hardware-tested on the 1080p. */
+int venc_set_qp_live(int minqp, int maxqp);

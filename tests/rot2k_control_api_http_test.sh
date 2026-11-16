@@ -289,13 +289,19 @@ echo sys >&3
 sleep 0.4
 req "$WID" "$WSEC" GET /akam/v1/state
 want "GET /state shows the hal_sys sample" 200 '"sys.mem_avail_kb":"9000".*"net.wifi_rssi":"-55"'
+want "GET /state: ptz travel and the flash write counters by source" 200 '"ptz.travel_since_cal":"1234".*"sys.flash_writes_ptzpos":"7".*"sys.flash_writes_scene":"3".*"sys.flash_writes_store":"[0-9]+"'
 req "$WID" "$WSEC" GET /akam/v1/settings/video0.fps
 want "GET /settings/<key> has metadata and value" 200 '"key":"video0.fps".*"value":"15"'
 req "$WID" "$WSEC" GET /akam/v1/settings/mqtt.pass
 want "an unknown (or secret) key is 404 unknown_key" 404 'unknown_key'
-req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.mode":"off","night.ir_led":"off","track.enabled":true,"video1.fps":8,"image.brightness":"70"}'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.mode":"off","night.ir_led":"off","track.enabled":true,"track.return":"home","track.return_delay_s":0,"video1.fps":8,"image.brightness":"70"}'
 want "PATCH: JSON numbers and booleans become canonical text, all ok" 200 '"led.mode":\{"ok":true,"apply":"applied","value":"off"\}.*"track.enabled":\{"ok":true.*"value":"1"'
 check "the setters ran: LED mode, IR, tracker, image" bash -c "grep -q 'led.mode off' '$D2/calls.log' && grep -q 'night.ir 0' '$D2/calls.log' && grep -q 'track 1' '$D2/calls.log' && grep -q 'image 70 -1 -1 50' '$D2/calls.log'"
+check "the return policy reached the tracker (home, then delay 0)" bash -c "grep -q 'track.return 1 30' '$D2/calls.log' && grep -q 'track.return 1 0' '$D2/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/track.return
+want "track.return reads back (enum stay|home)" 200 '"value":"home"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"track.return":"sideways"}'
+want "track.return refuses a value outside stay|home" 422 "track.return.*range"
 req "$WID" "$WSEC" GET /akam/v1/settings/led.mode
 want "the new value reads back" 200 '"value":"off"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.mode":"on","video0.fps":99}'

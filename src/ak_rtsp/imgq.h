@@ -25,7 +25,9 @@
  *   img.poll       0 | 1             applies at once
  *   img.reload     1 (write only)    re-send the whole conf of the current mode, then the AE tuning
  *   img.dump       confirmed | all   (write only) log the live ISP blocks against the file and write
- *                                    /tmp/isp_live/isp_blocks.bin */
+ *                                    /tmp/isp_live/isp_blocks.bin; nr = log the decoded NR / SHARP / 3D_NR entries
+ *   img.nr2d_bias img.uvnr_bias img.nr3d_bias img.sharp_bias (0..4), img.nr2d img.uvnr (50..400 %), img.sharp_coring
+ *   (100..300 %), img.nr3d_motion (50..200 %): RAM only, see isp_nr.h; img.nr: read-only live state */
 
 #define IMGQ_CONF_FILE "/etc/config/akam/image"
 #define IMGQ_RAM_FILE  "/tmp/akam_image"  /* same format, RAM only, read after the file above */
@@ -45,6 +47,10 @@ void imgq_after_mode_switch(int night);
 int imgq_venc_rc_stock(void);
 int imgq_wb_conf(void);
 int imgq_poll_stats(void);
+/* ipdelta = -12..12 (AKAM_VENC_IPDELTA or the option files, default 0): rc.delta of the legacy CREATE_ENC rc sub-struct (the
+ * encoder's I/P QP offset, "uIpDelta" in the kernel log). 0 = the payload ak_rtsp always sent. Applies when the encoder is
+ * created. Not hardware-tested: use the RAM file /tmp/akam_image only, until it has survived a test. */
+int imgq_venc_ipdelta(void);
 
 /* Same contract as ledsys_ctl_*: _get returns 0 and fills `out` for a key it owns, else -1; _set returns
  * -1 for a key it does not own, else 0 (done) or 1 (refused) with the answer in `msg`; _list emits one line per key. */

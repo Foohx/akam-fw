@@ -26,7 +26,7 @@ void a2k_leds_person(int present) { (void)present; }
 void a2k_ptz_info(a2k_ptz_info_t *o) { memset(o, 0, sizeof *o); }
 int a2k_zlive_applies(int st) { (void)st; return 1; }
 void a2k_zlive_get(a2k_zones_t *o, unsigned *g) { memset(o, 0, sizeof *o); if (g) *g = 1; }
-void a2k_track_feed(int64_t now_ms, const struct tl_box *b, int n, int fw, int fh) { (void)now_ms; (void)b; (void)n; (void)fw; (void)fh; }
+void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *b, int n, int fw, int fh) { (void)now_ms; (void)cap_ms; (void)b; (void)n; (void)fw; (void)fh; }
 void a2k_set_step(const char *s) { (void)s; }
 void a2k_mem_report(const char *t) { (void)t; }
 long a2k_mem_avail_kb(void) { return 100000; }

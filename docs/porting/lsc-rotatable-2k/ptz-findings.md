@@ -617,17 +617,18 @@ nudge / cancel on top of `ptz/akam_ptz_safe.h`, reused unchanged except the new 
 Unit test: `tests/rot2k_hal_ptz_unit.c` (simulated motor with hard stops; part of `tests/rot2k_overlay_test.sh`).
 
 **Files on the camera** (`/config/akam`, jffs2): `ptz.conf` optional, same strict keys as the tool (`pan_min pan_max tilt_min tilt_max pan_home
-tilt_home pan_step_max tilt_step_max speed`); a bad one switches PTZ off (motor never touched). `ptz.pos` = `pan=N tilt=M` (real steps) from a
-clean stop, or `unknown`. DIAGNOSTIC / last known value only: it is never used to skip the calibration (see Boot). Writes: `unknown` once per burst of motions (only when the file does not already say so), the position once after
-2 s without a command (and at stop), atomic (temp + fsync + rename), skipped when identical; a directory that does not exist is never created
-(one warning).
+tilt_home pan_step_max tilt_step_max speed`); a bad one switches PTZ off (motor never touched); the app never writes it. `ptz.scene` (+ `.a0..a2`) is the
+HOME reference (see "No recurring flash writes" below). There is NO `ptz.pos` any more (2026-11-16): the position lives in RAM; a leftover file
+from an older version is ignored. (The `akam_ptz` debug tool still has its own `/config/akam/ptz.pos` / `PTZ_SAVED_POS_PATH` writes; it is not part
+of normal operation.)
 
 **Boot** (`ptz_cal=auto`, default): (0) a stop request, then (1) the driver already holds our frame file (`/tmp/akam_ptz_app.frame`, written
-next to `/tmp/akam_ptz.frame`) and non-0/0 counters (the app restarted in the same boot): adopted, no init; (2) otherwise, i.e. EVERY COLD BOOT, the
-calibration, then state home. A saved position is never declared to the driver: the head can move outside the app (by hand, `akam_ptz`, a stock
-firmware boot) and the open-loop counters cannot detect it (safety review, MEDIUM; the stock calibrates at every boot as well). The adoption is
+next to `/tmp/akam_ptz.frame`, RAM) and non-0/0 counters (the app restarted in the same boot): adopted, no init; (2) otherwise, i.e. EVERY COLD BOOT,
+the scene check may prove that the head is at HOME (the only claim a cold boot can make: no position is stored anywhere, so there is no stale file to
+believe), else the calibration, then state home. The head can move outside the app (by hand, `akam_ptz`, a stock firmware boot, a power cut while it
+was away from home) and the open-loop counters cannot detect it (safety review, MEDIUM; the stock calibrates at every boot as well). The adoption is
 refused (so the next start calibrates) after a stall or a failed calibration (the app invalidates both frame files), and after any `akam_ptz`
-motion / `init` / `restore` (the tool invalidates `/tmp/akam_ptz_app.frame` and writes `unknown` to `/config/akam/ptz.pos`). `ptz_cal=off`: the motor is not initialised, the state
+motion / `init` / `restore` (the tool invalidates `/tmp/akam_ptz_app.frame`). `ptz_cal=off`: the motor is not initialised, the state
 stays `unknown`, every motion is refused (still adopts case 1, which moves nothing).
 
 **Calibration method chosen: declare-max-then-move** with the verified directional commands, the same mechanism as the stock `check` commands
@@ -657,15 +658,15 @@ kept) and replaces the pending command; every command is refused while calibrati
 sensor `ptz_state` (enum home / parked / moved / calibrating / unknown); diagnostic sensors `ptz_pan`, `ptz_tilt` (steps, only while known).
 
 **Hardware test plan (user at the camera, a hand on the power cable)**: (1) with `ptz_cal=off` boot: log says "not initialised", HA state
-`unknown`, buttons do nothing. (2) `ptz_cal=auto`, no `/config/akam/ptz.pos`: watch the calibration (tilt down, pan left, then home); abort criteria:
+`unknown`, buttons do nothing. (2) `ptz_cal=auto`, no `/config/akam/ptz.scene`: watch the calibration (tilt down, pan left, then home); abort criteria:
 grinding louder than the stock boot, a motion that does not stop, the log line `calibration FAILED`. (3) after it: buttons in all four directions
-(about 200 steps), park (looks up), home; `cat /config/akam/ptz.pos` 3 s later. (4) reboot: it calibrates again (the saved position is not used), even when the head was moved by hand before. (4b) `akam_ptz move 2 200` while the app is stopped, then restart the app: it calibrates (no adoption). (5) `kill -9`
-the app during a motion: the file says `unknown`, the next start calibrates; `kill -TERM` restarts the app: adopted, no calibration. (6) `ptz_privacy=1`:
+(about 200 steps), park (looks up), home; `/state` `sys.flash_writes_ptzpos` stays 0. (4) reboot with the head at home: the home view matches, no calibration (or it calibrates once and writes the reference); reboot with the head moved away or turned by hand: it calibrates. (4b) `akam_ptz move 2 200` while the app is stopped, then restart the app: it calibrates (no adoption). (5) `kill -9`
+the app during a motion: the next start finds no adoptable frame and calibrates (or proves home); `kill -TERM` restarts the app: adopted, no calibration. (6) `ptz_privacy=1`:
 park, the RTSP client freezes, home, the video resumes within one GOP.
 
 ## Cold-boot calibration and cancel race (safety review follow-up)
 
-- Cold boot always calibrates; `ptz.pos` is diagnostic only; same-boot app restart adopts (own frame file + non-0/0 counters); a stall or a
+- Cold boot calibrates unless the HOME scene reference proves the head is at home; no position is ever read from the flash; same-boot app restart adopts (own frame file + non-0/0 counters); a stall or a
   `akam_ptz` motion / init forbids the adoption (frame files invalidated). Host-tested (`tests/rot2k_hal_ptz_unit.c`, `tests/rot2k_ptz_unit.c`).
 - `ptz.conf` caps: `pan_max <= 3700`, `tilt_max <= 2100` (was 1800; raised 2026-11-15 after the top stop measure: still 50 below `tilt_step_max` 2160), `pan_step_max <= 4000`, `tilt_step_max <= 2160` (the old 6000 / 2200 driver limits are
   no longer accepted).
@@ -681,48 +682,178 @@ In the app frame (bottom stop = 0 by calibration): the head is level/straight at
 Problem (user, hardware): the long calibration at EVERY cold boot (sweeps of 4000 / 2160 steps) grinds about ten times against the stops on both axes.
 The long calibration stays the default and the fallback; it is skipped only when the camera image proves the head is where it was left.
 
-**Reference** (`/config/akam/ptz.scene`, < 4 KB, text header `scene1 <mode> <pan> <tilt> 80 48 <boots>` + 3840 raw gray bytes; or `invalid`): the position and an
+**Reference** (`/config/akam/ptz.scene`, < 4 KB, text header `scene1 <mode> <pan> <tilt> 80 48 <boots> <stamp>` + 3840 raw gray bytes; or `invalid [<boots>]`; the stamp is the write time, epoch seconds, 0 = unknown): the HOME position and an
 80x48 grayscale thumbnail (box filter 4x4 of the Y plane of the 320x192 detection frame, taken at most every 500 ms by `a2k_scene_feed`, no extra capture),
 with the day / night mode at capture and the number of matched boots since the last full calibration. Written in TWO steps on the PTZ thread, so that the
-thumbnail and the position belong to the same moment (safety review M1): (1) once the position is known and the motor has been quiet for 6 s (the AE has
-settled) the current view is kept in RAM as the candidate; (2) 6 s later (or at the app shutdown, if the candidate is more than 3 s old) the PTZ thread
+thumbnail and the position belong to the same moment (safety review M1): (1) after a calibration of this process, once the head is at home and the motor has been quiet for 6 s (the AE has
+settled; and 10 min after the last tracking nudge) the current view is kept in RAM as the candidate (the capture runs without the controller lock); (2) 6 s later (or at the app shutdown, if the candidate is more than 3 s old) the PTZ thread
 RE-READS the driver counters (they must still equal the cached position, within 4 steps) and the scene module writes the candidate only if the current
 view still matches it (same ZNCC + block rule, same day / night mode). A view that changed, counters that differ, or no settled candidate: nothing is
-written (up to 3 retries, then the next cold boot calibrates). Atomic (`akam2k_store`), at most one write per 5 min after the first one (flash wear, a
-tracker moves often); a view without detail is never saved (and not logged as saved).
+written (up to 3 retries, then the next cold boot calibrates unless the old reference still matches). Atomic (`akam2k_store`); a view without detail is never saved (and not logged as saved).
+Superseded 2026-11-16: the reference is no longer rewritten after every move: see "No recurring flash writes" below.
 
 **Boot decision** (`app/scene_check.c`, pure, `tests/rot2k_scene_unit.c`, `tests/rot2k_scene_glue_unit.c`): BEFORE any motor command the PTZ thread waits
-for the first frame + 4 s + 6 frames (AE settling; a day/night change restarts it; 30 s timeout), then compares: both images must have detail (std dev >= 8
-gray levels AND mean gradient >= 1.5), the day/night mode must be the same, the best zero-mean normalised cross-correlation over a +-2 thumbnail-px shift
-(about +-8 source px) must be >= `ptz_scene_min` (default 0.90, lowest accepted 0.80), AND (M2) at least 8 of the 4x3 blocks must each have detail in both
-images and match on their own (>= min - 0.10): a pattern fixed to the camera (lens dirt, an overlay, a sensor artefact) correlates perfectly whatever
-the scene, but covers only some blocks. Match: the saved position is declared to the driver (final shifted frame, no motion, no calibration), EXCEPT when
-it is the park position (within 15 steps; the parked view is the least informative one): that calibrates. Every 10th matched boot is a full calibration
+for the first frame + 4 s + 6 frames (AE settling; a day/night change restarts it; 30 s timeout), then compares (algorithm of 2026-11-16, see "Low-texture
+views" below; the first version used a global ZNCC and an 8-of-12 block rule and refused a plastered white wall): the day/night mode must be the same,
+at least 4 of the 12 blocks must be "detailed" in both images (clearly above the image noise), at least 2/3 of those must match on their own, the peak
+of the displacement must lie within +-2 thumbnail px (about +-8 source px) and the mean score of the matching blocks must be >= `ptz_scene_min`
+(default 0.90, lowest accepted 0.80). Match: HOME is declared to the driver (final shifted frame, no motion, no calibration; the reference position must equal the configured home, else
+"not taken at home": calibrate), EXCEPT when home is the park position (within 15 steps; the parked view is the least informative one): that calibrates. Every 10th matched boot is a full calibration
 anyway (L1: the counter `boots` lives in the reference and is rewritten at each match; if it cannot be written, no match). Anything else (no reference,
-low detail, mode differs, mismatch, no frame, error, timeout, position outside the soft range) is the full calibration as before. The score and the
+view too uniform, mode differs, mismatch, no frame, error, timeout, position outside the soft range) is the full calibration as before. The score and the
 decision are logged (`ptz: scene check: MATCH, score 0.987 >= 0.900 (boot 3 of 10 ...)`). `ptz_scene_check=0` disables everything; without the
 detection (`detect=0`) there is no frame source: always calibrates.
 
-**Invalidation** (L2: fail closed): the reference is overwritten with `invalid` when any motion starts (and before every calibration); if that write
-fails the motion / calibration is REFUSED (like `ptz.pos`), so a stale reference never outlives a new position. After a stall the position is unknown
-and nothing is saved; `akam_ptz` writes the marker on any motion / init (`PTZ_SCENE_PATH`).
+**Invalidation** (superseded 2026-11-16; it used to be "fail closed on every motion"): the reference is keyed to HOME, so moving the head away does not invalidate it
+(a stale reference can only match when the live view IS the home view, i.e. the head is at home). It is overwritten with `invalid <boots>` only when (a) a calibration
+FAILS (not a shutdown cancel), or (b) a position claimed by the scene check is lost (stall / I/O error: the claim was proven wrong). Best effort, counted, at most once per
+run; a failing drop is logged and refuses nothing. `akam_ptz` (the debug tool) writes the marker on any motion / init (`PTZ_SCENE_PATH`).
 
 **Calibration sweeps** (M3): the real tilt travel is about 2315 steps (top stop 2290..2340) but the declared step maximum is 2160, so one sweep could
 end about 150 steps above the bottom stop. The calibration now sweeps tilt down, re-declares the tilt counter at 300 and sweeps down again (the pan
 counter keeps its maximum), then pan left: four inits instead of three, the motor always ends on the bottom stop. Host test: head at the top stop.
 
-**Limits (documented, tested)**: ZNCC ignores a global gain / offset (lights on / off, AE: matches), but a lighting change over part of the image lowers the
-score; a uniform wall, a covered lens or a dark night view prove nothing (rejected: calibrate); a very repetitive pattern can match after a shift of one
-period; a rotation of more than about 3 thumbnail px (12 source px) mismatches; moved furniture or people may force a calibration (safe). The one thing
-that must never happen, a match on a uniform view, is excluded by the detail check on BOTH images, and a match carried by a fixed pattern by the block rule.
+**Limits (documented, tested)**: the correlation ignores a global gain / offset and a lighting change over part of the image (lights on / off, AE, a lamp: matches);
+a covered lens, a dark night view or a wall without any relief above the noise prove nothing (rejected: calibrate, or the multi-view fallback); a very repetitive
+pattern can match after a shift of one period; a displacement of 3 thumbnail px (about 12 source px) or more is refused; moved furniture or people covering up to a third of the
+detailed blocks are tolerated, more forces a calibration (safe). The one thing that must never happen, a match on a view that proves nothing, is excluded by the detail
+check on BOTH images (and in common), and a match carried by a fixed pattern by the vote of the other blocks.
+
+### Low-texture views (2026-11-16, host-tested on the real wall frame, NOT yet run on hardware)
+
+Problem (hardware, home 1275/1300): the home view is a close white plastered wall (window edge at the right, blue cloth bottom right). The reference was refused
+at commit: "too few image blocks match on their own (a fixed pattern?), score 991". The global score was 0.991, but the old rule needed 8 of 12 blocks to have
+detail (absolute std dev >= 8 and gradient >= 1.5) in BOTH images, and most blocks were low-contrast plaster. Requirement: the camera must adapt even when the
+reference view is a white wall.
+
+**Algorithm** (`scene_check.c`, thumbnail 80x48, grid 4x3 = 12 blocks of 20x16):
+
+1. *Band image*: 49 x (sum of the 3x3 pixels) - 9 x (sum of the 7x7 pixels), a difference of boxes. Zero on a flat area and on a linear gradient: a global gain /
+   offset, vignetting, a slowly varying illumination and the IR hot spot vanish; edges and plaster relief of a few thumbnail px stay.
+2. *Noise floor from the image itself*: the 25th percentile of the Laplacian energy of the 8x6 sub-blocks (the quietest part of the picture is noise only; texture
+   everywhere only OVERestimates it, which makes the check refuse more, never accept more), converted to the band image (x 882, white noise), with a floor of
+   sigma 0.6 gray level (8-bit rounding, banding of a perfect ramp). A block is *detailed* when its band energy is >= 3 x that noise energy. A block without detail is
+   EXCLUDED (neutral), never counted as a mismatch.
+3. *Score*: each block detailed in both images is scored by the noise-compensated zero-mean normalised correlation (the noise variance of each image is
+   subtracted from its variance, not from the covariance) over displacements of +-4 thumbnail px, on the part of the block where both images exist. The scores are
+   SUMMED over the voting blocks: the displacement is the peak of that surface (one smooth block cannot tell a shift of a pixel or two, ten blocks can).
+4. *Decision* (MATCH): same mode; >= 4 detailed blocks in the reference, in the current view and in common (`SC_DETAIL_BLOCKS_MIN`); the peak within +-2 px
+   (`SC_TOL`, about 8 source px; one thumbnail px is about 4 source px) and better than every larger displacement by 0.02 (`SC_PEAK_MARGIN`, per block); >= 2/3 of the
+   voting blocks with a score >= min - 0.10 at that displacement; and the mean of the matching ones >= min. Otherwise: no match (fail closed, full calibration).
+
+**Fixed pattern / vignetting / IR hot spot (protection kept)**: a smooth camera-fixed pattern (vignetting, IR hot spot) correlates at every shift and at every
+scene; the band image removes it, so it produces no detailed block: a view that only contains it is "too uniform". A localised high-contrast one (lens dirt, an
+overlay) produces a few detailed blocks that match at zero shift whatever the scene; the other blocks of the scene (or of ANOTHER scene) vote it down (< 2/3), and
+a head turned shifts the summed peak away from zero (or flattens it: the peak margin fails). Residual limit (accepted, documented): a high-contrast pattern fixed to
+the camera that covers 4 or more of the 12 blocks of a completely featureless scene cannot be told from a real scene; day/night equality and the periodic full
+calibration (every 10th matched boot) bound it.
+
+**Thresholds** (tuned on the real frame, then checked with the synthetic scenes): detail ratio 3, `SC_DETAIL_BLOCKS_MIN` 4, 2/3 vote, tolerance 2 px, peak margin
+0.02, block margin 0.10 below `ptz_scene_min`. Results on the real wall (`tests/fixtures/scene/wall_80x48.gray`, the 80x48 thumbnail of the frame, noise sigma 1.5 gray
+levels): 8 to 11 of 12 blocks detailed (the old rule needed 8 blocks with absolute detail in both images and refused it); same view + noise: match 20/20; mild
+exposure change (gain 0.85..1.15, offset -6..+6): match 20/20; a lamp lighting half of the wall: match; shifts of 1 px and 2 px: match; shifts of 3 px (4 directions) and
+6 px: refused; mirrored wall, head turned by 10/4 px: refused; the wall without relief (plane through its plaster) + noise, a flat image, an IR-like vignette alone, a lens
+dirt spot: "too uniform" (never a match); wall + vignette: match; wall + vignette with the head turned: refused. A Monte Carlo of 1800 flat / vignetted / ramp images with
+noise (thumbnail sigma 0.3 to 2.8) gave 0 images with 4 or more detailed blocks and 0 false matches. Even the plaster-only crops of the frame (no window, no cloth) are
+decided (4 to 7 detailed blocks); the sparsest crop has 3: undecidable by itself, which is what the multi-view fallback is for.
+
+**Log wording**: "the saved view is too uniform to prove anything", "current view too uniform (too little detail in common with the saved view)" (no more "fixed pattern?").
+
+**Multi-view fallback for a truly featureless rest view** (hal_ptz `cold_offset` / `cold_probe`, `akam2k_ptz.c` `run_multi`, scene hooks `probe*` / `alt_*` /
+`commit_multi`): when the rest view has fewer than 4 detailed blocks, `capture` answers 2 and, at HOME only (not parked, not an arbitrary tracking position), once
+per run, the PTZ thread moves the head by up to three small offsets from the rest position (pan +150, pan -150, tilt -100 steps, each skipped when it would leave the
+soft range), keeps the view of each one (quiet 6 s, kept, confirmed 6 s later: it must still match), returns to the rest position (counters re-read, they must still agree)
+and writes ONE multi-view reference: the stored views `ptz.scene.a0..a2` first (same format `scene1`, position = rest + offset), the main `ptz.scene` with the
+featureless rest view LAST (the stored views are only ever used with a valid main reference of the same position, mode and offsets). The old reference is not touched before the new one is complete; a command, a shutdown or any failed move abandons the build (nothing is written; the next cold boot calibrates). At a cold boot, a featureless saved view
+with usable stored views answers "probe": the claimed position is DECLARED to the driver (no motion), the head moves by an offset with the safe-motion layer
+(`ptzs_goto`, no new ioctl), waits 1.5 s and 3 new frames, compares the live view with the stored view of that offset with all the rules above; on a match it goes back to
+the claimed position (trusted, boots + 1); otherwise it tries the next offset, and after the last (or any failed / cancelled move) the position is forgotten again and the
+full calibration runs. Never at the park position.
+
+**Review fixes (Fable, same day)**: (H1) the frame files (`/tmp/akam_ptz*.frame`) stay INVALID while the position is only claimed (the in-RAM frame drives `ptzs_goto`);
+they are written once a stored view proved the position, so a hard kill during the 5-15 s probe cannot make a restart of the app adopt an unproven claim. (H2) the vote is
+over the UNION: a block detailed on one side only and clearly flat on the other (< 1.5x its noise) counts AGAINST; a borderline one is ignored (exposure, flicker). A reference
+of 8 scene blocks + 4 fixed-pattern blocks against the pattern alone is refused. (M1) a repetitive texture is never saved as a reference or as an offset view ("repetitive texture, no reference"); the 2026-11-16 residual fix is below. (M3) the multi-view build runs only when
+the reference is fresh (after a calibration) or once per run, never within 10 min of a tracking nudge; only a real failure (no usable view, failed move, write error)
+counts, 3 tries per run at most; an interruption (command, shutdown) is not a failure. (L1) the probe is requested only when the LIVE rest view is featureless too and
+the day / night mode is unchanged. (L2) the head goes back to the claimed position between two offsets, so the travel from the real position is always one D. (L3) a
+shutdown during the probe (`cold_probe` answers -1) returns cancelled: no calibration starts. (L4) `scene_matched` is cleared when the position is unknown or a calibration
+ran. (L5) obsolete: the probe adds no flash write any more (no `ptz.pos`). The probe keeps the default speed (the configured divisor).
+
+**Risk analysis of the probe move (D)**: at boot the position is only CLAIMED; the head may have been turned by hand anywhere. The probe is a relative move of at most D
+steps (the driver limits are the soft range of the declared frame; `hal_ptz` also refuses any offset above 200 steps per axis or outside the soft range), so in the worst case the
+head ends D steps beyond where it REALLY was. Soft range pan 300..3650 vs stops at 0 and 3932..4151 (measured): D_pan = 150 leaves 150 steps (left) and at least 282 - 150 = 132 steps
+(right) to the stops even from the soft-range edge. Tilt 300..2100 vs stops at 0 and 2290..2340: the tilt offset is DOWN only (-100): from the soft-range edge 300 it ends at
+200, 200 steps from the bottom stop; going up would leave only 190 - D (about 90) steps to the top stop, hence never. Host test with the simulated motor (hard stops at 0 and
+4000 / 2300): from the corners (3650/300 and 300/300) with a wrong claim, the probe moves cause no click (the calibration, which grinds on purpose, only starts afterwards). A head
+that really was at a stop (outside the soft range) could click at most once per offset: the same sound as the calibration, never a stall (the driver limits are the soft range).
+Time cost: about 2 s per offset (move 0.5 s + 1.5 s settle + frames), at most three offsets, only when the rest view is featureless; the reference build moves the head once per
+position (about 12 s of waiting per offset, at the first quiet moment at home after a calibration).
 
 **Open-loop limit (accepted)**: the head is a powered open-loop stepper. Turning it by hand within the capture window after a motion (before the candidate is written) can pair a moved view with unchanged counters. It is bounded by the periodic full calibration every 10 matched boots; a restart of the app in the same boot (adoption) keeps the on-disk count (`invalid <boots>` marker), it does not restart it.
 
-**Recalibrate button** (HA `ptz_recal`, `A2K_PTZ_RECAL`): the long calibration now from any state (reference dropped first, new one written when quiet,
-counter restarted); every command is refused meanwhile; refused with `ptz_cal=off`; a cancel (shutdown) between the dequeue and the start is honoured.
+**Recalibrate button** (HA `ptz_recal`, `A2K_PTZ_RECAL`): the long calibration now from any state (the home reference stays, it is checked again when quiet at home;
+only the matched-boots counter restarts, one write, and only when the counter was not 0 or the home view changed); every command is refused meanwhile; refused with `ptz_cal=off`; a cancel (shutdown) between the dequeue and the start is honoured.
+
+
+## No recurring flash writes (2026-11-16, host-tested, NOT yet run on hardware)
+
+User rule: no recurring writes to the flash in normal operation; state lives in RAM; a write only for an explicit user change or a rare one-off event, each counted
+(`/state` `sys.flash_writes_ptzpos`, `sys.flash_writes_scene`, `sys.flash_writes_store`). The PTZ persistence was redesigned for it.
+
+**Position: RAM only.** The safe-motion layer still reports through its `PTZ_POS_PATH` (`/tmp/akam_ptz.pos`); `hal_ptz` keeps the value in RAM and nothing reaches `/config`
+(no `unknown` before a move, no position after a quiet period, no probe-path or `declare_final` write). The frame files `/tmp/akam_ptz*.frame` are RAM (`/tmp`), used only to adopt
+the driver's frame after an app restart in the same boot. `sys.flash_writes_ptzpos` stays 0 (the key is kept for API stability). The old `ptz.pos` is ignored.
+
+**Boot decision (cold boot)**: (1) the driver holds our frame (warm restart, same boot): adopt (RAM files only), no scene check, no write. (2) Otherwise the ONLY claim is HOME
+(the configured `pan_home` / `tilt_home`), and it is proven by the home reference: the live view must match it (single view, or the multi-view probe around home when the home
+view is featureless: stored offset views at pan +-150 / tilt -100). Proven: home is declared, no calibration, no motion. Not proven, no reference, a reference taken at another position
+(home reconfigured), a repetitive reference, a day/night mode that differs, every 10th matched boot, no frame in 30 s, home == park: full calibration. There is never a claim from a stale
+file. A power cut while the head was away from home (tracking left it there, `track_return=stay`) therefore costs one full calibration at the next boot: the only cost of the policy
+(`stay` stays the default; `track_return=home` shortens the exposure at the price of more motion).
+
+**The home reference** is keyed to home: it proves "the head is at home", whatever moved it since, so moves never invalidate it and nothing is dropped before a move or a calibration.
+It is checked / written only after a calibration of THIS process (the head is at home then), once the head is quiet at home for 6 s and no tracking nudge happened for 10 min:
+- no reference (or invalid, or taken at another position): written (stamp = now, boots 0);
+- the stored one still matches the candidate: nothing is written (after a calibration only the matched-boots counter restarts, one write, and only when it was not 0);
+- the home view changed: rewritten, at most once per 24 h; the rate limit lives in the file itself (the `<stamp>` of the header: no extra file, no extra write); an unset wall clock
+  (no network) forbids a rewrite of an existing reference; an unknown stamp (older file) allows it;
+- the other day/night mode than the reference: kept (no flip-flop; the cost is a calibration at a cold boot in the other mode);
+- invalidated only by a failed calibration or a claimed position that proved wrong (stall / I/O error).
+At most 4 reference writes per run (belt and braces). The matched-boots counter (10-boot forced recalibration) is written at most once per boot (the match itself; the file is
+rewritten with boots + 1): there is no RAM-free scheme for a counter that must survive power cuts, and a cold boot is a rare event.
+The travel budget stays RAM only (`ptz.travel_since_cal`; a cold boot after a power cut calibrates anyway when the head was away from home).
+
+**Flash writes in normal use** (a person crossing every 2 min, 12 crossings per hour, `track_return=stay`): `ptz.pos` 0 (was 60 per hour = 1440 per day), scene reference 0 (was up to 12 per
+hour), i.e. 0 per day, for any number of moves. Per cold boot: at most 1 write for the matched-boots counter when the view matches, or after a calibration at most 1 write (new reference, a changed
+view once per 24 h, or the counter restart), plus 1 for a failed calibration or a lost claim. Host tests (`tests/rot2k_hal_ptz_unit.c`, `tests/rot2k_scene_glue_unit.c`): zero `ptz.pos` writes across 12 tracking
+crossings, zero scene writes and drops across moves, cold boot claim = home proven by the reference, a power cut away from home calibrates, the rewrite limit of 24 h.
+
+**Residual fixes of the scene re-review** (same day): (R1) a block STRONGLY detailed on one side (energy >= 2 x the detail threshold) counts against the match whatever the other side shows
+(it was ignored in the borderline band 1.5..3 x noise). (R2) `sc_repetitive(thumb, min)` skips the blocks that fall off the image (no averaged -1000), searches every displacement (step 1,
++-40 px: periods up to 40 px), applies the SAME decision rule as the match (2/3 of the valid blocks >= min - 0.10, their mean >= min) lowered by a 0.05 margin (R3: a clean
+self-correlation is an upper bound of a live noisy alias), and does not flag the broad main lobe of the correlation (the passing displacements connected to the tolerance box: vertical
+edges, an invariance along one axis; the match refuses those by itself through `peak_ok`). References already on the flash are screened at the boot check (and the stored offset views at `load_alts`):
+repetitive -> calibrate. Sweep on Fable's synthetic harness (square / sine bars, lattices, dots, periods 4..40, three scene mixes): 283 of 286 alias-match cases flagged (the 3 left are
+dot lattices of period 37..40 px = more than half the image), 0 of 200 random smooth scenes flagged, 0 flags on the real frames and the wall fixture, vertical-edge scenes not flagged. (R5) the
+screening runs outside the controller mutex, with integer sums (the host takes about 15 ms, an estimate of a few hundred ms on the ARM9). (R6) the multi-view probe snapshots `cancel_gen` at the start
+and tests it before every move (a cancel eaten by a position poll or by `begin()` is no longer lost). (R7) the probe attempts are bounded per boot by a RAM marker (`/tmp/akam_ptz.probes`, 2 attempts, then
+the calibration decides: a crash loop never walks the head by an offset at every restart). (R8) `long long` in the energy / noise arithmetic (a strong edge squares to more than 2^31).
+
+**Review follow-ups (Fable, same day)**: (M1) the main-lobe exclusion of `sc_repetitive` is bounded: a lobe reaching beyond 8 px (`SC_REP_LOBE_MAX`) is flagged too (an alias chain looks like a broad lobe); the price is that a pure 1D invariance (every row equal) is flagged, which is conservative (the match refuses it anyway); sweep: 0 unflagged alias cases of the lobe harness, 3 of 286 left in the period harness (dots 37..40 px). (M2) the strongly-detailed one-sided vote compares with the LARGER noise of the two images (a noisy live view no longer turns a strong block into a vote against; the real wall with sigma 2 noise matches 38 of 40 again). (M3) a reference of the other day/night mode is a changed view: replaceable under the same 24 h rule in the single-view, the keep-flat and the multi-view paths. (L1) an unknown stamp (or a not-set clock) allows at most one rewrite per run, and the per-run write cap also guards the multi-view build. (L2) no reference is checked or written once more than 3000 steps were travelled since the calibration (`A2K_PTZ_REF_TRAVEL`: lost steps could pair a moved view with home). (L3) the reference is keyed to the configured home, not to the reported position. The `akam_ptz` debug tool no longer writes `ptz.pos` or invalidates `ptz.scene` (no flash write; it still invalidates the /tmp app frame). (L4) the boot check logs `timing: repetitive screening N ms, compare M ms` to measure on the camera (R5 estimate).
 
 ## 2026-11-15 hardware follow-ups
 
 - Park default is now 1275:300 (down, 300 steps above the calibrated bottom stop). Tilt soft max 2100 (level-up view about 2104; top stop 2290..2340).
 - Person tracking: the pan direction was inverted on the 2K (a person on one side turned the camera away, pan 1275 -> 996 -> 695). The 2K now defaults
   `invert_pan=1` (akam2k.conf `track_invert_pan`, `track_invert_tilt`; tilt default 0, unverified).
+
+## 2026-11-16 tracking follow-ups
+
+- Tracking nudges can ask for a speed divisor (`a2k_ptz_nudge_sp`, `hal_ptz_nudge_sp`): the same `ptzs_goto(speed)` of the safe-motion layer (2..20,
+  anything else refused), no new ioctl. The tracker uses 2 (~500 steps/s; verified on 2026-11-15 for pan only, one run) for a large correction, the configured 3 (~333 steps/s)
+  otherwise. A nudge is accepted only while the controller is idle.
+- `a2k_ptz_info_t.motion_end_ms` (CLOCK_MONOTONIC ms, same clock as the detector) tells the tracker when the last motion ended, so it drops only the frames
+  captured during the motion (+ 150 ms) instead of waiting a fixed time.
+- A tracking nudge costs: 30 ms start, 1 step per `speed` ms, about 70 ms to stop, read and publish; the motor never runs two commands at once.
+  Field numbers behind the tracking rework (person at 1-2 m, speed 3): see tracking.md, "the latency chain".

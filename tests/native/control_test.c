@@ -65,7 +65,14 @@ int  audio_out_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)
 void audio_out_set_persist(int p) { (void)p; }
 void audio_out_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "audio.out_stub=2"); }
 int  imgq_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
-int  imgq_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+char g_imgq_last_val[64];
+int  imgq_ctl_set(const char *k, const char *v, char *m, size_t c)
+{
+    if (strcmp(k, "img.qp")) return -1;
+    snprintf(g_imgq_last_val, sizeof(g_imgq_last_val), "%s", v);   /* what the control parser hands to imgq.c */
+    snprintf(m, c, "OK img.qp=%s", v);
+    return 0;
+}
 void imgq_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "imgq.stub=3"); }
 int  talk_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  talk_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
@@ -358,7 +365,7 @@ static void test_server(void)
         "ae.stable_range=3\nae.hold_range=6\nae.speed=4\nae.exp_max=16384\nae.enabled=1\n"
         "night.mode=auto\nnight.state=day\nnight.trigger_hw_exp=0\nnight.day_hw_exp=0\n"
         "night.confirm_samples=0\nnight.lock_ms=0\n"
-        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
+        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=-15\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
         "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\nmqtt.state=off\n.\n");
@@ -436,9 +443,25 @@ static void test_server(void)
         isp_tune_t t;
         CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.sharpness == 12 && t.contrast == 0);
     }
+    /* sharpness 0 (stock) is an explicit choice: saved as a line; the default -15 removes the file */
     ask(c, "SET isp.sharpness 0", out, sizeof(out));
     CHECK_STR(out, "OK isp.sharpness=0\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.sharpness == 0);
+    }
+    ask(c, "SET isp.sharpness -15", out, sizeof(out));
+    CHECK_STR(out, "OK isp.sharpness=-15\n");
     CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    /* img.qp takes two values: both reach imgq.c, as "MIN MAX" (also from the "MIN,MAX" token) */
+    ask(c, "SET img.qp 28 43", out, sizeof(out));
+    CHECK_STR(out, "OK img.qp=28 43\n");
+    CHECK(!strcmp(g_imgq_last_val, "28 43"));
+    ask(c, "SET img.qp 22,40", out, sizeof(out));
+    CHECK_STR(out, "OK img.qp=22,40\n");
+    CHECK(!strcmp(g_imgq_last_val, "22,40"));
+    ask(c, "SET img.qp 20", out, sizeof(out));
+    CHECK_STR(out, "OK img.qp=20\n");
     ask(c, "SET isp.sharpness 99", out, sizeof(out));
     CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     {
@@ -640,7 +663,7 @@ static void test_server(void)
             ask(r, "SET night.mode day", out, sizeof(out));
             CHECK(g_night_persist == 0 && g_imgq_persist == 0);   /* RAM only from the network */
             ask(r, "SET night.mode auto", out, sizeof(out));
-            ask(r, "SET isp.sharpness 0", out, sizeof(out));
+            ask(r, "SET isp.sharpness -15", out, sizeof(out));
             ask(c, "SET ae.speed 7", out, sizeof(out));
             ask(r, "DEBUG off", out, sizeof(out));
             CHECK(!strncmp(out, "ERR DEBUG is loopback-only", 26));

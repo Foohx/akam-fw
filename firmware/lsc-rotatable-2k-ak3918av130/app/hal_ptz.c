@@ -13,10 +13,14 @@
  *      process cannot overshoot home;
  *   4. init the final shifted frame (driver limits = soft range) with the camera at home.
  * Grinding against the stop for the rest of the counted steps is inherent (the stock does it every boot, at speed 1). It happens
- * at every cold boot (the saved position is never trusted) and never on an app restart in the same boot (adoption). */
+ * at every cold boot where the scene check cannot prove the head is at HOME, and never on an app restart in the same boot (adoption).
+ *
+ * Position persistence: NONE on the flash. The position lives in RAM (and the frame files in /tmp, RAM too, for an adoption in the same
+ * boot). A cold boot claims only HOME, and only when the scene check proves it from the image; anything else calibrates. */
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -31,7 +35,7 @@
 #define PTZ_INIT_POS_WORDS 10
 #define APPROACH_MARGIN 20u             /* driver limit of the approach: home + this */
 #define STATE_TOL 15u                   /* a position this close to home / park is "home" / "parked" */
-#define SAVED_MAX 48
+#define SAVED_MAX 48                    /* longest "pan=N tilt=M\n" kept in RAM */
 #define VERIFY_TOL 4u                   /* steps: counters re-read before a scene reference is written */
 #define TILT_EXTRA_STEPS 300u           /* second tilt sweep: the real travel (about 2315) is longer than the declared step maximum (2160) */
 
@@ -41,11 +45,11 @@ struct hal_ptz {
     struct ptz_ops sops; /* the safe layer's view of ops (the saved position is routed to the store) */
     struct ptzs_conf cf;
     struct ptzs_ctx x;
-    char pos_path[96];
     int fd;
     int trusted;    /* the counters and the frame can be relied on */
     int cal_active;
     int moving;
+    int defer_frames; /* drv_init keeps the frame in RAM only (a probe: the files are written once the position is proven) */
     int pos_valid;  /* pan / tilt below are the last known position (false while moving) */
     uint32_t pan, tilt;
     volatile int cancel;
@@ -53,11 +57,10 @@ struct hal_ptz {
     unsigned mark_gen;            /* cancel_gen at hal_ptz_mark() */
     int marked;
     int canceled;
-    char disk[SAVED_MAX];    /* what the saved file holds ("" absent / unreadable) */
-    char pending[SAVED_MAX]; /* the position to write at the next flush ("" none) */
-    unsigned writes;
-    int store_warned;
+    int scene_claim;             /* this start's position is a claim proven by the scene check (a failure of the position later forgets the reference) */
     unsigned cal_runs;           /* completed calibrations (this process) */
+    uint32_t bpan, btilt;        /* the position when the current motion began */
+    unsigned long travel;        /* steps travelled by tracked motions since the last calibration (this process) */
 };
 
 static int near(uint32_t a, uint32_t b);
@@ -75,31 +78,13 @@ static void plog(hal_ptz_t *p, const char *fmt, ...)
     p->ops.log(line);
 }
 
-/* ---- the saved position: "pan=N tilt=M\n" or "unknown\n", atomic replace, written as seldom as possible ---- */
-static int disk_write(hal_ptz_t *p, const char *data)
-{
-    if (p->ops.save_file(p->pos_path, data)) {
-        if (!p->store_warned) {
-            p->store_warned = 1;
-            plog(p, "ptz: cannot save the position to %s (%s): the next boot calibrates", p->pos_path, strerror(errno));
-        }
-        return -1;
-    }
-    snprintf(p->disk, sizeof p->disk, "%s", data);
-    p->writes++;
-    return 0;
-}
-
-/* What the safe layer writes to PTZ_POS_PATH: "unknown" before every move (written at once, once per burst of moves), a
- * position after it (kept pending: the caller flushes it when the motor has been quiet for a while). */
+/* ---- the position: RAM only. The safe layer reports it through PTZ_POS_PATH ("pan=N tilt=M\n" or "unknown\n"); nothing reaches the flash
+ * (no recurring write in normal operation: a cold boot never trusts a stored position anyway, it proves HOME from the image or calibrates). ---- */
 static int store_pos(hal_ptz_t *p, const char *data)
 {
     uint32_t a, b;
     if (!strcmp(data, "unknown\n")) {
-        p->pending[0] = '\0';
         p->pos_valid = 0;
-        if (strcmp(p->disk, data) && disk_write(p, data) && p->disk[0])
-            return -1; /* a stale clean position stays on the flash: refuse to move, the next boot would trust it */
         return 0;
     }
     if (ptzs_pos_parse(data, &a, &b))
@@ -107,19 +92,16 @@ static int store_pos(hal_ptz_t *p, const char *data)
     p->pan = a;
     p->tilt = b;
     p->pos_valid = 1;
-    snprintf(p->pending, sizeof p->pending, "%s", data);
     return 0;
 }
 
-void hal_ptz_flush(hal_ptz_t *p)
+/* The stored scene reference must no longer be used (best effort: a rare one-off event, the hook counts its write). */
+static void scene_forget(hal_ptz_t *p, const char *why)
 {
-    if (p->pending[0] && strcmp(p->pending, p->disk))
-        (void)disk_write(p, p->pending);
-    p->pending[0] = '\0';
+    p->scene_claim = 0;
+    if (p->ops.scene_drop && p->ops.scene_drop() != 0)
+        plog(p, "ptz: the scene reference could not be invalidated (%s)", why);
 }
-
-unsigned hal_ptz_store_writes(const hal_ptz_t *p) { return p->writes; }
-int hal_ptz_dirty(const hal_ptz_t *p) { return p->pending[0] && strcmp(p->pending, p->disk); }
 
 /* ---- ops seen by the safe layer ---- */
 static int w_open(void) { return g_hp->ops.open_dev(); }
@@ -156,8 +138,7 @@ static void conf_from_desc(struct ptzs_conf *c, const hal_ptz_desc_t *d)
 
 static uint32_t clampu(uint32_t v, uint32_t lo, uint32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-hal_ptz_t *hal_ptz_new(const hal_ptz_desc_t *d, const hal_ptz_ops_t *ops, const char *conf_text, const char *pos_path,
-                       char *err, size_t errcap)
+hal_ptz_t *hal_ptz_new(const hal_ptz_desc_t *d, const hal_ptz_ops_t *ops, const char *conf_text, char *err, size_t errcap)
 {
     static hal_ptz_t inst; /* one motor per process: no heap */
     hal_ptz_t *p = &inst;
@@ -167,7 +148,6 @@ hal_ptz_t *hal_ptz_new(const hal_ptz_desc_t *d, const hal_ptz_ops_t *ops, const 
     p->d = *d;
     p->ops = *ops;
     p->fd = -1;
-    snprintf(p->pos_path, sizeof p->pos_path, "%s", pos_path);
     for (i = 0; i < HAL_PTZ_NDIR; i++)
         if (d->dir[i] > 7)
             goto bad_dir;
@@ -253,7 +233,7 @@ static int drv_init(hal_ptz_t *p, const uint32_t lim[2], const uint32_t cnt[2], 
     if (fr) {
         x->fr = *fr;
         ptzs_frame_format(fr, s, sizeof s);
-        if (p->ops.save_file(PTZ_FRAME_PATH, s) || p->ops.save_file(PTZ_APP_FRAME_PATH, s))
+        if (!p->defer_frames && (p->ops.save_file(PTZ_FRAME_PATH, s) || p->ops.save_file(PTZ_APP_FRAME_PATH, s)))
             return HAL_PTZ_EIO;
         x->have_frame = 1;
     }
@@ -358,19 +338,24 @@ static int calibrate(hal_ptz_t *p)
         rc = ptzs_goto(x, p->cf.pan_home, p->cf.tilt_home, p->cf.speed);
         x->cf = &p->cf;
         p->pos_valid = 0;
-        p->pending[0] = '\0';
     }
     if (!rc)
         rc = declare_final(p, p->cf.pan_home, p->cf.tilt_home);
     p->cal_active = 0;
-    if (!rc)
+    if (!rc) {
         p->cal_runs++;
+        p->travel = 0;
+    }
     if (rc)
         (void)frames_invalidate(p); /* a half-done calibration is never adopted by a restart */
-    if (rc)
+    if (rc) {
         plog(p, "ptz: calibration FAILED (%d): the position stays unknown, motion refused until the next start", rc);
-    else
+        if (!p->canceled && !p->cancel) /* not a shutdown: the head is somewhere unknown, the home reference is forgotten (one rare write) */
+            scene_forget(p, "calibration failed");
+    } else {
+        p->scene_claim = 0;
         plog(p, "ptz: calibrated, at home %u/%u", (unsigned)p->cf.pan_home, (unsigned)p->cf.tilt_home);
+    }
     return rc;
 }
 
@@ -396,14 +381,117 @@ static int try_adopt(hal_ptz_t *p)
     snprintf(s, sizeof s, "pan=%u tilt=%u\n", (unsigned)pan, (unsigned)tilt);
     (void)store_pos(p, s);
     p->trusted = 1;
+    p->scene_claim = 0;
     plog(p, "ptz: the driver already holds our frame: position %u/%u adopted, no calibration", (unsigned)pan, (unsigned)tilt);
     return 1;
 }
 
+#define PROBE_MAX_OFFSETS 8
+#define PROBE_MARKER "/tmp/akam_ptz.probes" /* RAM: the multi-view probes started in this boot (a crash loop must not walk the head by an offset at every restart) */
+#define PROBE_MAX_PER_BOOT 2
+#define PROBE_MAX_STEP 200 /* per axis: an offset beyond this is refused whatever the hook says (the margin to the stops is 190 steps in tilt, 282 in pan) */
+
+/* The in-RAM frame is written to the two frame files (the driver holds our frame: a restart of the app may adopt it). 0 ok. */
+static int frames_save(hal_ptz_t *p)
+{
+    char s[128];
+    ptzs_frame_format(&p->x.fr, s, sizeof s);
+    return p->ops.save_file(PTZ_FRAME_PATH, s) || p->ops.save_file(PTZ_APP_FRAME_PATH, s) ? -1 : 0;
+}
+
+/* The claimed position (pan, tilt) is declared and the head moved by the offsets of the hook; 1 when a stored view proved the position (the
+ * head is back at the claimed position, trusted), 0 when not (nothing trusted any more: the caller calibrates), -1 cancelled.
+ * The frame files stay INVALID until the position is proven (a hard kill during the probe must not let a restart adopt an unproven claim:
+ * ptzs_goto only needs the in-RAM frame). The head returns to the claimed position between two offsets, so the travel from the real
+ * position never exceeds one offset even when the claim is wrong. cold_probe: 1 match, 0 no, -1 cancelled (shutdown). */
+static int cold_probe_offsets(hal_ptz_t *p, uint32_t pan, uint32_t tilt, unsigned gen0)
+{
+    unsigned i, tries = 0;
+    int proven = 0, rc, cancelled = 0;
+    /* gen0: cancel_gen snapshot taken when the start began: a cancel after it (the shutdown) is never lost to begin() or a poll clearing the flag */
+    char mk[16];
+    int mn = p->ops.load_file(PROBE_MARKER, mk, sizeof mk);
+    if (mn > 0 && mn < (int)sizeof mk)
+        tries = (unsigned)strtoul(mk, NULL, 10);
+    if (tries >= PROBE_MAX_PER_BOOT) { /* each attempt moves a head whose position is only claimed: bounded per boot, then the calibration decides */
+        plog(p, "ptz: multi-view check: %u attempts already made in this boot: calibrating", tries);
+        return 0;
+    }
+    snprintf(mk, sizeof mk, "%u\n", tries + 1);
+    if (p->ops.save_file(PROBE_MARKER, mk)) {
+        plog(p, "ptz: multi-view check: the attempt marker cannot be written (%s): calibrating", strerror(errno));
+        return 0;
+    }
+    p->defer_frames = 1;
+    rc = declare_final(p, pan, tilt);
+    p->defer_frames = 0;
+    if (rc != 0) {
+        plog(p, "ptz: multi-view check: the driver init failed: calibrating");
+        (void)frames_invalidate(p);
+        return 0;
+    }
+    (void)frames_invalidate(p); /* belt and braces: the files are invalid until proven */
+    plog(p, "ptz: multi-view check: the saved view is featureless: position %u/%u declared for the probe, moving by a small offset", (unsigned)pan, (unsigned)tilt);
+    for (i = 0; i < PROBE_MAX_OFFSETS && !proven && !cancelled; i++) {
+        int dp = 0, dt = 0, pr;
+        int64_t tp, tt;
+        if (p->cancel || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0) {
+            cancelled = 1;
+            break;
+        }
+        if (p->ops.cold_offset(i, &dp, &dt) != 0)
+            continue;
+        tp = (int64_t)pan + dp;
+        tt = (int64_t)tilt + dt;
+        if ((!dp && !dt) || dp > PROBE_MAX_STEP || dp < -PROBE_MAX_STEP || dt > PROBE_MAX_STEP || dt < -PROBE_MAX_STEP || tp < (int64_t)p->cf.pan_min ||
+            tp > (int64_t)p->cf.pan_max || tt < (int64_t)p->cf.tilt_min || tt > (int64_t)p->cf.tilt_max)
+            continue; /* never leave the soft range, never move far */
+        if (__atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0) { /* tested right before each move (begin() would clear the flag) */
+            cancelled = 1;
+            break;
+        }
+        rc = hal_ptz_goto(p, (uint32_t)tp, (uint32_t)tt);
+        if (rc != HAL_PTZ_OK) {
+            plog(p, "ptz: multi-view check: the move to offset %u failed (%d): calibrating", i, rc);
+            cancelled = rc == HAL_PTZ_ECANCEL;
+            break;
+        }
+        pr = p->ops.cold_probe(i);
+        if (pr < 0) {
+            cancelled = 1;
+            break;
+        }
+        /* match or not, the head goes back to the claimed position before anything else */
+        if (__atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0) {
+            cancelled = 1;
+            break;
+        }
+        rc = hal_ptz_goto(p, pan, tilt);
+        if (rc != HAL_PTZ_OK) {
+            plog(p, "ptz: multi-view check: the move back failed (%d): calibrating", rc);
+            cancelled = rc == HAL_PTZ_ECANCEL;
+            break;
+        }
+        if (pr == 1) {
+            if (frames_save(p) == 0)
+                proven = 1;
+            else
+                plog(p, "ptz: multi-view check: the frame files cannot be written: calibrating");
+            break;
+        }
+    }
+    if (proven)
+        return 1;
+    p->trusted = 0;
+    p->pos_valid = 0;
+    (void)frames_invalidate(p);
+    return cancelled || p->cancel || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0 ? -1 : 0;
+}
+
 int hal_ptz_start(hal_ptz_t *p, int cal)
 {
-    char buf[SAVED_MAX * 2];
-    int n;
+    const unsigned gen0 = __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST);
+#define START_CANCELLED() (p->cancel || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0)
     p->fd = p->ops.open_dev();
     if (p->fd < 0) {
         plog(p, "ptz: cannot open the motor: %s", strerror(errno));
@@ -411,65 +499,67 @@ int hal_ptz_start(hal_ptz_t *p, int cal)
     }
     p->x.fd = p->fd;
     (void)ptzs_stop(&p->x); /* a previous process may have left it walking */
-    errno = 0;
-    n = p->ops.load_file(p->pos_path, buf, sizeof buf);
-    if (n > 0 && n < SAVED_MAX)
-        memcpy(p->disk, buf, (size_t)n + 1);
-    else
-        p->disk[0] = '\0';
     if (try_adopt(p))
         return 0;
     if (cal == HAL_PTZ_CAL_OFF) {
         plog(p, "ptz: ptz_cal=off: the motor is not initialised, motion is refused (akam_ptz init, then restart)");
         return 0;
     }
-    /* A cold boot ALWAYS calibrates (like the stock): the head can move outside the app (by hand, akam_ptz, the stock firmware)
-     * and the open-loop counters cannot tell, so the saved position is never declared to the driver. It stays on the flash as a
-     * diagnostic / last known value only. */
+    /* A cold boot calibrates (like the stock) unless the scene check proves the head is at HOME: the head can move outside the app (by hand,
+     * akam_ptz, the stock firmware, a power cut while it was away) and the open-loop counters cannot tell. No position is stored on the flash:
+     * the only claim a cold boot can make is the configured home, proven by the home reference image. */
     if (p->ops.cold_check) {
-        uint32_t pan = 0, tilt = 0;
-        /* No motor command so far (only the stop above). The scene check is the one thing that may trust a saved position: it proves, from
-         * the image, that the head did not move. A match inside the soft range is declared as is; anything else calibrates. */
-        if (p->ops.cold_check(&pan, &tilt) == 1 && pan >= p->cf.pan_min && pan <= p->cf.pan_max && tilt >= p->cf.tilt_min &&
-            tilt <= p->cf.tilt_max && !p->cancel && !(near(pan, p->d.pan_park) && near(tilt, p->d.tilt_park))) {
+        uint32_t pan = p->d.pan_home, tilt = p->d.tilt_home; /* in: the claim; the hook must leave it (the reference is keyed to home) */
+        /* No motor command so far (only the stop above). */
+        int cc = p->ops.cold_check(&pan, &tilt);
+        int ok = pan == p->d.pan_home && tilt == p->d.tilt_home && pan >= p->cf.pan_min && pan <= p->cf.pan_max && tilt >= p->cf.tilt_min &&
+                 tilt <= p->cf.tilt_max && !START_CANCELLED() && !(near(pan, p->d.pan_park) && near(tilt, p->d.tilt_park));
+        if (cc && !ok && !START_CANCELLED())
+            plog(p, "ptz: scene check: the claim is not the home position: calibrating");
+        if (cc == 2 && ok && p->ops.cold_offset && p->ops.cold_probe) {
+            int pr = cold_probe_offsets(p, pan, tilt, gen0);
+            if (pr == 1) {
+                p->scene_claim = 1;
+                plog(p, "ptz: scene check passed (multi-view): the head is at home, position %u/%u declared, no calibration", (unsigned)pan, (unsigned)tilt);
+                return 0;
+            }
+            if (pr < 0)
+                return HAL_PTZ_ECANCEL;
+        }
+        if (cc == 1 && ok) {
             if (declare_final(p, pan, tilt) == 0) {
-                plog(p, "ptz: scene check passed: the head did not move, position %u/%u declared, no calibration", (unsigned)pan, (unsigned)tilt);
+                p->scene_claim = 1;
+                plog(p, "ptz: scene check passed: the head is at home, position %u/%u declared, no calibration", (unsigned)pan, (unsigned)tilt);
                 return 0;
             }
             (void)frames_invalidate(p);
             plog(p, "ptz: scene check passed but the driver init failed: calibrating");
         }
-        if (p->cancel)
-            return HAL_PTZ_ECANCEL;
     }
-    plog(p, "ptz: cold boot (the driver holds no frame of ours): calibrating, the saved position is not trusted");
-    if (p->ops.scene_drop && p->ops.scene_drop() != 0) {
-        plog(p, "ptz: the scene reference cannot be invalidated: no calibration (the position stays unknown)");
-        return HAL_PTZ_EIO;
-    }
+    if (START_CANCELLED())
+        return HAL_PTZ_ECANCEL;
+    plog(p, "ptz: cold boot (the driver holds no frame of ours, the home view is not proven): calibrating");
     return calibrate(p);
+#undef START_CANCELLED
 }
 
 int hal_ptz_recalibrate(hal_ptz_t *p)
 {
     if (p->fd < 0)
         return HAL_PTZ_EREFUSED;
-    p->cancel = 0; /* a stale flag goes BEFORE the drop: a shutdown cancel that arrives during it (or later) must survive */
+    p->cancel = 0; /* a stale flag goes first: a shutdown cancel that arrives later must survive */
     p->canceled = 0;
     if (p->marked) { /* like begin(): a cancel between the caller's dequeue (hal_ptz_mark) and now is not lost */
         p->marked = 0;
         if (p->cancel_gen != p->mark_gen)
             return HAL_PTZ_ECANCEL;
     }
-    if (p->ops.scene_drop && p->ops.scene_drop() != 0) {
-        plog(p, "ptz: the scene reference cannot be invalidated: recalibration refused");
-        return HAL_PTZ_EIO;
-    }
     plog(p, "ptz: recalibration requested");
     return calibrate(p);
 }
 
 unsigned hal_ptz_cal_count(const hal_ptz_t *p) { return p->cal_runs; }
+unsigned long hal_ptz_travel(const hal_ptz_t *p) { return p->travel; }
 
 int hal_ptz_verify_pos(hal_ptz_t *p)
 {
@@ -486,7 +576,6 @@ void hal_ptz_close(hal_ptz_t *p)
 {
     if (p->fd >= 0)
         (void)ptzs_stop(&p->x);
-    hal_ptz_flush(p);
 }
 
 /* ---- motions ---- */
@@ -506,6 +595,8 @@ static int begin(hal_ptz_t *p)
     p->cancel = 0;
     p->canceled = 0;
     p->moving = 1;
+    p->bpan = p->pan;
+    p->btilt = p->tilt;
     return 0;
 }
 
@@ -513,12 +604,15 @@ static int end(hal_ptz_t *p, int rc)
 {
     uint32_t pan, tilt;
     char s[SAVED_MAX];
+    int lost = 0;
     p->moving = 0;
     p->cancel = 0; /* a cancel that came too late must not eat the final position read */
     if (!p->pos_valid && p->fd >= 0 && !ptzs_read_pos(&p->x, &pan, &tilt) && !(p->x.raw[0] == 0 && p->x.raw[1] == 0)) {
         snprintf(s, sizeof s, "pan=%u tilt=%u\n", (unsigned)pan, (unsigned)tilt); /* a cancel can eat the final read */
         (void)store_pos(p, s);
     }
+    if (p->pos_valid)
+        p->travel += (p->pan > p->bpan ? p->pan - p->bpan : p->bpan - p->pan) + (p->tilt > p->btilt ? p->tilt - p->btilt : p->btilt - p->tilt);
     if (p->canceled) {
         p->canceled = 0;
         return HAL_PTZ_ECANCEL;
@@ -526,10 +620,12 @@ static int end(hal_ptz_t *p, int rc)
     if (rc == HAL_PTZ_ESTALL || (rc == HAL_PTZ_EIO && !p->pos_valid)) { /* an I/O error with a readable position changed nothing */
         plog(p, "ptz: motion failed (%d): the position is no longer trusted until the next start", rc);
         p->trusted = 0;
-        p->pending[0] = '\0';
         p->pos_valid = 0;
+        lost = 1;
         (void)frames_invalidate(p); /* a restart must not re-adopt a frame whose counters lost the head */
     }
+    if (lost && p->scene_claim) /* the claim made by the scene check proved wrong (or the motor is stuck): the next cold boot must not repeat it */
+        scene_forget(p, "the claimed position failed");
     return rc;
 }
 
@@ -554,7 +650,10 @@ int hal_ptz_step(hal_ptz_t *p, int dir)
     return end(p, ptzs_move(&p->x, p->d.dir[dir], ms > 3000 ? 3000 : ms, p->cf.speed, p->cf.speed));
 }
 
-int hal_ptz_nudge(hal_ptz_t *p, int dx, int dy)
+int hal_ptz_nudge(hal_ptz_t *p, int dx, int dy) { return hal_ptz_nudge_sp(p, dx, dy, 0); }
+
+/* speed: a divisor 2..20 (the safe layer refuses anything else), 0 = the configured one */
+int hal_ptz_nudge_sp(hal_ptz_t *p, int dx, int dy, int speed)
 {
     int64_t pan, tilt;
     int rc = begin(p);
@@ -564,7 +663,7 @@ int hal_ptz_nudge(hal_ptz_t *p, int dx, int dy)
     tilt = (int64_t)p->tilt + dy;
     pan = pan < (int64_t)p->cf.pan_min ? p->cf.pan_min : pan > (int64_t)p->cf.pan_max ? p->cf.pan_max : pan;
     tilt = tilt < (int64_t)p->cf.tilt_min ? p->cf.tilt_min : tilt > (int64_t)p->cf.tilt_max ? p->cf.tilt_max : tilt;
-    return end(p, ptzs_goto(&p->x, (uint32_t)pan, (uint32_t)tilt, p->cf.speed));
+    return end(p, ptzs_goto(&p->x, (uint32_t)pan, (uint32_t)tilt, speed > 0 ? (uint32_t)speed : p->cf.speed));
 }
 
 void hal_ptz_cancel(hal_ptz_t *p)

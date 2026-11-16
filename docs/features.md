@@ -23,7 +23,8 @@ The evidence, test by test: [testing status](testing-status.md).
 | Microphone track | on | in the RTSP stream | hardware-validated | **L16** (raw 16-bit PCM, 8 kHz, mono), not G.711. Can be turned off (`./akam audio mic off`, host-tested only) |
 | RTSP Digest authentication | off | TCP 554 | hardware-validated | One user and password, set with `./akam rtsp-auth set` |
 | Speaker output and two-way audio (ONVIF audio backchannel, G.711 PCMU/PCMA) | on, needs the video password | in the RTSP session | hardware-validated (talk), host-tested only (`say`, speaker volume and beep) | Used by `./akam talk`, go2rtc, Frigate, Home Assistant. Speaker volume default 100 |
-| Picture settings (brightness, contrast, saturation, sharpness) | 0 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
+| Picture settings (brightness, contrast, saturation, sharpness) | 0; sharpness -15 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
+| Default sharpness -15 on every ISO level of the ISP sharpening (`isp.sharpness`, `img.sharp_all`) | on | `SET isp.sharpness 0` and `SET img.sharp_all 0` for the stock picture | measured on one camera (static scene, P frames 7.9 KB to 1.8 KB) | Long-run picture quality in all lights not yet judged |
 | Day/night switching with IR-cut filter and IR LEDs | automatic | | hardware-validated | Includes a night probe so the IR LEDs do not fool the exposure reading |
 | Status LED (front, blue) | on | | hardware-validated | `on`, `off`, or `auto` (blinks while starting or streaming) |
 

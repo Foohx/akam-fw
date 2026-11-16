@@ -21,6 +21,8 @@ keep a verified backup of your stock camera before you flash anything.
 - Video and audio over RTSP (H.264 1080p with microphone, 10, 15, 20 or 25 fps), optional Digest login, two-way audio
   through the ONVIF audio backchannel.
 - ONVIF-compatible services and WS-Discovery, and MQTT with Home Assistant discovery, both opt-in and off by default.
+- The 1080p picture runs with sharpness -15 on every ISO level of the ISP sharpening by default (the stock sharpening amplifies
+  sensor noise: P frames 7.9 KB to 1.8 KB on a still scene). `./akam picture sharpness 0` gives the stock picture back.
 - Day/night switching, front and IR LED settings, picture settings, NTP, an encoder-stall watchdog, a Wi-Fi supervisor
   and a kernel log filter.
 - Secure defaults: SSH keys only, Telnet and FTP off, only ports 22, 554 and 8091 listen.

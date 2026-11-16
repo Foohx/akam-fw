@@ -14,7 +14,7 @@ func TestOptionsMainScreenShowsEveryGroupInOneRead(t *testing.T) {
 	expectRC(t, r, 0)
 	contains(t, r.out, "Camera options - salon (127.0.0.1)   Akam b35-2af81c5",
 		"LED and night", "front LED: auto   IR LEDs: auto   night: auto*",
-		"brightness 0  contrast 0  saturation 0  sharpness 0",
+		"brightness 0  contrast 0  saturation 0  sharpness -15",
 		"bitrate 1536 kbit/s   15 fps   key frame every 2 s",
 		"ONVIF: off   NTP: off   name: ", "(read-only)", "video password: off",
 		"* not saved: back to the default at the next reboot")

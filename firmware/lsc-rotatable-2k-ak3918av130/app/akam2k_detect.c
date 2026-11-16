@@ -450,7 +450,7 @@ static void *detect_thread(void *arg)
         if (t1 - t0 > stat_max)
             stat_max = t1 - t0;
         done++;
-        a2k_track_feed(t1, tbox, ntbox, (int)A2K_DET_W, (int)A2K_DET_H); /* tracking: one call per inference, n = 0 when nobody */
+        a2k_track_feed(t1, t0 - age, tbox, ntbox, (int)A2K_DET_W, (int)A2K_DET_H); /* tracking: one call per inference, n = 0 when nobody */
         {
             int gch = a2k_det_update(&det, t1, &obs, &ev);
             unsigned zch = g_eff.n > 0 ? a2k_zdet_update(&zd, t1, &obs, zev) : 0;
