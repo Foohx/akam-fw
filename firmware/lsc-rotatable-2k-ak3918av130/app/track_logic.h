@@ -31,6 +31,8 @@ struct tl_cfg {
     int lost_grace_s;        /* no person for this long = lost; nothing moves before (3) */
     int return_home;         /* 1 = go home after the loss (track_return=home), 0 = stay where the person was last seen (0) */
     int return_delay_s;      /* home mode: seconds after the end of the grace before going home, 0 = right after the grace (30) */
+    int head_pct;            /* modern mode, tilt: the vertical reference is the TOP of the box (the head), kept this % of the frame height below the frame top (15);
+                              * a box whose top touches the frame edge = head out = tilt up; a short box (far person) is centred on its upper third; 0 = centre of the box */
     int sticky_gate_pct;     /* the previous target is kept if a box lies within this % of the frame width of it (world position) (35) */
     int invert_pan, invert_tilt;
 };
@@ -64,6 +66,11 @@ typedef struct {
     int64_t last_seen_ms;
     int home_pending;        /* home request not yet emitted for the current loss */
     int ns;                  /* velocity samples: capture time + world pan position */
+    int last_tsign;          /* sign of the last tilt nudge (image sign) */
+    int64_t last_tnudge_ms;
+    int64_t thold_until;     /* the tilt reversal cap holds the tilt still until then */
+    int64_t trev_ms[2];
+    int ntrev;
     int64_t hold_until;      /* the reversal cap holds the tracker still until then */
     int64_t rev_ms[2];       /* times of the last direction reversals */
     int nrev;

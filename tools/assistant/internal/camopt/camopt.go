@@ -110,6 +110,7 @@ func Catalog() []Option {
 		num("isp.contrast", "Picture", "Contrast", -50, 50, PersistCamera, Now),
 		num("isp.saturation", "Picture", "Saturation", -50, 50, PersistCamera, Now),
 		num("isp.sharpness", "Picture", "Sharpness", -50, 50, PersistCamera, Now),
+		num("isp.denoise", "Picture", "Denoise (0 = stock, 2 = default)", 0, 4, PersistCamera, Now),
 		enum("img.wb", "Picture", "White balance", PersistRAM, Now, "conf", "manual"),
 		num("audio.out_volume", "Audio", "Speaker volume", 0, 100, PersistCamera, Now),
 		enum("audio.out_enable", "Audio", "Speaker", PersistCamera, Now, "0", "1"),

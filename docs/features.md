@@ -25,6 +25,7 @@ The evidence, test by test: [testing status](testing-status.md).
 | Speaker output and two-way audio (ONVIF audio backchannel, G.711 PCMU/PCMA) | on, needs the video password | in the RTSP session | hardware-validated (talk), host-tested only (`say`, speaker volume and beep) | Used by `./akam talk`, go2rtc, Frigate, Home Assistant. Speaker volume default 100 |
 | Picture settings (brightness, contrast, saturation, sharpness) | 0; sharpness -15 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
 | Default sharpness -15 on every ISO level of the ISP sharpening (`isp.sharpness`, `img.sharp_all`) | on | `SET isp.sharpness 0` and `SET img.sharp_all 0` for the stock picture | measured on one camera (static scene, P frames 7.9 KB to 1.8 KB) | Long-run picture quality in all lights not yet judged |
+| Default 3D noise-reduction bias 2 (`isp.denoise`, the 3D_NR tables of each light level come from the level 2 steps higher) | on | `./akam picture denoise 0` for the camera's own tables; 1 to 4 for other strengths | A/B on two cameras (RAM, lamp light, ISO level 9): less pulsing at each key frame, 3 to 7 % less static detail | Not yet judged in all lights; refused (stock tables kept, logged) when the live table is not as decoded |
 | Day/night switching with IR-cut filter and IR LEDs | automatic | | hardware-validated | Includes a night probe so the IR LEDs do not fool the exposure reading |
 | Status LED (front, blue) | on | | hardware-validated | `on`, `off`, or `auto` (blinks while starting or streaming) |
 

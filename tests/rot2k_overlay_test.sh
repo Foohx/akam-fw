@@ -1217,6 +1217,20 @@ check "supervisor: the track_return / delay / grace / band / tilt / lead keys be
 check "supervisor: the bad tracking values were never evaluated" test ! -e "$SDC/akam/EVIL" -a ! -e EVIL
 end_sup
 
+# --- track_head_pct, and the conf is re-read at every app (re)start
+new_root suptr4
+mk_app crash
+printf 'track_tilt=1\ntrack_head_pct=20\ntrack_head_pct=51\n' >"$SDC/akam/akam2k.conf"
+AKAM_APP_BACKOFF_MIN=1 AKAM_APP_BACKOFF_MAX=1 AKAM_APP_CRASH_MAX=50 run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_head_pct 0..50 becomes --track-head-pct, 51 is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 20"
+printf 'track_tilt=1\ntrack_head_pct=0\n' >"$SDC/akam/akam2k.conf"
+i=0
+while [ "$(runs)" -lt 2 ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+check "supervisor: a conf change applies at the next app restart (no supervisor restart)" test "$(sed -n 2p "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 0"
+check "supervisor: the options are logged at each start" test "$(count_grep "$SDC/akam/akam_boot.log" 'akam2k_rtsp options:')" -ge 2
+end_sup
+
 # --- refusals: sha mismatch, no BUILDINFO hash, missing binary
 new_root sup3
 mk_app run

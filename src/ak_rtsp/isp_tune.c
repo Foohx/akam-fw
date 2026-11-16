@@ -24,6 +24,7 @@ int isp_tune_load(const char *path, isp_tune_t *t)
     char buf[512];
     memset(t, 0, sizeof(*t));
     t->sharpness = ISP_TUNE_DEFAULT_SHARPNESS;
+    t->denoise = ISP_TUNE_DEFAULT_DENOISE;
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -44,21 +45,23 @@ int isp_tune_load(const char *path, isp_tune_t *t)
         else if (!strcmp(line, "contrast"))   t->contrast = v;
         else if (!strcmp(line, "saturation")) t->saturation = v;
         else if (!strcmp(line, "sharpness"))  t->sharpness = v;
+        else if (!strcmp(line, "denoise") && v >= 0 && v <= ISP_TUNE_DENOISE_MAX) t->denoise = v;
     }
     return 1;
 }
 
 int isp_tune_save(const char *path, const isp_tune_t *t)
 {
-    if (!t->brightness && !t->contrast && !t->saturation && t->sharpness == ISP_TUNE_DEFAULT_SHARPNESS) {
+    if (!t->brightness && !t->contrast && !t->saturation && t->sharpness == ISP_TUNE_DEFAULT_SHARPNESS &&
+        t->denoise == ISP_TUNE_DEFAULT_DENOISE) {
         if (unlink(path) < 0 && errno != ENOENT) return -1;
         return 0;
     }
     isp_tune_t cur;
     if (isp_tune_load(path, &cur) == 1 && !memcmp(&cur, t, sizeof(cur))) return 0; /* unchanged: no flash write */
-    char out[160], tmp[512], dir[512];
-    int w = snprintf(out, sizeof(out), "brightness=%d\ncontrast=%d\nsaturation=%d\nsharpness=%d\n",
-                     t->brightness, t->contrast, t->saturation, t->sharpness);
+    char out[192], tmp[512], dir[512];
+    int w = snprintf(out, sizeof(out), "brightness=%d\ncontrast=%d\nsaturation=%d\nsharpness=%d\ndenoise=%d\n",
+                     t->brightness, t->contrast, t->saturation, t->sharpness, t->denoise);
     if (w < 0 || (size_t)w >= sizeof(out)) { errno = ENOSPC; return -1; }
     if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) { errno = ENAMETOOLONG; return -1; }
     snprintf(dir, sizeof(dir), "%s", path);

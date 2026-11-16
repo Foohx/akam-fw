@@ -103,6 +103,7 @@ Access: `r` read-only, `rw` read-write (write rule of section 3), `w` write-only
 | `ae.enabled` | rw | 0 or 1 | RAM |
 | `isp.brightness`, `isp.contrast`, `isp.saturation` | rw | -50 to 50 | file `picture` |
 | `isp.sharpness` | rw | -50 to 50, default -15 (all SHARP groups); 0 = stock | file `picture` |
+| `isp.denoise` | rw | 0 to 4, default 2 (1080p 3D-NR bias, same knob as `img.nr3d_bias`); 0 = stock; refused when the live table is not as decoded; GET = the value that runs | file `picture` |
 | `venc.minqp`, `venc.maxqp` | r | `28 (read-only)`, `43 (read-only)` (the suffix is part of the value) | - |
 
 A numeric `SET` is parsed strictly (whole decimal string, no trailing text, no overflow). An invalid value answers

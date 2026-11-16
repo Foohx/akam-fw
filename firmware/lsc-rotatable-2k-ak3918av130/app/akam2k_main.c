@@ -7,7 +7,7 @@
  *               [--image-brightness N] [--image-contrast N] [--image-sharpness N] [--mains-hz 50|60] [--wdr 0|1] [--audio 0|1]
  *               [--led auto|on|off] [--led-boot P] [--led-nowifi P] [--led-person P] [--led-stream P] [--led-night P] [--led-idle P]
  *               [--ptz-cal auto|off] [--ptz-park PAN:TILT] [--ptz-privacy 0|1]
- *               [--track 0|1] [--ptz-travel-budget-k 10..99999] [--track-return home|stay] [--track-return-delay-s N] [--track-grace-s N] [--track-band-pct 2..40] [--track-tilt 0|1] [--track-lead-pct 0..100] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
+ *               [--track 0|1] [--ptz-travel-budget-k 10..99999] [--track-return home|stay] [--track-return-delay-s N] [--track-grace-s N] [--track-band-pct 2..40] [--track-tilt 0|1] [--track-lead-pct 0..100] [--track-head-pct 0..50] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
  *               [--ptz-scene-check 0|1] [--ptz-scene-min 0.80..0.99] [--api-port 0|1024..65535]
  *   akam2k_rtsp --api-key new --scope read|write|admin --name LABEL | list | revoke ID|NAME [--force]   (key tool, no hardware touched)
  *   long forms: --port --main-kbps --sub-kbps --gop --auth --frames --seconds --detect --detect-hz --detect-threshold
@@ -413,6 +413,7 @@ int main(int argc, char **argv)
         { "track-band-pct", required_argument, NULL, 1035 },
         { "track-tilt", required_argument, NULL, 1036 },
         { "track-lead-pct", required_argument, NULL, 1037 },
+        { "track-head-pct", required_argument, NULL, 1039 },
         { "video0-kbps", required_argument, NULL, 1100 },
         { "video0-max-kbps", required_argument, NULL, 1101 },
         { "video0-fps", required_argument, NULL, 1102 },
@@ -525,6 +526,7 @@ int main(int argc, char **argv)
         case 1035: if (parse_int(optarg, 2, 40, &tune.deadband_pct)) return usage(); break;
         case 1036: if (parse_int(optarg, 0, 1, &tune.tilt_enable)) return usage(); break;
         case 1037: if (parse_int(optarg, 0, 100, &tune.lead_pct)) return usage(); break;
+        case 1039: if (parse_int(optarg, 0, 50, &tune.head_pct)) return usage(); break;
         case 1027: if (parse_int(optarg, BTN_LONG_MIN_MS, BTN_LONG_MAX_MS, &button_long)) return usage(); break;
         case 1120: if (parse_int(optarg, 0, 1, &cfg.video_live)) return usage(); break;
         case 1121: if (parse_int(optarg, 0, 1, &cfg.venc_test)) return usage(); break;

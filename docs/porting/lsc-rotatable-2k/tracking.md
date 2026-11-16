@@ -41,6 +41,7 @@ reproduces the 0.1.0 limit of 200 steps/s; it does not model the real detector's
 | settle_ms | 220 | a frame captured less than this after the end of the motion, or before the last nudge started, is dropped (see below) |
 | fast_pct / speed_fast | 25 / 2 | an offset beyond 25 % of the frame uses speed divisor 2 (~500 steps/s) instead of the default 3 (~333) |
 | lead_pct / lead_max | 70 / 500 | velocity lead: % of the predicted target travel added to the nudge, cap in steps (`track_lead_pct`, 0 = off) |
+| head_pct | 15 | tilt: the vertical reference is the TOP of the box (the head), kept 15 % of the frame height below the frame top (`track_head_pct` 0..50, 0 = centre of the box); see Tilt |
 | tilt_enable | **0** | tilt tracking, opt-in (`track_tilt=1`) until the tilt direction (`track_invert_tilt`) is verified on the camera |
 | lost_grace_s | 3 | no person for this long = lost; nothing is decided before (`track_grace_s`) |
 | return_home / return_delay_s | 0 (stay) / 30 | return policy, below |
@@ -75,8 +76,10 @@ in the frame at 200 steps/s without hunting, because every correction is re-meas
 - **No hunting.** Damping (85 %); a correction below 20 steps is not sent; a nudge against the previous one within 1.5 s is halved; the correction is always
   measured on a settled frame, never integrated over a motion; the band (8 %) is larger than the detector jitter (a few px).
 - Review fixes: a correction smaller than 20 steps is dropped AFTER the soft-range clip (a person 10 steps beyond a limit no longer loops tiny motions, scene timers and MQTT updates); the velocity samples are reset when the person is lost or the picked box is not the sticky match; a new box outside the sticky gate needs 2 ticks even inside the grace; a frame is also stale while the last nudge has no reported motion end (at most 2 s: queued, refused or not started); at most 2 direction reversals in 6 s, the third is held back and the tracker stays still for 3 s.
-- Tilt (off by default): same mechanism with its own band; the vertical offset of the box centre is used. At 1-2 m the box fills the frame vertically and its centre stays near
-  the middle, which is why tilt rarely moves in practice. `track_tilt=1` enables it. The tilt soft range is respected (the policy clips the nudge to it; it was
+- Tilt (off by default, `track_tilt=1`): same mechanism with its own band (`tband_pct`, 15 %), no lead. Hardware test 2026-11-16 (user at ~1 m): the box spans the full height (`0,0,102,191`, `16,13,264,191`), so its centre never moves and a centred policy never tilts. Tilt is therefore **head-anchored** (`head_pct`, default 15): the reference is the TOP of the box, aimed at 15 % of the frame height from the top, with the same 15 % band around it (top between 0 and 30 % of the height: nothing).
+  Box top at the frame edge (<= 2 px) = head out of the frame = tilt UP by `gain_tilt * box height / frame height / 3` steps (about 200 for a full-height box), at least 20, at most `max_step`; a box top below the band = tilt DOWN in proportion to the distance (crouching). A box 55 % of the frame height or taller, or cut by the bottom edge, is a near person and uses this rule; a shorter box (far person, fully inside) is centred on its UPPER THIRD, and a top already inside the head band also counts as in band (else the camera tilting down, which shrinks a cut box into the far rule, would be pulled back up: hunting). Anti-hunting: a tilt nudge against the previous one inside 1.5 s is halved, a 3rd tilt reversal inside 6 s holds only the tilt for 3 s (pan keeps its own counter). The soft range clips the nudge (no push at a limit). `head_pct=0` and `tl_cfg_legacy` keep the centre-of-box behaviour. Tests: `rot2k_track_unit.c` (`head_tilt`: closed loop, close person crouching and standing, head clipped, far person, range).
+  Before (centre-based): At 1-2 m the box fills the frame vertically and its centre stays near
+  the middle, which is why tilt rarely moved in practice. `track_tilt=1` enables it. The tilt soft range is respected (the policy clips the nudge to it; it was
   clipped with the wrong sign before: image "below" is tilt DOWN = motor -).
 - Speed: the nudge carries a speed divisor (2 for a large correction, 0 = the configured speed 3 otherwise) through `a2k_ptz_nudge_sp` ->
   `hal_ptz_nudge_sp` -> the safe-motion layer `ptzs_goto(speed)`, which refuses anything outside 2..20. No new ioctl, no new motor command: the same timed polled
@@ -101,7 +104,7 @@ beyond the soft range just pins the camera at the limit without further commands
   The grace is conf-only.
 - 0.1.0 behaviour (home 10 s after the last box) = `track_return=home`, `track_grace_s=10`, `track_return_delay_s=0`.
 
-Other conf keys: `track_band_pct` (2..40, default 8), `track_tilt` (0|1, default 0), `track_lead_pct` (0..100).
+Other conf keys: `track_band_pct` (2..40, default 8), `track_tilt` (0|1, default 0), `track_lead_pct` (0..100), `track_head_pct` (0..50, default 15). The supervisor re-reads `akam2k.conf` before every app (re)start, so a change applies when the app restarts (no supervisor restart).
 
 ## Simulation (tests/rot2k_track_sim.c)
 

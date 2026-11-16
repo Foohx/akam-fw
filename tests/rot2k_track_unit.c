@@ -1,6 +1,7 @@
 /* Host unit test of track_logic (pure policy). Build: see docs/porting/lsc-rotatable-2k/tracking.md */
 #include "../firmware/lsc-rotatable-2k-ak3918av130/app/track_logic.h"
 #include <stdio.h>
+#include <string.h>
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
@@ -73,8 +74,8 @@ static void responsive(void) {
     o = step(&t, 1600, 1250, b, p); CHECK(o.kind == TL_NONE);
     /* tilt: a person low in the frame (outside 15 % of 192 = 29 px): tilt down */
     c.tilt_enable = 1; tl_init(&t, &c);
-    b = box(160, 160, 40, 60);                                                 /* 64 px below = 200 steps -> 170 */
-    o = step(&t, 1000, 1000, b, p); o = step(&t, 1200, 1200, b, p); CHECK(o.kind == TL_NUDGE && o.dtilt == 170 && o.dpan == 0);
+    b = box(160, 150, 40, 60);                                                 /* upper third at row 140: 44 px below = 137 steps -> 116 */
+    o = step(&t, 1000, 1000, b, p); o = step(&t, 1200, 1200, b, p); CHECK(o.kind == TL_NUDGE && o.dtilt == 116 && o.dpan == 0);
     c.tilt_enable = 0; tl_init(&t, &c);
     o = step(&t, 1000, 1000, b, p); o = step(&t, 1200, 1200, b, p); CHECK(o.kind == TL_NONE);
     tl_cfg_defaults(&c); CHECK(c.tilt_enable == 0 && c.settle_ms == 220); /* tilt is opt-in until verified on the camera */
@@ -162,6 +163,120 @@ static void responsive(void) {
     o = step(&t, 2000, 1950, b, p); CHECK(o.kind == TL_NUDGE);
 }
 
+
+/* ---- head-anchored tilt: a close person fills the frame height, the box centre never moves; the top of the box does ---- */
+static struct tl_box rect(int x1, int y1, int x2, int y2) { struct tl_box b = {x1, y1, x2, y2}; return b; }
+
+/* closed loop: the person's head is at image row tilt `wtop` + 0.32 * tilt, the body is `hgt` px tall.
+ * 0.32 px per motor step (600 steps = 192 px). Tilt counter up = camera up = the person moves DOWN in the image. Returns the tilt after
+ * `ticks` ticks of 200 ms; nud = nudges, rev = reversals of the tilt direction, top = the box top at the end, tmin/tmax = tilt extremes. */
+struct loop { int tilt, nud, rev, top, tmin, tmax; };
+static void run_loop(tl_t *t, struct loop *l, double wtop, int hgt, int ticks, int64_t *now, int64_t *lastn) {
+    struct tl_ptz p = ptz();
+    int k, lastdir = 0;
+    for (k = 0; k < ticks; k++) {
+        struct tl_out o;
+        double top = wtop + l->tilt * 0.32;
+        int y1 = top < 0 ? 0 : (int)top, y2 = top + hgt > FH - 1 ? FH - 1 : (int)(top + hgt);
+        struct tl_box b = rect(100, y1, 220, y2);
+        p.tilt = l->tilt; p.tilt_min = 0; p.tilt_max = 2000;
+        p.cap_ms = *now; p.motion_end_ms = *lastn ? *lastn + 100 : 0;
+        *now += 200;
+        if (y2 <= y1) continue;
+        tl_update(t, *now, &b, 1, FW, FH, &p, &o);
+        l->top = y1;
+        if (o.kind == TL_NUDGE && o.dtilt) {
+            int dir = o.dtilt > 0 ? -1 : 1;
+            if (lastdir && dir != lastdir) l->rev++;
+            lastdir = dir;
+            l->tilt -= o.dtilt;
+            if (l->tilt < l->tmin) l->tmin = l->tilt;
+            if (l->tilt > l->tmax) l->tmax = l->tilt;
+            l->nud++;
+            *lastn = *now;
+        } else if (o.kind == TL_NUDGE) *lastn = *now;
+    }
+}
+
+static void head_tilt(void) {
+    tl_t t; struct tl_cfg c; struct tl_ptz p = ptz(); struct tl_out o; struct loop l;
+    int64_t now, lastn;
+    tl_cfg_defaults(&c); c.invert_pan = 0; c.lead_pct = 0; c.tilt_enable = 1;
+    tl_init(&t, &c);
+    /* head fully visible at the target (top 29 px) or anywhere in the band 0..58: nothing, whatever the box height (centre = 110, 96 ...) */
+    o = step(&t, 1000, 1000, rect(100, 15, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 15, 220, 191), p); CHECK(o.kind == TL_NONE);
+    tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 40, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 40, 220, 191), p); CHECK(o.kind == TL_NONE);
+    /* head clipped at the top, box 191 px tall: up (image above = dtilt < 0) by 600 * 191/192 / 3 = 198 steps, never a pan */
+    tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 0, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 0, 220, 191), p);
+    CHECK(o.kind == TL_NUDGE && o.dtilt == -198 && o.dpan == 0);
+    /* a smaller clipped box: a smaller step (bounded below by the minimum nudge) */
+    tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 1, 220, 61), p); o = step(&t, 1200, 1200, rect(100, 1, 220, 61), p);
+    CHECK(o.kind == TL_NUDGE && o.dtilt == -62);
+    /* crouching: the top drops to row 120 in a still full-height box: down (dtilt > 0) by (120-29)/192*600 * 85 % = 241 */
+    tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 120, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 120, 220, 191), p);
+    CHECK(o.kind == TL_NUDGE && o.dtilt > 0 && o.dpan == 0);
+    /* a far person (box 70 px tall, 36 %): centred on its upper third; fully inside and near the target: nothing */
+    tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(130, 60, 190, 130), p); o = step(&t, 1200, 1200, rect(130, 60, 190, 130), p); CHECK(o.kind == TL_NONE);
+    tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(130, 120, 190, 190), p); o = step(&t, 1200, 1200, rect(130, 120, 190, 190), p); CHECK(o.kind == TL_NUDGE && o.dtilt > 0);
+    /* tilt disabled / head_pct 0 (centre of the box): the head logic is off */
+    c.tilt_enable = 0; tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 0, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 0, 220, 191), p); CHECK(o.kind == TL_NONE);
+    c.tilt_enable = 1; c.head_pct = 0; tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 0, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 0, 220, 191), p); CHECK(o.kind == TL_NONE);
+    c.head_pct = 51; CHECK(tl_cfg_validate(&c) != 0);
+    /* invert_tilt flips the motion, not the decision */
+    c.head_pct = 15; c.invert_tilt = 1; tl_init(&t, &c);
+    o = step(&t, 1000, 1000, rect(100, 0, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 0, 220, 191), p);
+    CHECK(o.kind == TL_NUDGE && o.dtilt == 198);
+    c.invert_tilt = 0;
+    /* soft range: head clipped but the camera is at the top of the tilt range: no push */
+    tl_init(&t, &c); p.tilt = 500;
+    o = step(&t, 1000, 1000, rect(100, 0, 220, 191), p); o = step(&t, 1200, 1200, rect(100, 0, 220, 191), p); CHECK(o.kind == TL_NONE);
+    p = ptz();
+
+    /* closed loop, person close (body 260 px: the box is the full height): head out -> up until it shows, then crouch -> down, stand -> up */
+    {
+        double wtop = -40 - 1000 * 0.32; /* the head is 40 px above the frame at tilt 1000 */
+        int t1, t2;
+        tl_init(&t, &c);
+        memset(&l, 0, sizeof l); l.tilt = l.tmin = l.tmax = 1000; now = 1000; lastn = 0;
+        run_loop(&t, &l, wtop, 260, 40, &now, &lastn);
+        CHECK(l.tilt > 1000 && l.top >= 1 && l.top <= 58 && l.nud <= 6 && l.rev == 0);        /* standing, head out: tilts up till the head shows */
+        t1 = l.tilt;
+        wtop += 110;                                                                           /* crouches: the head drops 110 px */
+        memset(&l, 0, sizeof l); l.tilt = l.tmin = l.tmax = t1;
+        run_loop(&t, &l, wtop, 150, 40, &now, &lastn);
+        CHECK(l.tilt < t1 - 100 && l.top >= 1 && l.top <= 58 && l.rev <= 1);                  /* the box top follows: tilts down */
+        t2 = l.tilt;
+        wtop -= 100;                                                                           /* stands up: the head rises 100 px */
+        memset(&l, 0, sizeof l); l.tilt = l.tmin = l.tmax = t2;
+        run_loop(&t, &l, wtop, 260, 40, &now, &lastn);
+        CHECK(l.tilt > t2 + 100 && l.top >= 1 && l.top <= 58 && l.rev <= 1);
+    }
+    /* far person (70 px tall), standing still anywhere in the frame: it converges and then does not oscillate */
+    {
+        double tops[] = { 10, 60, 100, 120 };
+        int k;
+        for (k = 0; k < 4; k++) {
+            tl_init(&t, &c);
+            memset(&l, 0, sizeof l); l.tilt = l.tmin = l.tmax = 1000; now = 1000; lastn = 0;
+            run_loop(&t, &l, tops[k] - 1000 * 0.32, 70, 80, &now, &lastn);
+            CHECK(l.rev == 0 && l.nud <= 5);
+        }
+    }
+    /* soft range in a closed loop: the head stays out of the frame, the camera is stopped at the top of the range */
+    tl_init(&t, &c);
+    memset(&l, 0, sizeof l); l.tilt = l.tmin = l.tmax = 1000; now = 1000; lastn = 0;
+    run_loop(&t, &l, -4000 - 1000 * 0.32, 260, 60, &now, &lastn);
+    CHECK(l.tmax <= 2000 && l.tilt <= 2000);
+}
+
 int main(void) {
     tl_t t; struct tl_out o; struct tl_ptz p = ptz(); struct tl_cfg c; struct tl_box b, bs[2], z = {5, 5, 5, 5};
 
@@ -246,6 +361,7 @@ int main(void) {
     tl_update(&t, 1, &b, 1, 0, 0, &p, &o); CHECK(o.kind == TL_NONE);
 
     responsive();
+    head_tilt();
 
     printf(fails ? "track: %d FAILED\n" : "track: all tests passed\n", fails);
     return fails != 0;

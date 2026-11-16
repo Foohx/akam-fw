@@ -401,6 +401,17 @@ larger `s` keeps weight for larger differences = **stronger smoothing**. The ven
 | UVNR | +0x06 | 16 bit | 100 ... 8800 | `s` | conf |
 | UVNR | +0x08 | 17 x 10 bit, [0] not read | Gaussian | chroma range weights | RE + conf |
 
+**Live NR1 block of both 1080p cameras (akam-01, akam-02, `SET img.dump nr`, 2026-11-16; fixtures
+`tests/fixtures/isp_nr_dump_akam-0{1,2}.txt`).** It differs from the conf pattern above, and the first decode refused it
+("live table not as decoded", `GET img.nr` showing `NR1 unreadable`): the **mode word reads 192, not 1**; the 16 linkage entries
+are all zero (enable 0, `s = 0/0/0`), only the manual entry has `s = 64/64/64`. The kernel tests the mode word for non-zero only
+(5.5.1), and an entry with `s = 0` is skipped by every composer, so the decode now accepts 192 for NR1 (`isp_nr.c: mode_ok`);
+any other mode word, for any block, is still refused. NR1 is therefore a no-op for `img.nr2d` and `img.nr2d_bias` on these
+cameras (disabled in every linkage entry as read). NR2 (mode 1, `s` 200 ... 6000), UVNR (mode 1, 100 ... 8800) and 3D_NR (mode 1,
+`s` 50 ... 20000, lo/hi 800/1800 ... 7000/8000) are as decoded. The dump holds decoded fields and the block hash only (NR1
+`d20fa646`, NR2 `57566d32`, UVNR `db994035`, 3D_NR `1e25cdfe`), not the table bytes, which stay private vendor data; the table
+check of NR2/UVNR on the real bytes is the one thing that only a camera run proves (`SET img.nr2d 150` answering OK).
+
 #### 5.5.4 SHARP (0x40044925, 46584 B, entry 0xab4 = 2740 B)
 
 | Offset (entry) | Width | Values (levels 0 -> 15, day) | Meaning | Evidence |
@@ -449,9 +460,10 @@ Proven enough to edit (values stay inside what the vendor files or the stock sli
 Not to edit (layout or meaning not proven): every "unknown" field above, the NR1 intensity curve, the 3D_NR luma table
 and parallel groups, the SHARP transfer curves (beyond the slider's existing scaling), the manual entries, the mode words.
 
-#### 5.5.7 Implementation spec for the control keys (implemented: `isp_nr.c`, `isp_nr_ctl.c`, `isp.c`, `imgq.c`; not yet run on a camera)
+#### 5.5.7 Implementation spec for the control keys (implemented: `isp_nr.c`, `isp_nr_ctl.c`, `isp.c`, `imgq.c`; run on akam-01/02, 5.6)
 
-All keys: RAM only (never saved; a restart or a reboot returns to the vendor bytes), 8091 SET from loopback only (same
+All `img.*` keys: RAM only (never saved; a restart or a reboot returns to the vendor bytes; `isp.denoise` is the saved front end of
+`img.nr3d_bias`, 5.6), 8091 SET from loopback only (same
 rule as the other `img.*` keys), refused with `not_ready()` before `isp_pipeline_ready()`, run under `isp_cfg_lock()`.
 Defaults leave the blocks untouched: **no ioctl is sent while every key of a block is at its default**, and returning a
 key to its default re-sends the pristine baseline byte for byte. No rc struct change, no new start-up option.
@@ -533,7 +545,9 @@ from this decode; send the dump for analysis.
 Expected direction: P frames of a static scene from about 8 KB of noise towards a few KB, a smaller sharpness jump at
 each I frame, without the edge loss that sharpness -25 gave. A default change is a separate decision after step 10.
 
-### 5.6 Result: sharpness default -15 on all ISO levels (akam-01, 2026-11-16)
+### 5.6 Results: sharpness default -15 on all ISO levels, 3D-NR bias 2 default (akam-01, akam-02, 2026-11-16)
+
+#### 5.6.1 Sharpness -15 (akam-01)
 
 RAM trials, static scene, `tools/video_quality.sh`, `SET img.sharp_all 1` then the slider. The stock SHARP block amplifies the sensor
 noise, which the encoder then has to code in every P frame.
@@ -548,3 +562,35 @@ noise, which the encoder then has to code in every P frame.
 Decision (user, 2026-11-16): **-15 on all SHARP entries is the 1080p default** (`isp.sharpness` -15, `img.sharp_all` 1). The stock
 behaviour stays one setting away: `SET isp.sharpness 0` (saved) or `./akam picture sharpness 0`, and `SET img.sharp_all 0`.
 The trials ran with entries 0..15; the shipped code also covers entry 16 (ISO level 15, section 5.5.1), which the trials missed. The golden reproducible hash was re-recorded for it (tests/golden/ak_rtsp_1080p.sha256).
+
+#### 5.6.2 Second round on both 1080p cameras: sharpness vs 3D-NR bias (akam-01, akam-02, 2026-11-16)
+
+Lamp light, ISO level 9, RAM only, medians of 3 interleaved 12 s A/B rounds (A and B alternate within a round). "Jump" = sharpness
+jump at the I-frame boundary (what the eye sees as a pulse once per GOP); "drop" = sharpness lost over one GOP; "static" = sharpness of
+a static scene (detail kept).
+
+| A/B | Jump akam-01 | Jump akam-02 | GOP drop akam-01 | GOP drop akam-02 | Static sharpness | Verdict |
+|---|---|---|---|---|---|---|
+| `isp.sharpness` 0 -> -15 | 14.1 -> 7.6 | 3.4 -> 2.4 | 23.6 -> 19.0 % | 5.4 -> 4.8 % | (the -15 of 5.6.1) | confirms -15 on a second camera |
+| `img.nr3d_bias` 0 -> 2 | 7.4 -> 5.2 | 2.5 -> 1.9 | 18.6 -> 14.5 % | 4.9 -> 3.8 % | -7 % / -3 % | **shipped as default** |
+| `img.sharp_coring` 200 | mixed | mixed | mixed | mixed | | rejected (better on one measure, worse on another) |
+| `img.nr3d_motion` 150 | no effect | no effect | | | | not shipped |
+| `img.uvnr` 200 | no effect | no effect | | | | not shipped |
+| `img.sharp_bias` 1 | no effect | no effect | | | | not shipped |
+
+The bias is the one knob that moves both the I-boundary pulse and the GOP drop on both cameras, for a small loss of static detail (3 to 7 %).
+
+Conclusions:
+
+* **Decision (user, 2026-11-16): ship `isp.sharpness` -15 (all 17 SHARP entries) and `img.nr3d_bias` 2 as the 1080p defaults.** The 3D-NR
+  bias is exposed as `isp.denoise` (0..4, default 2; `./akam picture denoise N`), a saved picture value like the sharpness: a saved
+  value wins, `0` is the stock 3D-NR tables. It is applied once the ISP runs and again after every day/night reload (the reload
+  puts the vendor blocks back; `isp_nr_reapply` re-sends 3D_NR only, with level L taking vendor entry min(L+2,15)). `img.nr3d_bias`
+  stays as the RAM-only experiment key on the same knob.
+* The safety rule is unchanged: when the live 3D_NR block is not as decoded (mode word not 1, an enable word that is not a bit,
+  wrong length) nothing is sent. At start-up the refusal is logged (`[control] denoise 2 not applied (live table not as decoded): the
+  camera keeps the stock noise-reduction tables`), the camera keeps running with the stock tables, and the saved or default value is
+  not lost; `SET isp.denoise` answers `ERR ... live table not as decoded`.
+* Stock path: `isp.sharpness` 0 and `isp.denoise` 0 send exactly the payloads of the previous release (no GET, no SET of 3D_NR;
+  `tests/isp_nr_test.sh`, `tests/isp_effects_test.sh`). The golden hash changed (behaviour change, `tests/golden/ak_rtsp_1080p.sha256`).
+* Not made a default: `img.nr2d`, `img.nr2d_bias` (NR1 is empty on these cameras, 5.5.3; not A/B-tested), coring, motion, UVNR strength, sharp bias.

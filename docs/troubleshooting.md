@@ -154,6 +154,19 @@ sharpening amplifies the sensor noise, so the stream was grainy and heavy (about
   `./akam picture sharpness -15` or `./akam picture reset` (reset sets sharpness -15, the rest 0).
 - Over SSH on the camera, until the next restart: `printf 'SET img.sharp_all 0\n' | nc -w 2 127.0.0.1 8091` puts the slider back on the unused manual entry only (the stock behaviour).
 
+## The picture lost fine detail, or pulses at every key frame (denoise)
+
+The 1080p camera runs with `isp.denoise` 2: for each light level it uses the 3D noise-reduction tables of the level 2 steps higher
+(stronger temporal denoising). In the A/B on two cameras this lowered the sharpness pulse at each key frame and the loss over a GOP,
+for 3 to 7 % less static detail.
+- Want the camera's own tables back: `./akam picture denoise 0` (saved). `./akam picture denoise 1` is a lighter step, up to 4.
+- `./akam picture` shows `Denoise ...`; `./akam picture reset` puts sharpness -15 and denoise 2 back.
+- A camera that saved picture values before this update has no `denoise` line and gets 2; an explicit 0 stays 0.
+- If `GET isp.denoise` answers 0 while you expect 2, the camera refused the table at start-up (the log has
+  `[control] denoise 2 not applied (live table not as decoded)`): the stock tables run, the picture is the one of the previous release.
+  Send the output of `printf 'SET img.dump nr\n' | nc -w 2 127.0.0.1 8091` (SSH, loopback) with the report.
+- Over SSH, until the next restart: `printf 'SET img.nr3d_bias 0\n' | nc -w 2 127.0.0.1 8091`.
+
 ## VLC cannot open the stream, or hardware decoding fails
 
 - Missing plugins (seen on Arch): install `vlc-plugin-live555` (RTSP) and `vlc-plugin-ffmpeg`

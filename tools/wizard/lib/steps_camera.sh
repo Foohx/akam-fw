@@ -1581,8 +1581,9 @@ cmd_ntp() {
 # picture: isp.brightness/contrast/saturation/sharpness are saved on the camera and applied at start-up;
 # img.wb (conf | manual) and night.mode (auto | day | night) are RAM-only: they go back at the next reboot.
 picture_show() {
-    local out br co sa sh wb nm
-    out=$(led_remote "GET isp.brightness" "GET isp.contrast" "GET isp.saturation" "GET isp.sharpness" "GET img.wb" "GET night.mode")
+    local out br co sa sh wb nm dn
+    out=$(led_remote "GET isp.brightness" "GET isp.contrast" "GET isp.saturation" "GET isp.sharpness" "GET isp.denoise" "GET img.wb" "GET night.mode")
+    dn=$(led_get isp.denoise "$out")
     br=$(led_get isp.brightness "$out")
     co=$(led_get isp.contrast "$out")
     sa=$(led_get isp.saturation "$out")
@@ -1594,6 +1595,7 @@ picture_show() {
         return 1
     fi
     ui_say "  Brightness $br, contrast $co, saturation $sa, sharpness $sh (each -50 to 50; 0 = unchanged, except sharpness: -15 is the default, 0 is the camera's own sharpening). Saved on the camera."
+    [ -z "$dn" ] || ui_say "  Denoise (3D noise reduction): $dn (0 to 4; 2 is the default, 0 is the camera's own noise reduction). Saved on the camera."
     ui_say "  White balance: ${wb:-unknown} (conf = the camera's calibration, manual = Akam's own block). Saved on the camera."
     ui_say "  Day/night: ${nm:-unknown} (auto, day or night). Saved on the camera."
 }
@@ -1623,6 +1625,11 @@ cmd_picture() {
                 keys+=("isp.$1"); vals+=("$(picture_norm "$2")")
                 shift 2
                 ;;
+            denoise)
+                case ${2:-} in [0-4]) ;; *) echo "akam: picture denoise needs a whole number from 0 to 4 (see ./akam help)" >&2; return 2 ;; esac
+                for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != isp.denoise ] || { echo "akam: picture denoise given twice (see ./akam help)" >&2; return 2; }; done
+                keys+=(isp.denoise); vals+=("$2"); shift 2
+                ;;
             wb)
                 case ${2:-} in conf | manual) ;; *) echo "akam: picture wb needs conf or manual (see ./akam help)" >&2; return 2 ;; esac
                 for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != img.wb ] || { echo "akam: picture wb given twice (see ./akam help)" >&2; return 2; }; done
@@ -1641,7 +1648,7 @@ cmd_picture() {
         return 2
     fi
     if [ "$reset" = 1 ]; then
-        keys=(isp.brightness isp.contrast isp.saturation isp.sharpness); vals=(0 0 0 -15)
+        keys=(isp.brightness isp.contrast isp.saturation isp.sharpness); vals=(0 0 0 -15)   # + isp.denoise 2, best effort below
     fi
     step_banner_free "Picture settings"
     cam_need_ip || return 1
@@ -1649,14 +1656,18 @@ cmd_picture() {
         ui_say "  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 $LED_PORT"
         local i
         for i in "${!keys[@]}"; do ui_say "  WOULD send: SET ${keys[$i]} ${vals[$i]}"; done
-        [ "${#keys[@]}" -gt 0 ] || ui_say "  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, img.wb, night.mode"
+        [ "$reset" != 1 ] || ui_say "  WOULD send: SET isp.denoise 2 (ignored by an image without it)"
+        [ "${#keys[@]}" -gt 0 ] || ui_say "  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode"
         return 0
     fi
     rtsp_connect || return 1
     if [ "${#keys[@]}" -gt 0 ]; then
         local i
         for i in "${!keys[@]}"; do ctl_set "${keys[$i]}" "${vals[$i]}" || return 1; done
-        if [ "$reset" = 1 ]; then ui_good "  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed."; else ui_good "  Done."; fi
+        if [ "$reset" = 1 ]; then
+            ctl_set isp.denoise 2 >/dev/null 2>&1 || true   # an image without isp.denoise refuses it: nothing to reset
+            ui_good "  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed. Denoise is back to 2 (the default)."
+        else ui_good "  Done."; fi
     fi
     picture_show
 }

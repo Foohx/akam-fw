@@ -39,8 +39,8 @@ void a2k_track_run_start(int enabled, const char *conf_areas, void (*notify)(voi
     (void)a2k_track_load(&g_t, conf_areas);
     a2k_track_set_enabled(&g_t, enabled);
     g_up = 1;
-    a2k_log("track: invert_pan %d invert_tilt %d, band %d%%, tilt %d, lead %d%%, return %s after %d s + %d s grace", invert_pan, invert_tilt,
-            g_t.cfg.deadband_pct, g_t.cfg.tilt_enable, g_t.cfg.lead_pct, g_t.cfg.return_home ? "home" : "stay", g_t.cfg.return_delay_s,
+    a2k_log("track: invert_pan %d invert_tilt %d, band %d%%, tilt %d (head %d%%), lead %d%%, return %s after %d s + %d s grace", invert_pan, invert_tilt,
+            g_t.cfg.deadband_pct, g_t.cfg.tilt_enable, g_t.cfg.head_pct, g_t.cfg.lead_pct, g_t.cfg.return_home ? "home" : "stay", g_t.cfg.return_delay_s,
             g_t.cfg.lost_grace_s);
     a2k_log("track: person tracking %s", enabled ? "on" : "off (akam2k.conf track=1 or the Home Assistant switch turns it on)");
 }

@@ -20,6 +20,7 @@
 #include "audio_out.h"
 #include "imgq.h"
 #include "isp_tune.h"
+#include "isp_nr.h"
 #include "talk.h"
 #include "leds.h"
 #include "control.h"
@@ -104,6 +105,10 @@ static int g_isp_saturation = 0;
 static int g_isp_contrast   = 0;
 static int g_isp_brightness = 0;
 static int g_isp_sharpness  = ISP_TUNE_DEFAULT_SHARPNESS;   /* applied at start by control_apply_saved_isp() */
+/* isp.denoise: the wanted 3D-NR bias (saved value, else ISP_TUNE_DEFAULT_DENOISE). Not what is running: a start-up refusal
+ * (live table not as decoded) leaves the stock tables running, and the wanted value stays so that saving another picture
+ * value does not overwrite the user's choice. GET isp.denoise reads the running knob. */
+static int g_isp_denoise    = ISP_TUNE_DEFAULT_DENOISE;
 
 /* Saved with the same four values after every successful isp.* SET (8091 SET only; the values come back at the
  * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at the defaults
@@ -114,7 +119,7 @@ static int g_persist_isp;  /* set by do_set() under g_set_lock: only a local (SS
 
 static const char *isp_persist_note(char *note, size_t cap)
 {
-    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, g_isp_denoise };
     note[0] = '\0';
     /* a slider dragged by the PC tool over the network (DEBUG) would write flash at every step: RAM only */
     if (!g_persist_isp) return note;
@@ -326,6 +331,7 @@ static void do_list(cli_t *c)
     reply(c, "isp.contrast=%d",          g_isp_contrast);
     reply(c, "isp.brightness=%d",        g_isp_brightness);
     reply(c, "isp.sharpness=%d",         g_isp_sharpness);
+    reply(c, "isp.denoise=%d",           isp_nr_knob_get(ISP_KNOB_NR3D_BIAS));
     /* VENC QP is stock-matched ground truth but
      * not live-settable yet — no confirmed ioctl to update rc params on an
      * already-created encoder channel without a DEACTIVATE/CREATE_ENC
@@ -387,6 +393,7 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "isp.contrast"))          reply(c, "isp.contrast=%d", g_isp_contrast);
     else if (!strcmp(param, "isp.brightness"))        reply(c, "isp.brightness=%d", g_isp_brightness);
     else if (!strcmp(param, "isp.sharpness"))         reply(c, "isp.sharpness=%d", g_isp_sharpness);
+    else if (!strcmp(param, "isp.denoise"))           reply(c, "isp.denoise=%d", isp_nr_knob_get(ISP_KNOB_NR3D_BIAS));
     else if (!strcmp(param, "venc.minqp"))            reply(c, "venc.minqp=%d (read-only)", video_minqp());
     else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=%d (read-only)", video_maxqp());
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
@@ -544,6 +551,16 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         g_isp_sharpness = v;
         char note[64];
         setmsg(resp, cap, "OK isp.sharpness=%d%s", v, isp_persist_note(note, sizeof(note)));
+    } else if (!strcmp(param, "isp.denoise")) {
+        int v;
+        SET_INT(v, "isp.denoise", 0, ISP_TUNE_DENOISE_MAX);
+        if (!isp_pipeline_ready()) { setmsg(resp, cap, "ERR isp.denoise: the ISP is not ready"); return; }
+        int rc = isp_set_locked(isp_set_denoise, v);
+        if (rc == ISP_NR_REFUSED) { setmsg(resp, cap, "ERR isp.denoise: live table not as decoded (nothing sent; SET img.dump nr logs the tables)"); return; }
+        if (rc != 0) { setmsg(resp, cap, "ERR isp.denoise: the ISP refused the block"); return; }
+        g_isp_denoise = v;
+        char note[64];
+        setmsg(resp, cap, "OK isp.denoise=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "venc.minqp") || !strcmp(param, "venc.maxqp")) {
         setmsg(resp, cap, "ERR %s is read-only in this version "
                   "(requires an encoder restart, not yet implemented)", param);
@@ -594,6 +611,7 @@ int control_get_setting(const char *key, char *out, size_t cap)
     else if (!strcmp(key, "isp.contrast"))   v = g_isp_contrast;
     else if (!strcmp(key, "isp.saturation")) v = g_isp_saturation;
     else if (!strcmp(key, "isp.sharpness"))  v = g_isp_sharpness;
+    else if (!strcmp(key, "isp.denoise"))    v = isp_nr_knob_get(ISP_KNOB_NR3D_BIAS);
     else if (!strcmp(key, "night.mode")) {
         night_tuning_t n; night_get_tuning(&n);
         snprintf(out, cap, "%s", night_mode_name(n.override));
@@ -626,7 +644,7 @@ int control_get_value(const char *key, char *out, size_t cap)
 int control_persist_picture(void)
 {
     pthread_mutex_lock(&g_set_lock);
-    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness };
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, g_isp_denoise };
     int rc = isp_tune_save(ISP_TUNE_FILE, &t);
     pthread_mutex_unlock(&g_set_lock);
     return rc < 0 ? -1 : 0;
@@ -651,9 +669,16 @@ void control_apply_saved_isp(void)
     if (t.contrast && isp_set_locked(isp_set_contrast, t.contrast) == 0)     g_isp_contrast = t.contrast;
     if (t.brightness && isp_set_locked(isp_set_brightness, t.brightness) == 0) g_isp_brightness = t.brightness;
     if (t.sharpness && isp_set_locked(isp_set_sharpness, t.sharpness) == 0)   g_isp_sharpness = t.sharpness;
+    g_isp_denoise = t.denoise;
+    if (t.denoise) {
+        int rc = isp_set_locked(isp_set_denoise, t.denoise);
+        if (rc != 0)
+            printf("[control] denoise %d not applied (%s): the camera keeps the stock noise-reduction tables\n", t.denoise,
+                   rc == ISP_NR_REFUSED ? "live table not as decoded" : "the ISP refused the block");
+    }
     pthread_mutex_unlock(&g_set_lock);
-    printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d\n",
-           g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness);
+    printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d denoise=%d\n",
+           g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, isp_nr_knob_get(ISP_KNOB_NR3D_BIAS));
 }
 
 /* Blocking byte-at-a-time line reader — traffic on this protocol is tiny

@@ -81,6 +81,7 @@ struct isp_nr_knobs;
 const struct isp_nr_knobs *isp_nr_knobs(void);
 int  isp_nr_knob_set(int knob, int v);
 int  isp_nr_knob_get(int knob);
+int  isp_set_denoise(int bias);              /* isp.denoise: the 3D-NR bias knob; 0 done, else the isp_nr_knob_set error */
 int  isp_nr_status(char *out, size_t cap);   /* GET img.nr */
 int  isp_nr_dump_live(void);                 /* SET img.dump nr: number of blocks read */
 void isp_nr_reset(void);

@@ -357,10 +357,11 @@ func (a *App) cmdAudio(args []string) error {
 }
 
 func (a *App) pictureShow(c *camssh.Client) error {
-	out := a.ctlExchange(c, "GET isp.brightness", "GET isp.contrast", "GET isp.saturation", "GET isp.sharpness", "GET img.wb", "GET night.mode")
+	out := a.ctlExchange(c, "GET isp.brightness", "GET isp.contrast", "GET isp.saturation", "GET isp.sharpness", "GET isp.denoise", "GET img.wb", "GET night.mode")
 	br, co := ctl.Get("isp.brightness", out), ctl.Get("isp.contrast", out)
 	sa, sh := ctl.Get("isp.saturation", out), ctl.Get("isp.sharpness", out)
 	wb, nm := ctl.Get("img.wb", out), ctl.Get("night.mode", out)
+	dn := ctl.Get("isp.denoise", out)
 	if br == "" || co == "" || sa == "" || sh == "" {
 		return a.UI.Fail("the camera did not answer the picture settings.", "its control port may be busy; try again.")
 	}
@@ -371,6 +372,9 @@ func (a *App) pictureShow(c *camssh.Client) error {
 		nm = "unknown"
 	}
 	a.UI.Say(fmt.Sprintf("  Brightness %s, contrast %s, saturation %s, sharpness %s (each -50 to 50; 0 = unchanged, except sharpness: -15 is the default, 0 is the camera's own sharpening). Saved on the camera.", br, co, sa, sh))
+	if dn != "" {
+		a.UI.Say(fmt.Sprintf("  Denoise (3D noise reduction): %s (0 to 4; 2 is the default, 0 is the camera's own noise reduction). Saved on the camera.", dn))
+	}
 	a.UI.Say(fmt.Sprintf("  White balance: %s (conf = the camera's calibration, manual = Akam's own block). Saved on the camera.", wb))
 	a.UI.Say(fmt.Sprintf("  Day/night: %s (auto, day or night). Saved on the camera.", nm))
 	return nil
@@ -424,6 +428,15 @@ func (a *App) cmdPicture(args []string) error {
 			}
 			keys, vals = append(keys, "isp."+w), append(vals, v)
 			i += 2
+		case "denoise":
+			if len(next) != 1 || next[0] < '0' || next[0] > '4' {
+				return audioUsage("picture denoise needs a whole number from 0 to 4")
+			}
+			if has("isp.denoise") {
+				return audioUsage("picture denoise given twice")
+			}
+			keys, vals = append(keys, "isp.denoise"), append(vals, next)
+			i += 2
 		case "wb":
 			if next != "conf" && next != "manual" {
 				return audioUsage("picture wb needs conf or manual")
@@ -470,8 +483,11 @@ func (a *App) cmdPicture(args []string) error {
 		for i := range keys {
 			a.UI.Say(fmt.Sprintf("  WOULD send: SET %s %s", keys[i], vals[i]))
 		}
+		if reset {
+			a.UI.Say("  WOULD send: SET isp.denoise 2 (ignored by an image without it)")
+		}
 		if len(keys) == 0 {
-			a.UI.Say("  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, img.wb, night.mode")
+			a.UI.Say("  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode")
 		}
 		return nil
 	}
@@ -487,7 +503,9 @@ func (a *App) cmdPicture(args []string) error {
 			}
 		}
 		if reset {
-			a.UI.Good("  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed.")
+			// an image without isp.denoise refuses it: nothing to reset, no error
+			a.ctlExchange(c, "SET isp.denoise 2")
+			a.UI.Good("  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed. Denoise is back to 2 (the default).")
 		} else {
 			a.UI.Good("  Done.")
 		}

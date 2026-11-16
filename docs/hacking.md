@@ -100,6 +100,41 @@ camera, the other one stays untouched.
 
 `make upload` + `start_rtsp.sh` (steps above) is the other path, with a card in the camera and the stock watchdog stopped.
 
+### Install a new 1080p `ak_rtsp` permanently on a camera that already runs Akam
+
+`/usr/bin/ak_rtsp` lives in the APP squashfs (`mtd7`, read-only), so a permanent install means writing a new APP image. There is no
+binary-only update. Nothing below was run for a development build; read it first, one camera at a time.
+
+What exists:
+
+1. **Update over SSH, no card, no UART** (the supported way): build an image that contains your binary, then `./akam update --image FILE`
+   (bash wizard or Go assistant; the Go assistant also takes `--kit FILE` and `--version X.Y.Z` for releases). It checks the image
+   (5 242 880 bytes, squashfs), asks one red yes/no (default No), refuses without a verified stock backup, copies everything to RAM,
+   writes `mtd7` from a detached worker with 3 write-and-verify attempts, and needs two read-backs equal to the image md5 before it says
+   done ([installer spec](../specs/installer.md) 7.2). Then unplug and replug the camera by hand. Over SSH it keeps a second Dropbear
+   on port 2222 during the write.
+2. **Building the image**: `AK_RTSP_BIN=src/ak_rtsp/ak_rtsp APP_EXTRACTED=<your unsquashed stock APP> FW_DIR=<outside the repo> bash src/ak_rtsp/build_firmware.sh`
+   ([build guide](manual/build.md) section 7). It needs your own stock APP backup (nothing vendor ships in the repository). The kit route
+   (`tools/release/make_kit.sh`, then `./akam step image`) builds the same image from a kit plus your backup.
+3. **Card route** if SSH does not come back: `./akam flash` or `install_with_flash_tool.sh` with the image on the toolkit card
+   ([flash guide](manual/flash-and-restore.md)).
+4. **Rollback**: (a) before flashing, try the binary in RAM with the bind-mount procedure above: a power cycle undoes it;
+   (b) after flashing, keep the previous image file and run `./akam update --image <previous>.squashfs` (same gates); (c) back to the
+   original firmware: `./akam update --stock` or `./akam restore` from your verified backup (never rehearsed on a camera);
+   (d) a camera that does not boot: UART or the maintenance telnet, then `restore` ([flash guide](manual/flash-and-restore.md)).
+   Settings in `/etc/config/akam/` are on CONFIG and survive every APP write, including the new `isp.denoise` line of the `picture` file.
+
+What is missing:
+
+- A **dev-build update command**: `update --image` works, but nothing builds the image from `src/ak_rtsp/ak_rtsp` for you in one step
+  (`build_firmware.sh` by hand, or a kit). The Go assistant's native builder is experimental and the bash `update` refuses
+  `--version` and `--kit`.
+- A **binary-only or A/B slot update**: `ak_rtsp_wrapper.sh` starts `${AKAM_RTSP_BIN:-/usr/bin/ak_rtsp}` and `AKAM_RTSP_BIN` is only a test
+  hook, so there is no persistent override from CONFIG or the card, and a bad binary is replaced only by another full APP write.
+- An **automatic fallback**: no watchdog-driven return to the previous image; the wrapper only restarts a crashing binary with a back-off.
+- Hardware evidence: the bash wizard's first installs, updates over SSH and verify ran on two cameras; the Go assistant's update, restore
+  and SD writer are host-tested only; `restore` to stock was never rehearsed ([assistant](assistant.md)).
+
 ## Tests
 
 ```bash

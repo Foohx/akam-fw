@@ -57,6 +57,7 @@ static void clear_counts(void) { memset(g_sets, 0, sizeof(g_sets)); memset(g_get
 /* ---------------------------------------------------------------- vendor-like blocks */
 static void w16(uint8_t *p, unsigned v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 static unsigned r16(const uint8_t *p) { return (unsigned)p[0] | ((unsigned)p[1] << 8); }
+static unsigned r32(const uint8_t *p) { return r16(p) | (r16(p + 2) << 16); }
 static void w32(uint8_t *p, unsigned v) { w16(p, v & 0xffff); w16(p + 2, v >> 16); }
 static size_t eoff(int b, int k) { return 4 + (size_t)k * (b == ISP_NR_SHARP ? SHARP_ENTRY_SIZE : b == ISP_NR_3DNR ? 416 : b == ISP_NR_NR1 ? 180 : b == ISP_NR_NR2 ? 58 : 42); }
 
@@ -132,6 +133,50 @@ static int allowed(int knob, int b, size_t off)
     }
     }
     return 0;
+}
+
+
+/* ---------------------------------------------------------------- the live dump of the two 1080p cameras */
+/* Builds the NR1, NR2, UVNR and 3D_NR blocks from the decoded fields of a `SET img.dump nr` capture (tests/fixtures/
+ * isp_nr_dump_akam-0N.txt: mode word, enable and strength per entry; the dump holds no table bytes, so the weight tables
+ * are generated from the strength, floor 1). 0 on success. */
+static int load_dump(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    char line[256];
+    int n = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char name[16];
+        unsigned a, b, c, d, e, g;
+        int b_ix = -1;
+        if (strncmp(line, "[isp.nr] ", 9)) continue;
+        if (!strncmp(line + 9, "NR1 ", 4)) b_ix = ISP_NR_NR1;
+        else if (!strncmp(line + 9, "NR2 ", 4)) b_ix = ISP_NR_NR2;
+        else if (!strncmp(line + 9, "UVNR ", 5)) b_ix = ISP_NR_UVNR;
+        else if (!strncmp(line + 9, "3D_NR ", 6)) b_ix = ISP_NR_3DNR;
+        if (b_ix < 0) continue;
+        if (sscanf(line + 9, "%15s mode=%u len=%u", name, &a, &b) == 3) { memset(g_live[b_ix], 0, BUF); w32(g_live[b_ix], a); continue; }
+        char *eq = strstr(line, " e");
+        if (!eq || sscanf(eq, " e%u", &a) != 1 || a > 16) continue;
+        char *en = strstr(line, "en=");
+        if (!en || sscanf(en, "en=%u", &b) != 1) continue;
+        uint8_t *p = g_live[b_ix] + eoff(b_ix, (int)a);
+        w16(p, b);
+        if (b_ix == ISP_NR_NR1 && sscanf(strstr(line, "s=") + 2, "%u/%u/%u", &c, &d, &e) == 3) {
+            w16(p + 6, c); w16(p + 8, d); w16(p + 10, e);
+            if (c) for (int t = 0; t < 3; t++) vendor_table(p + 0x4e + 34 * t, c, 1, 0);
+        } else if (b_ix == ISP_NR_NR2 && sscanf(strstr(line, "s=") + 2, "%u", &c) == 1) {
+            w16(p + 0x0c, c); vendor_table(p + 0x0e, c, 1, 0);
+        } else if (b_ix == ISP_NR_UVNR && sscanf(strstr(line, "s=") + 2, "%u", &c) == 1) {
+            w16(p + 6, c); vendor_table(p + 8, c, 1, 0);
+        } else if (b_ix == ISP_NR_3DNR && sscanf(strstr(line, "lo="), "lo=%u hi=%u s=%u", &c, &d, &g) == 3) {
+            w16(p + 6, c); w16(p + 8, d); w16(p + 0x130, g); vendor_table(p + 0x132, g, 1, 0);
+        } else continue;
+        n++;
+    }
+    fclose(f);
+    return n == 4 * 17 ? 0 : -2;
 }
 
 static int knob_block(int knob)
@@ -464,6 +509,105 @@ int main(void)
         CHECK(isp_nr_knob_set(ISP_KNOB_SHARP_BIAS, 1) == ISP_NR_REFUSED && isp_nr_knob_get(ISP_KNOB_SHARP_BIAS) == 0);
         restore_vendor();
         isp_reset_picture_baselines();
+    }
+
+    /* ---- the NR1 / NR2 live dump of akam-01 and akam-02: NR1 mode word 192, every linkage entry zero (s = 0), s = 64 in
+     *      the manual entry. These used to be refused ("live table not as decoded", "NR1 unreadable"): now accepted */
+    {
+        static const char *const dumps[] = { FIXTURE_DIR "/isp_nr_dump_akam-01.txt", FIXTURE_DIR "/isp_nr_dump_akam-02.txt" };
+        for (int di = 0; di < 2; di++) {
+            build_live();
+            CHECK(load_dump(dumps[di]) == 0);
+            CHECK(r32(g_live[ISP_NR_NR1]) == 192 && r16(g_live[ISP_NR_NR1] + eoff(ISP_NR_NR1, 0) + 6) == 64);
+            snapshot();
+            restore_vendor();
+            isp_reset_picture_baselines();
+            clear_counts();
+            isp_nr_knobs_t kn = kd;
+            kn.v[ISP_KNOB_NR2D] = 150; kn.v[ISP_KNOB_NR2D_BIAS] = 2;
+            uint8_t *o1 = malloc(3064), *o2 = malloc(992);
+            CHECK(isp_nr_compose(ISP_NR_NR1, g_live[ISP_NR_NR1], 3064, &kn, o1) == 0);
+            CHECK(isp_nr_compose(ISP_NR_NR2, g_live[ISP_NR_NR2], 992, &kn, o2) == 0);
+            CHECK(memcmp(o1, g_live[ISP_NR_NR1], 3064) == 0);                         /* all entries are s = 0: nothing to change */
+            CHECK(r16(o2 + eoff(ISP_NR_NR2, 3) + 0x0c) * 100 / 150 >= 700 && r16(o2 + eoff(ISP_NR_NR2, 3) + 0x0c) <= 6000 * 150 / 100);
+            CHECK(r16(o2 + eoff(ISP_NR_NR2, 1) + 0x0c) == 800 * 150 / 100);          /* level 0 took vendor entry 3 (s 800), x 1.5 */
+            free(o1); free(o2);
+            CHECK(isp_nr_knob_set(ISP_KNOB_NR2D, 150) == 2);                          /* both blocks accepted by the senders */
+            CHECK(g_sets[ISP_NR_NR1] == 1 && g_sets[ISP_NR_NR2] == 1);
+            CHECK(r32(g_live[ISP_NR_NR1]) == 192 && r16(g_live[ISP_NR_NR2] + eoff(ISP_NR_NR2, 3) + 0x0c) == 1200);
+            CHECK(memcmp(g_live[ISP_NR_NR1], g_pristine[ISP_NR_NR1], 3064) == 0);
+            CHECK(isp_nr_knob_set(ISP_KNOB_NR2D_BIAS, 2) == 2);
+            CHECK(isp_nr_knob_set(ISP_KNOB_NR2D, 100) == 2 && isp_nr_knob_set(ISP_KNOB_NR2D_BIAS, 0) == 2);
+            CHECK(live_is_pristine(ISP_NR_NR1) && live_is_pristine(ISP_NR_NR2));
+            /* GET img.nr no longer says "NR1 unreadable" */
+            level_expo();
+            memset(g_run, 0, sizeof(g_run));
+            w32(g_run + 4, 600); w32(g_run + 8, 256); w32(g_run + 12, 256);
+            char line[512];
+            CHECK(isp_nr_status(line, sizeof(line)) == 0 && !strstr(line, "unreadable") && strstr(line, "NR1.s=0/0/0"));
+            /* a mode word that is neither 1 nor 192 is still refused, and so is NR2 with mode 192 */
+            w32(g_live[ISP_NR_NR1], 3);
+            isp_reset_picture_baselines();
+            clear_counts();
+            CHECK(isp_nr_knob_set(ISP_KNOB_NR2D, 150) == ISP_NR_REFUSED && total_sets() == 0 && isp_nr_knob_get(ISP_KNOB_NR2D) == 100);
+            w32(g_live[ISP_NR_NR1], 192);
+            w32(g_live[ISP_NR_NR2], 192);
+            isp_reset_picture_baselines();
+            CHECK(isp_nr_knob_set(ISP_KNOB_NR2D, 150) == ISP_NR_REFUSED && total_sets() == 0);
+            /* the 3D_NR, UVNR of the dump take the bias (the picture default) */
+            restore_vendor();
+            isp_reset_picture_baselines();
+            CHECK(isp_set_denoise(2) == 0 && g_sets[ISP_NR_3DNR] == 1 && g_sets[ISP_NR_NR1] == 0);
+            CHECK(isp_set_denoise(0) == 0 && live_is_pristine(ISP_NR_3DNR));
+        }
+        build_live(); snapshot(); restore_vendor();
+        isp_reset_picture_baselines();
+        clear_counts();
+    }
+
+    /* ---- isp.denoise = img.nr3d_bias 2 (the 1080p default): exactly the vendor entries min(L+2,15) of 3D_NR, one SET, nothing
+     *      else; 0 (stock) sends nothing and puts the original bytes back; a refusal keeps the stock tables running */
+    {
+        restore_vendor();
+        isp_reset_picture_baselines();
+        clear_counts();
+        CHECK(isp_set_denoise(0) == 0 && total_sets() == 0 && g_gets[ISP_NR_3DNR] == 0);          /* stock path: no GET, no SET */
+        CHECK(isp_set_sharpness(0) == 0 && g_sets[ISP_NR_SHARP] == 1);                           /* slider 0 on its own sends the block, as before */
+        restore_vendor();
+        isp_reset_picture_baselines();
+        clear_counts();
+        CHECK(isp_set_denoise(2) == 0);
+        CHECK(total_sets() == 1 && g_sets[ISP_NR_3DNR] == 1);
+        for (int b = 0; b < ISP_NR_BLOCKS; b++) if (b != ISP_NR_3DNR) CHECK(live_is_pristine(b));
+        CHECK(memcmp(g_live[ISP_NR_3DNR], g_pristine[ISP_NR_3DNR], eoff(ISP_NR_3DNR, 1)) == 0);   /* mode word + manual entry */
+        for (int L = 0; L < 16; L++) {
+            int src = L + 2 > 15 ? 15 : L + 2;
+            CHECK(memcmp(g_live[ISP_NR_3DNR] + eoff(ISP_NR_3DNR, 1 + L), g_pristine[ISP_NR_3DNR] + eoff(ISP_NR_3DNR, 1 + src), 416) == 0);
+        }
+        CHECK(memcmp(g_live[ISP_NR_3DNR] + eoff(ISP_NR_3DNR, 17), g_pristine[ISP_NR_3DNR] + eoff(ISP_NR_3DNR, 17), 7180 - eoff(ISP_NR_3DNR, 17)) == 0);
+        /* a day/night reload: the vendor block is back, the default is applied again on it */
+        uint8_t first[7180];
+        memcpy(first, g_live[ISP_NR_3DNR], 7180);
+        restore_vendor();
+        clear_counts();
+        isp_reset_picture_baselines();
+        CHECK(g_sets[ISP_NR_3DNR] == 1 && total_sets() == 1 && memcmp(g_live[ISP_NR_3DNR], first, 7180) == 0);
+        /* back to stock: the original bytes */
+        CHECK(isp_set_denoise(0) == 0 && live_is_pristine(ISP_NR_3DNR));
+        clear_counts();
+        isp_reset_picture_baselines();
+        CHECK(total_sets() == 0);                                                                 /* stock after a reload: nothing sent */
+        /* refusal: a live block that is not as decoded gets nothing, the knob stays 0, and a reload does not touch it */
+        w32(g_live[ISP_NR_3DNR], 0);
+        isp_reset_picture_baselines();
+        CHECK(isp_set_denoise(2) == ISP_NR_REFUSED && total_sets() == 0 && isp_nr_knob_get(ISP_KNOB_NR3D_BIAS) == 0);
+        restore_vendor();
+        w16(g_live[ISP_NR_3DNR] + eoff(ISP_NR_3DNR, 4), 0x1234);                                  /* enable is a bit, not 0x1234 */
+        isp_reset_picture_baselines();
+        CHECK(isp_set_denoise(2) == ISP_NR_REFUSED && total_sets() == 0);
+        restore_vendor();
+        isp_reset_picture_baselines();
+        clear_counts();
     }
 
     /* ---- ISO level and GET img.nr */

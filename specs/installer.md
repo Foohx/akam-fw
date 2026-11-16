@@ -40,7 +40,7 @@ step menu and the Go assistant opens a home screen. Every command that changes t
 | `rtsp-auth [set\|disable\|status]` | Digest login on the stream. Password typed on the PC, never shown |
 | `led [show \| status on\|off\|auto] [ir auto\|off]` | Front LED and IR LEDs |
 | `audio [show \| volume N \| beep \| on \| off \| talk on\|off \| mic on\|off]` | Speaker and microphone |
-| `picture [show \| brightness N \| contrast N \| saturation N \| sharpness N \| wb conf\|manual \| night auto\|day\|night \| reset]` | Picture. Sliders are saved; `wb` and `night` follow the camera's own rules ([image-day-night-leds.md](image-day-night-leds.md)) |
+| `picture [show \| brightness N \| contrast N \| saturation N \| sharpness N \| denoise N \| wb conf\|manual \| night auto\|day\|night \| reset]` | Picture. Sliders are saved; `wb` and `night` follow the camera's own rules ([image-day-night-leds.md](image-day-night-leds.md)) |
 | `video [show \| bitrate N \| fps N \| gop N]` | Encoder settings; asks (default No) whether to restart the video service |
 | `debug [on [MIN] \| off \| status]` | The 8091 debug flag |
 | `ntp [status \| set SERVER... \| off]` | Opt-in time sync |

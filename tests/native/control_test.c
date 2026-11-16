@@ -57,6 +57,10 @@ int  isp_set_saturation(int v) { return stub_isp_set(v); }
 int  isp_set_contrast(int v) { return stub_isp_set(v); }
 int  isp_set_brightness(int v) { return stub_isp_set(v); }
 int  isp_set_sharpness(int v) { return stub_isp_set(v); }
+static int g_stub_denoise, g_stub_denoise_rc, g_stub_ready = 1;   /* the running 3D-NR bias; what the setter answers */
+int  isp_pipeline_ready(void) { return g_stub_ready; }
+int  isp_nr_knob_get(int k) { (void)k; return g_stub_denoise; }
+int  isp_set_denoise(int v) { int rc = stub_isp_set(v); if (rc == 0 && g_stub_denoise_rc == 0) g_stub_denoise = v; return rc ? rc : g_stub_denoise_rc; }
 int  night_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  night_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void night_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "night.stub=1"); }
@@ -365,7 +369,7 @@ static void test_server(void)
         "ae.stable_range=3\nae.hold_range=6\nae.speed=4\nae.exp_max=16384\nae.enabled=1\n"
         "night.mode=auto\nnight.state=day\nnight.trigger_hw_exp=0\nnight.day_hw_exp=0\n"
         "night.confirm_samples=0\nnight.lock_ms=0\n"
-        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=-15\n"
+        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=-15\nisp.denoise=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
         "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\nmqtt.state=off\n.\n");
@@ -453,6 +457,38 @@ static void test_server(void)
     ask(c, "SET isp.sharpness -15", out, sizeof(out));
     CHECK_STR(out, "OK isp.sharpness=-15\n");
     CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    /* isp.denoise (3D-NR bias 0..4): range, refusal keeps the old value and the file, saved as a line, default removes it */
+    ask(c, "SET isp.denoise 9", out, sizeof(out));
+    CHECK_STR(out, "ERR isp.denoise range [0,4]\n");
+    ask(c, "SET isp.denoise 3", out, sizeof(out));
+    CHECK_STR(out, "OK isp.denoise=3\n");
+    ask(c, "GET isp.denoise", out, sizeof(out));
+    CHECK_STR(out, "isp.denoise=3\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 3 && t.sharpness == -15);
+    }
+    g_stub_denoise_rc = -2;                                                         /* ISP_NR_REFUSED: nothing sent */
+    ask(c, "SET isp.denoise 1", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR isp.denoise: live table not as decoded", 41));
+    g_stub_denoise_rc = 0;
+    ask(c, "GET isp.denoise", out, sizeof(out));
+    CHECK_STR(out, "isp.denoise=3\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 3);              /* the refused value was not saved */
+    }
+    ask(c, "SET isp.denoise 2", out, sizeof(out));                                  /* the default 2: file removed */
+    CHECK_STR(out, "OK isp.denoise=2\n");
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    ask(c, "SET isp.denoise 0", out, sizeof(out));                                  /* 0 = stock is an explicit choice */
+    CHECK_STR(out, "OK isp.denoise=0\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 0 && t.sharpness == -15);
+    }
+    ask(c, "SET isp.denoise 2", out, sizeof(out));
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     /* img.qp takes two values: both reach imgq.c, as "MIN MAX" (also from the "MIN,MAX" token) */
     ask(c, "SET img.qp 28 43", out, sizeof(out));
     CHECK_STR(out, "OK img.qp=28 43\n");
@@ -477,6 +513,36 @@ static void test_server(void)
         CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
         /* H1: every isp.* setter ran under isp_cfg_lock (8091 SET, ONVIF path and the saved-picture apply) */
         CHECK(g_isp_unlocked_calls == 0);
+    }
+    /* start-up denoise: no saved value = the default 2 applied; a saved 0 = stock, nothing applied; a saved 3 wins;
+     * a refusal is not fatal: the stock tables keep running and the wanted value is not lost */
+    {
+        FILE *f;
+        g_stub_denoise = 0;
+        unlink(ISP_TUNE_FILE);
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=2\n");
+        g_stub_denoise = 0;
+        if ((f = fopen(ISP_TUNE_FILE, "w"))) { fputs("denoise=0\n", f); fclose(f); }
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=0\n");
+        if ((f = fopen(ISP_TUNE_FILE, "w"))) { fputs("denoise=3\n", f); fclose(f); }
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=3\n");
+        g_stub_denoise = 0;
+        g_stub_denoise_rc = -2;
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=0\n");                                          /* refused: stock keeps running */
+        ask(c, "SET isp.contrast 5", out, sizeof(out));                              /* saving another value ... */
+        { isp_tune_t t; CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 3 && t.contrast == 5); } /* ... keeps the wish */
+        g_stub_denoise_rc = 0;
+        ask(c, "SET isp.contrast 0", out, sizeof(out));
+        ask(c, "SET isp.denoise 2", out, sizeof(out));
+        CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     }
     /* control_apply_setting is the entry point of the ONVIF Imaging service: same code as SET, persist is explicit */
     {

@@ -60,6 +60,11 @@ const char *isp_nr_block_name(int b) { return g_blk[b].name; }
 
 static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return rd16(p) | (rd16(p + 2) << 16); }
+/* mode word of the live block: 1 (linkage) everywhere; the NR1 block of both 1080p cameras (akam-01/02, 2026-11-16) reads
+ * 192, with every linkage entry zero (enable 0, s 0) and s = 64 in the manual entry: the kernel only tests mode != 0 and
+ * the entries are not rewritten (s = 0 is skipped), so 192 is accepted for NR1 as the proven live value. */
+#define NR1_LIVE_MODE 192u
+static int mode_ok(int block, uint32_t m) { return m == 1 || (block == ISP_NR_NR1 && m == NR1_LIVE_MODE); }
 static void wr16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 /* start of entry k (0 = manual, 1 + L = ISO level L) of a block */
 static size_t ent(int block, int k) { return 4 + (size_t)k * g_blk[block].esize; }
@@ -155,7 +160,9 @@ int isp_nr_compose(int block, const uint8_t *base, size_t len, const isp_nr_knob
 {
     if (block < 0 || block >= ISP_NR_SHARP || len != g_blk[block].len) return -1;
     if (isp_nr_block_default(block, k)) { memcpy(out, base, len); return 0; }
-    if (rd32(base) != 1) return ISP_NR_REFUSED;
+    if (!mode_ok(block, rd32(base))) return ISP_NR_REFUSED;
+    for (int e = 1; e <= ISP_LINK_LEVELS; e++)
+        if (rd16(base + ent(block, e)) > 1) return ISP_NR_REFUSED; /* enable is bit 0: anything else is not this layout */
     int bias, pct, off[3][2], np = gauss_pairs(block, off);
     switch (block) {
     case ISP_NR_NR1: case ISP_NR_NR2: bias = k->v[ISP_KNOB_NR2D_BIAS]; pct = k->v[ISP_KNOB_NR2D]; break;
@@ -250,7 +257,7 @@ void isp_nr_live_level(isp_get_fn get, void *gctx, int level, isp_nr_live_t *o)
     uint8_t *buf = malloc(SCRATCH);
     if (!buf) return;
     for (int b = 0; b < ISP_NR_BLOCKS; b++) {
-        if (get_block(get, gctx, b, buf) != 0 || rd32(buf) != 1) continue;
+        if (get_block(get, gctx, b, buf) != 0 || !mode_ok(b, rd32(buf))) continue;
         const uint8_t *p = buf + ent(b, 1 + level);
         o->ok[b] = 1;
         switch (b) {

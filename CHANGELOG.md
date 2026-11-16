@@ -23,6 +23,12 @@ keep a verified backup of your stock camera before you flash anything.
 - ONVIF-compatible services and WS-Discovery, and MQTT with Home Assistant discovery, both opt-in and off by default.
 - The 1080p picture runs with sharpness -15 on every ISO level of the ISP sharpening by default (the stock sharpening amplifies
   sensor noise: P frames 7.9 KB to 1.8 KB on a still scene). `./akam picture sharpness 0` gives the stock picture back.
+- The 1080p picture also runs with 3D noise-reduction bias 2 by default (`isp.denoise`, `./akam picture denoise N`, 0 to 4): each light
+  level uses the 3D noise-reduction tables of the level 2 steps higher, applied at start-up and after every day/night switch. Measured on
+  two cameras: less pulsing at each key frame, 3 to 7 % less static detail. `./akam picture denoise 0` gives the stock tables back; a camera
+  whose live tables are not as expected keeps the stock tables and logs it.
+- Decoding fix for the noise-reduction keys on the 1080p: the first noise-reduction block of both cameras reports mode 192, which the
+  decoder used to refuse, so `img.nr2d` and `img.nr2d_bias` (RAM-only experiment keys, off by default) are now accepted.
 - Day/night switching, front and IR LED settings, picture settings, NTP, an encoder-stall watchdog, a Wi-Fi supervisor
   and a kernel log filter.
 - Secure defaults: SSH keys only, Telnet and FTP off, only ports 22, 554 and 8091 listen.

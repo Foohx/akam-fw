@@ -3,7 +3,7 @@
  * the live vendor table of a block into the table to send, plus the ISO-level selection and the decoders behind
  * GET img.nr and SET img.dump nr. Layouts and evidence: specs/video-and-streaming.md 5.5, isp_nr_layout.h.
  * Rules (5.5.7): RAM only; a block whose knobs are all at the default is never rewritten; every composer first checks
- * that the baseline is what the decode says (length, mode word 1, weight table = formula within +-1) and refuses
+ * that the baseline is what the decode says (length, mode word 1 (NR1: or 192, as read on the 1080p cameras), enable words 0/1, weight table = formula within +-1) and refuses
  * (ISP_NR_REFUSED) when it is not. Entry 0 (manual) and the mode word are never changed. */
 
 #include <stddef.h>

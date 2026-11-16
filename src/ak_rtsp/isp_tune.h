@@ -15,11 +15,18 @@
 #define ISP_TUNE_MAX 50
 #define ISP_TUNE_DEFAULT_SHARPNESS (-15)
 
+/* isp.denoise 0..4 = the 3D-NR level bias (img.nr3d_bias, specs/video-and-streaming.md 5.6): level L uses the vendor
+ * entry min(L+n,15). Default 2, validated A/B on akam-01/02 2026-11-16; 0 = the vendor tables untouched (stock). A file with
+ * no denoise line gets the default; an explicit "denoise=0" is kept. */
+#define ISP_TUNE_DENOISE_MAX 4
+#define ISP_TUNE_DEFAULT_DENOISE 2
+
 typedef struct {
     int brightness;
     int contrast;
     int saturation;
     int sharpness;
+    int denoise;
 } isp_tune_t;
 
 /* Fills `t` (defaults first, then every valid line of `path`). Returns 1 when the file existed, else 0. */

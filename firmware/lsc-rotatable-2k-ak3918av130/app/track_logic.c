@@ -9,6 +9,8 @@
 #define REVERSE_MS 1500    /* a nudge against the previous one inside this time is halved (anti hunting) */
 #define REV_WINDOW_MS 6000 /* duty cap: at most 2 reversals of direction inside this window, the 3rd is held back */
 #define REV_HOLD_MS 3000   /* ... and the tracker then holds still this long */
+#define HEAD_TALL_PCT 55   /* tilt: a box at least this % of the frame height (or cut by the frame bottom) is anchored on its top (head), a shorter one on its upper third */
+#define HEAD_CLIP_PX 2     /* a box top this close to the frame top is clipped by the frame: the head is out */
 #define STALE_MAX_MS 2000  /* a frame is stale while the last nudge has no reported motion end, for at most this long */
 
 void tl_cfg_defaults(struct tl_cfg *c) {
@@ -30,6 +32,7 @@ void tl_cfg_defaults(struct tl_cfg *c) {
     c->lost_grace_s = 3;
     c->return_home = 0;
     c->return_delay_s = 30;
+    c->head_pct = 15;
     c->sticky_gate_pct = 35;
 }
 
@@ -62,6 +65,7 @@ int tl_cfg_validate(const struct tl_cfg *c) {
     if (c->speed_fast != 0 && (c->speed_fast < 2 || c->speed_fast > 20)) return -1;
     if (c->lead_pct < 0 || c->lead_pct > 100 || c->lead_max < 0 || c->lead_max > 2000) return -1;
     if (c->lost_grace_s < 0 || c->lost_grace_s > 86400 || c->return_delay_s < 0 || c->return_delay_s > 86400) return -1;
+    if (c->head_pct < 0 || c->head_pct > 50) return -1;
     if (c->sticky_gate_pct < 0 || c->sticky_gate_pct > 100) return -1;
     if ((c->return_home & ~1) || (c->tilt_enable & ~1) || (c->invert_pan & ~1) || (c->invert_tilt & ~1)) return -1;
     return 0;
@@ -112,7 +116,7 @@ void tl_update(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int f
                struct tl_out *out) {
     const struct tl_cfg *c = &t->cfg;
     const struct tl_box *pick = 0;
-    int sticky = 0, i, dp = 0, dt = 0, p, q, stale, modern, engaged, minv = 0, fast = 0, m;
+    int sticky = 0, i, tclip = 0, dp = 0, dt = 0, p, q, stale, modern, engaged, minv = 0, fast = 0, m;
     int64_t cap;
     out->kind = TL_NONE;
     out->dpan = out->dtilt = out->speed = 0;
@@ -176,7 +180,19 @@ void tl_update(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int f
 
     {
         int d2x = pick->x1 + pick->x2 - fw, d2y = pick->y1 + pick->y2 - fh;
-        int ox = offset_steps(d2x, fw, c->gain_pan), oy = offset_steps(d2y, fh, c->gain_tilt);
+        if (modern && c->head_pct > 0) { /* tilt follows the head (the top of the box), not the centre: a close person fills the frame height */
+            int bh = pick->y2 - pick->y1;
+            if (pick->y1 <= HEAD_CLIP_PX) tclip = 1;
+            else if ((int64_t)bh * 100 >= (int64_t)HEAD_TALL_PCT * fh || pick->y2 >= fh - HEAD_CLIP_PX) /* tall, or cut by the bottom: a near person */
+                d2y = 2 * (pick->y1 - (int)((int64_t)fh * c->head_pct / 100));
+            else { /* a far person: its upper third at the centre; a head already in the head band is fine too (else the camera tilting down, which
+                    * shrinks a cut box into this branch, would be pulled back up: hunting) */
+                int d2h = 2 * (pick->y1 - (int)((int64_t)fh * c->head_pct / 100));
+                d2y = 2 * (pick->y1 + bh / 3) - fh;
+                if (in_band(d2h, fh, c->tband_pct)) d2y = 0;
+            }
+        }
+        int ox = offset_steps(d2x, fw, c->gain_pan);
         int base = m * ox, v, lead, dx;
         long w = ptz->pan + base;
         t->target_w = w;
@@ -204,13 +220,17 @@ void tl_update(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int f
             if (iabs64(dp) < minv) dp = 0;
             if (dp && beyond(d2x, fw, c->fast_pct)) fast = 1;
         }
-        if (c->tilt_enable && !in_band(d2y, fh, c->tband_pct)) {
-            int s = oy * c->gain_pct / 100;
-            s = clampi(s, -c->max_step, c->max_step);
-            if (iabs64(s) >= minv) {
-                dt = c->invert_tilt ? -s : s;
+        if (c->tilt_enable && (tclip || !in_band(d2y, fh, c->tband_pct))) {
+            int s;
+            if (tclip) { /* head out of the frame: up by a step growing with the box height (a taller box = nearer = more is cut), no lead */
+                s = -clampi((int)((int64_t)c->gain_tilt * (pick->y2 - pick->y1) / fh / 3), minv > MIN_STEP ? minv : MIN_STEP, c->max_step);
+            } else {
+                s = clampi(offset_steps(d2y, fh, c->gain_tilt) * c->gain_pct / 100, -c->max_step, c->max_step);
                 if (beyond(d2y, fh, c->fast_pct)) fast = 1;
             }
+            if (modern && t->last_tsign && sgn(s) == -t->last_tsign && now_ms - t->last_tnudge_ms < REVERSE_MS) s /= 2;
+            if (iabs64(s) >= minv) dt = c->invert_tilt ? -s : s;
+            else if (!dp) fast = 0;
         }
     }
     /* soft range: clip the resulting motor position, so a nudge never leaves [min,max]; image "below" (dt > 0) = tilt DOWN = motor -dt */
@@ -226,6 +246,19 @@ void tl_update(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int f
         t->nrev = n2;
         if (t->nrev >= 2) { t->hold_until = now_ms + REV_HOLD_MS; t->nrev = 0; return; }
         t->rev_ms[t->nrev++] = now_ms;
+    }
+    if (modern && q && dt) { /* tilt duty cap, apart from the pan one: a 3rd reversal inside the window holds only the tilt */
+        int ts = sgn(-q) * (c->invert_tilt ? -1 : 1), k, n2 = 0;
+        if (now_ms < t->thold_until) q = 0;
+        else if (t->last_tsign && ts == -t->last_tsign) {
+            for (k = 0; k < t->ntrev; k++)
+                if (now_ms - t->trev_ms[k] < REV_WINDOW_MS) t->trev_ms[n2++] = t->trev_ms[k];
+            t->ntrev = n2;
+            if (t->ntrev >= 2) { t->thold_until = now_ms + REV_HOLD_MS; t->ntrev = 0; q = 0; }
+            else t->trev_ms[t->ntrev++] = now_ms;
+        }
+        if (q) { t->last_tsign = ts; t->last_tnudge_ms = now_ms; }
+        if (p == 0 && q == 0) return;
     }
     out->kind = TL_NUDGE;
     out->dpan = p;

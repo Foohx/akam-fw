@@ -38,14 +38,14 @@ int main(int argc, char **argv)
     CHECK(access(path, F_OK) != 0);
 
     /* save creates the directory (0700) and the file (0600), round trip, no temp left */
-    isp_tune_t w = { -50, 50, -1, 7 };
+    isp_tune_t w = { -50, 50, -1, 7, 4 };
     CHECK(isp_tune_save(path, &w) == 0);
     struct stat st;
     CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
     CHECK(stat(dir, &st) == 0 && (st.st_mode & 0777) == 0700);
     CHECK(access(tmp, F_OK) != 0);
     CHECK(isp_tune_load(path, &t) == 1);
-    CHECK(t.brightness == -50 && t.contrast == 50 && t.saturation == -1 && t.sharpness == 7);
+    CHECK(t.brightness == -50 && t.contrast == 50 && t.saturation == -1 && t.sharpness == 7 && t.denoise == 4);
 
     /* same values again: no write (an atomic write makes a new inode) */
     {
@@ -72,11 +72,24 @@ int main(int argc, char **argv)
     CHECK(isp_tune_load(path, &t) == 1 && !t.brightness);
 
     /* an explicitly saved sharpness 0 (stock) wins over the default: it is a file, and it loads back as 0 */
-    isp_tune_t z = { 0, 0, 0, 0 };
+    isp_tune_t z = { 0, 0, 0, 0, ISP_TUNE_DEFAULT_DENOISE };
     CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
     CHECK(isp_tune_load(path, &t) == 1 && t.sharpness == 0);
     put(path, "contrast=4\n");                                                   /* no sharpness line: the default */
     CHECK(isp_tune_load(path, &t) == 1 && t.contrast == 4 && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);
+
+    /* denoise: default 2 (a file without the line gets it), range 0..4, an explicit 0 (stock) is a saved line */
+    CHECK(ISP_TUNE_DEFAULT_DENOISE == 2);
+    put(path, "denoise=5\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == ISP_TUNE_DEFAULT_DENOISE);
+    put(path, "denoise=-1\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == ISP_TUNE_DEFAULT_DENOISE);
+    put(path, "denoise=0\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == 0);
+    z.denoise = 0;
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == 0 && t.sharpness == 0);
+    z.denoise = ISP_TUNE_DEFAULT_DENOISE;
 
     /* the defaults remove the file; a second removal is fine */
     z.sharpness = ISP_TUNE_DEFAULT_SHARPNESS;

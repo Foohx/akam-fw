@@ -1,0 +1,91 @@
+# SET img.dump nr on akam-01 (GC20C3 1080p), 2026-11-16: decoded fields only, no vendor table bytes.
+[isp.nr] NR1   mode=192 len=3064 hash=d20fa646
+[isp.nr] NR1   e0  (manual) en=0 s=64/64/64
+[isp.nr] NR1   e1  en=0 s=0/0/0
+[isp.nr] NR1   e2  en=0 s=0/0/0
+[isp.nr] NR1   e3  en=0 s=0/0/0
+[isp.nr] NR1   e4  en=0 s=0/0/0
+[isp.nr] NR1   e5  en=0 s=0/0/0
+[isp.nr] NR1   e6  en=0 s=0/0/0
+[isp.nr] NR1   e7  en=0 s=0/0/0
+[isp.nr] NR1   e8  en=0 s=0/0/0
+[isp.nr] NR1   e9  en=0 s=0/0/0
+[isp.nr] NR1   e10 en=0 s=0/0/0
+[isp.nr] NR1   e11 en=0 s=0/0/0
+[isp.nr] NR1   e12 en=0 s=0/0/0
+[isp.nr] NR1   e13 en=0 s=0/0/0
+[isp.nr] NR1   e14 en=0 s=0/0/0
+[isp.nr] NR1   e15 en=0 s=0/0/0
+[isp.nr] NR1   e16 en=0 s=0/0/0
+[isp.nr] NR2   mode=1 len=992 hash=57566d32
+[isp.nr] NR2   e0  (manual) en=0 s=60000
+[isp.nr] NR2   e1  en=1 s=200
+[isp.nr] NR2   e2  en=1 s=500
+[isp.nr] NR2   e3  en=1 s=800
+[isp.nr] NR2   e4  en=1 s=800
+[isp.nr] NR2   e5  en=1 s=1800
+[isp.nr] NR2   e6  en=1 s=2000
+[isp.nr] NR2   e7  en=1 s=3000
+[isp.nr] NR2   e8  en=1 s=4000
+[isp.nr] NR2   e9  en=1 s=3000
+[isp.nr] NR2   e10 en=1 s=2000
+[isp.nr] NR2   e11 en=1 s=2500
+[isp.nr] NR2   e12 en=1 s=3000
+[isp.nr] NR2   e13 en=1 s=3500
+[isp.nr] NR2   e14 en=1 s=4000
+[isp.nr] NR2   e15 en=1 s=5000
+[isp.nr] NR2   e16 en=1 s=6000
+[isp.nr] UVNR  mode=1 len=720 hash=db994035
+[isp.nr] UVNR  e0  (manual) en=0 s=100
+[isp.nr] UVNR  e1  en=1 s=100
+[isp.nr] UVNR  e2  en=1 s=200
+[isp.nr] UVNR  e3  en=1 s=500
+[isp.nr] UVNR  e4  en=1 s=600
+[isp.nr] UVNR  e5  en=1 s=1000
+[isp.nr] UVNR  e6  en=1 s=3000
+[isp.nr] UVNR  e7  en=1 s=8000
+[isp.nr] UVNR  e8  en=1 s=8000
+[isp.nr] UVNR  e9  en=1 s=8800
+[isp.nr] UVNR  e10 en=1 s=1000
+[isp.nr] UVNR  e11 en=1 s=1500
+[isp.nr] UVNR  e12 en=1 s=3000
+[isp.nr] UVNR  e13 en=1 s=3500
+[isp.nr] UVNR  e14 en=1 s=4000
+[isp.nr] UVNR  e15 en=1 s=5000
+[isp.nr] UVNR  e16 en=1 s=6000
+[isp.nr] 3D_NR mode=1 len=7180 hash=1e25cdfe
+[isp.nr] 3D_NR e0  (manual) en=0 lo=1000 hi=200 s=200
+[isp.nr] 3D_NR e1  en=1 lo=800 hi=1800 s=50
+[isp.nr] 3D_NR e2  en=1 lo=900 hi=1800 s=150
+[isp.nr] 3D_NR e3  en=1 lo=1000 hi=2000 s=200
+[isp.nr] 3D_NR e4  en=1 lo=1500 hi=2500 s=200
+[isp.nr] 3D_NR e5  en=1 lo=1800 hi=2800 s=300
+[isp.nr] 3D_NR e6  en=1 lo=1800 hi=2800 s=2500
+[isp.nr] 3D_NR e7  en=1 lo=2500 hi=3500 s=2500
+[isp.nr] 3D_NR e8  en=1 lo=5800 hi=6800 s=4000
+[isp.nr] 3D_NR e9  en=1 lo=4500 hi=5500 s=4000
+[isp.nr] 3D_NR e10 en=1 lo=7000 hi=8000 s=8000
+[isp.nr] 3D_NR e11 en=1 lo=6500 hi=7000 s=8000
+[isp.nr] 3D_NR e12 en=1 lo=7000 hi=8000 s=10000
+[isp.nr] 3D_NR e13 en=1 lo=7000 hi=8000 s=13000
+[isp.nr] 3D_NR e14 en=1 lo=7000 hi=8000 s=15000
+[isp.nr] 3D_NR e15 en=1 lo=7000 hi=8000 s=18000
+[isp.nr] 3D_NR e16 en=1 lo=7000 hi=8000 s=20000
+[isp.nr] SHARP mode=1 len=46584 hash=3fd3d774
+[isp.nr] SHARP e0  (manual) en=2 coring=8,8,8,8,8,8,8,8 q8=32,64,32,64,24,32,24,32
+[isp.nr] SHARP e1  en=1 coring=4,4,4,4,8,8,8,8 q8=30,30,30,30,16,16,16,16
+[isp.nr] SHARP e2  en=1 coring=4,4,4,4,8,8,8,8 q8=28,28,28,28,16,16,16,16
+[isp.nr] SHARP e3  en=1 coring=4,4,4,4,8,8,8,8 q8=28,28,28,28,12,12,12,12
+[isp.nr] SHARP e4  en=1 coring=4,4,4,4,8,8,8,8 q8=28,28,28,28,10,10,10,10
+[isp.nr] SHARP e5  en=1 coring=4,4,4,4,8,8,8,8 q8=28,24,28,24,10,10,10,10
+[isp.nr] SHARP e6  en=1 coring=4,4,4,4,8,8,8,8 q8=28,24,28,24,8,8,8,8
+[isp.nr] SHARP e7  en=1 coring=4,4,4,4,8,8,8,8 q8=28,28,28,28,8,8,8,8
+[isp.nr] SHARP e8  en=1 coring=6,6,6,6,8,8,8,8 q8=28,28,28,28,8,8,8,8
+[isp.nr] SHARP e9  en=1 coring=6,6,6,6,8,8,8,8 q8=31,28,31,28,8,8,8,8
+[isp.nr] SHARP e10 en=1 coring=8,8,8,8,8,8,8,8 q8=24,24,24,24,8,8,8,8
+[isp.nr] SHARP e11 en=1 coring=10,10,10,10,15,15,15,15 q8=16,24,16,24,8,8,8,8
+[isp.nr] SHARP e12 en=1 coring=10,10,10,10,15,15,15,15 q8=16,24,16,24,8,8,8,8
+[isp.nr] SHARP e13 en=1 coring=10,10,10,10,15,15,15,15 q8=16,24,16,24,8,8,8,8
+[isp.nr] SHARP e14 en=1 coring=10,10,10,10,15,15,15,15 q8=16,24,16,24,8,8,8,8
+[isp.nr] SHARP e15 en=1 coring=10,10,10,10,15,15,15,15 q8=16,24,16,24,8,8,8,8
+[isp.nr] SHARP e16 en=1 coring=10,10,10,10,15,15,15,15 q8=16,24,16,24,8,8,8,8

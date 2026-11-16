@@ -30,6 +30,7 @@ beyond the first comparisons.
 | Key | Range | Neutral | Saved |
 |---|---|---|---|
 | `isp.brightness`, `isp.contrast`, `isp.saturation` | -50 to 50 (integer) | 0 | `/etc/config/akam/picture` |
+| `isp.denoise` | 0 to 4 (integer) | **2** (3D-NR bias, 1080p only: level L uses the vendor 3D_NR entry min(L+2,15)); 0 = the vendor tables, nothing sent | `/etc/config/akam/picture` |
 | `isp.sharpness` | -50 to 50 (integer) | **-15** (all 16 ISO-level entries of the SHARP block, `img.sharp_all` 1); 0 = the stock picture | `/etc/config/akam/picture` |
 
 - The value is a delta from the hardware baseline captured at the first call. `0` leaves the file's block unchanged.
@@ -41,8 +42,14 @@ beyond the first comparisons.
   `./akam picture sharpness -15` (or `picture reset`, which now sets -15). Only a file without a `sharpness=` line gets -15.
   Stock behaviour: `SET isp.sharpness 0` (saved) and `SET img.sharp_all 0` (RAM): the SHARP block is then never sent and is the
   camera's own, byte for byte (`tests/isp_effects_test.sh`).
-- Saved file: four lines `brightness=`, `contrast=`, `saturation=`, `sharpness=`; written after every successful
-  loopback `SET` of any of the four; atomic; all four at their defaults (0, 0, 0, -15) removes the file. A remote `SET` (debug mode) changes the
+- `isp.denoise` (2026-11-16, validated A/B on akam-01/02, [video-and-streaming.md](video-and-streaming.md) section 5.6.2): the same rules as the
+  sharpness. A file without a `denoise=` line gets 2 (so cameras that saved other picture values get it with the update); an
+  explicit `denoise=0` wins and means the stock 3D_NR tables. Applied after the ISP runs and again after every day/night reload. When
+  the live 3D_NR block is not as decoded nothing is sent: at start-up that is logged and the camera runs with the stock tables, the
+  wanted value stays in the file; `SET isp.denoise` answers `ERR isp.denoise: live table not as decoded`. `GET isp.denoise` is the
+  value that runs. `img.nr3d_bias` is the RAM-only key on the same knob.
+- Saved file: five lines `brightness=`, `contrast=`, `saturation=`, `sharpness=`, `denoise=`; written after every successful
+  loopback `SET` of any of the five; atomic; all five at their defaults (0, 0, 0, -15, 2) removes the file. A remote `SET` (debug mode) changes the
   picture in RAM only.
 - Applied at every start after the ISP runs (`control_apply_saved_isp`). A value the ISP refuses is logged and the others
   still apply.

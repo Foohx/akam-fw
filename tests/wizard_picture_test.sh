@@ -27,6 +27,7 @@ export STUB_DIR=$T/stub CAM=$T/cam
 mkdir -p "$STUB_DIR/bin" "$CAM"
 reset_cam() {
     for k in isp.brightness isp.contrast isp.saturation isp.sharpness; do printf '0\n' >"$CAM/$k"; done
+    printf '2\n' >"$CAM/isp.denoise"
     printf -- '-15\n' >"$CAM/isp.sharpness"
     printf 'conf\n' >"$CAM/img.wb"
     printf 'auto\n' >"$CAM/night.mode"
@@ -45,6 +46,7 @@ while IFS= read -r line; do
     key=${2:-}
     case $key in
         isp.brightness | isp.contrast | isp.saturation | isp.sharpness | img.wb | night.mode) ;;
+        isp.denoise) [ "$mode" != nodenoise ] || { echo "ERR unknown param $key"; continue; } ;;
         *) echo "ERR unknown param $key"; continue ;;
     esac
     note=""
@@ -59,6 +61,7 @@ while IFS= read -r line; do
                         '' | *[!0-9-]*) echo "ERR $key range [-50,50]"; continue ;;
                     esac
                     if [ "$v" -lt -50 ] || [ "$v" -gt 50 ]; then echo "ERR $key range [-50,50]"; continue; fi
+                    if [ "$key" = isp.denoise ] && { [ "$v" -lt 0 ] || [ "$v" -gt 4 ]; }; then echo "ERR $key range [0,4]"; continue; fi
                     ;;
                 img.wb) case $v in conf | manual) ;; *) echo "ERR invalid img.wb value $v (want conf|manual)"; continue ;; esac; note="" ;;
                 night.mode) case $v in auto | day | night) ;; *) echo "ERR invalid night.mode value $v (want auto|day|night)"; continue ;; esac; note="" ;;
@@ -137,6 +140,20 @@ check "night night" test "$(cam night.mode)" = night
 a "$S" picture night auto </dev/null >/dev/null 2>&1
 check "night auto" test "$(cam night.mode)" = auto
 
+# ---- denoise (3D noise reduction bias 0..4, default 2) ---------------------------------------
+check "show: denoise line" has "$T/show.out" "Denoise (3D noise reduction): 2 (0 to 4; 2 is the default"
+a "$S" picture denoise 0 </dev/null >"$T/dn.out" 2>&1
+check "denoise 0 reaches the camera" test "$(cam isp.denoise)" = 0
+check "denoise 0 reported" has "$T/dn.out" "Denoise (3D noise reduction): 0"
+a "$S" picture denoise 4 sharpness -30 </dev/null >/dev/null 2>&1
+check "denoise 4 with another word" test "$(cam isp.denoise)" = 4 -a "$(cam isp.sharpness)" = -30
+setmode nodenoise
+a "$S" picture </dev/null >"$T/dn2.out" 2>&1
+check "older image: show works without the denoise line" bash -c '[ "$1" -eq 0 ] && ! grep -q Denoise "$2"' _ $? "$T/dn2.out"
+a "$S" picture reset </dev/null >"$T/dn3.out" 2>&1
+check "older image: reset still succeeds" test $? -eq 0
+setmode normal
+
 # ---- several words, in any order -------------------------------------------------------------
 a "$S" picture night day contrast 5 brightness -5 </dev/null >"$T/m.out" 2>&1
 check "several words" test "$(cam night.mode)" = day -a "$(cam isp.contrast)" = 5 -a "$(cam isp.brightness)" = -5
@@ -148,6 +165,8 @@ check "reset: succeeds" test $? -eq 0
 check "reset: 0, 0, 0 and the default sharpness -15" bash -c 'for k in isp.brightness isp.contrast isp.saturation; do [ "$(cat "$1/$k")" = 0 ] || exit 1; done; [ "$(cat "$1/isp.sharpness")" = -15 ]' _ "$CAM"
 check "reset: leaves wb and night alone" test "$(cam img.wb)" = conf -a "$(cam night.mode)" = day
 check "reset: says what it did" has "$T/r.out" "sharpness to -15"
+check "reset: denoise back to 2" test "$(cam isp.denoise)" = 2
+check "reset: says denoise" has "$T/r.out" "Denoise is back to 2"
 
 # ---- camera cases -----------------------------------------------------------------------------
 setmode nosave
@@ -167,7 +186,7 @@ check "camera unreachable: fails clearly, nothing changed" bash -c '[ "$1" -ne 0
 : >"$STUB_DIR/ssh.log"
 for bad in "brightness" "brightness 51" "brightness -51" "brightness abc" "brightness 5x" "brightness 1.5" "brightness --5" "brightness -" 'brightness $(id)' "brightness 100" \
     "contrast" "saturation x" "sharpness 999" "wb" "wb auto" "wb Conf" "night" "night dusk" "night ON" "frob" "reset now" "reset brightness 1" "show reset" "show wb conf" \
-    "brightness 1 brightness 2" "wb conf wb manual" "night day night auto" "brightness 5; reboot"; do
+    "denoise" "denoise 5" "denoise -1" "denoise 12" "denoise x" "denoise 1 denoise 2" "brightness 1 brightness 2" "wb conf wb manual" "night day night auto" "brightness 5; reboot"; do
     # shellcheck disable=SC2086  # word list on purpose
     a "$S" picture $bad </dev/null >"$T/bad.out" 2>&1
     check "refused (exit 2): picture $bad" test $? -eq 2
@@ -180,14 +199,14 @@ check "refusals: nothing changed" test "$(cam isp.brightness)" = 0 -a "$(cam img
 a "$S" --dry-run picture brightness -5 wb manual </dev/null >"$T/dry.out" 2>&1
 check "dry-run: WOULD send both" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD send: SET isp.brightness -5" "$2" && grep -q "WOULD send: SET img.wb manual" "$2"' _ $? "$T/dry.out"
 a "$S" --dry-run picture reset </dev/null >"$T/dry1.out" 2>&1
-check "dry-run reset: four SETs" test "$(grep -c "WOULD send: SET isp\." "$T/dry1.out")" -eq 4
+check "dry-run reset: five SETs (denoise 2 included)" test "$(grep -c "WOULD send: SET isp\." "$T/dry1.out")" -eq 5
 a "$S" --dry-run picture </dev/null >"$T/dry2.out" 2>&1
 check "dry-run show: read-only WOULD" has "$T/dry2.out" "WOULD send (read-only)"
 check "dry-run: the camera was not contacted" test ! -s "$STUB_DIR/ssh.log"
 
 # ---- help ----------------------------------------------------------------------------------------
 a "$S" help >"$T/help.out" 2>&1
-check "help lists picture" has "$T/help.out" "picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]"
+check "help lists picture" has "$T/help.out" "picture [show | brightness N | contrast N | saturation N | sharpness N | denoise N | wb conf|manual | night auto|day|night | reset]"
 
 echo "wizard_picture_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

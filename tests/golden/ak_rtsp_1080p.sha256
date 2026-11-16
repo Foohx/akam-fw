@@ -11,7 +11,10 @@
 # 2026-11-16, feature/1080p-nr-keys: new hash 775e8674... (was e50f020a...). New code, default behaviour identical: the NR/SHARP knobs
 # (img.nr2d_bias ... img.nr3d_motion, GET img.nr, SET img.dump nr) send nothing while every key is at its default. Proof:
 # tests/isp_nr_test.sh (composer output memcmp-identical to the baseline, zero SETs at default), tests/isp_effects_test.sh.
+# 2026-11-16, feature/1080p-image-defaults: new hash 6431e2c2... (was 775e8674...). behaviour change: nr3d_bias 2 default (isp.denoise, saved
+# like the sharpness, 0 = stock), validated A/B on akam-01/02 2026-11-16; NR1 mode word 192 accepted. Stock path (isp.sharpness 0 +
+# isp.denoise 0) byte-identical: tests/isp_nr_test.sh, tests/isp_effects_test.sh.
 # Command (from the repo root, zig 0.14.1 x86_64-linux, the pinned one in tools/.toolchain):
 #   make -C src/ak_rtsp repro        (AKAM_REPRO=1, SOURCE_DATE_EPOCH=0, -ffile-prefix-map, -g0, zig objcopy --strip-all)
 # Check: tools/ci/repro_check.sh. A different zig changes the hash: update this file in the same commit as the pin.
-775e8674ca5777c5c6b8707bc931c522f6af6ced6cd9756101ff8dbd573f563b  ak_rtsp.repro
+6431e2c2cdf9ef30027544694aa87108aa86297f51dd06bf7b5492dd6ace1479  ak_rtsp.repro

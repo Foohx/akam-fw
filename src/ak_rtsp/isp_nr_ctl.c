@@ -98,6 +98,12 @@ int isp_nr_knob_set(int knob, int v)
     return rc;
 }
 
+int isp_set_denoise(int bias)
+{
+    int rc = isp_nr_knob_set(ISP_KNOB_NR3D_BIAS, bias);
+    return rc < 0 ? rc : 0;
+}
+
 /* After a pipeline reload (isp_reset_picture_baselines): the vendor blocks are back, so the cached baselines and the
  * "changed" marks are stale. */
 void isp_nr_reset(void)
