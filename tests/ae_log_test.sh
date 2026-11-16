@@ -12,7 +12,7 @@ SRC=$REPO/src/ak_rtsp
 fails=0
 check() { if "${@:2}"; then echo "  ok   - $1"; else echo "FAIL: $1"; fails=$((fails + 1)); fi; }
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" -o "$WORK/ae_log" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/ae_log" \
     "$REPO/tests/native/ae_log_test.c" "$SRC/ae.c" "$SRC/video_cfg.c" -pthread
 
 "$WORK/ae_log" >"$WORK/quiet.txt"

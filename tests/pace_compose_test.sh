@@ -11,8 +11,8 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/pace_compose_test" \
-    "$REPO/tests/native/pace_compose_test.c" "$REPO/src/ak_rtsp/tx_pace.c" "$REPO/src/ak_rtsp/net_tx.c" \
-    "$REPO/src/ak_rtsp/rtp_clock.c"
+    "$REPO/tests/native/pace_compose_test.c" "$REPO/src/common/net/tx_pace.c" "$REPO/src/common/net/net_tx.c" \
+    "$REPO/src/common/net/rtp_clock.c"
 "$WORK/pace_compose_test"

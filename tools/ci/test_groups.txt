@@ -1,6 +1,6 @@
-# Group of every tests/*_test.sh: lint, go, native or shell (see tools/ci/groups.sh for what each group is).
+# Group of every tests/*_test.sh: lint, go, native, rot2k or shell (see tools/ci/groups.sh for what each group is).
 # One line per test: "<group> <file name>". A test that is not listed makes tools/ci/local_check.sh fail, so a
-# new test must be classified here (native = compiles and runs C code of src/ or tests/native/ with the host
+# new test must be classified here (rot2k = the LSC Rotatable 2K overlay/card tests, own CI job; native = compiles and runs C code of src/ or tests/native/ with the host
 # compiler or the pinned Zig; shell = everything else, including wizard, camera-side ash and release scripts).
 native ae_log_test.sh
 shell akam_authkeys_test.sh
@@ -58,6 +58,11 @@ lint readme_links_test.sh
 shell reflash_ssh_test.sh
 shell release_test.sh
 native rtp_clock_test.sh
+rot2k rot2k_card_test.sh
+rot2k rot2k_overlay_test.sh
+rot2k rot2k_flash_hot_test.sh
+rot2k rot2k_control_api_test.sh
+rot2k rot2k_control_api_http_test.sh
 native rtp_in_test.sh
 shell rtsp_auth_cmd_test.sh
 native rtsp_auth_test.sh

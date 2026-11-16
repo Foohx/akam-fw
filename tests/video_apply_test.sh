@@ -14,7 +14,7 @@ SRC=$REPO/src/ak_rtsp
 fails=0
 check() { if "${@:2}"; then echo "  ok   - $1"; else echo "FAIL: $1"; fails=$((fails + 1)); fi; }
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" "-DVIDEO_CFG_PATH=\"$WORK/video\"" -o "$WORK/apply" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" "-DVIDEO_CFG_PATH=\"$WORK/video\"" -o "$WORK/apply" \
     "$REPO/tests/native/video_apply_test.c" "$SRC/ae.c" "$SRC/venc.c" "$SRC/video_cfg.c" -pthread
 rec() { "$WORK/apply" | grep -E '^(TUNNEL|CREATE_ENC)'; }
 

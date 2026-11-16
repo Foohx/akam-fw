@@ -11,7 +11,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/isp_blocks_test" \
     "$REPO/tests/native/isp_blocks_test.c" "$REPO/src/ak_rtsp/isp_blocks.c"
 "$WORK/isp_blocks_test"

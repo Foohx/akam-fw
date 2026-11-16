@@ -48,6 +48,24 @@ Assistant with its Mosquitto add-on.
 | M10 | Broker down at boot | Enable MQTT, power cycle with the broker stopped: the stream and ONVIF come up as usual, MQTT state is `error:connect`, and it connects once the broker is back | [ ] |
 
 
+### Rotatable 2K control API (port 8092, own app; needs the camera and SSH)
+
+Not run on a camera yet; host tests only (`tests/rot2k_control_api_*_test.sh`). Reference: [control-api.md](porting/lsc-rotatable-2k/control-api.md).
+
+| # | Check | How | Done |
+|---|---|---|---|
+| A1 | Closed without a key | Fresh `/config` (no `api_keys`): `ss -ltn` (or `netstat -ltn`) shows no listener on 8092; the log says `no API key installed` | [ ] |
+| A2 | First key opens the port | `akam_api_key.sh new --scope admin --name t` over SSH: key id and secret printed once; port 8092 listens within ~2 s without a restart; `ls -l /config/akam/api_keys` is `-rw-------` | [ ] |
+| A3 | Signed calls | `tools/akam-api-sign.sh` + curl from a PC: `/hello` unsigned, `/info`, `/state`, `/schema` signed answer 200; a wrong secret is 401 `bad_signature`; the same request twice is 401 `replay` | [ ] |
+| A4 | Settings take effect | PATCH `led.mode` off/on (LED), `night.ir_led`, `image.brightness` (see it), `video1.fps` (stream re-opens, other stream untouched), `track.enabled`; read back with GET; reboot by power cut and check `led.mode`/`track.enabled` persisted, `image.*` did not | [ ] |
+| A5 | Actions | `ptz.home`, `ptz.step`, `ptz.move`, `ptz.park`, `ptz.recalibrate` move the head; a second `ptz.move` within 150 ms is 429 | [ ] |
+| A6 | Events | `GET /events?since=N&timeout=25` held; press the front button: the `button` event arrives at once; walk in front of the camera: `person` present true then false; PTZ and day/night events appear | [ ] |
+| A7 | net.* | PATCH `net.hostname`: `/tmp/akam_net.req` disappears within ~5 s, `akam_net.sh` log says set, `GET /settings/net.hostname` shows it; `net.wifi_band` keeps the Wi-Fi up (dead-man) | [ ] |
+| A8 | Cost | `a2k_mem_report` (log) VmRSS/MemAvailable before the first key, with a key and idle, and after a 1 minute burst of requests (gate: +64 KB RSS, +40 KB binary; the binary is +53 KB, see the spec); `video.fps_actual` and CPU unchanged under a flood of bad requests (they are rejected before any crypto once locked) | [ ] |
+| A9 | Hostile input | `curl --data` of 9 KB, a 5 KB header, chunked upload, `GET /akam/v1/../x`: 413, 431, 411, 400/404; nothing crashes (`akam2k.log` has no CRASH line) | [ ] |
+| A10 | Fail closed | `chmod 644 /config/akam/api_keys`: the API closes (`keys_perm`); `chmod 600` and it reopens; `echo x >> /config/akam/api_keys`: closes (`keys_invalid`) and the file is kept | [ ] |
+
+
 ## Post-flash check script
 
 `tools/hw_tests/akam_hwcheck.sh` is a read-only POSIX `sh` script. It never writes to flash or CONFIG,

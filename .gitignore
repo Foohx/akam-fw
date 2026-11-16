@@ -86,3 +86,4 @@ Thumbs.db
 # Synthetic test fixtures must stay tracked despite the bin/, *.bin and
 # *.squashfs rules above (keep this negation last).
 !/tests/fixtures/**
+/src/ak_rtsp/ak_rtsp.repro

@@ -23,7 +23,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 SRC="$REPO/src/ak_rtsp"
-INC=(-I"$SRC" -I"$SMOL/include"
+INC=(-I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -I"$SMOL/include"
      -I"$SMOL/build/_deps/slice99-src" -I"$SMOL/build/_deps/datatype99-src"
      -I"$SMOL/build/_deps/interface99-src" -I"$SMOL/build/_deps/metalang99-src/include")
 
@@ -42,13 +42,13 @@ done
     -Wl,--wrap=ioctl \
     -o "$WORK/rtsp_backchannel_test" \
     "$REPO/tests/native/rtsp_backchannel_test.c" \
-    "$SRC/rtsp.c" "$SRC/rtsp_in.c" "$SRC/rtsp_idle.c" "$SRC/rtsp_busy.c" "$SRC/rtsp_sdp.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" \
-    "$SRC/net_tx.c" "$SRC/tx_pace.c" "$SRC/rtp_clock.c" "$SRC/h264_params.c" "$SRC/talk.c" "$SRC/ctl_sys.c" "$SRC/rtp_in.c" \
-    "$SRC/audio_vad.c" "$SRC/g711.c" "$SRC/swdog.c" "$SRC/video_cfg.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
+    "$SRC/rtsp.c" "$REPO/src/common/net/rtsp_in.c" "$REPO/src/common/net/rtsp_idle.c" "$REPO/src/common/net/rtsp_busy.c" "$REPO/src/common/net/rtsp_sdp.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c" \
+    "$REPO/src/common/net/net_tx.c" "$REPO/src/common/net/tx_pace.c" "$REPO/src/common/net/rtp_clock.c" "$REPO/src/common/net/h264_params.c" "$SRC/talk.c" "$SRC/ctl_sys.c" "$SRC/rtp_in.c" \
+    "$REPO/src/common/logic/audio_vad.c" "$REPO/src/common/logic/g711.c" "$SRC/swdog.c" "$SRC/video_cfg.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
 
 # The host client (tools/akam-talk) is built here too and run against the same server.
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-    -I"$SRC" -o "$WORK/akam-talk" "$REPO/tools/akam-talk/akam_talk.c" "$SRC/md5.c" "$SRC/g711.c"
+    -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/akam-talk" "$REPO/tools/akam-talk/akam_talk.c" "$REPO/src/common/net/md5.c" "$REPO/src/common/logic/g711.c"
 export AKAM_TALK_BIN="$WORK/akam-talk"
 
 "$WORK/rtsp_backchannel_test" | grep -v '^\[ak_rtsp\]\|^\[audio_out\]'

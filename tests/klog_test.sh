@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the stub scripts are written with single quotes on purpose
-# Host test of the kernel log filter (src/ak_rtsp/klog.c, klog_run.c): drop, collapse, priorities, syslogd absent.
+# Host test of the kernel log filter (src/common/logic/klog.c, klog_run.c): drop, collapse, priorities, syslogd absent.
 # Synthetic input only; never reads the real kernel log.
 set -euo pipefail
 
@@ -11,9 +11,9 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -D_GNU_SOURCE -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/klog_test" \
-    "$REPO/tests/native/klog_test.c" "$REPO/src/ak_rtsp/klog.c" "$REPO/src/ak_rtsp/klog_run.c"
+    "$REPO/tests/native/klog_test.c" "$REPO/src/common/logic/klog.c" "$REPO/src/ak_rtsp/klog_run.c"
 "$WORK/klog_test" "$WORK"
 
 # The one-line patch of main.sh (build_firmware.sh KLOG_NEW): restart after a crash, stock klogd only when the

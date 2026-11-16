@@ -16,8 +16,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 SRC="$REPO/src/ak_rtsp"
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -fno-sanitize-recover=undefined -pthread -I"$SRC" \
+    -fno-sanitize-recover=undefined -pthread -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/talk_test" \
-    "$REPO/tests/native/talk_test.c" "$SRC/talk.c" "$SRC/rtp_in.c" "$SRC/audio_vad.c" \
-    "$SRC/g711.c" "$SRC/audio_out.c" "$SRC/audio_jitter.c" "$SRC/rtp_clock.c" -lm
+    "$REPO/tests/native/talk_test.c" "$SRC/talk.c" "$SRC/rtp_in.c" "$REPO/src/common/logic/audio_vad.c" \
+    "$REPO/src/common/logic/g711.c" "$SRC/audio_out.c" "$REPO/src/common/logic/audio_jitter.c" "$REPO/src/common/net/rtp_clock.c" -lm
 "$WORK/talk_test"

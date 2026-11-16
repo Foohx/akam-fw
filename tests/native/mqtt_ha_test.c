@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/mqtt_ha.c with a fake camera: entity table, Home Assistant discovery documents (strict
+/* Host test of src/common/net/mqtt_ha.c with a fake camera: entity table, Home Assistant discovery documents (strict
  * JSON check, required keys, unique ids, size), state formatting and change detection, and the command allow-list
  * (every entity against valid, invalid, oversized and hostile payloads; nothing outside the allow-list reaches the
  * setter, whatever the topic). Run under ASan/UBSan. */

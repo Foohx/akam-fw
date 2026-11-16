@@ -8,6 +8,7 @@
 #   shell   wizard smoke runs and every tests/*_test.sh that is neither native, go nor lint
 #   native  tests/*_test.sh that build and run C code of src/ and tests/native/ (host compiler or pinned Zig)
 #   go      tests/assistant_test.sh (gofmt, vet, go test, six-target build + size budget, reproducibility)
+#   rot2k   LSC Rotatable 2K (firmware/lsc-rotatable-2k-ak3918av130): shellcheck of its scripts + tests/rot2k_*_test.sh
 #   race    opt-in, not part of "all": CGO_ENABLED=1 go test -race -tags akamtest ./... in tools/assistant
 #           (CI runs --only go,race; needs a C compiler for cgo)
 # Every test belongs to exactly one group (test_group in tools/ci/groups.sh, also used by changed_groups.sh),
@@ -31,7 +32,7 @@ cd "$REPO" || exit 2
 . "$REPO/tools/lib/host.sh"
 
 # ---------------------------------------------------------------- group selection
-ALL_GROUPS="lint shell native go"
+ALL_GROUPS="lint shell native go rot2k"
 ONLY=""
 while [ "$#" -gt 0 ]; do
     case $1 in
@@ -53,7 +54,7 @@ else
     for g in ${ONLY//,/ }; do
         case " $ALL_GROUPS race " in
             *" $g "*) SEL="$SEL$g " ;;
-            *) echo "local_check: unknown group: $g (lint, shell, native, go, race, all)" >&2; exit 2 ;;
+            *) echo "local_check: unknown group: $g (lint, shell, native, go, rot2k, race, all)" >&2; exit 2 ;;
         esac
     done
 fi
@@ -163,6 +164,24 @@ done
 echo "tests: $T_PASS passed, $T_FAIL failed, $T_SKIP skipped (of $T_RUN)"
 if [ "$T_RUN" -eq 0 ] && [ "$SEL" != " race " ]; then
     note_fail "no tests found"
+fi
+
+# ---------------------------------------------------------------- 2b. rotatable 2K shellcheck
+# Own group: the extensionless on-camera files (rescue/telnetd) are not caught by the '*.sh' pass above.
+if want rot2k; then
+    host_say bold "== shellcheck (rot2k)"
+    if ! host_have shellcheck; then
+        note_fail "shellcheck not installed: $(host_pkg_install_hint shellcheck)"
+    else
+        rot_n=0
+        while IFS= read -r f; do
+            rot_n=$((rot_n + 1))
+            if ! shellcheck -x "$f"; then
+                note_fail "shellcheck findings in $f"
+            fi
+        done < <(git ls-files 'firmware/lsc-rotatable-2k-ak3918av130/*.sh' 'firmware/lsc-rotatable-2k-ak3918av130/rescue/telnetd' 'tests/rot2k_*_test.sh')
+        echo "shellcheck (rot2k): $rot_n scripts checked"
+    fi
 fi
 
 # ---------------------------------------------------------------- 3. wizard smoke runs

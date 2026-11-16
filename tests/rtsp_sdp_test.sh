@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/rtsp_sdp.c (SDP golden bytes, backchannel negotiation: Require parsing, 551 decision, track ids).
+# Host test of src/common/net/rtsp_sdp.c (SDP golden bytes, backchannel negotiation: Require parsing, 551 decision, track ids).
 # Needs only a host C compiler; touches no hardware.
 set -euo pipefail
 
@@ -14,7 +14,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -fno-sanitize-recover=undefined -I"$REPO/src/ak_rtsp" \
+    -fno-sanitize-recover=undefined -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/rtsp_sdp_test" \
-    "$REPO/tests/native/rtsp_sdp_test.c" "$REPO/src/ak_rtsp/rtsp_sdp.c"
+    "$REPO/tests/native/rtsp_sdp_test.c" "$REPO/src/common/net/rtsp_sdp.c"
 "$WORK/rtsp_sdp_test"

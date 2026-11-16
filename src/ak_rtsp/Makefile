@@ -1,8 +1,10 @@
 ZIG    ?= zig
+COMMON_DIR = ../common
+include $(COMMON_DIR)/common.mk
 CC      = $(ZIG) cc -target arm-linux-musleabi -mcpu=arm926ej_s
 CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -Wformat -Wformat-security -g \
           -ffunction-sections -fdata-sections \
-          -I. \
+          -I. $(common_inc) \
           -I../smolrtsp/include \
           -I../smolrtsp/build/_deps/slice99-src \
           -I../smolrtsp/build/_deps/datatype99-src \
@@ -14,18 +16,18 @@ LDFLAGS = -pthread -static -Wl,--gc-sections
 CFLAGS += $(EXTRA_CFLAGS)
 
 # ONVIF is off the video path and opt-in: size over speed for its files only.
-ONVIF_OBJS = http_srv.o soap.o onvif.o onvif_cfg.o onvif_device.o onvif_media.o onvif_imaging.o wsd.o cred.o
+ONVIF_OBJS = http_srv.o soap.o onvif.o onvif_cfg.o onvif_device.o onvif_media.o onvif_imaging.o wsd.o $(call common_obj,cred)
 $(ONVIF_OBJS): CFLAGS += -Os
 
 # MQTT is off the video path and opt-in as well: size over speed, and stack canaries (it parses broker input).
-MQTT_OBJS = mqtt.o mqtt_ha.o mqtt_svc.o mqtt_ops.o
+MQTT_OBJS = $(call common_obj,mqtt) $(call common_obj,mqtt_ha) mqtt_svc.o mqtt_ops.o
 $(MQTT_OBJS): CFLAGS += -Os
 
 # G17: stack canaries only on the parsers that read untrusted network input (ONVIF/SOAP/HTTP, RTSP auth,
 # the 8091 line parser). Everywhere would cost about 3 % of the stripped binary and a canary check on the
 # video/audio hot paths; here it costs under 1 %. Static non-PIE musl: no RELRO or PIE to turn on, and
 # musl ignores _FORTIFY_SOURCE, so those are deliberately not set.
-HARDENED_OBJS = $(ONVIF_OBJS) $(MQTT_OBJS) rtsp_auth.o control.o rtsp_in.o rtsp_busy.o rtp_in.o ctl_gate.o
+HARDENED_OBJS = $(ONVIF_OBJS) $(MQTT_OBJS) $(call common_obj,rtsp_auth) control.o $(call common_obj,rtsp_in) $(call common_obj,rtsp_busy) rtp_in.o ctl_gate.o
 $(HARDENED_OBJS): CFLAGS += -fstack-protector-strong
 
 TARGET     = ak_rtsp
@@ -67,22 +69,22 @@ SRCS    = main.c \
           audio.c \
           audio_out.c \
           rtsp.c \
-          h264_params.c \
-          rtp_clock.c \
-          net_tx.c \
-          tx_pace.c \
-          rtsp_in.c \
-          rtsp_idle.c \
-          rtsp_busy.c \
-          rtsp_sdp.c \
+          $(call common_src,h264_params) \
+          $(call common_src,rtp_clock) \
+          $(call common_src,net_tx) \
+          $(call common_src,tx_pace) \
+          $(call common_src,rtsp_in) \
+          $(call common_src,rtsp_idle) \
+          $(call common_src,rtsp_busy) \
+          $(call common_src,rtsp_sdp) \
           rtp_in.c \
-          audio_vad.c \
+          $(call common_src,audio_vad) \
           talk.c \
-          md5.c \
-          rtsp_auth.c \
-          sha1.c \
-          b64.c \
-          cred.c \
+          $(call common_src,md5) \
+          $(call common_src,rtsp_auth) \
+          $(call common_src,sha1) \
+          $(call common_src,b64) \
+          $(call common_src,cred) \
           http_srv.c \
           soap.c \
           onvif.c \
@@ -91,8 +93,8 @@ SRCS    = main.c \
           onvif_media.c \
           onvif_imaging.c \
           wsd.c \
-          mqtt.c \
-          mqtt_ha.c \
+          $(call common_src,mqtt) \
+          $(call common_src,mqtt_ha) \
           mqtt_svc.c \
           mqtt_ops.c \
           ircut.c \
@@ -101,13 +103,13 @@ SRCS    = main.c \
           ae.c \
           aec_custom.c \
           night.c \
-          night_logic.c \
-          cfg_file.c \
-          g711.c \
-          audio_jitter.c \
+          $(call common_src,night_logic) \
+          $(call common_src,cfg_file) \
+          $(call common_src,g711) \
+          $(call common_src,audio_jitter) \
           control.c \
           swdog.c \
-          klog.c \
+          $(call common_src,klog) \
           klog_run.c \
           isp_tune.c \
           video_cfg.c \
@@ -197,9 +199,25 @@ version.o: version.c FORCE
 	./gen_version.sh
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# -----------------------------------------------------------------------
+# repro — reproducible, stripped 1080p ak_rtsp (docs/convergence-plan.md 2.5, tools/ci/repro_check.sh).
+# Fixed version stamp (AKAM_REPRO=1, see gen_version.sh), no absolute paths (-ffile-prefix-map), no debug info,
+# the frozen SRCS link order, then `zig objcopy --strip-all`. Output: ak_rtsp.repro, its sha256 is printed.
+# The normal build is untouched: only the stamp and the paths differ.
+# -----------------------------------------------------------------------
+REPRO_ROOT = $(abspath ../..)
+REPRO_FLAGS = -ffile-prefix-map=$(CURDIR)=. -ffile-prefix-map=$(REPRO_ROOT)=/src -g0
+REPRO_EPOCH ?= 0
+.PHONY: repro
+repro:
+	"$(MAKE)" clean
+	AKAM_REPRO=1 SOURCE_DATE_EPOCH=$(REPRO_EPOCH) "$(MAKE)" $(TARGET) CFLAGS="$(CFLAGS) $(REPRO_FLAGS)"
+	$(ZIG) objcopy --strip-all $(TARGET) $(TARGET).repro
+	@sha256sum $(TARGET).repro
+
 clean:
-	rm -f *.o ../common/*.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
-	rm -f $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
+	rm -f *.o ../common/*.o ../common/*/*.o ../common/*/*.o ../smolrtsp/src/*.o ../smolrtsp/src/*/*.o
+	rm -f $(TARGET).repro $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0) version_info.h
 
 # -----------------------------------------------------------------------
 # firmware — builds the flashable, timestamped APP squashfs image

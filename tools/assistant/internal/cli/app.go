@@ -24,6 +24,7 @@ import (
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
@@ -61,6 +62,7 @@ type Hooks struct {
 // App is one run of the program.
 type App struct {
 	Opt        *Options
+	newType    string // camera type chosen for a camera created in this run, stored once its state is open
 	squashSaid string // md5 of the image whose "structure checked" line was printed (said once)
 	Env        Env
 	UI         ui.UI
@@ -192,6 +194,7 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 		}
 	}
 	dir := cams.DirOf(cams.Name)
+	created := !state.CameraExists(base, cams.Name)
 	a.St, err = state.Open(dir, opt.DryRun, secrets)
 	if err != nil {
 		errln("akam: cannot open the state in " + dir + ": " + err.Error())
@@ -208,6 +211,16 @@ func Run(argv []string, st Streams, version string, hooks Hooks) int {
 		}
 	}
 	a.UI = mk(opt, st, a.Log, secrets, opt.DryRun)
+	// The type of a camera that is created now: the one asked (first run) or given with --model. An existing
+	// camera is never retyped here, and one without a type stays a 1080p (see cameraType).
+	if created && a.newType == "" {
+		a.newType = strings.TrimSpace(opt.Model)
+	}
+	if created && a.newType != "" {
+		if _, known := models.ByID(a.newType); known {
+			a.setCameraType(a.newType)
+		}
+	}
 	if opt.Camera != "" {
 		_ = cams.Remember(cams.Name)
 	}
@@ -301,6 +314,11 @@ func (a *App) dispatch(cmd string) error {
 	}
 	if o := a.Opt; cmd != "config" && (o.CfgGlobal || o.CfgSecrets || o.CfgFrom != "" || o.CfgOnly != "") {
 		return usageErr("akam: --global, --from, --only and --include-secrets are options of the config command (see " + Prog + " help)")
+	}
+	if gatedCommands[cmd] {
+		if err := a.modelGate(cmd); err != nil {
+			return err
+		}
 	}
 	switch cmd {
 	case "":
@@ -408,6 +426,11 @@ func (a *App) notYet(cmd string) error {
 }
 
 func (a *App) runStep(name string) error {
+	if gatedCommands[name] {
+		if err := a.modelGate(name); err != nil {
+			return err
+		}
+	}
 	switch name {
 	case "doctor":
 		return a.cmdDoctor()

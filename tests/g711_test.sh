@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/g711.c (ASan/UBSan). Needs a host C compiler;
+# Host test of src/common/logic/g711.c (ASan/UBSan). Needs a host C compiler;
 # touches no hardware.
 set -euo pipefail
 
@@ -14,7 +14,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -fno-sanitize-recover=undefined -I"$REPO/src/ak_rtsp" \
+    -fno-sanitize-recover=undefined -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/g711_test" \
-    "$REPO/tests/native/g711_test.c" "$REPO/src/ak_rtsp/g711.c"
+    "$REPO/tests/native/g711_test.c" "$REPO/src/common/logic/g711.c"
 "$WORK/g711_test"

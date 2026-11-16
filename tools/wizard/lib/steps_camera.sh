@@ -2096,7 +2096,7 @@ talk_find_bin() {
     if [ -x "$f" ]; then TALK_BIN=$f; return 0; fi
     src="$ROOT/tools/akam-talk/akam_talk.c"
     cache="$STATE_DIR/akam-talk"
-    if [ -x "$cache" ] && [ "$cache" -nt "$src" ] && [ "$cache" -nt "$ROOT/src/ak_rtsp/md5.c" ] && [ "$cache" -nt "$ROOT/src/ak_rtsp/g711.c" ]; then
+    if [ -x "$cache" ] && [ "$cache" -nt "$src" ] && [ "$cache" -nt "$ROOT/src/common/net/md5.c" ] && [ "$cache" -nt "$ROOT/src/common/logic/g711.c" ]; then
         TALK_BIN=$cache
         return 0
     fi
@@ -2114,7 +2114,7 @@ talk_find_bin() {
     ui_say "  Building akam-talk (once) ..."
     log_line "CMD $cc -o $cache akam_talk.c md5.c g711.c"
     # shellcheck disable=SC2086  # $cc may be "zig cc"
-    if ! $cc -std=gnu99 -O2 -I"$ROOT/src/ak_rtsp" -o "$cache" "$src" "$ROOT/src/ak_rtsp/md5.c" "$ROOT/src/ak_rtsp/g711.c" 2>"$STATE_DIR/akam-talk.err"; then
+    if ! $cc -std=gnu99 -O2 -I"$ROOT/src/ak_rtsp" -I"$ROOT/src/common/net" -I"$ROOT/src/common/logic" -o "$cache" "$src" "$ROOT/src/common/net/md5.c" "$ROOT/src/common/logic/g711.c" 2>"$STATE_DIR/akam-talk.err"; then
         ui_fail "building akam-talk failed: $(head -n 3 "$STATE_DIR/akam-talk.err" | tr '\n' ' ')" "set AKAM_TALK to a prebuilt akam-talk."
         return 1
     fi

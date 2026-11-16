@@ -59,7 +59,7 @@ func TestEveryEmbeddedModelIsConsistent(t *testing.T) {
 				t.Errorf("%s: status %q", m.ID, r.Status)
 			}
 		}
-		if !validated {
+		if m.EffectiveKind() == models.KindNativeApp && !validated {
 			t.Errorf("%s has no validated record (a kit is only built for a validated model)", m.ID)
 		}
 	}

@@ -83,6 +83,13 @@ Several LSC cameras are planned; a new model needs real hardware, not only a new
 2. **Registry entry.** Add `tools/release/models/<model-id>.txt` (copy the existing file and read its comment): the header,
    and a record with the fingerprints, status `untested` at first. Add it to `tools/assistant/internal/assets/sources.txt` and
    run `go generate ./internal/assets` so that the assistant embeds it (a test fails otherwise).
+   The optional header `kind` says how Akam serves the model: `native-app` (the default when the line is absent; Akam
+   replaces the APP partition and a kit is built, as for the 1080p) `decloud-overlay` (the stock app stays in flash and
+   Akam only cuts the cloud from an SD overlay; no kit) or `cardless-appfs` (Akam runs from the flash with no SD card: the
+   appfs partition is replaced; no kit). The assistant refuses every install, update, backup, restore and option flow on a
+   model of another kind than `native-app` ("not yet supported for this model"), on a model of a `kind` it does not know,
+   and, for `native-app`, on a model without a validated record; the release scripts build no kit for the other kinds.
+   The camera **type** is asked when a camera is created in the assistant (see [camera type](assistant.md#camera-type)).
 3. **Validation.** Build an image from a kit of that model, flash a real unit, run `./akam verify` and the checks of the
    [testing status](testing-status.md). Only then change the record to `validated`: a kit is only built for a model that has
    a validated record.

@@ -40,6 +40,11 @@ TARGET=arm-linux-musleabi
 
 die() { echo "make_kit: error: $*" >&2; exit 1; }
 log() { echo "make_kit: $*"; }
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
 
 OUT="$ROOT/dist/kit"
 MODEL=""
@@ -81,8 +86,11 @@ BUILT_UTC="$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 . "$ROOT/tools/build/deps.lock"
 MODELS_DIR="$HERE/models"
 if [ -z "$MODEL" ]; then
-    set -- "$MODELS_DIR"/*.txt
-    { [ $# = 1 ] && [ -f "$1" ]; } || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
+    set --
+    for f in "$MODELS_DIR"/*.txt; do # native-app models only: a decloud-overlay model has no kit
+        if [ -f "$f" ] && native_app_model "$f"; then set -- "$@" "$f"; fi
+    done
+    [ $# = 1 ] || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
     MODEL="$(basename "$1" .txt)"
 fi
 { printf '%s\n' "$MODEL" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#MODEL}" -ge 3 ] && [ "${#MODEL}" -le 40 ]; } \

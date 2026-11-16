@@ -5,7 +5,7 @@
 #   tools/akam-talk/build.sh --cross         every supported OS/CPU with the pinned Zig -> OUT/<target>/
 #   tools/akam-talk/build.sh --out DIR       output directory (default: dist/akam-talk)
 #
-# The sources are tools/akam-talk/akam_talk.c plus src/ak_rtsp/md5.c and g711.c (the camera's own
+# The sources are tools/akam-talk/akam_talk.c plus src/common/net/md5.c and g711.c (the camera's own
 # code). The cross build needs the pinned toolchain (tools/build/bootstrap.sh, then ". tools/build/env.sh");
 # targets: linux x86_64 and aarch64 (static musl), macOS x86_64 and arm64, Windows x86_64.
 set -euo pipefail
@@ -24,8 +24,8 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-SRCS=("$HERE/akam_talk.c" "$ROOT/src/ak_rtsp/md5.c" "$ROOT/src/ak_rtsp/g711.c")
-CFLAGS=(-std=gnu99 -O2 -Wall -Wextra -I"$ROOT/src/ak_rtsp")
+SRCS=("$HERE/akam_talk.c" "$ROOT/src/common/net/md5.c" "$ROOT/src/common/logic/g711.c")
+CFLAGS=(-std=gnu99 -O2 -Wall -Wextra -I"$ROOT/src/ak_rtsp" -I"$ROOT/src/common/net" -I"$ROOT/src/common/logic")
 mkdir -p "$OUT"
 
 if [ "$CROSS" = 0 ]; then

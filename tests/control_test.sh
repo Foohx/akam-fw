@@ -28,7 +28,7 @@ else:
     print(18091)
 ')
 "$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT="$PORT" -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/control_test" \
     "$REPO/tests/native/control_test.c" "$REPO/src/ak_rtsp/control.c" "$REPO/src/ak_rtsp/ctl_gate.c" "$REPO/src/ak_rtsp/isp_tune.c" "$REPO/src/ak_rtsp/swdog.c"
 # The server tees stdout (the flood of LOG lines goes through it): keep the noise in a file.

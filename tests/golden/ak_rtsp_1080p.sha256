@@ -1,0 +1,6 @@
+# Golden sha256 of the stripped 1080p ak_rtsp, reproducible build (docs/convergence-plan.md 2.5).
+# Recorded from dev e9fcf7d, before any file move to src/common.
+# Command (from the repo root, zig 0.14.1 x86_64-linux, the pinned one in tools/.toolchain):
+#   make -C src/ak_rtsp repro        (AKAM_REPRO=1, SOURCE_DATE_EPOCH=0, -ffile-prefix-map, -g0, zig objcopy --strip-all)
+# Check: tools/ci/repro_check.sh. A different zig changes the hash: update this file in the same commit as the pin.
+caded296c4e7ca86100abd7a8a5f60eefa9c869f9c87dc2ce8490cd67731e102  ak_rtsp.repro

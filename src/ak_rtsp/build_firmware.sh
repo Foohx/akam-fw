@@ -83,6 +83,11 @@ EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 IMAGE_FILES="$ROOT/tools/release/image_files.txt"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
 WARNINGS=()
 warn() { echo "WARNING: $*" >&2; WARNINGS+=("$*"); }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d;s/^# \{0,1\}//' >&2; exit 2; }
@@ -202,7 +207,10 @@ else
     SUPPORTED_HW="${AKAM_SUPPORTED_HARDWARE:-}" # env: tests only
     if [ -z "$SUPPORTED_HW" ]; then # a source build has no kit: every model of the registry counts
         SUPPORTED_HW="$TMP/supported_hardware.txt"
-        cat "$ROOT"/tools/release/models/*.txt >"$SUPPORTED_HW"
+        : >"$SUPPORTED_HW"
+        for hwf in "$ROOT"/tools/release/models/*.txt; do # native-app models only (a decloud-overlay model has no image)
+            if native_app_model "$hwf"; then cat "$hwf" >>"$SUPPORTED_HW"; fi
+        done
     fi
     [ -f "$BINARY" ] || die "ak_rtsp binary not found at $BINARY (build it first: make -C src/ak_rtsp ak_rtsp, or set AK_RTSP_BIN)"
     # Dropbear: prebuilt, or build it with the pinned toolchain.
@@ -529,7 +537,7 @@ fi
 
 # The stock sbin/main.sh starts "klogd -n &", which forwards every kernel line to syslog. The vendor LED
 # driver prints a line per brightness write and the encoder driver prints bursts of identical errors, so
-# the 3 x 200 KB syslog files rotate every few minutes. "ak_rtsp klog" (src/ak_rtsp/klog.h) drops the LED
+# the 3 x 200 KB syslog files rotate every few minutes. "ak_rtsp klog" (src/common/logic/klog.h) drops the LED
 # trace and collapses repeats. It is restarted (2 s, 4 s, ... up to 5 crashes in a row) when a signal kills it; a run that lasted over 60 s
 # resets the count, and SIGTERM/SIGINT (143/130, someone asked for the stop) restarts after 1 s without counting; the stock
 # klogd runs only when it cannot start (exit code other than a signal: no /proc/kmsg, binary missing) or after

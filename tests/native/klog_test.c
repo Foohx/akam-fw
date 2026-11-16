@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/klog.c (filter core, fake clock) and klog_run.c (real file in, unix datagram
+/* Host test of src/common/logic/klog.c (filter core, fake clock) and klog_run.c (real file in, unix datagram
  * socket out). Synthetic fixture text only. Build/run: tests/klog_test.sh */
 #include <errno.h>
 #include <fcntl.h>

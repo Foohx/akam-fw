@@ -1,0 +1,10 @@
+# Pinned cross toolchain for the Rotatable 2K own-app study (sourceable by sh: KEY=value, no spaces).
+# Bootlin prebuilt "armv5-eabi--uclibc--stable-2018.11-1": GCC 7.3.0, binutils 2.29.1, uClibc-ng 1.0.30, Linux
+# headers 4.1.52, arm926ej-s, soft-float, aapcs-linux (buildroot.config inside the tarball). The camera runs
+# uClibc-ng 1.0.31 (same soname libc.so.0, same single-libc layout: pthread/dl/m inside), so a binary linked
+# against 1.0.30 should load on it (UNVERIFIED until PoC-0). Separate from the zig/musl toolchain of the 1080p.
+# The sha256 below matches both our own computation and the .sha256 file published next to the tarball.
+# The tarball was inspected (file list, README, buildroot.config) but its binaries were NOT run yet.
+TOOLCHAIN_NAME=armv5-eabi--uclibc--stable-2018.11-1
+TOOLCHAIN_URL=https://toolchains.bootlin.com/downloads/releases/toolchains/armv5-eabi/tarballs/armv5-eabi--uclibc--stable-2018.11-1.tar.bz2
+TOOLCHAIN_SHA256=198d4a32899e3bfd4dbbc7c59fa1b8da9fa9b5d3ecc02c55fc64f470e8ca2fbb

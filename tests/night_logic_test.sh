@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/night_logic.c (the day / night decision) with simulated AE traces. No camera.
+# Host test of src/common/logic/night_logic.c (the day / night decision) with simulated AE traces. No camera.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -9,7 +9,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/night_logic_test" \
-    "$REPO/tests/native/night_logic_test.c" "$REPO/src/ak_rtsp/night_logic.c" "$REPO/src/ak_rtsp/cfg_file.c" -lm
+    "$REPO/tests/native/night_logic_test.c" "$REPO/src/common/logic/night_logic.c" "$REPO/src/common/logic/cfg_file.c" -lm
 "$WORK/night_logic_test"

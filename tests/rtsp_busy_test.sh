@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/rtsp_busy.c (G06: the 503 answer for a second RTSP client) over real loopback sockets.
+# Host test of src/common/net/rtsp_busy.c (G06: the 503 answer for a second RTSP client) over real loopback sockets.
 # Nothing blocks, no fd leaks (AddressSanitizer build).
 set -euo pipefail
 
@@ -10,7 +10,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/rtsp_busy_test" \
-    "$REPO/tests/native/rtsp_busy_test.c" "$REPO/src/ak_rtsp/rtsp_busy.c"
+    "$REPO/tests/native/rtsp_busy_test.c" "$REPO/src/common/net/rtsp_busy.c"
 "$WORK/rtsp_busy_test"

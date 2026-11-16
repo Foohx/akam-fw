@@ -91,6 +91,24 @@ requires: do not repack or modify it.
 
 **Linux.** `chmod +x ./akam-linux-amd64`.
 
+## Camera type
+
+When you create a camera in the assistant (the first run of the menu, or a new camera chosen in "Change camera"), it
+asks the **type** first, from the model registry: "LSC Smart Indoor 1080p" or "LSC Smart Rotatable Camera 2K (Dual
+Band)". The answer is stored in the camera's state as `camera_model`, and backup, flash, options, config and health
+dispatch on it. From a script, `akam --camera NAME --model ID ...` types a camera that is created by that run (an
+existing camera is never retyped; `akam cameras` lists them).
+
+Migration: a camera saved before the type existed has no `camera_model`; it is a **1080p** and nothing is rewritten for it
+(its files stay byte for byte as they were). The assistant records the type once it recognises the stock firmware of a
+backup, as before.
+
+Only the 1080p has implemented flows. For the 2K, every backup, restore, update, flash, SD preparation, kit, option and
+config command and menu entry stops with "not yet supported for this model" before touching the camera, the card or a
+kit: the 1080p installer would brick it. Use the scripts of
+[`firmware/lsc-rotatable-2k-ak3918av130`](../firmware/lsc-rotatable-2k-ak3918av130/README.md) for the 2K; how the
+assistant will drive them is in the [2K flash design](assistant-rot2k-flash-design.md).
+
 ## First run
 
 ```text

@@ -143,7 +143,7 @@ static void broker_drop(void)
 
 static int rd_u16(const uint8_t *p) { return (p[0] << 8) | p[1]; }
 
-/* Parse one packet body; independent of src/ak_rtsp/mqtt.c. */
+/* Parse one packet body; independent of src/common/net/mqtt.c. */
 static void broker_packet(unsigned type, unsigned flags, const uint8_t *b, size_t n)
 {
     pthread_mutex_lock(&B.mu);

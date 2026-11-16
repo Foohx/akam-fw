@@ -1,4 +1,4 @@
-/* Host unit test for src/ak_rtsp/rtsp_in.c: the RTSP/TCP input demultiplexer.
+/* Host unit test for src/common/net/rtsp_in.c: the RTSP/TCP input demultiplexer.
  * Regression for "VLC over TCP is dropped after ~13 minutes": its RTCP
  * receiver reports ('$' frames) piled up unconsumed in the read buffer until
  * it was full and recv(.., 0) was taken for a disconnect. Pure byte-stream

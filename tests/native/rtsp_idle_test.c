@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/rtsp_idle.c. Build/run: tests/rtsp_idle_test.sh */
+/* Host test of src/common/net/rtsp_idle.c. Build/run: tests/rtsp_idle_test.sh */
 #include <stdio.h>
 #include <string.h>
 #include "rtsp_idle.h"

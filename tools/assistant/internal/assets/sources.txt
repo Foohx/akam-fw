@@ -8,3 +8,4 @@ tools/release/models/lsc-indoor-1080p-ak3918.txt
 THIRD_PARTY_NOTICES.md
 tools/flash_scripts/akam_authkeys.sh
 LICENSE
+tools/release/models/lsc-rotatable-2k-ak3918av130.txt

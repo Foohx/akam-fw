@@ -168,6 +168,11 @@ func (a *App) reportFlowError(e error) {
 }
 
 func (a *App) homeAction(act string) error {
+	if gatedActions[act] {
+		if err := a.modelGate(act); err != nil {
+			return err
+		}
+	}
 	switch act {
 	case "setup":
 		return a.flowInstall()

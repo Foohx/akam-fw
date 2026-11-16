@@ -24,7 +24,7 @@ else
     FLAGS=("-fsanitize=address,undefined" -fno-sanitize-recover=undefined -O1 -g)
 fi
 echo "sanitizer: $SAN"
-"$CC" -std=gnu99 -Wall -Wextra -Werror "${FLAGS[@]}" -I"$SRC" -o "$WORK/auth_thread_test" \
-    "$REPO/tests/native/auth_thread_test.c" "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
+"$CC" -std=gnu99 -Wall -Wextra -Werror "${FLAGS[@]}" -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/auth_thread_test" \
+    "$REPO/tests/native/auth_thread_test.c" "$REPO/src/common/net/cred.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c" "$REPO/src/common/net/sha1.c" "$REPO/src/common/net/b64.c" -pthread
 mkdir "$WORK/d"
 TSAN_OPTIONS="halt_on_error=1" "$WORK/auth_thread_test" "$WORK/d"

@@ -1,4 +1,4 @@
-/* Host unit test for src/ak_rtsp/rtp_clock.c: video capture-clock PLL, audio
+/* Host unit test for src/common/net/rtp_clock.c: video capture-clock PLL, audio
  * sample->time mapping and the NTP/RTP pairing of RTCP Sender Reports.
  * Simulated time only, no hardware. Build/run: tests/rtp_clock_test.sh */
 #include <stdio.h>

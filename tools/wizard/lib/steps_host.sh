@@ -452,6 +452,26 @@ download_file() {
     run_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -o "$2" "$1"
 }
 
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
+
+# model_refused MODEL: true (and says why) when the registry knows MODEL and it is not a native-app model: the wizard
+# never gets a kit for, installs or updates a decloud-overlay (or unknown kind) model. An id not in the registry passes.
+model_refused() {
+    local l f
+    [ -n "$1" ] || return 1
+    l=$(wiz_tool hw_list)
+    [ -d "$l" ] && f=$l/$1.txt || return 1
+    [ -f "$f" ] || return 1
+    if native_app_model "$f"; then return 1; fi
+    ui_fail "the camera model $1 is not supported by the wizard yet: it keeps its stock firmware, so no firmware is installed or updated for it." \
+        "nothing was changed on the camera. See docs/compatible-cameras.md."
+    return 0
+}
+
 # kit_model_wanted: the camera model whose kit is wanted: the camera model on record (found by the backup, or kept
 # from an earlier --model), else --model, else the model of the recorded backup's stock APP, else the only model of
 # the registry. Prints it. Fails (no output) with 1 when several models exist and none is known, with 2 when --model
@@ -472,8 +492,11 @@ kit_model_wanted() {
     fi
     l=$(wiz_tool hw_list)
     if [ -d "$l" ]; then
-        set -- "$l"/*.txt
-        if [ $# = 1 ] && [ -f "$1" ]; then basename "$1" .txt; return 0; fi
+        set --
+        for n in "$l"/*.txt; do # native-app models only: a decloud-overlay model is never the default
+            if [ -f "$n" ] && native_app_model "$n"; then set -- "$@" "$n"; fi
+        done
+        if [ $# = 1 ]; then basename "$1" .txt; return 0; fi
     else
         n=$(sed -n 's/^model=//p' "$l" | head -1)
         if [ -n "$n" ]; then printf '%s\n' "$n"; return 0; fi
@@ -557,6 +580,7 @@ cmd_get_kit() {
                 "pass --model ID (one of the files of $(wiz_tool hw_list)), or take the backup first so that the model is detected."
             return 1
         fi
+        if model_refused "$model"; then return 1; fi
         if [ -z "$ver" ]; then
             # The wizard has its own version: the firmware version is a different number (firmware-vX.Y.Z releases).
             if [ "$UI_DRY" = 1 ]; then
@@ -632,6 +656,7 @@ cmd_get_kit() {
             "a kit only fits the model it was built for: drop --model."
         return 1
     fi
+    if model_refused "$kmodel"; then return 1; fi
     if [ -n "$kmodel" ]; then vargs+=(--expect-model "$kmodel"); fi
     if [ ! -e "$kit" ]; then
         ui_say "  WOULD run: $(wiz_tool verify_kit) ${vargs[*]} $kit   (kit not downloaded in a rehearsal)"

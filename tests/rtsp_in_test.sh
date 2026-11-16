@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/rtsp_in.c (RTSP/TCP input demultiplexer: RTSP
+# Host test of src/common/net/rtsp_in.c (RTSP/TCP input demultiplexer: RTSP
 # requests mixed with interleaved '$' RTCP frames split across reads, 30
 # minutes of receiver reports and keepalives, bounded buffer, overflow
 # handling). Needs only a host C compiler; touches no hardware.
@@ -12,7 +12,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/rtsp_in_test" \
-    "$REPO/tests/native/rtsp_in_test.c" "$REPO/src/ak_rtsp/rtsp_in.c"
+    "$REPO/tests/native/rtsp_in_test.c" "$REPO/src/common/net/rtsp_in.c"
 "$WORK/rtsp_in_test"

@@ -17,7 +17,7 @@ trap 'chmod -R u+rwx "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 SRC=$REPO/src/ak_rtsp
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-    -I"$SRC" -o "$WORK/mqtt_svc_test" \
-    "$REPO/tests/native/mqtt_svc_test.c" "$SRC/mqtt_svc.c" "$SRC/mqtt_ha.c" "$SRC/mqtt.c" -pthread
+    -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/mqtt_svc_test" \
+    "$REPO/tests/native/mqtt_svc_test.c" "$SRC/mqtt_svc.c" "$REPO/src/common/net/mqtt_ha.c" "$REPO/src/common/net/mqtt.c" -pthread
 mkdir "$WORK/d"
 timeout 120 "$WORK/mqtt_svc_test" "$WORK/d"

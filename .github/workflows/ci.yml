@@ -72,6 +72,7 @@ jobs:
       shell: ${{ steps.groups.outputs.shell }}
       native: ${{ steps.groups.outputs.native }}
       go: ${{ steps.groups.outputs.go }}
+      rot2k: ${{ steps.groups.outputs.rot2k }}
       any: ${{ steps.groups.outputs.any }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,6 +125,19 @@ jobs:
       - uses: ./.github/actions/toolchain
       - run: bash tools/ci/local_check.sh --only native
 
+  # LSC Rotatable 2K overlay (firmware/lsc-rotatable-2k-ak3918av130): shellcheck, the overlay and card-build tests
+  # (dry run into a temp dir, static anti-brick scan). Separate job and group: it cannot mask the 1080p jobs, and a
+  # change confined to firmware/lsc-rotatable-2k-ak3918av130 runs only this job (plus lint).
+  rot2k-tests:
+    needs: [changes, toolchain]
+    if: needs.changes.outputs.rot2k == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/toolchain
+      - run: bash tools/ci/local_check.sh --only rot2k
+
   # gofmt, go vet, go test, the six release targets (cross-build, size budget 12 MiB, reproducibility) via
   # tests/assistant_test.sh, then go test -race. This is the only build in CI, and it is a sanity build:
   # nothing is uploaded.
@@ -157,7 +171,7 @@ jobs:
   # Single status for branch protection: green when nothing failed (skipped groups are fine).
   ci-ok:
     if: always()
-    needs: [lint, changes, toolchain, shell-tests, native-tests, go-tests]
+    needs: [lint, changes, toolchain, shell-tests, native-tests, rot2k-tests, go-tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

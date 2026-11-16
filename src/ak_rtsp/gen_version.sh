@@ -4,14 +4,22 @@
 
 BUILD_NUM_FILE=build_number.txt
 
-[ -f "$BUILD_NUM_FILE" ] || echo 0 > "$BUILD_NUM_FILE"
-num=$(( $(cat "$BUILD_NUM_FILE") + 1 ))
-echo "$num" > "$BUILD_NUM_FILE"
+if [ "${AKAM_REPRO:-0}" = 1 ]; then
+    # Reproducible build (make repro): every stamp comes from the environment, nothing from the clock, the
+    # counter file or the git state, so two builds of the same sources give the same bytes.
+    num=0
+    git=${AKAM_REPRO_GIT:-repro}
+    ts=$(date -u -d "@${SOURCE_DATE_EPOCH:-0}" '+%Y-%m-%d %H:%M:%S')
+else
+    [ -f "$BUILD_NUM_FILE" ] || echo 0 > "$BUILD_NUM_FILE"
+    num=$(( $(cat "$BUILD_NUM_FILE") + 1 ))
+    echo "$num" > "$BUILD_NUM_FILE"
 
-git=$(git describe --always --dirty=-dirty 2>/dev/null) || git=unknown
-[ -n "$git" ] || git=unknown
+    git=$(git describe --always --dirty=-dirty 2>/dev/null) || git=unknown
+    [ -n "$git" ] || git=unknown
 
-ts=$(date '+%Y-%m-%d %H:%M:%S')
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+fi
 
 cat > version_info.h <<HDR
 #pragma once

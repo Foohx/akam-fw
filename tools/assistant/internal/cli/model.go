@@ -74,10 +74,20 @@ func (a *App) needModel() (string, error) {
 	if !kit.ValidModel(id) {
 		return "", a.UI.Fail(fmt.Sprintf("'%s' is not a valid camera model id.", id), fmt.Sprintf("known models: %s.", modelIDs()))
 	}
-	if _, known := models.ByID(id); known && !a.UI.Dry() {
-		a.recordModel(id)
+	if m, known := models.ByID(id); known {
+		if why := m.Unsupported(); why != "" {
+			return "", a.UI.Fail(unsupportedMessage(m, why), "nothing was changed on the camera. See docs/compatible-cameras.md for the models and their status.")
+		}
+		if !a.UI.Dry() {
+			a.recordModel(id)
+		}
 	}
 	return id, nil
+}
+
+// unsupportedMessage is the refusal for a model the assistant must not install or update.
+func unsupportedMessage(m models.Model, why string) string {
+	return fmt.Sprintf("not yet supported for this model: %s. The assistant refuses to install or update it (%s).", models.Label(m.ID), why)
 }
 
 // askModel lets the user pick the camera model from the registry; the last item (the default, nothing is
@@ -109,6 +119,11 @@ func modelIDs() string {
 // (or --model) must equal it. When the camera's model is not known, nothing can be compared and the kit passes
 // (the hardware check of the image step still compares the stock APP with the kit's own list).
 func (a *App) kitModelProblem(kitModel string) string {
+	if m, ok := models.ByID(kitModel); ok {
+		if why := m.Unsupported(); why != "" {
+			return unsupportedMessage(m, why)
+		}
+	}
 	if want := a.camModel(); want != "" && want != kitModel {
 		return fmt.Sprintf("this kit is for the camera model %s, but this camera is %s. A kit only fits the model it was built for.", models.Label(kitModel), models.Label(want))
 	}
@@ -136,4 +151,70 @@ func (a *App) downloadedKitFile(model, ver string) string {
 func (a *App) wantedModel() string {
 	id, _ := a.wantModel()
 	return id
+}
+
+// ---- camera type (the model chosen when a camera is created) ----
+
+// cameraType is the type of the current camera: the recorded model, else --model, else the default (a profile saved
+// before the type existed is a 1080p; nothing is written for it, so that it keeps working byte for byte).
+func (a *App) cameraType() string {
+	if id := a.camModel(); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(a.Opt.Model); id != "" {
+		return id
+	}
+	return models.DefaultID
+}
+
+// modelGate is the one refusal of every flow written for the native 1080p (backup, flash, restore, kit, options,
+// config...). It runs before anything touches the camera: when the camera (or --model) is a model whose flows the
+// assistant does not implement, the flow stops with "not yet supported for this model". A model that is not in the
+// registry is left to the checks of each flow (they compare the kit and the stock APP with the registry).
+func (a *App) modelGate(what string) error {
+	for _, id := range []string{a.camModel(), strings.TrimSpace(a.Opt.Model)} {
+		m, ok := models.ByID(id)
+		if !ok || m.NativeFlows() {
+			continue
+		}
+		return a.UI.Fail(fmt.Sprintf("'%s' is not yet supported for this model: %s.", what, models.Label(m.ID)),
+			"nothing was changed on the camera. "+m.Unsupported()+". Flows for this model are planned (docs/assistant-rot2k-flash-design.md); see docs/compatible-cameras.md.")
+	}
+	return nil
+}
+
+// gatedCommands are the commands that run the 1080p logic on a camera (flash, SD, kit, control port, settings).
+var gatedCommands = map[string]bool{
+	"backup": true, "restore": true, "update": true, "verify": true, "image": true, "flash": true, "get-kit": true,
+	"prepare-backup-sd": true, "prepare-flash-sd": true, "config": true, "mqtt": true, "audio": true, "picture": true,
+	"video": true, "ntp": true, "talk": true, "say": true, "led": true, "onvif": true, "key": true, "rtsp-auth": true,
+	"hostname": true, "debug": true,
+}
+
+// gatedActions are the home-screen actions that do (setup, update, options, backup, configs).
+var gatedActions = map[string]bool{"setup": true, "update": true, "options": true, "backup": true, "configs": true}
+
+// askCameraType asks which camera this is, from the registry (nothing is preselected, the first line is the
+// validated 1080p). ok is false when the user cancels.
+func (a *App) askCameraType() (string, bool) {
+	all := models.All()
+	items := make([]string, 0, len(all)+1)
+	ids := make([]string, 0, len(all))
+	for _, m := range all {
+		items = append(items, m.Name+"  ("+m.Articles+")")
+		ids = append(ids, m.ID)
+	}
+	items = append(items, "Cancel")
+	i, err := a.UI.Pick("What type of camera is it? (the type decides how it is backed up, flashed and configured)", items)
+	if err != nil || i < 0 || i >= len(ids) {
+		return "", false
+	}
+	return ids[i], true
+}
+
+// setCameraType stores the type in the state of the current camera (camera_model, never in a rehearsal).
+func (a *App) setCameraType(id string) {
+	if id != "" && kit.ValidModel(id) && !a.UI.Dry() {
+		a.setState(keyCameraModel, id)
+	}
 }

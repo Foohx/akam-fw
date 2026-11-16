@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/md5.c and rtsp_auth.c (MD5 and Digest vectors, the
+# Host test of src/common/net/md5.c and rtsp_auth.c (MD5 and Digest vectors, the
 # authentication state machine, credentials file reload, rate limiting, no
 # secret in the logs), then a cross-check with a real Digest client (ffprobe)
 # when it is installed. Needs only a host C compiler; touches no hardware.
@@ -17,9 +17,9 @@ cleanup() {
 trap cleanup EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/rtsp_auth_test" \
-    "$REPO/tests/native/rtsp_auth_test.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread
+    "$REPO/tests/native/rtsp_auth_test.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c" -pthread
 "$WORK/rtsp_auth_test"
 
 # The journal line of rtsp.c must print only what rtsp_auth.c hands out (r.log),
@@ -38,9 +38,9 @@ if ! command -v ffprobe >/dev/null 2>&1; then
     echo "skip: ffprobe not installed, no real-client cross-check"
     exit 0
 fi
-"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/rtsp_auth_server" \
-    "$REPO/tests/native/rtsp_auth_server.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread
+    "$REPO/tests/native/rtsp_auth_server.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c" -pthread
 
 AUTHFILE=$WORK/rtsp_auth
 USERNAME=viewer

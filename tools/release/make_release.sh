@@ -47,6 +47,11 @@ REPO_URL="https://github.com/Foohx/akam-fw"
 KEY_LINE_RE='^akam-release namespaces="akam-release" ssh-ed25519 AAAA'
 die() { echo "make_release: error: $*" >&2; exit 1; }
 log() { echo "make_release: $*"; }
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
 
 FAMILY="" VERSION="" OUT="" TEST=0 CHECK=0
 USAGE="usage: $0 firmware|assistant X.Y.Z [--out DIR] [--test]   |   $0 --check-signed firmware|assistant X.Y.Z [--out DIR]"
@@ -154,7 +159,10 @@ if [ "$FAMILY" = firmware ]; then
     mkdir -p "$WORK/kit"
     MODELS=()
     for f in "$HERE"/models/*.txt; do
-        [ -f "$f" ] && MODELS+=("$(basename "$f" .txt)")
+        [ -f "$f" ] || continue
+        # a decloud-overlay model keeps the stock app: it has no kit (see the `kind` header of the registry)
+        native_app_model "$f" || continue
+        MODELS+=("$(basename "$f" .txt)")
     done
     [ "${#MODELS[@]}" -gt 0 ] || die "no model in tools/release/models/"
     for m in "${MODELS[@]}"; do

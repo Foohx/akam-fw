@@ -33,7 +33,7 @@ hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1";
 # --- builds -------------------------------------------------------------------
 HOOKFLAGS=(-std=gnu99 -O1 -Wall -Wextra -Werror -fPIC -shared -nostdlib -ffreestanding
     -fno-builtin -fno-stack-protector -fvisibility=hidden -fno-tree-loop-distribute-patterns
-    -I"$SRC" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u -DALIVE_MS=100u)
+    -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u -DALIVE_MS=100u)
 dirs_macro() { # $1 = base dir
     printf '"%s/out","%s/nosuch/sd","%s/tmp"' "$1" "$1" "$1"
 }

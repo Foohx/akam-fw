@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/audio_jitter.c: prefill, bursts, underrun,
+/* Host test of src/common/logic/audio_jitter.c: prefill, bursts, underrun,
  * overrun, randomized comparison with a naive model, timing simulation and
  * a two-thread smoke test. Run under ASan/UBSan by tests/jitter_test.sh. */
 #include <pthread.h>

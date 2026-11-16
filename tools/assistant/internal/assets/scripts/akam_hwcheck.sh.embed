@@ -687,7 +687,7 @@ check_hostname() {
     fi
 }
 
-# RTSP Digest authentication (src/ak_rtsp/rtsp_auth.h): information only, never a FAIL. The
+# RTSP Digest authentication (src/common/net/rtsp_auth.h): information only, never a FAIL. The
 # credentials file is "user:akam:HA1"; only the user name is shown, never the hash.
 check_rtsp_auth() {
     section "RTSP authentication (optional)"

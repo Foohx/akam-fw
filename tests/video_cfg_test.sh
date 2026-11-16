@@ -11,6 +11,6 @@ trap 'rm -rf "$WORK"' EXIT
 SRC=$REPO/src/ak_rtsp
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-    -I"$SRC" "-DVIDEO_CFG_PATH=\"$WORK/video\"" -o "$WORK/video_cfg_test" \
-    "$REPO/tests/native/video_cfg_test.c" "$SRC/video_cfg.c" "$SRC/video_ctl.c" "$SRC/cfg_file.c" -pthread
+    -I"$SRC" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" "-DVIDEO_CFG_PATH=\"$WORK/video\"" -o "$WORK/video_cfg_test" \
+    "$REPO/tests/native/video_cfg_test.c" "$SRC/video_cfg.c" "$SRC/video_ctl.c" "$REPO/src/common/logic/cfg_file.c" -pthread
 "$WORK/video_cfg_test" "$WORK"

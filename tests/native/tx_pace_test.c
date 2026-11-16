@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/tx_pace.c. Build/run: tests/tx_pace_test.sh */
+/* Host test of src/common/net/tx_pace.c. Build/run: tests/tx_pace_test.sh */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

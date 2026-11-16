@@ -11,7 +11,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/http_srv_test" \
     "$REPO/tests/native/http_srv_test.c" "$REPO/src/ak_rtsp/http_srv.c" "$REPO/src/ak_rtsp/soap.c" -pthread
 "$WORK/http_srv_test"

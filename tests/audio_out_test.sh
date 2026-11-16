@@ -11,7 +11,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined -pthread \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/audio_out_test" \
-    "$REPO/tests/native/audio_out_test.c" "$REPO/src/ak_rtsp/audio_out.c" "$REPO/src/ak_rtsp/audio_jitter.c"
+    "$REPO/tests/native/audio_out_test.c" "$REPO/src/ak_rtsp/audio_out.c" "$REPO/src/common/logic/audio_jitter.c"
 "$WORK/audio_out_test"

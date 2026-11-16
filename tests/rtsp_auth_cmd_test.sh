@@ -403,8 +403,8 @@ fi
 
 # --- 9. the file is what ak_rtsp reads: end-to-end with ffprobe ----------------
 if command -v ffprobe >/dev/null 2>&1 && command -v cc >/dev/null 2>&1; then
-    cc -std=gnu99 -I"$REPO/src/ak_rtsp" -o "$WORK/srv" "$REPO/tests/native/rtsp_auth_server.c" \
-        "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread 2>/dev/null
+    cc -std=gnu99 -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/srv" "$REPO/tests/native/rtsp_auth_server.c" \
+        "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c" -pthread 2>/dev/null
     E2E='n0t:S3NTINEL@p/ss w0rd'
     ENC='n0t%3AS3NTINEL%40p%2Fss%20w0rd'
     feed "$E2E

@@ -18,8 +18,8 @@ trap 'rm -rf "$WORK"' EXIT
 ok() { echo "  ok   - $1"; }
 bad() { echo "  FAIL - $1"; exit 1; }
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" -o "$WORK/akam-talk" \
-    "$REPO/tools/akam-talk/akam_talk.c" "$REPO/src/ak_rtsp/md5.c" "$REPO/src/ak_rtsp/g711.c"
+"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/akam-talk" \
+    "$REPO/tools/akam-talk/akam_talk.c" "$REPO/src/common/net/md5.c" "$REPO/src/common/logic/g711.c"
 ok "builds with -Wall -Wextra -Werror"
 T="$WORK/akam-talk"
 

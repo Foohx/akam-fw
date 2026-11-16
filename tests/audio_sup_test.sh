@@ -12,7 +12,7 @@ trap 'rm -rf "$WORK"' EXIT
 "$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -fno-sanitize-recover=undefined \
     -DAUDIO_BACKOFF_UNIT_MS=20 -DAUDIO_FAIL_SLEEP_US=1000 \
     -Wl,--wrap=open,--wrap=read,--wrap=ioctl \
-    -I"$REPO/src/ak_rtsp" \
+    -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" \
     -o "$WORK/audio_sup_test" \
-    "$REPO/tests/native/audio_sup_test.c" "$REPO/src/ak_rtsp/audio.c" "$REPO/src/ak_rtsp/rtp_clock.c"
+    "$REPO/tests/native/audio_sup_test.c" "$REPO/src/ak_rtsp/audio.c" "$REPO/src/common/net/rtp_clock.c"
 "$WORK/audio_sup_test" 2>"$WORK/err.txt" | grep -v '^\[ak_rtsp\]'
