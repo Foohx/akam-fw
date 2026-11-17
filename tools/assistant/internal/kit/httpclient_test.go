@@ -204,7 +204,6 @@ func TestClientFollowsHTTPSRedirectsOnly(t *testing.T) {
 	if got, err := fetchString(t, c, srv.URL+"/start"); err != nil || got != "arrived" {
 		t.Fatalf("relative redirect: %q, %v", got, err)
 	}
-	start := time.Now()
 	if _, err := fetchString(t, c, srv.URL+"/down"); err == nil || !strings.Contains(err.Error(), "non-HTTPS") {
 		t.Errorf("redirect to http: %v", err)
 	}
@@ -214,9 +213,6 @@ func TestClientFollowsHTTPSRedirectsOnly(t *testing.T) {
 	// Policy refusals are not retried: 10 requests for the loop, and no back-off wait.
 	if n := hops.Load(); n != 10 {
 		t.Errorf("%d requests, want 10 (no retry of a policy refusal)", n)
-	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Errorf("policy refusals were retried (%v)", d)
 	}
 }
 
@@ -273,21 +269,28 @@ func TestFetchAcceptsOnly200(t *testing.T) {
 }
 
 func TestClientTimeout(t *testing.T) {
+	// The handler stalls until the client gives up (its context ends) or the test ends; no wall-clock bound is
+	// asserted, the deadline is what must end the request, and a hang is caught by the go test timeout.
+	done := make(chan struct{})
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
-		case <-time.After(10 * time.Second):
+		case <-done:
 		}
 	}))
 	defer srv.Close()
+	defer close(done)
 	c := kittest.ClientFor(srv)
 	c.Timeout = 300 * time.Millisecond
-	start := time.Now()
-	if _, _, err := get(t, c, srv.URL+"/slow"); err == nil {
+	_, _, err := get(t, c, srv.URL+"/slow")
+	if err == nil {
 		t.Fatal("a stalled server must time out")
 	}
-	if time.Since(start) > 5*time.Second {
-		t.Errorf("timeout took %v", time.Since(start))
+	// The client's deadline surfaces either as the context error or, when the timer fires inside a read under load,
+	// as a net.Error timeout from the TLS conn: both are the same timeout, anything else is a real failure.
+	var ne net.Error
+	if !errors.Is(err, context.DeadlineExceeded) && !(errors.As(err, &ne) && ne.Timeout()) {
+		t.Errorf("want a deadline error, got %v", err)
 	}
 }
 
@@ -320,13 +323,9 @@ func TestClientBoundsTheAnswerHead(t *testing.T) {
 	for name, h := range cases {
 		t.Run(name, func(t *testing.T) {
 			c, u, n := rawServer(t, srv, h)
-			start := time.Now()
 			_, _, err := get(t, c, u)
 			if err == nil {
 				t.Fatal("an oversized answer was accepted")
-			}
-			if d := time.Since(start); d > 10*time.Second {
-				t.Errorf("took %v", d)
 			}
 			if got := n.Load(); got > 1<<20+256<<10 {
 				t.Errorf("the client read %d bytes of the answer (err %v)", got, err)
@@ -531,11 +530,14 @@ func TestProxyCredentialsNeverInErrors(t *testing.T) {
 	}
 	// A malformed proxy is reported at once, not retried.
 	t.Setenv("HTTPS_PROXY", "socks5://h:1080")
-	start := time.Now()
+	var tries atomic.Int32
 	out := filepath.Join(t.TempDir(), "f")
-	err := kit.FetchLimit(context.Background(), &kit.Client{Proxy: kit.ProxyFromEnvironment}, "https://example.invalid/x", out, 1<<10)
-	if err == nil || !strings.Contains(err.Error(), "SOCKS proxies are not supported") || time.Since(start) > 2*time.Second {
-		t.Errorf("SOCKS setting: %v after %v", err, time.Since(start))
+	err := kit.FetchLimit(context.Background(), &kit.Client{Proxy: func(u *url.URL) (*url.URL, error) {
+		tries.Add(1)
+		return kit.ProxyFromEnvironment(u)
+	}}, "https://example.invalid/x", out, 1<<10)
+	if err == nil || !strings.Contains(err.Error(), "SOCKS proxies are not supported") || tries.Load() != 1 {
+		t.Errorf("SOCKS setting: %v after %d attempts", err, tries.Load())
 	}
 }
 
@@ -543,18 +545,29 @@ func TestProxyCredentialsNeverInErrors(t *testing.T) {
 func TestClientCancelsWhileWaitingForTheProxy(t *testing.T) {
 	stall := make(chan struct{})
 	t.Cleanup(func() { close(stall) })
-	px := rawProxy(t, func(net.Conn) { <-stall })
+	entered := make(chan struct{}, 1)
+	px := rawProxy(t, func(net.Conn) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-stall
+	})
 	c := &kit.Client{TLSConfig: &tls.Config{}, Proxy: func(*url.URL) (*url.URL, error) { return px, nil }}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
-	start := time.Now()
+	defer cancel()
+	go func() {
+		select {
+		case <-entered:
+		case <-time.After(60 * time.Second):
+			t.Error("the request never reached the proxy")
+		}
+		cancel()
+	}()
 	out := filepath.Join(t.TempDir(), "f")
 	err := kit.FetchLimit(ctx, c, "https://example.invalid/x", out, 1<<10)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled, got %v", err)
-	}
-	if d := time.Since(start); d > 3*time.Second {
-		t.Errorf("cancellation took %v", d)
 	}
 }
 
@@ -576,28 +589,22 @@ func TestClientCancelsWhileWaitingForTheServer(t *testing.T) {
 	defer close(release) // runs first: srv.Close waits for the handlers
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var cancelled atomic.Pointer[time.Time]
+	var cancelled atomic.Bool
 	go func() {
 		select {
 		case <-entered:
-			now := time.Now()
-			cancelled.Store(&now)
+			cancelled.Store(true)
 		case <-time.After(60 * time.Second):
 			t.Error("the request never reached the server")
 		}
 		cancel()
 	}()
 	err := kit.FetchLimit(ctx, kittest.ClientFor(srv), srv.URL+"/x", filepath.Join(t.TempDir(), "f"), 1<<10)
-	end := time.Now()
-	at := cancelled.Load()
-	if at == nil {
+	if !cancelled.Load() {
 		t.Fatalf("returned %v before the request reached the server", err)
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled, got %v", err)
-	}
-	if d := end.Sub(*at); d > 10*time.Second {
-		t.Errorf("cancellation took %v", d)
 	}
 }
 
@@ -613,7 +620,9 @@ func TestClientVerifiesTheCertificate(t *testing.T) {
 	defer srv.Close()
 	addr := srv.Listener.Addr().String()
 	_, port, _ := net.SplitHostPort(addr)
+	var dials atomic.Int32
 	toSrv := func(ctx context.Context, nw, _ string) (net.Conn, error) {
+		dials.Add(1)
 		return (&net.Dialer{}).DialContext(ctx, nw, addr)
 	}
 	c := kittest.ClientFor(srv)
@@ -627,7 +636,7 @@ func TestClientVerifiesTheCertificate(t *testing.T) {
 		"wrong name":                "https://wrong.test:" + port + "/f",
 		"wrong name after redirect": "https://example.com:" + port + "/hop",
 	} {
-		start := time.Now()
+		dials.Store(0)
 		out := filepath.Join(t.TempDir(), "f")
 		err := kit.FetchLimit(context.Background(), c, u, out, 1<<10)
 		if err == nil || !strings.Contains(err.Error(), "certificate") {
@@ -636,8 +645,8 @@ func TestClientVerifiesTheCertificate(t *testing.T) {
 		if _, e := os.Stat(out); e == nil {
 			t.Errorf("%s: a file was written", name)
 		}
-		if time.Since(start) > 2*time.Second {
-			t.Errorf("%s: a certificate failure was retried", name)
+		if n := dials.Load(); n > 2 { // one connection per hop; a retry would dial again
+			t.Errorf("%s: a certificate failure was retried (%d dials)", name, n)
 		}
 	}
 

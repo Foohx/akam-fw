@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -9,7 +10,8 @@
 #include "akam2k_log.h"
 #include "akam2k_ptz.h"
 
-enum { K_NONE, K_STEP, K_HOME, K_PARK, K_NUDGE, K_RECAL };
+enum { K_NONE, K_STEP, K_HOME, K_PARK, K_NUDGE, K_RECAL, K_GOTO, K_VEL };
+#define RING_N 64 /* position samples of a continuous session (about 3 s at 20 Hz) */
 
 
 static struct {
@@ -17,7 +19,11 @@ static struct {
     pthread_cond_t cv;
     pthread_t tid;
     int running, stop, starting;
-    struct { int kind, a, b, sp; } pend;
+    struct { int kind, a, b, sp, patrol; unsigned ticket; } pend;
+    int cur_patrol;             /* the running command is a patrol move */
+    unsigned cur_ticket, pt_next, pt_done;  /* patrol move tickets: running, last issued, last finished */
+    int pt_rc;                  /* HAL_PTZ_* of the last finished patrol move */
+    void (*cmd_hook)(int kind); /* a manual command was accepted (atomic stores only: called under the lock) */
     int64_t end_ms;             /* CLOCK_MONOTONIC ms of the last motion end */
     a2k_ptz_info_t info;
     int cal_mode, privacy_opt;
@@ -44,8 +50,17 @@ static struct {
     int budget_logged;
     int64_t last_end_ms, last_save_ms;
     void (*notify)(const a2k_ptz_info_t *);
+    /* continuous motion */
+    int vending;                /* the session is ending: a2k_ptz_vel is refused (-1) until it is cleared */
+    int vsess;                  /* a session runs (a2k_ptz_vel updates the mailbox instead of queueing) */
+    struct { int sx, sy, dx, dy; } vel;
+    unsigned vel_seq;           /* bumped by every a2k_ptz_vel (a refresh included) */
+    int64_t vel_ms;             /* when the last one arrived */
+    int lease_ms;
+    struct { int64_t t; int pan, tilt; } ring[RING_N];
+    int ring_n, ring_head;      /* count, index of the next write */
 } G = { .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER,
-        .conf_path = A2K_PTZ_CONF,
+        .conf_path = A2K_PTZ_CONF, .lease_ms = A2K_PTZ_LEASE_MS,
         .scene_ms = A2K_PTZ_SCENE_MS, .scene_confirm_ms = A2K_PTZ_SCENE_CONFIRM_MS, .scene_gap_ms = A2K_PTZ_SCENE_GAP_MS };
 static volatile int g_privacy;
 
@@ -122,7 +137,7 @@ static int hook_cold_check(uint32_t *pan, uint32_t *tilt)
     if (!G.scene_on || !G.scene.boot_check)
         return 0;
     rc = G.scene.boot_check(pan, tilt, stopping);
-    return rc == 1 ? 1 : rc == 2 && G.scene.probe_offset && G.scene.probe ? 2 : 0;
+    return rc == 1 ? 1 : rc == 3 ? 3 : rc == 2 && G.scene.probe_offset && G.scene.probe ? 2 : 0;
 }
 
 static int hook_cold_offset(unsigned i, int *dpan, int *dtilt) { return G.scene.probe_offset ? G.scene.probe_offset(i, dpan, dtilt) : -1; }
@@ -139,6 +154,72 @@ static int hook_drop(void) { return G.scene.drop ? G.scene.drop() : 0; }
 
 /* Publish the state and the privacy flag after a change; `moving` forces "moved" with no position (the camera leaves home /
  * park at once, so the privacy ends with the first motion). */
+/* The position history of the controller (G.mu held): samples of a session and the position at the end of every motion. */
+static void ring_reset_locked(void) { G.ring_n = G.ring_head = 0; }
+static void (*volatile g_ring_hook)(int64_t t, int pan, int tilt);
+void a2k_ptz_set_ring_hook(void (*cb)(int64_t t, int pan, int tilt)) { g_ring_hook = cb; }
+static void ring_push_locked(int64_t t, int pan, int tilt)
+{
+    if (G.vsess && g_ring_hook)
+        g_ring_hook(t, pan, tilt); /* the raw recorder of the tracker (track_debug=2): every sample of a continuous session */
+    G.ring[G.ring_head].t = t;
+    G.ring[G.ring_head].pan = pan;
+    G.ring[G.ring_head].tilt = tilt;
+    G.ring_head = (G.ring_head + 1) % RING_N;
+    if (G.ring_n < RING_N)
+        G.ring_n++;
+}
+
+int a2k_ptz_pos_at(int64_t t, int *pan, int *tilt)
+{
+    int rc = -1, n, i, ia = -1, ib = -1;
+    pthread_mutex_lock(&G.mu);
+    n = G.ring_n;
+    if (G.running && n > 0) {
+        int newest = (G.ring_head + RING_N - 1) % RING_N, oldest = (G.ring_head + RING_N - n) % RING_N;
+        if (t >= G.ring[newest].t) { /* after the last sample: the head is where it was (idle) or just there (a session samples every 50 ms) */
+            if (!G.vsess || t - G.ring[newest].t <= 200) {
+                *pan = G.ring[newest].pan;
+                *tilt = G.ring[newest].tilt;
+                rc = 0;
+            }
+        } else if (t >= G.ring[oldest].t) {
+            for (i = 0; i < n; i++) { /* oldest -> newest: the last sample at or before t, and the first after it */
+                int k = (oldest + i) % RING_N;
+                if (G.ring[k].t <= t) ia = k;
+                else { ib = k; break; }
+            }
+            if (ia >= 0 && ib >= 0) {
+                int64_t span = G.ring[ib].t - G.ring[ia].t;
+                int dp = G.ring[ib].pan - G.ring[ia].pan, dt = G.ring[ib].tilt - G.ring[ia].tilt;
+                if (span <= 0 || span <= 120) { /* samples of a session: linear */
+                    int64_t f = span > 0 ? t - G.ring[ia].t : 0;
+                    *pan = G.ring[ia].pan + (span > 0 ? (int)(dp * f / span) : 0);
+                    *tilt = G.ring[ia].tilt + (span > 0 ? (int)(dt * f / span) : 0);
+                    rc = 0;
+                } else if (abs(dp) <= 2 && abs(dt) <= 2) { /* a long gap with the same position: it did not move */
+                    *pan = G.ring[ia].pan;
+                    *tilt = G.ring[ia].tilt;
+                    rc = 0;
+                }
+            }
+        }
+    }
+    pthread_mutex_unlock(&G.mu);
+    return rc;
+}
+
+void a2k_ptz_emergency_stop(void) { hal_ptz_emergency_stop(); }
+
+int a2k_ptz_oneshot_stop(void) { return hal_ptz_oneshot_stop(hal_ptz_linux_ops(a2k_ptz_desc.dev)); }
+
+void a2k_ptz_set_lease_ms(int ms)
+{
+    pthread_mutex_lock(&G.mu);
+    G.lease_ms = ms >= 150 && ms <= 2000 ? ms : A2K_PTZ_LEASE_MS;
+    pthread_mutex_unlock(&G.mu);
+}
+
 static void publish(int state, int moving)
 {
     a2k_ptz_info_t i;
@@ -152,6 +233,8 @@ static void publish(int state, int moving)
         i.known = 1;
     pthread_mutex_lock(&G.mu);
     G.info = i;
+    if (!moving && i.known)
+        ring_push_locked(G.end_ms, (int)i.pan, (int)i.tilt); /* the position at the end of a motion: later instants resolve to it */
     g_privacy = G.privacy_opt && state == HAL_PTZ_PARKED;
     fn = G.notify;
     pthread_mutex_unlock(&G.mu);
@@ -159,20 +242,97 @@ static void publish(int state, int moving)
         fn(&i);
 }
 
-static void run_cmd(int kind, int a, int b, int sp)
+/* The continuous session (PTZ thread, G.mu NOT held): the mailbox of a2k_ptz_vel is polled after every position poll (~50 ms). */
+struct vctx { unsigned seen; int published; };
+
+static int vel_cb(void *ctx, const hal_ptz_cstate_t *st, hal_ptz_cmd_t *cmd)
 {
-    static const char *const names[] = { "none", "step", "home", "park", "nudge", "recalibrate" };
+    struct vctx *v = ctx;
+    int64_t now = mono_ms();
+    int k = HAL_PTZ_CONT_KEEP;
+    if (!v->published) { /* the session really runs: now the state says moved (position unknown while it runs) */
+        v->published = 1;
+        publish(HAL_PTZ_MOVED, 1);
+    }
+    pthread_mutex_lock(&G.mu);
+    ring_push_locked(now, (int)st->pan, (int)st->tilt);
+    if (G.stop || G.pend.kind != K_NONE) { /* a manual command / the shutdown is waiting: it also cancelled the motion */
+        k = HAL_PTZ_CONT_STOP;
+        G.vending = 1;
+    } else if (G.vel_seq != v->seen) {
+        v->seen = G.vel_seq;
+        cmd->sx = G.vel.sx;
+        cmd->sy = G.vel.sy;
+        cmd->dx = G.vel.dx;
+        cmd->dy = G.vel.dy;
+        k = cmd->sx || cmd->sy ? HAL_PTZ_CONT_CMD : HAL_PTZ_CONT_STOP;
+        if (k == HAL_PTZ_CONT_STOP)
+            G.vending = 1;
+    } else if (now - G.vel_ms > G.lease_ms) { /* the real-time dead-man (the safe layer has its own, counted in polls) */
+        k = HAL_PTZ_CONT_STOP;
+        G.vending = 1;
+    }
+    pthread_mutex_unlock(&G.mu);
+    return k;
+}
+
+static int run_session(int a, int b)
+{
+    struct vctx v;
+    hal_ptz_cmd_t first;
+    unsigned lease;
+    int rc;
+    int64_t now = mono_ms();
+    uint32_t pan, tilt;
+    pthread_mutex_lock(&G.mu);
+    first.sx = a / 4 - 1; /* packed by a2k_ptz_vel: (sx + 1) * 4 + (sy + 1) */
+    first.sy = a % 4 - 1;
+    first.dx = b / 32;
+    first.dy = b % 32;
+    v.seen = G.vel_seq;
+    v.published = 0;
+    G.vending = 0;
+    G.vel_ms = now;
+    lease = (unsigned)G.lease_ms + 150; /* the polled-time lease of the safe layer: a little longer than the real-time one above */
+    pthread_mutex_unlock(&G.mu);
+    if (hal_ptz_pos(G.hp, &pan, &tilt)) { /* the position before the first poll */
+        pthread_mutex_lock(&G.mu);
+        ring_push_locked(now, (int)pan, (int)tilt);
+        pthread_mutex_unlock(&G.mu);
+    }
+    rc = hal_ptz_cont_run(G.hp, &first, lease, vel_cb, &v);
+    pthread_mutex_lock(&G.mu);
+    G.vending = 1; /* no more mailbox updates: a2k_ptz_vel is refused until the session is cleared (the tracker asks again next tick) */
+    if (rc == HAL_PTZ_OK && !G.stop && G.pend.kind == K_NONE && G.vel_seq != v.seen && (G.vel.sx || G.vel.sy)) { /* one that slipped in at the very end starts a new session */
+        G.pend.kind = K_VEL;
+        G.pend.a = (G.vel.sx + 1) * 4 + (G.vel.sy + 1);
+        G.pend.b = G.vel.dx * 32 + G.vel.dy;
+        G.pend.sp = 0;
+        G.pend.patrol = 0;
+    }
+    pthread_mutex_unlock(&G.mu);
+    return rc;
+}
+
+static int run_cmd(int kind, int a, int b, int sp, int quiet)
+{
+    static const char *const names[] = { "none", "step", "home", "park", "nudge", "recalibrate", "goto", "velocity" };
     static const char *const dirs[] = { " up", " right", " down", " left" };
     int rc = HAL_PTZ_EREFUSED;
     a2k_ptz_info_t i;
-    publish(kind == K_RECAL ? HAL_PTZ_CALIBRATING : HAL_PTZ_MOVED, 1);
+    if (kind != K_VEL)
+        publish(kind == K_RECAL ? HAL_PTZ_CALIBRATING : HAL_PTZ_MOVED, 1); /* a session publishes at its first poll (vel_cb): a refused one leaves no trace */
     switch (kind) {
     case K_RECAL: rc = hal_ptz_recalibrate(G.hp); break;
     case K_STEP: rc = hal_ptz_step(G.hp, a); break;
     case K_HOME: rc = hal_ptz_home(G.hp); break;
     case K_PARK: rc = hal_ptz_park(G.hp); break;
     case K_NUDGE: rc = hal_ptz_nudge_sp(G.hp, a, b, sp); break;
+    case K_GOTO: rc = hal_ptz_goto_sp(G.hp, (uint32_t)a, (uint32_t)b, sp); break;
+    case K_VEL: rc = run_session(a, b); break;
     }
+    if (kind == K_VEL && rc == HAL_PTZ_EREFUSED)
+        return rc; /* at a soft limit / unknown position: nothing moved, nothing published, nothing logged (the tracker asks again every tick) */
     if (kind == K_RECAL && rc == HAL_PTZ_OK) {
         pthread_mutex_lock(&G.mu);
         G.scene_fresh = 1; /* a full calibration ran: the matched-boots counter restarts, the home reference is checked again */
@@ -182,9 +342,12 @@ static void run_cmd(int kind, int a, int b, int sp)
     }
     publish(hal_ptz_state(G.hp), 0);
     a2k_ptz_info(&i);
+    if ((quiet || kind == K_VEL) && (rc == HAL_PTZ_OK || rc == HAL_PTZ_ECANCEL)) /* a patrol move or a tracker session: only start / stop / interrupt are logged (by the patrol), not every move */
+        return rc;
     a2k_log("ptz: %s%s -> %s, %s, pan %u tilt %u", names[kind], kind == K_STEP && a >= 0 && a < 4 ? dirs[a] : "-",
             rc == HAL_PTZ_OK ? "ok" : rc == HAL_PTZ_ECANCEL ? "cancelled" : rc == HAL_PTZ_EREFUSED ? "refused (limit or unknown position)" : "FAILED",
             a2k_ptz_state_name(i.state), (unsigned)i.pan, (unsigned)i.tilt);
+    return rc;
 }
 
 /* The home reference, on the PTZ thread, idle (nothing queued, not busy), only after a calibration of this process (the head is at home then; moves
@@ -443,7 +606,8 @@ static void *ptz_thread(void *arg)
     G.scene_fresh = hal_ptz_cal_count(G.hp) > 0; /* a full calibration ran in this start: the home reference is checked, the matched-boots counter restarts */
     G.scene_dirty = G.scene_on && G.scene.capture && i.known && G.scene_fresh; /* a start that matched the reference or adopted the frame writes nothing */
     for (;;) {
-        int kind, a, b, sp;
+        int kind, a, b, sp, patrol, rc;
+        unsigned ticket;
         while (!G.stop && G.pend.kind == K_NONE) {
             long wait_ms = scene_wait_locked();
             if (wait_ms >= 0) {
@@ -502,14 +666,32 @@ static void *ptz_thread(void *arg)
         a = G.pend.a;
         b = G.pend.b;
         sp = G.pend.sp;
+        patrol = G.pend.patrol;
+        ticket = G.pend.ticket;
         G.pend.kind = K_NONE;
+        G.pend.patrol = 0;
+        if (kind == K_VEL) {
+            G.vsess = 1; /* a2k_ptz_vel now updates the mailbox */
+            G.vending = 0;
+        }
+        else
+            ring_reset_locked(); /* another kind of motion: positions in between are not sampled */
         hal_ptz_mark(G.hp); /* under the lock: a cancel from submit() after this point aborts the command at its start */
         G.busy = 1;
+        G.cur_patrol = patrol;
+        G.cur_ticket = ticket;
         if (kind == K_RECAL)
             G.starting = 1; /* no command is accepted (and none cancels it) while the calibration runs */
         pthread_mutex_unlock(&G.mu);
-        run_cmd(kind, a, b, sp);
+        rc = run_cmd(kind, a, b, sp, patrol);
         pthread_mutex_lock(&G.mu);
+        if (G.cur_patrol) {
+            G.pt_done = G.cur_ticket;
+            G.pt_rc = rc;
+        }
+        G.cur_patrol = 0;
+        G.vsess = 0;
+        G.vending = 0;
         G.busy = 0;
         G.starting = 0;
         G.last_end_ms = mono_ms();
@@ -575,6 +757,11 @@ int a2k_ptz_start(const a2k_ptz_cfg_t *cfg)
     G.scene_dirty = G.scene_tries = G.busy = G.scene_cand = G.scene_fresh = G.stop_commit = G.mv_req = G.mv_failed = G.mv_built = 0;
     G.last_nudge_ms = 0;
     G.last_save_ms = 0;
+    G.vsess = 0;
+    G.vel_seq = 0;
+    ring_reset_locked();
+    G.cur_patrol = 0;
+    G.pend.patrol = 0;
     G.privacy_opt = cfg->privacy;
     memset(&G.info, 0, sizeof G.info);
     g_privacy = 0;
@@ -621,15 +808,23 @@ void a2k_ptz_stop(void)
     hal_ptz_free(hp);
 }
 
-/* Queue under the lock. A nudge is refused unless idle (never queues, never cancels); any other command replaces the pending one and cancels the running motion. */
-static int submit(int kind, int a, int b, int sp)
+/* Queue under the lock. A nudge is refused unless idle (never queues, never cancels); any other command replaces the pending one and cancels the running motion.
+ * A patrol move (patrol = 1) is accepted only while the controller is completely idle (it never preempts anything, 1 = busy, retry); a manual command
+ * (hook >= 0) tells the patrol hook once it is accepted. */
+static int submit2(int kind, int a, int b, int sp, int patrol, unsigned *ticket, int hook)
 {
     int rc = -1;
     pthread_mutex_lock(&G.mu);
-    if (kind == K_NUDGE)
-        G.last_nudge_ms = mono_ms(); /* a tracker is active (also when its nudge is refused): no multi-view excursion */
+    if (kind == K_NUDGE || patrol)
+        G.last_nudge_ms = mono_ms(); /* a tracker or a patrol is active (also when its move is refused): no multi-view excursion */
     if (G.running && !G.stop && !G.starting) {
-        if (kind == K_NUDGE && (G.busy || G.pend.kind != K_NONE)) {
+        if (patrol && (G.busy || G.pend.kind != K_NONE)) {
+            pthread_mutex_unlock(&G.mu);
+            return 1;
+        }
+        if (kind == K_NUDGE && hook >= 0 && G.vsess && G.pend.kind == K_NONE) { /* a MANUAL nudge (API ptz.move) ends a tracker's continuous session and runs */
+            hal_ptz_cancel(G.hp);
+        } else if (kind == K_NUDGE && (G.busy || G.pend.kind != K_NONE)) {
             pthread_mutex_unlock(&G.mu); /* a nudge (tracking) is accepted only while idle: it never queues behind, replaces or outlives a step, home or park (no un-park) */
             return -1;
         }
@@ -638,9 +833,17 @@ static int submit(int kind, int a, int b, int sp)
             G.pend.a = a;
             G.pend.b = b;
             G.pend.sp = sp;
+            G.pend.patrol = patrol;
+            if (patrol) {
+                G.pend.ticket = ++G.pt_next;
+                if (ticket)
+                    *ticket = G.pend.ticket;
+            }
             if (kind != K_NUDGE)
                 hal_ptz_cancel(G.hp);
         }
+        if (!patrol && hook >= 0 && G.cmd_hook)
+            G.cmd_hook(hook);
         pthread_cond_signal(&G.cv);
         rc = 0;
     }
@@ -648,16 +851,107 @@ static int submit(int kind, int a, int b, int sp)
     return rc;
 }
 
+static int submit(int kind, int a, int b, int sp, int hook) { return submit2(kind, a, b, sp, 0, NULL, hook); }
+
+void a2k_ptz_set_cmd_hook(void (*fn)(int kind))
+{
+    pthread_mutex_lock(&G.mu);
+    G.cmd_hook = fn;
+    pthread_mutex_unlock(&G.mu);
+}
+
+int a2k_ptz_park(int *pan, int *tilt)
+{
+    int rc = -1;
+    pthread_mutex_lock(&G.mu);
+    if (G.running && G.hp) {
+        const hal_ptz_desc_t *d = hal_ptz_desc(G.hp);
+        *pan = (int)d->pan_park;
+        *tilt = (int)d->tilt_park;
+        rc = 0;
+    }
+    pthread_mutex_unlock(&G.mu);
+    return rc;
+}
+
+int a2k_ptz_scene_pending(void)
+{
+    int v;
+    pthread_mutex_lock(&G.mu);
+    v = G.scene_dirty || G.scene_cand || G.mv_req;
+    pthread_mutex_unlock(&G.mu);
+    return v;
+}
+
+int a2k_ptz_home_tracker(void) { return submit(K_HOME, 0, 0, 0, -1); }
+
+int a2k_ptz_speeds(int *min, int *max, int *def)
+{
+    int rc = -1;
+    pthread_mutex_lock(&G.mu);
+    if (G.running && G.hp) {
+        *min = HAL_PTZ_SPEED_MIN;
+        *max = HAL_PTZ_SPEED_MAX;
+        *def = (int)hal_ptz_desc(G.hp)->speed;
+        rc = 0;
+    }
+    pthread_mutex_unlock(&G.mu);
+    return rc;
+}
+
+static int goto_checked(int pan, int tilt, int speed, int patrol, unsigned *ticket, int hook)
+{
+    uint32_t a, b, c, d;
+    if (speed != 0 && (speed < HAL_PTZ_SPEED_MIN || speed > HAL_PTZ_SPEED_MAX))
+        return -1;
+    if (a2k_ptz_range(&a, &b, &c, &d) != 0 || pan < (int)a || pan > (int)b || tilt < (int)c || tilt > (int)d)
+        return -1;
+    if (patrol) { /* the patrol never lands on the park position: that would turn the privacy mode on */
+        int pp, pt;
+        if (a2k_ptz_park(&pp, &pt) != 0 || (abs(pan - pp) <= A2K_PTZ_PARK_TOL && abs(tilt - pt) <= A2K_PTZ_PARK_TOL))
+            return -1;
+    }
+    return submit2(K_GOTO, pan, tilt, speed, patrol, ticket, hook);
+}
+
+int a2k_ptz_goto(int pan, int tilt, int speed) { return goto_checked(pan, tilt, speed, 0, NULL, A2K_PTZ_HOOK_GOTO); }
+
+int a2k_ptz_patrol_goto(int pan, int tilt, int speed, unsigned *ticket) { return goto_checked(pan, tilt, speed, 1, ticket, -1); }
+
+int a2k_ptz_patrol_result(unsigned ticket, int *rc)
+{
+    int done = 1;
+    pthread_mutex_lock(&G.mu);
+    if ((G.pend.kind == K_GOTO && G.pend.patrol && G.pend.ticket == ticket) || (G.busy && G.cur_patrol && G.cur_ticket == ticket))
+        done = 0;
+    else
+        *rc = G.pt_done == ticket ? G.pt_rc : HAL_PTZ_ECANCEL; /* a move that never ran (replaced by a command) counts as cancelled */
+    pthread_mutex_unlock(&G.mu);
+    return done;
+}
+
+void a2k_ptz_patrol_cancel(void)
+{
+    pthread_mutex_lock(&G.mu);
+    if (G.pend.kind == K_GOTO && G.pend.patrol) {
+        G.pend.kind = K_NONE;
+        G.pend.patrol = 0;
+    }
+    if (G.busy && G.cur_patrol && G.hp)
+        hal_ptz_cancel(G.hp);
+    pthread_mutex_unlock(&G.mu);
+}
+
 int a2k_ptz_command(int cmd)
 {
     switch (cmd) {
-    case A2K_PTZ_LEFT: return submit(K_STEP, HAL_PTZ_LEFT, 0, 0);
-    case A2K_PTZ_RIGHT: return submit(K_STEP, HAL_PTZ_RIGHT, 0, 0);
-    case A2K_PTZ_UP: return submit(K_STEP, HAL_PTZ_UP, 0, 0);
-    case A2K_PTZ_DOWN: return submit(K_STEP, HAL_PTZ_DOWN, 0, 0);
-    case A2K_PTZ_HOME: return submit(K_HOME, 0, 0, 0);
-    case A2K_PTZ_PARK: return submit(K_PARK, 0, 0, 0);
-    case A2K_PTZ_RECAL: return G.cal_mode == HAL_PTZ_CAL_OFF ? -1 : submit(K_RECAL, 0, 0, 0); /* ptz_cal=off: the motor is never touched */
+    case A2K_PTZ_LEFT: return submit(K_STEP, HAL_PTZ_LEFT, 0, 0, cmd);
+    case A2K_PTZ_RIGHT: return submit(K_STEP, HAL_PTZ_RIGHT, 0, 0, cmd);
+    case A2K_PTZ_UP: return submit(K_STEP, HAL_PTZ_UP, 0, 0, cmd);
+    case A2K_PTZ_DOWN: return submit(K_STEP, HAL_PTZ_DOWN, 0, 0, cmd);
+    case A2K_PTZ_HOME: return submit(K_HOME, 0, 0, 0, cmd);
+    case A2K_PTZ_PARK: return submit(K_PARK, 0, 0, 0, cmd);
+    case A2K_PTZ_RECAL: return G.cal_mode == HAL_PTZ_CAL_OFF ? -1 : submit(K_RECAL, 0, 0, 0, cmd); /* ptz_cal=off: the motor is never touched */
     default: return -1;
     }
 }
@@ -669,16 +963,60 @@ int a2k_ptz_toggle_park(void)
     return a2k_ptz_command(i.state == HAL_PTZ_PARKED ? A2K_PTZ_HOME : A2K_PTZ_PARK);
 }
 
+/* the tracker's nudge (no manual hook: a tracker never stops a patrol, it pauses it) */
 int a2k_ptz_nudge_sp(int dx, int dy, int speed)
 {
     if (!dx && !dy)
         return 0;
     if (speed != 0 && (speed < 2 || speed > 20))
         return -1;
-    return submit(K_NUDGE, dx, dy, speed);
+    return submit(K_NUDGE, dx, dy, speed, -1);
 }
 
-int a2k_ptz_nudge(int dx, int dy) { return a2k_ptz_nudge_sp(dx, dy, 0); }
+int a2k_ptz_vel(int sx, int sy, int dx, int dy)
+{
+    int rc = -1;
+    if (sx < -1 || sx > 1 || sy < -1 || sy > 1 || (sx && dx && (dx < HAL_PTZ_SPEED_MIN || dx > HAL_PTZ_SPEED_MAX)) || (sy && dy && (dy < HAL_PTZ_SPEED_MIN || dy > HAL_PTZ_SPEED_MAX)))
+        return -1;
+    pthread_mutex_lock(&G.mu);
+    if (sx || sy)
+        G.last_nudge_ms = mono_ms(); /* a tracker is active: no multi-view excursion */
+    if (G.running && !G.stop && !G.starting) {
+        if (G.vsess && G.vending) { /* the session is ending: not accepted (a refresh would be lost) */
+            rc = -1;
+        } else if (G.vsess) { /* a session runs: the next poll (<= 50 ms) takes it */
+            G.vel.sx = sx;
+            G.vel.sy = sy;
+            G.vel.dx = sx ? dx : 0;
+            G.vel.dy = sy ? dy : 0;
+            G.vel_seq++;
+            G.vel_ms = mono_ms();
+            rc = 0;
+        } else if (!sx && !sy) {
+            if (G.pend.kind == K_VEL)
+                G.pend.kind = K_NONE; /* a stop cancels a start that has not run yet */
+            rc = 0; /* nothing runs: nothing to stop */
+        } else if (!G.busy && G.pend.kind == K_NONE) {
+            G.pend.kind = K_VEL;
+            G.pend.a = (sx + 1) * 4 + (sy + 1);
+            G.pend.b = (sx ? dx : 0) * 32 + (sy ? dy : 0);
+            G.pend.sp = 0;
+            G.pend.patrol = 0;
+            pthread_cond_signal(&G.cv);
+            rc = 0;
+        }
+    }
+    pthread_mutex_unlock(&G.mu);
+    return rc;
+}
+
+/* a manual nudge (the API ptz.move): accepted only while idle, and a patrol stops when it is accepted */
+int a2k_ptz_nudge(int dx, int dy)
+{
+    if (!dx && !dy)
+        return 0;
+    return submit(K_NUDGE, dx, dy, 0, A2K_PTZ_HOOK_NUDGE);
+}
 
 void a2k_ptz_info(a2k_ptz_info_t *out)
 {
@@ -701,6 +1039,16 @@ int a2k_ptz_range(uint32_t *pan_min, uint32_t *pan_max, uint32_t *tilt_min, uint
     }
     pthread_mutex_unlock(&G.mu);
     return rc;
+}
+
+int a2k_ptz_tilt_home(void)
+{
+    int v = 0;
+    pthread_mutex_lock(&G.mu);
+    if (G.running && G.hp)
+        v = (int)hal_ptz_desc(G.hp)->tilt_home;
+    pthread_mutex_unlock(&G.mu);
+    return v;
 }
 
 int a2k_ptz_privacy_active(void) { return g_privacy; }

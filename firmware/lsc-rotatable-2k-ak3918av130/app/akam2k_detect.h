@@ -22,7 +22,9 @@ struct a2k_detect_cfg {
     int threshold;   /* classify threshold 500..950 (stock 700) */
     int on_count;    /* K: consecutive positive inferences for ON */
     int off_ms;      /* M: ms without a person for OFF */
-    int debug;       /* 0/1: --detect-debug, one rate-limited line per inference with frame age, count, best score */
+    int debug;       /* 0/1: --detect-debug (conf detect_debug), one rate-limited line per inference with frame age, count, best score, and every box of both classes with its score */
+    int age_window;  /* 0/1: the frame age reference is the minimum over the last 60 s instead of the all-time minimum (conf detect_age_window, experiment E3) */
+    int model_thr;   /* 0 = off; 300..950: experiment E1 only, the model's own threshold (below the classify threshold): lower-scored persons are logged but never counted or tracked, heads are kept */
     a2k_zones_t zones; /* optional detection zones (akam/zones): n = 0 is the whole image */
 };
 

@@ -190,12 +190,16 @@ static void switch_to_day_locked(void)
 
 /* The whole switch runs under the ISP configuration lock, and g_is_night changes before it is released, so an
  * 8091 img.reload / img.wb / img.dump (isp_cfg_lock) never sees a half-switched ISP or a stale mode. */
+static void (*g_notify)(int night, int ir_on);
+void night_set_notify(void (*cb)(int night, int ir_on)) { g_notify = cb; }
+
 static void switch_to_night(void)
 {
     isp_cfg_lock();
     switch_to_night_locked();
     g_is_night = 1;
     isp_cfg_unlock();
+    if (g_notify) g_notify(1, ircut_ir_led_allowed()); /* after the unlock: the callback must never be able to stall the ISP */
 }
 
 static void switch_to_day(void)
@@ -204,6 +208,7 @@ static void switch_to_day(void)
     switch_to_day_locked();
     g_is_night = 0;
     isp_cfg_unlock();
+    if (g_notify) g_notify(0, 0);
 }
 
 static void publish_status(const nl_state_t *nl, const night_tuning_t *t)

@@ -207,3 +207,35 @@ int a2k_model_path_ok(const char *path)
     static const char dir[] = "/appfs/resource/model/";
     return path && strncmp(path, dir, sizeof dir - 1) == 0 && path[sizeof dir - 1] != '\0' && !strstr(path, "..");
 }
+
+void a2k_agewin_init(struct a2k_agewin *w, int window)
+{
+    int i;
+    memset(w, 0, sizeof *w);
+    w->window = window ? 1 : 0;
+    for (i = 0; i < A2K_AGEWIN_S; i++)
+        w->sec[i] = -1;
+}
+
+long long a2k_agewin_age(struct a2k_agewin *w, long long now_ms, long long raw)
+{
+    long long s = now_ms / 1000, m;
+    int i, b = (int)(s % A2K_AGEWIN_S);
+    if (!w->have || raw < w->all_min) {
+        w->all_min = raw;
+        w->have = 1;
+    }
+    if (!w->window)
+        return raw - w->all_min;
+    if (w->sec[b] != s) {
+        w->sec[b] = s;
+        w->min_raw[b] = raw;
+    } else if (raw < w->min_raw[b]) {
+        w->min_raw[b] = raw;
+    }
+    m = raw;
+    for (i = 0; i < A2K_AGEWIN_S; i++)
+        if (w->sec[i] >= 0 && w->sec[i] > s - A2K_AGEWIN_S && w->sec[i] <= s && w->min_raw[i] < m)
+            m = w->min_raw[i];
+    return raw - m;
+}

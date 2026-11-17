@@ -49,6 +49,8 @@ static struct {
     int state_override;            /* 0 = from the position, else a forced hal state + 1 */
     int privacy;
 } P;
+static int64_t g_cap_cur;          /* capture time of the frame the current tick is computed from */
+static int g_n_busy, g_n_stale;    /* nudges sent while the motor was busy / from a frame captured before the last motion end + settle (or before the last nudge started) */
 static int g_force_state;          /* -1 = privacy on, else a forced hal state + 1 (0 = none) */
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -102,6 +104,8 @@ static int f_nudge(int dx, int dy, int sp)
 #endif
     if (P.last_nudge_ms >= 0 && P.now - P.last_nudge_ms < P.min_gap_ms)
         P.min_gap_ms = P.now - P.last_nudge_ms;
+    if (P.active) g_n_busy++;
+    if (P.nudges > 0 && (g_cap_cur < P.end_ms + 220 || g_cap_cur <= P.last_nudge_ms + 80)) g_n_stale++;
     P.last_nudge_ms = P.now;
     if (P.first_nudge_ms < 0)
         P.first_nudge_ms = P.now;
@@ -134,7 +138,7 @@ static int f_home(void)
     return 0;
 }
 static int f_priv(void) { return P.privacy; }
-static const a2k_track_ops_t OPS = { f_info, f_range, f_nudge, f_home, f_priv };
+static const a2k_track_ops_t OPS = { f_info, f_range, f_nudge, f_home, f_priv, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 
 static void p_step(void)
 {
@@ -198,6 +202,8 @@ typedef struct {
     int first_nudge_ms, in_band_ms, nudges, reversals, homes, bad_speed, range_violation, home_ms;
     int64_t min_gap_ms;
     double pan_end, tilt_end, max_off_px, end_off_px, end_off_y;
+    double overshoot_px, mean_abs_px;               /* camera AHEAD of a walking person (max, px) / mean |offset| while it walks (cumulative error) */
+    int n_busy, n_stale;
 } res_t;
 
 static int g_variant;       /* 0 = the responsive policy (defaults), 1 = tl_cfg_legacy through the new code (SIM_LEGACY: the 0.1.0 sources) */
@@ -212,7 +218,7 @@ static void configure(a2k_track_t *t)
     (void)tl_init(&t->tl, &t->cfg);
 #else
     struct tl_cfg c;
-    if (g_variant == 1) tl_cfg_legacy(&c); else tl_cfg_defaults(&c);
+    if (g_variant == 1) tl_cfg_legacy(&c); else tl_cfg_dev(&c);
     c.invert_pan = 1;
     if (g_variant == 0) c.tilt_enable = g_tilt;
     if (g_variant == 0) { c.return_home = g_return_home; c.return_delay_s = g_return_delay; }
@@ -233,10 +239,13 @@ static res_t run(const scen_t *s)
     res_t r;
     int n = s->total_ms / DT, k, vis = 0, in = 0, mto = s->metric_to ? s->metric_to : s->total_ms;
     int64_t next_tick = 100, deliver = -1, cap_true = 0, tick_t = 0;
-    double off = 0, offy = 0;
+    double off = 0, offy = 0, sum_abs = 0, vsign = 0;
+    int n_abs = 0;
 
     memset(&r, 0, sizeof r);
+    g_n_busy = g_n_stale = 0;
     g_rng = 12345;
+    for (k = 0; k < s->nseg; k++) if (s->seg[k].v != 0) { vsign = s->seg[k].v > 0 ? 1 : -1; break; }
     p_reset();
     a2k_track_init(&t, &OPS, NULL);
     configure(&t);
@@ -257,6 +266,12 @@ static res_t run(const scen_t *s)
             if (fabs(off) <= 160)
                 in++;
         }
+        if (exists(s, now) && now < mto && now > 500) {
+            double ahead = off * vsign;                          /* off > 0 for a person walking + means the camera is past it */
+            sum_abs += fabs(off);
+            n_abs++;
+            if (vsign != 0 && ahead > r.overshoot_px) r.overshoot_px = ahead;
+        }
         if (exists(s, now)) {
             if (fabs(off) > r.max_off_px)
                 r.max_off_px = fabs(off);
@@ -271,7 +286,7 @@ static res_t run(const scen_t *s)
         }
         if (deliver >= 0 && now >= deliver) {
             int ci = (int)(cap_true / DT), nb = 0, dropped = 0, i;
-            struct tl_box b = { 0, 0, 0, 0 };
+            struct tl_box b = { 0, 0, 0, 0, 0, 0 };
             if (ci < 0) ci = 0;
             for (i = 0; i < s->ndrop; i++)
                 if (cap_true >= s->drop[i][0] && cap_true < s->drop[i][1])
@@ -290,12 +305,16 @@ static res_t run(const scen_t *s)
 #ifdef SIM_LEGACY
             a2k_track_tick(&t, deliver, &b, nb, 320, 192);
 #else
+            g_cap_cur = tick_t;
             a2k_track_tick_ts(&t, deliver, tick_t, &b, nb, 320, 192);
 #endif
             deliver = -1;
         }
     }
     r.inframe = vis ? 100.0 * in / vis : 0;
+    r.n_busy = g_n_busy;
+    r.n_stale = g_n_stale;
+    r.mean_abs_px = n_abs ? sum_abs / n_abs : 0;
     r.nudges = P.nudges;
     r.reversals = P.reversals;
     r.homes = P.homes;
@@ -386,6 +405,10 @@ int main(void)
         CHECK(a.range_violation == 0 && b.range_violation == 0, "the soft range is never left");
         CHECK(a.bad_speed == 0, "only valid speed divisors are asked for");
         CHECK(a.nudges < 2 || a.min_gap_ms >= 300, "motion commands keep the 300 ms rate limit");
+        printf("   v=%3.0f: nudges while busy %d, from a stale frame %d, overshoot (camera ahead) %.0f px, mean |offset| %.0f px\n", SPEEDS[i], a.n_busy, a.n_stale, a.overshoot_px, a.mean_abs_px);
+        CHECK(a.n_busy == 0, "no nudge is ever sent while the motor is busy (nothing stacks)");
+        CHECK(a.n_stale == 0, "every nudge is computed from a frame captured after the last motion end + 220 ms settle and after the last nudge started");
+        CHECK(a.overshoot_px <= 40, "the camera never runs more than 40 px ahead of a walking person (no integrated stale offsets / lead)");
 #endif
     }
     printf("   fastest walking speed with >= 90 %% in frame: responsive %.0f steps/s, 0.1.0 %.0f steps/s\n", maxv_new, maxv_old);

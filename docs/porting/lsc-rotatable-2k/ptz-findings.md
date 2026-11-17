@@ -810,7 +810,7 @@ the driver's frame after an app restart in the same boot. `sys.flash_writes_ptzp
 view is featureless: stored offset views at pan +-150 / tilt -100). Proven: home is declared, no calibration, no motion. Not proven, no reference, a reference taken at another position
 (home reconfigured), a repetitive reference, a day/night mode that differs, every 10th matched boot, no frame in 30 s, home == park: full calibration. There is never a claim from a stale
 file. A power cut while the head was away from home (tracking left it there, `track_return=stay`) therefore costs one full calibration at the next boot: the only cost of the policy
-(`stay` stays the default; `track_return=home` shortens the exposure at the price of more motion).
+(superseded: `home` is now the default, see tracking.md; `stay` keeps this exposure).
 
 **The home reference** is keyed to home: it proves "the head is at home", whatever moved it since, so moves never invalidate it and nothing is dropped before a move or a calibration.
 It is checked / written only after a calibration of THIS process (the head is at home then), once the head is quiet at home for 6 s and no tracking nudge happened for 10 min:
@@ -824,7 +824,7 @@ At most 4 reference writes per run (belt and braces). The matched-boots counter 
 rewritten with boots + 1): there is no RAM-free scheme for a counter that must survive power cuts, and a cold boot is a rare event.
 The travel budget stays RAM only (`ptz.travel_since_cal`; a cold boot after a power cut calibrates anyway when the head was away from home).
 
-**Flash writes in normal use** (a person crossing every 2 min, 12 crossings per hour, `track_return=stay`): `ptz.pos` 0 (was 60 per hour = 1440 per day), scene reference 0 (was up to 12 per
+**Flash writes in normal use** (a person crossing every 2 min, 12 crossings per hour, `track_return=stay`, the former default): `ptz.pos` 0 (was 60 per hour = 1440 per day), scene reference 0 (was up to 12 per
 hour), i.e. 0 per day, for any number of moves. Per cold boot: at most 1 write for the matched-boots counter when the view matches, or after a calibration at most 1 write (new reference, a changed
 view once per 24 h, or the counter restart), plus 1 for a failed calibration or a lost claim. Host tests (`tests/rot2k_hal_ptz_unit.c`, `tests/rot2k_scene_glue_unit.c`): zero `ptz.pos` writes across 12 tracking
 crossings, zero scene writes and drops across moves, cold boot claim = home proven by the reference, a power cut away from home calibrates, the rewrite limit of 24 h.
@@ -842,6 +842,64 @@ the calibration decides: a crash loop never walks the head by an offset at every
 
 **Review follow-ups (Fable, same day)**: (M1) the main-lobe exclusion of `sc_repetitive` is bounded: a lobe reaching beyond 8 px (`SC_REP_LOBE_MAX`) is flagged too (an alias chain looks like a broad lobe); the price is that a pure 1D invariance (every row equal) is flagged, which is conservative (the match refuses it anyway); sweep: 0 unflagged alias cases of the lobe harness, 3 of 286 left in the period harness (dots 37..40 px). (M2) the strongly-detailed one-sided vote compares with the LARGER noise of the two images (a noisy live view no longer turns a strong block into a vote against; the real wall with sigma 2 noise matches 38 of 40 again). (M3) a reference of the other day/night mode is a changed view: replaceable under the same 24 h rule in the single-view, the keep-flat and the multi-view paths. (L1) an unknown stamp (or a not-set clock) allows at most one rewrite per run, and the per-run write cap also guards the multi-view build. (L2) no reference is checked or written once more than 3000 steps were travelled since the calibration (`A2K_PTZ_REF_TRAVEL`: lost steps could pair a moved view with home). (L3) the reference is keyed to the configured home, not to the reported position. The `akam_ptz` debug tool no longer writes `ptz.pos` or invalidates `ptz.scene` (no flash write; it still invalidates the /tmp app frame). (L4) the boot check logs `timing: repetitive screening N ms, compare M ms` to measure on the camera (R5 estimate).
 
+### Illumination-robust vote and the stored repetitive verdict (2026-11-16, host-tested, NOT yet run on hardware)
+
+First hardware boot after the check shipped: reference written at dusk with a lamp on, cold boot a few minutes later, head not moved:
+`timing: repetitive screening 3008 ms, compare 65 ms` then `too few of the detailed image blocks match on their own (score 0.962, needs 0.900)`.
+Reproduced on the host from the stored `ptz.scene` and a stream-1 frame of the same view (fixtures `tests/fixtures/scene/ptz_dusk_lamp_ref.gray`,
+`ptz_dusk_now.gray`, thumbnails only). All 12 blocks are detailed in both; at zero shift 5 blocks score 0.88..0.98, 5 plaster blocks (relief 3..7 x the
+noise, flattened by the lamp) score 0.1..0.67 with no better shifted peak, and the two window / cloth blocks (energy 2.3x and 1.7x lower) peak at a 2 px
+shift (0.93 / 0.98) while scoring 0.30 / 0.33 at zero. The old rule counted every block below 0.80 as a mismatch (5 of 12 matched, 2/3 needed).
+
+New rule (`sc_compare`): the displacement is the peak of the summed surface (within `SC_TOL`, `SC_PEAK_MARGIN` above larger ones), then each block is
+classified at it: SAME (peaks there, score >= min - 0.10), MOVED (a shifted peak >= min - 0.20 beats it by 0.12: against), mismatch (a strong block
+peaking nowhere: against), neutral (weak blocks, lighting-lowered strong blocks that still peak at the common displacement, at most 2 blocks whose
+energy changed by more than 2x without correlating). MATCH needs peak_ok, >= 4 SAME blocks that are >= 1/3 of the common detailed blocks and >= 2/3 of the voting
+blocks (neutral blocks that are not weak weigh half a vote against), a mean SAME score >= min - 0.05, and the pooled weak blocks >= 0.25 (a weak block is SAME only at >= min - 0.10:
+its noise-compensated correlation is unstable). A block that
+correlates keeps its SAME vote whatever its energy did (a gain). A noise estimate above 2 x the floor (`NV_CREDIBLE`: texture inflates it) makes no block weak.
+Fixed-pattern protection: the union vote is untouched; neutrality is limited to weak or changed blocks and they are pooled / half weighed, so a pattern
+that covers a few blocks cannot win over another scene (tests: another textured scene and another plaster wall behind the same pattern: 0 accepted).
+The repetitive gate is the same match rule applied to the image against itself (a weak block that passes counts as SAME, strong failures count against).
+Residual risk (honest), measured with a synthetic harness (another wall of unrelated relief + a camera-fixed pattern of 4 to 6 blocks, 40 draws per
+amplitude; old rule -> new rule accepted): relief amplitude 0.3 (below the detail threshold) 40 -> 32..39, 0.4: 16..27 -> 3..27, 0.5: 0 -> 1..12, 0.6 and above: 0 -> 0.
+The hole was already there for a relief below the detail threshold (those blocks are not voting at all); the new rule moves its edge, it does not close it:
+a pattern that is detailed over 4 to 6 blocks while the rest of the view is a wall with almost no relief can still carry the vote. Real fixed patterns
+are smooth (lens dirt, hot spots: removed by the high-pass) or absent from the detection channel (no OSD there), which is why this was accepted.
+Also: when most blocks are weak plaster, 4 SAME blocks are needed; a window that dims to half and clips takes the right column out of the evidence, with fewer than 4 SAME blocks left the check refuses (calibrates).
+
+Performance: the repetitive verdict is computed once when the reference is captured and stored in the header (`scene2 ... <stamp> <rep> <repmin>`:
+the threshold it was screened at; trusted only when repmin equals the configured threshold). The boot only reads it. An older `scene1` file, or one screened at another
+threshold (also the offset views), is screened once at the boot (slower once), and the store of the matched boot writes the verdict. The screening itself got an
+early exit and a cheap `dsqrt` (5 Newton steps from an exponent-halving seed instead of up to 60 soft-float divisions: the camera has no FPU and this
+was most of the 3008 ms): 17 ms -> about 4 ms on the host, estimated 0.3-0.7 s on the camera (not measured). The coarse gate was dropped (it only
+mattered at boot). Log: `timing: repetitive verdict read from the reference ...`.
+`hook_drop` invalidates any version ("scene" + a digit). Downgrade: an older build does not read `scene2` (no reference: full calibration).
+Review follow-ups (Fable): the jump ratio is normalised by the median block-energy ratio (a global gain / contrast no longer flips blocks: the real pair
+matches from gain 0.8 to 1.5 and 100/100 with +0.5 noise); `SC_SAME_BELOW` 0.25 -> 0.10 and `SC_SOFT_BELOW` 0.50 -> 0.25 (a window 60 % brighter that
+clips is now refused; 30 % is tested); `sc_unpack` refuses a screening threshold below 0.80; main-lobe seeds of the repetitive screening reach `SC_TOL +
+SC_REP_BRIDGE` px (the home view + 0.5 noise was flagged 12 of 60 times by an isolated fringe of its broad vertical lobe, now 0 of 60; the
+ceiling-line family of the review harness stays flagged and the unflagged alias counts are not above the old rule's, except layout 1 mix 0.80:
+25 vs 16 of 124). A tried "SAME blocks must localise along each axis" rule was dropped: it reopened invariant-axis aliases.
+
+### Ambiguous home view: multi-view instead of giving up (2026-11-16, host-tested, NOT yet run on hardware)
+
+Hardware (lamp night): after the calibration `ptz: scene: repetitive texture, no reference` (the near-flat wall with vertical bands / frame edges is
+invariant along y: flagged by the 1D rule) = no reference = full calibration at every cold boot. The stream-1 frame of that view (fixture
+`ptz_home_night_lamp.gray`, thumb rebuilt like the others) is NOT flagged on the host (0 of 15 noise draws), so the flag on the camera could not be reproduced
+from the frame; the mechanism is tested with a synthetic lattice. A repetitive / ambiguous home view now takes the multi-view path of the featureless one:
+`capture` answers 2, the controller stores the views at the offsets (pan +-150, tilt -100: each must itself be detailed and not repetitive), the home view is
+written LAST in the main file with its verdict (`rep 1`). At the boot a stored `rep 1` never decides: with usable offset views the answer is the probe
+(the head moves by an offset with the safe-motion layer only, `sc_probe_check` compares there), else the old refusal at once. The probe safety is the
+unchanged one. A plain commit refuses any featureless / ambiguous candidate. With a recent (< 24 h) reference on the flash the 24 h rule keeps it.
+
+**Diagnosis dumps (always on, RAM only).** Every capture and every boot check / probe writes the exact thumbnails the app used to `/tmp/akam_scene_dbg/`
+(80x48 raw gray, 3840 bytes; tmp + rename; the same names overwritten, at most 6 files, about 12 KB; never the flash; not behind a config key since the cost
+is nil): `cap.gray` + `cap.txt` (the capture candidate: flat / ambiguous / usable, per-image noise, detailed / strong block masks, the repetitive verdict with
+the displacement and lobe kind that triggered it), `ref.gray` / `live.gray` + `ref.txt` / `live.txt` (boot or probe: the reference and the live view, the
+comparison counts, SAME mask, shift, score, verdict). The repetitive trigger is also logged (`repetitive screening triggered at displacement dx,dy`).
+The boot does not screen again for the dump (it reads the stored verdict). Fetch with scp / `cat` and view with `ffmpeg -f rawvideo -pix_fmt gray -s 80x48`.
+
 ## 2026-11-15 hardware follow-ups
 
 - Park default is now 1275:300 (down, 300 steps above the calibrated bottom stop). Tilt soft max 2100 (level-up view about 2104; top stop 2290..2340).
@@ -857,3 +915,60 @@ the calibration decides: a crash loop never walks the head by an offset at every
   captured during the motion (+ 150 ms) instead of waiting a fixed time.
 - A tracking nudge costs: 30 ms start, 1 step per `speed` ms, about 70 ms to stop, read and publish; the motor never runs two commands at once.
   Field numbers behind the tracking rework (person at 1-2 m, speed 3): see tracking.md, "the latency chain".
+
+## 2026-11-17 stale reference after a hot update
+
+Field log (cold boot after a hot update): `scene check: scene differs: calibrating`, then at home `the home view ... differs from the reference (score -1000), which was written less than 24 h ago ...: not rewritten`. The 24 h rewrite limit kept a reference that this very boot had just proven stale, so every cold boot compared against it and recalibrated until 24 h had passed. Also `repetitive verdict screened now (older reference file) 870 ms`: the screened verdict of an older reference file was only stored back on a match.
+
+- When the boot check (or a probe) refuses the stored reference (mismatch, mismatch blocks, mode difference, repetitive, low detail of the live view) and a calibration follows, the post-calibration capture at home may replace the reference once in this run, whatever its age (`g_stale_boot` in `akam2k_scene.c`). The other gates are unchanged (position verified by the calibration, travel gates, quiet period). Spent by the first successful write (single or multi-view); the same 24 h rule applies to every other case (a view change seen without a failed boot, a matching boot).
+- Not a stale verdict: no reference, taken at another position, periodic full calibration, no frame, cancelled, store failed.
+- The repetitive verdict screened at the boot (older file / another `ptz_scene_min`) is stored back right away (one write), so the 870 ms screening happens once, not at every boot.
+- Tests: `tests/rot2k_scene_glue_unit.c` ("a reference this boot just refused may be replaced once").
+
+## 2026-11-17 Continuous motion (host-tested on a fake driver, NOT yet run on hardware)
+
+Measured with `akam_ptz` on 2026-11-16/17 (timed moves, speed 3): diagonal commands work (1 = pan+ tilt+, 3 = pan+ tilt-, 5 = pan- tilt-, 7 = pan- tilt+; both axes move at once, ~370 steps/s each, so the rate is about 1100 / divisor); a new direction command sent during a move is accepted at once WITHOUT a stop (pan reversed 1181 -> 1200 immediately). The tracker uses this: `ptz/akam_ptz_safe.h` `ptzs_cont_*`, `hal_ptz_cont_run` (`hal_ptz.c`), `a2k_ptz_vel` / `a2k_ptz_pos_at` (`akam2k_ptz.c`), `track_motion=continuous` (tracking.md, "Targeting policy, person state and continuous motion").
+
+- **Driver requests: none new.** Only the move (commands 0..7, diagonals included), the stop and the position read of the safe layer. The position file is marked unknown once per session (not per command).
+- **One session = one ongoing move.** `hal_ptz_cont_run(first command, lease, callback)` runs on the motor thread; after every 50 ms poll the callback may return KEEP, a new / refreshed command, or STOP. Commands are logical (right / up signs, divisors per axis) and become command words through the descriptor (`dir[]`, `diag[]`; a descriptor without diagonals turns a diagonal into the faster axis alone).
+- **Retarget without a stop** (`ptzs_cont_set`): a reversal or a change of direction / speed is just a new move request. Exception, on purpose: when an axis LEAVES the command (a diagonal becomes a pure direction, or the axis hit its limit) the stop request is sent first and the new move after it, because what the driver does with an axis that is missing from a new command is not measured (test: with a fake driver that keeps unlisted axes running the dropped axis does not run away).
+- **Dead-man lease.** The motion stops by itself when no command (an identical refresh counts) arrived for the lease (150..2000 ms, default 450): once in polled time in the safe layer (lease + 150 ms), once in real time in the controller thread (`a2k_ptz_vel` stamps the mailbox). A tracker that stops calling (a blocked detection thread) stops the head within about half a second.
+- **Soft range, continuously.** On every poll an axis whose room to the soft limit is under 1.5 polls of travel + 3 steps is dropped from the command (a diagonal continues as the pure direction of the other axis); with nothing left the motion ends (`HAL_PTZ_OK`). `ptzs_room` semantics as in `ptzs_move`; the driver's own limits are still the soft range (shifted frame), so a late poll cannot pass a limit. A command toward a limit the head is already at is refused (nothing is sent).
+- **Stall / wrong way** exactly as in `ptzs_move` (300 ms without progress, counter going the wrong way by more than 2) per commanded axis, but the detector of an axis restarts at every command change on it and gives no verdict for 150 ms (a reversal needs a moment to show). A stall at a soft limit is a clip, not a fault. An axis that is not commanded and moves by more than 3 steps per poll after the grace is an error (stop sent, `HAL_PTZ_ESTALL`, position no longer trusted: the usual fail-closed handling).
+- **Travel** is the sum of the polled steps (reversals included) and feeds `hal_ptz_travel` (the wear budget / scene reference limit); the session end waits 60 ms after the stop before the final position read (a stop takes a moment), so the position saved after it is the settled one.
+- **Preemption.** Any command through `submit` (step, home, park, recalibrate, goto), a MANUAL nudge (API `ptz.move`), `a2k_ptz_stop` call `hal_ptz_cancel`: the session ends at the next poll (<= 50 ms) with `HAL_PTZ_ECANCEL`, the motor stopped, the position kept. The tracker's own nudge and velocity commands are refused (-1) while another command runs; a velocity command while a session runs only updates the mailbox. Privacy (parked), calibration, tracking disabled, the area rule and `track_motion=steps` stop the session from the tracker side (`a2k_ptz_vel(0, 0, 0, 0)`).
+- **Position history.** The controller keeps the position of every poll (~3 s) and the position at the end of every motion; `a2k_ptz_pos_at(t)` interpolates it (resolves also while a session runs, "unknown" before the first sample, after a non-session motion in between or after a gap during a session). The tracker positions each frame with it (`capture time - lag_ms`).
+- **Tests:** `tests/rot2k_ptz_cont_unit.c` (fake driver: 1100 / divisor steps/s, command latency, shifted frame + mechanical stops, injectable stall / wrong way / drift, "unlisted axes keep running"; lease, refresh without driver traffic, reversals every 100 ms, diagonals, dropped axis, both limits and the corner, stall, wrong way, uncommanded axis, cancel, bad speeds, no diagonals descriptor, then the controller thread: sessions, `a2k_ptz_pos_at`, the manual command / nudge / park / shutdown preemption, and zero forbidden driver requests). Part of `tests/rot2k_overlay_test.sh`.
+- **To verify on the camera:** (1) a diagonal command that becomes a pure direction does not leave the other axis running (the layer stops first, but look at `moves although it is not commanded` in the log); (2) a speed change in the middle of a move is honoured (compare the polled rate with 1100 / divisor); (3) the lease: while a person is followed, hide the camera view (cover the lens: the detector keeps ticking with no person) or disable detection; the head must stop within about 0.6 s of the last refresh. The dead-man is software only: a hang of the whole process (not only of the detection thread) cannot stop the motor, the driver's own limits remain the only backstop.
+
+### Continuous motion: review follow-ups (same day)
+
+- **A dead process cannot stop the motor by itself.** The lease is software; a directional move is only bounded by the driver's own limits (the soft range), so a killed or crashed app could leave the head walking until the end of travel. Two complements: (a) the fatal-signal handler of the app (`on_crash`: SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT) first sends the motor stop request on the already open node (`hal_ptz_emergency_stop`: async-signal-safe, one `ioctl` stop sent twice, nothing else); (b) the supervisor (`own_app_run.sh`) polls the app every 1 s (was 5 s) and, as soon as the app is gone (crash, SIGKILL, or its own stop), runs `akam2k_rtsp --ptz-stop` (opens the node, one stop request, exits; no calibration, no thread, no other request). SIGKILL and a hard hang cannot run (a); (b) then stops the head within about 1 s. Tests: `rot2k_ptz_cont_unit.c` (emergency + one-shot stop send only the stop request), `rot2k_overlay_test.sh` (the supervisor asks for the stop after a crash and after its own stop signal, the stop call is not an app run, poll default 1 s).
+- **Hardware kill tests still required (nothing here ran on the camera):** with a person-free scene and a hand on the power cable, start a continuous move and `kill -9` the app: (1) pure tilt up from a mid position, (2) a diagonal (up-right) in a narrow frame, (3) `kill -STOP` the app and wait. Expect the head to stop within ~1 s (supervisor), or, if the supervisor is also dead, to end at the driver limit (soft range), never at a mechanical stop. Record how far it travelled.
+- Diagonals use divisor 3 or slower (both axes moving); divisor 2 is single-axis only (a diagonal at divisor 2 was never measured). Tracking areas: the velocity command is refused toward an area edge within `30 + rate * (tick 200 ms + lease)` steps (385 steps at divisor 2): the head cannot pass the edge before the next refresh or the lease can stop it, at the price of a wide unused band near an area edge at high speed. A session that is refused at a soft limit publishes and logs nothing; a velocity stop cancels a start that has not run; a command arriving while a session is ending is refused (or starts the next session).
+
+## Hardware kill tests, 2026-11-17 (driver limits are the backstop for continuous motion)
+
+Narrow frame written in RAM (/mnt/sdcard/akam/ptz.conf on the card-less tmpfs: pan 1100..1450, tilt 1150..1450, home 1275/1300),
+`akam_ptz init --i-know 1275 1300`, user next to the camera, hand on the cable. Each time the tool was SIGKILLed 0.3 s into a
+1500 ms move at speed 3 (no process left driving the motor):
+- tilt up (`move 0`): killed at tilt 1406, the driver stopped by itself at **1450** (the frame maximum) within 0.4 s, no overshoot.
+- diagonal up-right (`move 1`): killed at 1381/1406, **each axis stopped at its own limit, 1450/1450**.
+- diagonal down-left (`move 5`): killed at 1170/1193, both counters stopped at **0/0 = the frame minimum (1100/1150)**. Note: the
+  tool then prints "raw driver counters (no initialised position)" because 0/0 is also the value of an uninitialised driver —
+  a display ambiguity of the shifted-frame design, not a motor problem (the app recalibrated cleanly afterwards).
+Conclusion: the driver's own limits stop a dead process at the soft range on both axes and on diagonals, as documented for pan
+right on 2026-11-15. This is the backstop the continuous mode relies on (plus the crash-handler stop and the supervisor stop).
+Config removed and the camera recalibrated via the API after the test.
+
+## 2026-11-17 calibration noise: fewer false refusals, short calibration (host-tested, NOT yet run on hardware)
+
+Field log: `scene check: too few of the detailed image blocks match on their own (score 0.970, needs 0.900): calibrating` with a zero shift: the head had not moved, a person / furniture / the light changed some blocks and the strict 2/3 vote refused. Two changes, both fail closed for a moved head.
+
+**(a) Displacement evidence (`sc_decide`): NEVER a proof (revised after the review).** The relaxed rule (exactly zero shift, no MOVED block, enough blocks matching on their own with a mean score >= the threshold) does not return SC_MATCH: it only makes the verdict SC_LIKELY ("very likely home"). SC_MATCH is exactly what it was before (the strict 2/3 + union vote), at boot AND for the proof after a short calibration, so the false-trust rate of the scene check is unchanged by construction. The field benefit is kept only through LIKELY -> short calibration -> strict proof (a person standing in the view during the proof may still need the full calibration). Test: `rot2k_scene_unit.c` `test_half_same` (3 / 4 replaced blocks: the strict vote proves it as before; 5 / 6: LIKELY, never MATCH; a 3 px shift: neither; another scene: refused).
+
+**(b) Short calibration.** A new verdict `SC_LIKELY` (not a match): zero shift, no moved block, >= 4 blocks matching with a mean score >= the threshold, but too few of the others to prove it ("very likely home"). The boot check passes it to the motor layer as answer 3; `hal_ptz_start` then runs the SHORT calibration instead of the full one: the driver counters are declared at pan home + 400 and tilt home + 300 (instead of 4000 / 2160 + a second 300 tilt sweep), both axes walk to their stops (about 1300 + 300 and 1275 + 400 steps instead of 2160 + 300 and 4000: a quarter of the grinding, about 24 s instead of ~35-60 s in the model), the head goes home with the usual approach frame, and the scene check is asked AGAIN at home (`cold_check` a second time): only a MATCH trusts the position. Anything else (the proof fails, the sweep fails, a cancel) falls through to the full calibration from wherever the head is. Host test (`rot2k_hal_ptz_unit.c`): likely + proof (the proof looks at the mechanics): the counters are declared at 1675 / 1600, state home, counted as a calibration, 3 driver inits; the proof fails: the full calibration runs and ends at home; the head far from home (3000/1900) when the check says "likely" (a lie): the proof fails, the full calibration puts it right.
+
+*Risk analysis.* The calibration works because a counter declared at X >= the real position makes the motor walk X steps and end ON the stop. If the head is within 400 / 300 steps of home that is true and the stop is reached; if the head is further away (moved while off) the short sweep ends before the stop, the counters are then wrong by the difference and the "go home" lands at the wrong place. That is why the short calibration is never trusted by itself: the scene check at home is the proof of the PHYSICAL position (an image against the reference taken at home), independent of the counters. Residual risks: (1) a false proof (the same risk class as the boot check itself: a wrong view accepted; unchanged thresholds, the proof needs the strict MATCH incl. the new rule); (2) the extra motion happens in a case the old code answered with a full calibration anyway, so the head moves in both; the short sweep grinds less against the stops (400 / 300 steps instead of up to the full travel); (3) the sweep of a head that was really far away is shorter than the stop distance: harmless, nothing is trusted until the proof, and the full calibration follows; (4) a wrong "likely" from a fixed pattern: the proof fails (the pattern is not a MATCH either), the full calibration follows, ~25 s lost. Soft range, stall detection, cancel, travel budget: the same safe-motion layer as before; no new driver request; flash: the proof's MATCH bumps the matched-boots counter exactly like a normal match (one store write), nothing else.
+
+- **Review round 2 of the short calibration.** (H1) The frame files and the trusted flag stay INVALID / untrusted until the strict proof: `hal_ptz_start` runs `calibrate_x(p, 1)` with `defer_frames`, invalidates the files and untrusts the position right after it, asks `cold_check`, and only a MATCH writes the files (`frames_save`) and trusts it; a cancel, kill or failed proof leaves nothing adoptable (a restart calibrates). Tests: `rot2k_hal_ptz_unit.c` (files invalid at proof time, valid after a proof; a cancel during the proof: ECANCEL, files invalid, the next start calibrates and ends at the real home). (H2) A verified short calibration is not a full calibration: it does not count in `hal_ptz_cal_count` (the matched-boots counter keeps counting toward the periodic full calibration: a LIKELY boot does not zero it, the proof's MATCH adds one) and does not reset the travel; at most one flash write per boot (the proof's boots store; the screened-verdict store-back is skipped for a LIKELY boot).

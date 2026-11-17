@@ -47,6 +47,17 @@ int  control_persist_picture(void);
 /* Value text of any readable key (settings, night.state, LED, audio, metrics), for the MQTT module. 0, or -1. */
 int  control_get_value(const char *key, char *out, size_t cap);
 
+/* The settings registry behind the text port (ak1080_settings.h, convergence P7). The old code of this file stays the owner of every
+ * key it knows (names, replies, errors and the write rule are byte-identical); a key it does NOT know is offered to the registry,
+ * which has the rows under their registry names (led.mode, led.stream, image.brightness, video0.kbps, onvif.enabled, ...). Not in
+ * LIST (the order and content of LIST are unchanged). get: 0 and "key=value" in line, -1 not a row. set: -1 not a row, 0 and an
+ * "OK ..." line, 1 and an "ERR ..." line. NULL ops (the default) = no registry, "ERR unknown param" as before. Call before control_start(). */
+typedef struct {
+    int (*get)(const char *key, char *line, size_t cap);
+    int (*set)(const char *key, const char *val, int persist, char *msg, size_t cap);
+} control_reg_ops_t;
+void control_set_registry(const control_reg_ops_t *ops);
+
 /* 1 while the 8091 DEBUG mode is on (RAM flag, auto-off): the switch for chatty log lines (per-frame, per-AE-window).
  * Thread safe, cheap enough for once a second; do not call per video frame without a rate condition first. */
 int  control_debug_on(void);

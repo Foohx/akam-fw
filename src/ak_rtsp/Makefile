@@ -1,6 +1,18 @@
 ZIG    ?= zig
 COMMON_DIR = ../common
 include $(COMMON_DIR)/common.mk
+# Features of this model (src/common/features.mk, docs/convergence-plan.md 2.4): only what the 1080p has hardware or a use for.
+# Everything else (PTZ, button, scene, patrol, 5 GHz, tracking) is OFF: nothing of it is compiled into ak_rtsp.
+AKAM_FEAT_SYS    := 1
+AKAM_FEAT_LIGHT  := 1
+AKAM_FEAT_API    := 1
+AKAM_FEAT_PTZ    := 0
+AKAM_FEAT_BUTTON := 0
+AKAM_FEAT_SCENE  := 0
+AKAM_FEAT_PATROL := 0
+AKAM_FEAT_WIFI5G := 0
+AKAM_FEAT_TRACK  := 0
+include $(COMMON_DIR)/features.mk
 CC      = $(ZIG) cc -target arm-linux-musleabi -mcpu=arm926ej_s
 CFLAGS  = -std=gnu99 -mfloat-abi=soft -O2 -Wall -Wformat -Wformat-security -g \
           -ffunction-sections -fdata-sections \
@@ -23,11 +35,18 @@ $(ONVIF_OBJS): CFLAGS += -Os
 MQTT_OBJS = $(call common_obj,mqtt) $(call common_obj,mqtt_ha) mqtt_svc.o mqtt_ops.o
 $(MQTT_OBJS): CFLAGS += -Os
 
+# The signed control API (port 8092, off until an API key exists) is off the video path as well: size over speed, and stack canaries
+# below (it parses the network). The same shared sources the 2K links (src/common/api, net/http_req.c).
+API_OBJS = $(call common_obj,json_min) $(call common_obj,settings_reg) $(call common_obj,api_keys) $(call common_obj,sha256) \
+           $(call common_obj,api_sig) $(call common_obj,api_limit) $(call common_obj,api_events) $(call common_obj,http_req) \
+           $(call common_obj,api_core) $(call common_obj,api_httpd) ak1080_settings.o ak1080_api.o
+$(API_OBJS): CFLAGS += -Os
+
 # G17: stack canaries only on the parsers that read untrusted network input (ONVIF/SOAP/HTTP, RTSP auth,
 # the 8091 line parser). Everywhere would cost about 3 % of the stripped binary and a canary check on the
 # video/audio hot paths; here it costs under 1 %. Static non-PIE musl: no RELRO or PIE to turn on, and
 # musl ignores _FORTIFY_SOURCE, so those are deliberately not set.
-HARDENED_OBJS = $(ONVIF_OBJS) $(MQTT_OBJS) $(call common_obj,rtsp_auth) control.o $(call common_obj,rtsp_in) $(call common_obj,rtsp_busy) rtp_in.o ctl_gate.o
+HARDENED_OBJS = $(ONVIF_OBJS) $(MQTT_OBJS) $(call common_obj,http_req) $(call common_obj,api_core) $(call common_obj,api_httpd) $(call common_obj,api_sig) $(call common_obj,rtsp_auth) control.o $(call common_obj,rtsp_in) $(call common_obj,rtsp_busy) rtp_in.o ctl_gate.o
 $(HARDENED_OBJS): CFLAGS += -fstack-protector-strong
 
 TARGET     = ak_rtsp
@@ -101,6 +120,7 @@ SRCS    = main.c \
           mqtt_ops.c \
           ircut.c \
           leds.c \
+          $(call feat_objs,LIGHT,$(call common_src,led_pat) $(call common_src,light_logic)) \
           ledsys.c \
           ae.c \
           aec_custom.c \
@@ -117,7 +137,13 @@ SRCS    = main.c \
           video_cfg.c \
           video_ctl.c \
           ctl_gate.c \
+          $(call feat_objs,API,$(call common_src,json_min) $(call common_src,settings_reg) $(call common_src,api_keys) $(call common_src,sha256) \
+              $(call common_src,api_sig) $(call common_src,api_limit) $(call common_src,api_events) $(call common_src,http_req) \
+              $(call common_src,api_core) $(call common_src,api_httpd)) \
+          ak1080_settings.c \
+          ak1080_api.c \
           ctl_sys.c \
+          $(call feat_objs,SYS,$(call common_src,hal_sys)) \
           version.c \
           $(wildcard ../smolrtsp/src/*.c) \
           $(wildcard ../smolrtsp/src/types/*.c) \

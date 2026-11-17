@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -28,11 +29,13 @@ import (
 
 // env is one test world: a fake camera, a private HOME and state directory, a fresh SSH key.
 type env struct {
-	t     *testing.T
-	cam   *testfake.Camera
-	state string
-	home  string
-	key   string
+	t *testing.T
+	// dialTimedOut counts blocked dials (countDial) that ended by their own deadline instead of a cancellation.
+	dialTimedOut atomic.Int32
+	cam          *testfake.Camera
+	state        string
+	home         string
+	key          string
 	// capture is the fake microphone/converter; nil means "no tool installed" (nothing is run).
 	capture *fakeCapture
 	pass    string // AKAM_RTSP_PASSWORD for the next run (the program removes it from its environment)

@@ -24,6 +24,8 @@
 #include "night.h"
 #include "control.h"
 #include "ctl_gate.h"
+#include "ak1080_settings.h"
+#include "ak1080_api.h"
 #include "vi.h"
 #include "venc.h"
 #include "audio.h"
@@ -212,11 +214,21 @@ int main(int argc, char **argv)
         return klog_main(argc, argv);
     if (argc >= 3 && strcmp(argv[1], "ctl") == 0)
         return ctl_client_run(8091, argc - 2, argv + 2, stdout);
+    /* The on-camera API key tool (run over SSH by the assistant and ./akam): no hardware, no thread, exits here. */
+    if (argc >= 2 && strcmp(argv[1], "--api-key") == 0)
+        return ak1080_api_key_main(argc - 2, argv + 2);
 
     /* Before any thread exists: the credentials state (htdigest db + failure limiter) and the plain-credential
      * store are shared by the RTSP loop and the ONVIF HTTP thread, so both are set up once, here. */
     rtsp_auth_shared_init();
     cred_init(NULL, rtsp_auth_shared_db());
+
+    /* The settings registry (ak1080_settings.h): the rows the 8091 port knows by their registry names. Built before the first
+     * client can connect; the modules it reads are all lazily initialised or started below. */
+    {
+        static const control_reg_ops_t reg_ops = { ak1080_settings_ctl_get, ak1080_settings_ctl_set };
+        if (ak1080_settings_init() == 0) control_set_registry(&reg_ops);
+    }
 
     /* Very first thing: tees stdout so the TCP tuning server's debug log
      * view gets the FULL boot log (ISP/VI/VENC init, not just ae/night's
@@ -361,6 +373,11 @@ int main(int argc, char **argv)
         printf("[ak_rtsp] mqtt.state=%s\n", mstate);
     }
 
+    /* The signed control API (port 8092) is opt-in as well: the thread only listens while an API key exists (ak_rtsp --api-key new). It is
+     * started last, after the stream, and never touches the video path; a failure is logged and the camera goes on without it. */
+    if (ak1080_api_start(A2K_API_PORT, 0, NULL) != 0)
+        printf("[ak_rtsp] api: not running\n");
+
     for (;;) {
         swdog_beat(SWDOG_BEAT_MAIN);
         swdog_mode(SWDOG_FETCH);
@@ -409,6 +426,7 @@ int main(int argc, char **argv)
     close(server_fd);
 
 err:
+    ak1080_api_stop();
     mqtt_svc_stop();
     onvif_svc_stop();
     ledsys_stop();

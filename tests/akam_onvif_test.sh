@@ -113,7 +113,7 @@ for badp in 0 65536 abc -1 '' 123456 80x; do
     out=$(run enable "$badp"); rc=$?
     eq "enable '$badp': usage error 2" "$rc" 2
 done
-for resp in 21 22 23 24 554 8091; do
+for resp in 21 22 23 24 554 8091 8092; do
     out=$(run enable "$resp"); rc=$?
     eq "enable $resp (used by another service): usage error 2" "$rc" 2
 done

@@ -18,6 +18,7 @@
 #include <stddef.h>
 
 #include "akam2k_image.h"
+#include "api_backend.h"
 #include "hal_sys.h"
 #include "json_min.h"
 #include "settings_reg.h"
@@ -49,35 +50,22 @@ void a2k_settings_note_sys(const hal_sys_sample_t *s);
 /* Number of API keys, for the api.keys state row (set by the API layer). */
 void a2k_settings_set_keys(int n);
 
-/* ---- jobs ---- */
-enum { A2K_JOB_PATCH, A2K_JOB_ACTION };
-typedef struct {
-    int kind;            /* A2K_JOB_* */
-    int scope;           /* AKEY_* level of the caller */
-    st_src_t src;
-    jflat_t in;          /* the parsed body (PATCH: setting pairs; ACTION: the arguments) */
-    const char *name;    /* ACTION: the action name (a pointer into the action table) */
-    /* results */
-    int http;            /* status to send */
-    st_result_t res[JFLAT_MAX];
-    const char *err;     /* ACTION: machine error code, NULL when ok */
-    char detail[64];
-} a2k_job_t;
-
+/* ---- jobs (the job and action types are shared with the 1080p: api_backend.h) ---- */
 /* Runs the job on the worker and waits at most A2K_SET_WAIT_MS. 0 = done (results in *j), -1 = timeout (the job still runs: the caller
  * must not touch *j until a2k_settings_idle() is 1, and answers 504), -2 = a job is already running (answer 503). */
 int a2k_settings_exec(a2k_job_t *j);
 int a2k_settings_idle(void);
 
-/* Actions: name, minimum scope, the argument list as text for the schema. */
-typedef struct {
-    const char *name;
-    int min_scope;
-    const char *args;
-} a2k_action_info_t;
 size_t a2k_settings_action_count(void);
 const a2k_action_info_t *a2k_settings_action(size_t i);
 int a2k_settings_action_find(const char *name); /* index or -1 */
+
+/* Applies key/value pairs (at most 8) through the registry as ONE patch, from any thread but the HTTP one posting a job (the button): every pair is
+ * validated before any is applied (the rule of PATCH /settings: writable, not secret, in range); if a setter then fails, the earlier ones are put
+ * back. 0 applied, -1 refused or failed (detail, when not NULL, says which key and why). Never from a registry setter. */
+int a2k_settings_apply(size_t n, const char *const *keys, const char *const *vals, char *detail, size_t dcap);
+/* 0 when key=val may be part of a button mode: a writable, non-secret row applied live, shown over HTTP, not net.* / api.*, and val is valid. */
+int a2k_settings_mode_key_ok(const char *key, const char *val);
 
 /* Test hooks. */
 void a2k_settings_test_flush(void); /* save now, ignoring the flash limiter */

@@ -57,7 +57,7 @@ say() { echo "akam_flash_boot: $*"; }
     fi
 )
 
-for f in wpa.conf authorized_keys dropbear_ed25519_host_key akam2k.conf zones mqtt rtsp.conf ntp no_app decloud; do
+for f in wpa.conf authorized_keys dropbear_ed25519_host_key akam2k.conf ptz.conf zones mqtt rtsp.conf ntp no_app decloud; do
     [ -e "$CFG/$f" ] && ln -sf "$CFG/$f" "$FAKE/akam/$f"
 done
 

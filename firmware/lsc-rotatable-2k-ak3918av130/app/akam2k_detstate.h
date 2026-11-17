@@ -104,6 +104,19 @@ int a2k_det_state_format(char *buf, unsigned cap, const struct a2k_det_snapshot 
 /* Formats, writes <path>.tmp, renames it over <path>. 0 or -1 (the temp file is removed on failure). */
 int a2k_det_state_write(const char *path, const struct a2k_det_snapshot *s);
 
+/* The frame age reference of the detection thread: the raw age (now - frame stamp) minus the SMALLEST raw age seen. The all-time minimum (window 0, the default) keeps a one-off
+ * small value for ever, so a drifting clock reads as a growing age; with the window on (akam2k.conf detect_age_window=1, experiment E3) the minimum is over the last 60 s (one bucket
+ * per second). a2k_agewin_age() returns the age and folds the sample in. */
+#define A2K_AGEWIN_S 60
+struct a2k_agewin {
+    long long min_raw[A2K_AGEWIN_S];
+    long long sec[A2K_AGEWIN_S]; /* the second a bucket holds, -1 = empty */
+    long long all_min;
+    int have, window;
+};
+void a2k_agewin_init(struct a2k_agewin *w, int window);
+long long a2k_agewin_age(struct a2k_agewin *w, long long now_ms, long long raw);
+
 /* The model must sit under /appfs/resource/model/ and contain no "..": 1 when acceptable. */
 int a2k_model_path_ok(const char *path);
 

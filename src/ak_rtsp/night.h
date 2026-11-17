@@ -63,6 +63,9 @@ void night_set_persist(int on);
 /* Current actual day/night state (1=night, 0=day) — distinct from
  * night_tuning_t.override, which is the requested mode, not the applied one. */
 int night_is_night(void);
+/* Called by the night thread after every day/night switch (after the ISP lock is released) with the new state and whether the IR LEDs
+ * light (night and night.ir_led=auto): the control API turns it into the event "night". NULL (the default) = nobody is told. */
+void night_set_notify(void (*cb)(int night, int ir_on));
 
 /* 8091 keys owned by night.c (same contract as imgq_ctl_*: _get returns 0 and fills `out` for a key it owns, else
  * -1; _set returns -1 for a key it does not own, else 0 (done) or 1 (refused) with the answer in `msg`; _list

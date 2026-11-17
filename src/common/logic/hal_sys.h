@@ -23,7 +23,8 @@ typedef struct { unsigned long long total, busy; int have; } hal_sys_t;
 int hal_sys_parse_stat(const char *txt, unsigned long long *total, unsigned long long *busy);
 int hal_sys_cpu_pct(hal_sys_t *st, const char *stat_txt);           /* delta since last call, NA if none yet */
 int hal_sys_parse_load1(const char *txt, int *x100);
-int hal_sys_parse_mem(const char *txt, long *total_kb, long *avail_kb); /* avail falls back to Free+Buffers+Cached */
+int hal_sys_parse_mem(const char *txt, long *total_kb, long *avail_kb); /* avail falls back to Free+Buffers+Cached; -1 when it cannot be
+                                                                          * computed, with *total_kb still set when MemTotal was found */
 int hal_sys_parse_uptime(const char *txt, long *s);
 int hal_sys_parse_wireless(const char *txt, const char *ifname, int *dbm, int *quality);
 

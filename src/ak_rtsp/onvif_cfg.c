@@ -30,7 +30,7 @@ static int g_port;
 int onvif_cfg_port_ok(long port)
 {
     if (port < 1 || port > 65535) return 0;
-    if ((port >= 21 && port <= 24) || port == 554 || port == 8091) return 0;
+    if ((port >= 21 && port <= 24) || port == 554 || port == 8091 || port == 8092) return 0;
     return 1;
 }
 

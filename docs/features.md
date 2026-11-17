@@ -40,6 +40,7 @@ Not offered: other resolutions, a second (sub) stream, mirror or flip, snapshots
 | MQTT 3.1.1 client | off | outbound TCP to your broker (usually 1883) | host-tested only | One connection, no TLS (the password travels in clear on the LAN). The camera never runs a broker |
 | Home Assistant MQTT discovery | on, when MQTT is on | | host-tested only | One device with sensors, switches, numbers and buttons ([MQTT](mqtt.md)) |
 | Control port | on, read-only from the network | TCP 8091 | hardware-validated | Text commands (`LIST`, `GET`, `SET`): metrics for monitoring, settings from the camera itself. `./akam debug on` lets the network write for a while |
+| Signed control API | off (opens only while an API key exists) | TCP 8092 | host-tested only | The same signed JSON API as the Rotatable 2K: settings (LED mode and patterns, night mode, picture, video, ONVIF and MQTT switches), state, events, a "find the camera" LED action. Create a key over SSH with `ak_rtsp --api-key new --scope admin --name NAME` ([reference](porting/lsc-1080p/control-api.md)) |
 
 **ONVIF note.** ONVIF-compatible services (a subset of the ONVIF Profile S feature set: WS-Discovery, device, media,
 imaging). Akam is not an ONVIF conformant product, has not been tested with the ONVIF test tool and is not listed by
@@ -60,7 +61,7 @@ ONVIF. ONVIF is a trademark of ONVIF, Inc.
 | Update over SSH (Akam to Akam) | | | hardware-validated | `./akam update`, read-back verified |
 | Maintenance flag (microSD) | off | | hardware-validated (install) | A card marked `AKAM_MAINTENANCE` opens the maintenance shell: treat the card as physical access |
 
-Open ports after a normal boot: **22, 554, 8091** (TCP) and 68 (UDP client). Nothing else, unless you enable ONVIF
+Open ports after a normal boot: **22, 554, 8091** (TCP) and 68 (UDP client). Nothing else, unless you enable ONVIF (or create an API key: then 8092, see the signed control API)
 (80 and 3702) or MQTT (outbound only).
 
 ## What Akam removes or disables

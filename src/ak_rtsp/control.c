@@ -38,6 +38,9 @@
 #define CONTROL_PORT 8091   /* the host test builds with another port */
 #endif
 
+static const control_reg_ops_t *g_regops; /* the settings registry, see control.h (NULL = none) */
+void control_set_registry(const control_reg_ops_t *ops) { g_regops = ops; }
+
 static volatile int    g_control_running;
 static pthread_t       g_control_tid;
 static pthread_t       g_log_tid;
@@ -432,6 +435,7 @@ static void do_get(cli_t *c, const char *param)
         else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
         else if (video_ctl_get(param, line, sizeof(line)) == 0)     reply(c, "%s", line);
         else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, ident_hidden(c, param) ? "hidden" : val);
+        else if (g_regops && g_regops->get(param, line, sizeof(line)) == 0) reply(c, "%s", line); /* a registry row under its own name */
         else                                                   reply(c, "ERR unknown param %s", param);
     }
 }
@@ -598,6 +602,12 @@ int control_apply_setting(const char *key, const char *value, int persist, char 
     video_ctl_set_persist(persist);
     do_set_locked(msg, cap, key, value);
     pthread_mutex_unlock(&g_set_lock);
+    if (g_regops && !strncmp(msg, "ERR unknown param ", 18)) {
+        /* Not a key of this file: a registry row? The setter of a row calls back here with the OLD key it is built on (a key this
+         * file knows), so this does not recurse. It runs after the unlock: the row setters take g_set_lock themselves. */
+        char m2[256];
+        if (g_regops->set(key, value, persist, m2, sizeof(m2)) >= 0) snprintf(msg, cap, "%s", m2);
+    }
     return strncmp(msg, "OK", 2) == 0 ? 0 : -1;
 }
 

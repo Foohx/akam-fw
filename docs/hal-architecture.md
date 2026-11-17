@@ -20,7 +20,8 @@ This file sets the convention. It is derived from the two patterns already in th
    - `hal_light`  — LEDs/IR: a list of named emitters, each `{how, gpio|led_dir, active_high}`; set on/off/blink.
    - `hal_ircut`  — IR-cut filter: `{p_gpio, m_gpio, pulse_ms}`; go day/night.
    - `hal_video`/`hal_isp` — streams, encoder, ISP day/night, WDR, image settings.
-   - `hal_ptz`    — pan/tilt (2K only): device node, limits, direction map.
+   - `hal_ptz`    — pan/tilt (2K only): device node, limits, direction map. The patrol / scan engine on top of it (`ptz_patrol.c`,
+     presets, routes, sweeps, priorities with tracking) is pure logic with its own ops table: see `specs/ptz-patrol.md`.
    - `hal_audio`  — mic/speaker: device nodes, rate, gain.
    - `hal_sys`    — metrics: CPU/load/mem/uptime/temp/wifi from `/proc` (generic; one implementation fits all).
 
@@ -47,6 +48,21 @@ and the same `hal_light` interface** — only the descriptor and the driver func
   added without editing the 1080p's current files**: the 1080p keeps `leds.c` etc.; the 2K adopts the new
   portable module; the 1080p converges later as a dedicated phase-B step with the byte-identical proof.
 - Every extraction: full 1080p host tests green, and the 2K change validated on the camera (now card-less).
+
+## Feature selection (build time)
+
+Portable modules are compiled into a model only if that model enables them, so no model ships another's dead code.
+`src/common/features.mk` knows the features `API PTZ BUTTON SCENE PATROL WIFI5G TRACK SYS LIGHT`. A model Makefile sets
+`AKAM_FEAT_<NAME> := 1` or `0` before `include $(COMMON_DIR)/features.mk` (unset = off; a typo or a value other than 0/1
+is a build error) and adds the module's objects through `$(call feat_objs,<NAME>,<objects>)`; `feat_on <NAME>` tests a
+feature. `make features` prints what is on and off. Example (2K Makefile):
+`POC3_API := $(call feat_objs,API,api_limit api_keys api_sig sha256 json_min)`. The mechanism changes no binary: the 2K
+`akam2k_rtsp` is byte-identical with it. The 1080p does not include it yet; it opts in per module as it adopts them
+(`docs/convergence-plan.md` 2.4, P4-P9). Shared API sources live in `src/common/api` (and `net/sha256`). Since P3 the 2K Makefile lists its whole link order in
+`POC3_ORDER`, with `c:<name>` for a `src/common` object gated by `feat_objs`: `API` (`api_events`, `settings_reg`, the security
+files), `BUTTON` (`hal_input`, `button_logic`, `button_gesture`, `button_cfg`), `SYS` (`hal_sys`), `LIGHT` (`light_logic`;
+`hal_light.h` is its interface). The sysfs drivers `hal_light_sysfs.c` and `hal_input_sysfs.c` stay in the model directory
+because they call the model pin helper; the common code includes no model header.
 
 ## First module: `hal_light` (the worked example)
 

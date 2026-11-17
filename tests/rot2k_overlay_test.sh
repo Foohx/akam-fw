@@ -831,6 +831,7 @@ mk_app() { # mk_app <mode>: fake app + a BUILDINFO with its real sha256 on the c
     mkdir -p "$SDC/akam/bin"
     cat >"$SDC/akam/bin/akam2k_rtsp" <<'EOS'
 #!/bin/sh
+if [ "$1" = "--ptz-stop" ]; then echo stop >>"$AKAM_ROOT/tmp/app.stops"; exit 0; fi
 echo "$LD_LIBRARY_PATH|$*" >>"$AKAM_ROOT/tmp/app.runs"
 echo $$ >>"$AKAM_ROOT/tmp/app.pids"
 echo "akam2k_rtsp says hello"
@@ -1220,16 +1221,114 @@ end_sup
 # --- track_head_pct, and the conf is re-read at every app (re)start
 new_root suptr4
 mk_app crash
-printf 'track_tilt=1\ntrack_head_pct=20\ntrack_head_pct=51\n' >"$SDC/akam/akam2k.conf"
+printf 'track_tilt=1\ntrack_head_pct=20\ntrack_debug=1\ntrack_tilt_return_s=15\ntrack_head_pct=51\n' >"$SDC/akam/akam2k.conf"
 AKAM_APP_BACKOFF_MIN=1 AKAM_APP_BACKOFF_MAX=1 AKAM_APP_CRASH_MAX=50 run_sup
 wait_grep "$R/tmp/app.runs" . || true
-check "supervisor: track_head_pct 0..50 becomes --track-head-pct, 51 is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 20"
+check "supervisor: track_head_pct 0..50 becomes --track-head-pct, 51 is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 20 --track-debug 1 --track-tilt-return-s 15"
 printf 'track_tilt=1\ntrack_head_pct=0\n' >"$SDC/akam/akam2k.conf"
 i=0
 while [ "$(runs)" -lt 2 ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 check "supervisor: a conf change applies at the next app restart (no supervisor restart)" test "$(sed -n 2p "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 0"
 check "supervisor: the options are logged at each start" test "$(count_grep "$SDC/akam/akam_boot.log" 'akam2k_rtsp options:')" -ge 2
 end_sup
+
+# --- track_gain_pan / track_gain_tilt / track_tilt_band_pct
+new_root suptr5
+mk_app run
+printf 'track_gain_pan=1200\ntrack_gain_tilt=1000\ntrack_tilt_band_pct=8\ntrack_gain_pan=199\ntrack_gain_tilt=4001\ntrack_tilt_band_pct=1\ntrack_gain_tilt=abc\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_gain_pan / track_gain_tilt / track_tilt_band_pct become their options, out-of-range values are ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-gain-pan 1200 --track-gain-tilt 1000 --track-tilt-band-pct 8"
+end_sup
+
+# --- track_motion continuous|steps, track_zone_pct / track_zone_y_pct / track_zone_head_pct, track_lease_ms
+new_root suptr6
+mk_app run
+printf 'track_motion=steps\ntrack_zone_pct=50\ntrack_zone_y_pct=25\ntrack_zone_head_pct=0\ntrack_lease_ms=600\ntrack_zone_pct=91\ntrack_lease_ms=100\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_motion / track_zone_pct / track_zone_y_pct / track_zone_head_pct / track_lease_ms become their options, out-of-range values are ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-motion steps --track-zone-pct 50 --track-zone-y-pct 25 --track-zone-head-pct 0 --track-lease-ms 600"
+end_sup
+new_root suptr7
+mk_app run
+printf 'track_motion=teleport\ntrack_motion=continuous\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_motion accepts only continuous or steps (an exact word)" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-motion continuous"
+end_sup
+
+# --- track_lost_policy: the whole chain or nothing
+new_root suplost1
+mk_app run
+printf 'track_lost_policy=backsweep,exit,local:300:4:20,route:walk:45,home\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: a valid track_lost_policy becomes --track-lost-policy" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-lost-policy backsweep,exit,local:300:4:20,route:walk:45,home"
+end_sup
+for bad in 'hold:0' 'fly' 'backsweep,' 'stay,home' 'local:30:4:20' 'local:300:1:20' 'route:Bad' 'route:a:0' 'hold:5:5' 'exit;reboot' 'none,home' 'a,b,c,d,e,f,g,h,i'; do
+    new_root suplost2
+    mk_app run
+    printf 'track_lost_policy=%s\n' "$bad" >"$SDC/akam/akam2k.conf"
+    run_sup
+    wait_grep "$R/tmp/app.runs" . || true
+    check "supervisor: track_lost_policy '$bad' is ignored as a whole" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = ""
+    end_sup
+done
+new_root suplost3
+mk_app run
+printf 'track_lost_policy=none\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_lost_policy=none is accepted" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-lost-policy none"
+end_sup
+
+# --- track_tilt_back_s
+new_root suptb
+mk_app run
+printf 'track_tilt_back_s=8\ntrack_tilt_back_s=601\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_tilt_back_s 0..600 becomes --track-tilt-back-s, 601 is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt-back-s 8"
+end_sup
+
+# --- detect_debug / detect_model_thr (experiment E1)
+new_root supdd
+mk_app run
+printf 'detect_debug=1\ndetect_debug=2\ndetect_model_thr=450\ndetect_model_thr=299\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: detect_debug 0..1 and detect_model_thr 300..950 become --detect-log / --detect-model-thr, out of range ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--detect-log 1 --detect-model-thr 450"
+end_sup
+
+# --- track_lag_ms (signed) and detect_age_window
+new_root suplag
+mk_app run
+printf 'track_lag_ms=-120\ntrack_lag_ms=301\ntrack_lag_ms=-151\ntrack_lag_ms=abc\ndetect_age_window=1\ntrack_lag_ms=150\n' >"$SDC/akam/akam2k.conf"
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+check "supervisor: track_lag_ms -150..300 (negative allowed) becomes --track-lag-ms=N, out of range and words are ignored; detect_age_window 0|1" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-lag-ms=-120 --detect-age-window 1 --track-lag-ms=150"
+end_sup
+
+# --- motor stop after the app ended (a continuous move has no hardware dead-man): one `akam2k_rtsp --ptz-stop` per app exit, polled every second by default
+new_root supstop
+mk_app crash
+run_sup
+wait_grep "$R/tmp/app.stops" . || true
+check "supervisor: when the app dies it asks the app binary for a motor stop (--ptz-stop)" test -s "$R/tmp/app.stops"
+check "supervisor: the stop call is not counted as an app run (the first run is the real one)" test "$(grep -c -- '--ptz-stop' "$R/tmp/app.runs" 2>/dev/null || true)" = 0
+end_sup
+new_root supstop2
+mk_app run
+run_sup
+wait_grep "$R/tmp/app.runs" . || true
+kill -TERM "$SUPPID" 2>/dev/null || true
+wait_grep "$R/tmp/app.stops" . 100 || true
+check "supervisor: a stop signal stops the app and then the motor" test -s "$R/tmp/app.stops"
+end_sup
+# shellcheck disable=SC2016  # the pattern is literal text of the script
+check "supervisor: the death poll is 1 s by default (was 5 s)" grep -q '^POLL=${AKAM_APP_POLL:-1}' "$FW/overlay/akam/own_app_run.sh"
+check "app: the crash handler stops the motor (async-signal-safe) before anything else" grep -q 'a2k_ptz_emergency_stop' "$FW/app/akam2k_main.c"
+check "app: --ptz-stop is a tool mode that exits before any hardware init" grep -q '"--ptz-stop"' "$FW/app/akam2k_main.c"
 
 # --- refusals: sha mismatch, no BUILDINFO hash, missing binary
 new_root sup3
@@ -1391,7 +1490,7 @@ check "the supervisor script is on every card the builder writes (overlay/akam/*
 
 echo "== akam2k_rtsp frame ring (C unit test)"
 if command -v cc >/dev/null 2>&1; then
-    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/stream_unit" "$REPO/tests/rot2k_stream_unit.c" "$FW/app/akam2k_stream.c" "$REPO/src/common/net/h264_params.c" "$REPO/src/common/net/rtp_clock.c" -lpthread; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/stream_unit" "$REPO/tests/rot2k_stream_unit.c" "$FW/app/akam2k_stream.c" "$REPO/src/common/net/h264_params.c" "$REPO/src/common/net/rtp_clock.c" -lpthread; then
         "$WORK/stream_unit" >"$WORK/stream_unit.out" 2>&1 || true
         check "stream ring unit test passes" grep -q 'rot2k stream unit: 0 failed' "$WORK/stream_unit.out"
         grep 'FAIL' "$WORK/stream_unit.out" || true
@@ -1404,7 +1503,7 @@ fi
 
 echo "== akam2k_rtsp detection state (C unit test)"
 if command -v cc >/dev/null 2>&1; then
-    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/app" -o "$WORK/detect_unit" "$REPO/tests/rot2k_detect_unit.c" "$FW/app/akam2k_detstate.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/detect_unit" "$REPO/tests/rot2k_detect_unit.c" "$FW/app/akam2k_detstate.c"; then
         "$WORK/detect_unit" >"$WORK/detect_unit.out" 2>&1 || true
         check "detection state unit test passes" grep -q 'rot2k detect unit: 0 failed' "$WORK/detect_unit.out"
         grep 'FAIL' "$WORK/detect_unit.out" || true
@@ -1415,7 +1514,7 @@ if command -v cc >/dev/null 2>&1; then
     ZN_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/zn_probe" - 2>/dev/null; then ZN_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -I"$FW/app" -o "$WORK/zones_unit" "$REPO/tests/rot2k_zones_unit.c" "$FW/app/akam2k_zones.c" "$FW/app/akam2k_detstate.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/zones_unit" "$REPO/tests/rot2k_zones_unit.c" "$FW/app/akam2k_zones.c" "$FW/app/akam2k_detstate.c"; then
         "$WORK/zones_unit" >"$WORK/zones_unit.out" 2>&1 || true
         check "zones unit test passes (parser, fuzz, feet point, zone_mode any/all, hysteresis, state file)" grep -q 'rot2k zones unit: 0 failed' "$WORK/zones_unit.out"
         grep 'FAIL' "$WORK/zones_unit.out" || true
@@ -1424,7 +1523,7 @@ if command -v cc >/dev/null 2>&1; then
     fi
     echo "== JPEG snapshot module (C unit test, stub encoder: ring bounds, rate limit, failures)"
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/snap_unit" "$REPO/tests/rot2k_snap_unit.c" "$FW/app/akam2k_snap.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/snap_unit" "$REPO/tests/rot2k_snap_unit.c" "$FW/app/akam2k_snap.c"; then
         "$WORK/snap_unit" >"$WORK/snap_unit.out" 2>&1 || true
         check "snapshot unit test passes (ring bounds, rate limit, 3 failures disable, slow publisher)" grep -q 'rot2k snap unit: 0 failed' "$WORK/snap_unit.out"
         grep 'FAIL' "$WORK/snap_unit.out" || true
@@ -1449,7 +1548,7 @@ if command -v cc >/dev/null 2>&1; then
     fi
     echo "== akam2k_rtsp microphone track (C unit tests: multi-reader ring, wake pipes, L16 payload, RTP timestamps, start gate; capture thread without a device)"
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/audio_unit" "$REPO/tests/rot2k_audio_unit.c" "$FW/app/akam2k_aring.c" "$REPO/src/common/net/rtp_clock.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/audio_unit" "$REPO/tests/rot2k_audio_unit.c" "$FW/app/akam2k_aring.c" "$REPO/src/common/net/rtp_clock.c"; then
         "$WORK/audio_unit" >"$WORK/audio_unit.out" 2>&1 || true
         check "audio unit test passes (ring bounds, drop oldest, fan-out threads, wake pipes, gap, L16 byte order, RTP timestamps, start gate)" grep -q 'rot2k audio unit: 0 failed' "$WORK/audio_unit.out"
         grep 'FAIL' "$WORK/audio_unit.out" || true
@@ -1457,7 +1556,7 @@ if command -v cc >/dev/null 2>&1; then
         ko "audio unit test does not compile"
     fi
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/audio_thread" "$REPO/tests/rot2k_audio_thread_test.c" "$FW/app/akam2k_audio.c" "$FW/app/akam2k_aring.c" "$REPO/src/common/net/rtp_clock.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/audio_thread" "$REPO/tests/rot2k_audio_thread_test.c" "$FW/app/akam2k_audio.c" "$FW/app/akam2k_aring.c" "$REPO/src/common/net/rtp_clock.c"; then
         "$WORK/audio_thread" >"$WORK/audio_thread.out" 2>&1 || true
         check "audio capture thread without a device passes (stays down, logs, stops promptly, never crashes)" grep -q 'rot2k audio thread: 0 failed' "$WORK/audio_thread.out"
         grep 'FAIL' "$WORK/audio_thread.out" || true
@@ -1512,7 +1611,7 @@ if command -v cc >/dev/null 2>&1; then
     MQ_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe" - 2>/dev/null; then MQ_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # MQ_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $MQ_SAN -pthread -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/mqtt_unit" "$REPO/tests/rot2k_mqtt_unit.c" "$FW/app/akam2k_mqtt.c" "$FW/app/akam2k_mqttcfg.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_zones.c" "$FW/app/akam2k_apievt.c" "$REPO/src/common/net/mqtt.c" "$REPO/src/common/net/mqtt_ha.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $MQ_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/mqtt_unit" "$REPO/tests/rot2k_mqtt_unit.c" "$FW/app/akam2k_mqtt.c" "$FW/app/akam2k_mqttcfg.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/api/api_events.c" "$REPO/src/common/net/mqtt.c" "$REPO/src/common/net/mqtt_ha.c"; then
         "$WORK/mqtt_unit" >"$WORK/mqtt_unit.out" 2>&1 || true
         check "MQTT module unit test passes (config, golden payloads, fuzz, reconnect, no secret in the log)" grep -q 'rot2k mqtt unit: 0 failed' "$WORK/mqtt_unit.out"
         grep 'FAIL' "$WORK/mqtt_unit.out" || true
@@ -1535,7 +1634,7 @@ if command -v cc >/dev/null 2>&1; then
     NT_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe2" - 2>/dev/null; then NT_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # NT_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g -pthread $NT_SAN -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/night_unit" "$REPO/tests/rot2k_night_unit.c" "$FW/app/akam2k_pin.c" "$FW/app/akam2k_ircut.c" "$FW/app/akam2k_image.c" "$FW/app/akam2k_night.c" "$REPO/src/common/logic/night_logic.c" "$REPO/src/common/logic/cfg_file.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -pthread $NT_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/night_unit" "$REPO/tests/rot2k_night_unit.c" "$FW/app/akam2k_pin.c" "$FW/app/akam2k_ircut.c" "$FW/app/akam2k_image.c" "$FW/app/akam2k_night.c" "$REPO/src/common/logic/night_logic.c" "$REPO/src/common/logic/cfg_file.c"; then
         "$WORK/night_unit" >"$WORK/night_unit.out" 2>&1 || true
         check "day/night and image unit test passes" grep -q 'rot2k night unit: 0 failed' "$WORK/night_unit.out"
         grep 'FAIL' "$WORK/night_unit.out" || true
@@ -1550,7 +1649,7 @@ if command -v cc >/dev/null 2>&1; then
     SY_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe4" - 2>/dev/null; then SY_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # SY_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $SY_SAN -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/sys_unit" "$REPO/tests/rot2k_sys_unit.c" "$FW/app/hal_sys.c" "$FW/app/akam2k_mqttcfg.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/mqtt_ha.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $SY_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/sys_unit" "$REPO/tests/rot2k_sys_unit.c" "$REPO/src/common/logic/hal_sys.c" "$FW/app/akam2k_mqttcfg.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/mqtt_ha.c"; then
         "$WORK/sys_unit" >"$WORK/sys_unit.out" 2>&1 || true
         check "sys unit test passes (cpu/load/mem/uptime/wifi parsers, fixtures, absent values, MQTT diagnostic sensors)" grep -q 'rot2k sys unit: 0 failed' "$WORK/sys_unit.out"
         grep 'FAIL' "$WORK/sys_unit.out" || true
@@ -1565,7 +1664,7 @@ if command -v cc >/dev/null 2>&1; then
     LD_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe5" - 2>/dev/null; then LD_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # LD_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $LD_SAN -pthread -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/led_unit" "$REPO/tests/rot2k_led_unit.c" "$FW/app/akam2k_leds.c" "$FW/app/light_logic.c" "$FW/app/akam2k_hal.c" "$FW/app/hal_sys.c" "$FW/app/akam2k_mqttcfg.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/mqtt_ha.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $LD_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/led_unit" "$REPO/tests/rot2k_led_unit.c" "$FW/app/akam2k_leds.c" "$REPO/src/common/logic/led_pat.c" "$REPO/src/common/logic/light_logic.c" "$FW/app/akam2k_hal.c" "$REPO/src/common/logic/hal_sys.c" "$FW/app/akam2k_mqttcfg.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/mqtt_ha.c"; then
         "$WORK/led_unit" >"$WORK/led_unit.out" 2>&1 || true
         check "status LED unit test passes (patterns, timing, rule priority, engine, route parser, select / text discovery and command parsing)" grep -q 'rot2k led unit: 0 failed' "$WORK/led_unit.out"
         grep 'FAIL' "$WORK/led_unit.out" || true
@@ -1580,7 +1679,7 @@ if command -v cc >/dev/null 2>&1; then
     VD_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe_vd" - 2>/dev/null; then VD_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # VD_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $VD_SAN -pthread -I"$FW/app" -o "$WORK/video_unit" "$REPO/tests/rot2k_video_unit.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_video.c" "$FW/app/akam2k_store.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $VD_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/video_unit" "$REPO/tests/rot2k_video_unit.c" "$FW/app/akam2k_vidcfg.c" "$FW/app/akam2k_video.c" "$FW/app/akam2k_store.c"; then
         "$WORK/video_unit" >"$WORK/video_unit.out" 2>&1 || true
         check "video unit test passes (defaults unchanged, per-stream ranges, strict parsing, runtime file, pending / applied / refused)" grep -q 'rot2k video unit: 0 failed' "$WORK/video_unit.out"
         grep 'FAIL' "$WORK/video_unit.out" || true
@@ -1595,7 +1694,7 @@ if command -v cc >/dev/null 2>&1; then
     VL_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe_vl" - 2>/dev/null; then VL_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # VL_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $VL_SAN -I"$FW/app" -o "$WORK/vlive_unit" "$REPO/tests/rot2k_vlive_unit.c" "$FW/app/akam2k_vlive.c" "$FW/app/akam2k_vidcfg.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $VL_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/vlive_unit" "$REPO/tests/rot2k_vlive_unit.c" "$FW/app/akam2k_vlive.c" "$FW/app/akam2k_vidcfg.c"; then
         "$WORK/vlive_unit" >"$WORK/vlive_unit.out" 2>&1 || true
         check "live video unit test passes (set_fps / set_qp / get+set_attr / set_rc_type, refusal = re-open + setter off, video_live=0, hook commands)" grep -q 'rot2k vlive unit: 0 failed' "$WORK/vlive_unit.out"
         grep 'FAIL' "$WORK/vlive_unit.out" || true
@@ -1610,14 +1709,14 @@ if command -v cc >/dev/null 2>&1; then
     BT_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe_bt" - 2>/dev/null; then BT_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # BT_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -o "$WORK/button_unit" "$REPO/tests/rot2k_button_unit.c" "$FW/app/hal_input.c" "$FW/app/hal_input_sysfs.c" "$FW/app/button_logic.c" "$FW/app/akam2k_pin.c" "$FW/app/akam2k_hal.c" "$FW/app/akam2k_leds.c" "$FW/app/light_logic.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/button_unit" "$REPO/tests/rot2k_button_unit.c" "$REPO/src/common/logic/hal_input.c" "$FW/app/hal_input_sysfs.c" "$REPO/src/common/logic/button_gesture.c" "$REPO/src/common/logic/button_cfg.c" "$REPO/src/common/logic/button_logic.c" "$FW/app/akam2k_buttonrt.c" "$FW/app/akam2k_store.c" "$REPO/src/common/api/json_min.c" "$REPO/src/common/api/api_events.c" "$FW/app/akam2k_pin.c" "$FW/app/akam2k_hal.c" "$FW/app/akam2k_leds.c" "$REPO/src/common/logic/led_pat.c" "$REPO/src/common/logic/light_logic.c"; then
         "$WORK/button_unit" >"$WORK/button_unit.out" 2>&1 || true
-        check "button unit test passes (debounce 50 ms, short < 1 s, long >= button_long_ms, dead zone, hold cue, ignored during calibration, held at start, input pin read-only on a fake gpio dir, LED override)" grep -q 'rot2k button unit: 0 failed' "$WORK/button_unit.out"
+        check "button unit test passes (debounce, gesture engine timing tables incl. noise and overlapping sequences, action whitelist, modes, dispatch with fake ops, defaults identical, persistence only on change, HTTP handlers, dead zone, hold cue, calibration lock, held at start, input pin read-only on a fake gpio dir, LED override)" grep -q 'rot2k button unit: 0 failed' "$WORK/button_unit.out"
         grep 'FAIL' "$WORK/button_unit.out" || true
     else
         ko "button unit test does not compile"
     fi
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -I"$FW/app" -o "$WORK/track_unit" "$REPO/tests/rot2k_track_unit.c" "$FW/app/track_logic.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/track_unit" "$REPO/tests/rot2k_track_unit.c" "$FW/app/track_logic.c"; then
         if "$WORK/track_unit" >"$WORK/track_unit.out" 2>&1; then
             ok "track_logic unit test passes (pure policy: dead band, sticky target, rate limit, soft range, home after loss)"
         else
@@ -1628,7 +1727,7 @@ if command -v cc >/dev/null 2>&1; then
         ko "track_logic unit test does not compile"
     fi
     # shellcheck disable=SC2086
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -o "$WORK/track_wire_unit" "$REPO/tests/rot2k_track_wire_unit.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/track_wire_unit" "$REPO/tests/rot2k_track_wire_unit.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c"; then
         "$WORK/track_wire_unit" >"$WORK/track_wire_unit.out" 2>&1 || true
         check "tracking wiring unit test passes (sign mapping, off by default, never parked / calibrating / unknown / privacy, home after loss, named areas: parse, overlap, enable, clip, corners, persistence)" grep -q 'rot2k track wire unit: 0 failed' "$WORK/track_wire_unit.out"
         grep 'FAIL' "$WORK/track_wire_unit.out" || true
@@ -1636,15 +1735,52 @@ if command -v cc >/dev/null 2>&1; then
         ko "tracking wiring unit test does not compile"
     fi
     # shellcheck disable=SC2086
-    if cc -Wall -Wextra -Werror -std=gnu99 -g -O1 $BT_SAN -pthread -I"$FW/app" -o "$WORK/track_sim" "$REPO/tests/rot2k_track_sim.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c" -lm; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -O1 $BT_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/track_sim" "$REPO/tests/rot2k_track_sim.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c" -lm; then
         "$WORK/track_sim" >"$WORK/track_sim.out" 2>&1 || true
         check "tracking simulation passes (walking person, constant / stop-and-go / reversal / dropouts, fake PTZ with realistic motion time: in frame up to 300 steps/s, no oscillation, return stay / home, soft range and rate limit kept)" grep -q 'rot2k track sim: 0 failed' "$WORK/track_sim.out"
         grep 'FAIL' "$WORK/track_sim.out" || true
     else
         ko "tracking simulation does not compile"
     fi
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/track_cont_unit" "$REPO/tests/rot2k_track_cont_unit.c" "$FW/app/track_logic.c" -lm; then
+        "$WORK/track_cont_unit" >"$WORK/track_cont_unit.out" 2>&1 || true
+        check "tracking policy unit test passes (comfort zone and hysteresis, body / head reference, outlier boxes, robust velocity, 3D state near / far consistency, continuous command, sweep back after an overshoot, replays of two hardware logs)" grep -q 'rot2k track cont unit: 0 failed' "$WORK/track_cont_unit.out"
+        grep 'FAIL' "$WORK/track_cont_unit.out" || true
+    else
+        ko "tracking policy unit test does not compile"
+    fi
     # shellcheck disable=SC2086
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -o "$WORK/zlive_unit" "$REPO/tests/rot2k_zlive_unit.c" "$FW/app/akam2k_zones.c" "$FW/app/akam2k_zlive.c" "$FW/app/akam2k_store.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -O1 $BT_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/track_cont_sim" "$REPO/tests/rot2k_track_cont_sim.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c" -lm; then
+        "$WORK/track_cont_sim" >"$WORK/track_cont_sim.out" 2>&1 || true
+        check "tracking motion simulation passes (DEV vs STEPS vs CONT: walkers 0.5-1.5 m/s at 1-4 m, crouch / stand, approach, occlusion, two people crossing, feints and sprints never leave the frame, overshoot search)" grep -q 'rot2k track cont sim: 0 failed' "$WORK/track_cont_sim.out"
+        grep 'FAIL' "$WORK/track_cont_sim.out" || true
+    else
+        ko "tracking motion simulation does not compile"
+    fi
+    python3 -I "$REPO/tests/rot2k_track_lagfit_test.py" >"$WORK/track_lagfit.out" 2>&1 || true
+    check "tools/track_lagfit test passes (known lag / gains of synthetic sweeps are recovered, a static recording is refused)" grep -q 'rot2k track lagfit test: 0 failed' "$WORK/track_lagfit.out"
+    grep 'FAIL' "$WORK/track_lagfit.out" || true
+    # the raw recorder (track_debug=2) and the replay of recordings (tests/fixtures/track: the hardware logs of the continuous replays)
+    # shellcheck disable=SC2086
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -I"$FW/app" -o "$WORK/track_replay" "$REPO/tests/rot2k_track_replay.c" "$FW/app/track_logic.c" -lm; then
+        rp_ok=1
+        for fx in "$REPO"/tests/fixtures/track/*.raw; do
+            "$WORK/track_replay" --twice --heads -q "$fx" >"$WORK/track_replay.out" 2>&1 || { rp_ok=0; echo "replay of $fx failed:"; cat "$WORK/track_replay.out"; }
+        done
+        check "track replay: every fixture (hardware logs) replays deterministically, with its expectations, and head boxes added change no decision" test "$rp_ok" = 1
+    else
+        ko "track replay tool does not compile"
+    fi
+    # shellcheck disable=SC2086
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/track_rec_unit" "$REPO/tests/rot2k_track_rec_unit.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c" -lm; then
+        "$WORK/track_rec_unit" >"$WORK/track_rec_unit.out" 2>&1 || true
+        check "track raw recorder unit test passes (I / R / C / D lines, rolling bound, the replay decides like the live tracker)" grep -q 'rot2k track rec unit: 0 failed' "$WORK/track_rec_unit.out"
+        grep 'FAIL' "$WORK/track_rec_unit.out" || true
+    else
+        ko "track raw recorder unit test does not compile"
+    fi
+    # shellcheck disable=SC2086
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/zlive_unit" "$REPO/tests/rot2k_zlive_unit.c" "$FW/app/akam2k_zones.c" "$FW/app/akam2k_zlive.c" "$FW/app/akam2k_store.c"; then
         "$WORK/zlive_unit" >"$WORK/zlive_unit.out" 2>&1 || true
         check "live zones unit test passes (ignore rectangles, text forms, persistence, runtime file wins, applies at home only, atomic store)" grep -q 'rot2k zlive unit: 0 failed' "$WORK/zlive_unit.out"
         grep 'FAIL' "$WORK/zlive_unit.out" || true
@@ -1658,16 +1794,16 @@ echo "== hal_light (C unit test of the portable light logic with a fake driver, 
 if command -v cc >/dev/null 2>&1; then
     LT_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe3" - 2>/dev/null; then LT_SAN="-fsanitize=address,undefined"; fi
-    LT_SRC=("$FW/app/light_logic.c" "$FW/app/hal_light_sysfs.c" "$FW/app/akam2k_hal.c" "$FW/app/akam2k_pin.c")
+    LT_SRC=("$REPO/src/common/logic/light_logic.c" "$FW/app/hal_light_sysfs.c" "$FW/app/akam2k_hal.c" "$FW/app/akam2k_pin.c")
     # shellcheck disable=SC2086  # LT_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $LT_SAN -I"$FW/app" -o "$WORK/light_unit" "$REPO/tests/rot2k_light_unit.c" "${LT_SRC[@]}"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $LT_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/light_unit" "$REPO/tests/rot2k_light_unit.c" "${LT_SRC[@]}"; then
         "$WORK/light_unit" >"$WORK/light_unit.out" 2>&1 || true
         check "light unit test passes (on/off, blink 1 Hz / 0.5 Hz, 2K descriptor ir + blue, pin whitelist refuses 22 / 49 / 55, sysfs drivers)" grep -q 'rot2k light unit: 0 failed' "$WORK/light_unit.out"
         grep 'FAIL' "$WORK/light_unit.out" || true
     else
         ko "light unit test does not compile"
     fi
-    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/app" -o "$WORK/led_host" "$FW/app/akam2k_led.c" "${LT_SRC[@]}"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/led_host" "$FW/app/akam2k_led.c" "${LT_SRC[@]}"; then
         ok "akam2k_led compiles clean on the host"
         check "akam2k_led: 'ir' is refused without --force (exit 2) before any file is touched" test "$("$WORK/led_host" ir on >/dev/null 2>&1; echo $?)" = 2
         check "akam2k_led: usage errors exit 2 (no args, unknown light, unknown mode, ir-cut pin names, --secs 0 and 61)" test "$("$WORK/led_host" >/dev/null 2>&1; echo $?)$("$WORK/led_host" nope on >/dev/null 2>&1; echo $?)$("$WORK/led_host" white dim >/dev/null 2>&1; echo $?)$("$WORK/led_host" ircut on >/dev/null 2>&1; echo $?)$("$WORK/led_host" --secs 0 white blink-fast >/dev/null 2>&1; echo $?)$("$WORK/led_host" --secs 61 white blink-fast >/dev/null 2>&1; echo $?)" = 222222
@@ -1682,8 +1818,8 @@ check "the shared day/night policy is compiled from src/ak_rtsp, not copied: no 
 
 echo "== akam2k_rtsp detection thread ending (stubbed vendor calls: disable chn 16, else drain it)"
     # The ABI size asserts describe the 32-bit camera ABI: neutered for this host build, the ARM build keeps them.
-    if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/detect_thread" \
-        "$REPO/tests/rot2k_detect_thread_test.c" "$FW/app/akam2k_detect.c" "$FW/app/akam2k_detstate.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/rtp_clock.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/detect_thread" \
+        "$REPO/tests/rot2k_detect_thread_test.c" "$FW/app/akam2k_detect.c" "$FW/app/akam2k_detstate.c" "$FW/app/akam2k_detpub.c" "$REPO/src/common/api/api_events.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/rtp_clock.c"; then
         for m in ok refused stopping; do
             "$WORK/detect_thread" $m >"$WORK/detect_thread.$m.out" 2>&1 || true
             check "detection thread end ($m) passes" grep -q "rot2k detect thread ($m): 0 failed" "$WORK/detect_thread.$m.out"
@@ -1693,8 +1829,8 @@ echo "== akam2k_rtsp detection thread ending (stubbed vendor calls: disable chn 
         ko "detection thread test does not compile"
     fi
     echo "== akam2k_rtsp detection frame choice (stubbed vendor calls: newest frame of the chn 16 queue)"
-    if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/detect_fresh" \
-        "$REPO/tests/rot2k_detect_fresh_test.c" "$FW/app/akam2k_detect.c" "$FW/app/akam2k_detstate.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/rtp_clock.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/detect_fresh" \
+        "$REPO/tests/rot2k_detect_fresh_test.c" "$FW/app/akam2k_detect.c" "$FW/app/akam2k_detstate.c" "$FW/app/akam2k_detpub.c" "$REPO/src/common/api/api_events.c" "$FW/app/akam2k_zones.c" "$REPO/src/common/net/rtp_clock.c"; then
         "$WORK/detect_fresh" >"$WORK/detect_fresh.out" 2>&1 || true
         check "detection newest-frame test passes" grep -q 'rot2k detect fresh: 0 failed' "$WORK/detect_fresh.out"
         grep 'FAIL' "$WORK/detect_fresh.out" || true
@@ -1841,7 +1977,7 @@ check "app C sources: poc0, poc2, poc4 and the akam2k_rtsp sources present" test
 # (the outbound MQTT client) is the ONLY app file that may connect() (and it may not listen); both may create a socket; no
 # app file may use datagram sockets (sendto/recvfrom).
 APP_NET=akam2k_rtsp.c
-# The local control API server (akam2k_httpd.c, specs/control-api.md 4.1) is the second and last file that may create a socket, bind, listen and accept (one
+# The local control API server (src/common/api/api_httpd.c since the 1080p shares it, specs/control-api.md 4.1; not scanned here any more, it is no app file) is the second and last file that may create a socket, bind, listen and accept (one
 # listener, only while an API key exists); it may not connect(), and it never uses datagram sockets.
 APP_NET2=akam2k_httpd.c
 APP_CONNECT=akam2k_mqtt.c
@@ -1925,12 +2061,12 @@ check "ptz: hal_ptz.c reuses the validated safe-motion layer (one include of ptz
 check "ptz: the calibration sends only the directional commands (ptzs_send_move, command words from the descriptor, never a 9 / 10 / 12 literal) and the descriptor refuses a word above 7" test "$(strip_c_comments "$HP" | grep -c -E 'buf\[0\] = (8|9|10|11|12)\b|ptzs_send_move\(x, (8|9|1[0-2])\b')" = 0 -a "$(strip_c_comments "$HP" | grep -c -E 'd->dir\[i\] > 7')" = 1
 check "ptz: the two init request tokens are in hal_ptz.c (the engine) and the tool, and in no other app file" test "$(grep -rlE '0x40100c03u|0x40280c04u' "$FW/app" | sed 's|.*/||' | tr '\n' ' ')" = "hal_ptz.c "
 check "ptz: the driver opens exactly one file with open() (the descriptor's node, O_RDWR), renames one temp file onto the target, unlinks only that temp file" test "$(strip_c_comments "$HD" | grep -c -E '(^|[^_a-zA-Z0-9])open\(')" = 1 -a "$(strip_c_comments "$HD" | grep -c 'open(g_dev, O_RDWR)')" = 1 -a "$(strip_c_comments "$HD" | grep -c -E '\brename\(')" = 1 -a "$(strip_c_comments "$HD" | grep -c -E '\bunlink\(tmp\)')" = 2 -a "$(strip_c_comments "$HD" | grep -c -E '\bunlink\(')" = 2
-check "ptz: only akam2k_ptz.c, akam2k_main.c, akam2k_rtsp.c, akam2k_mqtt*.c, the 2K binding and the button / tracking / zones wiring (button, detect, track, zlive) and the API settings table (akam2k_settings.c: ptz.* state rows and actions) know the PTZ controller or its entities" test "$(grep -lE 'hal_ptz_|a2k_ptz_|akam2k_ptz\.h' "$FW"/app/*.c "$FW"/app/*.h | sed 's|.*/||' | LC_ALL=C sort | tr '\n' ' ')" = "akam2k_button.c akam2k_button.h akam2k_detect.c akam2k_hal.h akam2k_main.c akam2k_mqtt.h akam2k_mqttcfg.h akam2k_ptz.c akam2k_ptz.h akam2k_ptz_desc.c akam2k_rtsp.c akam2k_scene.c akam2k_scene.h akam2k_settings.c akam2k_track.c akam2k_track.h akam2k_track_run.c akam2k_track_run.h akam2k_zlive.h hal_ptz.c hal_ptz.h hal_ptz_drv.c "
+check "ptz: only akam2k_ptz.c, akam2k_main.c, akam2k_rtsp.c, akam2k_mqtt*.c, the 2K binding and the button / tracking / zones wiring (button, detect, track, zlive) and the API settings table (akam2k_settings.c: ptz.* state rows and actions) know the PTZ controller or its entities" test "$(grep -lE 'hal_ptz_|a2k_ptz_|akam2k_ptz\.h' "$FW"/app/*.c "$FW"/app/*.h | sed 's|.*/||' | LC_ALL=C sort | tr '\n' ' ')" = "akam2k_button.c akam2k_button.h akam2k_detect.c akam2k_hal.h akam2k_main.c akam2k_mqtt.h akam2k_mqttcfg.h akam2k_patrol.c akam2k_patrol.h akam2k_patrol_run.c akam2k_ptz.c akam2k_ptz.h akam2k_ptz_desc.c akam2k_rtsp.c akam2k_scene.c akam2k_scene.h akam2k_settings.c akam2k_track.c akam2k_track.h akam2k_track_run.c akam2k_track_run.h akam2k_zlive.h hal_ptz.c hal_ptz.h hal_ptz_drv.c "
 check "ptz: the privacy hook is one read in the video path (send_video_frame) and the video path calls nothing else of the controller" test "$(grep -c 'a2k_ptz_' "$FW/app/akam2k_rtsp.c")" = 1 -a "$(grep -c 'a2k_ptz_privacy_active()' "$FW/app/akam2k_rtsp.c")" = 1
 check "ptz: akam2k_main.c stops the controller after MQTT (no command reaches the motor while it stops) and before the capture" bash -c "m=\$(grep -n '^    a2k_mqtt_stop();' '$FW/app/akam2k_main.c' | cut -d: -f1); p=\$(grep -n '^    a2k_ptz_stop();' '$FW/app/akam2k_main.c' | cut -d: -f1); c=\$(grep -n '^    a2k_cap_stop();' '$FW/app/akam2k_main.c' | tail -n1 | cut -d: -f1); test -n \"\$m\" && test \"\$m\" -lt \"\$p\" && test \"\$p\" -lt \"\$c\""
 check "ptz: the defaults are calibration auto and privacy off (opt-in), the park is the descriptor's" test "$(grep -c -E 'c->cal = HAL_PTZ_CAL_AUTO;|c->park_pan = c->park_tilt = -1;|c->privacy = 0;' "$FW/app/akam2k_ptz.c")" = 3
 check "button / tracking: tracking is off by default (track=0), the button thread stops right after MQTT and before the LED and day/night stops (the pin files close there)" bash -c "grep -q 'int ptz_on = 0, track_on = 0' '$FW/app/akam2k_main.c' && m=\$(grep -n '^    a2k_mqtt_stop();' '$FW/app/akam2k_main.c' | cut -d: -f1) && b=\$(grep -n '^    a2k_button_stop();' '$FW/app/akam2k_main.c' | cut -d: -f1) && n=\$(grep -n '^    a2k_night_stop();' '$FW/app/akam2k_main.c' | cut -d: -f1) && test -n \"\$m\" && test -n \"\$b\" && test \"\$m\" -lt \"\$b\" && test \"\$b\" -lt \"\$n\""
-check "button / tracking: only akam2k_pin.c reads the button line, through hal_input; the button file names neither a pin number nor a path" test -z "$(grep -n -E '\\b71\\b|/sys/|/dev/|a2k_pin_' "$FW/app/akam2k_button.c" "$FW/app/button_logic.c" "$FW/app/hal_input.c" "$FW/app/akam2k_track.c" "$FW/app/akam2k_track_run.c" "$FW/app/akam2k_zlive.c" || true)"
+check "button / tracking: only akam2k_pin.c reads the button line, through hal_input; the button file names neither a pin number nor a path" test -z "$(grep -n -E '\\b71\\b|/sys/|/dev/|a2k_pin_' "$FW/app/akam2k_button.c" "$REPO/src/common/logic/button_logic.c" "$REPO/src/common/logic/hal_input.c" "$FW/app/akam2k_track.c" "$FW/app/akam2k_track_run.c" "$FW/app/akam2k_zlive.c" || true)"
 check "zones / tracking: the runtime files are the fixed /config/akam/zones and /config/akam/track_areas, and only the detection state writer, the snapshot ring, the settings store and the motor driver rename()" test "$(grep -c -E '#define A2K_STORE_(ZONES|TRACK) A2K_STORE_DIR \"/(zones|track_areas)\"' "$FW/app/akam2k_store.h")" = 2 -a "$(grep -l 'rename(' "$FW"/app/*.c | sed 's|.*/||' | LC_ALL=C sort | tr '\n' ' ')" = "akam2k_detstate.c akam2k_snap.c akam2k_store.c hal_ptz_drv.c "
 
 # akam2k_sntp (../sntp, not under app/: it is the one tool that may open a datagram socket): no file at all, no
@@ -1956,13 +2092,13 @@ check "day/night: only akam2k_ircut.c drives the pins (a2k_pin_open / a2k_pin_se
 check "day/night: the IR-cut pulse is the stock's 300 ms and both coil pins are released (constants)" bash -c "grep -q '#define A2K_IRCUT_PULSE_MS 300' '$FW/app/akam2k_ircut.h' && grep -q 'A2K_IRCUT_DAY_PIN A2K_PIN_IRCUT_P' '$FW/app/akam2k_ircut.h' && grep -q 'A2K_IRCUT_NIGHT_PIN A2K_PIN_IRCUT_M' '$FW/app/akam2k_ircut.h'"
 check "day/night: the crash and timeout handlers release the coil (async-signal-safe), main stops the engine before the capture" bash -c "test \"\$(grep -c 'a2k_pin_emergency_low();' '$FW/app/akam2k_main.c')\" = 2 && a=\$(grep -n '^    a2k_night_stop();' '$FW/app/akam2k_main.c' | cut -d: -f1) && c=\$(grep -n '^    a2k_cap_stop();' '$FW/app/akam2k_main.c' | tail -n1 | cut -d: -f1) && test -n \"\$a\" && test \"\$a\" -lt \"\$c\""
 check "vendor calls of the day/night and image modules live in akam2k_cap.c only (no ak_ call in the pin, ircut, image, night files)" test -z "$(grep -l -E '\bak_[a-z_0-9]+[[:space:]]*\(' "$FW/app/akam2k_pin.c" "$FW/app/akam2k_ircut.c" "$FW/app/akam2k_image.c" "$FW/app/akam2k_night.c" "$FW/app/akam2k_night_run.c" || true)"
-LL=$FW/app/light_logic.c
+LL=$REPO/src/common/logic/light_logic.c
 LD=$FW/app/hal_light_sysfs.c
 LT=$FW/app/akam2k_led.c
 LB=$FW/app/akam2k_hal.c
-check "hal_light: the portable files carry no model prefix and no vendor call (hal_light.h, light_logic.c/.h)" test -f "$FW/app/hal_light.h" -a -f "$LL" -a -f "$FW/app/light_logic.h" -a -z "$(grep -l -E '\bak_[a-z_0-9]+[[:space:]]*\(' "$LL" "$LD" "$LT" "$LB" || true)"
+check "hal_light: the portable files carry no model prefix and no vendor call (hal_light.h, light_logic.c/.h)" test -f "$REPO/src/common/logic/hal_light.h" -a -f "$LL" -a -f "$REPO/src/common/logic/light_logic.h" -a -z "$(grep -l -E '\bak_[a-z_0-9]+[[:space:]]*\(' "$LL" "$LD" "$LT" "$LB" || true)"
 check "hal_light: the pure logic includes no system header but string.h and does no I/O, no clock, no pin call" test "$(strip_c_comments "$LL" | grep -E '^#include' | sort -u | tr '\n' ' ')" = '#include "light_logic.h" #include <string.h> ' -a -z "$(strip_c_comments "$LL" | grep -E '\bopen|\bwrite|\bread[[:space:]]*\(|printf|a2k_pin|clock_gettime|time[[:space:]]*\(' || true)"
-check "hal_light: no pin number or sysfs path outside the descriptor binding (logic, driver, tool, interface hold none)" test -z "$({ strip_c_comments "$LL"; strip_c_comments "$LD"; strip_c_comments "$LT"; strip_c_comments "$FW/app/hal_light.h"; strip_c_comments "$FW/app/light_logic.h"; } | grep -E '/sys/|/dev/|(^|[^0-9A-Za-z_.])(9|10|22|24|25|48|49|50|55|56|71)([^0-9A-Za-z_.]|$)' || true)"
+check "hal_light: no pin number or sysfs path outside the descriptor binding (logic, driver, tool, interface hold none)" test -z "$({ strip_c_comments "$LL"; strip_c_comments "$LD"; strip_c_comments "$LT"; strip_c_comments "$REPO/src/common/logic/hal_light.h"; strip_c_comments "$REPO/src/common/logic/light_logic.h"; } | grep -E '/sys/|/dev/|(^|[^0-9A-Za-z_.])(9|10|22|24|25|48|49|50|55|56|71)([^0-9A-Za-z_.]|$)' || true)"
 check "hal_light: the 2K binding takes its pin numbers from the akam2k_pin.h macros and holds no IR-cut pin and no literal number" test -z "$(strip_c_comments "$LB" | grep -E '[^A-Za-z_0-9][0-9]{2,}[^A-Za-z_0-9]|IRCUT' || true)"
 check "hal_light: the 2K descriptor is ir=48, blue=56, both active high, no exclusion, no white / alarm" bash -c "grep -q '\"ir\", LIGHT_GPIO, A2K_PIN_IRLED, 1' '$LB' && grep -q '\"blue\", LIGHT_GPIO, A2K_PIN_BLUE, 1' '$LB' && ! grep -q -w -E 'WHITE|ALARM|white|alarm' '$LB' && grep -q 'A2K_PIN_BLUE 56' '$PH' && ! grep -q -E 'A2K_PIN_(WHITE|ALARM)' '$PH'"
 check "hal_light: the sysfs driver opens write-only, never creates, builds only <led_dir>/trigger and <led_dir>/brightness" test "$(strip_c_comments "$LD" | grep -c 'open(path, O_WRONLY | O_CLOEXEC)')" = 1 -a "$(strip_c_comments "$LD" | grep -o -E '"[^"]*"' | LC_ALL=C sort -u | tr '\n' ' ')" = '"%s/brightness" "%s/trigger" "0" "1" "akam2k_pin.h" "hal_light.h" "none" ' -a -z "$(strip_c_comments "$LD" | grep -E 'O_CREAT|O_TRUNC|O_RDWR|mmap|ioctl' || true)"
@@ -2049,11 +2185,11 @@ if [ -x "$XCC" ]; then
     # PoC-3 (akam2k_rtsp): the shared headers come from src/ak_rtsp, the RTSP file also needs SmolRTSP (a fetched,
     # untracked dependency: skipped when it is not there).
     for f in akam2k_main akam2k_cap akam2k_stream akam2k_detect akam2k_detstate akam2k_mqtt akam2k_mqttcfg akam2k_zones akam2k_snap akam2k_pin akam2k_ircut akam2k_image akam2k_night akam2k_night_run; do
-        check "$f.c compiles clean for ARM" "$XCC" -std=gnu99 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" "$FW/app/$f.c"
+        check "$f.c compiles clean for ARM" "$XCC" -std=gnu99 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" "$FW/app/$f.c"
     done
     SMOL=${SMOLRTSP:-$REPO/src/smolrtsp}
     if [ -d "$SMOL/build/_deps" ]; then
-        check "akam2k_rtsp.c compiles clean for ARM" "$XCC" -std=gnu99 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -I"$SMOL/include" -I"$SMOL/build/_deps/slice99-src" -I"$SMOL/build/_deps/datatype99-src" -I"$SMOL/build/_deps/interface99-src" -I"$SMOL/build/_deps/metalang99-src/include" -DSMOLRTSP_WITH_H264 "$FW/app/akam2k_rtsp.c"
+        check "akam2k_rtsp.c compiles clean for ARM" "$XCC" -std=gnu99 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$SMOL/include" -I"$SMOL/build/_deps/slice99-src" -I"$SMOL/build/_deps/datatype99-src" -I"$SMOL/build/_deps/interface99-src" -I"$SMOL/build/_deps/metalang99-src/include" -DSMOLRTSP_WITH_H264 "$FW/app/akam2k_rtsp.c"
     else
         echo "  skip - no SmolRTSP checkout: ARM syntax check of akam2k_rtsp.c"
     fi
@@ -2085,10 +2221,17 @@ if command -v cc >/dev/null 2>&1; then
     HP_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe2" - 2>/dev/null; then HP_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -I"$FW/app" -o "$WORK/hal_ptz_unit" "$REPO/tests/rot2k_hal_ptz_unit.c" "$FW/app/hal_ptz.c" "$FW/app/hal_ptz_drv.c" "$FW/app/akam2k_ptz.c" "$FW/app/akam2k_ptz_desc.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/hal_ptz_unit" "$REPO/tests/rot2k_hal_ptz_unit.c" "$FW/app/hal_ptz.c" "$FW/app/hal_ptz_drv.c" "$FW/app/akam2k_ptz.c" "$FW/app/akam2k_ptz_desc.c" "$FW/app/akam2k_patrol.c" "$FW/app/ptz_patrol.c"; then
         "$WORK/hal_ptz_unit" >"$WORK/hal_ptz_unit.out" 2>&1 || true
         check "hal_ptz unit test passes" grep -q 'rot2k hal_ptz unit: 0 failed' "$WORK/hal_ptz_unit.out"
         grep 'FAIL' "$WORK/hal_ptz_unit.out" || true
+        if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/ptz_cont_unit" "$REPO/tests/rot2k_ptz_cont_unit.c" "$FW/app/hal_ptz.c" "$FW/app/hal_ptz_drv.c" "$FW/app/akam2k_ptz.c" "$FW/app/akam2k_ptz_desc.c"; then
+            "$WORK/ptz_cont_unit" >"$WORK/ptz_cont_unit.out" 2>&1 || true
+            check "continuous motion unit test passes (safe layer + HAL session + controller thread on a fake driver: lease, retarget without a stop, soft range per axis, stall / wrong way / uncommanded axis, cancel, manual preemption, position history)" grep -q 'rot2k ptz cont unit: 0 failed' "$WORK/ptz_cont_unit.out"
+            grep 'FAIL' "$WORK/ptz_cont_unit.out" || true
+        else
+            ko "continuous motion unit test does not compile"
+        fi
     else
         ko "hal_ptz unit test does not compile"
     fi
@@ -2096,10 +2239,37 @@ else
     echo "  skip - no host C compiler: hal_ptz unit test"
 fi
 
+echo "== PTZ patrol (specs/ptz-patrol.md): pure engine unit test + fuzz, binding core on a fake motor, the real tracker core, flash policy"
+if command -v cc >/dev/null 2>&1; then
+    PP_SAN=""
+    if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe_pp" - 2>/dev/null; then PP_SAN="-fsanitize=address,undefined -fno-sanitize-recover=all"; fi
+    # shellcheck disable=SC2086  # PP_SAN is empty or flags
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -O1 $PP_SAN -o "$WORK/ptz_patrol_unit" "$REPO/tests/rot2k_ptz_patrol_unit.c" "$FW/app/ptz_patrol.c"; then
+        "$WORK/ptz_patrol_unit" >"$WORK/ptz_patrol_unit.out" 2>&1 || true
+        check "ptz_patrol unit test passes (model and limits, sweep / raster expansion, text and JSON forms, fuzz, run sequences with a simulated motor: dwell timing, loop / pingpong / once, preemption and resume, stop conditions, failed moves, clamping)" grep -q 'rot2k ptz_patrol unit: 0 failed' "$WORK/ptz_patrol_unit.out"
+        grep 'FAIL' "$WORK/ptz_patrol_unit.out" || true
+    else
+        ko "ptz_patrol unit test does not compile"
+    fi
+    # shellcheck disable=SC2086
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -O1 $PP_SAN -pthread -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -o "$WORK/patrol_wire_unit" "$REPO/tests/rot2k_patrol_wire_unit.c" "$FW/app/akam2k_patrol.c" "$FW/app/ptz_patrol.c" "$FW/app/akam2k_track.c" "$FW/app/track_logic.c" "$FW/app/akam2k_store.c"; then
+        "$WORK/patrol_wire_unit" >"$WORK/patrol_wire_unit.out" 2>&1 || true
+        check "patrol wiring unit test passes (off by default, one flash write per config change and none while patrolling, write limiter, priorities, tracker pause / resume with the real tracker core, idle trigger, thread)" grep -q 'rot2k patrol wire unit: 0 failed' "$WORK/patrol_wire_unit.out"
+        grep 'FAIL' "$WORK/patrol_wire_unit.out" || true
+    else
+        ko "patrol wiring unit test does not compile"
+    fi
+    check "ptz_patrol.c is pure: no hardware, driver, file, thread or clock call" bash -c "! grep -En 'hal_ptz|a2k_ptz|akam2k_|pthread|fopen|open\\(|ioctl|clock_gettime|time\\(' '$FW/app/ptz_patrol.c' '$FW/app/ptz_patrol.h' | grep -v '^[^:]*:[0-9]*:.*\\*'"
+    check "the patrol never calls a driver: its core talks to the motor only through the ops table (no hal_ptz_ or ioctl in akam2k_patrol.c)" bash -c "! grep -En 'hal_ptz_|ioctl|a2k_ptz_(command|nudge|goto|patrol_goto)' '$FW/app/akam2k_patrol.c'"
+    check "the patrol writes its config only through the store (no fopen / rename in the patrol files)" bash -c "! grep -En 'fopen|rename\\(|fwrite|open\\(' '$FW/app/akam2k_patrol.c' '$FW/app/akam2k_patrol_run.c' '$FW/app/ptz_patrol.c'"
+else
+    echo "  skip - no host C compiler: patrol unit tests"
+fi
+
 echo "== scene check: unit test (synthetic scenes: identical, shifted, rotated, other scene, uniform, lighting; reference file; boot decision)"
 if command -v cc >/dev/null 2>&1; then
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -I"$FW/app" -DFIXTURE_DIR="\"$REPO/tests/fixtures/scene\"" -o "$WORK/scene_unit" "$REPO/tests/rot2k_scene_unit.c" "$FW/app/scene_check.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -DFIXTURE_DIR="\"$REPO/tests/fixtures/scene\"" -o "$WORK/scene_unit" "$REPO/tests/rot2k_scene_unit.c" "$FW/app/scene_check.c" -lm; then
         "$WORK/scene_unit" >"$WORK/scene_unit.out" 2>&1 || true
         check "scene check unit test passes" grep -q 'rot2k scene unit: 0 failed' "$WORK/scene_unit.out"
         grep 'FAIL' "$WORK/scene_unit.out" || true
@@ -2111,7 +2281,7 @@ else
 fi
 if command -v cc >/dev/null 2>&1; then
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
-    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -I"$FW/app" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/scene_glue_unit" "$REPO/tests/rot2k_scene_glue_unit.c" "$FW/app/akam2k_scene.c" "$FW/app/scene_check.c" "$FW/app/akam2k_store.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -DA2K_SCENE_TEST -I"$FW/app" -I"$REPO/src/common/logic" -I"$REPO/src/common/api" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$WORK/scene_glue_unit" "$REPO/tests/rot2k_scene_glue_unit.c" "$FW/app/akam2k_scene.c" "$FW/app/scene_check.c" "$FW/app/akam2k_store.c"; then
         "$WORK/scene_glue_unit" >"$WORK/scene_glue_unit.out" 2>&1 || true
         check "scene runtime unit test passes (two-step write, view changed during the window, boots counter, invalidation)" grep -q 'rot2k scene glue unit: 0 failed' "$WORK/scene_glue_unit.out"
         grep 'FAIL' "$WORK/scene_glue_unit.out" || true
@@ -2119,6 +2289,7 @@ if command -v cc >/dev/null 2>&1; then
         ko "scene runtime unit test does not compile"
     fi
 fi
+check "scene: the dump dir is fixed (/tmp/akam_scene_dbg) in a production build: the test-only override is under #ifdef A2K_SCENE_TEST" bash -c "grep -B1 'g_dbg_dir, sizeof g_dbg_dir, \"%s.dbg\"' '$FW/app/akam2k_scene.c' | grep -q '#ifdef A2K_SCENE_TEST'"
 check "scene: the comparison module is pure (no hardware, no file or network call) and needs no libm" test -z "$(strip_c_comments "$FW/app/scene_check.c" | grep -E 'fopen|open\(|ioctl|socket|rename|unlink|#include <math.h>' || true)"
 check "scene: the 2K enables the person-tracking pan inversion by default (measured on the camera) and keys exist for both axes" bash -c "grep -q 'track_inv_pan = 1' '$FW/app/akam2k_main.c' && grep -q 'track_inv_tilt = 0' '$FW/app/akam2k_main.c' && grep -q 'track_invert_pan) lo=0 hi=1 opt=--track-invert-pan' '$FW/overlay/akam/own_app_run.sh' && grep -q 'track_invert_tilt) lo=0 hi=1 opt=--track-invert-tilt' '$FW/overlay/akam/own_app_run.sh'"
 check "scene: ptz_scene_check and ptz_scene_min are akam2k.conf keys passed to the app" bash -c "grep -q 'ptz_scene_check) lo=0 hi=1 opt=--ptz-scene-check' '$FW/overlay/akam/own_app_run.sh' && grep -q -- '--ptz-scene-min' '$FW/overlay/akam/own_app_run.sh'"
@@ -2663,7 +2834,7 @@ rm -f "$STUBS/hostname_none"
 echo "== net registry rows (C unit test: net.hostname, net.wifi_country, net.wifi_band)"
 if command -v cc >/dev/null 2>&1; then
     NA=$FW/app
-    if cc -Wall -Wextra -Werror -std=gnu99 -g -I"$NA" -I"$REPO/src/ak_rtsp" -o "$WORK/netreg_unit" "$REPO/tests/rot2k_netreg_unit.c" "$NA/akam2k_netreg.c" "$NA/settings_reg.c" "$NA/json_min.c" "$NA/api_keys.c" "$NA/sha256.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -g -I"$NA" -I"$REPO/src/common/api" -I"$REPO/src/common/net" -I"$REPO/src/ak_rtsp" -o "$WORK/netreg_unit" "$REPO/tests/rot2k_netreg_unit.c" "$NA/akam2k_netreg.c" "$REPO/src/common/api/settings_reg.c" "$REPO/src/common/api/json_min.c" "$REPO/src/common/api/api_keys.c" "$REPO/src/common/net/sha256.c"; then
         "$WORK/netreg_unit" >"$WORK/netreg_unit.out" 2>&1 || true
         check "netreg unit test passes" grep -q 'rot2k netreg unit: 0 failed' "$WORK/netreg_unit.out"
         grep 'FAIL' "$WORK/netreg_unit.out" || true

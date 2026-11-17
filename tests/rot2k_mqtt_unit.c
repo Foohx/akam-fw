@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "api_events.h"
 #include "akam2k_mqtt.h"
 #include "akam2k_mqttcfg.h"
 #include "akam2k_zones.h"
@@ -406,6 +407,7 @@ static void test_builders(void)
         "\"Akam\",\"model\":\"lsc-rotatable-2k-ak3918av130\",\"sw_version\":\"0.1.0\"}}"), "image discovery document (golden)");
     CHECK(!strstr(doc, "command_topic") && !strstr(doc, "retain"), "the image entity has no command topic");
     CHECK(a2k_mqtt_snapshot_topic(&ids, t, sizeof t) > 0 && !strcmp(t, "akam/test/snapshot"), "snapshot topic");
+    CHECK(a2k_mqtt_detections_topic(&ids, t, sizeof t) > 0 && !strcmp(t, "akam/test/detections"), "detections topic");
     memset(&d, 0, sizeof d);
     CHECK(a2k_mqtt_state(&ids, A2K_E_ZONE0, &d, -1, t, sizeof t, v, sizeof v) == 0, "no report yet: no zone state");
     d.valid = 1;
@@ -794,7 +796,39 @@ static void test_zones_snapshot(void)
         }
         CHECK(ok, "a snapshot of exactly the cap is published (200 KB through the stub socket)");
     }
+    /* the detections list: BASE/detections, QoS 0, not retained, no discovery entity */
+    {
+        static const char DJ[] = "{\"ts_ms\":1700000000123,\"w\":320,\"h\":192,\"boxes\":[{\"x\":312,\"y\":104,\"w\":125,\"h\":520,"
+                                 "\"score\":900,\"id\":0,\"target\":false,\"ignored\":false}]}";
+        char longj[A2K_MQTT_DET_MAX + 8];
+        unsigned dsent, ddropped;
+        a2k_mqtt_det_stats(&dsent, &ddropped);
+        CHECK(dsent == 0 && ddropped == 0, "no detections list yet");
+        a2k_mqtt_detections(DJ);
+        {
+            char want[400]; /* the stub keeps a record of the first bytes only: compare the head of the JSON */
+            snprintf(want, sizeof want, "akam/test/detections|%.90s", DJ);
+            CHECK(wait_sent(want, 1), "detections list published on BASE/detections");
+        }
+        a2k_mqtt_detections("{\"ts_ms\":1,\"boxes\":[]}");
+        CHECK(wait_sent("akam/test/detections|{\"ts_ms\":1,\"boxes\":[]}|0", 1), "the empty list is published too");
+        memset(longj, 'x', sizeof longj - 1);
+        longj[sizeof longj - 1] = '\0';
+        a2k_mqtt_detections(longj);
+        a2k_mqtt_detections("");
+        a2k_mqtt_detections(NULL);
+        usleep(50000);
+        a2k_mqtt_det_stats(&dsent, &ddropped);
+        CHECK(dsent == 2 && ddropped >= 3 && sent_count("akam/test/detections|") == 2, "oversized, empty and NULL lists are dropped and counted");
+    }
     a2k_mqtt_stop();
+    {
+        unsigned dsent, ddropped, dsent2, ddropped2;
+        a2k_mqtt_det_stats(&dsent, &ddropped);
+        a2k_mqtt_detections("{\"ts_ms\":2,\"boxes\":[]}");
+        a2k_mqtt_det_stats(&dsent2, &ddropped2);
+        CHECK(dsent2 == dsent && ddropped2 == ddropped && sent_count("akam/test/detections|{\"ts_ms\":2") == 0, "MQTT stopped: a list is a no-op, nothing queued");
+    }
     a2k_mqtt_snapshot((const uint8_t *)"JFIFdata", 8);
     a2k_mqtt_snap_stats(&sent, &dropped);
     CHECK(dropped >= 1 && sent == 2, "MQTT stopped: a snapshot is dropped, nothing queued");
@@ -1282,6 +1316,115 @@ static void test_vid(void)
     a2k_mqtt_stop();
 }
 
+/* ---- the programmable button: gesture publish + device triggers ---- */
+static pthread_mutex_t g_bmu = PTHREAD_MUTEX_INITIALIZER;
+static int g_btn_n;
+static char g_btn_v[A2K_BTN_TRIG_N][A2K_BTN_NAME];
+static int btn_list_fn(char names[][A2K_BTN_NAME])
+{
+    int n;
+    pthread_mutex_lock(&g_bmu);
+    n = g_btn_n;
+    for (int i = 0; i < n; i++)
+        snprintf(names[i], A2K_BTN_NAME, "%s", g_btn_v[i]);
+    pthread_mutex_unlock(&g_bmu);
+    return n;
+}
+static void btn_set_list(int n, const char *a, const char *b, const char *c, const char *d)
+{
+    const char *v[4] = { a, b, c, d };
+    pthread_mutex_lock(&g_bmu);
+    g_btn_n = n;
+    for (int i = 0; i < n; i++)
+        snprintf(g_btn_v[i], sizeof g_btn_v[0], "%s", v[i]);
+    pthread_mutex_unlock(&g_bmu);
+}
+
+static void test_btn(void)
+{
+    a2k_mqtt_cfg_t c;
+    a2k_mqtt_ids_t ids;
+    char t[200], doc[1100];
+    static const a2k_mqtt_ctl_t ops = { ctl_get_fn, ctl_set_fn, ctl_areas_fn };
+    static const char J1[] = "{\"gesture\":\"double\",\"actions\":[\"ptz.home\"],\"result\":\"ok\"}";
+    static const char J2[] = "{\"gesture\":\"short\",\"actions\":[\"none\"],\"result\":\"ok\"}";
+    printf("== button gestures: device triggers and the BASE/button publish\n");
+    memset(&c, 0, sizeof c);
+    strcpy(c.base, "akam/test");
+    strcpy(c.prefix, "ha");
+    CHECK(a2k_mqtt_ids_init(&ids, &c, "akam-rot2k", "aa:bb:cc:dd:ee:ff", "0.1.0") == 0, "ids");
+    CHECK(A2K_E_BTN0 == A2K_E_VID0 + A2K_VID_N && A2K_BTN_TRIG_N == 16 && A2K_MQTT_GESTURE_MAX == A2K_EVT_DATA, "layout: the triggers follow the video entities; 16 slots; the text limit is the event ring limit");
+    ids.ctl = 1;
+    ids.nbtn = 3;
+    strcpy(ids.btn[0], "short");
+    strcpy(ids.btn[1], "double");
+    strcpy(ids.btn[2], "S S L");
+    CHECK(a2k_mqtt_discovery(&ids, A2K_E_BTN0, t, sizeof t, doc, sizeof doc) > 0 && !strcmp(t, "ha/device_automation/akam_aabbccddeeff/button_0/config") &&
+              strstr(doc, "{\"automation_type\":\"trigger\",\"type\":\"short\",\"subtype\":\"button\",\"topic\":\"akam/test/button\",\"value_template\":\"{{ value_json.gesture }}\",\"payload\":\"short\","
+                          "\"device\":{\"identifiers\":[\"akam_aabbccddeeff\"]") == doc,
+          "device trigger of 'short' (type, subtype button, topic BASE/button, match on value_json.gesture, device)");
+    CHECK(a2k_mqtt_discovery(&ids, A2K_E_BTN0 + 2, t, sizeof t, doc, sizeof doc) > 0 && !strcmp(t, "ha/device_automation/akam_aabbccddeeff/button_2/config") && strstr(doc, "\"type\":\"s_s_l\"") &&
+              strstr(doc, "\"payload\":\"S S L\""),
+          "a sequence: type s_s_l (lower case, _), payload the exact gesture name");
+    CHECK(a2k_mqtt_discovery(&ids, A2K_E_BTN0 + 3, t, sizeof t, doc, sizeof doc) == -1 && a2k_mqtt_btn_config_topic(&ids, 3, t, sizeof t) == 0 && !strcmp(t, "ha/device_automation/akam_aabbccddeeff/button_3/config") &&
+              a2k_mqtt_btn_config_topic(&ids, A2K_BTN_TRIG_N, t, sizeof t) == -1 && a2k_mqtt_gesture_topic(&ids, t, sizeof t) == 0 && !strcmp(t, "akam/test/button"),
+          "no trigger past the configured ones, but their config topic is known (to clear it); the gesture topic");
+    ids.ctl = 0;
+    CHECK(a2k_mqtt_discovery(&ids, A2K_E_BTN0, t, sizeof t, doc, sizeof doc) == -1, "no trigger without the ctl group (MQTT stays opt-in)");
+    ids.ctl = 1;
+
+    reset_stub();
+    pthread_mutex_lock(&g_cmu);
+    g_ctl_na = 0;
+    g_ctl_setn = 0;
+    pthread_mutex_unlock(&g_cmu);
+    btn_set_list(3, "short", "double", "S S L", "");
+    a2k_mqtt_set_ctl(&ops);
+    a2k_mqtt_set_buttons(btn_list_fn);
+    CHECK(start_with(FULL) == 0 && wait_state("connected"), "connected with the ctl group and the gesture list");
+    CHECK(wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_0/config|{\"automation_type\":\"trigger\"", 1) &&
+              wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_1/config|{", 1) && wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_2/config|{", 1),
+          "discovery: one device trigger per configured gesture");
+    CHECK(wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_3/config|", 1) && sent_count("homeassistant/device_automation/akam_aabbccddeeff/button_3/config|{") == 0,
+          "the slots past them are cleared (empty retained config)");
+    a2k_mqtt_button_gesture("double", J1);
+    CHECK(wait_sent("akam/test/button|{\"gesture\":\"double\",\"actions\":[\"ptz.home\"],\"result\":\"ok\"}|0", 1), "every gesture is published on BASE/button, not retained");
+    usleep(100000);
+    CHECK(sent_count("akam/test/button/event|") == 0, "a double press is not the legacy press event");
+    a2k_mqtt_button_gesture("short", J2);
+    CHECK(wait_sent("akam/test/button|{\"gesture\":\"short\"", 1) && wait_sent("akam/test/button/event|{\"event_type\":\"press\"}|0", 1),
+          "a short gesture is published on BASE/button AND as the legacy Home Assistant event (the factory behaviour)");
+    a2k_mqtt_button_gesture("long", "{\"gesture\":\"long\",\"actions\":[\"x\"],\"result\":\"failed\"}");
+    a2k_mqtt_button_gesture("S L", "{\"gesture\":\"S L\",\"actions\":[],\"result\":\"unbound\"}");
+    CHECK(wait_sent("akam/test/button|{\"gesture\":\"long\"", 1) && wait_sent("akam/test/button|{\"gesture\":\"S L\"", 1), "failed and unbound gestures are published too");
+    {
+        char huge[400];
+        memset(huge, 'x', sizeof huge - 1);
+        huge[sizeof huge - 1] = '\0';
+        a2k_mqtt_button_gesture("long", huge);
+        a2k_mqtt_button_gesture(NULL, J1);
+        a2k_mqtt_button_gesture("long", NULL);
+        usleep(100000);
+        CHECK(sent_count("akam/test/button|xxx") == 0, "an oversized text or a NULL is dropped");
+    }
+    btn_set_list(4, "short", "double", "S S L", "very_long");
+    a2k_mqtt_resync();
+    CHECK(wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_3/config|{", 1), "a new binding (resync): its trigger is announced");
+    btn_set_list(1, "short", "", "", "");
+    a2k_mqtt_resync();
+    CHECK(wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_1/config|", 2) && wait_sent("homeassistant/device_automation/akam_aabbccddeeff/button_3/config|", 3),
+          "bindings removed: their triggers are cleared");
+    a2k_mqtt_stop();
+    a2k_mqtt_set_ctl(NULL);
+    reset_stub();
+    CHECK(start_with(FULL) == 0 && wait_state("connected") && wait_sent("homeassistant/", 5), "connected without the ctl group");
+    a2k_mqtt_button_gesture("short", J2);
+    usleep(100000);
+    CHECK(sent_count("akam/test/button|") == 0 && sent_count("homeassistant/device_automation/") == 0, "no ctl (MQTT opt-in off): no trigger, no gesture message");
+    a2k_mqtt_stop();
+    a2k_mqtt_set_buttons(NULL);
+}
+
 int main(void)
 {
     char dir[] = "/tmp/rot2k_mqtt_XXXXXX";
@@ -1300,6 +1443,7 @@ int main(void)
     test_night_client();
     test_ptz();
     test_ctl();
+    test_btn();
     test_vid();
     snprintf(buf, sizeof buf, "rm -rf %s", dir);
     if (system(buf) != 0) { /* best effort */ }

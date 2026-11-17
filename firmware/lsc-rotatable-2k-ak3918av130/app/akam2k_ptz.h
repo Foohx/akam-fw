@@ -104,11 +104,46 @@ void a2k_ptz_stop(void);    /* stops the motor (aborts a calibration), writes th
 /* Queue a command. 0 queued, -1 refused (not running, calibrating, unknown command). Cheap, never blocks on the motor. */
 int a2k_ptz_command(int cmd);
 int a2k_ptz_toggle_park(void);        /* parked -> home, anything else -> park */
-int a2k_ptz_nudge(int dx, int dy);    /* relative steps (right / up positive), clipped to the soft range */
-int a2k_ptz_nudge_sp(int dx, int dy, int speed); /* the same at a speed divisor 2..20 (0 = the default); a nudge is accepted only while idle */
+int a2k_ptz_nudge(int dx, int dy);    /* a MANUAL nudge (API ptz.move): relative steps (right / up positive), clipped to the soft range; stops a patrol when accepted */
+/* CONTINUOUS motion (the tracker, track_motion=continuous): ONE ongoing directional move re-targeted without a stop. vel(sx, sy, dx, dy): sx right+ / sy up+ in {-1,0,1}, dx / dy the
+ * speed divisors 2..20 of the moving axes. The first call while the controller is idle starts a session on the motor thread; later calls (every detection tick) change the direction /
+ * speed or just refresh the LEASE: with no call for A2K_PTZ_LEASE_MS the motion stops by itself (dead-man). sx = sy = 0 stops. 0 accepted, -1 refused (another command runs, not running,
+ * calibrating, bad arguments). Any manual command (step, home, park, recalibrate, goto, an API nudge), the shutdown, privacy and a stall end the session within about 50 ms; the soft
+ * range is enforced per axis by the safe layer on every poll (hal_ptz_cont_run). */
+#define A2K_PTZ_LEASE_MS 450
+int a2k_ptz_vel(int sx, int sy, int dx, int dy);
+void a2k_ptz_emergency_stop(void);   /* async-signal-safe: the crash handler sends a motor stop (hal_ptz_emergency_stop) */
+int a2k_ptz_oneshot_stop(void);      /* `akam2k_rtsp --ptz-stop`: open the node, stop, 0 / -1 (no thread, no calibration, nothing else touched) */
+void a2k_ptz_set_lease_ms(int ms);   /* 150..2000, default A2K_PTZ_LEASE_MS (cfg lease_ms of the tracker) */
+/* The driver position at a past instant (CLOCK_MONOTONIC ms), from the polled counters of the session (~50 ms) or the last known position while idle: 0 known (*pan / *tilt filled),
+ * -1 unknown (before the first sample, a non-session motion in between, a gap while a session runs). Works DURING a continuous move: a frame is positioned by it. */
+int a2k_ptz_pos_at(int64_t t_ms, int *pan, int *tilt);
+/* A callback told every position sample pushed into that ring while a continuous session runs (the tracker's raw recorder, track_debug=2). Called with the motor lock held: must be quick and never call back. NULL = none. */
+void a2k_ptz_set_ring_hook(void (*cb)(int64_t t_ms, int pan, int tilt));
+int a2k_ptz_nudge_sp(int dx, int dy, int speed); /* the TRACKER's nudge at a speed divisor 2..20 (0 = the default); accepted only while idle; never stops a patrol */
+
+/* PTZ patrol (ptz_patrol.h, akam2k_patrol.c). A manual command that is accepted (step, home, park, recalibrate, goto, nudge) calls the hook with its kind:
+ * the A2K_PTZ_* command, A2K_PTZ_HOOK_GOTO or A2K_PTZ_HOOK_NUDGE. The hook runs under the controller lock: atomic stores only. */
+#define A2K_PTZ_HOOK_GOTO 100
+#define A2K_PTZ_HOOK_NUDGE 101
+void a2k_ptz_set_cmd_hook(void (*fn)(int kind));
+/* Manual absolute move inside the soft range at a speed divisor (0 = default): queued like a step (replaces the pending command, cancels the running one). 0 queued, -1 refused. */
+int a2k_ptz_goto(int pan, int tilt, int speed);
+/* The patrol's absolute move (the same safe motion layer): accepted only while the controller is idle, never preempts, does not call the hook.
+ * 0 queued (*ticket filled), 1 busy (try again), -1 refused (not running, speed or position outside the limits). */
+int a2k_ptz_patrol_goto(int pan, int tilt, int speed, unsigned *ticket);
+/* 0 while the move is pending or running; 1 when finished: *rc = HAL_PTZ_OK, ECANCEL (cancelled or replaced), ESTALL, EIO, EREFUSED. */
+int a2k_ptz_patrol_result(unsigned ticket, int *rc);
+void a2k_ptz_patrol_cancel(void); /* cancels the patrol's pending or running move (never another command's) */
+#define A2K_PTZ_PARK_TOL 15 /* steps: a patrol target this close to the park position is refused (the head would count as parked: privacy) */
+int a2k_ptz_park(int *pan, int *tilt);   /* the park position: 0, -1 when the controller is not running */
+int a2k_ptz_scene_pending(void);         /* 1 while the home scene reference is due or being built (the patrol's idle trigger waits) */
+int a2k_ptz_home_tracker(void);          /* the tracker's home: like A2K_PTZ_HOME but never calls the manual-command hook */
+int a2k_ptz_speeds(int *min, int *max, int *def); /* the allowed speed divisors and the default: 0, -1 when the controller is not running */
 void a2k_ptz_info(a2k_ptz_info_t *out);
 /* The effective soft range (after ptz.conf): 0 and filled, -1 when the controller is not running. */
 int a2k_ptz_range(uint32_t *pan_min, uint32_t *pan_max, uint32_t *tilt_min, uint32_t *tilt_max);
+int a2k_ptz_tilt_home(void); /* the home tilt in motor steps, 0 when the controller is not running */
 unsigned long a2k_ptz_travel(void);   /* steps travelled since the last calibration (half the budget when this start did not calibrate) */
 void a2k_ptz_wear_counts(unsigned *pos, unsigned *scene); /* /config writes since the start: ptz.pos (always 0: the position lives in RAM), scene reference files */
 int a2k_ptz_privacy_active(void);     /* video path: 1 = send no frames. One volatile read. */

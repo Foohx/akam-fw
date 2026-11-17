@@ -22,7 +22,7 @@ ONVIF server by itself from a flag file, with no reboot.
   `./akam rtsp-auth set` first; `enable` refuses without it and says so. The wizard's `verify` offers to set it
   when you say yes to ONVIF. While the password is off, state-changing ONVIF calls (reboot, set the time,
   set the name) are refused anyway.
-- **Ports:** TCP 80 for the ONVIF service (or `./akam onvif enable 8080`, any port from 1 to 65535 except 21 to 24, 554 and 8091, which the camera already uses) and UDP 3702
+- **Ports:** TCP 80 for the ONVIF service (or `./akam onvif enable 8080`, any port from 1 to 65535 except 21 to 24, 554, 8091 and 8092, which the camera already uses) and UDP 3702
   (multicast discovery), on your LAN only: never forward them to the Internet. Without ONVIF, only 22, 554
   and 8091 are open.
 - **In your app:** let it search, or add the camera by hand with its address (`<camera-ip>`, port 80) and the

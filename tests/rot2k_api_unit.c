@@ -1,10 +1,11 @@
 /* Host unit tests of the control API transport pieces (specs/control-api.md phase 2): the strict HTTP request-head parser
- * (http_req.c), the rate limits (api_limit.c) and the event ring (akam2k_apievt.c). The router, the registry table and the server
+ * (http_req.c), the rate limits (api_limit.c) and the event ring (api_events.c). The router, the registry table and the server
  * are covered by tests/rot2k_control_api_http_test.sh. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "akam2k_apievt.h"
+#include "api_events.h"
 #include "api_limit.h"
 #include "api_sig.h"
 #include "http_req.h"
@@ -246,7 +247,15 @@ static void test_events(void)
     a2k_apievt_reset();
     a2k_api_event("Bad Type", NULL);
     a2k_api_event("", NULL);
-    a2k_api_event("ok", "{\"x\":\"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890\"}");
+    {
+        char longdata[A2K_EVT_DATA + 20];
+        memset(longdata, 'x', sizeof longdata - 1);
+        longdata[sizeof longdata - 1] = '\0';
+        memcpy(longdata, "{\"x\":\"", 6);
+        longdata[sizeof longdata - 3] = '"';
+        longdata[sizeof longdata - 2] = '}';
+        a2k_api_event("ok", longdata); /* over the data limit: dropped */
+    }
     CHECK(a2k_apievt_seq() == 0);
     a2k_api_event("ok", NULL);
     CHECK(a2k_apievt_seq() == 1);
@@ -254,8 +263,93 @@ static void test_events(void)
     CHECK(strstr(out, "\"data\":{}"));
 }
 
+static void test_det_ring(void)
+{
+    static char big[12288], det[A2K_EVT_DDATA + 1];
+    int count = -1, n, i;
+    char *q;
+    a2k_apievt_reset();
+    memset(det, 'x', sizeof det);
+    det[0] = '"';
+    det[A2K_EVT_DDATA - 1] = '"';
+    det[A2K_EVT_DDATA] = '\0';
+    a2k_api_event_button();
+    a2k_api_event("ptz", "{\"state\":\"moved\"}");
+    a2k_api_event("setting", "{\"key\":\"led.mode\"}");
+    for (i = 0; i < 50; i++) /* a long burst of detections of the largest size */
+        a2k_api_event(A2K_EVT_DETECTIONS, det);
+    CHECK(a2k_apievt_seq() == 53);
+    n = a2k_apievt_json(0, big, sizeof big, &count);
+    CHECK(n > 0 && n < (int)sizeof big);
+    CHECK(strstr(big, "\"type\":\"button\"") && strstr(big, "\"type\":\"ptz\"") && strstr(big, "\"type\":\"setting\""));
+    for (i = 0, q = big; (q = strstr(q, "\"type\":\"detections\"")) != NULL; q++)
+        i++;
+    CHECK(i == A2K_EVT_DRING && count == 3 + A2K_EVT_DRING);
+    CHECK(strstr(big, "\"missed\":true")); /* the older detections were overwritten, and that is said */
+    /* the oldest event first, whatever the ring: the sequence numbers are increasing */
+    {
+        long last = 0;
+        int ok = 1;
+        for (q = big; (q = strstr(q, "{\"seq\":")) != NULL; q++) {
+            long v = strtol(q + 7, NULL, 10);
+            if (q == big)
+                continue; /* the envelope */
+            ok &= v > last;
+            last = v;
+        }
+        CHECK(ok && last == 53);
+    }
+    /* a cursor inside the detections: only the ones after it, nothing missed */
+    n = a2k_apievt_json(51, big, sizeof big, &count);
+    CHECK(count == 2 && strstr(big, "\"missed\":false"));
+    /* too long for the detections ring: dropped; a detections event does not fit the other ring either */
+    a2k_apievt_reset();
+    memset(det, 'x', sizeof det - 1);
+    a2k_api_event(A2K_EVT_DETECTIONS, det); /* 800 x's: the limit, accepted */
+    CHECK(a2k_apievt_seq() == 1);
+    det[A2K_EVT_DDATA] = 'x';
+    det[A2K_EVT_DDATA + 1 - 1] = 'x';
+    {
+        static char longer[A2K_EVT_DDATA + 8];
+        memset(longer, 'x', sizeof longer - 1);
+        longer[sizeof longer - 1] = '\0';
+        a2k_api_event(A2K_EVT_DETECTIONS, longer);
+        CHECK(a2k_apievt_seq() == 1);
+    }
+}
+
+static void test_patrol_ring(void)
+{
+    static char big[12288];
+    int count = -1, i;
+    char *q;
+    long last = 0;
+    int ok = 1;
+    a2k_apievt_reset();
+    a2k_api_event_button();
+    a2k_api_event("ptz", "{\"state\":\"moved\"}");
+    for (i = 0; i < 100; i++) /* a patrol that talks a lot cannot push the others out */
+        a2k_api_event(A2K_EVT_PATROL, "{\"event\":\"step\"}");
+    a2k_api_event_person(1, 800);
+    CHECK(a2k_apievt_json(0, big, sizeof big, &count) > 0);
+    CHECK(strstr(big, "\"type\":\"button\"") && strstr(big, "\"type\":\"ptz\"") && strstr(big, "\"type\":\"person\""));
+    for (i = 0, q = big; (q = strstr(q, "\"type\":\"patrol\"")) != NULL; q++)
+        i++;
+    CHECK(i == A2K_EVT_PRING && count == 3 + A2K_EVT_PRING && strstr(big, "\"missed\":true"));
+    for (q = big; (q = strstr(q, "{\"seq\":")) != NULL; q++) {
+        long v = strtol(q + 7, NULL, 10);
+        if (q == big)
+            continue;
+        ok &= v > last;
+        last = v;
+    }
+    CHECK(ok && last == 103);
+}
+
 int main(void)
 {
+    test_patrol_ring();
+    test_det_ring();
     test_parser();
     test_limits();
     test_events();

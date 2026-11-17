@@ -102,9 +102,17 @@ The limits survive a reconnect (a new session does not refill the buckets), so r
 | Topic | Content |
 |---|---|
 | `BASE/status` | `online` (retained) while connected; `offline` (retained) when the camera stops or the connection breaks (the broker publishes it for the camera: it is the MQTT "last will") |
+| `BASE/detections` | the boxes of the people in view, JSON, not retained, QoS 0 (see below). No Home Assistant entity belongs to it |
 | `BASE/<entity>/state` | the value. Controls are retained (Home Assistant restores them); sensors are not |
 | `BASE/<entity>/set` | commands (select, number, switch and button entities only) |
 | `homeassistant/<component>/akam_<mac>/<entity>/config` | the retained discovery documents |
+
+**`BASE/detections`** carries the same JSON as the `detections` event of the local control API (see
+[control-api.md](porting/lsc-rotatable-2k/control-api.md), section 6): `{"ts_ms":..,"w":320,"h":192,"pan":..,"tilt":..,"boxes":[{"x":..,"y":..,"w":..,"h":..,"score":..,"id":..,"target":..,"ignored":..}]}`,
+the boxes in per-mille of the frame. It is published when the boxes change and every second while a person is in view, at most `detect.publish_hz` times a second (default 2, 0 = off; set it with the API;
+never more than 5 a second), and once with `"boxes":[]` when the last person has left. Nothing while the camera is parked or the privacy mode hides the video. It exists only while MQTT is on and
+connected (lists made while the broker is away are dropped, never queued) and has **no discovery document**: Home Assistant does not create an entity for it; subscribe from an automation, Node-RED or your own script,
+for example `mosquitto_sub -t 'akam/<hostname>/detections' | jq -c '.boxes[]'`. Nothing is written to the camera's flash.
 
 Controls are published at once when they change, also when the change was made elsewhere (`./akam led`, ONVIF, an app):
 the camera checks them every 2 seconds. Sensors are published every 30 seconds.

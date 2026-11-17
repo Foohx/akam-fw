@@ -29,6 +29,11 @@ keep a verified backup of your stock camera before you flash anything.
   whose live tables are not as expected keeps the stock tables and logs it.
 - Decoding fix for the noise-reduction keys on the 1080p: the first noise-reduction block of both cameras reports mode 192, which the
   decoder used to refuse, so `img.nr2d` and `img.nr2d_bias` (RAM-only experiment keys, off by default) are now accepted.
+- Signed local control API on port 8092 (HMAC key, scopes, audit, rate limits), the same as the Rotatable 2K: it listens only
+  while an API key exists (`ak_rtsp --api-key new --scope admin --name NAME` over SSH), settings registry behind it and behind the
+  8091 text port (LED mode and patterns, night mode, picture, video, ONVIF and MQTT switches, system and stream state), events and
+  a "find the camera" LED action. Host-tested only. [Reference](docs/porting/lsc-1080p/control-api.md)
+- The status LED has rules and patterns (`led.stream led.boot led.nowifi led.night led.idle`); the defaults behave exactly as before.
 - Day/night switching, front and IR LED settings, picture settings, NTP, an encoder-stall watchdog, a Wi-Fi supervisor
   and a kernel log filter.
 - Secure defaults: SSH keys only, Telnet and FTP off, only ports 22, 554 and 8091 listen.

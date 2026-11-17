@@ -1,5 +1,5 @@
-/* See akam2k_httpd.h. */
-#include "akam2k_httpd.h"
+/* See api_httpd.h. */
+#include "api_httpd.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -14,8 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "akam2k_apievt.h"
-#include "akam2k_log.h"
+#include "api_events.h"
 #include "http_req.h"
 
 #ifndef MSG_NOSIGNAL
@@ -315,7 +314,7 @@ static void listener_close(void)
         close(g_lfd);
         g_lfd = -1;
         g_bound = 0;
-        a2k_log("api: no API key installed, port closed");
+        a2k_api_log("api: no API key installed, port closed");
     }
     for (i = 0; i < A2K_HTTPD_MAX_CONNS; i++)
         if (g_conn[i].state != C_FREE)
@@ -335,7 +334,7 @@ static void listener_open(void)
     sa.sin_port = htons((uint16_t)g_port_cfg);
     sa.sin_addr.s_addr = htonl(g_loop ? INADDR_LOOPBACK : INADDR_ANY);
     if (bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0 || listen(fd, A2K_HTTPD_MAX_CONNS) != 0) {
-        a2k_log("api: cannot listen on port %d (%s); retrying", g_port_cfg, strerror(errno));
+        a2k_api_log("api: cannot listen on port %d (%s); retrying", g_port_cfg, strerror(errno));
         close(fd);
         return;
     }
@@ -343,7 +342,7 @@ static void listener_open(void)
     if (getsockname(fd, (struct sockaddr *)&sa, &sl) == 0)
         g_bound = ntohs(sa.sin_port);
     g_lfd = fd;
-    a2k_log("api: listening on port %d (%d key(s))", g_bound, a2k_api_keys_count());
+    a2k_api_log("api: listening on port %d (%d key(s))", g_bound, a2k_api_keys_count());
 }
 
 static void *thread_main(void *arg)
@@ -441,7 +440,7 @@ int a2k_httpd_start(int port, int loopback_only, const a2k_api_env_t *env)
         g_conn[i].state = C_FREE;
     }
     if (pipe(g_wake) != 0) {
-        a2k_log("api: cannot create the wake pipe");
+        a2k_api_log("api: cannot create the wake pipe");
         return -1;
     }
     for (i = 0; i < 2; i++)
@@ -455,13 +454,13 @@ int a2k_httpd_start(int port, int loopback_only, const a2k_api_env_t *env)
         a2k_apievt_set_wake(-1);
         close(g_wake[0]);
         close(g_wake[1]);
-        a2k_log("api: cannot start the HTTP thread");
+        a2k_api_log("api: cannot start the HTTP thread");
         return -1;
     }
     pthread_attr_destroy(&at);
     g_started = 1;
     if (a2k_api_keys_count() == 0)
-        a2k_log("api: no API key installed: the port stays closed (akam_api_key new --scope admin --name NAME creates the first one)");
+        a2k_api_log("api: no API key installed: the port stays closed (akam_api_key new --scope admin --name NAME creates the first one)");
     return 0;
 }
 

@@ -43,7 +43,7 @@ done
     -o "$WORK/rtsp_backchannel_test" \
     "$REPO/tests/native/rtsp_backchannel_test.c" \
     "$SRC/rtsp.c" "$REPO/src/common/net/rtsp_in.c" "$REPO/src/common/net/rtsp_idle.c" "$REPO/src/common/net/rtsp_busy.c" "$REPO/src/common/net/rtsp_sdp.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c" \
-    "$REPO/src/common/net/net_tx.c" "$REPO/src/common/net/tx_pace.c" "$REPO/src/common/net/rtp_clock.c" "$REPO/src/common/net/h264_params.c" "$SRC/talk.c" "$SRC/ctl_sys.c" "$SRC/rtp_in.c" \
+    "$REPO/src/common/net/net_tx.c" "$REPO/src/common/net/tx_pace.c" "$REPO/src/common/net/rtp_clock.c" "$REPO/src/common/net/h264_params.c" "$SRC/talk.c" "$SRC/ctl_sys.c" "$REPO/src/common/logic/hal_sys.c" "$SRC/rtp_in.c" \
     "$REPO/src/common/logic/audio_vad.c" "$REPO/src/common/logic/g711.c" "$SRC/swdog.c" "$SRC/video_cfg.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
 
 # The host client (tools/akam-talk) is built here too and run against the same server.

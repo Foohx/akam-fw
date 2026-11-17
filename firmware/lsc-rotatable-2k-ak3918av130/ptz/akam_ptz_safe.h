@@ -19,7 +19,7 @@
  *   - the DRIVER's own limits are the soft range (shifted frame, see struct ptzs_frame): even a tool killed by
  *     SIGKILL in the middle of a move cannot walk the motor past a soft limit, the driver stops it there itself.
  * Driver command 10 (absolute move) and the check sweeps (9, 12) are NOT used: timed directional moves (commands
- * 0..7, verified on the hardware) plus polling are.
+ * 0..7, verified on the hardware) plus polling are. The continuous mode at the end (ptzs_cont_*) keeps one directional move running and re-targets it without a stop.
  * The clock is virtual: the sum of the sleeps requested (ioctl latency is ignored, it only makes real time
  * slightly longer than counted, never shorter).
  */
@@ -114,6 +114,7 @@ struct ptzs_ctx {
     int have_frame;        /* 0: ptzs_read_axis returns raw driver counters (init, pos before init) */
     struct ptzs_frame fr;
     uint32_t raw[2];       /* last raw driver counters read by ptzs_read_axis */
+    int pos_marked;        /* the position file already says "unknown" (set by the first move, cleared when a position is saved): a continuous session marks it once */
 };
 
 static uint32_t ptzs_off(const struct ptzs_ctx *x, unsigned ax)
@@ -397,6 +398,7 @@ static int ptzs_stop(struct ptzs_ctx *x)
 static void ptzs_save_pos(struct ptzs_ctx *x, uint32_t pan, uint32_t tilt)
 {
     char s[48];
+    x->pos_marked = 0;
     snprintf(s, sizeof(s), "pan=%u tilt=%u\n", (unsigned)pan, (unsigned)tilt);
     if (x->ops->save_file(PTZ_POS_PATH, s))
         fprintf(stderr, "akam_ptz: warning: cannot save %s: %s\n", PTZ_POS_PATH, strerror(errno));
@@ -412,8 +414,11 @@ static int ptzs_send_move(struct ptzs_ctx *x, unsigned dir, uint32_t a, uint32_t
         errno = EINVAL;
         return -1;
     }
-    if (x->ops->save_file(PTZ_POS_PATH, "unknown\n"))
-        return -1;
+    if (!x->pos_marked) {
+        if (x->ops->save_file(PTZ_POS_PATH, "unknown\n"))
+            return -1;
+        x->pos_marked = 1;
+    }
     memset(buf, 0, sizeof(buf));
     buf[0] = dir;
     buf[1] = a;
@@ -663,5 +668,265 @@ static int ptzs_park(struct ptzs_ctx *x)
 {
     return ptzs_goto(x, x->cf->pan_home, x->cf->tilt_home, 0);
 }
+
+/* ====================================================================== continuous motion
+ * One ongoing directional move (commands 0..7, diagonals included) that the caller RE-TARGETS while it runs: a new direction / speed command is accepted by the
+ * driver without a stop (measured 2026-11-17: a pan reversal 1181 -> 1200 at once), so a velocity controller only sends the new command. Same guarantees as ptzs_move,
+ * adapted to commands that change on purpose:
+ *   - the soft range: an axis with no room left (a margin of about 1.5 polls of travel + 3 steps) is dropped from the command: a diagonal becomes the pure direction of
+ *     the other axis, and when nothing is left the motion stops (DONE). The driver's own limits are the soft range (shifted frame): a late poll still ends at the limit;
+ *   - the lease (dead-man): the motion stops by itself when no command (even an identical one: a refresh) arrived for lease_ms of polled time;
+ *   - stall / wrong-way detection per commanded axis, exactly as in ptzs_move, but a command change on an axis restarts its detector (its reference is the position at
+ *     the change, and for PTZS_CONT_GRACE_MS no verdict is given: a reversal needs a moment to show);
+ *   - an axis that is NOT commanded must not move (more than 3 steps per poll after the grace): an error (the stop is sent): an unverified driver behaviour of a diagonal
+ *     turning into a pure direction can never run away unnoticed;
+ *   - an axis dropped from a command (diagonal -> pure direction, or pure -> the other axis) is stopped with the stop request FIRST (then the new move): whether the driver
+ *     keeps an axis that is missing from a new command is not verified, so it is never relied on;
+ *   - no other request than PTZ_REQ_MOVE (0..7), PTZ_REQ_STOP and PTZ_REQ_POS is used; the position file is marked unknown once, at the start;
+ *   - the travel (sum of the polled steps, reversals included) is counted for the wear budget.
+ * Single threaded (the caller's thread); the clock is the virtual one (sum of the polls). */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#define PTZS_CONT_GRACE_MS 150u
+#define PTZS_CONT_DONE 10 /* not an error: nothing left to move (every axis at its soft limit, or no command) */
+#define PTZS_CONT_LEASE 11 /* not an error: the lease expired, the caller stops */
+#define PTZS_LEASE_MIN 150u
+#define PTZS_LEASE_MAX 2000u
+
+struct ptzs_cont {
+    int active;
+    unsigned dir;
+    int d[2];
+    unsigned sp[2];
+    uint32_t pos[2], last[2];
+    unsigned still[2], grace[2];
+    unsigned lease_ms, since_ms;
+    unsigned long travel;
+    unsigned nhard; /* stops sent because an axis was dropped from the command */
+};
+
+static uint32_t ptzs_cont_margin(unsigned sp)
+{
+    return (PTZS_POLL_MS * 3 / 2 + sp - 1) / sp + 3;
+}
+
+/* the command word of the direction signs (the table above); -1 for (0, 0) */
+static int ptzs_cont_word(const int d[2])
+{
+    int w;
+    for (w = 0; w < 8; w++)
+        if (PTZS_PAN_SIGN[w] == d[0] && PTZS_TILT_SIGN[w] == d[1])
+            return w;
+    return -1;
+}
+
+/* the signs of the requested direction with the axes that have no room dropped; 1 when something is left to move */
+static int ptzs_cont_filter(const struct ptzs_ctx *x, const uint32_t pos[2], unsigned dir, const unsigned sp[2], int d[2])
+{
+    const struct ptzs_conf *cf = x->cf;
+    uint32_t lo[2] = {cf->pan_min, cf->tilt_min}, hi[2] = {cf->pan_max, cf->tilt_max};
+    unsigned ax;
+    d[0] = PTZS_PAN_SIGN[dir];
+    d[1] = PTZS_TILT_SIGN[dir];
+    for (ax = 0; ax < 2; ax++)
+        if (d[ax] && ptzs_room(pos[ax], lo[ax], hi[ax], d[ax]) <= ptzs_cont_margin(sp[ax]))
+            d[ax] = 0;
+    return d[0] || d[1];
+}
+
+static int ptzs_cont_speeds(const struct ptzs_ctx *x, uint32_t a, uint32_t b, unsigned sp[2])
+{
+    sp[0] = a ? a : x->cf->speed;
+    sp[1] = b ? b : x->cf->speed;
+    if (sp[0] < PTZS_MIN_SPEED || sp[0] > PTZS_MAX_SPEED || sp[1] < PTZS_MIN_SPEED || sp[1] > PTZS_MAX_SPEED) {
+        fprintf(stderr, "akam_ptz: speed divisors must be %u..%u\n", PTZS_MIN_SPEED, PTZS_MAX_SPEED);
+        return -1;
+    }
+    return 0;
+}
+
+/* ptzs_cont_begin: starts the motion. Refused (PTZS_EREFUSED) when an axis of the command has no room and nothing else is left, or the position is unknown.
+ * Returns 0 (running; the caller polls) or a PTZS_* error (nothing is moving). */
+static int ptzs_cont_begin(struct ptzs_ctx *x, struct ptzs_cont *c, unsigned dir, uint32_t a, uint32_t b, unsigned lease_ms)
+{
+    unsigned sp[2];
+    int d[2], w;
+    memset(c, 0, sizeof(*c));
+    if (dir > 7 || lease_ms < PTZS_LEASE_MIN || lease_ms > PTZS_LEASE_MAX || ptzs_cont_speeds(x, a, b, sp))
+        return PTZS_EREFUSED;
+    if (ptzs_read_pos(x, &c->pos[0], &c->pos[1])) {
+        fprintf(stderr, "akam_ptz: pos failed: %s\n", strerror(errno));
+        return PTZS_EIO;
+    }
+    if (ptzs_known(x))
+        return PTZS_EREFUSED;
+    if (!ptzs_cont_filter(x, c->pos, dir, sp, d)) {
+        fprintf(stderr, "akam_ptz: refused: at the soft limit\n");
+        return PTZS_EREFUSED;
+    }
+    w = ptzs_cont_word(d);
+    if (ptzs_send_move(x, (unsigned)w, sp[0], sp[1])) { /* marks the position file unknown (once per session) */
+        fprintf(stderr, "akam_ptz: move failed: %s\n", strerror(errno));
+        (void)ptzs_stop(x);
+        return PTZS_EIO;
+    }
+    c->active = 1;
+    c->dir = (unsigned)w;
+    c->d[0] = d[0];
+    c->d[1] = d[1];
+    c->sp[0] = sp[0];
+    c->sp[1] = sp[1];
+    c->last[0] = c->pos[0];
+    c->last[1] = c->pos[1];
+    c->lease_ms = lease_ms;
+    c->grace[0] = c->grace[1] = PTZS_CONT_GRACE_MS;
+    return 0;
+}
+
+/* ptzs_cont_set: re-targets the running motion (also a refresh when nothing changes: the lease restarts). 0 running; PTZS_CONT_DONE when nothing is left to move (the motor is
+ * stopped); an error otherwise (the caller ends the session, which stops the motor). */
+static int ptzs_cont_set(struct ptzs_ctx *x, struct ptzs_cont *c, unsigned dir, uint32_t a, uint32_t b)
+{
+    unsigned sp[2], ax;
+    int d[2], w, dropped = 0, same;
+    if (!c->active || dir > 7 || ptzs_cont_speeds(x, a, b, sp))
+        return PTZS_EREFUSED;
+    c->since_ms = 0;
+    if (!ptzs_cont_filter(x, c->pos, dir, sp, d)) {
+        if (ptzs_stop(x))
+            return PTZS_EIO;
+        c->active = 0;
+        return PTZS_CONT_DONE;
+    }
+    w = ptzs_cont_word(d);
+    same = (unsigned)w == c->dir && (!d[0] || sp[0] == c->sp[0]) && (!d[1] || sp[1] == c->sp[1]);
+    if (same)
+        return 0;
+    for (ax = 0; ax < 2; ax++)
+        if (c->d[ax] && !d[ax])
+            dropped = 1;
+    if (dropped) { /* an axis leaves the command: stop first, never rely on the driver dropping it by itself */
+        if (ptzs_stop(x))
+            return PTZS_EIO;
+        c->nhard++;
+    }
+    if (ptzs_send_move(x, (unsigned)w, sp[0], sp[1])) {
+        fprintf(stderr, "akam_ptz: move failed: %s\n", strerror(errno));
+        return PTZS_EIO;
+    }
+    for (ax = 0; ax < 2; ax++) {
+        if (d[ax] != c->d[ax] || (d[ax] && sp[ax] != c->sp[ax])) { /* the detector restarts from here */
+            c->last[ax] = c->pos[ax];
+            c->still[ax] = 0;
+            c->grace[ax] = PTZS_CONT_GRACE_MS;
+        }
+        c->d[ax] = d[ax];
+        c->sp[ax] = sp[ax];
+    }
+    c->dir = (unsigned)w;
+    return 0;
+}
+
+/* ptzs_cont_poll: waits one poll, reads the position and checks everything. 0 running, PTZS_CONT_DONE (an axis reached its soft limit and nothing else is left: stopped),
+ * PTZS_CONT_LEASE (no command for lease_ms: the caller ends the session), else an error (stall, wrong way, uncommanded motion, I/O: the caller ends the session). */
+static int ptzs_cont_poll(struct ptzs_ctx *x, struct ptzs_cont *c)
+{
+    uint32_t pos[2];
+    unsigned ax;
+    int rc = 0, clip = 0;
+    ptzs_wait(x, PTZS_POLL_MS);
+    c->since_ms += PTZS_POLL_MS;
+    if (ptzs_read_pos(x, &pos[0], &pos[1])) {
+        fprintf(stderr, "akam_ptz: pos failed during the move: %s\n", strerror(errno));
+        return PTZS_EIO;
+    }
+    for (ax = 0; ax < 2 && !rc; ax++) {
+        long delta = ((long)pos[ax] - (long)c->last[ax]) * c->d[ax];
+        c->travel += pos[ax] > c->pos[ax] ? pos[ax] - c->pos[ax] : c->pos[ax] - pos[ax];
+        if (!c->d[ax]) {
+            long drift = (long)pos[ax] - (long)c->last[ax];
+            if (c->grace[ax]) {
+                c->grace[ax] = c->grace[ax] > PTZS_POLL_MS ? c->grace[ax] - PTZS_POLL_MS : 0;
+                c->last[ax] = pos[ax];
+            } else if (drift > 3 || drift < -3) {
+                fprintf(stderr, "akam_ptz: %s moves although it is not commanded: stopping\n", ax ? "tilt" : "pan");
+                rc = PTZS_ESTALL;
+            } else {
+                c->last[ax] = pos[ax];
+            }
+            continue;
+        }
+        if (c->grace[ax]) {
+            c->grace[ax] = c->grace[ax] > PTZS_POLL_MS ? c->grace[ax] - PTZS_POLL_MS : 0;
+            if (delta > 0)
+                c->last[ax] = pos[ax];
+            continue;
+        }
+        if (delta > 0) {
+            c->last[ax] = pos[ax];
+            c->still[ax] = 0;
+        } else {
+            c->still[ax] += PTZS_POLL_MS;
+            if (delta < -2) {
+                fprintf(stderr, "akam_ptz: %s moves the wrong way: stopping\n", ax ? "tilt" : "pan");
+                rc = PTZS_ESTALL;
+            }
+        }
+        if (!rc && c->still[ax] > PTZS_STALL_MS &&
+            ptzs_room(pos[ax], ax ? x->cf->tilt_min : x->cf->pan_min, ax ? x->cf->tilt_max : x->cf->pan_max, c->d[ax]) > ptzs_cont_margin(c->sp[ax])) {
+            fprintf(stderr, "akam_ptz: stall: %s position unchanged for %u ms: stopping\n", ax ? "tilt" : "pan", c->still[ax]);
+            rc = PTZS_ESTALL;
+        }
+    }
+    c->pos[0] = pos[0];
+    c->pos[1] = pos[1];
+    if (rc)
+        return rc;
+    for (ax = 0; ax < 2; ax++)
+        if (c->d[ax] && ptzs_room(pos[ax], ax ? x->cf->tilt_min : x->cf->pan_min, ax ? x->cf->tilt_max : x->cf->pan_max, c->d[ax]) <= ptzs_cont_margin(c->sp[ax]))
+            clip = 1;
+    if (clip) { /* an axis reached its limit: the other axis goes on alone (the pure direction), or the motion ends */
+        int d[2] = {c->d[0], c->d[1]}, w;
+        for (ax = 0; ax < 2; ax++)
+            if (d[ax] && ptzs_room(pos[ax], ax ? x->cf->tilt_min : x->cf->pan_min, ax ? x->cf->tilt_max : x->cf->pan_max, d[ax]) <= ptzs_cont_margin(c->sp[ax]))
+                d[ax] = 0;
+        fprintf(stderr, "akam_ptz: clipped at a soft limit\n");
+        w = ptzs_cont_word(d);
+        if (w < 0) {
+            if (ptzs_stop(x))
+                return PTZS_EIO;
+            c->active = 0;
+            return PTZS_CONT_DONE;
+        }
+        if (ptzs_stop(x)) /* the limit axis is dropped: stop first, then the other axis alone */
+            return PTZS_EIO;
+        c->nhard++;
+        if (ptzs_send_move(x, (unsigned)w, c->sp[0], c->sp[1]))
+            return PTZS_EIO;
+        for (ax = 0; ax < 2; ax++) {
+            if (d[ax] != c->d[ax]) {
+                c->last[ax] = pos[ax];
+                c->still[ax] = 0;
+                c->grace[ax] = PTZS_CONT_GRACE_MS;
+            }
+            c->d[ax] = d[ax];
+        }
+        c->dir = (unsigned)w;
+    }
+    if (c->since_ms >= c->lease_ms)
+        return PTZS_CONT_LEASE;
+    return 0;
+}
+
+/* ptzs_cont_end: always stops, reads and saves the position (ptzs_finish); the non-error outcomes count as OK. */
+static int ptzs_cont_end(struct ptzs_ctx *x, struct ptzs_cont *c, int rc)
+{
+    c->active = 0;
+    (void)ptzs_stop(x);
+    ptzs_wait(x, 60); /* a stop takes a moment: the position that is saved is the settled one (the scene reference, the next session) */
+    return ptzs_finish(x, rc >= PTZS_CONT_DONE ? 0 : rc);
+}
+
+#pragma GCC diagnostic pop
 
 #endif

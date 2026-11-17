@@ -37,6 +37,8 @@
 #define STATE_TOL 15u                   /* a position this close to home / park is "home" / "parked" */
 #define SAVED_MAX 48                    /* longest "pan=N tilt=M\n" kept in RAM */
 #define VERIFY_TOL 4u                   /* steps: counters re-read before a scene reference is written */
+#define SHORT_PAN_MARGIN 400u           /* short calibration: the counters are declared this far above home (pan) ... */
+#define SHORT_TILT_MARGIN 300u          /* ... and this far (tilt): the head is believed within this of home, the sweep still ends on the stop */
 #define TILT_EXTRA_STEPS 300u           /* second tilt sweep: the real travel (about 2315) is longer than the declared step maximum (2160) */
 
 struct hal_ptz {
@@ -92,6 +94,7 @@ static int store_pos(hal_ptz_t *p, const char *data)
     p->pan = a;
     p->tilt = b;
     p->pos_valid = 1;
+    p->x.pos_marked = 0; /* a position was stored by another path than ptzs_save_pos (the repair read of end_t, a declared position): the next move marks it unknown again */
     return 0;
 }
 
@@ -298,20 +301,32 @@ static int sweep(hal_ptz_t *p, unsigned ax, uint32_t steps)
     return rc;
 }
 
-static int calibrate(hal_ptz_t *p)
+static int calibrate_x(hal_ptz_t *p, int quick);
+static int calibrate(hal_ptz_t *p) { return calibrate_x(p, 0); }
+
+/* quick = 1: the SHORT calibration (see hal_ptz.h cold_check answer 3): the counters are declared at home + a margin instead of the stock maxima, one tilt sweep. */
+static int calibrate_x(hal_ptz_t *p, int quick)
 {
     struct ptzs_ctx *x = &p->x;
     struct ptzs_conf ac = p->cf;
     struct ptzs_frame fr;
     uint32_t lim[2] = { p->cf.pan_step_max, p->cf.tilt_step_max }, cnt[2] = { lim[0], lim[1] };
     int rc;
+    if (quick) {
+        cnt[0] = p->cf.pan_home + SHORT_PAN_MARGIN < lim[0] ? p->cf.pan_home + SHORT_PAN_MARGIN : lim[0];
+        cnt[1] = p->cf.tilt_home + SHORT_TILT_MARGIN < lim[1] ? p->cf.tilt_home + SHORT_TILT_MARGIN : lim[1];
+    }
     p->cal_active = 1;
-    plog(p, "ptz: calibrating: tilt down to the bottom stop, pan left to the left stop (speed %u, one sweep per axis, up to %u s)",
-         (unsigned)p->cf.speed, (unsigned)((p->cf.pan_step_max + p->cf.tilt_step_max + TILT_EXTRA_STEPS) * p->cf.speed / 1000 + 3));
+    if (quick) {
+        plog(p, "ptz: SHORT calibration (the head is very likely at home): tilt down from %u, pan left from %u, then home and the scene check again", (unsigned)cnt[1], (unsigned)cnt[0]);
+    } else {
+        plog(p, "ptz: calibrating: tilt down to the bottom stop, pan left to the left stop (speed %u, one sweep per axis, up to %u s)",
+             (unsigned)p->cf.speed, (unsigned)((p->cf.pan_step_max + p->cf.tilt_step_max + TILT_EXTRA_STEPS) * p->cf.speed / 1000 + 3));
+    }
     rc = drv_init(p, lim, cnt, NULL);
     if (!rc)
-        rc = sweep(p, 1, p->cf.tilt_step_max);
-    if (!rc) {
+        rc = sweep(p, 1, cnt[1]);
+    if (!rc && !quick) {
         /* The real tilt travel (about 2315 steps, measured) is longer than the declared maximum (2160): the first sweep can end 150 steps
          * above the bottom stop. Declare a short distance again (the pan counter keeps its maximum) and walk down once more: the motor
          * always ends ON the bottom stop. */
@@ -321,7 +336,7 @@ static int calibrate(hal_ptz_t *p)
             rc = sweep(p, 1, TILT_EXTRA_STEPS);
     }
     if (!rc)
-        rc = sweep(p, 0, p->cf.pan_step_max);
+        rc = sweep(p, 0, cnt[0]);
     if (!rc) {
         plog(p, "ptz: calibration: both stops reached, going home %u/%u", (unsigned)p->cf.pan_home, (unsigned)p->cf.tilt_home);
         ac.pan_min = ac.tilt_min = 1;
@@ -342,7 +357,7 @@ static int calibrate(hal_ptz_t *p)
     if (!rc)
         rc = declare_final(p, p->cf.pan_home, p->cf.tilt_home);
     p->cal_active = 0;
-    if (!rc) {
+    if (!rc && !quick) { /* a SHORT calibration does not reset the travel (the wear budget) nor count as a full one: the periodic full calibration keeps counting */
         p->cal_runs++;
         p->travel = 0;
     }
@@ -431,7 +446,7 @@ static int cold_probe_offsets(hal_ptz_t *p, uint32_t pan, uint32_t tilt, unsigne
         return 0;
     }
     (void)frames_invalidate(p); /* belt and braces: the files are invalid until proven */
-    plog(p, "ptz: multi-view check: the saved view is featureless: position %u/%u declared for the probe, moving by a small offset", (unsigned)pan, (unsigned)tilt);
+    plog(p, "ptz: multi-view check: the saved view is featureless or ambiguous: position %u/%u declared for the probe, moving by a small offset", (unsigned)pan, (unsigned)tilt);
     for (i = 0; i < PROBE_MAX_OFFSETS && !proven && !cancelled; i++) {
         int dp = 0, dt = 0, pr;
         int64_t tp, tt;
@@ -526,6 +541,35 @@ int hal_ptz_start(hal_ptz_t *p, int cal)
             if (pr < 0)
                 return HAL_PTZ_ECANCEL;
         }
+        if (cc == 3 && ok && !START_CANCELLED()) { /* very likely home, not proven: the short calibration, then the proof; anything else is the full calibration below */
+            int qrc;
+            p->defer_frames = 1; /* the frame files stay INVALID until the proof: a restart (kill, cancel) during it must never adopt an unproven home */
+            qrc = calibrate_x(p, 1);
+            p->defer_frames = 0;
+            if (qrc == 0) {
+                uint32_t vp = p->d.pan_home, vt = p->d.tilt_home;
+                int v;
+                p->trusted = 0; /* declared by calibrate_x, but not proven */
+                (void)frames_invalidate(p);
+                v = p->ops.cold_check(&vp, &vt); /* the live view at home against the reference, again: the strict check */
+                if (v == 1 && vp == p->d.pan_home && vt == p->d.tilt_home && !START_CANCELLED() && frames_save(p) == 0) {
+                    p->trusted = 1;
+                    p->scene_claim = 1;
+                    plog(p, "ptz: short calibration done and verified by the scene check: the head is at home %u/%u", (unsigned)vp, (unsigned)vt);
+                    return 0;
+                }
+                p->trusted = 0;
+                p->pos_valid = 0;
+                (void)frames_invalidate(p);
+                if (START_CANCELLED())
+                    return HAL_PTZ_ECANCEL;
+                plog(p, "ptz: short calibration: the home view is not proven afterwards: full calibration");
+            } else {
+                (void)frames_invalidate(p);
+                if (START_CANCELLED())
+                    return HAL_PTZ_ECANCEL;
+            }
+        }
         if (cc == 1 && ok) {
             if (declare_final(p, pan, tilt) == 0) {
                 p->scene_claim = 1;
@@ -600,7 +644,11 @@ static int begin(hal_ptz_t *p)
     return 0;
 }
 
-static int end(hal_ptz_t *p, int rc)
+static int end_t(hal_ptz_t *p, int rc, long travel_d);
+static int end(hal_ptz_t *p, int rc) { return end_t(p, rc, -1); }
+
+/* travel_d >= 0: the steps travelled (a continuous session: reversals count), else the net displacement */
+static int end_t(hal_ptz_t *p, int rc, long travel_d)
 {
     uint32_t pan, tilt;
     char s[SAVED_MAX];
@@ -612,7 +660,10 @@ static int end(hal_ptz_t *p, int rc)
         (void)store_pos(p, s);
     }
     if (p->pos_valid)
-        p->travel += (p->pan > p->bpan ? p->pan - p->bpan : p->bpan - p->pan) + (p->tilt > p->btilt ? p->tilt - p->btilt : p->btilt - p->tilt);
+        {
+            unsigned long d = travel_d >= 0 ? (unsigned long)travel_d : (p->pan > p->bpan ? p->pan - p->bpan : p->bpan - p->pan) + (p->tilt > p->btilt ? p->tilt - p->btilt : p->btilt - p->tilt);
+            p->travel = p->travel > ~0ul - d ? ~0ul : p->travel + d; /* saturates: a counter that wrapped would read as a fresh calibration */
+        }
     if (p->canceled) {
         p->canceled = 0;
         return HAL_PTZ_ECANCEL;
@@ -629,10 +680,21 @@ static int end(hal_ptz_t *p, int rc)
     return rc;
 }
 
+_Static_assert(HAL_PTZ_SPEED_MIN == PTZS_MIN_SPEED && HAL_PTZ_SPEED_MAX == PTZS_MAX_SPEED, "hal_ptz.h speed limits follow the safe layer");
+
 int hal_ptz_goto(hal_ptz_t *p, uint32_t pan, uint32_t tilt)
 {
     int rc = begin(p);
     return rc ? rc : end(p, ptzs_goto(&p->x, pan, tilt, p->cf.speed));
+}
+
+int hal_ptz_goto_sp(hal_ptz_t *p, uint32_t pan, uint32_t tilt, int speed)
+{
+    int rc;
+    if (speed != 0 && (speed < HAL_PTZ_SPEED_MIN || speed > HAL_PTZ_SPEED_MAX))
+        return HAL_PTZ_EREFUSED;
+    rc = begin(p);
+    return rc ? rc : end(p, ptzs_goto(&p->x, pan, tilt, speed > 0 ? (uint32_t)speed : p->cf.speed));
 }
 
 int hal_ptz_home(hal_ptz_t *p) { return hal_ptz_goto(p, p->d.pan_home, p->d.tilt_home); }
@@ -664,6 +726,91 @@ int hal_ptz_nudge_sp(hal_ptz_t *p, int dx, int dy, int speed)
     pan = pan < (int64_t)p->cf.pan_min ? p->cf.pan_min : pan > (int64_t)p->cf.pan_max ? p->cf.pan_max : pan;
     tilt = tilt < (int64_t)p->cf.tilt_min ? p->cf.tilt_min : tilt > (int64_t)p->cf.tilt_max ? p->cf.tilt_max : tilt;
     return end(p, ptzs_goto(&p->x, (uint32_t)pan, (uint32_t)tilt, speed > 0 ? (uint32_t)speed : p->cf.speed));
+}
+
+/* The command word of a logical command: 0 ok (*w, *a, *b filled), -1 stop / bad. Diagonals use the descriptor's words, or the faster axis alone when there are none. */
+static int cont_word(const hal_ptz_t *p, const hal_ptz_cmd_t *m, unsigned *w, uint32_t *a, uint32_t *b)
+{
+    int sx = m->sx, sy = m->sy;
+    if (sx < -1 || sx > 1 || sy < -1 || sy > 1 || m->dx < 0 || m->dy < 0 || (!sx && !sy))
+        return -1;
+    if (sx && sy && !p->d.diag_ok) { /* no diagonal command: the axis with the faster speed (smaller divisor) alone */
+        if ((m->dx ? m->dx : (int)p->cf.speed) <= (m->dy ? m->dy : (int)p->cf.speed))
+            sy = 0;
+        else
+            sx = 0;
+    }
+    if (sx && sy)
+        *w = p->d.diag[sy > 0 ? (sx > 0 ? 0 : 3) : (sx > 0 ? 1 : 2)];
+    else if (sy)
+        *w = p->d.dir[sy > 0 ? HAL_PTZ_UP : HAL_PTZ_DOWN];
+    else
+        *w = p->d.dir[sx > 0 ? HAL_PTZ_RIGHT : HAL_PTZ_LEFT];
+    *a = sx && m->dx ? (uint32_t)m->dx : 0;
+    *b = sy && m->dy ? (uint32_t)m->dy : 0;
+    return 0;
+}
+
+int hal_ptz_cont_run(hal_ptz_t *p, const hal_ptz_cmd_t *first, unsigned lease_ms, hal_ptz_cont_cb cb, void *ctx)
+{
+    struct ptzs_cont c;
+    unsigned w;
+    uint32_t a, b;
+    int rc = begin(p);
+    if (rc)
+        return rc;
+    memset(&c, 0, sizeof c);
+    if (!first || !cb || cont_word(p, first, &w, &a, &b))
+        return end(p, HAL_PTZ_EREFUSED);
+    rc = ptzs_cont_begin(&p->x, &c, w, a, b, lease_ms);
+    if (rc)
+        return end(p, rc);
+    while (!rc) {
+        hal_ptz_cstate_t st;
+        hal_ptz_cmd_t cmd;
+        int k;
+        rc = ptzs_cont_poll(&p->x, &c);
+        if (rc)
+            break;
+        st.pan = c.pos[0];
+        st.tilt = c.pos[1];
+        st.t_ms = p->x.t_ms;
+        memset(&cmd, 0, sizeof cmd);
+        k = cb(ctx, &st, &cmd);
+        if (k == HAL_PTZ_CONT_STOP) {
+            rc = PTZS_CONT_DONE;
+        } else if (k == HAL_PTZ_CONT_CMD) {
+            if (cont_word(p, &cmd, &w, &a, &b)) /* a zero command = stop */
+                rc = PTZS_CONT_DONE;
+            else
+                rc = ptzs_cont_set(&p->x, &c, w, a, b);
+        }
+    }
+    rc = ptzs_cont_end(&p->x, &c, rc);
+    return end_t(p, rc, (long)c.travel);
+}
+
+/* Async-signal-safe: one stop request on the already open node (the fatal-signal handler of the app). No allocation, no lock, no log. */
+void hal_ptz_emergency_stop(void)
+{
+    hal_ptz_t *p = g_hp;
+    if (p && p->fd >= 0 && p->ops.ioctl_fn) {
+        (void)p->ops.ioctl_fn(p->fd, PTZ_REQ_STOP, NULL);
+        (void)p->ops.ioctl_fn(p->fd, PTZ_REQ_STOP, NULL); /* a lost stop leaves the motor running: sent twice */
+    }
+}
+
+int hal_ptz_oneshot_stop(const hal_ptz_ops_t *ops)
+{
+    int fd, i, r = -1;
+    if (!ops || !ops->open_dev || !ops->ioctl_fn)
+        return -1;
+    fd = ops->open_dev();
+    if (fd < 0)
+        return -1;
+    for (i = 0; i < 3 && r; i++)
+        r = ops->ioctl_fn(fd, PTZ_REQ_STOP, NULL);
+    return r;
 }
 
 void hal_ptz_cancel(hal_ptz_t *p)

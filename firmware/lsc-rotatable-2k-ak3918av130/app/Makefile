@@ -59,16 +59,45 @@ SMOLRTSP ?= $(ROOT)/src/smolrtsp
 POC3_OBJ := $(OUT)/poc3
 COMMON_DIR := $(ROOT)/src/common
 include $(COMMON_DIR)/common.mk
+# Features of this model (src/common/features.mk). All on today: moving to feat_objs is not a behaviour change.
+AKAM_FEAT_API    := 1
+AKAM_FEAT_PTZ    := 1
+AKAM_FEAT_BUTTON := 1
+AKAM_FEAT_SCENE  := 1
+AKAM_FEAT_PATROL := 1
+AKAM_FEAT_WIFI5G := 0
+AKAM_FEAT_TRACK  := 1
+AKAM_FEAT_SYS    := 1
+AKAM_FEAT_LIGHT  := 1
+include $(COMMON_DIR)/features.mk
+.DEFAULT_GOAL := all
 SHARED_AK := h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtp_clock tx_pace net_tx md5 mqtt mqtt_ha night_logic cfg_file
+# Link order = the pre-move order of the objects (section placement of the stripped binary follows it: byte-identical across
+# the moves). `c:` names a src/common object (feature-gated), the others are 2K app objects. A model without a feature
+# links none of its common objects.
+POC3_ORDER := ptz_patrol akam2k_patrol akam2k_patrol_run akam2k_main akam2k_aring akam2k_audio akam2k_cap akam2k_stream akam2k_rtsp akam2k_detect akam2k_detstate akam2k_mqtt akam2k_mqttcfg akam2k_zones akam2k_snap akam2k_pin akam2k_ircut akam2k_image akam2k_night akam2k_night_run \
+  $(call feat_objs,SYS,c:hal_sys) \
+  akam2k_leds akam2k_leds_run akam2k_hal hal_light_sysfs \
+  $(call feat_objs,LIGHT,c:light_logic c:led_pat) \
+  hal_ptz hal_ptz_drv akam2k_ptz akam2k_ptz_desc akam2k_scene scene_check \
+  $(call feat_objs,BUTTON,c:hal_input) \
+  hal_input_sysfs \
+  $(call feat_objs,BUTTON,c:button_logic) \
+  akam2k_button akam2k_store akam2k_track akam2k_track_run akam2k_zlive track_logic akam2k_vidcfg akam2k_video akam2k_vlive akam2k_netreg \
+  $(call feat_objs,API,c:api_events) \
+  akam2k_detpub akam2k_settings akam2k_apibind $(call feat_objs,API,c:api_core c:api_httpd c:http_req) \
+  $(call feat_objs,BUTTON,c:button_gesture c:button_cfg) \
+  akam2k_buttonrt \
+  $(call feat_objs,API,c:api_limit c:api_keys c:api_sig c:sha256 c:json_min c:settings_reg) \
+  $(addprefix c:,$(SHARED_AK))
+poc3_obj = $(if $(filter c:%,$(1)),$(POC3_OBJ)/ak_$(patsubst c:%,%,$(1)).o,$(POC3_OBJ)/own_$(1).o)
 SMOL_SRC := $(wildcard $(SMOLRTSP)/src/*.c) $(wildcard $(SMOLRTSP)/src/types/*.c) $(wildcard $(SMOLRTSP)/src/writer/*.c) \
             $(wildcard $(SMOLRTSP)/src/transport/*.c) $(SMOLRTSP)/src/nal/h264.c
-POC3_OWN := akam2k_main akam2k_aring akam2k_audio akam2k_cap akam2k_stream akam2k_rtsp akam2k_detect akam2k_detstate akam2k_mqtt akam2k_mqttcfg akam2k_zones akam2k_snap akam2k_pin akam2k_ircut akam2k_image akam2k_night akam2k_night_run hal_sys akam2k_leds akam2k_leds_run akam2k_hal hal_light_sysfs light_logic hal_ptz hal_ptz_drv akam2k_ptz akam2k_ptz_desc akam2k_scene scene_check hal_input hal_input_sysfs button_logic akam2k_button akam2k_store akam2k_track akam2k_track_run akam2k_zlive track_logic akam2k_vidcfg akam2k_video akam2k_vlive akam2k_netreg akam2k_apievt akam2k_settings akam2k_api akam2k_httpd http_req api_limit api_keys api_sig sha256 json_min settings_reg
 POC3_CFLAGS := -std=gnu99 $(CFLAGS) -ffunction-sections -fdata-sections -MMD -MP -I. -I$(AKRTSP) $(common_inc) \
                -I$(SMOLRTSP)/include -I$(SMOLRTSP)/build/_deps/slice99-src -I$(SMOLRTSP)/build/_deps/datatype99-src \
                -I$(SMOLRTSP)/build/_deps/interface99-src -I$(SMOLRTSP)/build/_deps/metalang99-src/include \
                -DSMOLRTSP_WITH_H264
-POC3_OBJS := $(addprefix $(POC3_OBJ)/own_,$(addsuffix .o,$(POC3_OWN))) \
-             $(addprefix $(POC3_OBJ)/ak_,$(addsuffix .o,$(SHARED_AK))) \
+POC3_OBJS := $(foreach o,$(POC3_ORDER),$(call poc3_obj,$(o))) \
              $(addprefix $(POC3_OBJ)/smol_,$(subst /,_,$(patsubst $(SMOLRTSP)/src/%.c,%.o,$(SMOL_SRC))))
 # (the smol_ object names flatten the sub directories, see the rules below)
 
@@ -90,6 +119,9 @@ $(POC3_OBJ)/ak_%.o: $(COMMON_DIR)/net/%.c
 	$(poc3_check)
 	$(CC) $(POC3_CFLAGS) -c -o $@ $<
 $(POC3_OBJ)/ak_%.o: $(COMMON_DIR)/logic/%.c
+	$(poc3_check)
+	$(CC) $(POC3_CFLAGS) -c -o $@ $<
+$(POC3_OBJ)/ak_%.o: $(COMMON_DIR)/api/%.c
 	$(poc3_check)
 	$(CC) $(POC3_CFLAGS) -c -o $@ $<
 
@@ -135,12 +167,12 @@ $(OUT)/akam2k_mic: $(MIC_SRC) ../audio/akam2k_mic_core.h
 
 # akam2k_led: the light PoC / control tool (hal_light: portable logic + generic sysfs driver + the 2K descriptor). Plain libc only,
 # no vendor lib. A manual tool: copied by hand to /tmp on the camera, never installed by build_card.sh.
-LED_SRC := akam2k_led.c light_logic.c hal_light_sysfs.c akam2k_hal.c akam2k_pin.c
+LED_SRC := akam2k_led.c $(COMMON_DIR)/logic/light_logic.c hal_light_sysfs.c akam2k_hal.c akam2k_pin.c
 led: $(OUT)/akam2k_led
-$(OUT)/akam2k_led: $(LED_SRC) hal_light.h light_logic.h akam2k_hal.h akam2k_pin.h
+$(OUT)/akam2k_led: $(LED_SRC) $(COMMON_DIR)/logic/hal_light.h $(COMMON_DIR)/logic/light_logic.h akam2k_hal.h akam2k_pin.h
 	@test -x "$(CC)" || { echo "toolchain missing: run fetch_toolchain.sh"; exit 1; }
 	@mkdir -p $(OUT)
-	$(CC) -std=gnu99 $(CFLAGS) -I. -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(LED_SRC)
+	$(CC) -std=gnu99 $(CFLAGS) -I. $(common_inc) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(LED_SRC)
 
 # Every libc symbol the binary needs must be exported by the CAMERA's libc, not only by the build toolchain's.
 #   make poc3-symcheck CAMERA_LIBC=/path/to/libuClibc-1.0.31.so   (from your own camera backup)

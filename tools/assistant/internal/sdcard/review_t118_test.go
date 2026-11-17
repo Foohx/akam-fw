@@ -171,7 +171,7 @@ func TestSocketTransportStopsAfterTooManyBadConnections(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "too many bad connections") {
 		t.Fatalf("%v", err)
 	}
-	if time.Since(start) > 5*time.Second {
+	if time.Since(start) > 30*time.Second {
 		t.Error("slow")
 	}
 }

@@ -199,6 +199,25 @@ int main(void)
     CHECK(!a2k_model_path_ok("/tmp/model.bin") && !a2k_model_path_ok("/appfs/resource/model/") && !a2k_model_path_ok(NULL),
           "outside the model directory, the bare directory and NULL are refused");
 
+    /* ---- frame age reference: all-time minimum vs the 60 s window (experiment E3) */
+    {
+        struct a2k_agewin all, win;
+        long long a_all = 0, a_win = 0, t;
+        a2k_agewin_init(&all, 0);
+        a2k_agewin_init(&win, 1);
+        for (t = 0; t < 300000; t += 200) { /* a steady 40 ms queueing delay on a clock that drifts 1 ms per 2 s, one early outlier at the start */
+            long long raw = 100000 + t / 2000 + (t == 0 ? -50 : 40);
+            a_all = a2k_agewin_age(&all, 1000000 + t, raw);
+            a_win = a2k_agewin_age(&win, 1000000 + t, raw);
+        }
+        CHECK(a_all > 100, "all-time minimum: a drifting clock and an early outlier make the age grow (kept for ever)");
+        CHECK(a_win >= 0 && a_win <= 40, "60 s window: the age stays the real queueing delay, whatever the drift");
+        a2k_agewin_init(&win, 1);
+        CHECK(a2k_agewin_age(&win, 5000, 777) == 0, "the first sample is age 0");
+        CHECK(a2k_agewin_age(&win, 5200, 800) == 23 && a2k_agewin_age(&win, 5400, 760) == 0, "a smaller raw age lowers the reference at once");
+        CHECK(a2k_agewin_age(&win, 5400 + 59000, 900) == 140 && a2k_agewin_age(&win, 5400 + 61000, 900) == 0, "a minimum leaves the window after 60 s");
+    }
+
     printf("rot2k detect unit: %d failed\n", fails);
     return fails ? 1 : 0;
 }

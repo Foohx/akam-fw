@@ -7,15 +7,16 @@
  *               [--image-brightness N] [--image-contrast N] [--image-sharpness N] [--mains-hz 50|60] [--wdr 0|1] [--audio 0|1]
  *               [--led auto|on|off] [--led-boot P] [--led-nowifi P] [--led-person P] [--led-stream P] [--led-night P] [--led-idle P]
  *               [--ptz-cal auto|off] [--ptz-park PAN:TILT] [--ptz-privacy 0|1]
- *               [--track 0|1] [--ptz-travel-budget-k 10..99999] [--track-return home|stay] [--track-return-delay-s N] [--track-grace-s N] [--track-band-pct 2..40] [--track-tilt 0|1] [--track-lead-pct 0..100] [--track-head-pct 0..50] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
+ *               [--track 0|1] [--ptz-travel-budget-k 10..99999] [--track-return home|stay] [--track-return-delay-s N] [--track-grace-s N] [--track-band-pct 2..40] [--track-tilt 0|1] [--track-lead-pct 0..100] [--track-head-pct 0..50] [--track-gain-pan 200..4000] [--track-gain-tilt 200..4000] [--track-tilt-band-pct 2..40] [--track-debug 0..2] [--track-lag-ms -150..300] [--detect-age-window 0|1] [--track-tilt-return-s 0..3600] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
  *               [--ptz-scene-check 0|1] [--ptz-scene-min 0.80..0.99] [--api-port 0|1024..65535]
+ *   akam2k_rtsp --ptz-stop   (one motor stop request on the motor node, used by the supervisor after the app died)
  *   akam2k_rtsp --api-key new --scope read|write|admin --name LABEL | list | revoke ID|NAME [--force]   (key tool, no hardware touched)
  *   long forms: --port --main-kbps --sub-kbps --gop --auth --frames --seconds --detect --detect-hz --detect-threshold
  *
  * Defaults: port 554 (A2K_RTSP_PORT: rtsp://<ip>:554/stream0 main, /stream1 sub), main 2000 kbit/s, sub 512 kbit/s, GOP 30 (2 s at 15 fps), credentials file
  * /mnt/sdcard/akam/rtsp.conf (absent = no authentication; see rtsp_auth.h for its one-line format).
  * Person detection (akam2k_detect.c) runs alongside the streams: -D (default 1), -H 1..10 inferences/s (default 5),
- * -T classify threshold 500..950 (default 700), --detect-on-count 1..10 (default 2), --detect-off-s 1..60 (default 3), --detect-debug (per-inference frame age/count/score, 1 line/s, default off);
+ * -T classify threshold 500..950 (default 700), --detect-on-count 1..10 (default 2), --detect-off-s 1..60 (default 3), --detect-debug (per-inference frame age/count/score, 1 line/s, default off), --detect-log 0|1 (the same, conf detect_debug), --detect-model-thr 300..950 (experiment E1: the model threshold, lower than -T; the lower-scored persons are only logged);
  * state in /tmp/akam2k_detect.state and one log line per transition. A detection failure never stops the streams.
  * MQTT / Home Assistant (akam2k_mqtt.c): off unless the card file /mnt/sdcard/akam/mqtt (--mqtt-conf) exists and has
  * enabled=1; the broker password is read by the app itself from akam/mqtt_pass next to it, never from the command line.
@@ -51,20 +52,22 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "akam2k_api.h"
-#include "akam2k_apievt.h"
+#include "akam2k_apibind.h"
+#include "api_events.h"
 #include "akam2k_audio.h"
-#include "akam2k_httpd.h"
+#include "api_httpd.h"
 #include "akam2k_settings.h"
 #include "akam2k_cap.h"
 #include "akam2k_isp.h"
 #include "akam2k_button.h"
+#include "akam2k_buttonrt.h"
 #include "akam2k_leds.h"
 #include "akam2k_image.h"
 #include "akam2k_log.h"
 #include "akam2k_mqtt.h"
 #include "akam2k_night.h"
 #include "akam2k_pin.h"
+#include "akam2k_patrol.h"
 #include "akam2k_ptz.h"
 #include "akam2k_scene.h"
 #include "scene_check.h"
@@ -163,6 +166,7 @@ static void on_alarm(int sig)
 static void on_crash(int sig)
 {
     (void)sig;
+    a2k_ptz_emergency_stop(); /* a dead process must not leave the head walking toward a mechanical stop */
     a2k_pin_emergency_low();
     say("akam2k_rtsp: CRASH signal in step: ", (const char *)g_step);
     _exit(2);
@@ -377,6 +381,8 @@ int main(int argc, char **argv)
         { "detect-hz", required_argument, NULL, 'H' }, { "detect-threshold", required_argument, NULL, 'T' },
         { "detect-on-count", required_argument, NULL, 1000 }, { "detect-off-s", required_argument, NULL, 1001 },
         { "detect-debug", no_argument, NULL, 1002 },
+        { "detect-log", required_argument, NULL, 1060 },
+        { "detect-model-thr", required_argument, NULL, 1061 },
         { "mqtt-conf", required_argument, NULL, 1003 },
         { "zones-conf", required_argument, NULL, 1004 },
         { "snapshot", required_argument, NULL, 1005 },
@@ -414,6 +420,20 @@ int main(int argc, char **argv)
         { "track-tilt", required_argument, NULL, 1036 },
         { "track-lead-pct", required_argument, NULL, 1037 },
         { "track-head-pct", required_argument, NULL, 1039 },
+        { "track-gain-pan", required_argument, NULL, 1042 },
+        { "track-gain-tilt", required_argument, NULL, 1043 },
+        { "track-tilt-band-pct", required_argument, NULL, 1044 },
+        { "track-debug", required_argument, NULL, 1040 },
+        { "track-tilt-return-s", required_argument, NULL, 1041 },
+        { "track-motion", required_argument, NULL, 1045 },
+        { "track-zone-pct", required_argument, NULL, 1046 },
+        { "track-zone-y-pct", required_argument, NULL, 1047 },
+        { "track-zone-head-pct", required_argument, NULL, 1048 },
+        { "track-lease-ms", required_argument, NULL, 1049 },
+        { "track-lost-policy", required_argument, NULL, 1050 },
+        { "track-tilt-back-s", required_argument, NULL, 1051 },
+        { "track-lag-ms", required_argument, NULL, 1062 },
+        { "detect-age-window", required_argument, NULL, 1063 },
         { "video0-kbps", required_argument, NULL, 1100 },
         { "video0-max-kbps", required_argument, NULL, 1101 },
         { "video0-fps", required_argument, NULL, 1102 },
@@ -447,6 +467,7 @@ int main(int argc, char **argv)
     int track_inv_pan = 1, track_inv_tilt = 0, scene_min = SC_MIN_DEFAULT;
     int ptz_on = 0, track_on = 0, button_long = BTN_LONG_DEFAULT_MS;
     struct tl_cfg tune;
+    int track_debug = 0;
     char tarea_conf[A2K_TAREA_MAX * 48 + 1] = { 0 };
     int tarea_n = 0;
     long t_start;
@@ -456,8 +477,13 @@ int main(int argc, char **argv)
     unsigned long long lb[2] = { 0, 0 }, tb[2];
     unsigned long lf[2] = { 0, 0 }, tf[2];
 
-    if (argc >= 2 && strcmp(argv[1], "--api-key") == 0) /* the on-camera key tool: no hardware, no thread, exits here */
-        return a2k_api_key_cli(NULL, argc - 2, argv + 2);
+    if (argc == 2 && strcmp(argv[1], "--ptz-stop") == 0) /* the supervisor, after the app died: one motor stop request, nothing else */
+        return a2k_ptz_oneshot_stop() == 0 ? 0 : 1;
+    if (argc >= 2 && strcmp(argv[1], "--api-key") == 0) { /* the on-camera key tool: no hardware, no thread, exits here */
+        a2k_api_env_t kenv;
+        a2k_api_env_2k(&kenv);
+        return a2k_api_key_cli(&kenv, argc - 2, argv + 2);
+    }
     a2k_detect_defaults(&cfg.det);
     a2k_snap_defaults(&cfg.snap);
     a2k_night_defaults(&ncfg);
@@ -485,6 +511,8 @@ int main(int argc, char **argv)
             break;
         }
         case 1002: cfg.det.debug = 1; break;
+        case 1060: if (parse_int(optarg, 0, 1, &cfg.det.debug)) return usage(); break;
+        case 1061: if (parse_int(optarg, 300, 950, &cfg.det.model_thr)) return usage(); break;
         case 1003: mqtt_conf = optarg; break; /* a path only: the password is read from that file by the app itself */
         case 1004: zones_conf = optarg; break;
         case 1005: if (parse_int(optarg, 0, 1, &cfg.snap.enabled)) return usage(); break;
@@ -526,7 +554,21 @@ int main(int argc, char **argv)
         case 1035: if (parse_int(optarg, 2, 40, &tune.deadband_pct)) return usage(); break;
         case 1036: if (parse_int(optarg, 0, 1, &tune.tilt_enable)) return usage(); break;
         case 1037: if (parse_int(optarg, 0, 100, &tune.lead_pct)) return usage(); break;
+        case 1041: if (parse_int(optarg, 0, 3600, &tune.tilt_return_s)) return usage(); break;
+        case 1040: if (parse_int(optarg, 0, 2, &track_debug)) return usage(); break;
+        case 1042: if (parse_int(optarg, 200, 4000, &tune.gain_pan)) return usage(); break;
+        case 1043: if (parse_int(optarg, 200, 4000, &tune.gain_tilt)) return usage(); break;
+        case 1044: if (parse_int(optarg, 2, 40, &tune.tband_pct)) return usage(); break;
         case 1039: if (parse_int(optarg, 0, 50, &tune.head_pct)) return usage(); break;
+        case 1045: if (!strcmp(optarg, "continuous")) tune.motion = TL_MOTION_CONT; else if (!strcmp(optarg, "steps")) tune.motion = TL_MOTION_STEPS; else return usage(); break;
+        case 1046: if (parse_int(optarg, 0, 90, &tune.zone_x_pct)) return usage(); break;
+        case 1047: if (parse_int(optarg, 0, 90, &tune.zone_y_pct)) return usage(); break;
+        case 1048: if (parse_int(optarg, 0, 90, &tune.zone_head_pct)) return usage(); break;
+        case 1049: if (parse_int(optarg, 150, 2000, &tune.lease_ms)) return usage(); break;
+        case 1050: if (tl_lost_parse(optarg, &tune) != 0) return usage(); break;
+        case 1051: if (parse_int(optarg, 0, 600, &tune.tilt_back_s)) return usage(); break;
+        case 1062: if (parse_int(optarg, -150, 300, &tune.lag_ms)) return usage(); break;
+        case 1063: if (parse_int(optarg, 0, 1, &cfg.det.age_window)) return usage(); break;
         case 1027: if (parse_int(optarg, BTN_LONG_MIN_MS, BTN_LONG_MAX_MS, &button_long)) return usage(); break;
         case 1120: if (parse_int(optarg, 0, 1, &cfg.video_live)) return usage(); break;
         case 1121: if (parse_int(optarg, 0, 1, &cfg.venc_test)) return usage(); break;
@@ -624,6 +666,12 @@ int main(int argc, char **argv)
     ptz_on = a2k_ptz_start(&pcfg) == 0;
     /* person tracking: off unless track=1; the detection thread feeds it (a no-op while it is off or the camera cannot be moved) */
     a2k_track_run_start(track_on, tarea_conf, a2k_mqtt_resync, track_inv_pan, track_inv_tilt, &tune);
+    (void)a2k_patrol_run_start(); /* PTZ patrol: off until a route is started or ptz.patrol.idle_start_s is set (specs/ptz-patrol.md); never fatal */
+    if (track_debug && a2k_track_run_get()) {
+        a2k_track_set_debug(a2k_track_run_get(), track_debug);
+        if (track_debug >= 2)
+            a2k_ptz_set_ring_hook(a2k_track_rec_ring);
+    }
     if (a2k_rtsp_start(port, auth, sp) < 0) {
         a2k_stop = 1;
         alarm(15);
@@ -640,6 +688,8 @@ int main(int argc, char **argv)
     } else {
         a2k_mqtt_set_zones(NULL);
     }
+    a2k_button_prepare(button_long); /* the button bindings (the MQTT device triggers are made from them) */
+    a2k_mqtt_set_buttons(a2k_btn_gestures);
     a2k_mqtt_set_ctl(&ctl_ops);
     a2k_mqtt_set_vid(&vid_ctl);
     a2k_mqtt_set_snapshot(a2k_snap_enabled()); /* false when the JPEG encoder could not be opened */
@@ -649,7 +699,7 @@ int main(int argc, char **argv)
     a2k_mqtt_set_ptz(ptz_on ? &ptz_ctl : NULL);
     a2k_night_set_notify(night_to_mqtt);
     (void)a2k_mqtt_start(mqtt_conf, A2K_MQTT_MAC_PATH, port, a2k_rtsp_clients);
-    (void)a2k_button_start(button_long); /* the front button: short press = HA event, long press = park / home; never fatal */
+    (void)a2k_button_start(button_long); /* the front button: programmable gestures (default: short = HA event, long = park / home); never fatal */
     /* day/night: a failure is logged there and never stops the streams (the filter and the IR LED are then left alone) */
     if (a2k_night_start(&ncfg) != 0)
         a2k_log("day/night: not running");
@@ -661,7 +711,9 @@ int main(int argc, char **argv)
         sc.image = &icfg;
         if (a2k_settings_start(&sc) == 0) {
             a2k_settings_load();
-            if (api_port && a2k_httpd_start(api_port, 0, NULL) != 0)
+            a2k_api_env_t aenv;
+            a2k_api_env_2k(&aenv);
+            if (api_port && a2k_httpd_start(api_port, 0, &aenv) != 0)
                 a2k_log("api: not running");
         }
     }
@@ -738,6 +790,7 @@ int main(int argc, char **argv)
     a2k_settings_stop();
     a2k_mqtt_stop(); /* then MQTT, same reason */
     a2k_track_run_stop(); /* the detection thread outlives the motor: no more nudges from here on */
+    a2k_patrol_run_stop(); /* a running patrol is cancelled before the motor stops */
     a2k_button_stop(); /* before the PTZ and LED stops it drives, and before the pin files close */
     a2k_ptz_stop(); /* stops the motor (aborts a calibration), writes the position */
     a2k_leds_stop(); /* before the day/night stop, which closes the pin files */

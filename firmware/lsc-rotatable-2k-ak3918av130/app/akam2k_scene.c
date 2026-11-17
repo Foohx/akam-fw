@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -18,18 +19,23 @@ static unsigned g_seq;
 static int64_t g_th_ms = -1;
 static volatile int g_min = SC_MIN_DEFAULT;
 static char g_path[160] = A2K_PTZ_SCENE;
+static char g_dbg_dir[180] = "/tmp/akam_scene_dbg"; /* diagnosis dumps: RAM only, always on (about 10 KB, overwritten, at most 6 files) */
 static unsigned g_probe_ms = 0;
 static unsigned g_feed_ms = A2K_SCENE_FEED_MS, g_settle_ms = A2K_SCENE_SETTLE_MS, g_settle_frames = A2K_SCENE_SETTLE_FRAMES, g_timeout_ms = A2K_SCENE_TIMEOUT_MS;
 static sc_thumb_t g_cand; /* the candidate reference (PTZ thread only) */
 static int g_cand_mode = -1;
+static int g_cand_repmin; /* the threshold the candidate was screened for repetitive texture at (the verdict is stored in the reference: no screening at the boot) */
+static int g_altc_repmin[SC_OFFS];
 static unsigned g_boots;  /* matched boots since the last full calibration, as of the reference in force (PTZ thread only) */
 static int g_boots_known; /* g_boots was read from the file or set by a match / calibration */
 static sc_thumb_t g_altc[SC_OFFS]; /* the candidate views at the offsets (multi-view reference; PTZ thread only) */
 static int g_altc_mode[SC_OFFS];
+static int g_cand_rep;            /* the candidate home view is a repetitive / ambiguous texture (the multi-view reference is built, the verdict is stored) */
 static int g_cand_flat;           /* the candidate is a featureless view: the multi-view reference is being built */
 static unsigned g_unstamped_rewrites; /* rewrites of a reference with an unknown stamp in this run (at most one) */
 static int g_keep_old;            /* a featureless home view while a featureless reference of less than 24 h exists: only the boots counter may be reset */
 static unsigned g_writes;         /* flash writes of the reference files by this process (the store skips identical content: counted from its own counter) */
+static int g_stale_boot;          /* this run's boot check refused the stored reference (mismatch / differs / mode / repetitive) and a calibration follows: one rewrite regardless of the 24 h limit */
 static int64_t g_clock = -1;      /* tests: a fixed wall clock, seconds */
 #define CLOCK_SANE 1700000000LL   /* a wall clock below this (Nov 2023) is not set */
 
@@ -63,6 +69,22 @@ static int rewrite_allowed(const sc_ref_t *old)
     if (now < CLOCK_SANE)
         return 0;
     return now < (int64_t)old->stamp || now - old->stamp >= A2K_PTZ_SCENE_REWRITE_S;
+}
+
+/* rewrite_allowed(), or the one rewrite of this run when the boot check just proved the reference stale (*stale tells which; the caller clears g_stale_boot after the write) */
+static int rewrite_ok(const sc_ref_t *old, int *stale)
+{
+    *stale = 0;
+    if (rewrite_allowed(old))
+        return 1;
+    *stale = g_stale_boot;
+    return g_stale_boot;
+}
+
+/* the verdicts that say the stored reference no longer describes the home view (not: no reference, not home, no frame, cancelled, periodic, store failed) */
+static int verdict_stale(int v)
+{
+    return v == SC_MISMATCH || v == SC_MISMATCH_BLOCKS || v == SC_LIKELY || v == SC_MODE_DIFF || v == SC_REPETITIVE || v == SC_LOW_DETAIL_CUR || v == SC_LOW_DETAIL_REF;
 }
 
 void a2k_scene_set_min(int permille) { g_min = permille >= SC_MIN_LOWEST && permille <= 1000 ? permille : SC_MIN_DEFAULT; }
@@ -147,18 +169,46 @@ static int env_store(const sc_ref_t *ref)
     return write_ref(ref);
 }
 
+static int env_store_alt(unsigned i, const sc_ref_t *ref) { return i < SC_OFFS ? write_ref_at(ref, (int)i) : -1; }
+
 static void env_sleep(unsigned ms) { usleep(ms * 1000u); }
 static int64_t env_now(void) { return mono_ms(); }
 static void env_log(const char *line) { a2k_log("%s", line); }
 
+/* Diagnosis aid: the thumbnail the check used (80x48 raw gray, 3840 bytes) and one text line next to it, in the RAM directory g_dbg_dir (the camera's
+ * /tmp: never persistent storage), the same few names overwritten every time: ref.gray / live.gray / cap.gray (+ .txt). Written in place (no rename: a
+ * reader may catch a half file, it is a diagnosis aid). */
+static void env_dump(const char *name, const sc_thumb_t *t, const char *text)
+{
+    char path[260], base[40];
+    FILE *f;
+    size_t n = strlen(name);
+    mkdir(g_dbg_dir, 0755);
+    snprintf(base, sizeof base, "%.*s", (int)(n > 5 ? n - 5 : n), name); /* "ref.gray" -> "ref" */
+    snprintf(path, sizeof path, "%s/%s", g_dbg_dir, name);
+    if (t && (f = fopen(path, "wb")) != NULL) {
+        fwrite(t->px, 1, SC_N, f);
+        fclose(f);
+    }
+    snprintf(path, sizeof path, "%s/%s.txt", g_dbg_dir, base);
+    if (text && (f = fopen(path, "wb")) != NULL) {
+        fprintf(f, "%s\n", text);
+        fclose(f);
+    }
+}
+
+
 static int (*g_cancelled)(void);
 
-/* 1 match, 0 calibrate, 2 the saved view is featureless and stored views at nearby offsets exist: the motor layer moves by an offset and calls hook_probe */
+/* 1 match, 3 very likely home (not proven: the motor layer may run the short calibration and ask again), 0 calibrate, 2 the saved view is featureless and stored views at nearby offsets exist: the motor layer moves by an offset and calls hook_probe */
 static int hook_boot_check(uint32_t *pan, uint32_t *tilt, int (*cancelled)(void))
 {
-    sc_env_t e = { env_load, env_store, env_frame, env_mode, env_now, env_sleep, cancelled, env_log, env_load_alt };
+    sc_env_t e = { env_load, env_store, env_frame, env_mode, env_now, env_sleep, cancelled, env_log, env_load_alt, env_store_alt, env_dump };
     sc_cfg_t c = { g_min, g_settle_ms, g_settle_frames, g_timeout_ms, g_probe_ms };
-    int v = sc_boot_check(&e, &c, pan, tilt);
+    int v;
+    g_stale_boot = 0;
+    v = sc_boot_check(&e, &c, pan, tilt);
+    g_stale_boot = verdict_stale(v);
     g_cancelled = cancelled;
     if (v == SC_NEED_PROBE) {
         sc_ref_t r;
@@ -168,11 +218,11 @@ static int hook_boot_check(uint32_t *pan, uint32_t *tilt, int (*cancelled)(void)
         }
         return 2;
     }
-    if (v != SC_MATCH) {
-        g_boots = 0; /* a full calibration follows */
+    if (v != SC_MATCH && v != SC_LIKELY) { /* a LIKELY head keeps the boots counter: a short calibration that the strict check proves goes on counting toward the periodic full one */
+        g_boots = 0; /* a calibration follows */
         g_boots_known = 1;
     }
-    return v == SC_MATCH;
+    return v == SC_MATCH ? 1 : v == SC_LIKELY ? 3 : 0;
 }
 
 static int hook_probe_offset(unsigned i, int *dpan, int *dtilt) { return sc_probe_offset(i, dpan, dtilt); }
@@ -180,13 +230,14 @@ static int hook_probe_offset(unsigned i, int *dpan, int *dtilt) { return sc_prob
 /* the head is at offset i: 1 when the live view matches the stored view of that offset (the claimed position is proven) */
 static int hook_probe(unsigned i)
 {
-    sc_env_t e = { env_load, env_store, env_frame, env_mode, env_now, env_sleep, g_cancelled, env_log, env_load_alt };
+    sc_env_t e = { env_load, env_store, env_frame, env_mode, env_now, env_sleep, g_cancelled, env_log, env_load_alt, env_store_alt, env_dump };
     sc_cfg_t c = { g_min, g_settle_ms, g_settle_frames, g_timeout_ms, g_probe_ms };
     uint32_t pan, tilt;
     int v = sc_probe_check(&e, &c, i, &pan, &tilt);
     if (v != SC_MATCH) {
         g_boots = 0;
         g_boots_known = 1;
+        g_stale_boot = verdict_stale(v);
     }
     return v == SC_MATCH;
 }
@@ -215,21 +266,32 @@ static int hook_capture(void)
     if (g_cand_mode < 0 || env_frame(&g_cand, &seq) != 0)
         return -1;
     g_cand_flat = 0;
+    g_cand_rep = 0;
     g_keep_old = 0;
-    if (!sc_has_detail(&g_cand)) { /* it could prove nothing alone at the next boot */
+    g_cand_repmin = g_min;
+    {
+        int wdx = 0, wdy = 0, wk = 0;
+        char line[520];
+        int det = sc_has_detail(&g_cand);
+        if (det && (g_cand_rep = sc_repetitive_why(&g_cand, g_min, &wdx, &wdy, &wk)) != 0)
+            a2k_log("ptz: scene: repetitive screening triggered at displacement %d,%d px (%s)", wdx, wdy, wk == 1 ? "a separate lobe: a period" : "the main lobe reaches beyond 8 px: invariant along an axis");
+        sc_diag_text(&g_cand, NULL, g_min, !det ? "capture: featureless (flat)" : g_cand_rep ? "capture: ambiguous (repetitive)" : "capture: usable", 0, line, sizeof line);
+        if (det && !g_cand_rep)
+            snprintf(line + strlen(line), sizeof line - strlen(line), " | repetitive 0");
+        else if (g_cand_rep)
+            snprintf(line + strlen(line), sizeof line - strlen(line), " | repetitive 1 at %d,%d kind %d", wdx, wdy, wk);
+        env_dump("cap.gray", &g_cand, line);
+    }
+    if (!sc_has_detail(&g_cand) || g_cand_rep) { /* it could prove nothing alone at the next boot (featureless, or a shift would match) */
         sc_ref_t *o = &g_old;
-        if (env_load(o) == 0 && !rewrite_allowed(o)) { /* a mode difference is a changed view like any other: same 24 h rule */
+        int peek;
+        if (env_load(o) == 0 && !rewrite_ok(o, &peek)) { /* a mode difference is a changed view like any other: same 24 h rule */
             g_keep_old = 1; /* the reference (and its stored offset views) is recent: kept, no excursion, no write but the boots counter */
             return 0;
         }
-        a2k_log("ptz: scene: the view is too uniform to be a reference on its own: trying the multi-view reference (nearby offsets)");
+        a2k_log("ptz: scene: the view is %s: not a reference on its own, trying the multi-view reference (nearby offsets)", g_cand_rep ? "ambiguous (repetitive / invariant along an axis)" : "too uniform");
         g_cand_flat = 1;
         return 2; /* the controller may store views at offsets; otherwise nothing is saved */
-    }
-    if (sc_repetitive(&g_cand, g_min)) { /* blinds, tiles, bars: a shift of a period would match */
-        a2k_log("ptz: scene: repetitive texture, no reference");
-        g_cand_mode = -1;
-        return 1;
     }
     return 0;
 }
@@ -259,18 +321,20 @@ static int hook_commit(uint32_t pan, uint32_t tilt, int fresh)
     static sc_ref_t ref;
     sc_thumb_t cur;
     unsigned seq;
-    int score = -1000, v, have_old;
+    int score = -1000, v, have_old, stale = 0;
     sc_ref_t *old = &g_old;
     if (g_keep_old) {
         g_keep_old = 0;
         have_old = env_load(old) == 0 && old->pan == pan && old->tilt == tilt;
         return have_old ? (fresh ? reset_boots(old) : 1) : 1;
     }
-    if (g_cand_mode < 0 || env_frame(&cur, &seq) != 0)
+    if (g_cand_mode < 0 || g_cand_flat || env_frame(&cur, &seq) != 0) /* a featureless / ambiguous candidate is only ever written by commit_multi */
         return -1;
     ref.valid = 1;
     ref.mode = g_cand_mode;
     ref.th = g_cand;
+    ref.rep = 0; /* hook_capture screened it (a repetitive candidate never gets here) */
+    ref.repmin = g_cand_repmin;
     v = sc_decide(&ref, &cur, env_mode(), g_min, &score);
     if (v != SC_MATCH) { /* the scene changed during the window (a person, a lamp, a moved head): the candidate proves nothing */
         a2k_log("ptz: scene reference not saved: the view changed since it was captured (%s, score %d)", sc_verdict_name(v), score);
@@ -283,12 +347,12 @@ static int hook_commit(uint32_t pan, uint32_t tilt, int fresh)
             g_cand_mode = -1;
             return fresh ? reset_boots(old) : 1;
         }
-        if (!rewrite_allowed(old)) {
+        if (!rewrite_ok(old, &stale)) {
             a2k_log("ptz: scene: the home view (or its day/night mode) differs from the reference (score %d), which was written less than 24 h ago (or the clock is not set or the stamp unknown and already used): not rewritten", sc2);
             g_cand_mode = -1;
             return fresh ? reset_boots(old) : 1;
         }
-        a2k_log("ptz: scene: the home view changed (score %d against the reference): the reference is rewritten", sc2);
+        a2k_log("ptz: scene: the home view changed (score %d against the reference): the reference is rewritten%s", sc2, stale ? " (this boot's check refused the old one: the 24 h limit does not apply, once per run)" : " (allowed by the 24 h rule)");
     }
     ref.pan = pan;
     ref.tilt = tilt;
@@ -300,6 +364,8 @@ static int hook_commit(uint32_t pan, uint32_t tilt, int fresh)
         return -1;
     if (have_old && !old->stamp)
         g_unstamped_rewrites++;
+    if (stale)
+        g_stale_boot = 0;
     g_boots = ref.boots;
     g_boots_known = 1;
     g_cand_mode = -1;
@@ -330,6 +396,7 @@ static int hook_alt_capture(unsigned i)
     }
     g_altc[i] = t;
     g_altc_mode[i] = mode;
+    g_altc_repmin[i] = g_min;
     return 0;
 }
 
@@ -358,9 +425,10 @@ static int hook_commit_multi(uint32_t pan, uint32_t tilt, int fresh, unsigned ma
 {
     static sc_ref_t ref;
     unsigned i;
+    int stale = 0;
     if (!g_cand_flat || g_cand_mode < 0 || !mask)
         return -1;
-    if (env_load(&g_old) == 0 && g_old.pan == pan && g_old.tilt == tilt && !rewrite_allowed(&g_old)) /* the same 24 h rule as the single view */
+    if (env_load(&g_old) == 0 && g_old.pan == pan && g_old.tilt == tilt && !rewrite_ok(&g_old, &stale)) /* the same 24 h rule as the single view */
         return -1;
     if (env_load(&g_old) == 0 && !g_old.stamp)
         g_unstamped_rewrites++;
@@ -374,6 +442,8 @@ static int hook_commit_multi(uint32_t pan, uint32_t tilt, int fresh, unsigned ma
             ref.pan = (uint32_t)((int)pan + dp);
             ref.tilt = (uint32_t)((int)tilt + dt);
             ref.boots = 0;
+            ref.rep = 0;
+            ref.repmin = g_altc_repmin[i];
             ref.th = g_altc[i];
             if (ref.mode != g_cand_mode || write_ref_at(&ref, (int)i) != 0)
                 return -1;
@@ -388,6 +458,8 @@ static int hook_commit_multi(uint32_t pan, uint32_t tilt, int fresh, unsigned ma
     ref.valid = 1;
     ref.mode = g_cand_mode;
     ref.th = g_cand;
+    ref.rep = g_cand_rep; /* 1: the home view is ambiguous, the boot never decides on it (it asks for the offset views); 0: featureless, nothing to alias */
+    ref.repmin = g_cand_repmin;
     ref.pan = pan;
     ref.tilt = tilt;
     ref.stamp = now_s() >= CLOCK_SANE ? (uint32_t)now_s() : 0;
@@ -396,6 +468,8 @@ static int hook_commit_multi(uint32_t pan, uint32_t tilt, int fresh, unsigned ma
     ref.boots = fresh ? 0 : g_boots;
     if (write_ref(&ref) != 0)
         return -1;
+    if (stale)
+        g_stale_boot = 0;
     g_boots = ref.boots;
     g_boots_known = 1;
     g_cand_mode = -1;
@@ -409,7 +483,9 @@ static int hook_drop(void)
 {
     static char buf[A2K_STORE_MAX + 1];
     int n = a2k_store_read(g_path, buf, sizeof buf);
-    if (n >= 6 && !memcmp(buf, "scene1", 6)) {
+    /* any version of the format ("scene" + a digit: 1, 2, a future one): a reference this build cannot read is still dropped. A downgrade is safe in
+     * the other direction too: an older build does not recognise "scene2" at all (no reference: full calibration). */
+    if (n >= 6 && !memcmp(buf, "scene", 5) && buf[5] >= '0' && buf[5] <= '9') {
         char mark[32];
         load_boots(); /* the count survives the invalidation (a process restart after an adoption must not forget it) */
         snprintf(mark, sizeof mark, "invalid %u\n", g_boots);
@@ -433,6 +509,9 @@ void a2k_scene_test_set(const char *path, unsigned feed_ms, unsigned settle_ms, 
     g_settle_frames = settle_frames;
     g_timeout_ms = timeout_ms;
     g_th_ms = -1;
+#ifdef A2K_SCENE_TEST /* host tests only: a production build never derives the dump dir from a path (it could land under /config, flash) */
+    snprintf(g_dbg_dir, sizeof g_dbg_dir, "%s.dbg", g_path);
+#endif
     g_cand_mode = -1;
     g_cand_flat = 0;
     g_probe_ms = settle_ms ? settle_ms : 1; /* tests: the probe settles as fast as the check */
@@ -440,6 +519,7 @@ void a2k_scene_test_set(const char *path, unsigned feed_ms, unsigned settle_ms, 
     g_boots_known = 0;
     g_keep_old = 0;
     g_unstamped_rewrites = 0;
+    g_stale_boot = 0;
     g_writes = 0;
     g_clock = -1;
 }

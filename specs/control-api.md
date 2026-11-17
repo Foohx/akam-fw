@@ -72,7 +72,15 @@ Rules:
 | `rtsp.stream0.enabled`, `rtsp.stream1.enabled` | bool | default 1 | live | yes |
 | `audio.enabled` | bool | default 0 | live | yes |
 | `detect.enabled`, `track.enabled` | bool | track needs detect | live | yes |
-| `track.return`, `track.return_delay_s` | `stay|home` (default stay) / int 0..86400 (default 30) | return policy of the tracker | live | yes |
+| `track.return`, `track.return_delay_s` | `stay|home` (default home) / int 0..86400 (default 30) | return policy of the tracker | live | yes |
+| `track.band_pct`, `track.head_pct` | int 2..40 (default 6) / int 0..50 (default 15) | pan dead band, head row (% of the frame) | live | yes |
+| `track.gain_pan`, `track.gain_tilt`, `track.tilt_band_pct` | int 200..4000 (default 1000) / 200..4000 (default 700) / 2..40 (default 10) | motor steps per frame width / height of offset; the vertical dead band (the head band is half of it) | live (applied to the running tracker under its lock) | yes |
+| `track.zone_pct`, `track.zone_y_pct`, `track.zone_head_pct` | int 0..90 (default 40 / 30 / 20) | comfort zone of the person tracker, % of the frame width / the height (body rule) / the height (head rule); 0 = the old targeting | live | yes |
+| `track.motion` | enum `continuous\|steps` (default `continuous`) | continuous move re-targeted without a stop, or timed nudges (fallback) | live | yes |
+| `track.lost_policy` | string (`none` or up to 8 of `hold:N`, `backsweep`, `exit`, `local:W:D:N`, `route:<name>[:N]`, `home`, `stay`) | what the tracker does when the person is lost; default = the legacy return policy; all or nothing | live | yes |
+| `track.lost_step` | string, read only | current step of the lost chain (`idle`, `backsweep`, `exit`, `hold`, `local`, `route:<name>`, `home`, `stay`, `done`); changes are events of type `track` | live | no |
+| `track.tilt_back_s` | int 0..600 (default 5) | seconds after a loss before the tilt goes back to home when it is > 250 steps above it; 0 = off | live | yes |
+| `track.lag_ms` | int -150..300 (default 50) | video latency of the pose-at-capture lookup (negative allowed) | live | yes |
 | `led.mode`, `led.boot/nowifi/person/stream/night/idle` | enum / pattern | `auto|on|off`; patterns | live | yes |
 | `video0.kbps/max_kbps/fps/min_qp/max_qp/gop/rc` (and `video1.*`) | int/enum | `akam2k_video.h` ranges | live, else restart-component | yes |
 | `ptz.park`, `ptz.privacy`, `ptz.cal` | pattern/bool/enum | `PAN:TILT`, 0/1, `auto|off` | live | yes |
@@ -82,7 +90,7 @@ Rules:
 | `sys.*`, `net.wifi_rssi`, `rtsp.clients`, `detect.state`, `video.fps_actual` | state | read-only | - | no |
 
 Actions (a separate table `act_def_t {name, args schema, hook, scope}`; not settings): `ptz.home`, `ptz.park`,
-`ptz.recalibrate`, `ptz.move` (bounded relative step, rate limited), `audio.beep`, `snapshot.refresh`, `mqtt.test`,
+`ptz.recalibrate`, `ptz.move` (bounded relative step, rate limited), `ptz.patrol.start`, `ptz.patrol.stop`, `ptz.goto_preset` ([ptz-patrol.md](ptz-patrol.md)), `audio.beep`, `snapshot.refresh`, `mqtt.test`,
 `settings.reset` (one key or group to default; never a factory reset), `settings.save`. No `reboot` action in v1: a
 wedged camera is power-cycled or reached over SSH. It may be added later as a separate high-scope action if needed.
 
@@ -129,8 +137,21 @@ wedged camera is power-cycled or reached over SSH. It may be added later as a se
 | `POST /actions/<name>` | write | Body = argument object; reply `{"ok":true,...}` |
 | `GET /audit` | admin | Recent audit entries (7.5) |
 | `GET/POST/DELETE /keys[/<key_id>]` | admin | List (ids, scopes, labels, dates; never secrets), add, revoke (section 8) |
+| `GET /ptz/presets[/<name>]`, `GET /ptz/routes[/<name>]` | read | PTZ presets and patrol routes ([ptz-patrol.md](ptz-patrol.md) section 7) |
+| `POST /ptz/presets[/<name>]`, `POST /ptz/routes`, `DELETE /ptz/presets/<name>`, `DELETE /ptz/routes/<name>` | write | Create or replace, delete; JSON bodies, validated, all or nothing; one flash write per change, rate limited |
+
+| `GET /button`, `GET /modes[/<name>]` | read | The programmable push button: its whole config (gesture timing, LED confirmation, bindings `{gesture -> [actions]}`) and the named modes |
+| `POST /button`, `POST /modes[/<name>]`, `DELETE /modes/<name>` | write | Replace the whole button config (validated as a whole, all or nothing); create or replace a mode (up to 8 `key=value` pairs, only registry rows that are writable, non-secret, live, not `net.*` / `api.*`); delete a mode no binding uses (409 `in_use`). One flash write per real change (`/config/akam/button`, `/config/akam/modes`), burst of 8 then one per 10 s (429 `rate`), counted in `sys.flash_writes_button` |
 
 Scopes: `read` < `write` < `admin`. Each setting/action has a minimum scope (default `write`; `api.*` need `admin`).
+
+**Programmable button (2K, implemented 2026-11-17).** The front button is a gesture source: short / double / triple / long / very long presses and
+user sequences of up to 6 presses (`S S L`) are bound to up to 4 actions from a fixed whitelist (`none`, `ptz.home`, `ptz.park`, `ptz.toggle_park`,
+`ptz.recalibrate`, `ptz.privacy on|off|toggle`, `ptz.goto_preset <name>`, `track on|off|toggle`, `track.lost_policy <value>`, `patrol start <route>`, `patrol stop`,
+`led pattern <pattern|name>`, `mode <name>`); nothing destructive (no reset, key, network or reboot) can be bound. Every gesture emits the event `button`
+`{"gesture","actions","result"}` and an MQTT publish on `BASE/button` (plus one Home Assistant device trigger per configured gesture, MQTT staying opt-in); state key
+`button.last_gesture`; action `mode.apply {"name":".."}` applies a mode through the registry all or nothing (every pair is validated before any is applied). The
+defaults are the factory behaviour. Details, timing and limits: [docs/porting/lsc-rotatable-2k/button-and-zones.md](../docs/porting/lsc-rotatable-2k/button-and-zones.md).
 
 ### 4.3 What the API cannot do
 
@@ -267,8 +288,8 @@ key change = stop + start (`restart_component`). The password stays in its 0600 
   reads `unknown`.
 - `track.enabled`: starts/stops the tracker; stopping holds the motor in place. Cross-field `check`: needs
   `detect.enabled`.
-- `track.return`, `track.return_delay_s`: what the camera does after the person is lost (3 s grace): `stay` where it was last seen (default,
-  never returns) or `home` after the delay (0 = right after the grace). Applied to the running tracker at once.
+- `track.return`, `track.return_delay_s`: what the camera does after the person is lost (3 s grace): `stay` where it was last seen (opt-in,
+  never returns) or `home` (default) after the delay (0 = right after the grace). Applied to the running tracker at once.
 
 ### 6.4 Video parameters
 Reuse `akam2k_video.h`: live setters first, else a **re-open of that channel only** with automatic rollback on failure;
@@ -420,7 +441,9 @@ The 2K has no 8091 port; it is configured by `akam2k.conf` and MQTT. v1 adds the
   text protocol, reply forms and write rule (loopback or debug flag). `LIST` walks the registry. Existing key names
   stay (`night.mode`, `isp.brightness`, ...), differing ones get an `alias`.
 - The HTTP API reaches the 1080p only after the 1080p adoption phase (hal-architecture phase B), with the byte-identical
-  proof and a hardware pass. Until then no 1080p file changes.
+  proof and a hardware pass. Until then no 1080p file changes. **Done on the host (2026-11-17), see "Phase 3" at the end of this
+  file:** the 8091 adapter is a fallback in front of the registry (not a rewrite, and `LIST` does not walk the registry); the
+  hardware pass is open.
 - A shared key name keeps one meaning, range and unit on both models; a divergence is a per-model `lo/hi` override.
 
 ## 12. Test plan
@@ -524,7 +547,8 @@ tune it):
 
 ```sh
 APP=firmware/lsc-rotatable-2k-ak3918av130/app
-SRC="$APP/sha256.c $APP/api_keys.c $APP/api_sig.c $APP/json_min.c $APP/settings_reg.c"
+COMMON=src/common
+SRC="$COMMON/net/sha256.c $COMMON/api/api_keys.c $COMMON/api/api_sig.c $COMMON/api/json_min.c $APP/settings_reg.c"
 FLAGS="-std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-sanitize-recover=all -I$APP"
 cc $FLAGS -o /tmp/capi_unit $SRC tests/rot2k_control_api_unit.c && /tmp/capi_unit tests/fixtures/control_api_vectors.txt
 cc $FLAGS -o /tmp/capi_fuzz $SRC tests/rot2k_control_api_fuzz.c && /tmp/capi_fuzz 200000
@@ -562,23 +586,29 @@ was built and where it departs from the sections above.
 **Why it exists first:** there is no MQTT broker in the target setup, so this API is the path to a native Home Assistant integration. It therefore exposes
 everything HA needs: settings (LED, IR, picture, tracking, video, network), actions (PTZ), state/metrics, and a **push channel** (`GET /events`, a long poll).
 
-Files (all under `firmware/lsc-rotatable-2k-ak3918av130/app/`, linked into `akam2k_rtsp`; no `src/` file changed, the 1080p binary is byte-identical):
+Files (written under `firmware/lsc-rotatable-2k-ak3918av130/app/`; the generic ones moved to `src/common` with the 1080p port, Phase 3 below; the a2k_ symbol names are unchanged):
 
 | File | Content |
 |---|---|
-| `http_req.[ch]` | strict request-head parser (pure, fuzzed): CRLF only, no folding, no control or non-ASCII byte, duplicate X-Akam-*/Content-Length refused, raw `+` kept |
-| `api_limit.[ch]` | per-peer lockout (5 free failures, 1 s doubling to 5 min, LRU 16), global 20 failures/min with an exemption for a recently proven peer, accepted-request token bucket (0.4/s, burst 14), `/hello` limits (pure) |
-| `akam2k_apievt.[ch]` | event ring (32) + wake pipe; producers: button and person (in `akam2k_mqtt.c`'s existing hooks, which run with MQTT off too), day/night and PTZ (the notify adapters in `akam2k_main.c`), settings changes |
+| `http_req.[ch]` (now `src/common/net/`) | strict request-head parser (pure, fuzzed): CRLF only, no folding, no control or non-ASCII byte, duplicate X-Akam-*/Content-Length refused, raw `+` kept |
+| `api_limit.[ch]` (`src/common/api/`) | per-peer lockout (5 free failures, 1 s doubling to 5 min, LRU 16), global 20 failures/min with an exemption for a recently proven peer, accepted-request token bucket (0.4/s, burst 14), `/hello` limits (pure) |
+| `akam2k_apievt.[ch]` (now `src/common/api/api_events.[ch]`) | event ring (32) + wake pipe; producers: button and person (in `akam2k_mqtt.c`'s existing hooks, which run with MQTT off too), day/night and PTZ (the notify adapters in `akam2k_main.c`), settings changes |
 | `akam2k_settings.[ch]` | the 2K registry table over the real modules, the settings worker (32 KiB stack, one job slot, 3 s wait, 504 `busy`), persistence (`/config/akam/settings`, burst 4 then 1 per 30 s), actions, the net.* backend |
-| `akam2k_api.[ch]` | routing, verification order of 5.3, endpoints, key store (0600, reload by stat), audit ring, `--api-key` tool |
-| `akam2k_httpd.[ch]` | the socket side: one thread, `poll`, 4 connections (3 per peer), 5 s idle / 10 s per request, 2 s write bound, held long polls; the only API file that may create a socket |
+| `akam2k_api.[ch]` (now `src/common/api/api_core.[ch]`, bound by `akam2k_apibind.[ch]`) | routing, verification order of 5.3, endpoints, key store (0600, reload by stat), audit ring, `--api-key` tool |
+| `akam2k_httpd.[ch]` (now `src/common/api/api_httpd.[ch]`) | the socket side: one thread, `poll`, 4 connections (3 per peer), 5 s idle / 10 s per request, 2 s write bound, held long polls; the only API file that may create a socket |
 | `overlay/akam/akam_api_key.sh` | SSH tool: runs the app in key-tool mode (`akam2k_rtsp --api-key new\|list\|revoke`) |
 | `own_app_run.sh` `net_request` | hands one validated request line of `/tmp/akam_net.req` to `akam_net.sh` |
 
 Decisions and departures from the earlier text:
 - **One HTTP thread, not "one request at a time":** the thread multiplexes up to 4 connections with `poll` so a slow client cannot starve the others (the spec's
   sequential model would let a slowloris hold the port for 5 s per attempt). Handlers still run to completion one at a time. Only `GET /events` is held.
-- **Events (new):** `GET /events?since=N&timeout=S` (S up to 25), types `button`, `person`, `night`, `ptz`, `setting`; at most 2 held connections.
+- **Events (new):** `GET /events?since=N&timeout=S` (S up to 25), types `button`, `person`, `night`, `ptz`, `setting`, `detections`; at most 2 held connections.
+- **Person boxes out (2026-11-16):** event type `detections` (data: `ts_ms`, frame `w`/`h`, `pan`/`tilt` when known, `boxes[{x,y,w,h per-mille,score,id,target,ignored}]`), the read-only state key
+  `detect.boxes` (the latest list as JSON text; `STREG_VAL_MAX` is 832 for it) and the setting `detect.publish_hz` (0..10, default 2, persisted; 0 = off; at most 5 a second). Pure policy in
+  `akam2k_detpub.c` (rate limit, change detection, one empty list when the last person leaves, nothing while privacy or parked, ids by nearest centre), fan-out from the detection thread to
+  the event ring, the state key and `a2k_mqtt_detections` (MQTT `BASE/detections`, QoS 0, not retained, no discovery entity). The events have a **separate ring of 4** entries of 800 bytes
+  (`api_events.c` merges the two rings by sequence number; `missed` is true when any number after the cursor is gone), so detections never evict `button`/`ptz`/`setting`. Boxes in an ignore zone
+  are published with `ignored:true` (the tracker and the presence still skip them). RAM only. Caveat: the signed-request bucket (0.4/s) limits a long-poll client to about one reply per 2.5 s.
 - **Bootstrap:** the SSH tool is `akam_api_key.sh` calling the app (`akam2k_rtsp --api-key ...`) instead of a separate `akam-key` binary: the app already has the
   CSPRNG, the key code and the atomic store, so nothing new ships. The running app picks the file up by `stat` (mtime, ctime, mode, size, inode) about once a second, so
   no loopback reload socket exists. A file with any group/other permission bit, or an invalid one, closes the API (`keys_perm`, `keys_invalid`) and is kept.
@@ -604,3 +634,32 @@ JSON/schema code are larger than guessed). bss +57 KB after the review (the 4 co
 measured yet**; the gate (+64 KB) is to be checked with `a2k_mem_report` before and after a request burst, see the checklist.
 
 Left for later phases: the Go client and `akam api-key` commands, `GET /schema`-driven docs, the live component controllers, generated MQTT entities, TLS/payload encryption.
+
+
+## Phase 3: the signed API on the 1080p (convergence P7 and P8, implemented 2026-11-17, host-tested; camera checks pending)
+
+Section 11 said the 1080p adopts the registry and turns port 8091 into an adapter. What was built, and where it departs from that text:
+reference for users and integrators: [docs/porting/lsc-1080p/control-api.md](../docs/porting/lsc-1080p/control-api.md).
+
+- **One shared API, two bindings.** `akam2k_api.c`, `akam2k_httpd.c`, `http_req.c` and the job/action types moved to `src/common` (`api/api_core`,
+  `api/api_httpd`, `net/http_req`, `api/api_backend.h`) and take their model from `a2k_api_env_t`: model name and version, a log function, the file
+  store (read, atomic write), the settings backend (registry, executor, action list) and extra routes (the 2K: PTZ presets and patrol, the button and
+  its modes; the 1080p: none). The 2K binds in `akam2k_apibind.c` (behaviour unchanged: `tests/rot2k_control_api_http_test.sh` passes with its 357
+  checks), the 1080p in `src/ak_rtsp/ak1080_api.c`. `src/common/features.mk`: the 1080p builds with `API SYS LIGHT` on and `PTZ BUTTON SCENE PATROL WIFI5G
+  TRACK` off.
+- **Registry on the 1080p** (`ak1080_settings.c`, 41 rows, no registry file: each module keeps its own file, persisted only on a user change). The
+  rows call the code of the 8091 port (`control_apply_setting`), the LED engine, `video_ctl`, `ctl_sys`, the ONVIF and MQTT services, so there is one
+  writer per value whichever door is used. `control.c` offers any key it does not know to the registry (`GET/SET led.mode`, `image.contrast`,
+  `video0.kbps`...); the keys it knows keep their names, replies and write rule byte for byte (`tests/control_test.sh`).
+- **Departures from the plan text:** (a) `control.c` was not rewritten onto the table (the adapter is a fallback, the old code stays the writer behind
+  the rows): rewriting would have changed the error texts the assistant reads for no gain. (b) No settings worker thread: a PATCH runs inline on the one
+  HTTP thread (RAM and a 32 KiB stack saved); the 504 `busy` path of the 2K therefore cannot happen. (c) The flash limiter is per request (burst 6,
+  then one per 20 s, `429 flash_rate`), not the deferred save of the 2K (the modules save at once). (d) Video rows apply at the next start
+  (`restart_component`), no live setter (P10). (e) `net.hostname` and `net.ntp` are read-only (their files belong to `akam_hostname.sh` and
+  `akam_ntp.sh`, which also set the kernel host name and start the time helper; the app never spawns).
+- **Events:** `night` (the night thread calls `night_set_notify` after the ISP lock is released) and `setting`. No `person`, `ptz` or `button`.
+- **Budget** (pinned zig, stripped `ak_rtsp`, against `dev` 639d44a, details per step in `tests/golden/ak_rtsp_1080p.sha256`): P4 +2.4 KB, P6 +4.9 KB, P7 +17.9 KB,
+  P8 +61.6 KB; **+86.8 KB in total (text +86.5 KB, bss +62.4 KB)**. The registry-plus-API part (P7+P8, +79.5 KB) is OVER the section 9 gate (+56 KB),
+  like the 2K (+53 KB for the API alone, whose gate was +40 KB): the schema and JSON code, the HMAC and key code and the 41-row table are larger than
+  estimated, and the 1080p links them as static musl. bss is mostly untouched pages (the 12 KiB reply buffer, the 16 KiB audit ring, the 5 KiB write ring).
+  RSS on the camera is not measured.

@@ -1,6 +1,6 @@
 /* See akam2k_mqtt.h. The only app file with connect(). Host-compilable (the unit test replaces the network). */
 #define _GNU_SOURCE
-#include "akam2k_apievt.h"
+#include "api_events.h"
 #include "akam2k_mqtt.h"
 
 #include <arpa/inet.h>
@@ -224,12 +224,18 @@ static int g_snap_enabled, g_night_enabled, g_sys_enabled;
 static a2k_mqtt_leds_t g_leds;                    /* get == NULL: no controls */
 static a2k_mqtt_ctl_t g_ctl;                      /* get == NULL: no ctl entities */
 static int g_resync, g_btn_n;                     /* under g_mu: announce the zones / areas again; button presses to publish */
+#define BTN_Q 4
+static char g_bq[BTN_Q][A2K_MQTT_GESTURE_MAX + 1]; /* under g_mu: gesture messages to publish on BASE/button */
+static int g_bq_n;
+static int (*g_btn_list)(char names[][A2K_BTN_NAME]); /* the configured gestures (device triggers), NULL = none */
 static a2k_mqtt_vid_t g_vid;                      /* get == NULL: no video settings entities */
 static a2k_mqtt_ptz_t g_ptz;                      /* press == NULL: no PTZ entities */
 #define SNAP_HDR_ROOM 176                         /* room before the JPEG for the PUBLISH header (1 + 4 + 2 + topic) */
 static uint8_t *g_snap;                           /* the newest snapshot JPEG not published yet: own copy, SNAP_HDR_ROOM bytes in */
 static size_t g_snap_len;
 static unsigned g_snap_sent, g_snap_dropped;
+static char g_det[A2K_MQTT_DET_MAX + 1];          /* the newest detections list not published yet ("" = none) */
+static unsigned g_det_sent, g_det_dropped;
 
 static void set_state(const char *s)
 {
@@ -314,11 +320,27 @@ void a2k_mqtt_resync(void)
     pthread_mutex_unlock(&g_mu);
 }
 
+void a2k_mqtt_set_buttons(int (*list)(char names[][A2K_BTN_NAME])) { g_btn_list = list; }
+
+void a2k_mqtt_button_gesture(const char *gesture, const char *json)
+{
+    if (!gesture || !json || strlen(json) > A2K_MQTT_GESTURE_MAX)
+        return;
+    pthread_mutex_lock(&g_mu);
+    if (g_running && g_ctl.get) {
+        if (g_bq_n < BTN_Q)
+            snprintf(g_bq[g_bq_n++], sizeof g_bq[0], "%s", json);
+        if (strcmp(gesture, "short") == 0 && g_btn_n < 4)
+            g_btn_n++; /* the Home Assistant `event` entity "Button" keeps its press event for the short press */
+        wake_locked();
+    }
+    pthread_mutex_unlock(&g_mu);
+}
+
 void a2k_mqtt_button_event(const char *type)
 {
     if (!type || strcmp(type, "press") != 0)
         return;
-    a2k_api_event_button(); /* the HTTP API event channel (a no-op ring write), whether or not MQTT is on */
     pthread_mutex_lock(&g_mu);
     if (g_running && g_ctl.get) {
         if (g_btn_n < 4)
@@ -355,6 +377,31 @@ void a2k_mqtt_sys(const hal_sys_sample_t *s)
     g_cur.sys = *s;
     g_cur.sys_valid = 1;
     pthread_mutex_unlock(&g_mu); /* published at the next periodic republish: no wake-up, no ring entry */
+}
+
+void a2k_mqtt_detections(const char *json)
+{
+    size_t n = json ? strlen(json) : 0;
+    pthread_mutex_lock(&g_mu);
+    if (g_running) {
+        if (n == 0 || n > A2K_MQTT_DET_MAX)
+            g_det_dropped++;
+        else {
+            if (g_det[0])
+                g_det_dropped++; /* the newest wins */
+            memcpy(g_det, json, n + 1);
+            wake_locked();
+        }
+    }
+    pthread_mutex_unlock(&g_mu);
+}
+
+void a2k_mqtt_det_stats(unsigned *sent, unsigned *dropped)
+{
+    pthread_mutex_lock(&g_mu);
+    *sent = g_det_sent;
+    *dropped = g_det_dropped;
+    pthread_mutex_unlock(&g_mu);
 }
 
 void a2k_mqtt_snap_stats(unsigned *sent, unsigned *dropped)
@@ -550,6 +597,27 @@ static void ids_sync(a2k_mqtt_ids_t *ids)
     ids->ntarea = n < 0 ? 0 : n > A2K_CTL_SLOTS ? A2K_CTL_SLOTS : n;
     for (int s = 0; s < ids->ntarea; s++)
         snprintf(ids->tarea[s], sizeof ids->tarea[s], "%s", names[s]);
+    ids->nbtn = 0;
+    if (ids->ctl && g_btn_list) {
+        n = g_btn_list(ids->btn);
+        ids->nbtn = n < 0 ? 0 : n > A2K_BTN_TRIG_N ? A2K_BTN_TRIG_N : n;
+    }
+}
+
+/* The device triggers of the configured gestures; the slots past them are cleared (an empty retained config). */
+static int announce_btn(conn_t *c, const a2k_mqtt_ids_t *ids)
+{
+    char t[160], doc[1024];
+    for (int k = 0; ids->ctl && k < A2K_BTN_TRIG_N; k++) {
+        int n = a2k_mqtt_discovery(ids, A2K_E_BTN0 + k, t, sizeof t, doc, sizeof doc);
+        if (n > 0) {
+            if (pub(c, t, doc, 1) != 0)
+                return -1;
+        } else if (a2k_mqtt_btn_config_topic(ids, k, t, sizeof t) == 0 && pub(c, t, g_none, 1) != 0) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 /* The zones or the tracking areas changed: clear the entities that went away, announce the current ones, publish the values. */
@@ -582,6 +650,8 @@ static int resync(conn_t *c, a2k_mqtt_ids_t *ids, const struct a2k_mqtt_det *d)
                 return -1; /* a slot without an area: an empty retained config removes the entity an earlier announce made */
             }
         }
+        if (announce_btn(c, ids) != 0)
+            return -1;
     }
     for (int z = 0; z < ids->nzones; z++)
         if (pub_ent(c, ids, A2K_E_ZONE0 + z, d, -1) != 0)
@@ -734,6 +804,8 @@ static int announce(conn_t *c, const a2k_mqtt_ids_t *ids, const struct a2k_mqtt_
             if (n > 0 && pub(c, t, doc, 1) != 0)
                 return -1;
         }
+        if (announce_btn(c, ids) != 0)
+            return -1;
         if (!ids->snapshot) {
             /* snapshots off: an empty retained config removes a snapshot entity an earlier run announced */
             snprintf(t, sizeof t, "%s/image/%s/snapshot/config", ids->prefix, ids->node);
@@ -1012,6 +1084,7 @@ static int session(char *reason, size_t rcap)
     pthread_mutex_lock(&g_mu);
     g_connects++;
     g_ring_n = 0; /* the current state is published below: older transitions are history */
+    g_det[0] = '\0'; /* and a detections list */
     free(g_snap); /* likewise a snapshot taken while the broker was away */
     g_snap = NULL;
     g_snap_len = 0;
@@ -1075,6 +1148,36 @@ static int session(char *reason, size_t rcap)
                 char bt[160];
                 if (a2k_mqtt_button_topic(&ids, bt, sizeof bt) == 0 && pub(&c, bt, a2k_mqtt_button_payload, 0) != 0)
                     goto out;
+            }
+            for (;;) { /* every gesture, in order: BASE/button {"gesture","actions","result"} */
+                char bj[A2K_MQTT_GESTURE_MAX + 1], bt[160];
+                int have = 0;
+                pthread_mutex_lock(&g_mu);
+                if (g_bq_n > 0) {
+                    memcpy(bj, g_bq[0], sizeof bj);
+                    memmove(g_bq[0], g_bq[1], sizeof g_bq[0] * (BTN_Q - 1));
+                    g_bq_n--;
+                    have = 1;
+                }
+                pthread_mutex_unlock(&g_mu);
+                if (!have)
+                    break;
+                if (ids.ctl && a2k_mqtt_gesture_topic(&ids, bt, sizeof bt) == 0 && pub(&c, bt, bj, 0) != 0)
+                    goto out;
+            }
+        }
+        {
+            char dj[A2K_MQTT_DET_MAX + 1], dt[160];
+            pthread_mutex_lock(&g_mu);
+            memcpy(dj, g_det, sizeof dj);
+            g_det[0] = '\0';
+            pthread_mutex_unlock(&g_mu);
+            if (dj[0] && a2k_mqtt_detections_topic(&ids, dt, sizeof dt) > 0) {
+                if (pub(&c, dt, dj, 0) != 0)
+                    goto out;
+                pthread_mutex_lock(&g_mu);
+                g_det_sent++;
+                pthread_mutex_unlock(&g_mu);
             }
         }
         if (pub_snapshot(&c, &ids) != 0)
@@ -1227,6 +1330,8 @@ int a2k_mqtt_start(const char *conf_path, const char *mac_path, int rtsp_port, a
     pthread_mutex_lock(&g_mu);
     g_published = g_connects = 0;
     g_snap_sent = g_snap_dropped = 0;
+    g_det_sent = g_det_dropped = 0;
+    g_det[0] = '\0';
     g_ring_n = 0;
     snprintf(g_state, sizeof g_state, "connecting");
     pthread_mutex_unlock(&g_mu);

@@ -23,6 +23,10 @@ void a2k_log(const char *fmt, ...) { (void)fmt; }
 int a2k_snap_request(int64_t now_ms) { (void)now_ms; return 0; }
 void a2k_mqtt_detection(const a2k_det_t *d, const char *status, int64_t epoch) { (void)d; (void)status; (void)epoch; }
 void a2k_leds_person(int present) { (void)present; }
+void a2k_mqtt_detections(const char *json) { (void)json; }
+int a2k_ptz_privacy_active(void) { return 0; }
+a2k_track_t *a2k_track_run_get(void) { return NULL; }
+int a2k_track_enabled(a2k_track_t *t) { (void)t; return 0; }
 void a2k_ptz_info(a2k_ptz_info_t *o) { memset(o, 0, sizeof *o); }
 int a2k_zlive_applies(int st) { (void)st; return 1; }
 void a2k_zlive_get(a2k_zones_t *o, unsigned *g) { memset(o, 0, sizeof *o); if (g) *g = 1; }

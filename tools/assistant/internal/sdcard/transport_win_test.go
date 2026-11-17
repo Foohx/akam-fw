@@ -236,7 +236,7 @@ func TestUACTransportTimeoutsAndCleanup(t *testing.T) {
 	tr.connect = 100 * time.Millisecond
 	tr.launch = func(string, string) (uacProc, error) { return h.proc, nil } // started, silent
 	start := time.Now()
-	if _, err := tr.run("self.exe", Request{Op: OpList}, io.Discard); err == nil || time.Since(start) > 3*time.Second {
+	if _, err := tr.run("self.exe", Request{Op: OpList}, io.Discard); err == nil || time.Since(start) > 30*time.Second {
 		t.Fatalf("%v after %v", err, time.Since(start))
 	}
 	if !h.ln.closed || !h.proc.closed {

@@ -11,6 +11,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 APP=$REPO/firmware/lsc-rotatable-2k-ak3918av130/app
+COMMON=$REPO/src/common
 VEC=$REPO/tests/fixtures/control_api_vectors.txt
 SIGN=$REPO/tools/akam-api-sign.sh
 CC=${CC:-cc}
@@ -23,8 +24,8 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 ko() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; }
 
-SRCS="$APP/sha256.c $APP/api_keys.c $APP/api_sig.c $APP/json_min.c $APP/settings_reg.c"
-CFLAGS="-std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -I$APP"
+SRCS="$COMMON/net/sha256.c $COMMON/api/api_keys.c $COMMON/api/api_sig.c $COMMON/api/json_min.c $COMMON/api/settings_reg.c"
+CFLAGS="-std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -I$APP -I$COMMON/api -I$COMMON/net"
 
 echo "== C unit tests (ASan/UBSan)"
 # shellcheck disable=SC2086
@@ -38,14 +39,19 @@ if $CC $CFLAGS -o "$WORK/fuzz" $SRCS "$REPO/tests/rot2k_control_api_fuzz.c"; the
 else ko "fuzz build"; fi
 
 echo "== transport pieces: HTTP request parser, rate limits, event ring (ASan/UBSan)"
-TSRCS="$APP/http_req.c $APP/api_limit.c $APP/akam2k_apievt.c $APP/api_sig.c $APP/api_keys.c $APP/sha256.c"
+TSRCS="$COMMON/net/http_req.c $COMMON/api/api_limit.c $COMMON/api/api_events.c $COMMON/api/api_sig.c $COMMON/api/api_keys.c $COMMON/net/sha256.c"
 # shellcheck disable=SC2086
 if $CC $CFLAGS -pthread -o "$WORK/apiunit" $TSRCS "$REPO/tests/rot2k_api_unit.c"; then
     if "$WORK/apiunit" >"$WORK/apiunit.log" 2>&1; then ok "api unit: $(tail -1 "$WORK/apiunit.log")"; else ko "api unit tests"; cat "$WORK/apiunit.log"; fi
 else ko "api unit tests build"; fi
+echo "== detection boxes publication: rate limit, change detection, empty on leave, JSON (ASan/UBSan)"
+# shellcheck disable=SC2086
+if $CC $CFLAGS -pthread -I"$APP" -o "$WORK/detpub" "$REPO/tests/rot2k_detpub_unit.c" "$APP/akam2k_detpub.c" "$COMMON/api/api_events.c"; then
+    if "$WORK/detpub" >"$WORK/detpub.log" 2>&1; then ok "detpub unit: $(tail -1 "$WORK/detpub.log")"; else ko "detpub unit tests"; cat "$WORK/detpub.log"; fi
+else ko "detpub unit tests build"; fi
 echo "== fuzz of the HTTP request parser (ASan/UBSan)"
 # shellcheck disable=SC2086
-if $CC $CFLAGS -o "$WORK/apifuzz" "$APP/http_req.c" "$REPO/tests/rot2k_api_fuzz.c"; then
+if $CC $CFLAGS -o "$WORK/apifuzz" "$COMMON/net/http_req.c" "$REPO/tests/rot2k_api_fuzz.c"; then
     if "$WORK/apifuzz" "${FUZZ_ITERS:-200000}" >"$WORK/apifuzz.log" 2>&1; then ok "http fuzz: $(tail -1 "$WORK/apifuzz.log")"; else ko "http fuzz"; tail -20 "$WORK/apifuzz.log"; fi
 else ko "http fuzz build"; fi
 

@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -38,6 +39,7 @@ const char *leds_state_name(int st)
     case LEDS_ST_OFF:          return "off";
     case LEDS_ST_BLINK_WIFI:   return "blink_wifi";
     case LEDS_ST_BLINK_STREAM: return "blink_stream";
+    case LEDS_ST_BLIP:         return "blip";
     default:                   return "system";
     }
 }
@@ -58,9 +60,61 @@ static int parse_ir(const char *s)
 }
 
 /* ------------------------------------------------------------------------
- * State machine (pure)
+ * Rules and patterns (pure)
  * ------------------------------------------------------------------------ */
 
+static const char *const g_rule_name[LEDS_RULE_N] = { "stream", "boot", "nowifi", "night", "idle" };
+/* the key of a rule in the leds file */
+static const char *const g_rule_file[LEDS_RULE_N] = { "led_stream", "led_boot", "led_nowifi", "led_night", "led_idle" };
+
+static long mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+const char *leds_rule_name(int rule) { return rule >= 0 && rule < LEDS_RULE_N ? g_rule_name[rule] : "?"; }
+
+int leds_rule_find(const char *name)
+{
+    for (int r = 0; r < LEDS_RULE_N; r++)
+        if (name && !strcmp(name, g_rule_name[r])) return r;
+    return -1;
+}
+
+/* The pattern a rule has before anyone changes it, for a tick of tick_ms: a blink of one tick on and one tick off (boot, nowifi:
+ * the old 1 Hz at the 500 ms tick), two ticks on and two off (stream: the old 0.5 Hz), solid on for the rest. Built directly,
+ * not parsed, so that the short ticks of the host tests are representable (the grammar has a 50 ms floor). */
+static void rule_default(int rule, int tick_ms, a2k_pat_t *p)
+{
+    memset(p, 0, sizeof(*p));
+    if (rule == LEDS_RULE_STREAM || rule == LEDS_RULE_BOOT || rule == LEDS_RULE_NOWIFI) {
+        int half = rule == LEDS_RULE_STREAM ? 2 * tick_ms : tick_ms;
+        p->kind = A2K_PAT_BLINK;
+        p->n = 1;
+        p->on_ms = p->off_ms = half;
+    } else {
+        p->kind = A2K_PAT_ON;
+    }
+}
+
+/* The rule that wins (first true): stream (a client is playing), boot (not ready), nowifi, night, idle. */
+static int pick_rule(int ready, int net_ok, int clients, int night)
+{
+    return clients > 0 ? LEDS_RULE_STREAM : !ready ? LEDS_RULE_BOOT : !net_ok ? LEDS_RULE_NOWIFI : night ? LEDS_RULE_NIGHT
+                                                                                                      : LEDS_RULE_IDLE;
+}
+
+/* The state name a rule reports (led.state): what the LED is doing in terms the user knows. */
+static int rule_state(int rule)
+{
+    return rule == LEDS_RULE_STREAM ? LEDS_ST_BLINK_STREAM : (rule == LEDS_RULE_BOOT || rule == LEDS_RULE_NOWIFI) ? LEDS_ST_BLINK_WIFI
+                                                                                                                  : LEDS_ST_ON;
+}
+
+/* The LED level (0/1) for tick number `tick`, and the state. It is the policy of the engine with the DEFAULT patterns at the
+ * nominal 500 ms tick, as a pure function: the reference of the oracle test and of tests/native/leds_test.c. */
 int leds_compute(int status, int ready, int net_ok, int clients, unsigned tick, int *state_out)
 {
     int st, level;
@@ -68,16 +122,11 @@ int leds_compute(int status, int ready, int net_ok, int clients, unsigned tick, 
         st = LEDS_ST_OFF;
         level = 0;
     } else if (status == LEDS_STATUS_AUTO) {
-        if (clients > 0) {            /* privacy indicator: wins over everything */
-            st = LEDS_ST_BLINK_STREAM;
-            level = ((tick / 2) & 1u) == 0;   /* 1 s on, 1 s off at a 500 ms tick */
-        } else if (!ready || !net_ok) {
-            st = LEDS_ST_BLINK_WIFI;
-            level = (tick & 1u) == 0;         /* 500 ms on, 500 ms off */
-        } else {
-            st = LEDS_ST_ON;
-            level = 1;
-        }
+        a2k_pat_t p;
+        int rule = pick_rule(ready, net_ok, clients, 0);
+        rule_default(rule, LEDS_TICK_MS, &p);
+        st = rule_state(rule);
+        level = a2k_pat_level(&p, (long)tick * LEDS_TICK_MS);
     } else {
         st = LEDS_ST_ON;
         level = 1;
@@ -149,27 +198,38 @@ static int write_small(const char *path, const char *val)
     return 0;
 }
 
-/* Caller holds l->lock. A failure is logged once until a write succeeds again. */
-static void write_level(leds_t *l, int level)
+/* The driver of the hal_light descriptor of the 1080p: a kernel LED-class device (hal_light.h LIGHT_LEDCLASS). "trigger" is set
+ * to "none" once (a timer or mmc trigger would fight the writes; best effort, the file may be absent on another board),
+ * then <led_dir>/brightness. A failure is logged once until a write succeeds again and is retried at the next evaluation.
+ * The emitter is the first member of leds_t.emitter, so the driver finds its instance from the pointer it is given. */
+static int led_class_set(const hal_light_emitter_t *e, int on)
 {
+    leds_t *l = ((const struct { hal_light_emitter_t em; leds_t *owner; } *)e)->owner;
     char path[128];
     if (!l->trigger_done) {
-        /* A timer or mmc trigger would fight our writes. Best effort: the
-         * file may be absent on another board. */
         l->trigger_done = 1;
         snprintf(path, sizeof(path), "%s/trigger", l->led_dir);
         (void)write_small(path, "none");
     }
     snprintf(path, sizeof(path), "%s/brightness", l->led_dir);
-    if (write_small(path, level ? "1" : "0") < 0) {
+    if (write_small(path, on ? "1" : "0") < 0) {
         if (!l->err_logged) {
             l->err_logged = 1;
             printf("[leds] cannot write %s: %s (retrying quietly)\n", path, strerror(errno));
         }
-        return;
+        return -1;
     }
     l->err_logged = 0;
-    l->last_level = level;
+    return 0;
+}
+
+static const hal_light_ops_t g_led_class_ops = { led_class_set };
+
+/* Caller holds l->lock. */
+static void write_level(leds_t *l, int level, long now_ms)
+{
+    if (l->last_level < 0) l->light.level[0] = -1; /* "unknown": write even when the engine thinks the LED already has it */
+    if (light_set(&l->light, "status", level ? LIGHT_ON : LIGHT_OFF, now_ms) == 0) l->last_level = level;
 }
 
 /* ------------------------------------------------------------------------
@@ -191,6 +251,19 @@ void leds_init(leds_t *l, const leds_ops_t *ops, const leds_cfg_t *cfg)
     copy_str(l->net_ifname, sizeof(l->net_ifname), cfg->net_ifname ? cfg->net_ifname : "wlan0");
     copy_str(l->net_dir, sizeof(l->net_dir), cfg->net_dir ? cfg->net_dir : "/sys/class/net");
     l->tick_ms = cfg->tick_ms > 0 ? cfg->tick_ms : LEDS_TICK_MS;
+    /* the emitter "status": a LED-class device written through light_logic */
+    l->emitter.owner = l;
+    l->emitter.em.name = "status";
+    l->emitter.em.kind = LIGHT_LEDCLASS;
+    l->emitter.em.active_high = 1;
+    l->emitter.em.led_dir = l->led_dir;
+    l->light_desc.emitters = &l->emitter.em;
+    l->light_desc.count = 1;
+    (void)light_init(&l->light, &l->light_desc, &g_led_class_ops); /* cannot fail: one emitter, no exclusion */
+    for (int r = 0; r < LEDS_RULE_N; r++) rule_default(r, l->tick_ms, &l->pat[r]);
+    l->rule_now = -1;
+    l->next_ms = -1;
+    l->t0_ms = mono_ms();
     l->status = LEDS_STATUS_ON;
     l->ir = LEDS_IR_AUTO;
     l->last_level = -1;
@@ -237,27 +310,64 @@ int leds_clients(leds_t *l)
     return n;
 }
 
-/* Evaluates the state machine and writes the LED when its level changed.
- * advance: step the blink phase (the thread's tick); an immediate re-evaluation
- * after a SET keeps the phase. */
+/* The time the patterns are evaluated at, ms (caller holds l->lock). With the thread running it is the real time since leds_init
+ * (so a pattern of any period keeps its phase); without it, tick * tick_ms: one step per leds_tick(), which is what the host
+ * tests and the oracle drive. With the defaults and the nominal 500 ms tick the two give the same levels as the old tick counter. */
+static long pat_now(const leds_t *l)
+{
+    return l->use_real ? mono_ms() - l->t0_ms : (long)l->tick * l->tick_ms;
+}
+
+/* Evaluates the rules and writes the LED when its level changed.
+ * advance: step the blink phase (a leds_tick() of the host tests); an immediate re-evaluation after a SET keeps the phase. */
 static void evaluate(leds_t *l, int advance)
 {
     pthread_mutex_lock(&l->lock);
     int auto_mode = l->status == LEDS_STATUS_AUTO;
     pthread_mutex_unlock(&l->lock);
 
-    /* The network and the client count are read outside the main lock. */
+    /* The network, the night state and the client count are read outside the main lock (and only in auto mode: a solid LED does
+     * not even look at the network). */
     int net = auto_mode ? net_now(l) : 1;
+    int night = auto_mode && l->night_fn ? l->night_fn(l->night_user) : 0;
     int clients = leds_clients(l);
 
     pthread_mutex_lock(&l->lock);
-    int st;
-    int level = leds_compute(l->status, l->ready, net, clients, l->tick, &st);
+    long now = pat_now(l);
+    int st, level, rule = -1;
+    long next = -1;
+    if (l->status == LEDS_STATUS_OFF) {
+        st = LEDS_ST_OFF;
+        level = 0;
+    } else if (l->status == LEDS_STATUS_AUTO) {
+        a2k_pat_t *p;
+        rule = pick_rule(l->ready, net, clients, night);
+        p = &l->pat[rule];
+        st = rule_state(rule);
+        level = a2k_pat_level(p, now);
+        next = a2k_pat_next_ms(p, now);
+    } else {
+        st = LEDS_ST_ON;
+        level = 1;
+    }
+    if (l->blip_on) { /* an explicit blip overrides every mode, off included, for its duration */
+        long m = mono_ms();
+        if (m >= l->blip_until_ms) {
+            l->blip_on = 0;
+        } else {
+            st = LEDS_ST_BLIP;
+            level = a2k_pat_level(&l->blip_pat, m - l->blip_start_ms);
+            next = a2k_pat_next_ms(&l->blip_pat, m - l->blip_start_ms);
+            if (next < 0 || next > l->blip_until_ms - m) next = l->blip_until_ms - m;
+        }
+    }
+    l->rule_now = rule;
+    l->next_ms = next;
     if (!l->take_over) {
         l->state = LEDS_ST_UNMANAGED;
     } else {
         l->state = st;
-        if (level != l->last_level) write_level(l, level);
+        if (level != l->last_level) write_level(l, level, now);
     }
     if (advance) l->tick++;
     pthread_mutex_unlock(&l->lock);
@@ -288,8 +398,14 @@ static void *leds_thread_main(void *arg)
 {
     leds_t *l = arg;
     while (l->thread_running) {
-        leds_tick(l);
-        int ms = leds_get_status(l) == LEDS_STATUS_AUTO ? l->tick_ms : l->tick_ms * 4;
+        evaluate(l, 0);
+        /* Sleep until the next change of the pattern, but at most one tick in auto mode (the network is looked at each tick) and
+         * four ticks otherwise. With the default patterns the edge is one tick away: the cadence of the old engine. */
+        pthread_mutex_lock(&l->lock);
+        long next = l->next_ms;
+        int ms = l->status == LEDS_STATUS_AUTO ? l->tick_ms : l->tick_ms * 4;
+        pthread_mutex_unlock(&l->lock);
+        if (next >= 0 && next < ms) ms = next < 5 ? 5 : (int)next;
         struct pollfd p = { l->wake_r, POLLIN, 0 };
         int r = poll(&p, 1, ms);
         if (r > 0 && (p.revents & POLLIN)) {
@@ -313,8 +429,14 @@ int leds_thread_start(leds_t *l)
     l->wake_r = fds[0];
     l->wake_w = fds[1];
     l->thread_running = 1;
+    pthread_mutex_lock(&l->lock);
+    l->use_real = 1;
+    pthread_mutex_unlock(&l->lock);
     if (pthread_create(&l->tid, NULL, leds_thread_main, l) != 0) {
         l->thread_running = 0;
+        pthread_mutex_lock(&l->lock);
+        l->use_real = 0;
+        pthread_mutex_unlock(&l->lock);
         close(fds[0]); close(fds[1]);
         l->wake_r = l->wake_w = -1;
         return -1;
@@ -330,6 +452,9 @@ void leds_thread_stop(leds_t *l)
     wake_thread(l);
     pthread_join(l->tid, NULL);
     l->thread_started = 0;
+    pthread_mutex_lock(&l->lock);
+    l->use_real = 0;
+    pthread_mutex_unlock(&l->lock);
 }
 
 /* ------------------------------------------------------------------------
@@ -356,8 +481,13 @@ int leds_load_config(leds_t *l)
         if (vl && eq[vl] == '\r') eq[vl] = '\0'; /* tolerate CRLF */
         const char *k = line, *v = eq + 1;
         int x;
+        a2k_pat_t p;
         if (!strcmp(k, "status") && (x = parse_status(v)) >= 0) l->status = x;
         else if (!strcmp(k, "ir_led") && (x = parse_ir(v)) >= 0) l->ir = x;
+        else if (!strncmp(k, "led_", 4) && a2k_pat_parse(v, &p) == 0) { /* a bad pattern keeps the default */
+            for (int r = 0; r < LEDS_RULE_N; r++)
+                if (!strcmp(k, g_rule_file[r])) l->pat[r] = p;
+        }
     }
     pthread_mutex_unlock(&l->lock);
     return 1;
@@ -365,10 +495,29 @@ int leds_load_config(leds_t *l)
 
 static int key_is_ours(const char *line)
 {
-    return !strncmp(line, "status=", 7) || !strncmp(line, "ir_led=", 7);
+    if (!strncmp(line, "status=", 7) || !strncmp(line, "ir_led=", 7)) return 1;
+    for (int r = 0; r < LEDS_RULE_N; r++) {
+        size_t kl = strlen(g_rule_file[r]);
+        if (!strncmp(line, g_rule_file[r], kl) && line[kl] == '=') return 1;
+    }
+    return 0;
 }
 
+/* One writer at a time: the 8091 thread (led.status) and the API thread (a pattern) both save, and share the temp file name. */
+static pthread_mutex_t g_save_mu = PTHREAD_MUTEX_INITIALIZER;
+static int save_config_locked(leds_t *l);
+
 int leds_save_config(leds_t *l)
+{
+    pthread_mutex_lock(&g_save_mu);
+    int rc = save_config_locked(l);
+    int e = errno;
+    pthread_mutex_unlock(&g_save_mu);
+    errno = e;
+    return rc;
+}
+
+static int save_config_locked(leds_t *l)
 {
     char old[1024], out[1280];
     size_t olen = 0, outn = 0;
@@ -390,11 +539,23 @@ int leds_save_config(leds_t *l)
     }
     pthread_mutex_lock(&l->lock);
     int status = l->status, ir = l->ir;
+    a2k_pat_t pats[LEDS_RULE_N];
+    memcpy(pats, l->pat, sizeof(pats));
     pthread_mutex_unlock(&l->lock);
     int w = snprintf(out + outn, sizeof(out) - outn, "status=%s\nir_led=%s\n",
                      leds_status_name(status), leds_ir_name(ir));
     if (w < 0 || (size_t)w >= sizeof(out) - outn) { errno = ENOSPC; return -1; }
     outn += (size_t)w;
+    for (int r = 0; r < LEDS_RULE_N; r++) { /* only the patterns that differ from the default: the default file stays two lines */
+        a2k_pat_t d;
+        char txt[A2K_PAT_MAX];
+        rule_default(r, l->tick_ms, &d);
+        if (!memcmp(&d, &pats[r], sizeof(d))) continue;
+        a2k_pat_format(&pats[r], txt, sizeof(txt));
+        w = snprintf(out + outn, sizeof(out) - outn, "%s=%s\n", g_rule_file[r], txt);
+        if (w < 0 || (size_t)w >= sizeof(out) - outn) { errno = ENOSPC; return -1; }
+        outn += (size_t)w;
+    }
 
     if (mkdir(l->conf_dir, 0700) < 0 && errno != EEXIST) return -1;
     char tmp[sizeof(l->conf_path) + 8];
@@ -412,6 +573,93 @@ int leds_save_config(leds_t *l)
     close(fd);
     if (rename(tmp, l->conf_path) < 0) { int e = errno; unlink(tmp); errno = e; return -1; }
     return 0;
+}
+
+/* ------------------------------------------------------------------------
+ * Patterns and the transient blip
+ * ------------------------------------------------------------------------ */
+
+void leds_set_night_hook(leds_t *l, int (*night)(void *user), void *user)
+{
+    pthread_mutex_lock(&l->lock);
+    l->night_fn = night;
+    l->night_user = user;
+    pthread_mutex_unlock(&l->lock);
+}
+
+int leds_pat_get(leds_t *l, int rule, char *out, size_t cap)
+{
+    if (rule < 0 || rule >= LEDS_RULE_N) return -1;
+    pthread_mutex_lock(&l->lock);
+    a2k_pat_t p = l->pat[rule];
+    pthread_mutex_unlock(&l->lock);
+    char txt[A2K_PAT_MAX];
+    a2k_pat_format(&p, txt, sizeof(txt));
+    snprintf(out, cap, "%s", txt);
+    return 0;
+}
+
+void leds_pat_default(const leds_t *l, int rule, char *out, size_t cap)
+{
+    a2k_pat_t d;
+    rule_default(rule, l->tick_ms, &d);
+    a2k_pat_format(&d, out, cap);
+}
+
+int leds_pat_set(leds_t *l, int rule, const char *text)
+{
+    a2k_pat_t p;
+    if (rule < 0 || rule >= LEDS_RULE_N || a2k_pat_parse(text, &p) != 0) return -1;
+    pthread_mutex_lock(&l->lock);
+    int changed = memcmp(&l->pat[rule], &p, sizeof(p)) != 0;
+    l->pat[rule] = p;
+    pthread_mutex_unlock(&l->lock);
+    if (!changed) return 0; /* same pattern: no flash write */
+    evaluate(l, 0);
+    wake_thread(l);
+    return leds_save_config(l) < 0 ? -2 : 0;
+}
+
+int leds_blip(leds_t *l, const char *pattern, long dur_ms)
+{
+    a2k_pat_t p;
+    if (dur_ms < 1 || dur_ms > 60000 || a2k_pat_parse(pattern, &p) != 0) return -1;
+    pthread_mutex_lock(&l->lock);
+    l->blip_pat = p;
+    l->blip_start_ms = mono_ms();
+    l->blip_until_ms = l->blip_start_ms + dur_ms;
+    l->blip_on = 1;
+    l->take_over = 1; /* a blip shows even when status=on: the engine drives the LED from now on (and gives the rules back after it) */
+    pthread_mutex_unlock(&l->lock);
+    evaluate(l, 0);
+    wake_thread(l);
+    /* the first level of the blip must really have reached the LED, else the caller must not be told it works */
+    pthread_mutex_lock(&l->lock);
+    int shown = l->state == LEDS_ST_BLIP && l->last_level == a2k_pat_level(&l->blip_pat, mono_ms() - l->blip_start_ms);
+    if (!shown) l->blip_on = 0;
+    pthread_mutex_unlock(&l->lock);
+    if (!shown) {
+        evaluate(l, 0);
+        return -2;
+    }
+    return 0;
+}
+
+void leds_blip_clear(leds_t *l)
+{
+    pthread_mutex_lock(&l->lock);
+    l->blip_on = 0;
+    pthread_mutex_unlock(&l->lock);
+    evaluate(l, 0);
+    wake_thread(l);
+}
+
+int leds_rule_now(leds_t *l)
+{
+    pthread_mutex_lock(&l->lock);
+    int r = l->rule_now;
+    pthread_mutex_unlock(&l->lock);
+    return r;
 }
 
 /* ------------------------------------------------------------------------

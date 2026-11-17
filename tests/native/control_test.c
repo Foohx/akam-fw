@@ -140,6 +140,28 @@ void ctl_sys_list(void (*e)(const char *, const char *, void *), void *u)
     for (int i = 0; i < 2; i++) e(k_stub_keys[i], k_stub_vals[i], u);
 }
 
+#ifdef CTL_TEST_REGISTRY
+/* The settings registry behind the port (control.h control_set_registry, convergence P7): two fake rows. Built only with
+ * -DCTL_TEST_REGISTRY (tests/control_test.sh does): everything above and below is the unchanged contract test. */
+static int g_reg_val = 7, g_reg_last_persist = -1;
+static int reg_get(const char *k, char *line, size_t cap)
+{
+    if (strcmp(k, "reg.stub") && strcmp(k, "ae.speed")) return -1; /* "ae.speed" must never reach us: the old code answers first */
+    snprintf(line, cap, "%s=%d", k, g_reg_val);
+    return 0;
+}
+static int reg_set(const char *k, const char *v, int persist, char *msg, size_t cap)
+{
+    g_reg_last_persist = persist;
+    if (!strcmp(k, "reg.bad")) { snprintf(msg, cap, "ERR invalid reg.bad value %s (range)", v); return 1; }
+    if (strcmp(k, "reg.stub")) return -1;
+    g_reg_val = atoi(v);
+    snprintf(msg, cap, "OK reg.stub=%d", g_reg_val);
+    return 0;
+}
+static const control_reg_ops_t g_reg_ops = { reg_get, reg_set };
+#endif
+
 /* ------------------------------------------------------------------ part 1: pure logic */
 static void test_pure(void)
 {
@@ -357,6 +379,9 @@ static void test_server(void)
         freeifaddrs(ifa);
     }
 
+#ifdef CTL_TEST_REGISTRY
+    control_set_registry(&g_reg_ops);
+#endif
     CHECK(control_start() == 0);
     int c = -1;
     for (int i = 0; i < 50 && c < 0; i++) { c = dial("127.0.0.1"); if (c < 0) usleep(100000); }
@@ -404,6 +429,26 @@ static void test_server(void)
     CHECK_STR(out, "led.stub=5\n");
     ask(c, "GET nope", out, sizeof(out));
     CHECK_STR(out, "ERR unknown param nope\n");
+#ifdef CTL_TEST_REGISTRY
+    ask(c, "GET reg.stub", out, sizeof(out));        /* a key the old code does not know: the registry answers */
+    CHECK_STR(out, "reg.stub=7\n");
+    ask(c, "GET ae.speed", out, sizeof(out));        /* a key it knows: still the old code, never the registry */
+    CHECK_STR(out, "ae.speed=4\n");
+    ask(c, "SET reg.stub 9", out, sizeof(out));
+    CHECK_STR(out, "OK reg.stub=9\n");
+    CHECK(g_reg_val == 9 && g_reg_last_persist == 1);   /* a loopback write is saved */
+    ask(c, "SET reg.bad 1", out, sizeof(out));
+    CHECK_STR(out, "ERR invalid reg.bad value 1 (range)\n");
+    ask(c, "SET nope 1", out, sizeof(out));          /* the registry does not know it either */
+    CHECK_STR(out, "ERR unknown param nope\n");
+    ask(c, "LIST", out, sizeof(out));                /* LIST is unchanged: no registry row in it */
+    CHECK(!strstr(out, "reg.stub"));
+    {
+        char v[40];
+        int n = control_apply_setting("reg.stub", "11", 0, v, sizeof(v));   /* the entry point of ONVIF Imaging and of the row setters */
+        CHECK(n == 0 && g_reg_val == 11 && g_reg_last_persist == 0);
+    }
+#endif
     ask(c, "GET", out, sizeof(out));
     CHECK_STR(out, "ERR GET requires a param name\n");
     ask(c, "SET ae.speed", out, sizeof(out));

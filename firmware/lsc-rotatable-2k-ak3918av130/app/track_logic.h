@@ -6,17 +6,30 @@
  * them to the motor direction (cfg invert_pan/invert_tilt flip them here). */
 #ifndef TRACK_LOGIC_H
 #define TRACK_LOGIC_H
+#include <stddef.h>
 #include <stdint.h>
 
-#define TL_MAX_BOXES 8
+#define TL_MAX_BOXES 8       /* person boxes the policy looks at */
+#define TL_MAX_HEADS 4       /* head boxes accepted next to them (logged only: the policy ignores them for now) */
+#define TL_MAX_ALL (TL_MAX_BOXES + TL_MAX_HEADS)
+#define TL_MAX_STEPS 8
+/* The lost-target chain (track_lost_policy / track.lost_policy): an ordered list of recovery steps run when the person is lost; a detection at any step ends it. */
+enum { TLS_HOLD = 1, TLS_BACKSWEEP, TLS_EXIT, TLS_LOCAL, TLS_ROUTE, TLS_HOME, TLS_STAY };
+struct tl_step {
+    int kind;                /* TLS_* */
+    int a, b, c;             /* hold: a = seconds; local: a = width (steps), b = speed divisor, c = seconds; route: b = seconds */
+    char name[17];           /* route: the stored patrol route */
+};
 
-struct tl_box { int x1, y1, x2, y2; };
+/* cls: detector class, 0 = person (also the value of a box built without it), 1 = head (docs/porting/lsc-rotatable-2k/ai-own-app.md section 9); score 0..1000, 0 = unknown. */
+enum { TL_CLS_PERSON = 0, TL_CLS_HEAD = 1 };
+struct tl_box { int x1, y1, x2, y2; int cls, score; };
 
 struct tl_cfg {
     int deadband_pct;        /* pan: no move while the box centre is within +-this % of the frame width from the centre (the "central band", 8) */
-    int tband_pct;           /* tilt: same, % of the frame height (15) */
+    int tband_pct;           /* tilt: same, % of the frame height (10); the head band is half of it (+-5 %) */
     int gain_pan;            /* steps per full frame width of offset (1000: ~4000 steps/350 deg, ~90 deg HFOV; see tracking.md) */
-    int gain_tilt;           /* steps per full frame height of offset (600: ~50 deg VFOV) */
+    int gain_tilt;           /* steps per full frame height of offset (700; nominal geometry 600 ~ 54 deg VFOV, raised after the hardware test of 2026-11-17) */
     int gain_pct;            /* damping: % of the measured offset corrected by one nudge (85: < 100 so a stale measure cannot overshoot) */
     int max_step;            /* clamp of one nudge, per axis (700) */
     int min_interval_ms;     /* rate limit between two nudges (300) */
@@ -29,13 +42,37 @@ struct tl_cfg {
     int lead_max;            /* cap of the lead, steps (500) */
     int tilt_enable;         /* 1 = tilt tracking; default 0 (opt-in: track_tilt=1) until the tilt direction is verified on the camera */
     int lost_grace_s;        /* no person for this long = lost; nothing moves before (3) */
-    int return_home;         /* 1 = go home after the loss (track_return=home), 0 = stay where the person was last seen (0) */
+    int return_home;         /* 1 = go home after the loss (track_return=home), 0 = stay where the person was last seen (default 1; a position set by hand after the last tracking nudge cancels the pending return) */
     int return_delay_s;      /* home mode: seconds after the end of the grace before going home, 0 = right after the grace (30) */
     int head_pct;            /* modern mode, tilt: the vertical reference is the TOP of the box (the head), kept this % of the frame height below the frame top (15);
                               * a box whose top touches the frame edge = head out = tilt up; a short box (far person) is centred on its upper third; 0 = centre of the box */
+    int tilt_return_s;       /* stay mode: this many seconds after the lost-person grace the TILT goes back to the home tilt (pan stays); 0 = never (default 0: off, the home return covers both axes) */
     int sticky_gate_pct;     /* the previous target is kept if a box lies within this % of the frame width of it (world position) (35) */
     int invert_pan, invert_tilt;
+    /* --- targeting policy and continuous motion (all 0 / TL_MOTION_STEPS in tl_cfg_dev = the policy before them) --- */
+    int zone_x_pct;          /* comfort zone, % of the frame WIDTH (total, 40 = +-20 %): no motion while the reference point stays inside and is not heading out; 0 = the dev policy (central band, upper-third rule) */
+    int zone_y_pct;          /* body rule (whole person visible): vertical comfort band, % of the frame height (30 = +-15 %) around the frame centre */
+    int zone_head_pct;       /* head rule (close / cut person): band around the head row, % of the height (20 = +-10 %) */
+    int zone_stop_pct;       /* continuous: the motion stops when the target is within this % of the zone half width (35) */
+    int meas_px;             /* Kalman measurement noise of the box reference, px (std, 4: detector jitter; inflated for cut / partial / wide boxes) */
+    int accel_mms2;          /* Kalman process noise: std of the person's lateral / depth acceleration, mm/s^2 (4000: walking, feints, reversals) */
+    int steps_rad;           /* motor steps per radian (654 = 4000 steps / 350 deg, measured): angle <-> steps */
+    int person_h_mm;         /* assumed height of a whole person for the distance estimate (1700, +-20 % error) */
+    int shoulder_mm;         /* assumed width of a person seen from the front (450), the fallback distance cue when the box is cut */
+    int full_pct;            /* a box that is not cut by the frame and shorter than this % of the height is a whole body: its centre is the reference (85) */
+    int predict_ms;          /* motion starts when the predicted reference (velocity) leaves the zone within this long (500) */
+    int motion;              /* TL_MOTION_STEPS | TL_MOTION_CONT (tl_update dispatches) */
+    int lease_ms;            /* continuous: the lease the tracker asks the motor for, refreshed by every tick (450) */
+    int rate_k;              /* continuous: motor steps/s = rate_k / divisor (1100, measured 2026-11-17 at divisor 3: ~370) */
+    int gap_predict_ms;      /* continuous: constant-velocity prediction through a detection gap, ms (1500) */
+    int lost_n;              /* the lost-target chain: -1 = the legacy return policy (track_return / grace / delay), 0 = none (do nothing), else the number of steps of lost[] (continuous mode) */
+    struct tl_step lost[TL_MAX_STEPS];
+    int tilt_back_s;         /* continuous: this long after the person was lost with the tilt well above home, the tilt goes back to the home tilt, whatever the return policy does for the pan (5; 0 = off) */
+    int tilt_back_min;       /* ... when it is more than this many steps above home (250) */
+    int lag_ms;              /* continuous: video latency subtracted from the capture time when the pose at capture is looked up (50; -150..300, a negative value is allowed: the calibration of tools/track_lagfit may find the stamp later than the exposure) */
 };
+
+enum { TL_MOTION_STEPS = 0, TL_MOTION_CONT = 1 };
 
 struct tl_ptz {
     int moving;              /* 1 while the motor runs: never nudge */
@@ -43,17 +80,63 @@ struct tl_ptz {
     int pan_min, pan_max, tilt_min, tilt_max; /* soft range, inclusive */
     int64_t cap_ms;          /* capture time of the frame (same clock as now_ms), 0 = unknown (= now) */
     int64_t motion_end_ms;   /* when the last motion ended (same clock), 0 = unknown */
+    int tilt_home;           /* the home tilt, motor steps, 0 = unknown (no tilt return) */
+    int has_cap;             /* continuous: cap_pan / cap_tilt = the pose at the capture time of the frame (driver counters), so a frame taken while moving is usable */
+    int cap_pan, cap_tilt;
+    int cap_rate_ok;         /* cap_rate_*: the camera speed at the capture instant (steps/s, from the driver samples around it) is known */
+    int cap_rate_pan, cap_rate_tilt;
+    int over_budget;         /* the travel budget is used up: no local sweep in the lost chain */
+    int route_busy;          /* a patrol route started by the lost chain is running (the tracker reports it) */
+    int cont;                /* continuous: a motor session is running (the commanded velocity is in tl_t) */
 };
 
-enum tl_kind { TL_NONE = 0, TL_NUDGE = 1, TL_HOME = 2 };
+enum tl_kind { TL_NONE = 0, TL_NUDGE = 1, TL_HOME = 2, TL_VEL = 3, TL_STOP = 4 };
 
 struct tl_out {
     enum tl_kind kind;
     int dpan, dtilt;         /* TL_NUDGE only, already clipped to the soft range, never both 0 */
     int speed;               /* TL_NUDGE: speed divisor (2..20), 0 = the default speed */
+    /* TL_VEL: one ongoing directional move, refreshed every tick (the lease). Direction -1 / 0 / +1 per axis and a speed divisor 2..20 per axis:
+     * pan in MOTOR sign (+ = right), tilt in IMAGE sign (+ = below, like dtilt). Both 0 = nothing to move (the caller stops). TL_STOP: stop now. */
+    int pan_dir, pan_div, tilt_dir, tilt_div;
+    /* the lost chain: 1 = start the patrol route route_name for route_secs, 2 = stop the route the chain started (alongside any kind above) */
+    int route_op;
+    char route_name[17];
+    int route_secs;
 };
 
+/* What the last tl_update saw and decided, for the opt-in debug log (track_debug=1): pure data, no I/O. */
+struct tl_dbg {
+    int wide;                /* the box was too wide for a pan decision */
+    int has_box;             /* a box was picked */
+    struct tl_box box;
+    int rule;                /* 0 = centre of the box (head_pct 0 / legacy), 1 = head clipped at the top, 2 = near (head anchored), 3 = far (upper third), 4 = whole body (centre of the box), 5 = ambiguous (cut at top AND bottom and wider than 80 % of the frame: tilt held),
+                              * 7 = low crop (top uncut, bottom cut, shorter than 40 %: the top is the reference, no near doubling, no two-frame start; never rule 4) */
+    int ty;                  /* rule 1/2: the row the box top is aimed at; rule 3: the row the upper third is aimed at (px) */
+    int d2y;                 /* vertical offset in half pixels (target - reference, image sign: > 0 = below) */
+    int dp, dt;              /* wanted pan / tilt nudge before the range clip (image sign for tilt) */
+    int exit;                /* the exit direction used by the search (TL_EXIT_*) */
+    const char *why;         /* "nudge" or the reason nothing was sent (static string) */
+    /* continuous mode (the decision log) */
+    int ex, ey;              /* predicted reference minus the camera position, motor steps (pan, tilt) */
+    int hx, hy;              /* comfort-zone half width / height, steps */
+    int mvx, mvy;            /* the axes are being moved (start / stop hysteresis) */
+    int vdx, vdy;            /* desired velocity, steps/s, motor sign */
+    int kf;                  /* the 3D filter: 0 updated, 1 measurement held by the innovation gate, 2 accepted after two rejections (re-initialised) */
+    int hold;                /* the frame was held as an outlier (a sudden jump of the box) */
+    const char *dcue;        /* the distance cue of this fresh box: h (height), w (width), head (reserved), carried (the last estimate), none; 0 = no fresh box */
+    int innx, inny;    /* normalised innovation of the world position before the update, in 1/100 sigma (x: pan filter, y: tilt filter; 0 for a new target / rule change) */
+    int rsx, rsy;            /* the measurement noise budget used (1 sigma, motor steps) */
+    int upl;                 /* rule 1 was chosen from the ambiguous box because the head had been moving up (the real head-out of an approaching person) */
+};
+
+enum { TL_EXIT_NONE = 0, TL_EXIT_DOWN, TL_EXIT_UP, TL_EXIT_LEFT, TL_EXIT_RIGHT };
 #define TL_NS 3              /* position samples kept for the velocity */
+/* One-dimensional constant-velocity Kalman filter in an angular axis: a = angle (motor steps), v = LATERAL velocity of the person (mm/s); the angular
+ * rate is v * steps_rad / distance, so a person walking at a given speed turns the camera consistently near and far. Single precision, + - * / only. */
+struct tl_kf1 { float a, v, paa, pav, pvv; };
+struct tl_kfd { float d, v, pdd, pdv, pvv; }; /* distance (mm) and its rate */
+
 typedef struct {
     struct tl_cfg cfg;
     int has_target;          /* a target was seen in the previous tick */
@@ -76,16 +159,96 @@ typedef struct {
     int nrev;
     int64_t st[TL_NS];
     long sw[TL_NS];
+    int64_t prev_area, prev_ms; /* box area of the previous tick (growth = approaching) */
+    struct tl_box hist[4];   /* the last boxes seen (stale frames too): the exit direction of a person who leaves */
+    int hn;
+    int exit_set, exit_dir;  /* the exit direction of the current loss (TL_EXIT_*), computed once */
+    int search_n;            /* exit-search nudges sent in this loss (at most 2) */
+    int tilt_ref_set, tilt_ref; /* the tilt (motor steps) at the start of the tracking episode: the cumulative tilt UP is capped relative to it */
+    int clip_n;              /* consecutive fresh frames with a confirmed head clip (a tall box cut by the top edge) */
+    int tilt_pending;        /* the tilt was moved by tracking and has not been brought home yet */
+    int settle_wait;         /* a tracking nudge was sent and the pose it leads to is not recorded yet */
+    int has_settled, settled_pan, settled_tilt; /* the pose after the last tracking nudge: another pose later = a manual move */
+    struct tl_dbg dbg;       /* the last tick */
+    /* targeting policy / continuous motion */
+    int sm_valid, sm_rule;   /* the filtered reference is valid (world, motor steps), and the rule it belongs to */
+    long sm_wx, sm_wy;       /* filtered world position of the reference: pan axis, tilt axis (motor sign) */
+    struct tl_kf1 kx, ky;    /* the filters of the pan / tilt axes */
+    struct tl_kfd kd;        /* the distance filter */
+    int kd_valid, kf_rej;    /* a distance estimate exists; consecutive frames rejected by the innovation gate */
+    int64_t kf_t;            /* capture time of the last filter update */
+    int kox, koy;            /* Kalman angular rates (steps/s, before the robust gate) */
+    struct tl_out lastv;     /* the last velocity command (refreshed on stale frames) */
+    int dist_mm;             /* the filtered distance, mm (0 = unknown), for the debug log */
+    int kf_note;             /* last kf_measure result (tl_dbg.kf) */
+    int64_t kd_t;            /* when the distance estimate was last fed by a box */
+    int tback_on, tback_done; /* the tilt is on its way back to home / it was done for this loss */
+    int64_t tback_t0;
+    int cam_rx, cam_ry, cmv, cmvy, tstart_n; /* the camera rate at the capture of the last fresh frame (steps/s); bit history (3 frames) of 'the camera moved at capture' (any axis / the tilt); tilt start confirmations when close */
+    int lost_i, ls_init, ls_dir, lost_route_on, ls_route_seen, lost_done; /* the lost chain: current step (-1 = not lost), initialised, oscillation direction, the route it started runs, it was seen busy, the chain ended */
+    int64_t lost_t0;
+    long ls_center;
+    const char *lstep;       /* the current step name ("" = not lost), static string */
+    char lroute[17];         /* the route of a route step */
+    int64_t tnow, up_ms;     /* the tick time; when the head was last seen rising (uncut tops, a real approach: see head_rule) */
+    int amb_latch;           /* an ambiguous climb is on: a cut top keeps being read as a head-out (no clip confirmation) until an uncut-top box is seen */
+    int amb_up;              /* the last ambiguous box was read as a real head-out (rule 1 from rule 5): the sky-climb cap applies, no clip confirmation */
+    int dwc[4];              /* per dw sample: the box top was cut by the frame */
+    int vn;                  /* raw world samples for the robust velocity (fresh detections of the followed target) */
+    int64_t vt[6];
+    long vwx[6], vwy[6];
+    int vx, vy;              /* robust velocity, motor steps/s (0 = not established) */
+    int near_mode;           /* hysteresis of the whole-body / head rule */
+    int mv_x, mv_y;          /* continuous: the axis is being moved (the start / stop hysteresis) */
+    int cmd_px, cmd_py;      /* continuous: last commanded velocity, motor steps/s, signed (pan, tilt) */
+    int vact;                /* a velocity command is on (a TL_STOP is due when nothing is to be moved) */
+    int64_t cmd_ms;          /* when the last velocity command was issued */
+    int64_t search_until;    /* continuous exit search: moving in the exit direction until then */
+    int64_t lastcap_ms;      /* capture time of the last fresh detection */
+    int box_h, box_w;        /* last box size (identity cue) */
+    int nstart;              /* continuous: number of starts (motion episodes), for the sims */
+    int out_n;               /* a sudden large jump of the box vs the followed track is held as an outlier until a second consistent fresh frame confirms it */
+    struct tl_box out_box;
+    int out_down;            /* the held jump is a near, downward one with the bottom cut: the tilt is frozen until 2 further frames agree (out_topw) */
+    long out_topw;
+    int out_dn;              /* consecutive held near downward jumps */
+    int dw_n;                /* world-vertical position of the box TOP (down positive) of the last fresh boxes: the DOWN exit needs a real downward trend */
+    long dw[4];
+    float dws2[4];           /* per dw sample: the variance (steps^2) of the box top at capture: the jitter and the camera rate x the residual capture-time lag */
+    int tilt_unclip_set, tilt_unclip; /* the tilt at the last frame whose top was uncut and between 5 % and 35 % of the height: the origin of the close-range up budget */
+    int amb_tilt_set, amb_tilt0; /* the tilt where the up-trend latch of an ambiguous (rule 5) box started: the origin of its up budget */
+    int exit_tilt0;          /* the tilt at the start of the current loss (the exit-up search budget starts there) */
+    int last_near;           /* the last fresh box was a near one (tall, or the distance below NEAR_MM): the tilt-back after its loss starts earlier */
+    int pre_valid, pre_pan, pre_tilt; /* the pose before the last large move (> 1/3 frame): where a person lost after an overshoot must be */
+    int64_t last_move_ms;    /* when the last (large or not) tracking motion was commanded */
+    int sweep_n;             /* steps mode: sweep-back nudges in this loss (at most 2) */
+    int sweeping, sweep_sx, sweep_sy; /* continuous: sweeping back toward the pre-move pose, the directions (motor sign) it is allowed to move */
+    int64_t fresh_loss_ms;   /* first fresh (non-stale) frame without a person of the current loss, 0 = none: the exit search / sweep only start LOSS_FRESH_MS after it */
+    int wprev;               /* ptopw / pcenw: world top / centre of the last accepted box */
+    long ptopw, pcenw;
+    int ep_active;           /* continuous: a motion episode is on (its start pose is the pre pose) */
+    int last_rule, last_nl;  /* the rule of the last accepted box; it was a near one (bottom cut and >= 40 % tall, a low crop, or closer than 1200 mm): the close-loss machine runs when it is lost */
+    int nl_phase, nl_ev;     /* the close-loss machine (NL_* in track_logic.c) and its loss evidence (E_*) */
+    int nl_n, nl_w0ok;       /* search moves started; the widen phase is initialised */
+    int64_t nl_t0, nl_until, nl_w0; /* the first fresh no-box frame; the end of the running search move (negative: the stop time of the last one); the start of the widen phase */
+    int nl_pan0, nl_tilt0;   /* the pose at the loss: the search budget (400 steps) is counted from it */
 } tl_t;
 
+/* The lost-target chain text: "none", or steps joined by ',': hold:N (1..3600 s), backsweep, exit, local:W:D:N (width 40..1500 steps, divisor 2..20, 1..600 s), route:<name>[:N] (N 1..3600 s, default 60), home, stay (last only), up to 8.
+ * All or nothing: 0 and the chain stored, -1 and *c untouched. The default text "backsweep,exit,hold:30,home" selects the legacy return policy (lost_n = -1). */
+#define TL_LOST_DEFAULT "backsweep,exit,hold:30,home"
+int tl_lost_parse(const char *s, struct tl_cfg *c);
+void tl_lost_format(const struct tl_cfg *c, char *out, size_t cap);
 void tl_cfg_defaults(struct tl_cfg *c);
+/* The dev policy of before the targeting work and the continuous mode (central band, upper-third rule, steps): the "before" of the simulations and of the old unit cases. */
+void tl_cfg_dev(struct tl_cfg *c);
 /* The slow policy of firmware 0.1.0 (12 % band, 1.5 s rate limit, fixed 300 step nudges, no lead, home after 10 s): the "before" of the simulation. */
 void tl_cfg_legacy(struct tl_cfg *c);
 /* 0 when valid, -1 otherwise. */
 int tl_cfg_validate(const struct tl_cfg *c);
 /* -1 on an invalid cfg (state zeroed, tl_update then does nothing), 0 otherwise. */
 int tl_init(tl_t *t, const struct tl_cfg *c);
-/* One tick. n boxes (invalid/empty boxes are ignored, n > TL_MAX_BOXES is truncated). Fills *out. */
+/* One tick. n boxes (invalid/empty boxes are ignored; head boxes (cls 1) are dropped here, the policy does not use them yet; more than TL_MAX_BOXES persons are truncated). Fills *out. */
 void tl_update(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int fw, int fh, const struct tl_ptz *ptz,
                struct tl_out *out);
 #endif

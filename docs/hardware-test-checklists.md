@@ -66,6 +66,29 @@ Not run on a camera yet; host tests only (`tests/rot2k_control_api_*_test.sh`). 
 | A10 | Fail closed | `chmod 644 /config/akam/api_keys`: the API closes (`keys_perm`); `chmod 600` and it reopens; `echo x >> /config/akam/api_keys`: closes (`keys_invalid`) and the file is kept | [ ] |
 
 
+### 1080p remote control (convergence P4-P8; akam-01 first, then akam-02; UART attached, run from /tmp before flashing)
+
+Not run on a camera yet; host tests only (`tests/ak1080_*`, `tests/leds_oracle_test.sh`, `tests/ctl_sys_test.sh`, `tests/control_test.sh`).
+Reference: [control-api.md](porting/lsc-1080p/control-api.md). Baseline first: run the previous `ak_rtsp` 15 minutes with one RTSP client and record
+`video.fps_actual`, `ctl_sys` skipped frames, CPU of `ak_rtsp` and `VmRSS`/`MemAvailable`; every item below must keep them within noise.
+
+| # | Check | How | Done |
+|---|---|---|---|
+| B1 | Build and boot | `make repro` hash matches the golden; copy the binary to `/tmp/ak_rtsp`, stop the wrapper's copy, run it: stream up, `GET onvif.state`, `GET mqtt.state` as before, no new log errors, no port besides 22, 554, 8091 listening | [ ] |
+| B2 | sys.* (P4) | `ak_rtsp ctl GET sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_lq`: plausible against `top`, `free`, `iwconfig`; `-1000000` is never shown once the camera is up; the older keys (`sys.cpu`, `sys.mem_free`...) unchanged | [ ] |
+| B3 | LED, defaults (P6) | Power cycle with `status=auto` saved: the LED blinks 1 Hz while starting, solid when ready; unplug the router: 1 Hz again; start VLC: 0.5 Hz (1 s on, 1 s off), stop it: solid; `led.status off/on` and `night.ir_led off` as before; `led.state` names `blink_wifi`/`blink_stream`/`on`/`off`/`system` as before. Same on akam-02. This is the visual proof that completes `tests/leds_oracle_test.sh` | [ ] |
+| B4 | LED, patterns (P6/P7) | `ak_rtsp ctl SET led.nowifi 3:250:250:2000` then unplug the router: 3 quick blinks, pause; `GET led.nowifi`; `cat /etc/config/akam/leds` shows the `led_nowifi=` line only while not the default; set it back to `1:500:500:0`: the line is gone | [ ] |
+| B5 | 8091 unchanged (P7) | The assistant (`./akam status`, the LED, picture, video and night screens) works as before; `ak_rtsp ctl LIST` order unchanged (six `sys.*` keys appended in the metrics); `ak_rtsp ctl SET image.contrast -5` from the camera saves `/etc/config/akam/picture` | [ ] |
+| B6 | Closed without a key (P8) | No `/etc/config/akam/api_keys`: `netstat -ltn` shows no listener on 8092 (only 22, 554, 8091); the ak_rtsp log has no API error line | [ ] |
+| B7 | First key opens the port | `ak_rtsp --api-key new --scope admin --name t` over SSH while streaming: id and secret printed once; 8092 listens within ~2 s without a restart; `ls -l /etc/config/akam/api_keys` is `-rw-------`; the stream does not hiccup (`video.fps_actual`) | [ ] |
+| B8 | Signed calls | `tools/akam-api-sign.sh` + curl from a PC: `/hello`, `/info` (model `lsc-smart-indoor-1080p`), `/state`, `/schema` 200; wrong secret 401 `bad_signature`; the same request twice 401 `replay`; `/ptz/presets` and `/button` are 404 | [ ] |
+| B9 | Settings take effect | PATCH `led.mode`, `night.ir_led`, `night.mode` (force night: IR-cut click, IR LEDs per `night.ir_led`), `image.brightness`/`sharpness`/`denoise` (see it), `video0.kbps`/`fps`/`gop` (file written, `video0.cfg_pending` is 1, applied after `kill` + wrapper respawn), `onvif.enabled` (port opens, ODM sees it; refused without the stream password), `mqtt.enabled` (with a broker file); read back; power cut: persisted values survive | [ ] |
+| B10 | Actions and events | `led.blip` (find the camera), `led.blip_stop`, `settings.reset`; `GET /events?since=N&timeout=25` held; force night: the `night` event arrives at once; a PATCH: the `setting` event | [ ] |
+| B11 | Flash discipline | `md5sum /etc/config/akam/*` before and after 30 minutes of idle API polling (state every 30 s): identical (no periodic write); 7 PATCHes in a row: the 7th is 429 `flash_rate`; `audit` appears only after a write request | [ ] |
+| B12 | Cost | `VmRSS`/`MemAvailable` of `ak_rtsp` with no key, with a key idle, and after a 1 minute burst of requests (gate of the spec: +64 KB RSS; the binary is over its +56 KB gate, see the golden file); `video.fps_actual` 14.9-15, `ctl_sys` skipped 0 and CPU unchanged under a flood of bad signatures from a PC (they are rejected before any crypto once the peer is locked) | [ ] |
+| B13 | Hostile input and fail closed | As A9 and A10 of the 2K list (9 KB body 413, 5 KB header 431, chunked 411, `..` path 400/404; `chmod 644 api_keys` closes the API, `chmod 600` reopens, garbage in the file closes it and keeps it) | [ ] |
+| B14 | Rollback | Copy back the previous `ak_rtsp` to `/tmp`, restart the wrapper: video identical; `rm /etc/config/akam/api_keys` closes the port; deleting `led_*` lines of `/etc/config/akam/leds` restores the default patterns | [ ] |
+
 ## Post-flash check script
 
 `tools/hw_tests/akam_hwcheck.sh` is a read-only POSIX `sh` script. It never writes to flash or CONFIG,

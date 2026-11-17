@@ -18,6 +18,10 @@
 
 enum { HAL_PTZ_UP, HAL_PTZ_RIGHT, HAL_PTZ_DOWN, HAL_PTZ_LEFT, HAL_PTZ_NDIR };
 
+/* The speed divisors the safe motion layer accepts (smaller = faster: one step per `speed` ms). */
+#define HAL_PTZ_SPEED_MIN 2
+#define HAL_PTZ_SPEED_MAX 20
+
 typedef struct hal_ptz_desc {
     const char *dev;                 /* motor node */
     uint8_t dir[HAL_PTZ_NDIR];       /* driver command word (0..7) of each logical direction */
@@ -28,6 +32,9 @@ typedef struct hal_ptz_desc {
     uint32_t pan_step_max, tilt_step_max; /* the stock numbering: driver limits of the calibration sweep */
     uint32_t speed;                  /* speed divisor (one step per `speed` ms), 2..20 */
     uint32_t step;                   /* one button step, in steps */
+    /* Diagonal command words (continuous motion): up-right, down-right, down-left, up-left; diag_ok 0 = the driver has none (a diagonal then becomes the faster axis alone). */
+    uint8_t diag[4];
+    int diag_ok;
 } hal_ptz_desc_t;
 
 /* The driver and the persistence, replaceable by the host tests (hal_ptz_linux_ops: the real ones). */
@@ -46,6 +53,9 @@ typedef struct hal_ptz_ops {
      * position claimed by the scene check was lost (stall, I/O error). It is NOT called before moves or calibrations: the reference is keyed
      * to home, so moving the head away does not invalidate it. */
     int (*cold_check)(uint32_t *pan, uint32_t *tilt);
+    /* cold_check may also answer 3 = "very likely home, not proven" (zero shift, matching blocks, see scene_check.h SC_LIKELY): the SHORT calibration runs: the counters are declared a little
+     * above home (pan + 400, tilt + 300), both axes walk to their stops, the head goes home, and cold_check is called AGAIN: only a 1 trusts the position. Anything else (also a short sweep that
+     * fails or is cancelled): the full calibration, from wherever the head is. The risk is analysed in ptz-findings.md. */
     /* Multi-view (optional, both or none). cold_check may answer 2 = "the saved view is featureless; stored views at nearby offsets may prove the
      * position": *pan / *tilt = the claimed position. The claimed position is then declared to the driver (no motion), the head is moved by
      * cold_offset(i) (a relative offset in steps, at most 200 per axis whatever the hook says; each target inside the soft range) with the
@@ -99,6 +109,28 @@ int hal_ptz_park(hal_ptz_t *p);
 int hal_ptz_step(hal_ptz_t *p, int dir);          /* one bounded step of desc.step steps in a logical direction */
 int hal_ptz_nudge(hal_ptz_t *p, int dx, int dy);  /* relative, in steps, clipped to the soft range */
 int hal_ptz_nudge_sp(hal_ptz_t *p, int dx, int dy, int speed); /* the same at a speed divisor (2..20, else refused by the safe layer; 0 = default) */
+/* Absolute move at a speed divisor (HAL_PTZ_SPEED_MIN..MAX, 0 = the configured one). A target outside the soft range is REFUSED (the patrol engine). */
+int hal_ptz_goto_sp(hal_ptz_t *p, uint32_t pan, uint32_t tilt, int speed);
+
+/* ---- Continuous motion (hal_ptz_cont_run): ONE ongoing directional move, re-targeted without a stop (see the continuous block of ptz/akam_ptz_safe.h for the guarantees:
+ * soft range per axis, lease, stall / wrong-way / uncommanded-motion detection, travel counted). Logical commands: sx right+ / sy up+ in {-1, 0, 1}, dx / dy the speed
+ * divisors HAL_PTZ_SPEED_MIN..MAX of the moving axes (0 = the configured one); both signs 0 = stop. Runs on the motor thread and returns when the motion has ended. */
+typedef struct hal_ptz_cmd { int sx, sy, dx, dy; } hal_ptz_cmd_t;
+typedef struct hal_ptz_cstate {
+    uint32_t pan, tilt;  /* the polled position (real steps), every ~50 ms */
+    unsigned t_ms;       /* polled time since the start of the session */
+} hal_ptz_cstate_t;
+enum { HAL_PTZ_CONT_KEEP = 0, HAL_PTZ_CONT_CMD = 1, HAL_PTZ_CONT_STOP = 2 };
+/* Called after every poll: KEEP (nothing new: the lease runs), CMD (*cmd is the new or refreshed command: the lease restarts), STOP (end the session). */
+typedef int (*hal_ptz_cont_cb)(void *ctx, const hal_ptz_cstate_t *st, hal_ptz_cmd_t *cmd);
+/* Starts with `first` and returns when the session ended: HAL_PTZ_OK (STOP, the lease expired, every axis at its soft limit), HAL_PTZ_EREFUSED (soft limit / unknown position / bad command,
+ * nothing moved), ESTALL, EIO, ECANCEL (hal_ptz_cancel). *travel (optional) = the steps travelled. lease_ms 150..2000. */
+int hal_ptz_cont_run(hal_ptz_t *p, const hal_ptz_cmd_t *first, unsigned lease_ms, hal_ptz_cont_cb cb, void *ctx);
+
+/* The motor stop for a process that is going down or already gone: hal_ptz_emergency_stop() is async-signal-safe (the crash handler of the app: a stop request on the open node, nothing else);
+ * hal_ptz_oneshot_stop(ops) opens the node and sends the stop request (the supervisor's `akam2k_rtsp --ptz-stop` after the app died). No other request is used. 0 / -1. */
+void hal_ptz_emergency_stop(void);
+int hal_ptz_oneshot_stop(const hal_ptz_ops_t *ops);
 
 /* Any thread: the running motion stops within about 50 ms and returns HAL_PTZ_ECANCEL (a cancel with nothing running is dropped by
  * the next motion). It also aborts a start in progress and a calibration (the motor is stopped, the position stays unknown): use it

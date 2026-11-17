@@ -94,13 +94,13 @@ int hal_sys_parse_mem(const char *txt, long *total_kb, long *avail_kb)
     long t = kb_of(txt, "MemTotal"), a = kb_of(txt, "MemAvailable");
     if (t < 0)
         return -1;
+    *total_kb = t; /* known even when the available figure is not (the return value says it is incomplete) */
     if (a < 0) {
         long f = kb_of(txt, "MemFree"), b = kb_of(txt, "Buffers"), c = kb_of(txt, "Cached");
         a = f >= 0 && b >= 0 && c >= 0 ? f + b + c : -1;
     }
     if (a < 0)
         return -1;
-    *total_kb = t;
     *avail_kb = a;
     return 0;
 }

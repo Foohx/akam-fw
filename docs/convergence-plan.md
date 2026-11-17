@@ -68,7 +68,8 @@ hardware), **N/A** not applicable to that model. "2K only" = present on the 2K, 
 ```
 src/common/                 pure logic + HAL interfaces, no model path, no vendor header, host-testable
   time32_shim.c             (exists)
-  net/   h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtsp_busy rtp_clock tx_pace net_tx md5 sha1 b64 cred
+  net/   h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtsp_busy rtp_clock tx_pace net_tx md5 sha1 sha256 b64 cred
+  api/   json_min api_sig api_keys api_limit settings_reg api_events  (control API v1 security, JSON, registry, event ring; moved at P1-P3)
   logic/ night_logic light_logic(=leds engine) button_logic swdog klog hal_sys settings_reg(later) cfg_file
          audio_jitter audio_vad g711 video_cfg (pure part)
   hal/   hal_light.h hal_input.h hal_sys.h hal_ircut.h hal_venc.h (new, section 2.3)
@@ -121,6 +122,15 @@ machine of `akam2k_vlive.c` moves to `src/common/logic/vlive.c` (pure: takes the
 Golden history: `caded296...` (step 0, before any move) then `ffa4da4c...` after `feature/1080p-qp-tuning` (QP keys
 `minqp`/`maxqp` in `video_cfg`): behaviour-identical by default; hash changes because of new code. The proof is not the
 hash but `tests/video_apply_test.sh`: with no settings file the 96-byte CREATE_ENC payload equals the pre-change fixture byte for byte.
+
+**Feature selection (done with P1/P2).** `src/common/features.mk` is the per-model switch: a model Makefile sets
+`AKAM_FEAT_API`, `AKAM_FEAT_PTZ`, `AKAM_FEAT_BUTTON`, `AKAM_FEAT_SCENE`, `AKAM_FEAT_PATROL`, `AKAM_FEAT_WIFI5G`,
+`AKAM_FEAT_TRACK` to `1` or `0` (unset = off, unknown names and other values are an error), then lists a module's objects
+only through `$(call feat_objs,<NAME>,<objects>)`. A feature that is off compiles nothing, so a model never carries
+another model's dead code. The 2K Makefile has it on for everything it ships today (WIFI5G off) and gates the shared API
+objects with it; the 1080p includes it since P4 and turns on only what it adopts, one step at a time (P4-P9: `SYS`, `LIGHT`, `API` are on,
+`PTZ BUTTON SCENE PATROL WIFI5G TRACK` are off, so no 2K-only code is compiled into `ak_rtsp`). `make -C <app dir> features` prints the on/off sets. The link order is kept, so enabling a
+feature through `feat_objs` is byte-identical to listing the objects by hand.
 
 ### 2.5 Keeping the 1080p binary testable byte for byte
 
@@ -418,9 +428,39 @@ Sizes: S under 100 lines, M under 300, L up to 600 (moves excluded). BI/BC as in
 | # | Step | Moves / changes | Class | Size | Proof | HW |
 |---|---|---|---|---|---|---|
 | P0 | Re-baseline | after both branches merge: rebase, new golden hash, CPU baseline and `VmRSS` of akam-01 recorded here | BI | S | `repro_check.sh`, measurement | read only |
+
+**Status: P0 (hashes only, no hardware measurement, CPU/`VmRSS` still to do on akam-01), P1 and P2 done** on `convergence/p1-p2`. 1080p golden `6431e2c2...1479` unchanged; 2K `akam2k_rtsp` stripped `d472c552efc2d0e9e67218d3499b54d36cdbfe8e8d2b5658a4b794d719ddc6bf` identical before and after (the moved objects keep their place in the link order, `POC3_API` between `http_req` and `settings_reg`). sha256 lives in `net/`, the other four in `api/`.
+
+**Status: P3 done** on `convergence/p3` (pure moves, no 1080p binary change). 1080p golden `6431e2c2...1479` unchanged; 2K `akam2k_rtsp` stripped `893cf9336a967bfa9845a893a45e343d6377784f378b9a4e55bc20fa5ced2b50` identical before and after (the 2K link order is kept token by token in `POC3_ORDER`; common objects are `c:` entries gated by `feat_objs`). Moved: `settings_reg` and the event ring (`akam2k_apievt` -> `api/api_events`, file rename only: the `a2k_api_event*` symbols and `A2K_EVT_*` macros keep their names, renaming them is a later source change) to `src/common/api`; `hal_sys`, `light_logic` + `hal_light.h`, `hal_input` (debouncer, needed by `button_logic.h`), `button_logic`, `button_gesture`, `button_cfg` to `src/common/logic`. Gates: `API` (events, registry), `BUTTON`, and two new features `SYS` and `LIGHT`. Left in the 2K app on purpose: `hal_light_sysfs.c` and `hal_input_sysfs.c` (they call the 2K pin whitelist `akam2k_pin`: bindings, not generic yet; they move when the pin helper becomes a `hal_gpio` interface) and `akam2k_store.[ch]` (carries the 2K `/config/akam` path constants and the anti-brick `rename()` listing; its skip-if-equal helper merges with `cfg_file` in a later step).
+
+**Status: P4, P6, P7 and P8 done** on `convergence/p4-p8` (host-tested, never run on a camera; checklist B1-B14 of `hardware-test-checklists.md`).
+One commit per step; the golden hash (`tests/golden/ak_rtsp_1080p.sha256`) is updated per step with its size delta. P5 (`swdog` split) was skipped on
+purpose: nothing in P4-P8 needed it. What each step did, and where it departs from the table below:
+
+- **P4** `ctl_sys.c` collects with one `hal_sys_sample()` and adds the six `sys.*` names (`sys.cpu_pct sys.load1_x100 sys.mem_total_kb sys.mem_avail_kb
+  sys.uptime_s net.wifi_lq`; `net.wifi_rssi` already existed). No timer and no 10 s cadence: sampled when read (cache 1 s), zero cost while nobody reads.
+  Stripped +2376 bytes. The old keys keep every assertion of `tests/ctl_sys_test.sh`.
+- **P6** the status LED is the emitter `status` of a LED-class descriptor driven through `light_logic`; the rules `stream boot nowifi night idle` have patterns in the
+  grammar of the 2K (`led_pat.[ch]`, the pattern code split out of `akam2k_leds.c`). Defaults reproduce the old engine: `tests/leds_oracle_test.sh` runs the old engine (verbatim,
+  `tests/native/leds_legacy.c`, kept as the oracle instead of a `LEDS_LEGACY` build flag) and the new one on the same traces, ~735k comparisons of write sequences,
+  states, network checks, IR hook calls and the saved file; `leds_test.c` passes unchanged. The IR LEDs stay the `night.ir_led` rule inside `ircut.c` (not an emitter yet).
+  Stripped +4904 bytes.
+- **P7** `ak1080_settings.c`: 41 rows on the shared `settings_reg`; every row calls the module that owns the value; `control.c` offers a key it does not know to the registry
+  (`control_set_registry`). Departure: the 8091 code was not rewritten onto the table (error texts stay byte for byte, the old code remains the writer behind the rows); `LIST` is
+  unchanged. Stripped +17916 bytes.
+- **P8** the generic API moved to `src/common` (`api_core api_httpd http_req api_backend.h`) and the 2K rebinds it (`akam2k_apibind.c`, 357-check HTTP test unchanged); the 1080p binds
+  it in `ak1080_api.c`. Port 8092 opens only while a key exists, key tool `ak_rtsp --api-key`, ONE HTTP thread and no worker (settings run inline), buffers at accept,
+  flash limiter, `night` and `setting` events, actions `led.blip led.blip_stop settings.reset`. Stripped +61560 bytes: the registry-plus-API total (+79.5 KB) is over the
+  +56 KB gate of `specs/control-api.md` section 9, RSS not measured. `tests/ak1080_api_http_test.sh` (119 checks, ASan/UBSan) drives the real server.
+
+Open after this branch: P9 to P13, the assistant side of the key tool (`akam api-key`), a writable `net.hostname` / `net.ntp` (needs the scripts, the app never spawns), the ONVIF port
+list should also refuse 8092 (`onvif_cfg_port_ok` and `akam_onvif.sh` exclude 21-24, 554, 8091 only), and the camera pass of the checklist.
+
+| # | Step | Moves / changes | Class | Size | Proof | HW |
+|---|---|---|---|---|---|---|
 | P1 | Pure moves, crypto/JSON | `sha256`, `json_min` from the 2K app to `src/common/logic`; both Makefiles via `common.mk`; test paths | BI | S | 2K objects equal, 1080p hash unchanged (not linked) | no |
 | P2 | Pure moves, API security | `api_sig`, `api_keys`, `api_limit` to `src/common/logic` | BI | S | same | no |
-| P3 | Pure moves, registry and system | `settings_reg`, `hal_sys`, `light_logic` + `hal_light.h` + `hal_light_sysfs`, `button_logic`, the events ring (pure part of `akam2k_apievt.c`), the store helper (skip-if-equal of `akam2k_store.c` over `cfg_file`) | BI | M | same, plus the 2K unit tests (`tests/rot2k_*`) on the new paths | no |
+| P3 (done) | Pure moves, registry and system | `settings_reg`, `hal_sys`, `light_logic` + `hal_light.h` + `hal_light_sysfs`, `button_logic`, the events ring (pure part of `akam2k_apievt.c`), the store helper (skip-if-equal of `akam2k_store.c` over `cfg_file`) | BI | M | same, plus the 2K unit tests (`tests/rot2k_*`) on the new paths | no |
 | P4 | `sys.*` on the 1080p | `ctl_sys.c` calls `hal_sys_sample` every 10 s from an existing timer (no new thread); keys `sys.cpu_pct sys.load1_x100 sys.mem_*_kb sys.uptime_s net.wifi_rssi` read-only on 8091 and `LIST` | BC additive | S | `control_test.sh` (old keys byte-equal), RSS delta | yes |
 | P5 | `swdog` split | `swdog_st_*` pure half to `src/common/logic/swdog_core.c`, glue stays; the 2K capture watchdog adopts it in its own commit | BI (1080p), BC (2K) | M | `swdog_test.sh`, hash | 2K only |
 | P6 | LED engine on `state_led` | `ak1080_hal.c` status descriptor; `leds.c` rules re-expressed as `light_logic` calls; `status=on|off|auto`, `ir_led auto|off` and the `/etc/config/akam/leds` file keep their meaning; IR emitter added when `ledsys.c` is wrapped | BC | M | `leds_test.sh` plus an oracle comparing old and new write sequences; visual check on both cameras | yes |

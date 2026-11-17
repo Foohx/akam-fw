@@ -180,6 +180,7 @@ shared by all callers.
 | `rtsp.clients` | Connected RTSP clients |
 | `rtsp.auth` | `off`, `on`, `broken` |
 | `rtsp.skipped_frames` | Cumulative video frames dropped by the TCP backpressure pacing |
+| `sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_lq` | The same numbers as `sys.cpu`, `sys.load` (first field times 100), `sys.mem_total`, `sys.mem_free`, `sys.uptime`, and the raw link quality of `/proc/net/wireless`, as integers under the names of the settings registry and of the Rotatable 2K (convergence step P4, `hal_sys`). `-1000000` while not known, never the word `unknown`. Added at the end of the metrics, so the order of the older keys in `LIST` is unchanged |
 
 ### 6.6 Control and service state
 

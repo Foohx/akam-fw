@@ -3,18 +3,25 @@
  * short mutex-protected copy into a ring of A2K_EVT_RING entries and one byte written to the wake pipe of the HTTP thread; they
  * never block on the network and never allocate. The consumer reads with a cursor: events with seq > since. No other module
  * dependency, so a unit test that links a producer only needs this one file. */
-#ifndef AKAM2K_APIEVT_H
-#define AKAM2K_APIEVT_H
+#ifndef AKAM_API_EVENTS_H
+#define AKAM_API_EVENTS_H
 #include <stddef.h>
 #include <stdint.h>
 
 #define A2K_EVT_RING 32
 #define A2K_EVT_TYPE 12
-#define A2K_EVT_DATA 112
+#define A2K_EVT_DATA 144
+/* "detections" events (akam2k_detpub.h) have a ring of their own: a few larger entries, so they never evict the other types. */
+#define A2K_EVT_DETECTIONS "detections"
+#define A2K_EVT_DRING 4
+#define A2K_EVT_DDATA 800
+/* "patrol" events (PTZ patrol, specs/ptz-patrol.md) also have a ring of their own, so a patrol can never evict a button / person / night event. */
+#define A2K_EVT_PATROL "patrol"
+#define A2K_EVT_PRING 8
 
-/* type: [a-z_]+ (button, person, night, ptz, setting); data: a JSON object text, or NULL for {}. Longer text is dropped. */
+/* type: [a-z_]+ (button, person, night, ptz, setting); data: a JSON object text, or NULL for {}. Longer text is dropped (the limit is A2K_EVT_DDATA for "detections", A2K_EVT_DATA otherwise). */
 void a2k_api_event(const char *type, const char *data);
-void a2k_api_event_button(void);               /* a short press */
+void a2k_api_event_button(void);               /* a short press with the default bindings (the button itself posts {"gesture","actions","result"} through a2k_api_event) */
 void a2k_api_event_person(int present, int score); /* only a change of presence makes an event */
 
 /* The write end of a non-blocking pipe the HTTP thread polls (-1 = none). Set before the producers run. */

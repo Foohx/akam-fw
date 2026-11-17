@@ -8,11 +8,16 @@
  * Comparison (contrast normalised, works on a plastered white wall): both thumbnails are high-passed (Laplacian: gradients, vignetting, a
  * global gain / offset vanish; edges, plaster relief, texture stay). The sensor noise is estimated from the image itself (the quietest
  * sub-blocks), and each block of the 4x3 grid is "detailed" only when its high-pass energy is clearly above that noise (SC_DETAIL_RATIO).
- * A block detailed in BOTH images is scored by the noise-compensated zero-mean normalised correlation over +-SC_SHIFT px; it MATCHES when the
- * best score inside the tolerance (|shift| <= SC_TOL, one thumbnail px = about 4 source px) is >= min - SC_BLOCK_MARGIN AND beats the best
- * score at larger shifts by SC_PEAK_MARGIN (a real displacement or a repetitive / shift-invariant pattern fails here). Blocks without detail
- * are EXCLUDED (neutral), never counted as mismatches (a block detailed on one side only and clearly flat on the other counts against). MATCH needs at least SC_DETAIL_BLOCKS_MIN detailed blocks in common, at least 2/3 of the voting blocks
- * matching, and the mean score of the matching ones >= min. Anything else is refused (fail closed: the full calibration).
+ * The displacement is the peak of the surface summed over the blocks detailed in both (within SC_TOL, and SC_PEAK_MARGIN above every larger
+ * displacement). Each block is then classified at that common displacement by DISPLACEMENT EVIDENCE, not by its raw score (a lamp, dusk, the IR
+ * light or a window change the scores, not where the correlation peaks): SAME = the block peaks there (within SC_SAME_SLACK of its best
+ * displacement) and scores >= min - SC_SAME_BELOW; MOVED = a shifted peak clearly beats it (votes against); a strong block with no peak anywhere is
+ * another scene (against). Neutral (no vote): a weak block (high-pass energy < SC_WEAK_RATIO x the noise: plaster relief) that is not SAME, a
+ * lighting-lowered strong block still peaking at the common displacement, and up to SC_JUMP_MAX blocks whose signal energy changed by more than
+ * SC_JUMP_RATIO without correlating (a window); the latter two weigh half a vote against. The weak blocks are pooled (mean score >= SC_WEAK_POOL).
+ * MATCH needs a peak_ok displacement, at least SC_SAME_BLOCKS_MIN SAME blocks that are >= 1/3 of the blocks detailed in common and >= 2/3 of the
+ * voting blocks (SAME + MOVED + mismatches + blocks detailed on one side only and clearly flat on the other), and a mean SAME score >= min -
+ * SC_MEAN_SLACK. Anything else is refused (fail closed: the full calibration).
  * Anti fixed-pattern: lens dirt, an overlay or an IR hot spot covers a few blocks while the rest of the scene votes it down; a smooth
  * one (vignetting, hot spot) is removed by the high-pass and yields no detailed block. A truly featureless view (lens covered, blank wall with
  * no relief above the noise, dark night) cannot be decided: "view too uniform" -> calibrate, or the multi-view fallback below.
@@ -38,6 +43,7 @@
 #define SC_PEAK_MARGIN 20    /* permille: the peak inside the tolerance must beat the best score outside it by this much */
 #define SC_REP_RANGE 40      /* repetitive-texture check: displacements searched (step 1), thumbnail px */
 #define SC_REP_LOBE_MAX 8    /* ... the main lobe of the self-correlation is no alias only up to this displacement (px); wider is flagged */
+#define SC_REP_BRIDGE 3      /* ... passing displacements up to SC_TOL + this from the origin seed the main lobe (sampling noise leaves a gap at the edge of a broad lobe); a period still repeats at 2p, outside */
 #define SC_REP_MARGIN 50     /* ... the match rule applied to the image against itself, with this much margin below the match threshold (permille) */
 #define SC_DETAIL_RATIO 3    /* a block is detailed when its high-pass energy is >= this times the image noise energy */
 #define SC_DETAIL_BLOCKS_MIN 4 /* of SC_BX * SC_BY: detailed blocks needed in the reference, in the current view and in common */
@@ -45,7 +51,20 @@
 #define SC_MIN_LOWEST 800    /* ptz_scene_min below this is refused */
 #define SC_BX 4              /* the block grid of the per-block decision */
 #define SC_BY 3
-#define SC_BLOCK_MARGIN 100  /* a block may score this much below the global threshold */
+#define SC_BLOCK_MARGIN 100  /* (kept for the callers) */
+/* Displacement-evidence vote (illumination robust, see the header comment): all relative to the configured threshold, in permille. */
+#define SC_WEAK_RATIO 12     /* a block whose high-pass energy is below this times the noise (in either image) is weak: noise dominates its score, it is neutral */
+#define SC_JUMP_RATIO 2      /* a block whose signal energy changed by more than this factor between the images (a window, a screen) is neutral */
+#define SC_SAME_BELOW 100    /* a block is SAME (the head did not move) when its zero-shift score >= min - this, and zero shift is its peak */
+#define SC_SAME_SLACK 120    /* ... zero within this of the best score at any searched displacement */
+#define SC_WEAK_SAME_BELOW 100 /* a weak block (noise-compensated correlation of a barely detailed block is unstable) is SAME only at min - this */
+#define SC_MOVE_BELOW 200    /* a block is MOVED (votes against) when a shifted peak >= min - this beats zero shift by SC_MOVE_MARGIN */
+#define SC_MOVE_MARGIN 120
+#define SC_SOFT_BELOW 250    /* a strong block whose peak stays at zero shift with a score >= min - this is lighting-lowered: neutral, not a mismatch */
+#define SC_JUMP_MAX 2        /* at most this many blocks may be neutral for a drastic change of their content (more: another scene, they count against) */
+#define SC_WEAK_POOL 250     /* the weak blocks are neutral one by one, but their mean score at the common displacement must be >= this (permille) */
+#define SC_SAME_BLOCKS_MIN 4 /* SAME blocks needed (and at least a third of the blocks detailed in both) */
+#define SC_MEAN_SLACK 50     /* the mean zero-shift score of the SAME blocks must be >= min - this */
 #define SC_FULL_EVERY 10     /* a saved reference is trusted for this many matched boots, then one full calibration */
 #define SC_FILE_MAX 4096     /* serialized reference: header + SC_N bytes < 4 KB (fits the settings store) */
 
@@ -57,10 +76,14 @@ typedef struct {
     uint32_t pan, tilt;      /* the position at capture */
     unsigned boots;          /* matched boots since the last full calibration */
     uint32_t stamp;          /* seconds since the epoch when the reference was written (0 = unknown): the rewrite rate limit lives in the file itself */
+    int rep;                 /* the repetitive-texture verdict, screened when the reference was captured: 1 yes, 0 no; -1 unknown (older file) */
+    int repmin;              /* the ptz_scene_min (permille) the screening ran at (0 = unknown): valid for any boot threshold >= it */
     sc_thumb_t th;
 } sc_ref_t;
 
-enum { SC_MATCH = 0, SC_NO_REF, SC_LOW_DETAIL_REF, SC_LOW_DETAIL_CUR, SC_MODE_DIFF, SC_MISMATCH, SC_NO_FRAME, SC_CANCELLED, SC_MISMATCH_BLOCKS, SC_PERIODIC, SC_STORE_FAILED, SC_NEED_PROBE, SC_NOT_HOME, SC_REPETITIVE };
+enum { SC_MATCH = 0, SC_NO_REF, SC_LOW_DETAIL_REF, SC_LOW_DETAIL_CUR, SC_MODE_DIFF, SC_MISMATCH, SC_NO_FRAME, SC_CANCELLED, SC_MISMATCH_BLOCKS, SC_PERIODIC, SC_STORE_FAILED, SC_NEED_PROBE, SC_NOT_HOME, SC_REPETITIVE, SC_LIKELY };
+/* SC_LIKELY (sc_decide, not a match): zero shift, no MOVED block, at least SC_SAME_BLOCKS_MIN blocks matching on their own with a mean score >= the threshold, but too few of the others to prove it: "very likely home".
+ * Never a proof: the motor layer may then run the SHORT calibration (sweep a little past home, go home) and ask for the proof again before trusting it. */
 const char *sc_verdict_name(int v);
 
 /* Box-filters the luma plane (w x h, line stride `stride`; w a multiple of SC_W, h a multiple of SC_H) to a thumbnail. 0, or -1. */
@@ -71,17 +94,28 @@ typedef struct {
     int ref_detail, cur_detail; /* detailed blocks of each image */
     int both;                   /* detailed in both: the blocks that vote */
     int vote_n;                 /* both + the blocks detailed on one side only and clearly flat on the other (they count against) */
-    int matched;                /* of those, matching on their own */
+    int matched;                /* of those, SAME (zero shift is the block's own peak, score above the floor): positive evidence */
+    int weak_n, weak_mean;      /* the weak blocks (not changed ones) and their mean score at the common displacement (1000 when none) */
+    unsigned same_mask;         /* bit per block: SAME */
+    int doubt;                  /* neutral blocks that are not weak (changed energy, lighting-lowered): half a vote against */
+    int moved, neutral;         /* blocks voting a displacement (against), blocks left out (weak / changed drastically / lighting-lowered) */
     int shift_x, shift_y;       /* the best displacement (summed over the voting blocks), thumbnail px */
     int peak_ok;                /* it lies within SC_TOL and clearly beats every larger displacement */
     int score;                  /* permille: mean block score of the matching blocks (of all voting blocks when none matches); -1000 with no voting block */
 } sc_cmp_t;
 int sc_compare(const sc_thumb_t *ref, const sc_thumb_t *cur, int min_permille, sc_cmp_t *out); /* 0 */
 /* 1 when the thumbnail is a repetitive texture (blinds, tiles, bars): the image against itself, displaced beyond SC_TOL (up to +-SC_REP_RANGE px), would
- * pass the match rule of sc_decide at the configured threshold (less SC_REP_MARGIN). Such a view can match after a shift of a whole period: it is never
- * saved as a reference, and a reference on the flash that is one is refused at the boot check. The broad main lobe (and a pure invariance along one
- * axis, vertical edges) is not flagged: the match refuses it by itself. Integer arithmetic in the loops; it takes a few tens of ms on the camera: never call it under a lock. */
+ * pass the match rule of sc_compare at the configured threshold (less SC_REP_MARGIN). Such a view can match after a shift of a whole period: it is never
+ * saved as a reference. The verdict is computed ONCE, when the reference is captured, and stored in it (sc_ref_t rep / repmin, header scene2): the boot only
+ * reads it (a reference of the older format, or one screened at a stricter threshold than the configured one, is screened at the boot, once: the store of
+ * the first matched boot writes the verdict). The broad main lobe (and a pure invariance along one axis, vertical edges) is not flagged: the match refuses
+ * it by itself. Integer arithmetic; a coarse pass on a quarter of the pixels with a much lower floor and an early exit select the displacements that are
+ * evaluated in full (about 7x cheaper than evaluating all). Never call it under a lock. */
 int sc_repetitive(const sc_thumb_t *t, int min_permille);
+/* The same, and WHY: the first displacement (dx, dy, thumbnail px) that triggered it and kind 1 (a separate lobe: a period) or 2 (the main lobe reaches beyond SC_REP_LOBE_MAX: invariance along an axis). */
+int sc_repetitive_why(const sc_thumb_t *t, int min_permille, int *dx, int *dy, int *kind);
+/* One text line for a diagnosis dump: per image noise / detailed / strong block masks, and (cur != NULL) the comparison (counts, SAME mask, shift, score), and (with_rep) the repetitive screening with its reason. */
+void sc_diag_text(const sc_thumb_t *ref, const sc_thumb_t *cur, int min_permille, const char *what, int with_rep, char *out, size_t cap);
 /* Mean block score (permille) as in sc_cmp_t; -1000 when no block has detail in both. */
 int sc_score(const sc_thumb_t *ref, const sc_thumb_t *cur);
 /* How many blocks have detail in both images and match on their own. */
@@ -92,7 +126,7 @@ int sc_decide(const sc_ref_t *ref, const sc_thumb_t *cur, int cur_mode, int min_
 /* The plain decimal "0.80".."0.999" (or "1" / "1.0") -> permille; -1 on anything else (below SC_MIN_LOWEST = 0.80 is refused). */
 int sc_parse_min(const char *s);
 
-/* Serialized form: "scene1 <mode> <pan> <tilt> <w> <h> <boots>\n" + SC_N raw bytes. The invalid marker is sc_invalid_marker.
+/* Serialized form: "scene2 <mode> <pan> <tilt> <w> <h> <boots> <stamp> <rep> <repmin>\n" + SC_N raw bytes (scene1, without stamp / rep / repmin, is still read: rep unknown). The invalid marker is sc_invalid_marker.
  * sc_pack: bytes written (<= cap), or 0 when cap is too small. sc_unpack: 0 ok (ref->valid = 1), -1 anything else (including the marker). */
 size_t sc_pack(const sc_ref_t *ref, char *out, size_t cap);
 int sc_unpack(const char *buf, size_t len, sc_ref_t *ref);
@@ -109,6 +143,8 @@ typedef struct {
     int (*cancelled)(void);                     /* may be NULL */
     void (*log)(const char *line);              /* may be NULL */
     int (*load_alt)(unsigned i, sc_ref_t *ref); /* the stored view of offset i (multi-view fallback): 0 loaded, -1 absent / invalid; may be NULL (none) */
+    int (*store_alt)(unsigned i, const sc_ref_t *ref); /* writes a stored offset view back with the repetitive verdict screened at the boot (an older file): may be NULL */
+    void (*dump)(const char *name, const sc_thumb_t *t, const char *text); /* diagnosis aid (RAM only, never the flash): a thumbnail the check used and a text line; may be NULL */
 } sc_env_t;
 
 typedef struct {

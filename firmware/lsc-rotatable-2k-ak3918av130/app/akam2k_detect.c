@@ -5,14 +5,17 @@
  * (count cap, box inside the image, ordered corners, score 0..1000). This file opens no file and no device node: the
  * state file is written by akam2k_detstate.c, the vendor libraries open theirs. */
 #include <pthread.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "akam2k_abi.h"
+#include "api_events.h"
 #include "akam2k_cap.h"
 #include "akam2k_detect.h"
+#include "akam2k_detpub.h"
 #include "akam2k_detstate.h"
 #include "akam2k_leds.h"
 #include "akam2k_log.h"
@@ -47,6 +50,8 @@ void a2k_detect_defaults(struct a2k_detect_cfg *c)
     c->on_count = 2;
     c->off_ms = 3000;
     c->debug = 0;
+    c->model_thr = 0;
+    c->age_window = 0;
     memset(&c->zones, 0, sizeof c->zones);
 }
 
@@ -83,18 +88,68 @@ static void write_state(a2k_det_t *d, const a2k_zdet_t *zd, const char *status, 
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+/* The person the tracker follows (a2k_track_feed was just called with these boxes): the published box equal to its target, if any. */
+static void mark_target(struct a2k_dp_in *pub, int npub, const struct tl_box *tb, int ntb)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    struct tl_box tg;
+    int has, i, j;
+    if (!t || !a2k_track_enabled(t))
+        return;
+    pthread_mutex_lock(&t->mu);
+    has = t->tl.has_target;
+    tg = t->tl.target;
+    pthread_mutex_unlock(&t->mu);
+    if (!has)
+        return;
+    for (i = 0; i < npub; i++)
+        for (j = 0; j < ntb; j++)
+            if (tb[j].x1 == pub[i].x1 && tb[j].y1 == pub[i].y1 && tb[j].x2 == pub[i].x2 + 1 && tb[j].y2 == pub[i].y2 + 1 &&
+                tb[j].cls == TL_CLS_PERSON && tg.x1 == tb[j].x1 && tg.y1 == tb[j].y1 && tg.x2 == tb[j].x2 && tg.y2 == tb[j].y2)
+                pub[i].target = 1;
+}
+
+/* One inference's person boxes to the outside services (akam2k_detpub.h): the HTTP event, the state key detect.boxes, MQTT. Nothing while
+ * the privacy mode hides the video or the camera is parked. RAM only. */
+static a2k_dp_t g_dp;
+static void publish_boxes(int64_t t, struct a2k_dp_in *pub, int npub, const struct tl_box *tb, int ntb)
+{
+    char js[A2K_DP_JSON];
+    a2k_ptz_info_t pi;
+    struct timespec ts;
+    int hz = a2k_dp_hz(), blocked, n;
+    a2k_ptz_info(&pi);
+    blocked = a2k_ptz_privacy_active() || pi.state == HAL_PTZ_PARKED;
+    if (hz <= 0 || blocked) {
+        a2k_dp_update(&g_dp, t, 0, hz, 1, NULL, 0, 0, 0, 0, js, sizeof js);
+        a2k_dp_clear_latest();
+        return;
+    }
+    mark_target(pub, npub, tb, ntb);
+    clock_gettime(CLOCK_REALTIME, &ts);
+    n = a2k_dp_update(&g_dp, t, (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000, hz, 0, pub, npub, pi.known, (int)pi.pan, (int)pi.tilt, js,
+                      sizeof js);
+    if (n > 0) {
+        a2k_dp_set_latest(js);
+        a2k_api_event(A2K_EVT_DETECTIONS, js);
+        a2k_mqtt_detections(js);
+    }
+}
+
 /* Validates the results of one inference into an observation. Returns 0, or -1 for an implausible output. A box that
  * overshoots the image by a few pixels (a person cut by the frame edge, the model may report x2 = 320 or y2 = 192) is
  * CLAMPED into the image instead of dropped: dropping it made a person standing at the edge invisible. A box whose
  * corners are unordered, or a score outside 0..1000, is skipped and counted in *rejected. */
 static int collect(const struct svp2_output *out, struct a2k_det_obs *obs, unsigned *rejected, const a2k_zones_t *zones,
-                   struct tl_box *tb, int *ntb)
+                   struct tl_box *tb, int *ntb, struct a2k_dp_in *pub, int *npub)
 {
     const struct svp2_result *r = (const struct svp2_result *)out->res;
     unsigned i;
+    int nper = 0, nhead = 0;
 
     a2k_det_obs_reset(obs);
     *ntb = 0;
+    *npub = 0;
     if (out->count > MAX_RESULTS || (out->count && !r))
         return -1;
     for (i = 0; i < out->count; i++) {
@@ -107,10 +162,22 @@ static int collect(const struct svp2_output *out, struct a2k_det_obs *obs, unsig
         }
         b.cls = r[i].cls;
         b.score = r[i].score;
+        if (b.cls == A2K_DET_CLASS_PERSON && g_cfg.model_thr && b.score < g_cfg.threshold)
+            continue; /* experiment mode (detect_model_thr below the threshold): the lower-scored persons are for the log only */
         b.x1 = x1;
         b.y1 = y1;
         b.x2 = x2;
         b.y2 = y2;
+        if (b.cls == A2K_DET_CLASS_PERSON && *npub < A2K_DP_MAX) { /* published whatever the zones say, ignore zones as a flag */
+            pub[*npub].x1 = b.x1;
+            pub[*npub].y1 = b.y1;
+            pub[*npub].x2 = b.x2;
+            pub[*npub].y2 = b.y2;
+            pub[*npub].score = b.score;
+            pub[*npub].ignored = a2k_zones_ignored(zones, &b);
+            pub[*npub].target = 0;
+            (*npub)++;
+        }
         if (b.cls == A2K_DET_CLASS_PERSON && a2k_zones_ignored(zones, &b))
             continue; /* feet inside an ignore rectangle: not a person for anything (presence, zones, tracking) */
         if (zones->n > 0 && b.cls == A2K_DET_CLASS_PERSON) {
@@ -122,17 +189,46 @@ static int collect(const struct svp2_output *out, struct a2k_det_obs *obs, unsig
         } else {
             a2k_det_obs_add(obs, &b);
         }
-        if (b.cls == A2K_DET_CLASS_PERSON && *ntb < TL_MAX_BOXES) {
+        if (b.cls == A2K_DET_CLASS_PERSON && nper < TL_MAX_BOXES) {
             tb[*ntb].x1 = b.x1;
             tb[*ntb].y1 = b.y1;
             tb[*ntb].x2 = b.x2 + 1; /* pixel indexes -> edges, so a one pixel box is not empty */
             tb[*ntb].y2 = b.y2 + 1;
+            tb[*ntb].cls = TL_CLS_PERSON;
+            tb[*ntb].score = b.score;
             (*ntb)++;
+            nper++;
+        } else if (b.cls == A2K_DET_CLASS_HEAD && nhead < TL_MAX_HEADS) { /* the head boxes ride along for the logs; the tracking policy ignores them (track_logic.h) */
+            tb[*ntb].x1 = b.x1;
+            tb[*ntb].y1 = b.y1;
+            tb[*ntb].x2 = b.x2 + 1;
+            tb[*ntb].y2 = b.y2 + 1;
+            tb[*ntb].cls = TL_CLS_HEAD;
+            tb[*ntb].score = b.score;
+            (*ntb)++;
+            nhead++;
         }
     }
     if (zones->n > 0)
         a2k_det_obs_finish_mask(obs, a2k_zones_active_mask(zones), zones->mode == A2K_ZONE_MODE_ALL);
     return 0;
+}
+
+/* Experiment E1 (--detect-debug): every box of one inference, both classes, with its score. A static buffer: the detection thread only. */
+static const char *fmt_all_boxes(const struct svp2_output *out)
+{
+    static char buf[MAX_RESULTS * 32 + 8];
+    const struct svp2_result *r = (const struct svp2_result *)out->res;
+    size_t k = 0;
+    unsigned i;
+    buf[0] = 0;
+    for (i = 0; i < out->count && k + 40 < sizeof buf; i++) {
+        int w = snprintf(buf + k, sizeof buf - k, "%c%d:%d:%d,%d,%d,%d", ' ', (int)r[i].cls, (int)r[i].score, (int)r[i].x1, (int)r[i].y1, (int)r[i].x2, (int)r[i].y2);
+        if (w < 0 || (size_t)w >= sizeof buf - k)
+            break;
+        k += (size_t)w;
+    }
+    return buf;
 }
 
 /* Pulls the NEWEST frame of chn 16. The stock keeps 20 fps in a depth-2 queue and the thread runs at 5 Hz, so the
@@ -261,10 +357,12 @@ static void *detect_thread(void *arg)
     int64_t seq = 0, period = 1000 / g_cfg.hz, next, last_hb, last_stats = 0, last_frame_ok;
     unsigned long done = 0, stat_n = 0, implausible = 0, pfail = 0, stat_pos = 0, stat_drained = 0, dbg_n = 0;
     unsigned rejected = 0, stat_rej = 0;
-    long long stat_sum = 0, stat_max = 0, stat_age = 0, stat_age_max = 0, min_raw_age = 0, last_ts = 0, last_dbg = 0;
-    int have_age = 0;
+    long long stat_sum = 0, stat_max = 0, stat_age = 0, stat_age_max = 0, last_ts = 0, last_dbg = 0, last_dbg_all = 0;
+    struct a2k_agewin agew;
     const char *final = "stopped";
     (void)arg;
+    a2k_dp_init(&g_dp);
+    a2k_agewin_init(&agew, g_cfg.age_window);
 
     dc.on_count = g_cfg.on_count;
     dc.off_ms = g_cfg.off_ms;
@@ -299,14 +397,14 @@ static void *detect_thread(void *arg)
     memset(&attr, 0, sizeof attr);
     attr.model_num = 1;
     attr.m[0].model_type = 10;
-    attr.m[0].classify_thr = (uint32_t)g_cfg.threshold;
+    attr.m[0].classify_thr = (uint32_t)(g_cfg.model_thr ? g_cfg.model_thr : g_cfg.threshold);
     attr.m[0].iou_thr = 3;
     attr.m[0].target_type = 0;
     memset(&conf, 0, sizeof conf);
     conf.path = A2K_DET_MODEL;
     a2k_set_step("ak_svp2_create_chn");
     rc = ak_svp2_create_chn(0, &attr, &conf);
-    a2k_log("detect: ak_svp2_create_chn(0, model_type 10, classify %d, iou 3, target 0) = %d", g_cfg.threshold, rc);
+    a2k_log("detect: ak_svp2_create_chn(0, model_type 10, classify %d, iou 3, target 0) = %d", g_cfg.model_thr ? g_cfg.model_thr : g_cfg.threshold, rc);
     if (rc) {
         final = "failed";
         a2k_log("detect: model load failed, detection off (RTSP keeps running)");
@@ -326,8 +424,10 @@ static void *detect_thread(void *arg)
         struct svp2_input in;
         struct svp2_output out;
         struct a2k_det_obs obs;
-        struct tl_box tbox[TL_MAX_BOXES];
+        struct tl_box tbox[TL_MAX_ALL];
         int ntbox = 0;
+        struct a2k_dp_in pbox[A2K_DP_MAX];
+        int npbox = 0;
         struct a2k_det_event ev;
         uint32_t phys = 0;
         int64_t t0, t1, age = 0;
@@ -355,14 +455,7 @@ static void *detect_thread(void *arg)
         last_frame_ok = t0;
         /* The frame clock is not known to be ours: the age is relative to the freshest frame ever seen (raw age minus
          * its minimum), which is the real queueing delay whatever the origin of the timestamps. */
-        {
-            long long raw = (long long)t0 - (long long)f.ts_ms;
-            if (!have_age || raw < min_raw_age) {
-                min_raw_age = raw;
-                have_age = 1;
-            }
-            age = raw - min_raw_age;
-        }
+        age = a2k_agewin_age(&agew, t0, (long long)t0 - (long long)f.ts_ms);
         a2k_set_step("detect vaddr2paddr");
         rc = ak_mem_dma_vaddr2paddr((const void *)(uintptr_t)f.data, &phys);
         if (rc || f.len < A2K_DET_W * A2K_DET_H * 3 / 2) {
@@ -423,7 +516,7 @@ static void *detect_thread(void *arg)
                 last_hb = t1;
             }
         }
-        rc = collect(&out, &obs, &rejected, &g_eff, tbox, &ntbox);
+        rc = collect(&out, &obs, &rejected, &g_eff, tbox, &ntbox, pbox, &npbox);
         if (g_cfg.debug && t1 - last_dbg >= DEBUG_LOG_MS) {
             a2k_log("detect-debug: #%lu ts=%llu dts=%lld age=%lld ms drained=%d count=%u rejected=%u person=%d score=%d "
                     "box=%d,%d,%d,%d heads=%d",
@@ -431,6 +524,10 @@ static void *detect_thread(void *arg)
                     drained, (unsigned)out.count, rejected, obs.person, obs.person ? obs.best.score : 0, obs.best.x1,
                     obs.best.y1, obs.best.x2, obs.best.y2, obs.heads);
             last_dbg = t1;
+        }
+        if (g_cfg.debug && t1 - last_dbg_all >= DEBUG_LOG_MS && out.count && out.res && out.count <= MAX_RESULTS) {
+            a2k_log("detect-debug: all %u boxes (class 0 person, 1 head; cls:score:x1,y1,x2,y2) %s", (unsigned)out.count, fmt_all_boxes(&out));
+            last_dbg_all = t1;
         }
         last_ts = (long long)f.ts_ms;
         ak_svp2_release(&out);
@@ -451,6 +548,7 @@ static void *detect_thread(void *arg)
             stat_max = t1 - t0;
         done++;
         a2k_track_feed(t1, t0 - age, tbox, ntbox, (int)A2K_DET_W, (int)A2K_DET_H); /* tracking: one call per inference, n = 0 when nobody */
+        publish_boxes(t1, pbox, npbox, tbox, ntbox);
         {
             int gch = a2k_det_update(&det, t1, &obs, &ev);
             unsigned zch = g_eff.n > 0 ? a2k_zdet_update(&zd, t1, &obs, zev) : 0;
@@ -503,6 +601,7 @@ out:
         rc = ak_npu_deinit();
         a2k_log("detect: ak_npu_deinit() = %d", rc);
     }
+    a2k_dp_clear_latest();
     det.present = 0; /* a reader must not take the last person=1 of a dead detector for a live one (status says why) */
     for (rc = 0; rc < zd.n; rc++)
         zd.z[rc].present = 0;

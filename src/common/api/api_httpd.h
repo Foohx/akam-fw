@@ -1,15 +1,15 @@
-/* The HTTP server of the local control API (specs/control-api.md 4.1): ONE thread (64 KiB stack, below the video threads), poll
+/* The HTTP server of the local control API (specs/control-api.md 4.1), shared by the 2K and the 1080p (it was akam2k_httpd.c): ONE thread (64 KiB stack, below the video threads), poll
  * based, plain HTTP/1.1, `Connection: close`, no keep-alive, no pipelining, no chunked uploads. Hard limits: 4 connections (3 per peer),
  * head 4 KiB, body 8 KiB, 5 s without progress and 10 s per request while reading, replies written with a 2 s bound. A GET /events that has
- * nothing to report yet is HELD (long poll, up to 25 s) and answered when an event arrives (akam2k_apievt.h wakes the thread through a
+ * nothing to report yet is HELD (long poll, up to 25 s) and answered when an event arrives (api_events.h wakes the thread through a
  * pipe) or at its deadline. The listener exists only while at least one API key is installed (nothing listens on an unprovisioned
  * camera); the key file is re-read about once a second, so the on-camera tool opens and closes the port without a restart.
  * This file is the only API file that creates a socket, binds, listens or accepts (the anti-brick scan lists it next to
- * akam2k_rtsp.c). */
-#ifndef AKAM2K_HTTPD_H
-#define AKAM2K_HTTPD_H
+ * akam2k_rtsp.c and ak_rtsp rtsp.c). */
+#ifndef AKAM_API_HTTPD_H
+#define AKAM_API_HTTPD_H
 
-#include "akam2k_api.h"
+#include "api_core.h"
 
 #define A2K_HTTPD_MAX_CONNS 4
 #define A2K_HTTPD_MAX_PER_PEER 3

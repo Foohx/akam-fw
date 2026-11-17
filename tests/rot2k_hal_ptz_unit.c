@@ -15,6 +15,7 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/ptz/akam_ptz_safe.h"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_hal.h"
+#include "../firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_patrol.h"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ptz.h"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/app/hal_ptz.h"
 
@@ -790,6 +791,24 @@ static int hk_check(uint32_t *pan, uint32_t *tilt) { sc_nboot++; sc_nmove_at_boo
 static int hk_drop(void) { sc_ndrop++; return sc_drop_rc; }
 static int hk_check_mech(uint32_t *pan, uint32_t *tilt) { (void)pan; (void)tilt; sc_nboot++; sc_nmove_at_boot = M.nmove; return near_mech(1275, 1300, 15) ? 1 : 0; }
 
+/* "very likely home": the first call answers 3, the second (the proof after the short calibration) answers from the MECHANICS: 1 only when the head really is at home */
+static int g_likely_calls, g_likely_proof, g_proof_files_invalid = -1, g_likely_cancel;
+static hal_ptz_t *g_likely_hp;
+static const char *get_file(const char *path);
+static int hk_check_likely(uint32_t *pan, uint32_t *tilt)
+{
+    (void)pan; (void)tilt;
+    sc_nboot++;
+    sc_nmove_at_boot = M.nmove;
+    if (++g_likely_calls == 1)
+        return 3;
+    /* the proof: the frame files must still be INVALID (a restart now must never adopt an unproven home) */
+    g_proof_files_invalid = strncmp(get_file(PTZ_FRAME_PATH), "pan_min", 7) != 0 && strncmp(get_file(PTZ_APP_FRAME_PATH), "pan_min", 7) != 0;
+    if (g_likely_cancel && g_likely_hp)
+        hal_ptz_cancel(g_likely_hp);
+    return (g_likely_proof && near_mech(1275, 1300, 15)) ? 1 : 0;
+}
+
 static void sc_reset(int verdict, unsigned pan, unsigned tilt)
 {
     sc_verdict = verdict;
@@ -855,6 +874,64 @@ static void test_scene(void)
         p = hal_ptz_new(&a2k_ptz_desc, &om, NULL, err, sizeof err);
         CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0 && near_mech(1275, 1300, 12) && hal_ptz_state(p) == HAL_PTZ_HOME && sc_ndrop == 0,
               "cold boot with the head away from home (power cut away from home): the view does not prove home, FULL CALIBRATION, the reference is kept");
+        hal_ptz_free(p);
+    }
+
+    /* very likely home (answer 3): the SHORT calibration, then the proof; the full one when the proof fails */
+    {
+        hal_ptz_ops_t ol = ops;
+        long g0, t_short, t_full;
+        ol.cold_check = hk_check_likely;
+        g_likely_calls = 0; g_likely_proof = 1;
+        sc_reset(1, 1275, 1300);
+        reset(1275, 1300);
+        p = hal_ptz_new(&a2k_ptz_desc, &ol, NULL, err, sizeof err);
+        g0 = (long)M.clock;
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && g_likely_calls == 2 && hal_ptz_state(p) == HAL_PTZ_HOME && near_mech(1275, 1300, 12), "very likely home + proof: short calibration, then verified, state home");
+        CHECK(M.first_ipos[0] == 1275 + 400 && M.first_ipos[1] == 1300 + 300, "the counters were declared at home + 400 / + 300, not at the stock maxima");
+        t_short = (long)M.clock - g0;
+        CHECK(strstr(M.log, "SHORT calibration") && strstr(M.log, "verified by the scene check"), "the short calibration and its proof are logged");
+        CHECK(g_proof_files_invalid == 1, "at proof time the frame files were INVALID (not adoptable) ...");
+        CHECK(!strncmp(get_file(PTZ_APP_FRAME_PATH), "pan_min", 7) && !strncmp(get_file(PTZ_FRAME_PATH), "pan_min", 7), "... and valid once the strict check proved the home");
+        CHECK(hal_ptz_cal_count(p) == 0 && hal_ptz_travel(p) == 0 && hal_ptz_verify_pos(p) == 0 && M.bad_cmd == 0 && sc_ndrop == 0, "a verified short calibration is not a full one (the periodic counter keeps counting), the counters agree, only commands 0..7, the reference is kept");
+        hal_ptz_close(p);
+        hal_ptz_free(p);
+        /* a cancel (shutdown) / kill during the proof: nothing adoptable is left behind */
+        g_likely_calls = 0; g_likely_proof = 1; g_likely_cancel = 1; g_proof_files_invalid = -1;
+        reset(3000, 1900);
+        p = hal_ptz_new(&a2k_ptz_desc, &ol, NULL, err, sizeof err);
+        g_likely_hp = p;
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == HAL_PTZ_ECANCEL && g_proof_files_invalid == 1, "a cancel during the proof: the start is cancelled, the files were invalid");
+        CHECK(strncmp(get_file(PTZ_FRAME_PATH), "pan_min", 7) != 0 && strncmp(get_file(PTZ_APP_FRAME_PATH), "pan_min", 7) != 0 && hal_ptz_state(p) == HAL_PTZ_UNKNOWN, "... and nothing is adoptable: the frame files are invalid, the position untrusted");
+        hal_ptz_free(p);
+        g_likely_cancel = 0; g_likely_hp = NULL;
+        {   /* a restart in the same boot (the driver holds the declared counters, the files are the in-memory ones of this test) must calibrate, not adopt */
+            hal_ptz_ops_t o2 = ops;
+            hal_ptz_t *p2;
+            unsigned long g1 = M.grind;
+            o2.cold_check = NULL;
+            p2 = hal_ptz_new(&a2k_ptz_desc, &o2, NULL, err, sizeof err);
+            CHECK(p2 && hal_ptz_start(p2, HAL_PTZ_CAL_AUTO) == 0 && !strstr(M.log, "already holds our frame") && M.grind > g1 && near_mech(1275, 1300, 12), "the next start does NOT adopt the unproven home: it calibrates and ends at the real home");
+            hal_ptz_free(p2);
+        }
+        g_likely_calls = 0; g_likely_proof = 0;
+        reset(1275, 1300);
+        /* the proof fails: the full calibration follows */
+        g_likely_calls = 0; g_likely_proof = 0;
+        reset(1275, 1300);
+        p = hal_ptz_new(&a2k_ptz_desc, &ol, NULL, err, sizeof err);
+        g0 = (long)M.clock;
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && g_likely_calls == 2 && strstr(M.log, "not proven afterwards: full calibration") && near_mech(1275, 1300, 12) && hal_ptz_state(p) == HAL_PTZ_HOME, "the proof fails: the full calibration runs and ends at home");
+        t_full = (long)M.clock - g0;
+        printf("   virtual time: short calibration + proof %ld ms, failed short + full calibration %ld ms\n", t_short, t_full);
+        CHECK(t_short * 10 < t_full * 7, "the short calibration takes under 70 percent of a (failed short +) full calibration");
+        CHECK(M.ninit1 >= 4, "... with the two sweeps of the full calibration (4 driver inits instead of 3)");
+        hal_ptz_free(p);
+        /* the head was really far away (more than the margin): the short sweep ends short, the proof (the mechanics) fails, the full calibration puts it right */
+        g_likely_calls = 0; g_likely_proof = 1;
+        reset(3000, 1900);
+        p = hal_ptz_new(&a2k_ptz_desc, &ol, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && near_mech(1275, 1300, 12) && hal_ptz_state(p) == HAL_PTZ_HOME, "a head far from home: the short sweep cannot prove it, the full calibration corrects it (never trusted unproven)");
         hal_ptz_free(p);
     }
 
@@ -1525,6 +1602,234 @@ static void test_multiview(void)
     a2k_ptz_test_set_scene_timing(0, 0, 0);
 }
 
+/* ------------------------------------------------------------------------------------------------ PTZ patrol on the real controller */
+static volatile int pc_hook_n, pc_hook_last;
+static void pc_hook(int kind) { pc_hook_last = kind; pc_hook_n++; }
+
+static char pc_ev[32][128];
+static int pc_nev;
+static pthread_mutex_t pc_mu = PTHREAD_MUTEX_INITIALIZER;
+static char pc_file[PP_TEXT_MAX + 1];
+static int pc_file_len = -1, pc_saves;
+
+static int pc_limits(pp_limits_t *l)
+{
+    uint32_t a, b, c, d;
+    int smin, smax, sdef;
+    if (a2k_ptz_range(&a, &b, &c, &d) != 0 || a2k_ptz_speeds(&smin, &smax, &sdef) != 0)
+        return -1;
+    l->pan_min = (int)a;
+    l->pan_max = (int)b;
+    l->tilt_min = (int)c;
+    l->tilt_max = (int)d;
+    l->speed_min = sdef;
+    (void)smin;
+    if (a2k_ptz_park(&l->park_pan, &l->park_tilt) != 0)
+        return -1;
+    l->park_tol = A2K_PTZ_PARK_TOL;
+    l->speed_max = smax;
+    l->speed_def = sdef;
+    return 0;
+}
+static int pc_move(int pan, int tilt, int speed, unsigned *ticket)
+{
+    if (ticket)
+        return a2k_ptz_patrol_goto(pan, tilt, speed, ticket);
+    return a2k_ptz_goto(pan, tilt, speed) == 0 ? 0 : -1;
+}
+static void pc_event(const char *type, const char *json)
+{
+    pthread_mutex_lock(&pc_mu);
+    if (!strcmp(type, "patrol") && pc_nev < 32)
+        snprintf(pc_ev[pc_nev++], sizeof pc_ev[0], "%s", json);
+    pthread_mutex_unlock(&pc_mu);
+}
+static int pc_has(const char *needle)
+{
+    int i, f = 0;
+    pthread_mutex_lock(&pc_mu);
+    for (i = 0; i < pc_nev; i++)
+        f |= strstr(pc_ev[i], needle) != NULL;
+    pthread_mutex_unlock(&pc_mu);
+    return f;
+}
+static int pc_load(char *buf, size_t cap) { (void)buf; (void)cap; return pc_file_len; }
+static int pc_save(const char *text, size_t len)
+{
+    memcpy(pc_file, text, len);
+    pc_file_len = (int)len;
+    pc_saves++;
+    return 1;
+}
+static int64_t pc_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+static int pc_wait_patrol(const char *want, int ms)
+{
+    char st[16], rt[17];
+    int step, t;
+    for (t = 0; t < ms; t += 10) {
+        a2k_patrol_state(st, sizeof st, rt, sizeof rt, &step);
+        if (!strcmp(st, want))
+            return 1;
+        usleep(10000);
+    }
+    return 0;
+}
+static int pc_ticket_done(unsigned tk, int *rc, int ms)
+{
+    int t;
+    for (t = 0; t < ms; t += 5) {
+        if (a2k_ptz_patrol_result(tk, rc))
+            return 1;
+        usleep(5000);
+    }
+    return 0;
+}
+
+static void test_patrol_controller(void)
+{
+    static const a2k_patrol_ops_t POPS = { a2k_ptz_info, pc_limits, pc_move, a2k_ptz_patrol_result, a2k_ptz_patrol_cancel, a2k_ptz_privacy_active, pc_event, pc_load, pc_save, pc_now, a2k_ptz_scene_pending, a2k_ptz_travel };
+    a2k_ptz_cfg_t c;
+    unsigned tk = 0, tk2 = 0;
+    int rc = -1, smin = 0, smax = 0, sdef = 0, n;
+    printf("== PTZ patrol on the real controller (akam2k_ptz.c + hal_ptz.c on the simulated motor)\n");
+    {
+        uint32_t a, b, cc, d;
+        CHECK(a2k_ptz_speeds(&smin, &smax, &sdef) == -1 && a2k_ptz_range(&a, &b, &cc, &d) == -1 && a2k_ptz_patrol_goto(900, 1200, 3, &tk) == -1 && a2k_ptz_goto(900, 1200, 3) == -1,
+              "not started: speeds, range, goto and patrol goto are refused");
+    }
+    reset(2000, 700);
+    a2k_ptz_defaults(&c);
+    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf");
+    a2k_ptz_set_cmd_hook(pc_hook);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 60000), "started and calibrated");
+    CHECK(a2k_ptz_speeds(&smin, &smax, &sdef) == 0 && smin == 2 && smax == 20 && sdef == 3, "the descriptor's allowed speeds: 2..20, default 3");
+    pc_hook_n = 0;
+    CHECK(a2k_ptz_patrol_goto(900, 1200, 25, &tk) == -1 && a2k_ptz_patrol_goto(900, 1200, 1, &tk) == -1 && a2k_ptz_patrol_goto(100, 1200, 3, &tk) == -1 && a2k_ptz_patrol_goto(900, 5000, 3, &tk) == -1 &&
+          a2k_ptz_goto(4000, 1200, 3) == -1 && a2k_ptz_goto(900, 1200, 40) == -1 && pc_hook_n == 0, "a bad speed or a position outside the soft range is refused before anything is queued (no hook)");
+    CHECK(a2k_ptz_patrol_goto(900, 1200, 5, &tk) == 0 && tk > 0, "a patrol move is queued (a ticket)");
+    CHECK(pc_ticket_done(tk, &rc, 5000) && rc == HAL_PTZ_OK && near_mech(900, 1200, 12) && pc_hook_n == 0, "it ran through the safe move layer to the target; the patrol move does not call the manual hook");
+    CHECK(M.spd[0] == 5, "...at the speed asked for (divisor 5)");
+    CHECK(a2k_ptz_patrol_result(tk, &rc) == 1 && rc == HAL_PTZ_OK && a2k_ptz_patrol_result(tk + 7, &rc) == 1 && rc == HAL_PTZ_ECANCEL, "the result stays readable; an unknown ticket reads as cancelled");
+    /* the park position is never a patrol target; a tracker home does not call the manual hook */
+    pc_hook_n = 0;
+    {
+        int pp = 0, pt = 0;
+        CHECK(a2k_ptz_park(&pp, &pt) == 0 && pp == 1275 && pt == 300, "the controller reports the park position");
+        CHECK(a2k_ptz_patrol_goto(1275, 300, 3, &tk) == -1 && a2k_ptz_patrol_goto(1288, 312, 3, &tk) == -1 && a2k_ptz_patrol_goto(1291, 300, 3, &tk) == 0, "a patrol move within +-15 of the park position is refused, 16 away is accepted");
+        CHECK(pc_ticket_done(tk, &rc, 5000), "(it ran)");
+        pc_hook_n = 0;
+        CHECK(a2k_ptz_home_tracker() == 0 && wait_state(HAL_PTZ_MOVED, 2000), "the tracker's home is queued");
+        CHECK(wait_state(HAL_PTZ_HOME, 5000) && pc_hook_n == 0, "...it goes home and never calls the manual-command hook");
+        CHECK(a2k_ptz_goto(900, 1200, 0) == 0 && wait_state(HAL_PTZ_MOVED, 5000) && (usleep(200000), near_mech(900, 1200, 12)), "(away from home again)");
+        pc_hook_n = 0;
+    }
+    /* a patrol move waits for an idle controller: it never preempts */
+    set_gate(1);
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_blocked() && pc_hook_n == 1 && pc_hook_last == A2K_PTZ_HOME, "a manual home runs (held); the hook saw A2K_PTZ_HOME");
+    CHECK(a2k_ptz_patrol_goto(1500, 1300, 0, &tk2) == 1, "a patrol move while a command runs: busy (1), nothing queued");
+    CHECK(a2k_ptz_nudge_sp(10, 0, 3) == -1 && pc_hook_n == 1, "(a tracker nudge is refused while busy and never calls the hook)");
+    a2k_ptz_patrol_cancel();
+    set_gate(0);
+    CHECK(wait_state(HAL_PTZ_HOME, 5000) && near_mech(1275, 1300, 12), "...a patrol cancel does not touch another command's motion: home completed");
+    /* cancel and replace */
+    set_gate(1);
+    CHECK(a2k_ptz_patrol_goto(2500, 1300, 0, &tk) == 0 && wait_blocked(), "a patrol move is running (held)");
+    a2k_ptz_patrol_cancel();
+    set_gate(0);
+    CHECK(pc_ticket_done(tk, &rc, 5000) && rc == HAL_PTZ_ECANCEL && !near_mech(2500, 1300, 40), "a patrol cancel stops its own move (ECANCEL), the target was not reached");
+    pc_hook_n = 0;
+    set_gate(1);
+    CHECK(a2k_ptz_patrol_goto(2500, 1300, 0, &tk) == 0 && wait_blocked(), "again a patrol move runs (held)");
+    CHECK(a2k_ptz_command(A2K_PTZ_LEFT) == 0 && pc_hook_n == 1 && pc_hook_last == A2K_PTZ_LEFT, "a manual step replaces it and calls the hook");
+    set_gate(0);
+    CHECK(pc_ticket_done(tk, &rc, 5000) && rc == HAL_PTZ_ECANCEL, "the replaced patrol move reads as cancelled");
+    CHECK(wait_state(HAL_PTZ_MOVED, 5000), "(the step ran)");
+    usleep(150000);
+    pc_hook_n = 0;
+    CHECK(a2k_ptz_nudge(20, 0) == 0 && pc_hook_n == 1 && pc_hook_last == A2K_PTZ_HOOK_NUDGE, "a manual nudge calls the hook (HOOK_NUDGE)");
+    usleep(150000);
+    CHECK(a2k_ptz_nudge_sp(20, 0, 3) == 0 && pc_hook_n == 1, "a tracker nudge does not");
+    usleep(150000);
+    CHECK(a2k_ptz_goto(1200, 1250, 0) == 0 && pc_hook_n == 2 && pc_hook_last == A2K_PTZ_HOOK_GOTO, "a manual goto calls the hook (HOOK_GOTO)");
+    CHECK(wait_state(HAL_PTZ_MOVED, 5000) && (usleep(150000), near_mech(1200, 1250, 12)), "...and reaches the target");
+
+    /* the patrol core on this controller */
+    printf("== PTZ patrol core on the real controller: route, tracking pause, manual stop, flash\n");
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "(home)");
+    pc_nev = 0;
+    pc_saves = 0;
+    pc_file_len = -1;
+    a2k_patrol_init(&POPS);
+    a2k_ptz_set_cmd_hook(a2k_patrol_note_cmd); /* the real hook: a manual command stops the patrol */
+    {
+        char out[2048];
+        unsigned retry = 0;
+        const char *r1 = "{\"name\":\"yard\",\"mode\":\"loop\",\"steps\":[{\"pan\":900,\"tilt\":1200,\"speed\":4,\"dwell_ms\":300},{\"pan\":1800,\"tilt\":1500,\"speed\":3,\"dwell_ms\":300},{\"pan\":2400,\"tilt\":900,\"dwell_ms\":300}]}";
+        CHECK(a2k_patrol_http("POST", "routes", r1, strlen(r1), out, sizeof out, &retry) == 200 && pc_saves == 1, "a route is stored: one write");
+    }
+    CHECK(a2k_patrol_thread_start() == 0, "the patrol thread starts");
+    n = file_writes("/config/akam/ptz.pos") + file_writes("/config/akam/ptz.scene");
+    CHECK(a2k_patrol_start_route("yard") == PP_OK, "start the route");
+    CHECK(pc_wait_patrol("running", 1000), "running");
+    {
+        int seen[3] = { 0, 0, 0 }, t;
+        for (t = 0; t < 2400 && !(seen[0] && seen[1] && seen[2]); t++) {
+            seen[0] |= near_mech(900, 1200, 15);
+            seen[1] |= near_mech(1800, 1500, 15);
+            seen[2] |= near_mech(2400, 900, 15);
+            usleep(5000);
+        }
+        CHECK(seen[0] && seen[1] && seen[2], "the head visits the three steps in the real motor");
+    }
+    CHECK(pc_has("\"event\":\"started\"") && pc_has("\"event\":\"step\""), "events");
+    {
+        int t, ok = 1;
+        for (t = 0; t < 200; t++) { /* the soft range is never left, whatever the route */
+            if (M.mech[0] < 300 || M.mech[0] > 3650 || M.mech[1] < 300 || M.mech[1] > 2100)
+                ok = 0;
+            usleep(2000);
+        }
+        CHECK(ok && M.bad_cmd == 0, "the mechanical position stays inside the soft range during the patrol, no forbidden driver command");
+    }
+    a2k_patrol_note_person(1, 600);
+    CHECK(pc_wait_patrol("paused", 1000), "a tracked person pauses it");
+    CHECK(pc_has("\"event\":\"interrupted\"") && pc_has("\"reason\":\"tracking\""), "event interrupted");
+    {
+        int before = M.nmove;
+        usleep(300000);
+        CHECK(M.nmove == before, "the head does not move while paused");
+        CHECK(a2k_ptz_nudge_sp(30, 0, 3) == 0, "the tracker can move it (idle controller)");
+    }
+    CHECK(pc_wait_patrol("running", 8000) && pc_has("\"event\":\"resumed\""), "it resumes after the return time");
+    CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && pc_wait_patrol("idle", 2000) && pc_has("\"reason\":\"manual\""), "a manual command (a step) stops it");
+    CHECK(a2k_patrol_start_route("yard") == PP_OK && pc_wait_patrol("running", 500), "start again");
+    CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0 && pc_wait_patrol("idle", 2000) && pc_has("\"reason\":\"park\""), "the park command stops it (reason park)");
+    CHECK(wait_state(HAL_PTZ_PARKED, 5000), "...and the head parks");
+    CHECK(a2k_ptz_command(A2K_PTZ_HOME) == 0 && wait_state(HAL_PTZ_HOME, 5000), "(home)");
+    CHECK(a2k_patrol_start_route("yard") == PP_OK && pc_wait_patrol("running", 500), "start once more");
+    usleep(300000);
+    {
+        int r1 = a2k_ptz_command(A2K_PTZ_RECAL), r2 = pc_wait_patrol("idle", 2000), r3 = pc_has("\"reason\":\"calibration\"");
+        if (!(r1 == 0 && r2 && r3))
+            printf("    recal: %d %d %d, events %d: %s | %s\n", r1, r2, r3, pc_nev, pc_nev > 0 ? pc_ev[pc_nev - 1] : "", pc_nev > 1 ? pc_ev[pc_nev - 2] : "");
+        CHECK(r1 == 0 && r2 && r3, "a recalibration stops it (reason calibration)");
+    }
+    CHECK(wait_state(HAL_PTZ_HOME, 60000), "(calibrated)");
+    CHECK(a2k_patrol_start_route("yard") == PP_OK, "and starts again");
+    usleep(300000);
+    a2k_patrol_stop();
+    CHECK(pc_has("\"reason\":\"shutdown\"") && !a2k_patrol_active(), "shutdown cancels the patrol before the motor stops");
+    CHECK(pc_saves == 1 && file_writes("/config/akam/ptz.pos") + file_writes("/config/akam/ptz.scene") == n, "zero flash writes while patrolling: one config save in total, no motor file written");
+    a2k_ptz_stop();
+    a2k_ptz_set_cmd_hook(NULL);
+    CHECK(M.bad_cmd == 0, "no forbidden driver command word during the whole patrol test");
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -1537,6 +1842,7 @@ int main(void)
     test_thread();
     test_scene();
     test_multiview();
+    test_patrol_controller();
     printf("rot2k hal_ptz unit: %d failed\n", fails);
     return fails ? 1 : 0;
 }

@@ -1,5 +1,6 @@
 /* Read-only metrics of the control port, see ctl_sys.h. */
 #include "ctl_sys.h"
+#include "hal_sys.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -39,13 +40,17 @@ struct ak_iwreq {
 
 enum {
     K_UPTIME, K_LOAD, K_CPU, K_MEM_TOTAL, K_MEM_FREE, K_TEMP, K_SSID, K_RSSI, K_RATE, K_IP, K_MAC,
-    K_FPS, K_BITRATE, K_CLIENTS, K_AUTH, K_TIME_SET, K_SKIPPED, K_COUNT
+    K_FPS, K_BITRATE, K_CLIENTS, K_AUTH, K_TIME_SET, K_SKIPPED,
+    /* the same numbers under the names of the settings registry and of the Rotatable 2K (hal_sys.h): the integer is the
+     * text "-1000000" (HAL_SYS_NA) while it is not known, never "unknown" */
+    K_CPU_PCT, K_LOAD1_X100, K_MEM_TOTAL_KB, K_MEM_AVAIL_KB, K_UPTIME_S, K_WIFI_LQ, K_COUNT
 };
 static const char *const g_keys[K_COUNT] = {
     "sys.uptime", "sys.load", "sys.cpu", "sys.mem_total", "sys.mem_free", "sys.temp",
     "net.ssid", "net.wifi_rssi", "net.wifi_rate", "net.ip", "net.mac",
     "video.fps_actual", "video.bitrate", "rtsp.clients", "rtsp.auth", "sys.time_set",
-    "rtsp.skipped_frames"
+    "rtsp.skipped_frames",
+    "sys.cpu_pct", "sys.load1_x100", "sys.mem_total_kb", "sys.mem_avail_kb", "sys.uptime_s", "net.wifi_lq"
 };
 
 #define VAL_MAX 48
@@ -66,8 +71,8 @@ static int      g_have;                 /* cache holds a collection */
 static int64_t  g_last_ms;
 static char     g_temp_path[96];        /* sensor found by the last probe */
 static int64_t  g_temp_rescan_ms;       /* no sensor: next probe at this time */
-static int      g_cpu_have;             /* previous /proc/stat sample exists */
-static uint64_t g_cpu_total, g_cpu_busy;
+static hal_sys_t g_hs;                  /* the CPU baseline of hal_sys_sample (the previous /proc/stat sample) */
+static hal_sys_sample_t g_hsv;          /* the last hal_sys sample of this collection */
 static snap_t   g_snap[SNAPS];
 static int      g_nsnap, g_snap_head;
 
@@ -99,23 +104,6 @@ static int read_file(const char *rel, char *buf, size_t cap)
 }
 
 static void unk(int k) { strcpy(g_val[k], "unknown"); }
-
-/* Value of "Key:" at the start of a line, in kB, or -1. */
-static long long meminfo_kb(const char *txt, const char *key)
-{
-    size_t kl = strlen(key);
-    for (const char *p = txt; p && *p; ) {
-        if (!strncmp(p, key, kl) && p[kl] == ':') {
-            const char *v = p + kl + 1;
-            while (*v == ' ' || *v == '\t') v++;
-            if (!isdigit((unsigned char)*v)) return -1;
-            return strtoll(v, NULL, 10);
-        }
-        p = strchr(p, '\n');
-        if (p) p++;
-    }
-    return -1;
-}
 
 /* Tenths of a degree from a millidegree file, 1 when valid. */
 static int temp_read(const char *rel)
@@ -155,12 +143,24 @@ AK_SMALL static void collect_temp(int64_t t)
     g_temp_rescan_ms = t + TEMP_RESCAN_MS;
 }
 
+static const char *wifi_if(void) { return g_ifname[0] ? g_ifname : "wlan0"; }
+
+static void put_na(int k, long long v)
+{
+    snprintf(g_val[k], VAL_MAX, "%lld", v);
+}
+
 AK_SMALL static void collect_proc(int64_t t)
 {
     char b[1024];
+    const hal_sys_sample_t *h;
 
-    if (read_file("/proc/uptime", b, sizeof(b)) > 0 && isdigit((unsigned char)b[0]))
-        snprintf(g_val[K_UPTIME], VAL_MAX, "%lu", strtoul(b, NULL, 10));
+    /* One hal_sys sample (src/common/logic/hal_sys.c, the code the 2K uses): /proc/stat, loadavg, meminfo, uptime and
+     * net/wireless, five small reads. The CPU share is that since the previous collection (unknown the first time). */
+    hal_sys_sample(&g_hs, g_root, wifi_if(), &g_hsv);
+    h = &g_hsv;
+
+    if (h->uptime_s != HAL_SYS_NA) snprintf(g_val[K_UPTIME], VAL_MAX, "%lu", (unsigned long)h->uptime_s);
     else unk(K_UPTIME);
 
     unk(K_LOAD);
@@ -170,50 +170,21 @@ AK_SMALL static void collect_proc(int64_t t)
             snprintf(g_val[K_LOAD], VAL_MAX, "%s %s %s", l1, l2, l3);
     }
 
-    long long tot = -1, mfree = -1, avail = -1, buf = -1, cached = -1;
-    if (read_file("/proc/meminfo", b, sizeof(b)) > 0) {
-        tot = meminfo_kb(b, "MemTotal");
-        mfree = meminfo_kb(b, "MemFree");
-        avail = meminfo_kb(b, "MemAvailable");
-        buf = meminfo_kb(b, "Buffers");
-        cached = meminfo_kb(b, "Cached");
-    }
-    if (tot >= 0) snprintf(g_val[K_MEM_TOTAL], VAL_MAX, "%lld", tot); else unk(K_MEM_TOTAL);
-    if (avail >= 0) snprintf(g_val[K_MEM_FREE], VAL_MAX, "%lld", avail);
-    else if (mfree >= 0 && buf >= 0 && cached >= 0)
-        snprintf(g_val[K_MEM_FREE], VAL_MAX, "%lld", mfree + buf + cached);
-    else unk(K_MEM_FREE);
+    if (h->mem_total_kb != HAL_SYS_NA) snprintf(g_val[K_MEM_TOTAL], VAL_MAX, "%ld", h->mem_total_kb); else unk(K_MEM_TOTAL);
+    if (h->mem_avail_kb != HAL_SYS_NA) snprintf(g_val[K_MEM_FREE], VAL_MAX, "%ld", h->mem_avail_kb); else unk(K_MEM_FREE);
 
-    /* cpu: busy share since the previous collection */
-    unk(K_CPU);
-    if (read_file("/proc/stat", b, sizeof(b)) > 0 && !strncmp(b, "cpu ", 4)) {
-        unsigned long long f[8] = {0};
-        char *p = b + 4, *e;
-        int got = 0;
-        while (got < 8) {
-            while (*p == ' ') p++;
-            if (!isdigit((unsigned char)*p)) break;
-            f[got++] = strtoull(p, &e, 10);
-            p = e;
-        }
-        if (got >= 4) {
-            uint64_t total = 0;
-            for (int i = 0; i < got; i++) total += f[i];
-            uint64_t busy = total - f[3] - (got > 4 ? f[4] : 0);
-            if (g_cpu_have && total > g_cpu_total && busy >= g_cpu_busy) {
-                uint64_t dt = total - g_cpu_total, db = busy - g_cpu_busy;
-                unsigned pct = (unsigned)((db * 100 + dt / 2) / dt);
-                snprintf(g_val[K_CPU], VAL_MAX, "%u", pct > 100 ? 100 : pct);
-            }
-            g_cpu_have = 1;
-            g_cpu_total = total; g_cpu_busy = busy;
-        }
-    }
+    if (h->cpu_pct != HAL_SYS_NA) snprintf(g_val[K_CPU], VAL_MAX, "%d", h->cpu_pct); else unk(K_CPU);
+
+    /* the registry names: the same samples as integers */
+    put_na(K_CPU_PCT, h->cpu_pct);
+    put_na(K_LOAD1_X100, h->load1_x100);
+    put_na(K_MEM_TOTAL_KB, h->mem_total_kb);
+    put_na(K_MEM_AVAIL_KB, h->mem_avail_kb);
+    put_na(K_UPTIME_S, h->uptime_s);
+    put_na(K_WIFI_LQ, h->link_quality);
 
     collect_temp(t);
 }
-
-static const char *wifi_if(void) { return g_ifname[0] ? g_ifname : "wlan0"; }
 
 /* ESSID from SIOCGIWESSID: some old WEXT drivers count the trailing NUL in the length, so stop
  * at the first NUL; control bytes become '?'. out holds at least 33 bytes. */
@@ -231,40 +202,12 @@ static int iw_call(int s, unsigned long req, struct ak_iwreq *r, const char *ifn
     return ioctl(s, req, r);
 }
 
-/* dBm from the line of wif in /proc/net/wireless, 1 when found. Only a level
- * that is certainly dBm is taken (negative, with or without the trailing '.'). */
-AK_SMALL static int rssi_from_proc(const char *wif)
-{
-    char b[1024];
-    if (read_file("/proc/net/wireless", b, sizeof(b)) <= 0) return 0;
-    size_t wl = strlen(wif);
-    for (char *p = b; p && *p; ) {
-        while (*p == ' ') p++;
-        if (!strncmp(p, wif, wl) && p[wl] == ':') {
-            /* fields: status, link quality, level (no floating point: soft-float is heavy) */
-            const char *q = p + wl + 1;
-            for (int field = 0; field < 2; field++) {
-                while (*q == ' ') q++;
-                while (isxdigit((unsigned char)*q) || *q == '.') q++;
-            }
-            while (*q == ' ') q++;
-            if (*q != '-' || !isdigit((unsigned char)q[1])) return 0;
-            long lv = strtol(q + 1, NULL, 10);
-            if (lv < 1 || lv > 127) return 0;
-            snprintf(g_val[K_RSSI], VAL_MAX, "%d", (int)-lv);
-            return 1;
-        }
-        p = strchr(p, '\n');
-        if (p) p++;
-    }
-    return 0;
-}
-
 AK_SMALL static void collect_net(void)
 {
     unk(K_SSID); unk(K_RSSI); unk(K_RATE); unk(K_IP); unk(K_MAC);
     const char *wif = wifi_if();
-    int have_rssi = rssi_from_proc(wif);
+    int have_rssi = g_hsv.rssi_dbm != HAL_SYS_NA; /* /proc/net/wireless, read by hal_sys_sample (a level that is certainly dBm) */
+    if (have_rssi) snprintf(g_val[K_RSSI], VAL_MAX, "%d", g_hsv.rssi_dbm);
 
     int s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (s < 0) return;
@@ -437,7 +380,7 @@ void ctl_sys_set_wall_clock(time_t (*fn)(void))
 void ctl_sys_reset(void)
 {
     pthread_mutex_lock(&g_mu);
-    g_have = 0; g_temp_path[0] = 0; g_temp_rescan_ms = 0; g_cpu_have = 0; g_nsnap = 0; g_snap_head = 0;
+    g_have = 0; g_temp_path[0] = 0; g_temp_rescan_ms = 0; memset(&g_hs, 0, sizeof(g_hs)); g_nsnap = 0; g_snap_head = 0;
     g_frames = 0; g_bytes = 0; g_skipped = 0; g_clients = 0; g_playing = 0; g_play_edge = 0; g_auth = -1;
     pthread_mutex_unlock(&g_mu);
 }

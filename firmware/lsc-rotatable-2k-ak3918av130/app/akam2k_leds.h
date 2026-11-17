@@ -15,22 +15,10 @@
 #include <stddef.h>
 
 #include "hal_light.h"
+#include "led_pat.h"
 #include "light_logic.h"
 
-#define A2K_PAT_MAX 32 /* longest pattern text with the NUL */
 #define A2K_LEDS_BOOT_MS 20000
-
-enum { A2K_PAT_ON, A2K_PAT_OFF, A2K_PAT_BLINK };
-typedef struct {
-    int kind, n, on_ms, off_ms, pause_ms;
-} a2k_pat_t;
-
-/* 0 and *p filled, -1 for anything not exactly in the syntax or out of bounds (*p untouched). */
-int a2k_pat_parse(const char *s, a2k_pat_t *p);
-/* Canonical text ("on", "off", "3:250:250:5000"). */
-void a2k_pat_format(const a2k_pat_t *p, char *out, size_t cap);
-/* 1 lit / 0 dark, t_ms since the pattern started (>= 0). */
-int a2k_pat_level(const a2k_pat_t *p, long t_ms);
 
 enum { A2K_RULE_BOOT, A2K_RULE_NOWIFI, A2K_RULE_PERSON, A2K_RULE_STREAM, A2K_RULE_NIGHT, A2K_RULE_IDLE, A2K_RULE_N };
 const char *a2k_rule_key(int rule);     /* "led_boot", "led_nowifi", ... as in akam2k.conf */

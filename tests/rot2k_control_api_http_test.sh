@@ -9,6 +9,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 APP=$REPO/firmware/lsc-rotatable-2k-ak3918av130/app
+COMMON=$REPO/src/common
 SIGN=$REPO/tools/akam-api-sign.sh
 CC=${CC:-cc}
 SH_UNDER_TEST=${SH_UNDER_TEST:-sh}
@@ -19,7 +20,7 @@ SRVPIDS=()
 cleanup() {
     exec 3>&- 2>/dev/null || true
     for p in "${SRVPIDS[@]:-}"; do [ -z "$p" ] || kill "$p" 2>/dev/null || true; done
-    rm -rf "$WORK"
+    if [ -n "${KEEP_WORK:-}" ]; then echo "work dir kept: $WORK"; else rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
 PASS=0
@@ -36,10 +37,10 @@ echo "== build the server harness (ASan/UBSan)"
 SRV=$WORK/apisrv
 # shellcheck disable=SC2086
 if ! $CC -std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -pthread \
-    -I"$APP" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -o "$SRV" "$HERE/rot2k_api_server.c" \
-    "$APP/akam2k_httpd.c" "$APP/akam2k_api.c" "$APP/akam2k_settings.c" "$APP/akam2k_apievt.c" "$APP/http_req.c" "$APP/api_limit.c" \
-    "$APP/api_keys.c" "$APP/api_sig.c" "$APP/sha256.c" "$APP/json_min.c" "$APP/settings_reg.c" "$APP/akam2k_netreg.c" \
-    "$APP/akam2k_store.c" "$APP/akam2k_video.c" "$APP/akam2k_vidcfg.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c"; then
+    -I"$APP" -I"$REPO/src/ak_rtsp" -I"$REPO/src/common/net" -I"$REPO/src/common/logic" -I"$COMMON/api" -o "$SRV" "$HERE/rot2k_api_server.c" \
+    "$COMMON/api/api_httpd.c" "$COMMON/api/api_core.c" "$APP/akam2k_apibind.c" "$APP/akam2k_settings.c" "$COMMON/api/api_events.c" "$APP/akam2k_detpub.c" "$COMMON/net/http_req.c" "$COMMON/api/api_limit.c" \
+    "$COMMON/api/api_keys.c" "$COMMON/api/api_sig.c" "$COMMON/net/sha256.c" "$COMMON/api/json_min.c" "$COMMON/api/settings_reg.c" "$APP/akam2k_netreg.c" \
+    "$APP/akam2k_store.c" "$APP/akam2k_video.c" "$APP/akam2k_vidcfg.c" "$APP/akam2k_patrol.c" "$APP/ptz_patrol.c" "$APP/track_logic.c" "$APP/akam2k_buttonrt.c" "$COMMON/logic/button_cfg.c" "$COMMON/logic/button_gesture.c" "$COMMON/logic/button_logic.c" "$COMMON/logic/hal_input.c" "$REPO/src/common/net/rtsp_auth.c" "$REPO/src/common/net/md5.c"; then
     echo "  FAIL - server harness build"
     exit 1
 fi
@@ -302,6 +303,17 @@ req "$WID" "$WSEC" GET /akam/v1/settings/track.return
 want "track.return reads back (enum stay|home)" 200 '"value":"home"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"track.return":"sideways"}'
 want "track.return refuses a value outside stay|home" 422 "track.return.*range"
+req "$WID" "$WSEC" GET /akam/v1/settings/track.gain_tilt
+want "track.gain_tilt defaults to 700" 200 '"value":"700"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"track.gain_pan":1200,"track.gain_tilt":900,"track.tilt_band_pct":8}'
+want "PATCH: the three tracker gain rows are accepted" 200 '"track.gain_tilt":\{"ok":true'
+check "the gains reached the running tracker (live)" bash -c "grep -q 'track.gains 1200 900 8' '$D2/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/track.gain_tilt
+want "track.gain_tilt reads back from the tracker" 200 '"value":"900"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"track.gain_pan":199,"track.gain_tilt":4001,"track.tilt_band_pct":41}'
+want "the gain rows refuse values outside 200..4000 / 2..40 (all three, nothing applied)" 422 'range.*range.*range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"track.gain_tilt":"x"}'
+want "track.gain_tilt refuses a non-number" 422 'format'
 req "$WID" "$WSEC" GET /akam/v1/settings/led.mode
 want "the new value reads back" 200 '"value":"off"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.mode":"on","video0.fps":99}'
@@ -410,15 +422,34 @@ req "$WID" "$WSEC" GET /akam/v1/events "" "since=$SEQ2&timeout=2"
 t1=$(date +%s)
 want "with nothing new a long poll returns at its deadline with no events" 200 '"events":\[\]'
 [ $((t1 - t0)) -ge 2 ] && ok "the deadline was honoured" || ko "deadline $((t1 - t0)) s"
+# detections: a held long poll is woken by a published list; detect.boxes (state) holds the latest; the setting turns it off
+req "$WID" "$WSEC" GET /akam/v1/events "" "since=$SEQ2&timeout=0"
+SEQ3=$(printf '%s' "$BODY" | sed -n 's/.*"seq":\([0-9]*\),"missed".*/\1/p')
+(
+    sleep 1
+    echo "det 2" >&3
+) &
+req "$WID" "$WSEC" GET /akam/v1/events "" "since=$SEQ3&timeout=10"
+want "a held GET /events is answered by a detections event" 200 '"type":"detections","data":\{"ts_ms":1700000000000,"w":320,"h":192,"pan":1234,"tilt":56,"boxes":\[\{"x":312,"y":104,"w":128,"h":526,"score":900,"id":0,"target":true,"ignored":false\},\{"x":625,"y":156,"w":96,"h":369,"score":800,"id":1,"target":false,"ignored":true\}\]'
+req "$WID" "$WSEC" GET /akam/v1/state
+want "GET /state: detect.boxes holds the latest list" 200 '"detect.boxes":"\{\\"ts_ms\\":1700000000000,.*\\"boxes\\":\[\{'
+for i in 1 2 3 4 5 6 7 8 9; do echo "det 1" >&3; echo "det 2" >&3; done
+sleep 0.5
+req "$WID" "$WSEC" GET /akam/v1/events "" "since=$SEQ&timeout=0"
+want "a burst of detections never evicts the other event types" 200 '"type":"button".*"type":"person".*"type":"setting"'
+[ "$(printf '%s' "$BODY" | grep -o '"type":"detections"' | wc -l)" -le 4 ] && ok "the detections ring is bounded" || ko "detections ring size"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"detect.publish_hz":0}'
+want "detect.publish_hz is a setting" 200
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"detect.publish_hz":2}'
 req "$WID" "$WSEC" GET /akam/v1/events "" "since=1&timeout=99"
 want "timeout over 25 is 400" 400 'bad_query'
 # persistence: the file, the restart, the load
 sleep 2.2
-check "persistent settings were saved (changed keys only)" bash -c "grep -q 'track.enabled=1' '$D2/settings' && grep -q 'night.ir_led=off' '$D2/settings' && grep -q 'led.person=2:150:150:0' '$D2/settings' && ! grep -q 'video' '$D2/settings' && ! grep -q 'image' '$D2/settings' && ! grep -q 'led.mode' '$D2/settings'"
+check "persistent settings were saved (changed keys only)" bash -c "grep -q 'track.enabled=1' '$D2/settings' && grep -q 'track.gain_tilt=900' '$D2/settings' && grep -q 'track.gain_pan=1200' '$D2/settings' && grep -q 'track.tilt_band_pct=8' '$D2/settings' && grep -q 'night.ir_led=off' '$D2/settings' && grep -q 'led.person=2:150:150:0' '$D2/settings' && ! grep -q 'video' '$D2/settings' && ! grep -q 'image' '$D2/settings' && ! grep -q 'led.mode' '$D2/settings'"
 stop_srv && ok "stop saves and exits cleanly" || ko "stop (see $D2/err)"
 : >"$D2/calls.log"
 start_srv "$D2" --fast
-check "the saved file is loaded at start: setters ran for the saved keys" bash -c "grep -q 'track 1' '$D2/calls.log' && grep -q 'night.ir 0' '$D2/calls.log' && grep -q 'led.rule 2 2:150:150:0' '$D2/calls.log'"
+check "the saved file is loaded at start: setters ran for the saved keys" bash -c "grep -q 'track 1' '$D2/calls.log' && grep -q 'night.ir 0' '$D2/calls.log' && grep -q 'led.rule 2 2:150:150:0' '$D2/calls.log' && grep -q 'track.gains 1200 900 8' '$D2/calls.log'"
 req "$WID" "$WSEC" GET /akam/v1/settings/led.person
 want "the value survived the restart" 200 '"value":"2:150:150:0"'
 stop_srv || true
@@ -485,6 +516,493 @@ s2=$(curl -s -o /dev/null -w '%{http_code}' "${args[@]}" "http://127.0.0.1:$PORT
 admin GET /akam/v1/info
 want "a timestamp request is refused while the clock is not set" 401 'clock'
 stop_srv || true
+
+# ================================================================== phase 5: PTZ patrol (specs/ptz-patrol.md)
+echo "== PTZ patrol: presets, routes, actions, events, priorities, flash policy"
+D6=$WORK/p6
+mkdir -p "$D6"
+newkey "$D6" write ha
+WID=$KID
+WSEC=$KSEC
+newkey "$D6" read ro
+RID=$KID
+RSEC=$KSEC
+start_srv "$D6" --fast
+st_val() { # st_val <state key>: the value from /state
+    req "$WID" "$WSEC" GET /akam/v1/settings/"$1"
+    printf '%s' "$BODY" | sed -n 's/.*"value":"\([^"]*\)".*/\1/p'
+}
+wait_st() { # wait_st <state key> <value> [seconds]
+    local i
+    for i in $(seq 1 $((${3:-8} * 10))); do [ "$(st_val "$1")" = "$2" ] && return 0; sleep 0.1; done
+    return 1
+}
+evlog() { req "$WID" "$WSEC" GET /akam/v1/events "" "since=$1&timeout=0"; }
+seqnow() { req "$WID" "$WSEC" GET /akam/v1/events; printf '%s' "$BODY" | sed -n 's/^{"seq":\([0-9]*\).*/\1/p'; }
+pw() { st_val sys.flash_writes_patrol; }
+sw() { st_val sys.flash_writes_store; }
+want_ev() { # want_ev <desc> <since> <regex>: the events after <since> match
+    evlog "$2"
+    if printf '%s' "$BODY" | grep -Eq -- "$3"; then ok "$1"; else ko "$1 ($(printf '%s' "$BODY" | head -c 300))"; fi
+}
+req "$RID" "$RSEC" GET /akam/v1/ptz/presets
+want "GET /ptz/presets (read key): empty at first, max 16" 200 '"presets":\[\],"max":16'
+req "$RID" "$RSEC" POST /akam/v1/ptz/presets '{"name":"door","pan":900,"tilt":1200}'
+want "POST /ptz/presets needs a write key (403)" 403 'scope'
+check "patrol off by default: no patrol call at all before a start" bash -c "! grep -q 'patrol.move' '$D6/calls.log' 2>/dev/null"
+[ "$(st_val ptz.patrol.state)" = idle ] && [ "$(st_val ptz.patrol.step)" = -1 ] && ok "ptz.patrol.state is idle, step -1 (default off)" || ko "ptz.patrol.state idle"
+[ "$(pw)" = 0 ] && ok "no patrol flash write so far" || ko "no patrol flash write so far"
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"door","pan":900,"tilt":1200}'
+want "POST /ptz/presets creates a preset" 200 '"ok":true,"created":true,"name":"door"'
+[ "$(pw)" = 1 ] && ok "one flash write for the first change" || ko "one flash write for the first change ($(pw))"
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"door","pan":900,"tilt":1200}'
+want "the same preset again: ok, created false" 200 '"created":false'
+[ "$(pw)" = 1 ] && ok "an unchanged config is not written again" || ko "an unchanged config is not written again ($(pw))"
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"here1","here":true}'
+want "POST /ptz/presets here:true records the current position" 200 '"created":true'
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets/here1
+want "...the fake motor sits at 1275/1300" 200 '"pan":1275,"tilt":1300'
+[ "$(pw)" = 2 ] && ok "two changes, two flash writes" || ko "two changes, two flash writes ($(pw))"
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets
+want "GET /ptz/presets lists both" 200 '"name":"door","pan":900,"tilt":1200.*"name":"here1"'
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets/door
+want "GET /ptz/presets/<name>" 200 '^\{"name":"door","pan":900,"tilt":1200\}$'
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets/nope
+want "an unknown preset is 404 not_found" 404 'not_found'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"far","pan":5000,"tilt":1200}'
+want "a position outside the soft range is 422 range" 422 '"error":"range"'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"Bad Name","pan":900,"tilt":1200}'
+want "a bad name is 422 bad_name" 422 'bad_name'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"x","pan":900,"tilt":1200,"extra":1}'
+want "an unknown key is 400 bad_json" 400 'bad_json'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets 'not json'
+want "garbage is 400 bad_json" 400 'bad_json'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"x","pan":900.5,"tilt":1200}'
+want "a fraction is refused (400)" 400 'bad_json'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets/porch '{"pan":1500,"tilt":1100}'
+want "POST /ptz/presets/<name> takes the name from the path" 200 '"name":"porch"'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets/porch '{"name":"other","pan":1500,"tilt":1100}'
+want "a body name that differs from the path is refused" 422 'bad_name'
+[ "$(pw)" = 3 ] && ok "refused requests wrote nothing (3 writes)" || ko "refused requests wrote nothing ($(pw))"
+# routes
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"yard","mode":"loop","steps":[{"preset":"door","speed":3,"dwell_ms":300},{"pan":1500,"tilt":1300,"speed":5,"dwell_ms":300},{"preset":"porch"}]}'
+want "POST /ptz/routes creates a route (presets and explicit steps)" 200 '"created":true,"name":"yard"'
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes/yard
+want "GET /ptz/routes/<name>: the full step list" 200 '"mode":"loop","steps":\[\{"preset":"door","speed":3,"dwell_ms":300\},\{"pan":1500,"tilt":1300,"speed":5,"dwell_ms":300\},\{"preset":"porch","speed":0,"dwell_ms":0\}\]'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad1","steps":[{"preset":"nothere"}]}'
+want "a step that names an unknown preset is 422 no_preset" 422 'no_preset'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad2","steps":[{"pan":900,"tilt":1200,"speed":25}]}'
+want "a speed outside 2..20 is 422 speed" 422 '"error":"speed"'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad3","steps":[{"pan":100,"tilt":1200}]}'
+want "a step outside the soft range is 422 range" 422 '"error":"range"'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad4","mode":"zigzag","steps":[{"pan":900,"tilt":1200}]}'
+want "an unknown mode is 422 bad_mode" 422 'bad_mode'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad5","steps":[{"pan":900,"tilt":1200,"dwell_ms":4000000}]}'
+want "a dwell over 3600000 is 422 dwell" 422 '"error":"dwell"'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad6","steps":[]}'
+want "no step is 422 empty" 422 '"error":"empty"'
+many=$(for i in $(seq 1 33); do printf '{"pan":900,"tilt":1200},'; done)
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes "{\"name\":\"bad7\",\"steps\":[${many%,}]}"
+want "33 steps are refused (422 too_many_steps)" 422 'too_many_steps'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad8","steps":[{"preset":"door","pan":900,"tilt":1200}]}'
+want "a step with a preset AND a position is refused (400)" 400 'bad_json'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"bad9","steps":[{"pan":900,"tilt":1200}],"pattern":{"type":"sweep_h","pan_from":400,"pan_to":900,"tilt":1200,"step":250}}'
+want "steps and a pattern together are refused (400)" 400 'bad_json'
+[ "$(pw)" = 4 ] && ok "every refused route wrote nothing (4 writes)" || ko "every refused route wrote nothing ($(pw))"
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"sweep","mode":"pingpong","pattern":{"type":"sweep_h","pan_from":400,"pan_to":3000,"tilt":1300,"step":500,"speed":4,"dwell_ms":300}}'
+want "a sweep_h pattern is stored" 200 '"created":true'
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes/sweep
+want "...expanded into 7 plain steps ending exactly at pan_to" 200 '"pan":400,"tilt":1300,"speed":4,"dwell_ms":300\},\{"pan":900.*\{"pan":2900,"tilt":1300,"speed":4,"dwell_ms":300\},\{"pan":3000,"tilt":1300,"speed":4,"dwell_ms":300\}\]'
+n=$(printf '%s' "$BODY" | grep -o '"pan"' | wc -l)
+[ "$n" = 7 ] && ok "sweep_h: 7 steps" || ko "sweep_h: 7 steps ($n)"
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"scan","mode":"loop","pattern":{"type":"raster","pan_from":600,"pan_to":2400,"tilt_from":800,"tilt_to":1600,"rows":3,"cols":3,"speed":6,"dwell_ms":200}}'
+want "a raster pattern is stored" 200 '"created":true'
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes/scan
+n=$(printf '%s' "$BODY" | grep -o '"pan"' | wc -l)
+[ "$n" = 9 ] && ok "raster: 3 rows x 3 columns = 9 steps" || ko "raster: 9 steps ($n)"
+want "...boustrophedon (the second row runs back)" 200 '"pan":2400,"tilt":1200,"speed":6,"dwell_ms":200\},\{"pan":1500,"tilt":1200.*\{"pan":600,"tilt":1200'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"big","pattern":{"type":"sweep_h","pan_from":300,"pan_to":3650,"tilt":1300,"step":50}}'
+want "a sweep that needs over 32 steps is refused (422 too_many_steps)" 422 'too_many_steps'
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes
+want "GET /ptz/routes: summaries, max 8, no default yet" 200 '"name":"yard","mode":"loop","steps":3,"running":false.*"max":8,"default":""'
+req "$WID" "$WSEC" DELETE /akam/v1/ptz/presets/door
+want "a preset used by a route cannot be deleted (409 in_use)" 409 'in_use'
+req "$WID" "$WSEC" DELETE /akam/v1/ptz/presets/here1
+want "an unused preset is deleted" 200 '"deleted":"here1"'
+req "$WID" "$WSEC" DELETE /akam/v1/ptz/presets/here1
+want "...and then it is 404" 404 'not_found'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"once1","mode":"once","steps":[{"pan":1000,"tilt":1300,"dwell_ms":250},{"pan":1100,"tilt":1300,"dwell_ms":250}]}'
+want "a once route" 200 '"created":true'
+[ "$(pw)" = 8 ] && ok "8 real changes (presets, routes, a delete), 8 flash writes (one per change)" || ko "one write per change ($(pw))"
+# (the signed-request nonce cache holds 64 requests per minute: the run checks use fresh servers and long-poll the events instead of polling)
+stop_srv && ok "stage 1 server exits cleanly (config edits)" || ko "stage 1 server exit (see $D6/err)"
+waitev() { # waitev <since> <regex> [seconds]: long-polls the events until the accumulated text matches
+    local since=$1 re=$2 end=$((SECONDS + ${3:-8}))
+    ACC=""
+    while [ "$SECONDS" -lt "$end" ]; do
+        req "$WID" "$WSEC" GET /akam/v1/events "" "since=$since&timeout=2"
+        [ "$STATUS" = 200 ] || return 1
+        ACC="$ACC$BODY"
+        printf '%s' "$ACC" | grep -Eq -- "$re" && return 0
+        since=$(printf '%s' "$BODY" | sed -n 's/^{"seq":\([0-9]*\).*/\1/p')
+    done
+    return 1
+}
+wev() { # wev <description> <since> <regex> [seconds]
+    if waitev "$2" "$3" "${4:-8}"; then ok "$1"; else ko "$1 ($(printf '%s' "$ACC" | head -c 300) status=$STATUS $(printf '%s' "$BODY" | head -c 150))"; fi
+}
+stv() { # stv <key>: one value from /state
+    req "$WID" "$WSEC" GET /akam/v1/state
+    printf '%s' "$BODY" | sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p"
+}
+echo "== PTZ patrol: run, tracking priority, manual stop, events (config persisted from stage 1)"
+start_srv "$D6" --fast
+S0=$(seqnow)
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"nothere"}'
+want "start of an unknown route is 404" 404 'not_found'
+req "$RID" "$RSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"yard"}'
+want "ptz.patrol.start needs a write key (403)" 403 'scope'
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"yard"}'
+want "ptz.patrol.start {route}" 200 '"ok":true'
+wev "events: patrol started, then a step" "$S0" '"event":"started","route":"yard","step":0.*"event":"step","route":"yard","step":'
+req "$WID" "$WSEC" GET /akam/v1/state
+want "ptz.patrol.state is running on route yard" 200 '"ptz.patrol.state":"running".*"ptz.patrol.route":"yard"'
+sleep 6
+check "the moves went to the motor through its safe move (preset door at speed 3, explicit at 5, porch at the default 3)" bash -c "grep -q 'patrol.move 900 1200 3' '$D6/calls.log' && grep -q 'patrol.move 1500 1300 5' '$D6/calls.log' && grep -q 'patrol.move 1500 1100 3' '$D6/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes
+want "GET /ptz/routes marks the running route" 200 '"name":"yard","mode":"loop","steps":3,"running":true'
+req "$WID" "$WSEC" POST /akam/v1/ptz/routes '{"name":"yard","steps":[{"pan":900,"tilt":1200}]}'
+want "replacing the running route is refused (409 running)" 409 'running'
+req "$WID" "$WSEC" DELETE /akam/v1/ptz/routes/yard
+want "deleting the running route is refused (409 running)" 409 'running'
+# tracking preempts and the patrol resumes at the interrupted step
+S1=$(seqnow)
+echo "person 1" >&3
+wev "a tracked person pauses the patrol (interrupted, reason tracking)" "$S1" '"event":"interrupted","route":"yard","step":[0-9]+,"reason":"tracking"'
+req "$WID" "$WSEC" GET /akam/v1/state
+want "ptz.patrol.state is paused, the route and step are kept" 200 '"ptz.patrol.state":"paused".*"ptz.patrol.route":"yard"'
+M0=$(grep -c 'patrol.move' "$D6/calls.log")
+sleep 0.8
+echo "person 1" >&3
+sleep 0.8
+M1=$(grep -c 'patrol.move' "$D6/calls.log")
+[ "$M0" = "$M1" ] && ok "no patrol move while paused (and a new detection restarts the resume timer)" || ko "no patrol move while paused ($M0 $M1)"
+wev "no person for the return time: the patrol resumes at the interrupted step" "$S1" '"event":"resumed","route":"yard","step":[0-9]+'
+req "$WID" "$WSEC" GET /akam/v1/state
+want "...and it runs again" 200 '"ptz.patrol.state":"running"'
+# a manual command stops it
+S2=$(seqnow)
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.step '{"dir":"left"}'
+want "a manual PTZ command (ptz.step)" 200 '"ok":true'
+wev "...stops the patrol (stopped, reason manual)" "$S2" '"event":"stopped","route":"yard","step":[0-9]+,"reason":"manual"'
+req "$WID" "$WSEC" GET /akam/v1/state
+want "idle: route empty, step -1" 200 '"ptz.patrol.state":"idle".*"ptz.patrol.route":"".*"ptz.patrol.step":"-1"'
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.stop
+want "ptz.patrol.stop while idle is ok (idempotent)" 200 '"ok":true'
+# replace, park
+S3=$(seqnow)
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"sweep"}'
+want "start sweep" 200 '"ok":true'
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"scan"}'
+want "starting another route replaces the running one" 200 '"ok":true'
+wev "events: stopped (replaced) for the old route, started for the new one" "$S3" '"event":"stopped","route":"sweep","step":[0-9]+,"reason":"replaced".*"event":"started","route":"scan"'
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.park
+wev "ptz.park stops the patrol (reason park)" "$S3" '"event":"stopped","route":"scan","step":[0-9]+,"reason":"park"'
+# once
+S4=$(seqnow)
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"once1"}'
+want "start the once route" 200 '"ok":true'
+wev "a once route ends by itself (stopped, reason done)" "$S4" '"event":"stopped","route":"once1","step":1,"reason":"done"'
+check "the once route made exactly its two moves" bash -c "[ \$(grep -c 'patrol.move 1[01]00 1300' '$D6/calls.log') = 2 ]"
+# goto preset
+S5=$(seqnow)
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.start '{"route":"yard"}'
+sleep 0.5
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.goto_preset '{"name":"door"}'
+want "ptz.goto_preset {name}" 200 '"ok":true'
+check "...a manual move to the preset" grep -q 'ptz.goto 900 1200' "$D6/calls.log"
+wev "...and it stopped the running patrol (reason manual)" "$S5" '"event":"stopped","route":"yard","step":[0-9]+,"reason":"manual"'
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.goto_preset '{"name":"nope"}'
+want "an unknown preset is 404" 404 'not_found'
+req "$WID" "$WSEC" GET /akam/v1/state
+want "zero patrol flash writes while patrolling, pausing, resuming, stopping" 200 '"sys.flash_writes_patrol":"0"'
+stop_srv && ok "stage 2 server exits cleanly (ASan/UBSan clean)" || ko "stage 2 server exit (see $D6/err)"
+
+echo "== PTZ patrol: settings, idle trigger, persistence"
+start_srv "$D6" --fast
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.route_default":"Bad Name"}'
+want "route_default: a bad name is refused" 422 'check'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.idle_start_s":100000}'
+want "idle_start_s: over 86400 is refused" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.route_default":"yard"}'
+want "ptz.patrol.route_default is a setting" 200 '"ptz.patrol.route_default":\{"ok":true'
+req "$WID" "$WSEC" DELETE /akam/v1/ptz/routes/yard
+want "the default route cannot be deleted (409 in_use)" 409 'in_use'
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes
+want "GET /ptz/routes shows the default" 200 '"default":"yard"'
+sleep 2.5
+req "$WID" "$WSEC" GET /akam/v1/state
+want "a default route alone starts nothing (idle_start_s 0 = off)" 200 '"ptz.patrol.state":"idle"'
+S6=$(seqnow)
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.idle_start_s":2}'
+want "ptz.patrol.idle_start_s 2" 200 '"ptz.patrol.idle_start_s":\{"ok":true'
+sleep 0.8
+req "$WID" "$WSEC" GET /akam/v1/state
+want "idle trigger: not before the idle time" 200 '"ptz.patrol.state":"idle"'
+wev "idle trigger: the default route starts after 2 s without person or command" "$S6" '"event":"started","route":"yard"' 6
+echo "person 1" >&3
+sleep 0.4
+req "$WID" "$WSEC" GET /akam/v1/state
+want "a person also pauses an idle-started patrol" 200 '"ptz.patrol.state":"paused"'
+req "$WID" "$WSEC" POST /akam/v1/actions/ptz.patrol.stop
+want "ptz.patrol.stop (also from paused)" 200 '"ok":true'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.idle_start_s":0}'
+sleep 2.8
+req "$WID" "$WSEC" GET /akam/v1/state
+want "idle_start_s 0: it stays off" 200 '"ptz.patrol.state":"idle"'
+want "the config was not written by any of this (0 patrol writes)" 200 '"sys.flash_writes_patrol":"0"'
+req "$WID" "$WSEC" GET /akam/v1/schema
+want "the schema lists the patrol actions" 200 '"ptz.patrol.start".*"ptz.patrol.stop".*"ptz.goto_preset"'
+printf '%s' "$BODY" | grep -q '"key":"ptz.patrol.idle_start_s"' && ok "schema lists ptz.patrol.idle_start_s" || ko "schema lists ptz.patrol.idle_start_s"
+printf '%s' "$BODY" | grep -q '"key":"ptz.patrol.route_default"' && ok "schema lists ptz.patrol.route_default" || ko "schema lists ptz.patrol.route_default"
+stop_srv && ok "stage 3 server exits cleanly" || ko "stage 3 server exit (see $D6/err)"
+check "the config is one file /config/akam/ptz_patrol (text lines)" bash -c "grep -q '^p door 900 1200\$' '$D6/ptz_patrol' && grep -q '^r yard loop\$' '$D6/ptz_patrol' && grep -q '^s door 3 300\$' '$D6/ptz_patrol'"
+start_srv "$D6" --fast
+req "$WID" "$WSEC" GET /akam/v1/ptz/routes/yard
+want "after a restart the routes are back" 200 '"preset":"door","speed":3,"dwell_ms":300'
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets
+want "...and the presets" 200 '"name":"door".*"name":"porch"'
+sleep 2.5
+req "$WID" "$WSEC" GET /akam/v1/state
+want "a restart starts no patrol and writes nothing (default OFF: idle_start_s is back from the settings file only if it was saved)" 200 '"sys.flash_writes_patrol":"0"'
+stop_srv || true
+# an invalid file is ignored, and the config starts empty
+printf 'garbage line\n' >"$D6/ptz_patrol"
+start_srv "$D6" --fast
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets
+want "an invalid ptz_patrol file is ignored (empty config)" 200 '"presets":\[\]'
+check "...and the bad file was left alone" grep -q 'garbage line' "$D6/ptz_patrol"
+stop_srv || true
+# the write limiter: a burst of 8 real changes, then 429 with Retry-After
+D7=$WORK/p7
+mkdir -p "$D7"
+newkey "$D7" write ha
+WID=$KID
+WSEC=$KSEC
+start_srv "$D7" --fast
+for i in 1 2 3 4 5 6 7 8; do req "$WID" "$WSEC" POST /akam/v1/ptz/presets "{\"name\":\"p$i\",\"pan\":$((400 + i * 100)),\"tilt\":1000}"; done
+want "8 config writes in a burst are accepted" 200 '"name":"p8"'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"p9","pan":1000,"tilt":1000}'
+want "the 9th is rate limited (429 rate)" 429 '"error":"rate"'
+printf '%s' "$HDRS" | grep -qi '^Retry-After: [0-9]' && ok "...with Retry-After" || ko "429 carries Retry-After"
+req "$WID" "$WSEC" GET /akam/v1/ptz/presets/p9
+want "...and nothing was applied (all or nothing)" 404 'not_found'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"p8","pan":1300,"tilt":1000}'
+want "a change is limited even when it replaces" 429 'rate'
+req "$WID" "$WSEC" POST /akam/v1/ptz/presets '{"name":"p8","pan":1200,"tilt":1000}'
+want "an identical request needs no write, so it is not limited" 200 '"created":false'
+stop_srv && ok "the limiter server exits cleanly" || ko "limiter server exit"
+
+# ================================================================== phase 8: the programmable button
+echo "== programmable button: bindings, modes, simulated presses, events, persistence, flash policy"
+D8=$WORK/p8
+mkdir -p "$D8"
+newkey "$D8" write ha
+WID=$KID
+WSEC=$KSEC
+newkey "$D8" read ro
+RID=$KID
+RSEC=$KSEC
+start_srv "$D8" --fast
+DEFJ='{"timing":{"debounce_ms":50,"short_max_ms":1000,"gap_ms":400,"long_ms":2000,"very_long_ms":5000},"led_ack":true,"bindings":[{"gesture":"short","actions":["none"]},{"gesture":"long","actions":["ptz.toggle_park"]}]}'
+bw() { st_val sys.flash_writes_button; }
+req "$RID" "$RSEC" GET /akam/v1/button
+want "GET /button (read key): the defaults are today's button (short -> none, long -> ptz.toggle_park)" 200 'bindings.*"gesture":"short","actions":\["none"\].*"gesture":"long","actions":\["ptz.toggle_park"\]'
+[ "$BODY" = "$DEFJ" ] && ok "the default config is the golden JSON" || ko "default config JSON ($BODY)"
+req "$RID" "$RSEC" POST /akam/v1/button "$DEFJ"
+want "POST /button needs a write key (403)" 403 'scope'
+req "$RID" "$RSEC" POST /akam/v1/modes/night '{"settings":{"led.mode":"off"}}'
+want "POST /modes/<name> needs a write key (403)" 403 'scope'
+req "$RID" "$RSEC" DELETE /akam/v1/modes/night
+want "DELETE /modes/<name> needs a write key (403)" 403 'scope'
+req "$RID" "$RSEC" GET /akam/v1/modes
+want "GET /modes: empty at first" 200 '\{"modes":\[\]\}'
+[ "$(bw)" = 0 ] && ok "no button flash write so far (sys.flash_writes_button 0)" || ko "button writes at start ($(bw))"
+S0=$(seqnow)
+# the factory behaviour: short = event + blink only, long = the park toggle; nothing else is called
+echo "btn S" >&3
+wev "default short press: the API event {gesture short, actions none, result ok}" "$S0" '"type":"button","data":\{"gesture":"short","actions":\["none"\],"result":"ok"\}'
+check "... one MQTT publish for it, the double blink cue, no action run" bash -c "grep -q '^btn.mqtt short {\"gesture\":\"short\"' '$D8/calls.log' && grep -q '^btn.cue 1\$' '$D8/calls.log' && ! grep -q '^btn.run' '$D8/calls.log'"
+S1=$(seqnow)
+echo "btn L" >&3
+wev "default long press: the API event {gesture long, actions ptz.toggle_park}" "$S1" '"gesture":"long","actions":\["ptz.toggle_park"\],"result":"ok"'
+check "... the park toggle ran (once), nothing else" bash -c "[ \$(grep -c '^btn.run 3 ' '$D8/calls.log') = 1 ] && [ \$(grep -c '^btn.run' '$D8/calls.log') = 1 ]"
+[ "$(st_val button.last_gesture)" = long ] && ok "state button.last_gesture = long" || ko "button.last_gesture ($(st_val button.last_gesture))"
+echo "btn S S" >&3
+sleep 0.3
+S2=$(seqnow)
+req "$WID" "$WSEC" GET /akam/v1/events "" "since=$S1&timeout=0"
+want "with only short and long bound nothing waits: S S is two short events, no delay" 200 '"gesture":"short".*"gesture":"short"'
+echo "locked 1" >&3
+echo "btn S" >&3
+sleep 0.3
+req "$WID" "$WSEC" GET /akam/v1/events "" "since=$S2&timeout=0"
+want "during the PTZ calibration a press publishes nothing" 200 '"events":\[\]'
+echo "locked 0" >&3
+# (the server is restarted between the parts: a signed request refused for its scope leaves its challenge pending for 30 s and the pool holds 8)
+stop_srv && ok "part 1 server exits cleanly" || ko "part 1 server exit"
+start_srv "$D8" --fast
+# modes
+req "$WID" "$WSEC" POST /akam/v1/modes/night '{"settings":{"led.mode":"off","image.brightness":30}}'
+want "POST /modes/night: created" 200 '"created":true,"name":"night"'
+[ "$(bw)" = 1 ] && ok "one flash write for it (sys.flash_writes_button 1)" || ko "button writes after the first mode ($(bw))"
+req "$WID" "$WSEC" POST /akam/v1/modes/night '{"settings":{"led.mode":"off","image.brightness":30}}'
+want "the same mode again: accepted, no new write" 200 '"created":false'
+[ "$(bw)" = 1 ] && ok "... still 1 write" || ko "writes after an identical mode ($(bw))"
+req "$WID" "$WSEC" POST /akam/v1/modes/badmix '{"settings":{"led.mode":"on","video0.min_qp":40,"video0.max_qp":20}}'
+want "a mode whose pairs are each valid is accepted (the cross-field rule is judged at apply)" 200 '"created":true'
+req "$WID" "$WSEC" POST /akam/v1/modes/bad1 '{"settings":{"net.hostname":"cam"}}'
+want "a network key in a mode is refused" 422 'net.hostname'
+req "$WID" "$WSEC" POST /akam/v1/modes/bad2 '{"settings":{"api.keys":"3"}}'
+want "a read-only (state) key in a mode is refused" 422 'api.keys'
+req "$WID" "$WSEC" POST /akam/v1/modes/bad3 '{"settings":{"led.mode":"purple"}}'
+want "an invalid value in a mode is refused" 422 'led.mode'
+req "$WID" "$WSEC" POST /akam/v1/modes/bad4 '{"settings":{"nope.key":"1"}}'
+want "an unknown key in a mode is refused" 422 'nope.key'
+req "$WID" "$WSEC" POST /akam/v1/modes/Bad '{"settings":{"led.mode":"on"}}'
+want "a bad mode name is refused" 422 'mode name'
+req "$WID" "$WSEC" POST /akam/v1/modes/empty '{"settings":{}}'
+want "an empty mode is refused" 422 'value'
+req "$WID" "$WSEC" POST /akam/v1/modes/nine '{"settings":{"led.mode":"on","image.brightness":1,"image.contrast":1,"image.sharpness":1,"detect.publish_hz":1,"track.enabled":0,"led.person":"on","led.boot":"on","led.night":"on"}}'
+want "a mode with 9 pairs is refused (limit 8)" 422 'limit'
+req "$WID" "$WSEC" POST /akam/v1/modes/bad5 '{"settings":{"led.mode":"on"'
+want "malformed JSON is 400" 400 'syntax'
+[ "$(bw)" = 2 ] && ok "none of the refusals wrote anything (2 writes: night, badmix)" || ko "writes after refusals ($(bw))"
+req "$RID" "$RSEC" GET /akam/v1/modes
+want "GET /modes lists both" 200 '"name":"night".*"name":"badmix"'
+req "$RID" "$RSEC" GET /akam/v1/modes/night
+want "GET /modes/night" 200 '\{"name":"night","settings":\{"led.mode":"off","image.brightness":"30"\}\}'
+req "$RID" "$RSEC" GET /akam/v1/modes/ghost
+want "GET /modes/ghost is 404" 404 'not_found'
+# mode.apply: all or nothing through the registry
+req "$WID" "$WSEC" POST /akam/v1/actions/mode.apply '{"name":"night"}'
+want "action mode.apply night" 200 '"ok":true'
+[ "$(st_val led.mode)" = off ] && [ "$(st_val image.brightness)" = 30 ] && ok "both settings of the mode were applied" || ko "mode night applied (led.mode=$(st_val led.mode) image.brightness=$(st_val image.brightness))"
+req "$WID" "$WSEC" POST /akam/v1/actions/mode.apply '{"name":"badmix"}'
+want "mode.apply of a mode that fails its cross-field rule is refused" 422 'mode_refused'
+[ "$(st_val led.mode)" = off ] && [ "$(st_val video0.min_qp)" != 40 ] && ok "ALL OR NOTHING: led.mode (valid, first in the mode) was not applied either" || ko "all or nothing (led.mode=$(st_val led.mode) min_qp=$(st_val video0.min_qp))"
+req "$WID" "$WSEC" POST /akam/v1/actions/mode.apply '{"name":"ghost"}'
+want "mode.apply of an unknown mode is 404" 404 'not_found'
+req "$WID" "$WSEC" POST /akam/v1/actions/mode.apply '{"name":"Night"}'
+want "mode.apply with a bad name is 422" 422 'args'
+req "$RID" "$RSEC" POST /akam/v1/actions/mode.apply '{"name":"night"}'
+want "mode.apply needs a write key (403)" 403 'scope'
+req "$RID" "$RSEC" GET /akam/v1/schema
+want "the schema lists mode.apply" 200 '"mode.apply"'
+printf '%s' "$BODY" | grep -q '"key":"button.last_gesture"' && ok "schema lists button.last_gesture (state)" || ko "schema lists button.last_gesture"
+printf '%s' "$BODY" | grep -q '"key":"sys.flash_writes_button"' && ok "schema lists sys.flash_writes_button" || ko "schema lists sys.flash_writes_button"
+# bindings
+stop_srv && ok "part 2 server exits cleanly" || ko "part 2 server exit"
+start_srv "$D8" --fast
+[ "$(bw)" = 0 ] && ok "the modes are on the flash; a restart counts its own writes from 0" || ko "writes after the restart ($(bw))"
+BIND='{"timing":{"gap_ms":300},"bindings":[{"gesture":"short","actions":["none"]},{"gesture":"double","actions":["mode night","ptz.home","led pattern ack"]},{"gesture":"triple","actions":["mode badmix","ptz.park"]},{"gesture":"long","actions":["ptz.toggle_park"]},{"gesture":"S S L","actions":["track toggle","patrol stop"]},{"gesture":"very_long","actions":["ptz.privacy on"]}]}'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"double","actions":["mode ghost"]}]}'
+want "a binding to a mode that does not exist is refused" 422 'no_such_mode'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"double","actions":["reboot"]}]}'
+want "a destructive action (reboot) is refused" 422 'not an allowed action'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"double","actions":["settings.reset"]}]}'
+want "settings.reset is not a button action" 422 'not an allowed action'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"double","actions":["net.wifi_band 5g"]}]}'
+want "a network change is not a button action" 422 'not an allowed action'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"double","actions":["none","none","none","none","none"]}]}'
+want "5 actions in a binding: refused" 422 'limit'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"short","actions":["none"]},{"gesture":"S","actions":["none"]}]}'
+want "the same gesture twice: refused" 422 'same gesture'
+req "$WID" "$WSEC" POST /akam/v1/button '{"timing":{"gap_ms":20},"bindings":[]}'
+want "a timing out of range: refused" 422 'timing'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":[{"gesture":"S S S S S S S","actions":["none"]}]}'
+want "7 elements in a gesture: refused" 422 'gesture'
+req "$WID" "$WSEC" POST /akam/v1/button '{"bindings":'
+want "malformed JSON: 400" 400 'syntax'
+req "$WID" "$WSEC" GET /akam/v1/button
+[ "$BODY" = "$DEFJ" ] && ok "none of the refusals changed the config (all or nothing)" || ko "config after refusals ($BODY)"
+[ "$(bw)" = 0 ] && ok "... or wrote anything" || ko "writes after refusals ($(bw))"
+req "$WID" "$WSEC" POST /akam/v1/button "$BIND"
+want "POST /button: applied" 200 '"ok":true,"changed":true'
+[ "$(bw)" = 1 ] && ok "one flash write (sys.flash_writes_button 1)" || ko "button writes after the config ($(bw))"
+check "MQTT was told to announce the new triggers" grep -q '^btn.changed' "$D8/calls.log"
+req "$RID" "$RSEC" GET /akam/v1/button
+want "GET /button returns it" 200 '"gap_ms":300.*"gesture":"double","actions":\["mode night","ptz.home","led pattern ack"\]'
+req "$WID" "$WSEC" POST /akam/v1/button "$BIND"
+want "the same config again: accepted, changed false" 200 '"changed":false'
+[ "$(bw)" = 1 ] && ok "... and no flash write (still 1)" || ko "writes after an identical config ($(bw))"
+req "$WID" "$WSEC" DELETE /akam/v1/modes/night
+want "DELETE of a mode a binding uses: 409" 409 'in_use'
+req "$WID" "$WSEC" DELETE /akam/v1/button
+want "DELETE /button: 405" 405 'method'
+# simulated presses with the new bindings
+: >"$D8/calls.log"
+S3=$(seqnow)
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.mode":"on","image.brightness":55}'
+echo "btn S S" >&3
+wev "double: event with the action list and result ok" "$S3" '"gesture":"double","actions":\["mode night","ptz.home","led pattern ack"\],"result":"ok"'
+[ "$(st_val led.mode)" = off ] && [ "$(st_val image.brightness)" = 30 ] && ok "double applied the mode night (both settings)" || ko "double -> mode night (led.mode=$(st_val led.mode))"
+check "... then ptz.home and the LED pattern ran, in order" bash -c "grep '^btn.run' '$D8/calls.log' | sed -n '1p' | grep -q 'btn.run 1 ' && grep '^btn.run' '$D8/calls.log' | sed -n '2p' | grep -q 'btn.run 11 2:150:150:0'"
+[ "$(st_val button.last_gesture)" = double ] && ok "button.last_gesture = double" || ko "last_gesture ($(st_val button.last_gesture))"
+S4=$(seqnow)
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"led.mode":"on"}'
+echo "btn S S S" >&3
+wev "triple: mode badmix is refused as a whole, ptz.park still runs: result partial" "$S4" '"gesture":"triple".*"result":"partial"'
+[ "$(st_val led.mode)" = on ] && ok "the refused mode applied NOTHING (led.mode still on)" || ko "all or nothing on a button mode (led.mode=$(st_val led.mode))"
+S5=$(seqnow)
+echo "btn S S L" >&3
+wev "S S L: track toggle + patrol stop" "$S5" '"gesture":"S S L","actions":\["track toggle","patrol stop"\],"result":"ok"'
+S6=$(seqnow)
+echo "btn V" >&3
+wev "very long press: ptz.privacy on" "$S6" '"gesture":"very_long","actions":\["ptz.privacy on"\],"result":"ok"'
+check "... run as privacy on (kind 4, arg on)" grep -q '^btn.run 4 on' "$D8/calls.log"
+S9=$(seqnow)
+echo "btn S L" >&3
+wev "an unbound gesture (S L: S L is bound to nothing) is an event too: result unbound, no action" "$S9" '"gesture":"S L","actions":\[\],"result":"unbound"'
+check "... and an MQTT publish" grep -q '^btn.mqtt S L ' "$D8/calls.log"
+S7=$(seqnow)
+echo "btn S" >&3
+wev "short (now waits for a possible double): still reported once" "$S7" '"gesture":"short"'
+[ "$(bw)" = 1 ] && ok "all those presses wrote nothing to the flash (still 1)" || ko "writes after presses ($(bw))"
+check "every gesture was published to MQTT" bash -c "for g in double triple 'S S L' very_long short; do grep -q \"^btn.mqtt \$g \" '$D8/calls.log' || exit 1; done"
+check "persisted as the two files /config/akam/button and /config/akam/modes (JSON)" bash -c "grep -q '\"gesture\":\"S S L\"' '$D8/button' && grep -q '\"name\":\"night\"' '$D8/modes'"
+req "$WID" "$WSEC" GET /akam/v1/button
+BEFORE=$BODY
+stop_srv && ok "button server exits cleanly" || ko "button server exit (see $D8/err)"
+start_srv "$D8" --fast
+req "$WID" "$WSEC" GET /akam/v1/button
+[ "$BODY" = "$BEFORE" ] && ok "after a restart the bindings are back" || ko "bindings after a restart ($BODY)"
+req "$WID" "$WSEC" GET /akam/v1/modes
+want "... and the modes" 200 '"name":"night".*"name":"badmix"'
+[ "$(bw)" = 0 ] && ok "a restart writes nothing" || ko "writes at restart ($(bw))"
+S8=$(seqnow)
+echo "btn S S" >&3
+wev "the restored bindings work (double)" "$S8" '"gesture":"double"'
+stop_srv || true
+printf '{"bindings":[{"gesture":"short","actions":["reboot"]}]}' >"$D8/button"
+start_srv "$D8" --fast
+req "$WID" "$WSEC" GET /akam/v1/button
+[ "$BODY" = "$DEFJ" ] && ok "an invalid button file is ignored as a whole (the defaults)" || ko "invalid file ($BODY)"
+check "... and left alone" grep -q reboot "$D8/button"
+stop_srv || true
+# the write limiter
+D9=$WORK/p9
+mkdir -p "$D9"
+newkey "$D9" write ha
+WID=$KID
+WSEC=$KSEC
+start_srv "$D9" --fast
+for i in 1 2 3 4 5 6 7 8; do req "$WID" "$WSEC" POST /akam/v1/button "{\"timing\":{\"gap_ms\":$((200 + i))},\"bindings\":[{\"gesture\":\"short\",\"actions\":[\"none\"]}]}"; done
+want "8 config writes in a burst are accepted" 200 '"changed":true'
+req "$WID" "$WSEC" POST /akam/v1/button '{"timing":{"gap_ms":300},"bindings":[{"gesture":"short","actions":["none"]}]}'
+want "the 9th is rate limited (429 rate)" 429 '"error":"rate"'
+printf '%s' "$HDRS" | grep -qi '^Retry-After: [0-9]' && ok "...with Retry-After" || ko "429 carries Retry-After"
+stop_srv && ok "the button limiter server exits cleanly" || ko "button limiter server exit"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" = 0 ]

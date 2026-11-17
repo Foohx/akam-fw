@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 #define STREG_KEY_MAX 48
-#define STREG_VAL_MAX 128   /* longest value text incl. NUL; ST_STRING hi <= 127 */
+#define STREG_VAL_MAX 832   /* longest value text incl. NUL; ST_STRING hi <= 831 (detect.boxes is the long one) */
 #define STREG_MAX_DEFS 192
 #define STREG_FILE_MAX 4096 /* /config/akam/settings */
 #define STREG_ENUM_MAX 16

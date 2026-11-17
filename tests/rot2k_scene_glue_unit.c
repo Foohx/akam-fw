@@ -341,6 +341,29 @@ int main(void)
     scene(7, 0);
     feed();
     CHECK(h->capture() == 0 && h->commit(HOME_PAN, HOME_TILT, 1) == 0, "a new reference is written");
+    {
+        /* any version of the format is dropped: the file of the previous version (scene1), the current one, a future one */
+        static const char *ver[] = { "scene1 0 %u %u 80 48 3\n", "scene2 0 %u %u 80 48 3 0 0 900\n", "scene9 0 %u %u 80 48 3\n" };
+        unsigned vi;
+        for (vi = 0; vi < 3; vi++) {
+            char hdr[120];
+            size_t m;
+            FILE *f = fopen(path, "wb");
+            int hl = snprintf(hdr, sizeof hdr, ver[vi], (unsigned)HOME_PAN, (unsigned)HOME_TILT);
+            if (f) {
+                fwrite(hdr, 1, (size_t)hl, f);
+                for (m = 0; m < 3840; m++)
+                    fputc((int)(m * 7 % 251), f);
+                fclose(f);
+            }
+            CHECK(h->drop() == 0, "drop of a reference file of another version: ok");
+            d = slurp(&n);
+            CHECK(d && !strncmp(d, "invalid", 7) && (vi == 2 || !strncmp(d, "invalid 3", 9)), "...invalidated (the boots count kept when the header is readable)");
+        }
+    }
+    scene(7, 0);
+    feed();
+    CHECK(h->capture() == 0 && h->commit(HOME_PAN, HOME_TILT, 1) == 0, "a new reference is written again");
     if (geteuid() != 0) {
         chmod(dir, 0555); /* the directory cannot be written: the marker cannot be stored */
         CHECK(h->drop() == -1, "drop fails when the invalid marker cannot be written (reported, nothing is refused)");
@@ -349,14 +372,15 @@ int main(void)
         printf("  skip - running as root: a read-only directory is not enforced\n");
     }
 
-    printf("== repetitive texture (blinds): never a reference\n");
+    printf("== repetitive texture (blinds): never a single-view reference (the multi-view one is requested)\n");
+    unlink(path); /* (with a recent reference on the flash the 24 h rule keeps it instead: capture 0) */
     {
         int x, y;
         for (y = 0; y < 192; y++)
             for (x = 0; x < 320; x++)
                 plane[y][x] = (uint8_t)(((x / 4) % 7) < 3 ? 70 : 190); /* vertical bars, period 7 thumbnail px */
         feed();
-        CHECK(h->capture() == 1 && h->commit(HOME_PAN, HOME_TILT, 0) == -1, "bars: capture refuses (1), no candidate, commit refused");
+        CHECK(h->capture() == 2 && h->commit(HOME_PAN, HOME_TILT, 0) == -1, "bars: no single-view reference: capture asks for the multi-view one (2), the plain commit refuses");
         CHECK(h->alt_capture(0) == 1, "bars at an offset: not kept either");
     }
     printf("== multi-view reference: featureless rest view + views at offsets\n");
@@ -444,6 +468,155 @@ int main(void)
     pan = HOME_PAN;
     tilt = HOME_TILT;
     CHECK(h->boot_check(&pan, &tilt, NULL) == 0, "...and the stored views are never used without a valid main reference");
+
+    printf("== a reference this boot just refused may be replaced once, whatever its age\n");
+    {
+        sc_ref_t cur;
+        char buf2[4096];
+        size_t k;
+        FILE *f;
+        a2k_scene_test_set(path, 0, 0, 1, 2000);
+        a2k_scene_test_clock(T0 + 5 * DAY);
+        g_night = 1;
+        scene(7, 0);
+        feed();
+        CHECK(h->capture() == 0 && h->commit(1300, HOME_TILT, 1) == 0, "a reference (night, scene 7) is written");
+        a2k_scene_test_set(path, 0, 0, 1, 2000);
+        a2k_scene_test_clock(T0 + 5 * DAY + 3600); /* ...and is 1 h old */
+        scene(99, 0);
+        feed();
+        pan = 1300;
+        tilt = HOME_TILT;
+        w = wr(h);
+        CHECK(h->capture() == 0 && h->commit(1300, HOME_TILT, 1) == 1 && wr(h) == w, "no boot check refused it: the 24 h rule still blocks the rewrite");
+        CHECK(h->boot_check(&pan, &tilt, NULL) == 0, "the boot check refuses the stored reference (the view differs)");
+        w = wr(h);
+        CHECK(h->capture() == 0 && h->commit(1300, HOME_TILT, 1) == 0 && wr(h) == w + 1, "...and the calibration's capture at home replaces it although it is 1 h old");
+        d = slurp(&n);
+        CHECK(d && sc_unpack(d, n, &r) == 0 && r.stamp == (uint32_t)(T0 + 5 * DAY + 3600), "...with the new stamp");
+        scene(7, 0);
+        feed();
+        w = wr(h);
+        CHECK(h->capture() == 0 && h->commit(1300, HOME_TILT, 1) == 1 && wr(h) == w, "a later change, right away: the one rewrite of this run is spent, the 24 h rule applies");
+        /* a boot that matches does not unlock anything */
+        a2k_scene_test_set(path, 0, 0, 1, 2000);
+        a2k_scene_test_clock(T0 + 5 * DAY + 7200);
+        scene(99, 0);
+        feed();
+        pan = 1300;
+        tilt = HOME_TILT;
+        CHECK(h->boot_check(&pan, &tilt, NULL) == 1, "boot check matches the new reference");
+        scene(7, 0);
+        feed();
+        w = wr(h);
+        CHECK(h->capture() == 0 && h->commit(1300, HOME_TILT, 0) == 1 && wr(h) == w, "a view change after a matching boot: still the 24 h rule");
+        /* the repetitive verdict of an older file is stored back at the first boot (no screening at the next one) */
+        d = slurp(&n);
+        CHECK(d && sc_unpack(d, n, &cur) == 0, "reference readable");
+        cur.rep = -1;
+        cur.repmin = 0;
+        k = sc_pack(&cur, buf2, sizeof buf2);
+        f = fopen(path, "wb");
+        fwrite(buf2, 1, k, f);
+        fclose(f);
+        scene(7, 0);
+        feed();
+        CHECK(h->boot_check(&pan, &tilt, NULL) == 0, "older file, the view differs: calibrate");
+        d = slurp(&n);
+        CHECK(d && sc_unpack(d, n, &cur) == 0 && cur.rep >= 0 && cur.repmin > 0, "...the screened verdict was stored back in the reference");
+        g_night = 0;
+    }
+
+    /* ---- an AMBIGUOUS (repetitive / invariant) home view: the same multi-view mechanism, the home view is stored with its verdict ---- */
+    printf("== multi-view reference: ambiguous (repetitive) rest view\n");
+    unlink(path);
+    a2k_scene_test_clock(T0 + 30 * DAY);
+    {
+        int x, y, i, dp, dt, ok = 1;
+        sc_ref_t m;
+        for (y = 0; y < 192; y++)
+            for (x = 0; x < 320; x++)
+                plane[y][x] = (uint8_t)(128 + 50 * ((((x % 32) < 16) ^ ((y % 32) < 16)) ? 1 : -1)); /* a tile lattice: a shift of a period would match */
+        feed();
+        CHECK(h->capture() == 2, "a repetitive rest view: no longer 'no reference': the multi-view reference is requested (2)");
+        {
+            /* the diagnosis dump (RAM only, next to the test reference here, /tmp/akam_scene_dbg on the camera): the thumbnail and one line with the reason */
+            char dp[300];
+            FILE *f;
+            char line[700] = "";
+            long sz = -1;
+            snprintf(dp, sizeof dp, "%s.dbg/cap.gray", path);
+            f = fopen(dp, "rb");
+            if (f) {
+                fseek(f, 0, SEEK_END);
+                sz = ftell(f);
+                fclose(f);
+            }
+            snprintf(dp, sizeof dp, "%s.dbg/cap.txt", path);
+            f = fopen(dp, "rb");
+            if (f) {
+                if (!fgets(line, sizeof line, f))
+                    line[0] = 0;
+                fclose(f);
+            }
+            CHECK(sz == 3840 && strstr(line, "capture: ambiguous") && strstr(line, "repetitive 1 at") && strstr(line, "det "), "the capture dumped its thumbnail (3840 bytes) and a text line with the classification and the displacement that triggered the screening");
+        }
+        CHECK(h->commit(HOME_PAN, HOME_TILT, 1) == -1, "the plain commit refuses an ambiguous candidate");
+        for (i = 0; i < 3; i++) {
+            ok &= h->offset((unsigned)i, &dp, &dt) == 0;
+            scene(31 + (unsigned)i, 0);
+            feed();
+            ok &= h->alt_capture((unsigned)i) == 0;
+            scene(31 + (unsigned)i, 1);
+            feed();
+            ok &= h->alt_confirm((unsigned)i) == 0;
+        }
+        CHECK(ok, "informative offset views are kept and confirmed");
+        for (y = 0; y < 192; y++)
+            for (x = 0; x < 320; x++)
+                plane[y][x] = (uint8_t)(128 + 50 * ((((x % 32) < 16) ^ ((y % 32) < 16)) ? 1 : -1));
+        feed();
+        CHECK(h->alt_capture(2) == 1, "an offset view that is itself repetitive is not kept (1)");
+        CHECK(h->commit_multi(HOME_PAN, HOME_TILT, 1, 7) == 0, "multi-view reference written");
+        d = slurp(&n);
+        CHECK(d && sc_unpack(d, n, &m) == 0 && m.rep == 1 && m.repmin == SC_MIN_DEFAULT && m.pan == HOME_PAN, "the main file keeps the ambiguous home view with its verdict (rep 1)");
+        /* the cold boot: the home view never decides, the probe is requested; a head at the offset sees its stored view */
+        pan = HOME_PAN;
+        tilt = HOME_TILT;
+        feed(); /* the live rest view: the same lattice */
+        CHECK(h->boot_check(&pan, &tilt, NULL) == 2 && pan == HOME_PAN && tilt == HOME_TILT, "boot: ambiguous saved view -> answer 2 (probe), nothing declared");
+        {
+            char dp[300];
+            FILE *f;
+            char line[700] = "";
+            snprintf(dp, sizeof dp, "%s.dbg/ref.txt", path);
+            f = fopen(dp, "rb");
+            if (f) {
+                if (!fgets(line, sizeof line, f))
+                    line[0] = 0;
+                fclose(f);
+            }
+            CHECK(strstr(line, "boot (ambiguous reference: probe)") && strstr(line, "verdict"), "the boot check dumped the reference thumbnail and its verdict");
+        }
+        CHECK(h->probe_offset(0, &dp, &dt) == 0 && h->probe_offset(1, &dp, &dt) == 0 && h->probe_offset(2, &dp, &dt) == 0, "the stored offset views are usable");
+        scene(32, 1);
+        feed();
+        CHECK(h->probe(1) == 1, "the live view at offset 1 matches its stored view: the position is proven");
+        scene(99, 0);
+        feed();
+        CHECK(h->probe(1) == 0, "a moved head (another view at the offset): refused");
+        /* no usable offset view: refused as before, at once */
+        unlink(path);
+        {
+            char p2[260];
+            snprintf(p2, sizeof p2, "%s.a0", path);
+            unlink(p2);
+            snprintf(p2, sizeof p2, "%s.a1", path);
+            unlink(p2);
+            snprintf(p2, sizeof p2, "%s.a2", path);
+            unlink(p2);
+        }
+    }
     unlink(path);
     {
         char tmp[260];

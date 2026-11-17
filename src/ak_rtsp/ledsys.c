@@ -3,6 +3,7 @@
 
 #include "leds.h"
 #include "ircut.h"
+#include "night.h"
 
 /* Process-wide LED policy used by main.c, control.c and rtsp.c: the engine
  * of leds.c on the camera's real paths, with night.ir_led applied through
@@ -13,6 +14,12 @@ static void ir_hook(void *user, int allowed)
 {
     (void)user;
     ircut_set_ir_led_allowed(allowed);
+}
+
+static int night_hook(void *user)
+{
+    (void)user;
+    return night_is_night();
 }
 
 static leds_t        g_leds;
@@ -27,6 +34,7 @@ static void init_once(void)
     };
     static const leds_ops_t ops = { NULL, ir_hook, NULL };
     leds_init(&g_leds, &ops, &cfg);
+    leds_set_night_hook(&g_leds, night_hook, NULL);
 }
 
 static leds_t *single(void)
@@ -69,3 +77,10 @@ void ledsys_ctl_list(void (*emit)(void *arg, const char *line), void *arg)
 {
     leds_ctl_list(single(), emit, arg);
 }
+
+int ledsys_pat_get(int rule, char *out, size_t cap) { return leds_pat_get(single(), rule, out, cap); }
+int ledsys_pat_set(int rule, const char *text) { return leds_pat_set(single(), rule, text); }
+void ledsys_pat_default(int rule, char *out, size_t cap) { leds_pat_default(single(), rule, out, cap); }
+int ledsys_blip(const char *pattern, long dur_ms) { return leds_blip(single(), pattern, dur_ms); }
+void ledsys_blip_clear(void) { leds_blip_clear(single()); }
+int ledsys_rule_now(void) { return leds_rule_now(single()); }

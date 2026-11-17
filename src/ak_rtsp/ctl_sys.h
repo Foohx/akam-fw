@@ -14,6 +14,10 @@
  * rtsp.auth (off|on|broken), sys.time_set (1 when the wall clock is 2024 or later, else 0:
  * the camera has no RTC, see akam_ntp.sh), rtsp.skipped_frames (cumulative video frames dropped for an
  * RTSP/TCP client whose link was backed up, see tx_pace.h; no identity data).
+ * The same numbers again under the names of the settings registry and of the Rotatable 2K, as integers (hal_sys.h, convergence
+ * P4): sys.cpu_pct, sys.load1_x100, sys.mem_total_kb, sys.mem_avail_kb, sys.uptime_s, net.wifi_lq; -1000000 (HAL_SYS_NA) while
+ * not known. cpu, load, memory, uptime and the Wi-Fi level come from ONE hal_sys_sample() (src/common/logic/hal_sys.c, five
+ * small reads) per collection, when a key is read: nothing is sampled while nobody reads, there is no timer and no thread.
  * The audio.talk_* counters stay in talk.c (talk_ctl_get) and ctl.clients in
  * control.c.
  *

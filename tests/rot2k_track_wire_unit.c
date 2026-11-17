@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #include <stdarg.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -25,7 +26,7 @@ static int g_sp;
 static int f_nudge(int dx, int dy, int sp) { g_nudges++; g_dx = dx; g_dy = dy; g_sp = sp; return 0; }
 static int f_home(void) { g_homes++; return 0; }
 static int f_priv(void) { return g_priv; }
-static const a2k_track_ops_t OPS = { f_info, f_range, f_nudge, f_home, f_priv };
+static const a2k_track_ops_t OPS = { f_info, f_range, f_nudge, f_home, f_priv, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 
 /* the wiring cases below pin the sign mapping / safety gates with the slow 0.1.0 policy; the new one is in test_responsive and rot2k_track_sim.c */
 static void tinit(a2k_track_t *t, const char *path)
@@ -47,7 +48,7 @@ static void at(int state, int pan, int tilt)
 static void reset(void) { g_nudges = g_homes = g_dx = g_dy = g_priv = 0; g_range_ok = 1; at(HAL_PTZ_HOME, 1275, 1300); }
 
 /* a person box centred at (cx, cy) of the 320x192 frame */
-static struct tl_box person(int cx, int cy) { struct tl_box b = { cx - 20, cy - 40, cx + 20, cy + 40 }; return b; }
+static struct tl_box person(int cx, int cy) { struct tl_box b = { cx - 20, cy - 40, cx + 20, cy + 40, 0, 0 }; return b; }
 
 /* three ticks 200 ms apart (the confirm streak + the move), starting at t */
 static void see(a2k_track_t *t, int64_t t0, struct tl_box b)
@@ -295,10 +296,11 @@ static void test_responsive(void)
     int home, delay;
     printf("== responsive policy on the fake motor\n");
     a2k_track_init(&t, &OPS, NULL);
+    { struct tl_cfg dc; tl_cfg_dev(&dc); (void)a2k_track_set_cfg(&t, &dc); } /* the dev policy: these cases pin the nudge behaviour (the new policy is in rot2k_track_cont_unit.c) */
     a2k_track_set_enabled(&t, 1);
     reset();
     a2k_track_get_return(&t, &home, &delay);
-    CHECK(home == 0 && delay == 30, "defaults: stay, 30 s");
+    CHECK(home == 1 && delay == 30, "defaults: home, 30 s");
     a2k_track_tick_ts(&t, 1000, 1000, &b, 1, 320, 192);
     a2k_track_tick_ts(&t, 1200, 1200, &b, 1, 320, 192);
     CHECK(g_nudges == 1 && g_dx > 0 && g_sp == 2, "two ticks (the acquire): one nudge, a large offset asks for the fast speed (divisor 2)");
@@ -324,6 +326,133 @@ static void test_responsive(void)
     a2k_track_destroy(&t);
 }
 
+static int r_starts, r_stops, r_start_rc, r_busy;
+static int r_start(const char *n) { (void)n; r_starts++; return r_start_rc; }
+static int r_stop(void) { r_stops++; return 0; }
+static int r_isbusy(void) { return r_busy; }
+static int r_vel(int sx, int sy, int dx, int dy) { (void)sx; (void)sy; (void)dx; (void)dy; return 0; }
+static int r_pos_at(int64_t tm, int *pan, int *tilt) { (void)tm; *pan = 1275; *tilt = 1300; return 0; }
+
+static void test_lost_routes(void)
+{
+    a2k_track_ops_t ops = OPS;
+    a2k_track_t t;
+    struct tl_box b = person(160, 96);
+    printf("== lost chain routes through the tracker (a refused start is not ours to stop; disabling stops the one we started)\n");
+    ops.route_start = r_start;
+    ops.route_stop = r_stop;
+    ops.route_busy = r_isbusy;
+    ops.vel = r_vel;
+    ops.pos_at = r_pos_at;
+    for (int pass = 0; pass < 2; pass++) {
+        r_starts = r_stops = 0; r_start_rc = pass ? -1 : 0; r_busy = 0;
+        reset();
+        a2k_track_init(&t, &ops, NULL);
+        (void)a2k_track_set_lost_policy(&t, "route:walk:30");
+        a2k_track_set_enabled(&t, 1);
+        at(HAL_PTZ_HOME, 1275, 1300);
+        for (int i = 0; i < 4; i++)
+            a2k_track_tick_ts(&t, 1000 + i * 200, 1000 + i * 200, &b, 1, 320, 192);
+        for (int i = 0; i < 12; i++)
+            a2k_track_tick_ts(&t, 2000 + i * 200, 2000 + i * 200, NULL, 0, 320, 192);
+        CHECK(r_starts == 1, pass ? "the route start was asked once" : "the route start was asked once (accepted)");
+        if (pass) {
+            CHECK(t.tl.lost_route_on == 0, "a refused start: the chain does not believe it owns a route");
+            a2k_track_set_enabled(&t, 0);
+            CHECK(r_stops == 0, "... so disabling the tracker never stops a route (the user's patrol)");
+        } else {
+            CHECK(t.tl.lost_route_on == 1, "an accepted start: the chain owns the route");
+            a2k_track_set_enabled(&t, 0);
+            CHECK(r_stops == 1, "disabling the tracker stops the route the chain started, once");
+        }
+        a2k_track_destroy(&t);
+    }
+}
+
+static void test_lost_policy(void)
+{
+    a2k_track_t t;
+    char buf[200];
+    printf("== lost-target policy through the tracker (all or nothing, the step for /state)\n");
+    a2k_track_init(&t, &OPS, NULL);
+    a2k_track_get_lost_policy(&t, buf, sizeof buf);
+    CHECK(!strcmp(buf, "backsweep,exit,hold:30,home"), "the default is the legacy behaviour, shown as backsweep,exit,hold:30,home");
+    CHECK(a2k_track_set_lost_policy(&t, "backsweep,exit,local:300:4:20,home") == 0, "a valid chain is accepted");
+    a2k_track_get_lost_policy(&t, buf, sizeof buf);
+    CHECK(!strcmp(buf, "backsweep,exit,local:300:4:20,home"), "... and read back");
+    CHECK(a2k_track_set_lost_policy(&t, "backsweep,fly") == -1 && a2k_track_set_lost_policy(&t, "hold:0") == -1 && a2k_track_set_lost_policy(&t, "") == -1, "invalid strings are refused");
+    a2k_track_get_lost_policy(&t, buf, sizeof buf);
+    CHECK(!strcmp(buf, "backsweep,exit,local:300:4:20,home"), "... and nothing changed");
+    CHECK(a2k_track_set_lost_policy(&t, "none") == 0, "none");
+    a2k_track_get_lost_policy(&t, buf, sizeof buf);
+    CHECK(!strcmp(buf, "none"), "... read back as none");
+    a2k_track_get_lost_step(&t, buf, sizeof buf);
+    CHECK(!strcmp(buf, "idle"), "no lost step while nobody was lost");
+    CHECK(a2k_track_set_lost_policy(&t, "backsweep,exit,hold:30,home") == 0, "the default text restores the legacy policy");
+    a2k_track_destroy(&t);
+}
+
+static void test_debug_and_tune(void)
+{
+    a2k_track_t t;
+    struct tl_box b = { 20, 82, 163, 191, 0, 0 };
+    int band, head;
+    char line[512] = "";
+    FILE *f;
+    printf("== debug log and live tuning\n");
+    tinit(&t, "");
+    unlink("/tmp/akam2k_track.log");
+    a2k_track_set_enabled(&t, 1);
+    reset();
+    a2k_track_tick(&t, 1000, &b, 1, 320, 192);
+    CHECK(access("/tmp/akam2k_track.log", F_OK) != 0, "debug off by default: no log file");
+    a2k_track_set_debug(&t, 1);
+    a2k_track_tick(&t, 1200, &b, 1, 320, 192);
+    f = fopen("/tmp/akam2k_track.log", "r");
+    if (f) { if (!fgets(line, sizeof line, f)) line[0] = 0; fclose(f); }
+    CHECK(strstr(line, "box=20,82,163,191") && strstr(line, "rule=centre") && strstr(line, "why="), "debug on: one line with the box, the rule (centre: legacy policy) and the reason");
+    a2k_track_get_tune(&t, &band, &head);
+    CHECK(band == 12 && head == 15, "the tuning getters (legacy cfg band 12, head 15)");
+    a2k_track_set_tune(&t, 20, 30);
+    a2k_track_get_tune(&t, &band, &head);
+    CHECK(band == 20 && head == 30, "live tuning applied");
+    a2k_track_set_tune(&t, 1, 99);
+    a2k_track_get_tune(&t, &band, &head);
+    CHECK(band == 20 && head == 30, "out-of-range values are ignored");
+    {   /* live gains: valid values applied (and visible to the policy), out-of-range ones ignored */
+        int gp, gt, tb;
+        a2k_track_get_gains(&t, &gp, &gt, &tb);
+        CHECK(gp == 1000 && gt == 600 && tb == 12, "the gain getters (legacy cfg: 1000 / 600, band 12)");
+        a2k_track_set_gains(&t, 1200, 900, 8);
+        a2k_track_get_gains(&t, &gp, &gt, &tb);
+        CHECK(gp == 1200 && gt == 900 && tb == 8 && t.tl.cfg.gain_pan == 1200 && t.tl.cfg.gain_tilt == 900 && t.tl.cfg.tband_pct == 8, "live gains applied to the running policy");
+        a2k_track_set_gains(&t, 199, 4001, 1);
+        a2k_track_get_gains(&t, &gp, &gt, &tb);
+        CHECK(gp == 1200 && gt == 900 && tb == 8, "out-of-range gains are ignored");
+    }
+    {   /* the debug log is a rolling window: past 64 KiB the newest half stays, never an empty file */
+        struct stat st;
+        char last[512] = "", ln[512];
+        long first_ms = -1;
+        int i;
+        unlink("/tmp/akam2k_track.log");
+        for (i = 0; i < 2000; i++)
+            a2k_track_tick(&t, 100000 + (int64_t)i * 600, &b, 1, 320, 192);
+        CHECK(stat("/tmp/akam2k_track.log", &st) == 0 && st.st_size > 16000 && st.st_size <= 65536 + 512, "the debug log stays bounded (64 KiB) and is not emptied when it rolls");
+        f = fopen("/tmp/akam2k_track.log", "r");
+        if (f) {
+            while (fgets(ln, sizeof ln, f)) {
+                if (first_ms < 0) first_ms = atol(ln);
+                strcpy(last, ln);
+            }
+            fclose(f);
+        }
+        CHECK(atol(last) == 100000 + 1999 * 600 && first_ms > 100000 && first_ms % 600 == 100000 % 600, "the newest lines are kept and the file starts on a whole line");
+    }
+    unlink("/tmp/akam2k_track.log");
+    a2k_track_destroy(&t);
+}
+
 int main(void)
 {
     char dir[] = "/tmp/rot2k_track_XXXXXX";
@@ -333,6 +462,9 @@ int main(void)
     test_responsive();
     test_areas_pure();
     test_areas_run(dir);
+    test_debug_and_tune();
+    test_lost_policy();
+    test_lost_routes();
     snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
     if (system(cmd) != 0) { /* best effort */ }
     printf("rot2k track wire unit: %d failed\n", fails);

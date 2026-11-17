@@ -12,12 +12,12 @@
 #      (target bit rate; they win over main_kbps / sub_kbps), video<N>_max_kbps 0 (automatic, 1.25 x the target) or 64..12000 / 32..1500 (peak),
 #      video<N>_fps 1..15, video<N>_min_qp and video<N>_max_qp 10..51 (min must not exceed max), video<N>_gop 1..300 and video<N>_rc vbr|cbr|avbr, video_live 0|1 (default 1: a change is tried on the running encoder before the re-open; 0 = always re-open; --video-live), passed as
 #      --video<N>-kbps / --video<N>-max-kbps ... (the app checks the whole set; Home Assistant changes them at run time, see button-and-zones.md); detect 0..1 (person detection on the NPU, default 1), detect_hz 1..10 (default 5),
-#      detect_threshold 500..950 (classify threshold, default 700), passed as -D/-H/-T; snapshot 0..1 (JPEG snapshot when the
+#      detect_threshold 500..950 (classify threshold, default 700), passed as -D/-H/-T; detect_age_window 0|1 (default 0: the frame age reference is a 60 s windowed minimum instead of the all-time minimum, experiment E3) as --detect-age-window; track_lag_ms -150..300 (default 50: the video latency of the pose at capture, see tracking.md) as --track-lag-ms; detect_debug 0|1 (default 0: per-inference log of every box, both classes, with scores) and detect_model_thr 300..950 (default off: experiment E1, the model's own threshold below detect_threshold; see tracking.md) as --detect-log / --detect-model-thr; snapshot 0..1 (JPEG snapshot when the
 #      person goes ON, default 1) and snapshot_interval 5..300 (minimum seconds between two snapshots, default 10), passed as
 #      --snapshot/--snapshot-interval. Day/night and image: night auto|day|night (default auto) and ir_led auto|off (default
 #      auto) are the only WORDS accepted (exact match, passed as --night/--ir-led); image_brightness, image_contrast,
 #      image_sharpness 0..100 (default: not set, the ISP conf file values stay) and mains_hz 50 or 60 (default 50) are
-#      passed as --image-brightness/--image-contrast/--image-sharpness/--mains-hz; wdr 0|1 (default 1: WDR re-applied after every ISP mode switch, like the stock) is passed as --wdr; led auto|on|off (default on: the front blue LED stays as the system set it) and led_boot, led_nowifi, led_person, led_stream, led_night, led_idle (a pattern on | off | N:on_ms:off_ms:pause_ms; see hal-light.md) are passed as --led / --led-boot ...; audio 0|1 (default 0: OFF, the microphone is never opened and the streams carry no audio track; 1 adds an L16/8000 microphone track to both RTSP streams) is passed as --audio; ptz_cal auto|off (default auto: the motor calibrates at boot unless the scene check proves the head did not move; ptz_scene_check 0|1 (default 1) and ptz_scene_min 0.80..0.99 (default 0.90) are passed as --ptz-scene-check / --ptz-scene-min; track_invert_pan / track_invert_tilt 0|1 (default 1 / 0) as --track-invert-pan / --track-invert-tilt; off: never touched), ptz_park PAN:TILT (default 1275:300) and ptz_privacy 0|1 (default 0; 1: no video while parked) are passed as --ptz-cal/--ptz-park/--ptz-privacy. track 0|1 (default 0: person tracking off; 1 follows a person with the motor) is passed as --track; track_area_<name>=PMIN:PMAX:TMIN:TMAX (up to 4 named motor-step rectangles inside the soft range that limit the tracking; see tracking.md) as --track-area <name>=...; button_long_ms 1500..10000 (default 2000: how long the front button is held for park / home) as --button-long-ms; ptz_travel_budget_k 10..99999 (default 200: thousands of motor steps travelled since the last calibration after which no scene reference is saved, so the next cold boot calibrates) as --ptz-travel-budget-k; person tracking tuning: track_return home|stay (default stay), track_return_delay_s 0..86400 (default 30, home mode: wait after the lost-person grace), track_grace_s 0..600 (default 3), track_band_pct 2..40 (default 8), track_tilt 0|1 (default 0: opt-in until the tilt direction is verified), track_lead_pct 0..100 (default 70), track_head_pct 0..50 (default 15: tilt keeps the top of the person box this % below the frame top; 0 = centre of the box) as --track-return / --track-return-delay-s / --track-grace-s / --track-band-pct / --track-tilt / --track-lead-pct / --track-head-pct (see tracking.md). (The detection zones are NOT a key here: the app reads the optional card file akam/zones
+#      passed as --image-brightness/--image-contrast/--image-sharpness/--mains-hz; wdr 0|1 (default 1: WDR re-applied after every ISP mode switch, like the stock) is passed as --wdr; led auto|on|off (default on: the front blue LED stays as the system set it) and led_boot, led_nowifi, led_person, led_stream, led_night, led_idle (a pattern on | off | N:on_ms:off_ms:pause_ms; see hal-light.md) are passed as --led / --led-boot ...; audio 0|1 (default 0: OFF, the microphone is never opened and the streams carry no audio track; 1 adds an L16/8000 microphone track to both RTSP streams) is passed as --audio; ptz_cal auto|off (default auto: the motor calibrates at boot unless the scene check proves the head did not move; ptz_scene_check 0|1 (default 1) and ptz_scene_min 0.80..0.99 (default 0.90) are passed as --ptz-scene-check / --ptz-scene-min; track_invert_pan / track_invert_tilt 0|1 (default 1 / 0) as --track-invert-pan / --track-invert-tilt; off: never touched), ptz_park PAN:TILT (default 1275:300) and ptz_privacy 0|1 (default 0; 1: no video while parked) are passed as --ptz-cal/--ptz-park/--ptz-privacy. track 0|1 (default 0: person tracking off; 1 follows a person with the motor) is passed as --track; track_area_<name>=PMIN:PMAX:TMIN:TMAX (up to 4 named motor-step rectangles inside the soft range that limit the tracking; see tracking.md) as --track-area <name>=...; button_long_ms 1500..10000 (default 2000: how long the front button is held for park / home) as --button-long-ms; ptz_travel_budget_k 10..99999 (default 200: thousands of motor steps travelled since the last calibration after which no scene reference is saved, so the next cold boot calibrates) as --ptz-travel-budget-k; person tracking tuning: track_return home|stay (default home), track_return_delay_s 0..86400 (default 30, home mode: wait after the lost-person grace), track_grace_s 0..600 (default 3), track_band_pct 2..40 (default 6), track_tilt 0|1 (default 0: opt-in until the tilt direction is verified), track_lead_pct 0..100 (default 70), track_tilt_return_s 0..3600 (default 0 = off: the home return puts both axes back; in stay mode only, the tilt goes back to the home tilt this many seconds after the lost-person grace) as --track-tilt-return-s, track_debug 0..2 (default 0: 1 = one decision line per tick into the RAM file /tmp/akam2k_track.log, capped; 2 = also the raw recorder /tmp/akam2k_track.raw, see tracking.md) as --track-debug, track_head_pct 0..50 (default 15: tilt keeps the top of the person box this % below the frame top; 0 = centre of the box) track_gain_pan / track_gain_tilt 200..4000 (default 1000 / 700: motor steps per frame width / height of offset) and track_tilt_band_pct 2..40 (default 10: the vertical dead band, the head band is half of it) as --track-gain-pan / --track-gain-tilt / --track-tilt-band-pct, track_motion continuous|steps (default continuous: one ongoing motor move re-targeted without a stop; steps = timed nudges, the fallback) as --track-motion, track_zone_pct 0..90 (default 40: the central comfort zone, % of the frame width, 0 = the old targeting), track_zone_y_pct 0..90 (default 30) and track_zone_head_pct 0..90 (default 20) as --track-zone-pct / --track-zone-y-pct / --track-zone-head-pct, track_lease_ms 150..2000 (default 450: the continuous move stops by itself when it is not refreshed this long) as --track-lease-ms, track_tilt_back_s 0..600 (default 5: a lost person with the tilt more than 250 steps above home: the tilt goes back this long after, 0 = off) as --track-tilt-back-s, track_lost_policy none | steps joined by commas hold:N backsweep exit local:W:D:N route:NAME[:N] home stay (default backsweep,exit,hold:30,home = the legacy return policy; see tracking.md) as --track-lost-policy, as --track-return / --track-return-delay-s / --track-grace-s / --track-band-pct / --track-tilt / --track-lead-pct / --track-head-pct (see tracking.md). (The detection zones are NOT a key here: the app reads the optional card file akam/zones
 #      itself, see own-app-feasibility.md.) A bad line, an unknown key or an out-of-range value is logged and ignored
 #      (the default stays): a typo never keeps the camera from streaming. Values are digits only, never evaluated.
 #      The conf is re-read before every app (re)start, so a change applies when the app restarts.
@@ -57,7 +57,7 @@ STABLE=${AKAM_APP_STABLE:-120}
 CRASH_MAX=${AKAM_APP_CRASH_MAX:-5}
 CRASH_WINDOW=${AKAM_APP_CRASH_WINDOW:-600}
 LOG_MAX=${AKAM_APP_LOG_MAX:-262144}
-POLL=${AKAM_APP_POLL:-5}
+POLL=${AKAM_APP_POLL:-1}
 STOP_WAIT=${AKAM_APP_STOP_WAIT:-10}
 APP=""
 SLP=""
@@ -72,6 +72,61 @@ now() {
     read -r _u _ <"$UPTIME" 2>/dev/null
     _u=${_u%%.*}
     case $_u in '' | *[!0-9]*) date +%s 2>/dev/null || echo 0 ;; *) echo "$_u" ;; esac
+}
+
+# motor_stop: the app is gone (it crashed, was killed or was stopped): a continuous motor move has no hardware dead-man, so ask the app binary for ONE stop request on the motor node
+# (`akam2k_rtsp --ptz-stop`: open, stop, exit; no other request). Best effort, bounded by the binary's own exit, never blocks the restart.
+motor_stop() {
+    [ -x "$RUN" ] || return 0
+    LD_LIBRARY_PATH=$LIBS "$RUN" --ptz-stop >/dev/null 2>&1 </dev/null
+    log own_app "motor stop requested after the app ended"
+}
+
+# lost_policy_ok <text>: 0 when it is the lost-target chain syntax of track_logic.c (tl_lost_parse): none | up to 8 of hold:N backsweep exit local:W:D:N route:name[:N] home stay (stay last)
+lost_policy_ok() {
+    _lp=$1
+    [ -n "$_lp" ] || return 1
+    case $_lp in *[!a-z0-9_:,]*) return 1 ;; esac
+    [ "$_lp" = none ] && return 0
+    case $_lp in ,* | *, | *,,*) return 1 ;; esac
+    _n=0
+    _prev=""
+    _oldifs=$IFS
+    IFS=,
+    # shellcheck disable=SC2086  # split on commas on purpose
+    set -- $_lp
+    IFS=$_oldifs
+    [ "$#" -le 8 ] || return 1
+    for _t in "$@"; do
+        _n=$((_n + 1))
+        [ "$_prev" != stay ] || return 1
+        case $_t in
+            backsweep | exit | home | stay) ;;
+            hold:*) lp_num "${_t#hold:}" 1 3600 || return 1 ;;
+            local:*:*:*)
+                _r=${_t#local:}
+                lp_num "${_r%%:*}" 40 1500 || return 1
+                _r=${_r#*:}
+                lp_num "${_r%%:*}" 2 20 || return 1
+                lp_num "${_r#*:}" 1 600 || return 1
+                ;;
+            route:*)
+                _r=${_t#route:}
+                _nm=${_r%%:*}
+                case $_nm in [a-z]*) ;; *) return 1 ;; esac
+                case $_nm in *[!a-z0-9_]*) return 1 ;; esac
+                [ "${#_nm}" -le 16 ] || return 1
+                if [ "$_nm" != "$_r" ]; then lp_num "${_r#*:}" 1 3600 || return 1; fi
+                ;;
+            *) return 1 ;;
+        esac
+        _prev=${_t%%:*}
+    done
+    return 0
+}
+lp_num() { # lp_num <digits> <lo> <hi>
+    case $1 in '' | *[!0-9]* | ??????*) return 1 ;; esac
+    [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]
 }
 
 # stop_app: SIGTERM, up to STOP_WAIT seconds (polled every second), then SIGKILL.
@@ -91,6 +146,7 @@ stop_app() {
     fi
     wait "$APP" 2>/dev/null
     APP=""
+    motor_stop
 }
 trap 'STOPPING=1; [ -z "$SLP" ] || kill "$SLP" 2>/dev/null; log own_app "supervisor got a stop signal: stopping akam2k_rtsp"; stop_app; log own_app "supervisor stopped"; exit 0' TERM INT
 
@@ -184,6 +240,20 @@ read_conf() {
                 esac
                 continue
                 ;;
+            track_lost_policy)
+                # person tracking, what to do when the person is lost: "none" or steps joined by commas: hold:N backsweep exit local:W:D:N route:NAME[:N] home stay (see tracking.md).
+                # Validated here word by word (an invalid value would make the app refuse to start): the whole value or nothing.
+                if lost_policy_ok "$v"; then ARGS="$ARGS --track-lost-policy $v"; else log own_app "akam2k.conf line $n ignored: track_lost_policy is not a valid chain"; fi
+                continue
+                ;;
+            track_motion)
+                # person tracking motion: continuous (one ongoing move, re-targeted without a stop) | steps (timed nudges, the fallback); an exact word, never evaluated
+                case $v in
+                    continuous | steps) ARGS="$ARGS --track-motion $v" ;;
+                    *) log own_app "akam2k.conf line $n ignored: track_motion must be continuous or steps" ;;
+                esac
+                continue
+                ;;
             track_return)
                 # person tracking, what to do when the person is gone: home | stay (default stay); an exact word, never evaluated
                 case $v in
@@ -231,6 +301,13 @@ read_conf() {
                 esac
                 continue
                 ;;
+            track_lag_ms) # the only signed number: -150..300 (a negative lag is allowed), matched by exact patterns, never evaluated
+                case $v in
+                    0 | [1-9] | [1-9][0-9] | [12][0-9][0-9] | 300 | -[1-9] | -[1-9][0-9] | -1[0-4][0-9] | -150) ARGS="$ARGS --track-lag-ms=$v" ;;
+                    *) log own_app "akam2k.conf line $n ignored: track_lag_ms must be -150..300" ;;
+                esac
+                continue
+                ;;
             video0_rc | video1_rc) # the encoder rate-control mode of a stream: an exact word, never evaluated
                 case $v in
                     vbr | cbr | avbr) ARGS="$ARGS --$(echo "$k" | tr _ -) $v" ;;
@@ -267,6 +344,8 @@ read_conf() {
             detect) lo=0 hi=1 opt=-D ;;
             detect_hz) lo=1 hi=10 opt=-H ;;
             detect_threshold) lo=500 hi=950 opt=-T ;;
+            detect_debug) lo=0 hi=1 opt=--detect-log ;;
+            detect_model_thr) lo=300 hi=950 opt=--detect-model-thr ;;
             snapshot) lo=0 hi=1 opt=--snapshot ;;
             snapshot_interval) lo=5 hi=300 opt=--snapshot-interval ;;
             image_brightness) lo=0 hi=100 opt=--image-brightness ;;
@@ -283,7 +362,18 @@ read_conf() {
             track_band_pct) lo=2 hi=40 opt=--track-band-pct ;;
             track_tilt) lo=0 hi=1 opt=--track-tilt ;;
             track_head_pct) lo=0 hi=50 opt=--track-head-pct ;;
+            track_gain_pan) lo=200 hi=4000 opt=--track-gain-pan ;;
+            track_gain_tilt) lo=200 hi=4000 opt=--track-gain-tilt ;;
+            track_tilt_band_pct) lo=2 hi=40 opt=--track-tilt-band-pct ;;
+            track_debug) lo=0 hi=2 opt=--track-debug ;;
+            track_tilt_return_s) lo=0 hi=3600 opt=--track-tilt-return-s ;;
             track_lead_pct) lo=0 hi=100 opt=--track-lead-pct ;;
+            detect_age_window) lo=0 hi=1 opt=--detect-age-window ;;
+            track_zone_pct) lo=0 hi=90 opt=--track-zone-pct ;;
+            track_zone_y_pct) lo=0 hi=90 opt=--track-zone-y-pct ;;
+            track_zone_head_pct) lo=0 hi=90 opt=--track-zone-head-pct ;;
+            track_lease_ms) lo=150 hi=2000 opt=--track-lease-ms ;;
+            track_tilt_back_s) lo=0 hi=600 opt=--track-tilt-back-s ;;
             track_invert_pan) lo=0 hi=1 opt=--track-invert-pan ;;
             track_invert_tilt) lo=0 hi=1 opt=--track-invert-tilt ;;
             ptz_scene_check) lo=0 hi=1 opt=--ptz-scene-check ;;
@@ -396,6 +486,7 @@ while [ "$STOPPING" = 0 ]; do
     wait "$APP" 2>/dev/null
     rc=$?
     APP=""
+    motor_stop
     t1=$(now)
     run=$((t1 - t0))
     log own_app "akam2k_rtsp exited with status $rc after $run s"

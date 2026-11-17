@@ -48,6 +48,7 @@ A file that mixes levels labels each section. The evidence tables are in `docs/t
 | [audio.md](audio.md) | Microphone track, speaker output, two-way audio (ONVIF backchannel), `akam-talk` |
 | [image-day-night-leds.md](image-day-night-leds.md) | Picture settings, day/night state machine, IR-cut and IR LEDs, status LED |
 | [control-api.md](control-api.md) | Design: settings registry, signed local HTTP API (HMAC), generated MQTT entities |
+| [ptz-patrol.md](ptz-patrol.md) | PTZ patrol / scan engine: presets, routes, generated sweeps and rasters, triggers, priorities with tracking and manual control, safety, flash policy |
 | [control-port.md](control-port.md) | TCP port 8091: commands, every key, privacy and write rules |
 | [onvif.md](onvif.md) | ONVIF Profile S subset and WS-Discovery |
 | [mqtt.md](mqtt.md) | MQTT client and Home Assistant discovery |

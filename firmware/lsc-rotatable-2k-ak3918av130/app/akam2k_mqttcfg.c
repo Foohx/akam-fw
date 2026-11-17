@@ -409,6 +409,12 @@ int a2k_mqtt_snapshot_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap)
     return n < 0 || (size_t)n >= cap ? -1 : n;
 }
 
+int a2k_mqtt_detections_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap)
+{
+    int n = snprintf(out, cap, "%s/detections", ids->base);
+    return n < 0 || (size_t)n >= cap ? -1 : n;
+}
+
 static void jb_device(jb_t *j, const a2k_mqtt_ids_t *ids)
 {
     jb_raw(j, ",\"device\":{\"identifiers\":[");
@@ -790,6 +796,46 @@ static int discovery_button_event(const a2k_mqtt_ids_t *ids, char *topic, size_t
     return j.bad ? -1 : (int)j.n;
 }
 
+/* the Home Assistant discovery component of a device trigger (the topic literal is built from it: the C scan forbids a slash followed by dev) */
+#define A2K_HA_TRIGGER_COMPONENT "device_automation"
+
+int a2k_mqtt_gesture_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap)
+{
+    return snprintf(out, cap, "%s/button", ids->base) >= (int)cap ? -1 : 0;
+}
+
+int a2k_mqtt_btn_config_topic(const a2k_mqtt_ids_t *ids, int k, char *out, size_t cap)
+{
+    if (k < 0 || k >= A2K_BTN_TRIG_N)
+        return -1;
+    return snprintf(out, cap, "%s/%s/%s/button_%d/config", ids->prefix, A2K_HA_TRIGGER_COMPONENT, ids->node, k) >= (int)cap ? -1 : 0;
+}
+
+/* The device trigger of gesture slot k: type = the gesture name in lower case with '_' for spaces, subtype "button". */
+static int discovery_btn_trigger(const a2k_mqtt_ids_t *ids, int k, char *topic, size_t tcap, char *payload, size_t pcap)
+{
+    jb_t j = { payload, pcap, 0, 0 };
+    char t[160], type[A2K_BTN_NAME + 1];
+    size_t i;
+    if (!ids->ctl || k < 0 || k >= ids->nbtn || !ids->btn[k][0] || a2k_mqtt_btn_config_topic(ids, k, topic, tcap) != 0 || a2k_mqtt_gesture_topic(ids, t, sizeof t) != 0)
+        return -1;
+    for (i = 0; i < sizeof type - 1 && ids->btn[k][i]; i++) {
+        char c = ids->btn[k][i];
+        type[i] = c == ' ' ? '_' : (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    type[i] = '\0';
+    payload[0] = '\0';
+    jb_raw(&j, "{\"automation_type\":");
+    jb_str(&j, "trigger");
+    jb_kv(&j, "type", type);
+    jb_kv(&j, "subtype", "button");
+    jb_kv(&j, "topic", t);
+    jb_kv(&j, "value_template", "{{ value_json.gesture }}");
+    jb_kv(&j, "payload", ids->btn[k]);
+    jb_device(&j, ids);
+    return j.bad ? -1 : (int)j.n;
+}
+
 /* ---- video settings: number / select per stream parameter ---- */
 
 static const char *const g_vid_name[A2K_VP_N] = { "bit rate", "peak bit rate (0 = auto)", "frame rate", "min QP", "max QP", "GOP", "rate control" };
@@ -894,6 +940,8 @@ static int discovery_extra(const a2k_mqtt_ids_t *ids, int i, char *topic, size_t
         return discovery_vid(ids, i - A2K_E_VID0, topic, tcap, payload, pcap);
     if (i == A2K_E_BUTTON)
         return discovery_button_event(ids, topic, tcap, payload, pcap);
+    if (i >= A2K_E_BTN0 && i < A2K_E_BTN0 + A2K_BTN_TRIG_N)
+        return discovery_btn_trigger(ids, i - A2K_E_BTN0, topic, tcap, payload, pcap);
     if (i >= A2K_E_PTZ0 && i < A2K_E_PTZ0 + A2K_PTZ_N)
         return ids->ptz ? discovery_ptz(ids, i - A2K_E_PTZ0, topic, tcap, payload, pcap) : -1;
     if (i >= A2K_E_SYS0 && i < A2K_E_SYS0 + A2K_SYS_N)

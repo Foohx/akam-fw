@@ -184,6 +184,30 @@ writes only when the level changes. A sysfs failure is logged once and retried q
   those transitions; the streaming loop never waits for the LED thread.
 - `led.state` reports `system` (not managed), `on`, `off`, `blink_wifi` or `blink_stream`; it is read-only.
 
+**Rules and patterns (since the LED engine runs on `light_logic`, convergence P6).** The `auto` table above is the DEFAULT
+of a table of rules, the same engine and the same pattern grammar as the Rotatable 2K (`led_pat.h`, `light_logic.h`; the LED is
+the emitter `status` of a LED-class descriptor, `hal_light.h`). The first true rule wins, each has a pattern:
+
+| Rule (priority) | When | Default pattern | `led.state` |
+|---|---|---|---|
+| `stream` | at least one client is playing | `1:1000:1000:0` (1 s on, 1 s off) | `blink_stream` |
+| `boot` | the start is not finished | `1:500:500:0` | `blink_wifi` |
+| `nowifi` | no IPv4 address / link down | `1:500:500:0` | `blink_wifi` |
+| `night` | night mode | `on` | `on` |
+| `idle` | anything else | `on` | `on` |
+
+A pattern is `on`, `off` or `N:on_ms:off_ms:pause_ms` (N blinks of on_ms lit and off_ms dark, then pause_ms dark; N 1..10,
+times 50..60000 ms, pause 0 or 50..60000, whole cycle at most 120 s). `status=on` and `status=off` ignore the rules. With the
+default patterns the engine does exactly what the previous one did (`tests/native/leds_oracle_test.c` drives both with the same
+traces and requires the same writes). A rule is set with the registry rows `led.stream led.boot led.nowifi led.night led.idle`
+(8091 GET/SET and the signed API), saved as `led_<rule>=<pattern>` lines in the file above ONLY while it differs from its default
+(so the file stays the two lines above by default). The thread sleeps until the next change of the pattern in force, at most one
+tick (500 ms) in `auto` and four ticks otherwise: with the defaults that is the old cadence, a faster pattern wakes it faster.
+A transient pattern (`led.blip` action of the API, `leds_blip`) replaces the rules for 1 to 60 s ("find the camera"), ignored while
+`status=off`; it hands the LED to the engine, which gives it back to the rules (or to solid on) when it ends. The IR LEDs keep
+their own rule, `night.ir_led` (`auto` follows night mode, `off` never lights them): their pin is inside `ircut.c` and is not
+an emitter of the engine yet.
+
 **Saved file** `/etc/config/akam/leds` (directory 0700, file 0600), written atomically and only when a value changes;
 lines it does not own are kept:
 

@@ -88,6 +88,11 @@ int a2k_mqtt_mac_load(const char *path, char mac[18]);
 #define A2K_CTL_N (A2K_CTL_SLOT0 + A2K_CTL_SLOTS * A2K_CTL_PER_SLOT)
 #define A2K_CTL_VAL 256
 enum { A2K_CK_SWITCH, A2K_CK_TEXT, A2K_CK_SENSOR, A2K_CK_BUTTON };
+/* The programmable push button (akam2k_buttonrt.h): one Home Assistant DEVICE TRIGGER per configured gesture (at most A2K_BTN_TRIG_N = BC_MAX_BIND of
+ * button_cfg.h, names of at most A2K_BTN_NAME - 1 = BG_NAME_MAX - 1 characters), only with ids->ctl. Every gesture is published on BASE/button as
+ * {"gesture":"..","actions":[..],"result":".."} (not retained); the trigger of slot k matches on value_template {{ value_json.gesture }}. */
+#define A2K_BTN_TRIG_N 16
+#define A2K_BTN_NAME 16
 
 typedef struct {
     char base[72], prefix[40], host[33], node[40], mac[18], version[40];
@@ -102,6 +107,8 @@ typedef struct {
     char tarea[A2K_CTL_SLOTS][A2K_ZONE_NAME_MAX + 1];
     int  ptz;                                     /* 1: the PTZ buttons and sensors exist (A2K_E_PTZ0..), commanded */
     int  vid;                                     /* 1: the video settings numbers and selects exist (A2K_E_VID0..), commanded */
+    int  nbtn;                                    /* configured button gestures (with ids->ctl): slots 0..nbtn-1 have their device trigger */
+    char btn[A2K_BTN_TRIG_N][A2K_BTN_NAME];
 } a2k_mqtt_ids_t;
 
 /* host: the camera host name; mac "aa:bb:cc:dd:ee:ff" (or "": -2, the node id must be the stable hardware one);
@@ -151,6 +158,8 @@ enum { A2K_E_PERSON, A2K_E_SCORE, A2K_E_LAST, A2K_E_VIEWERS, A2K_E_VERSION, A2K_
  * state BASE/<id>/state. A change re-opens that stream's encoder (about 1 to 2 s without video on it). */
 #define A2K_E_VID0 (A2K_E_BUTTON + 1)
 #define A2K_VID_N (A2K_VID_STREAMS * A2K_VP_N)
+/* The button gesture device triggers (only with ids->ctl), after the video entities: slot k = A2K_E_BTN0 + k. */
+#define A2K_E_BTN0 (A2K_E_VID0 + A2K_VID_N)
 
 struct a2k_mqtt_ptz {
     int  valid;                  /* 0 until the first report */
@@ -215,6 +224,9 @@ int a2k_mqtt_vid_config_topic(const a2k_mqtt_ids_t *ids, int k, char *topic, siz
 /* 1 when (topic, payload) is a valid command of a video entity: *k, val filled. A number: digits only, 1 to 5, within the range of the parameter (0 only for the automatic
  * peak rate); the select: exactly vbr, cbr or avbr. The app still checks the whole set (min QP <= max QP, peak >= target). */
 int a2k_mqtt_vid_command(const a2k_mqtt_ids_t *ids, const char *topic, size_t tlen, const uint8_t *pl, size_t plen, int *k, char *val, size_t vcap);
+/* The gesture publish topic BASE/button and the config topic of trigger slot k (to announce it, or to clear it with an empty retained payload). */
+int a2k_mqtt_gesture_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap);
+int a2k_mqtt_btn_config_topic(const a2k_mqtt_ids_t *ids, int k, char *out, size_t cap);
 /* The button event: topic BASE/button/event and the JSON payload. */
 int a2k_mqtt_button_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap);
 extern const char a2k_mqtt_button_payload[];
@@ -223,6 +235,8 @@ int a2k_mqtt_zone_config_topic(const a2k_mqtt_ids_t *ids, const char *name, char
 
 /* "BASE/snapshot": the raw JPEG of the last snapshot (not retained). */
 int a2k_mqtt_snapshot_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap);
+/* "BASE/detections": the person boxes (akam2k_detpub.h JSON), QoS 0, not retained, no Home Assistant discovery. */
+int a2k_mqtt_detections_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap);
 /* "BASE/status" */
 int a2k_mqtt_status_topic(const a2k_mqtt_ids_t *ids, char *out, size_t cap);
 /* Discovery topic and document of entity e (fixed, A2K_E_IMAGE, A2K_E_ZONE0 + i): returns the payload length, -1 when it does not fit. */

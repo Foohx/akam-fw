@@ -7,12 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
-#include "akam2k_apievt.h"
+#include "api_events.h"
+#include "akam2k_buttonrt.h"
+#include "akam2k_detpub.h"
 #include "akam2k_leds.h"
 #include "akam2k_log.h"
 #include "akam2k_netreg.h"
 #include "akam2k_night.h"
+#include "akam2k_patrol.h"
 #include "akam2k_ptz.h"
 #include "akam2k_rtsp.h"
 #include "akam2k_store.h"
@@ -24,11 +28,13 @@
 #define RO ST_ACC_READ
 #define HM (ST_EXPOSE_HTTP | ST_EXPOSE_MQTT)
 #define MODEL_2K 1u
-#define MAX_ROWS 64
+#define MAX_ROWS 128 /* raise when the table grows: build_table() logs and the self-check fails on overflow */
+static const char k_none[1] = { 0 }; /* the empty default of the patrol string rows */
 
 /* ------------------------------------------------------------------ module state */
 static streg_t g_reg;
 static st_def_t g_defs[MAX_ROWS];
+static int g_overflow; /* rows that did not fit MAX_ROWS */
 static size_t g_nrows;
 static a2k_settings_cfg_t g_cfg;
 static char g_path[160], g_netdir[120], g_netreq[120], g_netres[128];
@@ -163,11 +169,74 @@ static int track_set(const char *key, const char *val, st_apply_t *eff)
     return 0;
 }
 
+/* ------------------------------------------------------------------ ptz.patrol.idle_start_s, ptz.patrol.route_default (specs/ptz-patrol.md) */
+static int pat_get(const char *key, char *out, size_t cap)
+{
+    char d[PP_NAME_MAX + 1];
+    if (strcmp(key, "ptz.patrol.idle_start_s") == 0)
+        return put(out, cap, a2k_patrol_get_idle_s());
+    if (strcmp(key, "ptz.patrol.travel_budget") == 0)
+        return put(out, cap, a2k_patrol_get_travel_budget());
+    a2k_patrol_get_default(d, sizeof d);
+    return puts_(out, cap, d);
+}
+
+static int pat_set(const char *key, const char *val, st_apply_t *eff)
+{
+    (void)eff;
+    if (strcmp(key, "ptz.patrol.idle_start_s") == 0) {
+        if (a2k_patrol_set_idle_s(atoi(val)) != 0)
+            return ST_E_SETTER;
+        a2k_log("patrol: idle start %s s (API)", val);
+        return 0;
+    }
+    if (strcmp(key, "ptz.patrol.travel_budget") == 0)
+        return a2k_patrol_set_travel_budget(atoi(val)) == 0 ? 0 : ST_E_SETTER;
+    return a2k_patrol_set_default(val) == 0 ? 0 : ST_E_SETTER;
+}
+
+static int pat_check(const struct streg *reg, const char *key, const char *val)
+{
+    (void)reg;
+    return strcmp(key, "ptz.patrol.route_default") == 0 && val[0] && !pp_name_ok(val) ? ST_E_CHECK : 0;
+}
+
+/* ptz.patrol.state / route / step (read only) */
+static int pat_state_get(const char *key, char *out, size_t cap)
+{
+    char st[16], rt[PP_NAME_MAX + 1];
+    int step;
+    a2k_patrol_state(st, sizeof st, rt, sizeof rt, &step);
+    if (strcmp(key, "ptz.patrol.state") == 0)
+        return puts_(out, cap, st);
+    if (strcmp(key, "ptz.patrol.route") == 0)
+        return puts_(out, cap, rt);
+    return put(out, cap, step);
+}
+
+/* ------------------------------------------------------------------ detect.publish_hz, detect.boxes */
+static int dpub_get(const char *key, char *out, size_t cap)
+{
+    if (strcmp(key, "detect.boxes") == 0) {
+        int n = a2k_dp_latest(out, cap);
+        return n < 0 ? ST_E_GETTER : n;
+    }
+    return put(out, cap, a2k_dp_hz());
+}
+
+static int dpub_set(const char *key, const char *val, st_apply_t *eff)
+{
+    (void)key;
+    (void)eff;
+    a2k_dp_set_hz(atoi(val));
+    return 0;
+}
+
 /* ------------------------------------------------------------------ track.return, track.return_delay_s */
 static int tret_get(const char *key, char *out, size_t cap)
 {
     a2k_track_t *t = a2k_track_run_get();
-    int home = 0, delay = 30;
+    int home = 1, delay = 30;
     if (t)
         a2k_track_get_return(t, &home, &delay);
     if (strcmp(key, "track.return") == 0)
@@ -189,6 +258,208 @@ static int tret_set(const char *key, const char *val, st_apply_t *eff)
         delay = atoi(val);
     a2k_track_set_return(t, home, delay);
     a2k_log("track: return %s, delay %d s (API)", home ? "home" : "stay", delay);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ track.band_pct, track.head_pct */
+static int ttune_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int band = 6, head = 15;
+    if (t)
+        a2k_track_get_tune(t, &band, &head);
+    return put(out, cap, strcmp(key, "track.band_pct") == 0 ? band : head);
+}
+
+static int ttune_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int band, head;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    a2k_track_get_tune(t, &band, &head);
+    if (strcmp(key, "track.band_pct") == 0)
+        band = atoi(val);
+    else
+        head = atoi(val);
+    a2k_track_set_tune(t, band, head);
+    a2k_log("track: band %d%%, head %d%% (API)", band, head);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ track.gain_pan, track.gain_tilt, track.tilt_band_pct */
+static int tgain_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int gp = 1000, gt = 700, tb = 10;
+    if (t)
+        a2k_track_get_gains(t, &gp, &gt, &tb);
+    return put(out, cap, strcmp(key, "track.gain_pan") == 0 ? gp : strcmp(key, "track.gain_tilt") == 0 ? gt : tb);
+}
+
+static int tgain_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int gp, gt, tb;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    a2k_track_get_gains(t, &gp, &gt, &tb);
+    if (strcmp(key, "track.gain_pan") == 0)
+        gp = atoi(val);
+    else if (strcmp(key, "track.gain_tilt") == 0)
+        gt = atoi(val);
+    else
+        tb = atoi(val);
+    a2k_track_set_gains(t, gp, gt, tb);
+    a2k_log("track: gain pan %d, tilt %d, tilt band %d%% (API)", gp, gt, tb);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ track.tilt_return_s */
+static int ttret_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int s = 0;
+    (void)key;
+    if (t)
+        a2k_track_get_tilt_return(t, &s);
+    return put(out, cap, s);
+}
+
+static int ttret_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    a2k_track_set_tilt_return(t, atoi(val));
+    a2k_log("track: tilt return %d s (API)", atoi(val));
+    return 0;
+}
+
+/* ------------------------------------------------------------------ track.zone_pct, track.zone_y_pct, track.zone_head_pct, track.motion */
+static const char *const OPT_TMOT[] = { "continuous", "steps", NULL };
+
+/* ------------------------------------------------------------------ track.lag_ms */
+static int tlag_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    return put(out, cap, t ? a2k_track_get_lag(t) : 50);
+}
+
+static int tlag_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    a2k_track_set_lag(t, atoi(val));
+    a2k_log("track: video lag %d ms (API)", atoi(val));
+    return 0;
+}
+
+/* ------------------------------------------------------------------ track.tilt_back_s */
+static int tback_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int s = 5;
+    (void)key;
+    if (t)
+        a2k_track_get_tilt_back(t, &s);
+    return put(out, cap, s);
+}
+
+static int tback_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    a2k_track_set_tilt_back(t, atoi(val));
+    a2k_log("track: tilt back after %d s (API)", atoi(val));
+    return 0;
+}
+
+/* ------------------------------------------------------------------ track.lost_policy, track.lost_step */
+static int tlost_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    char buf[256];
+    if (strcmp(key, "track.lost_step") == 0) {
+        if (!t)
+            return puts_(out, cap, "idle");
+        a2k_track_get_lost_step(t, buf, sizeof buf);
+        return puts_(out, cap, buf);
+    }
+    if (!t)
+        return puts_(out, cap, TL_LOST_DEFAULT);
+    a2k_track_get_lost_policy(t, buf, sizeof buf);
+    return puts_(out, cap, buf);
+}
+
+static int tlost_check(const struct streg *reg, const char *key, const char *val)
+{
+    struct tl_cfg tmp;
+    (void)reg;
+    if (strcmp(key, "track.lost_policy") != 0)
+        return 0;
+    tl_cfg_defaults(&tmp);
+    return tl_lost_parse(val, &tmp) == 0 ? 0 : ST_E_CHECK;
+}
+
+static int tlost_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    if (a2k_track_set_lost_policy(t, val) != 0)
+        return ST_E_SETTER;
+    a2k_log("track: lost policy %s (API)", val);
+    return 0;
+}
+
+static int tzone_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int x = 40, y = 30, h = 20;
+    if (t && strcmp(key, "track.motion") == 0)
+        return puts_(out, cap, a2k_track_get_motion(t) == TL_MOTION_CONT ? "continuous" : "steps");
+    if (strcmp(key, "track.motion") == 0)
+        return puts_(out, cap, "continuous");
+    if (t)
+        a2k_track_get_zones(t, &x, &y, &h);
+    return put(out, cap, strcmp(key, "track.zone_pct") == 0 ? x : strcmp(key, "track.zone_y_pct") == 0 ? y : h);
+}
+
+static int tzone_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    int x, y, h;
+    (void)eff;
+    if (!t)
+        return ST_E_SETTER;
+    if (strcmp(key, "track.motion") == 0) {
+        a2k_track_set_motion(t, strcmp(val, "steps") == 0 ? TL_MOTION_STEPS : TL_MOTION_CONT);
+        a2k_log("track: motion %s (API)", val);
+        return 0;
+    }
+    a2k_track_get_zones(t, &x, &y, &h);
+    if (strcmp(key, "track.zone_pct") == 0)
+        x = atoi(val);
+    else if (strcmp(key, "track.zone_y_pct") == 0)
+        y = atoi(val);
+    else
+        h = atoi(val);
+    a2k_track_set_zones(t, x, y, h);
+    a2k_log("track: comfort zone %d%% x %d%% (head %d%%) (API)", x, y, h);
     return 0;
 }
 
@@ -346,9 +617,16 @@ static int st_get(const char *key, char *out, size_t cap)
         a2k_ptz_wear_counts(&pos, &scene);
         if (strcmp(key + 17, "ptzpos") == 0) return put(out, cap, pos);
         if (strcmp(key + 17, "scene") == 0) return put(out, cap, scene);
+        if (strcmp(key + 17, "patrol") == 0) return put(out, cap, a2k_patrol_writes());
+        if (strcmp(key + 17, "button") == 0) return put(out, cap, a2k_btn_writes());
         return put(out, cap, a2k_store_writes());
     }
     if (strcmp(key, "ptz.travel_since_cal") == 0) return put(out, cap, (long)a2k_ptz_travel());
+    if (strcmp(key, "button.last_gesture") == 0) {
+        char g[BG_NAME_MAX + 4];
+        a2k_btn_last_gesture(g, sizeof g);
+        return puts_(out, cap, g);
+    }
     if (strcmp(key, "sys.cpu_pct") == 0) return put(out, cap, have ? s.cpu_pct : HAL_SYS_NA);
     if (strcmp(key, "sys.load1_x100") == 0) return put(out, cap, have ? s.load1_x100 : HAL_SYS_NA);
     if (strcmp(key, "sys.mem_total_kb") == 0) return put(out, cap, have ? s.mem_total_kb : HAL_SYS_NA);
@@ -381,8 +659,10 @@ static void row(const char *key, st_type_t type, long lo, long hi, const char *c
                 int (*set)(const char *, const char *, st_apply_t *))
 {
     st_def_t *d;
-    if (g_nrows >= MAX_ROWS)
+    if (g_nrows >= MAX_ROWS) {
+        g_overflow++; /* never silent: a2k_settings_init() reports it and refuses to start the registry */
         return;
+    }
     d = &g_defs[g_nrows++];
     memset(d, 0, sizeof *d);
     d->key = key;
@@ -416,9 +696,25 @@ static void build_table(void)
     row("image.contrast", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
     row("image.sharpness", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
     row("image.mains_hz", ST_ENUM, 0, 0, OPT_MAINS, "50", 0, RW, img_get, img_set);
+    row("detect.publish_hz", ST_INT, 0, 10, NULL, "2", 1, RW, dpub_get, dpub_set);
     row("track.enabled", ST_BOOL, 0, 0, NULL, "0", 1, RW, track_get, track_set);
-    row("track.return", ST_ENUM, 0, 0, OPT_TRET, "stay", 1, RW, tret_get, tret_set);
+    row("track.return", ST_ENUM, 0, 0, OPT_TRET, "home", 1, RW, tret_get, tret_set);
     row("track.return_delay_s", ST_INT, 0, 86400, NULL, "30", 1, RW, tret_get, tret_set);
+    row("track.band_pct", ST_INT, 2, 40, NULL, "6", 1, RW, ttune_get, ttune_set);
+    row("track.head_pct", ST_INT, 0, 50, NULL, "15", 1, RW, ttune_get, ttune_set);
+    row("track.gain_pan", ST_INT, 200, 4000, NULL, "1000", 1, RW, tgain_get, tgain_set);
+    row("track.gain_tilt", ST_INT, 200, 4000, NULL, "700", 1, RW, tgain_get, tgain_set);
+    row("track.tilt_band_pct", ST_INT, 2, 40, NULL, "10", 1, RW, tgain_get, tgain_set);
+    row("track.tilt_return_s", ST_INT, 0, 3600, NULL, "0", 1, RW, ttret_get, ttret_set);
+    row("track.zone_pct", ST_INT, 0, 90, NULL, "40", 1, RW, tzone_get, tzone_set);
+    row("track.zone_y_pct", ST_INT, 0, 90, NULL, "30", 1, RW, tzone_get, tzone_set);
+    row("track.zone_head_pct", ST_INT, 0, 90, NULL, "20", 1, RW, tzone_get, tzone_set);
+    row("track.motion", ST_ENUM, 0, 0, OPT_TMOT, "continuous", 1, RW, tzone_get, tzone_set);
+    row("track.lost_policy", ST_STRING, 1, 255, NULL, TL_LOST_DEFAULT, 1, RW, tlost_get, tlost_set);
+    g_defs[g_nrows - 1].check = tlost_check;
+    row("track.lost_step", ST_STRING, 1, 40, NULL, "idle", 0, RO, tlost_get, NULL);
+    row("track.tilt_back_s", ST_INT, 0, 600, NULL, "5", 1, RW, tback_get, tback_set);
+    row("track.lag_ms", ST_INT, -150, 300, NULL, "50", 1, RW, tlag_get, tlag_set);
     for (c = 0; c < A2K_VID_STREAMS; c++) {
         a2k_vid_t cur;
         a2k_vid_get(c, &cur);
@@ -444,11 +740,32 @@ static void build_table(void)
     row("net.wifi_lq", ST_INT, HAL_SYS_NA, 1000, NULL, "-1000000", 0, RO, st_get, NULL);
     row("rtsp.clients", ST_INT, 0, 16, NULL, "0", 0, RO, st_get, NULL);
     row("detect.person", ST_BOOL, 0, 0, NULL, "0", 0, RO, st_get, NULL);
+    row("detect.boxes", ST_STRING, 0, STREG_VAL_MAX - 1, NULL, "{}", 0, RO, dpub_get, NULL);
     row("night.active", ST_BOOL, 0, 0, NULL, "0", 0, RO, st_get, NULL);
     row("ptz.state", ST_STRING, 1, 16, NULL, "unknown", 0, RO, st_get, NULL);
     row("ptz.pan", ST_INT, -1, 100000, NULL, "-1", 0, RO, st_get, NULL);
     row("ptz.tilt", ST_INT, -1, 100000, NULL, "-1", 0, RO, st_get, NULL);
     row("ptz.travel_since_cal", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
+    /* PTZ patrol (off by default): the two settings, then the state; HTTP only (no Home Assistant entity) */
+    row("ptz.patrol.idle_start_s", ST_INT, 0, 86400, NULL, "0", 1, RW, pat_get, pat_set);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("ptz.patrol.travel_budget", ST_INT, 1000, 2000000000, NULL, "200000", 1, RW, pat_get, pat_set);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("ptz.patrol.route_default", ST_STRING, 0, PP_NAME_MAX, NULL, k_none, 1, RW, pat_get, pat_set);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    g_defs[g_nrows - 1].check = pat_check;
+    row("ptz.patrol.state", ST_STRING, 1, 16, NULL, "idle", 0, RO, pat_state_get, NULL);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("ptz.patrol.route", ST_STRING, 0, PP_NAME_MAX, NULL, k_none, 0, RO, pat_state_get, NULL);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("ptz.patrol.step", ST_INT, -1, PP_STEPS, NULL, "-1", 0, RO, pat_state_get, NULL);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("sys.flash_writes_patrol", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("sys.flash_writes_button", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    row("button.last_gesture", ST_STRING, 1, 16, NULL, "none", 0, RO, st_get, NULL);
+    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
     row("sys.flash_writes_ptzpos", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
     row("sys.flash_writes_scene", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
     row("sys.flash_writes_store", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
@@ -480,6 +797,10 @@ static const a2k_action_info_t g_actions[] = {
     { "ptz.recalibrate", AKEY_WRITE, NULL },
     { "ptz.step", AKEY_WRITE, "dir:left|right|up|down" },
     { "ptz.move", AKEY_WRITE, "dx:-400..400,dy:-400..400" },
+    { "ptz.patrol.start", AKEY_WRITE, "route:<route name>" },
+    { "ptz.patrol.stop", AKEY_WRITE, NULL },
+    { "ptz.goto_preset", AKEY_WRITE, "name:<preset name>" },
+    { "mode.apply", AKEY_WRITE, "name:<mode name>" },
     { "settings.reset", AKEY_WRITE, "key:<setting key> | prefix:<key prefix>" },
     { "settings.save", AKEY_WRITE, NULL },
 };
@@ -535,6 +856,7 @@ static void job_err(a2k_job_t *j, int http, const char *err, const char *detail)
 }
 
 static int g_dirty;
+static void act_mode(a2k_job_t *j);
 
 static void act_reset(a2k_job_t *j)
 {
@@ -611,7 +933,44 @@ static void run_action(a2k_job_t *j)
             return;
         }
         last_move = now;
+        if (a2k_patrol_active()) { /* a manual move ends a patrol: stop it and give its running move the time to be cancelled */
+            (void)a2k_patrol_stop_route();
+            usleep(120000);
+        }
         rc = a2k_ptz_nudge(dx, dy);
+    } else if (strcmp(j->name, "ptz.patrol.start") == 0) {
+        a = arg_of(&j->in, "route");
+        if (!a || !pp_name_ok(a)) {
+            job_err(j, 422, "args", "route is a route name");
+            return;
+        }
+        rc = a2k_patrol_start_route(a);
+        if (rc == PP_E_NOTFOUND) {
+            job_err(j, 404, "not_found", "no such route");
+            return;
+        }
+        if (rc != 0) {
+            job_err(j, 409, "unavailable", "the motor is not ready (position unknown, calibrating or privacy)");
+            return;
+        }
+    } else if (strcmp(j->name, "ptz.patrol.stop") == 0) {
+        rc = a2k_patrol_stop_route();
+    } else if (strcmp(j->name, "ptz.goto_preset") == 0) {
+        a = arg_of(&j->in, "name");
+        if (!a || !pp_name_ok(a)) {
+            job_err(j, 422, "args", "name is a preset name");
+            return;
+        }
+        rc = a2k_patrol_goto_preset(a);
+        if (rc == PP_E_NOTFOUND) {
+            job_err(j, 404, "not_found", "no such preset");
+            return;
+        }
+        if (rc != 0)
+            rc = -1;
+    } else if (strcmp(j->name, "mode.apply") == 0) {
+        act_mode(j);
+        return;
     } else if (strcmp(j->name, "settings.reset") == 0) {
         act_reset(j);
         return;
@@ -716,6 +1075,97 @@ static void do_patch(a2k_job_t *j)
     changed_event(j);
 }
 
+/* ---- mode.apply and a2k_settings_apply: a list of key/value pairs through the registry as ONE patch (every pair is validated before any is
+ * applied: streg_patch), with the earlier setters put back if a later one fails. Runs on the worker. ---- */
+#define APPLY_OLD_MAX 160
+typedef struct {
+    a2k_job_t job;
+    char old[BC_MAX_PAIRS][APPLY_OLD_MAX];
+    int have[BC_MAX_PAIRS];
+} apply_ctx_t;
+static apply_ctx_t g_ap_act; /* the mode.apply action (the worker) */
+static apply_ctx_t g_ap_ext; /* a2k_settings_apply of another thread (the button) */
+static pthread_mutex_t g_ap_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int apply_fill(apply_ctx_t *c, size_t n, const char *const *k, const char *const *v)
+{
+    size_t i, off = 0;
+    if (n < 1 || n > BC_MAX_PAIRS)
+        return -1;
+    for (i = 0; i < n; i++) {
+        size_t kl = strlen(k[i]), vl = strlen(v[i]);
+        if (kl > JFLAT_KEY_MAX || vl > JFLAT_VAL_MAX || off + kl + vl + 2 > JFLAT_POOL)
+            return -1;
+        memcpy(c->job.in.pool + off, k[i], kl + 1);
+        c->job.in.key[i] = c->job.in.pool + off;
+        off += kl + 1;
+        memcpy(c->job.in.pool + off, v[i], vl + 1);
+        c->job.in.val[i] = c->job.in.pool + off;
+        off += vl + 1;
+    }
+    c->job.in.n = n;
+    c->job.kind = A2K_JOB_APPLY;
+    c->job.scope = AKEY_WRITE;
+    c->job.src = ST_SRC_HTTP;
+    c->job.name = NULL;
+    c->job.http = 0;
+    return 0;
+}
+
+static void do_apply(apply_ctx_t *c)
+{
+    a2k_job_t *j = &c->job;
+    size_t i;
+    for (i = 0; i < j->in.n; i++) {
+        int n = streg_get(&g_reg, ST_SRC_HTTP, j->in.key[i], c->old[i], sizeof c->old[i]);
+        c->have[i] = n >= 0;
+    }
+    do_patch(j);
+    if (j->http == 200)
+        return;
+    for (i = 0; j->http == 207 && i < j->in.n; i++) { /* a setter failed after others were applied: put those back */
+        st_result_t r;
+        if (j->res[i].ok && c->have[i] && streg_set(&g_reg, ST_SRC_HTTP, AKEY_WRITE, j->in.key[i], c->old[i], &r) == 200)
+            g_dirty = 1;
+    }
+    j->http = j->http == 207 ? 409 : j->http;
+}
+
+static void act_mode(a2k_job_t *j)
+{
+    const char *name = arg_of(&j->in, "name");
+    bc_mode_t m;
+    const char *k[BC_MAX_PAIRS], *v[BC_MAX_PAIRS];
+    int i;
+    size_t f;
+    if (!name || !pp_name_ok(name)) {
+        job_err(j, 422, "args", "name is a mode name");
+        return;
+    }
+    if (a2k_btn_mode_get(name, &m) != 0) {
+        job_err(j, 404, "not_found", "no such mode");
+        return;
+    }
+    for (i = 0; i < m.n; i++) {
+        k[i] = m.key[i];
+        v[i] = m.val[i];
+    }
+    if (apply_fill(&g_ap_act, (size_t)m.n, k, v) != 0) {
+        job_err(j, 422, "args", "the mode is empty or too big");
+        return;
+    }
+    do_apply(&g_ap_act);
+    if (g_ap_act.job.http == 200)
+        return;
+    for (f = 0; f < g_ap_act.job.in.n; f++)
+        if (!g_ap_act.job.res[f].ok && g_ap_act.job.res[f].err != ST_E_NOTAPPLIED)
+            break;
+    j->http = g_ap_act.job.http == 409 ? 409 : 422;
+    j->err = "mode_refused";
+    snprintf(j->detail, sizeof j->detail, "%.30s: %s", f < g_ap_act.job.in.n ? g_ap_act.job.in.key[f] : "-",
+             f < g_ap_act.job.in.n ? streg_err_name(g_ap_act.job.res[f].err) : "refused");
+}
+
 static void *worker(void *arg)
 {
     (void)arg;
@@ -739,6 +1189,8 @@ static void *worker(void *arg)
         pthread_mutex_unlock(&g_mu);
         if (j->kind == A2K_JOB_PATCH)
             do_patch(j);
+        else if (j->kind == A2K_JOB_APPLY)
+            do_apply((apply_ctx_t *)j);
         else
             run_action(j);
         pthread_mutex_lock(&g_mu);
@@ -809,7 +1261,12 @@ int a2k_settings_start(const a2k_settings_cfg_t *cfg)
     else
         a2k_image_defaults(&g_img);
     a2k_netreg_set_backend(&g_netb);
+    g_overflow = 0;
     build_table();
+    if (g_overflow) {
+        a2k_log("settings: %d registry row(s) do not fit MAX_ROWS (%d): raise it; API settings disabled", g_overflow, MAX_ROWS);
+        return -1;
+    }
     if (streg_init(&g_reg, g_defs, g_nrows, MODEL_2K, 0, &bad) != 0) {
         a2k_log("settings: the registry table is invalid at row %lu (%s): API settings disabled", (unsigned long)bad,
                 bad < g_nrows ? g_defs[bad].key : "?");
@@ -865,4 +1322,42 @@ void a2k_settings_stop(void)
     g_started = 0;
     if (g_dirty)
         save_now();
+}
+
+/* ------------------------------------------------------------------ for the button (a2k_settings.h) */
+int a2k_settings_apply(size_t n, const char *const *keys, const char *const *vals, char *detail, size_t dcap)
+{
+    int rc = -1, http;
+    if (detail && dcap)
+        detail[0] = '\0';
+    pthread_mutex_lock(&g_ap_mu);
+    if (g_started && a2k_settings_idle() && apply_fill(&g_ap_ext, n, keys, vals) == 0) {
+        /* the job is the first member of the context: the worker casts it back */
+        rc = a2k_settings_exec(&g_ap_ext.job);
+        http = g_ap_ext.job.http;
+        if (rc == 0 && http == 200) {
+            rc = 0;
+        } else {
+            size_t f;
+            for (f = 0; rc == 0 && f < n; f++)
+                if (!g_ap_ext.job.res[f].ok && g_ap_ext.job.res[f].err != ST_E_NOTAPPLIED) {
+                    if (detail && dcap)
+                        snprintf(detail, dcap, "%s: %s", keys[f], streg_err_name(g_ap_ext.job.res[f].err));
+                    break;
+                }
+            rc = -1;
+        }
+    }
+    pthread_mutex_unlock(&g_ap_mu);
+    return rc;
+}
+
+int a2k_settings_mode_key_ok(const char *key, const char *val)
+{
+    const st_def_t *d = streg_find(&g_reg, key);
+    if (!d || !(d->access & ST_ACC_WRITE) || d->secret || d->apply != AP_LIVE || !(d->expose & ST_EXPOSE_HTTP) || d->min_scope > AKEY_WRITE)
+        return -1;
+    if (!strncmp(key, "net.", 4) || !strncmp(key, "api.", 4) || !strncmp(key, "mqtt.", 5))
+        return -1;
+    return streg_check_one(&g_reg, ST_SRC_HTTP, AKEY_WRITE, key, val) == ST_OK ? 0 : -1;
 }

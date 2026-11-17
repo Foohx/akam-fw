@@ -8,4 +8,5 @@
 
 const hal_ptz_desc_t a2k_ptz_desc = {
     "/dev/tymotor", { 0, 2, 4, 6 }, 300, 3650, 300, 2100, 1275, 1300, 1275, 300, 4000, 2160, 3, 200,
+    { 1, 3, 5, 7 }, 1, /* diagonals: up-right 1, down-right 3, down-left 5, up-left 7 (measured 2026-11-16/17: both axes move at once, ~370 steps/s each at divisor 3) */
 };

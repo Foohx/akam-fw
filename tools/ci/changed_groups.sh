@@ -9,6 +9,7 @@
 #       (lint still runs); but THIRD_PARTY_NOTICES.md, LICENSE, CHANGELOG.md and tools/release/*.md are embedded in
 #       or checked by release code and tests -> go + shell
 #   a file listed in tools/assistant/internal/assets/sources.txt (embedded in the assistant) -> go, plus its own rule
+#   src/common/**                                            -> native + shell + rot2k (the 2K links the shared sources since P1-P3)
 #   src/**, tests/native/**                                  -> native + shell (shell tests build against src/)
 #   firmware/lsc-rotatable-2k-ak3918av130/**                 -> rot2k only (never the 1080p groups)
 #   tests/<name>_test.sh                                     -> the group of that test (tools/ci/test_groups.txt)
@@ -55,6 +56,7 @@ while IFS= read -r f; do
         THIRD_PARTY_NOTICES.md | LICENSE | CHANGELOG.md | tools/release/*.md) go=true shell=true ;;
         *.md | docs/* | images/* | specs/* | .github/ISSUE_TEMPLATE/* | .github/FUNDING.yml) ;;
         firmware/lsc-rotatable-2k-ak3918av130/*) rot2k=true ;;
+        src/common/*) native=true shell=true rot2k=true ;;
         src/* | tests/native/*) native=true shell=true ;;
         tests/*_test.sh)
             case $(test_group "$REPO/tests" "${f#tests/}") in

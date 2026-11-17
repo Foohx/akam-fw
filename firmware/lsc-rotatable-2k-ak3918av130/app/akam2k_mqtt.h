@@ -23,6 +23,7 @@
 #define A2K_MQTT_CONF_DEFAULT "/mnt/sdcard/akam/mqtt"
 #define A2K_MQTT_MAC_PATH "/sys/class/net/wlan0/address"
 #define A2K_MQTT_RING 8
+#define A2K_MQTT_DET_MAX 800           /* the largest detections list published (api_events.h A2K_EVT_DDATA) */
 #define A2K_MQTT_SNAP_MAX (200u << 10) /* the largest snapshot JPEG published; a bigger one is skipped */
 
 /* The network, replaceable by the host unit test (tests/rot2k_mqtt_unit.c) with a scripted stub socket. */
@@ -96,6 +97,14 @@ void a2k_mqtt_resync(void);
 /* The push button was pressed briefly: publishes the Home Assistant event (type "press" only; others are ignored). Cheap, never blocks;
  * at most 4 presses wait for the broker, a dead broker drops them. */
 void a2k_mqtt_button_event(const char *type);
+/* Every gesture of the programmable button (akam2k_buttonrt.h): queued and published on BASE/button as json (the same text as the API event
+ * "button": {"gesture","actions","result"}), not retained; a "short" gesture also publishes the legacy event above. Only with the ctl group (the
+ * same opt-in as the event entity); never blocks. json: at most A2K_MQTT_GESTURE_MAX bytes (longer is dropped). */
+#define A2K_MQTT_GESTURE_MAX 144
+void a2k_mqtt_button_gesture(const char *gesture, const char *json);
+/* Before a2k_mqtt_start: the configured gestures (canonical names, at most A2K_BTN_TRIG_N) for the device triggers; returns how many. Called from the
+ * MQTT thread at every announce; call a2k_mqtt_resync after the bindings changed. NULL (the default) = no triggers. */
+void a2k_mqtt_set_buttons(int (*list)(char names[][A2K_BTN_NAME]));
 /* Called by the PTZ thread after every state change (cheap, thread safe, never blocks on the network): published at once and with every
  * periodic republish, like the day/night state. state: "home" "parked" "moved" "calibrating" "unknown"; pan / tilt only when known. */
 void a2k_mqtt_ptz(const char *state, int known, int pan, int tilt);
@@ -111,6 +120,12 @@ void a2k_mqtt_stop(void);
 /* Called by the detection thread with the state it just wrote to the state file. Cheap, thread safe, never blocks on
  * the network. epoch: wall clock seconds. */
 void a2k_mqtt_detection(const a2k_det_t *d, const char *status, int64_t epoch);
+/* Called by the detection thread with each person-box list it publishes (akam2k_detpub.h JSON, already rate limited). Cheap, never blocks
+ * on the network, a no-op when MQTT is off. The module keeps the NEWEST list not sent yet; the MQTT thread publishes it on BASE/detections
+ * (QoS 0, not retained, no discovery entity). Lists made while the broker is away are dropped. */
+void a2k_mqtt_detections(const char *json);
+/* Lists published, lists dropped (replaced before they were sent, too long, or the broker was away). */
+void a2k_mqtt_det_stats(unsigned *sent, unsigned *dropped);
 /* "off", "connecting", "connected" or "error:<reason>". */
 void a2k_mqtt_conn_state(char *out, size_t cap);
 /* Counters: messages published, connections made. */

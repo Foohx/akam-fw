@@ -6,9 +6,10 @@
 # A file is added here only if it has no vendor header, no device path and no ioctl, and a host test runs it.
 
 COMMON_NET   := h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtsp_busy rtp_clock tx_pace net_tx md5 sha1 b64 cred \
-                mqtt mqtt_ha
-COMMON_LOGIC := night_logic cfg_file klog audio_jitter audio_vad g711
+                mqtt mqtt_ha sha256 http_req
+COMMON_API   := json_min api_sig api_keys api_limit settings_reg api_events api_core api_httpd
+COMMON_LOGIC := night_logic cfg_file klog audio_jitter audio_vad g711 hal_sys light_logic led_pat hal_input button_logic button_gesture button_cfg
 
-common_src = $(or $(and $(filter $(1),$(COMMON_NET)),$(COMMON_DIR)/net/$(1).c),$(and $(filter $(1),$(COMMON_LOGIC)),$(COMMON_DIR)/logic/$(1).c),$(error not a src/common source: $(1)))
+common_src = $(or $(and $(filter $(1),$(COMMON_NET)),$(COMMON_DIR)/net/$(1).c),$(and $(filter $(1),$(COMMON_API)),$(COMMON_DIR)/api/$(1).c),$(and $(filter $(1),$(COMMON_LOGIC)),$(COMMON_DIR)/logic/$(1).c),$(error not a src/common source: $(1)))
 common_obj = $(patsubst %.c,%.o,$(call common_src,$(1)))
-common_inc = -I$(COMMON_DIR)/net -I$(COMMON_DIR)/logic
+common_inc = -I$(COMMON_DIR)/net -I$(COMMON_DIR)/logic -I$(COMMON_DIR)/api

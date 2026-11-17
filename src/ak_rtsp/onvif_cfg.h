@@ -2,7 +2,7 @@
  * the HTTP server (onvif.c + http_srv.c) and WS-Discovery (wsd.c).
  *
  * Flag file /etc/config/akam/onvif, written by akam_onvif.sh: exactly two lines, `enabled=1|0` and `port=N`, any
- * order, LF (a trailing CR is tolerated like the helper does), N a whole number 1..65535 except 21-24, 554 and 8091
+ * order, LF (a trailing CR is tolerated like the helper does), N a whole number 1..65535 except 21-24, 554, 8091 and 8092
  * (the ports of the other Akam services). Absent file = off. Anything else (unknown or repeated key, missing key,
  * bad number, a third line, file over ONVIF_CFG_MAX bytes) = off, with one log line.
  *
@@ -34,7 +34,7 @@ extern const char *onvif_cfg_path;
 /* TEST-ONLY: passed to wsd_start (bind an unprivileged port, notify elsewhere). NULL in production. */
 extern const wsd_test_t *onvif_svc_wsd_test;
 
-/* 1 when `port` may be used for the HTTP server (1..65535, not 21-24, 554, 8091). */
+/* 1 when `port` may be used for the HTTP server (1..65535, not 21-24, 554, 8091, 8092). */
 int onvif_cfg_port_ok(long port);
 /* Strict parse of the file content. 0 = valid (*out filled), -1 = invalid. */
 int onvif_cfg_parse(const char *text, size_t len, onvif_cfg_t *out);

@@ -42,6 +42,9 @@ native jitter_test.sh
 shell kit_test.sh
 native klog_test.sh
 native leds_test.sh
+native leds_oracle_test.sh
+native ak1080_settings_test.sh
+native ak1080_api_http_test.sh
 shell lockdown_test.sh
 native mqtt_codec_test.sh
 native mqtt_ha_test.sh

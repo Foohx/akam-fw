@@ -1,18 +1,15 @@
-/* See akam2k_api.h. */
-#include "akam2k_api.h"
+/* See api_core.h. */
+#include "api_core.h"
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
-#include "akam2k_apievt.h"
-#include "akam2k_log.h"
-#include "akam2k_mqttcfg.h" /* A2K_APP_VERSION */
-#include "akam2k_settings.h"
-#include "akam2k_store.h"
+#include "api_events.h"
 #include "api_keys.h"
 #include "api_limit.h"
 #include "api_sig.h"
@@ -22,7 +19,7 @@
 #include "sha256.h"
 
 enum { R_NONE, R_HELLO, R_INFO, R_SCHEMA, R_SETTINGS, R_SETTING_ONE, R_STATE, R_EVENTS, R_PATCH, R_ACTION, R_AUDIT, R_KEYS_LIST,
-       R_KEYS_ADD, R_KEYS_DEL };
+       R_KEYS_ADD, R_KEYS_DEL, R_EXT, R_EXT_W };
 
 typedef struct {
     char line[256];
@@ -50,6 +47,37 @@ static double g_audit_tokens = 2.0;
 static uint64_t g_start_ms;
 static a2k_job_t g_job;
 static const char k_nobody[1] = { 0 }; /* an absent body parses as the empty text */
+static size_t g_ext_idx;                /* the extra route family that matched the request being handled */
+
+/* ------------------------------------------------------------------ the binding */
+void a2k_api_log(const char *fmt, ...)
+{
+    char line[256];
+    va_list ap;
+    if (!g_env.log)
+        return;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    g_env.log(line);
+}
+
+static int st_read(const char *path, char *buf, size_t cap)
+{
+    if (!g_env.store_read || !path[0]) {
+        if (cap)
+            buf[0] = '\0';
+        return -1;
+    }
+    return g_env.store_read(path, buf, cap);
+}
+
+static int st_write(const char *path, const char *text, size_t len, unsigned mode)
+{
+    return g_env.store_write && path[0] ? g_env.store_write(path, text, len, mode) : -1;
+}
+
+static const a2k_api_backend_t *be(void) { return g_env.backend; }
 
 /* ------------------------------------------------------------------ clocks and randomness */
 static int64_t wall_s(void)
@@ -118,12 +146,13 @@ static void ok_reply(char *out, size_t cap, a2k_api_out_t *res, const char *deta
 static int keys_writer(void *ctx, const char *text, size_t len)
 {
     (void)ctx;
-    return a2k_store_write_mode(g_keys_path, text, len, 0600);
+    return st_write(g_keys_path, text, len, 0600);
 }
 
 static void keys_changed(void)
 {
-    a2k_settings_set_keys((int)g_keys.n);
+    if (be() && be()->keys_changed)
+        be()->keys_changed((int)g_keys.n);
 }
 
 int a2k_api_keys_count(void) { return (int)g_keys.n; }
@@ -156,17 +185,17 @@ int a2k_api_keys_refresh(void)
     g_kino = st.st_ino;
     if (st.st_mode & 077) { /* readable by others: refused like mqtt_pass; the file is kept, the API stays closed */
         if (!g_keys_err)
-            a2k_log("api: %s is readable by others (mode %o): the API stays closed", g_keys_path, (unsigned)(st.st_mode & 0777));
+            a2k_api_log("api: %s is readable by others (mode %o): the API stays closed", g_keys_path, (unsigned)(st.st_mode & 0777));
         memset(&g_keys, 0, sizeof g_keys);
         g_keys_err = "keys_perm";
         keys_changed();
         return 0;
     }
-    n = a2k_store_read(g_keys_path, buf, sizeof buf);
+    n = st_read(g_keys_path, buf, sizeof buf);
     if (n < 0 || akeys_parse(&k, buf, (size_t)n, NULL) != AKEYS_OK) {
         akam_wipe(buf, sizeof buf);
         akam_wipe(&k, sizeof k);
-        a2k_log("api: %s is invalid: the API stays closed (the file is kept)", g_keys_path);
+        a2k_api_log("api: %s is invalid: the API stays closed (the file is kept)", g_keys_path);
         memset(&g_keys, 0, sizeof g_keys);
         g_keys_err = "keys_invalid";
         keys_changed();
@@ -180,7 +209,7 @@ int a2k_api_keys_refresh(void)
             if (akeys_find(&k, g_keys.k[i].id) < 0 || memcmp(k.k[akeys_find(&k, g_keys.k[i].id)].secret, g_keys.k[i].secret, 32))
                 apisig_drop_key(&g_sig, g_keys.k[i].id);
         g_keys = k;
-        a2k_log("api: key file reloaded, %d key(s)", (int)g_keys.n);
+        a2k_api_log("api: key file reloaded, %d key(s)", (int)g_keys.n);
         keys_changed();
     }
     akam_wipe(buf, sizeof buf); /* the secrets must not stay on the stack */
@@ -193,8 +222,8 @@ int a2k_api_keys_refresh(void)
 /* ------------------------------------------------------------------ audit */
 static void audit_load(void)
 {
-    char buf[A2K_STORE_MAX + 1], *line, *save = NULL;
-    int n = a2k_store_read(g_audit_path, buf, sizeof buf);
+    char buf[A2K_API_STORE_MAX + 1], *line, *save = NULL;
+    int n = st_read(g_audit_path, buf, sizeof buf);
     if (n <= 0)
         return;
     for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
@@ -211,14 +240,14 @@ static void audit_load(void)
 
 static void audit_persist(void)
 {
-    char buf[A2K_STORE_MAX + 1];
+    char buf[A2K_API_STORE_MAX + 1];
     size_t len = 0;
     unsigned i, total = g_wr_n < A2K_API_AUDIT_PERSIST ? g_wr_n : A2K_API_AUDIT_PERSIST;
     unsigned first = total;
     /* newest entries that fit the file, written oldest first */
     for (i = 0; i < total; i++) {
         size_t l = strlen(g_wr[(g_wr_n - 1 - i) % A2K_API_AUDIT_PERSIST].line);
-        if (len + l + 1 > A2K_STORE_MAX)
+        if (len + l + 1 > A2K_API_STORE_MAX)
             break;
         len += l + 1;
         first = total - 1 - i;
@@ -231,7 +260,7 @@ static void audit_persist(void)
         len += l;
         buf[len++] = '\n';
     }
-    if (a2k_store_write_mode(g_audit_path, buf, len, 0600) == 0)
+    if (st_write(g_audit_path, buf, len, 0600) == 0)
         g_audit_dirty = 0;
 }
 
@@ -255,7 +284,7 @@ static void audit_add(const a2k_api_in_t *in, int status, const char *keyid, int
         g_wr_n++;
         g_audit_dirty = 1;
     }
-    a2k_log("api: %s %s %s key=%s -> %d", in->peer_str ? in->peer_str : "?", in->rq->method, in->rq->path, kid, status);
+    a2k_api_log("api: %s %s %s key=%s -> %d", in->peer_str ? in->peer_str : "?", in->rq->method, in->rq->path, kid, status);
 }
 
 void a2k_api_tick(void)
@@ -278,8 +307,8 @@ int a2k_api_init(const a2k_api_env_t *env)
     memset(&g_env, 0, sizeof g_env);
     if (env)
         g_env = *env;
-    snprintf(g_keys_path, sizeof g_keys_path, "%s", g_env.keys_path ? g_env.keys_path : A2K_API_KEYS);
-    snprintf(g_audit_path, sizeof g_audit_path, "%s", g_env.audit_path ? g_env.audit_path : A2K_API_AUDIT);
+    snprintf(g_keys_path, sizeof g_keys_path, "%s", g_env.keys_path ? g_env.keys_path : "");
+    snprintf(g_audit_path, sizeof g_audit_path, "%s", g_env.audit_path ? g_env.audit_path : "");
     memset(&g_keys, 0, sizeof g_keys);
     g_keys_err = NULL;
     g_kseen = 0;
@@ -370,6 +399,12 @@ static int route(const char *method, const char *sub, int *scope)
         *scope = AKEY_WRITE;
         return post ? R_ACTION : -405;
     }
+    for (g_ext_idx = 0; g_ext_idx < g_env.n_ext; g_ext_idx++) /* the extra routes of the model (the 2K: PTZ patrol, the button) */
+        if (g_env.ext[g_ext_idx].match(sub)) {
+            if (get) return R_EXT;
+            *scope = AKEY_WRITE;
+            return post || del ? R_EXT_W : -405;
+        }
     *scope = AKEY_ADMIN;
     if (!strcmp(sub, "/audit")) return get ? R_AUDIT : -405;
     if (!strcmp(sub, "/keys")) return get ? R_KEYS_LIST : post ? R_KEYS_ADD : -405;
@@ -382,8 +417,10 @@ static void h_info(const akeys_t *keys, int key_idx, char *out, size_t cap, a2k_
 {
     jw_t w;
     jw_init(&w, out, cap);
-    jw_raw(&w, "{\"api\":1,\"model\":\"lsc-rotatable-2k\",\"app\":");
-    jw_str(&w, A2K_APP_VERSION);
+    jw_raw(&w, "{\"api\":1,\"model\":");
+    jw_str(&w, g_env.model ? g_env.model : "unknown");
+    jw_raw(&w, ",\"app\":");
+    jw_str(&w, g_env.version ? g_env.version : "unknown");
     jw_raw(&w, ",\"app_uptime_s\":");
     jw_long(&w, (long)((mono_ms() - g_start_ms) / 1000u));
     jw_raw(&w, ",\"clock_set\":");
@@ -412,7 +449,7 @@ static void h_info(const akeys_t *keys, int key_idx, char *out, size_t cap, a2k_
 
 static void h_schema(char *out, size_t cap, a2k_api_out_t *res)
 {
-    int n = streg_json_schema(a2k_settings_reg(), out, cap);
+    int n = streg_json_schema(be()->reg(), out, cap);
     size_t i, len;
     jw_t w;
     if (n < 0 || out[n - 1] != '}') {
@@ -422,8 +459,8 @@ static void h_schema(char *out, size_t cap, a2k_api_out_t *res)
     len = (size_t)n - 1; /* reopen the object: ,"actions":[...]} */
     jw_init(&w, out + len, cap - len);
     jw_raw(&w, ",\"actions\":[");
-    for (i = 0; i < a2k_settings_action_count(); i++) {
-        const a2k_action_info_t *a = a2k_settings_action(i);
+    for (i = 0; i < be()->action_count(); i++) {
+        const a2k_action_info_t *a = be()->action(i);
         if (i)
             jw_raw(&w, ",");
         jw_raw(&w, "{\"name\":");
@@ -455,7 +492,7 @@ static void h_settings_get(const hreq_t *rq, int state_only, char *out, size_t c
         err_reply(out, cap, res, 400, "bad_query", "only prefix=<key prefix> is accepted");
         return;
     }
-    n = streg_json_values(a2k_settings_reg(), q == 1 ? prefix : NULL, state_only, out, cap);
+    n = streg_json_values(be()->reg(), q == 1 ? prefix : NULL, state_only, out, cap);
     if (n < 0)
         err_reply(out, cap, res, 500, "too_big", "reply does not fit");
     else
@@ -464,7 +501,7 @@ static void h_settings_get(const hreq_t *rq, int state_only, char *out, size_t c
 
 static void h_setting_one(const char *key, char *out, size_t cap, a2k_api_out_t *res)
 {
-    int n = streg_json_setting(a2k_settings_reg(), key, out, cap);
+    int n = streg_json_setting(be()->reg(), key, out, cap);
     if (n == ST_E_UNKNOWN)
         err_reply(out, cap, res, 404, "unknown_key", "no such setting");
     else if (n < 0)
@@ -487,7 +524,7 @@ static const char *jf_err(int rc)
 /* Runs the job on the worker; fills the reply for the transport errors. Returns 1 when the job finished. */
 static int run_job(char *out, size_t cap, a2k_api_out_t *res)
 {
-    int rc = a2k_settings_exec(&g_job);
+    int rc = be()->exec(&g_job);
     if (rc == -2) {
         err_reply(out, cap, res, 503, "busy", "a previous change is still running");
         res->retry_s = 3;
@@ -505,7 +542,7 @@ static void h_patch(const a2k_api_in_t *in, int scope, char *out, size_t cap, a2
     int rc;
     const char *k[JFLAT_MAX], *v[JFLAT_MAX];
     size_t i;
-    if (!a2k_settings_idle()) {
+    if (!be()->idle()) {
         err_reply(out, cap, res, 503, "busy", "a previous change is still running");
         res->retry_s = 3;
         return;
@@ -526,6 +563,12 @@ static void h_patch(const a2k_api_in_t *in, int scope, char *out, size_t cap, a2
     g_job.name = NULL;
     if (!run_job(out, cap, res))
         return;
+    if (g_job.err) { /* the backend refused the whole request before applying anything (the 1080p flash limiter) */
+        err_reply(out, cap, res, g_job.http, g_job.err, g_job.detail);
+        if (g_job.http == 429)
+            res->retry_s = 20;
+        return;
+    }
     for (i = 0; i < g_job.in.n; i++) {
         k[i] = g_job.in.key[i];
         v[i] = g_job.in.val[i];
@@ -535,7 +578,7 @@ static void h_patch(const a2k_api_in_t *in, int scope, char *out, size_t cap, a2
             strcat(what, k[i]);
         }
     }
-    rc = streg_json_patch_reply(a2k_settings_reg(), g_job.in.n, k, v, g_job.res, out, cap);
+    rc = streg_json_patch_reply(be()->reg(), g_job.in.n, k, v, g_job.res, out, cap);
     if (rc < 0)
         err_reply(out, cap, res, 500, "too_big", "reply does not fit");
     else
@@ -544,16 +587,16 @@ static void h_patch(const a2k_api_in_t *in, int scope, char *out, size_t cap, a2
 
 static void h_action(const a2k_api_in_t *in, const char *name, int scope, char *out, size_t cap, a2k_api_out_t *res)
 {
-    int idx = a2k_settings_action_find(name), rc;
+    int idx = be()->action_find(name), rc;
     if (idx < 0) {
         err_reply(out, cap, res, 404, "unknown_action", "no such action");
         return;
     }
-    if (a2k_settings_action(idx)->min_scope > scope) {
+    if (be()->action(idx)->min_scope > scope) {
         err_reply(out, cap, res, 403, "scope", "this key may not call that action");
         return;
     }
-    if (!a2k_settings_idle()) {
+    if (!be()->idle()) {
         err_reply(out, cap, res, 503, "busy", "a previous change is still running");
         res->retry_s = 3;
         return;
@@ -569,7 +612,7 @@ static void h_action(const a2k_api_in_t *in, const char *name, int scope, char *
     g_job.kind = A2K_JOB_ACTION;
     g_job.scope = scope;
     g_job.src = ST_SRC_HTTP;
-    g_job.name = a2k_settings_action(idx)->name;
+    g_job.name = be()->action(idx)->name;
     if (!run_job(out, cap, res))
         return;
     if (g_job.err)
@@ -779,7 +822,7 @@ void a2k_api_handle(const a2k_api_in_t *in, char *out, size_t cap, a2k_api_out_t
         err_reply(out, cap, res, 400, "bad_path", "the path is not canonical");
         return;
     }
-    if ((rt == R_PATCH || rt == R_KEYS_ADD) && rq->content_length < 0) {
+    if ((rt == R_PATCH || rt == R_KEYS_ADD || (rt == R_EXT_W && !strcmp(rq->method, "POST"))) && rq->content_length < 0) {
         err_reply(out, cap, res, 411, "length_required", "Content-Length is required");
         return;
     }
@@ -854,7 +897,7 @@ void a2k_api_handle(const a2k_api_in_t *in, char *out, size_t cap, a2k_api_out_t
         return;
     }
     scope = ar.scope;
-    write = rt == R_PATCH || rt == R_ACTION || rt == R_KEYS_ADD || rt == R_KEYS_DEL;
+    write = rt == R_PATCH || rt == R_ACTION || rt == R_KEYS_ADD || rt == R_KEYS_DEL || rt == R_EXT_W;
 
     switch (rt) {
     case R_INFO: h_info(&g_keys, ar.key_idx, out, cap, res); break;
@@ -875,6 +918,16 @@ void a2k_api_handle(const a2k_api_in_t *in, char *out, size_t cap, a2k_api_out_t
         snprintf(what, sizeof what, "%.60s", sub + 9);
         h_action(in, sub + 9, scope, out, cap, res);
         break;
+    case R_EXT:
+    case R_EXT_W: {
+        unsigned retry_s = 0;
+        int st = g_env.ext[g_ext_idx].handle(rq->method, sub, in->body, in->body_len, out, cap, &retry_s);
+        res->status = st;
+        res->len = strlen(out);
+        res->retry_s = retry_s;
+        snprintf(what, sizeof what, "%.60s", sub + 1);
+        break;
+    }
     case R_KEYS_ADD: h_keys_add(in, out, cap, res, what, sizeof what); break;
     case R_KEYS_DEL: h_keys_del(sub + 6, out, cap, res, what, sizeof what); break;
     default: err_reply(out, cap, res, 404, "unknown_path", "no such path"); break;
@@ -899,10 +952,10 @@ int a2k_api_key_cli(const a2k_api_env_t *env, int argc, char **argv)
     memset(&g_env, 0, sizeof g_env);
     if (env)
         g_env = *env;
-    snprintf(g_keys_path, sizeof g_keys_path, "%s", g_env.keys_path ? g_env.keys_path : A2K_API_KEYS);
+    snprintf(g_keys_path, sizeof g_keys_path, "%s", g_env.keys_path ? g_env.keys_path : "");
     if (argc < 1)
         return cli_usage();
-    n = a2k_store_read(g_keys_path, buf, sizeof buf);
+    n = st_read(g_keys_path, buf, sizeof buf);
     if (n < 0)
         n = 0, buf[0] = '\0'; /* no file yet: no key */
     if (akeys_parse(&keys, buf, (size_t)n, NULL) != AKEYS_OK) {

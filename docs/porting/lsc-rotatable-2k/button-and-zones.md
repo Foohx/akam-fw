@@ -11,27 +11,89 @@ pressed. See `stock-firmware-reference.md`.
 
 - `app/hal_input.c/.h` portable: descriptor `{name, gpio, active_low, debounce_ms}`, the debouncer, the driver interface (`setup`, `read`). The
   generic sysfs driver is `app/hal_input_sysfs.c`; the 2K descriptor is in `akam2k_hal.c` (`button`, 71, active low, 50 ms).
-- `app/button_logic.c/.h` portable and pure: the press policy (below), host-tested.
-- `app/akam2k_button.c`: the thread (20 ms poll, 32 KiB stack), the actions.
+- `app/button_gesture.c`, `button_cfg.c`, `button_logic.c`, `akam2k_buttonrt.c` (below): the gesture engine, the bindings, the policy and the runtime.
+- `app/akam2k_button.c`: the thread (20 ms poll, 32 KiB stack), the real actions.
 - `app/akam2k_pin.c` stays the ONLY file that touches the GPIO subsystem. Pin 71 is an **input-only** pin: `a2k_pin_allowed(71)` is still 0, the output
   whitelist stays 24 / 25 / 48 / 56, `a2k_pin_open_in(71)` writes `in` to the direction file and opens the value file O_RDONLY, nothing is ever written to it.
 
-**Policy (release decides).**
+**Programmable.** Every press pattern is a gesture bound to up to four whitelisted actions; the factory behaviour is just the default binding. Layers:
+`button_gesture.c/.h` (pure: the gesture engine), `button_cfg.c/.h` (pure: bindings, action whitelist, modes, dispatch through an ops table),
+`button_logic.c/.h` (pure: debounce + gesture engine + LED cues), `akam2k_buttonrt.c/.h` (the live config, its persistence, the HTTP handlers, the glue to the
+API event ring and MQTT; no hardware) and `akam2k_button.c` (the thread and the real actions). All host-tested by `tests/rot2k_button_unit.c` and, through the
+API, by `tests/rot2k_control_api_http_test.sh`.
 
-| press | action |
+**Gestures.** Each press is classified by how long it was held; a gesture is a sequence of up to 6 presses:
+
+| element | held |
 |---|---|
-| < 1 s | short press: Home Assistant `event` entity "Button" (`event_type` `press`) + blue LED double blink (`2:150:150:0`, 0.7 s) |
-| 1 s .. `button_long_ms` | nothing (dead zone) |
-| >= `button_long_ms` (default 2 s) | long press: `a2k_ptz_toggle_park()` (parked -> home, anything else -> park). The LED blinks fast (`1:100:100:0`) from 500 ms of hold ("keep holding"); at the threshold it shows a double blink then stays solid until the release ("release now") |
+| `S` short | < `short_max_ms` (default 1 s) |
+| `L` long | >= `long_ms` (default 2 s; `button_long_ms` of `akam2k.conf` seeds it) |
+| `V` very long | >= `very_long_ms` (default 5 s); only when some binding contains a `V`, otherwise such a hold is just a long press |
+| between `short_max_ms` and `long_ms` | dead zone: the whole interaction is dropped, nothing happens |
 
-- `button_long_ms` (`akam2k.conf`, 1500..10000, default 2000) is `--button-long-ms`; it is always above the 1 s short limit.
+Names: `short` = `S`, `double` = `S S`, `triple` = `S S S`, `long` = `L`, `very_long` = `V`; anything else is its tokens joined by spaces (`S S L`, up to 6).
+A gesture ends when the next press does not come within `gap_ms` (default 400 ms) of a release. **Exactly one gesture is reported per interaction**, and the engine
+only waits when waiting can matter (longest match): a press is reported at its release, with no delay, unless a longer bound gesture starts with it (bind `double`
+and a lone short press is reported `gap_ms` later). A sequence that is not bound and cannot grow (`S L` with only `S S L` bound) is reported at once as an unbound
+gesture; at 6 elements the sequence ends. Timing, all configurable and validated together: `debounce_ms` 10..200 (default 50), `short_max_ms` 200..1500 (1000),
+`gap_ms` 150..1000 (400), `long_ms` 1500..10000 (2000, above `short_max_ms`), `very_long_ms` long+500..30000 (5000).
+
+**Bindings.** Up to 16 `{gesture -> [actions]}`, up to 4 actions each, run in order (a failing action does not stop the next ones). Only this whitelist exists:
+
+| action | effect |
+|---|---|
+| `none` | nothing (the gesture is still an event) |
+| `ptz.home`, `ptz.park`, `ptz.recalibrate` | like the API / MQTT buttons |
+| `ptz.toggle_park` | parked -> home, anything else -> park (the factory long press) |
+| `ptz.privacy on\|off\|toggle` | on = park, off = home, toggle = `ptz.toggle_park`. Privacy in this app IS the parked head: the video is withheld while parked only with `ptz_privacy=1`; there is no other run-time privacy switch |
+| `ptz.goto_preset NAME` | a patrol preset (a manual move: it stops a patrol) |
+| `track on\|off\|toggle` | person tracking, through the registry (`track.enabled`: same setter, same persistence as over the API) |
+| `track.lost_policy VALUE` | the `track.lost_policy` setting (the tracker validates the value; refused at run time on a build without that row) |
+| `patrol start ROUTE`, `patrol stop` | the PTZ patrol |
+| `led pattern P` | the status LED shows pattern P for 3 s: `on`, `off`, `N:on_ms:off_ms:pause_ms` or a name (`ack` `blink` `fast` `slow`) |
+| `mode NAME` | apply a named mode |
+
+**Nothing destructive can be bound**: no reset, no key or network change, no reboot; the parser accepts exactly this list (a unit test feeds it the lookalikes and
+the chained forms).
+
+**Modes.** A mode is a named set of up to 8 `key=value` settings (at most 8 modes), applied through the settings registry as ONE patch: every pair is validated
+before any is applied (a bad value or a failed cross-field rule applies nothing), and if a setter then fails the ones already applied are put back. Only rows that
+are writable, not secret, applied live and shown over HTTP can be in a mode, and never `net.*` / `api.*`. The same mode is applied by the action
+`mode.apply {"name":".."}`.
+
+**Every gesture, bound or not,** emits the API event `button`
+`{"gesture":"double","actions":["mode night","ptz.home"],"result":"ok"}` (`result`: `ok`, `partial`, `failed`, `unbound`; a long action list is cut with
+`"more":N` to fit the 144-byte event) and an MQTT publish of the same text on `BASE/button` (not retained), and sets the state `button.last_gesture`. While the PTZ
+calibration runs nothing is dispatched or published (the LED cues only). The LED confirmation blink (`led_ack`, default on) is the double blink `2:150:150:0` after
+a bound gesture that ends with a short press; the hold cues are unchanged (fast blink from 500 ms, confirm double blink at `long_ms`, triple blink at
+`very_long_ms` when a very long gesture is bound, then solid until the release).
+
+**Defaults reproduce the factory button exactly** (the unit test replays the old policy on them): `short -> none` (the event and the double blink, no delay) and
+`long -> ptz.toggle_park`. With only these two bound nothing waits, so every press is reported at its release as before.
+
+**API** ([control-api.md](control-api.md), `specs/control-api.md` 4.2): `GET /akam/v1/button` (read) and `POST /akam/v1/button` (write) take and return the whole
+config `{"timing":{..},"led_ack":true,"bindings":[{"gesture":"double","actions":["mode night","ptz.home"]}]}`, validated as a whole, nothing applied on any error
+(400 `syntax`, 422 `value` `limit` `no_such_mode`, 413 `too_big`); `GET /modes`, `GET|POST|DELETE /modes/<name>` (`POST` body `{"settings":{"led.mode":"off"}}`;
+409 `in_use` for a mode a binding names). **Persistence:** `/config/akam/button` and `/config/akam/modes` (JSON), written only by a POST / DELETE that really
+changes them (atomic through the store, an identical text is not written, a burst of 8 then one per 10 s, else 429 `rate`), counted in `sys.flash_writes_button`.
+Pressing the button never writes. An invalid file is ignored as a whole (the defaults) and left alone.
+
+**Home Assistant** (MQTT stays opt-in, the ctl group): the `event` entity "Button" (`event_type` `press`, `BASE/button/event`, discovery
+`homeassistant/event/<node>/button/config`, Home Assistant 2023.8 or later) is still published for a `short` gesture, and every gesture goes to `BASE/button`. One
+**device trigger** is announced per configured gesture (`homeassistant/device_automation/<node>/button_<k>/config`: `automation_type` `trigger`, `type` the gesture
+in lower case with `_` for spaces, `subtype` `button`, `topic` `BASE/button`, `value_template` `{{ value_json.gesture }}`, `payload` the gesture name). A slot
+without a binding is cleared with an empty retained config; a change of the bindings makes the MQTT thread announce again.
+
+**Other behaviour.**
+
 - During the PTZ calibration a press does nothing (no event, no motion); the LED cues are still given.
 - A button already held when the app starts is ignored until released.
 - The LED cue is a transient override of the status LED engine (`a2k_leds_blip`): it replaces the rules for its duration, then the rules come back. With the
   master LED mode `off` there is no cue (a dark LED stays dark).
-- The HA entity is the MQTT `event` platform: discovery `homeassistant/event/<node>/button/config`, state topic `BASE/button/event`, payload
-  `{"event_type":"press"}`, not retained. It needs a Home Assistant that has the MQTT event platform (2023.8 or later). On an older one the same topic can still be
-  used by hand as an MQTT trigger (a device_trigger discovery is not published). Presses wait for the broker at most 4 deep; a dead broker drops them.
+- `button_long_ms` (`akam2k.conf`, 1500..10000, default 2000) is `--button-long-ms`; it only seeds the default config (a saved config has its own `long_ms`).
+- Gesture messages wait for the broker at most 4 deep; a dead broker drops them.
+- Cost (ARM uClibc `-Os`, stripped `akam2k_rtsp`): 360,552 -> 381,352 bytes (+20,800) for the gesture engine, bindings, modes, API handlers and MQTT triggers; about 30 KB of
+  static RAM (live config, modes and the dispatch snapshot); no new thread. Not run on a camera yet (host-tested with a fake line, clock and actions).
 
 ## Runtime image zones and ignore zones
 

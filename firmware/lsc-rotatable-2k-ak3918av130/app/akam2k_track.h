@@ -64,6 +64,23 @@ typedef struct {
     int (*nudge)(int dx, int dy, int speed); /* relative steps (right / up positive); speed divisor 2..20, 0 = the default */
     int (*home)(void);
     int (*privacy)(void);            /* 1: the video is hidden */
+    int (*tilt_home)(void);          /* the home tilt in motor steps, 0 = unknown; may be NULL */
+    /* PTZ patrol hook, may be NULL: called on every tick that sees a person (n > 0), tracking enabled or not. tracking = 1 when the tracker acts on it (enabled, allowed
+     * here, not parked / calibrating / private): the patrol pauses. resume_ms = lost-person grace + return delay: the patrol resumes after that long without a person. */
+    void (*person)(int tracking, int resume_ms);
+    int (*home_hold)(void);          /* may be NULL: 1 = the head must NOT be sent home now (a patrol runs or waits to resume: it resumes at the interrupted step instead) */
+    /* Continuous motion (both or none; NULL = the tracker uses nudges, track_motion=steps): vel(sx, sy, dx, dy) keeps ONE ongoing directional move, refreshed every tick (the
+     * motor stops by itself when no refresh arrives: the lease): sx right+ / sy up+ in {-1,0,1}, dx / dy the speed divisors 2..20; all zero = stop. Returns 0, or -1 when refused (another
+     * command runs). pos_at(t_ms, &pan, &tilt): the driver position at that time (CLOCK_MONOTONIC ms) from the polled counters, 0 known, -1 unknown. */
+    int (*vel)(int sx, int sy, int dx, int dy);
+    int (*pos_at)(int64_t t_ms, int *pan, int *tilt);
+    /* The lost-target chain (all optional, NULL = absent): route_start(name) starts a stored patrol route (0 ok), route_stop() stops the one the chain started, route_busy() = 1 while a route runs,
+     * lost_event(step) is told every change of the current step ("" = tracking again), never blocks. */
+    int (*route_start)(const char *name);
+    int (*route_stop)(void);
+    int (*route_busy)(void);
+    void (*lost_event)(const char *step);
+    int (*over_budget)(void); /* 1 when the steps travelled since the last calibration exceed the travel budget: the lost chain skips its local sweep */
 } a2k_track_ops_t;
 
 typedef struct {
@@ -75,7 +92,11 @@ typedef struct {
     a2k_tareas_t areas;
     char path[160];                  /* the areas file, "" = not persisted */
     void (*notify)(void);            /* after an edit of the areas / the switch (cheap, never blocks on the network) */
-    unsigned nudges, homes;
+    unsigned nudges, homes, vels;
+    char lost_last[40];              /* the last lost step announced (change detection) */
+    int debug;
+    int64_t dbg_last_ms;
+    const char *dbg_why;             /* the reason of the last logged tick (the continuous log skips repeated idle ticks) */
 } a2k_track_t;
 
 void a2k_track_init(a2k_track_t *t, const a2k_track_ops_t *ops, const char *store_path);
@@ -89,6 +110,37 @@ void a2k_track_set_return(a2k_track_t *t, int home, int delay_s);
 void a2k_track_get_return(a2k_track_t *t, int *home, int *delay_s);
 /* The tuning (init time, before the detection runs): replaces the policy config (areas and the switch are kept). -1 when invalid. */
 int a2k_track_set_cfg(a2k_track_t *t, const struct tl_cfg *c);
+/* Live tuning (API track.band_pct 2..40 = pan band, track.head_pct 0..50 = the tilt head row), applied on the running policy without resetting its state. */
+/* Live tilt/pan gains (API track.gain_pan / track.gain_tilt 200..4000 steps per frame width / height, track.tilt_band_pct 2..40), same rules. */
+/* Live video latency of the pose-at-capture lookup (API track.lag_ms -150..300, default 50; calibrate with tools/track_lagfit, see tracking.md). */
+void a2k_track_set_lag(a2k_track_t *t, int lag_ms);
+int a2k_track_get_lag(a2k_track_t *t);
+void a2k_track_get_gains(a2k_track_t *t, int *gain_pan, int *gain_tilt, int *tilt_band_pct);
+void a2k_track_set_gains(a2k_track_t *t, int gain_pan, int gain_tilt, int tilt_band_pct);
+/* Live comfort zones (API track.zone_pct 0..90 = the horizontal zone width in % of the frame width, 0 = the dev targeting; track.zone_y_pct = body rule vertical band; track.zone_head_pct = head rule band). */
+void a2k_track_get_zones(a2k_track_t *t, int *x_pct, int *y_pct, int *head_pct);
+void a2k_track_set_zones(a2k_track_t *t, int x_pct, int y_pct, int head_pct);
+/* Live motion mode (API track.motion): TL_MOTION_CONT or TL_MOTION_STEPS (the fallback, also used when the motor layer has no continuous mode). */
+int a2k_track_get_motion(a2k_track_t *t);
+/* The lost-target chain (API track.lost_policy, conf track_lost_policy; syntax in track_logic.h tl_lost_parse). set: all or nothing, 0 or -1 (nothing changed). */
+int a2k_track_set_lost_policy(a2k_track_t *t, const char *text);
+void a2k_track_get_lost_policy(a2k_track_t *t, char *out, size_t cap);
+/* The current step for /state (track.lost_step): "idle" while the person is followed or nobody was lost, else backsweep | exit | hold | local | route:<name> | home | stay | done. */
+void a2k_track_get_lost_step(a2k_track_t *t, char *out, size_t cap);
+void a2k_track_set_motion(a2k_track_t *t, int motion);
+void a2k_track_get_tune(a2k_track_t *t, int *band_pct, int *head_pct);
+void a2k_track_set_tune(a2k_track_t *t, int band_pct, int head_pct);
+/* Opt-in decision log (akam2k.conf track_debug=1; 2 adds the raw recorder below): one line per decision to a RAM file (/tmp/akam2k_track.log, capped, 2 lines/s at most). */
+void a2k_track_set_debug(a2k_track_t *t, int on);
+/* track_debug=2: the raw recorder, /tmp/akam2k_track.raw (RAM, rolling, 128 kB): C (config), I (every tl_update input), D (the decision line), R t pan tilt (every position-ring push of a
+ * continuous session: wire a2k_track_rec_ring to a2k_ptz_set_ring_hook). Input of tests/rot2k_track_replay.c and tools/track_lagfit. */
+void a2k_track_rec_ring(int64_t t_ms, int pan, int tilt);
+/* Live tilt return (API track.tilt_return_s 0..3600): stay mode, seconds after the lost-person grace before the tilt goes back home; 0 = never. */
+void a2k_track_get_tilt_return(a2k_track_t *t, int *s);
+/* Live: continuous mode, seconds after the person was lost with the tilt more than 250 steps above home before the tilt goes back to the home tilt (API track.tilt_back_s 0..600, 5; 0 = off). */
+void a2k_track_get_tilt_back(a2k_track_t *t, int *s);
+void a2k_track_set_tilt_back(a2k_track_t *t, int s);
+void a2k_track_set_tilt_return(a2k_track_t *t, int s);
 int a2k_track_enabled(a2k_track_t *t);
 /* One detection tick; n = 0 when nobody is seen. Boxes in the detector frame fw x fh. cap_ms: when the frame was captured (same clock as
  * now_ms; 0 = unknown): frames captured while the motor ran are dropped (a2k_ptz_info_t.motion_end_ms). */
