@@ -27,6 +27,8 @@
 #include "rtsp.h"
 #include "h264_params.h"
 #include "rtp_clock.h"
+#include "md.h"
+#include "preroll.h"
 #include "net_tx.h"
 #include "tx_pace.h"
 #include "rtsp_in.h"
@@ -73,6 +75,31 @@ static int64_t video_capture_time_us(void)
 }
 
 #define VIDEO_CLOCK_RATE 90000
+
+/* Lead-in buffer (preroll.h): filled by drain_venc_ring() while nobody plays, sent to a client that starts
+ * playing during motion. Main thread only. The arena is sized for 15 s at the highest bitrate setting plus the
+ * keyframes; with less in it the oldest frames simply leave earlier. */
+#define PREROLL_ARENA_BYTES  (4 * 1024 * 1024)
+#define PREROLL_BURST_FRAMES 12       /* frames sent per loop pass, so the encoder is still fetched in time */
+#define PREROLL_GIVE_UP_US   30000000 /* a link that has not caught up by then gets the live picture instead */
+static pr_t g_pr;
+static int  g_pr_seconds = -1; /* -1: not set up yet */
+
+static pr_t *preroll_ring(void)
+{
+    if (g_pr_seconds < 0) {
+        g_pr_seconds = md_preroll_seconds();
+        uint8_t *arena = g_pr_seconds > 0 ? malloc(PREROLL_ARENA_BYTES) : NULL;
+        if (g_pr_seconds > 0 && !arena) {
+            printf("[ak_rtsp] no memory for the lead-in buffer: off\n");
+            g_pr_seconds = 0;
+        }
+        /* one group of pictures more than asked, so the playout can start on a keyframe that old */
+        pr_init(&g_pr, arena, arena ? PREROLL_ARENA_BYTES : 0, (int64_t)(g_pr_seconds + 3) * 1000000);
+        if (arena) printf("[ak_rtsp] lead-in buffer: %d s\n", g_pr_seconds);
+    }
+    return g_pr.arena ? &g_pr : NULL;
+}
 
 /* 64 random bits for the RTP timestamp origins (RFC 3550 section 5.1);
  * rand() may be only 15 bits wide, so draw until 64 are filled. */
@@ -136,6 +163,12 @@ typedef struct {
     SmolRTSP_RtpTransport *audio_rtp_transport;
     int audio_rtp_udp_fd;
     int audio_rtcp_udp_fd;
+
+    /* Set by PLAY when the lead-in buffer is being sent first (preroll.h): live frames go to the end of that
+     * buffer instead of the socket until it is empty. */
+    bool preroll;
+    int64_t preroll_start_us;
+    unsigned preroll_sent;
 
     /* Set by PLAY: video is held back until the next IDR frame so the
      * decoder starts on a keyframe (see send_video_frame()). */
@@ -660,6 +693,24 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
             self->need_idr = true;
             self->idr_wait_frames = 0;
             rtp_astart_arm(&self->audio_start); /* released at the first sent frame */
+            pr_t *pr = preroll_ring();
+            self->preroll = false;
+            if (pr) {
+                unsigned n = 0;
+                if (self->is_tcp && net_tx_queue_cap(&self->tx) && md_preroll_wanted())
+                    n = pr_begin(pr, rtp_mono_us(), (int64_t)g_pr_seconds * 1000000);
+                if (n) {
+                    const pr_frame_t *f = pr_peek(pr);
+                    printf("[ak_rtsp] lead-in: sending %u buffered frames (%.1f s) first\n", n,
+                           (double)(rtp_mono_us() - f->capture_us) / 1e6);
+                    self->preroll = true;
+                    self->preroll_start_us = rtp_mono_us();
+                    self->preroll_sent = 0;
+                    self->need_idr = false; /* the buffer starts on a keyframe */
+                } else {
+                    pr_clear(pr); /* this client gets the live picture: what was buffered is of no use after it */
+                }
+            }
         } else {
             rtp_astart_release(&self->audio_start, rtp_mono_us());
         }
@@ -872,7 +923,14 @@ void drain_venc_ring(void)
         if (ioctl(g_chn0_fd, VENC_IOCTL_GET_STREAM, &req) != 0)
             return; /* nothing ready (EAGAIN) or transient error: wait again */
         swdog_frame();
-        (void)video_capture_time_us(); /* keep the capture clock locked */
+        int64_t capture_us = video_capture_time_us(); /* also keeps the capture clock locked */
+        pr_t *pr = preroll_ring();
+        if (pr && req.len > 0) {
+            uint32_t poff = req.frame_offset - g_venc_phys;
+            if (poff < ENC_VENC_SIZE && (size_t)req.len <= ENC_VENC_SIZE - poff)
+                pr_push(pr, (const uint8_t *)g_venc_virt + poff, (size_t)req.len, capture_us,
+                        req.frame_type_raw == FRAME_TYPE_I);
+        }
         /* Keep the SPS/PPS cache current for DESCRIBE (sprop-parameter-sets).
          * This is the only place the idle path dereferences the ring, so the
          * driver-supplied offset/length are range-checked first: a bad value
@@ -921,6 +979,16 @@ static int send_video_frame(Client *client)
     uint64_t ms_ts = (uint64_t)(capture_us / 1000);
     uint32_t rtp_ts = rtp_ticks_from_us(capture_us, client->video_ts_base_us,
                                         VIDEO_CLOCK_RATE);
+
+    if (client->preroll) {
+        /* The lead-in is still going out: this frame waits its turn behind it (preroll_playout()). */
+        pr_push(&g_pr, (const uint8_t *)data, (size_t)req.len, capture_us, req.frame_type_raw == FRAME_TYPE_I);
+        if (ioctl(g_chn0_fd, VENC_IOCTL_RELEASE_STREAM, &req) < 0) {
+            perror("VENC_IOCTL_RELEASE_STREAM");
+            return -1;
+        }
+        return 1;
+    }
 
     static int frame_count = 0;
     /* Per-frame lines only while the 8091 DEBUG mode is on (about 2 lines per 2 s otherwise, for ever):
@@ -1092,6 +1160,55 @@ static int send_video_frame(Client *client)
         return -1;
     }
     return 1;
+}
+
+/* Sends buffered frames (the lead-in, then the live frames that queued up behind it) as fast as the client's
+ * send queue takes them, each with the RTP time it was captured at, so the receiver sees one continuous stream
+ * that begins in the past. Ends when the buffer is empty and the link has drained: the next frame then goes
+ * out directly again. */
+static void preroll_playout(Client *client)
+{
+    for (int n = 0; n < PREROLL_BURST_FRAMES && !client->tx_fail; n++) {
+        const pr_frame_t *f = pr_peek(&g_pr);
+        if (!f) break;
+        if (net_tx_room(&client->tx) < tx_pace_wire_len(f->len)) break; /* later, when the queue has drained */
+        const uint8_t *data = g_pr.arena + f->off;
+        uint32_t ts = rtp_ticks_from_us(f->capture_us, client->video_ts_base_us, VIDEO_CLOCK_RATE);
+        if (f->key) {
+            int in_band = h264_params_scan(&g_params, data, f->len, PARAMS_SCAN_BYTES);
+            if (in_band != (H264_FOUND_SPS | H264_FOUND_PPS) && h264_params_ready(&g_params)) {
+                if (send_one_nalu(client, g_params.sps, g_params.sps_len, ts, false) == SEND_OK)
+                    (void)send_one_nalu(client, g_params.pps, g_params.pps_len, ts, false);
+            }
+        }
+        if (rtp_astart_holding(&client->audio_start)) rtp_astart_release(&client->audio_start, f->capture_us);
+        int r = send_frame_nalus(client, (uint8_t *)data, f->len, ts);
+        size_t len = f->len;
+        pr_pop(&g_pr);
+        if (r == SEND_FAIL) return;
+        if (r == SEND_NOBUFS) { /* torn picture: go on from the next keyframe */
+            g_pr.need_key = 1;
+            ctl_sys_note_video_skipped();
+            break;
+        }
+        ctl_sys_note_video_frame(len);
+        client->preroll_sent++;
+    }
+    int64_t took_us = rtp_mono_us() - client->preroll_start_us;
+    if (!pr_peek(&g_pr) && net_tx_pending(&client->tx) == 0 &&
+        tx_pace_backlog(client->tx.fd) <= tx_pace_base(video_kbps()) / 2) {
+        printf("[ak_rtsp] lead-in: done, %u frames in %.1f s, live from here\n", client->preroll_sent,
+               (double)took_us / 1e6);
+        client->preroll = false;
+        pr_clear(&g_pr);
+    } else if (took_us > PREROLL_GIVE_UP_US) {
+        printf("[ak_rtsp] lead-in: link too slow (%u frames in %.1f s), switching to the live picture\n",
+               client->preroll_sent, (double)took_us / 1e6);
+        client->preroll = false;
+        pr_clear(&g_pr);
+        client->need_idr = true;
+        client->idr_wait_frames = 0;
+    }
 }
 
 /* -------------------------------------------------------------------------
@@ -1704,6 +1821,7 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             int vret;
             if (client.nal_transport) {
                 vret = send_video_frame(&client);
+                if (client.preroll && vret >= 0) preroll_playout(&client);
             } else {
                 drain_venc_ring();
                 vret = 0;
@@ -1720,7 +1838,9 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
             if (stall_ms >= TX_RESYNC_STALL_MS && client.is_tcp) {
                 printf("[ak_rtsp] client slow: TCP write stalled %d ms, "
                        "resuming video at the next keyframe\n", stall_ms);
-                if (client.nal_transport) {
+                if (client.nal_transport && client.preroll) {
+                    g_pr.need_key = 1; /* the buffered frames resume on a keyframe too */
+                } else if (client.nal_transport) {
                     client.need_idr = true;
                     client.idr_wait_frames = 0;
                     rtp_astart_arm(&client.audio_start);

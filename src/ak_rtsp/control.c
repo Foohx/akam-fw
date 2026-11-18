@@ -19,6 +19,7 @@
 #include "isp.h"
 #include "audio_out.h"
 #include "imgq.h"
+#include "md.h"
 #include "isp_tune.h"
 #include "talk.h"
 #include "leds.h"
@@ -334,6 +335,7 @@ static void do_list(cli_t *c)
     ledsys_ctl_list(audio_list_emit, c);
     audio_out_ctl_list(audio_list_emit, c);
     imgq_ctl_list(audio_list_emit, c);
+    md_ctl_list(audio_list_emit, c);
     talk_ctl_list(audio_list_emit, c);
     video_ctl_list(audio_list_emit, c);
     metric_buf_t *m = malloc(sizeof(*m));   /* 2 KB: not on the 64 KB client stack */
@@ -420,6 +422,7 @@ static void do_get(cli_t *c, const char *param)
         else if (ledsys_ctl_get(param, line, sizeof(line)) == 0)    reply(c, "%s", line);
         else if (audio_out_ctl_get(param, line, sizeof(line)) == 0) reply(c, "%s", line);
         else if (imgq_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
+        else if (md_ctl_get(param, line, sizeof(line)) == 0)        reply(c, "%s", line);
         else if (talk_ctl_get(param, line, sizeof(line)) == 0)      reply(c, "%s", line);
         else if (video_ctl_get(param, line, sizeof(line)) == 0)     reply(c, "%s", line);
         else if (ctl_sys_get(param, val, sizeof(val)) == 0)         reply(c, "%s=%s", param, ident_hidden(c, param) ? "hidden" : val);
@@ -551,6 +554,7 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         else if (ledsys_ctl_set(param, value, msg, sizeof(msg)) >= 0)    setmsg(resp, cap, "%s", msg);
         else if (audio_out_ctl_set(param, value, msg, sizeof(msg)) >= 0) setmsg(resp, cap, "%s", msg);
         else if (imgq_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
+        else if (md_ctl_set(param, value, msg, sizeof(msg)) >= 0)        setmsg(resp, cap, "%s", msg);
         else if (talk_ctl_set(param, value, msg, sizeof(msg)) >= 0)      setmsg(resp, cap, "%s", msg);
         else if (video_ctl_set(param, value, msg, sizeof(msg)) >= 0)     setmsg(resp, cap, "%s", msg);
         else                                                        setmsg(resp, cap, "ERR unknown param %s", param);
@@ -575,6 +579,7 @@ int control_apply_setting(const char *key, const char *value, int persist, char 
     g_persist_isp = persist;
     night_set_persist(persist);
     imgq_set_persist(persist);
+    md_set_persist(persist);
     audio_out_set_persist(persist);
     video_ctl_set_persist(persist);
     do_set_locked(msg, cap, key, value);
