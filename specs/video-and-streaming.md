@@ -20,7 +20,8 @@ Status: **hardware-validated** (VLC, ffmpeg, go2rtc over TCP; RTSP Digest login;
 
 Only one encoder channel exists. The sensor's second and third video devices are opened but no sub-stream is encoded.
 Resolution is fixed at 1920x1080 (the ISP crop, VI formats and the encoder DMA pool are sized for it). Mirror and flip
-are not offered.
+are done by the ISP (`video.flip`, `video.mirror`, see [control-port.md](control-port.md)): the sensor reads out in the
+other direction, so every consumer of the picture sees it turned.
 
 ## 2. Encoder
 

@@ -24,10 +24,11 @@ The evidence, test by test: [testing status](testing-status.md).
 | RTSP Digest authentication | off | TCP 554 | hardware-validated | One user and password, set with `./akam rtsp-auth set` |
 | Speaker output and two-way audio (ONVIF audio backchannel, G.711 PCMU/PCMA) | on, needs the video password | in the RTSP session | hardware-validated (talk), host-tested only (`say`, speaker volume and beep) | Used by `./akam talk`, go2rtc, Frigate, Home Assistant. Speaker volume default 100 |
 | Picture settings (brightness, contrast, saturation, sharpness) | 0 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
+| Picture flip and mirror (both = turned by 180 degrees, for a ceiling mount) | off | via 8091 (`video.flip`, `video.mirror`) | checked on one camera | Set over SSH with `ak_rtsp ctl`; not yet in `./akam video` |
 | Day/night switching with IR-cut filter and IR LEDs | automatic | | hardware-validated | Includes a night probe so the IR LEDs do not fool the exposure reading |
 | Status LED (front, blue) | on | | hardware-validated | `on`, `off`, or `auto` (blinks while starting or streaming) |
 
-Not offered: other resolutions, a second (sub) stream, mirror or flip, snapshots, motion detection, recording to microSD.
+Not offered: other resolutions, a second (sub) stream, snapshots, motion detection, recording to microSD.
 
 ## Home automation and discovery
 

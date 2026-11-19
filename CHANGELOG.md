@@ -23,6 +23,7 @@ keep a verified backup of your stock camera before you flash anything.
 - ONVIF-compatible services and WS-Discovery, and MQTT with Home Assistant discovery, both opt-in and off by default.
 - Day/night switching, front and IR LED settings, picture settings, NTP, an encoder-stall watchdog, a Wi-Fi supervisor
   and a kernel log filter.
+- Picture flip and mirror for a camera mounted upside down (`video.flip`, `video.mirror` on port 8091).
 - Secure defaults: SSH keys only, Telnet and FTP off, only ports 22, 554 and 8091 listen.
 - One kit per camera model (`akam-kit-<model>-X.Y.Z.tar.xz`), signed, with the fingerprints of the stock firmware it was
   validated against. The kit holds Akam's own files only, never a camera image.

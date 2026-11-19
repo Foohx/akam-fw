@@ -28,6 +28,16 @@ static void emit(void *arg, const char *line)
     strcat(buf, "|");
 }
 
+/* orient.c is hardware: here it only records what video_ctl.c asks for. */
+static int g_orient_calls, g_orient_flip, g_orient_mirror, g_orient_rc;
+int orient_set(int flip, int mirror)
+{
+    g_orient_calls++;
+    g_orient_flip = flip;
+    g_orient_mirror = mirror;
+    return g_orient_rc;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) return 2;
@@ -72,7 +82,12 @@ int main(int argc, char **argv)
     parse("bitrate=12x\nbitrate=-5\nbitrate=+600\nbitrate= 600\nbitrate=\nbitrate=0x400\n", &c, &bad);
     CHECK(bad == 6 && c.bitrate == 1536, "non-numeric, signed, spaced, empty and hex values refused");
     parse("flip=h\nresolution=1280x720\nwhat\n", &c, &bad);
-    CHECK(bad == 3 && c.fps == 15 && c.bitrate == 1536, "flip, resolution (not offered) and a line without = are skipped");
+    CHECK(bad == 3 && c.fps == 15 && c.bitrate == 1536 && c.flip == 0,
+          "a flip that is not 0 or 1, resolution (not offered) and a line without = are skipped");
+    parse("flip=1\nmirror=1\n", &c, &bad);
+    CHECK(bad == 0 && c.flip == 1 && c.mirror == 1 && c.fps == 15, "flip and mirror accepted");
+    parse("flip=2\nmirror=01\nmirror=on\n", &c, &bad);
+    CHECK(bad == 3 && c.flip == 0 && c.mirror == 0, "flip and mirror take 0 or 1 only");
     parse("bitrate=900\nfps=bad\ngop=4\n", &c, &bad);
     CHECK(bad == 1 && c.bitrate == 900 && c.gop_s == 4 && c.fps == 15, "one bad line does not affect the others");
     {
@@ -91,6 +106,8 @@ int main(int argc, char **argv)
     c.gop_s = 4;
     CHECK(video_cfg_format(&c, out, sizeof(out)) > 0 && !strcmp(out, "bitrate=900\ngop=4\n"), "only non-default keys are written");
     CHECK(video_cfg_format(&c, out, 5) == -1, "a buffer too small is reported");
+    c.mirror = 1;
+    CHECK(video_cfg_format(&c, out, sizeof(out)) > 0 && !strcmp(out, "bitrate=900\ngop=4\nmirror=1\n"), "mirror is written when set");
 
     printf("8091 keys\n");
     char msg[160], line[80];
@@ -143,7 +160,29 @@ int main(int argc, char **argv)
     {
         char all[300] = "";
         video_ctl_list(emit, all);
-        CHECK(!strcmp(all, "video.bitrate_cfg=800|video.fps_cfg=10|video.gop_cfg=3|video.cfg_pending=1|"), "LIST has the four keys");
+        CHECK(!strcmp(all, "video.bitrate_cfg=800|video.fps_cfg=10|video.gop_cfg=3|video.cfg_pending=1|video.flip=0|video.mirror=0|"),
+              "LIST has the six keys");
+    }
+    {
+        /* flip and mirror: saved like the others, but sent to the ISP at once and never "pending" */
+        CHECK(video_ctl_get("video.flip", line, sizeof(line)) == 0 && !strcmp(line, "video.flip=0"), "GET default flip");
+        g_orient_calls = 0;
+        CHECK(video_ctl_set("video.flip", "1", msg, sizeof(msg)) == 0 && !strcmp(msg, "OK video.flip=1"), "SET flip 1: no restart note");
+        CHECK(g_orient_calls == 1 && g_orient_flip == 1 && g_orient_mirror == 0, "flip is applied at once");
+        CHECK(video_ctl_set("video.mirror", "1", msg, sizeof(msg)) == 0 && g_orient_flip == 1 && g_orient_mirror == 1,
+              "mirror is applied together with the saved flip");
+        CHECK(video_ctl_get("video.mirror", line, sizeof(line)) == 0 && !strcmp(line, "video.mirror=1"), "GET returns the saved mirror");
+        CHECK(video_ctl_set("video.flip", "2", msg, sizeof(msg)) == 1 && strstr(msg, "0 or 1"), "SET flip 2 refused");
+        g_orient_rc = -1;
+        CHECK(video_ctl_set("video.mirror", "0", msg, sizeof(msg)) == 1 && !strncmp(msg, "ERR ", 4), "an ISP refusal is reported");
+        g_orient_rc = 0;
+        video_ctl_set_persist(0);
+        g_orient_calls = 0;
+        CHECK(video_ctl_set("video.flip", "0", msg, sizeof(msg)) == 1 && strstr(msg, "from the camera itself") && g_orient_calls == 0,
+              "a network SET of flip is refused and turns nothing");
+        video_ctl_set_persist(1);
+        CHECK(video_ctl_set("video.flip", "0", msg, sizeof(msg)) == 0 && video_ctl_set("video.mirror", "0", msg, sizeof(msg)) == 0,
+              "back to the defaults");
     }
 
     printf("apply at start\n");

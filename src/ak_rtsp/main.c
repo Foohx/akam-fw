@@ -34,6 +34,7 @@
 #include "onvif_cfg.h"
 #include "mqtt_svc.h"
 #include "mqtt_ops.h"
+#include "orient.h"
 #include "swdog.h"
 #include "klog.h"
 #include "version.h"
@@ -293,6 +294,8 @@ int main(int argc, char **argv)
     if (venc_activate()          < 0) goto err;
 
     night_start();  /* needs AE samples flowing, so start after ae_start() */
+    orient_set(video_cfg_active()->flip, video_cfg_active()->mirror);
+    orient_ready(); /* the ISP is up: turn the picture if the saved settings say so */
     control_apply_saved_isp();  /* saved picture settings; the ISP and AE run now */
 
     /* Non-fatal: video streaming must keep working even if mic capture

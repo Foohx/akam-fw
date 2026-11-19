@@ -149,9 +149,14 @@ See [image-day-night-leds.md](image-day-night-leds.md) for ranges: `night.mode`,
 | `video.fps_cfg` | rw | 10, 15, 20, 25 | same |
 | `video.gop_cfg` | rw | 1 to 4 (seconds) | same |
 | `video.cfg_pending` | r | 1 when the saved file differs from the running encoder | - |
+| `video.flip` | rw | 0 or 1: picture upside down | file `video`, applies at once |
+| `video.mirror` | rw | 0 or 1: left and right swapped | same |
 
-These keys are writable only from loopback (nothing would apply them from the network). The answer says
-`(restart to apply)` while a change is pending.
+These keys are writable only from loopback (nothing would apply the first three from the network). The answer says
+`(restart to apply)` while a change is pending. `video.flip` and `video.mirror` send the stock application's ISP
+flip/mirror request (`0x40044979`, two 32-bit words) as soon as they are set, at every start, and again after every
+day/night switch, because the ISP forgets them when it reloads its configuration; both together turn the picture by
+180 degrees, for a camera mounted upside down. They never count as pending.
 
 ### 6.5 Metrics (read-only)
 
