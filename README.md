@@ -41,7 +41,7 @@ The codes are on the back of the camera body, under the LSC logo. Details, how t
 - **MQTT with Home Assistant discovery** (off by default, host-tested only).
 - **Camera controls:** day/night with infrared LEDs, status LED, picture settings, frame rate, bitrate.
 - **Safe by default:** SSH with a key only, Telnet and FTP closed, optional clock sync (NTP).
-- **Not provided:** the Tuya/Smart Life app, cloud and remote viewing, push notifications, motion detection,
+- **Not provided:** the Tuya/Smart Life app, cloud and remote viewing, push notifications,
   recording to microSD, vendor updates. Use a VPN into your home network, an NVR or Home Assistant instead.
 
 The complete list with ports, defaults and test status: [features](docs/features.md).

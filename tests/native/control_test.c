@@ -67,6 +67,11 @@ void audio_out_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "audio.
 int  imgq_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  imgq_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void imgq_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "imgq.stub=3"); }
+int  g_md_persist = -1;
+void md_set_persist(int on) { g_md_persist = on; }
+int  md_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
+int  md_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+void md_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "md.stub=7"); }
 int  talk_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  talk_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void talk_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "talk.stub=4"); }
@@ -358,7 +363,7 @@ static void test_server(void)
         "night.confirm_samples=0\nnight.lock_ms=0\n"
         "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
-        "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
+        "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\nmd.stub=7\ntalk.stub=4\nvideo.stub=5\n"
         "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\nmqtt.state=off\n.\n");
     ask(c, "GET sys.stub", out, sizeof(out));
     CHECK_STR(out, "sys.stub=6\n");
@@ -477,7 +482,7 @@ static void test_server(void)
     /* night.mode / img.wb are saved by their modules: a loopback SET allows it, and a failure is reported */
     ask(c, "SET night.mode day", out, sizeof(out));
     CHECK_STR(out, "OK night.mode=day\n");
-    CHECK(g_night_persist == 1 && g_imgq_persist == 1);
+    CHECK(g_night_persist == 1 && g_imgq_persist == 1 && g_md_persist == 1);
     g_night_err = ENOSPC;
     ask(c, "SET night.mode night", out, sizeof(out));
     CHECK(!strncmp(out, "OK night.mode=night (not saved: ", 32));
@@ -636,7 +641,7 @@ static void test_server(void)
             CHECK_STR(out, "OK isp.sharpness=5\n");
             CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
             ask(r, "SET night.mode day", out, sizeof(out));
-            CHECK(g_night_persist == 0 && g_imgq_persist == 0);   /* RAM only from the network */
+            CHECK(g_night_persist == 0 && g_imgq_persist == 0 && g_md_persist == 0);   /* RAM only from the network */
             ask(r, "SET night.mode auto", out, sizeof(out));
             ask(r, "SET isp.sharpness 0", out, sizeof(out));
             ask(c, "SET ae.speed 7", out, sizeof(out));

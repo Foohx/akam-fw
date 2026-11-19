@@ -177,7 +177,35 @@ shared by all callers.
 | `rtsp.auth` | `off`, `on`, `broken` |
 | `rtsp.skipped_frames` | Cumulative video frames dropped by the TCP backpressure pacing |
 
-### 6.6 Control and service state
+### 6.6 Motion detection
+
+Frame differencing on the 320x180 channel, twice a second (`md.c`, `md_logic.c`): a frame is reduced to 80x45 block
+means, the mean change of the whole picture is removed (a lamp or an exposure step is not motion), and the score is the
+share of blocks that changed. Motion starts after two consecutive samples at or above the preset's share and ends 5 s
+after the last one. Samples are skipped for 3 s after start-up, and whenever the picture changes for a reason
+that is not movement: the night logic announces a day/night switch (10 s, then 8 s to settle) and each ambient light
+probe with the infrared LEDs off (its settling time twice, plus 8 s), and the detector starts from a fresh reference
+picture afterwards. Movement that begins during such a pause is seen a few seconds late.
+
+| Key | Acc | Values | Persist |
+|---|---|---|---|
+| `md.enabled` | rw | 0 or 1 (default 0: off until switched on) | file `md` |
+| `md.sensitivity` | rw | `low`, `medium` (default), `high`: 4.5 %, 1.5 %, 0.5 % of the blocks | file `md` |
+| `md.preroll` | rw | 0 to 15: seconds of lead-in video kept in RAM while `md.enabled` is 1 (default 10, 0 = off); a new length applies at the next start | file `md` |
+| `md.state` | r | 1 from the start of motion until it ends, else 0 | - |
+| `md.events` | r | times motion started since `ak_rtsp` started | - |
+| `md.score` | r | latest sample, hundredths of a percent of the picture (0 to 10000) | - |
+| `md.peak` | r | highest `md.score` of the current or last motion | - |
+| `md.age` | r | seconds since the last sample at or above the preset's share, -1 before the first | - |
+
+A recorder can poll `md.state` and `md.events` instead of pulling video: a counter that grew between two polls means a
+motion that began and ended in between. With `md.enabled=1`, while no client is playing, the last `md.preroll` seconds of encoded video are
+kept in RAM (`preroll.c`, 4 MiB). An RTSP/TCP client that starts playing while `md.state` is 1, or less than 15 s after
+the last moving sample, is first sent those frames from the oldest suitable keyframe, each with the RTP time it was
+captured at, then the frames that arrived meanwhile, then live video; the audio track starts live. A client that is
+already playing when motion starts gets no lead-in, and neither does an RTSP/UDP client.
+
+### 6.7 Control and service state
 
 | Key | Meaning |
 |---|---|
@@ -193,7 +221,7 @@ shared by all callers.
 | `mqtt.test` | `idle`, `running`, `ok`, `error:<reason>` (`GET` only) |
 
 `LIST` prints, in this order: `ae.*`, `night.mode`/`night.state` and the other `night.*`, `isp.*`, `venc.*`, the night,
-LED, audio, image, talk and video keys, the metrics, then `ctl.clients`, `ctl.debug`, `fw.version`, `sys.hostname`,
+LED, audio, image, motion, talk and video keys, the metrics, then `ctl.clients`, `ctl.debug`, `fw.version`, `sys.hostname`,
 `onvif.state`, `mqtt.state`, and the `.` terminator.
 
 ## 7. The `ak_rtsp ctl` helper
@@ -206,4 +234,5 @@ before any hardware initialisation. The helper scripts use it instead of the Bus
 ## 8. Tests
 
 `tests/control_test.sh` (with `tests/native/control_test.c`), `ctl_sys_test.sh`, `akam_debug_test.sh`,
-`wizard_debug_test.sh`.
+`wizard_debug_test.sh`. Motion detection: `md_logic_test.sh`, `preroll_test.sh` (host tests of the logic and of the
+buffer; the detector thread and the lead-in playout were checked on one camera only).

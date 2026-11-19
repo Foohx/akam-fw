@@ -43,6 +43,8 @@ void    *g_venc_virt = NULL;
 uint32_t g_venc_phys = 0;
 
 void ledsys_stream_delta(int delta) { (void)delta; }
+int  md_preroll_seconds(void) { return 0; } /* no lead-in buffer in this test */
+int  md_preroll_wanted(void) { return 0; }
 int control_debug_on(void) { return 0; }
 
 /* The encoder never has a frame: every ioctl on it answers EAGAIN. GET_STREAM calls are counted: the ring is

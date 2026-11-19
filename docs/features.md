@@ -26,8 +26,9 @@ The evidence, test by test: [testing status](testing-status.md).
 | Picture settings (brightness, contrast, saturation, sharpness) | 0 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
 | Day/night switching with IR-cut filter and IR LEDs | automatic | | hardware-validated | Includes a night probe so the IR LEDs do not fool the exposure reading |
 | Status LED (front, blue) | on | | hardware-validated | `on`, `off`, or `auto` (blinks while starting or streaming) |
+| Motion detection on the camera, with a lead-in video buffer for a recorder that connects on motion | off | via 8091 (`md.*`) | checked on one camera | Turn on with `ak_rtsp ctl "SET md.enabled 1"` over SSH. State and counters only: nothing is recorded or sent by the camera ([keys](../specs/control-port.md#66-motion-detection)) |
 
-Not offered: other resolutions, a second (sub) stream, mirror or flip, snapshots, motion detection, recording to microSD.
+Not offered: other resolutions, a second (sub) stream, mirror or flip, snapshots, recording to microSD.
 
 ## Home automation and discovery
 
