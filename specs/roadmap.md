@@ -65,7 +65,7 @@ Never seen on a camera (see `docs/testing-status.md` and `docs/hardware-test-che
 | Pri | Item | Note |
 |---|---|---|
 | P2 | Sub-stream and extra resolutions | The encoder, ISP crop and DMA pool are sized for 1920x1080 only |
-| P2 | Mirror and flip | The ISP flip ioctl number is known; its payload and the sensor register sequence are not |
+| P2 | Mirror and flip in `./akam video` and the assistant | The firmware has `video.flip` and `video.mirror` on 8091; the two tools still refuse the words |
 | P2 | More than one RTSP viewer | One client at a time by design (go2rtc restreams) |
 | P2 | Snapshot (JPEG), ONVIF Events and motion detection | No JPEG path; motion would be frame differencing on the sub-channel luma or encoder frame-size spikes, off by default |
 | P2 | On-screen display (timestamp) and time zone | The vendor OSD module is not used; needs a reverse-engineering session and a clock |

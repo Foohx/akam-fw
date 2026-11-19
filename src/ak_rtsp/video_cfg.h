@@ -11,6 +11,8 @@
  *               night mode itself always runs at 10 fps / VTS 3426 (night.c).
  *   gop=S       key frame interval in whole seconds, VIDEO_GOP_S_MIN..VIDEO_GOP_S_MAX (default 2 s: ENC_GOP frames
  *               at the default 15 fps). The encoder gets S * fps frames (S * 25 = 100 at most).
+ *   flip=0|1    vertical flip, mirror=0|1 horizontal mirror (default 0; both = the picture turned by 180 degrees,
+ *               for a camera mounted upside down). These two apply at once and need no restart (orient.h).
  * An absent file, or an absent key, means the compiled-in default: the behaviour is then exactly the one of a build
  * without this module. A bad line (unknown key, bad number, out of range) is skipped with one log line and its key
  * keeps the default; nothing else is affected.
@@ -19,8 +21,7 @@
  * encoder is created from them, and the SDP, ONVIF and the bitrate/GOP bookkeeping of rtsp.c report them. A change
  * of the file (./akam video, 8091 SET video.*_cfg) applies at the next start of ak_rtsp.
  * Not offered, on purpose (specs/roadmap.md): resolution (ISP crop, VI formats and the encoder DMA pool are sized for
- * 1920x1080 only) and mirror/flip (the ISP flip ioctl number is known, its payload and the sensor register
- * sequence are not). */
+ * 1920x1080 only). */
 #pragma once
 #include <stddef.h>
 
@@ -43,6 +44,8 @@ typedef struct {
     int bitrate; /* kbit/s */
     int fps;
     int gop_s;
+    int flip;   /* 0 or 1: picture upside down (orient.h) */
+    int mirror; /* 0 or 1: left and right swapped */
 } video_cfg_t;
 
 /* Defaults (the compiled-in constants). */

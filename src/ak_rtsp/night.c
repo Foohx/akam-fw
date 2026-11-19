@@ -12,6 +12,7 @@
 #include "ae.h"
 #include "night.h"
 #include "night_logic.h"
+#include "orient.h"
 #include "imgq.h"
 #include "video_cfg.h"
 
@@ -164,6 +165,7 @@ static void switch_to_night_locked(void)
         ae_set_tuning(&t);
     }
     imgq_after_mode_switch(1);
+    orient_after_mode_switch();
 }
 
 static void switch_to_day_locked(void)
@@ -186,6 +188,7 @@ static void switch_to_day_locked(void)
     }
     /* The day reload sent the file's WB block; img.wb=manual puts its own back. */
     imgq_after_mode_switch(0);
+    orient_after_mode_switch();
 }
 
 /* The whole switch runs under the ISP configuration lock, and g_is_night changes before it is released, so an

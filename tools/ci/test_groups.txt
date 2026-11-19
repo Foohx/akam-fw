@@ -51,6 +51,7 @@ shell onvif_check_test.sh
 native onvif_media_test.sh
 native onvif_svc_test.sh
 native onvif_test.sh
+native orient_test.sh
 native pace_compose_test.sh
 shell preflight_test.sh
 shell publish_test.sh

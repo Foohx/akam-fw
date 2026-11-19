@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "cfg_file.h"
+#include "orient.h"
 #include "video_cfg.h"
 #include "video_ctl.h"
 
@@ -16,7 +17,7 @@ void video_ctl_set_persist(int on) { g_persist = on; }
 static int is_ours(const char *k)
 {
     return !strcmp(k, "video.bitrate_cfg") || !strcmp(k, "video.fps_cfg") || !strcmp(k, "video.gop_cfg") ||
-           !strcmp(k, "video.cfg_pending");
+           !strcmp(k, "video.cfg_pending") || !strcmp(k, "video.flip") || !strcmp(k, "video.mirror");
 }
 
 static int pending(const video_cfg_t *saved)
@@ -30,6 +31,8 @@ static void fmt_key(const video_cfg_t *c, const char *key, char *out, size_t cap
     if (!strcmp(key, "video.bitrate_cfg")) snprintf(out, cap, "%s=%d", key, c->bitrate);
     else if (!strcmp(key, "video.fps_cfg")) snprintf(out, cap, "%s=%d", key, c->fps);
     else if (!strcmp(key, "video.gop_cfg")) snprintf(out, cap, "%s=%d", key, c->gop_s);
+    else if (!strcmp(key, "video.flip")) snprintf(out, cap, "%s=%d", key, c->flip);
+    else if (!strcmp(key, "video.mirror")) snprintf(out, cap, "%s=%d", key, c->mirror);
     else snprintf(out, cap, "%s=%d", key, pending(c));
 }
 
@@ -52,10 +55,14 @@ int video_ctl_set(const char *key, const char *val, char *msg, size_t cap)
         return 1;
     }
     if (!g_persist) {
-        snprintf(msg, cap, "ERR %s can only be set from the camera itself (it applies at the next start)", key);
+        if (!strcmp(key, "video.flip") || !strcmp(key, "video.mirror"))
+            snprintf(msg, cap, "ERR %s can only be set from the camera itself (it is saved)", key);
+        else
+            snprintf(msg, cap, "ERR %s can only be set from the camera itself (it applies at the next start)", key);
         return 1;
     }
-    const char *want = !strcmp(key, "video.bitrate_cfg") ? "bitrate" : !strcmp(key, "video.fps_cfg") ? "fps" : "gop";
+    const char *want = !strcmp(key, "video.bitrate_cfg") ? "bitrate" : !strcmp(key, "video.fps_cfg") ? "fps" :
+                       !strcmp(key, "video.flip") ? "flip" : !strcmp(key, "video.mirror") ? "mirror" : "gop";
     video_cfg_t c;
     pthread_mutex_lock(&g_lock);
     video_cfg_read(&c);
@@ -67,6 +74,8 @@ int video_ctl_set(const char *key, const char *val, char *msg, size_t cap)
             snprintf(msg, cap, "ERR invalid %s value (want %d..%d kbit/s)", key, VIDEO_KBPS_MIN, VIDEO_KBPS_MAX);
         else if (!strcmp(want, "fps"))
             snprintf(msg, cap, "ERR invalid %s value (want 10, 15, 20 or 25)", key);
+        else if (!strcmp(want, "flip") || !strcmp(want, "mirror"))
+            snprintf(msg, cap, "ERR invalid %s value (want 0 or 1)", key);
         else
             snprintf(msg, cap, "ERR invalid %s value (want %d..%d seconds)", key, VIDEO_GOP_S_MIN, VIDEO_GOP_S_MAX);
         return 1;
@@ -91,13 +100,22 @@ int video_ctl_set(const char *key, const char *val, char *msg, size_t cap)
         snprintf(msg, cap, "ERR %s not saved: %s", key, strerror(err));
         return 1;
     }
+    if (!strcmp(want, "flip") || !strcmp(want, "mirror")) { /* these two apply at once */
+        if (orient_set(c.flip, c.mirror) != 0) {
+            snprintf(msg, cap, "ERR %s saved, but the picture did not turn (see the log)", key);
+            return 1;
+        }
+        snprintf(msg, cap, "OK %s=%s", key, val);
+        return 0;
+    }
     snprintf(msg, cap, "OK %s=%s%s", key, val, pend ? " (restart to apply)" : "");
     return 0;
 }
 
 void video_ctl_list(void (*emit)(void *arg, const char *line), void *arg)
 {
-    static const char *const keys[] = { "video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.cfg_pending" };
+    static const char *const keys[] = { "video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.cfg_pending",
+                                        "video.flip", "video.mirror" };
     char line[64];
     video_cfg_t c;
     pthread_mutex_lock(&g_lock);

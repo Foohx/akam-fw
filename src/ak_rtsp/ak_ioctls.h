@@ -39,6 +39,8 @@
 #define ISP_INNER_GET_3D_NR_STAT   0x80044970  /* AK_ISP_get_3d_nr_stat_info 0x608 B      */
 #define ISP_INNER_GET_AE_STAT      0x80044991  /* AK_ISP_get_ae_stat_info  0xc0 B         */
 
+#define ISP_INNER_FLIP_MIRROR       0x40044979  /* Ak_ISP_Set_Flip_Mirror {s32 flip, s32 mirror} */
+
 /* 3D NR reference frame dimensions */
 #define ISP_INNER_3D_NR_REF        0x40044967  /* AK_ISP_set_3d_nr_ref_attr {w,h}         */
 

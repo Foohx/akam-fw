@@ -9,7 +9,7 @@
 
 #include "video_cfg.h"
 
-static video_cfg_t g_active = { ENC_KBPS, ENC_FPS, VIDEO_GOP_S_DEF };
+static video_cfg_t g_active = { ENC_KBPS, ENC_FPS, VIDEO_GOP_S_DEF, 0, 0 };
 static int g_loaded;
 
 void video_cfg_defaults(video_cfg_t *c)
@@ -17,6 +17,8 @@ void video_cfg_defaults(video_cfg_t *c)
     c->bitrate = ENC_KBPS;
     c->fps = ENC_FPS;
     c->gop_s = VIDEO_GOP_S_DEF;
+    c->flip = 0;
+    c->mirror = 0;
 }
 
 int video_cfg_fps_ok(long fps) { return fps == 10 || fps == 15 || fps == 20 || fps == 25; }
@@ -46,6 +48,10 @@ int video_cfg_set_key(video_cfg_t *c, const char *key, const char *val)
     } else if (!strcmp(key, "gop")) {
         if (v < VIDEO_GOP_S_MIN || v > VIDEO_GOP_S_MAX) return -1;
         c->gop_s = (int)v;
+    } else if (!strcmp(key, "flip") || !strcmp(key, "mirror")) {
+        if (v > 1 || val[1] != '\0') return -1; /* exactly "0" or "1" */
+        if (key[0] == 'f') c->flip = (int)v;
+        else c->mirror = (int)v;
     } else {
         return -1;
     }
@@ -89,6 +95,8 @@ int video_cfg_format(const video_cfg_t *c, char *out, size_t cap)
     EMIT("bitrate", bitrate)
     EMIT("fps", fps)
     EMIT("gop", gop_s)
+    EMIT("flip", flip)
+    EMIT("mirror", mirror)
 #undef EMIT
     return (int)n;
 }
@@ -112,7 +120,7 @@ int video_cfg_read(video_cfg_t *out)
         return -1;
     }
     int bad = video_cfg_parse(buf, (size_t)n, out);
-    if (bad) printf("[video] settings file: %d invalid line(s) ignored (valid keys: bitrate, fps, gop)\n", bad);
+    if (bad) printf("[video] settings file: %d invalid line(s) ignored (valid keys: bitrate, fps, gop, flip, mirror)\n", bad);
     return 0;
 }
 

@@ -1,4 +1,5 @@
-/* 8091 keys of the saved video settings (video_cfg.h): video.bitrate_cfg, video.fps_cfg, video.gop_cfg (the saved
+/* 8091 keys of the saved video settings (video_cfg.h): video.flip and video.mirror (0 or 1, saved and applied at
+ * once, orient.h), and video.bitrate_cfg, video.fps_cfg, video.gop_cfg (the saved
  * value, not the measured video.bitrate / video.fps_actual of ctl_sys) and video.cfg_pending (1 when the saved
  * file differs from what the running encoder uses). Same contract as imgq_ctl_*: _get returns 0 and fills `out`
  * ("key=value") for a key it owns, else -1; _set returns -1 for a key it does not own, else 0 (done) or 1 (refused)
