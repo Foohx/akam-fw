@@ -40,5 +40,12 @@ typedef struct {
 /* Feeds one sample taken at now_ms. Returns 1 when motion starts, -1 when it ends, else 0. */
 int md_feed(md_state_t *s, const md_params_t *p, unsigned score, int64_t now_ms);
 
+/* Pausing: the firmware announces changes of the picture that are not movement (infrared LEDs or the
+ * IR-cut filter switching, the picture being turned) with a time to look away. A pause can be extended
+ * by a later announcement, never shortened. Returns the new deadline. */
+int64_t md_pause_extend(int64_t until_ms, int64_t now_ms, int pause_ms);
+/* 1 while the detector must not look. */
+int md_paused(int64_t until_ms, int64_t now_ms);
+
 /* Sensitivity presets: "low", "medium", "high". Returns 0, or -1 for an unknown name. */
 int md_preset(const char *name, md_params_t *p);

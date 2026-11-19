@@ -23,6 +23,8 @@ keep a verified backup of your stock camera before you flash anything.
 - ONVIF-compatible services and WS-Discovery, and MQTT with Home Assistant discovery, both opt-in and off by default.
 - Day/night switching, front and IR LED settings, picture settings, NTP, an encoder-stall watchdog, a Wi-Fi supervisor
   and a kernel log filter.
+- Motion detection on the camera (`md.*` keys on port 8091) and a lead-in video buffer for a recorder that connects on
+  motion, opt-in and off by default.
 - Secure defaults: SSH keys only, Telnet and FTP off, only ports 22, 554 and 8091 listen.
 - One kit per camera model (`akam-kit-<model>-X.Y.Z.tar.xz`), signed, with the fingerprints of the stock firmware it was
   validated against. The kit holds Akam's own files only, never a camera image.
@@ -35,7 +37,7 @@ All features, with their default and how well each one is tested: [features](doc
   and a different flash layout is refused ([compatible cameras](docs/compatible-cameras.md)).
 - MQTT, the watchdog and several settings are host-tested only, and the image builder built into the assistant was
   never flashed. The evidence, test by test: [testing status](docs/testing-status.md).
-- One RTSP client at a time; no motion detection, no recording to microSD.
+- One RTSP client at a time; no recording to microSD.
 
 ## [assistant 0.1.0] - unreleased
 

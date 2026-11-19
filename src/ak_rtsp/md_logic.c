@@ -58,6 +58,14 @@ int md_feed(md_state_t *s, const md_params_t *p, unsigned score, int64_t now_ms)
     return 0;
 }
 
+int64_t md_pause_extend(int64_t until_ms, int64_t now_ms, int pause_ms)
+{
+    int64_t wanted = now_ms + (pause_ms > 0 ? pause_ms : 0);
+    return wanted > until_ms ? wanted : until_ms;
+}
+
+int md_paused(int64_t until_ms, int64_t now_ms) { return now_ms < until_ms; }
+
 int md_preset(const char *name, md_params_t *p)
 {
     /* "medium" is what camd used on the server; the other two sit a factor of three either side. */

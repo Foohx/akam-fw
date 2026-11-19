@@ -12,6 +12,7 @@
 #include "ae.h"
 #include "night.h"
 #include "night_logic.h"
+#include "md.h"
 #include "imgq.h"
 #include "video_cfg.h"
 
@@ -129,8 +130,14 @@ static void set_frame_rate(int fps, int vts)
     ae_set_tuning(&t);
 }
 
+
+/* How long motion detection looks away (md.h): for a whole switch, and for the exposure to settle after the
+ * picture changed (a switch finished, a probe ended). */
+#define MD_PAUSE_SWITCH_MS 10000
+#define MD_PAUSE_SETTLE_MS 8000
 static void switch_to_night_locked(void)
 {
+    md_pause(MD_PAUSE_SWITCH_MS); /* the filter, the LEDs and the ISP reload: none of it is movement */
     ircut_switch(1);
     set_frame_rate(NIGHT_FPS, NIGHT_VTS);
     /* Full night ISP calibration (2026-07-05) — replaces the old
@@ -164,10 +171,12 @@ static void switch_to_night_locked(void)
         ae_set_tuning(&t);
     }
     imgq_after_mode_switch(1);
+    md_pause(MD_PAUSE_SETTLE_MS);
 }
 
 static void switch_to_day_locked(void)
 {
+    md_pause(MD_PAUSE_SWITCH_MS); /* the filter, the LEDs and the ISP reload: none of it is movement */
     ircut_switch(0);
     set_frame_rate(video_fps(), video_day_vts());
     /* Restore the day ISP calibration (see switch_to_night()'s comment) —
@@ -186,6 +195,7 @@ static void switch_to_day_locked(void)
     }
     /* The day reload sent the file's WB block; img.wb=manual puts its own back. */
     imgq_after_mode_switch(0);
+    md_pause(MD_PAUSE_SETTLE_MS);
 }
 
 /* The whole switch runs under the ISP configuration lock, and g_is_night changes before it is released, so an
@@ -288,11 +298,13 @@ static void *night_loop(void *arg)
             break;
         case NL_PROBE_START:
             printf("[night] ambient light probe: %s\n", why);
+            md_pause(2 * t.probe_settle_ms + MD_PAUSE_SETTLE_MS); /* dark for the probe, then IR back on */
             ircut_ir_led_probe(1);
             break;
         case NL_PROBE_END:
             printf("[night] %s\n", why);
             ircut_ir_led_probe(0);
+            md_pause(MD_PAUSE_SETTLE_MS);
             break;
         default:
             break;

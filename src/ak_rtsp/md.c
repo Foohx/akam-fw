@@ -12,14 +12,13 @@
 #include "ak_rtsp.h"
 #include "cfg_file.h"
 #include "md_logic.h"
-#include "night.h"
 
 #define MD_CONF_FILE     "/etc/config/akam/md"
 #define MD_PERIOD_US     500000
 #define MD_SETTLE_TICKS  6 /* samples skipped after start-up and after a day/night switch (3 s) */
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static int         g_enabled = 1;
+static int         g_enabled = 0; /* opt-in, like ONVIF and MQTT */
 static char        g_sensitivity[8] = "medium";
 static md_params_t g_params;
 static md_state_t  g_state;
@@ -27,6 +26,7 @@ static int64_t     g_last_motion_ms = -1;
 static int         g_persist = 1;
 static int         g_preroll_s = 10;
 static int         g_started;
+static int64_t     g_pause_until; /* monotonic ms, see md_pause() */
 
 static int64_t now_ms(void)
 {
@@ -44,7 +44,7 @@ static void load(void)
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
         if (!strncmp(line, "enabled=", 8)) {
-            g_enabled = line[8] != (char)48; /* anything but "0" */
+            g_enabled = line[8] != '0';
         } else if (!strncmp(line, "preroll=", 8)) {
             int v = atoi(line + 8);
             if (v >= 0 && v <= 15) g_preroll_s = v;
@@ -78,7 +78,6 @@ static void *md_thread(void *arg)
     static uint8_t prev[VI_TD_BUF_COUNT][MD_BLOCKS], cur[MD_BLOCKS];
     int have[VI_TD_BUF_COUNT] = {0};
     int settle = MD_SETTLE_TICKS;
-    int was_night = night_is_night();
 
     for (;;) {
         usleep(MD_PERIOD_US);
@@ -86,14 +85,10 @@ static void *md_thread(void *arg)
         pthread_mutex_lock(&g_lock);
         int enabled = g_enabled;
         md_params_t params = g_params;
+        int paused = md_paused(g_pause_until, now_ms());
         pthread_mutex_unlock(&g_lock);
 
-        int night = night_is_night();
-        if (night != was_night) {
-            was_night = night;
-            settle = MD_SETTLE_TICKS;
-        }
-        if (!enabled || settle > 0) {
+        if (!enabled || settle > 0 || paused) {
             if (settle > 0) settle--;
             memset(have, 0, sizeof(have));
             pthread_mutex_lock(&g_lock);
@@ -133,6 +128,13 @@ static void *md_thread(void *arg)
         else if (tr < 0) printf("[md] motion ended (peak %u.%02u%%)\n", peak / 100, peak % 100);
     }
     return NULL;
+}
+
+void md_pause(int ms)
+{
+    pthread_mutex_lock(&g_lock);
+    g_pause_until = md_pause_extend(g_pause_until, now_ms(), ms);
+    pthread_mutex_unlock(&g_lock);
 }
 
 void md_start(void)
@@ -178,7 +180,6 @@ int md_preroll_seconds(void)
 
 int md_preroll_wanted(void)
 {
-    if (access("/tmp/akam_md_preroll_always", F_OK) == 0) return 1;
     pthread_mutex_lock(&g_lock);
     int w = g_enabled && (g_state.active || (g_last_motion_ms >= 0 && now_ms() - g_last_motion_ms < 15000));
     pthread_mutex_unlock(&g_lock);
@@ -230,7 +231,7 @@ int md_ctl_set(const char *key, const char *val, char *msg, size_t cap)
             snprintf(msg, cap, "ERR md.enabled must be 0 or 1");
             rc = 1;
         } else {
-            g_enabled = val[0] == (char)49;
+            g_enabled = val[0] == '1';
         }
     } else if (!strcmp(key, "md.preroll")) {
         char *end = NULL;

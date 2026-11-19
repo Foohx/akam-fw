@@ -42,6 +42,7 @@ shell kit_test.sh
 native klog_test.sh
 native leds_test.sh
 shell lockdown_test.sh
+native md_logic_test.sh
 native mqtt_codec_test.sh
 native mqtt_ha_test.sh
 native mqtt_svc_test.sh
@@ -53,6 +54,7 @@ native onvif_svc_test.sh
 native onvif_test.sh
 native pace_compose_test.sh
 shell preflight_test.sh
+native preroll_test.sh
 shell publish_test.sh
 lint readme_links_test.sh
 shell reflash_ssh_test.sh

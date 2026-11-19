@@ -64,6 +64,18 @@ int main(void)
     CHECK(md_feed(&st, &p, 800, 7500) == 0);
     CHECK(md_feed(&st, &p, 800, 8000) == 1 && st.events == 2);
 
+    /* pauses: extended by a later announcement, never shortened, over when the time is up */
+    int64_t until = 0;
+    CHECK(!md_paused(until, 1000));
+    until = md_pause_extend(until, 1000, 8000);
+    CHECK(until == 9000 && md_paused(until, 1000) && md_paused(until, 8999) && !md_paused(until, 9000));
+    until = md_pause_extend(until, 2000, 3000); /* a shorter one inside a longer one changes nothing */
+    CHECK(until == 9000);
+    until = md_pause_extend(until, 5000, 8000); /* a later one extends */
+    CHECK(until == 13000);
+    until = md_pause_extend(until, 6000, -5);   /* nonsense is no pause */
+    CHECK(until == 13000);
+
     /* presets order */
     md_params_t lo, hi;
     md_preset("low", &lo);

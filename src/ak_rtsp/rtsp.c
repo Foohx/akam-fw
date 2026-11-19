@@ -87,6 +87,10 @@ static int  g_pr_seconds = -1; /* -1: not set up yet */
 
 static pr_t *preroll_ring(void)
 {
+    /* Off (the default) costs nothing; it is asked again about once a second, so switching motion detection on
+     * needs no restart. */
+    static unsigned asked;
+    if (g_pr_seconds == 0 && (++asked & 15) == 0) g_pr_seconds = -1;
     if (g_pr_seconds < 0) {
         g_pr_seconds = md_preroll_seconds();
         uint8_t *arena = g_pr_seconds > 0 ? malloc(PREROLL_ARENA_BYTES) : NULL;
