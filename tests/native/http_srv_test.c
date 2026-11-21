@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-/* Host test of src/ak_rtsp/http_srv.c over real localhost sockets: routing, keep-alive, pipelining, limits,
+/* Host test of src/net/onvif/http_srv.c over real localhost sockets: routing, keep-alive, pipelining, limits,
  * timeouts, connection cap, streamed responses, start/stop/start without fd or thread leaks. Built with
  * ASan/UBSan by tests/http_srv_test.sh. SIGPIPE is left at its default on purpose: a send without MSG_NOSIGNAL
  * would kill this test. */

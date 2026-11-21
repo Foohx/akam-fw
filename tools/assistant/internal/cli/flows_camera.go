@@ -419,9 +419,13 @@ func (a *App) selectRow(ch *chooser, r discover.Row) (bool, error) {
 		return false, nil
 	}
 	name := r.Name
+	newType := ""
 	if name == "" {
 		var ok bool
 		if name, ok = a.askNewCameraName(); !ok {
+			return false, nil
+		}
+		if newType, ok = a.askCameraType(); !ok {
 			return false, nil
 		}
 	}
@@ -431,6 +435,7 @@ func (a *App) selectRow(ch *chooser, r discover.Row) (bool, error) {
 	if err := a.useCamera(name); err != nil {
 		return false, a.UI.Fail("cannot open the state of "+name+": "+err.Error(), "")
 	}
+	a.setCameraType(newType)
 	if r.Found {
 		_ = state.RecordSeen(a.St, ip, r.Host, r.FW, time.Now())
 		switch r.Kind {

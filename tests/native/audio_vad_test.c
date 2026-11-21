@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/audio_vad.c: the energy gate of the half-duplex
+/* Host test of src/features/audio/audio_vad.c: the energy gate of the half-duplex
  * rule. Build/run: tests/audio_vad_test.sh */
 #include <math.h>
 #include <stdint.h>

@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/mqtt.c: the MQTT 3.1.1 codec. Golden bytes (written by hand from the specification, not
+/* Host test of src/net/mqtt/mqtt.c: the MQTT 3.1.1 codec. Golden bytes (written by hand from the specification, not
  * produced by the code under test), remaining-length edge cases, every encoder against every too-small buffer,
  * malformed and hostile input, and a deterministic fuzz loop. Run under ASan/UBSan: every buffer below is an exact
  * size heap block, so one byte too many or too few is a report. */

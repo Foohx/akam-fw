@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end test of src/ak_rtsp/build_firmware.sh on the synthetic fixture,
+# End-to-end test of firmware/lsc-indoor-1080p-ak3918/image/build_image.sh on the synthetic fixture,
 # with stub ak_rtsp / dropbearmulti binaries. Nothing here touches hardware,
 # the repository tree, or a real APP dump. Sizes in the reports are fixture
 # sizes, NOT representative of the real free space.
@@ -7,7 +7,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-BUILD=$REPO/src/ak_rtsp/build_firmware.sh
+BUILD=$REPO/firmware/lsc-indoor-1080p-ak3918/image/build_image.sh
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 TARGET=5242880
 
@@ -166,14 +166,14 @@ fi
 check "gate: clear message" grep -q 'time64 check failed on the installed binaries' "$WORK/o5e.log"
 check "override: stub build accepted" with_app "$FIXTURE" "$WORK/o5f"
 check "override warning recorded" grep -q 'time64 machine code check SKIPPED' "$WORK/o5f/build_report.txt"
-RA=$REPO/src/ak_rtsp/ak_rtsp
+RA=$REPO/build/lsc-indoor-1080p-ak3918/ak_rtsp
 RD=$REPO/dist/dropbear/dropbearmulti
 if host_arm_gdb >/dev/null 2>&1 && [ -f "$RA" ] && [ -f "$RD" ]; then
     check "real ak_rtsp + dropbearmulti pass the gate" \
         with_app "$FIXTURE" "$WORK/o5g" AK_RTSP_BIN="$RA" DROPBEAR_MULTI="$RD" AKAM_ALLOW_UNCHECKED_TIME64=0
     check "gate ran on the installed files" grep -q 'check_time32: .*bin/dropbearmulti: ok' "$WORK/o5g.log"
 else
-    echo "  skip - needs gdb, src/ak_rtsp/ak_rtsp and dist/dropbear/dropbearmulti"
+    echo "  skip - needs gdb, build/lsc-indoor-1080p-ak3918/ak_rtsp and dist/dropbear/dropbearmulti"
 fi
 
 echo "== 6. service.sh without telnet/ftp lines"

@@ -273,7 +273,7 @@ check "transient errors: succeeds" 0 "$RC"
 contains "transient: retry logged" "$OUT" "retry 3/5"
 if [ "$CALLS" -ge 9 ]; then ok "transient: all artifacts downloaded ($CALLS curl calls)"; else bad "transient: curl calls $CALLS"; fi
 if [ -x "$ROOT/tools/.toolchain/zig-0.14.1-x86_64-linux/zig" ]; then ok "zig installed in per-arch dir"; else bad "zig installed in per-arch dir"; fi
-check "smolrtsp checked out" "$SMOL_SHA" "$(git -C "$ROOT/src/smolrtsp" rev-parse HEAD)"
+check "smolrtsp checked out" "$SMOL_SHA" "$(git -C "$ROOT/third_party/smolrtsp" rev-parse HEAD)"
 
 # Idempotent: nothing to fetch the second time.
 SEQ='' boot
@@ -336,10 +336,10 @@ SEQ='' boot --offline
 check "offline, empty cache: fails" 1 "$RC"
 contains "offline, empty cache: message" "$OUT" "offline:"
 check "offline, empty cache: no curl call" 0 "$CALLS"
-rm -rf "$ROOT/src/smolrtsp/build"
+rm -rf "$ROOT/third_party/smolrtsp/build"
 SEQ='' boot
 check "online repopulate" 0 "$RC"
-rm -rf "$ROOT/tools/.toolchain/zig-0.14.1-x86_64-linux" "$ROOT/src/smolrtsp/build"
+rm -rf "$ROOT/tools/.toolchain/zig-0.14.1-x86_64-linux" "$ROOT/third_party/smolrtsp/build"
 SEQ='' boot --offline
 check "offline, full cache: ok" 0 "$RC"
 check "offline, full cache: no curl call" 0 "$CALLS"

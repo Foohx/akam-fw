@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-/* Host test of src/ak_rtsp/onvif_cfg.c: the flag file parser, the reload state machine (off, on, port change,
+/* Host test of platforms/anyka-ak3918/onvif_cfg.c: the flag file parser, the reload state machine (off, on, port change,
  * no_password, port in use, password OFF) over the REAL http_srv + onvif + wsd + cred, files in a temporary
  * directory, no camera. End to end: after a reload the Device service answers GetSystemDateAndTime and
  * GetDeviceInformation over HTTP and WS-Discovery answers a unicast Probe with the right XAddr. Also checks that OFF
@@ -192,15 +192,15 @@ static void test_parser(void)
     CHECK(pcfg("enabled=1\nport=8x\n", NULL, NULL) != 0, "port with a letter");
     CHECK(pcfg("enabled=1\nport=\n", NULL, NULL) != 0, "empty port");
     CHECK(pcfg("enabled=1\nport=123456\n", NULL, NULL) != 0, "six digits");
-    int bad[] = { 21, 22, 23, 24, 554, 8091 }, ok = 1;
+    int bad[] = { 21, 22, 23, 24, 554, 8091, 8092 }, ok = 1;
     for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         char b[40];
         snprintf(b, sizeof(b), "enabled=1\nport=%d\n", bad[i]);
         if (pcfg(b, NULL, NULL) == 0 || onvif_cfg_port_ok(bad[i])) ok = 0;
     }
-    CHECK(ok, "ports 21-24, 554 and 8091 refused");
+    CHECK(ok, "ports 21-24, 554, 8091 and 8092 refused");
     CHECK(onvif_cfg_port_ok(20) && onvif_cfg_port_ok(25) && onvif_cfg_port_ok(553) && onvif_cfg_port_ok(555) &&
-          onvif_cfg_port_ok(8090) && onvif_cfg_port_ok(8092) && onvif_cfg_port_ok(80), "neighbours of the refused ports ok");
+          onvif_cfg_port_ok(8090) && onvif_cfg_port_ok(8093) && onvif_cfg_port_ok(80), "neighbours of the refused ports ok");
     char big[200];
     memset(big, 'a', sizeof(big));
     onvif_cfg_t tmp;

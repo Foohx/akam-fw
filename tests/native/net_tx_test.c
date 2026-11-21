@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/net_tx.c: the stall policy of the RTSP/TCP writer.
+/* Host test of src/net/rtsp/net_tx.c: the stall policy of the RTSP/TCP writer.
  * Loopback socketpairs with tiny buffers; no network, no hardware.
  * Build/run: tests/net_tx_test.sh */
 #include <errno.h>

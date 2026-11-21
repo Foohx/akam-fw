@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/ctl_sys.c on a fake /proc and /sys tree and a fake clock. No camera, no network
+/* Host test of src/core/control/ctl_sys.c on a fake /proc and /sys tree and a fake clock. No camera, no network
  * interface needed (the test points the module at an interface that does not exist). */
 #include <stdint.h>
 #include <stdio.h>
@@ -105,6 +105,13 @@ int main(void)
     CHECK(IS("rtsp.clients", "0"));
     CHECK(IS("rtsp.auth", "unknown"));
     CHECK(IS("rtsp.skipped_frames", "0"));
+    /* the registry names (hal_sys): numbers, -1000000 (HAL_SYS_NA) while not known, never the word "unknown" */
+    CHECK(IS("sys.cpu_pct", "-1000000"));
+    CHECK(IS("sys.load1_x100", "-1000000"));
+    CHECK(IS("sys.mem_total_kb", "-1000000"));
+    CHECK(IS("sys.mem_avail_kb", "-1000000"));
+    CHECK(IS("sys.uptime_s", "-1000000"));
+    CHECK(IS("net.wifi_lq", "-1000000"));
 
     /* --- unknown keys --- */
     char b[64];
@@ -133,6 +140,12 @@ int main(void)
     CHECK(IS("sys.cpu", "unknown"));             /* first sample: no interval yet */
     CHECK(IS("sys.temp", "45.3"));
     CHECK(IS("net.wifi_rssi", "-58"));
+    CHECK(IS("sys.cpu_pct", "-1000000"));        /* first sample: no interval yet */
+    CHECK(IS("sys.load1_x100", "12"));
+    CHECK(IS("sys.mem_total_kb", "57344"));
+    CHECK(IS("sys.mem_avail_kb", "21000"));
+    CHECK(IS("sys.uptime_s", "86400"));
+    CHECK(IS("net.wifi_lq", "70"));
 
     /* --- cache: files change, within 1 s nothing moves --- */
     put("/proc/uptime", "86401.55 1.00\n");
@@ -144,6 +157,8 @@ int main(void)
     CHECK(IS("sys.uptime", "86401"));
     /* delta: busy 500, total 1000 -> 50 % */
     CHECK(IS("sys.cpu", "50"));
+    CHECK(IS("sys.cpu_pct", "50"));
+    CHECK(IS("sys.uptime_s", "86401"));
 
     /* --- cpu: iowait counts as idle; delta total 0 keeps unknown rather than inventing --- */
     stat_file(1500 + 100, 9500 + 100, 200);       /* busy +100 of total +400 -> 25 % */
@@ -270,11 +285,13 @@ int main(void)
     g_now = 60000;
     ctl_sys_list(emit, NULL);
     CHECK(g_emitted == (int)ctl_sys_count());
-    CHECK(ctl_sys_count() == 17);
+    CHECK(ctl_sys_count() == 23);
     CHECK(ctl_sys_key(0) && !strcmp(ctl_sys_key(0), "sys.uptime"));
     CHECK(ctl_sys_key(15) && !strcmp(ctl_sys_key(15), "sys.time_set"));
     CHECK(ctl_sys_key(16) && !strcmp(ctl_sys_key(16), "rtsp.skipped_frames"));
-    CHECK(ctl_sys_key(17) == NULL);
+    CHECK(ctl_sys_key(17) && !strcmp(ctl_sys_key(17), "sys.cpu_pct"));
+    CHECK(ctl_sys_key(22) && !strcmp(ctl_sys_key(22), "net.wifi_lq"));
+    CHECK(ctl_sys_key(23) == NULL);
     CHECK(g_emit_unknown >= 1);
 
     /* --- small output buffer truncates, does not overflow --- */

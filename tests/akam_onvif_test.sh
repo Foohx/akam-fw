@@ -6,7 +6,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-ONV=$REPO/tools/firmware_patch_templates/akam_onvif.sh
+ONV=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/akam_onvif.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
@@ -113,7 +113,7 @@ for badp in 0 65536 abc -1 '' 123456 80x; do
     out=$(run enable "$badp"); rc=$?
     eq "enable '$badp': usage error 2" "$rc" 2
 done
-for resp in 21 22 23 24 554 8091; do
+for resp in 21 22 23 24 554 8091 8092; do
     out=$(run enable "$resp"); rc=$?
     eq "enable $resp (used by another service): usage error 2" "$rc" 2
 done

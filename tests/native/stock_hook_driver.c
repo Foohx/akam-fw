@@ -1,4 +1,4 @@
-/* stock_hook_driver.c - host test program for src/ak_rtsp/stock_hook.c (see
+/* stock_hook_driver.c - host test program for platforms/anyka-ak3918/tools/stock_hook.c (see
  * tests/stock_hook_test.sh). Built as "hook_driver", run with LD_PRELOAD=stock_hook.so
  * (host build of the hook on x86_64, STOCK_HOOK_COMM="hook_driver").
  *

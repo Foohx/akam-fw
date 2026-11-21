@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Check that a static ARM binary never issues a time64 system call that the
-# camera's kernel acknowledges without executing (see src/common/time32_shim.c
+# camera's kernel acknowledges without executing (see src/core/time32_shim.c
 # and docs/how-it-works.md).
 #
 #   tools/build/check_time32.sh [--require-263] <elf>...

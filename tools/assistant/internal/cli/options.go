@@ -28,6 +28,14 @@ type Options struct {
 	// The config command (config.go): --global, --from CAMERA, --only GROUPS, --include-secrets.
 	CfgGlobal, CfgSecrets bool
 	CfgFrom, CfgOnly      string
+	// The appfs commands (appfscmds.go): the card-less 2K installer.
+	ImageDir, CurrentImage, WorkDir      string
+	Hot, HotPreflight, Execute, NVRAMSet bool
+	// The 2K update flow (rot2k_install.go): --rollback, --force (downgrade), --card (update from an SD card boot instead
+	// of card-less), --yes (answers the rehearsal and the typed write question), --recovery-at-hand (answers the
+	// recovery question, only together with --yes), --api-key-file FILE (the camera's signed API key).
+	Rollback, Force, Card, Yes, RecoveryAtHand bool
+	APIKeyFile                                 string
 }
 
 var negNum = regexp.MustCompile(`^-[0-9]`)
@@ -95,6 +103,32 @@ func ParseArgs(argv []string) (*Options, error) {
 			set(&o.Image)
 		case "--out":
 			set(&o.Out)
+		case "--image-dir":
+			set(&o.ImageDir)
+		case "--current-image":
+			set(&o.CurrentImage)
+		case "--work-dir":
+			set(&o.WorkDir)
+		case "--hot":
+			o.Hot = true
+		case "--hot-preflight":
+			o.HotPreflight = true
+		case "--execute":
+			o.Execute = true
+		case "--nvram":
+			o.NVRAMSet = true
+		case "--rollback":
+			o.Rollback = true
+		case "--force":
+			o.Force = true
+		case "--card":
+			o.Card = true
+		case "--yes":
+			o.Yes = true
+		case "--recovery-at-hand":
+			o.RecoveryAtHand = true
+		case "--api-key-file":
+			set(&o.APIKeyFile)
 		case "--comp":
 			set(&o.Comp)
 		case "--device":
@@ -152,6 +186,9 @@ func ParseArgs(argv []string) (*Options, error) {
 		if o.Kit != "" || o.Version != "" || o.Image != "" {
 			return nil, usageErr("akam: --stock cannot be combined with --kit, --version or --image: choose one firmware (see " + Prog + " help)")
 		}
+	}
+	if o.RecoveryAtHand && !o.Yes && (len(o.Args) == 0 || o.Args[0] != "help") {
+		return nil, usageErr("akam: --recovery-at-hand only goes with --yes (it answers the recovery question of an update)")
 	}
 	switch o.Builder {
 	case "", "native", "tools":

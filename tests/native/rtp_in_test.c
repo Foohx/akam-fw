@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/rtp_in.c: RTP receive unpacker of the audio
+/* Host test of src/net/rtsp/rtp_in.c: RTP receive unpacker of the audio
  * backchannel. Build/run: tests/rtp_in_test.sh (ASan + UBSan). */
 #include <stdint.h>
 #include <stdio.h>

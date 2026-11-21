@@ -21,7 +21,7 @@ runs:
           tools/.toolchain
           !tools/.toolchain/go/cache
           tools/.cache
-          src/smolrtsp
+          third_party/smolrtsp
         key: toolchain-${{ runner.os }}-${{ hashFiles('tools/build/deps.lock', 'tools/build/bootstrap.sh', 'tools/assistant/go.sum') }}
     - if: inputs.bootstrap == 'true' && steps.save.outputs.cache-hit != 'true'
       shell: bash
@@ -33,7 +33,7 @@ runs:
           tools/.toolchain
           !tools/.toolchain/go/cache
           tools/.cache
-          src/smolrtsp
+          third_party/smolrtsp
         key: toolchain-${{ runner.os }}-${{ hashFiles('tools/build/deps.lock', 'tools/build/bootstrap.sh', 'tools/assistant/go.sum') }}
         fail-on-cache-miss: true
     # Host tools the tests probe with `command -v` (tools/build/check_host.sh lists the same kit/build tools). Test jobs

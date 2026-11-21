@@ -11,7 +11,7 @@ parsers has not been done.
 ## 1. Switching it on and off
 
 - Flag file `/etc/config/akam/onvif`, exactly two lines in any order: `enabled=1|0` and `port=N` (N is 1 to 65535 except
-  21 to 24, 554 and 8091). LF; a trailing CR is tolerated. Absent file means off. Anything else (unknown or repeated key,
+  21 to 24, 554, 8091 and 8092). LF; a trailing CR is tolerated. Absent file means off. Anything else (unknown or repeated key,
   missing key, bad number, a third line, over 64 bytes) means off, with one log line.
 - `akam_onvif.sh` (run over SSH): `enable [PORT]` (default port 80), `disable`, `status`. `enable` refuses when the RTSP
   stream password is not set, then writes the file atomically and runs `ak_rtsp ctl ONVIF reload`.

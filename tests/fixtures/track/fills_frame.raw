@@ -1,0 +1,15 @@
+# Hardware log of the 2K (the person fills the frame, a premature search, a head clip going up), as replayed by tests/rot2k_track_cont_unit.c replay_cases().
+# The policy must not tilt up: a box cut at top and bottom and 95 % wide is ambiguous (no head-clip up); no exit search at the first fresh no-box frame after the camera's own move.
+# expect tilt_up=0
+# expect ticks>=9
+C motion=1 invert_pan=1 tilt_enable=1 return_home=0
+I 1095216 1095116 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,210,9,319,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 1095416 1095316 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,210,9,319,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 1095616 1095516 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,210,9,319,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 1095816 1095716 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,210,9,319,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 1096016 1095916 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,210,9,319,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 1096216 1096116 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,210,9,319,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 1096845 1096745 1000 1300 0 0 0 0 0 1 1300 300 3650 300 2100 0 me=0 cr=0 ob=0 rb=0 ct=0
+I 1097405 1097305 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=1097000 cr=0 ob=0 rb=0 ct=0
+I 1098035 1097935 1000 1300 0 0 0 0 0 1 1300 300 3650 300 2100 1 {0,0,0,0,297,191} me=1097000 cr=0 ob=0 rb=0 ct=0
+I 1098856 1098756 1000 1300 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,0,0,304,191} me=1098300 cr=0 ob=0 rb=0 ct=0

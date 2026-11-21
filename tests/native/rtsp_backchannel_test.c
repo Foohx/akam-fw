@@ -1,4 +1,4 @@
-/* End-to-end host test of the ONVIF audio backchannel through the REAL rtsp.c
+/* End-to-end host test of the ONVIF audio backchannel through the REAL rtsp_session.c
  * client loop (SmolRTSP, Digest authentication, rtsp_in demultiplexer, talk.c,
  * rtp_in.c, audio_vad.c) over loopback TCP/UDP. Only the hardware is faked: the
  * video encoder (never has a frame), the microphone (a steady tone, one 256
@@ -24,11 +24,11 @@
 #include <unistd.h>
 
 #include "ak_ioctls.h"
-#include "ak_rtsp.h"
+#include "platform.h"
 #include "audio.h"
 #include "g711.h"
 #include "md5.h"
-#include "rtsp.h"
+#include "rtsp_session.h"
 #include "rtsp_auth.h"
 
 static int fails;

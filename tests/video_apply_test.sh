@@ -7,14 +7,16 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
 CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-SRC=$REPO/src/ak_rtsp
+SRC=$REPO/platforms/anyka-ak3918
 fails=0
 check() { if "${@:2}"; then echo "  ok   - $1"; else echo "FAIL: $1"; fails=$((fails + 1)); fi; }
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" "-DVIDEO_CFG_PATH=\"$WORK/video\"" -o "$WORK/apply" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" "-DVIDEO_CFG_PATH=\"$WORK/video\"" -o "$WORK/apply" \
     "$REPO/tests/native/video_apply_test.c" "$SRC/ae.c" "$SRC/venc.c" "$SRC/video_cfg.c" -pthread
 rec() { "$WORK/apply" | grep -E '^(TUNNEL|CREATE_ENC)'; }
 
@@ -43,5 +45,29 @@ check "fps 10: SET_SENSOR_FPS is {10,0,0,10}" grep -qx 'TUNNEL 4004497a 0a000000
 enc=$(grep '^CREATE_ENC' "$WORK/default.txt" | cut -d' ' -f2)
 want="${enc:0:56}0a002800${enc:64:24}8403${enc:92}"
 check "CREATE_ENC: only fps 10, goplen 40, max_kbps 900 changed" grep -qx "CREATE_ENC $want" "$WORK/cfg.txt"
+
+# QP bounds 22..40 (0x16, 0x28): only enc.minqp (0x28), enc.maxqp (0x2a), rc.minqp (0x44) and rc.maxqp (0x46) change
+printf 'minqp=22\nmaxqp=40\n' >"$WORK/video"
+rec >"$WORK/qp.txt"
+want="${enc:0:80}16002800${enc:88:48}16002800${enc:144}"
+check "CREATE_ENC: only the four QP words changed (22, 40)" grep -qx "CREATE_ENC $want" "$WORK/qp.txt"
+# a pair that breaks min < max is dropped as a whole: payload identical to the default
+printf 'minqp=45\n' >"$WORK/video"
+rec >"$WORK/qpbad.txt"
+check "minqp 45 alone (>= default maxqp): payloads identical" cmp -s "$WORK/qpbad.txt" "$WORK/default.txt"
+printf 'minqp=28\nmaxqp=43\n' >"$WORK/video"
+rec >"$WORK/qpdef.txt"
+check "explicit default QP: payloads identical" cmp -s "$WORK/qpdef.txt" "$WORK/default.txt"
+# ipdelta option (rc.delta, +0x48): 0 = default payload, 3 and -2 change only that word, nothing else
+rm -f "$WORK/video"
+TEST_IPDELTA=0 rec >"$WORK/ipd0.txt"
+check "ipdelta 0: payloads identical" cmp -s "$WORK/ipd0.txt" "$WORK/default.txt"
+TEST_IPDELTA=3 rec >"$WORK/ipd3.txt"
+want="${enc:0:144}03000000${enc:152}"
+check "ipdelta 3: only rc.delta changed" grep -qx "CREATE_ENC $want" "$WORK/ipd3.txt"
+TEST_IPDELTA=-2 rec >"$WORK/ipdm2.txt"
+want="${enc:0:144}feffffff${enc:152}"
+check "ipdelta -2: only rc.delta changed" grep -qx "CREATE_ENC $want" "$WORK/ipdm2.txt"
+check "ipdelta: the ISP payloads did not change" cmp -s <(grep ^TUNNEL "$WORK/ipd3.txt") <(grep ^TUNNEL "$WORK/default.txt")
 if [ "$fails" -ne 0 ]; then echo "video_apply_test: $fails failed"; exit 1; fi
 echo "video_apply_test: all passed"

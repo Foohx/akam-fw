@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/wsd.c. Pure parts first (parse, match, build, rate limit), then the thread on loopback
+/* Host test of src/net/onvif/wsd.c. Pure parts first (parse, match, build, rate limit), then the thread on loopback
  * through the test hook (wsd_test_t): Probes are sent by unicast to the bound port, Hello/Bye are redirected to a
  * receiver socket, so no multicast support is required from the host. */
 #define _GNU_SOURCE

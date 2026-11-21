@@ -106,8 +106,9 @@ func TestPicture(t *testing.T) {
 	e := newEnv(t)
 	r := e.run("", "picture")
 	expectRC(t, r, 0)
-	contains(t, r.out, "  Brightness 0, contrast 0, saturation 0, sharpness 0 (each -50 to 50, 0 = unchanged). Saved on the camera.",
+	contains(t, r.out, "  Brightness 0, contrast 0, saturation 0, sharpness -15 (each -50 to 50; 0 = unchanged, except sharpness: -15 is the default, 0 is the camera's own sharpening). Saved on the camera.",
 		"  White balance: conf", "  Day/night: auto")
+	contains(t, r.out, "  Denoise (3D noise reduction): 2 (0 to 4; 2 is the default, 0 is the camera's own noise reduction). Saved on the camera.")
 	r = e.run("", "picture", "contrast", "-20", "brightness", "5", "wb", "manual", "night", "day")
 	expectRC(t, r, 0)
 	contains(t, r.out, "  Done.", "Brightness 5, contrast -20")
@@ -115,9 +116,19 @@ func TestPicture(t *testing.T) {
 	if got := strings.Join(e.cam.CtlSets(), "|"); got != want {
 		t.Errorf("control lines (one SET each, in the order given):\n got %s\nwant %s", got, want)
 	}
+	r = e.run("", "picture", "denoise", "0")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Denoise (3D noise reduction): 0")
+	if e.cam.CtlValue("isp.denoise") != "0" {
+		t.Error("denoise 0 did not reach the camera")
+	}
+	for _, bad := range [][]string{{"picture", "denoise", "5"}, {"picture", "denoise", "-1"}, {"picture", "denoise", "12"}, {"picture", "denoise"}, {"picture", "denoise", "1", "denoise", "2"}} {
+		expectRC(t, e.run("", bad...), 2)
+	}
 	r = e.run("", "picture", "reset")
-	contains(t, r.out, "Done. Brightness, contrast, saturation and sharpness are back to 0 and the saved file is removed.")
-	if e.cam.CtlValue("isp.contrast") != "0" {
+	contains(t, r.out, "Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed.")
+	contains(t, r.out, "Denoise is back to 2 (the default).")
+	if e.cam.CtlValue("isp.contrast") != "0" || e.cam.CtlValue("isp.sharpness") != "-15" || e.cam.CtlValue("isp.denoise") != "2" {
 		t.Error("reset did not reach the camera")
 	}
 	for _, bad := range [][]string{{"picture", "contrast", "51"}, {"picture", "contrast", "--5"}, {"picture", "contrast"}, {"picture", "wb", "x"},

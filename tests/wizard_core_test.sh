@@ -265,6 +265,15 @@ check "kit_format refusal explains itself" has "$T/g5.out" "does not support"
 a get-kit >"$T/g6.out" 2>&1
 check "development checkout cannot download without --version" has "$T/g6.out" "--version"
 
+# a decloud-overlay model (rotatable 2K) never gets a kit: refused before any download, with or without --kit
+ROT=lsc-rotatable-2k-ak3918av130
+a get-kit --model "$ROT" --version 9.9.9 >"$T/g7.out" 2>&1
+check "get-kit is refused for a decloud-overlay model" test $? -ne 0
+check "the refusal says it is not supported" has "$T/g7.out" "not supported by the wizard yet"
+a get-kit --model "$ROT" --kit "$KIT" >"$T/g8.out" 2>&1
+check "get-kit --kit is refused for a decloud-overlay model" test $? -ne 0
+check "no kit is recorded for it" test "$(state_get camera_model)" != "$ROT"
+
 # ---------------------------------------------------------------- get-kit download
 new_state
 a doctor >/dev/null 2>&1

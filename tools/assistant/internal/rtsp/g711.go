@@ -3,7 +3,7 @@
 // exit codes) and reuses nothing from the camera code.
 package rtsp
 
-// G.711 mu-law and A-law, the segment/mantissa algorithm of src/ak_rtsp/g711.c (bit exact with
+// G.711 mu-law and A-law, the segment/mantissa algorithm of src/features/audio/g711.c (bit exact with
 // the Sun reference; the vectors of tests/native/g711_test.c are in the Go tests).
 
 const (

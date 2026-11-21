@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/soap.c: the SOAP scanner, the template engine and the fault helper. Built with
+/* Host test of src/net/onvif/soap.c: the SOAP scanner, the template engine and the fault helper. Built with
  * ASan/UBSan by tests/soap_test.sh. Every input is copied to an exact-size heap block so that a read past the end
  * is caught by ASan. */
 #include <stdio.h>

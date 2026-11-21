@@ -8,6 +8,8 @@ pages are for details, hacking, or when something goes wrong.
 - [Features and protocols](features.md): everything Akam implements, with ports, defaults and test status.
 - [How it works](how-it-works.md): hardware, flash map, boot, `ak_rtsp`, configuration, security.
 - [Compatible cameras](compatible-cameras.md): is my camera supported, and how to report a new one.
+- [Models](models.md) and [what runs on each camera](porting/lsc-1080p/on-camera.md) ([2K](porting/lsc-rotatable-2k/on-camera.md)); [port a new camera](porting/TEMPLATE-new-camera.md).
+- [SoCs](socs.md): which Anyka chip is in each camera, from the firmware strings, and what the platform names mean.
 - [Legal notes](legal.md): your device, privacy, radio, interoperability.
 
 ## Install and use

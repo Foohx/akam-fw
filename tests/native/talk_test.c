@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/talk.c: the talk session of the audio backchannel
+/* Host test of platforms/anyka-ak3918/talk.c: the talk session of the audio backchannel
  * (RTP in, decode, speech gate, speaker queue, counters) with a fake speaker.
  * Build/run: tests/talk_test.sh */
 #include <math.h>

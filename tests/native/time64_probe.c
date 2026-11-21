@@ -8,7 +8,7 @@
  * (which only falls back to the 32-bit call on ENOSYS) gives callers garbage.
  * This program shows, per syscall, whether the kernel really executes it, and
  * whether the libc functions our programs use (with or without
- * src/common/time32_shim.c linked in) give the right result.
+ * src/core/time32_shim.c linked in) give the right result.
  *
  * Run it on the camera (from the SD card or /tmp), optionally with a writable
  * directory for the utimensat test (default /tmp):
@@ -121,7 +121,7 @@ static long raw6(long nr, long a, long b, long c, long d, long e, long f)
 #define RAW3(nr, a, b, c) raw6((nr), (long)(a), (long)(b), (long)(c), 0, 0, 0)
 #define RAW4(nr, a, b, c, d) raw6((nr), (long)(a), (long)(b), (long)(c), (long)(d), 0, 0)
 
-/* The shim marker (defined by src/common/time32_shim.c when linked in). */
+/* The shim marker (defined by src/core/time32_shim.c when linked in). */
 extern const int akam_time32_shim_active __attribute__((weak));
 
 /* ---------- verdict bookkeeping ---------- */

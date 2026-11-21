@@ -256,7 +256,12 @@ partition (only active holders are seen). The Windows and macOS layers are descr
 
 ### The flash path (audited)
 
-* One function writes the flash: `flash.Flash` in `internal/flash`, called from `flashSSH` only (a test counts the
+The card-less 2K has its own audited writer, `appfs.Flash` in `internal/installer/appfs`, called from `appfs-flash` only
+(`cli/appfscmds.go`, counted by a test). It is a dry run unless the plan says Execute, and Execute needs an
+`appfs.Confirmation` (recovery acknowledgement then a typed answer, both explicit, bound to the image sha256). The rest of
+this section describes the 1080p writer.
+
+* One function writes the flash: `flash.Flash` in `internal/installer/nativeapp/flash`, called from `flashSSH` only (a test counts the
   callers and checks that the start command and the confirmation flag appear nowhere else).
 * It needs a `flash.Confirmation`, which only `flash.NewConfirmation` can make, from an explicit yes (default No: Enter,
   Esc, `q` and end of input are No; refused without a terminal) for that image's md5. `--dry-run` never reaches it.
@@ -309,7 +314,7 @@ message when Go is missing) covers every P1 command end to end without a camera,
 ffmpeg:
 
 * `internal/testfake`: the fake camera. An in-process SSH server that runs the **real helper scripts**
-  of `tools/firmware_patch_templates/` (`akam_rtsp_auth.sh`, `akam_hostname.sh`, `akam_debug.sh`) in a
+  of `firmware/lsc-indoor-1080p-ak3918/overlay/` and `src/scripts/` (`akam_rtsp_auth.sh`, `akam_hostname.sh`, `akam_debug.sh`) in a
   temporary root, a control port 8091 reached the way the real camera allows (the exec `nc -w 2 127.0.0.1 8091`; `direct-tcpip` is refused like Dropbear), a second Dropbear and a fake flash (a byte slice plays
   `/dev/mtd7`; the behaviour of `akam_reflash_ssh.sh` is emulated, the real script is tested by
   `tests/reflash_ssh_test.sh`), and an RTSP server with Digest login
@@ -340,10 +345,13 @@ internal/state/           state files, cameras, log with redaction, lock
 internal/camera/ssh/      SSH client, keys, host-key pinning
 internal/camera/ctl/      control port 8091 client
 internal/camera/telnet/   maintenance telnet client, manual mode, nc transfers with hashing
-internal/sdcard/          card enumeration and guards, MBR + FAT32 writer and reader, payload, helper, toolkit
+internal/installer/       firmware kind -> installer (native-app, cardless-appfs); never by model id
+internal/installer/nativeapp/{image,flash,sdcard}/
+                          the 1080p installer: native image builder, the one audited function that writes the camera
+                          flash (port of reflash_over_ssh.sh), card enumeration and guards, MBR + FAT32 writer, payload
+internal/installer/appfs/ the card-less 2K installer: Go port of build_appfs.sh (Build) and flash_appfs.sh (Flash)
 internal/assets/          embedded camera-side scripts (go generate) and the supported-hardware list
 internal/kit/             kit download, SSHSIG check, archive and MANIFEST checks (port of verify_kit.sh); kit/kittest builds test kits
-internal/flash/           the one audited function that writes the camera flash (port of reflash_over_ssh.sh)
 internal/discover/        port probe, subnet list and scan, WS-Discovery, mDNS
 internal/rtsp/            RTSP + Digest, ONVIF backchannel talk, G.711, WAV
 internal/audio/           optional capture tools (external processes)

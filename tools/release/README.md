@@ -87,8 +87,10 @@ default version of the family that is not `X.Y.Z`, a placeholder key, an embedde
 `CHANGELOG.md` section, a directory that already holds a signature, and the build overrides (`AKAM_ALLOW_ANY_GO`,
 `AKAM_STRIP`, `ZIG`, `AKAM_TARGETS`, ...).
 
-- *firmware*: runs `make_kit.sh --model <id>` (`AKAM_KIT_VERSION=X.Y.Z`) for every file of `tools/release/models/`, and
-  gathers the kits, the source (`git archive --prefix=akam-firmware-X.Y.Z/ HEAD`), `LICENSE`,
+- *firmware*: runs `make_kit.sh --model <id>` (`AKAM_KIT_VERSION=X.Y.Z`) for every native-app file of
+  `tools/release/models/` and `make_kit_2k.sh --model <id>` for every `cardless-appfs` one (the 2K; its inputs
+  `dist/rot2k-app`, `dist/dropbear` and the pinned busybox must be built first, see the header of `make_kit_2k.sh`), and
+  gathers all the kits into the one directory, the source (`git archive --prefix=akam-firmware-X.Y.Z/ HEAD`), `LICENSE`,
   `THIRD_PARTY_NOTICES.md` and ONE `SHA256SUMS`.
 - *assistant*: runs `build_assistant.sh` (`AKAM_VERSION=X.Y.Z`) and gathers the six binaries and archives, `LICENSE`,
   `THIRD_PARTY_NOTICES.md` and ONE `SHA256SUMS`.
@@ -167,7 +169,7 @@ number and timestamp (`gen_version.sh`), so two separate compilations of
 given binaries (this is what `tests/kit_test.sh` checks).
 
 Which Akam files end up in the image (overlay, `service.sh` patch, links) is listed once,
-in `image_files.txt`; `tests/kit_test.sh` builds an image with `build_firmware.sh` and
+in `image_files.txt`; `tests/kit_test.sh` builds an image with `build_image.sh` and
 fails if it disagrees with that list. Edit the list, not two scripts.
 
 ## The assistant (`build_assistant.sh`)
@@ -240,6 +242,7 @@ a newer firmware release simply does not see that release.
 | `gather_release.sh` | gathers and checks the release directory (used by `make_release.sh`, tested on fixtures) |
 | `publish.sh` | `draft` and `sign-and-publish` with `gh` (tested with a fake `gh`) |
 | `make_kit.sh` | build, gate, MANIFEST, SHA256SUMS, tarball of ONE model's kit |
+| `make_kit_2k.sh` | the same for the card-less 2K (kind `cardless-appfs`): appfs payload + SD card files, from the `dist/rot2k-app`, `dist/dropbear` and pinned busybox inputs; test `tests/kit2k_test.sh`. Called by `make_release.sh` (one combined, signed `SHA256SUMS` for all kits; `verify_kit.sh` understands its kind) |
 | `build_assistant.sh` | the six assistant binaries, archives, notices |
 | `image_files.txt` | single list of the Akam files installed into the image |
 | `models/<id>.txt` | the camera model registry: stock firmware fingerprints and their status |

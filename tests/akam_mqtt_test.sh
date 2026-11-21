@@ -7,7 +7,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-MQ=$REPO/tools/firmware_patch_templates/akam_mqtt.sh
+MQ=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/akam_mqtt.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"

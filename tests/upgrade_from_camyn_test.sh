@@ -15,7 +15,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-TPL=$REPO/tools/firmware_patch_templates
+TPL=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay
 FIXTURES=$REPO/tests/fixtures
 TCBB=$REPO/tools/.toolchain/busybox-1.35.0-x86_64/busybox
 

@@ -1,4 +1,4 @@
-/* Composition of the RTSP/TCP video send path of rtsp.c (send_video_frame): tx_pace_decide() with the room of
+/* Composition of the RTSP/TCP video send path of rtsp_session.c (send_video_frame): tx_pace_decide() with the room of
  * net_tx, packet-wise writes into the private queue, ENOBUFS handled as "stop the frame and skip to the next
  * keyframe", against a real loopback TCP socket whose reader is slow. Virtual time (no sleeps): every tick is one
  * frame period of 66 ms. Build/run: tests/pace_compose_test.sh */
@@ -71,7 +71,7 @@ static void drain_peer(int rs, framer_t *fr, result_t *R)
     }
 }
 
-/* One run of the loop of rtsp.c: 15 fps, a keyframe every 30 frames. rd_bytes = what the peer reads per tick. */
+/* One run of the loop of rtsp_session.c: 15 fps, a keyframe every 30 frames. rd_bytes = what the peer reads per tick. */
 static result_t run(int kbps, size_t keylen, size_t plen, size_t rd_bytes, int ticks, int64_t max_skip_ms)
 {
     result_t R;

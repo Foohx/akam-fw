@@ -14,7 +14,7 @@ import (
 	"time"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/flash"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/flash"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 

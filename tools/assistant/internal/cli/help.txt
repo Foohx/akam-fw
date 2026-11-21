@@ -14,12 +14,31 @@ Commands:
   backup             back up the camera (double read, checked, copied to ~/akam-backup-<name>-<date>/),
                      or accept a backup folder you made by hand (--backup-dir DIR)
   image              build the Akam image from your backup
+  backup-2k          2K only: back up the six flash partitions over SSH (read only, each read twice, checked,
+                     kept in the camera's state folder; --out DIR for another new folder)
+  key-2k             2K only: have the camera create the admin API key of this assistant and keep it on this PC
+                     (0600, never shown); with it `update` reads the model and version
+  appfs-build        card-less 2K only (--model lsc-rotatable-2k-ak3918av130): build the appfs image from your
+                     mtd3.bin backup and the 2K kit (--kit DIR --backup-dir DIR [--out DIR]); host only, any OS
+  appfs-flash        card-less 2K only: rehearse (default) or write that image to mtd3 (--image-dir DIR
+                     --backup-dir DIR [--current-image FILE --hot|--hot-preflight] [--nvram] [--execute]);
+                     --execute needs a terminal, the recovery acknowledgement and a typed confirmation
+  prepare-2k-sd      2K only: prepare the first-install microSD card from the signed 2K kit (no flash is written;
+                     --kit FILE or the newest release; asks the SSH key, the Wi-Fi and the red-box yes/no)
   prepare-flash-sd   prepare the microSD card used to flash the camera
   flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
   verify             check SSH, ports and hardware, then the same without the card
   update             flash a new image over SSH (no card). Choose the firmware with --version X.Y.Z (a published
                      release), --kit FILE, --image FILE or --stock (back to the original); without one, the menu
                      asks "Which firmware?"
+                     On the card-less 2K it is one flow: reads the model and version over the signed API
+                     (--api-key-file FILE), verifies the kit (--kit FILE, --version X.Y.Z), builds the image from
+                     your backup (--backup-dir DIR), shows what changes, rehearses without writing, asks, writes,
+                     waits for the camera after YOU power-cycle it and checks mtd3 and the version. The previous
+                     image is kept: update --rollback puts it back. --current-image FILE names the image on a
+                     camera flashed by the scripts, --card updates from an SD card boot, --force allows a
+                     downgrade, --yes answers the rehearsal and the typed question only (never the recovery
+                     question, which needs --recovery-at-hand as well); a terminal is always required
   releases           list the firmware releases published on GitHub for your camera model, newest first
                      (read only; --include-prereleases)
   hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
@@ -39,10 +58,12 @@ Commands:
                      the stream (needs a reboot to apply); beep plays a
                      short tone; off silences the speaker and keeps it off after a reboot; on may need a
                      reboot of the camera to start the speaker. No confirmation is asked.
-  picture [show | brightness N | contrast N | saturation N | sharpness N | wb conf|manual | night auto|day|night | reset]
+  picture [show | brightness N | contrast N | saturation N | sharpness N | denoise N | wb conf|manual | night auto|day|night | reset]
                      the picture, over SSH. N is -50 to 50 (0 = unchanged); the four numbers, wb (/etc/config/akam/image)
                      and night (/etc/config/akam/night) are saved on the camera and applied at every start.
-                     reset puts the four numbers back to 0. Several words can be combined. Default: show.
+                     reset puts the four numbers back to 0 (sharpness -15, denoise 2). denoise N is 0 to 4: 0 = the camera's own
+                     noise reduction, 2 = default (1080p: each light level uses the 3D noise-reduction tables of the
+                     level 2 steps higher). Several words can be combined. Default: show.
   video [show | bitrate N | fps N | gop N]
                      the video encoder settings, over SSH. Default: show. bitrate is the cap in kbit/s (500 to 3000,
                      default 1536); fps is 10, 15, 20 or 25 (default 15; night mode always runs at 10); gop is the key

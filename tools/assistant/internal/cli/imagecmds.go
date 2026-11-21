@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/image"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/image"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 )
 
 // The `image` command and the image step (T11.16): three ways to get the image of a camera.
 //
-//	tools   the bash builder of a source checkout (src/ak_rtsp/build_firmware.sh): Linux only
+//	tools   the bash builder of a source checkout (firmware/lsc-indoor-1080p-ak3918/image/build_image.sh): Linux only
 //	import  an image built elsewhere, given with --image FILE
 //	native  the in-process builder (internal/image): opt-in with --builder native, EXPERIMENTAL
 //

@@ -12,8 +12,8 @@ import (
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/profile"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testfake"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"

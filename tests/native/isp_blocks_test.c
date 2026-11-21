@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/isp_blocks.c: the block table against a synthetic two-subfile
+/* Host test of platforms/anyka-ak3918/isp_blocks.c: the block table against a synthetic two-subfile
  * sensor_isp.conf, the conf loader, the comparison and the dump (fake ISP driver, no camera).
  * With AKAM_ISP_CONF_REAL=/path/to/isp_gc20c3.conf it also checks that every table entry fits the real
  * file (the file is the vendor's: it is never part of the repository). */

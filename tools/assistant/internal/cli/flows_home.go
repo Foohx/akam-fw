@@ -168,6 +168,22 @@ func (a *App) reportFlowError(e error) {
 }
 
 func (a *App) homeAction(act string) error {
+	if a.is2K() { // the card-less 2K: its own install and update flows, everything else stays refused
+		switch act {
+		case "setup":
+			return a.cmdPrepare2KSD()
+		case "update":
+			if !a.needCamera() {
+				return nil
+			}
+			return a.cmdUpdate2K()
+		}
+	}
+	if gatedActions[act] {
+		if err := a.modelGate(act); err != nil {
+			return err
+		}
+	}
 	switch act {
 	case "setup":
 		return a.flowInstall()

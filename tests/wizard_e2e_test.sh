@@ -306,7 +306,7 @@ SB=$(new_state b)
 printf 'step_doctor_done=2026-01-01T00:00:00Z\nstep_get_kit_done=2026-01-01T00:00:00Z\n' >"$SB/state.dry"
 : >"$STUB_LOG"
 a "$SB" --dry-run build </dev/null >"$T/b1.out" 2>&1
-check "b build (rehearsal): shows bootstrap, make and the dropbear build as WOULD lines" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD run: bash .*bootstrap.sh" "$2" && grep -q "WOULD run: bash -c .*make -C src/ak_rtsp" "$2" && grep -q "WOULD run: bash .*build_dropbear.sh" "$2"' _ $? "$T/b1.out"
+check "b build (rehearsal): shows bootstrap, make and the dropbear build as WOULD lines" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD run: bash .*bootstrap.sh" "$2" && grep -q "WOULD run: bash -c .*make -C platforms/anyka-ak3918" "$2" && grep -q "WOULD run: bash .*build_dropbear.sh" "$2"' _ $? "$T/b1.out"
 check "b build (rehearsal): nothing compiled, real state untouched" bash -c '! grep -q "^mode=source" "$1/state" 2>/dev/null' _ "$SB"
 check "b build (rehearsal): the build tools profile was asked of the doctor script" has "$STUB_LOG" "check_host --profile build"
 # the source path is also reachable by the state, with the same rules for the image step
@@ -319,7 +319,7 @@ SBI=$(new_state b2)
 } >"$SBI/state.dry"
 chmod 600 "$SBI/state.dry"
 a "$SBI" --dry-run image </dev/null >"$T/b2.out" 2>&1
-check "b image (rehearsal, source mode): uses build_firmware.sh on the unsquashed backup" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD run: bash -c .*unsquashfs.*build_firmware.sh. --backup-dir" "$2"' _ $? "$T/b2.out"
+check "b image (rehearsal, source mode): uses build_image.sh on the unsquashed backup" bash -c '[ "$1" -eq 0 ] && grep -q "WOULD run: bash -c .*unsquashfs.*build_image.sh. --backup-dir" "$2"' _ $? "$T/b2.out"
 
 # ================================================================== (c) update over SSH
 SC=$(new_state c)

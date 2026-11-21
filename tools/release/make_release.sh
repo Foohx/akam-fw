@@ -7,7 +7,8 @@
 #
 # Two release families with their own versions, tags and assets (both start at 0.1.0):
 #   firmware   tag firmware-vX.Y.Z: one kit per camera model akam-kit-<model>-X.Y.Z.tar.xz (one per file of
-#              tools/release/models/), the source tarball akam-firmware-X.Y.Z-src.tar.gz, LICENSE,
+#              tools/release/models/ that has a kit: native-app models by make_kit.sh, card-less appfs models (the
+#              2K) by make_kit_2k.sh from the build outputs it names; decloud-overlay models have none), the source tarball akam-firmware-X.Y.Z-src.tar.gz, LICENSE,
 #              THIRD_PARTY_NOTICES.md, SHA256SUMS, SHA256SUMS.sig. The version is in tools/release/firmware_version,
 #              recorded as akam_version in every kit MANIFEST and in the image (/usr/local/akam/MANIFEST.txt).
 #   assistant  tag assistant-vX.Y.Z: the six binaries and archives, LICENSE, THIRD_PARTY_NOTICES.md, SHA256SUMS,
@@ -47,6 +48,16 @@ REPO_URL="https://github.com/Foohx/akam-fw"
 KEY_LINE_RE='^akam-release namespaces="akam-release" ssh-ed25519 AAAA'
 die() { echo "make_release: error: $*" >&2; exit 1; }
 log() { echo "make_release: $*"; }
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
+
+# appfs_model FILE: true when the registry file is a card-less appfs model (the 2K): its kit is made by make_kit_2k.sh.
+appfs_model() {
+    [ "$(sed 's/\r$//' "$1" | sed -n 's/^[[:space:]]*kind[[:space:]]*=[[:space:]]*//p' | head -n1 | sed 's/[[:space:]]*$//')" = cardless-appfs ]
+}
 
 FAMILY="" VERSION="" OUT="" TEST=0 CHECK=0
 USAGE="usage: $0 firmware|assistant X.Y.Z [--out DIR] [--test]   |   $0 --check-signed firmware|assistant X.Y.Z [--out DIR]"
@@ -122,7 +133,7 @@ else
             || die "ZIG is set to a Zig other than the pinned one ($ZIG): unset it for a release"
     fi
     for v in AKAM_ALLOW_ANY_GO AKAM_STRIP AKAM_TARGETS AKAM_KIT_NO_BUILD AKAM_KIT_ALLOW_DIRTY AKAM_ALLOW_DIRTY \
-        AKAM_KIT_CHECK_TIME32 AK_RTSP_BIN FLASH_TOOL_BIN DROPBEAR_MULTI; do
+        AKAM_KIT_CHECK_TIME32 SKIP_SOURCE_PROOFS AKAM_ROT2K_BUSYBOX_SHA256_TEST_ONLY AK_RTSP_BIN FLASH_TOOL_BIN DROPBEAR_MULTI; do
         [ -z "${!v:-}" ] || die "$v is set: build overrides are for test builds, never for a release (unset it)"
     done
     # The default version of the family must be the release version.
@@ -154,14 +165,31 @@ if [ "$FAMILY" = firmware ]; then
     mkdir -p "$WORK/kit"
     MODELS=()
     for f in "$HERE"/models/*.txt; do
-        [ -f "$f" ] && MODELS+=("$(basename "$f" .txt)")
+        [ -f "$f" ] || continue
+        # a decloud-overlay model keeps the stock app: it has no kit (see the `kind` header of the registry)
+        native_app_model "$f" || continue
+        MODELS+=("$(basename "$f" .txt)")
     done
-    [ "${#MODELS[@]}" -gt 0 ] || die "no model in tools/release/models/"
+    # the card-less appfs models (the 2K) have their own kit builder; all kits go into the ONE release directory and
+    # ONE SHA256SUMS, which is what the assistant downloads and verifies for every model
+    APPFS_MODELS=()
+    for f in "$HERE"/models/*.txt; do
+        [ -f "$f" ] || continue
+        appfs_model "$f" || continue
+        APPFS_MODELS+=("$(basename "$f" .txt)")
+    done
+    [ "${#MODELS[@]}" -gt 0 ] || [ "${#APPFS_MODELS[@]}" -gt 0 ] || die "no model in tools/release/models/"
     for m in "${MODELS[@]}"; do
         log "kit $m $STAMP"
         AKAM_KIT_VERSION="$STAMP" bash "$HERE/make_kit.sh" --model "$m" --out "$WORK/kit.$m"
         cp "$WORK/kit.$m/akam-kit-$m-$STAMP.tar.xz" "$WORK/kit/"
     done
+    for m in "${APPFS_MODELS[@]}"; do
+        log "kit (card-less appfs) $m $STAMP"
+        AKAM_KIT_VERSION="$STAMP" bash "$HERE/make_kit_2k.sh" --model "$m" --out "$WORK/kit.$m"
+        cp "$WORK/kit.$m/akam-kit-$m-$STAMP.tar.xz" "$WORK/kit/"
+    done
+    MODELS+=("${APPFS_MODELS[@]}")
     log "source tarball (HEAD $(git -C "$ROOT" rev-parse --short HEAD))"
     git -C "$ROOT" archive --format=tar --prefix="akam-firmware-$STAMP/" HEAD | gzip -n -9 >"$WORK/source.tar.gz"
     bash "$HERE/gather_release.sh" firmware "$STAMP" --kit-dir "$WORK/kit" --source "$WORK/source.tar.gz" --out "$OUT" --grade "$GRADE"

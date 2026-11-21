@@ -43,12 +43,14 @@ func TestOnlyTheFlashPackageWritesTheFlash(t *testing.T) {
 		rel, _ := filepath.Rel(root, p)
 		b, _ := os.ReadFile(p)
 		s := string(b)
-		inFlash := strings.HasPrefix(rel, "flash"+string(filepath.Separator))
+		// the two audited flash writers: the native-app one and the card-less appfs one
+		inFlash := strings.HasPrefix(rel, filepath.Join("installer", "nativeapp", "flash")+string(filepath.Separator)) ||
+			strings.HasPrefix(rel, filepath.Join("installer", "appfs")+string(filepath.Separator))
 		inFake := strings.HasPrefix(rel, "testfake"+string(filepath.Separator)) || strings.HasPrefix(rel, filepath.Join("kit", "kittest")+string(filepath.Separator))
 		if !inFlash && !inFake && rel != filepath.Join("cli", "flashcmds.go") && rel != filepath.Join("cli", "remote.go") {
 			for _, w := range []string{"i-understand-no-uart", "akam_reflash_ssh.sh", "flash_guard.sh"} {
 				// the telnet + card route puts flash_guard.sh on the card (the card's script needs it)
-				if w == "flash_guard.sh" && (rel == filepath.Join("cli", "telnetcmds.go") || rel == filepath.Join("sdcard", "payload.go")) {
+				if w == "flash_guard.sh" && (rel == filepath.Join("cli", "telnetcmds.go") || rel == filepath.Join("installer", "nativeapp", "sdcard", "payload.go")) {
 					continue
 				}
 				if strings.Contains(s, w) {
@@ -78,5 +80,31 @@ func TestRehearsalNeverConfirmsAFlash(t *testing.T) {
 	a := &App{UI: &ui.Plain{DryRun: true, Out: io.Discard, ErrOut: io.Discard}}
 	if ok, err := a.flashConfirm("Updating", "192.0.2.1", strings.Repeat("a", 32), "SSH"); ok || err == nil {
 		t.Fatalf("a rehearsal confirmed a flash: %v %v", ok, err)
+	}
+}
+
+// The appfs writer (the card-less 2K) has exactly one caller outside its package: the appfs-flash command.
+func TestOnlyAppfsFlashCommandCallsTheAppfsWriter(t *testing.T) {
+	root := filepath.Join("..")
+	var callers []string
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		if strings.HasPrefix(rel, filepath.Join("installer", "appfs")+string(filepath.Separator)) {
+			return nil
+		}
+		b, _ := os.ReadFile(p)
+		if strings.Contains(string(b), "appfs.Flash(") {
+			callers = append(callers, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || callers[0] != filepath.Join("cli", "appfscmds.go") {
+		t.Errorf("appfs.Flash is called from %v, want only cli/appfscmds.go", callers)
 	}
 }

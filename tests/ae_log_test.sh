@@ -4,15 +4,16 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$HERE/lib/paths.sh"
 CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-SRC=$REPO/src/ak_rtsp
+SRC=$SRC_1080P
 fails=0
 check() { if "${@:2}"; then echo "  ok   - $1"; else echo "FAIL: $1"; fails=$((fails + 1)); fi; }
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" -o "$WORK/ae_log" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/ae_log" \
     "$REPO/tests/native/ae_log_test.c" "$SRC/ae.c" "$SRC/video_cfg.c" -pthread
 
 "$WORK/ae_log" >"$WORK/quiet.txt"

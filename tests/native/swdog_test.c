@@ -1,4 +1,4 @@
-/* Host test of the decision logic of src/ak_rtsp/swdog.c on an injected clock. Build/run: tests/swdog_test.sh */
+/* Host test of the decision logic of platforms/anyka-ak3918/swdog.c on an injected clock. Build/run: tests/swdog_test.sh */
 #include <signal.h>
 #include <stdio.h>
 #include <sys/wait.h>

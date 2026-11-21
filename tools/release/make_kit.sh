@@ -18,7 +18,7 @@
 # Signing is a separate step (tools/release/sign_kit.sh).
 #
 # Which Akam files go into the image (overlay, patch, links) is listed ONCE, in
-# tools/release/image_files.txt; tests/kit_test.sh checks build_firmware.sh against it.
+# tools/release/image_files.txt; tests/kit_test.sh checks build_image.sh against it.
 # tools/release/models/<model>.txt is copied into the kit as supported_hardware.txt and hashed in MANIFEST.txt.
 #
 # Environment (all optional):
@@ -29,7 +29,7 @@
 #   Any of these, or AKAM_KIT_CHECK_TIME32, marks the kit "kit_grade=test" in
 #   MANIFEST.txt; verify_kit.sh refuses such a kit unless --allow-test-kit is given.
 #   AK_RTSP_BIN, FLASH_TOOL_BIN, DROPBEAR_MULTI (+ LICENSE.dropbear next to it)
-#   SMOLRTSP_DIR, MUSL_COPYRIGHT, ZIG_LICENSE    licence sources (as build_firmware.sh)
+#   SMOLRTSP_DIR, MUSL_COPYRIGHT, ZIG_LICENSE    licence sources (as build_image.sh)
 #   AKAM_KIT_CHECK_TIME32 alternative gate command (tests only)
 set -euo pipefail
 
@@ -40,6 +40,11 @@ TARGET=arm-linux-musleabi
 
 die() { echo "make_kit: error: $*" >&2; exit 1; }
 log() { echo "make_kit: $*"; }
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
 
 OUT="$ROOT/dist/kit"
 MODEL=""
@@ -81,8 +86,11 @@ BUILT_UTC="$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 . "$ROOT/tools/build/deps.lock"
 MODELS_DIR="$HERE/models"
 if [ -z "$MODEL" ]; then
-    set -- "$MODELS_DIR"/*.txt
-    { [ $# = 1 ] && [ -f "$1" ]; } || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
+    set --
+    for f in "$MODELS_DIR"/*.txt; do # native-app models only: a decloud-overlay model has no kit
+        if [ -f "$f" ] && native_app_model "$f"; then set -- "$@" "$f"; fi
+    done
+    [ $# = 1 ] || die "--model ID is required (the registry $MODELS_DIR does not hold exactly one model)"
     MODEL="$(basename "$1" .txt)"
 fi
 { printf '%s\n' "$MODEL" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#MODEL}" -ge 3 ] && [ "${#MODEL}" -le 40 ]; } \
@@ -99,10 +107,10 @@ if [ "$NO_BUILD" != 1 ]; then
     # shellcheck source=tools/build/env.sh
     . "$ROOT/tools/build/env.sh"
     log "building ak_rtsp and flash_tool from a clean tree"
-    make -C "$ROOT/src/ak_rtsp" clean >/dev/null
-    make -C "$ROOT/src/ak_rtsp" ak_rtsp flash_tool >/dev/null
-    AK_RTSP_BIN="$ROOT/src/ak_rtsp/ak_rtsp"
-    FLASH_TOOL_BIN="$ROOT/src/ak_rtsp/flash_tool"
+    make -C "$ROOT/platforms/anyka-ak3918" clean >/dev/null
+    make -C "$ROOT/platforms/anyka-ak3918" ak_rtsp flash_tool >/dev/null
+    AK_RTSP_BIN="$ROOT/build/lsc-indoor-1080p-ak3918/ak_rtsp"
+    FLASH_TOOL_BIN="$ROOT/build/lsc-indoor-1080p-ak3918/flash_tool"
     log "building dropbearmulti"
     rm -rf "$ROOT/dist/dropbear"
     bash "$ROOT/tools/dropbear/build_dropbear.sh" >/dev/null
@@ -116,7 +124,7 @@ for v in AK_RTSP_BIN FLASH_TOOL_BIN DROPBEAR_MULTI; do
 done
 DROPBEAR_DIR="$(dirname "$DROPBEAR_MULTI")"
 DROPBEAR_LICENSE="$DROPBEAR_DIR/LICENSE.dropbear"
-SMOLRTSP_DIR="${SMOLRTSP_DIR:-$ROOT/src/smolrtsp}"
+SMOLRTSP_DIR="${SMOLRTSP_DIR:-$ROOT/third_party/smolrtsp}"
 MUSL_COPYRIGHT="${MUSL_COPYRIGHT:-$PINNED_ZIG_DIR/lib/libc/musl/COPYRIGHT}"
 ZIG_LICENSE="${ZIG_LICENSE:-$PINNED_ZIG_DIR/LICENSE}"
 LICENSES=(

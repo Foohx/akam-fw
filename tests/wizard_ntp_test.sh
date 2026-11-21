@@ -6,7 +6,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AKAM="$ROOT/akam"
-HELPER="$ROOT/tools/firmware_patch_templates/akam_ntp.sh"
+HELPER="$ROOT/src/scripts/akam_ntp.sh"
 
 T=$(mktemp -d)
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT

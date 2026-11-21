@@ -14,7 +14,7 @@ wiz_tool() { # name default
     case $1 in
         check_host) v=${AKAM_CHECK_HOST:-$ROOT/tools/build/check_host.sh} ;;
         verify_kit) v=${AKAM_VERIFY_KIT:-$ROOT/tools/release/verify_kit.sh} ;;
-        assemble) v=${AKAM_ASSEMBLE:-$ROOT/tools/image/assemble_from_kit.sh} ;;
+        assemble) v=${AKAM_ASSEMBLE:-$ROOT/firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh} ;;
         sd_cli) v=${AKAM_SD_CLI:-$ROOT/tools/sd/sd_card.sh} ;;
         hw_list) v=${AKAM_HW_LIST:-$ROOT/tools/release/models} ;; # a model registry directory (one file per model) or one file
         compat) v=${AKAM_KIT_COMPAT:-$ROOT/tools/wizard/kit_compat.txt} ;;
@@ -452,6 +452,26 @@ download_file() {
     run_cmd curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --retry 3 -o "$2" "$1"
 }
 
+# native_app_model FILE: true when the registry file is a native-app model: no `kind` line, or only `kind=native-app`.
+# Anything else (decloud-overlay, an unknown or malformed kind, CRLF or spaces around '=') fails closed.
+native_app_model() {
+    ! sed 's/\r$//' "$1" | grep -iE '^[[:space:]]*kind[[:space:]]*=' | grep -vE '^[[:space:]]*kind[[:space:]]*=[[:space:]]*native-app[[:space:]]*$' >/dev/null
+}
+
+# model_refused MODEL: true (and says why) when the registry knows MODEL and it is not a native-app model: the wizard
+# never gets a kit for, installs or updates a decloud-overlay (or unknown kind) model. An id not in the registry passes.
+model_refused() {
+    local l f
+    [ -n "$1" ] || return 1
+    l=$(wiz_tool hw_list)
+    [ -d "$l" ] && f=$l/$1.txt || return 1
+    [ -f "$f" ] || return 1
+    if native_app_model "$f"; then return 1; fi
+    ui_fail "the camera model $1 is not supported by the wizard yet: it keeps its stock firmware, so no firmware is installed or updated for it." \
+        "nothing was changed on the camera. See docs/compatible-cameras.md."
+    return 0
+}
+
 # kit_model_wanted: the camera model whose kit is wanted: the camera model on record (found by the backup, or kept
 # from an earlier --model), else --model, else the model of the recorded backup's stock APP, else the only model of
 # the registry. Prints it. Fails (no output) with 1 when several models exist and none is known, with 2 when --model
@@ -472,8 +492,11 @@ kit_model_wanted() {
     fi
     l=$(wiz_tool hw_list)
     if [ -d "$l" ]; then
-        set -- "$l"/*.txt
-        if [ $# = 1 ] && [ -f "$1" ]; then basename "$1" .txt; return 0; fi
+        set --
+        for n in "$l"/*.txt; do # native-app models only: a decloud-overlay model is never the default
+            if [ -f "$n" ] && native_app_model "$n"; then set -- "$@" "$n"; fi
+        done
+        if [ $# = 1 ]; then basename "$1" .txt; return 0; fi
     else
         n=$(sed -n 's/^model=//p' "$l" | head -1)
         if [ -n "$n" ]; then printf '%s\n' "$n"; return 0; fi
@@ -557,6 +580,7 @@ cmd_get_kit() {
                 "pass --model ID (one of the files of $(wiz_tool hw_list)), or take the backup first so that the model is detected."
             return 1
         fi
+        if model_refused "$model"; then return 1; fi
         if [ -z "$ver" ]; then
             # The wizard has its own version: the firmware version is a different number (firmware-vX.Y.Z releases).
             if [ "$UI_DRY" = 1 ]; then
@@ -632,6 +656,7 @@ cmd_get_kit() {
             "a kit only fits the model it was built for: drop --model."
         return 1
     fi
+    if model_refused "$kmodel"; then return 1; fi
     if [ -n "$kmodel" ]; then vargs+=(--expect-model "$kmodel"); fi
     if [ ! -e "$kit" ]; then
         ui_say "  WOULD run: $(wiz_tool verify_kit) ${vargs[*]} $kit   (kit not downloaded in a rehearsal)"
@@ -691,7 +716,7 @@ cmd_build() {
         { ui_fail "build tools are missing." "run the install command printed above yourself, then retry."; return 1; }
     fi
     run_cmd bash "$ROOT/tools/build/bootstrap.sh" || return 1
-    run_cmd bash -c "cd '$ROOT' && . tools/build/env.sh && make -C src/ak_rtsp ak_rtsp flash_tool" || return 1
+    run_cmd bash -c "cd '$ROOT' && . tools/build/env.sh && make -C platforms/anyka-ak3918 ak_rtsp flash_tool" || return 1
     run_cmd bash "$ROOT/tools/dropbear/build_dropbear.sh" || return 1
     state_set mode source
     state_set kit_path ""
@@ -1112,7 +1137,7 @@ cmd_image() {
 
     ui_warn "reminder: your backup must exist on TWO different media. Never publish dumps or images."
     if [ "$(state_get mode)" = source ]; then
-        run_cmd bash -c "d=\$(mktemp -d) && unsquashfs -d \"\$d/app\" '$bdir/mtdblock7.bin' && APP_EXTRACTED=\"\$d/app\" FW_DIR='$out' bash '$ROOT/src/ak_rtsp/build_firmware.sh' --backup-dir '$bdir'" || rc=$?
+        run_cmd bash -c "d=\$(mktemp -d) && unsquashfs -d \"\$d/app\" '$bdir/mtdblock7.bin' && APP_EXTRACTED=\"\$d/app\" FW_DIR='$out' bash '$ROOT/firmware/lsc-indoor-1080p-ak3918/image/build_image.sh' --backup-dir '$bdir'" || rc=$?
     else
         [ "$UI_DRY" = 1 ] || [ -e "$kit" ] || { ui_fail "kit not found: $kit" "run ./akam get-kit again."; return 1; }
         run_task "Building the image" bash "$(wiz_tool assemble)" --backup-dir "$bdir" --kit "${kit:-<kit>}" --out "$out" ${pass[@]+"${pass[@]}"} || rc=$?
@@ -1274,7 +1299,7 @@ cmd_prepare_flash_sd() {
     if [ "$UI_DRY" != 1 ]; then state_set ssh_pubkey "$pub"; fi
     sd_need_cli "prepare the card by hand: see docs/manual/ssh-and-lockdown.md and tools/sd/prepare_first_boot_sd.sh" || return 1
     ui_require_tty "preparing the flash card" || return 1
-    if [ "$(state_get mode)" = source ]; then ft=$ROOT/src/ak_rtsp/flash_tool; else ft=$BASE_DIR/kit/bin/flash_tool; fi
+    if [ "$(state_get mode)" = source ]; then ft=$ROOT/build/lsc-indoor-1080p-ak3918/flash_tool; else ft=$BASE_DIR/kit/bin/flash_tool; fi
     if [ "$UI_DRY" != 1 ] && [ ! -s "$ft" ]; then
         ui_fail "flash_tool not found: $ft" "run ./akam get-kit again (or ./akam build)."
         return 1

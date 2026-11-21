@@ -29,7 +29,7 @@ It contains **no firmware image, no dump and no vendor file** (Anyka/Tuya
 binaries, kernel modules, stock scripts). Your camera's APP partition is
 proprietary and cannot be redistributed: you dump it from your own camera, and
 the image is assembled on your machine. `flash_tool` is Akam's own MIT-licensed
-program (`src/ak_rtsp/flash_tool.c`), covered by the repository's `LICENSE`.
+program (`firmware/lsc-indoor-1080p-ak3918/image/flash_tool.c`), covered by the repository's `LICENSE`.
 
 Nothing in the kit is executed on your PC: the binaries are for the camera's
 ARM CPU, and the scripts are only copied into the image or used on the camera.

@@ -13,7 +13,7 @@
 # Options live in tools/dropbear/localoptions.h. The only source change is the
 # set of patches in tools/dropbear/patches/ (applied in name order, each one
 # must apply cleanly): see the header of each patch for why it exists.
-# src/common/time32_shim.c is compiled with the same flags and linked into the
+# src/core/time32_shim.c is compiled with the same flags and linked into the
 # multi-call binary: the camera's kernel does not execute musl's time64
 # clock_gettime syscall (docs/how-it-works.md). The final binary's
 # machine code is checked for it (gdb required, hard failure).
@@ -76,7 +76,7 @@ cflags="-Os -mfloat-abi=soft -ffunction-sections -fdata-sections $prefix_map"
 
 # The shim is a plain object, linked explicitly (see its header for why that
 # beats libc.a's clock_gettime for a static link).
-shim_src="$root/src/common/time32_shim.c"
+shim_src="$root/src/core/time32_shim.c"
 shim_obj="$work/time32_shim.o"
 [ -f "$shim_src" ] || die "$shim_src missing"
 # shellcheck disable=SC2086  # cflags is a word list by design

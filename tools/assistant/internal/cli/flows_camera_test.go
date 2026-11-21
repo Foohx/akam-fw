@@ -151,10 +151,14 @@ func TestChooserNewCameraIsNamed(t *testing.T) {
 	e.cam.SetCtl("sys.hostname", "evil\x1b[2Jcam")
 	e.fakeLAN("192.0.2.57")
 	// find (5) > type an address (4 with no rows: after the 4 fixed actions, index 4) ; bad name, then salon
-	r := e.noIP("5\n4\n192.0.2.57\n1\nBad Name\nsalon\n10\n", "--camera", "first")
+	r := e.noIP("5\n4\n192.0.2.57\n1\nBad Name\nsalon\n1\n10\n", "--camera", "first")
 	expectRC(t, r, 0)
 	contains(t, r.out, "(evilcam)", "'Bad Name' is not valid", "Camera: salon at 192.0.2.57.")
 	notContains(t, r.out, "\x1b")
+	contains(t, r.out, "What type of camera is it?", "LSC Smart Rotatable Camera 2K")
+	if e.readStateOf("salon", "camera_model") != "lsc-indoor-1080p-ak3918" {
+		t.Errorf("type not stored: %q", e.readStateOf("salon", "camera_model"))
+	}
 	if e.readStateOf("salon", "camera_kind") != "akam" || e.readStateOf("salon", "camera_ip") != "192.0.2.57" {
 		t.Errorf("state: kind=%q ip=%q", e.readStateOf("salon", "camera_kind"), e.readStateOf("salon", "camera_ip"))
 	}

@@ -1,6 +1,6 @@
 /* Host test of the control port (8091): the read-only gate, DEBUG, client slots, golden read output.
- * Part 1 tests the pure logic of src/ak_rtsp/ctl_gate.c (no sockets, injected clock).
- * Part 2 links the REAL src/ak_rtsp/control.c with stub modules (built with -DCONTROL_PORT=<free port>) and talks to it
+ * Part 1 tests the pure logic of src/core/control/ctl_gate.c (no sockets, injected clock).
+ * Part 2 links the REAL platforms/anyka-ak3918/control.c with stub modules (built with -DCONTROL_PORT=<free port>) and talks to it
  * over TCP: loopback clients, the 4-client limit, LOG forwarding that never blocks, `ak_rtsp ctl`. A "remote" client
  * is a connection to this host's own non-loopback address (skipped when the host has none). No camera. */
 #define _GNU_SOURCE
@@ -57,6 +57,10 @@ int  isp_set_saturation(int v) { return stub_isp_set(v); }
 int  isp_set_contrast(int v) { return stub_isp_set(v); }
 int  isp_set_brightness(int v) { return stub_isp_set(v); }
 int  isp_set_sharpness(int v) { return stub_isp_set(v); }
+static int g_stub_denoise, g_stub_denoise_rc, g_stub_ready = 1;   /* the running 3D-NR bias; what the setter answers */
+int  isp_pipeline_ready(void) { return g_stub_ready; }
+int  isp_nr_knob_get(int k) { (void)k; return g_stub_denoise; }
+int  isp_set_denoise(int v) { int rc = stub_isp_set(v); if (rc == 0 && g_stub_denoise_rc == 0) g_stub_denoise = v; return rc ? rc : g_stub_denoise_rc; }
 int  night_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  night_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void night_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "night.stub=1"); }
@@ -65,13 +69,22 @@ int  audio_out_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)
 void audio_out_set_persist(int p) { (void)p; }
 void audio_out_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "audio.out_stub=2"); }
 int  imgq_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
-int  imgq_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+char g_imgq_last_val[64];
+int  imgq_ctl_set(const char *k, const char *v, char *m, size_t c)
+{
+    if (strcmp(k, "img.qp")) return -1;
+    snprintf(g_imgq_last_val, sizeof(g_imgq_last_val), "%s", v);   /* what the control parser hands to imgq.c */
+    snprintf(m, c, "OK img.qp=%s", v);
+    return 0;
+}
 void imgq_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "imgq.stub=3"); }
 int  talk_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  talk_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void talk_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "talk.stub=4"); }
 int  video_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  video_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
+int  video_minqp(void) { return 28; }
+int  video_maxqp(void) { return 43; }
 void video_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "video.stub=5"); }
 void video_ctl_set_persist(int on) { (void)on; }
 int  ledsys_ctl_get(const char *k, char *o, size_t c)
@@ -126,6 +139,28 @@ void ctl_sys_list(void (*e)(const char *, const char *, void *), void *u)
 {
     for (int i = 0; i < 2; i++) e(k_stub_keys[i], k_stub_vals[i], u);
 }
+
+#ifdef CTL_TEST_REGISTRY
+/* The settings registry behind the port (control.h control_set_registry, convergence P7): two fake rows. Built only with
+ * -DCTL_TEST_REGISTRY (tests/control_test.sh does): everything above and below is the unchanged contract test. */
+static int g_reg_val = 7, g_reg_last_persist = -1;
+static int reg_get(const char *k, char *line, size_t cap)
+{
+    if (strcmp(k, "reg.stub") && strcmp(k, "ae.speed")) return -1; /* "ae.speed" must never reach us: the old code answers first */
+    snprintf(line, cap, "%s=%d", k, g_reg_val);
+    return 0;
+}
+static int reg_set(const char *k, const char *v, int persist, char *msg, size_t cap)
+{
+    g_reg_last_persist = persist;
+    if (!strcmp(k, "reg.bad")) { snprintf(msg, cap, "ERR invalid reg.bad value %s (range)", v); return 1; }
+    if (strcmp(k, "reg.stub")) return -1;
+    g_reg_val = atoi(v);
+    snprintf(msg, cap, "OK reg.stub=%d", g_reg_val);
+    return 0;
+}
+static const control_reg_ops_t g_reg_ops = { reg_get, reg_set };
+#endif
 
 /* ------------------------------------------------------------------ part 1: pure logic */
 static void test_pure(void)
@@ -344,6 +379,9 @@ static void test_server(void)
         freeifaddrs(ifa);
     }
 
+#ifdef CTL_TEST_REGISTRY
+    control_set_registry(&g_reg_ops);
+#endif
     CHECK(control_start() == 0);
     int c = -1;
     for (int i = 0; i < 50 && c < 0; i++) { c = dial("127.0.0.1"); if (c < 0) usleep(100000); }
@@ -356,7 +394,7 @@ static void test_server(void)
         "ae.stable_range=3\nae.hold_range=6\nae.speed=4\nae.exp_max=16384\nae.enabled=1\n"
         "night.mode=auto\nnight.state=day\nnight.trigger_hw_exp=0\nnight.day_hw_exp=0\n"
         "night.confirm_samples=0\nnight.lock_ms=0\n"
-        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=0\n"
+        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=-15\nisp.denoise=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
         "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\nmqtt.state=off\n.\n");
@@ -391,6 +429,26 @@ static void test_server(void)
     CHECK_STR(out, "led.stub=5\n");
     ask(c, "GET nope", out, sizeof(out));
     CHECK_STR(out, "ERR unknown param nope\n");
+#ifdef CTL_TEST_REGISTRY
+    ask(c, "GET reg.stub", out, sizeof(out));        /* a key the old code does not know: the registry answers */
+    CHECK_STR(out, "reg.stub=7\n");
+    ask(c, "GET ae.speed", out, sizeof(out));        /* a key it knows: still the old code, never the registry */
+    CHECK_STR(out, "ae.speed=4\n");
+    ask(c, "SET reg.stub 9", out, sizeof(out));
+    CHECK_STR(out, "OK reg.stub=9\n");
+    CHECK(g_reg_val == 9 && g_reg_last_persist == 1);   /* a loopback write is saved */
+    ask(c, "SET reg.bad 1", out, sizeof(out));
+    CHECK_STR(out, "ERR invalid reg.bad value 1 (range)\n");
+    ask(c, "SET nope 1", out, sizeof(out));          /* the registry does not know it either */
+    CHECK_STR(out, "ERR unknown param nope\n");
+    ask(c, "LIST", out, sizeof(out));                /* LIST is unchanged: no registry row in it */
+    CHECK(!strstr(out, "reg.stub"));
+    {
+        char v[40];
+        int n = control_apply_setting("reg.stub", "11", 0, v, sizeof(v));   /* the entry point of ONVIF Imaging and of the row setters */
+        CHECK(n == 0 && g_reg_val == 11 && g_reg_last_persist == 0);
+    }
+#endif
     ask(c, "GET", out, sizeof(out));
     CHECK_STR(out, "ERR GET requires a param name\n");
     ask(c, "SET ae.speed", out, sizeof(out));
@@ -434,9 +492,57 @@ static void test_server(void)
         isp_tune_t t;
         CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.sharpness == 12 && t.contrast == 0);
     }
+    /* sharpness 0 (stock) is an explicit choice: saved as a line; the default -15 removes the file */
     ask(c, "SET isp.sharpness 0", out, sizeof(out));
     CHECK_STR(out, "OK isp.sharpness=0\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.sharpness == 0);
+    }
+    ask(c, "SET isp.sharpness -15", out, sizeof(out));
+    CHECK_STR(out, "OK isp.sharpness=-15\n");
     CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    /* isp.denoise (3D-NR bias 0..4): range, refusal keeps the old value and the file, saved as a line, default removes it */
+    ask(c, "SET isp.denoise 9", out, sizeof(out));
+    CHECK_STR(out, "ERR isp.denoise range [0,4]\n");
+    ask(c, "SET isp.denoise 3", out, sizeof(out));
+    CHECK_STR(out, "OK isp.denoise=3\n");
+    ask(c, "GET isp.denoise", out, sizeof(out));
+    CHECK_STR(out, "isp.denoise=3\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 3 && t.sharpness == -15);
+    }
+    g_stub_denoise_rc = -2;                                                         /* ISP_NR_REFUSED: nothing sent */
+    ask(c, "SET isp.denoise 1", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR isp.denoise: live table not as decoded", 41));
+    g_stub_denoise_rc = 0;
+    ask(c, "GET isp.denoise", out, sizeof(out));
+    CHECK_STR(out, "isp.denoise=3\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 3);              /* the refused value was not saved */
+    }
+    ask(c, "SET isp.denoise 2", out, sizeof(out));                                  /* the default 2: file removed */
+    CHECK_STR(out, "OK isp.denoise=2\n");
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    ask(c, "SET isp.denoise 0", out, sizeof(out));                                  /* 0 = stock is an explicit choice */
+    CHECK_STR(out, "OK isp.denoise=0\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 0 && t.sharpness == -15);
+    }
+    ask(c, "SET isp.denoise 2", out, sizeof(out));
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    /* img.qp takes two values: both reach imgq.c, as "MIN MAX" (also from the "MIN,MAX" token) */
+    ask(c, "SET img.qp 28 43", out, sizeof(out));
+    CHECK_STR(out, "OK img.qp=28 43\n");
+    CHECK(!strcmp(g_imgq_last_val, "28 43"));
+    ask(c, "SET img.qp 22,40", out, sizeof(out));
+    CHECK_STR(out, "OK img.qp=22,40\n");
+    CHECK(!strcmp(g_imgq_last_val, "22,40"));
+    ask(c, "SET img.qp 20", out, sizeof(out));
+    CHECK_STR(out, "OK img.qp=20\n");
     ask(c, "SET isp.sharpness 99", out, sizeof(out));
     CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     {
@@ -452,6 +558,36 @@ static void test_server(void)
         CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
         /* H1: every isp.* setter ran under isp_cfg_lock (8091 SET, ONVIF path and the saved-picture apply) */
         CHECK(g_isp_unlocked_calls == 0);
+    }
+    /* start-up denoise: no saved value = the default 2 applied; a saved 0 = stock, nothing applied; a saved 3 wins;
+     * a refusal is not fatal: the stock tables keep running and the wanted value is not lost */
+    {
+        FILE *f;
+        g_stub_denoise = 0;
+        unlink(ISP_TUNE_FILE);
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=2\n");
+        g_stub_denoise = 0;
+        if ((f = fopen(ISP_TUNE_FILE, "w"))) { fputs("denoise=0\n", f); fclose(f); }
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=0\n");
+        if ((f = fopen(ISP_TUNE_FILE, "w"))) { fputs("denoise=3\n", f); fclose(f); }
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=3\n");
+        g_stub_denoise = 0;
+        g_stub_denoise_rc = -2;
+        control_apply_saved_isp();
+        ask(c, "GET isp.denoise", out, sizeof(out));
+        CHECK_STR(out, "isp.denoise=0\n");                                          /* refused: stock keeps running */
+        ask(c, "SET isp.contrast 5", out, sizeof(out));                              /* saving another value ... */
+        { isp_tune_t t; CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.denoise == 3 && t.contrast == 5); } /* ... keeps the wish */
+        g_stub_denoise_rc = 0;
+        ask(c, "SET isp.contrast 0", out, sizeof(out));
+        ask(c, "SET isp.denoise 2", out, sizeof(out));
+        CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
     }
     /* control_apply_setting is the entry point of the ONVIF Imaging service: same code as SET, persist is explicit */
     {
@@ -638,7 +774,7 @@ static void test_server(void)
             ask(r, "SET night.mode day", out, sizeof(out));
             CHECK(g_night_persist == 0 && g_imgq_persist == 0);   /* RAM only from the network */
             ask(r, "SET night.mode auto", out, sizeof(out));
-            ask(r, "SET isp.sharpness 0", out, sizeof(out));
+            ask(r, "SET isp.sharpness -15", out, sizeof(out));
             ask(c, "SET ae.speed 7", out, sizeof(out));
             ask(r, "DEBUG off", out, sizeof(out));
             CHECK(!strncmp(out, "ERR DEBUG is loopback-only", 26));

@@ -33,7 +33,7 @@ a good tool, but Akam does **not** use it:
   which is exactly what Akam closes. A card left over from the flasher keeps that hook.
 - The flasher's own post-flash check does not look at SSH.
 
-Akam's procedure is: backup, `build_firmware.sh`, then `install_with_flash_tool.sh` below. The
+Akam's procedure is: backup, `build_image.sh`, then `install_with_flash_tool.sh` below. The
 flasher stays a reference. The image builder still honours the flasher's interface (`APP_EXTRACTED`, `FW_DIR`, output name,
 exact size).
 
@@ -60,7 +60,7 @@ mkdir -p "$SD/custom_firmware" "$SD/akam" "$SD/original_firmware"
 cp ak_rtsp_firmware_*.squashfs "$SD/custom_firmware/"
 cp ~/akam-backup/mtdblock*.bin "$SD/original_firmware/"          # for restore
 REPO=~/akam-fw                                                   # your checkout of the repository
-cp "$REPO/src/ak_rtsp/flash_tool" "$SD/"
+cp "$REPO/build/lsc-indoor-1080p-ak3918/flash_tool" "$SD/"
 cp "$REPO/tools/flash_scripts/install_with_flash_tool.sh" \
    "$REPO/tools/flash_scripts/restore.sh" \
    "$REPO/tools/flash_scripts/flash_guard.sh" "$SD/"           # flash_guard.sh is mandatory
@@ -75,7 +75,7 @@ and no `*.bin` at the root all checked, then verified:
 
 ```bash
 tools/sd/sd_card.sh prepare --mode flash-files --device /dev/sdX \
-    --image ~/akam-work/out/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --flash-tool src/ak_rtsp/flash_tool --backup-dir ~/akam-backup
+    --image ~/akam-work/out/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --flash-tool build/lsc-indoor-1080p-ak3918/flash_tool --backup-dir ~/akam-backup
 tools/sd/sd_card.sh verify --mode flash-files --device /dev/sdX
 ```
 
@@ -157,7 +157,7 @@ that the camera boots stock and opens `telnet CAMERA_IP 24`). Add, on the PC, in
 | On the card | What |
 |---|---|
 | `custom_firmware/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs` | the one image to flash (keep only one) |
-| `flash_tool` | `src/ak_rtsp/flash_tool` (built by `make -C src/ak_rtsp flash_tool`) |
+| `flash_tool` | `build/lsc-indoor-1080p-ak3918/flash_tool` (built by `make -C platforms/anyka-ak3918 flash_tool`) |
 | `install_with_flash_tool.sh`, `flash_guard.sh` | from `tools/flash_scripts/`; `flash_guard.sh` is mandatory, a missing file makes the script refuse |
 | `original_firmware/mtdblock7.bin` | your stock APP backup, **in this subdirectory only** (section 3) |
 | `restore.sh` | optional, from `tools/flash_scripts/` |
@@ -300,7 +300,7 @@ A partly written APP is recoverable only through UART (section 5), so use UART f
 
 UART is the only route with a safety net. Two no-UART routes are described below: the reflash over
 the **maintenance telnet** (card in the camera) and the **reflash over SSH from RAM** (no card; residual
-risk). Both were validated on hardware. The `make -C src/ak_rtsp upload`
+risk). Both were validated on hardware. The `make -C platforms/anyka-ak3918 upload`
 target copies `install_with_flash_tool.sh` into `/tmp` but does not flash;
 do not run it from an SSH session on an Akam image (the guard refuses it).
 
@@ -430,13 +430,13 @@ What the scripts do:
    compares it with the md5 you gave. Only then does it print that the flash is verified and tell you
    to power-cycle **by hand**. Nothing in these scripts reboots the camera.
 
-Run it (the `flash_tool` is the ARM binary from `make -C src/ak_rtsp flash_tool`):
+Run it (the `flash_tool` is the ARM binary from `make -C platforms/anyka-ak3918 flash_tool`):
 
 ```bash
 # 1. dry run: uploads only the two scripts, checks mtd7 and free RAM, writes nothing
 tools/flash_scripts/reflash_over_ssh.sh --host CAMERA_IP --identity ~/.ssh/akam \
     --image build/ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs --md5 <md5 of the image> \
-    --flash-tool src/ak_rtsp/flash_tool --precheck-only
+    --flash-tool build/lsc-indoor-1080p-ak3918/flash_tool --precheck-only
 # 2. the flash itself
 tools/flash_scripts/reflash_over_ssh.sh ... same options ... --i-understand-no-uart
 ```
@@ -527,7 +527,7 @@ is in place. Consequences, stated plainly:
 | `*.bin` OTA-style upgrade from the card | Allowed only with `AKAM_MAINTENANCE`; Akam does not provide an OTA-format file, so this is not a recovery path. |
 
 So the no-UART first flash is a bet that the image mounts and the network comes up. The image checks
-(`build_firmware.sh` round-trip, padding, exact size) and the pre-flash gates above reduce but do not
+(`build_image.sh` round-trip, padding, exact size) and the pre-flash gates above reduce but do not
 remove that risk; the xz SquashFS format is the stock one (the running kernel already mounts xz ROOTFS and APP), but Akam's own image has not been booted.
 
 ### Caveat: restore is not guaranteed

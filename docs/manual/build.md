@@ -38,7 +38,7 @@ there too, since the scripts run them through `sudo`. macOS is not supported yet
 
 Tested in clean Docker containers (`debian:12`, `ubuntu:24.04`, mawk as `awk`,
 shellcheck 0.9.x): the packages `check_host.sh` asks for, then `bootstrap.sh`, `make` in
-`src/ak_rtsp`, `tools/dropbear/build_dropbear.sh`, `tools/build/check_time32.sh --require-263` on
+`platforms/anyka-ak3918`, `tools/dropbear/build_dropbear.sh`, `tools/build/check_time32.sh --require-263` on
 `ak_rtsp` and `dropbearmulti`, and `tools/ci/local_check.sh` (ends with `LOCAL CHECK: OK`).
 Maintainers can repeat it with `tools/ci/distro_check.sh` (docker or podman, no sudo, read-only
 source mount, `--rm`). Host scripts use POSIX awk only, so mawk and busybox awk work.
@@ -54,12 +54,12 @@ Reads `tools/build/deps.lock` and downloads, with a SHA-256 check on every downl
 | Item | Pin | Location |
 |---|---|---|
 | Zig | 0.14.1 (linux x86_64; aarch64 also pinned) | `tools/.toolchain/` (git-ignored) |
-| SmolRTSP | commit `8ae3b5115f7a77c383080b51cb7fdba1046f862f` | `src/smolrtsp` |
-| slice99 / metalang99 / datatype99 / interface99 | v0.7.8 / v1.13.5 / v1.6.5 / v1.0.2 | `src/smolrtsp/build/_deps/` |
+| SmolRTSP | commit `8ae3b5115f7a77c383080b51cb7fdba1046f862f` | `third_party/smolrtsp` |
+| slice99 / metalang99 / datatype99 / interface99 | v0.7.8 / v1.13.5 / v1.6.5 / v1.0.2 | `third_party/smolrtsp/build/_deps/` |
 | Dropbear archive | 2026.94 | `tools/.cache/` |
 | static BusyBox | 1.35.0 (host-side tests only) | `tools/.toolchain/` |
 
-The script is idempotent and refuses to overwrite a locally modified `src/smolrtsp`.
+The script is idempotent and refuses to overwrite a locally modified `third_party/smolrtsp`.
 `--print-plan` shows what would be fetched for this host without downloading; `--offline` (or
 `AKAM_OFFLINE=1`) uses `tools/.cache` only and fails clearly if something is missing. Transient
 failures (HTTP 5xx/429, network errors) are retried with exponential backoff.
@@ -68,14 +68,22 @@ failures (HTTP 5xx/429, network errors) are retried with exponential backoff.
 
 ```bash
 . tools/build/env.sh                      # exports ZIG, AKAM_CC, ... and puts the pinned zig on PATH
-make -C src/ak_rtsp ak_rtsp flash_tool
-file src/ak_rtsp/ak_rtsp                  # expect: ELF 32-bit LSB executable, ARM, EABI5, statically linked
-readelf -A src/ak_rtsp/ak_rtsp            # expect ARM926EJ-S / v5TE and no VFP attributes (soft-float)
+make -C platforms/anyka-ak3918 ak_rtsp flash_tool
+file build/lsc-indoor-1080p-ak3918/ak_rtsp                  # expect: ELF 32-bit LSB executable, ARM, EABI5, statically linked
+readelf -A build/lsc-indoor-1080p-ak3918/ak_rtsp            # expect ARM926EJ-S / v5TE and no VFP attributes (soft-float)
 ```
+
+The repository root also has a `Makefile` that delegates to the per-model Makefiles and CI scripts (it puts the pinned
+zig on `PATH` itself): `make help` lists `1080p`, `2k` (needs `CAMERA_LIBC=`), `2k-appfs` (needs `BACKUP=`), `test`, `lint`,
+`check`, `repro` and `clean`. Everything a build writes goes to a per-model directory `build/<model-id>/` (git-ignored): the 1080p binaries
+(`ak_rtsp`, `flash_tool`, ...) and objects in `build/lsc-indoor-1080p-ak3918/`, the 2K binaries, `BUILDINFO.txt` and objects in
+`build/lsc-rotatable-2k-ak3918av130/` (objects in `poc3/`). `make 2k` (`poc3-dist`) then publishes a copy of the 2K binaries and
+`BUILDINFO.txt` to `dist/rot2k-app/`, the location `build_card.sh`, `build_appfs.sh` and `make_kit_2k.sh` read (it is also where
+`prepare_vendor.sh` puts the vendor libraries).
 
 `env.sh` must be sourced in the same shell as `make` (it is also how `make` finds `zig`). The Makefile
 default is `zig cc -target arm-linux-musleabi -mcpu=arm926ej_s` and `make CC=...` still overrides it.
-`ak_rtsp` is built with `-g`; `build_firmware.sh` installs a **stripped copy** (the build output is
+`ak_rtsp` is built with `-g`; `build_image.sh` installs a **stripped copy** (the build output is
 not modified).
 
 ## 4. Build Dropbear
@@ -89,7 +97,7 @@ Output (git-ignored): `dist/dropbear/dropbearmulti`, `dist/dropbear/BUILDINFO.tx
 `scp` and SFTP are intentionally absent (see the
 [SSH guide](ssh-and-lockdown.md#5-file-transfer-without-scp)). Options
 are fixed in `tools/dropbear/localoptions.h` (no password authentication, no forwarding, ed25519 only).
-Set `DROPBEAR_PROGRAMS` to change the program list. If you skip this step, `build_firmware.sh` runs it
+Set `DROPBEAR_PROGRAMS` to change the program list. If you skip this step, `build_image.sh` runs it
 for you when `dist/dropbear/dropbearmulti` is missing.
 
 ## 5. Extract your APP partition
@@ -100,12 +108,12 @@ unsquashfs -d ~/akam-work/app_extracted ~/akam-backup/mtdblock7.bin
 ```
 
 This is `APP_EXTRACTED`: the tree the camera mounts on `/usr` (`bin/`, `sbin/`, `local/`, `lib/`, ...).
-`build_firmware.sh` refuses a tree without `bin/`, `sbin/` and `local/`. Read any `unsquashfs` warning
+`build_image.sh` refuses a tree without `bin/`, `sbin/` and `local/`. Read any `unsquashfs` warning
 (for example about special files when you are not root): the image is packed with `-all-root`, but a
 tree that failed to extract completely is not a valid input.
 
 Before building, look at how the stock firmware launches network daemons. The repository's planned
-audit helper `audit_remote_services.sh` is **not in the tree yet** (`build_firmware.sh` skips it when
+audit helper `audit_remote_services.sh` is **not in the tree yet** (`build_image.sh` skips it when
 absent), so do it by hand:
 
 ```bash
@@ -137,19 +145,19 @@ is cheap: `AKAM_SQUASHFS_COMP=gzip` with a different `FW_DIR`.
 ```bash
 APP_EXTRACTED=~/akam-work/app_extracted \
 FW_DIR=~/akam-work/out \
-    bash src/ak_rtsp/build_firmware.sh
+    bash firmware/lsc-indoor-1080p-ak3918/image/build_image.sh
 ```
 
-(`make -C src/ak_rtsp firmware` is the same script, with the default `APP_EXTRACTED=src/ak_rtsp/app_extracted`
-and `FW_DIR=src/ak_rtsp`; prefer setting `FW_DIR` outside the repository.)
+(`make -C platforms/anyka-ak3918 firmware` is the same script, with the default `APP_EXTRACTED=firmware/lsc-indoor-1080p-ak3918/image/app_extracted`
+and `FW_DIR=firmware/lsc-indoor-1080p-ak3918/image`; prefer setting `FW_DIR` outside the repository.)
 
 Environment variables (all optional), from the script header:
 
 | Variable | Meaning |
 |---|---|
-| `APP_EXTRACTED` | Your unsquashed APP tree (default `src/ak_rtsp/app_extracted`) |
-| `FW_DIR` | Output directory (default `src/ak_rtsp`) |
-| `AK_RTSP_BIN` | `ak_rtsp` binary (default `src/ak_rtsp/ak_rtsp`) |
+| `APP_EXTRACTED` | Your unsquashed APP tree (default `firmware/lsc-indoor-1080p-ak3918/image/app_extracted`) |
+| `FW_DIR` | Output directory (default `firmware/lsc-indoor-1080p-ak3918/image`) |
+| `AK_RTSP_BIN` | `ak_rtsp` binary (default `build/lsc-indoor-1080p-ak3918/ak_rtsp`) |
 | `ZIG_LICENSE`, `MUSL_COPYRIGHT` | Licence texts shipped in the image (default: from the pinned Zig tarball) |
 | `DROPBEAR_MULTI` | Prebuilt `dropbearmulti` (default `dist/dropbear/dropbearmulti`) |
 | `AKAM_SQUASHFS_COMP` | `xz` (default) or `gzip` |
@@ -198,7 +206,7 @@ that the diff shows the telnet/FTP launch lines commented out with `# AKAM-DISAB
 ### If the build stops on `service.sh`
 
 `patch_service_sh.sh` exits 3 when it finds no telnet/FTP launch line, and 2 when a matching line has a
-shape it refuses to guess about. `build_firmware.sh` treats both as fatal unless
+shape it refuses to guess about. `build_image.sh` treats both as fatal unless
 `AKAM_ALLOW_UNPATCHED_SERVICE=1`. Do not set that flag before reading the real `sbin/service.sh` and
 understanding why: it means the build-time half of the lockdown did not apply (the runtime half,
 `akam_lockdown.sh`, still runs, but leaves an exposure window).

@@ -11,7 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "ak_rtsp.h"
+#include "platform.h"
 #include "audio.h"
 
 #define AUDIO_BACKOFF_UNIT_MS_T 20 /* matches -DAUDIO_BACKOFF_UNIT_MS in audio_sup_test.sh */

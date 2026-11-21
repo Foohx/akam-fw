@@ -3,6 +3,7 @@
  * bit for bit unchanged when the file is absent. Real ae.c, venc.c and video_cfg.c; the ISP tunnel and the
  * ioctl are stubs that only record. With -DNO_VIDEO_CFG the harness builds against the pre-video_cfg ae.c/venc.c
  * (used once to produce tests/fixtures/video_apply_default.txt from dev). */
+#include <stdlib.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -10,7 +11,7 @@
 #include <sys/ioctl.h>
 
 #include "ak_ioctls.h"
-#include "ak_rtsp.h"
+#include "platform.h"
 #include "ae.h"
 #include "isp.h"
 #include "venc.h"
@@ -24,6 +25,7 @@ uint32_t g_venc_phys;
 
 int imgq_poll_stats(void) { return 0; }
 int imgq_venc_rc_stock(void) { return 0; }
+int imgq_venc_ipdelta(void) { const char *e = getenv("TEST_IPDELTA"); return e ? atoi(e) : 0; }
 int imgq_wb_conf(void) { return 0; }
 int isp_set_wb_manual(uint16_t r, uint16_t g, uint16_t b) { (void)r; (void)g; (void)b; return 0; }
 int isp_reapply_awb_ex(void) { return 0; }

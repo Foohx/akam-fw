@@ -59,6 +59,8 @@ type Options struct {
 	ExtractTo string
 	// ExpectModel: when set, the kit must be for this camera model (MANIFEST model=).
 	ExpectModel string
+	// Layout describes the payload of a kit that is not the 1080p one (nil: the 1080p kit).
+	Layout *Layout
 	// Say and Warn print the "ok:" and WARNING lines (nil: discarded).
 	Say, Warn func(string)
 	// Decompress opens an .xz file as a stream (nil: XZReader, in process, with DefaultXZLimits).
@@ -67,6 +69,28 @@ type Options struct {
 	// Test seams (nil: the real ones): symlink replaces os.Symlink, isLocal replaces filepath.IsLocal.
 	symlink func(oldname, newname string) error
 	isLocal func(string) bool
+}
+
+// Layout is what differs between the kits of two firmware kinds; everything else (MANIFEST lines, SHA256SUMS,
+// archive safety, time64 gate) is the same code. The 2K kit (kind cardless-appfs) is the second user.
+type Layout struct {
+	Target       string   // the MANIFEST "target=" value
+	Payload      []string // files that must be listed in the MANIFEST
+	HardwareFile string   // the registry entry of the model inside the kit
+}
+
+// Layout1080p is the default layout.
+var Layout1080p = Layout{
+	Target:       "arm-linux-musleabi",
+	Payload:      []string{"bin/ak_rtsp", "bin/dropbearmulti", "bin/flash_tool", "patches/patch_service_sh.sh", "supported_hardware.txt", "licenses/LICENSE.akam", "licenses/THIRD_PARTY_NOTICES.md", "licenses/LICENSE.dropbear"},
+	HardwareFile: "supported_hardware.txt",
+}
+
+func (o *Options) layout() Layout {
+	if o.Layout != nil {
+		return *o.Layout
+	}
+	return Layout1080p
 }
 
 // modesMatter reports whether the OS has Unix permission bits (Windows has not: directory-mode
@@ -564,7 +588,7 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 	if o.ExpectModel != "" && o.ExpectModel != model[0] {
 		return nil, fail("this kit is for the camera model '%s', not '%s': use the kit of your model", model[0], o.ExpectModel)
 	}
-	for _, kv := range [][2]string{{"time64_gate", "pass"}, {"target", "arm-linux-musleabi"}} {
+	for _, kv := range [][2]string{{"time64_gate", "pass"}, {"target", o.layout().Target}} {
 		v := manifestValues(m, kv[0])
 		if len(v) != 1 || v[0] != kv[1] {
 			return nil, fail("MANIFEST.txt must contain exactly one %s line, equal to %s", kv[0], kv[1])
@@ -728,12 +752,13 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 	}
 
 	// 3. the payload we promise.
-	for _, p := range []string{"bin/ak_rtsp", "bin/dropbearmulti", "bin/flash_tool", "patches/patch_service_sh.sh", "supported_hardware.txt", "licenses/LICENSE.akam", "licenses/THIRD_PARTY_NOTICES.md", "licenses/LICENSE.dropbear"} {
+	lay := o.layout()
+	for _, p := range lay.Payload {
 		if !contains1(manFiles, p) {
 			return nil, fail("required file %s is not in the kit", p)
 		}
 	}
-	hw, _ := os.ReadFile(filepath.Join(d, "supported_hardware.txt"))
+	hw, _ := os.ReadFile(filepath.Join(d, filepath.FromSlash(lay.HardwareFile)))
 	if n := len(regexp.MustCompile(`(?m)^model=`).FindAll(hw, -1)); n != 1 ||
 		!regexp.MustCompile(`(?m)^model=`+regexp.QuoteMeta(model[0])+`\r?$`).Match(hw) {
 		return nil, fail("supported_hardware.txt is not the registry entry of model %s (exactly one model= line, equal to it)", model[0])

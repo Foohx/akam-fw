@@ -53,10 +53,10 @@ echo "== check_host (after)"; tools/build/check_host.sh --profile all | tail -3
 echo "== bootstrap"; tools/build/bootstrap.sh >/tmp/bs.log 2>&1 && echo OK || { echo FAIL; tail -5 /tmp/bs.log; }
 . tools/build/env.sh || true
 echo "== make"
-(cd src/ak_rtsp && make >/tmp/make.log 2>&1 && echo "OK warnings=$(grep -c 'warning:' /tmp/make.log)" || { echo FAIL; tail -5 /tmp/make.log; })
+(cd platforms/anyka-ak3918 && make >/tmp/make.log 2>&1 && echo "OK warnings=$(grep -c 'warning:' /tmp/make.log)" || { echo FAIL; tail -5 /tmp/make.log; })
 echo "== dropbear"; tools/dropbear/build_dropbear.sh >/tmp/db.log 2>&1 && echo OK || { echo FAIL; tail -5 /tmp/db.log; }
 echo "== time32 gate"
-tools/build/check_time32.sh --require-263 src/ak_rtsp/ak_rtsp dist/dropbear/dropbearmulti 2>&1 | sed 's/(.*//'
+tools/build/check_time32.sh --require-263 build/lsc-indoor-1080p-ak3918/ak_rtsp dist/dropbear/dropbearmulti 2>&1 | sed 's/(.*//'
 echo "== local_check"; tools/ci/local_check.sh >/tmp/lc.log 2>&1; grep -E 'FAIL|SKIP' /tmp/lc.log | head -10; tail -1 /tmp/lc.log
 INNER
 

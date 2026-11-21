@@ -84,12 +84,14 @@ type Option struct {
 	ReadOnly               bool
 }
 
-// Video limits (src/ak_rtsp/video_cfg).
+// Video limits (platforms/anyka-ak3918/video_cfg).
 const (
 	VideoKbpsMin = 500
 	VideoKbpsMax = 3000
 	VideoGopMin  = 1
 	VideoGopMax  = 4
+	VideoQpMin   = 10
+	VideoQpMax   = 51
 )
 
 // Catalog returns every option, in screen order.
@@ -108,6 +110,7 @@ func Catalog() []Option {
 		num("isp.contrast", "Picture", "Contrast", -50, 50, PersistCamera, Now),
 		num("isp.saturation", "Picture", "Saturation", -50, 50, PersistCamera, Now),
 		num("isp.sharpness", "Picture", "Sharpness", -50, 50, PersistCamera, Now),
+		num("isp.denoise", "Picture", "Denoise (0 = stock, 2 = default)", 0, 4, PersistCamera, Now),
 		enum("img.wb", "Picture", "White balance", PersistRAM, Now, "conf", "manual"),
 		num("audio.out_volume", "Audio", "Speaker volume", 0, 100, PersistCamera, Now),
 		enum("audio.out_enable", "Audio", "Speaker", PersistCamera, Now, "0", "1"),
@@ -116,6 +119,8 @@ func Catalog() []Option {
 		num("video.bitrate_cfg", "Video", "Bitrate (kbit/s)", VideoKbpsMin, VideoKbpsMax, PersistCamera, VideoRestart),
 		enum("video.fps_cfg", "Video", "Frame rate", PersistCamera, VideoRestart, "10", "15", "20", "25"),
 		num("video.gop_cfg", "Video", "Key frame interval (s)", VideoGopMin, VideoGopMax, PersistCamera, VideoRestart),
+		num("video.minqp_cfg", "Video", "Lowest quantiser (minqp)", VideoQpMin, VideoQpMax, PersistCamera, VideoRestart),
+		num("video.maxqp_cfg", "Video", "Highest quantiser (maxqp)", VideoQpMin, VideoQpMax, PersistCamera, VideoRestart),
 		{ID: "video.cfg_pending", Group: "Video", Label: "Settings not running yet", Kind: Int, Key: "video.cfg_pending", Persisted: PersistNone, ReadOnly: true},
 		{ID: "video.bitrate", Group: "Video", Label: "Measured bitrate (kbit/s)", Kind: Int, Key: "video.bitrate", Persisted: PersistNone, ReadOnly: true},
 		{ID: "video.fps_actual", Group: "Video", Label: "Measured frame rate (tenths)", Kind: Int, Key: "video.fps_actual", Persisted: PersistNone, ReadOnly: true},

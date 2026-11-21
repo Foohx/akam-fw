@@ -5,6 +5,8 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
 CC=${HOST_CC:-cc}
 if ! command -v "$CC" >/dev/null 2>&1; then
     echo "skip: no host C compiler ($CC)"
@@ -12,7 +14,7 @@ if ! command -v "$CC" >/dev/null 2>&1; then
 fi
 WORK=$(mktemp -d)
 trap 'chmod -R u+rwx "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
-SRC=$REPO/src/ak_rtsp
+SRC=$REPO/platforms/anyka-ak3918
 
 # Does -fsanitize=thread link and run here?
 printf 'int main(void){return 0;}\n' >"$WORK/probe.c"
@@ -24,7 +26,7 @@ else
     FLAGS=("-fsanitize=address,undefined" -fno-sanitize-recover=undefined -O1 -g)
 fi
 echo "sanitizer: $SAN"
-"$CC" -std=gnu99 -Wall -Wextra -Werror "${FLAGS[@]}" -I"$SRC" -o "$WORK/auth_thread_test" \
-    "$REPO/tests/native/auth_thread_test.c" "$SRC/cred.c" "$SRC/rtsp_auth.c" "$SRC/md5.c" "$SRC/sha1.c" "$SRC/b64.c" -pthread
+"$CC" -std=gnu99 -Wall -Wextra -Werror "${FLAGS[@]}" -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/auth_thread_test" \
+    "$REPO/tests/native/auth_thread_test.c" "$REPO/src/net/crypto/cred.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" "$REPO/src/net/crypto/sha1.c" "$REPO/src/net/crypto/b64.c" -pthread
 mkdir "$WORK/d"
 TSAN_OPTIONS="halt_on_error=1" "$WORK/auth_thread_test" "$WORK/d"

@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/night_logic.c: the day / night decision fed with simulated AE traces (lit room, dusk,
+/* Host test of src/features/night/night_logic.c: the day / night decision fed with simulated AE traces (lit room, dusk,
  * dark room, the IR lit scene of the night mode, a lamp switched on at night, noise around the threshold).
  * No camera, no clock: one nl_step() is 100 ms of simulated time. */
 #include <math.h>

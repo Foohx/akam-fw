@@ -7,8 +7,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui/tui"

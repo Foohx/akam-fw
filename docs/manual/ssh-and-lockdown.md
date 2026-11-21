@@ -267,7 +267,7 @@ ssh -i ~/.ssh/akam root@<camera-ip> 'cat /tmp/f' > f
 tar czf - dir | ssh -i ~/.ssh/akam root@<camera-ip> 'tar xzf - -C /tmp'
 ```
 
-`make -C src/ak_rtsp upload CAMERA_IP=<camera-ip>` uses the `cat` technique, with plain
+`make -C platforms/anyka-ak3918 upload CAMERA_IP=<camera-ip>` uses the `cat` technique, with plain
 `ssh root@<camera-ip>`; add a host entry so it picks your key:
 
 ```
@@ -287,7 +287,7 @@ Two independent layers; both are needed because the exact place where the stock 
 
 ### Layer 1: build-time patch of `sbin/service.sh`
 
-`tools/firmware_patch_templates/patch_service_sh.sh`, run by `build_firmware.sh`:
+`firmware/lsc-indoor-1080p-ak3918/overlay/patch_service_sh.sh`, run by `build_image.sh`:
 
 - every non-comment line that launches `telnetd`, `utelnetd`, `ftpd`, `bftpd` or `vsftpd` (this
   includes `tcpsvd ... ftpd`) is replaced by `: # AKAM-DISABLED: <original line>`, so the daemons are

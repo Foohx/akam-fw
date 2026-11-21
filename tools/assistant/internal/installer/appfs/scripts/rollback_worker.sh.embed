@@ -1,0 +1,44 @@
+#!/bin/sh
+# runs on the camera, detached. Result: /tmp/akam_rollback.result = ROLLED_BACK | ROLLBACK_FAILED
+# never the OOM victim (only when panic_on_oom is 0); flashcp and the rollback worker inherit it
+if [ "$(cat /proc/sys/vm/panic_on_oom 2>/dev/null)" = 0 ]; then echo -1000 > /proc/$$/oom_score_adj 2>/dev/null; fi
+OLD=@STAGE@/appfs-backup.bin
+RES=/tmp/akam_rollback.result
+LOCK=/tmp/akam_rollback.lock
+if ! mkdir $LOCK 2>/dev/null; then
+    lp=$(cat $LOCK/pid 2>/dev/null)
+    if [ -z "$lp" ] || grep -q akam_rollback /proc/$lp/cmdline 2>/dev/null; then
+        echo "another rollback worker (pid ${lp:-unknown}) holds $LOCK: not starting a second writer on mtd3 (no worker running? rm -rf $LOCK)"
+        exit 1
+    fi
+    echo "stale $LOCK (pid $lp is dead, e.g. SIGKILL): taking it over"
+    rm -rf $LOCK
+    mkdir $LOCK 2>/dev/null || { echo "cannot take $LOCK"; exit 1; }
+fi
+echo $$ > $LOCK/pid
+trap "rm -rf $LOCK 2>/dev/null" EXIT
+rm -f $RES
+sum() { dd if=/dev/mtd3 bs=65536 2>/dev/null | md5sum | cut -d" " -f1; }
+oldsum=$(md5sum $OLD | cut -d" " -f1)
+if [ -z "$oldsum" ]; then
+    echo "no md5 of $OLD: backup missing?"
+    echo ROLLBACK_FAILED > $RES
+    exit 1
+fi
+i=0
+while [ $i -lt 3 ]; do
+    i=$((i + 1))
+    echo "rollback try $i: flashcp"
+    if flashcp -v $OLD /dev/mtd3 && [ "$(sum)" = "$oldsum" ]; then
+        echo ROLLED_BACK > $RES
+        exit 0
+    fi
+    echo "rollback try $i: dd to /dev/mtdblock3"
+    dd if=$OLD of=/dev/mtdblock3 bs=65536 2>/dev/null
+    sync
+    if [ "$(sum)" = "$oldsum" ]; then
+        echo ROLLED_BACK > $RES
+        exit 0
+    fi
+done
+echo ROLLBACK_FAILED > $RES

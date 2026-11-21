@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/sha1.c (FIPS 180-1 vectors, padding boundaries,
+/* Host test of src/net/crypto/sha1.c (FIPS 180-1 vectors, padding boundaries,
  * incremental feeding) and b64.c (RFC 4648 vectors, strict decoding, bounds).
  * Reference values for the padding boundaries come from `openssl dgst -sha1`.
  * Build/run: tests/sha1_test.sh */

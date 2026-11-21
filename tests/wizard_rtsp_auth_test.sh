@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for ./akam rtsp-auth (set, disable, status) against the REAL camera command
-# tools/firmware_patch_templates/akam_rtsp_auth.sh run by a fake ssh in a fake root under the
+# firmware/lsc-indoor-1080p-ak3918/overlay/akam_rtsp_auth.sh run by a fake ssh in a fake root under the
 # pinned BusyBox. Checks that the password and its hash are never in a command line, in the
 # output or in the wizard log. The real camera is never contacted.
 set -uo pipefail
@@ -13,7 +13,7 @@ if [ ! -x "$BB" ]; then
     exit 0
 fi
 AKAM="$ROOT/akam"
-CAMCMD="$ROOT/tools/firmware_patch_templates/akam_rtsp_auth.sh"
+CAMCMD="$ROOT/firmware/lsc-indoor-1080p-ak3918/overlay/akam_rtsp_auth.sh"
 
 T=$(mktemp -d)
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT

@@ -32,10 +32,10 @@
 *.app
 *.squashfs
 *.bin
-/src/ak_rtsp/ak_rtsp
-/src/ak_rtsp/flash_tool
-/src/ak_rtsp/isp_dump
-/src/ak_rtsp/patch_div0
+/platforms/anyka-ak3918/ak_rtsp
+/platforms/anyka-ak3918/flash_tool
+/platforms/anyka-ak3918/isp_dump
+/platforms/anyka-ak3918/patch_div0
 *.stripped
 
 # IDE & Build Artifacts
@@ -49,21 +49,21 @@ obj/
 .pio/
 
 # ak_rtsp build versioning (regenerated every `make`)
-/src/ak_rtsp/build_number.txt
-/src/ak_rtsp/version_info.h
+/platforms/anyka-ak3918/build_number.txt
+/platforms/anyka-ak3918/version_info.h
 
 # Local SmolRTSP checkout & firmware build workspace (see README prerequisites)
-# NOTE: smolrtsp must live at src/smolrtsp (sibling of src/ak_rtsp), not the repo root --
-# the Makefile's "../smolrtsp" include paths are relative to src/ak_rtsp/.
-/src/smolrtsp
-/src/ak_rtsp/app_extracted/
-/src/ak_rtsp/app_patched/
-/src/ak_rtsp/new_app_gzip.squashfs
-# build_firmware.sh outputs when FW_DIR is the default (they quote the stock service.sh)
-/src/ak_rtsp/service_sh.diff
-/src/ak_rtsp/build_report.txt
-/src/ak_rtsp/audit_remote_services.txt
-/src/ak_rtsp/ak_rtsp_firmware_*
+# NOTE: smolrtsp must live at third_party/smolrtsp --
+# the platform Makefiles name it as ../../third_party/smolrtsp.
+/third_party/smolrtsp
+/firmware/lsc-indoor-1080p-ak3918/image/app_extracted/
+/firmware/lsc-indoor-1080p-ak3918/image/app_patched/
+/firmware/lsc-indoor-1080p-ak3918/image/new_app_gzip.squashfs
+# build_image.sh outputs when FW_DIR is the default (they quote the stock service.sh)
+/firmware/lsc-indoor-1080p-ak3918/image/service_sh.diff
+/firmware/lsc-indoor-1080p-ak3918/image/build_report.txt
+/firmware/lsc-indoor-1080p-ak3918/image/audit_remote_services.txt
+/firmware/lsc-indoor-1080p-ak3918/image/ak_rtsp_firmware_*
 
 # Go assistant (tools/assistant): go.mod is not a Fortran module file; the build output bin/ stays ignored
 !/tools/assistant/go.mod
@@ -78,11 +78,16 @@ Thumbs.db
 /tools/.cache/
 /build/
 /dist/
-/src/ak_rtsp/*.o
-/src/ak_rtsp/isp_hook.so
-/src/ak_rtsp/isp_dump
-/src/ak_rtsp/new_app_*.squashfs
+/platforms/anyka-ak3918/*.o
+/platforms/anyka-ak3918/isp_hook.so
+/platforms/anyka-ak3918/isp_dump
+/firmware/lsc-indoor-1080p-ak3918/image/new_app_*.squashfs
 
 # Synthetic test fixtures must stay tracked despite the bin/, *.bin and
 # *.squashfs rules above (keep this negation last).
 !/tests/fixtures/**
+/platforms/anyka-ak3918/ak_rtsp.repro
+
+# Real camera frames of the drift matcher test (never committed; the test skips its real-frame part without them).
+# After the tests/fixtures negation above on purpose: the last matching rule wins.
+/tests/fixtures/drift/

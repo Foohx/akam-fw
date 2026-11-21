@@ -2,7 +2,7 @@
 // flash card), embedded in the binary so that it works from any directory, without a checkout: a
 // folder found on disk is never trusted to provide what is sent to a camera. The copies in scripts/
 // are made from their source paths (sources.txt) by `go generate`; a test fails if they drift.
-// flash_tool is an ARM binary built from src/ak_rtsp: it is only taken from the verified kit.
+// flash_tool is an ARM binary built from platforms/anyka-ak3918: it is only taken from the verified kit.
 package assets
 
 import (

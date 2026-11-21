@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/rtsp_sdp.c: the SDP of the server (golden bytes) and
+/* Host test of src/net/rtsp/rtsp_sdp.c: the SDP of the server (golden bytes) and
  * the negotiation of the ONVIF backchannel. Build/run: tests/rtsp_sdp_test.sh */
 #include <stdio.h>
 #include <string.h>
@@ -10,7 +10,7 @@ static int fails;
     else { printf("  FAIL - %s\n", msg); fails++; } } while (0)
 
 /* The SDP exactly as Client_describe() built it before the backchannel existed
- * (snprintf of the same literal, copied from rtsp.c at the commit that added
+ * (snprintf of the same literal, copied from rtsp_session.c at the commit that added
  * this module). A regression here means a player that never asked for talk saw
  * a different DESCRIBE answer. */
 static void legacy_sdp(char *out, size_t cap, unsigned long long t, const char *fmtp, int rate, int ch)

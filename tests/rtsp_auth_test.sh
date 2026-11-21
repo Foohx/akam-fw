@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/md5.c and rtsp_auth.c (MD5 and Digest vectors, the
+# Host test of src/net/crypto/md5.c and rtsp_auth.c (MD5 and Digest vectors, the
 # authentication state machine, credentials file reload, rate limiting, no
 # secret in the logs), then a cross-check with a real Digest client (ffprobe)
 # when it is installed. Needs only a host C compiler; touches no hardware.
@@ -7,6 +7,8 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
 CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 SRV=""
@@ -17,18 +19,18 @@ cleanup() {
 trap cleanup EXIT
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+ -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/rtsp_auth_test" \
-    "$REPO/tests/native/rtsp_auth_test.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread
+    "$REPO/tests/native/rtsp_auth_test.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" -pthread
 "$WORK/rtsp_auth_test"
 
-# The journal line of rtsp.c must print only what rtsp_auth.c hands out (r.log),
+# The journal line of rtsp_session.c must print only what rtsp_auth.c hands out (r.log),
 # never a header, a user name or a password.
-if grep -n 'printf' "$REPO/src/ak_rtsp/rtsp.c" | grep -i -e 'authorization' -e 'username' -e 'ha1' -e 'passw'; then
-    echo "FAIL: rtsp.c prints authentication data"
+if grep -n 'printf' "$REPO/platforms/anyka-ak3918/rtsp_session.c" | grep -i -e 'authorization' -e 'username' -e 'ha1' -e 'passw'; then
+    echo "FAIL: rtsp_session.c prints authentication data"
     exit 1
 fi
-echo "  ok   - rtsp.c never prints the Authorization header, user or password"
+echo "  ok   - rtsp_session.c never prints the Authorization header, user or password"
 
 # ---- cross-check with a real Digest client (ffmpeg's RTSP demuxer) ----------
 # Optional: skipped when ffprobe is missing. The server is tests/native/rtsp_auth_server.c,
@@ -38,9 +40,9 @@ if ! command -v ffprobe >/dev/null 2>&1; then
     echo "skip: ffprobe not installed, no real-client cross-check"
     exit 0
 fi
-"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/rtsp_auth_server" \
-    "$REPO/tests/native/rtsp_auth_server.c" "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread
+    "$REPO/tests/native/rtsp_auth_server.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" -pthread
 
 AUTHFILE=$WORK/rtsp_auth
 USERNAME=viewer

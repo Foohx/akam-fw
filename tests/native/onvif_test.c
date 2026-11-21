@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-/* Host test of src/ak_rtsp/onvif.c (dispatch, authentication gate, identity) and onvif_device.c (every Device
+/* Host test of src/net/onvif/onvif.c (dispatch, authentication gate, identity) and onvif_device.c (every Device
  * operation), over real HTTP requests to http_srv on a localhost port, with the real cred.c / rtsp_auth.c and real
  * files in a temporary directory. Clocks: the monotonic clock of cred.c is injected (nonce lifetimes), the wall clock
  * is the real one (WS-Security Created). Golden responses live in tests/fixtures/onvif/; the port is written

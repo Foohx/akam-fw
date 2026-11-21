@@ -4,12 +4,14 @@
 #   lint    always runs in CI (cheap): shellcheck, hygiene, tests/readme_links_test.sh
 #   go      tests/assistant_test.sh (Go: fmt, vet, tests, six-target build, size budget, reproducibility)
 #   native  tests that compile and run C code (tests/native/, src/) with the host compiler or pinned Zig
+#   rot2k   firmware/lsc-rotatable-2k-ak3918av130: shellcheck of its scripts, tests/rot2k_*_test.sh (own CI job, so that it
+#           can neither mask nor be masked by the 1080p groups)
 #   shell   every other tests/*_test.sh (wizard, camera-side ash, release scripts) and the wizard smoke runs
 # Every test belongs to exactly one group, so the groups together are "all". The mapping is the explicit table
 # tools/ci/test_groups.txt (no guessing from the test's text): a test missing from it is group "unknown", which
 # makes local_check fail until the table is updated.
 
-# test_group <tests/ directory> <basename of a *_test.sh>: prints lint, go, native, shell or unknown.
+# test_group <tests/ directory> <basename of a *_test.sh>: prints lint, go, native, rot2k, shell or unknown.
 test_group() {
     local table g f
     table="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_groups.txt"

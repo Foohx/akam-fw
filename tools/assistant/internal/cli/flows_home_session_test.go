@@ -146,6 +146,9 @@ func (e *env) countDial(n *atomic.Int32, block bool) {
 		n.Add(1)
 		if block {
 			<-ctx.Done()
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				e.dialTimedOut.Add(1)
+			}
 			return nil, errors.New("stopped (test)")
 		}
 		return inner(ctx, network, addr)
@@ -274,16 +277,15 @@ func TestSessionEndCancelsTheSearch(t *testing.T) {
 	e.countDial(&n, true) // every connection hangs until the context is cancelled
 	bs := &boardSession{keys: []string{"c", "s"}, endAfter: func() bool { return n.Load() > 0 }}
 	done := make(chan result, 1)
-	start := time.Now()
 	go func() { done <- runBoard(t, e, bs, "y\n") }()
 	select {
 	case <-done:
 	case <-time.After(20 * time.Second):
 		t.Fatal("the search kept running after the session ended")
 	}
-	// a probe that is not cancelled waits its own 2 s timeout
-	if d := time.Since(start); d > 1500*time.Millisecond {
-		t.Errorf("the search took %v to notice that the session ended", d)
+	// a probe that is not cancelled ends by its own 2 s timeout (no wall-clock bound: count those instead)
+	if k := e.dialTimedOut.Load(); k != 0 {
+		t.Errorf("%d probes ended by their own timeout instead of the session end", k)
 	}
 	if n.Load() == 0 {
 		t.Error("the scan never started")

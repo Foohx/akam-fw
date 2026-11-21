@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-/* Host test of src/ak_rtsp/onvif_media.c and onvif_imaging.c over real HTTP on a localhost port (with the real
+/* Host test of platforms/anyka-ak3918/onvif_media.c and onvif_imaging.c over real HTTP on a localhost port (with the real
  * onvif.c gate, cred.c, rtsp_auth.c), the camera side stubbed by onvif_stubs.c: every Media and Imaging operation
  * against golden responses (tests/fixtures/onvif_media/), the access classes (reads open and writes refused with
  * the password OFF, token needed with it ON), the stream URI taken from getsockname, the SetImagingSettings

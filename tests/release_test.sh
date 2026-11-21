@@ -291,6 +291,55 @@ check "with the key in both files the key check passes (firmware: the run then f
     ! bash '$M' firmware 1.0.0 --out '$WORK/r4' >'$WORK/m.out' 2>&1 && ! grep -qE 'no ssh-ed25519|differs from|not clean|already exists|set the version|no section' '$WORK/m.out' && grep -q 'make_kit' '$WORK/m.out'"
 check "nothing was written for the refused builds" bash -c "[ ! -e '$WORK/r1' ] && [ ! -e '$WORK/r2' ] && [ ! -e '$WORK/r3' ]"
 
+echo "== make_release --test builds the 1080p kit AND the 2K kit into ONE SHA256SUMS (stub builders, throw-away repository)"
+R2=$WORK/repo2
+mkdir -p "$R2/tools/release/models" "$R2/tools/assistant/internal/kit" "$R2/dist"
+cp "$MAKEREL" "$GATHER" "$REPO/tools/release/verify_kit.sh" "$R2/tools/release/"
+cp "$REPO/tools/release/models/"*.txt "$R2/tools/release/models/"
+cp "$REPO/LICENSE" "$REPO/THIRD_PARTY_NOTICES.md" "$R2/"
+printf '# placeholder\n' >"$R2/tools/release/allowed_signers"
+cp "$R2/tools/release/allowed_signers" "$R2/tools/assistant/internal/kit/allowed_signers"
+# stub inputs of make_kit_2k.sh (the same as tests/kit2k_test.sh)
+S2=$WORK/stub2k
+mkdir -p "$S2/app" "$S2/db"
+fake_elf() { { printf '\177ELF\001\001\001'; head -c 11 /dev/zero; printf '\050\000'; head -c 64 /dev/zero; printf '/lib/ld-uClibc.so.0\000%s\n' "$2"; } >"$1"; chmod 755 "$1"; }
+fake_elf "$S2/app/akam2k_rtsp" rtsp
+fake_elf "$S2/app/akam2k_sntp" sntp
+sha1() { sha256sum "$1" | cut -d' ' -f1; }
+printf 'symcheck=passed\nsha256=%s\nsntp_sha256=%s\nsource_sha256=x\nsntp_source_sha256=y\n' "$(sha1 "$S2/app/akam2k_rtsp")" "$(sha1 "$S2/app/akam2k_sntp")" >"$S2/app/BUILDINFO.txt"
+printf '#!/bin/sh\necho stub dropbearmulti\n' >"$S2/db/dropbearmulti"
+chmod 755 "$S2/db/dropbearmulti"
+printf 'sha256_stripped=%s\nprograms=dropbear dropbearkey scp\ntime32_shim_sha256=z\n' "$(sha1 "$S2/db/dropbearmulti")" >"$S2/db/BUILDINFO.txt"
+printf 'Dropbear stub licence\n' >"$S2/db/LICENSE.dropbear"
+printf '#!/bin/sh\necho stub busybox\n' >"$S2/busybox"
+chmod 755 "$S2/busybox"
+cat >"$R2/tools/release/make_kit.sh" <<EOF
+#!/usr/bin/env bash
+export AKAM_KIT_NO_BUILD=1 AK_RTSP_BIN=$S/ak_rtsp FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti
+export SMOLRTSP_DIR=$S/smol MUSL_COPYRIGHT=$S/COPYRIGHT ZIG_LICENSE=$S/ZIGLICENSE AKAM_KIT_CHECK_TIME32=$S/gate_ok
+exec bash $MAKEKIT "\$@"
+EOF
+cat >"$R2/tools/release/make_kit_2k.sh" <<EOF
+#!/usr/bin/env bash
+echo "stub make_kit_2k called" >>"$WORK/kit2k.calls"
+export AKAM_KIT_CHECK_TIME32=$S/gate_ok SKIP_SOURCE_PROOFS=1 AKAM_ROT2K_BUSYBOX_SHA256_TEST_ONLY=$(sha1 "$S2/busybox")
+exec bash $REPO/tools/release/make_kit_2k.sh --app-dist $S2/app --dropbear-dist $S2/db --busybox $S2/busybox "\$@"
+EOF
+git -C "$R2" init -q
+git -C "$R2" add -A
+git -C "$R2" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+RO=$WORK/out2/firmware-v9.9.9-test
+check "make_release --test builds both kits" bash -c "SOURCE_DATE_EPOCH=1700000000 bash '$R2/tools/release/make_release.sh' firmware 9.9.9 --test --out '$RO' >'$WORK/mr2.out' 2>&1 || { cat '$WORK/mr2.out'; false; }"
+K2=akam-kit-lsc-rotatable-2k-ak3918av130-9.9.9-test.tar.xz
+K1=akam-kit-lsc-indoor-1080p-ak3918-9.9.9-test.tar.xz
+check "the 2K builder was called by make_release" grep -q 'stub make_kit_2k called' "$WORK/kit2k.calls"
+check "ONE SHA256SUMS lists the 1080p kit, the 2K kit, the source, the licences and the marker (6 lines)" bash -c "
+    cd '$RO' && [ \$(wc -l <SHA256SUMS) = 6 ] && grep -q ' $K1\$' SHA256SUMS && grep -q ' $K2\$' SHA256SUMS && [ \$(ls | grep -c '^SHA256SUMS') = 1 ] && sha256sum -c --quiet SHA256SUMS"
+check "the combined SHA256SUMS lets verify_kit accept the 2K kit (what the assistant downloads)" quiet bash "$REPO/tools/release/verify_kit.sh" --allow-unsigned --allow-test-kit --expect-model lsc-rotatable-2k-ak3918av130 "$RO/$K2"
+check "a decloud-overlay or unknown kind never gets a kit (only cardless-appfs and native-app are built)" bash -c "
+    f() { sed -n '/^appfs_model()/,/^}/p' '$MAKEREL'; }; eval \"\$(f)\"
+    appfs_model '$REPO/tools/release/models/lsc-rotatable-2k-ak3918av130.txt' && ! appfs_model '$REPO/tools/release/models/lsc-indoor-1080p-ak3918.txt'"
+
 echo
 echo "release_test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

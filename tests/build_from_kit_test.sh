@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for src/ak_rtsp/build_firmware.sh --kit and tools/image/assemble_from_kit.sh:
+# Tests for firmware/lsc-indoor-1080p-ak3918/image/build_image.sh --kit and firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh:
 # kit mode builds the same image as source mode, refuses bad kits, follows the stock
 # APP compression and checks the supported hardware list. Stub binaries, synthetic APP
 # fixtures and throw-away kits only: no hardware, no network, no real dump.
@@ -7,9 +7,9 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-BUILD=$REPO/src/ak_rtsp/build_firmware.sh
+BUILD=$REPO/firmware/lsc-indoor-1080p-ak3918/image/build_image.sh
 MAKE=$REPO/tools/release/make_kit.sh
-ASSEMBLE=$REPO/tools/image/assemble_from_kit.sh
+ASSEMBLE=$REPO/firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 PART=5242880
 
@@ -298,7 +298,7 @@ check "  ... and no temporary tree is left behind" test -z "$(find "$WORK/tmp_ro
 check "  ... the read-only directory is in the image" bash -c "unsquashfs -ll '$(image_of "$WORK/ro1")' | grep -q 'rodir/sub/f'"
 
 # --- 5. user-facing wrapper -------------------------------------------------------------------------------
-echo "== 5. tools/image/assemble_from_kit.sh"
+echo "== 5. firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh"
 mkdir -p "$WORK/bk_w"
 for i in 0 1 2 3 4 5 6; do printf 'p%s' "$i" >"$WORK/bk_w/mtdblock$i.bin"; done
 cp "$WORK/bk_gz/mtdblock7.bin" "$WORK/bk_w/mtdblock7.bin"

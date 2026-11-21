@@ -8,11 +8,11 @@ ones pinned in `tools/build/deps.lock`.
 Source: https://github.com/4ddict/Action-Smart-Connect-Flasher
 (`install.sh` v0.3.2, commit b99baf2)
 
-Four fixes in `src/ak_rtsp/` were ported from the patches that `install.sh`
+Four fixes in `platforms/anyka-ak3918/` were ported from the patches that `install.sh`
 applies at build time:
 
 - `ae.c`: default AE `exp_max` lowered from 1039 to 2.
-- `rtsp.c`: RTSP client socket kept blocking (no `O_NONBLOCK`).
+- `rtsp_session.c`: RTSP client socket kept blocking (no `O_NONBLOCK`).
 - `night.c`: auto day/night thresholds NIGHT=3000 / DAY=1200.
 - `night.c`: mutex-protected tuning and mode-change reset of the debounce/lock
   state (the `night_get_snapshot` / `g_mode_generation` logic).
@@ -59,7 +59,7 @@ code linked into `ak_rtsp` and `dropbearmulti`: `LICENSE.musl` (musl's
 (Zig's compiler-rt is linked into both binaries) and `LICENSE.akam` (the
 repository's own MIT licence, covering `ak_rtsp`), plus this file as
 `THIRD_PARTY_NOTICES.md` (it carries the flasher's MIT notice above). They are
-copied unmodified from the pinned sources by `build_firmware.sh`, which fails
+copied unmodified from the pinned sources by `build_image.sh`, which fails
 if one is missing, and are listed with their SHA-256 in `MANIFEST.txt`.
 
 ## SmolRTSP and its dependencies (all MIT)

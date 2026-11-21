@@ -8,7 +8,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-TPL=$REPO/tools/firmware_patch_templates
+TPL=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay
 FIXTURES=$REPO/tests/fixtures
 PATCH=$TPL/patch_service_sh.sh
 LOCKDOWN=$TPL/akam_lockdown.sh

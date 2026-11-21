@@ -17,7 +17,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/state"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )

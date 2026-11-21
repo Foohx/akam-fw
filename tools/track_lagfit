@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""track_lagfit: fit the video latency and the gains of the 2K person tracker from a raw recording of a pan / tilt sweep over a STATIC person.
+
+Input: /tmp/akam2k_track.raw of the camera (akam2k.conf track_debug=2; see docs/porting/lsc-rotatable-2k/tracking.md, experiment E2). The recording holds
+  R t pan tilt                  every motor position sample of a continuous session (t: monotonic ms)
+  I now cap pan tilt ... n {cls,score,x1,y1,x2,y2}...   every tracker input (cap: capture time of the frame)
+  C key=value ...               the tracker configuration (invert_pan, invert_tilt, gains, lag_ms)
+
+The person does not move, so the world position of the person, the pose of the camera at the exposure plus the offset of the box in the frame,
+    W_pan(i)  = pan(cap_i - lag)  + m  * g_pan  * (xc_i - fw/2) / fw
+    W_tilt(i) = tilt(cap_i - lag) + kt * g_tilt * (yc_i - fh/2) / fh
+must be constant. A wrong lag shifts the pose (the camera moves while the frame is in the pipeline), a wrong gain scales the offset. For each lag of the grid
+(-150..300 ms, 5 ms) the gain is the closed form minimising the variance of W (g = -cov(P, q) / var(q), with q the offset term for g = 1); the lag with the smallest
+residual wins. The pan and the tilt are fitted on their own and together (the lag is common: the report gives the joint one and each axis' own).
+
+Several persons in view: the static one is picked (the world position that appears in most frames), see --window.
+Usage: track_lagfit [--frame WxH] [--window STEPS] [--invert-pan 0|1] [--invert-tilt 0|1] [--lo MS] [--hi MS] [--step MS] [--min-samples N] FILE
+Prints the fit, the residual, and the akam2k.conf lines. Exit 0 when a fit was made, 1 when the recording has too little motion, 2 on a usage error.
+Standard library only."""
+import argparse
+import bisect
+import math
+import re
+import sys
+
+BOX = re.compile(r"\{(-?\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+)\}")
+
+
+def parse(path):
+    ring, inputs, cfg = [], [], {}
+    with open(path) as f:
+        for line in f:
+            if line.startswith("R "):
+                p = line.split()
+                if len(p) >= 4:
+                    ring.append((int(p[1]), int(p[2]), int(p[3])))
+            elif line.startswith("C "):
+                for tok in line[2:].split():
+                    if "=" in tok:
+                        k, v = tok.split("=", 1)
+                        try:
+                            cfg[k] = int(v)
+                        except ValueError:
+                            pass
+            elif line.startswith("I "):
+                p = line.split()
+                if len(p) < 17:
+                    continue
+                try:
+                    now, cap = int(p[1]), int(p[2])
+                except ValueError:
+                    continue
+                boxes = [tuple(int(x) for x in m.groups()) for m in BOX.finditer(line)]
+                persons = [b for b in boxes if b[0] == 0]
+                inputs.append((now, cap, persons))
+    ring.sort()
+    return ring, inputs, cfg
+
+
+def interp(ts, ps, t):
+    """Linear interpolation of a ring sample list (ts sorted); None outside the recorded span."""
+    if not ts or t < ts[0] or t > ts[-1]:
+        return None
+    i = bisect.bisect_right(ts, t) - 1
+    if i >= len(ts) - 1:
+        return float(ps[-1])
+    t0, t1 = ts[i], ts[i + 1]
+    if t1 - t0 > 400:  # a hole in the samples: not a real interpolation
+        return None
+    f = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+    return ps[i] + (ps[i + 1] - ps[i]) * f
+
+
+def fit_axis(pose, q):
+    """pose: list of P_i, q: list of offset terms (per unit gain). Returns (gain, residual variance, var of the pose)."""
+    n = len(pose)
+    mp, mq = sum(pose) / n, sum(q) / n
+    vq = sum((x - mq) ** 2 for x in q) / n
+    vp = sum((x - mp) ** 2 for x in pose) / n
+    if vq < 1e-12:
+        return None
+    cov = sum((a - mp) * (b - mq) for a, b in zip(pose, q)) / n
+    g = -cov / vq
+    res = sum((a + g * b - (mp + g * mq)) ** 2 for a, b in zip(pose, q)) / n
+    return g, res, vp
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("file")
+    ap.add_argument("--frame", default="320x192")
+    ap.add_argument("--invert-pan", type=int, default=None)
+    ap.add_argument("--invert-tilt", type=int, default=None)
+    ap.add_argument("--lo", type=int, default=-150)
+    ap.add_argument("--hi", type=int, default=300)
+    ap.add_argument("--step", type=int, default=5)
+    ap.add_argument("--min-samples", type=int, default=12)
+    ap.add_argument("--window", type=int, default=250, help="decoy selection: steps around the most frequent world position (default 250)")
+    a = ap.parse_args(argv)
+    try:
+        fw, fh = (int(x) for x in a.frame.lower().split("x"))
+    except ValueError:
+        print("bad --frame", file=sys.stderr)
+        return 2
+    ring, inputs, cfg = parse(a.file)
+    inv_pan = a.invert_pan if a.invert_pan is not None else cfg.get("invert_pan", 1)
+    inv_tilt = a.invert_tilt if a.invert_tilt is not None else cfg.get("invert_tilt", 0)
+    m = -1 if inv_pan else 1
+    kt = 1 if inv_tilt else -1
+    if len(ring) < 10:
+        print("too few R lines (%d): record with track_debug=2 while the head moves in a continuous session" % len(ring), file=sys.stderr)
+        return 1
+    ts = [r[0] for r in ring]
+    pans = [r[1] for r in ring]
+    tilts = [r[2] for r in ring]
+    # the samples: ONE person box per frame, the one that does not move in the world. With a single person that is the box; with a walker next to the static decoy
+    # (the usual E2 set-up: the camera follows the walker, the decoy stands still) the world position of every box is computed with the recorded lag and gains, the
+    # most frequent 100-step bin of it is the decoy, and per frame the box within --window steps of it is kept.
+    g_pan, g_tilt, lag0 = cfg.get("gain_pan", 1000), cfg.get("gain_tilt", 700), cfg.get("lag_ms", 50)
+    cand = []  # (cap, [(world_pan, ox, oy, cut_x, cut_y)])
+    for now, cap, persons in inputs:
+        if cap <= 0 or not persons:
+            continue
+        pp = interp(ts, pans, cap - lag0)
+        if pp is None:
+            continue
+        row = []
+        for b in persons:
+            x1, y1, x2, y2 = b[2], b[3], b[4], b[5]
+            ox, oy = (x1 + x2 - fw) / 2.0 / fw, (y1 + y2 - fh) / 2.0 / fh
+            row.append((pp + m * g_pan * ox, ox, oy, x1 <= 2 or x2 >= fw - 2, y1 <= 2 or y2 >= fh - 2))  # a cut box has no stable centre on that axis
+        cand.append((cap, row))
+    bins = {}
+    for cap, row in cand:
+        for c in row:
+            bins[int(c[0] // 100)] = bins.get(int(c[0] // 100), 0) + 1
+    samples = []
+    if bins:
+        top = max(bins, key=lambda k: bins[k])
+        centre = [c[0] for cap, row in cand for c in row if int(c[0] // 100) == top]
+        centre = sum(centre) / len(centre)
+        for cap, row in cand:
+            near = [c for c in row if abs(c[0] - centre) <= a.window]
+            if near:
+                c = min(near, key=lambda x: abs(x[0] - centre))
+                samples.append((cap, c[1], c[2], c[3], c[4]))
+    if len(samples) < a.min_samples:
+        print("too few frames with a person (%d < %d)" % (len(samples), a.min_samples), file=sys.stderr)
+        return 1
+
+    def at(lag):
+        """The per-axis pose / offset lists for one lag."""
+        px, qx, py, qy = [], [], [], []
+        for cap, ox, oy, cx, cy in samples:
+            t = cap - lag
+            pp, tt = interp(ts, pans, t), interp(ts, tilts, t)
+            if pp is None or tt is None:
+                continue
+            if not cx:
+                px.append(pp)
+                qx.append(m * ox)
+            if not cy:
+                py.append(tt)
+                qy.append(kt * oy)
+        return px, qx, py, qy
+
+    rows = []
+    lag = a.lo
+    while lag <= a.hi:
+        px, qx, py, qy = at(lag)
+        fx = fit_axis(px, qx) if len(px) >= a.min_samples else None
+        fy = fit_axis(py, qy) if len(py) >= a.min_samples else None
+        rows.append((lag, fx, fy))
+        lag += a.step
+    # an axis counts when the camera really moved along it (the pose varies by > 20 steps): otherwise nothing can be fitted
+    use_x = any(r[1] and r[1][2] > 400 for r in rows)
+    use_y = any(r[2] and r[2][2] > 400 for r in rows)
+    if not use_x and not use_y:
+        print("the head did not move enough during the recording (pose variation < 20 steps on both axes): sweep pan and tilt, see tracking.md E2", file=sys.stderr)
+        return 1
+
+    def cost(r, which):
+        f = r[1] if which == "x" else r[2]
+        return f[1] if f else float("inf")
+
+    def joint(r):
+        c = 0.0
+        if use_x:
+            c += cost(r, "x")
+        if use_y:
+            c += cost(r, "y")
+        return c
+
+    best = min(rows, key=joint)
+    cur = cfg.get("lag_ms", 50)
+    print("frames with a person: %d, motor samples: %d, span %.1f s; frame %dx%d, invert_pan %d, invert_tilt %d" % (len(samples), len(ring), (ts[-1] - ts[0]) / 1000.0, fw, fh, inv_pan, inv_tilt))
+    print("%-5s %-12s %-12s %-12s %-12s" % ("lag", "gain_pan", "rms_pan", "gain_tilt", "rms_tilt"))
+    for r in rows:
+        if r[0] % 25 == 0 or r is best:
+            fx, fy = r[1], r[2]
+            print("%-5d %-12s %-12s %-12s %-12s%s" % (r[0], "%.0f" % fx[0] if fx else "-", "%.1f" % math.sqrt(fx[1]) if fx else "-",
+                                                      "%.0f" % fy[0] if fy else "-", "%.1f" % math.sqrt(fy[1]) if fy else "-", "   <- best" if r is best else ""))
+    print()
+    print("FIT lag_ms=%d" % best[0])
+    out = ["track_lag_ms=%d" % best[0]]
+    if use_x and best[1]:
+        g, res, vp = best[1]
+        print("    pan : gain %.0f steps per frame width, residual rms %.1f steps (the pose alone varied %.0f steps rms)" % (g, math.sqrt(res), math.sqrt(vp)))
+        if g <= 0:
+            print("    WARNING: negative pan gain: check invert_pan (--invert-pan)")
+        else:
+            out.append("track_gain_pan=%d" % max(200, min(4000, round(g))))
+        bx = min((r for r in rows if r[1]), key=lambda r: r[1][1])
+        print("    pan lag alone: %d ms" % bx[0])
+    if use_y and best[2]:
+        g, res, vp = best[2]
+        print("    tilt: gain %.0f steps per frame height, residual rms %.1f steps (pose rms %.0f)" % (g, math.sqrt(res), math.sqrt(vp)))
+        if g <= 0:
+            print("    WARNING: negative tilt gain: check invert_tilt (--invert-tilt)")
+        else:
+            out.append("track_gain_tilt=%d" % max(200, min(4000, round(g))))
+        by = min((r for r in rows if r[2]), key=lambda r: r[2][1])
+        print("    tilt lag alone: %d ms" % by[0])
+    curr = min(rows, key=lambda r: abs(r[0] - cur))
+    print("    the recorded lag_ms %d: joint residual %.1f, the best %.1f (variance sum, steps^2)" % (cur, joint(curr), joint(best)))
+    print()
+    print("akam2k.conf:")
+    for l in out:
+        print("  " + l)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

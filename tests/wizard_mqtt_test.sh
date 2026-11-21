@@ -7,7 +7,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AKAM="$ROOT/akam"
-HELPER="$ROOT/tools/firmware_patch_templates/akam_mqtt.sh"
+HELPER="$ROOT/firmware/lsc-indoor-1080p-ak3918/overlay/akam_mqtt.sh"
 
 T=$(mktemp -d)
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT

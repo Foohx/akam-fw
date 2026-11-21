@@ -6,8 +6,8 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-NTP=$REPO/tools/firmware_patch_templates/akam_ntp.sh
-WRAP=$REPO/tools/firmware_patch_templates/ak_rtsp_wrapper.sh
+NTP=$REPO/src/scripts/akam_ntp.sh
+WRAP=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/ak_rtsp_wrapper.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"

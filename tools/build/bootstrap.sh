@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Download and verify the pinned build dependencies (see deps.lock):
 #   - Zig toolchain          -> tools/.toolchain/zig-<ver>-<arch>-linux/  (arch: x86_64, aarch64)
-#   - SmolRTSP checkout      -> src/smolrtsp
-#   - its 4 header-only deps -> src/smolrtsp/build/_deps/<name>-src
+#   - SmolRTSP checkout      -> third_party/smolrtsp
+#   - its 4 header-only deps -> third_party/smolrtsp/build/_deps/<name>-src
 #   - Dropbear archive       -> tools/.cache/ (verified; built by tools/dropbear/)
 #   - official Go (GO_VERSION)  -> tools/.toolchain/go-<ver>-<os>-<arch>/  (project-local, never system-wide)
 #   - Go modules of tools/assistant -> tools/.toolchain/go/mod (with that Go, else a host Go >= GO_VERSION's minor)
@@ -11,7 +11,7 @@
 #
 #   bootstrap.sh [--print-plan] [--offline]
 #     --print-plan  show what would be fetched for this host; download and write nothing
-#     --offline     never touch the network: use tools/.cache (and an existing src/smolrtsp)
+#     --offline     never touch the network: use tools/.cache (and an existing third_party/smolrtsp)
 #                   only; fail clearly if something is missing (also: AKAM_OFFLINE=1)
 # Transient failures (HTTP 5xx, 429, network errors) are retried with exponential backoff:
 # AKAM_RETRY_MAX attempts (default 5), AKAM_RETRY_SLEEP initial delay in seconds (default 2).
@@ -46,7 +46,7 @@ done
 
 cache="$root/tools/.cache"
 toolchain="$root/tools/.toolchain"
-smol="$root/src/smolrtsp"
+smol="$root/third_party/smolrtsp"
 curl_cmd="${AKAM_CURL:-curl}"
 retry_max="${AKAM_RETRY_MAX:-5}"
 retry_sleep="${AKAM_RETRY_SLEEP:-2}"
@@ -210,7 +210,7 @@ else
 fi
 head="$(git -C "$smol" rev-parse -q --verify HEAD 2>/dev/null || true)"
 if [ "$head" != "$SMOLRTSP_COMMIT" ]; then
-    [ "$offline" = 1 ] && die "offline: SmolRTSP $SMOLRTSP_COMMIT is not checked out in src/smolrtsp"
+    [ "$offline" = 1 ] && die "offline: SmolRTSP $SMOLRTSP_COMMIT is not checked out in third_party/smolrtsp"
     log "fetching SmolRTSP $SMOLRTSP_COMMIT"
     retry git -C "$smol" fetch -q --depth 1 origin "$SMOLRTSP_COMMIT" \
         || die "git fetch failed for $SMOLRTSP_URL"

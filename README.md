@@ -1,4 +1,4 @@
-# Akam: local firmware for the LSC Smart Indoor 1080p camera
+# Akam: local firmware that frees LSC cameras from the cloud
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![SoC](https://img.shields.io/badge/SoC-Anyka%20AK3918AV130-orange.svg)]()
@@ -6,17 +6,17 @@
 
 ## What is Akam?
 
-Akam is an open-source replacement firmware for the **LSC Smart Indoor 1080p** IP camera (sold at Action, Anyka
-AK3918AV130 chip). It removes the Tuya cloud application and puts a small program in its place that works **only on
+Akam is an open-source firmware for LSC IP cameras (sold at Action, Anyka AK3918 family chips). It removes the Tuya cloud application and puts a small program in its place that works **only on
 your own network**: no cloud, no account, no phone app, no telemetry.
 
 It is for people who want to plug a cheap camera into their own setup: a video player, an NVR (network video
 recorder), Home Assistant or any tool that speaks standard protocols (RTSP, ONVIF, MQTT, SSH). The goals are a light
 firmware, standard protocols, easy home-automation integration, and features that are off until you turn them on.
 
-A guided installer (`./akam`) does the whole job from your PC: back up the camera, build the image from your own
-backup, flash, check. Only the camera's application area (the APP partition) is rewritten. The boot loader, the
-kernel and the system are never touched.
+A guided installer (`./akam`) does the whole job from your PC for the 1080p: back up the camera, build the image from
+your own backup, flash, check. Only the camera's application area (the APP partition) is rewritten. The boot loader,
+the kernel and the system are never touched. The Rotatable 2K is flashed by documented scripts for now (the installer
+does not drive it yet).
 
 > **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
 > [risks](#important-disclaimer-and-risks). The installer makes you take a full backup first.
@@ -26,11 +26,19 @@ kernel and the system are never touched.
 | Camera | Article | SI code | Status |
 |---|---|---|---|
 | LSC Smart Indoor 1080p | `3215672.3` | SI `D26228` | validated on 2 units |
+| LSC Smart Rotatable Camera 2K (Dual Band) | `3225722` | SZ `G26312` | validated on 1 unit, card-less boot; flashed by script, not by `./akam` yet ([model](docs/models.md)) |
 | LSC Smart Indoor 1080p | `3215672.2` | SI `B26101` / `C26101` | untested |
 | any other camera | | | not supported |
 
 The codes are on the back of the camera body, under the LSC logo. Details, how to report a new model:
-[compatible cameras](docs/compatible-cameras.md).
+[compatible cameras](docs/compatible-cameras.md). What runs on each camera, before and after:
+
+| | Stock firmware | With Akam |
+|---|---|---|
+| **1080p** | `anyka_ipc` (Tuya cloud app), telnet and FTP on | `ak_rtsp`: RTSP, optional ONVIF and MQTT, key-only SSH; cloud, telnet, FTP gone. Replaces the APP partition ([on the camera](docs/porting/lsc-1080p/on-camera.md)) |
+| **2K** | `yy_cam` (Tuya cloud app) | `akam2k_rtsp`: two RTSP streams, person detection, pan/tilt tracking, signed API, key-only SSH; no stock app. Replaces the appfs partition, boots with no SD card ([on the camera](docs/porting/lsc-rotatable-2k/on-camera.md)) |
+
+Porting another camera: [checklist](docs/porting/TEMPLATE-new-camera.md).
 
 ## Features in short
 
@@ -87,7 +95,18 @@ verify. Arrow keys and Enter run a step, `?` explains it, `q` quits. Every risky
 whose **default is No**. You unplug and replug the camera's power yourself: the program never reboots it.
 
 `./akam help` lists every command; add `--dry-run` to rehearse. Step by step: [wizard guide](docs/wizard_guide.md).
-Watch the stream: `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/`.
+Watch the stream: `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/stream0`. Every Akam camera uses the same URLs:
+`rtsp://<ip>:554/stream0` (main) and, where the camera has a second encoder (the Rotatable 2K), `rtsp://<ip>:554/stream1` (sub).
+Frigate: detect on `stream1` (low load), record on `stream0`.
+
+```yaml
+cameras:
+  cam:
+    ffmpeg:
+      inputs:
+        - {path: "rtsp://<ip>:554/stream1", input_args: preset-rtsp-restream, roles: [detect]}
+        - {path: "rtsp://<ip>:554/stream0", input_args: preset-rtsp-restream, roles: [record]}
+```
 
 ## Daily use
 

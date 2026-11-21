@@ -91,6 +91,113 @@ requires: do not repack or modify it.
 
 **Linux.** `chmod +x ./akam-linux-amd64`.
 
+## Camera type
+
+When you create a camera in the assistant (the first run of the menu, or a new camera chosen in "Change camera"), it
+asks the **type** first, from the model registry: "LSC Smart Indoor 1080p" or "LSC Smart Rotatable Camera 2K (Dual
+Band)". The answer is stored in the camera's state as `camera_model`, and backup, flash, options, config and health
+dispatch on it. From a script, `akam --camera NAME --model ID ...` types a camera that is created by that run (an
+existing camera is never retyped; `akam cameras` lists them).
+
+Migration: a camera saved before the type existed has no `camera_model`; it is a **1080p** and nothing is rewritten for it
+(its files stay byte for byte as they were). The assistant records the type once it recognises the stock firmware of a
+backup, as before.
+
+The installer is chosen by the **firmware kind** of the model in the registry, never by the model id
+(`internal/installer`): `native-app` (the 1080p: the APP partition is replaced) is served by `nativeapp` (image, flash,
+sdcard), `cardless-appfs` (the 2K: Akam runs from the flash with no SD card) by `appfs`. Any other kind has no installer.
+The 1080p backup, restore, update, flash, SD preparation, kit, option and config commands and menu entries stay refused
+on a 2K ("not yet supported for this model"): the 1080p installer would brick it.
+
+### The card-less 2K installer (`appfs-build`, `appfs-flash`)
+
+Two commands, only for a model of kind `cardless-appfs` (pass `--model lsc-rotatable-2k-ak3918av130`; a 1080p is refused):
+
+* `akam appfs-build --kit DIR --backup-dir DIR [--out DIR]` builds the appfs image **in this program** (Linux, macOS and
+  Windows, no `mksquashfs`, no shell) from **your own `mtd3.bin`** and the 2K kit. It is the port of `appfs/build_appfs.sh`:
+  the stock appfs with one `init.sh` branch changed (no override card: start Akam from flash; the SD override modes,
+  the recovery, stay stock code), the Akam payload under `/appfs/akam`, `bin/yy_cam` replaced by a launcher of the stub.
+  Its proofs are those of the script (binaries match their BUILDINFO, ARM, uClibc, pinned busybox, symcheck, dropbear
+  programs, squashfs superblock equal in kind to the stock one, image decoded and compared with its tree, 0x490000 bytes).
+  Output: `appfs-akam.squashfs`, `.sha256`, `appfs_sign.txt`, `MANIFEST.txt`, the same names as the script.
+* `akam appfs-flash --image-dir DIR --backup-dir DIR --ip ADDRESS [...]` is the port of `tools/flash_appfs.sh`. **Without
+  `--execute` it is a dry run**: local checks (image, sign, backup against its `SHA256SUMS`) and the printed plan, no
+  connection. `--execute` needs a terminal, then two answers in order: the recovery acknowledgement (a UART or a CH341A
+  programmer is at hand and the backup is verified: only they bring back a half-written `mtd3`) and the typed text
+  `<first 12 digits of the image sha256> mtd3`. Steps: (a) fresh dump of `mtd0..mtd5` byte-compared with the backup
+  (`mtd4`, the jffs2 config, may differ: warning), (b) camera preflight (real SD card mounted, feeder alive and not
+  running from `/appfs`, app stopped, nothing maps `/appfs/lib`), (c) both images staged and md5-checked, then a detached
+  on-camera worker that flashes, verifies, and rolls back by itself, (d) read-back to the PC and byte compare (never
+  writes), (e) the optional `appfs_sign` nvram write (`--nvram`, off by default). It never reboots: the staged reboot is
+  printed. `--current-image FILE` updates an appfs that is already flashed (the rollback source becomes that image);
+  `--hot` does it from a card-less boot (one detached on-camera runner, `--hot-preflight` is its reversible rehearsal).
+  A failed write is never retried by the program; the message carries the rollback worker commands.
+* **Recovery.** The Akam SD card inserted at power-up overrides the flashed boot (stock `debug` mode of `init.sh`). Only a
+  half-written `mtd3` needs UART (`sf write`) or a CH341A.
+
+**The 2K kit** (a directory; the signed tarball is opened by `internal/kit` first). It holds only Akam code, never a vendor
+file: `MANIFEST.txt` (`model`, `kind=cardless-appfs`, `akam_version`, `source_commit`, `kit_grade`, exactly one
+`time64_gate=pass`), `SHA256SUMS` (every other file, checked: any mismatch, missing or extra file refuses the kit),
+`appfs/overlay/` (`own_app_stub.sh own_app_run.sh common.sh decloud.sh start_ssh.sh akam_net.sh akam_api_key.sh
+akam_flash_boot.sh akam_ntp.sh akam_hostname.sh`) and `appfs/bin/` (`akam2k_rtsp`, `akam2k_sntp`, `akam2k_rtsp.BUILDINFO`,
+`dropbearmulti`, `dropbearmulti.BUILDINFO`, the pinned static `busybox`). The vendor part of the image comes from your backup.
+Optional, all hashed in `SHA256SUMS`: `card/` (`yy_debug.ini akam_boot.sh akam/enable_local.sh akam/restore_param.sh`, all or none:
+the files of the first-install SD card that are not in `appfs/`), `supported_hardware.txt` and `licenses/*`. The kit is built by
+`tools/release/make_kit_2k.sh` (reproducible tarball, `tests/kit2k_test.sh`), signed like the 1080p one, and verified by the same
+`internal/kit` code with the 2K layout (`appfs.KitLayout`) before `appfs.LoadKit` applies the 2K checks.
+
+### Install and update of the 2K from the assistant (`prepare-2k-sd`, `update`)
+
+Same on Linux, macOS and Windows, no bash. The journey and the status of each step are in
+[assistant/install-update-journey.md](assistant/install-update-journey.md).
+
+* `akam prepare-2k-sd [--kit FILE] [--device DEV]` writes the first-install card **from the signed kit** (newest release when no
+  `--kit`): the card-less Akam boots from it with **no flash write** and removing it undoes everything. It asks your SSH public key
+  and your Wi-Fi (stored on the card as a hex SSID and the 256-bit PSK, never the password), shows the red-box confirmation naming
+  the device, formats MBR + FAT32 and **verifies every file by sha256 after the write**. Like `build_card.sh` it never puts a
+  `*.bin`, `fac_av130.zip` or `yy_upgrade*` file on the card and checks that `yy_debug.ini` is `mode=debug`.
+* `akam backup-2k [--out DIR]` backs the 2K up: `/proc/mtd` must be the 2K layout, each of the six partitions is read twice over SSH
+  (read only, nothing is written on the camera) and compared, sizes are checked, `mtd0..mtd5.bin` and `SHA256SUMS` are written
+  in a new folder (the camera's state folder by default), verified from the files, and recorded for `update`.
+* `akam key-2k` creates the control-API key for this assistant: the camera makes it (`akam_api_key.sh new --scope admin --name
+  assistant`), the secret comes back once over SSH, is stored in the camera's state folder (`api_key`, 0600) and is never printed;
+  `update` then reads the model and version. It asks before it writes `/config/akam/api_keys` on the camera.
+* `akam update` on a 2K is one flow (the 1080p flow stays what it was):
+  1. detect: model and Akam version from the signed control API `GET /info` (`--api-key-file FILE`, or `api_key` in the camera's
+     state folder, or `AKAM_KEY_ID` + `AKAM_KEY_SECRET`); no key or a closed API only means "not read";
+  2. artifact: the kit of the newest release (or `--version`, `--kit`), verified; the image is built from **your** backup
+     (`--backup-dir`, kept in the state for next time); the image on the camera is the one recorded at the last update (or
+     `--current-image FILE` the first time on a camera flashed by the scripts);
+  3. what changes: versions, both image hashes, the list of files that differ (`/akam/common.sh changed ...`);
+  4. preflight: the hot rehearsal (H1 to H3, stops nothing for good, writes no flash) after its own yes/no;
+  5. confirmation: the recovery question (UART or CH341A at hand, verified backup), then the typed `<12 hex of the sha256> mtd3`;
+  6. the write by `appfs.Flash` (all the gates of `flash_appfs.sh`: fresh dump equal to the current image byte for byte, card-less
+     proof, process census, memory budget, detached worker with its own rollback, read-back compared before any reboot);
+  7. you power-cycle the camera (this program never reboots it); it waits, reads `mtd3` back, compares it to the image and
+     compares the version the API reports; only then are the images recorded: **current** = new, **previous** = the one before.
+     The images are kept in the camera's state folder, `appfs-images/`: `<sha256>.squashfs` and `<sha256>.json` (never changed),
+     and ONE `store.json` {current, previous, pending} replaced by a single atomic rename (temporary file, fsync, rename).
+     If the run stopped after the write and before this record (Ctrl-C, closed terminal, another IP after the boot), the next
+     `akam update` (or `--rollback`) first reads `mtd3` READ ONLY: equal to the pending image, it is recorded and the update goes
+     on; equal to the current one, the pending record is dropped; neither, it refuses and shows both hashes. `--current-image
+     FILE` is recorded only after a live step (a) compared it with a fresh dump of `mtd3`, never before. After a verified update
+     the work folder keeps no dump (the Wi-Fi configuration dump, `mtd4`, is never kept).
+  A kit that is **downloaded** (newest release or `--version`) must be signed: a release without `SHA256SUMS.sig` is refused, and
+  `--allow-unsigned` only covers a local `--kit FILE`. A development kit (`kit_grade=test`) is accepted only as a local folder
+  with `--kit DIR --allow-unsigned`, with a warning. `appfs-flash --execute` records the image it wrote (after its verified
+  read-back) so that the first `update` has a current image.
+  `--rollback` flashes the previous image with exactly the same steps. `--card` updates from an SD-card boot instead of card-less
+  (a dry run replaces the rehearsal), `--force` allows a downgrade, `--yes` answers the rehearsal question and the typed question
+  (never the recovery question: that needs `--recovery-at-hand` as well), and a terminal is always required: **no flag writes
+  flash on its own**. A failed write is never retried; the message carries the rollback commands, the Akam SD card recovers an
+  appfs that mounts, a half-written `mtd3` needs UART or a CH341A.
+
+**Byte for byte.** The compressed streams of this program's squashfs writer and of `mksquashfs` differ (two xz encoders),
+so the images are not the same byte string; what is tested equal against `build_appfs.sh` on the same fixture is the whole
+tree (names, types, modes, owners, links, contents), the squashfs parameters, the superblock in kind, the size, the padding,
+the creation time and the `appfs_sign` recipe (a test runs the script when `mksquashfs` is installed). The squashfs writer
+also had to learn the flags of the stock image (`mksquashfs -xattrs` without xattrs: `NO_XATTRS` clear).
+
 ## First run
 
 ```text

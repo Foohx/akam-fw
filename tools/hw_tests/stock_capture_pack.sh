@@ -3,7 +3,7 @@
 #
 #   tools/hw_tests/stock_capture_pack.sh CARD_MOUNT_DIR [--hook FILE]
 #
-# Builds src/ak_rtsp/stock_hook.so with the pinned Zig (run tools/build/bootstrap.sh once),
+# Builds build/lsc-indoor-1080p-ak3918/stock_hook.so with the pinned Zig (run tools/build/bootstrap.sh once),
 # or takes a prebuilt one with --hook, and copies it with stock_capture.sh to
 # CARD_MOUNT_DIR/stock_capture/, plus a SHA256SUMS file the camera script checks.
 # Nothing else on the card is touched. See docs/manual/stock-capture.md.
@@ -36,8 +36,8 @@ fi
 if [ -z "$HOOK" ]; then
     # shellcheck source=tools/build/env.sh
     . "$REPO/tools/build/env.sh" || { echo "error: run tools/build/bootstrap.sh first (pinned Zig missing)" >&2; exit 1; }
-    make -C "$REPO/src/ak_rtsp" stock_hook.so >&2
-    HOOK=$REPO/src/ak_rtsp/stock_hook.so
+    make -C "$REPO/platforms/anyka-ak3918" stock_hook.so >&2
+    HOOK=$REPO/build/lsc-indoor-1080p-ak3918/stock_hook.so
 fi
 [ -f "$HOOK" ] || { echo "error: hook not found: $HOOK" >&2; exit 1; }
 

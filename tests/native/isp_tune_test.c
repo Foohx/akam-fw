@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/isp_tune.c: saved picture settings (load, validation, atomic save, removal at all zero). */
+/* Host test of platforms/anyka-ak3918/isp_tune.c: saved picture settings (load, validation, atomic save, removal at all zero). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,22 +29,23 @@ int main(int argc, char **argv)
 
     /* absent file: defaults, nothing created */
     CHECK(isp_tune_load(path, &t) == 0);
-    CHECK(!t.brightness && !t.contrast && !t.saturation && !t.sharpness);
+    CHECK(!t.brightness && !t.contrast && !t.saturation && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);
+    CHECK(ISP_TUNE_DEFAULT_SHARPNESS == -15);
     CHECK(access(dir, F_OK) != 0);
 
-    /* all zero never creates a file */
+    /* the defaults never create a file */
     CHECK(isp_tune_save(path, &t) == 0);
     CHECK(access(path, F_OK) != 0);
 
     /* save creates the directory (0700) and the file (0600), round trip, no temp left */
-    isp_tune_t w = { -50, 50, -1, 7 };
+    isp_tune_t w = { -50, 50, -1, 7, 4 };
     CHECK(isp_tune_save(path, &w) == 0);
     struct stat st;
     CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
     CHECK(stat(dir, &st) == 0 && (st.st_mode & 0777) == 0700);
     CHECK(access(tmp, F_OK) != 0);
     CHECK(isp_tune_load(path, &t) == 1);
-    CHECK(t.brightness == -50 && t.contrast == 50 && t.saturation == -1 && t.sharpness == 7);
+    CHECK(t.brightness == -50 && t.contrast == 50 && t.saturation == -1 && t.sharpness == 7 && t.denoise == 4);
 
     /* same values again: no write (an atomic write makes a new inode) */
     {
@@ -63,15 +64,35 @@ int main(int argc, char **argv)
     /* validation: out of range, junk, trailing text, unknown key, CRLF, missing '=' */
     put(path, "brightness=51\ncontrast=-51\nsaturation=abc\nsharpness=5x\nfoo=3\nnoequals\n");
     CHECK(isp_tune_load(path, &t) == 1);
-    CHECK(!t.brightness && !t.contrast && !t.saturation && !t.sharpness);
+    CHECK(!t.brightness && !t.contrast && !t.saturation && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);   /* junk: defaults */
     put(path, "brightness=10\r\ncontrast=-20\r\nsaturation=\nsharpness= 4\n");
     CHECK(isp_tune_load(path, &t) == 1);
     CHECK(t.brightness == 10 && t.contrast == -20 && t.saturation == 0);
     put(path, "");
     CHECK(isp_tune_load(path, &t) == 1 && !t.brightness);
 
-    /* all zero removes the file; a second removal is fine */
-    isp_tune_t z = { 0, 0, 0, 0 };
+    /* an explicitly saved sharpness 0 (stock) wins over the default: it is a file, and it loads back as 0 */
+    isp_tune_t z = { 0, 0, 0, 0, ISP_TUNE_DEFAULT_DENOISE };
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
+    CHECK(isp_tune_load(path, &t) == 1 && t.sharpness == 0);
+    put(path, "contrast=4\n");                                                   /* no sharpness line: the default */
+    CHECK(isp_tune_load(path, &t) == 1 && t.contrast == 4 && t.sharpness == ISP_TUNE_DEFAULT_SHARPNESS);
+
+    /* denoise: default 2 (a file without the line gets it), range 0..4, an explicit 0 (stock) is a saved line */
+    CHECK(ISP_TUNE_DEFAULT_DENOISE == 2);
+    put(path, "denoise=5\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == ISP_TUNE_DEFAULT_DENOISE);
+    put(path, "denoise=-1\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == ISP_TUNE_DEFAULT_DENOISE);
+    put(path, "denoise=0\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == 0);
+    z.denoise = 0;
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
+    CHECK(isp_tune_load(path, &t) == 1 && t.denoise == 0 && t.sharpness == 0);
+    z.denoise = ISP_TUNE_DEFAULT_DENOISE;
+
+    /* the defaults remove the file; a second removal is fine */
+    z.sharpness = ISP_TUNE_DEFAULT_SHARPNESS;
     CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) != 0);
     CHECK(isp_tune_save(path, &z) == 0);
 

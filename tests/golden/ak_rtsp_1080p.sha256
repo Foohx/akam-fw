@@ -1,0 +1,42 @@
+# Golden sha256 of the stripped 1080p ak_rtsp, reproducible build (docs/convergence-plan.md 2.5).
+# Recorded from dev e9fcf7d, before any file move to src/common.
+# 2026-11-16, feature/1080p-qp-tuning: new hash ffa4da4c... (was caded296...). Behaviour-identical by default; hash changes
+# because of new code (video_cfg minqp/maxqp keys). Proof: tests/video_apply_test.sh, CREATE_ENC payload byte-identical to
+# tests/fixtures/video_apply_default.txt with no settings file.
+# 2026-11-16, feature/1080p-image-quality: new hash aa5fb757... (was ffa4da4c...). Behaviour-identical by default; hash changes
+# because of new code (img.qp live QP key, img.sharp_all, ipdelta option). Proof: tests/video_apply_test.sh (CREATE_ENC
+# payload byte-identical to the default fixture with ipdelta 0, only rc.delta changes otherwise), tests/isp_effects_test.sh.
+# 2026-11-16, feature/1080p-sharp-default: new hash e50f020a... (was aa5fb757...). behaviour change: sharpness default -15 on all SHARP entries (17, incl. ISO level 15) and a 3D_NR send buffer of 7180 B with a zero tail (stock; was 7080, a 104-byte over-read),
+# validated on akam-01 2026-11-16 (also img.qp "MIN MAX" control parser fix). Stock: isp.sharpness 0 + img.sharp_all 0 (tests/isp_effects_test.sh).
+# 2026-11-16, feature/1080p-nr-keys: new hash 775e8674... (was e50f020a...). New code, default behaviour identical: the NR/SHARP knobs
+# (img.nr2d_bias ... img.nr3d_motion, GET img.nr, SET img.dump nr) send nothing while every key is at its default. Proof:
+# tests/isp_nr_test.sh (composer output memcmp-identical to the baseline, zero SETs at default), tests/isp_effects_test.sh.
+# 2026-11-16, feature/1080p-image-defaults: new hash 6431e2c2... (was 775e8674...). behaviour change: nr3d_bias 2 default (isp.denoise, saved
+# like the sharpness, 0 = stock), validated A/B on akam-01/02 2026-11-16; NR1 mode word 192 accepted. Stock path (isp.sharpness 0 +
+# isp.denoise 0) byte-identical: tests/isp_nr_test.sh, tests/isp_effects_test.sh.
+# 2026-11-17, convergence/p4-p8 step P4 (sys.* through hal_sys): new hash a37f7aa7... (was 6431e2c2...). New code, behaviour identical for every key
+# that existed (sys.uptime/load/cpu/mem_total/mem_free, net.wifi_rssi, same text, same unknown rule): the collection now calls
+# hal_sys_sample() (src/common/logic) and six keys are added (sys.cpu_pct sys.load1_x100 sys.mem_total_kb sys.mem_avail_kb sys.uptime_s
+# net.wifi_lq). Stripped size 426396 -> 428772 (+2376), text +2380, bss +328. Proof: tests/ctl_sys_test.sh (all the old assertions unchanged).
+# 2026-11-17, convergence/p4-p8 step P6 (LED engine on light_logic): new hash c5e7c579... (was a37f7aa7...). Behaviour identical BY DEFAULT: the engine of
+# leds.c is re-expressed as light_logic + led_pat rules (stream, boot, nowifi, night, idle) with default patterns equal to the old
+# state machine. Proof: tests/native/leds_oracle_test.c (the old engine kept verbatim in tests/native/leds_legacy.c, same traces, same
+# write sequences, ~735k comparisons) and tests/native/leds_test.c unchanged. Stripped 428772 -> 433676 bytes (+4904): text 423524 -> 428424 (+4900),
+# bss 56078 -> 56382 (+304) (led_pat 0.9 KB, light_logic 1.1 KB, rules/blip/pattern persistence in leds.c).
+# 2026-11-17, convergence/p4-p8 step P7 (settings registry behind 8091): new hash 38f017a4... (was c5e7c579...). Behaviour identical for every key the old
+# 8091 code knows (tests/control_test.sh: all old assertions unchanged, LIST golden unchanged). New code: ak1080_settings.c (the table, 41
+# rows) + the shared settings_reg/json_min/api_keys/sha256 + the registry fallback in control.c (keys the old code does not know). Stripped
+# 433676 -> 451592 (+17916): text 428424 -> 446096 (+17672), bss 56382 -> 60174 (+3792). Against dev: +25196 stripped, +24952 text, +4424 bss.
+# 2026-11-17, convergence/p4-p8 step P8 (signed control API on 8092): new hash 4eef210e... (was 38f017a4...). Default behaviour identical (the listener opens only
+# while /etc/config/akam/api_keys holds a key; no key = nothing listens); new code: the shared API (api_core, api_httpd, http_req, api_sig, api_limit, api_events),
+# ak1080_api.c, the night notify hook, the 8092 refusal in the ONVIF port list. API objects are built -Os, the HTTP/signature parsers with stack canaries.
+# Stripped 451592 -> 513152 (+61560): text 446096 -> 507612 (+61516), bss 60174 -> 118170 (+57996, mostly untouched pages: 12 KiB reply buffer, 16 KiB audit ring,
+# 5 KiB write ring, key/nonce/peer tables). Against dev (6431e2c2...): +86756 stripped, +86468 text, +62420 bss. Registry + API (P7+P8) = +79.5 KB, over the
+# +56 KB gate of specs/control-api.md s9. Proof: tests/ak1080_api_http_test.sh (119 checks), tests/ak1080_settings_test.sh, tests/control_test.sh, the 2K suite.
+# Command (from the repo root, zig 0.14.1 x86_64-linux, the pinned one in tools/.toolchain):
+#   make -C platforms/anyka-ak3918 repro        (AKAM_REPRO=1, SOURCE_DATE_EPOCH=0, -ffile-prefix-map, -g0, zig objcopy --strip-all)
+# Check: tools/ci/repro_check.sh. A different zig changes the hash: update this file in the same commit as the pin.
+79eb7464714b9c7f4d560944003b64577947bd9bb88c72bf387b347a2d4ecbbb  ak_rtsp.repro
+# 2026-11-17, review(1080p-api): leds_save_config mutex and the 8091 registry refusal of network writes to rows with no RAM-only mode (new hash).
+# 2026-11-17, fix/1080p-led-blip: new hash dbc49018... (was e630e2e4...). Behaviour change: an explicit led.blip overrides every led.status (off included) for its duration, led.state reads "blip", leds_blip/led.blip fail (-2 / HTTP 500) when the LED cannot be written. Default (no blip) byte-identical: tests/native/leds_oracle_test.c unchanged. Stripped 513152 -> 513496 (+344).
+# 2026-11-18, feature/rot2k-onvif-ptz step 1 (ONVIF core moved to src/common/net: http_srv, soap, onvif, wsd; model binding onvif_model_services): new hash 79eb7464... (was dbc49018...). Behaviour identical: only onvif_start changed (a loop over the model table, defined in firmware/lsc-indoor-1080p-ak3918/onvif_model.c, instead of three direct calls); every ONVIF/SOAP/WSD host test (soap, http_srv, wsd, onvif, onvif_media, onvif_svc) passes with unchanged sources and assertions, only the source paths of the drivers moved. Stripped 513496 -> 513512 (+16 = the 4-entry table); all symbols and instructions otherwise identical up to the 16-byte address shift.

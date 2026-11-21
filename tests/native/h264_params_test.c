@@ -1,4 +1,4 @@
-/* Host unit test for src/ak_rtsp/h264_params.c (SPS/PPS extraction, base64,
+/* Host unit test for src/net/rtsp/h264_params.c (SPS/PPS extraction, base64,
  * SDP fmtp builder). Synthetic bytes only. Build/run: tests/h264_params_test.sh */
 #include <stdio.h>
 #include <string.h>

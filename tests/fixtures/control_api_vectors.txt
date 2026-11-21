@@ -1,0 +1,294 @@
+# Shared test vectors of the control API request signing (specs/control-api.md sections 5 and 12).
+# Consumed by tests/rot2k_control_api_unit.c (C), tests/rot2k_control_api_sign_test.sh (tools/akam-api-sign.sh) and, later,
+# the Go client tests. Expected values were produced with openssl, not with the C code.
+#
+# Format: blocks separated by blank lines; "name: value" lines (first ':' splits, one optional space after it).
+# "case" blocks: inputs (secret hex, key_id, method, path, query = RAW query without '?', body_hex or body_fill =
+#   "<2 hex digits>:<count>", timestamp, nonce) and expected outputs: canonical_query, canonical (a literal backslash-n
+#   stands for a newline; the line has no other backslash), signature (hex HMAC-SHA256 of the canonical string).
+#   The method is upper-cased by every signer ("method: get" signs GET). A challenge-mode case puts "challenge:<hex>" in
+#   timestamp and nonce.
+# "reject" blocks: kind = path | query; value = the input a verifier must refuse (HTTP 400) and a signer must not sign.
+# Canonical query: a parameter without '=' becomes "name="; sort bytewise on the re-encoded name, then value; an empty
+#   segment or %00 is malformed.
+
+case: get_plain
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: 
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 0c5a09437ee39365b98b9cb01f65c9a87aabe1fa568b3657097e804e16ef3a5c
+
+case: query_unsorted
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: b=2&a=1
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: a=1&b=2
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\na=1&b=2\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: d639cd4acc2860058e0b48b9322a4117f31871180b7d8c1f7ced522cc4dfbe9f
+
+case: query_repeated
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: x=2&x=1&a=z&x=1
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: a=z&x=1&x=1&x=2
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\na=z&x=1&x=1&x=2\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: c70b249b22ef807c979495505803a4db10e4bf88489712d7d0b2afc26e3d46d7
+
+case: query_percent
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: name=caf%C3%A9&tilde=%7e&sp=a%20b&plus=a+b&lower=%2f&up=%2F
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: lower=%2F&name=caf%C3%A9&plus=a%2Bb&sp=a%20b&tilde=~&up=%2F
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\nlower=%2F&name=caf%C3%A9&plus=a%2Bb&sp=a%20b&tilde=~&up=%2F\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 2c264041dff5785494774934ff958e6141257056b4e557b2f11be6457c161812
+
+case: query_no_equals
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: flag&a=1
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: a=1&flag=
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\na=1&flag=\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 49ca8bc591eebf4d686e7a9260881771a0300c605f085268747e621f88c64df1
+
+case: query_equals_in_value
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: k=a=b&e=
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: e=&k=a%3Db
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\ne=&k=a%3Db\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 36968695b455662154e4f4c80935012028357ba0e997f5282ef9fafa6ae7c91b
+
+case: query_utf8_raw
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: q=é
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: q=%C3%A9
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\nq=%C3%A9\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 1ab145db9412ac15a0c13df338c1d2d10e3aebedd355a9c03ef3a3c59d123dad
+
+case: query_prefix
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: prefix=video0.
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: prefix=video0.
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\nprefix=video0.\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: f997160f2a68f806393aa204f8ac4283661188b1a167dfc83218b6bd3ddf748a
+
+case: query_sort_by_value
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/settings
+query: a=b&a=B&a=a&A=z
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: A=z&a=B&a=a&a=b
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\nA=z&a=B&a=a&a=b\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 647309499545a991d39f8a4b23e81fee5def7489a02e2f2ff049ccd34c64d99c
+
+case: method_lowercase
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: get
+path: /akam/v1/settings
+query: 
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/settings\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 0c5a09437ee39365b98b9cb01f65c9a87aabe1fa568b3657097e804e16ef3a5c
+
+case: patch_json
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: PATCH
+path: /akam/v1/settings
+query: 
+body_hex: 7b22766964656f302e667073223a223135222c22727473702e73747265616d312e656e61626c6564223a66616c73657d
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nPATCH\n/akam/v1/settings\n\n00c893e28530f093a1033f55484f57535a3bbd2ebb2fc7cff09c2b06784f474b\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 99a7ce60ac48e2dded282c4eb293306bf5b2810ecbdaf3ee477a5ce53bf97a3d
+
+case: post_empty_body
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: POST
+path: /akam/v1/actions/ptz.home
+query: 
+body_hex: 
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nPOST\n/akam/v1/actions/ptz.home\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 91eb6b6a2ada0b96b0ef56c3ccf4b4c613659b98cacf1775196a0368ba4ead46
+
+case: body_unicode
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: PATCH
+path: /akam/v1/settings
+query: 
+body_hex: 7b226c6564223a22c3a9227d
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nPATCH\n/akam/v1/settings\n\n2ae9336ff38d07ca0d20851371b1822fb73d059f3fb2d6ce5fd5bf71ecb228df\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 5b50b0c321f1fb72a8cde60c96abb1705a70497b31da9b6969bb6bfd099cac5e
+
+case: body_large
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: PATCH
+path: /akam/v1/settings
+query: 
+body_hex: 
+body_fill: 61:100000
+timestamp: 1700000000
+nonce: 00112233445566778899aabbccddeeff
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nPATCH\n/akam/v1/settings\n\n6d1cf22d7cc09b085dfc25ee1a1f3ae0265804c607bc2074ad253bcc82fd81ee\n1700000000\n00112233445566778899aabbccddeeff\n3fa91c07
+signature: 181da7eac91643dfe4af2f16719c5a5f4de0a00e9d3f2c8bcfafad505505126e
+
+case: delete_key
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: DELETE
+path: /akam/v1/keys/3fa91c07
+query: 
+body_hex: 
+timestamp: 1700000059
+nonce: ffeeddccbbaa99887766554433221100
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nDELETE\n/akam/v1/keys/3fa91c07\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1700000059\nffeeddccbbaa99887766554433221100\n3fa91c07
+signature: 45791ff1b15193a3e501a16d4d77ae529f6ac36029da443e60e3fa15331d38a8
+
+case: challenge_mode
+secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+key_id: 3fa91c07
+method: GET
+path: /akam/v1/info
+query: 
+body_hex: 
+timestamp: challenge:8899aabbccddeeff0011223344556677
+nonce: challenge:8899aabbccddeeff0011223344556677
+canonical_query: 
+canonical: AKAM1-HMAC-SHA256\nGET\n/akam/v1/info\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nchallenge:8899aabbccddeeff0011223344556677\nchallenge:8899aabbccddeeff0011223344556677\n3fa91c07
+signature: e0eb6eda003b712205ae202a7b36049e80f786c9b57576c584d5f0d9380eddb4
+
+reject: //akam/v1/settings
+kind: path
+value: //akam/v1/settings
+
+reject: /akam/v1/../keys
+kind: path
+value: /akam/v1/../keys
+
+reject: /akam/v1/./keys
+kind: path
+value: /akam/v1/./keys
+
+reject: /akam/v1/settings%2fx
+kind: path
+value: /akam/v1/settings%2fx
+
+reject: /akam/v1/settings%2Fx
+kind: path
+value: /akam/v1/settings%2Fx
+
+reject: /akam/v1/settings/
+kind: path
+value: /akam/v1/settings/
+
+reject: akam/v1/settings
+kind: path
+value: akam/v1/settings
+
+reject: /akam/v1//settings
+kind: path
+value: /akam/v1//settings
+
+reject: /
+kind: path
+value: /
+
+reject: /akam/v1/set tings
+kind: path
+value: /akam/v1/set tings
+
+reject: a=%zz
+kind: query
+value: a=%zz
+
+reject: a=%4
+kind: query
+value: a=%4
+
+reject: a=%
+kind: query
+value: a=%
+
+reject: a&&b
+kind: query
+value: a&&b
+
+reject: &a=1
+kind: query
+value: &a=1
+
+reject: a=1&
+kind: query
+value: a=1&
+
+reject: a=%00
+kind: query
+value: a=%00
+
+reject: %zz=1
+kind: query
+value: %zz=1

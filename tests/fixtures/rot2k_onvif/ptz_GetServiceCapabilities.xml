@@ -1,0 +1,1 @@
+<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><tptz:GetServiceCapabilitiesResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><tptz:Capabilities EFlip="false" GetCompatibleConfigurations="false" MoveStatus="true" Reverse="false" StatusPosition="false"></tptz:Capabilities></tptz:GetServiceCapabilitiesResponse></env:Body></env:Envelope>

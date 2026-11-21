@@ -1,4 +1,4 @@
-/* Host integration test of src/ak_rtsp/mqtt_svc.c (+ mqtt.c, mqtt_ha.c) against a fake MQTT broker written in this
+/* Host integration test of platforms/anyka-ak3918/mqtt_svc.c (+ mqtt.c, mqtt_ha.c) against a fake MQTT broker written in this
  * file with its own, independent packet parser (it does not use mqtt.c): the config file parser, the dormant
  * guarantee (no thread, no socket while off), CONNECT with credentials and will, availability, retained discovery,
  * state publishes, the command allow-list over the wire, oversized and hostile packets, keepalive, a broker that
@@ -143,7 +143,7 @@ static void broker_drop(void)
 
 static int rd_u16(const uint8_t *p) { return (p[0] << 8) | p[1]; }
 
-/* Parse one packet body; independent of src/ak_rtsp/mqtt.c. */
+/* Parse one packet body; independent of src/net/mqtt/mqtt.c. */
 static void broker_packet(unsigned type, unsigned flags, const uint8_t *b, size_t n)
 {
     pthread_mutex_lock(&B.mu);

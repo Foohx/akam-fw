@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/md5.c and rtsp_auth.c: RFC 1321 vectors, the RFC 2617
+/* Host test of src/net/crypto/md5.c and rtsp_auth.c: RFC 1321 vectors, the RFC 2617
  * and RFC 2069 Digest examples, and the authentication state machine (401 ->
  * right answer -> served; wrong password; stale and unknown nonces; file
  * reload; fail-closed on a broken file; rate limiting; no secret in any log

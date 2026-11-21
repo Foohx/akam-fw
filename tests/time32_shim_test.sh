@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host-side test of src/common/time32_shim.c (the fix for the camera kernel
+# Host-side test of src/core/time32_shim.c (the fix for the camera kernel
 # that acknowledges clock_gettime64 without executing it). Nothing here
 # touches hardware. It proves, on the FINAL static ARM binaries, that:
 #   - with the shim, clock_gettime/timerfd go through the 32-bit syscalls
@@ -85,7 +85,7 @@ build_users() { # <output> [extra source...]
     # shellcheck disable=SC2086  # AKAM_CC is a command line by design
     $AKAM_CC -static -Os -mfloat-abi=soft -g -o "$out" "$WORK/users.c" "$@"
 }
-check "users program builds with the shim" build_users "$WORK/users_shim" "$REPO/src/common/time32_shim.c"
+check "users program builds with the shim" build_users "$WORK/users_shim" "$REPO/src/core/time32_shim.c"
 check "users program builds without the shim" build_users "$WORK/users_stock"
 
 echo "== machine code: no unconditional time64 syscall in the shim builds"
@@ -106,17 +106,17 @@ EOF
     # shellcheck disable=SC2086  # AKAM_CC is a command line by design
     check "conditional-syscall control builds" $AKAM_CC -static -Os -mfloat-abi=soft -o "$WORK/cond" "$WORK/cond.c"
     check "gate catches a conditionally loaded clock_gettime64 (403)" bash -c "! '$CHECK' '$WORK/cond' >/dev/null 2>&1"
-    for b in src/ak_rtsp/flash_tool src/ak_rtsp/isp_dump src/ak_rtsp/patch_div0; do
+    for b in build/lsc-indoor-1080p-ak3918/flash_tool build/lsc-indoor-1080p-ak3918/isp_dump build/lsc-indoor-1080p-ak3918/patch_div0; do
         if [ -f "$REPO/$b" ]; then
             check "$b: no forbidden time64 syscall" "$CHECK" "$REPO/$b"
         else
             echo "  skip - $b not built"
         fi
     done
-    if [ -f "$REPO/src/ak_rtsp/ak_rtsp" ]; then
-        check "ak_rtsp: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/src/ak_rtsp/ak_rtsp"
+    if [ -f "$REPO/build/lsc-indoor-1080p-ak3918/ak_rtsp" ]; then
+        check "ak_rtsp: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/build/lsc-indoor-1080p-ak3918/ak_rtsp"
     else
-        echo "  skip - src/ak_rtsp/ak_rtsp not built"
+        echo "  skip - build/lsc-indoor-1080p-ak3918/ak_rtsp not built"
     fi
     if [ -f "$REPO/dist/dropbear/dropbearmulti" ]; then
         check "dropbearmulti: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/dist/dropbear/dropbearmulti"
@@ -173,7 +173,7 @@ int main(void)
 }
 EOF
     # shellcheck disable=SC2086  # AKAM_CC is a command line by design
-    check "edge-case program builds with the shim" $AKAM_CC -static -Os -mfloat-abi=soft -o "$WORK/edge" "$WORK/edge.c" "$REPO/src/common/time32_shim.c"
+    check "edge-case program builds with the shim" $AKAM_CC -static -Os -mfloat-abi=soft -o "$WORK/edge" "$WORK/edge.c" "$REPO/src/core/time32_shim.c"
     check "shim edge cases (NULL, EINVAL, all clock ids) under qemu" qemu-arm "$WORK/edge"
 
     qemu-arm "$WORK/probe_shim" "$WORK" >"$WORK/probe_shim.txt" 2>&1 || true

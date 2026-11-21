@@ -6,7 +6,7 @@
 
 > **Do this before anything else.** Do not build, flash or even boot a modified image until you
 > hold a verified copy of all 8 flash partitions. The backup is also the source for building your
-> image: the APP partition (`mtdblock7`) is the input of `build_firmware.sh`.
+> image: the APP partition (`mtdblock7`) is the input of `build_image.sh`.
 >
 > Status: the dump commands are upstream's (`dd` per partition); the double read and the size and hash
 > checks are the ones the wizard runs, which were validated on two cameras. The

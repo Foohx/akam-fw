@@ -6,7 +6,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-DBG=$REPO/tools/firmware_patch_templates/akam_debug.sh
+DBG=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/akam_debug.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"

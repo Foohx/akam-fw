@@ -6,7 +6,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-TPL=$REPO/tools/firmware_patch_templates
+TPL=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then

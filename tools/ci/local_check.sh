@@ -4,10 +4,11 @@
 #   (from anywhere; run tools/build/bootstrap.sh first so camera-side tests get the pinned BusyBox)
 # Groups (default and "all": every group, in this order; GitHub CI runs the SAME code per group,
 # see .github/workflows/ci.yml, so each check runs once per pipeline):
-#   lint    shellcheck, tracked-file hygiene (forbidden files, symlinks, private IPs), tests/readme_links_test.sh
+#   lint    shellcheck, tracked-file hygiene (forbidden files, symlinks, private IPs), layering lint (tools/ci/layering_lint.sh), tests/readme_links_test.sh
 #   shell   wizard smoke runs and every tests/*_test.sh that is neither native, go nor lint
 #   native  tests/*_test.sh that build and run C code of src/ and tests/native/ (host compiler or pinned Zig)
 #   go      tests/assistant_test.sh (gofmt, vet, go test, six-target build + size budget, reproducibility)
+#   rot2k   LSC Rotatable 2K (firmware/lsc-rotatable-2k-ak3918av130): shellcheck of its scripts + tests/rot2k_*_test.sh
 #   race    opt-in, not part of "all": CGO_ENABLED=1 go test -race -tags akamtest ./... in tools/assistant
 #           (CI runs --only go,race; needs a C compiler for cgo)
 # Every test belongs to exactly one group (test_group in tools/ci/groups.sh, also used by changed_groups.sh),
@@ -31,7 +32,7 @@ cd "$REPO" || exit 2
 . "$REPO/tools/lib/host.sh"
 
 # ---------------------------------------------------------------- group selection
-ALL_GROUPS="lint shell native go"
+ALL_GROUPS="lint shell native go rot2k"
 ONLY=""
 while [ "$#" -gt 0 ]; do
     case $1 in
@@ -53,7 +54,7 @@ else
     for g in ${ONLY//,/ }; do
         case " $ALL_GROUPS race " in
             *" $g "*) SEL="$SEL$g " ;;
-            *) echo "local_check: unknown group: $g (lint, shell, native, go, race, all)" >&2; exit 2 ;;
+            *) echo "local_check: unknown group: $g (lint, shell, native, go, rot2k, race, all)" >&2; exit 2 ;;
         esac
     done
 fi
@@ -165,6 +166,24 @@ if [ "$T_RUN" -eq 0 ] && [ "$SEL" != " race " ]; then
     note_fail "no tests found"
 fi
 
+# ---------------------------------------------------------------- 2b. rotatable 2K shellcheck
+# Own group: the extensionless on-camera files (rescue/telnetd) are not caught by the '*.sh' pass above.
+if want rot2k; then
+    host_say bold "== shellcheck (rot2k)"
+    if ! host_have shellcheck; then
+        note_fail "shellcheck not installed: $(host_pkg_install_hint shellcheck)"
+    else
+        rot_n=0
+        while IFS= read -r f; do
+            rot_n=$((rot_n + 1))
+            if ! shellcheck -x "$f"; then
+                note_fail "shellcheck findings in $f"
+            fi
+        done < <(git ls-files 'firmware/lsc-rotatable-2k-ak3918av130/*.sh' 'firmware/lsc-rotatable-2k-ak3918av130/boot/rescue/telnetd' 'tests/rot2k_*_test.sh')
+        echo "shellcheck (rot2k): $rot_n scripts checked"
+    fi
+fi
+
 # ---------------------------------------------------------------- 3. wizard smoke runs
 if want shell; then
     host_say bold "== wizard smoke"
@@ -204,6 +223,14 @@ if want lint; then
     done < <(git ls-files)
     echo "tracked files: $bad forbidden"
 
+    # Directories retired by the repository reorganisation (tools/dev/path-map.txt): a branch cut before the move must not bring them back.
+    retired=0
+    while IFS= read -r f; do
+        retired=$((retired + 1))
+        note_fail "tracked file in a retired directory (see tools/dev/path-map.txt for the new place): $f"
+    done < <(git ls-files -- src/common src/ak_rtsp src/smolrtsp tools/firmware_patch_templates tools/image 'firmware/*/app')
+    echo "tracked files in retired directories: $retired"
+
     # No symlink may ever be tracked (git mode 120000). Tests that need one create it in a temp dir.
     links=0
     while IFS= read -r f; do
@@ -221,6 +248,10 @@ if want lint; then
         note_fail "private 192.168 address in tracked file, use an RFC 5737 documentation range (192.0.2.x, 198.51.100.x, 203.0.113.x) or list the file in tools/ci/ip_allowlist.txt: $f"
     done < <(git grep -l -E '192[.]168[.]')
     echo "tracked private-address files: $ipbad"
+
+    # Layering: src/ compiles with the shared include list only, basenames unique per build (tools/ci/layering_lint.sh).
+    host_say bold "== layering lint"
+    bash "$HERE/layering_lint.sh" || note_fail "layering lint (tools/ci/layering_lint.sh)"
 fi
 
 # ---------------------------------------------------------------- 5. Go race detector (opt-in group "race")

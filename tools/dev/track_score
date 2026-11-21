@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# One table of tracker numbers, computed by the CURRENT tracker code (src/features/track/track_logic.c + track.c), on the host.
+# Usage: tools/dev/track_score sim [--raw] [SCENARIO...]      the closed loop: synthetic persons in a simulated room with a fake motor (tools/dev/track_sim.c)
+#        tools/dev/track_score replay [--raw] [--emit] [--cfg k=v] FILE...   open loop: a recorded session (track_debug=2 raw file, tools/dev/track_fetch.sh) run through the
+#                                    current policy on the recorded boxes and poses (tools/dev/track_replay_score.c); --emit prints the commands "V ..." instead of the table
+#        tools/dev/track_score list                          the sim scenario names
+# --raw prints the machine lines "name key=value ..." (the format of tests/golden/track_bench.txt) instead of the aligned table.
+# Metrics (both modes): lock = % of time on target, err_mean / err_p95 = centre error in px, rev_lat_* = ms to follow a direction change, still_* = motion while the person is still,
+# flips / cmds / starts = reversals and commands, reacq_* = ms to reacquire, pan/tilt ranges and travel, error drift or latency growth over time. The keys are described in the headers of
+# tools/dev/track_sim.c and tools/dev/track_replay_score.c. Build: cc into $TRACK_BENCH_BUILD (default <repo>/.local/build/track-bench), nothing in /tmp.
+set -euo pipefail
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
+FW=$REPO/firmware/lsc-rotatable-2k-ak3918av130
+PL=$REPO/platforms/anyka-ak3918av130
+B=${TRACK_BENCH_BUILD:-$REPO/.local/build/track-bench}
+CC=${HOST_CC:-cc}
+mkdir -p "$B"
+
+build_sim() {
+    "$CC" -O2 -Wall -Wextra -std=gnu99 -pthread -I"$PL" -I"$FW" -I"$REPO/src/features/scene" -I"$REPO/src/features/track" -I"$REPO/src/features/ptz" -I"$REPO/src/features/night" -I"$REPO/src/api" -I"$REPO/src/core" -I"$REPO/src/hal" -o "$B/track_sim" "$HERE/track_sim.c" \
+        "$REPO/firmware/lsc-rotatable-2k-ak3918av130/track.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" -lm
+}
+build_replay() {
+    "$CC" -O2 -Wall -Wextra -std=gnu99 -I"$PL" -I"$FW" -I"$REPO/src/features/scene" -o "$B/track_replay_score" "$HERE/track_replay_score.c" "$REPO/src/features/track/track_logic.c" -lm
+}
+table() { # key=value lines -> aligned table
+    awk '{
+        n = split($0, a, " "); name = a[1]; rows[NR] = name
+        for (i = 2; i <= n; i++) { split(a[i], kv, "="); if (!(kv[1] in col)) { col[kv[1]] = ++nc; hdr[nc] = kv[1] } v[NR, col[kv[1]]] = kv[2] }
+        if (length(name) > w) w = length(name)
+    } END {
+        printf "%-*s", w, "scenario"; for (c = 1; c <= nc; c++) printf " %*s", (length(hdr[c]) > 7 ? length(hdr[c]) : 7), hdr[c]; printf "\n"
+        for (r = 1; r <= NR; r++) { printf "%-*s", w, rows[r]; for (c = 1; c <= nc; c++) printf " %*s", (length(hdr[c]) > 7 ? length(hdr[c]) : 7), (v[r, c] == "" ? "-" : v[r, c]); printf "\n" }
+    }'
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+RAW=0 EMIT=0 ARGS=()
+for a in "$@"; do
+    case $a in
+        --raw) RAW=1 ;;
+        --emit) EMIT=1; ARGS+=("$a") ;;
+        --trace) ARGS+=("$a") ;;
+        *) ARGS+=("$a") ;;
+    esac
+done
+case $cmd in
+    sim)
+        build_sim
+        if [ "$RAW" = 1 ]; then "$B/track_sim" ${ARGS[@]+"${ARGS[@]}"}; else "$B/track_sim" ${ARGS[@]+"${ARGS[@]}"} | table; fi ;;
+    replay)
+        [ ${#ARGS[@]} -gt 0 ] || { echo "replay: no file" >&2; exit 2; }
+        build_replay
+        if [ "$RAW" = 1 ] || [ "$EMIT" = 1 ]; then "$B/track_replay_score" "${ARGS[@]}"; else "$B/track_replay_score" "${ARGS[@]}" | table; fi ;;
+    list)
+        grep -o '{ "[a-z0-9_.]*", [0-9]*, sb_' "$HERE/track_sim.c" | cut -d'"' -f2 ;;
+    *)
+        sed -n 2,5p "$0" | sed 's/^# \{0,1\}//'
+        exit 2 ;;
+esac

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of tools/firmware_patch_templates/akam_rtsp_auth.sh, the camera command that
+# Host test of firmware/lsc-indoor-1080p-ak3918/overlay/akam_rtsp_auth.sh, the camera command that
 # manages the RTSP credentials. It runs in a fake root, under BusyBox ash (the pinned one when
 # AKAM_BUSYBOX is set), with PATH reduced to the applets the camera's BusyBox 1.30.1 has
 # (md5sum, sync, mv, chmod, mkdir, rm, stty, cat, ls): no tr, no mktemp, no head. Nothing here
@@ -8,7 +8,9 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-SCRIPT=$REPO/tools/firmware_patch_templates/akam_rtsp_auth.sh
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
+SCRIPT=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/akam_rtsp_auth.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
@@ -403,8 +405,8 @@ fi
 
 # --- 9. the file is what ak_rtsp reads: end-to-end with ffprobe ----------------
 if command -v ffprobe >/dev/null 2>&1 && command -v cc >/dev/null 2>&1; then
-    cc -std=gnu99 -I"$REPO/src/ak_rtsp" -o "$WORK/srv" "$REPO/tests/native/rtsp_auth_server.c" \
-        "$REPO/src/ak_rtsp/rtsp_auth.c" "$REPO/src/ak_rtsp/md5.c" -pthread 2>/dev/null
+ cc -std=gnu99 -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/srv" "$REPO/tests/native/rtsp_auth_server.c" \
+        "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" -pthread 2>/dev/null
     E2E='n0t:S3NTINEL@p/ss w0rd'
     ENC='n0t%3AS3NTINEL%40p%2Fss%20w0rd'
     feed "$E2E

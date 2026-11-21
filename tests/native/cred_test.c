@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/cred.c: the credentials file (format, permissions,
+/* Host test of src/net/crypto/cred.c: the credentials file (format, permissions,
  * reload), WS-Security PasswordDigest (the vector of the WS-Security
  * UsernameToken profile and one checked with openssl, replay cache, Created
  * window with an injected clock, malformed input), the shared failure

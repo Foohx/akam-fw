@@ -9,7 +9,7 @@
 
 #include "ae.h"
 #include "ak_ioctls.h"
-#include "ak_rtsp.h"
+#include "platform.h"
 #include "isp.h"
 
 static int g_dbg;

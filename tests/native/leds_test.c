@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/leds.c: status LED state machine, saved settings,
+/* Host test of platforms/anyka-ak3918/leds.c: status LED state machine, saved settings,
  * 8091 keys and the blink thread, against a fake sysfs directory, a fake
  * network check and a fake IR hook. Nothing here touches a camera. */
 #define _GNU_SOURCE
@@ -567,6 +567,63 @@ static void test_thread(void)
     leds_destroy(&l);
 }
 
+/* ---- the blip overrides every mode ------------------------------------------------- */
+
+static void test_blip_modes(void)
+{
+    static const char *const modes[] = { "off", "on", "auto" };
+    static const char *const after_stop[] = { "0", "1", "1" }; /* what the mode itself shows (auto, ready, network ok: solid) */
+    static const char *const bl_dark[] = { "0", "0", "0" };    /* a blip "off" in the same mode */
+    for (int m = 0; m < 3; m++) {
+        reset_world();
+        leds_t l; make(&l, 0);
+        CHECK(setk(&l, "led.status", modes[m]) == 0, "[%s] set mode", modes[m]);
+        leds_set_ready(&l, 1);
+        leds_tick(&l);
+        /* a lit blip in every mode, off included; the sysfs write is really made and led.state says so */
+        CHECK(leds_blip(&l, "on", 5000) == 0, "[%s] blip on accepted", modes[m]);
+        CHECK(!strcmp(bright(), "1"), "[%s] blip on drives the LED (got '%s')", modes[m], bright());
+        CHECK(!strcmp(getk(&l, "led.state"), "led.state=blip"), "[%s] state blip: %s", modes[m], getk(&l, "led.state"));
+        leds_tick(&l);
+        CHECK(!strcmp(bright(), "1") && leds_get_state(&l) == LEDS_ST_BLIP, "[%s] blip holds across ticks", modes[m]);
+        leds_blip_clear(&l);
+        CHECK(!strcmp(bright(), after_stop[m]), "[%s] blip_stop restores the mode (got '%s')", modes[m], bright());
+        CHECK(leds_get_state(&l) != LEDS_ST_BLIP, "[%s] state back from blip: %s", modes[m], getk(&l, "led.state"));
+        CHECK(leds_get_status(&l) == (m == 0 ? LEDS_STATUS_OFF : m == 1 ? LEDS_STATUS_ON : LEDS_STATUS_AUTO), "[%s] setting untouched", modes[m]);
+
+        /* a dark blip, then a flashing one: the levels follow the pattern at real time */
+        CHECK(leds_blip(&l, "off", 5000) == 0 && !strcmp(bright(), bl_dark[m]), "[%s] blip off is dark (got '%s')", modes[m], bright());
+        leds_blip_clear(&l);
+        CHECK(leds_blip(&l, "10:100:100:0", 5000) == 0 && !strcmp(bright(), "1"), "[%s] pattern starts lit", modes[m]);
+        usleep(150000);
+        leds_tick(&l);
+        CHECK(!strcmp(bright(), "0"), "[%s] pattern goes dark at 150 ms (got '%s')", modes[m], bright());
+        usleep(100000);
+        leds_tick(&l);
+        CHECK(!strcmp(bright(), "1"), "[%s] pattern lit again at 250 ms (got '%s')", modes[m], bright());
+        leds_blip_clear(&l);
+
+        /* expiry returns to the mode by itself */
+        CHECK(leds_blip(&l, "on", 200) == 0, "[%s] short blip", modes[m]);
+        usleep(260000);
+        leds_tick(&l);
+        CHECK(!strcmp(bright(), after_stop[m]) && leds_get_state(&l) != LEDS_ST_BLIP, "[%s] expired blip: mode back (got '%s')", modes[m], bright());
+        leds_destroy(&l);
+    }
+
+    /* a blip that cannot be shown is not accepted */
+    reset_world();
+    leds_t l; make(&l, 0);
+    CHECK(setk(&l, "led.status", "off") == 0, "off");
+    char cmd[300];
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", g_led);
+    CHECK(system(cmd) == 0, "led dir removed");
+    CHECK(leds_blip(&l, "on", 5000) == -2, "unwritable LED: blip refused");
+    CHECK(leds_get_state(&l) != LEDS_ST_BLIP, "no blip state after a refused blip");
+    CHECK(leds_blip(&l, "bad", 5000) == -1 && leds_blip(&l, "on", 0) == -1, "bad args still -1");
+    leds_destroy(&l);
+}
+
 int main(void)
 {
     char tmpl[] = "/tmp/leds_test.XXXXXX";
@@ -583,6 +640,7 @@ int main(void)
     test_persistence();
     test_net_check();
     test_thread();
+    test_blip_modes();
 
     char cmd[200];
     snprintf(cmd, sizeof(cmd), "rm -rf %s", g_root);

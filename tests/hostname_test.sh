@@ -7,8 +7,8 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-TPL=$REPO/tools/firmware_patch_templates
-HN=$TPL/akam_hostname.sh
+TPL=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay
+HN=$REPO/src/scripts/akam_hostname.sh
 PATCH=$TPL/patch_ethernet_hostname.sh
 WRAPPER=$TPL/ak_rtsp_wrapper.sh
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
@@ -153,8 +153,8 @@ else
 fi
 
 echo "== image contains the script (image_files.txt)"
-check "image_files.txt installs akam_hostname.sh 755" grep -q '^file 755 overlay/sbin/akam_hostname.sh sbin/akam_hostname.sh tools/firmware_patch_templates/akam_hostname.sh$' "$REPO/tools/release/image_files.txt"
-check "image_files.txt lists the ethernet patcher" grep -q 'patches/patch_ethernet_hostname.sh - tools/firmware_patch_templates/patch_ethernet_hostname.sh$' "$REPO/tools/release/image_files.txt"
+check "image_files.txt installs akam_hostname.sh 755" grep -q '^file 755 overlay/sbin/akam_hostname.sh sbin/akam_hostname.sh src/scripts/akam_hostname.sh$' "$REPO/tools/release/image_files.txt"
+check "image_files.txt lists the ethernet patcher" grep -q 'patches/patch_ethernet_hostname.sh - firmware/lsc-indoor-1080p-ak3918/overlay/patch_ethernet_hostname.sh$' "$REPO/tools/release/image_files.txt"
 # Full image check lives in build_firmware_test.sh (sbin/akam_hostname.sh + patched ethernet.sh).
 
 echo

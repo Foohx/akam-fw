@@ -1,6 +1,6 @@
-# Group of every tests/*_test.sh: lint, go, native or shell (see tools/ci/groups.sh for what each group is).
+# Group of every tests/*_test.sh: lint, go, native, rot2k or shell (see tools/ci/groups.sh for what each group is).
 # One line per test: "<group> <file name>". A test that is not listed makes tools/ci/local_check.sh fail, so a
-# new test must be classified here (native = compiles and runs C code of src/ or tests/native/ with the host
+# new test must be classified here (rot2k = the LSC Rotatable 2K overlay/card tests, own CI job; native = compiles and runs C code of src/ or tests/native/ with the host
 # compiler or the pinned Zig; shell = everything else, including wizard, camera-side ash and release scripts).
 native ae_log_test.sh
 shell akam_authkeys_test.sh
@@ -36,11 +36,16 @@ native imgq_test.sh
 shell isp_block_diff_test.sh
 native isp_blocks_test.sh
 native isp_effects_test.sh
+native isp_nr_test.sh
 native isp_tune_test.sh
 native jitter_test.sh
 shell kit_test.sh
+shell kit2k_test.sh
 native klog_test.sh
 native leds_test.sh
+native leds_oracle_test.sh
+native ak1080_settings_test.sh
+native ak1080_api_http_test.sh
 shell lockdown_test.sh
 native mqtt_codec_test.sh
 native mqtt_ha_test.sh
@@ -52,17 +57,26 @@ native onvif_media_test.sh
 native onvif_svc_test.sh
 native onvif_test.sh
 native pace_compose_test.sh
+native ptz_lease_test.sh
+native ptz_vel_test.sh
 shell preflight_test.sh
 shell publish_test.sh
 lint readme_links_test.sh
 shell reflash_ssh_test.sh
 shell release_test.sh
 native rtp_clock_test.sh
+rot2k rot2k_card_test.sh
+rot2k rot2k_overlay_test.sh
+rot2k rot2k_flash_hot_test.sh
+rot2k rot2k_control_api_test.sh
+rot2k rot2k_control_api_http_test.sh
 native rtp_in_test.sh
+shell rewrite_paths_test.sh
 shell rtsp_auth_cmd_test.sh
 native rtsp_auth_test.sh
 native rtsp_backchannel_test.sh
 native rtsp_busy_test.sh
+native rot2k_rtsp_ports_test.sh
 native rtsp_idle_test.sh
 native rtsp_in_test.sh
 native rtsp_sdp_test.sh
@@ -96,6 +110,12 @@ shell wizard_rtsp_auth_test.sh
 shell wizard_talk_test.sh
 shell wizard_tui_pty_test.sh
 shell wizard_tui_widgets_test.sh
+shell video_quality_test.sh
 shell wizard_video_test.sh
 shell wrapper_backoff_test.sh
 native wsd_test.sh
+lint on_camera_docs_test.sh
+native track_bench_test.sh
+rot2k rot2k_source_hash_test.sh
+lint layering_lint_test.sh
+native feature_switch_test.sh

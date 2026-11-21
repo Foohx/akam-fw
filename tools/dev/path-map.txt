@@ -1,0 +1,356 @@
+# Machine-readable old -> new path table of the repo reorganisation (docs: .local/reviews/fable-architecture-20261118.md, section 2).
+# Done: steps 0-6 of the reorganisation (src/common, src/ak_rtsp, the 2K app tree, the akam2k_ prefix); step 7 (akamd) and the step 8 tests/docs moves are not done.
+# Done (step 8, assistant installer packages): tools/assistant/internal/{image,flash,sdcard}/ -> internal/installer/nativeapp/ (lines retired).
+# Format: "old<TAB>new" per line. A path ending in "/" is a directory (prefix rule); other lines are single files.
+# Matching is longest-prefix-first, so a file line wins over the directory line that contains it. Lines starting
+# with "#" are comments; the "# UNDECIDED" lines list sources whose destination the review leaves open (split files or
+# "stays until the registry merge"): they are NOT rewritten. Used by tools/dev/rewrite_paths.sh.
+# The target names are the review's; where it says only "prefix dropped" the file name keeps its stem.
+# Not paths, kept for the record (on-camera renames, step 7): /usr/bin/ak_rtsp -> akam (+ link), ak_rtsp_wrapper.sh -> akam_run.sh,
+# akam2k_rtsp -> akam, akam2k_{sntp,mic,led} -> akam-{sntp,mic,led}, akam2k.conf/.log -> akam.conf/.log. Image file name and kit path unchanged.
+
+# ---- src/common (step 3)
+src/common/net/h264_params.c	src/net/rtsp/h264_params.c
+src/common/net/h264_params.h	src/net/rtsp/h264_params.h
+src/common/net/rtp_clock.c	src/net/rtsp/rtp_clock.c
+src/common/net/rtp_clock.h	src/net/rtsp/rtp_clock.h
+src/common/net/tx_pace.c	src/net/rtsp/tx_pace.c
+src/common/net/tx_pace.h	src/net/rtsp/tx_pace.h
+src/common/net/net_tx.c	src/net/rtsp/net_tx.c
+src/common/net/net_tx.h	src/net/rtsp/net_tx.h
+src/common/net/rtsp_auth.c	src/net/rtsp/rtsp_auth.c
+src/common/net/rtsp_auth.h	src/net/rtsp/rtsp_auth.h
+src/common/net/rtsp_busy.c	src/net/rtsp/rtsp_busy.c
+src/common/net/rtsp_busy.h	src/net/rtsp/rtsp_busy.h
+src/common/net/rtsp_idle.c	src/net/rtsp/rtsp_idle.c
+src/common/net/rtsp_idle.h	src/net/rtsp/rtsp_idle.h
+src/common/net/rtsp_in.c	src/net/rtsp/rtsp_in.c
+src/common/net/rtsp_in.h	src/net/rtsp/rtsp_in.h
+src/common/net/rtsp_sdp.c	src/net/rtsp/rtsp_sdp.c
+src/common/net/rtsp_sdp.h	src/net/rtsp/rtsp_sdp.h
+src/common/net/mqtt.c	src/net/mqtt/mqtt.c
+src/common/net/mqtt.h	src/net/mqtt/mqtt.h
+src/common/net/mqtt_ha.c	src/net/mqtt/mqtt_ha.c
+src/common/net/mqtt_ha.h	src/net/mqtt/mqtt_ha.h
+src/common/net/http_req.c	src/net/http/http_req.c
+src/common/net/http_req.h	src/net/http/http_req.h
+src/common/net/http_srv.c	src/net/onvif/http_srv.c
+src/common/net/http_srv.h	src/net/onvif/http_srv.h
+src/common/net/soap.c	src/net/onvif/soap.c
+src/common/net/soap.h	src/net/onvif/soap.h
+src/common/net/onvif.c	src/net/onvif/onvif.c
+src/common/net/onvif.h	src/net/onvif/onvif.h
+src/common/net/wsd.c	src/net/onvif/wsd.c
+src/common/net/wsd.h	src/net/onvif/wsd.h
+src/common/net/md5.c	src/net/crypto/md5.c
+src/common/net/md5.h	src/net/crypto/md5.h
+src/common/net/sha1.c	src/net/crypto/sha1.c
+src/common/net/sha1.h	src/net/crypto/sha1.h
+src/common/net/sha256.c	src/net/crypto/sha256.c
+src/common/net/sha256.h	src/net/crypto/sha256.h
+src/common/net/b64.c	src/net/crypto/b64.c
+src/common/net/b64.h	src/net/crypto/b64.h
+src/common/net/cred.c	src/net/crypto/cred.c
+src/common/net/cred.h	src/net/crypto/cred.h
+src/common/api/settings_reg.c	src/core/settings_reg.c
+src/common/api/settings_reg.h	src/core/settings_reg.h
+src/common/api/api_backend.h	src/api/api_backend.h
+src/common/api/api_core.c	src/api/api_core.c
+src/common/api/api_core.h	src/api/api_core.h
+src/common/api/api_events.c	src/api/api_events.c
+src/common/api/api_events.h	src/api/api_events.h
+src/common/api/api_httpd.c	src/api/api_httpd.c
+src/common/api/api_httpd.h	src/api/api_httpd.h
+src/common/api/api_keys.c	src/api/api_keys.c
+src/common/api/api_keys.h	src/api/api_keys.h
+src/common/api/api_limit.c	src/api/api_limit.c
+src/common/api/api_limit.h	src/api/api_limit.h
+src/common/api/api_sig.c	src/api/api_sig.c
+src/common/api/api_sig.h	src/api/api_sig.h
+src/common/api/json_min.c	src/api/json_min.c
+src/common/api/json_min.h	src/api/json_min.h
+src/common/logic/night_logic.c	src/features/night/night_logic.c
+src/common/logic/night_logic.h	src/features/night/night_logic.h
+src/common/logic/light_logic.c	src/features/light/light_logic.c
+src/common/logic/light_logic.h	src/features/light/light_logic.h
+src/common/logic/led_pat.c	src/features/light/led_pat.c
+src/common/logic/led_pat.h	src/features/light/led_pat.h
+src/common/logic/button_cfg.c	src/features/button/button_cfg.c
+src/common/logic/button_cfg.h	src/features/button/button_cfg.h
+src/common/logic/button_gesture.c	src/features/button/button_gesture.c
+src/common/logic/button_gesture.h	src/features/button/button_gesture.h
+src/common/logic/button_logic.c	src/features/button/button_logic.c
+src/common/logic/button_logic.h	src/features/button/button_logic.h
+src/common/logic/cfg_file.c	src/core/cfg_file.c
+src/common/logic/cfg_file.h	src/core/cfg_file.h
+src/common/logic/klog.c	src/core/klog.c
+src/common/logic/klog.h	src/core/klog.h
+src/common/logic/audio_jitter.c	src/features/audio/audio_jitter.c
+src/common/logic/audio_jitter.h	src/features/audio/audio_jitter.h
+src/common/logic/audio_vad.c	src/features/audio/audio_vad.c
+src/common/logic/audio_vad.h	src/features/audio/audio_vad.h
+src/common/logic/g711.c	src/features/audio/g711.c
+src/common/logic/g711.h	src/features/audio/g711.h
+src/common/logic/hal_light.h	src/hal/hal_light.h
+src/common/logic/hal_input.c	src/hal/hal_input.c
+src/common/logic/hal_input.h	src/hal/hal_input.h
+src/common/logic/hal_sys.c	src/hal/hal_sys.c
+src/common/logic/hal_sys.h	src/hal/hal_sys.h
+src/common/logic/ptz_lease.c	src/features/ptz/ptz_lease.c
+src/common/logic/ptz_lease.h	src/features/ptz/ptz_lease.h
+src/common/logic/ptz_vel.c	src/features/ptz/ptz_vel.c
+src/common/logic/ptz_vel.h	src/features/ptz/ptz_vel.h
+src/common/time32_shim.c	src/core/time32_shim.c
+src/common/logic/drift_match.c	src/features/track/drift_match.c
+src/common/logic/drift_match.h	src/features/track/drift_match.h
+src/common/common.mk	src/build/sources.mk
+src/common/features.mk	src/build/features.mk
+src/smolrtsp/	third_party/smolrtsp/
+
+# ---- src/ak_rtsp (step 4)
+# Placement rule of step 4: a file goes to src/ only if every header it includes is itself shared (no platform header). So the 1080p
+# ONVIF services (onvif_cfg/device/imaging/media: they read the encoder and ISP state), control.c (the 8091 protocol over the ISP, AE,
+# night, LEDs), talk.c (audio_out) stay in platforms/anyka-ak3918/; only the service table onvif_model.c is camera specific
+# (firmware/<model>/). ctl_gate, ctl_sys, rtp_in and version are pure and go to src/ as the review says; video_cfg.h includes platform.h (ENC_* constants) and swdog.c includes video_cfg.h, so both stay in the platform.
+src/ak_rtsp/onvif_cfg.c	platforms/anyka-ak3918/onvif_cfg.c
+src/ak_rtsp/onvif_cfg.h	platforms/anyka-ak3918/onvif_cfg.h
+src/ak_rtsp/onvif_device.c	platforms/anyka-ak3918/onvif_device.c
+src/ak_rtsp/onvif_device.h	platforms/anyka-ak3918/onvif_device.h
+src/ak_rtsp/onvif_imaging.c	platforms/anyka-ak3918/onvif_imaging.c
+src/ak_rtsp/onvif_imaging.h	platforms/anyka-ak3918/onvif_imaging.h
+src/ak_rtsp/onvif_media.c	platforms/anyka-ak3918/onvif_media.c
+src/ak_rtsp/onvif_media.h	platforms/anyka-ak3918/onvif_media.h
+src/ak_rtsp/onvif_model.c	firmware/lsc-indoor-1080p-ak3918/onvif_model.c
+src/ak_rtsp/control.c	platforms/anyka-ak3918/control.c
+src/ak_rtsp/control.h	platforms/anyka-ak3918/control.h
+src/ak_rtsp/ctl_gate.c	src/core/control/ctl_gate.c
+src/ak_rtsp/ctl_gate.h	src/core/control/ctl_gate.h
+src/ak_rtsp/ctl_sys.c	src/core/control/ctl_sys.c
+src/ak_rtsp/ctl_sys.h	src/core/control/ctl_sys.h
+src/ak_rtsp/talk.c	platforms/anyka-ak3918/talk.c
+src/ak_rtsp/talk.h	platforms/anyka-ak3918/talk.h
+src/ak_rtsp/rtp_in.c	src/net/rtsp/rtp_in.c
+src/ak_rtsp/rtp_in.h	src/net/rtsp/rtp_in.h
+src/ak_rtsp/video_cfg.c	platforms/anyka-ak3918/video_cfg.c
+src/ak_rtsp/video_cfg.h	platforms/anyka-ak3918/video_cfg.h
+src/ak_rtsp/swdog.c	platforms/anyka-ak3918/swdog.c
+src/ak_rtsp/swdog.h	platforms/anyka-ak3918/swdog.h
+src/ak_rtsp/version.c	src/core/version/version.c
+src/ak_rtsp/version.h	src/core/version/version.h
+src/ak_rtsp/gen_version.sh	src/core/version/gen_version.sh
+src/ak_rtsp/rtsp.c	platforms/anyka-ak3918/rtsp_session.c
+src/ak_rtsp/rtsp.h	platforms/anyka-ak3918/rtsp_session.h
+src/ak_rtsp/ak_rtsp.h	platforms/anyka-ak3918/platform.h
+src/ak_rtsp/main.c	platforms/anyka-ak3918/main.c
+src/ak_rtsp/isp.c	platforms/anyka-ak3918/isp.c
+src/ak_rtsp/isp.h	platforms/anyka-ak3918/isp.h
+src/ak_rtsp/isp_blocks.c	platforms/anyka-ak3918/isp_blocks.c
+src/ak_rtsp/isp_blocks.h	platforms/anyka-ak3918/isp_blocks.h
+src/ak_rtsp/isp_nr.c	platforms/anyka-ak3918/isp_nr.c
+src/ak_rtsp/isp_nr.h	platforms/anyka-ak3918/isp_nr.h
+src/ak_rtsp/isp_nr_ctl.c	platforms/anyka-ak3918/isp_nr_ctl.c
+src/ak_rtsp/isp_nr_layout.h	platforms/anyka-ak3918/isp_nr_layout.h
+src/ak_rtsp/isp_tune.c	platforms/anyka-ak3918/isp_tune.c
+src/ak_rtsp/isp_tune.h	platforms/anyka-ak3918/isp_tune.h
+src/ak_rtsp/imgq.c	platforms/anyka-ak3918/imgq.c
+src/ak_rtsp/imgq.h	platforms/anyka-ak3918/imgq.h
+src/ak_rtsp/ae.c	platforms/anyka-ak3918/ae.c
+src/ak_rtsp/ae.h	platforms/anyka-ak3918/ae.h
+src/ak_rtsp/aec_custom.c	platforms/anyka-ak3918/aec_custom.c
+src/ak_rtsp/aec_custom.h	platforms/anyka-ak3918/aec_custom.h
+src/ak_rtsp/vi.c	platforms/anyka-ak3918/vi.c
+src/ak_rtsp/vi.h	platforms/anyka-ak3918/vi.h
+src/ak_rtsp/venc.c	platforms/anyka-ak3918/venc.c
+src/ak_rtsp/venc.h	platforms/anyka-ak3918/venc.h
+src/ak_rtsp/venc_dump.h	platforms/anyka-ak3918/venc_dump.h
+src/ak_rtsp/audio.c	platforms/anyka-ak3918/audio.c
+src/ak_rtsp/audio.h	platforms/anyka-ak3918/audio.h
+src/ak_rtsp/audio_out.c	platforms/anyka-ak3918/audio_out.c
+src/ak_rtsp/audio_out.h	platforms/anyka-ak3918/audio_out.h
+src/ak_rtsp/ircut.c	platforms/anyka-ak3918/ircut.c
+src/ak_rtsp/ircut.h	platforms/anyka-ak3918/ircut.h
+src/ak_rtsp/ledsys.c	platforms/anyka-ak3918/ledsys.c
+src/ak_rtsp/leds.c	platforms/anyka-ak3918/leds.c
+src/ak_rtsp/leds.h	platforms/anyka-ak3918/leds.h
+src/ak_rtsp/night.c	platforms/anyka-ak3918/night.c
+# src/ak_rtsp/night.h moved to src/common/logic/night.h in reorg step 2 (the shared day/night tuning header); a branch older than that renames by hand.
+src/common/logic/night.h	src/features/night/night.h
+src/ak_rtsp/klog_run.c	platforms/anyka-ak3918/klog_run.c
+src/ak_rtsp/video_ctl.c	platforms/anyka-ak3918/video_ctl.c
+src/ak_rtsp/video_ctl.h	platforms/anyka-ak3918/video_ctl.h
+src/ak_rtsp/ak_ioctls.h	platforms/anyka-ak3918/ak_ioctls.h
+src/ak_rtsp/arm_atomics.S	platforms/anyka-ak3918/arm_atomics.S
+src/ak_rtsp/isp_dump.c	platforms/anyka-ak3918/tools/isp_dump.c
+src/ak_rtsp/isp_hook.c	platforms/anyka-ak3918/tools/isp_hook.c
+src/ak_rtsp/stock_hook.c	platforms/anyka-ak3918/tools/stock_hook.c
+src/ak_rtsp/patch_div0.c	platforms/anyka-ak3918/tools/patch_div0.c
+src/ak_rtsp/ak1080_api.c	firmware/lsc-indoor-1080p-ak3918/api_bind.c
+src/ak_rtsp/ak1080_api.h	firmware/lsc-indoor-1080p-ak3918/api_bind.h
+src/ak_rtsp/ak1080_settings.c	firmware/lsc-indoor-1080p-ak3918/settings.c
+src/ak_rtsp/ak1080_settings.h	firmware/lsc-indoor-1080p-ak3918/settings.h
+src/ak_rtsp/flash_tool.c	firmware/lsc-indoor-1080p-ak3918/image/flash_tool.c
+src/ak_rtsp/build_firmware.sh	firmware/lsc-indoor-1080p-ak3918/image/build_image.sh
+tools/image/	firmware/lsc-indoor-1080p-ak3918/image/
+tools/firmware_patch_templates/	firmware/lsc-indoor-1080p-ak3918/overlay/
+src/ak_rtsp/Makefile	platforms/anyka-ak3918/Makefile
+# src/ak_rtsp/Makefile is split into platforms/anyka-ak3918/Makefile (rules, flags, repro, targets) + firmware/lsc-indoor-1080p-ak3918/model.mk (features, ordered object list);
+# the platform Makefile keeps the name Makefile (make -C platforms/anyka-ak3918, the root Makefile delegates to it)
+# src/ak_rtsp/{mqtt_svc,mqtt_ops}.[ch] stay per platform until the registry merge, then src/net/mqtt/
+src/ak_rtsp/mqtt_svc.c	platforms/anyka-ak3918/mqtt_svc.c
+src/ak_rtsp/mqtt_svc.h	platforms/anyka-ak3918/mqtt_svc.h
+src/ak_rtsp/mqtt_ops.c	platforms/anyka-ak3918/mqtt_ops.c
+src/ak_rtsp/mqtt_ops.h	platforms/anyka-ak3918/mqtt_ops.h
+# UNDECIDED: tools/flash_scripts/ on-camera part -> firmware/lsc-indoor-1080p-ak3918/install/, host part stays
+tools/firmware_patch_templates/akam_ntp.sh	src/scripts/akam_ntp.sh
+tools/firmware_patch_templates/akam_net.sh	src/scripts/akam_net_wifi_supervisor.sh
+
+# ---- 2K app (step 5)
+
+# ---- 2K tree (step 5), one line per file
+# Placement: src/ gets the files whose includes are all shared (ptz_patrol, track_*, scene_check, hal_ptz.h, the app log interface log.h);
+# platforms/anyka-ak3918av130/ the vendor-library glue (main, cap, stream, rtsp_session, audio, aring, detect, snap, image, ircut, hal_ptz*, MQTT and ONVIF
+# glue, the toolchain scripts, the PoC probes); firmware/<2k>/ the model binding (hal, pin, ptz_desc, settings, netreg, store, api_bind, *_run) plus the
+# feature wiring that still mixes logic with the store or the HAL (button, patrol, ptz, scene, track, video, zones, detstate, leds, night: kept whole,
+# `akam2k_` prefix kept until step 6; the pure part of each is to be split into src/features/<x>/ by a later behaviour-preserving refactor).
+# The sysfs drivers hal_{light,input}_sysfs.c include the 2K pin helper, so they stay in firmware/<2k>/ until they take the pin helper as an op.
+# The 2K directories sntp, audio, ptz, overlay, appfs, rescue become helpers/{sntp,mic,ptz}, boot/{card,flash,rescue}; build_card.sh and build_appfs.sh image/.
+firmware/lsc-rotatable-2k-ak3918av130/app/ptz_patrol.c	src/features/ptz/ptz_patrol.c
+firmware/lsc-rotatable-2k-ak3918av130/app/ptz_patrol.h	src/features/ptz/ptz_patrol.h
+firmware/lsc-rotatable-2k-ak3918av130/app/track_logic.c	src/features/track/track_logic.c
+firmware/lsc-rotatable-2k-ak3918av130/app/track_logic.h	src/features/track/track_logic.h
+firmware/lsc-rotatable-2k-ak3918av130/app/track_cfgkv.h	src/features/track/track_cfgkv.h
+firmware/lsc-rotatable-2k-ak3918av130/app/track_relay.c	src/features/track/track_relay.c
+firmware/lsc-rotatable-2k-ak3918av130/app/track_relay.h	src/features/track/track_relay.h
+firmware/lsc-rotatable-2k-ak3918av130/app/scene_check.c	src/features/scene/scene_check.c
+firmware/lsc-rotatable-2k-ak3918av130/app/scene_check.h	src/features/scene/scene_check.h
+firmware/lsc-rotatable-2k-ak3918av130/app/hal_ptz.h	src/hal/hal_ptz.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_log.h	src/core/log.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_main.c	platforms/anyka-ak3918av130/main.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_cap.c	platforms/anyka-ak3918av130/cap.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_cap.h	platforms/anyka-ak3918av130/cap.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_stream.c	platforms/anyka-ak3918av130/stream.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_stream.h	platforms/anyka-ak3918av130/stream.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_rtsp.c	platforms/anyka-ak3918av130/rtsp_session.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_rtsp.h	platforms/anyka-ak3918av130/rtsp_session.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_audio.c	platforms/anyka-ak3918av130/audio.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_audio.h	platforms/anyka-ak3918av130/audio.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_aring.c	platforms/anyka-ak3918av130/aring.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_aring.h	platforms/anyka-ak3918av130/aring.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_detect.c	platforms/anyka-ak3918av130/detect.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_detect.h	platforms/anyka-ak3918av130/detect.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_snap.c	platforms/anyka-ak3918av130/snap.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_snap.h	platforms/anyka-ak3918av130/snap.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_image.c	platforms/anyka-ak3918av130/image.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_image.h	platforms/anyka-ak3918av130/image.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ircut.c	platforms/anyka-ak3918av130/ircut.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ircut.h	platforms/anyka-ak3918av130/ircut.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_isp.h	platforms/anyka-ak3918av130/isp.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_abi.h	platforms/anyka-ak3918av130/abi.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ctype.h	platforms/anyka-ak3918av130/ctype_compat.h
+firmware/lsc-rotatable-2k-ak3918av130/app/hal_ptz.c	platforms/anyka-ak3918av130/hal_ptz.c
+firmware/lsc-rotatable-2k-ak3918av130/app/hal_ptz_drv.c	platforms/anyka-ak3918av130/hal_ptz_drv.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_mqtt.c	platforms/anyka-ak3918av130/mqtt_bind.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_mqtt.h	platforms/anyka-ak3918av130/mqtt_bind.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_mqttcfg.c	platforms/anyka-ak3918av130/mqtt_cfg.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_mqttcfg.h	platforms/anyka-ak3918av130/mqtt_cfg.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_onvif.c	platforms/anyka-ak3918av130/onvif_services.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_onvif.h	platforms/anyka-ak3918av130/onvif_services.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_onvif_bind.c	platforms/anyka-ak3918av130/onvif_model.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_onvif_ptz.c	platforms/anyka-ak3918av130/onvif_ptz.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_zlive.c	platforms/anyka-ak3918av130/zlive.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_zlive.h	platforms/anyka-ak3918av130/zlive.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_isptest.c	platforms/anyka-ak3918av130/isptest.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_isptest.h	platforms/anyka-ak3918av130/isptest.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_detpub.c	platforms/anyka-ak3918av130/detpub.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_detpub.h	platforms/anyka-ak3918av130/detpub.h
+firmware/lsc-rotatable-2k-ak3918av130/app/fetch_toolchain.sh	platforms/anyka-ak3918av130/toolchain/fetch_toolchain.sh
+firmware/lsc-rotatable-2k-ak3918av130/app/toolchain.lock	platforms/anyka-ak3918av130/toolchain/toolchain.lock
+firmware/lsc-rotatable-2k-ak3918av130/app/prepare_vendor.sh	platforms/anyka-ak3918av130/toolchain/prepare_vendor.sh
+firmware/lsc-rotatable-2k-ak3918av130/app/poc0_versions.c	platforms/anyka-ak3918av130/probes/poc0_versions.c
+firmware/lsc-rotatable-2k-ak3918av130/app/poc2_frame.c	platforms/anyka-ak3918av130/probes/poc2_frame.c
+firmware/lsc-rotatable-2k-ak3918av130/app/poc4_detect.c	platforms/anyka-ak3918av130/probes/poc4_detect.c
+firmware/lsc-rotatable-2k-ak3918av130/app/README.md	platforms/anyka-ak3918av130/README.md
+firmware/lsc-rotatable-2k-ak3918av130/app/Makefile	platforms/anyka-ak3918av130/Makefile
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_hal.c	firmware/lsc-rotatable-2k-ak3918av130/hal.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_hal.h	firmware/lsc-rotatable-2k-ak3918av130/hal.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_pin.c	firmware/lsc-rotatable-2k-ak3918av130/pin.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_pin.h	firmware/lsc-rotatable-2k-ak3918av130/pin.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_settings.c	firmware/lsc-rotatable-2k-ak3918av130/settings.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_settings.h	firmware/lsc-rotatable-2k-ak3918av130/settings.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_netreg.c	firmware/lsc-rotatable-2k-ak3918av130/netreg.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_netreg.h	firmware/lsc-rotatable-2k-ak3918av130/netreg.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_store.c	firmware/lsc-rotatable-2k-ak3918av130/store.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_store.h	firmware/lsc-rotatable-2k-ak3918av130/store.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_apibind.c	firmware/lsc-rotatable-2k-ak3918av130/api_bind.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_apibind.h	firmware/lsc-rotatable-2k-ak3918av130/api_bind.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ptz_desc.c	firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_leds_run.c	firmware/lsc-rotatable-2k-ak3918av130/leds_run.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_night_run.c	firmware/lsc-rotatable-2k-ak3918av130/night_run.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_patrol_run.c	firmware/lsc-rotatable-2k-ak3918av130/patrol_run.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_track_run.c	firmware/lsc-rotatable-2k-ak3918av130/track_run.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_track_run.h	firmware/lsc-rotatable-2k-ak3918av130/track_run.h
+firmware/lsc-rotatable-2k-ak3918av130/app/hal_light_sysfs.c	firmware/lsc-rotatable-2k-ak3918av130/hal_light_sysfs.c
+firmware/lsc-rotatable-2k-ak3918av130/app/hal_input_sysfs.c	firmware/lsc-rotatable-2k-ak3918av130/hal_input_sysfs.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_button.c	firmware/lsc-rotatable-2k-ak3918av130/button.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_button.h	firmware/lsc-rotatable-2k-ak3918av130/button.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_buttonrt.c	firmware/lsc-rotatable-2k-ak3918av130/button_rt.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_buttonrt.h	firmware/lsc-rotatable-2k-ak3918av130/button_rt.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_patrol.c	firmware/lsc-rotatable-2k-ak3918av130/patrol.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_patrol.h	firmware/lsc-rotatable-2k-ak3918av130/patrol.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ptz.c	firmware/lsc-rotatable-2k-ak3918av130/ptz.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_ptz.h	firmware/lsc-rotatable-2k-ak3918av130/ptz.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_scene.c	firmware/lsc-rotatable-2k-ak3918av130/scene.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_scene.h	firmware/lsc-rotatable-2k-ak3918av130/scene.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_track.c	firmware/lsc-rotatable-2k-ak3918av130/track.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_track.h	firmware/lsc-rotatable-2k-ak3918av130/track.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_vidcfg.c	firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_video.c	firmware/lsc-rotatable-2k-ak3918av130/video.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_video.h	firmware/lsc-rotatable-2k-ak3918av130/video.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_vlive.c	firmware/lsc-rotatable-2k-ak3918av130/vlive.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_vlive.h	firmware/lsc-rotatable-2k-ak3918av130/vlive.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_zones.c	firmware/lsc-rotatable-2k-ak3918av130/zones.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_zones.h	firmware/lsc-rotatable-2k-ak3918av130/zones.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_detstate.c	firmware/lsc-rotatable-2k-ak3918av130/detstate.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_detstate.h	firmware/lsc-rotatable-2k-ak3918av130/detstate.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_leds.c	firmware/lsc-rotatable-2k-ak3918av130/leds.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_leds.h	firmware/lsc-rotatable-2k-ak3918av130/leds.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_night.c	firmware/lsc-rotatable-2k-ak3918av130/night_ctl.c
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_night.h	firmware/lsc-rotatable-2k-ak3918av130/night_ctl.h
+firmware/lsc-rotatable-2k-ak3918av130/app/akam2k_led.c	firmware/lsc-rotatable-2k-ak3918av130/helpers/led/led.c
+firmware/lsc-rotatable-2k-ak3918av130/app/source_hash.sh	firmware/lsc-rotatable-2k-ak3918av130/image/source_hash.sh
+firmware/lsc-rotatable-2k-ak3918av130/sntp/akam2k_sntp.c	firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp.c
+firmware/lsc-rotatable-2k-ak3918av130/sntp/akam2k_sntp_core.c	firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp_core.c
+firmware/lsc-rotatable-2k-ak3918av130/sntp/akam2k_sntp_core.h	firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp_core.h
+firmware/lsc-rotatable-2k-ak3918av130/audio/akam2k_mic.c	firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c
+firmware/lsc-rotatable-2k-ak3918av130/audio/akam2k_mic_core.c	firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic_core.c
+firmware/lsc-rotatable-2k-ak3918av130/audio/akam2k_mic_core.h	firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic_core.h
+firmware/lsc-rotatable-2k-ak3918av130/ptz/akam_ptz.c	firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz.c
+firmware/lsc-rotatable-2k-ak3918av130/ptz/akam_ptz_safe.h	firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h
+firmware/lsc-rotatable-2k-ak3918av130/ptz/build_akam_ptz.sh	firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/build_akam_ptz.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/akam_api_key.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/akam_api_key.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/akam_net.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/akam_net.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/common.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/common.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/decloud.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/decloud.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/enable_local.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/enable_local.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/own_app_run.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/own_app_stub.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_stub.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/restore_param.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/restore_param.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam/start_ssh.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/start_ssh.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/akam_boot.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam_boot.sh
+firmware/lsc-rotatable-2k-ak3918av130/overlay/yy_debug.ini	firmware/lsc-rotatable-2k-ak3918av130/boot/card/yy_debug.ini
+firmware/lsc-rotatable-2k-ak3918av130/appfs/akam_flash_boot.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/flash/akam_flash_boot.sh
+firmware/lsc-rotatable-2k-ak3918av130/appfs/build_appfs.sh	firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh
+firmware/lsc-rotatable-2k-ak3918av130/rescue/hack.sh	firmware/lsc-rotatable-2k-ak3918av130/boot/rescue/hack.sh
+firmware/lsc-rotatable-2k-ak3918av130/rescue/telnetd	firmware/lsc-rotatable-2k-ak3918av130/boot/rescue/telnetd
+firmware/lsc-rotatable-2k-ak3918av130/rescue/yy_debug.ini	firmware/lsc-rotatable-2k-ak3918av130/boot/rescue/yy_debug.ini
+firmware/lsc-rotatable-2k-ak3918av130/build_card.sh	firmware/lsc-rotatable-2k-ak3918av130/image/build_card.sh
+
+# (step 6, the akam2k_ prefix of the remaining 2K files, is folded into the lines above: each old path maps to its final name)
+
+# ---- release, assistant, tests, docs (step 8 and 4)
+tools/release/models/lsc-indoor-1080p-ak3918.txt	firmware/lsc-indoor-1080p-ak3918/model.txt
+tools/release/models/lsc-rotatable-2k-ak3918av130.txt	firmware/lsc-rotatable-2k-ak3918av130/model.txt
+tests/golden/ak_rtsp_1080p.sha256	tests/golden/lsc-indoor-1080p-ak3918.sha256
+docs/porting/lsc-1080p/	docs/models/lsc-indoor-1080p-ak3918/
+docs/porting/lsc-rotatable-2k/	docs/models/lsc-rotatable-2k-ak3918av130/
+# UNDECIDED: tests/native/*, tests/*_test.sh, tests/rot2k_* -> tests/src/<area>/, tests/platforms/<p>/, tests/firmware/<model>/, tests/tools/<tool>/ (per test; use tests/lib/paths.sh)

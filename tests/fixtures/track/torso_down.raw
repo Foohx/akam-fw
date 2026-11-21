@@ -1,0 +1,29 @@
+# Hardware log of the 2K (partial torso box, the camera went all the way down), as replayed by tests/rot2k_track_cont_unit.c replay_cases(); inputs reconstructed from the log lines.
+# The policy must not tilt down: the sudden box with its top at row 99 (instead of 28) is an outlier, and a single ambiguous box does not justify a DOWN exit search.
+# After the loss the camera (1580, 280 above home) goes back to the home tilt (tilt-back, merged from the close-range fixes): at most those ticks go down, never a DOWN exit search.
+# expect tilt_down<=3
+# expect searches=0
+# expect ticks>=20
+C motion=1 invert_pan=1 tilt_enable=1 return_home=0
+I 832047 831947 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 832247 832147 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 832447 832347 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 832647 832547 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 832847 832747 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 833047 832947 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 833247 833147 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 833447 833347 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,96,27,280,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 833647 833547 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 1 {0,0,97,99,279,191} me=0 cr=0 ob=0 rb=0 ct=0
+I 834272 834172 932 1580 0 0 0 0 0 1 1300 300 3650 300 2100 0 me=0 cr=0 ob=0 rb=0 ct=0
+I 834693 834593 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 834893 834793 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 835093 834993 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 835293 835193 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 835493 835393 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 835693 835593 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 835893 835793 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 836093 835993 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 836293 836193 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 836493 836393 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 836693 836593 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0
+I 836893 836793 932 1580 0 0 0 0 0 0 1300 300 3650 300 2100 0 me=834300 cr=0 ob=0 rb=0 ct=0

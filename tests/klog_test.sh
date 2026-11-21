@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the stub scripts are written with single quotes on purpose
-# Host test of the kernel log filter (src/ak_rtsp/klog.c, klog_run.c): drop, collapse, priorities, syslogd absent.
+# Host test of the kernel log filter (src/core/klog.c, klog_run.c): drop, collapse, priorities, syslogd absent.
 # Synthetic input only; never reads the real kernel log.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
 CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 "$CC" -std=gnu99 -D_GNU_SOURCE -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$REPO/src/ak_rtsp" \
+ -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/klog_test" \
-    "$REPO/tests/native/klog_test.c" "$REPO/src/ak_rtsp/klog.c" "$REPO/src/ak_rtsp/klog_run.c"
+    "$REPO/tests/native/klog_test.c" "$REPO/src/core/klog.c" "$REPO/platforms/anyka-ak3918/klog_run.c"
 "$WORK/klog_test" "$WORK"
 
-# The one-line patch of main.sh (build_firmware.sh KLOG_NEW): restart after a crash, stock klogd only when the
+# The one-line patch of main.sh (build_image.sh KLOG_NEW): restart after a crash, stock klogd only when the
 # filter cannot start or crashed 5 times in a row. ak_rtsp, sleep, klogd and /proc/uptime are stubs; nothing real
 # is started. Each RCS entry is "exit-code" or "exit-code:seconds-the-run-lasted" (the stub advances the fake uptime).
-LINE=$(sed -n "s/^    KLOG_NEW='\(.*\)'\$/\1/p" "$REPO/src/ak_rtsp/build_firmware.sh")
-[ -n "$LINE" ] || { echo "FAIL: KLOG_NEW not found in build_firmware.sh"; exit 1; }
+LINE=$(sed -n "s/^    KLOG_NEW='\(.*\)'\$/\1/p" "$REPO/firmware/lsc-indoor-1080p-ak3918/image/build_image.sh")
+[ -n "$LINE" ] || { echo "FAIL: KLOG_NEW not found in build_image.sh"; exit 1; }
 LINE=${LINE//\/usr\/bin\/ak_rtsp/$WORK/fake_ak_rtsp}
 LINE=${LINE//\/proc\/uptime/$WORK/uptime}
 mkdir -p "$WORK/stubs"

@@ -34,7 +34,7 @@ the firmware version, plain semver, without a prefix; `get-kit` depends on that 
 
 Which Akam files go into the image is listed once, in `tools/release/image_files.txt` (`file <mode> <kit path> <image
 path> <source>` and `link <target> <kit path> <image path>`). `tests/kit_test.sh` builds an image with
-`build_firmware.sh` and fails if it disagrees with the list.
+`build_image.sh` and fails if it disagrees with the list.
 
 The kit build refuses forbidden content: any private key, `*_host_key*`, `id_rsa*`, `id_ed25519*`, `*.pem`, `*.squashfs`,
 `*.img`, `*.ko`, or a squashfs magic (`hsqs`) in the scripts, overlay, patches or licences.
@@ -103,8 +103,8 @@ digits, cross-checked against the release notes), `--expect-model ID` (the kit m
 `--allow-test-kit`, `--extract-to DIR`. Exit: 0 verified, 1 failed, 2 usage or missing tool, 3 unsigned without
 `--allow-unsigned` (everything else fine).
 
-After the kit is verified, image assembly runs ([installer.md](installer.md) section 6): `tools/image/assemble_from_kit.sh`
-calls `build_firmware.sh --kit`, which verifies the kit again, fingerprints the user's stock APP against
+After the kit is verified, image assembly runs ([installer.md](installer.md) section 6): `firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh`
+calls `build_image.sh --kit`, which verifies the kit again, fingerprints the user's stock APP against
 `supported_hardware.txt`, and installs the files of `image_files.txt`. In kit mode the machine-code time64 check is
 replayed on the installed binaries when `gdb` exists (`--recheck-time64`); otherwise the MANIFEST and the hashes are
 trusted.

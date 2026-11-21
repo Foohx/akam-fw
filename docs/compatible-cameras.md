@@ -2,8 +2,9 @@
 
 **Will Akam run on my camera?** Read this page before you flash anything.
 
-Akam has run on real cameras of **one** model: the LSC Smart Indoor 1080p, article `3215672.3` (two units). Everything
-else is untested, and a camera with a different flash layout is refused by the installer. What Akam does on the
+Akam has run on real cameras of **two** models: the LSC Smart Indoor 1080p, article `3215672.3` (two units), and the
+LSC Smart Rotatable Camera 2K, article `3225722` (one unit, flashed by script, see [models](models.md)). The tables
+below describe the 1080p, which the installer drives. Everything else is untested, and a camera with a different flash layout is refused by the installer. What Akam does on the
 supported camera: [features](features.md).
 
 ## Is my camera compatible?
@@ -30,6 +31,7 @@ not expected to work.
 | Status | Camera | Article no. and SI code | Notes |
 |---|---|---|---|
 | validated | LSC Smart Indoor 1080p (sold at Action) | `3215672.3`, SI `D26228` | 2 units tested, see below |
+| validated (script only) | LSC Smart Rotatable Camera 2K (Dual Band) | `3225722`, SZ `G26312` | 1 unit, card-less boot; the installer refuses its 6-partition layout, see [on the camera](porting/lsc-rotatable-2k/on-camera.md) |
 | untested | LSC Smart Indoor 1080p (sold at Action) | `3215672.2`, SI `B26101` / `C26101` | The upstream project ran its `ak_rtsp` on a unit of this model. Akam's installer and image were never run on it |
 | not supported | Other Anyka or Tuya cameras | any | `ak_rtsp` is specific to the AK3918AV130 SoC and the GC20C3 sensor. Older rectangular boards (AK3918EV200, GK7102) use other register maps and layouts. The wizard warns and refuses a different flash layout |
 
@@ -83,6 +85,13 @@ Several LSC cameras are planned; a new model needs real hardware, not only a new
 2. **Registry entry.** Add `tools/release/models/<model-id>.txt` (copy the existing file and read its comment): the header,
    and a record with the fingerprints, status `untested` at first. Add it to `tools/assistant/internal/assets/sources.txt` and
    run `go generate ./internal/assets` so that the assistant embeds it (a test fails otherwise).
+   The optional header `kind` says how Akam serves the model: `native-app` (the default when the line is absent; Akam
+   replaces the APP partition and a kit is built, as for the 1080p) `decloud-overlay` (the stock app stays in flash and
+   Akam only cuts the cloud from an SD overlay; no kit) or `cardless-appfs` (Akam runs from the flash with no SD card: the
+   appfs partition is replaced; no kit). The assistant refuses every install, update, backup, restore and option flow on a
+   model of another kind than `native-app` ("not yet supported for this model"), on a model of a `kind` it does not know,
+   and, for `native-app`, on a model without a validated record; the release scripts build no kit for the other kinds.
+   The camera **type** is asked when a camera is created in the assistant (see [camera type](assistant.md#camera-type)).
 3. **Validation.** Build an image from a kit of that model, flash a real unit, run `./akam verify` and the checks of the
    [testing status](testing-status.md). Only then change the record to `validated`: a kit is only built for a model that has
    a validated record.

@@ -66,9 +66,9 @@ Files added to the image (the single list is `tools/release/image_files.txt`):
 
 | Image path | Mode | Source |
 |---|---|---|
-| `bin/ak_rtsp` | 755 | `src/ak_rtsp` (stripped) |
+| `bin/ak_rtsp` | 755 | `platforms/anyka-ak3918` (stripped) |
 | `bin/dropbearmulti`, links `bin/dropbear`, `bin/dropbearkey` | 755 | `tools/dropbear` (Dropbear 2026.94) |
-| `sbin/ak_rtsp_wrapper.sh` | 755 | `tools/firmware_patch_templates/` |
+| `sbin/ak_rtsp_wrapper.sh` | 755 | `firmware/lsc-indoor-1080p-ak3918/overlay/` |
 | `sbin/akam_ssh.sh`, `akam_lockdown.sh`, `akam_net.sh`, `akam_ntp.sh`, `akam_hostname.sh` | 755 | same |
 | `sbin/akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh`, `akam_mqtt.sh` | 755 | same |
 | `local/_ht_process.ini` | 644 | same |
@@ -108,7 +108,7 @@ onvif = 0
    5. Runs `/usr/bin/ak_rtsp` in the foreground and records its exit.
 5. `ak_rtsp` start order: stdout tee and control port, status LED, software watchdog arm, then ISP/VI/VENC
    initialisation, AE thread, night thread, audio capture, speaker, ONVIF and MQTT services (if enabled), and the RTSP
-   accept loop on port 554. Failure of audio, ONVIF or MQTT MUST NOT stop video.
+   accept loop on port 554. Every Akam camera MUST serve the canonical `rtsp://<ip>:554/stream0` (main) and, with a second encoder, `/stream1` (sub); the Rotatable 2K takes its port from one constant, `A2K_RTSP_PORT`, and serves only the paths `/stream0` and `/stream1`. Failure of audio, ONVIF or MQTT MUST NOT stop video.
 
 ## 5. Processes in a normal boot
 
@@ -176,7 +176,7 @@ Status: stall exit is in the flashed image; no real stall was ever seen. Host-te
   stream timestamps use the monotonic clock.
 - **time32 shim.** The vendor kernel has no time64 system calls but answers some of them with success without writing
   the result. musl 1.2 calls `clock_gettime64` (syscall 403) first and never falls back, so monotonic timeouts were
-  garbage. `src/common/time32_shim.c` redefines `clock_gettime`, `__clock_gettime`, `timerfd_settime/gettime` and
+  garbage. `src/core/time32_shim.c` redefines `clock_gettime`, `__clock_gettime`, `timerfd_settime/gettime` and
   `timerfd_create` with the 32-bit syscalls (263 for `clock_gettime`). It is linked into every binary Akam ships.
   `tools/build/check_time32.sh` disassembles the `.text` section and fails the build if any of syscalls
   403, 405, 408, 409, 410, 411 or 417 is issued. Dropbear carries a patch that takes monotonic time from kernel ticks.

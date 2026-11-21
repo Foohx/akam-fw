@@ -128,7 +128,7 @@ has "8091 LIST answered" '^PASS +8091 answered LIST' "$WORK/t1.out"
 # hostname section: script absent, then present with a stored name
 has "hostname: helper absent reported" 'akam_hostname.sh not installed' "$WORK/t1.out"
 mkdir -p "$R1/usr/sbin" "$R1/sys/class/net/wlan0" "$R1/proc/sys/kernel"
-install -m 755 "$REPO/tools/firmware_patch_templates/akam_hostname.sh" "$R1/usr/sbin/akam_hostname.sh"
+install -m 755 "$REPO/src/scripts/akam_hostname.sh" "$R1/usr/sbin/akam_hostname.sh"
 echo "aa:bb:cc:dd:12:34" > "$R1/sys/class/net/wlan0/address"
 echo "akam-1234" > "$R1/proc/sys/kernel/hostname"
 run t1h "$R1" "$S1"

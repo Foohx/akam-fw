@@ -18,8 +18,8 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/backuploc"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/flash"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/flash"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"

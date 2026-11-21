@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host test of src/ak_rtsp/stock_hook.c, the LD_PRELOAD capture of the stock anyka_ipc.
+# Host test of platforms/anyka-ak3918/tools/stock_hook.c, the LD_PRELOAD capture of the stock anyka_ipc.
 # The camera build is ARM; here the same source is built for x86_64 (the raw syscall layer
 # has an x86_64 branch for exactly this) and preloaded into tests/native/stock_hook_driver.c,
 # which plays anyka_ipc on a fake device tree. Checks: what is logged, that the real libc
@@ -10,7 +10,9 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-SRC=$REPO/src/ak_rtsp
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
+SRC=$REPO/platforms/anyka-ak3918
 CC=${HOST_CC:-cc}
 PARSER=$REPO/tools/hw_tests/parse_stock_capture.py
 
@@ -33,22 +35,22 @@ hasnt() { if grep -Eq -- "$2" "$3"; then ko "$1 (unexpected: $2)"; else ok "$1";
 # --- builds -------------------------------------------------------------------
 HOOKFLAGS=(-std=gnu99 -O1 -Wall -Wextra -Werror -fPIC -shared -nostdlib -ffreestanding
     -fno-builtin -fno-stack-protector -fvisibility=hidden -fno-tree-loop-distribute-patterns
-    -I"$SRC" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u -DALIVE_MS=100u)
+ -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -DSTOCK_HOOK_COMM='"hook_driver"' -DSTATS_WIN_MS=40u -DALIVE_MS=100u)
 dirs_macro() { # $1 = base dir
     printf '"%s/out","%s/nosuch/sd","%s/tmp"' "$1" "$1" "$1"
 }
 mkdir -p "$WORK/a" "$WORK/b" "$WORK/c" "$WORK/d"
 if ! "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/a")" \
-        -o "$WORK/hook_a.so" "$SRC/stock_hook.c" 2>"$WORK/cc.log"; then
+        -o "$WORK/hook_a.so" "$REPO/platforms/anyka-ak3918/tools/stock_hook.c" 2>"$WORK/cc.log"; then
     ko "stock_hook.c builds for the host with -Wall -Wextra -Werror"; cat "$WORK/cc.log"
 else
     ok "stock_hook.c builds for the host with -Wall -Wextra -Werror"
 fi
 "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/b")" \
-    -o "$WORK/hook_b.so" "$SRC/stock_hook.c" || ko "build variant b"
+    -o "$WORK/hook_b.so" "$REPO/platforms/anyka-ak3918/tools/stock_hook.c" || ko "build variant b"
 "$CC" "${HOOKFLAGS[@]}" -DSTOCK_HOOK_DIRS_TEST="$(dirs_macro "$WORK/c")" \
     -DCAP_MAIN_SD=3000u -DCAP_ISP_SD=600u -DCAP_TMP=3000u -DCAP_BIN_SD=1000u \
-    -o "$WORK/hook_c.so" "$SRC/stock_hook.c" || ko "build variant c"
+    -o "$WORK/hook_c.so" "$REPO/platforms/anyka-ak3918/tools/stock_hook.c" || ko "build variant c"
 "$CC" -std=gnu99 -O1 -Wall -Wextra -Werror -pthread -o "$WORK/hook_driver" \
     "$HERE/native/stock_hook_driver.c" || ko "build the driver"
 
@@ -247,11 +249,11 @@ if command -v zig >/dev/null 2>&1 && command -v readelf >/dev/null 2>&1; then
     if (cd "$SRC" && make -s stock_hook.so >"$WORK/arm.log" 2>&1); then
         ok "ARM stock_hook.so builds"
         if [ -s "$WORK/arm.log" ]; then ko "ARM build printed warnings"; head -n 20 "$WORK/arm.log"; else ok "ARM build prints no warning"; fi
-        und=$(readelf --dyn-syms -W "$SRC/stock_hook.so" | awk '$7=="UND" && $8!="" {print $8}' | grep -v -E '^(__errno_location|dlsym)$' || true)
+        und=$(readelf --dyn-syms -W "$REPO/build/lsc-indoor-1080p-ak3918/stock_hook.so" | awk '$7=="UND" && $8!="" {print $8}' | grep -v -E '^(__errno_location|dlsym)$' || true)
         if [ -z "$und" ]; then ok "ARM hook: only the weak __errno_location and dlsym are undefined (no libc/compiler-rt dependency)"; else ko "unexpected undefined symbols: $und"; fi
-        exp=$(readelf --dyn-syms -W "$SRC/stock_hook.so" | awk '$7!="UND" && $5=="GLOBAL" {print $8}' | sort | tr '\n' ' ')
+        exp=$(readelf --dyn-syms -W "$REPO/build/lsc-indoor-1080p-ak3918/stock_hook.so" | awk '$7!="UND" && $5=="GLOBAL" {print $8}' | sort | tr '\n' ' ')
         if [ "$exp" = "close dup dup2 ioctl mmap open popen read system write writev " ]; then ok "ARM hook exports only the hooked libc functions"; else ko "unexpected exports: $exp"; fi
-        rm -f "$SRC/stock_hook.so"
+        rm -f "$REPO/build/lsc-indoor-1080p-ak3918/stock_hook.so"
     else
         ko "ARM stock_hook.so does not build"; head -n 30 "$WORK/arm.log"
     fi

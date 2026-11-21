@@ -311,12 +311,12 @@ printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nxx\n' >"$WORK/badlic/COPYRIGHT"
 check "a private key in a shipped file stops make_kit" bash -c "
     ! MUSL_COPYRIGHT='$WORK/badlic/COPYRIGHT' bash '$MAKE' --out '$WORK/o9' >'$WORK/bad.out' 2>&1 && grep -q 'forbidden content' '$WORK/bad.out'"
 
-# image_files.txt is the single list; build_firmware.sh must install exactly the same files.
+# image_files.txt is the single list; build_image.sh must install exactly the same files.
 check "fixture APP tree exists" test -d "$FIXTURE/sbin"
 DRIFT=$WORK/drift
 mkdir -p "$DRIFT"
-check "build_firmware.sh builds an image with the same stubs" bash -c "
-    cd '$WORK' && env APP_EXTRACTED='$FIXTURE' FW_DIR='$DRIFT' AKAM_ALLOW_UNCHECKED_TIME64=1 bash '$REPO/src/ak_rtsp/build_firmware.sh' >'$WORK/drift.log' 2>&1"
+check "build_image.sh builds an image with the same stubs" bash -c "
+    cd '$WORK' && env APP_EXTRACTED='$FIXTURE' FW_DIR='$DRIFT' AKAM_ALLOW_UNCHECKED_TIME64=1 bash '$REPO/firmware/lsc-indoor-1080p-ak3918/image/build_image.sh' >'$WORK/drift.log' 2>&1"
 P=$DRIFT/app_patched
 drift_check() {
     local kind a b c d f rc=0 want="$WORK/drift.want" got="$WORK/drift.got"

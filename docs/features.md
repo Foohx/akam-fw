@@ -17,13 +17,15 @@ The evidence, test by test: [testing status](testing-status.md).
 
 | Feature | Default | Port | Status | Notes |
 |---|---|---|---|---|
-| RTSP 1.0 server, H.264 Main profile, 1920x1080 | on | TCP 554 | hardware-validated | Any URL path gives the same stream. TCP interleaved and UDP transports. **One client at a time**; a second one gets `503` |
+| RTSP 1.0 server, H.264 Main profile, 1920x1080 | on | TCP 554 | hardware-validated | Any URL path gives the same stream; the canonical form, shared with the Rotatable 2K, is `rtsp://<ip>:554/stream0` (main). The 1080p has no sub stream, so `/stream1` is the same picture. TCP interleaved and UDP transports. **One client at a time**; a second one gets `503` |
 | Frame rate | 15 fps | | hardware-validated (15, 25) | Only 10, 15, 20 or 25 fps. 20 fps was only seen in a RAM test. Night mode always runs at 10 fps. 30 fps is refused (picture too dark) |
 | Bitrate and key-frame interval | 1536 kbit/s, 2 s | | host-tested only | Bitrate 500 to 3000 kbit/s, key frames every 1 to 4 s. Applied at the next restart of the video service |
 | Microphone track | on | in the RTSP stream | hardware-validated | **L16** (raw 16-bit PCM, 8 kHz, mono), not G.711. Can be turned off (`./akam audio mic off`, host-tested only) |
 | RTSP Digest authentication | off | TCP 554 | hardware-validated | One user and password, set with `./akam rtsp-auth set` |
 | Speaker output and two-way audio (ONVIF audio backchannel, G.711 PCMU/PCMA) | on, needs the video password | in the RTSP session | hardware-validated (talk), host-tested only (`say`, speaker volume and beep) | Used by `./akam talk`, go2rtc, Frigate, Home Assistant. Speaker volume default 100 |
-| Picture settings (brightness, contrast, saturation, sharpness) | 0 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
+| Picture settings (brightness, contrast, saturation, sharpness) | 0; sharpness -15 | via 8091 | checked in RAM on one camera | Not yet checked on the final image |
+| Default sharpness -15 on every ISO level of the ISP sharpening (`isp.sharpness`, `img.sharp_all`) | on | `SET isp.sharpness 0` and `SET img.sharp_all 0` for the stock picture | measured on one camera (static scene, P frames 7.9 KB to 1.8 KB) | Long-run picture quality in all lights not yet judged |
+| Default 3D noise-reduction bias 2 (`isp.denoise`, the 3D_NR tables of each light level come from the level 2 steps higher) | on | `./akam picture denoise 0` for the camera's own tables; 1 to 4 for other strengths | A/B on two cameras (RAM, lamp light, ISO level 9): less pulsing at each key frame, 3 to 7 % less static detail | Not yet judged in all lights; refused (stock tables kept, logged) when the live table is not as decoded |
 | Day/night switching with IR-cut filter and IR LEDs | automatic | | hardware-validated | Includes a night probe so the IR LEDs do not fool the exposure reading |
 | Status LED (front, blue) | on | | hardware-validated | `on`, `off`, or `auto` (blinks while starting or streaming) |
 
@@ -38,6 +40,7 @@ Not offered: other resolutions, a second (sub) stream, mirror or flip, snapshots
 | MQTT 3.1.1 client | off | outbound TCP to your broker (usually 1883) | host-tested only | One connection, no TLS (the password travels in clear on the LAN). The camera never runs a broker |
 | Home Assistant MQTT discovery | on, when MQTT is on | | host-tested only | One device with sensors, switches, numbers and buttons ([MQTT](mqtt.md)) |
 | Control port | on, read-only from the network | TCP 8091 | hardware-validated | Text commands (`LIST`, `GET`, `SET`): metrics for monitoring, settings from the camera itself. `./akam debug on` lets the network write for a while |
+| Signed control API | off (opens only while an API key exists) | TCP 8092 | host-tested only | The same signed JSON API as the Rotatable 2K: settings (LED mode and patterns, night mode, picture, video, ONVIF and MQTT switches), state, events, a "find the camera" LED action. Create a key over SSH with `ak_rtsp --api-key new --scope admin --name NAME` ([reference](porting/lsc-1080p/control-api.md)) |
 
 **ONVIF note.** ONVIF-compatible services (a subset of the ONVIF Profile S feature set: WS-Discovery, device, media,
 imaging). Akam is not an ONVIF conformant product, has not been tested with the ONVIF test tool and is not listed by
@@ -58,7 +61,7 @@ ONVIF. ONVIF is a trademark of ONVIF, Inc.
 | Update over SSH (Akam to Akam) | | | hardware-validated | `./akam update`, read-back verified |
 | Maintenance flag (microSD) | off | | hardware-validated (install) | A card marked `AKAM_MAINTENANCE` opens the maintenance shell: treat the card as physical access |
 
-Open ports after a normal boot: **22, 554, 8091** (TCP) and 68 (UDP client). Nothing else, unless you enable ONVIF
+Open ports after a normal boot: **22, 554, 8091** (TCP) and 68 (UDP client). Nothing else, unless you enable ONVIF (or create an API key: then 8092, see the signed control API)
 (80 and 3702) or MQTT (outbound only).
 
 ## What Akam removes or disables

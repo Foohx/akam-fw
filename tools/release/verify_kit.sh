@@ -218,9 +218,18 @@ verify_dir() {
     if [ -n "$EXPECT_MODEL" ] && [ "$EXPECT_MODEL" != "$model" ]; then
         die "this kit is for the camera model '$model', not '$EXPECT_MODEL': use the kit of your model"
     fi
+    # The kit kind: no kind line = the native-app kit of the 1080p (musl); kind=cardless-appfs = the 2K kit (uClibc
+    # apps and a musl dropbear: target arm-linux, no symlinks, the payload of internal/installer/appfs).
+    KIND="$(sed -n 's/^kind=//p' "$m")"
+    case "$KIND" in
+        '') KIT_TARGET=arm-linux-musleabi ;;
+        cardless-appfs) KIT_TARGET=arm-linux ;;
+        *) die "MANIFEST.txt kind '$KIND' is not known to this verifier" ;;
+    esac
+    [ "$(grep -c '^kind=' "$m")" -le 1 ] || die "MANIFEST.txt has more than one kind line"
     # Each of these keys must appear exactly once, with the expected value.
     local kv
-    for kv in time64_gate=pass target=arm-linux-musleabi; do
+    for kv in time64_gate=pass "target=$KIT_TARGET"; do
         if [ "$(grep -c "^${kv%%=*}=" "$m")" != 1 ] || ! grep -qx "$kv" "$m"; then
             die "MANIFEST.txt must contain exactly one ${kv%%=*} line, equal to ${kv#*=}"
         fi
@@ -256,6 +265,7 @@ verify_dir() {
                 echo "$path" >>"$TMP/man.files"
                 ;;
             link)
+                [ -z "$KIND" ] || die "MANIFEST lists a symlink ($path) in a kit of kind $KIND, which has none"
                 case "$path:$a" in overlay/bin/dropbear:dropbearmulti | overlay/bin/dropbearkey:dropbearmulti) ;; *) die "MANIFEST lists an unexpected symlink $path -> $a" ;; esac
                 [ -L "$d/$path" ] || die "MANIFEST lists $path as a link but it is not"
                 [ "$(readlink "$d/$path")" = "$a" ] || die "link target mismatch for $path"
@@ -272,7 +282,9 @@ verify_dir() {
     [ "$find_links" = "$(grep -c '^link ' "$m" || true)" ] || die "symlinks in the kit are not all listed in MANIFEST.txt"
 
     # 3. the payload we promise.
-    for path in bin/ak_rtsp bin/dropbearmulti bin/flash_tool patches/patch_service_sh.sh supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear; do
+    local payload="bin/ak_rtsp bin/dropbearmulti bin/flash_tool patches/patch_service_sh.sh supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear"
+    [ "$KIND" != cardless-appfs ] || payload="appfs/overlay/own_app_stub.sh appfs/bin/akam2k_rtsp appfs/bin/dropbearmulti appfs/bin/busybox supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear"
+    for path in $payload; do
         grep -qx "$path" "$TMP/man.sorted" || die "required file $path is not in the kit"
     done
     want="$(sed -n 's/^supported_hardware_sha256=//p' "$m")"

@@ -101,7 +101,9 @@ Access: `r` read-only, `rw` read-write (write rule of section 3), `w` write-only
 | `ae.stable_range`, `ae.hold_range`, `ae.speed` | rw | 0 to 100 | RAM |
 | `ae.exp_max` | rw | 0 to 32767 | RAM |
 | `ae.enabled` | rw | 0 or 1 | RAM |
-| `isp.brightness`, `isp.contrast`, `isp.saturation`, `isp.sharpness` | rw | -50 to 50 | file `picture` |
+| `isp.brightness`, `isp.contrast`, `isp.saturation` | rw | -50 to 50 | file `picture` |
+| `isp.sharpness` | rw | -50 to 50, default -15 (all SHARP groups); 0 = stock | file `picture` |
+| `isp.denoise` | rw | 0 to 4, default 2 (1080p 3D-NR bias, same knob as `img.nr3d_bias`); 0 = stock; refused when the live table is not as decoded; GET = the value that runs | file `picture` |
 | `venc.minqp`, `venc.maxqp` | r | `28 (read-only)`, `43 (read-only)` (the suffix is part of the value) | - |
 
 A numeric `SET` is parsed strictly (whole decimal string, no trailing text, no overflow). An invalid value answers
@@ -112,7 +114,7 @@ A numeric `SET` is parsed strictly (whole decimal string, no trailing text, no o
 See [image-day-night-leds.md](image-day-night-leds.md) for ranges: `night.mode`, `night.state`, `night.trigger_hw_exp`,
 `night.day_hw_exp`, `night.confirm_samples`, `night.lock_ms`, `night.gain_pct`, `night.day_confirm_samples`,
 `night.min_night_ms`, `night.probe_ms`, `night.probe_settle_ms`, `night.ae`, `night.logic`, `night.ir_led`, and
-`img.venc_rc`, `img.wb`, `img.poll`, `img.reload`, `img.dump`. `led.status` and `led.state` are in the same file.
+`img.venc_rc`, `img.wb`, `img.poll`, `img.reload`, `img.dump`, `img.qp`, `img.sharp_all`, and the 1080p noise-reduction keys `img.nr2d_bias`, `img.uvnr_bias`, `img.nr3d_bias`, `img.sharp_bias` (0..4), `img.nr2d`, `img.uvnr` (50..400 %), `img.sharp_coring` (100..300 %), `img.nr3d_motion` (50..200 %), read-only `GET img.nr` (live exposure index, ISO level, NR tables of that level) and `SET img.dump nr`; all RAM only, defaults send nothing, details in [video-and-streaming.md](video-and-streaming.md) 5.5.7. `SET img.qp` is the only key with two values: `SET img.qp 28 43` or `SET img.qp 28,43`. `led.status` and `led.state` are in the same file.
 
 | Key | Acc | Values | Persist |
 |---|---|---|---|
@@ -148,6 +150,8 @@ See [image-day-night-leds.md](image-day-night-leds.md) for ranges: `night.mode`,
 | `video.bitrate_cfg` | rw | 500 to 3000 (kbit/s) | file `video`, applies at next start |
 | `video.fps_cfg` | rw | 10, 15, 20, 25 | same |
 | `video.gop_cfg` | rw | 1 to 4 (seconds) | same |
+| `video.minqp_cfg` | rw | 10 to 51 (default 28) | same; minqp must stay below maxqp (a SET that breaks it is refused) |
+| `video.maxqp_cfg` | rw | 10 to 51 (default 43) | same |
 | `video.cfg_pending` | r | 1 when the saved file differs from the running encoder | - |
 
 These keys are writable only from loopback (nothing would apply them from the network). The answer says
@@ -176,6 +180,7 @@ shared by all callers.
 | `rtsp.clients` | Connected RTSP clients |
 | `rtsp.auth` | `off`, `on`, `broken` |
 | `rtsp.skipped_frames` | Cumulative video frames dropped by the TCP backpressure pacing |
+| `sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_lq` | The same numbers as `sys.cpu`, `sys.load` (first field times 100), `sys.mem_total`, `sys.mem_free`, `sys.uptime`, and the raw link quality of `/proc/net/wireless`, as integers under the names of the settings registry and of the Rotatable 2K (convergence step P4, `hal_sys`). `-1000000` while not known, never the word `unknown`. Added at the end of the metrics, so the order of the older keys in `LIST` is unchanged |
 
 ### 6.6 Control and service state
 

@@ -8,7 +8,7 @@
 +/* Akam: on the Anyka AK3918 (Linux 4.4, ARM926) the kernel acknowledges
 + * musl's clock_gettime64 syscall without filling the timespec, which made
 + * sessions drop with "Timeout before auth" in the same second. The build now
-+ * also links src/common/time32_shim.c, which fixes clock_gettime() itself;
++ * also links src/core/time32_shim.c, which fixes clock_gettime() itself;
 + * this tick based clock stays as defence in depth. Dropbear only needs
 + * second-resolution monotonic time for its timeouts, so take it from the
 + * kernel tick counter: the raw times(2) syscall returns the 32-bit jiffies

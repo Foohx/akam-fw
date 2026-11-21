@@ -40,7 +40,7 @@ step menu and the Go assistant opens a home screen. Every command that changes t
 | `rtsp-auth [set\|disable\|status]` | Digest login on the stream. Password typed on the PC, never shown |
 | `led [show \| status on\|off\|auto] [ir auto\|off]` | Front LED and IR LEDs |
 | `audio [show \| volume N \| beep \| on \| off \| talk on\|off \| mic on\|off]` | Speaker and microphone |
-| `picture [show \| brightness N \| contrast N \| saturation N \| sharpness N \| wb conf\|manual \| night auto\|day\|night \| reset]` | Picture. Sliders are saved; `wb` and `night` follow the camera's own rules ([image-day-night-leds.md](image-day-night-leds.md)) |
+| `picture [show \| brightness N \| contrast N \| saturation N \| sharpness N \| denoise N \| wb conf\|manual \| night auto\|day\|night \| reset]` | Picture. Sliders are saved; `wb` and `night` follow the camera's own rules ([image-day-night-leds.md](image-day-night-leds.md)) |
 | `video [show \| bitrate N \| fps N \| gop N]` | Encoder settings; asks (default No) whether to restart the video service |
 | `debug [on [MIN] \| off \| status]` | The 8091 debug flag |
 | `ntp [status \| set SERVER... \| off]` | Opt-in time sync |
@@ -175,8 +175,8 @@ camera streams the partitions over SSH.
 ## 6. Image build
 
 Inputs: the user's backup (`mtdblock7.bin` and the kernel name from `mtdblock4.bin`) and a verified kit.
-Bash path: `tools/image/assemble_from_kit.sh` unpacks `mtdblock7.bin` with `unsquashfs` as a normal user, then runs
-`src/ak_rtsp/build_firmware.sh --kit`. Steps and gates:
+Bash path: `firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh` unpacks `mtdblock7.bin` with `unsquashfs` as a normal user, then runs
+`firmware/lsc-indoor-1080p-ak3918/image/build_image.sh --kit`. Steps and gates:
 
 1. Verify the kit ([kit-and-release.md](kit-and-release.md)). A `kit_format` the installer does not know
    (`tools/wizard/kit_compat.txt`, currently `1`) is refused, and so is a kit made for another camera model than the
@@ -204,7 +204,7 @@ the image on Linux or WSL and pass it with `--image FILE`; the assistant checks 
 
 ## 7. Flash
 
-`flash_tool` (`src/ak_rtsp/flash_tool.c`, an ARM binary from the kit) writes the APP partition through the raw
+`flash_tool` (`firmware/lsc-indoor-1080p-ak3918/image/flash_tool.c`, an ARM binary from the kit) writes the APP partition through the raw
 `/dev/mtd7` character device, reading back every 4 KB erase block and retrying a mismatch. A plain `dd` to
 `/dev/mtdblock7` corrupts writes through DMA contention with the SPI-NOR controller while Wi-Fi, camera or ISP drivers
 are active and MUST NOT be used.
@@ -236,7 +236,7 @@ resolve under the RAM directory, none under `/usr`, and that directory is a tmpf
 detached from the SSH session (no SSH variables, no `dropbear` among its ancestors, session leader). `restore.sh` refuses
 the same way.
 
-The Go flash path (`internal/flash`) is the one audited place that can write a camera's flash. It needs a Confirmation
+The Go flash path (`internal/installer/nativeapp/flash`) is the one audited place that can write a camera's flash. It needs a Confirmation
 that only an explicit yes (default No, refused without a terminal, bound to one image md5) can create; it checks the
 size and md5 on the PC, the sha256 on the camera after upload, the md5 again in `prepare`, once more just before the
 erase, and after the write requires **two independent read-backs** (the camera script's and the assistant's) to equal the

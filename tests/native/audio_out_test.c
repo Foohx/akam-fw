@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/audio_out.c with a fake PCM device and a fake
+/* Host test of platforms/anyka-ak3918/audio_out.c with a fake PCM device and a fake
  * clock. Build/run: tests/audio_out_test.sh */
 #define _GNU_SOURCE
 #include <errno.h>

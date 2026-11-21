@@ -7,6 +7,8 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
 CC=${HOST_CC:-cc}
 if ! command -v "$CC" >/dev/null 2>&1; then
     echo "skip: no host C compiler ($CC)"
@@ -18,8 +20,8 @@ trap 'rm -rf "$WORK"' EXIT
 ok() { echo "  ok   - $1"; }
 bad() { echo "  FAIL - $1"; exit 1; }
 
-"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/src/ak_rtsp" -o "$WORK/akam-talk" \
-    "$REPO/tools/akam-talk/akam_talk.c" "$REPO/src/ak_rtsp/md5.c" "$REPO/src/ak_rtsp/g711.c"
+"$CC" -std=gnu99 -Wall -Wextra -Werror -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/akam-talk" \
+    "$REPO/tools/akam-talk/akam_talk.c" "$REPO/src/net/crypto/md5.c" "$REPO/src/features/audio/g711.c"
 ok "builds with -Wall -Wextra -Werror"
 T="$WORK/akam-talk"
 

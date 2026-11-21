@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Host test of the control port 8091 (src/ak_rtsp/control.c + ctl_gate.c): read-only gate, DEBUG with an
+# Host test of the control port 8091 (platforms/anyka-ak3918/control.c + ctl_gate.c): read-only gate, DEBUG with an
 # injected clock, 4 client slots, golden read output, LOG forwarding that never blocks, `ak_rtsp ctl`.
 # control.c is built for real against stub modules and talked to over TCP on a free port chosen per run. No camera.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib/paths.sh
+. "$REPO/tests/lib/paths.sh"
 CC=${HOST_CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -27,10 +29,10 @@ for _ in range(200):
 else:
     print(18091)
 ')
-"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT="$PORT" -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" \
-    -I"$REPO/src/ak_rtsp" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT="$PORT" -DCTL_TEST_REGISTRY -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" \
+ -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/control_test" \
-    "$REPO/tests/native/control_test.c" "$REPO/src/ak_rtsp/control.c" "$REPO/src/ak_rtsp/ctl_gate.c" "$REPO/src/ak_rtsp/isp_tune.c" "$REPO/src/ak_rtsp/swdog.c"
+    "$REPO/tests/native/control_test.c" "$REPO/platforms/anyka-ak3918/control.c" "$REPO/src/core/control/ctl_gate.c" "$REPO/platforms/anyka-ak3918/isp_tune.c" "$REPO/platforms/anyka-ak3918/swdog.c"
 # The server tees stdout (the flood of LOG lines goes through it): keep the noise in a file.
 if "$WORK/control_test" >"$WORK/out.txt" 2>&1; then rc=0; else rc=$?; fi
 grep -E '^(FAIL|skip:|control_test:)|ERROR|runtime error' "$WORK/out.txt" || true

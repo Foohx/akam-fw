@@ -4,7 +4,7 @@
 usage: python3 -I parse_stock_capture.py RUN_DIR_OR_stock_hook.log [--export-isp OUTDIR]
 
 Reads stock_hook.log (and, next to it when present: isp_blocks.bin, isp_hook.log, timeline.log,
-run.meta, dmesg.txt, fd_*.txt) written by src/ak_rtsp/stock_hook.c and
+run.meta, dmesg.txt, fd_*.txt) written by platforms/anyka-ak3918/tools/stock_hook.c and
 tools/hw_tests/stock_capture.sh, and prints: the state of the run (finished, or not finished cleanly,
 with the last heartbeat and, when a later run exists, whether the camera rebooted), the ordered speaker ioctl sequence with decoded arguments, PCM
 format / period sizes, gain / source / speaker values, GPIO / PWM / LED / light sensor activity,
@@ -54,7 +54,7 @@ P_NAMES = {
     0xE6: ("TIMESTAMP?", "raw"),
     0xEA: ("SET_RATE", "u32"),
 }
-# Request numbers of src/ak_rtsp/ak_ioctls.h. The number actually issued by the stock app is
+# Request numbers of platforms/anyka-ak3918/ak_ioctls.h. The number actually issued by the stock app is
 # always printed (req=...); it is flagged when it differs from the one ak_rtsp uses.
 KNOWN_REQ = {
     0xE0: 0x401c50e0, 0xE1: 0x000050e1, 0x10: 0x80045010, 0x30: 0x80045030,

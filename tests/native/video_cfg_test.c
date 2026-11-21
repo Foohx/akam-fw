@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/video_cfg.c and video_ctl.c (saved video settings): defaults, strict parsing, ranges,
+/* Host test of platforms/anyka-ak3918/video_cfg.c and video_ctl.c (saved video settings): defaults, strict parsing, ranges,
  * atomic save, the 8091 key contract, "restart to apply" and the network refusal. VIDEO_CFG_PATH is set by the
  * build line. Run: video_cfg_test TEMPDIR */
 #include <stdio.h>
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
     {
         char all[300] = "";
         video_ctl_list(emit, all);
-        CHECK(!strcmp(all, "video.bitrate_cfg=800|video.fps_cfg=10|video.gop_cfg=3|video.cfg_pending=1|"), "LIST has the four keys");
+        CHECK(!strcmp(all, "video.bitrate_cfg=800|video.fps_cfg=10|video.gop_cfg=3|video.minqp_cfg=28|video.maxqp_cfg=43|video.cfg_pending=1|"), "LIST has the six keys");
     }
 
     printf("apply at start\n");
@@ -190,6 +190,36 @@ int main(int argc, char **argv)
         }
         unlink(VIDEO_CFG_PATH);
         video_cfg_reset_for_test();
+    }
+
+    printf("QP bounds\n");
+    video_cfg_defaults(&c);
+    CHECK(c.minqp == 28 && c.maxqp == 43, "QP defaults are 28 and 43 (the compiled-in values)");
+    parse("minqp=22\nmaxqp=40\n", &c, &bad);
+    CHECK(bad == 0 && c.minqp == 22 && c.maxqp == 40, "minqp and maxqp are read");
+    parse("minqp=9\n", &c, &bad);
+    CHECK(bad == 1 && c.minqp == 28, "minqp 9 refused (below 10)");
+    parse("maxqp=52\n", &c, &bad);
+    CHECK(bad == 1 && c.maxqp == 43, "maxqp 52 refused (above 51)");
+    parse("minqp=45\n", &c, &bad);
+    CHECK(bad == 1 && c.minqp == 28 && c.maxqp == 43, "minqp above the default maxqp: pair back to defaults");
+    parse("minqp=30\nmaxqp=30\n", &c, &bad);
+    CHECK(bad == 1 && c.minqp == 28 && c.maxqp == 43, "min == max refused (crashed the kernel once)");
+    parse("minqp=20\n", &c, &bad);
+    CHECK(bad == 0 && c.minqp == 20 && c.maxqp == 43, "one key alone keeps the other default");
+    parse("minqp=20\nmaxqp=45\n", &c, &bad);
+    CHECK(video_cfg_format(&c, out, sizeof(out)) > 0 && !strcmp(out, "minqp=20\nmaxqp=45\n"), "QP keys are written when not default");
+    CHECK(video_cfg_qp_ok(28, 43) && !video_cfg_qp_ok(43, 43) && !video_cfg_qp_ok(9, 43) && !video_cfg_qp_ok(28, 52), "qp_ok");
+    {
+        char m[160];
+        unlink(VIDEO_CFG_PATH);
+        CHECK(video_ctl_set("video.minqp_cfg", "45", m, sizeof(m)) == 1 && strstr(m, "refused") && !exists(),
+              "SET minqp 45 over maxqp 43: refused, nothing saved");
+        CHECK(video_ctl_set("video.maxqp_cfg", "50", m, sizeof(m)) == 0 && strstr(m, "restart to apply"), "SET maxqp 50 saved, restart");
+        CHECK(video_ctl_set("video.minqp_cfg", "45", m, sizeof(m)) == 0, "SET minqp 45 now accepted");
+        CHECK(video_ctl_get("video.minqp_cfg", m, sizeof(m)) == 0 && !strcmp(m, "video.minqp_cfg=45"), "GET minqp");
+        CHECK(video_ctl_set("video.minqp_cfg", "5", m, sizeof(m)) == 1 && strstr(m, "invalid"), "SET minqp 5 invalid");
+        unlink(VIDEO_CFG_PATH);
     }
 
     printf("%s\n", fails ? "FAILED" : "all ok");

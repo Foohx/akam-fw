@@ -1,4 +1,4 @@
-/* Host test of src/ak_rtsp/g711.c: exhaustive decode vs an independent
+/* Host test of src/features/audio/g711.c: exhaustive decode vs an independent
  * reference, encode/decode round trips over all 65536 inputs, ITU vectors. */
 #include <stdio.h>
 #include <stdlib.h>

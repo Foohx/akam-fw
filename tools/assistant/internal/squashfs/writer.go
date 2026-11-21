@@ -96,6 +96,11 @@ type Options struct {
 	// MaxSize, when positive, fails with ErrLimit if the image (padding included) would be larger.
 	MaxSize int64
 
+	// XattrsAllowed clears the NO_XATTRS superblock flag, as `mksquashfs -xattrs` does on a tree that has no extended
+	// attribute (the xattr table start stays invalid, there is no table). Images made by recent mksquashfs from the
+	// vendors' trees carry that flag value, and a builder that must keep the superblock of such a stock image needs it.
+	XattrsAllowed bool
+
 	// noCompress stores every block (inode, directory, fragment, data, id): tests only, it makes the
 	// image comparable byte for byte with `mksquashfs -noI -noD -noF -noX`.
 	noCompress bool
@@ -296,6 +301,9 @@ func build(root *Node, o Options) ([]byte, Stats, error) {
 	w.out = append(w.out, make([]byte, pad)...)
 
 	flags := uint16(FlagDuplicates | FlagExportable | FlagNoXattrs)
+	if o.XattrsAllowed {
+		flags &^= FlagNoXattrs
+	}
 	if o.noCompress {
 		flags |= FlagUncompressedInodes | FlagUncompressedData | FlagUncompressedFrags
 	}

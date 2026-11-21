@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
-	"github.com/Foohx/akam-fw/tools/assistant/internal/sdcard"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/sdcard"
 )
 
 // The SD card commands run against a regular file that plays the card (the helper's image-file mode,

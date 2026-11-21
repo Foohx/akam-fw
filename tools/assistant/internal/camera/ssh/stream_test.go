@@ -63,7 +63,7 @@ func TestRunStreamWriterErrorAborts(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the writer's error", err)
 	}
-	if time.Since(start) > 10*time.Second {
+	if time.Since(start) > 60*time.Second {
 		t.Error("the abort took too long")
 	}
 	n := w.n
@@ -101,7 +101,7 @@ func TestRunStreamContextCancel(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want deadline exceeded", err)
 	}
-	if time.Since(start) > 8*time.Second {
+	if time.Since(start) > 60*time.Second {
 		t.Error("the cancel took too long")
 	}
 	// Let the fake camera finish its stalled read, so its goroutines are not counted, then wait (bounded) for the

@@ -1,5 +1,5 @@
 // Package testfake is the fake camera of the tests: an in-process SSH server that runs the real
-// camera helper scripts (tools/firmware_patch_templates) in a temporary root file system, a fake
+// camera helper scripts (firmware/lsc-indoor-1080p-ak3918/overlay) in a temporary root file system, a fake
 // control port 8091 reached the way the real camera allows it (the exec command
 // `nc -w 2 127.0.0.1 8091`; direct-tcpip is refused like Dropbear built without forwarding; the port
 // also listens on a real loopback port, for port probes), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
@@ -163,10 +163,20 @@ func newSigner(t testing.TB) gossh.Signer {
 	return s
 }
 
-// TemplatesDir is tools/firmware_patch_templates of this checkout.
+// TemplatesDir is firmware/lsc-indoor-1080p-ak3918/overlay of this checkout (the helper scripts of the 1080p image).
 func TemplatesDir() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "firmware_patch_templates")
+	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "firmware", "lsc-indoor-1080p-ak3918", "overlay")
+}
+
+// helperPath is the file of a helper script of the 1080p image: its overlay directory, or src/scripts for the
+// scripts shared with the 2K (akam_hostname.sh).
+func helperPath(name string) string {
+	p := filepath.Join(TemplatesDir(), name)
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return filepath.Join(TemplatesDir(), "..", "..", "..", "src", "scripts", name)
 }
 
 // HelpersAvailable reports whether the real helper scripts can run here (a POSIX sh and the
@@ -176,7 +186,7 @@ func HelpersAvailable() bool {
 		return false
 	}
 	for _, s := range []string{"akam_rtsp_auth.sh", "akam_hostname.sh", "akam_debug.sh"} {
-		if _, err := os.Stat(filepath.Join(TemplatesDir(), s)); err != nil {
+		if _, err := os.Stat(helperPath(s)); err != nil {
 			return false
 		}
 	}
@@ -219,9 +229,9 @@ func New(t testing.TB, opts Options) *Camera {
 			"led.status": "auto", "led.state": "idle", "night.ir_led": "auto",
 			"audio.out_volume": "60", "audio.out_enable": "1", "audio.talk_enable": "1", "audio.out_state": "idle",
 			"audio.out_underruns": "0", "audio.out_drops": "0", "audio.out_test": "0",
-			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "0",
+			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "-15", "isp.denoise": "2",
 			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "1",
-			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.cfg_pending": "0",
+			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43", "video.cfg_pending": "0",
 			"video.bitrate": "1480", "video.fps_actual": "150",
 			"fw.version": "b35-2af81c5", "sys.hostname": "akam-01",
 			"net.wifi_rssi": "-55", "net.wifi_rate": "72", "night.state": "day", "sys.time_set": "1",
@@ -229,7 +239,7 @@ func New(t testing.TB, opts Options) *Camera {
 	if opts.FwVersion != "" {
 		c.ctl["fw.version"] = opts.FwVersion
 	}
-	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2"}
+	c.vRun = map[string]string{"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43"}
 	c.Root = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(c.Root, "etc", "config"), 0o700); err != nil {
 		t.Fatal(err)
@@ -476,7 +486,7 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 		if c.downOnRestart {
 			c.ctlDown = true
 		}
-		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
+		for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.minqp_cfg", "video.maxqp_cfg"} {
 			c.vRun[k] = c.ctl[k]
 		}
 		c.ctl["video.cfg_pending"] = "0"
@@ -540,7 +550,7 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 
 // runScript runs a real helper script of the checkout in the fake root (argv, never a shell line).
 func (c *Camera) runScript(name string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return c.runScriptFile(filepath.Join(TemplatesDir(), name), args, stdin, stdout, stderr)
+	return c.runScriptFile(helperPath(name), args, stdin, stdout, stderr)
 }
 
 func (c *Camera) runScriptFile(script string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -582,7 +592,7 @@ func (c *Camera) SetNtpLog(line string) {
 	c.ntpLog = line
 }
 
-// ntp emulates akam_ntp.sh (texts of tools/firmware_patch_templates/akam_ntp.sh); the host grammar is
+// ntp emulates akam_ntp.sh (texts of src/scripts/akam_ntp.sh); the host grammar is
 // checked again here, as the script does, so that a bad name from a client is refused like on the camera.
 func (c *Camera) ntp(args []string, stdout, stderr io.Writer) int {
 	if c.opts.NoNtpHelper {
@@ -729,15 +739,20 @@ func (c *Camera) handleCtl(nc net.Conn) {
 					lo, hi = 10, 25
 				case "video.gop_cfg":
 					lo, hi = 1, 4
+				case "video.minqp_cfg", "video.maxqp_cfg":
+					lo, hi = 10, 51
 				}
 				if hi == 0 {
 					reply = "ERR " + f[1] + " is read-only"
 				} else if err != nil || n < lo || n > hi || (f[1] == "video.fps_cfg" && n != 10 && n != 15 && n != 20 && n != 25) {
 					reply = "ERR invalid " + f[1] + " value"
+				} else if (f[1] == "video.minqp_cfg" && n >= atoiOr(c.ctl["video.maxqp_cfg"])) ||
+					(f[1] == "video.maxqp_cfg" && n <= atoiOr(c.ctl["video.minqp_cfg"])) {
+					reply = "ERR " + f[1] + "=" + f[2] + " refused: minqp must stay below maxqp"
 				} else {
 					c.ctl[f[1]] = f[2]
 					pend := false
-					for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg"} {
+					for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.minqp_cfg", "video.maxqp_cfg"} {
 						if c.ctl[k] != c.vRun[k] {
 							pend = true
 						}
@@ -751,7 +766,7 @@ func (c *Camera) handleCtl(nc net.Conn) {
 				}
 			} else if strings.HasPrefix(f[1], "isp.") {
 				n, err := strconv.Atoi(f[2])
-				if err != nil || n < -50 || n > 50 {
+				if err != nil || n < -50 || n > 50 || (f[1] == "isp.denoise" && n > 4) || (f[1] == "isp.denoise" && n < 0) {
 					reply = "ERR out of range"
 				} else {
 					c.ctl[f[1]] = f[2]
@@ -919,4 +934,9 @@ func (c *Camera) CtlDownAfterRestart(on bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.downOnRestart = on
+}
+
+func atoiOr(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }

@@ -43,6 +43,11 @@ func (a *App) firstRunName() bool {
 	if !ok {
 		return false
 	}
+	t, ok := a.askCameraType()
+	if !ok {
+		return false
+	}
+	a.newType = t // stored once the state of the new camera is open
 	a.Cams.Name = n
 	return true
 }

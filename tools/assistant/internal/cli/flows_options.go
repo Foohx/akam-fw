@@ -130,7 +130,7 @@ func groupSummary(group string, s optSnap) string {
 	case "LED and night":
 		return fmt.Sprintf("front LED: %s   IR LEDs: %s   night: %s", s.v("led.status"), s.v("night.ir_led"), s.v("night.mode"))
 	case "Picture":
-		return fmt.Sprintf("brightness %s  contrast %s  saturation %s  sharpness %s", s.v("isp.brightness"), s.v("isp.contrast"), s.v("isp.saturation"), s.v("isp.sharpness"))
+		return fmt.Sprintf("brightness %s  contrast %s  saturation %s  sharpness %s  denoise %s", s.v("isp.brightness"), s.v("isp.contrast"), s.v("isp.saturation"), s.v("isp.sharpness"), s.v("isp.denoise"))
 	case "Video":
 		return fmt.Sprintf("bitrate %s kbit/s   %s fps   key frame every %s s", s.v("video.bitrate_cfg"), s.v("video.fps_cfg"), s.v("video.gop_cfg"))
 	case "Audio":

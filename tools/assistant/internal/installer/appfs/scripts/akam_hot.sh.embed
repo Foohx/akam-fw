@@ -1,0 +1,611 @@
+#!/bin/sh
+# shellcheck disable=SC2010,SC2012,SC2015,SC2086,SC2046  # ls -l is the only portable way to read a link target on this BusyBox
+# akam_hot.sh -- CAMERA side of flash_appfs.sh --hot / --hot-preflight (uploaded to /tmp/akam_hot/). POSIX sh (BusyBox ash).
+# Subcommands: run MODE NEED_KB TMP_KB FINAL_KB (the detached runner: MODE hot|rehearsal) and the single steps it calls:
+#              cardless tools scan [free] feedercheck capture stage feeder wpaswap hasdb dbstart PORT dbstop_old
+#              dbkill PORT stopapp memgate NEED_KB TMP_KB final NEED_KB restore
+# The runner is the ONE detached on-camera job: the PC only uploads, starts it, polls $D/status and answers the
+# confirmation checkpoints (wpa, dbalt, db22, upload, go) by touching $D/confirm.<name>. No answer within
+# AKAM_CONFIRM_S (120 s) = the runner restores by itself and exits, nothing written.
+# NEVER writes flash, nvram or /config. Writes only under $D (/tmp/akam_hot). Overridable for the host test:
+# AKAM_PROC (/proc), AKAM_HOT_DIR, AKAM_MOUNTS (/proc/mounts), AKAM_MEMINFO, AKAM_SD (/mnt/sdcard), AKAM_FLASHDIR,
+# AKAM_DROP (drop_caches), AKAM_PANIC (panic_on_oom), AKAM_OOMFILE, AKAM_SOAK, AKAM_CONFIRM_S, AKAM_WORKER,
+# AKAM_FLASH_RES, AKAM_FLASH_LOG, AKAM_FEEDER_PID (/tmp/akam_feeder.pid: the pid file akam_net.sh's last resort reads).
+P=${AKAM_PROC:-/proc}
+D=${AKAM_HOT_DIR:-/tmp/akam_hot}
+UNSAFE='[^A-Za-z0-9_./:=@%+,-]'
+FD=${AKAM_FLASHDIR:-/tmp/akam_flash}
+ST=$D/status
+CONFIRM_S=${AKAM_CONFIRM_S:-120}
+OWNLOCK=0
+SOAK=${AKAM_SOAK:-25}   # feeder soak after the old feeder is killed: longer than the watchdog timeout (-T 20)
+RESTORE=0
+
+# oom_protect: this process (and what it spawns: the feeder, flashcp) is never the OOM victim. Only when
+# panic_on_oom is 0: with panic_on_oom set, an unkillable victim would panic the kernel instead.
+oom_protect() {
+    pv=$(cat "${AKAM_PANIC:-/proc/sys/vm/panic_on_oom}" 2>/dev/null)
+    if [ "$pv" = 0 ]; then
+        if echo -1000 >"${AKAM_OOMFILE:-/proc/$$/oom_score_adj}" 2>/dev/null; then echo "oom_score_adj -1000 set for pid $$"; else echo "oom_score_adj not writable: not protected"; fi
+    else
+        echo "panic_on_oom is '${pv:-unreadable}', not 0: oom_score_adj left alone"
+    fi
+}
+dropcaches() { sync; echo 3 >"${AKAM_DROP:-/proc/sys/vm/drop_caches}" 2>/dev/null || echo "drop_caches not writable"; }
+memlog() { # memlog <label>: MemFree and MemAvailable at a gate
+    mi=${AKAM_MEMINFO:-/proc/meminfo}
+    m1=$(sed -n 's/^MemFree:[[:space:]]*\([0-9]*\) kB.*/\1/p' "$mi")
+    m2=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\) kB.*/\1/p' "$mi")
+    echo "mem[$1]: MemFree ${m1:-?} kB, MemAvailable ${m2:-n/a} kB"
+}
+st() { # st <PHASE> <message>: the status file the PC polls (atomic) and the log
+    echo "$1|$2" >"$ST.tmp" && mv -f "$ST.tmp" "$ST"
+    echo "[$1] $2"
+}
+wait_confirm() { # wait_confirm <name> <message>: 0 when the PC touches $D/confirm.<name> within CONFIRM_S
+    rm -f "$D/confirm.$1"
+    st "WAIT_$1" "$2"
+    t=0
+    while [ "$t" -lt "$CONFIRM_S" ]; do
+        [ ! -e "$D/confirm.$1" ] || { echo "confirmed by the PC: $1"; return 0; }
+        sleep 1
+        t=$((t + 1))
+    done
+    echo "no confirmation '$1' from the PC within $CONFIRM_S s"
+    return 1
+}
+
+lnk() { ls -l "$1" 2>/dev/null | sed -n 's/^.* -> //p'; }
+cmdl() { tr '\0' ' ' <"$P/$1/cmdline" 2>/dev/null | sed 's/ *$//'; }
+pids() { for d in "$P"/[0-9]*; do [ -d "$d" ] && echo "${d##*/}"; done; }
+
+# refs <pid>: why this process depends on the appfs squashfs (empty = it does not). Own cmdline is NOT looked at.
+refs() {
+    r=""
+    ls -l "$P/$1/exe" 2>/dev/null | grep -q -- '-> /appfs/' && r="$r exe"
+    ls -l "$P/$1/cwd" 2>/dev/null | grep -q -- '-> /appfs' && r="$r cwd"
+    ls -l "$P/$1/fd/" 2>/dev/null | grep -q -- '-> /appfs/' && r="$r fd"
+    grep -q '/appfs/' "$P/$1/maps" 2>/dev/null && r="$r maps"
+    echo "$r"
+}
+
+role() {
+    c=$(cmdl "$1")
+    e=$(lnk "$P/$1/exe")
+    case $c in
+        *own_app_stub.sh*) echo stub ;;
+        */appfs/script/init.sh*) echo init ;; # the stock init loop (resident): polls yy_debug.ini and an OTA trigger
+        *own_app_run.sh*) echo supervisor ;;
+        *akam_ntp.sh*) echo ntp ;;
+        *decloud.sh*) echo keeper ;;
+        *akam2k_rtsp*) echo app ;;
+        *wpa_supplicant*) echo wpa ;;
+        *)
+            case $e in
+                */dropbearmulti) echo dropbear ;;
+                */busybox) case $c in *" watchdog "*) echo feeder ;; *) echo UNEXPECTED ;; esac ;;
+                *) echo UNEXPECTED ;;
+            esac ;;
+    esac
+}
+
+pids_of() { # pids_of <role> [norefs]: live processes of a role (norefs: only those that do not touch /appfs)
+    for p in $(pids); do
+        [ "$p" = "$$" ] && continue
+        [ "$(role "$p")" = "$1" ] || continue
+        [ "$2" != norefs ] || [ -z "$(refs "$p")" ] || continue
+        echo "$p"
+    done
+}
+
+gone() { # gone <seconds> <pid...>: wait until none of the pids lives
+    t=$1
+    shift
+    while [ "$t" -ge 0 ]; do
+        l=""
+        for p in "$@"; do kill -0 "$p" 2>/dev/null && l="$l $p"; done
+        [ -n "$l" ] || return 0
+        t=$((t - 1))
+        sleep 1
+    done
+    return 1
+}
+
+stop_pids() { # stop_pids <wait s> <pid...>: SIGTERM, wait, SIGKILL the rest
+    w=$1
+    shift
+    [ $# -gt 0 ] || return 0
+    for p in "$@"; do kill -TERM "$p" 2>/dev/null; done
+    gone "$w" "$@" && return 0
+    for p in "$@"; do kill -KILL "$p" 2>/dev/null; done
+    gone 5 "$@"
+}
+
+cap_file() { ls "$D"/cap."$1".*.argv 2>/dev/null | head -n 1; }
+
+# spawn <argvfile> <argv0> <fg|bg>: run a captured command line with argv[0] replaced
+spawn() {
+    af=$1
+    a0=$2
+    md=$3
+    set -- "$a0"
+    first=1
+    while IFS= read -r a; do
+        if [ "$first" = 1 ]; then first=0; continue; fi
+        set -- "$@" "$a"
+    done <"$af"
+    if [ "$md" = fg ]; then
+        "$@" >"$D/spawn.out" 2>&1 </dev/null
+    else
+        "$@" >/dev/null 2>&1 </dev/null &
+    fi
+}
+
+# replay <prefix>: restart a captured process exactly (cmdline + its AKAM_* environment), detached
+replay() {
+    pre=$1
+    set --
+    while IFS= read -r a; do set -- "$@" "$a"; done <"$pre.argv"
+    (
+        cd / || exit 1
+        if [ -s "$pre.env" ]; then
+            set -a
+            # shellcheck disable=SC1090  # validated KEY=safe-value lines written by capture
+            . "$pre.env"
+            set +a
+        fi
+        exec "$@"
+    ) >/dev/null 2>&1 </dev/null &
+}
+
+# netok: wlan0 up with an IPv4 address and a LAN route. NOT a default route: the decloud keeper replaces it with the
+# blackhole pair 0.0.0.0/1 + 128.0.0.0/1, so a default-route check can never pass on an Akam camera.
+netok() {
+    [ "$(cat /sys/class/net/wlan0/operstate 2>/dev/null)" = up ] || return 1
+    ip addr show wlan0 2>/dev/null | grep -q 'inet ' || return 1
+    ip route show dev wlan0 2>/dev/null | grep -q 'scope link'
+}
+waitnet() { i=0; while [ "$i" -lt "$1" ]; do netok && return 0; sleep 1; i=$((i + 1)); done; return 1; }
+
+cmd_cardless() {
+    m=${AKAM_MOUNTS:-/proc/mounts}
+    if grep -q '^/dev/mmcblk' "$m" 2>/dev/null; then echo "an mmcblk device is mounted: this is not a card-less boot"; exit 1; fi
+    l=$(awk '$2=="/mnt/sdcard"{print $1" "$3}' "$m" 2>/dev/null | tail -n 1)
+    [ "$l" = "tmpfs tmpfs" ] || { echo "/mnt/sdcard is '$l', not the tmpfs bind of a card-less boot"; exit 1; }
+    ls -l "${AKAM_SD:-/mnt/sdcard}/busybox" 2>/dev/null | grep -q -- '-> /appfs/akam/busybox' || { echo "no Akam flash tree on /mnt/sdcard"; exit 1; }
+    echo "card-less: /mnt/sdcard = tmpfs bind of the Akam flash tree, no mmcblk mounted"
+}
+
+cmd_tools() { # the tools the flash path runs must not come from /appfs
+    for t in flashcp md5sum nohup dd sh cat awk sed ip cut sync mkdir rmdir sleep; do
+        x=$(command -v "$t") || { echo "missing on the camera: $t"; exit 1; }
+        echo "$t $x"
+        case $x in /appfs/*) echo "$t resolves into /appfs"; exit 1 ;; esac
+        if ls -l "$x" 2>/dev/null | grep -q -- '-> .*/appfs/'; then echo "$t is a link into /appfs"; exit 1; fi
+    done
+}
+
+cmd_scan() { # scan [free]: list every process touching /appfs; exit 2 when one has no known role; free: exit 4 if any
+    bad=0
+    n=0
+    for p in $(pids); do
+        [ "$p" = "$$" ] && continue
+        w=$(refs "$p")
+        [ -n "$w" ] || continue
+        ro=$(role "$p")
+        n=$((n + 1))
+        echo "$p $ro [$w ] $(cmdl "$p")"
+        [ "$ro" != UNEXPECTED ] || bad=1
+    done
+    if [ "$1" = free ]; then
+        [ "$n" -eq 0 ] || exit 4
+        echo "no process touches /appfs"
+        return 0
+    fi
+    [ "$bad" = 0 ] || exit 2
+}
+
+cmd_feedercheck() {
+    n=$(pids_of feeder norefs | wc -l)
+    [ "$n" -ge 1 ] || { echo "no watchdog feeder runs from outside /appfs"; exit 1; }
+    echo "feeder from outside /appfs alive: $(pids_of feeder norefs | tr '\n' ' ')"
+}
+
+cmd_capture() {
+    mkdir -p "$D" || exit 1
+    rm -f "$D"/cap.*
+    for p in $(pids); do
+        [ "$p" = "$$" ] && continue
+        [ -n "$(refs "$p")" ] || continue
+        ro=$(role "$p")
+        case $ro in supervisor | ntp | keeper | feeder | wpa | dropbear) ;; *) continue ;; esac
+        f=$D/cap.$ro.$p
+        tr '\0' '\n' <"$P/$p/cmdline" >"$f.argv" 2>/dev/null
+        if grep -q "$UNSAFE" "$f.argv"; then echo "pid $p ($ro): an argument has characters that cannot be replayed safely: refused"; exit 3; fi
+        lnk "$P/$p/exe" >"$f.exe"
+        : >"$f.env"
+        case $ro in supervisor | ntp | keeper)
+            tr '\0' '\n' <"$P/$p/environ" 2>/dev/null | grep '^AKAM_' >"$f.env"
+            if grep -q -v '^AKAM_[A-Za-z0-9_]*=[A-Za-z0-9_./:=@%+,-]*$' "$f.env"; then echo "pid $p ($ro): an AKAM_ variable cannot be replayed safely: refused"; exit 3; fi ;;
+        esac
+        echo "captured $ro pid $p"
+    done
+}
+
+cmd_hasdb() { [ -n "$(cap_file dropbear)" ]; }
+
+cmd_stage() { # copy the three relocatable binaries to $D, md5-checked, no other /appfs mapping allowed
+    for f in "$D"/cap.feeder.*.argv "$D"/cap.dropbear.*.argv "$D"/cap.wpa.*.argv; do
+        [ -f "$f" ] || continue
+        p=${f#"$D"/cap.*.}
+        p=${p%.argv}
+        src=$(cat "${f%.argv}.exe")
+        dst=$D/${src##*/}
+        if [ -x "$dst" ]; then
+            if [ "$(md5sum <"$src")" = "$(md5sum <"$dst")" ]; then echo "reused $dst (md5 equal)"; continue; fi
+            echo "$dst differs from $src: copying again"
+            rm -f "$dst"
+        fi
+        if grep '/appfs/' "$P/$p/maps" 2>/dev/null | grep -q -v -F "$src"; then
+            echo "pid $p maps another file from /appfs besides $src (a library): cannot be relocated: refused"
+            exit 1
+        fi
+        cp "$src" "$dst" && chmod 755 "$dst" || { echo "cannot copy $src"; exit 1; }
+        [ "$(md5sum <"$src")" = "$(md5sum <"$dst")" ] || { echo "copy of $src differs"; exit 1; }
+        echo "staged $dst ($(wc -c <"$dst") bytes, md5 equal)"
+    done
+}
+
+cmd_feeder() {
+    f=$(cap_file feeder)
+    [ -n "$f" ] || { echo "feeder: none runs from /appfs, nothing to do"; return 0; }
+    oom_protect
+    olds=$(pids_of feeder)
+    olds_app=""
+    for p in $olds; do [ -z "$(refs "$p")" ] || olds_app="$olds_app $p"; done
+    spawn "$f" "$D/busybox" bg
+    new=$!
+    sleep 3
+    if kill -0 "$new" 2>/dev/null; then
+        echo "feeder: the new one (pid $new) opened the watchdog while the old one runs (shared open allowed)"
+        sleep 4
+    else
+        echo "feeder: the new one exited (watchdog is exclusive): handing over"
+        # SIGKILL, never SIGTERM: no magic close, so the timer keeps running during the 1 s gap
+        for p in $olds_app; do kill -KILL "$p" 2>/dev/null; done
+        gone 5 $olds_app
+        spawn "$f" "$D/busybox" bg
+        new=$!
+        sleep 3
+        if ! kill -0 "$new" 2>/dev/null; then
+            spawn "$f" "$(cat "${f%.argv}.exe")" bg
+            fb=$!
+            sleep 2
+            if kill -0 "$fb" 2>/dev/null; then
+                echo "feeder: FAILED to start a feeder from outside /appfs; the old command was restarted (pid $fb, alive)"
+            else
+                echo "feeder: CRITICAL: FAILED to start a feeder from /tmp AND the fallback feeder (the old command) is NOT alive: no watchdog feeder runs, the camera may reset soon"
+            fi
+            exit 1
+        fi
+        echo "feeder: handed over, new pid $new"
+    fi
+    kill -0 "$new" 2>/dev/null || { echo "feeder: the new feeder died"; exit 1; }
+    for p in $olds_app; do kill -KILL "$p" 2>/dev/null; done
+    gone 5 $olds_app || { echo "feeder: an old feeder did not die"; exit 1; }
+    # soak: the new feeder alone must keep running longer than the watchdog timeout (-T 20) after the old one is gone
+    i=0
+    while [ "$i" -lt "$SOAK" ]; do
+        kill -0 "$new" 2>/dev/null || { echo "feeder: the new feeder died ${i} s after the old one was stopped"; exit 1; }
+        sleep 1
+        i=$((i + 1))
+    done
+    echo "$new" >"$D/feeder.pid"
+    echo "$new" >"${AKAM_FEEDER_PID:-/tmp/akam_feeder.pid}" # akam_net.sh's last resort kills the feeder named here, not the dead old one
+    echo "feeder: running from /tmp (pid $new, soaked ${SOAK} s alone), old one(s) stopped:$olds_app"
+}
+
+# wpaswap: stop the /appfs wpa_supplicant, start the /tmp copy with the same arguments, wait for the PC's confirmation
+# (a fresh ssh round trip proves Wi-Fi + SSH work). No confirmation within CONFIRM_S, or no network = the old one
+# (still on the untouched /appfs) is restarted and 1 is returned. Nothing to do (none runs from /appfs: already
+# relocated, e.g. after a rehearsal) = 0 at once, no checkpoint.
+cmd_wpaswap() {
+    f=$(cap_file wpa)
+    if [ -z "$f" ]; then echo "wpa: none runs from /appfs (already on /tmp): skipped"; return 0; fi
+    old=""
+    for p in $(pids_of wpa); do [ -z "$(refs "$p")" ] || old="$old $p"; done
+    exe0=$(cat "${f%.argv}.exe")
+    # shellcheck disable=SC2086  # pid list
+    stop_pids 10 $old
+    sleep 2 # let the Wi-Fi driver release the interface before the new instance claims it
+    a=0
+    ok=0
+    while [ "$a" -lt 3 ]; do
+        a=$((a + 1))
+        if spawn "$f" "$D/wpa_supplicant" fg; then ok=1; break; fi
+        echo "wpa: attempt $a failed, its output:"
+        cat "$D/spawn.out" 2>/dev/null
+        sleep 3
+    done
+    if [ "$ok" = 1 ] && [ -z "$(pids_of wpa norefs)" ]; then
+        echo "wpa: spawned but not seen as a /tmp process; ps:"
+        # shellcheck disable=SC2009  # BusyBox ps output, diagnostic only
+        ps | grep "[w]pa_supplicant"
+    fi
+    sleep 3
+    if [ "$ok" = 1 ] && [ -n "$(pids_of wpa norefs)" ] && waitnet 60; then
+        echo "wpa: running from /tmp, network up; waiting for the PC's confirmation"
+        wait_confirm wpa "wpa_supplicant runs from /tmp, network up: confirm with a fresh ssh round trip" && return 0
+        echo "wpa: NOT confirmed within $CONFIRM_S s: rolling back"
+    else
+        echo "wpa: the new wpa_supplicant did not come up: rolling back"
+    fi
+    # shellcheck disable=SC2046  # pid list
+    stop_pids 10 $(pids_of wpa norefs)
+    spawn "$f" "$exe0" fg
+    waitnet 60
+    echo "wpa: rolled back to the /appfs copy"
+    return 1
+}
+
+dbspawn() { # dbspawn <port>: a dropbear from the copy in /tmp with the captured arguments, port and pid file replaced
+    f=$(cap_file dropbear)
+    [ -n "$f" ] || return 1
+    port=$1
+    bin=$D/dropbearmulti
+    [ -x "$bin" ] || bin=$(cat "${f%.argv}.exe")
+    set -- "$bin"
+    first=1
+    skip=""
+    sp=0
+    sP=0
+    while IFS= read -r a; do
+        if [ "$first" = 1 ]; then first=0; continue; fi
+        if [ -n "$skip" ]; then
+            if [ "$skip" = p ]; then set -- "$@" "$port"; else set -- "$@" "$D/db$port.pid"; fi
+            skip=""
+            continue
+        fi
+        case $a in -p) skip=p; sp=1 ;; -P) skip=P; sP=1 ;; esac
+        set -- "$@" "$a"
+    done <"$f"
+    [ "$sp" = 1 ] || set -- "$@" -p "$port"
+    [ "$sP" = 1 ] || set -- "$@" -P "$D/db$port.pid"
+    rm -f "$D/db$port.pid"
+    "$@" >"$D/db$port.log" 2>&1 </dev/null
+}
+
+cmd_dbstart() {
+    i=0
+    while [ "$i" -lt 4 ]; do
+        i=$((i + 1))
+        dbspawn "$1" || { echo "dropbear: no captured command line"; exit 1; }
+        sleep 2
+        if [ -s "$D/db$1.pid" ] && kill -0 "$(cat "$D/db$1.pid")" 2>/dev/null; then echo "dropbear from /tmp on port $1, pid $(cat "$D/db$1.pid")"; return 0; fi
+    done
+    echo "dropbear on port $1 did not start: $(tail -n 3 "$D/db$1.log" 2>/dev/null)"
+    exit 1
+}
+
+cmd_dbkill() { # only the listener of this port (its sessions live on)
+    [ -s "$D/db$1.pid" ] && kill "$(cat "$D/db$1.pid")" 2>/dev/null
+    echo "dropbear listener on port $1 stopped"
+}
+
+anc_refs() { # does this shell's own ancestry touch /appfs (= it would kill itself)?
+    q=$$
+    while [ -n "$q" ] && [ "$q" -gt 1 ]; do
+        [ -z "$(refs "$q")" ] || return 0
+        q=$(sed -n 's/^PPid:[[:space:]]*//p' "$P/$q/status" 2>/dev/null)
+    done
+    return 1
+}
+
+cmd_dbstop_old() {
+    if anc_refs; then echo "refusing: this session itself runs from /appfs (use the second dropbear)"; exit 3; fi
+    l=""
+    for p in $(pids_of dropbear); do [ -z "$(refs "$p")" ] || l="$l $p"; done
+    # shellcheck disable=SC2086  # pid list
+    stop_pids 8 $l
+    echo "old dropbear processes stopped:$l"
+}
+
+cmd_stopapp() {
+    cmd_feedercheck || exit 1
+    # shellcheck disable=SC2046  # pid lists
+    stop_pids 25 $(pids_of supervisor) && stop_pids 12 $(pids_of app) && stop_pids 6 $(pids_of ntp) &&
+        stop_pids 6 $(pids_of keeper) || { echo "a process did not stop"; exit 1; }
+    # KILL: the stub's TERM trap would signal the feeder; init.sh only polls yy_debug.ini and an OTA trigger
+    for p in $(pids_of stub) $(pids_of init); do kill -KILL "$p" 2>/dev/null; done
+    # shellcheck disable=SC2046  # pid list
+    gone 5 $(pids_of stub) $(pids_of init) || { echo "the stub or init.sh did not stop"; exit 1; }
+    echo "supervisor, app, ntp helper, keeper, stub and init.sh stopped"
+}
+
+cmd_memgate() { # memgate <need kB> <tmp kB>
+    dropcaches
+    mi=${AKAM_MEMINFO:-/proc/meminfo}
+    memlog "memory gate"
+    mf=$(sed -n 's/^MemFree:[[:space:]]*\([0-9]*\) kB.*/\1/p' "$mi")
+    tf=$(df -k /tmp 2>/dev/null | awk 'END{print $4}')
+    echo "MemFree ${mf:-?} kB (need > $1), /tmp free ${tf:-?} kB (need > $2)"
+    [ "${mf:-0}" -gt "$1" ] || { echo "not enough free memory"; exit 1; }
+    [ "${tf:-0}" -gt "$2" ] || { echo "not enough space in /tmp"; exit 1; }
+    mkdir -p "$FD" || exit 1
+}
+
+cmd_final() { # last gate before the write: nothing touches /appfs, a feeder runs, memory is left
+    cmd_scan free || exit 1
+    cmd_feedercheck || exit 1
+    [ -s "${AKAM_WORKER:-/tmp/akam_flash_worker.sh}" ] && [ -s "${AKAM_RBWORKER:-/tmp/akam_rollback_worker.sh}" ] || { echo "the flash worker or the rollback worker script is missing"; exit 1; }
+    dropcaches
+    mi=${AKAM_MEMINFO:-/proc/meminfo}
+    memlog "final gate"
+    mf=$(sed -n 's/^MemFree:[[:space:]]*\([0-9]*\) kB.*/\1/p' "$mi")
+    echo "MemFree after staging: ${mf:-?} kB (need > $1)"
+    [ "${mf:-0}" -gt "$1" ] || exit 1
+}
+
+cmd_restore() { # restart what the relocation stopped; feeder, wpa_supplicant and dropbear stay on their /tmp copies
+    [ -d "$D" ] || { echo "nothing captured"; exit 0; }
+    rm -rf "$FD"   # frees the staged images (~9.3 MB of RAM)
+    for ro in supervisor ntp keeper; do
+        for pre in "$D"/cap."$ro".*.argv; do
+            [ -f "$pre" ] || continue
+            if [ -z "$(pids_of "$ro")" ]; then replay "${pre%.argv}"; echo "restarted $ro"; fi
+            break
+        done
+    done
+    if [ -z "$(pids_of feeder)" ]; then
+        f=$(cap_file feeder)
+        [ -z "$f" ] || { oom_protect; spawn "$f" "$D/busybox" bg; echo "restarted a feeder"; }
+    fi
+    # a port-22 listener: by the pid file of the one this helper started, else by an /appfs one still on port 22
+    p22=0
+    if [ -s "$D/db22.pid" ] && kill -0 "$(cat "$D/db22.pid")" 2>/dev/null; then p22=1; fi
+    for p in $(pids_of dropbear); do
+        case "$(cmdl "$p") " in *" -p 22 "*) p22=1 ;; esac
+    done
+    if [ "$p22" = 0 ] && [ -n "$(cap_file dropbear)" ]; then cmd_dbstart 22 || exit 1; fi
+    cmd_dbkill "${AKAM_HOT_PORT:-2222}" >/dev/null   # the temporary listener of a failed swap
+    if [ -z "$(pids_of wpa)" ]; then echo "restore: NO wpa_supplicant is running: the camera has no Wi-Fi"; exit 5; fi
+    echo "restore done (the stub is not restarted: its feeder/Wi-Fi/health job is done; a reboot returns to the normal state)"
+}
+
+# ---- the runner: ONE detached job, the PC only uploads, polls $ST and answers the checkpoints ----------------------------
+do_restore() { # status word for the outcome of a restore: RESTORED | RESTORED_NO_WIFI | RESTORE_FAILED
+    (cmd_restore) >&2
+    case $? in 0) echo RESTORED ;; 5) echo RESTORED_NO_WIFI ;; *) echo RESTORE_FAILED ;; esac
+}
+runner_exit() { # EXIT trap: killed or failed with the relocation in place and no write started = restore
+    if [ "$RESTORE" = 1 ]; then
+        RESTORE=0
+        echo "runner leaving with the relocation in place and no write: restoring"
+        rs=$(do_restore)
+        st "ABORTED_$rs" "runner interrupted, $rs"
+    fi
+    [ "$OWNLOCK" != 1 ] || rm -rf "$D/run.lock"
+}
+abort() { # abort <message>: a failure before the write
+    echo "ABORT: $1"
+    if [ "$RESTORE" = 1 ]; then
+        RESTORE=0
+        rs=$(do_restore)
+        st "ABORTED_$rs" "$1 ($rs, nothing written)"
+    else
+        st ABORTED_UNCHANGED "$1 (nothing changed, nothing written)"
+    fi
+    exit 1
+}
+
+cmd_run() { # run <hot|rehearsal> <need kB> <tmp kB> <final kB>
+    mode=$1
+    need=$2
+    tmpk=$3
+    fin=$4
+    port=${AKAM_HOT_PORT:-2222}
+    case $mode in hot | rehearsal) ;; *) echo "run: mode must be hot or rehearsal"; exit 64 ;; esac
+    cd / || exit 1
+    mkdir -p "$D" || exit 1
+    # single instance: the lock holds the runner's pid; a lock whose pid is dead is taken over (an empty pid = alive)
+    if ! mkdir "$D/run.lock" 2>/dev/null; then
+        lp=$(cat "$D/run.lock/pid" 2>/dev/null)
+        if [ -z "$lp" ] || grep -q akam_hot "/proc/$lp/cmdline" 2>/dev/null; then
+            echo "another runner (pid ${lp:-unknown}) holds $D/run.lock: refusing to start a second one"
+            exit 1
+        fi
+        echo "stale run.lock (pid $lp is dead): taking it over"
+        rm -rf "$D/run.lock"
+        mkdir "$D/run.lock" 2>/dev/null || { echo "cannot take run.lock"; exit 1; }
+    fi
+    echo $$ >"$D/run.lock/pid"
+    OWNLOCK=1
+    rm -f "$D"/confirm.*
+    trap runner_exit EXIT
+    trap 'exit 143' INT TERM HUP
+    oom_protect
+    st H1 "card-less boot, tools, feeder, process scan"
+    memlog H1
+    (cmd_cardless) || abort "not a card-less boot (an SD card is mounted or the Akam flash tree is not on /mnt/sdcard)"
+    (cmd_tools) || abort "a tool the flash path needs is missing or lives in /appfs"
+    [ -n "$(pids_of feeder)" ] || abort "no watchdog feeder running: a write of 1-2 minutes without one = reset mid-write"
+    rc=0
+    (cmd_scan) || rc=$?
+    case $rc in
+        0) ;;
+        2) abort "a process with no known role touches /appfs (listed above): cannot prove the update safe" ;;
+        *) abort "the process scan failed (status $rc)" ;;
+    esac
+    (cmd_capture) || abort "cannot capture the command lines for a restore"
+    RESTORE=1
+    st H2 "stage the /tmp copies"
+    (cmd_stage) || abort "cannot stage the binaries in /tmp"
+    st H2 "feeder relocation"
+    (cmd_feeder) || abort "the feeder relocation failed"
+    memlog "after feeder"
+    st H2 "wpa_supplicant swap"
+    (cmd_wpaswap) || abort "the wpa_supplicant swap failed or was not confirmed by the PC (the old one is back)"
+    if cmd_hasdb; then
+        st H2 "dropbear from /tmp on port $port"
+        (cmd_dbstart "$port") || abort "no second dropbear from /tmp"
+        wait_confirm dbalt "dropbear from /tmp answers on port $port: confirm through it" || abort "the PC did not confirm the dropbear on port $port"
+        (cmd_dbstop_old) || abort "cannot stop the dropbear that runs from /appfs"
+        (cmd_dbstart 22) || abort "no dropbear from /tmp on port 22"
+        wait_confirm db22 "dropbear from /tmp serves port 22: confirm through it" || abort "the PC did not confirm port 22 after the dropbear swap"
+        (cmd_dbkill "$port") || true
+    else
+        echo "no dropbear runs from /appfs: nothing to relocate"
+    fi
+    st H2 "stop app, supervisor, ntp helper, keeper, stub"
+    (cmd_stopapp) || abort "could not stop the app, supervisor, ntp helper, keeper or stub"
+    (cmd_scan free) || abort "something still touches /appfs (listed above): refused"
+    st H3 "memory gate"
+    (cmd_memgate "$need" "$tmpk") || abort "memory gate failed even after the relocation"
+    if [ "$mode" = rehearsal ]; then
+        st H3 "rehearsal: gates passed, restoring (nothing is written)"
+        RESTORE=0
+        rs=$(do_restore)
+        case $rs in
+            RESTORED) st DONE_RESTORED "rehearsal passed; everything restored"; exit 0 ;;
+            RESTORED_NO_WIFI) st DONE_RESTORED_NO_WIFI "rehearsal passed, restored, but NO wpa_supplicant runs"; exit 1 ;;
+        esac
+        st DONE_RESTORE_FAILED "rehearsal passed but the restore failed"
+        exit 1
+    fi
+    wait_confirm upload "relocation done, memory gate passed: upload the two images to $FD" || abort "the PC did not upload the images in time"
+    [ -s "$FD/appfs-new.bin" ] && [ -s "$FD/appfs-backup.bin" ] || abort "the staged images are missing"
+    wait_confirm go "images staged and md5-checked by the PC: final go" || abort "the PC gave no final go in time"
+    st FINAL "final gate"
+    (cmd_final "$fin") || abort "the final gate failed (something touches /appfs again, no feeder, or the staged images ate the memory)"
+    RESTORE=0   # from here NOTHING is restarted and NOTHING waits for the PC: a write may be running
+    trap '' TERM INT HUP   # shield the write: ignored dispositions are inherited by the worker and flashcp
+    st WRITING "mtd3 write started: no PC confirmation is waited for from here on"
+    wk=${AKAM_WORKER:-/tmp/akam_flash_worker.sh}
+    rf=${AKAM_FLASH_RES:-/tmp/akam_flash.result}
+    rm -f "$rf"
+    sh "$wk" >"${AKAM_FLASH_LOG:-/tmp/akam_flash.log}" 2>&1 </dev/null
+    res=$(cat "$rf" 2>/dev/null)
+    st WRITTEN "${res:-NONE}"
+}
+
+c=$1
+shift
+case $c in
+    cardless) cmd_cardless ;;
+    tools) cmd_tools ;;
+    scan) cmd_scan "$@" ;;
+    feedercheck) cmd_feedercheck ;;
+    capture) cmd_capture ;;
+    hasdb) cmd_hasdb ;;
+    stage) cmd_stage ;;
+    feeder) cmd_feeder ;;
+    dbstart) cmd_dbstart "$@" ;;
+    dbstop_old) cmd_dbstop_old ;;
+    dbkill) cmd_dbkill "$@" ;;
+    stopapp) cmd_stopapp ;;
+    memgate) cmd_memgate "$@" ;;
+    final) cmd_final "$@" ;;
+    restore) cmd_restore ;;
+    run) cmd_run "$@" ;;
+    *) echo "akam_hot: unknown subcommand '$c'"; exit 64 ;;
+esac
