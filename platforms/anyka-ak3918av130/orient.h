@@ -24,8 +24,14 @@
 /* The current orientation; every a2k_orient_get reader sees a consistent pair. */
 void a2k_orient_get(int *flip, int *mirror);
 /* Sets it (each 0 or 1), calls the listeners when it changed, and opens a settling window (a2k_orient_settling). Does NOT touch the ISP: the caller
- * (settings.c) applies a2k_isp_flip_mirror first and records the orientation only when that worked. */
+ * (settings.c) records the orientation FIRST (so every consumer is on the new frame rules while the picture turns), then applies a2k_isp_flip_mirror, and puts
+ * the old orientation back if the ISP refuses. That sequence, and the replay after a day / night switch (a2k_isp_mode), run under a2k_orient_isp_lock. */
 void a2k_orient_set(int flip, int mirror);
+/* Opens the settling window without a change (the ISP may hand out frames of the other orientation for a moment: a day / night switch before its flip replay). */
+void a2k_orient_hold(void);
+/* One lock around "read / record the orientation and call the ISP", so the ISP and the recorded orientation never disagree after two concurrent callers. */
+void a2k_orient_isp_lock(void);
+void a2k_orient_isp_unlock(void);
 /* Increases at every change (a consumer that caches a converted value compares it). */
 unsigned a2k_orient_gen(void);
 /* 1 during A2K_ORIENT_SETTLE_MS after a change: the frames of the detection channel may still be of the old orientation (frames already queued), a consumer
@@ -46,8 +52,6 @@ int a2k_orient_tilt_sign(int s, int flip);
 /* The tracker's motor direction flags: base (the 2K binding's invert_pan / invert_tilt, measured with the orientation off) combined with the orientation. */
 int a2k_orient_invert_pan(int base, int mirror);
 int a2k_orient_invert_tilt(int base, int flip);
-/* A point (percent 0..100, or pixels 0..max) between the sensor and the displayed frame: mirror reverses x, flip reverses y. max = 100 for a percent. */
-void a2k_orient_point(int flip, int mirror, int max_x, int max_y, int *x, int *y);
 /* A rectangle x1,y1,x2,y2 (x1 <= x2, y1 <= y2, same units, max as above) between the frames; the result keeps x1 <= x2 and y1 <= y2. */
 void a2k_orient_rect(int flip, int mirror, int max_x, int max_y, int *x1, int *y1, int *x2, int *y2);
 /* A luma plane (w x h bytes, src_stride) of the DISPLAYED frame into dst (w x h, stride w) in the SENSOR frame (or the other way: an involution). dst != src.

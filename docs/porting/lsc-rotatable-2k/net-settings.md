@@ -103,7 +103,7 @@ akam_net.sh wifi show | render | set country XX|none | set band 2.4|5 | fallback
 
 ## Registry rows (not wired yet)
 
-`app/akam2k_netreg.[ch]`: `net.hostname` (string 1-32), `net.wifi_country` (2 capitals), `net.wifi_band`
+`firmware/lsc-rotatable-2k-ak3918av130/netreg.[ch]`: `net.hostname` (string 1-32), `net.wifi_country` (2 capitals), `net.wifi_band`
 (`2.4|5`, default 2.4), all apply mode live, writable, HTTP + MQTT exposed, `persist = 0` (the script files are the source of
 truth). The hooks call a backend installed by the caller (`a2k_netreg_set_backend`): the app never spawns (anti-brick
 scan), so the future wiring supplies a backend that runs `akam_net.sh`. The check hooks refuse what the script would

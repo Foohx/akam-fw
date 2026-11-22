@@ -526,6 +526,30 @@ req "$WID" "$WSEC" GET /akam/v1/settings/image.flip
 want "the flip survived the restart" 200 '"value":"1"'
 stop_srv || true
 
+# image.ceiling ALONE (the Home Assistant "Ceiling mount" switch sends exactly this): the file must get image.flip and image.mirror, and a restart must read both on.
+echo "== image.ceiling alone is saved (through image.flip and image.mirror) and survives a restart"
+D2C=$WORK/p2c
+mkdir -p "$D2C"
+newkey "$D2C" write ha
+WID=$KID
+WSEC=$KSEC
+start_srv "$D2C" --fast
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.ceiling":true}'
+want "PATCH image.ceiling alone is applied" 200 '"image.ceiling":\{"ok":true'
+sleep 2.2
+check "the file holds image.flip=1 and image.mirror=1 and no image.ceiling key" bash -c "grep -q '^image.flip=1' '$D2C/settings' && grep -q '^image.mirror=1' '$D2C/settings' && ! grep -q 'image.ceiling' '$D2C/settings'"
+stop_srv || true
+: >"$D2C/calls.log"
+start_srv "$D2C" --fast
+check "the restart applies flip 1 mirror 1 to the ISP" bash -c "grep -q 'isp.flip_mirror 1 1 rc 0' '$D2C/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/image.flip
+want "flip reads 1 after the restart" 200 '"value":"1"'
+req "$WID" "$WSEC" GET /akam/v1/settings/image.mirror
+want "mirror reads 1 after the restart" 200 '"value":"1"'
+req "$WID" "$WSEC" GET /akam/v1/settings/image.ceiling
+want "ceiling reads 1 after the restart" 200 '"value":"1"'
+stop_srv || true
+
 # ================================================================== phase 3: default limits (lockout, rate)
 echo "== rate limit and lockout with the spec defaults"
 D3=$WORK/p3

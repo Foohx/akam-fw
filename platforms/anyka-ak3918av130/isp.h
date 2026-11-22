@@ -16,8 +16,8 @@ int a2k_isp_effect(int type, int value);
  * for off. The ISP mode switch resets it, so the stock replays it after every switch. */
 int a2k_isp_wdr(int on);
 
-/* ak_vpss_switch_flip_mirror(0, flip, mirror): flip = vertical, mirror = horizontal, each 0 or 1 (0 = the sensor's native picture). Live. The app records the result
- * with a2k_orient_set (orient.h) and replays it after every ISP mode switch (a2k_isp_mode). */
+/* ak_vpss_switch_flip_mirror(0, flip, mirror): flip = vertical, mirror = horizontal, each 0 or 1 (0 = the sensor's native picture). Live. The caller (settings.c) records the orientation
+ * with a2k_orient_set (orient.h) BEFORE this call and puts the old one back if it fails; a2k_isp_mode replays it after every ISP mode switch. */
 int a2k_isp_flip_mirror(int flip, int mirror);
 
 /* Registers the stock automatic day/night parameters with the vendor lib (once, before the first a2k_isp_dn_level). */

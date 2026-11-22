@@ -23,7 +23,7 @@ passes the host tests of its operating-system layer. Nothing is called tested un
 | Windows arm64 | yes | no | host tests only | everything on hardware |
 | macOS Intel (amd64) | yes | no | host tests only | everything on hardware |
 | macOS Apple silicon (arm64) | yes | no | host tests only | everything on hardware |
-| Go program, 2K commands (any OS) | yes | **no** | host tests with a fake camera and a fake card (`backup-2k`, `prepare-2k-sd`, `key-2k`, `seed-2k`, `update`) | everything on hardware; a first install from macOS or Windows |
+| Go program, 2K commands (any OS) | yes | **no** | host tests with a fake camera and a fake card (`backup-2k`, `prepare-2k-sd`, `key-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`, `update --rollback`) | everything on hardware; a first install from macOS or Windows |
 | **Bash wizard, Linux** | n/a (scripts) | **yes, the reference** | real first installs (backup, image, flash), updates over SSH, verify, on two cameras | restore to stock (never rehearsed), Windows and macOS (not supported) |
 
 A **first install from Windows or macOS has never been done**. Until it is, install from Linux (or WSL2 for the build
@@ -34,7 +34,7 @@ Evidence: [testing status](testing-status.md).
 
 The assistant has its own releases, tagged `assistant-vX.Y.Z` (the one marked "Latest" on GitHub). The camera firmware is
 a separate release, `firmware-vX.Y.Z`, with its own version: one kit per camera model, the source, the licences and its own
-`SHA256SUMS` and `SHA256SUMS.sig`; `akam get-kit` downloads and verifies it for you. Names of the assistant files carry no version:
+`SHA256SUMS` and `SHA256SUMS.sig`; `akam get-kit` (1080p) or, for the 2K, `prepare-2k-sd`, `appfs-build` and `update` download and verify it for you. Names of the assistant files carry no version:
 
 | Target | Raw binary | Archive |
 |---|---|---|
@@ -112,15 +112,18 @@ backup, as before.
 The installer is chosen by the **firmware kind** of the model in the registry, never by the model id
 (`internal/installer`): `native-app` (the 1080p: the APP partition is replaced) is served by `nativeapp` (image, flash,
 sdcard), `cardless-appfs` (the 2K: Akam runs from the flash with no SD card) by `appfs`. Any other kind has no installer.
-The 1080p backup, restore, update, flash, SD preparation, kit, option and config commands and menu entries stay refused
-on a 2K ("not yet supported for this model"): the 1080p installer would brick it.
+The 1080p backup, restore, flash, SD preparation, kit, option and config commands and menu entries (and the 1080p `update`) stay
+refused on a 2K ("not yet supported for this model"): the 1080p installer would brick it. The 2K has its own `update`, below.
 
 ### The card-less 2K installer (`appfs-build`, `appfs-flash`)
 
 Two commands, only for a model of kind `cardless-appfs` (pass `--model lsc-rotatable-2k-ak3918av130`; a 1080p is refused):
 
-* `akam appfs-build --kit DIR --backup-dir DIR [--out DIR]` builds the appfs image **in this program** (Linux, macOS and
-  Windows, no `mksquashfs`, no shell) from **your own `mtd3.bin`** and the 2K kit. It is the port of `firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`:
+* `akam appfs-build --backup-dir DIR [--kit FILE|DIR] [--version X.Y.Z] [--out DIR]` builds the appfs image **in this program** (Linux, macOS and
+  Windows, no `mksquashfs`, no shell) from **your own `mtd3.bin`** and the 2K kit. The kit is verified exactly like the one of
+  `prepare-2k-sd` and `update`: `--kit FILE` is the signed `.tar.xz` of the release (checksum, signature, archive layout, model),
+  with no `--kit` the newest release (or `--version`) is downloaded over HTTPS and its signature is mandatory, and `--kit DIR`
+  (an unpacked folder, no signature to check) is for a kit you made yourself (`--allow-unsigned` for a development kit). It is the port of `firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`:
   the stock appfs with one `init.sh` branch changed (no override card: start Akam from flash; the SD override modes,
   the recovery, stay stock code), the Akam payload under `/appfs/akam`, `bin/yy_cam` replaced by a launcher of the stub.
   Its proofs are those of the script (binaries match their BUILDINFO, ARM, uClibc, pinned busybox, symcheck, dropbear
@@ -162,7 +165,7 @@ Same on Linux, macOS and Windows, no bash. The journey and the status of each st
   and your Wi-Fi (stored on the card as a hex SSID and the 256-bit PSK, never the password), shows the red-box confirmation naming
   the device, formats MBR + FAT32 and **verifies every file by sha256 after the write**. **The card disables the rescue
   telnet by default** (it creates the empty file `akam/no_telnet`; the SSH key on the card is enough). `--rescue-telnet`
-  keeps the passwordless root telnet of the card's boot script (port 23, root/root in RAM, open to your whole LAN while the
+  keeps the passwordless root telnet of the card's boot script (port 23, no password prompt, the root password is `root` in RAM, open to your whole LAN while the
   card is in) for a rescue card, behind a red-box confirmation: a card without `akam/no_telnet` is a security risk, remove it
   when you are done. Like `build_card.sh` it never puts a
   `*.bin`, `fac_av130.zip` or `yy_upgrade*` file on the card and checks that `yy_debug.ini` is `mode=debug`.
@@ -240,7 +243,7 @@ the built-in backend, `ffmpeg`, `arecord`. `./akam doctor` prints an `Audio:` li
 (Settings, Privacy, Microphone, "Let desktop apps access your microphone").
 
 `doctor` names the package of each optional tool for your system (for example `alsa-utils` for `arecord`). The squashfs tools
-have no native Windows package: use `--builder native` (experimental, needs none) or WSL.
+have no native Windows package: use `--builder native` (experimental, needs none).
 
 The camera options screen (`./akam`, item 3) also shows the camera's Wi-Fi signal and clock. A weak or poor signal (below
 -70 dBm) prints advice (move the camera or the access point, or lower the bitrate and key frame interval with
@@ -248,6 +251,6 @@ The camera options screen (`./akam`, item 3) also shows the camera's Wi-Fi signa
 by more than 2 minutes it offers to set it from this computer (default No; lost at the next reboot unless time sync is on:
 `./akam ntp set ntp.example.net`: you name the server, there is no default; a server on your network works too). The end of a first install or update offers time sync too (default No; it asks for the server, and an empty answer changes nothing).
 
-On Windows and macOS, the first install needs an image built on Linux or in WSL until the native builder is released
-(`--image FILE`, see the README of the assistant). Writing a card asks for administrator rights: see "Writing the SD card,
+On Windows and macOS the 1080p image can be built with `--builder native` (experimental, not yet validated on hardware), or
+built on Linux or in WSL and given with `--image FILE` (see the README of the assistant). Writing a card asks for administrator rights: see "Writing the SD card,
 per OS" there.

@@ -1740,7 +1740,10 @@ static void test_patrol_controller(void)
         /* Race-free: the head is MOVED (away from home) before the call, so waiting for the state MOVED proves nothing and, on a loaded host, the
          * whole home move can finish between two polls of the transient state. What "queued" means is that the motor was commanded: count it. */
         {
-            int nm0 = M.nmove;
+            int nm0;
+            pthread_mutex_lock(&M.gm);
+            nm0 = M.nmove;
+            pthread_mutex_unlock(&M.gm);
             CHECK(a2k_ptz_home_tracker() == 0 && wait_nmove_above(nm0, 5000), "the tracker's home is queued (the motor is commanded)");
         }
         CHECK(wait_state(HAL_PTZ_HOME, 5000) && pc_hook_n == 0, "...it goes home and never calls the manual-command hook");

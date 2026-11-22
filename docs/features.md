@@ -1,7 +1,7 @@
 # Features and protocols
 
 Everything Akam implements on the LSC Smart Indoor 1080p (article `3215672.3`), with its default, its port and how well
-it is tested. The LSC Rotatable 2K has its own section at the end of this page ("What Akam removes" and the ports line above are the 1080p's; the 2K's are in its [on-camera page](porting/lsc-rotatable-2k/on-camera.md)). Technical details of each item are in [`specs/`](../specs/README.md).
+it is tested. The LSC Rotatable 2K has its own section at the end of this page ([jump to it](#lsc-rotatable-2k)); "What Akam removes" and the ports line below are the 1080p's, the 2K's are in its [on-camera page](porting/lsc-rotatable-2k/on-camera.md). All hardware labels refer to the units flashed earlier, not to the current builds: see [testing status](testing-status.md#which-build-the-hardware-results-come-from). Technical details of each item are in [`specs/`](../specs/README.md).
 
 **Status labels**
 
@@ -102,6 +102,6 @@ features are set in `firmware/lsc-rotatable-2k-ak3918av130/model.mk`.
 | Front button, image zones, night, LEDs | on | | see [button and zones](porting/lsc-rotatable-2k/button-and-zones.md) | Host-tested with fake hardware |
 | ONVIF with pan/tilt, WS-Discovery | off (`onvif=1` in `akam2k.conf`) | TCP 8000, UDP 3702 | host-tested only | [ONVIF](onvif.md) |
 | MQTT, Home Assistant discovery | off | outbound | host-tested only | [MQTT](mqtt.md) |
-| Signed control API | closed until an API key exists | TCP 8092 | hardware-used (signed requests on port 8092: settings changes, `ptz.recalibrate`, state reads), full suite host-tested | [2K API](porting/lsc-rotatable-2k/control-api.md) |
+| Signed control API | closed until an API key exists | TCP 8092 | hardware-used with an earlier binary (signed requests on port 8092: settings changes, `ptz.recalibrate`, state reads), full suite host-tested | [2K API](porting/lsc-rotatable-2k/control-api.md) |
 | SSH (Dropbear) | on | TCP 22 | hardware-validated | ed25519 key only; needs `authorized_keys` on the card or in `/config/akam` |
 | Card-less boot, SD rescue | on | | hardware-validated | [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md) |

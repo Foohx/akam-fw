@@ -76,8 +76,8 @@ func (a *App) cmdAppfsBuild() error {
 		return err
 	}
 	o := a.Opt
-	if o.Kit == "" || o.BackupDir == "" {
-		return usageErr("akam: appfs-build needs --kit DIR (the appfs kit, verified) and --backup-dir DIR (your backup, with mtd3.bin); optional --out DIR")
+	if o.BackupDir == "" {
+		return usageErr("akam: appfs-build needs --backup-dir DIR (your backup, with mtd3.bin); the kit is --kit FILE (the signed .tar.xz of the release) or --kit DIR (an unpacked kit), and is downloaded and verified when --kit is not given; optional --version X.Y.Z, --out DIR")
 	}
 	out := o.Out
 	if out == "" {
@@ -85,18 +85,30 @@ func (a *App) cmdAppfsBuild() error {
 	}
 	a.UI.Banner("Build the card-less appfs image")
 	if a.UI.Dry() {
-		a.UI.Say("  WOULD read the kit " + o.Kit + " (SHA256SUMS, kind, time64 gate), your mtd3.bin from " + o.BackupDir + ",")
+		if o.Kit == "" {
+			a.UI.Say("  WOULD download the signed 2K kit of the newest release (or --version) over HTTPS, verify its signature and checksums, then read it,")
+		} else {
+			a.UI.Say("  WOULD read the kit " + o.Kit + " (signature of a .tar.xz, SHA256SUMS, kind, time64 gate), your mtd3.bin from " + o.BackupDir + ",")
+		}
 		a.UI.Say("  patch the one init.sh branch, add the Akam payload under /appfs/akam, replace bin/yy_cam by a launcher,")
 		a.UI.Say("  write the squashfs, check it against the stock superblock and re-read it, then write " + out + "/" + appfs.ImageName)
 		return nil
 	}
-	var kopts []appfs.KitOption
-	if o.AllowUnsigned { // an explicit choice of a local development kit folder
-		kopts = append(kopts, appfs.AllowTestGrade())
-	}
-	kit, err := appfs.LoadKit(o.Kit, kopts...)
-	if err != nil {
-		return a.UI.Fail("the appfs kit is not usable: "+err.Error(), "get the kit of the 2K from the release (the kit holds only Akam code).")
+	var kit *appfs.Kit
+	var err error
+	if st, serr := os.Stat(o.Kit); o.Kit != "" && serr == nil && st.IsDir() {
+		// an already unpacked kit folder (what a developer builds, or an earlier extraction): as before
+		var kopts []appfs.KitOption
+		if o.AllowUnsigned { // an explicit choice of a local development kit folder
+			kopts = append(kopts, appfs.AllowTestGrade())
+		}
+		kit, err = appfs.LoadKit(o.Kit, kopts...)
+		if err != nil {
+			return a.UI.Fail("the appfs kit is not usable: "+err.Error(), "get the kit of the 2K from the release (the kit holds only Akam code).")
+		}
+	} else if kit, err = a.kit2K(); err != nil {
+		// the signed kit of the release (--kit FILE, or downloaded): signature, checksums, layout and model are checked
+		return err
 	}
 	stock, err := os.ReadFile(filepath.Join(o.BackupDir, "mtd3.bin"))
 	if err != nil {

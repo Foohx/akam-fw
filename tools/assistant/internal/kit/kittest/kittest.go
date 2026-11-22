@@ -39,6 +39,8 @@ type Spec struct {
 	Model   string // camera model id, default DefaultModel
 	Grade   string // default release
 	Format  string // default 1
+	Target  string // MANIFEST target, default arm-linux-musleabi (the 1080p kit); the 2K kit says arm-linux
+	NoLink  bool   // no "link" line in the MANIFEST (the 2K kit has none)
 	// Files overrides or adds payload files (path inside the kit -> content, mode 644 unless it
 	// starts with "bin/" or ends in ".sh", which are 755). A nil content removes the default file.
 	Files map[string][]byte
@@ -157,6 +159,9 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	if sp.HashAlg == "" {
 		sp.HashAlg = "sha256"
 	}
+	if sp.Target == "" {
+		sp.Target = "arm-linux-musleabi"
+	}
 	files := DefaultFilesFor(sp.Model)
 	for k, v := range sp.Files {
 		if v == nil {
@@ -173,11 +178,13 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 	sort.Strings(names)
 	hw := files["supported_hardware.txt"]
 	var man strings.Builder
-	fmt.Fprintf(&man, "kit_format=%s\nkit_grade=%s\nakam_version=%s\nmodel=%s\nsource_commit=0123456789abcdef0123\ntarget=arm-linux-musleabi\ntime64_gate=pass\nsupported_hardware_sha256=%s\n", sp.Format, sp.Grade, sp.Version, sp.Model, shaHex(hw))
+	fmt.Fprintf(&man, "kit_format=%s\nkit_grade=%s\nakam_version=%s\nmodel=%s\nsource_commit=0123456789abcdef0123\ntarget=%s\ntime64_gate=pass\nsupported_hardware_sha256=%s\n", sp.Format, sp.Grade, sp.Version, sp.Model, sp.Target, shaHex(hw))
 	for _, n := range names {
 		fmt.Fprintf(&man, "file %s %o %s\n", shaHex(files[n]), modeFor(n), n)
 	}
-	man.WriteString("link dropbearmulti 777 overlay/bin/dropbear\n")
+	if !sp.NoLink {
+		man.WriteString("link dropbearmulti 777 overlay/bin/dropbear\n")
+	}
 	man.WriteString(sp.ManifestExtra)
 	manifest := []byte(man.String())
 	var inner strings.Builder
@@ -218,11 +225,13 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 		entries = append(entries, Entry{Name: top + "/" + k, Type: tar.TypeReg, Mode: m, Body: all[k]})
 	}
 	for _, d := range []string{"overlay/", "overlay/bin/"} {
-		if !seenDir[top+"/"+d] {
+		if !seenDir[top+"/"+d] && !sp.NoLink {
 			entries = append(entries, Entry{Name: top + "/" + d, Type: tar.TypeDir, Mode: 0o755})
 		}
 	}
-	entries = append(entries, Entry{Name: top + "/overlay/bin/dropbear", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "dropbearmulti"})
+	if !sp.NoLink {
+		entries = append(entries, Entry{Name: top + "/overlay/bin/dropbear", Type: tar.TypeSymlink, Mode: 0o777, Linkname: "dropbearmulti"})
+	}
 	if sp.TarMutate != nil {
 		sp.TarMutate(&entries)
 	}

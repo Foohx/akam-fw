@@ -1,12 +1,12 @@
 # Install and update through the assistant: the user journey per model
 
-Status of every step at the start of the branch (`dev` f82ce99), then what `feat/assistant-install` adds.
-Legend: **exists** = works from the assistant on Linux, macOS and Windows; **partial** = exists with a named limit;
+Status of every step before the assistant's install and update flows were written (the first table of each model), then what
+those flows added (the "What the assistant adds" table). Legend: **exists** = works from the assistant on Linux, macOS and Windows; **partial** = exists with a named limit;
 **missing**. `akam` (CLI and menu) is `tools/assistant`; "script" means a bash tool under `firmware/` or `tools/`.
 
 ## 1080p (`lsc-indoor-1080p-ak3918`, kind `native-app`, APP partition `mtd7`)
 
-| Step | Status at start | How |
+| Step | Status before | How |
 |---|---|---|
 | Release kit (signed tarball) | exists | `akam get-kit` (HTTPS, SHA256SUMS + SSH signature, safe extraction), `akam releases` |
 | Kit build (maintainer) | exists | `tools/release/make_kit.sh`, `sign_kit.sh`, `verify_kit.sh` |
@@ -18,13 +18,13 @@ Legend: **exists** = works from the assistant on Linux, macOS and Windows; **par
 
 ## 2K (`lsc-rotatable-2k-ak3918av130`, kind `cardless-appfs`, appfs `mtd3`)
 
-| Step | Status at start | How |
+| Step | Status before | How |
 |---|---|---|
 | Signed release kit for the 2K | **missing** | no producer (the 1080p `make_kit.sh` refuses this kind); the kit verifier only knew the 1080p layout |
 | First install, SD card: the kit | **partial** | `firmware/lsc-rotatable-2k-ak3918av130/image/build_card.sh` (bash, needs a source tree and a build) |
 | First install, SD card: screens | **missing** | the 1080p SD screens are refused on a 2K (`modelGate`) |
 | Backup (mtd0..mtd5) | partial | by hand over SSH (`on-camera.md`); the assistant backup is 1080p only |
-| Card-less image build | exists | `akam appfs-build` (Go port of `build_appfs.sh`, any OS) |
+| Card-less image build | exists | `akam appfs-build` (Go port of `build_appfs.sh`, any OS); takes the signed kit tarball (`--kit FILE`) or downloads and verifies it |
 | Flash, first card-less | exists | `akam appfs-flash --execute` (Go port of `flash_appfs.sh`, every gate, typed confirmation) |
 | Hot update (card-less to card-less) | partial | `appfs-flash --current-image F --hot-preflight` then `--hot`; kit, image, current image and backup dir all passed by hand |
 | Detect model and version | **missing** | no client of the signed control API (`GET /info`) in the assistant |
@@ -33,11 +33,11 @@ Legend: **exists** = works from the assistant on Linux, macOS and Windows; **par
 | Keep the previous image for rollback | **missing** | the operator keeps `--current-image` by hand |
 | Rollback / recovery | partial | on-camera worker rolls back by itself; SD card override; UART/CH341A in `uart-recovery.md`; no assistant screen |
 
-## What this branch adds (status after)
+## What the assistant adds (status after)
 
 | Step | Now | How |
 |---|---|---|
-| Signed release kit for the 2K | exists (producer + verifier + release pipeline) | `tools/release/make_kit_2k.sh`, `tests/kit2k_test.sh`; the kit verifier takes a layout (`kit.Layout`, `appfs.KitLayout`). Built by `make_release.sh` into the one signed `SHA256SUMS` of the firmware release (the file the assistant downloads); not yet published in a release |
+| Signed release kit for the 2K | exists (producer + verifier + release pipeline) | `tools/release/make_kit_2k.sh`, `tests/kit2k_test.sh`; the kit verifier takes a layout (`kit.Layout`, `appfs.KitLayout`). Built by `make_release.sh` into the one signed `SHA256SUMS` of the firmware release (the file the assistant downloads) |
 | First install, SD card: the kit | exists | the kit carries `card/` |
 | First install, SD card: screens | exists | `akam prepare-2k-sd` (also the "Set up a new camera" entry on a 2K): kit, SSH key, Wi-Fi, device, red box, FAT32, sha256 verify of every file |
 | Backup (mtd0..mtd5) | exists | `akam backup-2k` (read only, double read, verified, recorded for `update`); `--backup-dir` still takes a backup made by hand |
@@ -51,8 +51,8 @@ Legend: **exists** = works from the assistant on Linux, macOS and Windows; **par
 ## Remaining
 
 * The 2K kit is built by `make_release.sh` into the one `SHA256SUMS` of the firmware release (signed and published by
-  `publish.sh` like the 1080p kits); no release carrying it has been published yet, so `update` and `prepare-2k-sd` without
-  `--kit` have nothing to download until the first firmware release with the 2K kit.
+  `publish.sh` like the 1080p kits). `prepare-2k-sd`, `appfs-build` and `update` without `--kit` download the newest release that
+  carries it; if the releases page has none, use `--kit FILE` or build the kit yourself (`tools/release/make_kit_2k.sh`).
 * `akam backup-2k` backs the 2K up from the assistant (read only, double read, sizes and `SHA256SUMS` checked, recorded for
   `update`); it is a separate command, there is no menu entry for it yet.
 * `akam key-2k` creates the API key: the camera makes it itself (`akam_api_key.sh new`, its own random pool; the key is NOT
@@ -65,5 +65,5 @@ Legend: **exists** = works from the assistant on Linux, macOS and Windows; **par
   screens of the first flash are still the design of `assistant-rot2k-flash-design.md` section 3.5 (`appfs-flash` prints the steps).
 * No `akam restore-2k`: back to stock on the 2K is manual ([back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock)).
 * `prepare-2k-sd` writes `akam/no_telnet` on the card by default; `--rescue-telnet` keeps the passwordless root telnet.
-* Not run on hardware: every test uses fakes (no camera, no network). The hot update itself is the already-tested Go port of
-  `flash_appfs.sh --hot`; the first live run of `akam update` should be a rehearsal with a recovery means at hand.
+* Not run on hardware: every test uses fakes (no camera, no network). The hot update itself is the host-tested Go port of
+  `flash_appfs.sh --hot` (the script it ports did run on the camera); the first live run of `akam update` should be a rehearsal with a recovery means at hand.

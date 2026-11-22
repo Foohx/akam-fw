@@ -8,10 +8,10 @@ WAV are built in. The plan is in [specs/installer.md](../../specs/installer.md).
 camera that already runs Akam, gets and verifies the kit, updates or restores a camera over SSH, does the whole first
 install from a stock camera (telnet detection, backup, built-in microSD writer, flash), and since phase 11 it is built
 for six targets (Linux, Windows and macOS, amd64 and arm64) and has a home screen, a camera chooser, option screens, a
-backup over SSH and a guided update. **The bash wizard (`./akam`) remains the reference on Linux for the 1080p.** The LSC Rotatable 2K commands (`backup-2k`, `prepare-2k-sd`, `seed-2k`, `key-2k`, `appfs-build`, `appfs-flash`, `update`) exist only in this program and are host-tested only. The program never
+backup over SSH and a guided update. **The bash wizard (`./akam`) remains the reference on Linux for the 1080p.** The LSC Rotatable 2K commands (`backup-2k`, `prepare-2k-sd`, `seed-2k`, `key-2k`, `appfs-build`, `appfs-flash`, `update`) exist only in this program and are host-tested only (`get-kit` is the 1080p's; `prepare-2k-sd`, `appfs-build` and `update` verify and download the signed 2K kit themselves, see [docs/assistant.md](../../docs/assistant.md)). The program never
 reboots or power-cycles a camera: after a flash it tells you to do it by hand. Evidence: host tests on fake cameras and
 files, plus a few real-camera checks of the SSH and 8091 paths (see [testing status](../../docs/testing-status.md)).
-**Nothing was run on a real Windows or macOS computer**, and no Windows or macOS card write has been tried.
+**Nothing was run on a real macOS computer.** An earlier Windows build ran discovery, the options over SSH and `talk` on a real computer; no Windows or macOS card write has been tried.
 Details per OS are in "Phase 11" just below.
 
 **Self-contained.** The camera-side scripts the program uploads (`akam_reflash_ssh.sh`, `flash_guard.sh`,
@@ -33,7 +33,7 @@ Only the Linux amd64 paths have been exercised on a real camera, and only in par
 
 ### Home screen
 
-`akam` with no command opens the home screen (on a terminal: arrows or `j`/`k`, Enter, digits 1 to 8, `?` details, `c` camera, `q`; in the camera list `s` scan, `o` ONVIF search, `t` type an address, `r` recheck, `f` forget, Esc back; with
+`akam` with no command opens the home screen (on a terminal: arrows or `j`/`k`, Enter, digits 1 to 7 and 9, `?` details, `c` camera, `q`; in the camera list `s` scan, `o` ONVIF search, `t` type an address, `r` recheck, `f` forget, Esc back; with
 `--plain`, `AKAM_PLAIN=1` or without a terminal: a plain menu or the status table).
 
 | Entry | What it does |
@@ -45,6 +45,7 @@ Only the Linux amd64 paths have been exercised on a real camera, and only in par
 | 5 Find cameras on my network | the camera chooser |
 | 6 Settings | backup folder, state folder (shown), SD helper mode (shown), licences |
 | 7 Check this computer | `doctor` |
+| 9 Configs | the global and local configs (`config`) |
 
 Entries 1 to 4 open the camera chooser first when no camera is selected. The header shows the selected camera, its
 address and its firmware.
@@ -128,9 +129,9 @@ when you are done.
 
 ### Interim image rule (Windows and macOS)
 
-The native squashfs builder is not available yet (reader merged; writer and assembly pending; the hardware gate of
-specs/installer.md, section 11 (Supported host platforms), must pass before any user flashes with it). Until then **on Windows and macOS you import an
-image built on Linux or in WSL**: build it with `./akam image` there, copy the 5 242 880-byte file, and pass
+The native squashfs builder exists (`akam image --builder native`) but is EXPERIMENTAL: it has not passed the hardware gate of
+specs/installer.md, section 11 (Supported host platforms), so it is opt-in and asks for confirmation. **On Windows and macOS
+the safe way is to import an image built on Linux or in WSL**: build it with `./akam image` there, copy the 5 242 880-byte file, and pass
 `--image FILE`. The program checks the size and records the md5, which the red box shows before the flash. On Linux
 the default stays the bash `image` step.
 
@@ -175,7 +176,7 @@ amd64 and 8.9 MiB for arm64).
 ## Use
 
 The commands and options have the names and the texts of `./akam help` (`akam help` prints the same text,
-plus the three commands that only exist here). From a source checkout, the bash script can hand over to the
+plus the commands that only exist here, such as the 2K ones and `releases`). From a source checkout, the bash script can hand over to the
 binary for a side-by-side comparison:
 
 ```bash
@@ -196,10 +197,10 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `led`, `audio`, `picture`, `debug`, `onvif` | the same settings, checks and messages as the bash commands; control-port lines are sent to the camera's own loopback by running `nc -w 2 127.0.0.1 8091` over an SSH exec session (its Dropbear has no TCP forwarding) |
 | `rtsp-auth [set\|disable\|status]` | the password is typed twice without echo and sent on stdin to `akam_rtsp_auth.sh set-creds` |
 | `hostname [NAME]` | `akam_hostname.sh set NAME` (a note only on an older image) |
-| `talk [SECONDS\|test]`, `say FILE` | RTSP + Digest + ONVIF audio backchannel + G.711 in Go; `talk test` and `say file.wav` need no other program (any rate or channel count; 8/16/24/32-bit PCM or float). The microphone and files that are not WAV need `arecord` or `ffmpeg` (optional, found automatically, nothing else uses them) |
+| `talk [SECONDS\|test]`, `say FILE` | RTSP + Digest + ONVIF audio backchannel + G.711 in Go; `talk test` and `say file.wav` need no other program (any rate or channel count; 8/16/24/32-bit PCM or float). Files that are not WAV, MP3, FLAC or Ogg Vorbis need `ffmpeg`; the live microphone is built in on Linux (PulseAudio protocol, also served by PipeWire) and Windows (WASAPI), `ffmpeg` (or `arecord` on Linux) is the fallback and what macOS uses (optional, found automatically) |
 | `forget-host-key IP` | forget a camera's pinned SSH host key (asks first) |
 | `doctor` | what this program found on your computer (optional tools included) |
-| menu (`akam` alone) | on a terminal, a full-screen menu (arrows or `j`/`k`, Enter, digits 1 to 8, `?` details, `c` camera, `q`; no "Press Enter" prompts: results show on a strip that any key clears); with `--plain`, `AKAM_PLAIN=1` or without a terminal, the status table |
+| menu (`akam` alone) | on a terminal, a full-screen menu (arrows or `j`/`k`, Enter, digits 1 to 7 and 9, `?` details, `c` camera, `q`; no "Press Enter" prompts: results show on a strip that any key clears); with `--plain`, `AKAM_PLAIN=1` or without a terminal, the status table |
 
 | `get-kit` | downloads `akam-kit-<model>-X.tar.xz`, `SHA256SUMS`, `SHA256SUMS.sig` of the `firmware-vX` release (X: `--version`, else the newest release that has a kit for the camera's model; the model is the one recorded by the backup, or `--model`) (HTTPS only, TLS 1.2+, a redirect to http is refused, 3 tries), checks the sha256, the OpenSSH signature (SSHSIG, principal and namespace `akam-release`, keys of `tools/release/allowed_signers` built in; there is no environment override in a release binary: `AKAM_ALLOWED_SIGNERS`, `AKAM_KIT_URL_BASE`, `AKAM_API_URL_BASE` (the release list; without it a test build never reaches the network), `AKAM_FLASH_TOOL`, `AKAM_FLASH_SCRIPTS_DIR`, `AKAM_PORT_SSH2`, `AKAM_REFLASH_*` and `AKAM_FORCE_TTY` are test hooks, read only by a build with `-tags akamtest`; downloads are capped at 256 MiB and 1 MiB for the checksum files, the archive at 1 GiB decompressed / 200 MiB of content / 10000 entries), the archive layout and the kit's MANIFEST exactly like `verify_kit.sh`, and extracts it to `<state dir>/kit`. `--kit FILE`, `--version`, `--expect-sha256`, `--allow-unsigned` keep their meaning; a kit made for another camera model than the camera's is refused. An unsigned kit needs the yes/no "Unsigned kit" (default No, refused without a terminal) or `--allow-unsigned`. Nothing from a kit is run. The `.tar.xz` is decoded in process (`ulikunitz/xz`, no `xz` program needed): before any byte is decoded the stream structure is checked (exactly one stream with one LZMA2 block, dictionary at most 64 MiB, declared size at most 1 GiB) |
 | `update [--image FILE]` | flashes a new image over SSH, no card: precheck (writes nothing), the red box and one yes/no (default No), upload to the camera's RAM, sha256 on both sides, md5 by the camera script, a second Dropbear from RAM on port 2222, detached flash, polled log, independent read-back md5 of `/dev/mtd7`. The camera-side scripts are those of `tools/flash_scripts` (or the kit's `scripts/flash`), unchanged. It never reboots: power-cycle by hand |
@@ -209,7 +210,7 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `prepare-backup-sd`, `prepare-flash-sd`, `wipe-sd` | see "The SD card" below. One red box (device path, size, model) with a yes/no default No, refused without a terminal |
 | `flash` | stock or maintenance telnet with the flash card on `/mnt`: layout gate, exactly one image on the card with the right md5 (pushed over `nc` only after a yes), `flash_tool` and scripts checked or pushed, Wi-Fi gate (`preflight_check.sh --ensure-wifi` on the camera), the camera script's md5 line compared, the red box, and only after the explicit yes the `YES` to the camera's own prompt; then the read-back `dd if=/dev/mtd7 | md5sum` decides. SSH route when Akam runs and you say yes. No reboot is ever sent |
 
-Still in the bash wizard: `image` and `build` (they need a squashfs writer; see the interim image rule). `--manual-telnet` keeps its meaning;
+Still in the bash wizard: `build`. `image` also exists here with the experimental native builder (`--builder native`; see the interim image rule). `--manual-telnet` keeps its meaning;
 after two failed commands the session switches to manual mode on its own.
 
 ### The telnet client
@@ -274,8 +275,9 @@ this section describes the 1080p writer.
 
 ### Image building (spike result)
 
-The squashfs spike (specs/installer.md, section 6, Image build) found no mature MIT/BSD pure-Go writer, so `image` stays in the bash
-wizard (`mksquashfs`/`unsquashfs`, reported by `doctor`). `update` takes `--image FILE` or the image the bash step recorded.
+The squashfs spike (specs/installer.md, section 6, Image build) found no mature MIT/BSD pure-Go writer, so the project wrote its own
+(`internal/squashfs`): `akam image --builder native` builds the image in process (experimental, not flashed yet). The default on Linux is still
+the bash builder (`mksquashfs`/`unsquashfs`, reported by `doctor`). `update` takes `--image FILE` or the image the `image` step recorded.
 
 ### SSH and host keys
 
@@ -318,8 +320,8 @@ ffmpeg:
   temporary root, a control port 8091 reached the way the real camera allows (the exec `nc -w 2 127.0.0.1 8091`; `direct-tcpip` is refused like Dropbear), a second Dropbear and a fake flash (a byte slice plays
   `/dev/mtd7`; the behaviour of `akam_reflash_ssh.sh` is emulated, the real script is tested by
   `tests/reflash_ssh_test.sh`), and an RTSP server with Digest login
-  against the credentials those scripts wrote and the ONVIF backchannel. `akam_onvif.sh` is emulated until it is
-  part of this tree (it is on the ONVIF branch).
+  against the credentials those scripts wrote and the ONVIF backchannel. `akam_onvif.sh` is in
+  `firmware/lsc-indoor-1080p-ak3918/overlay/`.
 * the P3 tests: `internal/testfake/stock.go` is a fake stock camera (telnet server over a temporary tree, BusyBox-like
   echo and IAC bytes, mtd "devices" as files, a fake `install_with_flash_tool.sh`; fault injection: dropped
   commands, closed session, corrupted or truncated `nc` transfers, unreliable reads, bad write) used by the backup,
@@ -363,10 +365,10 @@ internal/testfake/        fake camera for the tests
 * `find-camera` does not need `prepare-backup-sd` done first when the camera already runs Akam (ssh, rtsp and
   control ports open, telnet closed): it proceeds. Any other camera still gets the bash rule ("needs these
   steps first"). The bash wizard keeps the strict rule on every camera.
-* `say` decodes WAV itself and uses `ffmpeg` only for other formats (the bash script always used `ffmpeg` when
-  present), so its rehearsal line differs; `pw-record`/`parec` capture backends are not used yet.
+* `say` decodes WAV, MP3, FLAC and Ogg Vorbis itself and uses `ffmpeg` only for other formats (the bash script always used `ffmpeg` when
+  present), so its rehearsal line differs; the microphone of `talk` is built in (PulseAudio protocol, WASAPI) instead of `pw-record`/`parec`.
 * Messages say `./akam` (as the bash wizard does) even when the binary is run under another name.
-* `onvif` follows the command of the ONVIF branch (`akam_onvif.sh`), which is not merged into `dev` yet.
+* `onvif` drives `akam_onvif.sh` of the 1080p overlay.
 * P2: the `update`/`restore` flow was tested against an emulation of the camera scripts, not the scripts themselves
   (they have their own tests in `tests/reflash_ssh_test.sh`); `get-kit` on a
   folder (`--kit DIR`) is accepted only as an unsigned kit.

@@ -12,6 +12,7 @@
 #include "abi.h"
 #include "cap.h"
 #include "detect.h"
+#include "orient.h"
 #include "ptz.h"
 #include "track_run.h"
 #include "zlive.h"
@@ -38,8 +39,17 @@ a2k_track_t *a2k_track_run_get(void) { return NULL; }
 int a2k_track_enabled(a2k_track_t *t) { (void)t; return 0; }
 void a2k_ptz_info(a2k_ptz_info_t *o) { memset(o, 0, sizeof *o); }
 int a2k_zlive_applies(int st) { (void)st; return 1; }
-void a2k_zlive_get(a2k_zones_t *o, unsigned *g) { memset(o, 0, sizeof *o); if (g) *g = 1; }
-void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *b, int n, int fw, int fh) { (void)now_ms; (void)cap_ms; (void)b; (void)n; (void)fw; (void)fh; }
+static int g_zones_on; /* the zones the live store hands out (sensor frame): one zone in the top left quarter */
+void a2k_zlive_get(a2k_zones_t *o, unsigned *g)
+{
+    static const char zt[] = "porch=0,0,50,50\n";
+    memset(o, 0, sizeof *o);
+    if (g_zones_on)
+        (void)a2k_zones_parse(zt, sizeof zt - 1, o);
+    if (g) *g = 1;
+}
+static volatile int g_feed_n;
+void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *b, int n, int fw, int fh) { (void)now_ms; (void)cap_ms; (void)b; (void)n; (void)fw; (void)fh; g_feed_n++; }
 void a2k_log(const char *fmt, ...)
 {
     va_list ap;
@@ -138,6 +148,54 @@ int main(void)
     a2k_detect_stop();
     chk(g_get_n == 1 && g_proc_n == 1 && g_proc_virt == g_q_data[0], "after a slow get the thread stops pulling and uses that frame");
     chk(g_rel_n == g_get_n, "get/release still balanced after a slow get");
+
+    /* Third run: an orientation change opens the settling window: the frames already queued are of the old orientation, so the tracker gets none of them
+     * (the zone detector shares the gate); once the window is over the feed resumes. */
+    a2k_orient_test_clock(5000);
+    a2k_orient_set(0, 1);
+    g_q_head = g_get_n = g_rel_n = g_proc_n = g_feed_n = 0;
+    a2k_stop = 0;
+    chk(a2k_detect_start(&c) == 0, "thread restarted inside the settling window");
+    usleep(300 * 1000);
+    a2k_stop = 1;
+    a2k_detect_stop();
+    chk(g_proc_n >= 1 && g_feed_n == 0, "inside the settling window the frames are inferred but not fed to the tracker");
+    chk(g_rel_n == g_get_n, "get/release still balanced inside the window");
+    a2k_orient_test_clock(5000 + A2K_ORIENT_SETTLE_MS + 1);
+    g_q_head = g_get_n = g_rel_n = g_proc_n = g_feed_n = 0;
+    a2k_stop = 0;
+    chk(a2k_detect_start(&c) == 0, "thread restarted after the window");
+    usleep(300 * 1000);
+    a2k_stop = 1;
+    a2k_detect_stop();
+    chk(g_proc_n >= 1 && g_feed_n >= 1, "after the window the tracker is fed again");
+
+    /* Fourth run: the zones are stored in the SENSOR frame; a mirror change under a RUNNING detection loop converts them for the detector at the next loop
+     * (the displayed frame: x reversed), with no restart. */
+    g_zones_on = 1;
+    a2k_orient_test_reset();
+    a2k_orient_test_clock(9000);
+    g_q_head = g_get_n = g_rel_n = g_proc_n = 0;
+    pthread_mutex_lock(&mu);
+    g_logbuf[0] = '\0';
+    pthread_mutex_unlock(&mu);
+    a2k_stop = 0;
+    chk(a2k_detect_start(&c) == 0, "thread started with a zone and the orientation off");
+    usleep(300 * 1000);
+    pthread_mutex_lock(&mu);
+    chk(strstr(g_logbuf, "detect: zone porch = 0,0,50,50 %") != NULL, "orientation off: the zone is used as stored");
+    g_logbuf[0] = '\0';
+    pthread_mutex_unlock(&mu);
+    a2k_orient_set(0, 1);
+    g_q_head = 0; /* more frames for the running loop */
+    usleep(500 * 1000);
+    a2k_stop = 1;
+    a2k_detect_stop();
+    pthread_mutex_lock(&mu);
+    chk(strstr(g_logbuf, "detect: zone porch = 50,0,100,50 %") != NULL, "after a mirror change the running loop uses the zone in the displayed frame (x reversed)");
+    pthread_mutex_unlock(&mu);
+    g_zones_on = 0;
+    a2k_orient_test_reset();
     printf("rot2k detect fresh: %d failed\n", fails);
     return fails != 0;
 }

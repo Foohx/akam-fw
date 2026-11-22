@@ -38,7 +38,7 @@ Recovery rule: `init.sh` looks at the card **before** any Akam code. A card with
 | 4 | `/mnt/sdcard/akam_boot.sh` | rescue (passwordless telnet :23, tmpfs shadow), SSH, optional param.conf edit, with flag `akam/own_app` bind-mounts a `/tmp` copy of `own_app_stub.sh` over `/appfs/bin/yy_cam` (RAM), boot counter (3 unfinished boots: stock `yy_cam` returns), hands off to `start.sh &`, then decloud and verify in the background |
 | 5 to 9 | as above | the stub and app come from the card (`/mnt/sdcard/akam/...`) |
 
-Rescue-only card: `/mnt/sdcard/yy_debug.ini`, `hack.sh` and `telnetd` in `rescue/` (telnet root/root, nothing else).
+Rescue-only card: `/mnt/sdcard/yy_debug.ini`, `hack.sh` and `telnetd` in `rescue/` (a root telnet shell with no password prompt, the root password is set to `root` in RAM; nothing else).
 
 ## 3. Akam files
 

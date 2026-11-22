@@ -115,8 +115,14 @@ unsigned a2k_patrol_writes(void)
     return 0;
 }
 
+/* A NAME CHECK, not patrol logic: the settings use it for a button mode name too (mode.apply), so it stays the real rule even with the patrol switched off. */
 int pp_name_ok(const char *s)
 {
-    (void)s;
-    return 0;
+    size_t n = s ? strlen(s) : 0, i;
+    if (n < 1 || n > PP_NAME_MAX || s[0] < 'a' || s[0] > 'z')
+        return 0;
+    for (i = 1; i < n; i++)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_'))
+            return 0;
+    return 1;
 }

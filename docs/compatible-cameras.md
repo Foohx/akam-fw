@@ -2,7 +2,7 @@
 
 **Will Akam run on my camera?** Read this page before you flash anything.
 
-Akam has run on real cameras of **two** models: the LSC Smart Indoor 1080p, article `3215672.3` (two units), and the
+Akam has run on real cameras of **two** models (with earlier builds than the current ones, see [testing status](testing-status.md#which-build-the-hardware-results-come-from)): the LSC Smart Indoor 1080p, article `3215672.3` (two units), and the
 LSC Smart Rotatable Camera 2K, article `3225722` (one unit, see [models](models.md)). Everything else is untested, and a
 camera with a different flash layout is refused by the installer. Per-camera pages: [1080p](porting/lsc-1080p/README.md),
 [2K](porting/lsc-rotatable-2k/README.md). What Akam does: [features](features.md).
@@ -31,7 +31,7 @@ not expected to work.
 | Status | Camera | Article no. and SI code | Notes |
 |---|---|---|---|
 | validated | LSC Smart Indoor 1080p (sold at Action) | `3215672.3`, SI `D26228` | 2 units tested, see below |
-| validated | LSC Smart Rotatable Camera 2K (Dual Band) | `3225722`, SZ `G26312` | 1 unit, card-less boot (no SD card); installed with the `akam` 2K commands, see [the 2K page](porting/lsc-rotatable-2k/README.md) |
+| validated | LSC Smart Rotatable Camera 2K (Dual Band) | `3225722`, SZ `G26312` | 1 unit (earlier build), card-less boot (no SD card); installed with the `akam` 2K commands, see [the 2K page](porting/lsc-rotatable-2k/README.md) |
 | untested | LSC Smart Indoor 1080p (sold at Action) | `3215672.2`, SI `B26101` / `C26101` | The upstream project ran its `ak_rtsp` on a unit of this model. Akam's installer and image were never run on it |
 | not supported | Other Anyka or Tuya cameras | any | `ak_rtsp` is specific to the AK3918AV130 SoC and the GC20C3 sensor. Older rectangular boards (AK3918EV200, GK7102) use other register maps and layouts. The wizard warns and refuses a different flash layout |
 
@@ -43,7 +43,7 @@ not expected to work.
 | Board | `IPC280KG2-GNA-MAIN-V1.0` (circular PCB) |
 | Flash | 8 MiB SPI NOR, 8 partitions ([flash map](how-it-works.md#flash-map)); only the APP partition (`mtd7`, 5 242 880 bytes) is rewritten |
 | Stock firmware fingerprint | Linux `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`, APP squashfs xz with 128 KiB blocks, BusyBox 1.30.1. The sha256 of the stock APP is in `tools/release/models/lsc-indoor-1080p-ak3918.txt` |
-| Tested | 2 units, on a recent image: RTSP, talk, day/night, NTP, SSH and more ([testing status](testing-status.md)) |
+| Tested | 2 units, on an earlier image (the current build is host-tested only, see [testing status](testing-status.md#which-build-the-hardware-results-come-from)): RTSP, talk, day/night, NTP, SSH and more ([testing status](testing-status.md)) |
 
 ## What identifies a model
 

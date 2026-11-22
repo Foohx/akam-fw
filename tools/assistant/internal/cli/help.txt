@@ -22,7 +22,9 @@ Commands:
   key-2k             2K only: have the camera create the admin API key of this assistant and keep it on this PC
                      (0600, never shown); with it `update` reads the model and version
   appfs-build        card-less 2K only (--model lsc-rotatable-2k-ak3918av130): build the appfs image from your
-                     mtd3.bin backup and the 2K kit (--kit DIR --backup-dir DIR [--out DIR]); host only, any OS
+                     mtd3.bin backup and the 2K kit (--backup-dir DIR [--out DIR]); host only, any OS. The kit is the
+                     signed .tar.xz given with --kit FILE (verified), else the newest release (or --version X.Y.Z)
+                     downloaded and verified; --kit DIR takes an unpacked folder you made yourself
   appfs-flash        card-less 2K only: rehearse (default) or write that image to mtd3 (--image-dir DIR
                      --backup-dir DIR [--current-image FILE --hot|--hot-preflight] [--nvram] [--execute]);
                      --execute needs a terminal, the recovery acknowledgement and a typed confirmation
@@ -123,8 +125,9 @@ Commands:
                          this camera (--camera NAME), from this computer. Nothing is synchronised, ever.
   talk [SECONDS | test]
                      speak to the camera's speaker from this computer's microphone (Ctrl-C stops);
-                     'test' sends a 2 second tone. Needs the stream password (rtsp-auth) and
-                     ffmpeg or arecord; uses the ONVIF audio backchannel on port 554
+                     'test' sends a 2 second tone. Needs the stream password (rtsp-auth); the microphone is
+                     built in on Linux (PulseAudio or PipeWire) and Windows (WASAPI), ffmpeg (or arecord on
+                     Linux) otherwise; uses the ONVIF audio backchannel on port 554
   say FILE           play an audio file on the camera's speaker (ffmpeg converts it)
   restore            put the original APP back from your backup
   wipe-sd            erase a card that holds your Wi-Fi password (use it when you are done)

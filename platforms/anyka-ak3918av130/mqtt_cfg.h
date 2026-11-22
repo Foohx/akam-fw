@@ -2,8 +2,10 @@
  * parser of the card file akam/mqtt, the topics, the Home Assistant discovery documents and the state / attribute
  * payloads of the person-detection entities. Host unit-tested (tests/rot2k_mqtt_unit.c) with golden JSON and fuzzed.
  *
- * Same keys, same format and same topic scheme as the 1080p firmware (specs/mqtt.md), except that this app is READ-ONLY:
- * it publishes, it never subscribes and no command topic exists. Same SD-card layout as the 1080p /etc/config/akam/:
+ * Same keys, same format and same topic scheme as the 1080p firmware (specs/mqtt.md), except that the command topics are the
+ * ones of the 2K features (BASE/<entity>/set for the tracking, zone, orientation, video, LED, PTZ and button entities, BASE/ptz_vel/set), all opt-in
+ * with the card file and rate limited; there is no generic settings write over MQTT (that is the local API). It publishes the states and the Home Assistant
+ * discovery, and subscribes only to those command topics. Same SD-card layout as the 1080p /etc/config/akam/:
  * `akam/mqtt` (this file) and `akam/mqtt_pass` (the broker password alone, see a2k_mqtt_pass_load). The card is FAT: it
  * has no usable file mode, so the 1080p "mode 0600 or refused" rule cannot apply (the card is the physical secret).
  *

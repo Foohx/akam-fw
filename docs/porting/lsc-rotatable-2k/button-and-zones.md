@@ -9,7 +9,7 @@ pressed. See `stock-firmware-reference.md`.
 
 **Layers (docs/hal-architecture.md).**
 
-- `app/hal_input.c/.h` portable: descriptor `{name, gpio, active_low, debounce_ms}`, the debouncer, the driver interface (`setup`, `read`). The
+- `src/hal/hal_input.c` and `src/hal/hal_input.h` portable: descriptor `{name, gpio, active_low, debounce_ms}`, the debouncer, the driver interface (`setup`, `read`). The
   generic sysfs driver is `firmware/lsc-rotatable-2k-ak3918av130/hal_input_sysfs.c`; the 2K descriptor is in `hal.c` (`button`, 71, active low, 50 ms).
 - `src/features/button/button_gesture.c`, `button_cfg.c`, `button_logic.c`, `button_rt.c` (below): the gesture engine, the bindings, the policy and the runtime.
 - `firmware/lsc-rotatable-2k-ak3918av130/button.c`: the thread (20 ms poll, 32 KiB stack), the real actions.
@@ -111,7 +111,7 @@ sky=0,0,100,20@screen    optional anchor suffix on any zone or ignore rectangle:
 A person whose **feet point** (bottom centre of its box) lies in an ignore rectangle is dropped before anything else: no presence, no zone sensor, no
 tracking. Zone names starting with `ignore_` are reserved. The file holds at most 1024 bytes.
 
-**Frame (flip / mirror).** The rectangles of the card file and of `/config/akam/zones` are in the **sensor frame** (the picture with `image.flip` and `image.mirror`
+**Frame (flip / mirror; host-tested only, not verified on the camera).** The rectangles of the card file and of `/config/akam/zones` are in the **sensor frame** (the picture with `image.flip` and `image.mirror`
 off), so a zone keeps covering the same part of the room when you turn the orientation on or off (`a2k_zones_orient`, isp-controls.md 3.3). The two Home Assistant
 `text` entities show and accept the **displayed** frame, i.e. what the picture shows now: with the mirror on, a zone drawn at the left of the picture is typed with
 x near 0 and stored mirrored. With the orientation off nothing changes. After an orientation change made over the API the text entities show the new values at the

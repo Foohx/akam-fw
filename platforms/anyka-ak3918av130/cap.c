@@ -676,14 +676,23 @@ int a2k_isp_dn_level(int cur_night, int *want_night)
 
 int a2k_isp_mode(int night)
 {
-    int rc = ak_vi_switch_mode(0, night ? 1 : 0);
+    int rc, f, m;
+    /* The vendor lib may reset the flip inside the mode switch (not verified on hardware): the frames between the switch and the replay can be unflipped, so the
+     * settling window (scene check, tracker, zones) is open from before the switch until after the replay, whenever an orientation is on. */
+    a2k_orient_isp_lock();
+    a2k_orient_get(&f, &m);
+    if (f || m)
+        a2k_orient_hold();
+    rc = ak_vi_switch_mode(0, night ? 1 : 0);
     a2k_log("ak_vi_switch_mode(0, %d) = %d", night ? 1 : 0, rc);
     if (rc == 0) { /* the stock does not replay the flip after a mode switch; the call is absolute (not a toggle), so replaying it is harmless when the lib kept it */
-        int f, m;
         a2k_orient_get(&f, &m);
-        if (f || m)
+        if (f || m) {
             (void)a2k_isp_flip_mirror(f, m);
+            a2k_orient_hold();
+        }
     }
+    a2k_orient_isp_unlock();
     for (int c = 0; c < NCHN; c++)
         if (g_ch[c].started)
             a2k_stream_want_idr(g_ch[c].s);

@@ -50,7 +50,7 @@ Assistant with its Mosquitto add-on.
 
 ### Rotatable 2K control API (port 8092, own app; needs the camera and SSH)
 
-Not run on a camera yet; host tests only (`tests/rot2k_control_api_*_test.sh`). Reference: [control-api.md](porting/lsc-rotatable-2k/control-api.md).
+Host tests (`tests/rot2k_control_api_*_test.sh`) cover the whole API; on the camera only a few signed requests were used (a few settings changes, `ptz.recalibrate`, state reads; earlier binary), and none of this checklist has been ticked on the current build. Reference: [control-api.md](porting/lsc-rotatable-2k/control-api.md).
 
 | # | Check | How | Done |
 |---|---|---|---|
@@ -65,6 +65,25 @@ Not run on a camera yet; host tests only (`tests/rot2k_control_api_*_test.sh`). 
 | A9 | Hostile input | `curl --data` of 9 KB, a 5 KB header, chunked upload, `GET /akam/v1/../x`: 413, 431, 411, 400/404; nothing crashes (`akam2k.log` has no CRASH line) | [ ] |
 | A10 | Fail closed | `chmod 644 /config/akam/api_keys`: the API closes (`keys_perm`); `chmod 600` and it reopens; `echo x >> /config/akam/api_keys`: closes (`keys_invalid`) and the file is kept | [ ] |
 
+
+### 2K picture orientation (flip, mirror, ceiling mount)
+
+Written after the last flash of the 2K: host tests only. Do these first on the first flash of the current build. Reference:
+[ISP controls, sections 3.2 and 3.3](porting/lsc-rotatable-2k/isp-controls.md). Use a stream player on `/stream0` and `PATCH` the settings
+with the signed API (or the Home Assistant switches **Image flip**, **Image mirror**, **Ceiling mount**).
+
+| # | Check | How | Done |
+|---|---|---|---|
+| O1 | Default is unchanged | Both off (`image.flip` 0, `image.mirror` 0): the picture is exactly the one of the earlier builds, colour correct; the log has no orientation call | [ ] |
+| O2 | `image.flip` is vertical | `image.flip` 1: the picture is upside down (top and bottom swapped, left and right unchanged); no stream restart; back to 0 restores it | [ ] |
+| O3 | `image.mirror` is horizontal | `image.mirror` 1: left and right swapped, top and bottom unchanged; back to 0 restores it | [ ] |
+| O4 | `(0, 0)` leaves the picture unchanged | After a 1 then 0 round trip of both switches, the picture is identical to O1 (same framing) | [ ] |
+| O5 | Colour stays right | With flip, with mirror and with both on, skin and sky colours look natural (no swapped red and blue, no green or magenta cast) | [ ] |
+| O6 | Survives day/night | With `image.ceiling` 1, force `night.mode` night then day (and let it switch by itself once): the orientation is the same after each switch | [ ] |
+| O7 | Survives a restart | Set flip, power cycle: the orientation is still applied (it is saved only when you change it); the stream, the zones and the tracker agree with it | [ ] |
+| O8 | Ceiling mount, tracker | Camera mounted upside down (or the camera turned over on the desk) with `image.ceiling` 1: with `track.enabled` on, the head pans toward the person, not away, and tilts the right way with `track.tilt` on | [ ] |
+| O9 | Zones and PTZ follow | A zone drawn in the displayed picture covers the same part of the scene before and after a change of orientation; the ONVIF or API pan and tilt directions match the picture | [ ] |
+| O10 | Home Assistant | The three switches show the real state; `Ceiling mount` reads ON only while flip and mirror are both on | [ ] |
 
 ### 1080p remote control (convergence P4-P8; akam-01 first, then akam-02; UART attached, run from /tmp before flashing)
 

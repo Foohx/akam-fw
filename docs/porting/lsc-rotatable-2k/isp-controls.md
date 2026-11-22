@@ -120,7 +120,7 @@ picture colour is right after a flip (the sensor Bayer order changes; the ISP is
 it after every `ak_vi_switch_mode`; the call is absolute, replaying it is harmless).
 
 Where it lives in Akam: `a2k_isp_flip_mirror` (cap.c, the only caller), the state and every mapping in `platforms/anyka-ak3918av130/orient.[ch]`, the settings
-rows `image.flip`, `image.mirror`, `image.ceiling` and the Home Assistant switches (control-api.md section 4, mqtt in on-camera.md). How each part of the app
+rows `image.flip`, `image.mirror`, `image.ceiling` and the Home Assistant switches (control-api.md section 4, [MQTT](../../mqtt.md#lsc-rotatable-2k)). How each part of the app
 follows the orientation is in section 3.3.
 
 ### 3.3 What follows the orientation (one convention for the whole app)
@@ -136,6 +136,8 @@ Two frames: the **displayed frame** (what the streams and the snapshots show: th
 | ONVIF ContinuousMove, `ptz.vel`, MQTT `ptz_vel`, the step buttons (`ptz.step`, MQTT `ptz_left` ...) | The viewer's directions: right / up are right / up in the picture. The driver speaks sensor directions: a mirror reverses left / right, a flip reverses up / down (`a2k_ptz_vel_manual`, `a2k_ptz_command`). |
 | `ptz.move` (motor steps), presets, patrol routes, soft limits, the counters | Motor state: never depends on the orientation. |
 | Scene reference (`/config/akam/ptz.scene`), the drift reference (RAM) and the FLAT check | The live detection frame is converted to the **sensor frame** before it is compared, saved or matched (`a2k_scene_feed`), so every reference stays comparable and **no reference is invalidated** by an orientation change. Frames of the first 1.5 s after a change (queued frames of the old orientation) are skipped. The drift sign constants (`A2K_PTZ_DRIFT_*_SIGN`) are motor facts and stay. |
+
+Behaviour of a change (one rule for every consumer): the orientation is recorded first, then the ISP is told (the old one is restored if the ISP refuses). A **settling window** of 1.5 s opens: during it the scene check, the person tracker and the zone detector get no frame (the queued frames are of the old orientation); the tracker also forgets its target (its memory holds positions built with the old signs). The same window opens around the flip replay after a day / night switch, because the vendor lib may reset the flip inside `ak_vi_switch_mode` (not verified on the camera). A change of `image.ceiling` alone is saved (it writes `image.flip` and `image.mirror` to the settings file; the key itself is never in the file), and every change, from any source, republishes the Home Assistant switches and zone texts.
 
 ## 4. White balance and the "too red" question: what is known
 
@@ -159,7 +161,7 @@ Direction of `k` (bigger = more smoothing?) is MEDIUM; the test plan measures it
 
 ## 7. The test hook (`--isp-test 1`, default OFF, RAM only)
 
-Files: `app/isptest.c/.h`, vendor access in `cap.c` (`g_it_ops`), prototypes in `abi.h`, host test `tests/rot2k_isptest_unit.c` (run by `tests/rot2k_overlay_test.sh`).
+Files: `platforms/anyka-ak3918av130/isptest.c` and `isptest.h`, vendor access in `cap.c` (`g_it_ops`), prototypes in `platforms/anyka-ak3918av130/abi.h`, host test `tests/rot2k_isptest_unit.c` (run by `tests/rot2k_overlay_test.sh`).
 The hook is a poll thread (every 500 ms) reading `/tmp/akam2k_isp_test`; the file is deleted once read; up to 16 lines; every result is logged as `isp-test: ...` in the app log (before / after values, return codes). Nothing is persistent: the ISP restarts from the conf file at the next boot, `restore` puts back the first read of everything changed (effects are set back to 0). Option `--isp-test 1` is a command-line option of the binary only (no `akam2k.conf` key: run the binary from RAM like the `--venc-test` runs).
 
 Commands (parser limits are enforced; `fx` type 5 / WDR is refused because the app owns it):

@@ -447,7 +447,7 @@ static void *detect_thread(void *arg)
         struct a2k_det_obs obs;
         struct tl_box tbox[TL_MAX_ALL];
         int ntbox = 0;
-        int rbox[4], have_relay = 0;
+        int rbox[4], have_relay = 0, settling;
         struct a2k_dp_in pbox[A2K_DP_MAX];
         int npbox = 0;
         struct a2k_det_event ev;
@@ -528,6 +528,8 @@ static void *detect_thread(void *arg)
             ogen = a2k_orient_gen();
             a2k_orient_get(&of, &om);
             a2k_zlive_get(&cz, &gen);
+            if (ogen != zogen)
+                tr_init(&g_relay); /* the relay follows a patch of the old-orientation picture */
             if (gen != zgen || home != zhome || ogen != zogen) {
                 zgen = gen;
                 zhome = home;
@@ -580,7 +582,13 @@ static void *detect_thread(void *arg)
         if (t1 - t0 > stat_max)
             stat_max = t1 - t0;
         done++;
-        if (have_relay && ntbox < TL_MAX_ALL) { /* a relayed person box (score 0 = unknown): for the tracker only, never for presence or the published boxes */
+        /* One settling window for every consumer of the picture after an orientation change (orient.h): the frames already queued are of the old orientation
+         * while the tracker signs and the zones are already the new ones, so neither the tracker nor the zone detector sees these frames. The presence state
+         * (any person, no geometry) and the published boxes carry on. */
+        settling = a2k_orient_settling();
+        if (settling) {
+            /* nothing to feed */
+        } else if (have_relay && ntbox < TL_MAX_ALL) { /* a relayed person box (score 0 = unknown): for the tracker only, never for presence or the published boxes */
             struct tl_box tf[TL_MAX_ALL];
             int nf = ntbox;
             memcpy(tf, tbox, sizeof(struct tl_box) * (size_t)ntbox);
@@ -592,7 +600,7 @@ static void *detect_thread(void *arg)
         publish_boxes(t1, pbox, npbox, tbox, ntbox);
         {
             int gch = a2k_det_update(&det, t1, &obs, &ev);
-            unsigned zch = g_eff.n > 0 ? a2k_zdet_update(&zd, t1, &obs, zev) : 0;
+            unsigned zch = g_eff.n > 0 && !settling ? a2k_zdet_update(&zd, t1, &obs, zev) : 0;
             int zi;
             if (gch) {
                 det.last_event_epoch = (int64_t)time(NULL);

@@ -46,6 +46,13 @@ static void test_state(void)
     CHECK(a2k_orient_settling(), "still settling just before the window ends");
     a2k_orient_test_clock(1000 + A2K_ORIENT_SETTLE_MS);
     CHECK(!a2k_orient_settling(), "settled when the window is over");
+    {
+        unsigned g = a2k_orient_gen();
+        a2k_orient_hold();
+        CHECK(a2k_orient_settling() && a2k_orient_gen() == g, "a hold opens the settling window without a change (no new generation)");
+        a2k_orient_test_clock(1000 + A2K_ORIENT_SETTLE_MS * 2 + 5);
+        CHECK(!a2k_orient_settling(), "...and it ends like the window of a change");
+    }
     for (k = 0; k < 3; k++)
         ok &= a2k_orient_listen(listener) == 0;
     CHECK(ok && a2k_orient_listen(listener) == -1 && a2k_orient_listen(NULL) == -1, "at most 4 listeners (one taken above, three more fit), NULL refused");
@@ -69,19 +76,8 @@ static void test_directions(void)
 
 static void test_geometry(void)
 {
-    int x, y, a, b, c, d, f, m;
+    int a, b, c, d, f, m;
     printf("== points and rectangles between the sensor and the displayed frame\n");
-    x = 20; y = 30;
-    a2k_orient_point(0, 0, 100, 100, &x, &y);
-    CHECK(x == 20 && y == 30, "off: a point is unchanged");
-    a2k_orient_point(0, 1, 100, 100, &x, &y);
-    CHECK(x == 80 && y == 30, "mirror reverses x only");
-    x = 20; y = 30;
-    a2k_orient_point(1, 0, 100, 100, &x, &y);
-    CHECK(x == 20 && y == 70, "flip reverses y only");
-    x = 320; y = 0;
-    a2k_orient_point(1, 1, 320, 192, &x, &y);
-    CHECK(x == 0 && y == 192, "flip + mirror (ceiling): pixel frame, the opposite corner");
     for (f = 0; f <= 1; f++)
         for (m = 0; m <= 1; m++) {
             a = 10; b = 20; c = 40; d = 90;

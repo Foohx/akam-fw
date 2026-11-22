@@ -18,8 +18,13 @@ First public release of the Akam camera firmware, with a kit for each of two mod
 - the **LSC Smart Rotatable Camera 2K (Dual Band)** (article `3225722`, `lsc-rotatable-2k-ak3918av130`), validated on one unit,
   running card-less from its flash since 2026-11-15.
 
-Experimental: keep a verified backup of your stock camera before you flash anything. Everything below is the 1080p unless
-a line says 2K.
+**Which binaries were validated:** those validations were made with earlier builds. The current builds of both models (the
+code shared between them was refactored and the firmware goldens were re-recorded on 2026-11-22; the 2K also gained the picture
+orientation) have not been flashed yet and are verified on the host only: see
+[testing status](docs/testing-status.md#which-build-the-hardware-results-come-from).
+
+Experimental: keep a verified backup of your stock camera before you flash anything. Everything under "Added" is the 1080p
+unless a line says 2K; the 2K has its own sections below.
 
 ### Added
 
@@ -32,8 +37,8 @@ a line says 2K.
   level uses the 3D noise-reduction tables of the level 2 steps higher, applied at start-up and after every day/night switch. Measured on
   two cameras: less pulsing at each key frame, 3 to 7 % less static detail. `./akam picture denoise 0` gives the stock tables back; a camera
   whose live tables are not as expected keeps the stock tables and logs it.
-- Decoding fix for the noise-reduction keys on the 1080p: the first noise-reduction block of both cameras reports mode 192, which the
-  decoder used to refuse, so `img.nr2d` and `img.nr2d_bias` (RAM-only experiment keys, off by default) are now accepted.
+- The noise-reduction experiment keys `img.nr2d` and `img.nr2d_bias` (RAM-only, off by default) decode the first noise-reduction
+  block of both cameras (it reports mode 192).
 - Signed local control API on port 8092 (HMAC key, scopes, audit, rate limits), the same as the Rotatable 2K: it listens only
   while an API key exists (`ak_rtsp --api-key new --scope admin --name NAME` over SSH), settings registry behind it and behind the
   8091 text port (LED mode and patterns, night mode, picture, video, ONVIF and MQTT switches, system and stream state), events and
@@ -47,7 +52,7 @@ a line says 2K.
 
 ### Added, LSC Rotatable 2K
 
-- **Image flip, mirror and ceiling mount** (Unreleased, host-tested only, not tried on the camera): settings `image.flip`, `image.mirror` (vertical / horizontal, default off,
+- **Image flip, mirror and ceiling mount** (host-tested only, not tried on the camera): settings `image.flip`, `image.mirror` (vertical / horizontal, default off,
   live, saved only when you change them) and `image.ceiling` (both at once, for a camera mounted upside down), with Home Assistant switches. The SDK call is
   `ak_vpss_switch_flip_mirror(0, flip, mirror)`. The detection zones are stored in the sensor frame and shown in the displayed one, person tracking and the PTZ
   directions (ONVIF, `ptz.vel`, the step buttons) follow the picture, and the scene / drift references are compared in the sensor frame so they stay valid.
@@ -77,7 +82,7 @@ All features, with their default and how well each one is tested: [features](doc
   confirmed by a port scan.
 - MQTT, the watchdog and several settings are host-tested only, and the image builder built into the assistant was
   never flashed. The evidence, test by test: [testing status](docs/testing-status.md).
-- One RTSP client at a time; no motion detection, no recording to microSD.
+- 1080p: one RTSP client at a time; no motion detection, no recording to microSD.
 
 ## [assistant 0.1.0] - unreleased
 

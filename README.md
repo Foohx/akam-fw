@@ -28,12 +28,17 @@ Two cameras, one project: same Akam core, each with its own hardware features.
 | Identify it | article `3215672.3`, label `SI D26228` | article `3225722`, label `SZ G26312` |
 | SoC | Anyka AK3918AV130 | Anyka AK3918AV130 |
 | Model id | `lsc-indoor-1080p-ak3918` (same chip as the 2K; the id suffix is historical, see [SoCs](docs/socs.md)) | `lsc-rotatable-2k-ak3918av130` |
-| Status | validated on 2 units | validated on 1 unit (card-less boot since 2026-11-15) |
+| Status | validated on 2 units (earlier builds, see the note below) | validated on 1 unit (card-less boot since 2026-11-15; earlier build) |
 | Akam is written to | the APP flash partition (`mtd7`) | the appfs flash partition (`mtd3`); runs with **no SD card** |
-| Installed with | the bash wizard (Linux) or the Go `akam` program | the Go `akam` program only (`prepare-2k-sd`, `appfs-flash`, `update`; host-tested only), or scripts |
+| Installed with | the bash wizard (Linux) or the Go `akam` program | the Go `akam` program only (`prepare-2k-sd`, `backup-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`; host-tested only), or scripts |
 | Docs | [1080p](docs/porting/lsc-1080p/README.md) | [2K](docs/porting/lsc-rotatable-2k/README.md) |
 
-The codes are on the back of the camera body, under the LSC logo (photos: [hacking guide](docs/hacking.md#photos-of-the-board)). 5 GHz on the 2K is untested. Other revisions (for example `3215672.2`) are untested; any other
+**What "validated" means.** The units were validated with earlier builds of the firmware. The current builds of both models
+(shared code refactored, firmware goldens re-recorded on 2026-11-22, and on the 2K the new flip, mirror and ceiling-mount
+settings) have **not been flashed yet**: they are tested on the host only. Details: [testing status](docs/testing-status.md#which-build-the-hardware-results-come-from).
+
+The codes are on the back of the camera body, under the LSC logo (photos: [hacking guide](docs/hacking.md#photos-of-the-board)).
+5 GHz on the 2K is untested. Other revisions (for example `3215672.2`) are untested; any other
 camera is not supported. See [compatible cameras](docs/compatible-cameras.md) and the
 [porting template](docs/porting/TEMPLATE-new-camera.md).
 
@@ -62,6 +67,7 @@ camera is not supported. See [compatible cameras](docs/compatible-cameras.md) an
 | Local video | RTSP on port 8554 with no password, only if enabled in its config | two RTSP streams on port 554: `/stream0` 2304x1296, `/stream1` 640x360 |
 | ONVIF, MQTT, Home Assistant | ONVIF only if enabled | opt-in (ONVIF with pan/tilt) |
 | Pan/tilt, person detection | cloud app only | API, ONVIF, MQTT and button; NPU person detection and tracking (tracking off by default) |
+| Picture orientation | not offered | flip, mirror, ceiling mount (host-tested only, not yet tried on the camera) |
 | SSH | no | key only |
 | Vendor updates | yes | the stock update tool is kept but inert |
 | Boot | internal flash | internal flash, no SD card needed |
@@ -80,7 +86,7 @@ What each row's evidence is (validated on a camera, or host-tested only): [featu
   pan/tilt, presets, patrol, a programmable button, image zones, person detection and tracking.
 - **Safe by default:** SSH with an ed25519 key only, no passwords, no telnet or FTP in normal operation, opt-in clock
   sync. Open by default: SSH (22), RTSP (554) and, on the 1080p, the read-only control port (8091). **The video stream
-  has no password until you set one** (`akam rtsp-auth set`). Keep the camera on your LAN; never forward its ports to
+  has no password until you set one** (1080p: `akam rtsp-auth set`; 2K: the file `rtsp.conf`, see [using the 2K](docs/porting/lsc-rotatable-2k/using-the-2k.md#1-set-the-stream-password)). Keep the camera on your LAN; never forward its ports to
   the Internet, and consider blocking its Internet access at your router as well.
 - **Light:** code a camera does not use is not compiled in; no recurring flash writes in normal operation.
 
@@ -125,19 +131,32 @@ git clone https://github.com/Foohx/akam-fw && cd akam-fw
 ./akam
 ```
 
+```bash
+# 2K, the Go program on any OS (host-tested only; read the 2K install page first, it explains each step)
+M=lsc-rotatable-2k-ak3918av130; IP=CAMERA_IP
+akam prepare-2k-sd --model $M                       # signed kit downloaded and verified, first-install card written
+# insert the card, power on, wait about 3 minutes, find the camera's address
+akam backup-2k   --model $M --ip $IP --out BACKUP_DIR
+akam seed-2k     --model $M --ip $IP
+akam appfs-build --model $M --backup-dir BACKUP_DIR --out IMAGE_DIR
+akam appfs-flash --model $M --ip $IP --backup-dir BACKUP_DIR --image-dir IMAGE_DIR              # rehearsal
+akam appfs-flash --model $M --ip $IP --backup-dir BACKUP_DIR --image-dir IMAGE_DIR --execute    # the real write
+```
+
 - **Install, 1080p:** the wizard checks your PC, makes a verified backup of all partitions, builds the image from your
   own backup plus the signed kit, flashes with read-back verification. Every risky step defaults to No and you replug
   the power yourself: [wizard guide](docs/wizard_guide.md).
-- **Install, 2K:** Go program only: `backup-2k`, `prepare-2k-sd`, `seed-2k`, `appfs-build`, `appfs-flash`, in that
-  order: [2K install](docs/porting/lsc-rotatable-2k/README.md#install). **These commands have passed host tests only;
-  keep a UART or a CH341A programmer at hand.**
+- **Install, 2K:** Go program only. A stock 2K has no SSH, so the card comes first: `prepare-2k-sd`, boot from the card,
+  `backup-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, in that order (the block above):
+  [2K install](docs/porting/lsc-rotatable-2k/README.md#install). **These commands have passed host tests only;
+  keep a UART or a CH341A programmer at hand.** Then: [using the 2K](docs/porting/lsc-rotatable-2k/using-the-2k.md).
 - **Update:** `akam update` (1080p over SSH; 2K card-less flow with a rehearsal and a typed confirmation, host-tested only).
 - **Rollback:** `akam restore` (1080p, your stock APP backup; never rehearsed on hardware), `akam update --rollback`
   (2K, previous Akam image; host-tested only). Back to stock on the 2K: flash your own `mtd3.bin` backup, see
   [back to stock](docs/porting/lsc-rotatable-2k/README.md#back-to-stock), or UART.
 - **Releases:** [assistant binaries](https://github.com/Foohx/akam-fw/releases?q=assistant-v) and
   [firmware kits](https://github.com/Foohx/akam-fw/releases?q=firmware-v), one per camera model (1080p and 2K) and
-  signed; the program downloads and verifies the right kit itself. The first release carries both kits.
+  signed; the program downloads and verifies the right kit itself (or give it a downloaded one with `--kit FILE`).
 - **Watch it:** `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/stream0`
 
 `akam help` lists every command and `--dry-run` rehearses. More: [assistant](docs/assistant.md),
@@ -181,7 +200,7 @@ cameras:
   host-tested only). **Back to stock on the 2K:** flash your own `mtd3.bin` backup, see
   [back to stock](docs/porting/lsc-rotatable-2k/README.md#back-to-stock), or use a UART.
 - **SD rescue (2K):** an Akam SD card is read before any Akam code and overrides the flash, so a broken payload does
-  not lock you out as long as the appfs still mounts; a half-written `mtd3` needs a UART or a CH341A programmer. Last resort: a 3.3 V UART or a CH341A programmer ([2K recovery](docs/porting/lsc-rotatable-2k/uart-recovery.md),
+  not lock you out as long as the appfs still mounts. A half-written `mtd3` is the last resort: a 3.3 V UART or a CH341A programmer ([2K recovery](docs/porting/lsc-rotatable-2k/uart-recovery.md),
   [flash and restore](docs/manual/flash-and-restore.md)).
 - **2K, while an Akam SD card is inserted** (first install or rescue): a card made by the scripts, by an older assistant, or by
   `prepare-2k-sd --rescue-telnet`, opens a root telnet shell on port 23 with no password, so that a card can always
@@ -195,7 +214,8 @@ cameras:
 
 ## What you can do next
 
-- Put the camera in **Home Assistant** (MQTT discovery) or **Frigate** (RTSP) with no vendor account.
+- Put the camera in **Home Assistant** (MQTT discovery) or **Frigate** (RTSP) with no vendor account
+  ([MQTT, both cameras](docs/mqtt.md); 2K setup: [using the 2K](docs/porting/lsc-rotatable-2k/using-the-2k.md)).
 - Use a **VPN into your home network** for remote viewing instead of a cloud relay.
 - On the 2K: pan/tilt from an ONVIF app, **track a person**, patrol presets, bind the button to actions.
 - Script anything with the **signed API** and its event feed.

@@ -785,6 +785,8 @@ int main(int argc, char **argv)
     a2k_mqtt_set_leds(&led_ctl);
     a2k_mqtt_set_ptz(ptz_on ? &ptz_ctl : NULL);
     a2k_night_set_notify(night_to_mqtt);
+    if (a2k_mqtt_follow_orientation() != 0) /* an orientation change from any source (API, button mode, the saved settings loaded below) is published to Home Assistant */
+        a2k_log("mqtt: no orientation listener slot free (the switches resync on the next reconnect)");
     (void)a2k_mqtt_start(mqtt_conf, A2K_MQTT_MAC_PATH, port, a2k_rtsp_clients);
     (void)a2k_button_start(button_long); /* the front button: programmable gestures (default: short = HA event, long = park / home); never fatal */
     /* day/night: a failure is logged there and never stops the streams (the filter and the IR LED are then left alone) */
@@ -798,6 +800,7 @@ int main(int argc, char **argv)
         sc.image = &icfg;
         if (a2k_settings_start(&sc) == 0) {
             a2k_settings_load();
+            a2k_mqtt_resync(); /* the saved settings are in: the first state publish must not show the defaults (the MQTT thread starts before the load) */
             a2k_api_env_t aenv;
             a2k_api_env_2k(&aenv);
             if (api_port && a2k_httpd_start(api_port, 0, &aenv) != 0)

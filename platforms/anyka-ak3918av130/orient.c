@@ -12,6 +12,7 @@ static unsigned g_gen;
 static int64_t g_change_ms = -1, g_test_ms = -1;
 static void (*g_cb[MAX_LISTENERS])(int, int);
 static int g_ncb;
+static pthread_mutex_t g_isp_mu = PTHREAD_MUTEX_INITIALIZER; /* serialises "record the orientation and tell the ISP" (settings) with "read it and replay it" (a2k_isp_mode) */
 
 static int64_t now_ms(void)
 {
@@ -53,6 +54,16 @@ void a2k_orient_set(int flip, int mirror)
         for (i = 0; i < n; i++)
             cb[i](flip, mirror);
 }
+
+void a2k_orient_hold(void)
+{
+    pthread_mutex_lock(&g_mu);
+    g_change_ms = now_ms();
+    pthread_mutex_unlock(&g_mu);
+}
+
+void a2k_orient_isp_lock(void) { pthread_mutex_lock(&g_isp_mu); }
+void a2k_orient_isp_unlock(void) { pthread_mutex_unlock(&g_isp_mu); }
 
 unsigned a2k_orient_gen(void)
 {
@@ -107,14 +118,6 @@ int a2k_orient_pan_sign(int s, int mirror) { return mirror ? -s : s; }
 int a2k_orient_tilt_sign(int s, int flip) { return flip ? -s : s; }
 int a2k_orient_invert_pan(int base, int mirror) { return (base ? 1 : 0) ^ (mirror ? 1 : 0); }
 int a2k_orient_invert_tilt(int base, int flip) { return (base ? 1 : 0) ^ (flip ? 1 : 0); }
-
-void a2k_orient_point(int flip, int mirror, int max_x, int max_y, int *x, int *y)
-{
-    if (mirror)
-        *x = max_x - *x;
-    if (flip)
-        *y = max_y - *y;
-}
 
 void a2k_orient_rect(int flip, int mirror, int max_x, int max_y, int *x1, int *y1, int *x2, int *y2)
 {

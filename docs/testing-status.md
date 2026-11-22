@@ -7,12 +7,21 @@ This page separates three levels of evidence, so you know what to trust:
 - **Validated in RAM:** a development build copied to `/tmp` on one camera and run from there, before the final image.
 - **Hardware validated:** the flashed image, running on the cameras of [compatible cameras](compatible-cameras.md).
 
+## Which build the hardware results come from
+
+**The current builds of both models have not been flashed yet.** The hardware results below were recorded with earlier
+binaries. Since then the code shared between the two models was refactored (commits `d5d523f` and `e580d22`), the 2K gained
+the picture orientation (flip, mirror, ceiling mount: `24e6e2e`), and both firmware goldens were re-recorded on
+2026-11-22. Those builds are verified on the host only (tests, byte-identical goldens, repeatable builds); no camera has
+run them. Treat every "Yes" below as "Yes, with the earlier binary" until the first-flash checks of the
+[hardware checklists](hardware-test-checklists.md) have been ticked on the current build.
+
 "Not yet" means **not run on a camera**. Checklists to tick on your own camera:
 [hardware test checklists](hardware-test-checklists.md).
 
 ## Summary of the hardware results
 
-Two cameras (LSC Smart Indoor 1080p `3215672.3`) were flashed with a recent image and ran continuously with a home
+Two cameras (LSC Smart Indoor 1080p `3215672.3`) were flashed with an earlier image (before the 2026-11-22 builds, see above) and ran continuously with a home
 server pulling RTSP.
 
 - **Video:** 15 fps measured on both cameras (14.9 to 15 fps, 0 encoder errors); 25 fps measured in daylight on one
@@ -63,7 +72,7 @@ server pulling RTSP.
 
 ## LSC Rotatable 2K
 
-One unit (article `3225722`), card-less since 2026-11-15. The matrix above is the 1080p. Evidence for the 2K, by page:
+One unit (article `3225722`), card-less since 2026-11-15, with an earlier binary than the current build (see above). The matrix above is the 1080p. Evidence for the 2K, by page:
 [features](features.md#lsc-rotatable-2k), the findings pages of its [entry page](porting/lsc-rotatable-2k/README.md).
 
 | Feature | Host tests | Hardware | Notes |
@@ -72,11 +81,12 @@ One unit (article `3225722`), card-less since 2026-11-15. The matrix above is th
 | Two RTSP streams (`/stream0`, `/stream1`), key-only SSH | host tests | Yes | |
 | Pan/tilt (`ptz.move`, `ptz.home`), person detection, tracking | policy and closed-loop simulations | Yes: runs of 2026-11-16 and 2026-11-17 | Tracking is off by default; see [tracking](porting/lsc-rotatable-2k/tracking.md) |
 | Front button, image zones, night, LEDs | fake hardware | Partly | [button and zones](porting/lsc-rotatable-2k/button-and-zones.md) |
-| Signed control API | full suite | PTZ actions used on the camera | |
+| Signed control API (port 8092) | full suite | signed requests used on the camera with an earlier binary: a few settings changes, `ptz.recalibrate`, state reads | The rest of the endpoints: host tests only |
 | ONVIF with pan/tilt | yes | **Not yet** | [ONVIF](onvif.md) |
 | MQTT, Home Assistant discovery | yes | **Not yet** | [MQTT](mqtt.md) |
 | Go assistant: `backup-2k`, `prepare-2k-sd`, `key-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`, `update --rollback` | `assistant_test.sh` (fake cameras, fake card) | **Not yet** | Never run on a real camera or card; the scripts they port (`flash_appfs.sh`, `build_appfs.sh`) did run |
 | Back to stock (restore of the six-partition backup) | none: no `akam restore-2k` command | **Never run** | Manual procedure: [back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock) |
+| Picture orientation: `image.flip` (vertical), `image.mirror` (horizontal), `image.ceiling`; also applied to zones, tracker, PTZ directions and scene reference | orientation, zones and tracker unit tests, API and MQTT tests | **Not yet** | Written after the last flash. First checks: [hardware checklist](hardware-test-checklists.md#2k-picture-orientation-flip-mirror-ceiling-mount) |
 | Open ports of the card-less image | | **Not yet** (no full port scan) | |
 
 ## How to run the host tests

@@ -1,7 +1,6 @@
 # Local control API of the Rotatable 2K (port 8092)
 
-Signed, plain-HTTP JSON API inside the own app `akam2k_rtsp`, for scripts and for a native Home Assistant integration
-**without an MQTT broker**. Design and threat model: [specs/control-api.md](../../../specs/control-api.md). This page is
+Signed, plain-HTTP JSON API inside the own app `akam2k_rtsp`, for scripts and other local tools. Home Assistant uses MQTT discovery ([MQTT](../../mqtt.md#lsc-rotatable-2k)), not this API. Design and threat model: [specs/control-api.md](../../../specs/control-api.md). This page is
 the user and integrator reference of what phase 2 ships.
 
 ## 1. Provisioning: the first key
@@ -78,8 +77,8 @@ cap of 20 failures per minute, so a flood cannot lock the owner out).
 | `night.ir_led` | `auto\|off` | IR LED policy; persisted |
 | `image.brightness`, `image.contrast`, `image.sharpness` | 0..100 | ISP picture, RAM only (reset by a restart) |
 | `image.mains_hz` | `50\|60` | RAM only |
-| `image.flip` | bool (default 0) | flip the picture vertically (`ak_vpss_switch_flip_mirror`, isp-controls.md 3.2); live, no restart; saved in `/config/akam/settings` only when the user changes it (never rewritten while running); Home Assistant switch **Image flip** |
-| `image.mirror` | bool (default 0) | mirror the picture horizontally; same rules; Home Assistant switch **Image mirror** |
+| `image.flip` | bool (default 0) | flip the picture vertically (`ak_vpss_switch_flip_mirror`, isp-controls.md 3.2; host-tested only, not verified on the camera); live, no restart; saved in `/config/akam/settings` only when the user changes it (never rewritten while running); Home Assistant switch **Image flip** |
+| `image.mirror` | bool (default 0) | mirror the picture horizontally (not verified on the camera either); same rules; Home Assistant switch **Image mirror** |
 | `image.ceiling` | bool (default 0) | convenience for a camera mounted upside down: 1 = flip and mirror both on, 0 = both off; reads 1 only while both are on; not saved itself (the two rows above are); Home Assistant switch **Ceiling mount**. The orientation also applies to the zones, the tracker, the PTZ directions and the scene reference: see isp-controls.md 3.3 |
 | `detect.publish_hz` | 0..10 (default 2) | how often the person boxes are published (event `detections`, `detect.boxes`, MQTT `BASE/detections`); 0 = off; never more than 5 a second; live, persisted |
 | `track.enabled` | bool | person tracking; persisted |

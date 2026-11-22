@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/appfs"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/kit/kittest"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/squashfs"
 )
 
@@ -150,4 +151,75 @@ func TestAppfsFlashExecuteNeedsATerminalAndConfirmations(t *testing.T) {
 	if r.rc == 0 {
 		t.Fatal("piped answers confirmed a live flash")
 	}
+}
+
+// build2KKit makes a signed tarball of the 2K kit with the right file set (stand-in contents: the real busybox pin
+// is not satisfied, so a build from it stops inside the builder, after the kit was verified and loaded).
+func build2KKit(t *testing.T, sp kittest.Spec) kittest.Built {
+	t.Helper()
+	files := map[string][]byte{"bin/ak_rtsp": nil, "bin/dropbearmulti": nil, "bin/flash_tool": nil, "patches/patch_service_sh.sh": nil,
+		"scripts/flash/akam_reflash_ssh.sh": nil, "scripts/flash/flash_guard.sh": nil, "scripts/flash/preflight_check.sh": nil,
+		"scripts/hwcheck/akam_hwcheck.sh": nil}
+	for _, p := range appfs.RequiredKitPaths() {
+		if p != "MANIFEST.txt" && p != "SHA256SUMS" {
+			files[p] = []byte("stand-in " + p + "\n")
+		}
+	}
+	sp.Model, sp.Target, sp.NoLink = rotModel, "arm-linux", true
+	sp.Files = files
+	sp.ManifestExtra = "kind=cardless-appfs\n"
+	return kittest.Build(t, t.TempDir(), sp)
+}
+
+// B2: appfs-build takes the signed release tarball (--kit FILE) or downloads it: the signature is verified, as for
+// prepare-2k-sd and update, before the kit is read.
+func TestAppfsBuildVerifiesTheSignedKit(t *testing.T) {
+	b := build2KKit(t, kittest.Spec{})
+	_, bdir := appfsDirs(t)
+	tar := filepath.Join(b.Dir, "akam-kit-"+rotModel+"-1.0.0.tar.xz")
+
+	// the signed tarball given as a file: verified, loaded, and the build starts (the stand-in busybox stops it)
+	e := getKitEnv(t, nil, &b)
+	e.writeState("camera_model=" + rotModel + "\n")
+	r := e.run("", "appfs-build", "--kit", tar, "--backup-dir", bdir, "--out", filepath.Join(t.TempDir(), "o"))
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "signature valid", "Kit verified (version 1.0.0", "the image was not built")
+	notContains(t, r.out+r.err, "appfs kit is not usable")
+
+	// downloaded: no --kit, the three files are fetched over HTTPS and verified the same way
+	ks := newKitServer(t, b, false)
+	e = getKitEnv(t, ks, &b)
+	e.writeState("camera_model=" + rotModel + "\n")
+	r = e.run("", "appfs-build", "--version", "1.0.0", "--backup-dir", bdir, "--out", filepath.Join(t.TempDir(), "o"))
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "signature valid", "Kit verified (version 1.0.0", "the image was not built")
+	if len(ks.hits) != 3 {
+		t.Errorf("requests: %v", ks.hits)
+	}
+
+	// a kit signed by a key the program does not trust is refused before it is read
+	other := build2KKit(t, kittest.Spec{}) // another test key: this program trusts only the key it is given
+	e = getKitEnv(t, nil, &other)
+	e.writeState("camera_model=" + rotModel + "\n")
+	r = e.run("", "appfs-build", "--kit", tar, "--backup-dir", bdir, "--out", filepath.Join(t.TempDir(), "o"))
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "the kit failed verification")
+	notContains(t, r.out+r.err, "the image was not built")
+
+	// an unsigned tarball is refused unless --allow-unsigned (and asks no question without a terminal)
+	u := build2KKit(t, kittest.Spec{Unsigned: true})
+	e = getKitEnv(t, nil, &u)
+	e.writeState("camera_model=" + rotModel + "\n")
+	r = e.run("", "appfs-build", "--kit", filepath.Join(u.Dir, "akam-kit-"+rotModel+"-1.0.0.tar.xz"), "--backup-dir", bdir)
+	if r.rc == 0 {
+		t.Fatalf("an unsigned kit was accepted:\n%s%s", r.out, r.err)
+	}
+	notContains(t, r.out+r.err, "the image was not built")
+}
+
+func TestAppfsBuildDryRunWithoutKitSaysItDownloads(t *testing.T) {
+	e := newEnv(t)
+	r := e.run("", "--dry-run", "--model", rotModel, "appfs-build", "--backup-dir", "b")
+	expectRC(t, r, 0)
+	contains(t, r.out, "WOULD download the signed 2K kit")
 }

@@ -106,19 +106,19 @@ int a2k_ptz_park(int *pan, int *tilt)
 int a2k_ptz_parse_boot_calibrate(const char *s)
 {
     (void)s;
-    return -1;
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
 }
 
 int a2k_ptz_parse_cal(const char *s)
 {
     (void)s;
-    return -1;
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
 }
 
 int a2k_ptz_parse_drift_correct(const char *s)
 {
     (void)s;
-    return -1;
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
 }
 
 int a2k_ptz_parse_park(const char *s, int *pan, int *tilt)
@@ -126,13 +126,13 @@ int a2k_ptz_parse_park(const char *s, int *pan, int *tilt)
     (void)s;
     if (pan) *pan = 0;
     if (tilt) *tilt = 0;
-    return -1;
+    return 0; /* accepted and ignored, as the other parsers of the absent feature */
 }
 
 int a2k_ptz_parse_tilt_rehome(const char *s)
 {
     (void)s;
-    return -1;
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
 }
 
 void a2k_ptz_patrol_cancel(void)
@@ -191,7 +191,7 @@ void a2k_ptz_rehome_last(unsigned long *last_s, const char **reason)
 
 int a2k_ptz_scene_pending(void)
 {
-    return -1;
+    return 0; /* a boolean: nothing is pending */
 }
 
 void a2k_ptz_set_cmd_hook(void (*fn)(int kind))
@@ -308,7 +308,7 @@ int dm_ref_build(const uint8_t *y, unsigned w, unsigned h, unsigned stride, dm_r
 int dm_static_ok(const dm_res_t *r)
 {
     (void)r;
-    return -1;
+    return 0; /* a boolean: no */
 }
 
 const char *dm_verdict_name(int v)

@@ -1,5 +1,8 @@
 # How Akam works on this camera
 
+This page describes the **LSC Indoor 1080p** (APP partition replaced by `ak_rtsp`). The 2K runs `akam2k_rtsp` from the appfs
+partition: see [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md) and [on the camera](porting/lsc-rotatable-2k/on-camera.md).
+
 For curious users and hackers. You do not need this page to install Akam. The exact values (ports, limits, file
 formats) are in [`specs/`](../specs/README.md); this page explains the picture and links there.
 

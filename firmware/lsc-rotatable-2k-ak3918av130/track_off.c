@@ -13,7 +13,7 @@ int a2k_tareas_parse(const char *text, size_t len, a2k_tareas_t *out)
     (void)text;
     (void)len;
     if (out) memset(out, 0, sizeof *out);
-    return -1;
+    return 0; /* accepted and ignored (a track_area line left in akam2k.conf must not stop the app) */
 }
 
 int a2k_track_area_corner(a2k_track_t *t, int slot, int corner)
@@ -288,8 +288,8 @@ void tl_cfg_geometry_2k(struct tl_cfg *c)
 int tl_lost_parse(const char *s, struct tl_cfg *c)
 {
     (void)s;
-    if (c) memset(c, 0, sizeof *c);
-    return -1;
+    (void)c; /* untouched: the caller's other tracking options stay */
+    return 0; /* accepted and ignored */
 }
 
 void tr_init(tr_t *t)

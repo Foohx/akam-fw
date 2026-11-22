@@ -3,12 +3,16 @@
 *What this page is for: connecting the camera to Home Assistant or another home automation system. Skip it if you
 only want to watch the video.*
 
+> **Two cameras.** Sections 1 to 8 describe the **LSC Indoor 1080p** (`./akam mqtt set`, `ak_rtsp`,
+> `/etc/config/akam/mqtt`, the entity table of section 3). The **LSC Rotatable 2K** has its own commands and files, and its own entities: see
+> [LSC Rotatable 2K](#lsc-rotatable-2k) at the end. The assistant's `mqtt` command is refused on a 2K.
+
 **MQTT** is a light messaging protocol for home automation; a **broker** (for example Mosquitto) is the server that
 passes the messages around. Akam can publish the camera to an MQTT broker and take a few commands from it. Home Assistant finds the camera by itself
 (MQTT discovery): one device with its sensors and controls. It is **optional and off by default**. Without it the camera
 has no MQTT code running: no thread, no socket, no timer. The video stream (RTSP) and ONVIF work without it.
 
-Status: **tested on the host only** (packet codec, discovery documents, a fake broker, the helper script, the assistant
+Status (both cameras): **tested on the host only** (packet codec, discovery documents, a fake broker, the helper script, the assistant
 and the wizard). It has not run on a real camera yet: the checks to make are in [section 8](#8-hardware-checks).
 
 ## 1. What it is
@@ -102,7 +106,7 @@ The limits survive a reconnect (a new session does not refill the buckets), so r
 | Topic | Content |
 |---|---|
 | `BASE/status` | `online` (retained) while connected; `offline` (retained) when the camera stops or the connection breaks (the broker publishes it for the camera: it is the MQTT "last will") |
-| `BASE/detections` | the boxes of the people in view, JSON, not retained, QoS 0 (see below). No Home Assistant entity belongs to it |
+| `BASE/detections` | **2K only.** The boxes of the people in view, JSON, not retained, QoS 0 (see below). No Home Assistant entity belongs to it |
 | `BASE/<entity>/state` | the value. Controls are retained (Home Assistant restores them); sensors are not |
 | `BASE/<entity>/set` | commands (select, number, switch and button entities only) |
 | `homeassistant/<component>/akam_<mac>/<entity>/config` | the retained discovery documents |
@@ -205,3 +209,35 @@ See `specs/audio.md` (status notes) for the exact figures and what is still to m
 ## 8. Hardware checks
 
 These need a camera and a broker; they are listed in the [test plan](hardware-test-checklists.md).
+
+## LSC Rotatable 2K
+
+The 2K runs the same MQTT client design (outbound only, plain TCP, no broker on the camera, one Home Assistant device, off
+until you configure it) inside `akam2k_rtsp`. Status: host tests only (golden discovery documents, fuzzed parser, fake broker);
+not run on the camera.
+
+**Turn it on.** There is no assistant command for it on the 2K. Create two files over SSH in `/config/akam`, then restart the
+app: [using the 2K](porting/lsc-rotatable-2k/using-the-2k.md#2-mqtt-and-home-assistant).
+
+| File | Content |
+|---|---|
+| `/config/akam/mqtt` | `key=value` lines, strict (an unknown key or a bad value makes the file invalid, MQTT stays off): `enabled=0\|1` and `host=` required; `port=` (1883), `user=`, `client_id=` (`akam-rot2k`), `base_topic=` (`akam/<hostname>`), `discovery=on\|off`, `discovery_prefix=` (`homeassistant`), `interval=` (10 to 300 s, default 30) |
+| `/config/akam/mqtt_pass` | the broker password alone on one line; absent = none; ignored without a `user=` |
+
+The broker address is an IPv4 address or a host name your DNS resolves (no mDNS). The password is never logged or published.
+
+**What Home Assistant gets** (discovery only; the device is named after the camera and identified by its Wi-Fi MAC): person
+presence, last detection score, video viewers and the firmware version; one presence sensor per detection zone; a JPEG snapshot
+image when a person appears; the day/night state; the diagnostic system sensors; the status LED and IR LED selects and the LED
+rule patterns; the PTZ buttons and position sensors; the video settings (bit rate, frame rate, ...); the controls of person
+tracking (switch, pan-only switch), the zone and tracking-area texts; the front button as an event and as device triggers; and
+the three picture switches **Image flip**, **Image mirror** and **Ceiling mount** (host-tested only, not verified on the camera:
+[checklist](hardware-test-checklists.md#2k-picture-orientation-flip-mirror-ceiling-mount)). Commands go to `BASE/<entity>/set`,
+states to `BASE/<entity>/state` (payloads are validated by the camera). The exact entity list is in
+`platforms/anyka-ak3918av130/mqtt_cfg.h`.
+
+**`BASE/detections`** (section 3, topics) exists only on the 2K: the boxes of the people in view, same JSON as the `detections`
+event of the [2K API](porting/lsc-rotatable-2k/control-api.md).
+
+Not on the 2K: the 1080p entities of section 3 that depend on the speaker (volume, talk, beep) and the 1080p's `akam_mqtt.sh`
+options. The security advice of section 4 applies: whoever can publish to `BASE/+/set` on your broker commands the camera.

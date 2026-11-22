@@ -101,6 +101,9 @@ void a2k_mqtt_set_vid(const a2k_mqtt_vid_t *ops);
  * entities again (and clears the removed ones) and publishes the new values. The zones are the CONFIGURED ones (not the ones in force). */
 void a2k_mqtt_zones_changed(const a2k_zones_t *z);
 void a2k_mqtt_resync(void);
+/* Registers an orientation listener (orient.h) that calls a2k_mqtt_resync: an image.flip / mirror / ceiling change from ANY source (API, button mode, load of the
+ * saved settings) republishes the three switches and the zone texts (which are shown in the displayed frame). 0, or -1 when the listener slots are full. */
+int a2k_mqtt_follow_orientation(void);
 /* The push button was pressed briefly: publishes the Home Assistant event (type "press" only; others are ignored). Cheap, never blocks;
  * at most 4 presses wait for the broker, a dead broker drops them. */
 void a2k_mqtt_button_event(const char *type);

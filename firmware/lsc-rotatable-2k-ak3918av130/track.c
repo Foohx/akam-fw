@@ -480,10 +480,19 @@ int a2k_track_set_invert(a2k_track_t *t, int invert_pan, int invert_tilt)
     if ((invert_pan & ~1) || (invert_tilt & ~1))
         return -1;
     pthread_mutex_lock(&t->mu);
-    t->cfg.invert_pan = invert_pan;
-    t->tl.cfg.invert_pan = invert_pan;
-    t->cfg.invert_tilt = invert_tilt;
-    t->tl.cfg.invert_tilt = invert_tilt;
+    if (t->cfg.invert_pan != invert_pan || t->cfg.invert_tilt != invert_tilt) {
+        /* The policy memory holds world positions built with the old signs (m * pan, kt * tilt, tilt_ref, exit_tilt0): read with the new ones they point to the mirrored
+         * side. A real change forgets the target as the disable path does (a moving command and a lost-chain route stop, the next target starts clean). */
+        if (t->active) {
+            if (t->ops.vel)
+                (void)t->ops.vel(0, 0, 0, 0);
+            if (t->tl.lost_route_on && t->ops.route_stop)
+                (void)t->ops.route_stop();
+        }
+        t->cfg.invert_pan = invert_pan;
+        t->cfg.invert_tilt = invert_tilt;
+        (void)tl_init(&t->tl, &t->cfg);
+    }
     pthread_mutex_unlock(&t->mu);
     return 0;
 }

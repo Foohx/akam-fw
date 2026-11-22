@@ -22,6 +22,7 @@
 
 #include "log.h"
 #include "mqtt.h"
+#include "orient.h"
 #include "ptz_vel.h"
 
 #define RX_CAP 512            /* a broker sends CONNACK, PINGRESP, PUBACK: anything bigger is not for us */
@@ -311,6 +312,15 @@ void a2k_mqtt_resync(void)
         wake_locked();
     pthread_mutex_unlock(&g_mu);
 }
+
+static void orient_resync(int flip, int mirror)
+{
+    (void)flip;
+    (void)mirror;
+    a2k_mqtt_resync();
+}
+
+int a2k_mqtt_follow_orientation(void) { return a2k_orient_listen(orient_resync); }
 
 void a2k_mqtt_set_buttons(int (*list)(char names[][A2K_BTN_NAME])) { g_btn_list = list; }
 

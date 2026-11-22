@@ -6,6 +6,8 @@
 
 #include "rtp_clock.h"
 
+_Static_assert(RTCP_SR_SIZE == SMOLRTSP_RTCP_SR_SIZE_BASE, "RTCP_SR_SIZE (rtcp_sr.h) must stay the size SmolRTSP serialises");
+
 size_t rtcp_sr_build(uint8_t out[RTCP_SR_SIZE], uint32_t ssrc, uint32_t rtp_ts, uint32_t pkt_count, uint32_t octet_count, int64_t real_us)
 {
     uint32_t ntp_sec, ntp_frac;

@@ -12,6 +12,7 @@
 
 #include "api_events.h"
 #include "mqtt_bind.h"
+#include "orient.h"
 #include "mqtt_cfg.h"
 #include "zones.h"
 #include "mqtt.h"
@@ -1063,7 +1064,7 @@ static void test_ptz(void)
 /* ---- ctl group: the tracking switch, zone texts, tracking areas, button event ---- */
 static pthread_mutex_t g_cmu = PTHREAD_MUTEX_INITIALIZER;
 static char g_ctl_track[4] = "OFF", g_ctl_zones[260] = "porch=0,0,50,50", g_ctl_areas[3][A2K_ZONE_NAME_MAX + 1];
-static int g_ctl_na, g_ctl_setn, g_ctl_last_k = -1;
+static int g_ctl_na, g_ctl_setn, g_ctl_last_k = -1, g_ctl_orient;
 static char g_ctl_last_v[A2K_CTL_VAL];
 static int ctl_get_fn(int k, char *out, size_t cap)
 {
@@ -1071,6 +1072,11 @@ static int ctl_get_fn(int k, char *out, size_t cap)
     pthread_mutex_lock(&g_cmu);
     if (k == A2K_CTL_TRACK) snprintf(out, cap, "%s", g_ctl_track);
     else if (k == A2K_CTL_ZONES) snprintf(out, cap, "%s", g_ctl_zones);
+    else if (g_ctl_orient && k >= A2K_CTL_FLIP && k <= A2K_CTL_CEILING) { /* only while a test follows the orientation (the sent-message log is bounded) */
+        int f, m;
+        a2k_orient_get(&f, &m);
+        snprintf(out, cap, "%s", (k == A2K_CTL_FLIP ? f : k == A2K_CTL_MIRROR ? m : f && m) ? "ON" : "OFF");
+    }
     else if (k == A2K_CTL_IGNORE) snprintf(out, cap, "%s", "door=1,1,2,2");
     else if (k == A2K_CTL_AREAS) snprintf(out, cap, "%s", g_ctl_na ? "door=500:1500:500:1500" : "none");
     else if (k >= A2K_CTL_SLOT0 && (k - A2K_CTL_SLOT0) % A2K_CTL_PER_SLOT == 0 && (k - A2K_CTL_SLOT0) / A2K_CTL_PER_SLOT < g_ctl_na) snprintf(out, cap, "ON");
@@ -1414,6 +1420,29 @@ static void btn_set_list(int n, const char *a, const char *b, const char *c, con
     pthread_mutex_unlock(&g_bmu);
 }
 
+/* An orientation change that did not come from MQTT (API, button mode, the settings loaded at boot) republishes the switches (a2k_mqtt_follow_orientation). */
+static void test_orient_follow(void)
+{
+    static const a2k_mqtt_ctl_t ops = { ctl_get_fn, ctl_set_fn, ctl_areas_fn };
+    printf("== orientation switches follow a change made elsewhere\n");
+    a2k_orient_test_reset();
+    reset_stub();
+    a2k_mqtt_set_ctl(&ops);
+    g_ctl_orient = 1;
+    CHECK(a2k_mqtt_follow_orientation() == 0, "the MQTT bind follows the orientation");
+    CHECK(start_with(FULL) == 0 && wait_state("connected"), "connected with the ctl entities");
+    CHECK(wait_sent("akam/test/image_flip/state|OFF|0", 1) && wait_sent("akam/test/ceiling_mount/state|OFF|0", 1), "the orientation switches are published (off)");
+    a2k_orient_set(1, 0);
+    CHECK(wait_sent("akam/test/image_flip/state|ON|0", 1) && wait_sent("akam/test/image_mirror/state|OFF|0", 2) && wait_sent("akam/test/ceiling_mount/state|OFF|0", 2),
+          "a change from another source republishes the switches with the new values");
+    a2k_orient_set(1, 1);
+    CHECK(wait_sent("akam/test/ceiling_mount/state|ON|0", 1) && wait_sent("akam/test/image_mirror/state|ON|0", 1), "the ceiling mount and the mirror follow too");
+    a2k_mqtt_stop();
+    g_ctl_orient = 0;
+    a2k_orient_test_reset();
+    a2k_mqtt_set_ctl(NULL);
+}
+
 static void test_btn(void)
 {
     a2k_mqtt_cfg_t c;
@@ -1519,6 +1548,7 @@ int main(void)
     test_ctl();
     test_btn();
     test_vid();
+    test_orient_follow();
     snprintf(buf, sizeof buf, "rm -rf %s", dir);
     if (system(buf) != 0) { /* best effort */ }
     printf("rot2k mqtt unit: %d failed\n", fails);

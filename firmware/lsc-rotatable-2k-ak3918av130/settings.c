@@ -166,6 +166,7 @@ static int orient_set_row(const char *key, const char *val, st_apply_t *eff)
 {
     int f, m, of, om, v = atoi(val);
     (void)eff;
+    a2k_orient_isp_lock();
     a2k_orient_get(&of, &om);
     f = of;
     m = om;
@@ -175,15 +176,21 @@ static int orient_set_row(const char *key, const char *val, st_apply_t *eff)
         m = v;
     else if (strcmp(key, "image.ceiling") == 0)
         f = m = v;
-    else
+    else {
+        a2k_orient_isp_unlock();
         return ST_E_SETTER;
-    if (f == of && m == om)
+    }
+    if (f == of && m == om) {
+        a2k_orient_isp_unlock();
         return 0;
+    }
     a2k_orient_set(f, m);
     if (a2k_isp_flip_mirror(f, m) != 0) { /* ISP calls: on the worker thread, never the HTTP thread */
         a2k_orient_set(of, om);
+        a2k_orient_isp_unlock();
         return ST_E_SETTER;
     }
+    a2k_orient_isp_unlock();
     return 0;
 }
 
@@ -1022,6 +1029,9 @@ static void job_err(a2k_job_t *j, int http, const char *err, const char *detail)
 }
 
 static int g_dirty;
+/* A change of this row must reach the file. image.ceiling is not in the file itself (persist 0) but it sets image.flip and image.mirror, which are: a patch of
+ * the ceiling alone has to mark them dirty too, or the mount is lost at the next boot. */
+static int row_saves(const st_def_t *d) { return d->persist || strcmp(d->key, "image.ceiling") == 0; }
 static void act_mode(a2k_job_t *j);
 
 static void act_reset(a2k_job_t *j)
@@ -1043,7 +1053,7 @@ static void act_reset(a2k_job_t *j)
         if (d->min_scope > j->scope)
             continue;
         if (streg_set(&g_reg, j->src, j->scope, d->key, d->def, &r) == 200)
-            done++, g_dirty |= d->persist;
+            done++, g_dirty |= row_saves(d);
         else
             failed++;
     }
@@ -1268,7 +1278,7 @@ static void do_patch(a2k_job_t *j)
     j->http = streg_patch(&g_reg, j->src, j->scope, j->in.n, k, v, j->res);
     for (i = 0; i < j->in.n; i++) {
         const st_def_t *d = j->res[i].ok ? streg_find(&g_reg, k[i]) : NULL;
-        if (d && d->persist)
+        if (d && row_saves(d))
             g_dirty = 1;
     }
     changed_event(j);

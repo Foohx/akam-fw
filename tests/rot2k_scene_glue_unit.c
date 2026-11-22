@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "../firmware/lsc-rotatable-2k-ak3918av130/night_ctl.h"
+#include "../platforms/anyka-ak3918av130/orient.h"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/scene.h"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/store.h"
 #include "../src/features/scene/scene_check.h"
@@ -386,6 +387,49 @@ static void drift_ref_tests(const a2k_ptz_scene_t *h)
     pthread_join(th, NULL);
     a2k_scene_set_drift_ref(0);
     a2k_scene_test_set(path, 0, 0, 1, 2000);
+}
+
+/* The references are in the SENSOR frame (orient.h): with a mirror on, the frames the detection thread feeds are of the displayed frame and a2k_scene_feed converts them, and
+ * it skips the settling window after a change. Behaviour of a2k_scene_feed, not a source grep. */
+static void orient_tests(const a2k_ptz_scene_t *h)
+{
+    static uint8_t shown[192][320];
+    char d2[220], p2[240];
+    uint32_t pan = HOME_PAN, tilt = HOME_TILT;
+    printf("== orientation: references in the sensor frame, frames of the displayed frame converted, settling window skipped\n");
+    snprintf(d2, sizeof d2, "%s_orient", dir);
+    mkdir(d2, 0755);
+    snprintf(p2, sizeof p2, "%s/ptz.scene", d2);
+    a2k_orient_test_reset();
+    a2k_orient_test_clock(1000);
+    a2k_scene_test_set(p2, 0, 0, 1, 2000);
+    a2k_scene_test_clock(T0);
+    scene(7, 0);
+    feed();
+    CHECK(h->capture() == 0 && h->commit(HOME_PAN, HOME_TILT, 1) == 0, "orientation off: the home reference is written (sensor frame)");
+    CHECK(a2k_orient_plane(0, 1, &plane[0][0], 320, 192, 320, &shown[0][0]) == 0, "the mirrored picture the camera shows after the mount changed");
+    a2k_scene_test_set(p2, 0, 0, 1, 2000); /* forgets the frame */
+    a2k_orient_set(0, 1);
+    a2k_scene_feed(&shown[0][0], 320, 192, 320);
+    CHECK(h->capture() == -1, "inside the settling window the frame is skipped (no frame held)");
+    a2k_orient_test_clock(1000 + A2K_ORIENT_SETTLE_MS + 1);
+    a2k_scene_feed(&shown[0][0], 320, 192, 320);
+    CHECK(h->boot_check(&pan, &tilt, NULL) == 1 && pan == HOME_PAN && tilt == HOME_TILT, "after the window: the displayed frame is converted back and matches the reference saved before the change");
+    a2k_orient_test_reset();
+    a2k_orient_test_clock(1000);
+    a2k_scene_test_set(p2, 0, 0, 1, 2000);
+    a2k_scene_feed(&shown[0][0], 320, 192, 320);
+    pan = HOME_PAN;
+    tilt = HOME_TILT;
+    CHECK(h->boot_check(&pan, &tilt, NULL) != 1, "control: the same mirrored frame with the orientation off does NOT match (the conversion is what makes it match)");
+    a2k_orient_test_reset();
+    {
+        char t2[260];
+        unlink(p2);
+        snprintf(t2, sizeof t2, "%s.tmp", p2);
+        unlink(t2);
+        rmdir(d2);
+    }
 }
 
 int main(void)
@@ -916,6 +960,7 @@ int main(void)
     }
     rmdir(dir);
     drift_ref_tests(h);
+    orient_tests(h);
     printf("rot2k scene glue unit: %d failed\n", fails);
     return fails ? 1 : 0;
 }

@@ -66,6 +66,19 @@ done
 check "2K all four off: the rest of the program is still listed" bash -c "echo '$none' | grep -q '/main.c\$' && echo '$none' | grep -q '/settings.c\$'"
 check "the AKAM_ALLOW_UNLINKABLE escape is gone from the 2K model" bash -c "! grep -rq AKAM_ALLOW_UNLINKABLE '$REPO/firmware' '$REPO/platforms' '$REPO/src'"
 
+# The stand-ins behave (host build, no ARM toolchain): the parsers of an absent feature accept and ignore their akam2k.conf line (a refusal makes main.c exit with usage()),
+# and pp_name_ok is the real rule (mode.apply validates a button mode name with it) - compared with the real ptz_patrol.c on a list of names.
+if command -v "${HOST_CC:-cc}" >/dev/null 2>&1; then
+    # shellcheck source=tests/lib/paths.sh
+    . "$REPO/tests/lib/paths.sh"
+    OFFDIR=$REPO/firmware/lsc-rotatable-2k-ak3918av130
+    check "2K stand-ins: the host unit test builds (all four *_off.c together)" quiet "${HOST_CC:-cc}" -Wall -Wextra -Werror -std=gnu99 -DOFF -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/off_unit" \
+        "$REPO/tests/rot2k_off_unit.c" "$OFFDIR/ptz_off.c" "$OFFDIR/scene_off.c" "$OFFDIR/track_off.c" "$OFFDIR/patrol_off.c"
+    check "2K stand-ins: parsers accept and ignore their options, booleans answer false, pp_name_ok is the real rule" bash -c "'$WORK/off_unit' | grep -q 'rot2k off unit: 0 failed'"
+    quiet "${HOST_CC:-cc}" -Wall -Wextra -Werror -std=gnu99 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/real_unit" "$REPO/tests/rot2k_off_unit.c" "$REPO/src/features/ptz/ptz_patrol.c" || true
+    check "2K patrol_off.c: pp_name_ok answers like the real ptz_patrol.c on every name of the list" bash -c "diff <('$WORK/off_unit' | grep '^name') <('$WORK/real_unit' | grep '^name')"
+fi
+
 # every variant links for ARM (needs the pinned uClibc toolchain, the vendor libraries of YOUR backup and the SmolRTSP checkout)
 TCBIN=$REPO/tools/.toolchain/armv5-eabi--uclibc--stable-2018.11-1/bin/arm-linux-gcc
 VENDOR_LIB=$(make -s -C "$P2" -p -n 2>/dev/null | sed -n 's/^VENDOR := //p' | head -1)

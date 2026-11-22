@@ -46,7 +46,7 @@ For developers and tinkerers. To just install Akam, use `./akam` ([README](../RE
 
 **Target:** `firmware/<model-id>/` holds only camera facts: `model.mk`, the HAL and PTZ descriptors, the pins, the settings table, boot scripts, image
 builders. **Current:** that is true for the 1080p (its `settings.c` and `api_bind.c` still describe the platform's ISP, encoder and LED, a smaller debt), but not
-for the 2K. `firmware/lsc-rotatable-2k-ak3918av130/` has 26 C files, of which only `hal.c`, `ptz_desc.c`, `pin.c` and the two small sysfs drivers hold hardware
+for the 2K. `firmware/lsc-rotatable-2k-ak3918av130/` has 30 C files (four of them `*_off.c` stand-ins), of which only `hal.c`, `ptz_desc.c`, `pin.c` and the two small sysfs drivers hold hardware
 facts; `ptz.c` (about 1 750 lines), `settings.c`, `track.c`, `scene.c`, `patrol.c`, `button_rt.c`, `night_ctl.c`, `zones.c`, `vlive.c` and others are feature logic or wiring.
 The platform (`platforms/anyka-ak3918av130/`) reaches into the model directory by basename (`-I$(MODEL_DIR)`, 17 headers) and the model includes platform headers
 back, so the two directories are one program in two folders. Consequences today: a new camera on the 2K platform would copy that code; a 2K feature switched off
