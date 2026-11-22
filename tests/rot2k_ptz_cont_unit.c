@@ -18,6 +18,7 @@
 #include "../firmware/lsc-rotatable-2k-ak3918av130/hal.h"
 #include "../firmware/lsc-rotatable-2k-ak3918av130/ptz.h"
 #include "../src/hal/hal_ptz.h"
+#include "../platforms/anyka-ak3918av130/orient.h"
 
 #define REQ_LIM 0x40100c03u
 #define REQ_IPOS 0x40280c04u
@@ -1361,6 +1362,58 @@ static void manual_cases(void)
     a2k_ptz_set_lease_ms(450);
     a2k_ptz_set_cmd_hook(cmd_hook);
     CHECK(a2k_ptz_range(&pmin, &pmax, &tmin, &tmax) == 0, "soft range known");
+
+    /* 0. image orientation (orient.h): the commands are the viewer's directions, the driver's are the sensor's: a mirror reverses left / right, a flip up / down */
+    {
+        int pa, ta, up_off, before;
+        a2k_orient_test_reset();
+        pa = mech_pan();
+        CHECK(a2k_ptz_vel_manual(1, 0, 3, 0, 600) == 0, "0: orientation off: velocity right");
+        usleep(300000);
+        CHECK(mech_pan() > pa + 40, "0: orientation off: the pan counter goes up (the reference direction)");
+        CHECK(a2k_ptz_manual_stop() == 0 && wait_motor_stop(1500) >= 0 && wait_idle(3000), "0: stop");
+        a2k_orient_set(0, 1);
+        pa = mech_pan();
+        CHECK(a2k_ptz_vel_manual(1, 0, 3, 0, 600) == 0, "0: mirror: velocity right");
+        usleep(300000);
+        CHECK(mech_pan() < pa - 40, "0: mirror: the same command now drives the pan the other way");
+        CHECK(a2k_ptz_manual_stop() == 0 && wait_motor_stop(1500) >= 0 && wait_idle(3000), "0: stop");
+        ta = mech_tilt();
+        CHECK(a2k_ptz_vel_manual(0, 1, 0, 4, 600) == 0, "0: mirror only: velocity up");
+        usleep(300000);
+        up_off = mech_tilt() - ta;
+        CHECK(a2k_ptz_manual_stop() == 0 && wait_motor_stop(1500) >= 0 && wait_idle(3000), "0: stop");
+        a2k_orient_set(1, 1);
+        ta = mech_tilt();
+        CHECK(a2k_ptz_vel_manual(0, 1, 0, 4, 600) == 0, "0: ceiling: velocity up");
+        usleep(300000);
+        CHECK(up_off != 0 && (mech_tilt() - ta) * up_off < 0, "0: flip: the tilt direction is the opposite of the mirror-only one (the flip reverses up / down)");
+        CHECK(a2k_ptz_manual_stop() == 0 && wait_motor_stop(1500) >= 0 && wait_idle(3000), "0: stop");
+        a2k_orient_set(0, 0);
+        before = mech_pan();
+        t0 = mono();
+        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_done(t0, 5000), "0: orientation off: the step button right");
+        CHECK(mech_pan() - before > 100, "0: orientation off: a step right raises the pan counter by about one step");
+        a2k_orient_set(0, 1);
+        before = mech_pan();
+        t0 = mono();
+        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_done(t0, 5000), "0: mirror: the step button right");
+        CHECK(mech_pan() - before < -100, "0: mirror: the same button lowers the pan counter");
+        a2k_orient_set(1, 0);
+        before = mech_tilt();
+        t0 = mono();
+        CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_done(t0, 5000), "0: flip: the step button up");
+        ta = mech_tilt() - before;
+        a2k_orient_set(0, 0);
+        before = mech_tilt();
+        t0 = mono();
+        CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_done(t0, 5000), "0: orientation off: the step button up");
+        CHECK(ta != 0 && (mech_tilt() - before) * ta < 0, "0: flip reverses the tilt of the step button");
+        a2k_orient_test_reset();
+        CHECK(M.bad_cmd == 0, "0: no forbidden request");
+        CHECK(a2k_ptz_goto(1275, 1300, 3) == 0 && wait_idle(8000) && mech_pan() > 1270 && mech_pan() < 1280 && mech_tilt() > 1295 && mech_tilt() < 1305, "0: back at the start pose for the cases below");
+    }
+
 
     CHECK(a2k_ptz_vel_manual(2, 0, 3, 0, 450) == A2K_PTZ_E_ARGS && a2k_ptz_vel_manual(1, 0, 1, 0, 450) == A2K_PTZ_E_ARGS && a2k_ptz_vel_manual(1, 0, 21, 0, 450) == A2K_PTZ_E_ARGS &&
           a2k_ptz_vel_manual(0, 1, 0, 0, 450) == A2K_PTZ_E_ARGS && a2k_ptz_vel_manual(1, 0, 3, 0, 149) == A2K_PTZ_E_ARGS && a2k_ptz_vel_manual(1, 0, 3, 0, 2001) == A2K_PTZ_E_ARGS,
@@ -2834,6 +2887,7 @@ int main(void)
 {
     if (getenv("PTZ_UNIT_ONLY_FLAT")) { flat_cases(); printf("rot2k ptz cont unit (blind drift only): %d failed\n", fails); return fails ? 1 : 0; }
     if (getenv("PTZ_UNIT_ONLY_REHOME")) { rehome_hal_cases(); rehome_ctl_cases(); printf("rot2k ptz cont unit (re-home only): %d failed\n", fails); return fails ? 1 : 0; }
+    if (getenv("PTZ_UNIT_ONLY_MANUAL")) { manual_cases(); printf("rot2k ptz cont unit (manual motion only): %d failed\n", fails); return fails ? 1 : 0; }
     if (getenv("PTZ_UNIT_ONLY")) {
         if (only("f1")) f1_cases();
         if (only("f2")) f2_cases();

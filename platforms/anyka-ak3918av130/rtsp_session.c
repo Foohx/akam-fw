@@ -36,8 +36,10 @@
 #include "log.h"
 #include "ptz.h"
 #include "rtsp_session.h"
+#include "h264_nalu.h"
 #include "h264_params.h"
 #include "net_tx.h"
+#include "rtcp_sr.h"
 #include "rtp_clock.h"
 #include "rtsp_auth.h"
 #include "rtsp_idle.h"
@@ -497,38 +499,21 @@ static int send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len, u
     return SEND_OK;
 }
 
+typedef struct {
+    Client *client;
+    uint32_t timestamp;
+} nalu_ctx_t;
+
+static int nalu_cb(void *user, const uint8_t *nalu, size_t len, int is_vcl)
+{
+    const nalu_ctx_t *c = user;
+    return send_one_nalu(c->client, nalu, len, c->timestamp, is_vcl != 0);
+}
+
 static int send_frame_nalus(Client *client, const uint8_t *data, size_t len, uint32_t timestamp)
 {
-    size_t i = 0;
-    while (i + 3 < len) {
-        size_t sc = 0;
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1)
-            sc = 4;
-        else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
-            sc = 3;
-        if (sc > 0) {
-            size_t start = i + sc, next = len, j = start;
-            size_t nlen;
-            while (j + 2 < len) {
-                if (data[j] == 0 && data[j + 1] == 0 && data[j + 2] == 1) {
-                    next = (j > 0 && data[j - 1] == 0) ? j - 1 : j;
-                    break;
-                }
-                j++;
-            }
-            nlen = next - start;
-            if (nlen > 0) {
-                unsigned t = data[start] & 0x1f;
-                int r = send_one_nalu(client, data + start, nlen, timestamp, t >= 1 && t <= 5);
-                if (r != SEND_OK)
-                    return r;
-            }
-            i = next;
-        } else {
-            i++;
-        }
-    }
-    return SEND_OK;
+    nalu_ctx_t c = { client, timestamp };
+    return h264_annexb_each(data, len, nalu_cb, &c);
 }
 
 /* One frame for one client: pacing (drop for this client only), start on a keyframe, then packetise. */
@@ -700,27 +685,11 @@ static void pump_audio(Client *c)
 static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport, uint8_t tcp_channel, uint32_t rtp_ts,
                              int64_t real_us)
 {
-    uint32_t ntp_sec, ntp_frac;
-    uint8_t frame[4 + SMOLRTSP_RTCP_SR_SIZE_BASE];
-    SmolRTSP_RtcpSr sr;
+    uint8_t frame[RTCP_SR_FRAME_SIZE];
 
-    rtp_ntp_from_unix_us(real_us, &ntp_sec, &ntp_frac);
-    sr = (SmolRTSP_RtcpSr){
-        .padding = false,
-        .rc = 0,
-        .ssrc = htonl(SmolRTSP_RtpTransport_ssrc(transport)),
-        .ntp_sec = htonl(ntp_sec),
-        .ntp_frac = htonl(ntp_frac),
-        .rtp_ts = htonl(rtp_ts),
-        .pkt_count = htonl(SmolRTSP_RtpTransport_pkt_count(transport)),
-        .octet_count = htonl(SmolRTSP_RtpTransport_octet_count(transport)),
-    };
     /* RFC 2326 section 10.12: '$', channel, 16-bit length, packet. */
-    frame[0] = '$';
-    frame[1] = tcp_channel;
-    frame[2] = 0;
-    frame[3] = SMOLRTSP_RTCP_SR_SIZE_BASE;
-    if (!SmolRTSP_RtcpSr_serialize(sr, frame + 4))
+    if (rtcp_sr_frame(frame, tcp_channel, SmolRTSP_RtpTransport_ssrc(transport), rtp_ts, SmolRTSP_RtpTransport_pkt_count(transport),
+                      SmolRTSP_RtpTransport_octet_count(transport), real_us) == 0)
         return;
     if (net_tx_write_all(&client->tx, frame, sizeof frame) < 0 && errno != ENOBUFS)
         client->tx_fail = true; /* ENOBUFS: this report is dropped, the next one is in 5 s */

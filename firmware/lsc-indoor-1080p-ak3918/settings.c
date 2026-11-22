@@ -478,9 +478,3 @@ int ak1080_settings_patch(int scope, size_t n, const char *const *keys, const ch
     return http;
 }
 
-int ak1080_settings_key_persists(const char *key)
-{
-    const st_def_t *d;
-    if (!g_ready || !(d = streg_find(&g_reg, key)) || !(d->access & ST_ACC_WRITE)) return 0;
-    return 1; /* every writable row saves a file of its module (only when the value changed: skip-if-equal in each module) */
-}

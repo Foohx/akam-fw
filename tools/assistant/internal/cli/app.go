@@ -421,6 +421,8 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdImage()
 	case "prepare-2k-sd":
 		return a.cmdPrepare2KSD()
+	case "seed-2k":
+		return a.cmdSeed2K()
 	case "key-2k":
 		return a.cmdKey2K()
 	case "backup-2k":
@@ -642,16 +644,6 @@ func (a *App) run(c *camssh.Client, cmd string, stdin io.Reader, logCmd string) 
 	ctx, cancel := context.WithTimeout(a.Ctx, 60*time.Second)
 	defer cancel()
 	return c.Run(ctx, cmd, stdin)
-}
-
-func joinNonEmpty(parts ...string) string {
-	var out []string
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return strings.Join(out, " ")
 }
 
 // envSecret is the value an AKAM_*PASS* variable had at start-up (they are removed from the

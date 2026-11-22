@@ -37,7 +37,7 @@ echo "== build the server harness (ASan/UBSan)"
 SRV=$WORK/apisrv
 # shellcheck disable=SC2086
 if ! $CC -std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -pthread \
- '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=16384 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" \
+ '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=16384 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" "$REPO/platforms/anyka-ak3918av130/orient.c" \
     "$REPO/src/api/api_httpd.c" "$REPO/src/api/api_core.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/api_bind.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/settings.c" "$REPO/src/api/api_events.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/net/http/http_req.c" "$REPO/src/api/api_limit.c" \
     "$REPO/src/api/api_keys.c" "$REPO/src/api/api_sig.c" "$REPO/src/net/crypto/sha256.c" "$REPO/src/api/json_min.c" "$REPO/src/core/settings_reg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/netreg.c" \
     "$REPO/src/features/ptz/ptz_vel.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button_rt.c" "$REPO/src/features/button/button_cfg.c" "$REPO/src/features/button/button_gesture.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c"; then
@@ -472,6 +472,58 @@ start_srv "$D2" --fast
 check "an invalid settings file is ignored as a whole" bash -c "! grep -q 'led.mode' '$D2/calls.log'"
 req "$WID" "$WSEC" GET /akam/v1/settings/led.mode
 want "defaults apply after an invalid settings file" 200 '"value":"on"'
+stop_srv || true
+
+# ================================================================== orientation rows (image.flip / image.mirror / image.ceiling)
+echo "== image orientation: flip, mirror, ceiling mount (live, saved on a user change, an ISP refusal is rolled back)"
+D2B=$WORK/p2b
+mkdir -p "$D2B"
+newkey "$D2B" write ha
+WID=$KID
+WSEC=$KSEC
+start_srv "$D2B" --fast
+req "$WID" "$WSEC" GET /akam/v1/schema
+for k in image.flip image.mirror image.ceiling; do
+    printf '%s' "$BODY" | grep -q "\"key\":\"$k\"" && ok "schema lists $k" || ko "schema lists $k"
+done
+req "$WID" "$WSEC" GET /akam/v1/settings/image.flip
+want "image.flip defaults to off" 200 '"value":"0"'
+check "nothing was sent to the ISP while the orientation stayed off" bash -c "! grep -q 'isp.flip_mirror' '$D2B/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.flip":true}'
+want "PATCH image.flip is applied live" 200 '"image.flip":\{"ok":true,"apply":"applied"'
+check "the ISP got flip 1, mirror 0" bash -c "grep -q 'isp.flip_mirror 1 0 rc 0' '$D2B/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/image.ceiling
+want "ceiling reads off while only the flip is on" 200 '"value":"0"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.ceiling":true}'
+want "PATCH image.ceiling turns both on" 200 '"image.ceiling":\{"ok":true'
+check "the ISP got flip 1, mirror 1" bash -c "grep -q 'isp.flip_mirror 1 1 rc 0' '$D2B/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/image.mirror
+want "image.mirror reads on" 200 '"value":"1"'
+req "$WID" "$WSEC" GET /akam/v1/settings/image.ceiling
+want "image.ceiling reads on while both are" 200 '"value":"1"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.mirror":false}'
+req "$WID" "$WSEC" GET /akam/v1/settings/image.ceiling
+want "turning the mirror off makes the ceiling read off" 200 '"value":"0"'
+: >"$D2B/calls.log"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.flip":true}'
+want "setting the value it already has is accepted" 200 '"image.flip":\{"ok":true'
+check "...and sends nothing to the ISP" bash -c "! grep -q 'isp.flip_mirror' '$D2B/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.flip":"yes"}'
+want "a non boolean is refused" 422
+: >"$D2B/flip_fail"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.mirror":true}'
+check "an ISP refusal is reported, not applied" bash -c "printf '%s' '$BODY' | grep -q '\"image.mirror\":{\"ok\":false'"
+req "$WID" "$WSEC" GET /akam/v1/settings/image.mirror
+want "...and the value stays off (the orientation is rolled back)" 200 '"value":"0"'
+rm -f "$D2B/flip_fail"
+sleep 2.2
+check "flip is saved (a user change), the ceiling row and the off mirror are not" bash -c "grep -q '^image.flip=1' '$D2B/settings' && ! grep -q 'image.ceiling' '$D2B/settings' && ! grep -q 'image.mirror' '$D2B/settings'"
+stop_srv && ok "stop saves and exits cleanly" || ko "stop (see $D2B/err)"
+: >"$D2B/calls.log"
+start_srv "$D2B" --fast
+check "the saved orientation is applied at the next start (live setter ran with the saved value)" bash -c "grep -q 'isp.flip_mirror 1 0 rc 0' '$D2B/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/image.flip
+want "the flip survived the restart" 200 '"value":"1"'
 stop_srv || true
 
 # ================================================================== phase 3: default limits (lockout, rate)

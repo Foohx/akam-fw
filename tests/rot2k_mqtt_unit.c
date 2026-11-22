@@ -1129,7 +1129,20 @@ static void test_ctl(void)
     CHECK(a2k_mqtt_discovery(&ids, A2K_E_CTL0, t, sizeof t, doc, sizeof doc) == -1 && a2k_mqtt_discovery(&ids, A2K_E_BUTTON, t, sizeof t, doc, sizeof doc) == -1,
           "no ctl entity unless ids.ctl");
     ids.ctl = 1;
-    CHECK(A2K_E_CTL0 == A2K_E_PTZ0 + A2K_PTZ_N && A2K_E_BUTTON == A2K_E_CTL0 + A2K_CTL_N && A2K_CTL_N == 22 && A2K_ZONE_MAX == 8, "entity index layout");
+    CHECK(A2K_E_CTL0 == A2K_E_PTZ0 + A2K_PTZ_N && A2K_E_BUTTON == A2K_E_CTL0 + A2K_CTL_N && A2K_CTL_N == 25 && A2K_ZONE_MAX == 8, "entity index layout (25 = 9 fixed ctl entities incl. the three orientation switches + 4 slots x 4)");
+    {
+        static const char *const id[3] = { "image_flip", "image_mirror", "ceiling_mount" }, *const nm[3] = { "Image flip", "Image mirror", "Ceiling mount" };
+        int k, ok = 1;
+        for (k = 0; k < 3; k++) {
+            char want_t[80], want_c[80], want_n[40];
+            snprintf(want_t, sizeof want_t, "ha/switch/akam_aabbccddeeff/%s/config", id[k]);
+            snprintf(want_c, sizeof want_c, "\"command_topic\":\"akam/test/%s/set\"", id[k]);
+            snprintf(want_n, sizeof want_n, "\"name\":\"%s\"", nm[k]);
+            ok &= a2k_mqtt_discovery(&ids, A2K_E_CTL0 + A2K_CTL_FLIP + k, t, sizeof t, doc, sizeof doc) > 0 && !strcmp(t, want_t) && strstr(doc, want_c) && strstr(doc, want_n) &&
+                  strstr(doc, "\"payload_on\":\"ON\"") && strstr(doc, "\"payload_off\":\"OFF\"");
+        }
+        CHECK(ok && A2K_CTL_FLIP == 6 && A2K_CTL_MIRROR == 7 && A2K_CTL_CEILING == 8 && A2K_CTL_SLOT0 == 9, "the orientation switches (flip, mirror, ceiling mount): switch entities with ON / OFF commands, in the ctl group before the tracking-area slots");
+    }
     CHECK(a2k_mqtt_discovery(&ids, A2K_E_CTL0 + A2K_CTL_TRACK, t, sizeof t, doc, sizeof doc) > 0 && !strcmp(t, "ha/switch/akam_aabbccddeeff/track/config") &&
               strstr(doc, "\"name\":\"Person tracking\"") && strstr(doc, "\"command_topic\":\"akam/test/track/set\"") && strstr(doc, "\"state_topic\":\"akam/test/track/state\"") &&
               strstr(doc, "\"payload_on\":\"ON\"") && strstr(doc, "\"payload_off\":\"OFF\""),

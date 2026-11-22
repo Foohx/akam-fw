@@ -14,7 +14,7 @@ include $(SRC_DIR)/build/sources.mk
 # `$(call O,a.o ../../b/c.o)` maps source-relative object names to those paths.
 BUILD ?= $(ROOT)/build/$(MODEL)
 O = $(addprefix $(BUILD)/,$(subst ../,,$(1)))
-# The model: AKAM_FEAT_* (src/build/features.mk, docs/convergence-plan.md 2.4), the object groups and SRCS, the ordered source list.
+# The model: AKAM_FEAT_* (src/build/features.mk, docs/archive/convergence-plan.md 2.4), the object groups and SRCS, the ordered source list.
 include $(MODEL_DIR)/model.mk
 include $(SRC_DIR)/build/features.mk
 # A model C file must not share its basename with a C file of the platform directory: the platform file would be compiled and the model's ignored
@@ -186,7 +186,7 @@ $(BUILD)/src/core/version/version.o: $(SRC_DIR)/core/version/version.c FORCE
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # -----------------------------------------------------------------------
-# repro — reproducible, stripped 1080p ak_rtsp (docs/convergence-plan.md 2.5, tools/ci/repro_check.sh).
+# repro — reproducible, stripped 1080p ak_rtsp (docs/archive/convergence-plan.md 2.5, tools/ci/repro_check.sh).
 # Fixed version stamp (AKAM_REPRO=1, see gen_version.sh), no absolute paths (-ffile-prefix-map), no debug info,
 # the frozen SRCS link order, then `zig objcopy --strip-all`. Output: ak_rtsp.repro, its sha256 is printed.
 # The normal build is untouched: only the stamp and the paths differ.

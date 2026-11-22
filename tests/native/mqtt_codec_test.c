@@ -25,6 +25,16 @@ static void expect_bytes(int line, const uint8_t *got, int n, const uint8_t *wan
 }
 #define GOLDEN(got, n, ...) do { static const uint8_t w_[] = { __VA_ARGS__ }; expect_bytes(__LINE__, (got), (n), w_, sizeof(w_)); } while (0)
 
+static void test_connack_reason(void)
+{
+    CHECK(strcmp(mqtt_connack_reason(1), "refused_protocol") == 0);
+    CHECK(strcmp(mqtt_connack_reason(2), "refused_id") == 0);
+    CHECK(strcmp(mqtt_connack_reason(3), "refused_unavailable") == 0);
+    CHECK(strcmp(mqtt_connack_reason(4), "refused_credentials") == 0);
+    CHECK(strcmp(mqtt_connack_reason(5), "refused_not_authorized") == 0);
+    CHECK(strcmp(mqtt_connack_reason(0), "refused") == 0 && strcmp(mqtt_connack_reason(99), "refused") == 0);
+}
+
 /* ------------------------------------------------------------------ remaining length */
 static void test_varlen(void)
 {
@@ -428,6 +438,7 @@ static void test_fuzz(void)
 int main(void)
 {
     test_varlen();
+    test_connack_reason();
     test_utf8();
     test_encoders();
     test_frame();

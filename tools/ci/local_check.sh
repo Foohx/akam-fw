@@ -4,7 +4,7 @@
 #   (from anywhere; run tools/build/bootstrap.sh first so camera-side tests get the pinned BusyBox)
 # Groups (default and "all": every group, in this order; GitHub CI runs the SAME code per group,
 # see .github/workflows/ci.yml, so each check runs once per pipeline):
-#   lint    shellcheck, tracked-file hygiene (forbidden files, symlinks, private IPs), layering lint (tools/ci/layering_lint.sh), tests/readme_links_test.sh
+#   lint    shellcheck, tracked-file hygiene (forbidden files, symlinks, private IPs), layering lint (tools/ci/layering_lint.sh), docs link and path check (tools/ci/docs_links_check.sh), tests/readme_links_test.sh
 #   shell   wizard smoke runs and every tests/*_test.sh that is neither native, go nor lint
 #   native  tests/*_test.sh that build and run C code of src/ and tests/native/ (host compiler or pinned Zig)
 #   go      tests/assistant_test.sh (gofmt, vet, go test, six-target build + size budget, reproducibility)
@@ -252,6 +252,10 @@ if want lint; then
     # Layering: src/ compiles with the shared include list only, basenames unique per build (tools/ci/layering_lint.sh).
     host_say bold "== layering lint"
     bash "$HERE/layering_lint.sh" || note_fail "layering lint (tools/ci/layering_lint.sh)"
+
+    # Docs: every relative link, #anchor and `repo/path` in the tracked Markdown resolves (tools/ci/docs_links_check.sh).
+    host_say bold "== docs links"
+    bash "$HERE/docs_links_check.sh" || note_fail "docs links (tools/ci/docs_links_check.sh)"
 fi
 
 # ---------------------------------------------------------------- 5. Go race detector (opt-in group "race")

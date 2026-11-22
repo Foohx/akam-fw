@@ -71,6 +71,5 @@ void a2k_snap_stats(unsigned *requested, unsigned *stored, unsigned *dropped, un
 
 /* TEST ONLY */
 void a2k_snap_test_set_dir(const char *dir);
-void a2k_snap_test_set_cap(size_t total_cap);
 
 #endif

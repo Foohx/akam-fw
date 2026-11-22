@@ -2,8 +2,7 @@
  * (yy_media_av130_video_init, RE): brightness, contrast, sharpness (each 0..100, stored by the stock as [dsp] brightness /
  * contrast / sharpness, default -1 = "not set", then NOTHING is applied and the ISP conf file values stay), the mains
  * frequency (anti_flicker: 0 and 1 mean 50 Hz, 2 means 60 Hz, the stock applies it at every start) and flip / mirror
- * (not done here: the stock maps its flip_mode through a per sensor base orientation that has not been read on the camera,
- * a guess could turn the picture upside down).
+ * (not here: they are user switches with their own state, orient.h, applied by the settings rows image.flip / image.mirror).
  *
  * The 0..100 setting v is applied to the ISP as v - 50 (100 is treated as 99, like the stock): 50 = the conf file value.
  * Config keys (akam2k.conf, passed by the supervisor): image_brightness, image_contrast, image_sharpness (0..100, absent =

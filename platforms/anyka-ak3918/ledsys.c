@@ -83,4 +83,3 @@ int ledsys_pat_set(int rule, const char *text) { return leds_pat_set(single(), r
 void ledsys_pat_default(int rule, char *out, size_t cap) { leds_pat_default(single(), rule, out, cap); }
 int ledsys_blip(const char *pattern, long dur_ms) { return leds_blip(single(), pattern, dur_ms); }
 void ledsys_blip_clear(void) { leds_blip_clear(single()); }
-int ledsys_rule_now(void) { return leds_rule_now(single()); }

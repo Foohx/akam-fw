@@ -149,19 +149,6 @@ int a2k_btn_init(const a2k_btn_ops_t *ops, int long_ms)
     return 0;
 }
 
-void a2k_btn_test_reset(void)
-{
-    pthread_mutex_lock(&G.mu);
-    memset(&G.cfg, 0, sizeof G.cfg);
-    memset(&G.modes, 0, sizeof G.modes);
-    bc_defaults(&G.cfg, 0);
-    G.gen++;
-    G.writes = 0;
-    snprintf(G.last, sizeof G.last, "none");
-    pthread_mutex_unlock(&G.mu);
-    G.have_b = 0;
-}
-
 /* ---- the button thread ---- */
 static void sync_engine(void)
 {
@@ -225,15 +212,6 @@ int a2k_btn_gestures(char names[][BG_NAME_MAX])
             names[i][0] = '\0';
     pthread_mutex_unlock(&G.mu);
     return n;
-}
-
-int a2k_btn_led_ack(void)
-{
-    int v;
-    pthread_mutex_lock(&G.mu);
-    v = G.cfg.led_ack;
-    pthread_mutex_unlock(&G.mu);
-    return v;
 }
 
 int a2k_btn_mode_get(const char *name, bc_mode_t *out)

@@ -230,10 +230,10 @@ latency, log bytes per minute, whether any Notify arrived, whether `ivs_hd_on_of
 
 ## 8. Code changes in this branch
 
-- `overlay/akam/enable_local.sh` `verify`: new read-only `log_ai_state` (AI keys of `[dsp] ivs_*` and
+- `firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/enable_local.sh` `verify`: new read-only `log_ai_state` (AI keys of `[dsp] ivs_*` and
   `[alg] ak_av130_*`, log-switch files, `ak_npu` module line, holders of the NPU node by name, CPU ticks of the
   `Y_ALG_*` threads). Writes only to the card log. Tests in `tests/rot2k_overlay_test.sh` (fixtures `el6`, `el7`).
-- `tools/onvif_events_probe.py` (host side, standard library only, no address or credential built in) and
+- `firmware/lsc-rotatable-2k-ak3918av130/tools/onvif_events_probe.py` (host side, standard library only, no address or credential built in) and
   `tests/rot2k_onvif_probe_test.py` (loopback fake camera, run from the overlay test).
 
 ## 9. Open items

@@ -1,9 +1,9 @@
 # Rotatable 2K person tracking: policy (track_logic)
 
-`src/features/track/track_logic.c/.h` is a pure policy (no I/O, no clock, no vendor call, integer
+`src/features/track/track_logic.c` and `track_logic.h` is a pure policy (no I/O, no clock, no vendor call, integer
 math): per detection tick (~5 Hz) it takes the person boxes, the capture time of the frame and the PTZ state and returns at
 most one pan/tilt nudge (with a speed), a home request, or nothing. The wiring to the detector and the motor is
-`app/track.c` (below).
+`firmware/lsc-rotatable-2k-ak3918av130/track.c` (below).
 
 ## Why 0.1.0 reacted every 2-10 s: the latency chain
 
@@ -114,7 +114,7 @@ Other conf keys: `track_gain_pan` / `track_gain_tilt` (200..4000, default 1000 /
 
 ## Targeting policy, person state and continuous motion (`track_motion`)
 
-Hardware reports of 2026-11-17: "much better, less lag, but the camera often re-centres on the middle of the body for nothing", "after a quick feint it overshoots and loses me", the camera went all the way DOWN after a partial torso box and UP when the person filled the frame. This section is the answer. Everything is in `track_logic.c` (pure policy, no I/O), the wiring in `track.c`, the motor side in `ptz/akam_ptz_safe.h` / `hal_ptz.c` / `ptz.c` (see `ptz-findings.md` "Continuous motion").
+Hardware reports of 2026-11-17: "much better, less lag, but the camera often re-centres on the middle of the body for nothing", "after a quick feint it overshoots and loses me", the camera went all the way DOWN after a partial torso box and UP when the person filled the frame. This section is the answer. Everything is in `track_logic.c` (pure policy, no I/O), the wiring in `track.c`, the motor side in `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h` / `hal_ptz.c` / `ptz.c` (see `ptz-findings.md` "Continuous motion").
 
 ### Keys, API rows, fallback
 
@@ -283,7 +283,7 @@ frames, tilt, lead, return policy). `tests/rot2k_track_wire_unit.c` (wiring on a
 
 ## Wiring in the app (akam2k_track)
 
-`app/track.c` (core, motor through an ops table, host-tested on a fake motor by `tests/rot2k_track_wire_unit.c`) and `track_run.c` (the real
+`firmware/lsc-rotatable-2k-ak3918av130/track.c` (core, motor through an ops table, host-tested on a fake motor by `tests/rot2k_track_wire_unit.c`) and `track_run.c` (the real
 binding). The detection thread calls `a2k_track_feed(now, capture_time, ...)` after every inference with the person boxes that count (not ignored, in a zone when zones apply;
 `n = 0` when nobody), `TL_NUDGE` becomes `a2k_ptz_nudge_sp(dx, dy, speed)`, `TL_HOME` the home command.
 
@@ -473,7 +473,7 @@ The raw recorder already holds what a replay needs: per tick the two clocks (`no
 | `tools/dev/track_score sim` | closed loop, the real tracker against synthetic persons (walk left / right with reversals at 0.8, 2, 5 m slow / fast, still 60 s, crouch, sit / stand, leave and return elsewhere, 10 min random session) and a fake motor; one table: % locked, centre error mean / p95, reaction latency to a direction change, motion while still, reversals, commands, reacquire time, excursions, error drift |
 | `tools/dev/track_score replay FILE` | open loop, a recorded session through the CURRENT policy; same kind of table plus relay share and the video-to-decision latency and its growth per minute; `--emit` prints the commands for `motor_replay.sh` |
 | `tests/track_bench_test.sh` | runs the sim and fails when a metric is worse than `tests/golden/track_bench.txt` (the numbers of the tracker when the bench was created); `TRACK_BENCH_UPDATE=1` rewrites it after a deliberate improvement |
-| `tools/dev/motor_replay.sh` | plays a recorded command stream to the camera through the signed API (nobody in front, tracking off), home frame before / after, `tools/dev/drift_shift` (drift_match.c) measures the lost steps; `--matrix` = speed caps 0..3 x with / without reversals; `--dry-run` shows the plan |
+| `tools/dev/motor_replay.sh` | plays a recorded command stream to the camera through the signed API (nobody in front, tracking off), home frame before / after, `tools/dev/drift_shift.c` (compiled by the script) (drift_match.c) measures the lost steps; `--matrix` = speed caps 0..3 x with / without reversals; `--dry-run` shows the plan |
 
 **Pacing and the full-range search (`tune/tracker-bench`).** Two behaviours found with the bench. (1) A person pacing back and forth faster than the camera can follow (three turning points of the filtered pan position inside 6 s, spanning at most 90 % of the frame width; `pace_push` / `pacing` in `track_logic.c`) is not chased: the camera aims at the middle of the band with a 110-step dead band, no feed-forward, at most `rate_k / 6`. The chase of such a person lags by about 0.5 s (detector 5 Hz, inference, video, command), i.e. it was always on the wrong side, it left the frame and, with the 4-reversals-per-4-s throttle, stood still while the person walked out. Result at 2 m, 1.5 m/s: lock 38.7 -> 50 %, in the frame 76 -> 98 %, 22 -> 3 reversals, 146 -> 22 commands. Cost: `rev_lat_*` of a pacing person gets worse (the camera by design does not turn with each of his turns; legs of 1.6 s at 1.5 m/s, 0.8 s at 0.8 m). (2) A person really lost (no box for `lost_grace_s` + 10 s, close-loss machine and exit search over, legacy lost policy only) is searched in the whole pan range, once per loss (`sweep_step`): to the nearer end at `rate_k / 2`, across to the other end with a 0.9 s stop every 700 steps (a steady picture for the detector), then back to where it began (the home return, when on, follows). Any accepted box ends it. 10 min session: lock 74 -> 96 %, person out of the frame 117 -> 7 s, no never-reacquired loss (reacquire 13.9 s mean / 20 s max -> 1.8 / 4.3 s). Cost: commands / starts / reversals / pan travel while the person stands out of view grow by the search itself.
 
@@ -554,3 +554,10 @@ Log of a user standing close: boxes at loss `88,2,301,188 / 87,3,269,189 / 98,5,
 - **Pan only (`track.tilt` 0).** Runtime setting (API PATCH settings, Home Assistant switch `pan_only`, boot key `track_tilt`): `a2k_track_set_tilt` flips `tilt_enable` of the live policy. The policy already never commanded the tilt with `tilt_enable` 0 (`pan_only_cases` pins it: follow, close, flapping, loss, close scan, tilt-back, 729 pan commands and 0 tilt commands); the new part is the live switch. The tilt stays where it is when the switch is turned off (no automatic return). `track.close_scan*` already applied live: the `not_applied` the user saw was the all-or-nothing PATCH (`track.gain_tilt 0` refused in the same batch). `A2K_API_RESP_MAX` 12288 -> 16384 for the 2K build only (`-DA2K_API_RESP_MAX=16384`, the 1080p binary must stay identical): the settings schema no longer fitted with one more row.
 
 Replay scorer, absences (2026-11-20, session `20261120-session2`): the recording had 440 s with nobody in view (the camera sat at home, 2414 of 2793 ticks without a box). The scorer counted it as tracking time (`lock` 13.5 %) and as one reacquisition (`reacq_mean` 154 s, `reacq_max` 440 s). A run of >= 60 s without any box is now an absence: `lock` and `reacq_*` leave it out (this session: lock 63.6 %, reacq_mean 10.7 s), `lock_all` keeps the old all-ticks value (13.5) and `absent_n` / `absent_s` count them. `track_score replay --trace` prints one line per tick (pose, picked box, rule, why, ey, distance). Finding on the same session: all 57 `tilt-cap` ticks of the replay are the frame-filling climb cap (`FF_CAP`, 150 steps above the pose where the person filled the frame; the up budget `TILT_UP_CAP` never fired, the tilt range is 300..2100 and the session stayed at 1414..1487) held while a head box sat at the top row at 0.3..1.2 m; the person was still boxed and followed in pan. The `ambiguous` (rule 5) ticks of the log end only hold the tilt: the pan zone was respected (`ex` inside the zone), nothing stops. No tracker change: the evidence does not show the caps losing the person.
+
+## Image orientation (flip / mirror)
+
+The tracker works on the DISPLAYED frame (the boxes come from the picture the viewer sees). The motor sign is the measured one (`invert_pan` 1, `invert_tilt` 0 with
+the orientation off) with `invert_pan` toggled by the mirror and `invert_tilt` by the flip (`a2k_orient_invert_pan` / `a2k_orient_invert_tilt`, set live on the running
+policy by `a2k_track_set_invert` from a listener of `orient.h`); the ceiling mount (both) toggles both. `tests/rot2k_orient_unit.c` pins the four cases. Not verified on the
+camera: with a ceiling mount, a person walking to the right of the picture must turn the camera towards them. See isp-controls.md 3.3 for the whole convention.

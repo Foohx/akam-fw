@@ -1,5 +1,6 @@
 /* Microphone capture thread, see audio.h. The ioctl sequence is the one of audio/mic.c (ground truth: the
  * stock anyka_ipc capture, platforms/anyka-ak3918/audio.c audio_init_capture), run on the hardware on 2026-11-15. */
+#include "akpcm.h"
 #include "audio.h"
 
 #include <errno.h>
@@ -22,18 +23,6 @@
 #define MAX_CONSEC_FAILS 5
 #define FAIL_SLEEP_US 200000
 
-/* Same request numbers and struct as audio/mic.c (and platforms/anyka-ak3918/ak_ioctls.h, not included: the 1080p tree's). */
-#define IOC_GET_PARS    0x401c50e0u /* misnamed, really the commit of struct akpcm_pars */
-#define IOC_SET_RATE    0x800450eau
-#define IOC_SET_STATE   0x80045010u
-#define IOC_GET_PERIODS 0x40045030u
-#define IOC_SET_PERIODS 0x80045030u
-#define IOC_SET_MODE    0x000050e1u
-#define IOC_RESET_BUF   0x000050e3u
-
-struct akpcm_pars {
-    uint32_t format, rate, channels, bits, period_size, period_count, reserved;
-};
 
 static a2k_aring_t g_ring;
 static pthread_t g_th;
@@ -61,9 +50,9 @@ static int open_capture(void)
         a2k_log("audio: %s is locked by another process (akam2k_mic running?)", PCM_CAPTURE);
         goto fail;
     }
-    STEP("SET_STATE(2)", ioctl(fd, IOC_SET_STATE, &v));
+    STEP("SET_STATE(2)", ioctl(fd, AKPCM_IOC_SET_STATE, &v));
     v = 0;
-    if (ioctl(fd, IOC_GET_PERIODS, &v) < 0)
+    if (ioctl(fd, AKPCM_IOC_GET_PERIODS, &v) < 0)
         a2k_log("audio: GET_PERIODS (non-fatal): %s", strerror(errno));
     memset(&pars, 0, sizeof pars);
     pars.rate = A2K_AUDIO_RATE;
@@ -71,15 +60,15 @@ static int open_capture(void)
     pars.bits = 16;
     pars.period_size = PERIOD_BYTES;
     pars.period_count = PERIOD_COUNT;
-    STEP("GET_PARS (commit params)", ioctl(fd, IOC_GET_PARS, &pars));
-    STEP("RESET_BUF(-1)", ioctl(fd, IOC_RESET_BUF, (void *)(long)-1));
-    STEP("SET_MODE(0)", ioctl(fd, IOC_SET_MODE, 0));
+    STEP("GET_PARS (commit params)", ioctl(fd, AKPCM_IOC_GET_PARS, &pars));
+    STEP("RESET_BUF(-1)", ioctl(fd, AKPCM_IOC_RESET_BUF, (void *)(long)-1));
+    STEP("SET_MODE(0)", ioctl(fd, AKPCM_IOC_SET_MODE, 0));
     v = A2K_AUDIO_RATE;
-    STEP("SET_RATE", ioctl(fd, IOC_SET_RATE, &v));
+    STEP("SET_RATE", ioctl(fd, AKPCM_IOC_SET_RATE, &v));
     v = 2;
-    STEP("SET_STATE(2)#2", ioctl(fd, IOC_SET_STATE, &v));
+    STEP("SET_STATE(2)#2", ioctl(fd, AKPCM_IOC_SET_STATE, &v));
     v = 2;
-    STEP("SET_PERIODS(2)", ioctl(fd, IOC_SET_PERIODS, &v));
+    STEP("SET_PERIODS(2)", ioctl(fd, AKPCM_IOC_SET_PERIODS, &v));
     return fd;
 fail:
     close(fd);

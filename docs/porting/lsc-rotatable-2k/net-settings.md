@@ -2,8 +2,8 @@
 
 Script: `firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/akam_net.sh`, plus the shared
 `src/scripts/akam_hostname.sh` reused UNCHANGED (validation, atomic store, kernel `hostname`; installed
-beside it as `akam/akam_hostname.sh` by `build_card.sh` and `appfs/build_appfs.sh`, linked into the card-shaped tree by
-`appfs/akam_flash_boot.sh`). Files live in `/config/akam` (jffs2, written on user actions only). Nothing here touches
+beside it as `akam/akam_hostname.sh` by `build_card.sh` and `firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`, linked into the card-shaped tree by
+`firmware/lsc-rotatable-2k-ak3918av130/boot/flash/akam_flash_boot.sh`). Files live in `/config/akam` (jffs2, written on user actions only). Nothing here touches
 flash partitions, nvram or the user's `wpa.conf`. No camera test yet: everything below is verified on the host with fakes
 (`tests/rot2k_overlay_test.sh`, section "net settings").
 
@@ -107,14 +107,14 @@ akam_net.sh wifi show | render | set country XX|none | set band 2.4|5 | fallback
 (`2.4|5`, default 2.4), all apply mode live, writable, HTTP + MQTT exposed, `persist = 0` (the script files are the source of
 truth). The hooks call a backend installed by the caller (`a2k_netreg_set_backend`): the app never spawns (anti-brick
 scan), so the future wiring supplies a backend that runs `akam_net.sh`. The check hooks refuse what the script would
-refuse. Adding these files changes `app/source_hash.sh`: rebuild the app dist (`make poc3-dist`) before the next
+refuse. Adding these files changes `firmware/lsc-rotatable-2k-ak3918av130/image/source_hash.sh`: rebuild the app dist (`make poc3-dist`) before the next
 `build_card.sh` / `build_appfs.sh` (the binary itself is unchanged, the rows are not linked into it).
 
 ## Deployment
 
 - SD overlay card: rebuild with `build_card.sh` (copies `akam_net.sh`, `akam_hostname.sh`, new stub); the files in `/config/akam`
   are read in card mode too.
-- Card-less image: the scripts are baked in `/appfs/akam`, so the **appfs image must be rebuilt** (`appfs/build_appfs.sh`)
+- Card-less image: the scripts are baked in `/appfs/akam`, so the **appfs image must be rebuilt** (`firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`)
   and reflashed (or hot-updated) to get them. NOT done here: it needs the stock mtd3 backup and the app dist; no flash
   was attempted. Until then the running camera keeps `akam-rot2k` / band 2.4, and the scripts can be tried from a card.
 - Try by hand over SSH (card or flashed): `sh /mnt/sdcard/akam/akam_net.sh hostname set cam-salon`, then

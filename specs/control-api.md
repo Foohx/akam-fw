@@ -511,7 +511,7 @@ tested against the same vector file as the C code.
 2. **Persistence and settings worker**: `/config/akam/settings`, precedence, coalesced rate-limited writes, request
    queue. Migrate `akam2k.conf` key groups one at a time, each proving identical effective values.
 3. **Crypto and signing library**: SHA-256, HMAC, canonicalizer, nonce cache, clock/challenge, lockout; host tests with
-   the shared vector file in `tests/vectors/`.
+   the shared vector file in `tests/fixtures/control_api_vectors.txt`.
 4. **HTTP server and read endpoints** (`hello`, `info`, `schema`, `settings`, `state`), keys read from the file;
    fake-client integration tests; **measure the budget on the camera**. Port opens only with a key.
 5. **Write path**: PATCH, actions, audit, scopes, key endpoints, `akam-key` SSH bootstrap, assistant Go client
@@ -599,7 +599,7 @@ Files (written under `platforms/anyka-ak3918av130/`; the generic ones moved to `
 | `akam2k_settings.[ch]` | the 2K registry table over the real modules, the settings worker (32 KiB stack, one job slot, 3 s wait, 504 `busy`), persistence (`/config/akam/settings`, burst 4 then 1 per 30 s), actions, the net.* backend |
 | `akam2k_api.[ch]` (now `src/api/api_core.[ch]`, bound by `akam2k_apibind.[ch]`) | routing, verification order of 5.3, endpoints, key store (0600, reload by stat), audit ring, `--api-key` tool |
 | `akam2k_httpd.[ch]` (now `src/api/api_httpd.[ch]`) | the socket side: one thread, `poll`, 4 connections (3 per peer), 5 s idle / 10 s per request, 2 s write bound, held long polls; the only API file that may create a socket |
-| `overlay/akam/akam_api_key.sh` | SSH tool: runs the app in key-tool mode (`akam2k_rtsp --api-key new\|list\|revoke`) |
+| `firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/akam_api_key.sh` | SSH tool: runs the app in key-tool mode (`akam2k_rtsp --api-key new\|list\|revoke`) |
 | `own_app_run.sh` `net_request` | hands one validated request line of `/tmp/akam_net.req` to `akam_net.sh` |
 
 Decisions and departures from the earlier text:

@@ -560,20 +560,12 @@ static inline int venc_max_frame_size(int width, int height)
  *   regardless of what SET_MODE/SET_RATE/SET_STATE/SET_PERIODS did. Must be
  *   called with real values (e.g. rate=8000, period_size=512,
  *   period_count=16 — the real captured defaults, §23) to succeed. */
-#define AKPCM_IOC_GET_PARS      0x401c50e0  /* _IOR('P',0xe0,28) */
 
-struct akpcm_pars {
-    uint32_t format;
-    uint32_t rate;
-    uint32_t channels;
-    uint32_t bits;
-    uint32_t period_size;
-    uint32_t period_count;
-    uint32_t reserved;
-};
+/* struct akpcm_pars and the capture request numbers (GET_PARS, SET_RATE, SET_STATE, GET_STATE, SET_PERIODS, GET_PERIODS, SET_MODE, RESET_BUF)
+ * live in src/hal/akpcm.h, shared with the 2K platform; the notes above and below describe them. */
+#include "akpcm.h"
 
 /* SET_RATE — write the target sample rate in Hz (observed value 8000). */
-#define AKPCM_IOC_SET_RATE      0x800450ea  /* _IOW('P',0xea,4) */
 
 /* Best-guess name "STATE" — nr=0x10, size=4, W/R pair. Semantics still not
  * confirmed — values are NOT a simple "0=reset/4=start" lifecycle as
@@ -583,16 +575,12 @@ struct akpcm_pars {
  *   capture: SET(2) -> ... -> SET(2) again -> [reads start succeeding]
  *   playback: SET(0) -> ... -> SET(4) (later, well after config)
  * Replay the exact values per stream, don't assume meaning beyond that. */
-#define AKPCM_IOC_SET_STATE     0x80045010  /* _IOW('P',0x10,4) */
-#define AKPCM_IOC_GET_STATE     0x40045010  /* _IOR('P',0x10,4) */
 
 /* Best-guess name "PERIODS" — nr=0x30, size=4, W/R pair. Real, path-tag-
  * confirmed observed value for capture's *initial* config is 2 (not 4 as
  * §11 originally documented — see §23); playback's initial value is 4.
  * Both fds' periods value changes again later during steady-state read/
  * write (not proven required for the initial unlock — not replicated here). */
-#define AKPCM_IOC_SET_PERIODS   0x80045030  /* _IOW('P',0x30,4) */
-#define AKPCM_IOC_GET_PERIODS   0x40045030  /* _IOR('P',0x30,4) */
 
 /* Best-guess name "CAPS" — nr=0x81, observed value 1. On the playback fd the
  * same number is the speaker enable and 0x40045081 is its real SET (see the
@@ -608,7 +596,6 @@ struct akpcm_pars {
  * our own AV130 capture calls it exactly ONCE, before 1442 consecutive
  * successful reads with no further calls to it, so whatever it does here it
  * is NOT a per-transfer requirement on this chip generation. */
-#define AKPCM_IOC_SET_MODE      0x000050e1  /* _IO('P',0xe1) */
 
 /* dir=NONE, arg passed as a literal integer (same calling convention as
  * SET_MODE above). Completely unidentified until Session 8 (§23) — found by
@@ -620,7 +607,6 @@ struct akpcm_pars {
  * captured arg rather than assuming NULL is equivalent. This was entirely
  * missing from our own capture sequence prior to §23 — a strong candidate
  * for (part of) the actual fix for capture's read() EPERM. */
-#define AKPCM_IOC_RESET_BUF     0x000050e3  /* _IO('P',0xe3) */
 
 /* -------------------------------------------------------------------------
  * Playback-side names (specs/audio.md). The names and numbers above

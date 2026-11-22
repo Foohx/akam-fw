@@ -3,7 +3,7 @@
 Copy the skeleton into `docs/porting/<model-id>/` and fill it while you work. Rule: **everything learned about a
 camera goes into the repository docs**, the same day (partitions, formats, contents, hardware, original firmware).
 Never commit vendor files, dumps, keys, Wi-Fi data or nvram values (the hygiene lint refuses them).
-Two finished examples: [1080p](lsc-1080p/on-camera.md), [Rotatable 2K](lsc-rotatable-2k/on-camera.md).
+Two finished examples, with the same entry-page structure: [1080p](lsc-1080p/README.md), [Rotatable 2K](lsc-rotatable-2k/README.md).
 
 Model id: `<brand>-<form>-<resolution>-<soc>`, stable once released (see the header of
 [the registry file](../../tools/release/models/lsc-indoor-1080p-ak3918.txt)). A new id is needed when the board, SoC,
@@ -25,6 +25,7 @@ flash layout or stock firmware family differs.
 
 | File | Content |
 |---|---|
+| `README.md` | entry page, same sections as the examples: hardware, stock firmware findings, what runs on the camera, install, update, recovery, known limits |
 | `on-camera.md` | the boot chain on the camera: every binary and script that runs (stock and Akam), who starts it, why, kept / replaced / removed, files and partitions read or written, flash-write frequency, ports. Same shape as the two examples; **checked by `tests/on_camera_docs_test.sh`** (section 5) |
 | `stock-firmware-reference.md` | platform table, flash map, boot chain, GPIO map, config keys, network services of the stock firmware; each fact tagged HW (seen on the camera), RE (offline) or unverified |
 | `decloud-findings.md` | what talks to the cloud, what removes routes, what blocks it |
@@ -33,7 +34,7 @@ flash layout or stock firmware family differs.
 | `flash-test-plan.md`, `uart-recovery.md` | staged plan with a rollback at every stage; recovery by UART or SPI programmer |
 
 Also update: [models](../models.md), [compatible cameras](../compatible-cameras.md), the README table, the
-[parity matrix](../parity-matrix.md), [testing status](../testing-status.md).
+[parity matrix](../archive/parity-matrix.md), [testing status](../testing-status.md).
 
 ## 3. Choose the kind, reuse the shared modules
 
@@ -61,7 +62,7 @@ Keep the object order of `model.mk` explicit (it sets the layout of the stripped
   Dropbear: `tools/dropbear/` (the time32 shim is needed: kernel 4.4.302 has no 64-bit time syscalls).
 - **features.mk parity rule**: the model's `model.mk` sets `AKAM_FEAT_<NAME> := 1` or `0` for `API PTZ BUTTON SCENE PATROL
   TRACK SYS LIGHT ONVIF` before `include .../features.mk` (unset = off; see `src/build/features.mk`). Set `1` only for
-  what the hardware has and the port implements, and give every row of the [parity matrix](../parity-matrix.md) a
+  what the hardware has and the port implements, and give every row of the [parity matrix](../archive/parity-matrix.md) a
   status for the new model.
 - No recurring flash write in normal operation (state in RAM, writes only on a user change). A feature stays off until
   the user turns it on.

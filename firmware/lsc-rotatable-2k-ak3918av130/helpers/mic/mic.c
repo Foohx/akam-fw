@@ -32,6 +32,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "akpcm.h"
 #include "mic_core.h"
 
 #define PCM_CAPTURE "/dev/pcmC0D0c"
@@ -39,18 +40,6 @@
 #define PERIOD_COUNT 16u
 #define MAX_CONSEC_FAILS 5
 
-/* Same request numbers and struct as platforms/anyka-ak3918/ak_ioctls.h (not included: that header is the 1080p tree's). */
-#define IOC_GET_PARS    0x401c50e0u /* misnamed, really the commit of struct akpcm_pars */
-#define IOC_SET_RATE    0x800450eau
-#define IOC_SET_STATE   0x80045010u
-#define IOC_GET_PERIODS 0x40045030u
-#define IOC_SET_PERIODS 0x80045030u
-#define IOC_SET_MODE    0x000050e1u
-#define IOC_RESET_BUF   0x000050e3u
-
-struct akpcm_pars {
-    uint32_t format, rate, channels, bits, period_size, period_count, reserved;
-};
 
 static volatile sig_atomic_t g_stop;
 static void on_sig(int s) { (void)s; g_stop = 1; }
@@ -130,24 +119,24 @@ int main(int argc, char **argv)
     {
         int32_t v = 2;
         struct akpcm_pars pars;
-        STEP("SET_STATE(2)", ioctl(fd, IOC_SET_STATE, &v));
+        STEP("SET_STATE(2)", ioctl(fd, AKPCM_IOC_SET_STATE, &v));
         v = 0;
-        if (ioctl(fd, IOC_GET_PERIODS, &v) < 0) fprintf(stderr, "akam2k_mic: GET_PERIODS (non-fatal): %s\n", strerror(errno));
+        if (ioctl(fd, AKPCM_IOC_GET_PERIODS, &v) < 0) fprintf(stderr, "akam2k_mic: GET_PERIODS (non-fatal): %s\n", strerror(errno));
         memset(&pars, 0, sizeof(pars));
         pars.rate = rate;
         pars.channels = 1;
         pars.bits = 16;
         pars.period_size = PERIOD_BYTES;
         pars.period_count = PERIOD_COUNT;
-        STEP("GET_PARS (commit params)", ioctl(fd, IOC_GET_PARS, &pars));
-        STEP("RESET_BUF(-1)", ioctl(fd, IOC_RESET_BUF, (void *)(long)-1));
-        STEP("SET_MODE(0)", ioctl(fd, IOC_SET_MODE, 0));
+        STEP("GET_PARS (commit params)", ioctl(fd, AKPCM_IOC_GET_PARS, &pars));
+        STEP("RESET_BUF(-1)", ioctl(fd, AKPCM_IOC_RESET_BUF, (void *)(long)-1));
+        STEP("SET_MODE(0)", ioctl(fd, AKPCM_IOC_SET_MODE, 0));
         v = (int32_t)rate;
-        STEP("SET_RATE", ioctl(fd, IOC_SET_RATE, &v));
+        STEP("SET_RATE", ioctl(fd, AKPCM_IOC_SET_RATE, &v));
         v = 2;
-        STEP("SET_STATE(2)#2", ioctl(fd, IOC_SET_STATE, &v));
+        STEP("SET_STATE(2)#2", ioctl(fd, AKPCM_IOC_SET_STATE, &v));
         v = 2;
-        STEP("SET_PERIODS(2)", ioctl(fd, IOC_SET_PERIODS, &v));
+        STEP("SET_PERIODS(2)", ioctl(fd, AKPCM_IOC_SET_PERIODS, &v));
         fprintf(stderr, "akam2k_mic: configured %u Hz mono 16 bit, requested period %u B x %u (struct after the commit call: period_size %u, period_count %u)\n",
                 (unsigned)rate, PERIOD_BYTES, PERIOD_COUNT, (unsigned)pars.period_size, (unsigned)pars.period_count);
     }

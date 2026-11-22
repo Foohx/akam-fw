@@ -1,5 +1,7 @@
 # Card-less flash: staged test plan (rot2k)
 
+> Archived document (2026-11): historical, kept for its findings. Paths and status may predate the repository reorganisation (old to new table: `tools/dev/path-map.txt`); current docs are in [docs/README.md](../README.md).
+
 Goal: eventually boot Akam from internal flash (appfs/mtd3) with no SD card. This file is the **staged,
 reversible** path to get there, ordered from zero-risk to brick-risk. **Nothing here has been run.** Each
 step is gated on an explicit user "go".
@@ -18,7 +20,7 @@ Facts established statically (2026-11-15, all read-only):
 - The running app mmaps `/appfs/lib/*.so` → **stop the app before writing mtd3**.
 - Current mtd3 == backup `mtd3.bin`, byte-identical (known-good image on hand).
 - U-Boot normal boot does **not** verify a signature (CRC-only `bootm`); the signature is forgeable and set by
-  the yy_upgrade path. See [flash-signature-findings.md](flash-signature-findings.md).
+  the yy_upgrade path. See [flash-signature-findings.md](../porting/lsc-rotatable-2k/flash-signature-findings.md).
 - appfs squashfs `bytes_used = 0x44d21a`; partition `0x490000`; the last eraseblock `0x48f000` (index 1167) is
   in the **unused padding tail** (~264 KiB free above `bytes_used`).
 
@@ -62,7 +64,7 @@ open (its step 0) AND a CH341A+SOIC8 on hand, full backup, read-back verify, exp
 as the fallback until MT-2 is proven over several reboots.
 
 **Prepared (not run):** the image, the boot logic, the `/config/akam` seeding, the write+verify+rollback script and the
-pre-flight checklist are in [cardless-appfs.md](cardless-appfs.md) (`appfs/build_appfs.sh`, `tools/flash_appfs.sh`,
+pre-flight checklist are in [cardless-appfs.md](../porting/lsc-rotatable-2k/cardless-appfs.md) (`appfs/build_appfs.sh`, `tools/flash_appfs.sh`,
 dry run by default). Unlike what the first risk paragraph assumes, the image keeps the SD override: `init.sh` checks the
 card first, so the Akam card still wins on a *mountable* appfs; only a half-written appfs needs UART/CH341A.
 

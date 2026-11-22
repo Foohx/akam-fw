@@ -8,6 +8,7 @@
 
 #include "hal.h"
 #include "log.h"
+#include "orient.h"
 #include "ptz.h"
 #include "ptz_lease.h"
 
@@ -1843,13 +1844,25 @@ void a2k_ptz_patrol_cancel(void)
     pthread_mutex_unlock(&G.mu);
 }
 
+/* The step directions are what the viewer sees (displayed frame); the driver's HAL_PTZ_* are sensor-frame directions (orient.h): a mirror swaps left / right, a flip up / down. */
+static int step_dir(int cmd)
+{
+    int flip, mirror, sx = 0, sy = 0;
+    a2k_orient_get(&flip, &mirror);
+    if (cmd == A2K_PTZ_LEFT || cmd == A2K_PTZ_RIGHT)
+        sx = a2k_orient_pan_sign(cmd == A2K_PTZ_RIGHT ? 1 : -1, mirror);
+    else
+        sy = a2k_orient_tilt_sign(cmd == A2K_PTZ_UP ? 1 : -1, flip);
+    return sx ? (sx > 0 ? HAL_PTZ_RIGHT : HAL_PTZ_LEFT) : (sy > 0 ? HAL_PTZ_UP : HAL_PTZ_DOWN);
+}
+
 int a2k_ptz_command(int cmd)
 {
     switch (cmd) {
-    case A2K_PTZ_LEFT: return submit(K_STEP, HAL_PTZ_LEFT, 0, 0, cmd);
-    case A2K_PTZ_RIGHT: return submit(K_STEP, HAL_PTZ_RIGHT, 0, 0, cmd);
-    case A2K_PTZ_UP: return submit(K_STEP, HAL_PTZ_UP, 0, 0, cmd);
-    case A2K_PTZ_DOWN: return submit(K_STEP, HAL_PTZ_DOWN, 0, 0, cmd);
+    case A2K_PTZ_LEFT:
+    case A2K_PTZ_RIGHT:
+    case A2K_PTZ_UP:
+    case A2K_PTZ_DOWN: return submit(K_STEP, step_dir(cmd), 0, 0, cmd);
     case A2K_PTZ_HOME: return submit(K_HOME, 0, 0, 0, cmd);
     case A2K_PTZ_PARK: return submit(K_PARK, 0, 0, 0, cmd);
     case A2K_PTZ_RECAL: return G.cal_mode == HAL_PTZ_CAL_OFF ? -1 : submit(K_RECAL, 0, 0, 0, cmd); /* ptz_cal=off: the motor is never touched */
@@ -1953,6 +1966,12 @@ int a2k_ptz_vel_manual(int sx, int sy, int dx, int dy, int lease_ms)
         return A2K_PTZ_E_ARGS;
     if (!sx && !sy)
         return a2k_ptz_manual_stop();
+    { /* right / up as the viewer sees them (displayed frame, what ONVIF, ptz.vel and MQTT mean) -> the sensor-frame directions of the driver (orient.h) */
+        int flip, mirror;
+        a2k_orient_get(&flip, &mirror);
+        sx = a2k_orient_pan_sign(sx, mirror);
+        sy = a2k_orient_tilt_sign(sy, flip);
+    }
     pthread_mutex_lock(&G.mu);
     rc = manual_gate_locked();
     if (rc) {

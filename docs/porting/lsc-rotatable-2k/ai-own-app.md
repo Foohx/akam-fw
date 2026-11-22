@@ -1,8 +1,8 @@
 # LSC Rotatable 2K: running person / motion detection in OUR app (offline study + PoC-4)
 
 Status: offline reverse engineering of the stock `/appfs/bin/yy_cam` and its vendor libs, plus a hardware PoC program
-(`app/poc4_detect.c`) that **has run on the camera** (results in section 8; the class meaning is still unverified). Same conventions as [npu-findings.md](npu-findings.md) and
-[own-app-feasibility.md](own-app-feasibility.md): addresses are virtual addresses in the stock `yy_cam` (non-PIE, base
+(`platforms/anyka-ak3918av130/probes/poc4_detect.c`) that **has run on the camera** (results in section 8; the class meaning is still unverified). Same conventions as [npu-findings.md](npu-findings.md) and
+[archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md): addresses are virtual addresses in the stock `yy_cam` (non-PIE, base
 0x10000) or offsets inside the named vendor lib; no vendor code, dump, model content or value is reproduced, only symbol
 and string names, addresses and struct notes. Confidence: HIGH = read directly in instructions, MEDIUM = inferred from
 several consistent observations, LOW = guess. Statements are UNVERIFIED unless section 8 reports a hardware result for them.
@@ -227,7 +227,7 @@ end-stop protection), and run detection alongside RTSP in the same app (shared V
 
 The walk-test pipeline of sections 7 to 9 now lives in the production app, next to both RTSP streams; the full description,
 options, state file keys and the step-by-step hardware procedure are in
-[own-app-feasibility.md](own-app-feasibility.md), section "Person detection inside `akam2k_rtsp`".
+[archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md), section "Person detection inside `akam2k_rtsp`".
 
 Decisions taken from the walk test:
 - Only **class 0 (person/body)** drives presence; **class 1 (head)** is counted (`heads`) and its best score kept (`head_score`)
@@ -238,7 +238,7 @@ Decisions taken from the walk test:
 - Results are validated as in PoC-4 (count at most 64, corners ordered and inside 320x192, score 0..1000); an implausible
   output is ignored, a bad box is skipped.
 - Events are a log line and `/tmp/akam2k_detect.state`; MQTT/Home Assistant is published by the app itself, straight from
-  the detection state module (see the "MQTT and Home Assistant" section of [own-app-feasibility.md](own-app-feasibility.md));
+  the detection state module (see the "MQTT and Home Assistant" section of [archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md));
   the file stays for SSH debugging.
 
 Open until the hardware run: CPU and RSS of the whole app with both encoders at 5 Hz, `MemAvailable` cost of the model next to

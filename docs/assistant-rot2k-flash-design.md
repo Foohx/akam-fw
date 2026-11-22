@@ -1,16 +1,15 @@
 # Assistant: flashing the rotatable 2K (design, step 2)
 
-Status: **partly implemented** (the card first install and the update flow are now `prepare-2k-sd` and `update`, see [assistant.md](assistant.md#install-and-update-of-the-2k-from-the-assistant-prepare-2k-sd-update); the backup and config-seeding screens remain). The build and the flash of section 3.4 exist as `akam appfs-build` and `akam appfs-flash`
-(`internal/installer/appfs`, a Go port of `build_appfs.sh` and `flash_appfs.sh`, user-facing description in
-[assistant.md](assistant.md#the-card-less-2k-installer-appfs-build-appfs-flash)); the card first install, the config seeding and
-the staged-reboot screens of this design are still to do, and every other 1080p flow stays refused on a 2K. Step 1 (camera type, registry kind `cardless-appfs`, refusal of
-every 1080p flow on a 2K) is in the assistant; see [the camera type](assistant.md#camera-type). Until this design is
-built, `akam` stops every backup, flash, restore, kit, option and config command on a 2K with "not yet supported for this
-model", and the 2K is installed with the scripts of
-[`firmware/lsc-rotatable-2k-ak3918av130`](../firmware/lsc-rotatable-2k-ak3918av130/README.md).
+Status: **mostly implemented, historical design**. Built: the camera type and the refusal of the 1080p flows on a 2K, the
+backup (`backup-2k`), the card first install (`prepare-2k-sd`), the config seeding (`seed-2k`), the build and the flash of
+section 3.4 (`appfs-build`, `appfs-flash`: `internal/installer/appfs`, Go ports of `build_appfs.sh` and `flash_appfs.sh`) and
+the update flow (`update`, `update --rollback`); see [assistant.md](assistant.md#install-and-update-of-the-2k-from-the-assistant-prepare-2k-sd-update).
+All host-tested only. **Left to do:** the staged-reboot screens of section 3.5, and a `restore-2k` command (back to stock is manual:
+[back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock)). The text below is the original design and is not
+updated line by line.
 
 Sources of truth (the assistant must not re-implement them, it drives them): [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md),
-[flash test plan](porting/lsc-rotatable-2k/flash-test-plan.md), [UART recovery](porting/lsc-rotatable-2k/uart-recovery.md).
+[flash test plan](archive/rot2k-flash-test-plan.md), [UART recovery](porting/lsc-rotatable-2k/uart-recovery.md).
 
 ## 1. Principles
 
@@ -19,7 +18,7 @@ Sources of truth (the assistant must not re-implement them, it drives them): [ca
    partitions and an APP in `mtd7`, the flash writes `mtd7`. The refusal gate (`modelGate`) stays in front of every 1080p
    flow and is only lifted per command, when the 2K implementation of that command exists and is tested.
 2. **The assistant never writes flash by itself.** It runs the existing, reviewed scripts (`build_card.sh`,
-   `appfs/build_appfs.sh`, `tools/flash_appfs.sh`) and shows what they print. Their gates (dry run by default,
+   `firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`, `firmware/lsc-rotatable-2k-ak3918av130/tools/flash_appfs.sh`) and shows what they print. Their gates (dry run by default,
    `AKAM_I_HAVE_RECOVERY=yes` plus `--execute`, never reboots, md5/cmp verification, detached worker, rollback) are not
    weakened or bypassed; the assistant supplies them only after the user answered the matching question.
 3. **The user confirms each physical step** (insert or remove the card, power cycle, plug the UART). The assistant never
@@ -90,7 +89,7 @@ Prerequisite checklist, each item answered by the user (the assistant cannot ver
 
 Then, in order, each shown before it runs:
 
-1. **Build.** `appfs/build_appfs.sh --backup <backup>/mtd3.bin` (output in a private work dir). Its own proofs (binaries
+1. **Build.** `firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh --backup <backup>/mtd3.bin` (output in a private work dir). Its own proofs (binaries
    match their BUILDINFO and sources, squashfs parameters equal to the stock image, full re-extract and diff) must pass;
    the assistant shows the sha256 and `bytes_used`, and refuses an image whose size is not exactly `0x490000`.
 2. **Dry run.** `flash_appfs.sh` without `--execute` (its default). The assistant shows the plan, and the user reads it.
@@ -160,8 +159,6 @@ typed confirmation; `AKAM_I_HAVE_RECOVERY` is never set in a dry run; staged reb
 
 ## 7. Open points
 
-- Kit packaging for the 2K: the layout the installer reads is defined (assistant.md); `tools/release/make_kit.sh` does not
-  produce it yet (it refuses every kind but native-app), so today the kit directory is assembled by hand from `make poc3-dist`.
 - Windows and macOS: `build_card.sh` and `build_appfs.sh` are bash and need `mksquashfs`; the assistant runs on Linux first
   (as the bash wizard is the reference for the 1080p). The appfs build is now ported to Go
   (`internal/installer/appfs`, in memory, on the writer of `internal/squashfs`), so it runs on Windows and macOS too.

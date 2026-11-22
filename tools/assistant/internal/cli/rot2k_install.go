@@ -186,12 +186,25 @@ func (a *App) cmdPrepare2KSD() error {
 	a.UI.Banner("Prepare the first-install SD card of the 2K")
 	a.UI.Say("  This card boots the camera into Akam with no flash write: remove it and the camera is back to what is in its flash.")
 	a.UI.Say("  It holds your Wi-Fi key (as a 256-bit PSK, not the password) and your SSH public key. Treat it as private.")
+	if a.Opt.RescueTelnet {
+		a.UI.Warn("--rescue-telnet: while this card is in the camera, a root shell is open on telnet port 23 with NO password. Anyone on your network can use it. Use this card for rescue only and remove it afterwards.")
+	} else {
+		a.UI.Say("  The card disables the rescue telnet (flag akam/no_telnet): the camera is reached over SSH with your key. For a rescue card that keeps telnet, use --rescue-telnet.")
+	}
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD verify the 2K kit, ask for the SSH key and the Wi-Fi, ask the red-box yes/no, then write an MBR + FAT32 card and verify every file by sha256.")
 		return nil
 	}
 	if err := a.UI.RequireTTY("preparing the card"); err != nil {
 		return ui.ErrFailed
+	}
+	if a.Opt.RescueTelnet {
+		ok, derr := a.UI.Danger("Rescue card: passwordless root telnet", "Make a card that keeps the passwordless root telnet?",
+			"While this card is in the camera, port 23 gives a root shell with NO password to anyone on your network.",
+			"Use it for a rescue only and remove it afterwards. A normal first-install card does not need it.")
+		if derr != nil || !ok {
+			return a.UI.Fail("not confirmed.", "nothing was written. Without --rescue-telnet the card disables telnet.")
+		}
 	}
 	k, err := a.kit2K()
 	if err != nil {
@@ -223,7 +236,7 @@ func (a *App) cmdPrepare2KSD() error {
 	if ok, e := a.UI.AskYN("Block the vendor cloud at boot (flag akam/decloud)?"); e == nil {
 		decloud = ok
 	}
-	card, err := appfs.BuildCard(k, appfs.CardInput{PubKey: pk, SSID: ssid, Pass: pass, Decloud: decloud})
+	card, err := appfs.BuildCard(k, appfs.CardInput{PubKey: pk, SSID: ssid, Pass: pass, Decloud: decloud, RescueTelnet: a.Opt.RescueTelnet})
 	if err != nil {
 		return a.UI.Fail("preparing the card failed: "+err.Error(), "the camera was not touched; fix the problem above and retry.")
 	}
@@ -486,4 +499,45 @@ func (a *App) runDeps2K(ip string) appfs.RunDeps {
 		},
 	}
 	return rd
+}
+
+// ---------------------------------------------------------------- seed-2k
+
+// cmdSeed2K copies the card's Wi-Fi settings and SSH key into /config/akam of the camera, over SSH, while it runs
+// from the first-install card and before the appfs flash. The copy is made by the camera: nothing secret is read,
+// shown or stored on this PC.
+func (a *App) cmdSeed2K() error {
+	if err := a.appfsGate("seed-2k"); err != nil {
+		return err
+	}
+	a.UI.Banner("Seed the Wi-Fi and the SSH key of the card-less 2K (once, before the appfs flash)")
+	a.UI.Say("  The card-less camera reads its Wi-Fi settings and its SSH key from /config/akam (jffs2, kept across the flash).")
+	a.UI.Say("  Without them it would have no Wi-Fi and no SSH. This copies them from the first-install card it runs from now.")
+	if a.UI.Dry() {
+		a.UI.Say("  WOULD connect over SSH, check that the camera runs from the card, then copy akam/wpa.conf and akam/authorized_keys")
+		a.UI.Say("  of the card to /config/akam on the camera (mode 0600, checked by md5, a file already there is never overwritten).")
+		a.UI.Say("  Nothing secret is shown or stored on this PC. Small writes to the config partition, not to the firmware.")
+		return nil
+	}
+	if err := a.UI.RequireTTY("seeding /config/akam"); err != nil {
+		return ui.ErrFailed
+	}
+	ip, err := a.camNeedIP()
+	if err != nil {
+		return err
+	}
+	ok, err := a.UI.AskYN("Copy the Wi-Fi settings and the SSH key of the card into /config/akam on the camera at " + ip + "?")
+	if err != nil || !ok {
+		return a.UI.Fail("not confirmed.", "nothing was changed.")
+	}
+	conn, err := a.flashDial(ip)(0)
+	if err != nil {
+		return a.UI.Fail("cannot connect to the camera: "+ui.Sanitize(err.Error())+".", "nothing was changed.")
+	}
+	defer conn.Close()
+	if _, err := appfs.Seed(a.Ctx, conn, func(s string) { a.UI.Say("  " + ui.Sanitize(s)) }); err != nil {
+		return a.UI.Fail(ui.Sanitize(err.Error())+".", "nothing was flashed. Fix the problem above and run "+Prog+" seed-2k again.")
+	}
+	a.UI.Good("  /config/akam is ready (nothing secret was shown). Next: " + Prog + " appfs-build, then appfs-flash.")
+	return nil
 }

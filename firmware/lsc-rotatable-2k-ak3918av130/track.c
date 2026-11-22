@@ -474,6 +474,20 @@ int a2k_track_set_tilt(a2k_track_t *t, int on)
     return 0;
 }
 
+/* The motor direction flags of the policy (live): the 2K binding's base combined with the image orientation (track_run.c, orient.h). 0, or -1 for a value other than 0 / 1. */
+int a2k_track_set_invert(a2k_track_t *t, int invert_pan, int invert_tilt)
+{
+    if ((invert_pan & ~1) || (invert_tilt & ~1))
+        return -1;
+    pthread_mutex_lock(&t->mu);
+    t->cfg.invert_pan = invert_pan;
+    t->tl.cfg.invert_pan = invert_pan;
+    t->cfg.invert_tilt = invert_tilt;
+    t->tl.cfg.invert_tilt = invert_tilt;
+    pthread_mutex_unlock(&t->mu);
+    return 0;
+}
+
 int a2k_track_get_tilt(a2k_track_t *t)
 {
     int v;

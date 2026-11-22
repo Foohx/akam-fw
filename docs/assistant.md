@@ -1,9 +1,14 @@
 # The `akam` program: install, check, tested platforms
 
-`akam` is the single-file version of the setup wizard, written in Go, for Windows, macOS and Linux. On Linux, the bash
-wizard (`./akam` in the repository, see the [wizard guide](wizard_guide.md)) remains the **reference**: it is the one
-used for real installs and flashes. The Go program is **experimental**. What it does:
-[tools/assistant/README.md](../tools/assistant/README.md).
+`akam` is the single-file version of the setup wizard, written in Go, for Windows, macOS and Linux. It covers both
+cameras: the 1080p flows (also in the bash wizard) and the 2K flows (`backup-2k`, `prepare-2k-sd`, `seed-2k`, `key-2k`,
+`appfs-build`, `appfs-flash`, `update`), which exist **only** in the Go program. On Linux, the bash wizard (`./akam` in
+the repository, see the [wizard guide](wizard_guide.md)) remains the **reference for the 1080p**: it is the one used for
+real installs and flashes. The Go program is **experimental**: the 1080p install, update, restore and flash from it, and
+every 2K command, have passed host tests only. The Go `build` (build from source) and some single steps are not in it yet
+(`akam build` tells you to use the bash wizard). What it does: [tools/assistant/README.md](../tools/assistant/README.md).
+To run the Go program from the source tree: `tools/assistant/build.sh`, then `tools/assistant/bin/akam`, or
+`AKAM_USE_BIN=1 ./akam ARGS...`. Never run the bash wizard and the Go program at the same time (they share the state files).
 
 ## Tested platforms
 
@@ -18,10 +23,11 @@ passes the host tests of its operating-system layer. Nothing is called tested un
 | Windows arm64 | yes | no | host tests only | everything on hardware |
 | macOS Intel (amd64) | yes | no | host tests only | everything on hardware |
 | macOS Apple silicon (arm64) | yes | no | host tests only | everything on hardware |
+| Go program, 2K commands (any OS) | yes | **no** | host tests with a fake camera and a fake card (`backup-2k`, `prepare-2k-sd`, `key-2k`, `seed-2k`, `update`) | everything on hardware; a first install from macOS or Windows |
 | **Bash wizard, Linux** | n/a (scripts) | **yes, the reference** | real first installs (backup, image, flash), updates over SSH, verify, on two cameras | restore to stock (never rehearsed), Windows and macOS (not supported) |
 
 A **first install from Windows or macOS has never been done**. Until it is, install from Linux (or WSL2 for the build
-steps). Checklists for testers: [hardware test checklists](hardware-test-checklists.md#assistant-checklists).
+steps): the Go program is less tested than the bash wizard on every system. Checklists for testers: [hardware test checklists](hardware-test-checklists.md#assistant-checklists).
 Evidence: [testing status](testing-status.md).
 
 ## Files of a release
@@ -114,13 +120,13 @@ on a 2K ("not yet supported for this model"): the 1080p installer would brick it
 Two commands, only for a model of kind `cardless-appfs` (pass `--model lsc-rotatable-2k-ak3918av130`; a 1080p is refused):
 
 * `akam appfs-build --kit DIR --backup-dir DIR [--out DIR]` builds the appfs image **in this program** (Linux, macOS and
-  Windows, no `mksquashfs`, no shell) from **your own `mtd3.bin`** and the 2K kit. It is the port of `appfs/build_appfs.sh`:
+  Windows, no `mksquashfs`, no shell) from **your own `mtd3.bin`** and the 2K kit. It is the port of `firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`:
   the stock appfs with one `init.sh` branch changed (no override card: start Akam from flash; the SD override modes,
   the recovery, stay stock code), the Akam payload under `/appfs/akam`, `bin/yy_cam` replaced by a launcher of the stub.
   Its proofs are those of the script (binaries match their BUILDINFO, ARM, uClibc, pinned busybox, symcheck, dropbear
   programs, squashfs superblock equal in kind to the stock one, image decoded and compared with its tree, 0x490000 bytes).
   Output: `appfs-akam.squashfs`, `.sha256`, `appfs_sign.txt`, `MANIFEST.txt`, the same names as the script.
-* `akam appfs-flash --image-dir DIR --backup-dir DIR --ip ADDRESS [...]` is the port of `tools/flash_appfs.sh`. **Without
+* `akam appfs-flash --image-dir DIR --backup-dir DIR --ip ADDRESS [...]` is the port of `firmware/lsc-rotatable-2k-ak3918av130/tools/flash_appfs.sh`. **Without
   `--execute` it is a dry run**: local checks (image, sign, backup against its `SHA256SUMS`) and the printed plan, no
   connection. `--execute` needs a terminal, then two answers in order: the recovery acknowledgement (a UART or a CH341A
   programmer is at hand and the backup is verified: only they bring back a half-written `mtd3`) and the typed text
@@ -154,11 +160,21 @@ Same on Linux, macOS and Windows, no bash. The journey and the status of each st
 * `akam prepare-2k-sd [--kit FILE] [--device DEV]` writes the first-install card **from the signed kit** (newest release when no
   `--kit`): the card-less Akam boots from it with **no flash write** and removing it undoes everything. It asks your SSH public key
   and your Wi-Fi (stored on the card as a hex SSID and the 256-bit PSK, never the password), shows the red-box confirmation naming
-  the device, formats MBR + FAT32 and **verifies every file by sha256 after the write**. Like `build_card.sh` it never puts a
+  the device, formats MBR + FAT32 and **verifies every file by sha256 after the write**. **The card disables the rescue
+  telnet by default** (it creates the empty file `akam/no_telnet`; the SSH key on the card is enough). `--rescue-telnet`
+  keeps the passwordless root telnet of the card's boot script (port 23, root/root in RAM, open to your whole LAN while the
+  card is in) for a rescue card, behind a red-box confirmation: a card without `akam/no_telnet` is a security risk, remove it
+  when you are done. Like `build_card.sh` it never puts a
   `*.bin`, `fac_av130.zip` or `yy_upgrade*` file on the card and checks that `yy_debug.ini` is `mode=debug`.
 * `akam backup-2k [--out DIR]` backs the 2K up: `/proc/mtd` must be the 2K layout, each of the six partitions is read twice over SSH
   (read only, nothing is written on the camera) and compared, sizes are checked, `mtd0..mtd5.bin` and `SHA256SUMS` are written
   in a new folder (the camera's state folder by default), verified from the files, and recorded for `update`.
+* `akam seed-2k` (once, after booting from the card, **before** `appfs-flash`): copies `akam/wpa.conf` and
+  `akam/authorized_keys` of the card into `/config/akam` of the camera (jffs2, kept across the flash), over SSH. The copy is
+  done by the camera: no secret reaches this PC or the screen. It refuses a camera that does not run from the card, or a
+  card without both files; a file already in `/config/akam` is left alone (identical: "already seeded"; different: kept
+  and reported, never overwritten), so it can be run again. Without it the card-less camera has no Wi-Fi and no SSH
+  ([card-less appfs, section 4](porting/lsc-rotatable-2k/cardless-appfs.md)). Host-tested only.
 * `akam key-2k` creates the control-API key for this assistant: the camera makes it (`akam_api_key.sh new --scope admin --name
   assistant`), the secret comes back once over SSH, is stored in the camera's state folder (`api_key`, 0600) and is never printed;
   `update` then reads the model and version. It asks before it writes `/config/akam/api_keys` on the camera.
@@ -190,7 +206,8 @@ Same on Linux, macOS and Windows, no bash. The journey and the status of each st
   (a dry run replaces the rehearsal), `--force` allows a downgrade, `--yes` answers the rehearsal question and the typed question
   (never the recovery question: that needs `--recovery-at-hand` as well), and a terminal is always required: **no flag writes
   flash on its own**. A failed write is never retried; the message carries the rollback commands, the Akam SD card recovers an
-  appfs that mounts, a half-written `mtd3` needs UART or a CH341A.
+  appfs that mounts, a half-written `mtd3` needs UART or a CH341A. All of this is host-tested only (fake camera, fake card).
+  Back to stock on a 2K: there is no `akam restore-2k`; see [back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock).
 
 **Byte for byte.** The compressed streams of this program's squashfs writer and of `mksquashfs` differ (two xz encoders),
 so the images are not the same byte string; what is tested equal against `build_appfs.sh` on the same fixture is the whole

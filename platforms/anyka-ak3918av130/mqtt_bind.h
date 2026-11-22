@@ -135,8 +135,6 @@ void a2k_mqtt_detections(const char *json);
 void a2k_mqtt_det_stats(unsigned *sent, unsigned *dropped);
 /* "off", "connecting", "connected" or "error:<reason>". */
 void a2k_mqtt_conn_state(char *out, size_t cap);
-/* Counters: messages published, connections made. */
-void a2k_mqtt_stats(unsigned *published, unsigned *connects);
 /* Snapshots published, snapshots dropped. */
 void a2k_mqtt_snap_stats(unsigned *sent, unsigned *dropped);
 

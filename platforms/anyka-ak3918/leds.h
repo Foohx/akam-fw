@@ -199,7 +199,6 @@ int  ledsys_pat_set(int rule, const char *text);        /* leds_pat_set */
 void ledsys_pat_default(int rule, char *out, size_t cap);
 int  ledsys_blip(const char *pattern, long dur_ms);     /* leds_blip */
 void ledsys_blip_clear(void);
-int  ledsys_rule_now(void);
 int  ledsys_ctl_get(const char *key, char *out, size_t cap);
 int  ledsys_ctl_set(const char *key, const char *val, char *msg, size_t cap);
 void ledsys_ctl_list(void (*emit)(void *arg, const char *line), void *arg);

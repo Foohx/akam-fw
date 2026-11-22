@@ -58,5 +58,3 @@ void rtp_in_init(rtp_in_t *r);
  * A new SSRC restarts the sequence tracking (a client may restart its stream). */
 rtp_in_result_t rtp_in_feed(rtp_in_t *r, const uint8_t *pkt, size_t len,
                             int16_t *pcm, size_t *n, int *pt);
-
-const char *rtp_in_result_name(rtp_in_result_t r);

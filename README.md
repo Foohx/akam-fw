@@ -1,147 +1,220 @@
-# Akam: local firmware that frees LSC cameras from the cloud
+# Akam: take back full control of your cameras
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![SoC](https://img.shields.io/badge/SoC-Anyka%20AK3918AV130-orange.svg)]()
-[![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264%20%2B%20L16%20Audio-red.svg)]()
+[![Stream](https://img.shields.io/badge/Stream-RTSP%20H.264-red.svg)]()
 
-## What is Akam?
+**Akam is an open-source firmware that lets you take back full control of your IP cameras. No mandatory cloud.**
 
-Akam is an open-source firmware for LSC IP cameras (sold at Action, Anyka AK3918 family chips). It removes the Tuya cloud application and puts a small program in its place that works **only on
-your own network**: no cloud, no account, no phone app, no telemetry.
+It replaces the vendor's cloud application with one small program that works **only on your own network**: no
+cloud, no account, no phone app, no telemetry. The camera then speaks standard protocols (RTSP, ONVIF, MQTT, SSH)
+that any player, NVR or Home Assistant understands. The goals: light, standard, easy to integrate, every extra off
+until you turn it on.
 
-It is for people who want to plug a cheap camera into their own setup: a video player, an NVR (network video
-recorder), Home Assistant or any tool that speaks standard protocols (RTSP, ONVIF, MQTT, SSH). The goals are a light
-firmware, standard protocols, easy home-automation integration, and features that are off until you turn them on.
+> **Flashing can brick a camera, and restoring a backup is not guaranteed.** Akam is experimental. Read
+> [Safety and recovery](#safety-and-recovery) first.
 
-A guided installer (`./akam`) does the whole job from your PC for the 1080p: back up the camera, build the image from
-your own backup, flash, check. Only the camera's application area (the APP partition) is rewritten. The boot loader,
-the kernel and the system are never touched. The Rotatable 2K is flashed by documented scripts for now (the installer
-does not drive it yet).
+## Who is it for
 
-> **Flashing can brick your camera, and restoring a backup is not guaranteed.** Read the
-> [risks](#important-disclaimer-and-risks). The installer makes you take a full backup first.
+People who own one of the cameras below and want it to work with their own setup (Home Assistant, Frigate, an NVR, a
+VPN into the home network) instead of a vendor cloud. Being comfortable with a command line and a microSD card helps.
 
-## Supported camera
+## Supported cameras
 
-| Camera | Article | SI code | Status |
-|---|---|---|---|
-| LSC Smart Indoor 1080p | `3215672.3` | SI `D26228` | validated on 2 units |
-| LSC Smart Rotatable Camera 2K (Dual Band) | `3225722` | SZ `G26312` | validated on 1 unit, card-less boot; flashed by script, not by `./akam` yet ([model](docs/models.md)) |
-| LSC Smart Indoor 1080p | `3215672.2` | SI `B26101` / `C26101` | untested |
-| any other camera | | | not supported |
+Two cameras, one project: same Akam core, each with its own hardware features.
 
-The codes are on the back of the camera body, under the LSC logo. Details, how to report a new model:
-[compatible cameras](docs/compatible-cameras.md). What runs on each camera, before and after:
+| | LSC Indoor 1080p | LSC Rotatable 2K (Dual Band) |
+|---|---|---|
+| Identify it | article `3215672.3`, label `SI D26228` | article `3225722`, label `SZ G26312` |
+| SoC | Anyka AK3918AV130 | Anyka AK3918AV130 |
+| Model id | `lsc-indoor-1080p-ak3918` (same chip as the 2K; the id suffix is historical, see [SoCs](docs/socs.md)) | `lsc-rotatable-2k-ak3918av130` |
+| Status | validated on 2 units | validated on 1 unit (card-less boot since 2026-11-15) |
+| Akam is written to | the APP flash partition (`mtd7`) | the appfs flash partition (`mtd3`); runs with **no SD card** |
+| Installed with | the bash wizard (Linux) or the Go `akam` program | the Go `akam` program only (`prepare-2k-sd`, `appfs-flash`, `update`; host-tested only), or scripts |
+| Docs | [1080p](docs/porting/lsc-1080p/README.md) | [2K](docs/porting/lsc-rotatable-2k/README.md) |
+
+The codes are on the back of the camera body, under the LSC logo (photos: [hacking guide](docs/hacking.md#photos-of-the-board)). 5 GHz on the 2K is untested. Other revisions (for example `3215672.2`) are untested; any other
+camera is not supported. See [compatible cameras](docs/compatible-cameras.md) and the
+[porting template](docs/porting/TEMPLATE-new-camera.md).
+
+## Before and after
+
+**LSC Indoor 1080p**
 
 | | Stock firmware | With Akam |
 |---|---|---|
-| **1080p** | `anyka_ipc` (Tuya cloud app), telnet and FTP on | `ak_rtsp`: RTSP, optional ONVIF and MQTT, key-only SSH; cloud, telnet, FTP gone. Replaces the APP partition ([on the camera](docs/porting/lsc-1080p/on-camera.md)) |
-| **2K** | `yy_cam` (Tuya cloud app) | `akam2k_rtsp`: two RTSP streams, person detection, pan/tilt tracking, signed API, key-only SSH; no stock app. Replaces the appfs partition, boots with no SD card ([on the camera](docs/porting/lsc-rotatable-2k/on-camera.md)) |
+| Application | `anyka_ipc` (cloud app) | `ak_rtsp` (local only) |
+| Cloud account, phone app | required | not needed |
+| Local video | none by default (an RTSP server is in the image, switched off) | RTSP H.264 1080p + microphone, port 554 |
+| ONVIF, MQTT, Home Assistant | ONVIF service present but switched off; no MQTT | opt-in |
+| Talk through the speaker | through the vendor app | ONVIF backchannel (`akam talk`, go2rtc, Frigate) |
+| Telnet and FTP | launched by the stock start script | launch lines disabled, killed if started (checked every 60 s) |
+| SSH | no | key only |
+| Vendor updates | yes | gone |
+| Not provided | | pan/tilt (no motor), motion detection, recording to microSD, a second stream |
 
-Porting another camera: [checklist](docs/porting/TEMPLATE-new-camera.md).
+**LSC Rotatable 2K**
 
-## Features in short
+| | Stock firmware | With Akam |
+|---|---|---|
+| Application | `yy_cam` (cloud app) | `akam2k_rtsp` (local only) |
+| Cloud account, phone app | required | not needed |
+| Local video | RTSP on port 8554 with no password, only if enabled in its config | two RTSP streams on port 554: `/stream0` 2304x1296, `/stream1` 640x360 |
+| ONVIF, MQTT, Home Assistant | ONVIF only if enabled | opt-in (ONVIF with pan/tilt) |
+| Pan/tilt, person detection | cloud app only | API, ONVIF, MQTT and button; NPU person detection and tracking (tracking off by default) |
+| SSH | no | key only |
+| Vendor updates | yes | the stock update tool is kept but inert |
+| Boot | internal flash | internal flash, no SD card needed |
+| Not provided | | speaker output, generic motion detection (person presence events only), recording to microSD |
 
-- **Video and sound:** RTSP H.264 1080p with microphone, 10/15/20/25 fps (default 15), optional password. One viewer
-  at a time: put [go2rtc](https://github.com/AlexxIT/go2rtc) or MediaMTX in front for several.
-- **Talk through the camera speaker** (ONVIF audio backchannel, `./akam talk`, go2rtc, Frigate, Home Assistant).
-- **ONVIF-compatible services** (off by default, not certified) and WS-Discovery for NVRs and apps.
-- **MQTT with Home Assistant discovery** (off by default, host-tested only).
-- **Camera controls:** day/night with infrared LEDs, status LED, picture settings, frame rate, bitrate.
-- **Safe by default:** SSH with a key only, Telnet and FTP closed, optional clock sync (NTP).
-- **Not provided:** the Tuya/Smart Life app, cloud and remote viewing, push notifications, motion detection,
-  recording to microSD, vendor updates. Use a VPN into your home network, an NVR or Home Assistant instead.
+What each row's evidence is (validated on a camera, or host-tested only): [features](docs/features.md),
+[testing status](docs/testing-status.md).
 
-The complete list with ports, defaults and test status: [features](docs/features.md).
+## What Akam adds
 
-## How it works, in 5 lines
+- **Standard video:** RTSP H.264 on port 554, the same URLs on both cameras: `rtsp://<camera-ip>:554/stream0` (main)
+  and, on the 2K, `/stream1` (sub). Optional Digest password.
+- **Integrations:** ONVIF with WS-Discovery, MQTT with Home Assistant discovery, a signed JSON HTTP API with a
+  settings registry and an event feed. All opt-in.
+- **Local control:** LEDs and patterns, day/night with IR, picture settings, frame rate and bitrate. On the 2K also
+  pan/tilt, presets, patrol, a programmable button, image zones, person detection and tracking.
+- **Safe by default:** SSH with an ed25519 key only, no passwords, no telnet or FTP in normal operation, opt-in clock
+  sync. Open by default: SSH (22), RTSP (554) and, on the 1080p, the read-only control port (8091). **The video stream
+  has no password until you set one** (`akam rtsp-auth set`). Keep the camera on your LAN; never forward its ports to
+  the Internet, and consider blocking its Internet access at your router as well.
+- **Light:** code a camera does not use is not compiled in; no recurring flash writes in normal operation.
 
-1. The installer reads your camera's own firmware backup, made by you with a microSD card.
-2. Akam's **kit** (its own programs and scripts, signed, no vendor files) is downloaded.
-3. Your PC builds a new APP image from your backup plus the kit.
-4. The image is flashed to the APP partition, with read-back verification.
-5. Vendor files stay on your camera and in your private backup. They are never distributed.
+## What Akam replaces
 
-More: [how it works](docs/how-it-works.md).
+| | 1080p | 2K |
+|---|---|---|
+| Vendor application | `anyka_ipc` replaced by `ak_rtsp` | `yy_cam` removed, replaced by `akam2k_rtsp` |
+| Cloud connection, vendor OTA | gone | gone (the stock OTA tool stays, inert: nothing downloads) |
+| Telnet, FTP, SD-card hook | launch lines disabled, watched by a helper | the stock SD hook is kept as the recovery path |
+| Flash partition rewritten | APP (`mtd7`) | appfs (`mtd3`) |
 
-## What you need
+## What Akam keeps
 
-- the camera, and a 2.4 GHz Wi-Fi network it can join;
-- a **microSD card** and a **USB card reader** ([card reader problems](docs/troubleshooting.md#no-medium-found-with-a-usb-card-reader));
-- a **Linux PC** (Arch Linux, Debian 12 and Ubuntu 24.04 tested) for the bash wizard. A single-file `akam` program
-  also exists for Windows, macOS and Linux, but it is less tested: see the
-  [tested platforms](docs/assistant.md#tested-platforms);
-- optional but wise: a 3.3 V USB-UART adapter, the safety net if a flash goes wrong
-  ([hacking guide](docs/hacking.md#uart-access)).
+Everything below the application stays the stock one and is never redistributed by Akam:
 
-## Install quick start
+- **Both cameras:** U-Boot, kernel and drivers, Wi-Fi stack, root file system, hardware watchdog.
+- **1080p:** the stock boot scripts (patched at build time), the `cmdserver` and `msgserver` helpers.
+- **2K:** the vendor libraries and drivers (ISP, NPU, motor) that the Akam app uses at run time, and the rest of the
+  stock appfs; the Tuya data in `/config` is never read.
 
-**Linux (reference):**
+Vendor files stay on your camera and in your private backup; Akam images are assembled on your computer.
+
+## Quick start
+
+You need the camera, a 2.4 GHz Wi-Fi network (5 GHz on the 2K is untested), a microSD card with a USB reader, and a PC.
+Optional but wise: a 3.3 V USB-UART adapter as a safety net. There are two programs, both called `akam`:
+
+| | Where | Covers | Status |
+|---|---|---|---|
+| **Go program** (single binary) | download `akam-<os>-<arch>` from the [assistant releases](https://github.com/Foohx/akam-fw/releases?q=assistant-v), Linux, macOS and Windows | both cameras; the **only** one with the 2K commands (`prepare-2k-sd`, `backup-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`) | experimental: host-tested, not run on a real camera for any install, update, restore or flash |
+| **Bash wizard** (`./akam` in the source) | `git clone https://github.com/Foohx/akam-fw && cd akam-fw`, Linux only | the **1080p** only (no 2K command) | the reference: real first installs and updates on two 1080p cameras |
+
+Check the download first (SHA256 and signature, see [assistant](docs/assistant.md#check-the-download)), then run it
+(`chmod +x akam-linux-amd64 && ./akam-linux-amd64` on Linux or macOS, `.\akam-windows-amd64.exe` on Windows). A first
+install from macOS or Windows has never been done: install from Linux. To build the Go program yourself:
+`tools/assistant/build.sh`, then `tools/assistant/bin/akam`, or `AKAM_USE_BIN=1 ./akam ...` from the source folder.
 
 ```bash
+# 1080p, Linux, the tested path
 git clone https://github.com/Foohx/akam-fw && cd akam-fw
 ./akam
 ```
 
-**Windows, macOS, Linux (single binary):** download `akam` for your system from the
-[assistant release](https://github.com/Foohx/akam-fw/releases?q=assistant-v) (the one marked "Latest"), check it
-([steps](docs/assistant.md)), then run `akam`. The camera firmware has its own versions: the program downloads the kit
-of your camera model from the [firmware releases](https://github.com/Foohx/akam-fw/releases?q=firmware-v) itself and
-verifies it; you only download a firmware kit by hand to use `--kit`.
+- **Install, 1080p:** the wizard checks your PC, makes a verified backup of all partitions, builds the image from your
+  own backup plus the signed kit, flashes with read-back verification. Every risky step defaults to No and you replug
+  the power yourself: [wizard guide](docs/wizard_guide.md).
+- **Install, 2K:** Go program only: `backup-2k`, `prepare-2k-sd`, `seed-2k`, `appfs-build`, `appfs-flash`, in that
+  order: [2K install](docs/porting/lsc-rotatable-2k/README.md#install). **These commands have passed host tests only;
+  keep a UART or a CH341A programmer at hand.**
+- **Update:** `akam update` (1080p over SSH; 2K card-less flow with a rehearsal and a typed confirmation, host-tested only).
+- **Rollback:** `akam restore` (1080p, your stock APP backup; never rehearsed on hardware), `akam update --rollback`
+  (2K, previous Akam image; host-tested only). Back to stock on the 2K: flash your own `mtd3.bin` backup, see
+  [back to stock](docs/porting/lsc-rotatable-2k/README.md#back-to-stock), or UART.
+- **Releases:** [assistant binaries](https://github.com/Foohx/akam-fw/releases?q=assistant-v) and
+  [firmware kits](https://github.com/Foohx/akam-fw/releases?q=firmware-v), one per camera model (1080p and 2K) and
+  signed; the program downloads and verifies the right kit itself. The first release carries both kits.
+- **Watch it:** `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/stream0`
 
-The program checks your PC, remembers where you stopped, and walks you through: check the PC, get the kit, prepare
-the backup card, find the camera, **back it up (all 8 partitions)**, build the image, prepare the flash card, flash,
-verify. Arrow keys and Enter run a step, `?` explains it, `q` quits. Every risky step shows a red box with a yes/no
-whose **default is No**. You unplug and replug the camera's power yourself: the program never reboots it.
+`akam help` lists every command and `--dry-run` rehearses. More: [assistant](docs/assistant.md),
+[using Akam day to day](docs/using_akam.md), [troubleshooting](docs/troubleshooting.md).
 
-`./akam help` lists every command; add `--dry-run` to rehearse. Step by step: [wizard guide](docs/wizard_guide.md).
-Watch the stream: `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/stream0`. Every Akam camera uses the same URLs:
-`rtsp://<ip>:554/stream0` (main) and, where the camera has a second encoder (the Rotatable 2K), `rtsp://<ip>:554/stream1` (sub).
-Frigate: detect on `stream1` (low load), record on `stream0`.
+## Integrations
+
+| Protocol | Port | Default | Notes |
+|---|---|---|---|
+| RTSP | 554 | on | `/stream0` (both), `/stream1` (2K). The 1080p serves one client at a time: put go2rtc or MediaMTX in front |
+| ONVIF and WS-Discovery | 80 (1080p), 8000 (2K), 3702/udp | off | subset of Profile S (pan/tilt on the 2K), not certified: [ONVIF](docs/onvif.md) |
+| MQTT, Home Assistant discovery | outbound to your broker | off | no broker on the camera, no TLS yet: [MQTT](docs/mqtt.md) |
+| Signed HTTP API | 8092 | closed until an API key exists | HMAC-signed JSON, scopes, events: [1080p](docs/porting/lsc-1080p/control-api.md), [2K](docs/porting/lsc-rotatable-2k/control-api.md), [spec](specs/control-api.md) |
+| SSH | 22 | on | ed25519 key only |
+| Text control port | 8091 | 1080p only, read-only from the network | metrics and local settings |
+
+Frigate on the 2K: detect on `stream1`, record on `stream0`. On the 1080p use a single input (`stream0`) for both
+roles, or put go2rtc in front: the 1080p serves one client at a time.
 
 ```yaml
+# 2K
 cameras:
   cam:
     ffmpeg:
       inputs:
-        - {path: "rtsp://<ip>:554/stream1", input_args: preset-rtsp-restream, roles: [detect]}
-        - {path: "rtsp://<ip>:554/stream0", input_args: preset-rtsp-restream, roles: [record]}
+        - {path: "rtsp://<camera-ip>:554/stream1", input_args: preset-rtsp-restream, roles: [detect]}
+        - {path: "rtsp://<camera-ip>:554/stream0", input_args: preset-rtsp-restream, roles: [record]}
 ```
 
-## Daily use
+## Safety and recovery
 
-| I want to... | Go to |
-|---|---|
-| change a setting, update, set a password, name the camera | [using Akam](docs/using_akam.md) |
-| talk through the speaker | [two-way audio](docs/two_way_audio.md) |
-| connect an NVR or ONVIF app | [ONVIF](docs/onvif.md) |
-| connect Home Assistant or MQTT | [MQTT](docs/mqtt.md) |
-| fix a problem | [troubleshooting](docs/troubleshooting.md) |
-| hack, build, debug | [hacking guide](docs/hacking.md) |
-| everything else | [documentation index](docs/README.md) |
+> **FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.** Akam is experimental, built on reverse
+> engineering and written with AI assistance. Writing to the SPI NOR flash can brick the camera; in the worst case
+> only an external SPI programmer (for example a CH341A) recovers it. Restoring your backup is not guaranteed. The
+> authors accept no liability, to the extent the law allows.
 
-## Important disclaimer and risks
+- The installer makes you take a **full verified backup** first. Never publish it.
+- **Never cut the power during a flash.** If a flash reports errors, do not power cycle: flash your stock backup.
+- One partition is rewritten (APP on the 1080p, appfs on the 2K). U-Boot and the kernel are never written.
+- **Rollback:** `akam restore` (1080p; never rehearsed on hardware), `akam update --rollback` (2K, previous Akam image;
+  host-tested only). **Back to stock on the 2K:** flash your own `mtd3.bin` backup, see
+  [back to stock](docs/porting/lsc-rotatable-2k/README.md#back-to-stock), or use a UART.
+- **SD rescue (2K):** an Akam SD card is read before any Akam code and overrides the flash, so a broken payload does
+  not lock you out as long as the appfs still mounts; a half-written `mtd3` needs a UART or a CH341A programmer. Last resort: a 3.3 V UART or a CH341A programmer ([2K recovery](docs/porting/lsc-rotatable-2k/uart-recovery.md),
+  [flash and restore](docs/manual/flash-and-restore.md)).
+- **2K, while an Akam SD card is inserted** (first install or rescue): a card made by the scripts, by an older assistant, or by
+  `prepare-2k-sd --rescue-telnet`, opens a root telnet shell on port 23 with no password, so that a card can always
+  rescue the camera. Anyone on your LAN can use it. `prepare-2k-sd` now creates the empty file `akam/no_telnet` on the
+  card by default, which turns it off; the SSH key on the card is enough. If your card has no `akam/no_telnet`, remove
+  the card when you are done or create that empty file.
+- **Closed parts:** U-Boot, the kernel, the drivers, the Wi-Fi stack and, on the 2K, the vendor media libraries stay
+  closed stock code that Akam cannot audit or update. Blocking the camera's Internet access at your router is good
+  defence in depth.
+- Legal notes (your device, privacy, radio, interoperability): [legal](docs/legal.md).
 
-> **FLASHING AND MODIFYING THIS DEVICE IS STRICTLY AT YOUR OWN RISK.**
->
-> - **Experimental:** Akam is built on a reverse-engineering project and was written with AI assistance. It was
->   validated on two cameras so far ([testing status](docs/testing-status.md)).
-> - **Risk of permanent bricking:** writing to the SPI NOR flash can brick the camera. In the worst case only an
->   external SPI programmer (for example a CH341A) recovers it. **Restoring your backup is not guaranteed.**
-> - **No liability:** the authors and contributors accept no liability, to the extent the law allows, for damaged
->   hardware, bricked cameras, data loss or voided warranties.
-> - **Always make and verify a complete 8-partition backup first**, and never publish it.
-> - **Never cut the power while a flash runs.** If a flash reports errors, do not power cycle: flash your stock
->   backup immediately.
+## What you can do next
 
-Legal notes (your device, privacy, radio, interoperability): [legal](docs/legal.md).
+- Put the camera in **Home Assistant** (MQTT discovery) or **Frigate** (RTSP) with no vendor account.
+- Use a **VPN into your home network** for remote viewing instead of a cloud relay.
+- On the 2K: pan/tilt from an ONVIF app, **track a person**, patrol presets, bind the button to actions.
+- Script anything with the **signed API** and its event feed.
+
+Planned, not implemented: TLS for MQTT, more camera models, speaker
+output on the 2K, motion events and recording. Open gaps: [specs/roadmap.md](specs/roadmap.md); history:
+[CHANGELOG](CHANGELOG.md).
 
 ## Documentation
 
-[Documentation index](docs/README.md): [features](docs/features.md), [how it works](docs/how-it-works.md),
-[hacking guide](docs/hacking.md), [assistant](docs/assistant.md), [testing status](docs/testing-status.md),
-[changelog](CHANGELOG.md). Contributors: [CONTRIBUTING](CONTRIBUTING.md). Vulnerabilities: [SECURITY](SECURITY.md).
-Technical specifications of the code (as built): [specs/](specs/README.md).
+[Documentation index](docs/README.md): user, integration, developer, per camera, porting. Exact behaviour of the
+code: [specs/](specs/README.md). Contributors: [CONTRIBUTING](CONTRIBUTING.md). Vulnerabilities: [SECURITY](SECURITY.md).
+
+## Contributing and porting
+
+Bug reports, camera reports and ports are welcome: [open an issue](https://github.com/Foohx/akam-fw/issues) (the bug
+template asks for what is needed; how to [report your camera](docs/compatible-cameras.md#report-your-camera)). To add a camera, start with the
+[porting template](docs/porting/TEMPLATE-new-camera.md) and [CONTRIBUTING](CONTRIBUTING.md). Never attach a backup,
+dump or image to an issue.
 
 ## Release signing key
 

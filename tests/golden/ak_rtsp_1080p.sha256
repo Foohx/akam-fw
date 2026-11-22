@@ -1,4 +1,4 @@
-# Golden sha256 of the stripped 1080p ak_rtsp, reproducible build (docs/convergence-plan.md 2.5).
+# Golden sha256 of the stripped 1080p ak_rtsp, reproducible build (docs/archive/convergence-plan.md 2.5).
 # Recorded from dev e9fcf7d, before any file move to src/common.
 # 2026-11-16, feature/1080p-qp-tuning: new hash ffa4da4c... (was caded296...). Behaviour-identical by default; hash changes
 # because of new code (video_cfg minqp/maxqp keys). Proof: tests/video_apply_test.sh, CREATE_ENC payload byte-identical to
@@ -36,7 +36,9 @@
 # Command (from the repo root, zig 0.14.1 x86_64-linux, the pinned one in tools/.toolchain):
 #   make -C platforms/anyka-ak3918 repro        (AKAM_REPRO=1, SOURCE_DATE_EPOCH=0, -ffile-prefix-map, -g0, zig objcopy --strip-all)
 # Check: tools/ci/repro_check.sh. A different zig changes the hash: update this file in the same commit as the pin.
-79eb7464714b9c7f4d560944003b64577947bd9bb88c72bf387b347a2d4ecbbb  ak_rtsp.repro
+e4552748a454aafc6de034392083463674be369e47817cb72ef1391b3e68b60e  ak_rtsp.repro
 # 2026-11-17, review(1080p-api): leds_save_config mutex and the 8091 registry refusal of network writes to rows with no RAM-only mode (new hash).
 # 2026-11-17, fix/1080p-led-blip: new hash dbc49018... (was e630e2e4...). Behaviour change: an explicit led.blip overrides every led.status (off included) for its duration, led.state reads "blip", leds_blip/led.blip fail (-2 / HTTP 500) when the LED cannot be written. Default (no blip) byte-identical: tests/native/leds_oracle_test.c unchanged. Stripped 513152 -> 513496 (+344).
 # 2026-11-18, feature/rot2k-onvif-ptz step 1 (ONVIF core moved to src/common/net: http_srv, soap, onvif, wsd; model binding onvif_model_services): new hash 79eb7464... (was dbc49018...). Behaviour identical: only onvif_start changed (a loop over the model table, defined in firmware/lsc-indoor-1080p-ak3918/onvif_model.c, instead of three direct calls); every ONVIF/SOAP/WSD host test (soap, http_srv, wsd, onvif, onvif_media, onvif_svc) passes with unchanged sources and assertions, only the source paths of the drivers moved. Stripped 513496 -> 513512 (+16 = the 4-entry table); all symbols and instructions otherwise identical up to the 16-byte address shift.
+# 2026-11-22, reorg/2k-split: new hash 46e9739f... (was 79eb7464...). Behaviour identical; only code placement changed: mqtt_connack_reason, the Annex B NAL splitter (h264_nalu.c), the RTCP SR writer (rtcp_sr.c) and the identical ONVIF handlers (onvif_common.c) moved from per-platform statics to shared src/ objects, and the AKPCM ioctl block to src/hal/akpcm.h (header only). Proof: tests/mqtt_codec_test.sh, rtsp_tx_test.sh, rtsp_backchannel_test.sh, onvif_test.sh, onvif_media_test.sh, onvif_svc_test.sh; dead functions removed earlier left the hash unchanged.
+# 2026-11-22, fix(cred): new hash e4552748... (was 46e9739f...). Behaviour identical: exp1 in fresh_and_remember is initialised to 0 to silence a -Wmaybe-uninitialized false positive (exp1 is only read when in_window succeeded and wrote it). Proof: tests/onvif_test.sh, ak1080_api_http_test.sh (cred and nonce paths) unchanged.

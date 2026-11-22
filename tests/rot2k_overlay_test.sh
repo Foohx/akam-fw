@@ -1593,7 +1593,7 @@ if command -v cc >/dev/null 2>&1; then
     ZN_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/zn_probe" - 2>/dev/null; then ZN_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
- if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/zones_unit" "$REPO/tests/rot2k_zones_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/zones_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_zones_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c"; then
         "$WORK/zones_unit" >"$WORK/zones_unit.out" 2>&1 || true
         check "zones unit test passes (parser, fuzz, feet point, zone_mode any/all, hysteresis, state file)" grep -q 'rot2k zones unit: 0 failed' "$WORK/zones_unit.out"
         grep 'FAIL' "$WORK/zones_unit.out" || true
@@ -1618,7 +1618,7 @@ if command -v cc >/dev/null 2>&1; then
     else
         ko "mic unit test does not compile"
     fi
-    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/helpers/mic" -o "$WORK/mic_host" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic_core.c"; then
+    if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/helpers/mic" -I"$REPO/src/hal" -o "$WORK/mic_host" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic_core.c"; then
         ok "akam2k_mic compiles clean on the host"
         check "akam2k_mic: a path outside /tmp is refused before anything is opened (exit 2)" test "$("$WORK/mic_host" /etc/x.wav >/dev/null 2>&1; echo $?)" = 2
         check "akam2k_mic: usage errors exit 2 (seconds 0 and 31, rate 44100, no file)" test "$("$WORK/mic_host" -s 0 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" -s 31 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" -r 44100 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" >/dev/null 2>&1; echo $?)" = 2222
@@ -1690,7 +1690,7 @@ if command -v cc >/dev/null 2>&1; then
     MQ_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe" - 2>/dev/null; then MQ_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # MQ_SAN is empty or one flag
- if cc -Wall -Wextra -Werror -std=gnu99 -g $MQ_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/mqtt_unit" "$REPO/tests/rot2k_mqtt_unit.c" "$REPO/platforms/anyka-ak3918av130/mqtt_bind.c" "$REPO/src/features/ptz/ptz_vel.c" "$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/api/api_events.c" "$REPO/src/net/mqtt/mqtt.c" "$REPO/src/net/mqtt/mqtt_ha.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $MQ_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/mqtt_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_mqtt_unit.c" "$REPO/platforms/anyka-ak3918av130/mqtt_bind.c" "$REPO/src/features/ptz/ptz_vel.c" "$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/api/api_events.c" "$REPO/src/net/mqtt/mqtt.c" "$REPO/src/net/mqtt/mqtt_ha.c"; then
         "$WORK/mqtt_unit" >"$WORK/mqtt_unit.out" 2>&1 || true
         check "MQTT module unit test passes (config, golden payloads, fuzz, reconnect, no secret in the log)" grep -q 'rot2k mqtt unit: 0 failed' "$WORK/mqtt_unit.out"
         grep 'FAIL' "$WORK/mqtt_unit.out" || true
@@ -1728,7 +1728,7 @@ if command -v cc >/dev/null 2>&1; then
     SY_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe4" - 2>/dev/null; then SY_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # SY_SAN is empty or one flag
- if cc -Wall -Wextra -Werror -std=gnu99 -g $SY_SAN "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/sys_unit" "$REPO/tests/rot2k_sys_unit.c" "$REPO/src/hal/hal_sys.c" "$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/mqtt/mqtt_ha.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $SY_SAN "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/sys_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_sys_unit.c" "$REPO/src/hal/hal_sys.c" "$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/mqtt/mqtt_ha.c"; then
         "$WORK/sys_unit" >"$WORK/sys_unit.out" 2>&1 || true
         check "sys unit test passes (cpu/load/mem/uptime/wifi parsers, fixtures, absent values, MQTT diagnostic sensors)" grep -q 'rot2k sys unit: 0 failed' "$WORK/sys_unit.out"
         grep 'FAIL' "$WORK/sys_unit.out" || true
@@ -1743,7 +1743,7 @@ if command -v cc >/dev/null 2>&1; then
     LD_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe5" - 2>/dev/null; then LD_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # LD_SAN is empty or one flag
- if cc -Wall -Wextra -Werror -std=gnu99 -g $LD_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/led_unit" "$REPO/tests/rot2k_led_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/leds.c" "$REPO/src/features/light/led_pat.c" "$REPO/src/features/light/light_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/hal.c" "$REPO/src/hal/hal_sys.c" "$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/mqtt/mqtt_ha.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $LD_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/led_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_led_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/leds.c" "$REPO/src/features/light/led_pat.c" "$REPO/src/features/light/light_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/hal.c" "$REPO/src/hal/hal_sys.c" "$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/mqtt/mqtt_ha.c"; then
         "$WORK/led_unit" >"$WORK/led_unit.out" 2>&1 || true
         check "status LED unit test passes (patterns, timing, rule priority, engine, route parser, select / text discovery and command parsing)" grep -q 'rot2k led unit: 0 failed' "$WORK/led_unit.out"
         grep 'FAIL' "$WORK/led_unit.out" || true
@@ -1874,7 +1874,7 @@ if command -v cc >/dev/null 2>&1; then
         ko "track raw recorder unit test does not compile"
     fi
     # shellcheck disable=SC2086
- if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/zlive_unit" "$REPO/tests/rot2k_zlive_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/platforms/anyka-ak3918av130/zlive.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $BT_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/zlive_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_zlive_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/platforms/anyka-ak3918av130/zlive.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c"; then
         "$WORK/zlive_unit" >"$WORK/zlive_unit.out" 2>&1 || true
         check "live zones unit test passes (ignore rectangles, text forms, persistence, runtime file wins, applies at home only, atomic store)" grep -q 'rot2k zlive unit: 0 failed' "$WORK/zlive_unit.out"
         grep 'FAIL' "$WORK/zlive_unit.out" || true
@@ -1912,7 +1912,7 @@ check "the shared day/night policy is compiled from platforms/anyka-ak3918, not 
 
 echo "== akam2k_rtsp detection thread ending (stubbed vendor calls: disable chn 16, else drain it)"
     # The ABI size asserts describe the 32-bit camera ABI: neutered for this host build, the ARM build keeps them.
- if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_thread" \
+ if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_thread" "$REPO/platforms/anyka-ak3918av130/orient.c" \
         "$REPO/tests/rot2k_detect_thread_test.c" "$REPO/platforms/anyka-ak3918av130/detect.c" "$REPO/src/features/track/track_relay.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/api/api_events.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/rtsp/rtp_clock.c"; then
         for m in ok refused stopping; do
             "$WORK/detect_thread" $m >"$WORK/detect_thread.$m.out" 2>&1 || true
@@ -1923,7 +1923,7 @@ echo "== akam2k_rtsp detection thread ending (stubbed vendor calls: disable chn 
         ko "detection thread test does not compile"
     fi
     echo "== akam2k_rtsp detection frame choice (stubbed vendor calls: newest frame of the chn 16 queue)"
- if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_fresh" \
+ if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_fresh" "$REPO/platforms/anyka-ak3918av130/orient.c" \
         "$REPO/tests/rot2k_detect_fresh_test.c" "$REPO/platforms/anyka-ak3918av130/detect.c" "$REPO/src/features/track/track_relay.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/api/api_events.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/rtsp/rtp_clock.c"; then
         "$WORK/detect_fresh" >"$WORK/detect_fresh.out" 2>&1 || true
         check "detection newest-frame test passes" grep -q 'rot2k detect fresh: 0 failed' "$WORK/detect_fresh.out"
@@ -2047,8 +2047,9 @@ check "mic: no playback/loopback node, no GPIO, no speaker request in the code (
 AU=$REPO/platforms/anyka-ak3918av130/audio.c
 check "audio: audio.c holds the capture literal once, opens it O_RDONLY once, and has no other open()" test "$(grep -c '^#define PCM_CAPTURE "/dev/pcmC0D0c"$' "$AU")" = 1 -a "$(grep -c 'open(PCM_CAPTURE, O_RDONLY)' "$AU")" = 1 -a "$(strip_c_comments "$AU" | grep -c -E '(^|[^_a-zA-Z0-9])open\(')" = 1
 check "audio: audio.c has no playback/loopback node, no GPIO, no speaker request (comments ignored)" test -z "$(strip_c_comments "$AU" | grep -E 'pcmC0D0[pl]|[Gg][Pp][Ii][Oo]|SPEAKER' || true)"
-check "audio: every ioctl in audio.c is on the capture fd with one of the seven IOC_ macros (8 calls)" test "$(strip_c_comments "$AU" | grep -c 'ioctl(')" = 8 -a "$(strip_c_comments "$AU" | grep -c -E 'ioctl\(fd, IOC_(GET_PARS|SET_RATE|SET_STATE|GET_PERIODS|SET_PERIODS|SET_MODE|RESET_BUF), ')" = 8
-check "audio: the seven request numbers and struct akpcm_pars equal those of the verified PoC tool" test "$(grep -E '^#define IOC_|^struct akpcm_pars|^    uint32_t format' "$AU")" = "$(grep -E '^#define IOC_|^struct akpcm_pars|^    uint32_t format' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c")"
+check "audio: every ioctl in audio.c is on the capture fd with one of the seven AKPCM_IOC_ macros (8 calls)" test "$(strip_c_comments "$AU" | grep -c 'ioctl(')" = 8 -a "$(strip_c_comments "$AU" | grep -c -E 'ioctl\(fd, AKPCM_IOC_(GET_PARS|SET_RATE|SET_STATE|GET_PERIODS|SET_PERIODS|SET_MODE|RESET_BUF), ')" = 8
+AKP=$REPO/src/hal/akpcm.h
+check "audio: the seven request numbers and struct akpcm_pars (src/hal/akpcm.h, shared with the PoC tool and the 1080p) are the verified ones, defined nowhere else" test "$(grep -E '^#define AKPCM_IOC_(GET_PARS|SET_RATE|SET_STATE|GET_PERIODS|SET_PERIODS|SET_MODE|RESET_BUF) ' "$AKP" | awk '{print $2, $3}' | tr '\n' ';')" = "AKPCM_IOC_GET_PARS 0x401c50e0;AKPCM_IOC_SET_RATE 0x800450ea;AKPCM_IOC_SET_STATE 0x80045010;AKPCM_IOC_SET_PERIODS 0x80045030;AKPCM_IOC_GET_PERIODS 0x40045030;AKPCM_IOC_SET_MODE 0x000050e1;AKPCM_IOC_RESET_BUF 0x000050e3;" -a "$(grep -c 'uint32_t format;' "$AKP")" = 1 -a -z "$(grep -E '^#define (AKPCM_)?IOC_|^struct akpcm_pars' "$AU" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" || true)" -a "$(grep -c '#include "akpcm.h"' "$AU" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" | grep -c ':1')" = 2
 check "audio: the capture is opt-in: a2k_audio_start is called once, under 'if (audio_on)', and audio_on defaults to 0" test "$(grep -c 'a2k_audio_start()' "$REPO/platforms/anyka-ak3918av130/main.c")" = 1 -a "$(grep -c 'audio_on = 0;' "$REPO/platforms/anyka-ak3918av130/main.c")" = 1 -a "$(grep -c -E '^    if \(audio_on\) \{' "$REPO/platforms/anyka-ak3918av130/main.c")" = 1
 printf '#define PCM_CAPTURE "/dev/pcmC0D0c"\n' >"$WORK/mic_other.c"
 check "the C scanner flags the capture node in any file but audio/mic.c (positive control)" test "$(scan_c "$WORK/mic_other.c" | wc -l)" = 1
@@ -2174,7 +2175,7 @@ check "ptz: hal_ptz.c reuses the validated safe-motion layer (one include of aka
 check "ptz: the calibration sends only the directional commands (ptzs_send_move, command words from the descriptor, never a 9 / 10 / 12 literal) and the descriptor refuses a word above 7" test "$(strip_c_comments "$HP" | grep -c -E 'buf\[0\] = (8|9|10|11|12)\b|ptzs_send_move\(x, (8|9|1[0-2])\b')" = 0 -a "$(strip_c_comments "$HP" | grep -c -E 'd->dir\[i\] > 7')" = 1
 check "ptz: the two init request tokens are in hal_ptz.c (the engine) and the tool, and in no other app file" test "$(grep -lE '0x40100c03u|0x40280c04u' "${A2K_APPALL[@]}" | sed 's|.*/||' | tr '\n' ' ')" = "hal_ptz.c "
 check "ptz: the driver opens exactly one file with open() (the descriptor's node, O_RDWR), renames one temp file onto the target, unlinks only that temp file" test "$(strip_c_comments "$HD" | grep -c -E '(^|[^_a-zA-Z0-9])open\(')" = 1 -a "$(strip_c_comments "$HD" | grep -c 'open(g_dev, O_RDWR)')" = 1 -a "$(strip_c_comments "$HD" | grep -c -E '\brename\(')" = 1 -a "$(strip_c_comments "$HD" | grep -c -E '\bunlink\(tmp\)')" = 2 -a "$(strip_c_comments "$HD" | grep -c -E '\bunlink\(')" = 2
-check "ptz: only ptz.c, main.c, rtsp_session.c, mqtt_bind.c, the 2K binding and the button / tracking / zones wiring (button, detect, track, zlive) and the API settings table (settings.c: ptz.* state rows and actions) know the PTZ controller or its entities" test "$(grep -lE 'hal_ptz_|a2k_ptz_|[^_a-z]ptz\.h' "${A2K_APP[@]}" | sed 's|.*/||' | LC_ALL=C sort | tr '\n' ' ')" = "button.c button.h detect.c hal.h hal_ptz.c hal_ptz.h hal_ptz_drv.c main.c mqtt_bind.h mqtt_cfg.h onvif_model.c onvif_ptz.c onvif_services.h patrol.c patrol.h patrol_run.c ptz.c ptz.h ptz_desc.c rtsp_session.c scene.c scene.h settings.c track.c track.h track_run.c track_run.h zlive.h "
+check "ptz: only ptz.c, its switched-off stand-ins (ptz_off.c, scene_off.c for the scene hook type), main.c, rtsp_session.c, mqtt_bind.c, the 2K binding and the button / tracking / zones wiring (button, detect, track, zlive) and the API settings table (settings.c: ptz.* state rows and actions) know the PTZ controller or its entities" test "$(grep -lE 'hal_ptz_|a2k_ptz_|[^_a-z]ptz\.h' "${A2K_APP[@]}" | sed 's|.*/||' | LC_ALL=C sort | tr '\n' ' ')" = "button.c button.h detect.c hal.h hal_ptz.c hal_ptz.h hal_ptz_drv.c main.c mqtt_bind.h mqtt_cfg.h onvif_model.c onvif_ptz.c onvif_services.h patrol.c patrol.h patrol_run.c ptz.c ptz.h ptz_desc.c ptz_off.c rtsp_session.c scene.c scene.h scene_off.c settings.c track.c track.h track_run.c track_run.h zlive.h "
 check "ptz: the privacy hook is one read in the video path (send_video_frame) and the video path calls nothing else of the controller" test "$(grep -c 'a2k_ptz_' "$REPO/platforms/anyka-ak3918av130/rtsp_session.c")" = 1 -a "$(grep -c 'a2k_ptz_privacy_active()' "$REPO/platforms/anyka-ak3918av130/rtsp_session.c")" = 1
 check "ptz: main.c stops the controller after MQTT (no command reaches the motor while it stops) and before the capture" bash -c "m=\$(grep -n '^    a2k_mqtt_stop();' '$REPO/platforms/anyka-ak3918av130/main.c' | cut -d: -f1); p=\$(grep -n '^    a2k_ptz_stop();' '$REPO/platforms/anyka-ak3918av130/main.c' | cut -d: -f1); c=\$(grep -n '^    a2k_cap_stop();' '$REPO/platforms/anyka-ak3918av130/main.c' | tail -n1 | cut -d: -f1); test -n \"\$m\" && test \"\$m\" -lt \"\$p\" && test \"\$p\" -lt \"\$c\""
 check "ptz: the defaults are calibration auto and privacy off (opt-in), the park is the descriptor's" test "$(grep -c -E 'c->cal = HAL_PTZ_CAL_AUTO;|c->park_pan = c->park_tilt = -1;|c->privacy = 0;' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c")" = 3
@@ -2334,11 +2335,11 @@ if command -v cc >/dev/null 2>&1; then
     HP_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe2" - 2>/dev/null; then HP_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
- if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/hal_ptz_unit" "$REPO/tests/rot2k_hal_ptz_unit.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz_drv.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c" "$REPO/src/features/ptz/ptz_lease.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/hal_ptz_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_hal_ptz_unit.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz_drv.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c" "$REPO/src/features/ptz/ptz_lease.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c"; then
         "$WORK/hal_ptz_unit" >"$WORK/hal_ptz_unit.out" 2>&1 || true
         check "hal_ptz unit test passes" grep -q 'rot2k hal_ptz unit: 0 failed' "$WORK/hal_ptz_unit.out"
         grep 'FAIL' "$WORK/hal_ptz_unit.out" || true
- if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/ptz_cont_unit" "$REPO/tests/rot2k_ptz_cont_unit.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz_drv.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c" "$REPO/src/features/ptz/ptz_lease.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/ptz_cont_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_ptz_cont_unit.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz_drv.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c" "$REPO/src/features/ptz/ptz_lease.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c"; then
             "$WORK/ptz_cont_unit" >"$WORK/ptz_cont_unit.out" 2>&1 || true
             check "continuous motion unit test passes (safe layer + HAL session + controller thread on a fake driver: lease, retarget without a stop, soft range per axis, stall / wrong way / uncommanded axis, cancel, manual preemption, position history)" grep -q 'rot2k ptz cont unit: 0 failed' "$WORK/ptz_cont_unit.out"
             grep 'FAIL' "$WORK/ptz_cont_unit.out" || true
@@ -2358,7 +2359,7 @@ if command -v cc >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe_ov" - 2>/dev/null; then OV_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # OV_SAN is empty or one flag
  if cc -Wall -Wextra -Werror -std=gnu99 -g $OV_SAN -pthread -DONVIF_SCRATCH=2048 '-DWSD_INSTANCE_FILE="/tmp/akam2k_wsd_instance_test"' "${INC_2K[@]}" "${SHARED_INC[@]}" \
-        -o "$WORK/onvif_server" "$REPO/tests/rot2k_onvif_server.c" "$REPO/platforms/anyka-ak3918av130/onvif_services.c" "$REPO/platforms/anyka-ak3918av130/onvif_ptz.c" "$REPO/src/net/onvif/http_srv.c" "$REPO/src/net/onvif/soap.c" "$REPO/src/net/onvif/onvif.c" "$REPO/src/net/onvif/wsd.c" "$REPO/src/net/crypto/cred.c" \
+        -o "$WORK/onvif_server" "$REPO/tests/rot2k_onvif_server.c" "$REPO/platforms/anyka-ak3918av130/onvif_services.c" "$REPO/platforms/anyka-ak3918av130/onvif_ptz.c" "$REPO/src/net/onvif/onvif_common.c" "$REPO/src/net/onvif/http_srv.c" "$REPO/src/net/onvif/soap.c" "$REPO/src/net/onvif/onvif.c" "$REPO/src/net/onvif/wsd.c" "$REPO/src/net/crypto/cred.c" \
         "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" "$REPO/src/net/crypto/sha1.c" "$REPO/src/net/crypto/b64.c" "$REPO/src/features/ptz/ptz_vel.c" "$REPO/src/features/ptz/ptz_lease.c"; then
         python3 -I "$REPO/tests/rot2k_onvif_test.py" "$WORK/onvif_server" >"$WORK/onvif_test.out" 2>&1 || true
         check "ONVIF conformance smoke passes (pre-auth list, Digest, golden XML of every operation, ContinuousMove mapping table, Timeout clamp, Stop, home, presets, refusals, WS-Discovery)" grep -q 'rot2k onvif test: 0 failed' "$WORK/onvif_test.out"
@@ -2423,7 +2424,7 @@ else
 fi
 if command -v cc >/dev/null 2>&1; then
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
- if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -DA2K_SCENE_TEST "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/scene_glue_unit" "$REPO/tests/rot2k_scene_glue_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/scene.c" "$REPO/src/features/scene/scene_check.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/src/features/track/drift_match.c"; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread -DA2K_SCENE_TEST "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/scene_glue_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_scene_glue_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/scene.c" "$REPO/src/features/scene/scene_check.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/src/features/track/drift_match.c"; then
         "$WORK/scene_glue_unit" >"$WORK/scene_glue_unit.out" 2>&1 || true
         check "scene runtime unit test passes (two-step write, view changed during the window, boots counter, invalidation)" grep -q 'rot2k scene glue unit: 0 failed' "$WORK/scene_glue_unit.out"
         grep 'FAIL' "$WORK/scene_glue_unit.out" || true

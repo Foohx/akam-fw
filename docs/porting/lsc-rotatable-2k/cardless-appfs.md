@@ -1,7 +1,7 @@
 # Card-less appfs (MT-2): design, build, flash, rollback
 
 Status: **image built and statically checked on the host; nothing flashed, nothing run on the camera.** The write
-script exists and is a dry run by default. Staged plan: [flash-test-plan.md](flash-test-plan.md) (MT-2).
+script exists and is a dry run by default. Staged plan: [flash-test-plan.md](../../archive/rot2k-flash-test-plan.md) (MT-2).
 
 ## 1. What it is
 

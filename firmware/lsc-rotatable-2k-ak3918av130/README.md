@@ -3,9 +3,9 @@
 Firmware kind: **`cardless-appfs`**: Akam runs from the flash (appfs partition, no SD card needed; the stock app
 `yy_cam` is removed and replaced by the own app `akam2k_rtsp`). The SD overlay card in this directory is the
 first-install and recovery path: it overrides the flash. **Status: validated on one unit** (card-less since
-2026-11-15). What runs, in order: [on-camera.md](../../docs/porting/lsc-rotatable-2k/on-camera.md). Plan: [docs/porting/lsc-rotatable-2k/PLAN.md](../../docs/porting/lsc-rotatable-2k/PLAN.md); model
+2026-11-15). What runs, in order: [on-camera.md](../../docs/porting/lsc-rotatable-2k/on-camera.md). Original porting plan (historical): [docs/archive/rot2k-porting-plan.md](../../docs/archive/rot2k-porting-plan.md); model
 index: [docs/models.md](../../docs/models.md); first-boot checklist:
-[phase1-validation.md](../../docs/porting/lsc-rotatable-2k/phase1-validation.md).
+[phase1-validation.md](../../docs/archive/rot2k-phase1-validation.md).
 
 Camera: Action article `3225722`, label `SZ G26312`; SoC Anyka AK3918AV130, kernel 4.4.302-cip94, 8 MiB SPI NOR, 6 MTD
 partitions. Everything model-specific lives in this directory.
@@ -17,9 +17,9 @@ partitions. Everything model-specific lives in this directory.
 | `overlay/` | the Akam card: `yy_debug.ini` (`mode=debug`, `start_sh=/mnt/sdcard/akam_boot.sh`), `akam_boot.sh`, `akam/*.sh` |
 | `rescue/` | the minimal telnet-only rescue card: `yy_debug.ini`, `hack.sh`, `telnetd` |
 | `tools/` | host-side helpers (flash script, signature calculator, MQTT and ONVIF probes) |
-| `ptz/` | `akam_ptz`, the tiny on-camera motor tool (C, static ARM; `ptz/build_akam_ptz.sh`; copied to `akam/akam_ptz` by `build_card.sh`; soft-limited motion layer in `ptz/akam_ptz_safe.h`, optional `akam/ptz.conf`; init, moves and the safe layer hardware verified; the same layer drives the motor inside `akam2k_rtsp` through `app/hal_ptz.*`, see ptz-findings.md "hal_ptz") |
-| `overlay/akam/own_app_run.sh` | supervisor of `akam2k_rtsp` (see own-app-feasibility.md, "Auto-start"); the app sources and `make poc3-dist` are in `app/` |
-| `sntp/` + `overlay` stub | opt-in time sync: `akam2k_sntp` (one-shot SNTP client, BusyBox has no `ntpd`) driven by the shared `akam_ntp.sh`; enabled only by creating `akam/ntp` on the card (`server=NAME` lines, e.g. your router's IP), see own-app-feasibility.md, "Time" |
+| `ptz/` | `akam_ptz`, the tiny on-camera motor tool (C, static ARM; `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/build_akam_ptz.sh`; copied to `akam/akam_ptz` by `build_card.sh`; soft-limited motion layer in `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h`, optional `akam/ptz.conf`; init, moves and the safe layer hardware verified; the same layer drives the motor inside `akam2k_rtsp` through `app/hal_ptz.*`, see ptz-findings.md "hal_ptz") |
+| `firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh` | supervisor of `akam2k_rtsp` (see [rot2k-own-app-feasibility.md](../../docs/archive/rot2k-own-app-feasibility.md), "Auto-start"); the app sources and `make poc3-dist` are in `app/` |
+| `sntp/` + `overlay` stub | opt-in time sync: `akam2k_sntp` (one-shot SNTP client, BusyBox has no `ntpd`) driven by the shared `akam_ntp.sh`; enabled only by creating `akam/ntp` on the card (`server=NAME` lines, e.g. your router's IP), see [rot2k-own-app-feasibility.md](../../docs/archive/rot2k-own-app-feasibility.md), "Time" |
 | `build_card.sh` | assembles `overlay/` or `rescue/` into a directory (the mounted card) |
 
 ## Build a card
@@ -86,6 +86,8 @@ Turn it off with `build_card.sh ... --no-telnet`, or by creating an empty file `
 the file to turn it back on). SSH (Dropbear, port 22) is public-key only (ed25519, no password authentication compiled
 in). The SSH host key and your `authorized_keys` live on the card (FAT: no file permissions): treat the card like a
 key, and do not share an image of it. Never put the camera on a network you do not trust with the card in.
+`akam prepare-2k-sd` creates `akam/no_telnet` by default (the SSH key is on the card, telnet is not needed); only
+`akam prepare-2k-sd --rescue-telnet` makes a card that keeps the telnet shell.
 
 ## Residual risk of the opt-in `param.conf` edit
 

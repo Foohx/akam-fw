@@ -25,7 +25,9 @@
 #include "ak_ioctls.h"
 #include "audio.h"
 #include "rtsp_session.h"
+#include "h264_nalu.h"
 #include "h264_params.h"
+#include "rtcp_sr.h"
 #include "rtp_clock.h"
 #include "net_tx.h"
 #include "tx_pace.h"
@@ -815,43 +817,21 @@ static int send_one_nalu(Client *client, const uint8_t *data, size_t nalu_len,
 
 /* Sends every NAL unit of a frame; stops at the first packet the connection refuses (SEND_NOBUFS) or breaks
  * on (SEND_FAIL): the rest of the frame would only be written into a dead or full stream. */
-static int send_frame_nalus(Client *client, uint8_t *data, size_t len,
-                            uint32_t timestamp)
+typedef struct {
+    Client *client;
+    uint32_t timestamp;
+} nalu_ctx_t;
+
+static int nalu_cb(void *user, const uint8_t *nalu, size_t len, int is_vcl)
 {
-    size_t i = 0;
-    while (i + 3 < len) {
-        size_t start_code_len = 0;
-        if (data[i] == 0x00 && data[i+1] == 0x00 &&
-            data[i+2] == 0x00 && data[i+3] == 0x01)
-            start_code_len = 4;
-        else if (data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x01)
-            start_code_len = 3;
+    const nalu_ctx_t *c = user;
+    return send_one_nalu(c->client, nalu, len, c->timestamp, is_vcl != 0);
+}
 
-        if (start_code_len > 0) {
-            size_t nalu_start = i + start_code_len;
-            size_t next_nalu_start = len;
-            size_t j = nalu_start;
-            while (j + 2 < len) {
-                if (data[j] == 0x00 && data[j+1] == 0x00 && data[j+2] == 0x01) {
-                    next_nalu_start = (j > 0 && data[j-1] == 0x00) ? j - 1 : j;
-                    break;
-                }
-                j++;
-            }
-
-            size_t nalu_len = next_nalu_start - nalu_start;
-            if (nalu_len > 0) {
-                uint8_t nalu_type = data[nalu_start] & 0x1F;
-                int r = send_one_nalu(client, data + nalu_start, nalu_len, timestamp,
-                                      nalu_type >= 1 && nalu_type <= 5);
-                if (r != SEND_OK) return r;
-            }
-            i = next_nalu_start;
-        } else {
-            i++;
-        }
-    }
-    return SEND_OK;
+static int send_frame_nalus(Client *client, uint8_t *data, size_t len, uint32_t timestamp)
+{
+    nalu_ctx_t c = { client, timestamp };
+    return h264_annexb_each(data, len, nalu_cb, &c);
 }
 
 /* Drain any frames queued in the VENC ring without sending them.
@@ -1189,28 +1169,13 @@ static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport,
                              int rtcp_fd, uint8_t tcp_channel, uint32_t rtp_ts,
                              int64_t real_us)
 {
-    uint32_t ntp_sec, ntp_frac;
-    rtp_ntp_from_unix_us(real_us, &ntp_sec, &ntp_frac);
-
-    SmolRTSP_RtcpSr sr = {
-        .padding     = false,
-        .rc          = 0,
-        .ssrc        = htonl(SmolRTSP_RtpTransport_ssrc(transport)), /* as in the RTP header */
-        .ntp_sec     = htonl(ntp_sec),
-        .ntp_frac    = htonl(ntp_frac),
-        .rtp_ts      = htonl(rtp_ts),
-        .pkt_count   = htonl(SmolRTSP_RtpTransport_pkt_count(transport)),
-        .octet_count = htonl(SmolRTSP_RtpTransport_octet_count(transport)),
-    };
+    uint32_t ssrc = SmolRTSP_RtpTransport_ssrc(transport), pkts = SmolRTSP_RtpTransport_pkt_count(transport);
+    uint32_t octets = SmolRTSP_RtpTransport_octet_count(transport);
 
     if (client->is_tcp) {
         /* RFC 2326 section 10.12: '$', channel, 16-bit length, packet. */
-        uint8_t frame[4 + SMOLRTSP_RTCP_SR_SIZE_BASE];
-        frame[0] = '$';
-        frame[1] = tcp_channel;
-        frame[2] = 0;
-        frame[3] = SMOLRTSP_RTCP_SR_SIZE_BASE;
-        (void)SmolRTSP_RtcpSr_serialize(sr, frame + 4);
+        uint8_t frame[RTCP_SR_FRAME_SIZE];
+        if (rtcp_sr_frame(frame, tcp_channel, ssrc, rtp_ts, pkts, octets, real_us) == 0) return;
         if (net_tx_write_all(&client->tx, frame, sizeof(frame)) < 0) {
             int e = errno; /* perror() may change it */
             if (e == ENOBUFS) return; /* queue full: this report is dropped (the next one is in 5 s) */
@@ -1222,8 +1187,9 @@ static void send_one_rtcp_sr(Client *client, SmolRTSP_RtpTransport *transport,
     }
 
     if (rtcp_fd < 0) return;
-    uint8_t buf[SMOLRTSP_RTCP_SR_SIZE_BASE];
-    if (write(rtcp_fd, SmolRTSP_RtcpSr_serialize(sr, buf), sizeof(buf)) < 0)
+    uint8_t buf[RTCP_SR_SIZE];
+    if (rtcp_sr_build(buf, ssrc, rtp_ts, pkts, octets, real_us) == 0) return;
+    if (write(rtcp_fd, buf, sizeof(buf)) < 0)
         perror("send RTCP SR");
 }
 

@@ -167,7 +167,7 @@ So in this exact build, the "has a backup, verify/restore it" branch is permanen
 and reboots harmlessly), and the only branch that can ever actually write flash is the no-backup, no-rollback one.
 **There is no A/B partition, no automatic rollback, no "verify after write and revert if bad" anywhere in this
 binary.** A bad write (wrong partition, corrupt image, power loss mid-write) has no software recovery — the only
-recovery path is external (CH341A + SOIC8 clip on the SPI NOR), exactly as already planned in PLAN.md §8bis step 5.
+recovery path is external (CH341A + SOIC8 clip on the SPI NOR), exactly as already planned in archive/rot2k-porting-plan.md §8bis step 5.
 
 ### 3.5 Trigger path (HIGH — read directly from the script, not executed)
 
@@ -245,7 +245,7 @@ real attempt, in order:
    finding the vendor's own package-building tool/script rather than only reverse-engineering the reader, since a
    byte-offset mistake here is exactly the failure mode that would misdirect a write.
 2. Have the CH341A + SOIC8 clip recovery path proven (full read-back dump compared against today's backup) —
-   PLAN.md §8bis step 5 prerequisite, independent of all of the above.
+   archive/rot2k-porting-plan.md §8bis step 5 prerequisite, independent of all of the above.
 3. Only then consider a real, single-partition (`appfs` only), full-backup, explicit-user-go attempt — and still
    never touch `mtd0`.
 

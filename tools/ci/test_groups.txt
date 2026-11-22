@@ -65,11 +65,13 @@ lint readme_links_test.sh
 shell reflash_ssh_test.sh
 shell release_test.sh
 native rtp_clock_test.sh
+native rtsp_tx_test.sh
 rot2k rot2k_card_test.sh
 rot2k rot2k_overlay_test.sh
 rot2k rot2k_flash_hot_test.sh
 rot2k rot2k_control_api_test.sh
 rot2k rot2k_control_api_http_test.sh
+rot2k rot2k_orient_test.sh
 native rtp_in_test.sh
 shell rewrite_paths_test.sh
 shell rtsp_auth_cmd_test.sh
@@ -117,5 +119,6 @@ native wsd_test.sh
 lint on_camera_docs_test.sh
 native track_bench_test.sh
 rot2k rot2k_source_hash_test.sh
+lint docs_links_test.sh
 lint layering_lint_test.sh
 native feature_switch_test.sh

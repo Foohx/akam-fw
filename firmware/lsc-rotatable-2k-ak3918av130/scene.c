@@ -9,6 +9,7 @@
 
 #include "log.h"
 #include "night_ctl.h"
+#include "orient.h"
 #include "scene.h"
 #include "store.h"
 #include "drift_match.h"
@@ -107,9 +108,23 @@ void a2k_scene_set_min(int permille) { g_min = permille >= SC_MIN_LOWEST && perm
 void a2k_scene_feed(const uint8_t *y, unsigned w, unsigned h, unsigned stride)
 {
     static sc_thumb_t tmp; /* the detection thread only */
+    static uint8_t nrm[DM_MAX_W * DM_MAX_H]; /* the frame in the sensor frame, when an orientation is on (detection thread only) */
     int64_t now = mono_ms();
+    int flip, mirror;
     if (g_th_ms >= 0 && now - g_th_ms < g_feed_ms)
         return;
+    /* Every reference (the file, the drift reference) is in the SENSOR frame (orient.h): the live frame is converted before anything is compared or saved, so an
+     * orientation change never needs a new reference. Frames of the settling window after a change may be of either orientation: skipped. A frame that cannot be
+     * converted is skipped too, never fed unconverted. */
+    a2k_orient_get(&flip, &mirror);
+    if (a2k_orient_settling())
+        return;
+    if (flip || mirror) {
+        if (w > DM_MAX_W || h > DM_MAX_H || a2k_orient_plane(flip, mirror, y, w, h, stride, nrm) != 0)
+            return;
+        y = nrm;
+        stride = w;
+    }
     if (sc_downscale_y(y, w, h, stride, &tmp) != 0)
         return;
     pthread_mutex_lock(&g_mu);

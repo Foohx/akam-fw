@@ -19,6 +19,7 @@
 #include "cred.h"
 #include "http_srv.h"
 #include "onvif.h"
+#include "onvif_common.h"
 #include "wsd.h"
 
 #define ENV_OPEN ONVIF_ENV_OPEN
@@ -39,7 +40,6 @@ long long (*a2k_onvif_time_fn)(void);
 static long long now_unix(void) { return a2k_onvif_time_fn ? a2k_onvif_time_fn() : (long long)time(NULL); }
 
 void a2k_onvif_set_rtsp_port(int port) { g_rtsp_port = port > 0 && port < 65536 ? port : 554; }
-int a2k_onvif_rtsp_port(void) { return g_rtsp_port; }
 void a2k_onvif_test_set_wsd(const wsd_test_t *t) { g_wsd_test = t; }
 
 int a2k_onvif_port_ok(long port, int rtsp_port, int api_port)
@@ -218,21 +218,13 @@ static int profile_index(const char *tok)
     return -1;
 }
 
-static void fault_noprofile(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:NoProfile", "The requested profile token does not exist");
-}
-static void fault_noconfig(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:NoConfig", "The requested configuration token does not exist");
-}
 
 static int need_profile(onvif_call_t *c)
 {
     char tok[32];
     int i;
     if (arg_text(c, "ProfileToken", tok, sizeof tok) != 0 || (i = profile_index(tok)) < 0) {
-        fault_noprofile(c);
+        onvif_fault_noprofile(c);
         return -1;
     }
     return i;
@@ -389,11 +381,6 @@ static void op_scopes(onvif_call_t *c)
     onvif_send(c);
 }
 
-static void op_get_discovery_mode(onvif_call_t *c)
-{
-    onvif_reply(c, ENV_OPEN "<tds:GetDiscoveryModeResponse><tds:DiscoveryMode>Discoverable</tds:DiscoveryMode></tds:GetDiscoveryModeResponse>" ENV_CLOSE);
-    onvif_send(c);
-}
 
 static void op_get_protocols(onvif_call_t *c)
 {
@@ -417,7 +404,7 @@ static const onvif_op_t k_dev_ops[] = {
     { "GetScopes", ONVIF_PRE, op_scopes },
     { "GetHostname", ONVIF_PRE, op_get_hostname },
     { "GetDeviceInformation", ONVIF_READ, op_device_information },
-    { "GetDiscoveryMode", ONVIF_READ, op_get_discovery_mode },
+    { "GetDiscoveryMode", ONVIF_READ, onvif_op_get_discovery_mode },
     { "GetNetworkProtocols", ONVIF_READ, op_get_protocols },
 };
 
@@ -529,7 +516,7 @@ static void op_get_vsrc_config(onvif_call_t *c)
 {
     char tok[32];
     if (arg_text(c, "ConfigurationToken", tok, sizeof tok) != 0 || strcmp(tok, TOK_VSRCCFG) != 0) {
-        fault_noconfig(c);
+        onvif_fault_noconfig(c);
         return;
     }
     onvif_reply(c, ENV_OPEN "<trt:GetVideoSourceConfigurationResponse><trt:Configuration token=\"" TOK_VSRCCFG "\">" VSRCCFG_BODY
@@ -565,7 +552,7 @@ static int need_venc_config(onvif_call_t *c)
 {
     char tok[32];
     if (arg_text(c, "ConfigurationToken", tok, sizeof tok) != 0 || strncmp(tok, "venccfg", 7) != 0 || (tok[7] != '0' && tok[7] != '1') || tok[8]) {
-        fault_noconfig(c);
+        onvif_fault_noconfig(c);
         return -1;
     }
     return tok[7] - '0';
@@ -603,7 +590,7 @@ static void op_get_venc_options(onvif_call_t *c)
     if (arg_text(c, "ConfigurationToken", tok, sizeof tok) == 0) {
         if (strcmp(tok, "venccfg0") == 0) i = 0;
         else if (strcmp(tok, "venccfg1") == 0) i = 1;
-        else { fault_noconfig(c); return; }
+        else { onvif_fault_noconfig(c); return; }
     }
     if (i == 0)
         onvif_reply(c, ENV_OPEN VENC_OPTIONS(0, "2304", "1296", "Main") ENV_CLOSE);
@@ -615,16 +602,6 @@ static void op_get_venc_options(onvif_call_t *c)
 static void op_get_audio_sources(onvif_call_t *c)
 {
     onvif_reply(c, ENV_OPEN "<trt:GetAudioSourcesResponse/>" ENV_CLOSE); /* the microphone track is L16, which ONVIF Media 1 cannot describe: it is in the RTSP SDP only */
-    onvif_send(c);
-}
-static void op_get_asrc_configs(onvif_call_t *c)
-{
-    onvif_reply(c, ENV_OPEN "<trt:GetAudioSourceConfigurationsResponse/>" ENV_CLOSE);
-    onvif_send(c);
-}
-static void op_get_aenc_configs(onvif_call_t *c)
-{
-    onvif_reply(c, ENV_OPEN "<trt:GetAudioEncoderConfigurationsResponse/>" ENV_CLOSE);
     onvif_send(c);
 }
 
@@ -679,21 +656,9 @@ static void op_media_caps(onvif_call_t *c)
 }
 
 /* the device is read only: configuration changes are refused after the access gate (write class) */
-static void op_refuse_set(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:ConfigModify", "The configuration cannot be changed (read-only device)");
-}
 static void op_refuse_conf(onvif_call_t *c)
 {
     onvif_fault(c, 1, "ter:Action", "ter:ConfigurationConflict", "The profiles are fixed and cannot be changed");
-}
-static void op_refuse_create(onvif_call_t *c)
-{
-    onvif_fault(c, 1, "ter:Action", "ter:MaxNVTProfiles", "The maximum number of profiles is already reached");
-}
-static void op_refuse_delete(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:DeletionOfFixedProfile", "The profile is fixed");
 }
 
 static const onvif_op_t k_media_ops[] = {
@@ -708,20 +673,20 @@ static const onvif_op_t k_media_ops[] = {
     { "GetVideoEncoderConfiguration", ONVIF_READ, op_get_venc_config },
     { "GetVideoEncoderConfigurationOptions", ONVIF_READ, op_get_venc_options },
     { "GetAudioSources", ONVIF_READ, op_get_audio_sources },
-    { "GetAudioSourceConfigurations", ONVIF_READ, op_get_asrc_configs },
-    { "GetAudioEncoderConfigurations", ONVIF_READ, op_get_aenc_configs },
+    { "GetAudioSourceConfigurations", ONVIF_READ, onvif_op_get_asrc_configs },
+    { "GetAudioEncoderConfigurations", ONVIF_READ, onvif_op_get_aenc_configs },
     { "GetStreamUri", ONVIF_READ, op_get_stream_uri },
     { "GetSnapshotUri", ONVIF_READ, op_get_snapshot_uri },
-    { "SetVideoSourceConfiguration", ONVIF_WRITE, op_refuse_set },
-    { "SetVideoEncoderConfiguration", ONVIF_WRITE, op_refuse_set },
+    { "SetVideoSourceConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
+    { "SetVideoEncoderConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
     { "AddVideoSourceConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "AddVideoEncoderConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "AddPTZConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "RemoveVideoSourceConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "RemoveVideoEncoderConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "RemovePTZConfiguration", ONVIF_WRITE, op_refuse_conf },
-    { "CreateProfile", ONVIF_WRITE, op_refuse_create },
-    { "DeleteProfile", ONVIF_WRITE, op_refuse_delete },
+    { "CreateProfile", ONVIF_WRITE, onvif_op_refuse_create },
+    { "DeleteProfile", ONVIF_WRITE, onvif_op_refuse_delete },
 };
 
 int a2k_onvif_media_register(void)

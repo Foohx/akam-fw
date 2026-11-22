@@ -77,7 +77,6 @@ int a2k_onvif_ptz_register(void);
 
 /* Facts the device / media services publish (set by a2k_onvif_start from the config; tests may set them directly). */
 void a2k_onvif_set_rtsp_port(int port);
-int a2k_onvif_rtsp_port(void);
 
 /* TEST ONLY: WS-Discovery bound elsewhere (wsd_test_t); the time source of GetSystemDateAndTime / GetStatus (Unix seconds, default time()). */
 void a2k_onvif_test_set_wsd(const wsd_test_t *t);

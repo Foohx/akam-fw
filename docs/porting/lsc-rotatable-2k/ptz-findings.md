@@ -134,7 +134,7 @@ with `yy_cam`.
 
 ## 6. Code change
 
-`overlay/akam/enable_local.sh` `verify` (background, read-only) now also logs, with tests:
+`firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/enable_local.sh` `verify` (background, read-only) now also logs, with tests:
 - the `[ptz]` values of `param.conf` (calibration numbers only),
 - which pids hold a file whose name ends in `tymotor` or `ms41929` open (from `/proc/<pid>/fd` link names, no device
   path is built or opened),
@@ -361,7 +361,7 @@ values, not 4000/2160; the replayed sequence and the allowed request tokens are 
 above and prints `pan=.. tilt=..`. It refuses without `--i-know`, refuses 0, values above the driver's own built-in
 limits (6000 / 2200) and `home > max`, and never sends a move, a stop or move_to. `pos` now reads both axes
 (`pan=.. tilt=..`, selectors 0 and 1). The C anti-brick scan allows exactly the two tokens `0x40100c03u` and
-`0x40280c04u`, in `ptz/akam_ptz.c` only (positive and negative controls in `tests/rot2k_overlay_test.sh`).
+`0x40280c04u`, in `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz.c` only (positive and negative controls in `tests/rot2k_overlay_test.sh`).
 Do NOT run `init` while `yy_cam` runs: it would overwrite its counters.
 
 ### `cal` plan (documented, NOT implemented, decided not to implement: see "Safe motion layer")
@@ -416,7 +416,7 @@ grinding, no driver error in dmesg. Speeds: divisor 3 ≈ 333 steps/s, 2 ≈ 500
 `speed` ms"). Directions confirmed: 0 up (tilt +), 2 right (pan +), 4 down, 6 left. Real mechanical ranges still
 unmeasured (do NOT approach 0/max until the end-stop-safe `cal` plan exists).
 
-## Safe motion layer (2026-11-15, `akam_ptz` + `ptz/akam_ptz_safe.h`; host-tested, NOT yet run on hardware)
+## Safe motion layer (2026-11-15, `akam_ptz` + `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h`; host-tested, NOT yet run on hardware)
 
 Goal: make the motor safe to expose (Home Assistant / ONVIF later) without ever relying on the mechanical stops. The
 motor has no limit switch and the driver cannot see the stops, so everything below is software, and the only truly
@@ -424,7 +424,7 @@ trustworthy numbers are the ones measured on the camera (procedure at the end).
 
 ### What changed
 
-- `move`, new `goto`, `park`, `restore` go through one module (`ptz/akam_ptz_safe.h`, header-only, reusable by the app:
+- `move`, new `goto`, `park`, `restore` go through one module (`firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h`, header-only, reusable by the app:
   fill a `struct ptz_ops` and a `struct ptzs_conf`, call `ptzs_move` / `ptzs_goto` / `ptzs_park`).
 - **Soft range** (defaults pan 300..3700 of 4000, tilt 200..1960 of 2160). Justification: 4000/2160 are the stock code
   defaults, never measured (confidence LOW, table above), and the driver's counters only equal the mechanics if the
@@ -554,7 +554,7 @@ kills the tool (longjmp, no stop request) in 1536 move cases (8 directions x 8 s
 times x 3 speeds) and in goto/park cases, then lets the simulated driver run free for 40 s with the hard stops placed ONE
 step outside the soft range: the mechanism must never reach a stop. A control case with the stock unshifted limits does
 grind, so the test is able to fail. `tests/rot2k_overlay_test.sh` keeps the anti-brick C scan: the
-init request tokens only in `ptz/akam_ptz.c` (negative control on `akam_ptz_safe.h`), no other `/dev` path, no 9/10/12
+init request tokens only in `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz.c` (negative control on `akam_ptz_safe.h`), no other `/dev` path, no 9/10/12
 command word in the move path.
 
 ### Hardware procedure (user at the camera, hand on the power cable, one step at a time; stop at the first doubt)
@@ -611,7 +611,7 @@ Pan: left stop = 0, right stop between 3932 and 4151 (total about 4000, the stoc
 ## hal_ptz: the motor in `akam2k_rtsp` (host-tested with a fake driver, NOT yet run on hardware)
 
 Files (`platforms/anyka-ak3918av130/`): `hal_ptz.h/.c` (portable engine: calibration, saved position, goto / step /
-nudge / cancel on top of `ptz/akam_ptz_safe.h`, reused unchanged except the new defaults, `ptzs_conf_parse_over` and a `PTZS_QUIET` switch),
+nudge / cancel on top of `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h`, reused unchanged except the new defaults, `ptzs_conf_parse_over` and a `PTZS_QUIET` switch),
 `hal_ptz_drv.c` (Linux driver: node, ioctl, atomic files), the 2K descriptor in `hal.c` (`/dev/tymotor`, command words 0 up, 2 right,
 4 down, 6 left, the measured range above, park 1275/300 (down; was 1275/1750), tilt soft max 2100 (was 1750; head level-up at about 2104, top stop 2290..2340), speed 3, button step 200), `ptz.h/.c` (one thread, one pending command).
 Unit test: `tests/rot2k_hal_ptz_unit.c` (simulated motor with hard stops; part of `tests/rot2k_overlay_test.sh`).
@@ -694,7 +694,7 @@ view still matches it (same ZNCC + block rule, same day / night mode). A view th
 written (up to 3 retries, then the next cold boot calibrates unless the old reference still matches). Atomic (`akam2k_store`); a view without detail is never saved (and not logged as saved).
 Superseded 2026-11-16: the reference is no longer rewritten after every move: see "No recurring flash writes" below.
 
-**Boot decision** (`app/scene_check.c`, pure, `tests/rot2k_scene_unit.c`, `tests/rot2k_scene_glue_unit.c`): BEFORE any motor command the PTZ thread waits
+**Boot decision** (`src/features/scene/scene_check.c`, pure, `tests/rot2k_scene_unit.c`, `tests/rot2k_scene_glue_unit.c`): BEFORE any motor command the PTZ thread waits
 for the first frame + 4 s + 6 frames (AE settling; a day/night change restarts it; 30 s timeout), then compares (algorithm of 2026-11-16, see "Low-texture
 views" below; the first version used a global ZNCC and an 8-of-12 block rule and refused a plastered white wall): the day/night mode must be the same,
 at least 4 of the 12 blocks must be "detailed" in both images (clearly above the image noise), at least 2/3 of those must match on their own, the peak
@@ -929,7 +929,7 @@ Field log (cold boot after a hot update): `scene check: scene differs: calibrati
 
 ## 2026-11-17 Continuous motion (host-tested on a fake driver, NOT yet run on hardware)
 
-Measured with `akam_ptz` on 2026-11-16/17 (timed moves, speed 3): diagonal commands work (1 = pan+ tilt+, 3 = pan+ tilt-, 5 = pan- tilt-, 7 = pan- tilt+; both axes move at once, ~370 steps/s each, so the rate is about 1100 / divisor); a new direction command sent during a move is accepted at once WITHOUT a stop (pan reversed 1181 -> 1200 immediately). The tracker uses this: `ptz/akam_ptz_safe.h` `ptzs_cont_*`, `hal_ptz_cont_run` (`hal_ptz.c`), `a2k_ptz_vel` / `a2k_ptz_pos_at` (`ptz.c`), `track_motion=continuous` (tracking.md, "Targeting policy, person state and continuous motion").
+Measured with `akam_ptz` on 2026-11-16/17 (timed moves, speed 3): diagonal commands work (1 = pan+ tilt+, 3 = pan+ tilt-, 5 = pan- tilt-, 7 = pan- tilt+; both axes move at once, ~370 steps/s each, so the rate is about 1100 / divisor); a new direction command sent during a move is accepted at once WITHOUT a stop (pan reversed 1181 -> 1200 immediately). The tracker uses this: `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h` `ptzs_cont_*`, `hal_ptz_cont_run` (`hal_ptz.c`), `a2k_ptz_vel` / `a2k_ptz_pos_at` (`ptz.c`), `track_motion=continuous` (tracking.md, "Targeting policy, person state and continuous motion").
 
 - **Driver requests: none new.** Only the move (commands 0..7, diagonals included), the stop and the position read of the safe layer. The position file is marked unknown once per session (not per command).
 - **One session = one ongoing move.** `hal_ptz_cont_run(first command, lease, callback)` runs on the motor thread; after every 50 ms poll the callback may return KEEP, a new / refreshed command, or STOP. Commands are logical (right / up signs, divisors per axis) and become command words through the descriptor (`dir[]`, `diag[]`; a descriptor without diagonals turns a diagonal into the faster axis alone).
@@ -979,7 +979,7 @@ Field log: `scene check: too few of the detailed image blocks match on their own
 
 **Finding (hardware, 2K).** After about 114,000 steps of continuous tracking since the last calibration (fast moves at divisor 2 / 3, diagonals, frequent direction reversals while following a close person) the head had drifted physically DOWN: at the declared home 1275/1300 the view showed the desk instead of the wall and the window. A recalibration restored the right view at 1300. The motor is an open-loop stepper: the driver counters advance while the rotor stalls or slips, so steps are lost silently and the counters are only a belief. Two measures: lose fewer steps (A), and notice and fix a drift when the head is home (B).
 
-### A. Fewer lost steps (the continuous mode, `ptz/akam_ptz_safe.h`)
+### A. Fewer lost steps (the continuous mode, `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h`)
 
 All of it is in the safe layer; the tracker asks for a direction and divisors as before and the layer walks the motor there. Config keys of `ptz.conf` (strict, optional):
 

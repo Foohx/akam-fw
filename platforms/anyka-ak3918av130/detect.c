@@ -20,6 +20,7 @@
 #include "leds.h"
 #include "log.h"
 #include "mqtt_bind.h"
+#include "orient.h"
 #include "ptz.h"
 #include "snap.h"
 #include "track_run.h"
@@ -365,7 +366,7 @@ static void *detect_thread(void *arg)
     struct svp2_conf conf;
     a2k_det_t det;
     a2k_zdet_t zd;
-    unsigned zgen = 0;
+    unsigned zgen = 0, zogen = 0;
     int zhome = 1;
     struct a2k_det_event zev[A2K_ZONE_MAX];
     struct a2k_det_cfg dc;
@@ -387,9 +388,13 @@ static void *detect_thread(void *arg)
         a2k_ptz_info_t pi;
         a2k_zones_t cz;
         a2k_ptz_info(&pi);
+        int of, om;
         zhome = a2k_zlive_applies(pi.state);
+        zogen = a2k_orient_gen();
+        a2k_orient_get(&of, &om);
         a2k_zlive_get(&cz, &zgen);
         a2k_zones_effective(&cz, zhome, &g_eff);
+        a2k_zones_orient(&g_eff, of, om); /* the boxes are in the displayed frame, the zones are stored in the sensor frame (zones.h) */
     }
     a2k_zdet_init(&zd, g_eff.n, &dc);
 
@@ -516,15 +521,19 @@ static void *detect_thread(void *arg)
             /* zones edited at run time, or the camera left / came back to home: the zones in force change */
             a2k_ptz_info_t pi;
             a2k_zones_t cz;
-            unsigned gen;
-            int home;
+            unsigned gen, ogen;
+            int home, of, om;
             a2k_ptz_info(&pi);
             home = a2k_zlive_applies(pi.state);
+            ogen = a2k_orient_gen();
+            a2k_orient_get(&of, &om);
             a2k_zlive_get(&cz, &gen);
-            if (gen != zgen || home != zhome) {
+            if (gen != zgen || home != zhome || ogen != zogen) {
                 zgen = gen;
                 zhome = home;
+                zogen = ogen;
                 a2k_zones_effective(&cz, home, &g_eff);
+                a2k_zones_orient(&g_eff, of, om);
                 a2k_zdet_init(&zd, g_eff.n, &dc);
                 a2k_log("detect: zones %s", home ? "in force" : "suspended (the camera is not at home; @screen zones stay)");
                 if (g_eff.n > 0 || g_eff.ni > 0)

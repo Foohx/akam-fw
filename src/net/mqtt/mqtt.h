@@ -78,6 +78,8 @@ int mqtt_dec_connack(const mqtt_pkt_t *p, int *session_present, int *rc);
 /* *rc is the granted QoS of the one filter, or 0x80 for a refusal. */
 int mqtt_dec_suback(const mqtt_pkt_t *p, uint16_t *pid, int *rc);
 int mqtt_dec_puback(const mqtt_pkt_t *p, uint16_t *pid);
+/* Short reason text of a non-zero CONNACK return code (shared by both platforms' MQTT clients; their state topics show it). */
+const char *mqtt_connack_reason(int rc);
 
 typedef struct {
     const char    *topic;    /* not NUL terminated */

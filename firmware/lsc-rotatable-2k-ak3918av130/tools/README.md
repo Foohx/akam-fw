@@ -15,4 +15,4 @@ Host-side tools of this model (ONVIF probe, PTZ and DP clients, ...). Nothing he
   [cardless-appfs](../../../docs/porting/lsc-rotatable-2k/cardless-appfs.md). Image built by `../appfs/build_appfs.sh`.
 
 The Phase 1 validation otherwise uses `ffprobe`, `ssh` and `curl`
-([checklist](../../../docs/porting/lsc-rotatable-2k/phase1-validation.md)).
+([checklist](../../../docs/archive/rot2k-phase1-validation.md)).

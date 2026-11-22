@@ -3,10 +3,10 @@
 > Historical document: the file paths below predate the repository reorganisation (`src/common`, `src/ak_rtsp`, `firmware/<model>/app`); the old to new table is `tools/dev/path-map.txt`.
 
 Status: **offline reverse engineering only, nothing was run on a camera** (2026-11-14). Same method and conventions
-as [ptz-findings.md](ptz-findings.md) and [npu-findings.md](npu-findings.md): addresses are virtual addresses in the
+as [ptz-findings.md](../porting/lsc-rotatable-2k/ptz-findings.md) and [npu-findings.md](../porting/lsc-rotatable-2k/npu-findings.md): addresses are virtual addresses in the
 stock `/appfs/bin/yy_cam` (ARM32 EABI5, stripped, dynamic symbols kept, `.text` 0x75cb0, `.rodata` 0x2f3dd8) or
 offsets in the named `.so`. Only symbol names, log strings, addresses and struct field notes are reproduced; no vendor
-code, header, dump, key, credential or nvram value. Context: [PLAN.md](PLAN.md) sections 2, 2.4, 7bis, 8, 8bis
+code, header, dump, key, credential or nvram value. Context: [PLAN.md](rot2k-porting-plan.md) sections 2, 2.4, 7bis, 8, 8bis
 (points 6 and 7). Confidence: HIGH = read directly in instructions or strings, MEDIUM = consistent inference, LOW =
 guess. Everything stays UNVERIFIED in the sense of PLAN section 9 until a PoC below runs on the camera.
 
@@ -240,12 +240,12 @@ need only `libc.so.0`), so no libstdc++ dependency.
 | Link against the camera's own `libc.so.0` and `ld-uClibc` taken from the backup | cannot work alone: no headers and no linker in the backup; but the vendor `.so` are taken from it at build time (below) |
 
 Pinning, consistent with `tools/build/deps.lock` and `bootstrap.sh`: URL + sha256 in a lock file
-([`app/toolchain.lock`](../../../platforms/anyka-ak3918av130/toolchain/toolchain.lock)), downloaded by
-[`app/fetch_toolchain.sh`](../../../platforms/anyka-ak3918av130/toolchain/fetch_toolchain.sh) into the git-ignored
+([`app/toolchain.lock`](../../platforms/anyka-ak3918av130/toolchain/toolchain.lock)), downloaded by
+[`app/fetch_toolchain.sh`](../../platforms/anyka-ak3918av130/toolchain/fetch_toolchain.sh) into the git-ignored
 `tools/.toolchain/`, hash mismatch aborts. The tarball is 58,143,779 bytes, sha256
 `198d4a32899e3bfd4dbbc7c59fa1b8da9fa9b5d3ecc02c55fc64f470e8ca2fbb` (equal to our computation and to the file Bootlin
 publishes next to it). Vendor `.so` for linking come from the user's own backup through
-[`app/prepare_vendor.sh`](../../../platforms/anyka-ak3918av130/toolchain/prepare_vendor.sh) (checks `mtd3.bin`
+[`app/prepare_vendor.sh`](../../platforms/anyka-ak3918av130/toolchain/prepare_vendor.sh) (checks `mtd3.bin`
 against the backup's `SHA256SUMS`, `unsquashfs` of `lib/` only, output under git-ignored `dist/`). No vendor header is
 needed or used: we declare only the prototypes we call (struct layouts of section 1, written ourselves).
 **Isolation:** a separate directory, toolchain, output (`dist/rot2k-app/`) and Makefile; none of `src/ak_rtsp`, the zig
@@ -683,7 +683,7 @@ RTSP back in ~6 s. RAM after restart: ~22 MB available. The camera is now an RTS
 
 ## Person detection inside `akam2k_rtsp` (2026-11-15, offline, host-tested, not yet run on hardware)
 
-`akam2k_rtsp` now runs the stock human-detection model next to both RTSP streams (PoC-4 pipeline, [ai-own-app.md](ai-own-app.md) section 10).
+`akam2k_rtsp` now runs the stock human-detection model next to both RTSP streams (PoC-4 pipeline, [ai-own-app.md](../porting/lsc-rotatable-2k/ai-own-app.md) section 10).
 No new listening port, no new socket, no change under `src/` (the shared RTSP sources are still compiled unmodified).
 
 **Files** (all under `firmware/lsc-rotatable-2k-ak3918av130/app/`):
@@ -984,7 +984,7 @@ per zone.
 
 **What.** When the global person goes ON, **one** JPEG of the sub channel (640x360) is taken, kept in `/tmp` and published. Rate limited (default one per 10 s).
 
-**How the JPEG is made.** The vendor's own JPEG encoder (evidence in [stock-firmware-reference.md](stock-firmware-reference.md), "JPEG snapshot encoder": the stock
+**How the JPEG is made.** The vendor's own JPEG encoder (evidence in [stock-firmware-reference.md](../porting/lsc-rotatable-2k/stock-firmware-reference.md), "JPEG snapshot encoder": the stock
 snapshot is `ak_venc_encode_frame` on a VI frame with an encoder opened by the same `ak_venc_open_ex` with `enc_type` 1 and profile 7 `Jpeg`): the app opens a third
 encoder handle next to the two H.264 ones (640x360, JPEG quality level 1 = the stock `snap_jpeg_quality` default, QP 1..100, `venc_param` of `cap.c`,
 `jpeg_defaults()`). The vendor lib's JPEG quality is a level 0..3, not the percentage the first spec guessed (about 70): the stock default 1 is used. Not software JPEG:
@@ -1069,7 +1069,7 @@ VI chn 0 is not an option (it would exceed the 200 KB cap and the encoder memory
 
 ## Day/night and image (IR-cut, IR light, effects)
 
-Branch `feature/rot2k-daynight`. Facts and evidence (addresses, struct fields, pin map) are in [stock-firmware-reference.md](stock-firmware-reference.md)
+Branch `feature/rot2k-daynight`. Facts and evidence (addresses, struct fields, pin map) are in [stock-firmware-reference.md](../porting/lsc-rotatable-2k/stock-firmware-reference.md)
 ("Day/night and image"). Everything below is **offline RE and host-tested code; nothing ran on the camera yet** (UNVERIFIED until the procedure at the end passes).
 All of it is RAM state (GPIO levels, ISP registers): a reboot undoes it, no flash, no nvram, no card write.
 

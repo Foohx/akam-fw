@@ -38,7 +38,6 @@ void a2k_snap_defaults(struct a2k_snap_cfg *c)
 }
 
 void a2k_snap_test_set_dir(const char *dir) { snprintf(g_dir, sizeof g_dir, "%s", dir); }
-void a2k_snap_test_set_cap(size_t total_cap) { g_total_cap = total_cap; }
 
 /* ------------------------------------------------------------------------ ring bookkeeping */
 

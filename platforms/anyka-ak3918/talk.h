@@ -63,8 +63,6 @@ int  talk_mic_muted(const talk_t *t, int64_t now_us);
  * the n samples are overwritten with silence and 1 is returned. Only the
  * samples change: the packet, its length and its RTP timestamp go on as usual. */
 int  talk_gate_mic(const talk_t *t, int16_t *pcm, size_t n, int64_t now_us);
-/* Microseconds of the last accepted or dropped RTP packet (0 before any). */
-int64_t talk_last_rtp_us(const talk_t *t);
 
 /* ---- singleton on audio_out.c and its 8091 keys (read-only) ---------------
  * audio.talk_state (idle|active), audio.talk_codec (pcmu|pcma|none),

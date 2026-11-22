@@ -5,7 +5,7 @@ user's own backup (offline reverse engineering, **RE**) or from the real camera 
 is marked **unverified**. Deeper evidence: [stock firmware reference](stock-firmware-reference.md),
 [card-less appfs](cardless-appfs.md), [decloud findings](decloud-findings.md). The doc is checked by
 `tests/on_camera_docs_test.sh`: an Akam path in backticks must exist in the sources that build the image
-(`appfs/build_appfs.sh`, `overlay/`); a stock path is written `/path` (stock) and is not checked.
+(`firmware/lsc-rotatable-2k-ak3918av130/image/build_appfs.sh`, `overlay/`); a stock path is written `/path` (stock) and is not checked.
 
 Two ways to run Akam on this camera: **card-less** (the appfs partition `mtd3` carries the payload; current mode) and
 the **SD overlay card** (recovery and override: it wins whenever it is inserted).
@@ -69,7 +69,7 @@ ONVIF on, with a backup and an undo), `/mnt/sdcard/akam/akam_ptz` (motor tool), 
 
 | Where | Content | Written |
 |---|---|---|
-| `mtd3` appfs (squashfs xz) | stock appfs plus `/appfs/akam/` | only by `tools/flash_appfs.sh` (dry run by default, needs `AKAM_I_HAVE_RECOVERY=yes` and `--execute`) |
+| `mtd3` appfs (squashfs xz) | stock appfs plus `/appfs/akam/` | only by `firmware/lsc-rotatable-2k-ak3918av130/tools/flash_appfs.sh` (dry run by default, needs `AKAM_I_HAVE_RECOVERY=yes` and `--execute`) |
 | `mtd4` config (jffs2, 256 KiB) | `/config/akam/*` user files; stock `/config/param.conf`, Tuya data (never read) | only on a user action (setting change, key, one-time host key). Never periodically |
 | `mtd0` uboot, `mtd1`, `mtd2`, `mtd5` factory | stock | never written (U-Boot: unrecoverable without an SPI programmer) |
 | `/tmp` (RAM) | logs, supervisor state, the app copy, the `/tmp/akamsd` tree | every run, no flash cost |
@@ -88,9 +88,9 @@ Watchdog: HW-verified that killing a BusyBox feeder resets the camera about 20 s
 ## 6. Ports (defaults)
 
 22 (SSH, key only, needs `authorized_keys`), 554 (RTSP, main stream0, sub stream1), nothing else until an
-API key (8092), ONVIF (8000, 3702/udp) or MQTT is switched on. **unverified**: a full port scan of the card-less image.
+API key (8092), ONVIF (8000, 3702/udp) or MQTT is switched on (not confirmed by a port scan of the card-less image). The RTSP streams have no password until one is set.
 
 ## See also
 
 [Template for a new camera](../TEMPLATE-new-camera.md), [control API](control-api.md), [net settings](net-settings.md),
-[PTZ findings](ptz-findings.md), [flash test plan](flash-test-plan.md), [UART recovery](uart-recovery.md).
+[PTZ findings](ptz-findings.md), [flash test plan](../../archive/rot2k-flash-test-plan.md), [UART recovery](uart-recovery.md).

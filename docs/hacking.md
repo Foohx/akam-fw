@@ -32,7 +32,7 @@ For developers and tinkerers. To just install Akam, use `./akam` ([README](../RE
     ├── akam-talk/                # host client that sends sound to the speaker
     ├── assistant/                # the Go program `akam` (Windows, macOS, Linux)
     ├── build/                    # bootstrap.sh (pinned toolchain), check_host.sh, env.sh, deps.lock
-    ├── ci/                       # local_check.sh, distro_check.sh
+    ├── ci/                       # local_check.sh, distro_check.sh, docs_links_check.sh (links and paths of the Markdown)
     ├── dev/                      # path-map.txt and rewrite_paths.sh (late branches), motor and tracking tools
     ├── dropbear/                 # Dropbear SSH build and options
     ├── flash_scripts/            # flash, restore, reflash over SSH, start_rtsp.sh
@@ -49,8 +49,10 @@ builders. **Current:** that is true for the 1080p (its `settings.c` and `api_bin
 for the 2K. `firmware/lsc-rotatable-2k-ak3918av130/` has 26 C files, of which only `hal.c`, `ptz_desc.c`, `pin.c` and the two small sysfs drivers hold hardware
 facts; `ptz.c` (about 1 750 lines), `settings.c`, `track.c`, `scene.c`, `patrol.c`, `button_rt.c`, `night_ctl.c`, `zones.c`, `vlive.c` and others are feature logic or wiring.
 The platform (`platforms/anyka-ak3918av130/`) reaches into the model directory by basename (`-I$(MODEL_DIR)`, 17 headers) and the model includes platform headers
-back, so the two directories are one program in two folders. Consequences today: a new camera on the 2K platform would copy that code; the feature switches
-`PTZ/TRACK/SCENE/PATROL` cannot be turned off on the 2K (see the comment in its `model.mk`); `tools/dev/path-map.txt` records the files as "kept whole".
+back, so the two directories are one program in two folders. Consequences today: a new camera on the 2K platform would copy that code; a 2K feature switched off
+(`PTZ/TRACK/SCENE/PATROL`) links stand-ins kept in the model directory (`*_off.c`); `tools/dev/path-map.txt` records the files as "kept whole". Known
+obstacles: `store.h`, `button_rt.h` and `patrol.h` carry `/config/akam/*` paths (they must become model settings before moving), and the 2K `leds.*` needs a
+new name before it can join `src/` (the 1080p already has a `leds.h`, and header basenames are unique).
 **Planned split**, in this order, each step gated by the 2K golden (`tools/ci/repro_check_rot2k.sh`): (a) pin and sensor facts into a model descriptor so the
 platform stops including `pin.h`; (b) the pure files (`zones`, `detstate`, `store`, `netreg`, `leds`, `button_rt`, `night_ctl`, `patrol`, `vlive`, `video*`) to
 `src/features/` or `src/core/`; (c) `ptz.c`, `track.c`, `scene.c`, `settings.c` once their store and HAL calls go through ops tables. It waits for the PTZ and
@@ -76,6 +78,9 @@ bash tools/build/bootstrap.sh       # once: pinned Zig, SmolRTSP, BusyBox, Go mo
 make -C platforms/anyka-ak3918 ak_rtsp flash_tool
 bash tools/dropbear/build_dropbear.sh
 ```
+
+This builds the 1080p. For the 2K (`akam2k_rtsp`, the kit, the card and the appfs image) follow
+[`firmware/lsc-rotatable-2k-ak3918av130/README.md`](../firmware/lsc-rotatable-2k-ak3918av130/README.md).
 
 The result is a static ARM binary (`arm-linux-musleabi`, `-mcpu=arm926ej_s`). To build a flashable image from your own
 APP dump: [build guide](manual/build.md).

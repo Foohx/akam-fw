@@ -112,6 +112,15 @@ int a2k_image_apply(const a2k_image_cfg_t *c)
     call("image %d %d %d %d", c->brightness, c->contrast, c->sharpness, c->mains_hz);
     return 0;
 }
+static int g_isp_flip_rc; /* the fake ISP answer of a2k_isp_flip_mirror (the test script flips it through the file DIR/flip_fail) */
+int a2k_isp_flip_mirror(int flip, int mirror)
+{
+    char path[320];
+    snprintf(path, sizeof path, "%s/flip_fail", g_dir);
+    g_isp_flip_rc = access(path, F_OK) == 0 ? -1 : 0;
+    call("isp.flip_mirror %d %d rc %d", flip, mirror, g_isp_flip_rc);
+    return g_isp_flip_rc;
+}
 static int g_track_dummy;
 a2k_track_t *a2k_track_run_get(void) { return (a2k_track_t *)&g_track_dummy; }
 int a2k_track_enabled(a2k_track_t *t)

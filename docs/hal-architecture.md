@@ -69,11 +69,18 @@ Portable modules are compiled into a model only if that model enables them, so n
 `$(call feat_objs,<NAME>,<objects>)`; `feat_on <NAME>` tests a feature. `make features` prints what is on and off. Both models use it: the 1080p
 (`firmware/lsc-indoor-1080p-ak3918/model.mk`, `SRCS`) and the 2K (`firmware/lsc-rotatable-2k-ak3918av130/model.mk`, `POC3_ORDER` with `c:<name>` for a `src`
 object). With the feature on the mechanism changes no binary (both golden hashes are identical with it). What a 0 really does: on the 1080p `ONVIF=0` drops
-every ONVIF object and links `onvif_off.c` (the answers of an ONVIF that is off); on the 2K `PTZ`, `TRACK`, `SCENE` and `PATROL` drop their objects but the
-model code still calls them unconditionally, so `model.mk` refuses those switches until the model directory is split (docs/hacking.md). The 2K gates: `API`
+every ONVIF object and links `onvif_off.c` (the answers of an ONVIF that is off); on the 2K `PTZ`, `TRACK`, `SCENE` and `PATROL` drop their objects (and
+the shared modules only they use) and link `firmware/<2k>/<feature>_off.c`, whose stand-ins answer "not available" and never move a motor or write a file
+(`tests/feature_switch_test.sh` links each variant). `ONVIF=0` does not link on the 2K yet (its `main.c` calls the ONVIF server). The 2K gates: `API`
 (`api_events`, `settings_reg`, the security files), `BUTTON` (`hal_input`, `button_logic`, `button_gesture`, `button_cfg`), `SYS` (`hal_sys`), `LIGHT`
 (`light_logic`, `led_pat`; `hal_light.h` is its interface), `ONVIF`, and the four above. The sysfs drivers `hal_light_sysfs.c` and `hal_input_sysfs.c` stay in the
 model directory because they call the model pin helper; the common code includes no model header (enforced by `tools/ci/layering_lint.sh`).
+
+Code shared by both platforms beyond the cores: the Annex B NAL splitter (`src/net/rtsp/h264_nalu.c`), the RTCP Sender Report and interleaved-frame writer
+(`src/net/rtsp/rtcp_sr.c`), the ONVIF handlers whose answer is the same on every camera (`src/net/onvif/onvif_common.c`: missing profile or configuration
+faults, refused set/create/delete, empty audio lists, discovery mode), `mqtt_connack_reason` (`src/net/mqtt/mqtt.c`) and the AKPCM capture ioctl numbers
+(`src/hal/akpcm.h`). The RTSP session loops (UDP and TCP on the 1080p, TCP only on the 2K), the camera-specific ONVIF answers (profiles, stream URI,
+capabilities, device information) and the MQTT receive loops stay per platform.
 
 ## First module: `hal_light` (the worked example)
 

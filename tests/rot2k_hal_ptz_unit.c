@@ -620,6 +620,20 @@ static int wait_state(int st, int ms)
     return 0;
 }
 
+/* Waits until the simulated motor has been commanded more than `n0` times (a command is counted when it reaches the driver, never undone). */
+static int wait_nmove_above(int n0, int ms)
+{
+    for (int t = 0; t < ms; t += 5) {
+        pthread_mutex_lock(&M.gm);
+        int n = M.nmove;
+        pthread_mutex_unlock(&M.gm);
+        if (n > n0)
+            return 1;
+        usleep(5000);
+    }
+    return 0;
+}
+
 static void set_gate(int on)
 {
     pthread_mutex_lock(&M.gm);
@@ -1723,7 +1737,12 @@ static void test_patrol_controller(void)
         CHECK(a2k_ptz_patrol_goto(1275, 300, 3, &tk) == -1 && a2k_ptz_patrol_goto(1288, 312, 3, &tk) == -1 && a2k_ptz_patrol_goto(1291, 300, 3, &tk) == 0, "a patrol move within +-15 of the park position is refused, 16 away is accepted");
         CHECK(pc_ticket_done(tk, &rc, 5000), "(it ran)");
         pc_hook_n = 0;
-        CHECK(a2k_ptz_home_tracker() == 0 && wait_state(HAL_PTZ_MOVED, 2000), "the tracker's home is queued");
+        /* Race-free: the head is MOVED (away from home) before the call, so waiting for the state MOVED proves nothing and, on a loaded host, the
+         * whole home move can finish between two polls of the transient state. What "queued" means is that the motor was commanded: count it. */
+        {
+            int nm0 = M.nmove;
+            CHECK(a2k_ptz_home_tracker() == 0 && wait_nmove_above(nm0, 5000), "the tracker's home is queued (the motor is commanded)");
+        }
         CHECK(wait_state(HAL_PTZ_HOME, 5000) && pc_hook_n == 0, "...it goes home and never calls the manual-command hook");
         CHECK(a2k_ptz_goto(900, 1200, 0) == 0 && wait_state(HAL_PTZ_MOVED, 5000) && (usleep(200000), near_mech(900, 1200, 12)), "(away from home again)");
         pc_hook_n = 0;

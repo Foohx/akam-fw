@@ -58,12 +58,12 @@ func TestBuildCardTreeAndVerify(t *testing.T) {
 	}
 	for _, p := range []string{"yy_debug.ini", "akam_boot.sh", "busybox", "akam/own_app", "akam/decloud", "akam/wpa.conf", "akam/authorized_keys",
 		"akam/own_app_stub.sh", "akam/common.sh", "akam/akam_ntp.sh", "akam/akam_hostname.sh", "akam/dropbearmulti", "akam/bin/akam2k_rtsp",
-		"akam/bin/akam2k_sntp.BUILDINFO", "akam/enable_local.sh", "akam/restore_param.sh", "akam/LICENSE.dropbear"} {
+		"akam/bin/akam2k_sntp.BUILDINFO", "akam/enable_local.sh", "akam/restore_param.sh", "akam/LICENSE.dropbear", "akam/no_telnet"} {
 		if _, ok := have[p]; !ok {
 			t.Errorf("card lacks %s", p)
 		}
 	}
-	for _, p := range []string{"akam/akam_flash_boot.sh", "akam/enable_param_conf", "akam/no_telnet"} {
+	for _, p := range []string{"akam/akam_flash_boot.sh", "akam/enable_param_conf"} {
 		if _, ok := have[p]; ok {
 			t.Errorf("card has %s", p)
 		}
@@ -135,5 +135,26 @@ func TestBuildCardRefusals(t *testing.T) {
 	g["card/yy_debug.ini"] = []byte("mode=debug\nstart_sh=/mnt/sdcard/akam_boot.sh")
 	if _, err := NewKit(sealKit(g)); err == nil || !strings.Contains(err.Error(), "only some of the SD card files") {
 		t.Errorf("partial card files: %v", err)
+	}
+}
+
+// The card carries the flag akam/no_telnet by default (the SSH key is on the card, telnet is not needed); only a
+// rescue card asked for with RescueTelnet keeps the passwordless telnet of the boot script.
+func TestBuildCardTelnetFlag(t *testing.T) {
+	k := cardKit(t)
+	for _, rescue := range []bool{false, true} {
+		c, err := BuildCard(k, CardInput{PubKey: []byte(testPub), SSID: "home", Pass: "correct horse", RescueTelnet: rescue})
+		if err != nil {
+			t.Fatal(err)
+		}
+		has := false
+		for _, f := range c.Files {
+			if f.Path == "akam/no_telnet" {
+				has = true
+			}
+		}
+		if has == rescue {
+			t.Errorf("RescueTelnet=%v but akam/no_telnet present=%v", rescue, has)
+		}
 	}
 }

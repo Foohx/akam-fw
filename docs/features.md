@@ -1,7 +1,7 @@
 # Features and protocols
 
-Everything Akam implements on the validated camera (LSC Smart Indoor 1080p, article `3215672.3`), with its default,
-its port and how well it is tested. Technical details of each item are in [`specs/`](../specs/README.md).
+Everything Akam implements on the LSC Smart Indoor 1080p (article `3215672.3`), with its default, its port and how well
+it is tested. The LSC Rotatable 2K has its own section at the end of this page ("What Akam removes" and the ports line above are the 1080p's; the 2K's are in its [on-camera page](porting/lsc-rotatable-2k/on-camera.md)). Technical details of each item are in [`specs/`](../specs/README.md).
 
 **Status labels**
 
@@ -61,8 +61,7 @@ ONVIF. ONVIF is a trademark of ONVIF, Inc.
 | Update over SSH (Akam to Akam) | | | hardware-validated | `./akam update`, read-back verified |
 | Maintenance flag (microSD) | off | | hardware-validated (install) | A card marked `AKAM_MAINTENANCE` opens the maintenance shell: treat the card as physical access |
 
-Open ports after a normal boot: **22, 554, 8091** (TCP) and 68 (UDP client). Nothing else, unless you enable ONVIF (or create an API key: then 8092, see the signed control API)
-(80 and 3702) or MQTT (outbound only).
+Open ports after a normal boot: **22, 554, 8091** (TCP) and 68 (UDP client). Nothing else, unless you enable ONVIF (80 and 3702), create an API key (8092) or enable MQTT (outbound only). The RTSP stream (and the microphone) has no password until you set one with `./akam rtsp-auth set`: keep the camera on your LAN.
 
 ## What Akam removes or disables
 
@@ -86,3 +85,23 @@ network scripts, the hardware watchdog and two local helper programs (`cmdserver
 | `akam` (Go program, six targets) | Same, plus talk, configs, camera options screen | partly tested ([platforms](assistant.md#tested-platforms)) |
 | `akam-talk` | Send a voice or a sound file to the camera speaker | hardware-validated |
 | `tools/hw_tests/akam_hwcheck.sh` | Read-only post-install check over SSH (`./akam verify`) | hardware-validated |
+
+## LSC Rotatable 2K
+
+Same Akam core, other hardware (details and evidence per feature: [2K page](porting/lsc-rotatable-2k/README.md)). Model
+features are set in `firmware/lsc-rotatable-2k-ak3918av130/model.mk`.
+
+| Feature | Default | Port | Status | Notes |
+|---|---|---|---|---|
+| RTSP H.264, two streams | on | TCP 554 | hardware-validated | `/stream0` 2304x1296, `/stream1` 640x360; optional Digest login |
+| Microphone track (L16, 8 kHz) | off (opt-in `audio=1`) | in the RTSP session | hardware-validated | Both streams carry it when on |
+| Speaker output, two-way audio | not implemented | | | |
+| Pan/tilt, presets, patrol, home | on | via API, ONVIF, MQTT | see [PTZ findings](porting/lsc-rotatable-2k/ptz-findings.md) | Soft limits, drift correction |
+| Person detection (NPU) and tracking | detection on (`detect=1`), tracking off (`track.enabled`, `track=1`) | | see [tracking](porting/lsc-rotatable-2k/tracking.md) | Hardware tests of 2026-11-16 and 2026-11-17 are recorded there |
+| Image flip, mirror and ceiling mount | off (`image.flip`, `image.mirror`, `image.ceiling`; Home Assistant switches) | via API, MQTT | host-tested only, **not yet tried on the camera** | Live, saved only when you change it. The zones, tracking, PTZ directions and the scene check follow the orientation ([how](porting/lsc-rotatable-2k/isp-controls.md#33-what-follows-the-orientation-one-convention-for-the-whole-app)) |
+| Front button, image zones, night, LEDs | on | | see [button and zones](porting/lsc-rotatable-2k/button-and-zones.md) | Host-tested with fake hardware |
+| ONVIF with pan/tilt, WS-Discovery | off (`onvif=1` in `akam2k.conf`) | TCP 8000, UDP 3702 | host-tested only | [ONVIF](onvif.md) |
+| MQTT, Home Assistant discovery | off | outbound | host-tested only | [MQTT](mqtt.md) |
+| Signed control API | closed until an API key exists | TCP 8092 | hardware-used (signed requests on port 8092: settings changes, `ptz.recalibrate`, state reads), full suite host-tested | [2K API](porting/lsc-rotatable-2k/control-api.md) |
+| SSH (Dropbear) | on | TCP 22 | hardware-validated | ed25519 key only; needs `authorized_keys` on the card or in `/config/akam` |
+| Card-less boot, SD rescue | on | | hardware-validated | [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md) |

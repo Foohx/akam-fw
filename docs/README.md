@@ -1,40 +1,51 @@
 # Documentation index
 
-New here? Read the [README](../README.md) and run `./akam`: you do not need anything below to install Akam. These
-pages are for details, hacking, or when something goes wrong.
+New here? Read the [README](../README.md), then run `./akam`. The pages below are for details, integration,
+development, or when something goes wrong.
 
-## Understand Akam
+## User docs
 
-- [Features and protocols](features.md): everything Akam implements, with ports, defaults and test status.
-- [How it works](how-it-works.md): hardware, flash map, boot, `ak_rtsp`, configuration, security.
-- [Compatible cameras](compatible-cameras.md): is my camera supported, and how to report a new one.
-- [Models](models.md) and [what runs on each camera](porting/lsc-1080p/on-camera.md) ([2K](porting/lsc-rotatable-2k/on-camera.md)); [port a new camera](porting/TEMPLATE-new-camera.md).
-- [SoCs](socs.md): which Anyka chip is in each camera, from the firmware strings, and what the platform names mean.
-- [Legal notes](legal.md): your device, privacy, radio, interoperability.
+- [Compatible cameras](compatible-cameras.md): is my camera supported, how to report a new one.
+- [The setup wizard](wizard_guide.md) (1080p) and [the `akam` program](assistant.md) (tested platforms, 2K install and update).
+- [Using Akam day to day](using_akam.md) (1080p): commands, settings, ports, updates.
+- [Features and protocols](features.md): everything implemented, with defaults, ports and test status.
+- [Troubleshooting](troubleshooting.md) (1080p).
+- [Legal notes](legal.md).
 
-## Install and use
+## Integration
 
-- [The setup wizard](wizard_guide.md): the menu, what each step does and risks.
-- [The `akam` program and tested platforms](assistant.md): Windows, macOS and Linux binary, checks, warnings.
-- [Using Akam day to day](using_akam.md): every command and setting, ports, updates, security notes.
-- [Troubleshooting](troubleshooting.md): real problems and their fixes.
-- [Two-way audio](two_way_audio.md): talk through the speaker.
-- [ONVIF](onvif.md): NVRs and ONVIF apps.
-- [MQTT and Home Assistant](mqtt.md).
+- [RTSP and Frigate](../README.md#integrations), [ONVIF](onvif.md), [MQTT and Home Assistant](mqtt.md),
+  [Two-way audio](two_way_audio.md).
+- Signed HTTP API: [1080p](porting/lsc-1080p/control-api.md), [2K](porting/lsc-rotatable-2k/control-api.md),
+  [spec](../specs/control-api.md).
 
-## Hack
+## Per camera
 
-- [Hacking guide](hacking.md): repository layout, build from source, RAM test, tests, UART and photos.
-- Manual procedures, in this order: [back up by UART](manual/backup-uart.md) or
-  [by microSD](manual/backup-sd.md), [build the image](manual/build.md),
-  [flash and restore](manual/flash-and-restore.md).
-- [SSH keys, lockdown, maintenance flag](manual/ssh-and-lockdown.md), [the release kit](manual/kit.md),
-  [stock capture](manual/stock-capture.md).
+Same sections for both: hardware, stock firmware findings, what runs, install, update, recovery, known limits.
 
-## Tests and status
+| | Entry page | What runs on the camera | Control API |
+|---|---|---|---|
+| LSC Indoor 1080p | [1080p](porting/lsc-1080p/README.md) | [on-camera](porting/lsc-1080p/on-camera.md) | [API](porting/lsc-1080p/control-api.md) |
+| LSC Rotatable 2K | [2K](porting/lsc-rotatable-2k/README.md) | [on-camera](porting/lsc-rotatable-2k/on-camera.md) | [API](porting/lsc-rotatable-2k/control-api.md) |
 
-- [Testing status](testing-status.md): what was tested on the host, in RAM and on hardware.
-- [Hardware test checklists](hardware-test-checklists.md): tick-lists for your own camera and for the `akam` program.
+The 2K findings (stock firmware, PTZ, NPU, audio, tracking, recovery) are listed on its entry page.
+Also: [models](models.md), [SoCs](socs.md), [how it works](how-it-works.md).
 
-Project history: [CHANGELOG](../CHANGELOG.md). Contributors: [CONTRIBUTING](../CONTRIBUTING.md). Exact behaviour of the
-code: [specs/](../specs/README.md).
+## Developer
+
+- [Hacking guide](hacking.md): repository layout, build from source, RAM test, tests, UART.
+- [HAL architecture](hal-architecture.md): portable modules and the per-model layer.
+- Manual procedures: [back up by UART](manual/backup-uart.md) or [by microSD](manual/backup-sd.md),
+  [build the image](manual/build.md), [flash and restore](manual/flash-and-restore.md),
+  [SSH keys and lockdown](manual/ssh-and-lockdown.md), [release kit](manual/kit.md), [stock capture](manual/stock-capture.md).
+- Tests: [testing status](testing-status.md) (1080p and 2K sections), [hardware checklists](hardware-test-checklists.md); CI: `tools/ci/local_check.sh`.
+- Code behaviour: [specs/](../specs/README.md). Contributing: [CONTRIBUTING](../CONTRIBUTING.md). Assistant design:
+  [2K flash design (partly implemented)](assistant-rot2k-flash-design.md), [install and update journey](assistant/install-update-journey.md).
+
+## Porting a new camera
+
+[Template and checklist](porting/TEMPLATE-new-camera.md), then [compatible cameras](compatible-cameras.md#adding-a-new-model).
+
+## Archive
+
+Historical plans and studies: [docs/archive](archive/README.md). Project history: [CHANGELOG](../CHANGELOG.md).

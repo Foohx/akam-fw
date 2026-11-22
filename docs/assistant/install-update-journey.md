@@ -59,7 +59,11 @@ Legend: **exists** = works from the assistant on Linux, macOS and Windows; **par
   generated on the PC because that script has no "install this secret" entry), the secret comes back once over SSH, is kept in the
   camera's state folder (`api_key`, 0600) and is never printed. It writes `/config/akam/api_keys` on the camera, so it asks first.
   Key rotation (revoke then create again) is by hand over SSH for now.
-* Seeding `/config/akam` (Wi-Fi, SSH key) before a first card-less flash, and the staged-reboot screens of the first flash, are
-  still the design of `assistant-rot2k-flash-design.md` section 3.3 and 3.5 (`appfs-flash` prints the steps).
+* Seeding `/config/akam` (Wi-Fi, SSH key) before a first card-less flash is `akam seed-2k` (the camera copies the card's
+  `akam/wpa.conf` and `akam/authorized_keys` itself; nothing secret reaches the PC; idempotent; host-tested with a local shell
+  standing in for the camera). It is a separate command: `appfs-flash` does not check that it was run. The staged-reboot
+  screens of the first flash are still the design of `assistant-rot2k-flash-design.md` section 3.5 (`appfs-flash` prints the steps).
+* No `akam restore-2k`: back to stock on the 2K is manual ([back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock)).
+* `prepare-2k-sd` writes `akam/no_telnet` on the card by default; `--rescue-telnet` keeps the passwordless root telnet.
 * Not run on hardware: every test uses fakes (no camera, no network). The hot update itself is the already-tested Go port of
   `flash_appfs.sh --hot`; the first live run of `akam update` should be a rehearsal with a recovery means at hand.

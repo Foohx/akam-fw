@@ -3,8 +3,8 @@
 Status: **offline reverse engineering plus a RAM-only test hook; nothing of this ran on the camera yet** (2026-11-18). Everything below is read
 from `libplat_vpss.so` (V3.1.03), `libplat_isp_sdk.so`, the stock `yy_cam` 14.1.5 and the ISP conf file `isp_sc1346_mipi_1lane_av130.bin`
 (SC1346 sensor, the same bytes in the stock appfs and in our appfs tree, checked with `cmp`). Related notes: stock-firmware-reference.md ("Image
-effects", "WDR call chain"), own-app-feasibility.md ("Day/night and image"), venc-live-params.md (the `--venc-test` hook this one copies),
-`app/abi.h` (how structs are transcribed: our own struct text with `_Static_assert`, no vendor header).
+effects", "WDR call chain"), archive/rot2k-own-app-feasibility.md ("Day/night and image"), venc-live-params.md (the `--venc-test` hook this one copies),
+`platforms/anyka-ak3918av130/abi.h` (how structs are transcribed: our own struct text with `_Static_assert`, no vendor header).
 
 Confidence words: **HIGH** = read from code that validates the field (the lib prints the field name in its error string), **MEDIUM** = consistent
 with the code and with the conf file bytes but not proven by a name, **LOW** = guess. "Unverified on the camera" applies to all of it until the
@@ -14,7 +14,7 @@ test plan at the end has run.
 
 `yy_cam` imports exactly these image calls (`readelf --dyn-syms`): `ak_vpss_effect_set`, `ak_vpss_effect_get`, `ak_vpss_get_soft_ps_level`,
 `ak_vpss_set_soft_ps_param`, `ak_vpss_get_soft_wh_level`, `ak_vpss_get_wdr_attr`, `ak_vpss_set_wdr_attr`, `ak_vpss_md_get_stat`,
-`ak_vpss_switch_flip_mirror`, `ak_vi_switch_mode`, `ak_vi_load_sensor_cfg`. The `effect_set` call sites (0x2a1724, 0x2a2c34, 0x2a2f2c,
+`ak_vpss_switch_flip_mirror`, `ak_vi_switch_mode`, `ak_vi_load_sensor_cfg`. The flip call is in section 3.2. The `effect_set` call sites (0x2a1724, 0x2a2c34, 0x2a2f2c,
 0x2a3224, plus the WDR ones) use types **7, 4, 3, 1, 5** only. So the stock makes **no** white balance, CCM, saturation, hue, noise reduction or
 gamma call: the picture it produces is the conf file (day / night set) with the ISP's own automatic white balance, plus brightness, contrast and
 sharpness only when the user set them (default -1 = nothing applied), plus WDR 40. Our app does the same set of calls (image.c,
@@ -95,6 +95,48 @@ value the ISP had when the type was first used** (the base is read once per type
 - type 1 brightness and 4 sharpness: other structs (`AK_ISP_CONTRAST`/`SHARP` scaled), as the stock uses them.
 - The first call of a type reads the attribute, so the base is the conf value even if another tool changed it before. Setting `0` again returns to that base.
 
+### 3.2 Flip and mirror: `ak_vpss_switch_flip_mirror` (HIGH on the call and its arguments, UNVERIFIED on the camera)
+
+`int ak_vpss_switch_flip_mirror(int dev, int flip_en, int mirror_en)` (libplat_vpss 0x114f4; `ak_vpss_get_flip_mirror(dev, int *flip, int *mirror)` 0x1164c).
+`ak_vpss_effect_set` type 8 ("flip bits") is NOT the way: the stock does not use it.
+
+How it was confirmed (no header ships with the SDK; every statement below is read from the libraries and from the stock `yy_cam`):
+
+- the lib's own error text, `param is error! flip_en:%d, mirror_en:%d`, names the two arguments: argument 2 is the flip, argument 3 the mirror; `dev` is 0..3
+  (above that the lib logs and refuses), each flag must be 0 or 1 (anything else: refused, nothing written);
+- the code: the lib keeps, per device, the orientation the sensor driver declared when its attributes were loaded (`isp_set_attr` copies the two u16 flip / mirror
+  fields of the sensor attributes into a table that starts at -1 = "not loaded", the call fails while it is -1). The new orientation is that declared one **XOR**
+  the argument: `0` = the sensor's native picture (what the app has always shown), `1` = reversed. It then calls `isp_set_flip_mirror`, which stores the pair
+  and sends ISP ioctl `0x40044979` (the `FLIP_MIRROR` of `tools/hw_tests/parse_stock_capture.py`): the change is applied to the running ISP, **no stream restart**;
+- the stock `yy_cam` (`yy_media_av130_isp_get_video_flip_mode` 0x2a19e4, called by `yy_media_av130_video_init` and by the Tuya "flip" data point) builds the two
+  arguments from its `[dsp]` `flip_mode` (0 = none, 1 and 2 = one axis, 3 = both: `flip_mode` bit toggles an argument) combined with a per-sensor base field
+  (`sensor1_flip_mode`) and calls the lib with them; it does not replay the call after a day/night switch.
+
+Akam passes `(0, flip, mirror)` with the user's two switches (default 0, 0), so an unflipped camera behaves exactly as before: with both at 0 the app **never
+calls** the function. Which of the two flags is vertical and which horizontal comes from the names of the arguments (flip = vertical, mirror = horizontal, the
+usual meaning) and is **UNVERIFIED on the camera** (first thing to check: `image.flip=1` turns the picture upside down, `image.mirror=1` swaps left and right).
+Also to check on the camera: that the lib's declared base orientation is the picture the camera shows today (so that 0 / 0 is the unchanged picture), that the
+picture colour is right after a flip (the sensor Bayer order changes; the ISP is expected to follow), and that a day/night switch keeps the flip (the app replays
+it after every `ak_vi_switch_mode`; the call is absolute, replaying it is harmless).
+
+Where it lives in Akam: `a2k_isp_flip_mirror` (cap.c, the only caller), the state and every mapping in `platforms/anyka-ak3918av130/orient.[ch]`, the settings
+rows `image.flip`, `image.mirror`, `image.ceiling` and the Home Assistant switches (control-api.md section 4, mqtt in on-camera.md). How each part of the app
+follows the orientation is in section 3.3.
+
+### 3.3 What follows the orientation (one convention for the whole app)
+
+Two frames: the **displayed frame** (what the streams and the snapshots show: the detector, the tracker and everything a user types or reads is in it) and the
+**sensor frame** (the picture with flip and mirror off). Anything stored that must outlive a change is kept in the sensor frame. The two mappings are involutions.
+
+| Part | Frame / rule |
+|---|---|
+| Detection zones and ignore rectangles | **Stored in the sensor frame** (`akam/zones` on the card, `/config/akam/zones`), converted to the displayed frame by the detection (`a2k_zones_orient`) and by the Home Assistant text entities (they show and accept the displayed frame). A zone keeps covering the same part of the scene when the orientation changes: mirror: x1,x2 become 100-x2,100-x1; flip: the same for y. A card file is read as the sensor frame. |
+| Person boxes (`detect.boxes`, the `detections` event), snapshots | Displayed frame (what the picture shows). |
+| Person tracking | Works on the displayed frame; its motor sign is the measured one (invert_pan 1, invert_tilt 0 with the orientation off) with the pan reversed by the mirror and the tilt by the flip (`a2k_orient_invert_*`, applied live through a listener). |
+| ONVIF ContinuousMove, `ptz.vel`, MQTT `ptz_vel`, the step buttons (`ptz.step`, MQTT `ptz_left` ...) | The viewer's directions: right / up are right / up in the picture. The driver speaks sensor directions: a mirror reverses left / right, a flip reverses up / down (`a2k_ptz_vel_manual`, `a2k_ptz_command`). |
+| `ptz.move` (motor steps), presets, patrol routes, soft limits, the counters | Motor state: never depends on the orientation. |
+| Scene reference (`/config/akam/ptz.scene`), the drift reference (RAM) and the FLAT check | The live detection frame is converted to the **sensor frame** before it is compared, saved or matched (`a2k_scene_feed`), so every reference stays comparable and **no reference is invalidated** by an orientation change. Frames of the first 1.5 s after a change (queued frames of the old orientation) are skipped. The drift sign constants (`A2K_PTZ_DRIFT_*_SIGN`) are motor facts and stay. |
+
 ## 4. White balance and the "too red" question: what is known
 
 - The stock never touches WB (section 1). With the ISP's AWB running (`wb_type` = the value read at start) the day set uses the 4-point CCM of section 2.
@@ -111,7 +153,7 @@ Direction of `k` (bigger = more smoothing?) is MEDIUM; the test plan measures it
 ## 6. IR-cut, the prime suspect (read of the code, HIGH on the code, UNVERIFIED on the camera)
 
 - `ircut.c` does exactly the stock sequence: day = pin 24 high, 25 low, 300 ms, 24 low; night = 24 low, 25 high, 300 ms, 25 low; at start a day pulse. The stock does at init: mode 1 (day) pulse, mode 0 (night) pulse, then settles on day (3 pulses). We do one. A coil that is bistable moves on any pulse of the right polarity, so one is enough **if the polarity is right**.
-- The only hardware evidence of the mapping is indirect (own-app-feasibility.md, 2026-11-15): forced night gave a bright mono IR frame (filter out), forced day gave a dark colour frame (sat 6). That proves the **night pulse moves the filter out**; that the **day pulse brings it fully back in** is only assumed (MEDIUM, "unverified until seen by eye").
+- The only hardware evidence of the mapping is indirect (archive/rot2k-own-app-feasibility.md, 2026-11-15): forced night gave a bright mono IR frame (filter out), forced day gave a dark colour frame (sat 6). That proves the **night pulse moves the filter out**; that the **day pulse brings it fully back in** is only assumed (MEDIUM, "unverified until seen by eye").
 - Signature of a filter that is not in the path in day light: the picture is pink / red with weak saturation structure, foliage and fabrics bright, black plastics purple, and the **R average clearly above G** (see `get rgb`). The cheap proof: **a TV remote pointed at the lens**. With the filter out (night position) the remote's IR LED shows as a bright white / violet spot in the live view; with the filter in it is invisible (or a faint dot). Do it in forced day (`night=day`) and then in forced night as the reference.
 - Also compare the daylight `get rgb` ratios of forced day against the same scene seen by the stock (a stock frame).
 

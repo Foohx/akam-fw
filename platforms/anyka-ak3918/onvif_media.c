@@ -10,6 +10,7 @@
 #include "audio_out.h"
 #include "cred.h"
 #include "onvif.h"
+#include "onvif_common.h"
 #include "onvif_media.h"
 #include "video_cfg.h"
 
@@ -94,21 +95,13 @@ static int arg_text(onvif_call_t *c, const char *local, char *out, size_t cap)
     return soap_text(&e, out, cap, SOAP_TRIM) >= 0 ? 0 : -1;
 }
 
-static void fault_noprofile(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:NoProfile", "The requested profile token does not exist");
-}
-static void fault_noconfig(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:NoConfig", "The requested configuration token does not exist");
-}
 
 /* The request names the profile (ProfileToken) and it is ours; else the fault is sent. */
 static int need_profile(onvif_call_t *c)
 {
     char tok[32];
     if (arg_text(c, "ProfileToken", tok, sizeof(tok)) != 0 || strcmp(tok, TOK_PROFILE) != 0) {
-        fault_noprofile(c);
+        onvif_fault_noprofile(c);
         return 0;
     }
     return 1;
@@ -119,7 +112,7 @@ static int need_config(onvif_call_t *c, const char *want)
 {
     char tok[32];
     if (arg_text(c, "ConfigurationToken", tok, sizeof(tok)) != 0 || strcmp(tok, want) != 0) {
-        fault_noconfig(c);
+        onvif_fault_noconfig(c);
         return 0;
     }
     return 1;
@@ -129,7 +122,7 @@ static int need_config(onvif_call_t *c, const char *want)
 static int need_bc_config(onvif_call_t *c, const char *want)
 {
     if (!backchannel_on()) {
-        fault_noconfig(c);
+        onvif_fault_noconfig(c);
         return 0;
     }
     return need_config(c, want);
@@ -275,16 +268,6 @@ static void op_get_audio_sources(onvif_call_t *c)
 }
 
 /* Empty lists: the microphone is L16, which ONVIF Media 1 cannot name (see onvif_media.h). */
-static void op_get_asrc_configs(onvif_call_t *c)
-{
-    onvif_reply(c, ENV_OPEN "<trt:GetAudioSourceConfigurationsResponse/>" ENV_CLOSE);
-    onvif_send(c);
-}
-static void op_get_aenc_configs(onvif_call_t *c)
-{
-    onvif_reply(c, ENV_OPEN "<trt:GetAudioEncoderConfigurationsResponse/>" ENV_CLOSE);
-    onvif_send(c);
-}
 static void op_get_compat_asrc(onvif_call_t *c)
 {
     if (!need_profile(c)) return;
@@ -297,7 +280,7 @@ static void op_get_compat_aenc(onvif_call_t *c)
     onvif_reply(c, ENV_OPEN "<trt:GetCompatibleAudioEncoderConfigurationsResponse/>" ENV_CLOSE);
     onvif_send(c);
 }
-static void op_no_config(onvif_call_t *c) { fault_noconfig(c); }
+static void op_no_config(onvif_call_t *c) { onvif_fault_noconfig(c); }
 
 static void op_get_audio_outputs(onvif_call_t *c)
 {
@@ -445,21 +428,9 @@ static void op_service_caps(onvif_call_t *c)
 
 /* ---- refused changes (read only device) ---- */
 
-static void op_refuse_set(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:ConfigModify", "The configuration cannot be changed (read-only device)");
-}
 static void op_refuse_conf(onvif_call_t *c)
 {
     onvif_fault(c, 1, "ter:Action", "ter:ConfigurationConflict", "The profile is fixed and cannot be changed");
-}
-static void op_refuse_create(onvif_call_t *c)
-{
-    onvif_fault(c, 1, "ter:Action", "ter:MaxNVTProfiles", "The maximum number of profiles is already reached");
-}
-static void op_refuse_delete(onvif_call_t *c)
-{
-    onvif_fault(c, 0, "ter:InvalidArgVal", "ter:DeletionOfFixedProfile", "The profile is fixed");
 }
 
 static const onvif_op_t k_ops[] = {
@@ -475,10 +446,10 @@ static const onvif_op_t k_ops[] = {
     { "GetVideoEncoderConfigurationOptions", ONVIF_READ, op_get_venc_options },
     { "GetGuaranteedNumberOfVideoEncoderInstances", ONVIF_READ, op_get_guaranteed },
     { "GetAudioSources", ONVIF_READ, op_get_audio_sources },
-    { "GetAudioSourceConfigurations", ONVIF_READ, op_get_asrc_configs },
+    { "GetAudioSourceConfigurations", ONVIF_READ, onvif_op_get_asrc_configs },
     { "GetAudioSourceConfiguration", ONVIF_READ, op_no_config },
     { "GetAudioSourceConfigurationOptions", ONVIF_READ, op_no_config },
-    { "GetAudioEncoderConfigurations", ONVIF_READ, op_get_aenc_configs },
+    { "GetAudioEncoderConfigurations", ONVIF_READ, onvif_op_get_aenc_configs },
     { "GetAudioEncoderConfiguration", ONVIF_READ, op_no_config },
     { "GetAudioEncoderConfigurationOptions", ONVIF_READ, op_no_config },
     { "GetAudioOutputs", ONVIF_READ, op_get_audio_outputs },
@@ -496,12 +467,12 @@ static const onvif_op_t k_ops[] = {
     { "GetCompatibleAudioDecoderConfigurations", ONVIF_READ, op_get_compat_adec },
     { "GetStreamUri", ONVIF_READ, op_get_stream_uri },
     { "GetSnapshotUri", ONVIF_READ, op_get_snapshot_uri },
-    { "SetVideoSourceConfiguration", ONVIF_WRITE, op_refuse_set },
-    { "SetVideoEncoderConfiguration", ONVIF_WRITE, op_refuse_set },
-    { "SetAudioSourceConfiguration", ONVIF_WRITE, op_refuse_set },
-    { "SetAudioEncoderConfiguration", ONVIF_WRITE, op_refuse_set },
-    { "SetAudioOutputConfiguration", ONVIF_WRITE, op_refuse_set },
-    { "SetAudioDecoderConfiguration", ONVIF_WRITE, op_refuse_set },
+    { "SetVideoSourceConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
+    { "SetVideoEncoderConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
+    { "SetAudioSourceConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
+    { "SetAudioEncoderConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
+    { "SetAudioOutputConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
+    { "SetAudioDecoderConfiguration", ONVIF_WRITE, onvif_op_refuse_set },
     { "AddVideoSourceConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "AddVideoEncoderConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "AddAudioSourceConfiguration", ONVIF_WRITE, op_refuse_conf },
@@ -514,8 +485,8 @@ static const onvif_op_t k_ops[] = {
     { "RemoveAudioEncoderConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "RemoveAudioOutputConfiguration", ONVIF_WRITE, op_refuse_conf },
     { "RemoveAudioDecoderConfiguration", ONVIF_WRITE, op_refuse_conf },
-    { "CreateProfile", ONVIF_WRITE, op_refuse_create },
-    { "DeleteProfile", ONVIF_WRITE, op_refuse_delete },
+    { "CreateProfile", ONVIF_WRITE, onvif_op_refuse_create },
+    { "DeleteProfile", ONVIF_WRITE, onvif_op_refuse_delete },
 };
 
 int onvif_media_register(void)

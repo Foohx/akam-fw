@@ -4,6 +4,7 @@
 
 #include "api_events.h"
 #include "log.h"
+#include "orient.h"
 #include "patrol.h"
 #include "ptz.h"
 #include "store.h"
@@ -12,6 +13,14 @@
 
 static a2k_track_t g_t;
 static volatile int g_up;
+static int g_base_pan, g_base_tilt, g_listening; /* the 2K binding's invert_pan / invert_tilt, measured with the orientation off */
+
+/* The tracker works in the DISPLAYED frame (the boxes come from the flipped picture), the motor in the sensor frame: a mirror reverses the pan direction, a flip the tilt (orient.h). */
+static void orient_changed(int flip, int mirror)
+{
+    if (g_up)
+        (void)a2k_track_set_invert(&g_t, a2k_orient_invert_pan(g_base_pan, mirror), a2k_orient_invert_tilt(g_base_tilt, flip));
+}
 
 static int real_range(int r[4])
 {
@@ -48,13 +57,25 @@ void a2k_track_run_start(int enabled, const char *conf_areas, void (*notify)(voi
     g_t.notify = notify;
     if (tune)
         g_t.cfg = *tune;
-    g_t.cfg.invert_pan = invert_pan; /* the 2K binding: a person on one side must turn the camera TOWARD it (measured: not inverted = away) */
+    {
+        int flip, mirror;
+        g_base_pan = invert_pan;
+        g_base_tilt = invert_tilt;
+        a2k_orient_get(&flip, &mirror);
+        invert_pan = a2k_orient_invert_pan(g_base_pan, mirror);
+        invert_tilt = a2k_orient_invert_tilt(g_base_tilt, flip);
+    }
+    g_t.cfg.invert_pan = invert_pan; /* the 2K binding: a person on one side must turn the camera TOWARD it (measured: not inverted = away); combined with the image orientation */
     g_t.cfg.invert_tilt = invert_tilt;
     (void)tl_init(&g_t.tl, &g_t.cfg);
     a2k_ptz_set_lease_ms(g_t.cfg.lease_ms);
     (void)a2k_track_load(&g_t, conf_areas);
     a2k_track_set_enabled(&g_t, enabled);
     g_up = 1;
+    if (!g_listening) {
+        g_listening = 1;
+        (void)a2k_orient_listen(orient_changed);
+    }
     a2k_log("track: invert_pan %d invert_tilt %d, band %d%%, tilt %d (head %d%%), lead %d%%, return %s after %d s + %d s grace", invert_pan, invert_tilt,
             g_t.cfg.deadband_pct, g_t.cfg.tilt_enable, g_t.cfg.head_pct, g_t.cfg.lead_pct, g_t.cfg.return_home ? "home" : "stay", g_t.cfg.return_delay_s,
             g_t.cfg.lost_grace_s);

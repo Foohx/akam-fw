@@ -12,10 +12,12 @@
 #include "api_events.h"
 #include "button_rt.h"
 #include "detpub.h"
+#include "isp.h"
 #include "leds.h"
 #include "log.h"
 #include "netreg.h"
 #include "night_ctl.h"
+#include "orient.h"
 #include "patrol.h"
 #include "ptz.h"
 #include "rtsp_session.h"
@@ -145,6 +147,41 @@ static int img_set(const char *key, const char *val, st_apply_t *eff)
         pthread_mutex_lock(&g_mu);
         *f = old;
         pthread_mutex_unlock(&g_mu);
+        return ST_E_SETTER;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ image.flip / image.mirror / image.ceiling (live, saved only on a user change)
+ * flip = vertical, mirror = horizontal, ceiling = both (a 180 degree rotation: a camera mounted upside down). The orientation is recorded FIRST (orient.h opens the settling
+ * window of the scene check and moves the tracker, the zones and the directions to the new frame), then the ISP is told; if the ISP refuses, the old orientation is restored. */
+static int orient_get_row(const char *key, char *out, size_t cap)
+{
+    int f, m;
+    a2k_orient_get(&f, &m);
+    return put(out, cap, strcmp(key, "image.flip") == 0 ? f : strcmp(key, "image.mirror") == 0 ? m : (f && m));
+}
+
+static int orient_set_row(const char *key, const char *val, st_apply_t *eff)
+{
+    int f, m, of, om, v = atoi(val);
+    (void)eff;
+    a2k_orient_get(&of, &om);
+    f = of;
+    m = om;
+    if (strcmp(key, "image.flip") == 0)
+        f = v;
+    else if (strcmp(key, "image.mirror") == 0)
+        m = v;
+    else if (strcmp(key, "image.ceiling") == 0)
+        f = m = v;
+    else
+        return ST_E_SETTER;
+    if (f == of && m == om)
+        return 0;
+    a2k_orient_set(f, m);
+    if (a2k_isp_flip_mirror(f, m) != 0) { /* ISP calls: on the worker thread, never the HTTP thread */
+        a2k_orient_set(of, om);
         return ST_E_SETTER;
     }
     return 0;
@@ -799,6 +836,9 @@ static void build_table(void)
     row("image.contrast", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
     row("image.sharpness", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
     row("image.mains_hz", ST_ENUM, 0, 0, OPT_MAINS, "50", 0, RW, img_get, img_set);
+    row("image.flip", ST_BOOL, 0, 0, NULL, "0", 1, RW, orient_get_row, orient_set_row);
+    row("image.mirror", ST_BOOL, 0, 0, NULL, "0", 1, RW, orient_get_row, orient_set_row);
+    row("image.ceiling", ST_BOOL, 0, 0, NULL, "0", 0, RW, orient_get_row, orient_set_row); /* flip + mirror: not saved itself, the two rows above are */
     row("detect.publish_hz", ST_INT, 0, 10, NULL, "2", 1, RW, dpub_get, dpub_set);
     row("track.enabled", ST_BOOL, 0, 0, NULL, "0", 1, RW, track_get, track_set);
     row("track.return", ST_ENUM, 0, 0, OPT_TRET, "home", 1, RW, tret_get, tret_set);

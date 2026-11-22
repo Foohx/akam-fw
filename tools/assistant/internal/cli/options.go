@@ -20,6 +20,7 @@ type Options struct {
 	Builder                                                                       string // --builder native|tools (the image step)
 	PasswordFile                                                                  string
 	AllowUnsigned, AllowUnknownComp, ManualTelnet, Plain, DryRun, NoColor         bool
+	RescueTelnet                                                                  bool // prepare-2k-sd --rescue-telnet
 	Stock, IncludePre                                                             bool // --stock (update: back to the stock firmware), --include-prereleases (releases, update)
 	UntestedOK                                                                    bool // --i-understand-untested (the native image builder)
 	// TelnetNegotiate (hidden): answer telnet option negotiation (default: stay silent, as validated on hardware).
@@ -69,6 +70,8 @@ func ParseArgs(argv []string) (*Options, error) {
 			o.Plain = true
 		case "--allow-unsigned":
 			o.AllowUnsigned = true
+		case "--rescue-telnet":
+			o.RescueTelnet = true
 		case "--allow-unknown-stock-comp":
 			o.AllowUnknownComp = true
 		case "--i-understand-untested":

@@ -16,6 +16,9 @@ Commands:
   image              build the Akam image from your backup
   backup-2k          2K only: back up the six flash partitions over SSH (read only, each read twice, checked,
                      kept in the camera's state folder; --out DIR for another new folder)
+  seed-2k            2K only, once, while it runs from the first-install card and BEFORE appfs-flash: copy the Wi-Fi
+                     settings and the SSH key of the card into the camera's /config/akam (done on the camera; nothing
+                     is shown or kept on this PC; a file already there is never overwritten; needs the SSH key set up)
   key-2k             2K only: have the camera create the admin API key of this assistant and keep it on this PC
                      (0600, never shown); with it `update` reads the model and version
   appfs-build        card-less 2K only (--model lsc-rotatable-2k-ak3918av130): build the appfs image from your
@@ -24,7 +27,9 @@ Commands:
                      --backup-dir DIR [--current-image FILE --hot|--hot-preflight] [--nvram] [--execute]);
                      --execute needs a terminal, the recovery acknowledgement and a typed confirmation
   prepare-2k-sd      2K only: prepare the first-install microSD card from the signed 2K kit (no flash is written;
-                     --kit FILE or the newest release; asks the SSH key, the Wi-Fi and the red-box yes/no)
+                     --kit FILE or the newest release; asks the SSH key, the Wi-Fi and the red-box yes/no).
+                     The card disables the rescue telnet (akam/no_telnet); --rescue-telnet keeps the passwordless
+                     root telnet of the card (port 23) for a rescue card
   prepare-flash-sd   prepare the microSD card used to flash the camera
   flash              write the image to the camera (SSH when Akam runs, else maintenance telnet)
   verify             check SSH, ports and hardware, then the same without the card
@@ -142,6 +147,7 @@ Options:
   --version X.Y.Z    firmware release to download for get-kit, or to put on the camera with update
   --model ID         camera model of the kit (default: the model found by the backup, or the only one)
   --allow-unsigned   accept a kit without a signature (checksum only)
+  --rescue-telnet    prepare-2k-sd: keep the passwordless root telnet on the card (rescue card only; default: disabled)
   --expect-sha256 H  require the kit sha256 to start with H (from the release notes)
   --backup-dir DIR   your backup folder (mtdblock0.bin ... mtdblock7.bin)
   --backup-copy DIR  also copy the backup folder to DIR (another medium) and check the copy

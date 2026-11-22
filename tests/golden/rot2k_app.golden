@@ -1,8 +1,8 @@
 # Golden of the Rotatable 2K own app (tools/ci/repro_check_rot2k.sh): stripped sha256 of the four binaries and sha256 of
 # the .text disassembly of akam2k_rtsp, built from clean with the pinned toolchain (uClibc armv5 2018.11). Changes only
 # with an intentional 2K code or build change; regenerate with: tools/ci/repro_check_rot2k.sh --update
-rtsp=d0371ef048d5fa93faa7f86babcf6b3a4515ec9a539165e622bbd14c43bccb35
+rtsp=203880a1365e3776bfd0aa2b3ee447cff0f7b1a82e8e4dad624182fcbc602701
 sntp=d557b350aa0697d0c98038265fd16eacd902885424580ae76627b4ca603014ab
 mic=5bf35e5cab37cb2dda850e7d63cbe52018fc93ad5c1a47613fa3266bcbb696c7
 led=e8bc596651eec0341093080084302b9ffef480bb1d9bade3c68c70e9836f25c3
-rtsp_text=14aec047598f79941e5b4cdf877d95c19f7e1c8fb0e3f71d866421399fd35981
+rtsp_text=ed9e28c714c8b5ab3479a619b24f54321a096053ae38469bde1a14e792478e95

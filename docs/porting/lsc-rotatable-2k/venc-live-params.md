@@ -80,7 +80,7 @@ re-open only (current close/open behaviour).
 ## 5. Limits
 - The kernel driver is not available: runtime acceptance of each ioctl is unverified.
 - `set_rc_param` struct size, `set_rc_type` value meaning, `set_iframe_param` full arguments and the exact fps/gop ladder come from partial disassembly: verify with `get_*` readbacks.
-- Stock `yy_cam` uses none of these setters (see `own-app-feasibility.md`); no public SDK header was found offline in the repo.
+- Stock `yy_cam` uses none of these setters (see `archive/rot2k-own-app-feasibility.md`); no public SDK header was found offline in the repo.
 
 ## 6. Implementation (app, `vlive.c`)
 - The capture thread tries the live path before the re-open (`a2k_vlive_apply`): fps -> `set_fps`; QP -> `set_qp`; rc vbr/cbr -> `set_rc_type(h, rc_mode)`;

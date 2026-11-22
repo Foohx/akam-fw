@@ -212,7 +212,6 @@ static int g_ring_n;
 static int g_prev_present = -1;
 static int64_t g_last_on;
 static char g_state[40] = "off";
-static unsigned g_published, g_connects;
 static volatile int g_running, g_done;
 static pthread_t g_tid;
 static a2k_mqtt_cfg_t g_cfg;
@@ -253,14 +252,6 @@ void a2k_mqtt_conn_state(char *out, size_t cap)
 {
     pthread_mutex_lock(&g_mu);
     snprintf(out, cap, "%s", g_state);
-    pthread_mutex_unlock(&g_mu);
-}
-
-void a2k_mqtt_stats(unsigned *published, unsigned *connects)
-{
-    pthread_mutex_lock(&g_mu);
-    *published = g_published;
-    *connects = g_connects;
     pthread_mutex_unlock(&g_mu);
 }
 
@@ -533,9 +524,6 @@ static int pub(conn_t *c, const char *topic, const char *payload, int retain)
     if (g_net->send_all(c->h, g_tx, (size_t)n) != 0)
         return -1;
     c->last_tx = g_net->now_ms();
-    pthread_mutex_lock(&g_mu);
-    g_published++;
-    pthread_mutex_unlock(&g_mu);
     return 0;
 }
 
@@ -744,7 +732,6 @@ static int pub_snapshot(conn_t *c, const a2k_mqtt_ids_t *ids)
     free(jpeg);
     c->last_tx = g_net->now_ms();
     pthread_mutex_lock(&g_mu);
-    g_published++;
     g_snap_sent++;
     pthread_mutex_unlock(&g_mu);
     return 0;
@@ -817,18 +804,6 @@ static int announce(conn_t *c, const a2k_mqtt_ids_t *ids, const struct a2k_mqtt_
     return pub_all(c, ids, d);
 }
 
-static const char *connack_reason(int rc)
-{
-    switch (rc) {
-    case 1: return "refused_protocol";
-    case 2: return "refused_id";
-    case 3: return "refused_unavailable";
-    case 4: return "refused_credentials";
-    case 5: return "refused_not_authorized";
-    default: return "refused";
-    }
-}
-
 /* Reads from the broker until one whole packet is in c->rx: 1 (p filled, drop it with consume), 0 nothing yet,
  * -1 malformed, -2 stop. */
 static int next_pkt(conn_t *c, mqtt_pkt_t *p)
@@ -883,7 +858,7 @@ static int handshake(conn_t *c, const mqtt_conn_t *mc, const char **reason)
                 return -1;
             }
             if (rc != 0) {
-                *reason = connack_reason(rc);
+                *reason = mqtt_connack_reason(rc);
                 return -1;
             }
             consume(c, p.total);
@@ -1019,7 +994,7 @@ static int obey_ctl(conn_t *c, a2k_mqtt_ids_t *ids, const mqtt_pub_t *m)
         return 0;
     (void)g_ctl.set(k, val);
     for (int e = 0; e < A2K_CTL_N; e++) /* the values, not the entities: a changed list of areas is announced by the resync the app asked for */
-        if ((e == k || e == A2K_CTL_AREAS || e == A2K_CTL_ZONES || e == A2K_CTL_IGNORE) && pub_ctl_one(c, ids, e) != 0)
+        if ((e == k || e == A2K_CTL_AREAS || e == A2K_CTL_ZONES || e == A2K_CTL_IGNORE || (k >= A2K_CTL_FLIP && k <= A2K_CTL_CEILING && e >= A2K_CTL_FLIP && e <= A2K_CTL_CEILING)) && pub_ctl_one(c, ids, e) != 0)
             return -1;
     return 0;
 }
@@ -1143,7 +1118,6 @@ static int session(char *reason, size_t rcap)
     accepted = 1;
     set_state("connected");
     pthread_mutex_lock(&g_mu);
-    g_connects++;
     g_ring_n = 0; /* the current state is published below: older transitions are history */
     g_det[0] = '\0'; /* and a detections list */
     free(g_snap); /* likewise a snapshot taken while the broker was away */
@@ -1389,7 +1363,6 @@ int a2k_mqtt_start(const char *conf_path, const char *mac_path, int rtsp_port, a
     g_stop = 0;
     g_done = 0;
     pthread_mutex_lock(&g_mu);
-    g_published = g_connects = 0;
     g_snap_sent = g_snap_dropped = 0;
     g_det_sent = g_det_dropped = 0;
     g_det[0] = '\0';

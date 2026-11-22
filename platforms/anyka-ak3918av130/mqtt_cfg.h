@@ -73,7 +73,7 @@ int a2k_mqtt_mac_load(const char *path, char mac[18]);
 /* Controls of person tracking, the zones and the push button (only with ids->ctl), after the PTZ entities. Index k of the ctl group (the
  * callbacks of mqtt_bind.h use it): 0 `track` switch (ON | OFF), 1 `zones` text and 2 `ignore_zones` text (zones.h: "name=x1,y1,x2,y2;...",
  * zone_mode=all|any in the first; "none" or empty clears), 3 `track_area_new` text (a new tracking area name: command only), 4 `track_areas`
- * sensor (read only), 5 `pan_only` switch (ON = the tracker never moves the tilt), then per tracking-area SLOT s (0..A2K_CTL_SLOTS-1, exists while s < ntarea) four entities: `tarea<s>` switch (enabled), buttons
+ * sensor (read only), 5 `pan_only` switch (ON = the tracker never moves the tilt), 6 `image_flip`, 7 `image_mirror`, 8 `ceiling_mount` switches (the picture orientation, orient.h), then per tracking-area SLOT s (0..A2K_CTL_SLOTS-1, exists while s < ntarea) four entities: `tarea<s>` switch (enabled), buttons
  * `tarea<s>_a` / `tarea<s>_b` (set corner A / B to the current position) and `tarea<s>_del`. Command topic BASE/<id>/set (button payload exactly
  * PRESS, switch ON / OFF, text: [0-9a-z_=,;:.@-], at most A2K_CTL_VAL - 1 bytes), state BASE/<id>/state. The `button` EVENT entity (event_type
  * press) publishes {"event_type":"press"} on BASE/button/event (not retained). */
@@ -83,7 +83,10 @@ int a2k_mqtt_mac_load(const char *path, char mac[18]);
 #define A2K_CTL_NEWAREA 3
 #define A2K_CTL_AREAS 4
 #define A2K_CTL_PANONLY 5 /* switch: ON = pan only tracking (track.tilt 0: the tilt never moves), OFF = pan and tilt */
-#define A2K_CTL_SLOT0 6
+#define A2K_CTL_FLIP 6    /* switch: ON = the picture is flipped vertically (settings row image.flip) */
+#define A2K_CTL_MIRROR 7  /* switch: ON = the picture is mirrored horizontally (image.mirror) */
+#define A2K_CTL_CEILING 8 /* switch: ON = flip and mirror both on (ceiling mount, image.ceiling); reads ON only while both are */
+#define A2K_CTL_SLOT0 9
 #define A2K_CTL_SLOTS 4
 #define A2K_CTL_PER_SLOT 4
 #define A2K_CTL_N (A2K_CTL_SLOT0 + A2K_CTL_SLOTS * A2K_CTL_PER_SLOT)

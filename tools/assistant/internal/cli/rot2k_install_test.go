@@ -69,3 +69,33 @@ func TestPrepare2KSD(t *testing.T) {
 		t.Fatalf("a card was prepared without a terminal:\n%s%s", r.out, r.err)
 	}
 }
+
+// The card disables the rescue telnet unless --rescue-telnet asks for it, and the rehearsal says which.
+func TestPrepare2KSDTelnetWording(t *testing.T) {
+	e := newEnv(t)
+	e.writeState("camera_model=" + rotModel + "\n")
+	r := e.run("", "--dry-run", "--model", rotModel, "prepare-2k-sd")
+	expectRC(t, r, 0)
+	contains(t, r.out, "disables the rescue telnet", "akam/no_telnet")
+	notContains(t, r.out, "NO password")
+	r = e.run("", "--dry-run", "--model", rotModel, "prepare-2k-sd", "--rescue-telnet")
+	expectRC(t, r, 0)
+	contains(t, r.out, "NO password", "rescue only")
+	notContains(t, r.out, "disables the rescue telnet")
+}
+
+// seed-2k: refused on a 1080p, the rehearsal changes nothing and says what it would do, a real run needs a terminal.
+func TestSeed2KCommand(t *testing.T) {
+	e := newEnv(t)
+	e.writeState("camera_model=" + rotModel + "\ncamera_ip=192.0.2.10\n")
+	r := e.run("", "--dry-run", "--model", rotModel, "seed-2k")
+	expectRC(t, r, 0)
+	contains(t, r.out, "/config/akam", "never overwritten", "Nothing secret is shown")
+	r = e.run("", "--model", rotModel, "seed-2k")
+	if r.rc == 0 {
+		t.Fatalf("seeding ran without a terminal:\n%s%s", r.out, r.err)
+	}
+	r = e.run("", "--model", lsc1080, "seed-2k")
+	expectRC(t, r, 1)
+	contains(t, r.out+r.err, "is not served by it")
+}

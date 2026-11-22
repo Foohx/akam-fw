@@ -38,15 +38,17 @@
 #
 #
 # kind (header, optional, added after format 1; an absent kind means native-app):
-#   native-app       Akam replaces the APP partition with its own image (the validated 1080p). A kit exists for it.
+#   native-app       Akam replaces the APP partition with its own image (the validated 1080p). A kit is built for it.
 #   decloud-overlay  the stock app stays in flash; Akam only cuts the cloud and enables the local services from an
-#                    SD-card overlay. No kit, no APP flash: the assistant refuses install and update for it until it
-#                    learns this kind (Phase 2), and the release scripts build no kit for it. A tool that does not
-#                    know a kind must treat the model as not actionable.
+#                    SD-card overlay. No kit, no APP flash: the assistant has no installer for it and refuses install
+#                    and update, and the release scripts build no kit for it. A tool that does not know a kind must
+#                    treat the model as not actionable.
 #   cardless-appfs   Akam runs from the camera's flash with no SD card: the appfs partition (squashfs) is replaced by
 #                    the stock appfs plus the Akam payload (build_appfs.sh, flash_appfs.sh); the first install and the
-#                    recovery use an SD card (build_card.sh). No kit; the release scripts build none and the assistant
-#                    refuses its install/update/backup/options flows until it implements them.
+#                    recovery use an SD card (build_card.sh). The release scripts build a kit for it
+#                    (tools/release/make_kit_2k.sh) and the Go assistant drives it with the 2K commands (prepare-2k-sd,
+#                    backup-2k, seed-2k, appfs-build, appfs-flash, update; host-tested only); it refuses the 1080p flows
+#                    on such a model.
 #
 # The sha256 of a stock APP dump is the dump of ONE camera: it is expected to be
 # identical on other units of the same firmware, which is still to be confirmed.

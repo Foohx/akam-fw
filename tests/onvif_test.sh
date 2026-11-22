@@ -20,7 +20,7 @@ SRC=$REPO/platforms/anyka-ak3918
 
 "$CC" -std=gnu99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
  -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/onvif_test" \
-    "$REPO/tests/native/onvif_test.c" "$REPO/src/net/onvif/onvif.c" "$REPO/firmware/lsc-indoor-1080p-ak3918/onvif_model.c" "$SRC/onvif_device.c" "$SRC/onvif_media.c" "$SRC/onvif_imaging.c" \
+    "$REPO/tests/native/onvif_test.c" "$REPO/src/net/onvif/onvif.c" "$REPO/src/net/onvif/onvif_common.c" "$REPO/firmware/lsc-indoor-1080p-ak3918/onvif_model.c" "$SRC/onvif_device.c" "$SRC/onvif_media.c" "$SRC/onvif_imaging.c" \
     "$REPO/tests/native/onvif_stubs.c" "$REPO/src/net/onvif/http_srv.c" "$REPO/src/net/onvif/soap.c" \
     "$REPO/src/net/crypto/cred.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" "$REPO/src/net/crypto/sha1.c" "$REPO/src/net/crypto/b64.c" "$SRC/video_cfg.c" -pthread
 mkdir "$WORK/d"

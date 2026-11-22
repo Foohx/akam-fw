@@ -405,7 +405,7 @@ static bool in_window(int64_t created, int64_t mono_s, int64_t off, int64_t *exp
  * nonce while the cache is full (refused, not counted: nothing suggests an attack). */
 static int fresh_and_remember(const char *created, const uint8_t *nonce, size_t nn)
 {
-    int64_t c, exp1, exp2 = 0, mono_s = cred_mono_us() / 1000000, wall = cred_wall_s();
+    int64_t c, exp1 = 0, exp2 = 0, mono_s = cred_mono_us() / 1000000, wall = cred_wall_s();
     if (!parse_created(created, &c)) return 0;
     clock_track(mono_s, wall, c);
     bool ok = in_window(c, mono_s, S.off_s, &exp1);

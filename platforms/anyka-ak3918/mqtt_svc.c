@@ -511,18 +511,6 @@ static int next_pkt(conn_t *c, mqtt_pkt_t *p)
     return r;
 }
 
-static const char *connack_reason(int rc)
-{
-    switch (rc) {
-    case 1: return "refused_protocol";
-    case 2: return "refused_id";
-    case 3: return "refused_unavailable";
-    case 4: return "refused_credentials";
-    case 5: return "refused_not_authorized";
-    default: return "refused";
-    }
-}
-
 /* Send CONNECT and wait for the CONNACK. 0 = accepted, else -1 with *reason. */
 static int handshake(conn_t *c, uint8_t *tx, size_t txcap, const mqtt_conn_t *mc, const char **reason)
 {
@@ -537,7 +525,7 @@ static int handshake(conn_t *c, uint8_t *tx, size_t txcap, const mqtt_conn_t *mc
         if (r > 0) {
             int sp, rc;
             if (mqtt_dec_connack(&p, &sp, &rc) != 0) { *reason = "protocol"; return -1; }
-            if (rc != 0) { *reason = connack_reason(rc); return -1; }
+            if (rc != 0) { *reason = mqtt_connack_reason(rc); return -1; }
             consume(c, p.total);
             return 0;
         }

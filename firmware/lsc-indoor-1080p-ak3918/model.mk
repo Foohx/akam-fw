@@ -45,6 +45,8 @@ SRCS     = main.c \
           audio_out.c \
           rtsp_session.c \
           $(call common_src,h264_params) \
+          $(call common_src,h264_nalu) \
+          $(call common_src,rtcp_sr) \
           $(call common_src,rtp_clock) \
           $(call common_src,net_tx) \
           $(call common_src,tx_pace) \
@@ -60,7 +62,7 @@ SRCS     = main.c \
           $(call common_src,sha1) \
           $(call common_src,b64) \
           $(call common_src,cred) \
-          $(call feat_objs,ONVIF,$(call common_src,http_srv) $(call common_src,soap) $(call common_src,onvif)) \
+          $(call feat_objs,ONVIF,$(call common_src,http_srv) $(call common_src,soap) $(call common_src,onvif) $(call common_src,onvif_common)) \
           $(call feat_objs,ONVIF,onvif_cfg.c $(MODEL_DIR)/onvif_model.c onvif_device.c onvif_media.c onvif_imaging.c) \
           $(call feat_objs,ONVIF,$(call common_src,wsd)) \
           $(if $(call feat_on,ONVIF),,onvif_off.c) \

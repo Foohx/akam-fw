@@ -2,9 +2,10 @@
 # Feature switches (src/build/features.mk, firmware/<model>/model.mk) must gate something real.
 #   1080p: AKAM_FEAT_ONVIF=0 drops every ONVIF object (the object list has none, onvif_off.c stands in) and the program still LINKS, without the
 #          ONVIF code (no service string in the binary); the default (=1) object list has them all. The link needs the pinned Zig (skipped without).
-#   2K:    PTZ / TRACK / SCENE / PATROL = 0 drop their objects from the link list, but the model code calls them unconditionally, so the build refuses
-#          the switch with a clear error (until the 2K model directory is split); AKAM_ALLOW_UNLINKABLE=1 shows the dropped list. An unknown
-#          feature (WIFI5G, which gated nothing, was removed) is a make error.
+#   2K:    PTZ / TRACK / SCENE / PATROL = 0 drop their objects (and the shared modules only they use) from the link list and link <feature>_off.c
+#          instead (firmware/<model>/*_off.c: "not available" answers), so each variant LINKS. The ARM link of every variant (one at a time and all
+#          four off) runs when the pinned uClibc toolchain, the vendor libraries and SmolRTSP are present. An unknown feature (WIFI5G, which gated
+#          nothing, was removed) is a make error.
 # Group "native" (uses the pinned Zig when present).
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -19,6 +20,7 @@ ok() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 ko() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; }
 check() { local d=$1; shift; if "$@"; then ok "$d"; else ko "$d"; fi; }
 fails() { ! "$@" >"$WORK/out.txt" 2>&1; }
+quiet() { "$@" >"$WORK/make.log" 2>&1; }
 outhas() { grep -q -- "$1" "$WORK/out.txt"; }
 
 # ---- 1080p: the object list
@@ -44,16 +46,39 @@ fi
 
 # ---- 2K
 all=$(make -s -C "$P2" print-sources | sed "s|^$REPO/||")
+none=$(make -s -C "$P2" AKAM_FEAT_PTZ=0 AKAM_FEAT_TRACK=0 AKAM_FEAT_SCENE=0 AKAM_FEAT_PATROL=0 print-sources | sed "s|^$REPO/||")
+declare -A OBJS=(
+    [PTZ]="ptz.c hal_ptz.c hal_ptz_drv.c ptz_desc.c onvif_ptz.c ptz_vel.c ptz_lease.c drift_match.c"
+    [TRACK]="track.c track_run.c track_logic.c track_relay.c"
+    [SCENE]="scene.c scene_check.c"
+    [PATROL]="patrol.c patrol_run.c ptz_patrol.c")
+declare -A OFFC=([PTZ]=ptz_off.c [TRACK]=track_off.c [SCENE]=scene_off.c [PATROL]=patrol_off.c)
 for f in PTZ TRACK SCENE PATROL; do
-    check "2K $f=0 is refused with a clear error" fails make -s -C "$P2" "AKAM_FEAT_$f=0" print-sources
-    check "2K $f=0: the message names the switch" outhas "AKAM_FEAT_$f := 0 does not link"
-done
-none=$(make -s -C "$P2" AKAM_ALLOW_UNLINKABLE=1 AKAM_FEAT_PTZ=0 AKAM_FEAT_TRACK=0 AKAM_FEAT_SCENE=0 AKAM_FEAT_PATROL=0 print-sources | sed "s|^$REPO/||")
-for o in ptz.c hal_ptz.c hal_ptz_drv.c ptz_desc.c track.c track_run.c scene.c patrol.c patrol_run.c onvif_ptz.c ptz_patrol.c scene_check.c drift_match.c ptz_vel.c ptz_lease.c track_logic.c track_relay.c; do
-    check "2K default: $o is in the link" bash -c "echo '$all' | grep -q '/$o\$'"
-    check "2K all four off: $o is dropped" bash -c "! echo '$none' | grep -q '/$o\$'"
+    one=$(make -s -C "$P2" "AKAM_FEAT_$f=0" print-sources | sed "s|^$REPO/||")
+    check "2K $f=0 is accepted (no refusal, no AKAM_ALLOW_UNLINKABLE escape)" test -n "$one"
+    for o in ${OBJS[$f]}; do
+        check "2K default: $o is in the link" bash -c "echo '$all' | grep -q '/$o\$'"
+        check "2K $f=0: $o is dropped" bash -c "! echo '$one' | grep -q '/$o\$'"
+        check "2K all four off: $o is dropped" bash -c "! echo '$none' | grep -q '/$o\$'"
+    done
+    check "2K $f=0: ${OFFC[$f]} stands in" bash -c "echo '$one' | grep -q '/${OFFC[$f]}\$' && ! echo '$all' | grep -q '/${OFFC[$f]}\$'"
 done
 check "2K all four off: the rest of the program is still listed" bash -c "echo '$none' | grep -q '/main.c\$' && echo '$none' | grep -q '/settings.c\$'"
+check "the AKAM_ALLOW_UNLINKABLE escape is gone from the 2K model" bash -c "! grep -rq AKAM_ALLOW_UNLINKABLE '$REPO/firmware' '$REPO/platforms' '$REPO/src'"
+
+# every variant links for ARM (needs the pinned uClibc toolchain, the vendor libraries of YOUR backup and the SmolRTSP checkout)
+TCBIN=$REPO/tools/.toolchain/armv5-eabi--uclibc--stable-2018.11-1/bin/arm-linux-gcc
+VENDOR_LIB=$(make -s -C "$P2" -p -n 2>/dev/null | sed -n 's/^VENDOR := //p' | head -1)
+if [ -x "$TCBIN" ] && [ -n "$VENDOR_LIB" ] && [ -d "$VENDOR_LIB" ] && [ -d "$REPO/third_party/smolrtsp/build/_deps" ]; then
+    for v in "PTZ" "TRACK" "SCENE" "PATROL" "PTZ TRACK SCENE PATROL"; do
+        args=""
+        for f in $v; do args="$args AKAM_FEAT_$f=0"; done
+        # shellcheck disable=SC2086
+        check "2K links with: ${v// /=0 }=0" quiet make -s -C "$P2" OUT="$WORK/b2k_${v// /_}" $args poc3
+    done
+else
+    echo "  skip - no uClibc toolchain, vendor libraries or SmolRTSP checkout: the 2K variant links were not run"
+fi
 check "an unknown feature (WIFI5G) is a make error" fails make -s -C "$P2" AKAM_FEAT_WIFI5G=1 print-sources
 check "the unknown-feature error names it" outhas "unknown feature AKAM_FEAT_WIFI5G"
 

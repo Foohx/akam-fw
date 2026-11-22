@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "log.h"
+#include "orient.h"
 #include "store.h"
 #include "zlive.h"
 #include "hal_ptz.h"
@@ -57,16 +58,19 @@ int a2k_zlive_set_text(int which, const char *text)
     a2k_zones_t t;
     char file[A2K_STORE_MAX + 1];
     void (*fn)(const a2k_zones_t *);
-    int n;
+    int n, of, om;
     char path[sizeof g_path];
+    a2k_orient_get(&of, &om);
     pthread_mutex_lock(&g_wmu);
     pthread_mutex_lock(&g_mu);
     t = g_z;
+    a2k_zones_orient(&t, of, om); /* the text is what the viewer sees (displayed frame); the store is in the sensor frame (zones.h) */
     if (a2k_zones_set_text(&t, which, text) != 0) {
         pthread_mutex_unlock(&g_mu);
         pthread_mutex_unlock(&g_wmu);
         return -1;
     }
+    a2k_zones_orient(&t, of, om);
     n = a2k_zones_format(&t, A2K_ZF_FILE, '\n', file, sizeof file);
     if (n < 0 || n > A2K_ZONES_FILE_MAX) { /* would not load back: refused */
         pthread_mutex_unlock(&g_mu);
@@ -90,7 +94,10 @@ int a2k_zlive_set_text(int which, const char *text)
 void a2k_zlive_get_text(int which, char *out, size_t cap)
 {
     a2k_zones_t t;
+    int of, om;
+    a2k_orient_get(&of, &om);
     a2k_zlive_get(&t, NULL);
+    a2k_zones_orient(&t, of, om); /* shown in the displayed frame */
     if (a2k_zones_format(&t, which, ';', out, cap) < 0 && cap)
         out[0] = '\0';
 }

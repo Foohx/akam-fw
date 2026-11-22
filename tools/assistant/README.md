@@ -8,7 +8,7 @@ WAV are built in. The plan is in [specs/installer.md](../../specs/installer.md).
 camera that already runs Akam, gets and verifies the kit, updates or restores a camera over SSH, does the whole first
 install from a stock camera (telnet detection, backup, built-in microSD writer, flash), and since phase 11 it is built
 for six targets (Linux, Windows and macOS, amd64 and arm64) and has a home screen, a camera chooser, option screens, a
-backup over SSH and a guided update. **The bash wizard (`./akam`) remains the reference on Linux.** The program never
+backup over SSH and a guided update. **The bash wizard (`./akam`) remains the reference on Linux for the 1080p.** The LSC Rotatable 2K commands (`backup-2k`, `prepare-2k-sd`, `seed-2k`, `key-2k`, `appfs-build`, `appfs-flash`, `update`) exist only in this program and are host-tested only. The program never
 reboots or power-cycles a camera: after a flash it tells you to do it by hand. Evidence: host tests on fake cameras and
 files, plus a few real-camera checks of the SSH and 8091 paths (see [testing status](../../docs/testing-status.md)).
 **Nothing was run on a real Windows or macOS computer**, and no Windows or macOS card write has been tried.

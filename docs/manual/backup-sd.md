@@ -1,7 +1,7 @@
 # Back Up the Camera with a microSD Root Shell (manual, no UART)
 
 > **Advanced / manual procedure (without the wizard).** `./akam prepare-backup-sd`, `find-camera` and
-> `backup` do all of this for you ([README](../../README.md#install-quick-start)). Read on to understand or audit what
+> `backup` do all of this for you ([README](../../README.md#quick-start)). Read on to understand or audit what
 > they do, or when you cannot run the wizard.
 
 This is an alternative to the UART route in [backup by UART](backup-uart.md). It gets a

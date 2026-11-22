@@ -51,8 +51,12 @@ With the video password off, ONVIF still starts but only answers read calls. Tec
 ## Rotatable 2K: ONVIF with PTZ (opt-in)
 
 The LSC Rotatable 2K runs the same shared ONVIF core (`src/net`: `http_srv`, `soap`, `onvif`, `wsd`, `cred`) with its own model binding
-(`platforms/anyka-ak3918av130/akam2k_onvif*.c`). Its point is **smooth pan/tilt from ONVIF clients**: a held ContinuousMove drives the
+(`platforms/anyka-ak3918av130/onvif_services.c`, `onvif_ptz.c`, `onvif_model.c`). Its point is **smooth pan/tilt from ONVIF clients**: a held ContinuousMove drives the
 motor's continuous mode (`a2k_ptz_vel`) instead of one 200-step jump at a time. Not tested on the real camera yet.
+
+Directions are the viewer's: pan right / tilt up in ContinuousMove (and in `ptz.vel`, MQTT `ptz_vel` and the step buttons) mean right / up in the picture, also when
+the picture is mirrored, flipped or ceiling-mounted (`image.mirror`, `image.flip`, `image.ceiling`: the mirror reverses the motor's pan sign, the flip its tilt sign; presets
+and patrol positions are motor positions and do not change). Not verified on the camera.
 
 - **Off by default.** `akam2k.conf`: `onvif=1` (and optionally `onvif_port=N`), then restart the app. `GET /akam/v1/state` shows `onvif.state`
   (`off`, `on:<port>`, `no_password`, `error:bad_port|port_in_use|permission_denied|http_failed|discovery_failed|auth_broken`);

@@ -100,7 +100,6 @@ int talk_gate_mic(const talk_t *t, int16_t *pcm, size_t n, int64_t now_us)
     return 1;
 }
 
-int64_t talk_last_rtp_us(const talk_t *t) { return t->last_rtp_us; }
 
 /* ------------------------------------------------------------------------
  * Process-wide instance on audio_out.c

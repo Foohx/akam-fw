@@ -1,10 +1,12 @@
 # Parity matrix: 1080p versus the Rotatable 2K
 
+> Archived document (2026-11): historical, kept for its findings. Paths and status may predate the repository reorganisation (old to new table: `tools/dev/path-map.txt`); current docs are in [docs/README.md](../README.md).
+
 Directive: the LSC Smart Indoor 1080p (`platforms/anyka-ak3918`) reaches the same level of features and remote control as the
 LSC Rotatable 2K (`platforms/anyka-ak3918av130`, `akam2k_*`), each within its own hardware. Written from
 the code of both (dev 6d3a9f4), no camera access. The ordered plan is in [convergence-plan.md](convergence-plan.md) section 7.
 
-Legend. **HW** = validated on a camera (per [testing-status.md](testing-status.md) and the porting docs); **host** = host
+Legend. **HW** = validated on a camera (per [testing-status.md](../testing-status.md) and the porting docs); **host** = host
 tests only (fake hardware), never on a camera. Shared code: `C` = already in `src`, `2K` = only in the 2K app
 (`platforms/anyka-ak3918av130/`, portable, move candidate), `1080` = only in `platforms/anyka-ak3918`.
 Cells marked "(check)" were read from docs, not re-proven.
@@ -52,7 +54,7 @@ Cells marked "(check)" were read from docs, not re-proven.
 ## Status of the 1080p porting (2026-11-17, branch `convergence/p4-p8`)
 
 P4, P6, P7 and P8 are done and host-tested; nothing of them has run on a camera (checklist B1-B14 in
-[hardware-test-checklists.md](hardware-test-checklists.md)). P5 (`swdog` split) was skipped on purpose (not needed). Still open: P9 (MQTT from the
+[hardware-test-checklists.md](../hardware-test-checklists.md)). P5 (`swdog` split) was skipped on purpose (not needed). Still open: P9 (MQTT from the
 registry), P10 (live video and QP), P11 (second stream, button, JPEG), P12 (`log.*` rows), P13 (reverse parity), and the assistant side of the key tool.
 
 ## Reading

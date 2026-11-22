@@ -15,6 +15,7 @@
 #include "detect.h"
 #include "isp.h"
 #include "log.h"
+#include "orient.h"
 #include "video.h"
 #include "vlive.h"
 #include "isptest.h"
@@ -621,6 +622,16 @@ int a2k_isp_effect(int type, int value)
     return rc;
 }
 
+int a2k_isp_flip_mirror(int flip, int mirror)
+{
+    int rc;
+    if ((flip != 0 && flip != 1) || (mirror != 0 && mirror != 1))
+        return -1;
+    rc = ak_vpss_switch_flip_mirror(0, flip, mirror);
+    a2k_log("ak_vpss_switch_flip_mirror(0, %d, %d) = %d", flip, mirror, rc);
+    return rc;
+}
+
 int a2k_isp_wdr(int on)
 {
     return a2k_isp_effect(A2K_FX_WDR, on ? 40 : 0);
@@ -667,6 +678,12 @@ int a2k_isp_mode(int night)
 {
     int rc = ak_vi_switch_mode(0, night ? 1 : 0);
     a2k_log("ak_vi_switch_mode(0, %d) = %d", night ? 1 : 0, rc);
+    if (rc == 0) { /* the stock does not replay the flip after a mode switch; the call is absolute (not a toggle), so replaying it is harmless when the lib kept it */
+        int f, m;
+        a2k_orient_get(&f, &m);
+        if (f || m)
+            (void)a2k_isp_flip_mirror(f, m);
+    }
     for (int c = 0; c < NCHN; c++)
         if (g_ch[c].started)
             a2k_stream_want_idr(g_ch[c].s);

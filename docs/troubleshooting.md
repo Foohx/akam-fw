@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> Written for the LSC Indoor 1080p. The 2K has its own pages: [LSC Rotatable 2K](porting/lsc-rotatable-2k/README.md).
+
 **What this page is for:** something does not work (no network, no video, a password refused, a card problem)
 and you want the fix. Look for your symptom in the headings below.
 

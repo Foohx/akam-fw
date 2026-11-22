@@ -10,10 +10,10 @@ pressed. See `stock-firmware-reference.md`.
 **Layers (docs/hal-architecture.md).**
 
 - `app/hal_input.c/.h` portable: descriptor `{name, gpio, active_low, debounce_ms}`, the debouncer, the driver interface (`setup`, `read`). The
-  generic sysfs driver is `app/hal_input_sysfs.c`; the 2K descriptor is in `hal.c` (`button`, 71, active low, 50 ms).
-- `app/button_gesture.c`, `button_cfg.c`, `button_logic.c`, `button_rt.c` (below): the gesture engine, the bindings, the policy and the runtime.
-- `app/button.c`: the thread (20 ms poll, 32 KiB stack), the real actions.
-- `app/pin.c` stays the ONLY file that touches the GPIO subsystem. Pin 71 is an **input-only** pin: `a2k_pin_allowed(71)` is still 0, the output
+  generic sysfs driver is `firmware/lsc-rotatable-2k-ak3918av130/hal_input_sysfs.c`; the 2K descriptor is in `hal.c` (`button`, 71, active low, 50 ms).
+- `src/features/button/button_gesture.c`, `button_cfg.c`, `button_logic.c`, `button_rt.c` (below): the gesture engine, the bindings, the policy and the runtime.
+- `firmware/lsc-rotatable-2k-ak3918av130/button.c`: the thread (20 ms poll, 32 KiB stack), the real actions.
+- `firmware/lsc-rotatable-2k-ak3918av130/pin.c` stays the ONLY file that touches the GPIO subsystem. Pin 71 is an **input-only** pin: `a2k_pin_allowed(71)` is still 0, the output
   whitelist stays 24 / 25 / 48 / 56, `a2k_pin_open_in(71)` writes `in` to the direction file and opens the value file O_RDONLY, nothing is ever written to it.
 
 **Programmable.** Every press pattern is a gesture bound to up to four whitelisted actions; the factory behaviour is just the default binding. Layers:
@@ -97,7 +97,7 @@ without a binding is cleared with an empty retained config; a change of the bind
 
 ## Runtime image zones and ignore zones
 
-The detection zones of `own-app-feasibility.md` ("Detection zones") are now editable at run time, and a second kind exists.
+The detection zones of `archive/rot2k-own-app-feasibility.md` ("Detection zones") are now editable at run time, and a second kind exists.
 
 **Format** (the card file `akam/zones`, extended; the runtime file has the same syntax):
 
@@ -110,6 +110,12 @@ sky=0,0,100,20@screen    optional anchor suffix on any zone or ignore rectangle:
 
 A person whose **feet point** (bottom centre of its box) lies in an ignore rectangle is dropped before anything else: no presence, no zone sensor, no
 tracking. Zone names starting with `ignore_` are reserved. The file holds at most 1024 bytes.
+
+**Frame (flip / mirror).** The rectangles of the card file and of `/config/akam/zones` are in the **sensor frame** (the picture with `image.flip` and `image.mirror`
+off), so a zone keeps covering the same part of the room when you turn the orientation on or off (`a2k_zones_orient`, isp-controls.md 3.3). The two Home Assistant
+`text` entities show and accept the **displayed** frame, i.e. what the picture shows now: with the mirror on, a zone drawn at the left of the picture is typed with
+x near 0 and stored mirrored. With the orientation off nothing changes. After an orientation change made over the API the text entities show the new values at the
+next announcement (change them from Home Assistant, or restart the integration, to refresh at once).
 
 **Source at start:** `/config/akam/zones` (jffs2, written by the edits below) if it exists and is valid (an EMPTY runtime file is valid and means "no zone": it
 wins over the card), else the card `akam/zones`. Delete `/config/akam/zones` to go back to the card file.
@@ -138,7 +144,7 @@ whole text (or file) invalid. The position the zone "belongs to" is home only: z
 
 The two RTSP streams (0 = main 2304x1296 H.264 Main, 1 = sub 640x360 H.264 Main, Baseline if the encoder refuses Main) each have seven settings. The **defaults are unchanged** (what the app always ran:
 15 fps, VBR, QP 32..51 main / 26..44 sub, target `main_kbps` 2000 / `sub_kbps` 800, peak 1.25 x the target, GOP `gop` 30). The stock firmware uses AVBR 630/800 kbit/s on the
-main stream (PLAN.md "Point 4"); `video0_rc=avbr` with `video0_kbps=630` reproduces it.
+main stream (archive/rot2k-porting-plan.md "Point 4"); `video0_rc=avbr` with `video0_kbps=630` reproduces it.
 
 | setting | `akam2k.conf` key | Home Assistant entity (`number` / `select`, category config) | range main / sub |
 |---|---|---|---|

@@ -986,10 +986,6 @@ func (a *App) flashTelnetManual(md5 string) error {
 
 // ---------------------------------------------------------------- flash command
 
-func (a *App) camAfterFlash() {
-	a.afterFlash()
-}
-
 // cmdFlash is cmd_flash.
 func (a *App) cmdFlash() error {
 	if err := a.stepNeed("flash"); err != nil {

@@ -1,8 +1,10 @@
 # The setup wizard: menu, steps and the native binary
 
+> Written for the LSC Indoor 1080p. The 2K has its own pages: [LSC Rotatable 2K](porting/lsc-rotatable-2k/README.md).
+
 This page is for people who want to know what `./akam` does at each step, how its menu works, and what the
 experimental single-file `akam` binary can and cannot do. To install Akam you only need the short steps in the
-[README](../README.md#install-quick-start).
+[README](../README.md#quick-start).
 
 ## The menu
 

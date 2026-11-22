@@ -35,7 +35,7 @@ inputs() { # absolute paths of every input of the akam2k_rtsp hash
 }
 case "${1:-}" in
     sntp) printf '%s\n' "$fw"/helpers/sntp/*.c "$fw"/helpers/sntp/*.h | hash_files ;;
-    audio) printf '%s\n' "$fw"/helpers/mic/*.c "$fw"/helpers/mic/*.h | hash_files ;;
+    audio) printf '%s\n' "$fw"/helpers/mic/*.c "$fw"/helpers/mic/*.h "$root"/src/hal/akpcm.h | hash_files ;;
     led)
         # shellcheck disable=SC2046
         closure $(mk print-led-sources) | hash_files

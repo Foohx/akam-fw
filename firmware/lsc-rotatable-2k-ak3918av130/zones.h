@@ -15,6 +15,8 @@
  * ANCHOR (optional suffix of the rectangle, zones and ignore rectangles alike): `<name>=x1,y1,x2,y2@screen` is always active, image-relative,
  *                        whatever the camera position; `@position` (also what NO suffix means) is active only at the position it belongs to
  *                        (the ptz state home, or not managed) and suspended while the camera is moved, parked or calibrating.
+ * FRAME: the rectangles of this file are in the SENSOR frame (the picture with image.flip and image.mirror off), so a zone keeps covering the same part of the
+ * scene when the orientation is changed; the text entities and the detection work in the displayed frame and convert (a2k_zones_orient, orient.h).
  * Any other line, a bad value, a duplicate or a ninth zone / ninth ignore rectangle makes the whole file invalid: the app then logs it once and
  * keeps the whole image (an invalid zones file never silences the detection).
  *
@@ -74,6 +76,10 @@ int a2k_zones_set_text(a2k_zones_t *z, int which, const char *text);
  * `home` (the camera is where the zones were drawn); @screen ones are always on. When no zone is on, the zone part is cleared (n = 0: the
  * whole image counts, like a configuration without zones); the indexes of the zones that stay are those of cfg. */
 void a2k_zones_effective(const a2k_zones_t *cfg, int home, a2k_zones_t *out);
+/* Converts every zone and ignore rectangle of *zs between the SENSOR frame and the DISPLAYED frame (orient.h: mirror reverses x, flip reverses y; the same call
+ * converts both ways). The stored data (the files, a2k_zlive) is in the sensor frame, so it keeps its meaning when the orientation changes; the detection and the text
+ * entities work in the displayed frame. Names, anchors, off flags and the mode are untouched. */
+void a2k_zones_orient(a2k_zones_t *zs, int flip, int mirror);
 /* Bit mask of the zones that are not off. */
 unsigned a2k_zones_active_mask(const a2k_zones_t *zs);
 /* 1 when the feet point of box b is inside zone z. */

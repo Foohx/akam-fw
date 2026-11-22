@@ -10,21 +10,6 @@ void rtp_in_init(rtp_in_t *r)
     r->last_pt = -1;
 }
 
-const char *rtp_in_result_name(rtp_in_result_t r)
-{
-    switch (r) {
-    case RTP_IN_OK:           return "ok";
-    case RTP_IN_DROP_SHORT:   return "short";
-    case RTP_IN_DROP_BIG:     return "big";
-    case RTP_IN_DROP_VERSION: return "version";
-    case RTP_IN_DROP_PADDING: return "padding";
-    case RTP_IN_DROP_PT:      return "payload-type";
-    case RTP_IN_DROP_EMPTY:   return "empty";
-    case RTP_IN_DROP_DUP:     return "duplicate";
-    }
-    return "?";
-}
-
 static rtp_in_result_t drop(rtp_in_t *r, rtp_in_result_t why)
 {
     r->dropped++;

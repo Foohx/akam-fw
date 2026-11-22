@@ -27,7 +27,7 @@ done
 "$CC" -std=gnu99 -Wall -Wextra -Wno-unused-parameter -pthread "${INC[@]}" -DSMOLRTSP_WITH_H264 \
     -DRTSP_AUTH_PATH="\"$WORK/rtsp_auth\"" -o "$WORK/ports" \
     "$HERE/rot2k_rtsp_ports_unit.c" "$REPO/platforms/anyka-ak3918av130/rtsp_session.c" "$REPO/platforms/anyka-ak3918av130/stream.c" "$REPO/platforms/anyka-ak3918av130/aring.c" \
-    "$REPO/src/net/rtsp/h264_params.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/rtsp/rtsp_idle.c" "$REPO/src/net/rtsp/rtsp_in.c" "$REPO/src/net/rtsp/rtsp_sdp.c" "$REPO/src/net/rtsp/net_tx.c" \
+    "$REPO/src/net/rtsp/h264_params.c" "$REPO/src/net/rtsp/h264_nalu.c" "$REPO/src/net/rtsp/rtcp_sr.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/rtsp/rtsp_idle.c" "$REPO/src/net/rtsp/rtsp_in.c" "$REPO/src/net/rtsp/rtsp_sdp.c" "$REPO/src/net/rtsp/net_tx.c" \
     "$REPO/src/net/rtsp/tx_pace.c" "$REPO/src/net/crypto/md5.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
 rc=0; timeout 60 "$WORK/ports" >"$WORK/out" 2>&1 || rc=$?; cat "$WORK/out"; echo "exit $rc"
 grep -q 'rot2k rtsp ports unit: 0 failed' "$WORK/out"

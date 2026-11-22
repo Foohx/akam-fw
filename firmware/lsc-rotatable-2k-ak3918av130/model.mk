@@ -21,19 +21,17 @@ AKAM_FEAT_TRACK  := 1
 AKAM_FEAT_SYS    := 1
 AKAM_FEAT_LIGHT  := 1
 AKAM_FEAT_ONVIF  := 1
-SHARED_AK := h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtp_clock tx_pace net_tx md5 mqtt mqtt_ha night_logic cfg_file
-# PTZ, TRACK, SCENE and PATROL gate their objects below (a 0 really drops ptz/hal_ptz, track, scene, patrol and their shared modules), but the model code
-# that stays (settings.c, detect.c, main.c, mqtt_bind.c, the API binding ...) still calls them without an `ifdef`, so a build with one of them off does not
-# link (measured: SCENE 5 undefined symbols, PATROL 19, TRACK 43, PTZ 50). That needs a stub layer per feature, to be written together with the split of this
-# directory (docs/hacking.md, "the 2K model directory"). Until then the switch is refused instead of failing at the linker;
-# AKAM_ALLOW_UNLINKABLE=1 lifts the refusal (to list the symbols a stub layer has to provide).
-$(foreach f,PTZ TRACK SCENE PATROL,$(if $(filter 1,$(AKAM_FEAT_$(f))),,$(if $(AKAM_ALLOW_UNLINKABLE),,$(error AKAM_FEAT_$(f) := 0 does not link on this model yet: the model code calls $(f) unconditionally, see the comment in $(MODEL_DIR)/model.mk))))
+SHARED_AK := h264_params h264_nalu rtcp_sr rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtp_clock tx_pace net_tx md5 mqtt mqtt_ha night_logic cfg_file
+# PTZ, TRACK, SCENE and PATROL gate their objects below: with one at 0 its objects (and the shared modules only it uses) are dropped and <feature>_off.c
+# is linked instead. The model code that stays (settings.c, detect.c, main.c, mqtt_bind.c, the API binding ...) calls the feature unconditionally; the
+# stand-ins answer "not available" (a refusal, an empty value, nothing), so the program links and runs without the feature.
+# tests/feature_switch_test.sh builds every variant.
 
 # Link order = the pre-move order of the objects (section placement of the stripped binary follows it). Never sort it, never use a wildcard.
 # `c:` names a shared module of src/ (src/build/sources.mk; feature-gated when wrapped in feat_objs), the other names are sources of this
 # directory (firmware/<model>) or of the platform directory (platforms/anyka-ak3918av130), found by the pattern rules of the platform Makefile.
 # A model without a feature links none of its shared objects.
-POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring audio cap stream rtsp_session detect detstate mqtt_bind mqtt_cfg zones snap pin ircut image night_ctl night_run \
+POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring audio cap stream rtsp_session detect detstate mqtt_bind mqtt_cfg zones snap pin ircut image orient night_ctl night_run \
   $(call feat_objs,SYS,c:hal_sys) \
   leds leds_run hal hal_light_sysfs \
   $(call feat_objs,LIGHT,c:light_logic c:led_pat) \
@@ -49,7 +47,10 @@ POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring 
   $(call feat_objs,API,c:api_limit c:api_keys c:api_sig c:sha256 c:json_min c:settings_reg) \
   $(addprefix c:,$(SHARED_AK)) \
   $(call feat_objs,PTZ,c:ptz_vel c:ptz_lease) \
-  $(call feat_objs,ONVIF,c:http_srv c:soap c:onvif c:wsd c:cred c:sha1 c:b64 onvif_services $(if $(and $(call feat_on,ONVIF),$(call feat_on,PTZ)),onvif_ptz) onvif_model)
+  $(call feat_objs,ONVIF,c:http_srv c:soap c:onvif c:onvif_common c:wsd c:cred c:sha1 c:b64 onvif_services $(if $(and $(call feat_on,ONVIF),$(call feat_on,PTZ)),onvif_ptz) onvif_model)
+
+# Stand-ins of the features that are off (firmware/<model>/<feature>_off.c). Listed last: no effect on a build that has every feature on.
+POC3_ORDER += $(if $(call feat_on,PTZ),,ptz_off) $(if $(call feat_on,TRACK),,track_off) $(if $(call feat_on,SCENE),,scene_off) $(if $(call feat_on,PATROL),,patrol_off)
 
 # ---- helper programs of this model --------------------------------------------------------------------------------------------------------------
 # HELPERS = key:binary:argument of image/source_hash.sh. The platform Makefile builds them in the symcheck/dist targets and records them in BUILDINFO
@@ -73,7 +74,7 @@ mic: $(OUT)/akam2k_mic
 $(OUT)/akam2k_mic: $(MIC_SRC) $(MODEL_DIR)/helpers/mic/mic_core.h
 	@test -x "$(CC)" || { echo "toolchain missing: run fetch_toolchain.sh"; exit 1; }
 	@mkdir -p $(OUT)
-	$(CC) -std=gnu99 $(CFLAGS) -I$(MODEL_DIR)/helpers/mic -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(MIC_SRC)
+	$(CC) -std=gnu99 $(CFLAGS) -I$(MODEL_DIR)/helpers/mic -I$(SRC_DIR)/hal -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(MIC_SRC)
 
 # akam2k_led: the light PoC / control tool (hal_light: portable logic + generic sysfs driver + the 2K descriptor). Plain libc only,
 # no vendor lib. A manual tool: copied by hand to /tmp on the camera, never installed by build_card.sh.

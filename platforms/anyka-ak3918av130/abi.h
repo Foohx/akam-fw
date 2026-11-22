@@ -192,7 +192,7 @@ extern int ak_vi_release_frame(int chn, struct vi_frame *f);
  * the effect and mode semantics are HIGH from the lib code, none of it ran on the camera yet). dev is the VI/ISP device 0.
  * effect types 0..5 take -50..50 (the stock maps its 0..100 setting v to v - 50): 1 brightness, 3 contrast, 4 sharpness
  * are the ones yy_cam uses; 7 = mains frequency, 50 or 60 only; (0, 2, 5 exist and are never used by the stock; 6 = ISP
- * style, 8 = flip/mirror bits: not used by us). ak_vi_switch_mode: 0 day, 1 night (loads the ISP conf day / night set).
+ * style, 8 = flip/mirror bits: not used by us, see ak_vpss_switch_flip_mirror). ak_vi_switch_mode: 0 day, 1 night (loads the ISP conf day / night set).
  * ak_vpss_get_soft_ps_level: cur 0 day / 1 night, *want 0 day / 1 night = the lib's own decision, with its hysteresis and
  * its non-infrared check (which does NOT keep the camera's own IR light out: hardware 2026-11-15, see night_ctl.h);
  * it fails until ak_vpss_set_soft_ps_param ran and while the AE is not stable. */
@@ -200,6 +200,10 @@ extern int ak_vpss_effect_set(int dev, int type, int value);
 extern int ak_vpss_set_soft_ps_param(int dev, const struct vpss_dn_param *p);
 extern int ak_vpss_get_soft_ps_level(int dev, int cur, int *want);
 extern int ak_vi_switch_mode(int dev, int mode);
+/* Flip / mirror of the picture (libplat_vpss, RE of the lib and of yy_cam, see isp-controls.md "Flip and mirror"): dev 0..3, flip_en and mirror_en 0 or 1 (the lib's own error
+ * text names them "flip_en" and "mirror_en"; anything else is refused). The lib XORs each with the orientation its sensor config declared: 0 = the sensor's native picture
+ * (what the app has always shown), 1 = reversed. 0 = done, live (ioctl 0x40044979 of the ISP), no stream restart. */
+extern int ak_vpss_switch_flip_mirror(int dev, int flip_en, int mirror_en);
 /* ISP attribute accessors used by the RAM-only test hook (isptest.h; layouts and confidence in docs/porting/lsc-rotatable-2k/isp-controls.md). All take the
  * device 0 and return 0 on success, 0x100 for a NULL / bad device, or the validation / ioctl failure. Every setter validates the whole struct before it writes, so a
  * get -> change one field -> set of the same buffer is the safe way to use them. The buffers the hook passes are 16 KiB (the real structs are smaller). */

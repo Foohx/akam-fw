@@ -16,6 +16,7 @@
 
 #include "cred.h"
 #include "onvif.h"
+#include "onvif_common.h"
 #include "onvif_device.h"
 #include "onvif_imaging.h"
 #include "version.h"
@@ -515,11 +516,6 @@ static void op_get_protocols(onvif_call_t *c)
     onvif_send(c);
 }
 
-static void op_get_discovery_mode(onvif_call_t *c)
-{
-    onvif_reply(c, ENV_OPEN "<tds:GetDiscoveryModeResponse><tds:DiscoveryMode>Discoverable</tds:DiscoveryMode></tds:GetDiscoveryModeResponse>" ENV_CLOSE);
-    onvif_send(c);
-}
 
 static void op_get_zeroconf(onvif_call_t *c)
 {
@@ -609,7 +605,7 @@ static const onvif_op_t k_ops[] = {
     { "GetUsers", ONVIF_READ, op_get_users },
     { "GetNetworkProtocols", ONVIF_READ, op_get_protocols },
     { "GetNetworkDefaultGateway", ONVIF_READ, op_get_gateway },
-    { "GetDiscoveryMode", ONVIF_READ, op_get_discovery_mode },
+    { "GetDiscoveryMode", ONVIF_READ, onvif_op_get_discovery_mode },
     { "GetZeroConfiguration", ONVIF_READ, op_get_zeroconf },
     { "SetSystemDateAndTime", ONVIF_WRITE, op_set_time },
     { "SetHostname", ONVIF_WRITE, op_set_hostname },

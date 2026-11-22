@@ -26,6 +26,9 @@ type CardInput struct {
 	SSID    string
 	Pass    string // WPA-PSK passphrase, 8 to 63 characters
 	Decloud bool   // the flag akam/decloud: block the vendor cloud at boot
+	// RescueTelnet keeps the passwordless root telnet of the card's boot script (port 23, RAM-only root/root). Off by
+	// default: without it the card carries the flag akam/no_telnet, because the card already holds the SSH key.
+	RescueTelnet bool
 	// ParamConf is the flag akam/enable_param_conf (opt-in: the card may edit /config/param.conf). Off by default.
 	ParamConf bool
 }
@@ -124,6 +127,9 @@ func BuildCard(k *Kit, in CardInput) (*Card, error) {
 	}
 	if in.Decloud {
 		files["akam/decloud"] = []byte{}
+	}
+	if !in.RescueTelnet {
+		files["akam/no_telnet"] = []byte{}
 	}
 	if in.ParamConf {
 		files["akam/enable_param_conf"] = []byte{}

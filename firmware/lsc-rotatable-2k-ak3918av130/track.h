@@ -116,6 +116,7 @@ int a2k_track_set_cfg(a2k_track_t *t, const struct tl_cfg *c);
 void a2k_track_set_lag(a2k_track_t *t, int lag_ms);
 int a2k_track_get_lag(a2k_track_t *t);
 void a2k_track_get_gains(a2k_track_t *t, int *gain_pan, int *gain_tilt, int *tilt_band_pct);
+int a2k_track_set_invert(a2k_track_t *t, int invert_pan, int invert_tilt); /* live motor direction flags (the base combined with the image orientation), -1 for a value other than 0 / 1 */
 int a2k_track_set_tilt(a2k_track_t *t, int on); /* track.tilt 0/1 live (0 = pan only), -1 for another value */
 int a2k_track_get_tilt(a2k_track_t *t);
 void a2k_track_set_gains(a2k_track_t *t, int gain_pan, int gain_tilt, int tilt_band_pct);

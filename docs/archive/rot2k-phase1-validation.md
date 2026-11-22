@@ -1,5 +1,7 @@
 # Phase 1 validation checklist (LSC Rotatable 2K, `akam-rot-01`)
 
+> Archived document (2026-11): historical, kept for its findings. Paths and status may predate the repository reorganisation (old to new table: `tools/dev/path-map.txt`); current docs are in [docs/README.md](../README.md).
+
 Copy of the PLAN section 5 checklist with the exact commands. One unit, a user "go" for every boot. Replace
 `192.0.2.50` with the camera's address (the router's DHCP list shows it). Everything marked UNVERIFIED in the scripts
 is confirmed or corrected here. Record every result; nothing on this page writes flash.
@@ -7,7 +9,7 @@ is confirmed or corrected here. Record every result; nothing on this page writes
 **Rules for the first boot.** The first hardware boot of the overlay is done with the **telnet rescue available**
 (the overlay card has it by default; do not build it with `--no-telnet`). Never accept the in-app update V14.1.7.
 If anything looks wrong: remove the card and power-cycle, the camera is stock again. Prepare the card as in the
-[README](../../../firmware/lsc-rotatable-2k-ak3918av130/README.md) (`build_card.sh <dir> --authorized-keys <your .pub> --decloud`;
+[README](../../firmware/lsc-rotatable-2k-ak3918av130/README.md) (`build_card.sh <dir> --authorized-keys <your .pub> --decloud`;
 add `--enable-param-conf` only if the RTSP/ONVIF ports are closed in the first run). Keep the flash backup safe.
 
 - [ ] **0. Confirm telnet root works BEFORE testing anything else.**
@@ -54,7 +56,7 @@ add `--enable-param-conf` only if the RTSP/ONVIF ports are closed in the first r
   `grep 'decloud' /mnt/sdcard/akam/akam_boot.log | grep keeper` shows only a few change lines (a `restored` line after each
   Wi-Fi restart is expected, a steady stream is not); `netstat -tn` shows no non-LAN peer; router connection list shows no WAN
   flow from the camera. Optional: `ip route del 224.0.0.0/4 dev wlan0`, wait 35 s, the route is back and one log line added.
-  See [decloud-findings.md](decloud-findings.md).
+  See [decloud-findings.md](../porting/lsc-rotatable-2k/decloud-findings.md).
 - [ ] **9. Anti-brick spot checks.** `ls /mnt/sdcard` shows no `fac_av130.zip`, `*.bin` or `yy_upgrade*`;
   `cat /mnt/sdcard/yy_debug.ini` is `mode=debug`; `ls /tmp/rmem_blk 2>/dev/null` shows no `yy_upgrade.bin`.
 

@@ -8,9 +8,10 @@ These notes are not legal advice.
   EU: the GDPR and national rules on video surveillance and sound recording, in particular for visitors, employees,
   tenants, neighbours and public space). Akam has no cloud and no telemetry: the camera contacts no server unless you
   turn on time sync (NTP) or MQTT, and the PC tools only download Akam's files from GitHub.
-- **Radio.** Akam does not change the camera's Wi-Fi driver, transmit power or regulatory settings. If you sell or give
-  away a camera, restore the stock firmware first: whoever supplies a modified device may become responsible for its
-  conformity.
+- **Radio.** Akam does not change the camera's Wi-Fi driver or transmit power. On the 2K you can set a Wi-Fi country and
+  band (off by default); choosing the right country is your responsibility. If you sell or give away a camera, restore
+  the stock firmware first (1080p: `akam restore`; 2K: [back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock),
+  by hand) and delete `/config/akam` on a 2K: whoever supplies a modified device may become responsible for its conformity.
 - **Interoperability.** The hardware interfaces Akam uses were worked out by observing and analysing lawfully bought
   cameras, only as far as needed to make independently written software work on them (in the EU: Directive 2009/24/EC,
   articles 5(3) and 6). Akam contains no vendor code.

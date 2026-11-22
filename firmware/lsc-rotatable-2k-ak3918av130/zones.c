@@ -1,6 +1,8 @@
 /* See zones.h. */
 #include "zones.h"
 
+#include "orient.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -174,6 +176,17 @@ void a2k_zones_effective(const a2k_zones_t *cfg, int home, a2k_zones_t *out)
         out->mode = A2K_ZONE_MODE_ANY;
         memset(out->z, 0, sizeof out->z);
     }
+}
+
+void a2k_zones_orient(a2k_zones_t *zs, int flip, int mirror)
+{
+    int i;
+    if (!flip && !mirror)
+        return;
+    for (i = 0; i < zs->n; i++)
+        a2k_orient_rect(flip, mirror, 100, 100, &zs->z[i].x1, &zs->z[i].y1, &zs->z[i].x2, &zs->z[i].y2);
+    for (i = 0; i < zs->ni; i++)
+        a2k_orient_rect(flip, mirror, 100, 100, &zs->ig[i].x1, &zs->ig[i].y1, &zs->ig[i].x2, &zs->ig[i].y2);
 }
 
 unsigned a2k_zones_active_mask(const a2k_zones_t *zs)

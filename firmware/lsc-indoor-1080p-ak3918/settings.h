@@ -1,5 +1,5 @@
 #pragma once
-/* The settings registry of the 1080p (specs/control-api.md sections 2 and 11, docs/convergence-plan.md step P7): one row per
+/* The settings registry of the 1080p (specs/control-api.md sections 2 and 11, docs/archive/convergence-plan.md step P7): one row per
  * user-visible setting or state value, under the same key names as the Rotatable 2K wherever the concept is the same (led.mode,
  * led.<rule>, night.ir_led, image.*, video0.*, sys.*, net.wifi_*, rtsp.clients, night.active, api.keys), a different scale
  * being told by the schema (bounds, options, default), not by the name. DATA and glue only: every row calls the module that
@@ -41,5 +41,3 @@ int ak1080_settings_ctl_set(const char *key, const char *val, int persist, char 
 /* ---- the signed API (ak1080_api.c) ---- */
 /* Applies the rows of a PATCH with the persistence of an authenticated write (saved). Returns the HTTP status of streg_patch. */
 int ak1080_settings_patch(int scope, size_t n, const char *const *keys, const char *const *vals, st_result_t *res);
-/* Flash: 1 when the key's module writes a file (the API counts those against the flash limiter). */
-int ak1080_settings_key_persists(const char *key);

@@ -627,6 +627,9 @@ static const struct { const char *id, *name, *icon; int kind; } g_ctl[A2K_CTL_SL
     { "track_area_new", "New tracking area name", "mdi:plus-box", A2K_CK_TEXT },
     { "track_areas", "Tracking areas", "mdi:map-marker-radius", A2K_CK_SENSOR },
     { "pan_only", "Pan only tracking", "mdi:pan-horizontal", A2K_CK_SWITCH },
+    { "image_flip", "Image flip", "mdi:flip-vertical", A2K_CK_SWITCH },
+    { "image_mirror", "Image mirror", "mdi:flip-horizontal", A2K_CK_SWITCH },
+    { "ceiling_mount", "Ceiling mount", "mdi:ceiling-light", A2K_CK_SWITCH },
 };
 
 int a2k_mqtt_ctl_kind(int k)

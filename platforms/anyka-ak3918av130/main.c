@@ -63,6 +63,7 @@
 #include "button_rt.h"
 #include "leds.h"
 #include "image.h"
+#include "orient.h"
 #include "log.h"
 #include "mqtt_bind.h"
 #include "night_ctl.h"
@@ -325,6 +326,12 @@ static int ctl_get(int k, char *out, size_t cap)
         a2k_zlive_get_text(k == A2K_CTL_ZONES ? A2K_ZF_ZONES : A2K_ZF_IGNORE, out, cap);
         return 0;
     }
+    if (k >= A2K_CTL_FLIP && k <= A2K_CTL_CEILING) { /* the picture orientation: not a tracker control, it exists without tracking */
+        int f, m;
+        a2k_orient_get(&f, &m);
+        snprintf(out, cap, "%s", (k == A2K_CTL_FLIP ? f : k == A2K_CTL_MIRROR ? m : f && m) ? "ON" : "OFF");
+        return 0;
+    }
     if (!t)
         return -1;
     if (k == A2K_CTL_TRACK) {
@@ -356,6 +363,13 @@ static int ctl_set(int k, const char *val)
     a2k_track_t *t = a2k_track_run_get();
     if (k == A2K_CTL_ZONES || k == A2K_CTL_IGNORE)
         return a2k_zlive_set_text(k == A2K_CTL_ZONES ? A2K_ZF_ZONES : A2K_ZF_IGNORE, val);
+    if (k >= A2K_CTL_FLIP && k <= A2K_CTL_CEILING) { /* through the settings registry: the same setter as PATCH /settings, saved like any user change */
+        static const char *const key[3] = { "image.flip", "image.mirror", "image.ceiling" };
+        const char *v = !strcmp(val, "ON") ? "1" : "0";
+        char detail[64];
+        a2k_log("image: %s %s (Home Assistant)", key[k - A2K_CTL_FLIP], v);
+        return a2k_settings_apply(1, &key[k - A2K_CTL_FLIP], &v, detail, sizeof detail);
+    }
     if (!t)
         return -1;
     if (k == A2K_CTL_TRACK) {

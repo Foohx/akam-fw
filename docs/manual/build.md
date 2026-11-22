@@ -1,7 +1,7 @@
 # Build the Image From Your Own Dump (advanced, from source)
 
 **Advanced / manual procedure, and optional.** Most people use the prebuilt kit through `./akam` (see the
-[README](../../README.md#install-quick-start)): `./akam get-kit` then `./akam image`. Build from source only to audit
+[README](../../README.md#quick-start)): `./akam get-kit` then `./akam image`. Build from source only to audit
 or change the code, or if no kit is available (`./akam build` drives the same steps).
 
 All build steps run on the PC (Arch Linux x86-64 is the reference host) and never touch the camera.

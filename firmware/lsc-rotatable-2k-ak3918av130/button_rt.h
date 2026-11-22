@@ -48,7 +48,6 @@ void a2k_btn_last_gesture(char *out, size_t cap);   /* "none" until the first ge
 unsigned a2k_btn_writes(void);                      /* flash writes of the two files since the start (sys.flash_writes_button) */
 /* The configured gestures (canonical names, binding order) for the MQTT device triggers: the count, at most BC_MAX_BIND. */
 int a2k_btn_gestures(char names[][BG_NAME_MAX]);
-int a2k_btn_led_ack(void);
 /* A copy of the mode (0), or -1 when there is none of that name. */
 int a2k_btn_mode_get(const char *name, bc_mode_t *out);
 
@@ -59,6 +58,5 @@ int a2k_btn_http(const char *method, const char *sub, const void *body, size_t l
 
 /* Where the two files live (NULL = the defaults above): the host tests point them at a temporary directory. Before a2k_btn_init. */
 void a2k_btn_set_paths(const char *button, const char *modes);
-void a2k_btn_test_reset(void);  /* forgets everything (the files stay) */
 
 #endif

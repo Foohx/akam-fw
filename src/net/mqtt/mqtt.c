@@ -290,3 +290,15 @@ int mqtt_dec_publish(const mqtt_pkt_t *p, mqtt_pub_t *out)
     out->plen = p->blen - off;
     return 0;
 }
+
+const char *mqtt_connack_reason(int rc)
+{
+    switch (rc) {
+    case 1: return "refused_protocol";
+    case 2: return "refused_id";
+    case 3: return "refused_unavailable";
+    case 4: return "refused_credentials";
+    case 5: return "refused_not_authorized";
+    default: return "refused";
+    }
+}

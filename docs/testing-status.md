@@ -61,6 +61,24 @@ server pulling RTSP.
 | Native image builder (`akam image --builder native`) | reader and writer round trips | Partly: same file tree as the bash builder from a real backup; the image was mounted read-only on a real camera and 117 files read back identical. **Never flashed** | Experimental, opt-in |
 | No internet at all (isolated network) | | Not yet | |
 
+## LSC Rotatable 2K
+
+One unit (article `3225722`), card-less since 2026-11-15. The matrix above is the 1080p. Evidence for the 2K, by page:
+[features](features.md#lsc-rotatable-2k), the findings pages of its [entry page](porting/lsc-rotatable-2k/README.md).
+
+| Feature | Host tests | Hardware | Notes |
+|---|---|---|---|
+| Card-less boot from the flashed appfs, SD rescue | `tests/rot2k_*_test.sh` (scripts) | Yes, one unit | [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md) |
+| Two RTSP streams (`/stream0`, `/stream1`), key-only SSH | host tests | Yes | |
+| Pan/tilt (`ptz.move`, `ptz.home`), person detection, tracking | policy and closed-loop simulations | Yes: runs of 2026-11-16 and 2026-11-17 | Tracking is off by default; see [tracking](porting/lsc-rotatable-2k/tracking.md) |
+| Front button, image zones, night, LEDs | fake hardware | Partly | [button and zones](porting/lsc-rotatable-2k/button-and-zones.md) |
+| Signed control API | full suite | PTZ actions used on the camera | |
+| ONVIF with pan/tilt | yes | **Not yet** | [ONVIF](onvif.md) |
+| MQTT, Home Assistant discovery | yes | **Not yet** | [MQTT](mqtt.md) |
+| Go assistant: `backup-2k`, `prepare-2k-sd`, `key-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`, `update --rollback` | `assistant_test.sh` (fake cameras, fake card) | **Not yet** | Never run on a real camera or card; the scripts they port (`flash_appfs.sh`, `build_appfs.sh`) did run |
+| Back to stock (restore of the six-partition backup) | none: no `akam restore-2k` command | **Never run** | Manual procedure: [back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock) |
+| Open ports of the card-less image | | **Not yet** (no full port scan) | |
+
 ## How to run the host tests
 
 ```bash

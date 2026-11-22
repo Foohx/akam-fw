@@ -14,7 +14,7 @@ Never copy vendor binaries, keys, nvram values or `/config/tuya` content into th
 | SoC / OS | AK3918AV130, ARM926EJ-S soft-float; YYOS / TuyaOS v1.6, kernel 4.4.302-cip94, **no IPv6** (HW) |
 | userland | Buildroot 2018.02, uClibc-ng 1.0.31, BusyBox **1.30.1** (no `tar`, `cmp`, `timeout`, `pidof`) (HW) |
 | RAM | 38 MiB usable; ~18 MB available with `yy_cam`, ~24 MB without (HW) |
-| flash | 8 MiB NOR, 6 partitions: uboot/kernel/rootfs/appfs/config(jffs2)/factory — see [PLAN §2.2](PLAN.md) |
+| flash | 8 MiB NOR, 6 partitions: uboot/kernel/rootfs/appfs/config(jffs2)/factory — see [PLAN §2.2](../../archive/rot2k-porting-plan.md) |
 | Wi-Fi | ATBM6132C **USB** device on `ak_hcd` (HW) |
 | sensor | SC1346 MIPI 1-lane, ISP2, Allegro encoder, NPU (`ak_npu`) |
 
@@ -25,13 +25,13 @@ there) → `/appfs/script/init.sh` reads `/mnt/sdcard/yy_debug.ini`: `mode=debug
 **in the background** (our hook), `mode=normal` runs `start.sh` → `start.sh` insmods video/NPU/motor/misc drivers
 and runs `/appfs/bin/yy_cam &` if `nvram get STATUS` = active. `init.sh` then loops: reboots on a `mode=` change,
 drops caches on low memory, and runs **OTA** when `/tmp/rmem_blk/yy_upgrade.bin` exists **and**
-`nvram YYOS_UPGRADE=on` (RE). Details: [PLAN §2.3](PLAN.md).
+`nvram YYOS_UPGRADE=on` (RE). Details: [PLAN §2.3](../../archive/rot2k-porting-plan.md).
 
 ## Watchdog (RE + HW)
 
 `yy_cam` opens `/dev/watchdog` O_RDONLY, `WDIOC_SETTIMEOUT` 20 s, `WDIOC_KEEPALIVE` every 5 s (log line
 `feed watchdog!`); clean exit → `WDIOC_SETOPTIONS DISABLECARD`. **HW-verified:** SIGKILL of a BusyBox `watchdog`
-feeder resets the camera ~20 s later. Not armed before userspace opens it (MEDIUM). → [own-app-feasibility.md](own-app-feasibility.md)
+feeder resets the camera ~20 s later. Not armed before userspace opens it (MEDIUM). → [archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md)
 
 ## GPIO map (RE, defaults from `yy_cam`; sysfs `/sys/class/gpio`)
 
@@ -76,7 +76,7 @@ Fallback file `/config/default_param.conf`; `yy_cam` has a path that deletes `pa
 ## nvram (names only — values are device secrets)
 
 `STATUS`, `MASTER_MAC`, `YYOS_UPGRADE`, `appfs/rootfs/kernel_version`, **`appfs_sign`, `rootfs_sign`,
-`kernel_sign`** (md5-sized; U-Boot has `%s_sign` md5 code → flash-write gate RED, [PLAN §7bis](PLAN.md)),
+`kernel_sign`** (md5-sized; U-Boot has `%s_sign` md5 code → flash-write gate RED, [PLAN §7bis](../../archive/rot2k-porting-plan.md)),
 `TY_*` and `accredit_key`/`accesskey_id`/`omok_*` (**Tuya credentials — never print**; `nvram show` prints them).
 
 ## Network services (stock)
@@ -158,7 +158,7 @@ On this SoC the stock does **not** measure the scene itself. `yy_media_av130_sof
 `night_check_frame_num` (10) frames spaced by one frame period it reads `ak_vpss_get_ev` and, with `blk_check_flag` 1, `ak_vpss_get_non_infrared_ratio` (input: `awb_night_dis_max`, `gain_r/b/rb`, `low_lumi_th`, `high_lumi_th`,
 `non_infrared_ratio_th`, `revised_dis_max_ratio`); a frame counts as "day" when EV < `night_to_day_lum` **and** the ratio > `non_infrared_ratio_th`. The verdict is "day" only when all frames count; otherwise `want = 1`. A
 "lock in night" state (`start lock in night...` / `locking in night...`, a timer compared with the word at +84 of the struct, which the stock leaves 0, and the EV against a reference taken at the lock start, 10 % change) can still
-override it. MEDIUM (read from the disassembly, not run). **It does not keep the camera's own IR light out on the 2K**: dark room, IR LED on, filter out: verdict "day" after ~4.5 min (hardware 2026-11-15, see own-app-feasibility.md
+override it. MEDIUM (read from the disassembly, not run). **It does not keep the camera's own IR light out on the 2K**: dark room, IR LED on, filter out: verdict "day" after ~4.5 min (hardware 2026-11-15, see archive/rot2k-own-app-feasibility.md
 "IR self-illumination"). The `cur` flag passed by our adapter (0 = ISP in day, 1 = ISP in night) and every field are the stock's; there is no separate "IR on" flag in the call. The stock's own handling of this is not known (it
 may be hidden by the white-light variant or by a lock the Tuya app sets); the app now trusts a "day" verdict only with the IR LED off (IR-off probe of the shared 1080p policy).
 
@@ -183,7 +183,7 @@ MEDIUM), `sleep(1)`.
   it loads the day or night parameter set of the ISP conf and tells the soft-PS code that the IR light is on or off; the exact content
   of the conf file's two sets was not read, UNVERIFIED). Then a keyframe request on every video channel, `usleep(100 ms)`, and the
   stock **re-applies WDR** (see "WDR call chain" below; our app replays it since the `feature/rot2k-wdr` change, hardware check pending,
-  see own-app-feasibility.md). Colour or mono comes from the ISP set; no separate "colour to mono"
+  see archive/rot2k-own-app-feasibility.md). Colour or mono comes from the ISP set; no separate "colour to mono"
   call exists (the string `mono` in the binary is a JSON/ONVIF text).
 - **IR-cut** (`Y_IRCUT` thread `yy_ircut_th` 0x2a7ac0, `yy_ircut.cpp`): `[ircut]` `p_no` default **24**, `m_no` default **25**
   (`yy_conf_get_int`; with `m_no` 0 it would drive a single pin). Pins are exported through sysfs (`/sys/class/gpio`, `%s/gpio%d/direction`,
@@ -246,8 +246,10 @@ RE of yy_cam (objdump, HIGH for the sequence and values, MEDIUM for the meaning 
   saturation and a third one in the Anyka SDK; names UNVERIFIED) are never used by the stock.
 - Mains frequency: `anti_flicker` 0 and 1 mean 50 Hz, 2 means 60 Hz; applied at **every** start (`ak_vpss_effect_set(dev, 7, hz)`), so the
   stock default is 50 Hz.
-- Flip: `ak_vpss_switch_flip_mirror(dev, a, b)` with a, b derived from `flip_mode` and a per-sensor base orientation read from the config
-  (`[dsp]` sensor flip field, not decoded): not copied by our app (a guess could turn the picture upside down).
+- Flip: `ak_vpss_switch_flip_mirror(dev, flip_en, mirror_en)` (0x2a19e4): the two arguments are built from `flip_mode` (0 none, 1 toggles the second argument, 2 the
+  first, 3 both) and a per-sensor base field of the config (`sensor1_flip_mode`, 0..3, value on the camera not read); the lib XORs them with the orientation the
+  sensor driver declared. Decoded in isp-controls.md section 3.2; the app now offers it as the user switches `image.flip` / `image.mirror` (default off: the call is
+  never made).
 - AWB: `yy_cam` makes **no** AWB control call. The ISP's own AWB runs from the conf file; the soft-PS parameters above only read it.
 - ISP conf: the file named by `[dsp]` `sensor1_isp_conf_file` (our app loads `/appfs/conf/isp_sc1346_mipi_1lane_av130.bin`, as PoC-2).
   There is no second conf file for night: the day / night sets are inside it and `ak_vi_switch_mode` selects them (see above).
@@ -265,14 +267,14 @@ Wi-Fi SSID and password in clear** — never leave it on, never ship it. `yy_log
 `ak_venc_open_ex` (64 B + 28 B) → loop `get_frame/encode_frame/release`. Link also needs `-lplat_thread
 -lplat_dbg`. Toolchain: Bootlin `armv5-eabi--uclibc--stable-2018.11-1`. Lib versions: vi V3.4.32, vpss V3.1.03,
 venc V3.0.00, mem V2.0.01, app_video V2.0.00. The stock also calls `ak_vpss_effect_set` (mains frequency always; brightness, contrast, sharpness only when set) after venc open, and
-`ak_vi_switch_mode` / `ak_vpss_get_soft_ps_level` for day/night: see "Day/night and image". → [own-app-feasibility.md](own-app-feasibility.md)
+`ak_vi_switch_mode` / `ak_vpss_get_soft_ps_level` for day/night: see "Day/night and image". → [archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md)
 
-### Learned while building PoC-3 (the libc finding is offline RE; the first camera run passed, see own-app-feasibility.md)
+### Learned while building PoC-3 (the libc finding is offline RE; the first camera run passed, see archive/rot2k-own-app-feasibility.md)
 
 - **RE (camera rootfs):** the camera's libc is uClibc-ng 1.0.31 **without** `__ctype_b_loc` (it exports `__ctype_b`,
   `getrandom`, `pthread_create`; pthreads are inside libc, no `libpthread`). The pinned Bootlin toolchain's `<ctype.h>`
   macros call `__ctype_b_loc`, so any binary using `isdigit()` etc. through those macros fails to load on the camera.
-  Check new binaries with `make poc3-symcheck CAMERA_LIBC=...` (own-app-feasibility.md).
+  Check new binaries with `make poc3-symcheck CAMERA_LIBC=...` (archive/rot2k-own-app-feasibility.md).
 - **UNVERIFIED:** `ak_venc_request_idr(handle)` is assumed to make the next encoded frame an IDR (one call per
   encoder handle; we call it from the thread that owns the handle). Two encoders (main + sub) open at once and
   two threads pulling `ak_vi_get_frame` on different channels: assumed to work (stock uses one thread per stream).
@@ -308,7 +310,7 @@ light); ~27 ms per inference on the NPU. → [ai-own-app.md](ai-own-app.md) §9
   `depth` (2) frames per tick and keep the newest. `ak_vi_get_frame` BLOCKS on an empty queue (~50 ms), so never "get until empty"
   (ai-own-app.md section 11). The stock hd thread does one get per 100 ms loop without draining.
 - **UNVERIFIED:** VI chn 16 (320x192, depth 2) enabled together with chn 0/1 AND two encoders running: PoC-4 ran chn 16 only
-  with chn 0/1 drained by the program, never with encoders. See own-app-feasibility.md, "Person detection inside akam2k_rtsp".
+  with chn 0/1 drained by the program, never with encoders. See archive/rot2k-own-app-feasibility.md, "Person detection inside akam2k_rtsp".
 
 ## JPEG snapshot encoder (venc) — offline RE of `yy_cam` and `libmpi_venc.so`, 2026-11-15 (MEDIUM, no hardware run yet)
 

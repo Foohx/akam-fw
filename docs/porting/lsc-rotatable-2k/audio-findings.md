@@ -260,7 +260,7 @@ process, remove the card/reboot". Nothing is written to flash or `/config`.
    a target client needs it; the 1080p binary must stay byte-identical.
 8. **Speaker/backchannel (later, separate study):** `/dev/pcmC0D0p` with the 1080p `audio_out` sequence, `SET_SPEAKER`,
    GPIO 9 test with the amp muted first, `audio_jitter` + `talk` reuse; AEC via `/dev/pcmC0D0l` only after one-way works.
-9. **Document** in `own-app-feasibility.md` and `stock-firmware-reference.md`; run both models' test suites.
+9. **Document** in `archive/rot2k-own-app-feasibility.md` and `stock-firmware-reference.md`; run both models' test suites.
 
 ## 7. Sources (offline)
 

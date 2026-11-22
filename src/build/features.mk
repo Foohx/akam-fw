@@ -1,4 +1,4 @@
-# Build-time feature selection (docs/convergence-plan.md 2.5, docs/hal-architecture.md "Feature selection").
+# Build-time feature selection (docs/archive/convergence-plan.md 2.5, docs/hal-architecture.md "Feature selection").
 # A model Makefile sets AKAM_FEAT_<NAME> := 1 (on) or 0 (off) BEFORE including this file, then adds a module's objects only
 # through $(call feat_objs,<NAME>,<objects>): a feature that is off contributes no object, so no dead code ships in a model
 # that does not use it. A feature the model does not set is off. Features:

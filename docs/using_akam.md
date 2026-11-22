@@ -1,5 +1,7 @@
 # Using Akam day to day
 
+> Written for the LSC Indoor 1080p. The 2K has its own pages: [LSC Rotatable 2K](porting/lsc-rotatable-2k/README.md).
+
 This page is for when Akam already runs on your camera: every setting and command, the ports that are open,
 how to watch the stream, how to update, and the security notes. Not installed yet? Start with the
 [README](../README.md) and the [compatible cameras](compatible-cameras.md) page.
@@ -143,7 +145,7 @@ All of this works over SSH, with no card, on a camera set up by the wizard (or r
 | change brightness, contrast, saturation, sharpness, white balance or day/night mode | `./akam picture` shows them; `./akam picture brightness N` (also `contrast`, `saturation`, `sharpness`, N from -50 to 50; sharpness is -15 by default, 0 is the stock sharpening), `wb conf\|manual`, `night auto\|day\|night`, `reset` (all of them are saved on the camera; reset sets sharpness back to -15 and denoise to 2; `denoise N`, N from 0 to 4, is the 1080p 3D noise-reduction level, 2 by default, 0 is the stock tables) |
 | lower the bitrate or frame rate, or change the key frame interval of the video | `./akam video` shows them; `./akam video bitrate N` (500 to 3000 kbit/s, default 1536), `fps 10\|15\|20\|25` (default 15; higher rates make dim light darker and grainier and start night mode earlier, see [troubleshooting](troubleshooting.md)), `gop N` (key frame every N seconds, 1 to 4, default 2). Saved on the camera and applied when the video service restarts (it offers to restart it for you; the stream stops for a few seconds). Resolution and flip/mirror are not available yet |
 | make the camera visible to ONVIF apps (NVRs, ONVIF Device Manager); off by default | `./akam onvif enable [PORT]` (asks first; needs the video password), `./akam onvif status`, `./akam onvif disable` ([ONVIF](onvif.md)) |
-| go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](../README.md#important-disclaimer-and-risks)). Go assistant: also `akam update --stock`, or "Stock firmware (from your backup)" in the firmware list; the same gates, never tested on a real camera |
+| go back to the original firmware | `./akam restore` (from your backup; no guarantee, see [risks](../README.md#safety-and-recovery)). Go assistant: also `akam update --stock`, or "Stock firmware (from your backup)" in the firmware list; the same gates, never tested on a real camera |
 
 The LED settings are saved on the camera. `status auto` makes the LED blink while the camera starts or
 has no Wi-Fi, blink slowly while someone watches the video, and stay solid otherwise; the default `on`

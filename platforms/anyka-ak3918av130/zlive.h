@@ -21,8 +21,9 @@
 /* init: `initial` = the zones read from the card file (NULL = none); store_path = the runtime file (NULL = no persistence, tests).
  * Returns 1 when the runtime file was used, else 0. Call before the detection thread and MQTT start. */
 int a2k_zlive_init(const a2k_zones_t *initial, const char *store_path);
-void a2k_zlive_get(a2k_zones_t *out, unsigned *gen);            /* the configured zones (all of them), whatever the ptz state */
-/* The edit of one text (A2K_ZF_ZONES or A2K_ZF_IGNORE, zones.h). 0 applied, -1 invalid (nothing changed). */
+void a2k_zlive_get(a2k_zones_t *out, unsigned *gen);            /* the configured zones (all of them), whatever the ptz state, in the SENSOR frame (orient.h) */
+/* The edit of one text (A2K_ZF_ZONES or A2K_ZF_IGNORE, zones.h). The text is in the DISPLAYED frame (what the viewer sees: with image.flip / image.mirror on, the coordinates
+ * are those of the flipped picture) and is converted to the sensor frame for the store; a2k_zlive_get_text converts back. 0 applied, -1 invalid (nothing changed). */
 int a2k_zlive_set_text(int which, const char *text);
 void a2k_zlive_get_text(int which, char *out, size_t cap);
 /* 1 when the position-anchored zones apply in this ptz state (enum hal_ptz_state): home and unknown. @screen zones apply always. */
