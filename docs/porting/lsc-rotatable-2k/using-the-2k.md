@@ -4,9 +4,10 @@
 Home Assistant, ONVIF, the settings file, the signed API. Skip it if you only want to watch the video.*
 
 The 2K is configured through small files in `/config/akam` (the jffs2 partition, kept across Akam updates), written over
-SSH, and through the signed API on port 8092. The 1080p commands `rtsp-auth`, `mqtt`, `onvif`, `ntp`, `hostname`, `led`,
-`key`, `config` and the options screens of the `akam` program are **refused on a 2K** ("not yet supported for this model"):
-do not look for them. Everything here is host-tested; the checks that ran on the real camera are in
+SSH, and through the signed API on port 8092. The 1080p commands `rtsp-auth`, `mqtt`, `onvif`, `ntp`, `audio`, `key` and
+`config` are **refused on a 2K** ("not yet supported for this model"): do not look for them. `led`, `picture`, `video`,
+`hostname` and the Camera options screen of the `akam` program work on a 2K through the signed API (section 5), as do `track`,
+`wifi` and `settings`. Everything here is host-tested; the checks that ran on the real camera are in
 [testing status](../../testing-status.md) (the current build has not been flashed yet).
 
 Log in with the key you gave `prepare-2k-sd` (`ssh -i KEY root@CAMERA_IP`). Files are small: the partition is 256 KiB. Each
@@ -93,6 +94,29 @@ ssh -i KEY root@CAMERA_IP 'sh /mnt/sdcard/akam/akam_api_key.sh new --scope admin
 The key id and secret are printed once. Requests are HMAC-signed JSON over plain HTTP: how to sign, the settings registry
 (LEDs, picture, video, PTZ, tracking, orientation), actions and the event feed are in the [2K control API](control-api.md).
 Keep the camera on your LAN; the port has no TLS.
+
+**From the assistant** (needs the key of `akam key-2k`; without it the assistant says so and points to `key-2k`): the Camera
+options screen (menu item 3) lists the settings by group with their current values, edits them locally and sends them in
+one `PATCH /settings` after a confirmation. The same from the command line:
+
+```sh
+akam led status off ir off              # front LED off, IR night LEDs off
+akam picture brightness 60 flip on      # brightness is not saved (back to 50 at a restart)
+akam video stream 0 bitrate 2000 fps 10 # main stream
+akam hostname cam-salon                 # queued: the camera applies it within seconds
+akam wifi country FR band 5             # asks first; 5 GHz needs a country
+akam track on return stay
+akam settings list                      # every setting of the catalogue with its value
+akam settings get track.               # by key or prefix
+akam settings set led.person 3:250:250:5000 track.band_pct 8
+akam --dry-run settings set net.wifi_band 5   # prints the PATCH body, sends nothing
+```
+
+Values are checked like the firmware checks them (host name RFC 1123 label, 1..32; band 5 needs a country; QP and bitrate order;
+ranges) and the camera's own refusal text is shown when it still says no. A result says applied now, queued (Wi-Fi and name),
+needs a restart (the assistant never restarts or power-cycles the camera), or not saved. No secret is shown or sent: the
+registry has none, so the stream password and MQTT stay in `akam2k.conf` (sections 1 and 2). **Host-tested only**: this was run
+against a fake of the API, not against a real 2K.
 
 ## Picture orientation (flip, mirror, ceiling)
 

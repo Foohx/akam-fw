@@ -37,6 +37,10 @@ type Options struct {
 	// recovery question, only together with --yes), --api-key-file FILE (the camera's signed API key).
 	Rollback, Force, Card, Yes, RecoveryAtHand bool
 	APIKeyFile                                 string
+	// import-backup: --date YYYYMMDD (the folder's date), --record (make it the camera's backup). --from, --camera,
+	// --model and --yes are shared with other commands.
+	Date   string
+	Record bool
 }
 
 var negNum = regexp.MustCompile(`^-[0-9]`)
@@ -154,6 +158,10 @@ func ParseArgs(argv []string) (*Options, error) {
 			o.CfgSecrets = true
 		case "--from":
 			set(&o.CfgFrom)
+		case "--date":
+			set(&o.Date)
+		case "--record":
+			o.Record = true
 		case "--only":
 			set(&o.CfgOnly)
 		case "--camera":

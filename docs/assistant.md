@@ -171,7 +171,32 @@ Same on Linux, macOS and Windows, no bash. The journey and the status of each st
   `*.bin`, `fac_av130.zip` or `yy_upgrade*` file on the card and checks that `yy_debug.ini` is `mode=debug`.
 * `akam backup-2k [--out DIR]` backs the 2K up: `/proc/mtd` must be the 2K layout, each of the six partitions is read twice over SSH
   (read only, nothing is written on the camera) and compared, sizes are checked, `mtd0..mtd5.bin` and `SHA256SUMS` are written
-  in a new folder (the camera's state folder by default), verified from the files, and recorded for `update`.
+  in a new folder, verified from the files, and recorded for `update` (state key `rot2k_backup`). The folder follows the same
+  rules as the 1080p backup ([Backup location](../tools/assistant/README.md#backup-location)): `<backup folder>/Akam backups/<camera>/<date>[-N]`,
+  where the backup folder is the one you chose (`akam backup-location DIR`, or the menu), else Documents, else your home
+  folder when Documents is synced; the folders and files are private to your user; `README.txt` and `camera_info.txt`
+  (`model=`, `kind=cardless-appfs`, the six partition sizes) are written next to `SHA256SUMS`. `--out DIR` names another new
+  (or empty) folder and wins. A folder inside a git tree is refused. In the menu, "Back up / restore" of a 2K offers the
+  backup, the folder choice and a check of a backup folder.
+* `akam backup-location [show | DIR | default]` (both models) shows or changes the folder that holds `Akam backups`, without a
+  menu. `DIR` must exist and must not be inside a git tree; a cloud-synced folder (OneDrive, iCloud Drive, Dropbox...) needs
+  a yes, or `--yes`; `default` goes back to Documents (home folder when Documents is synced). It is a setting of the camera in
+  use: `--camera NAME` sets it for another camera. `--dry-run` says what would be set.
+* `akam import-backup --from DIR [--camera NAME] [--model 1080p|2k] [--date YYYYMMDD] [--record] [--dry-run]` brings a
+  backup you already have into the layout above. It recognises the 1080p (`mtdblock0..7.bin`) and the 2K (`mtd0..5.bin`),
+  optionally with `SHA256SUMS`, `MD5SUMS` (2K) and `camera_info.txt`. It refuses a partial backup (a partition missing), a
+  file of the wrong size for the model, a mix of both models, a link instead of a file, and any `SHA256SUMS` or `MD5SUMS`
+  that does not match (a `SHA256SUMS` must list every partition). The source is only read: it is **copied** (never moved or
+  deleted) with its other files (`hack_log.txt`, `dump*`, `MD5SUMS`...) into
+  `<backup folder>/Akam backups/<camera>/<date>[-N]`; the date is the one in the folder name (`20260314`, `2026-03-14`, Windows
+  or Unix paths alike), else the newest date of the partition files, or `--date`. A missing `SHA256SUMS` (computed from the
+  partitions), `README.txt` and `camera_info.txt` are written; an existing `camera_info.txt` is kept and gets `imported=1`,
+  `imported_from=` and `imported_at=` appended. The copy is read back and verified (each file, the sums, and for the 2K the
+  same check `update` uses); a failure removes the copy. An existing destination is never overwritten (the `-N` suffix). The
+  same partitions already under the camera (same checksums) are reported and not copied twice. `--record` makes the copy the
+  camera's backup: `rot2k_backup` for a 2K (what `update` and `appfs-build` use), `backup_dir` for a 1080p (the setup step is not
+  marked done: accept it with `backup --backup-dir DIR`, which compares it with the original firmware). `--dry-run` prints
+  every file it would create or copy, and writes nothing.
 * `akam seed-2k` (once, after booting from the card, **before** `appfs-flash`): copies `akam/wpa.conf` and
   `akam/authorized_keys` of the card into `/config/akam` of the camera (jffs2, kept across the flash), over SSH. The copy is
   done by the camera: no secret reaches this PC or the screen. It refuses a camera that does not run from the card, or a
@@ -181,6 +206,14 @@ Same on Linux, macOS and Windows, no bash. The journey and the status of each st
 * `akam key-2k` creates the control-API key for this assistant: the camera makes it (`akam_api_key.sh new --scope admin --name
   assistant`), the secret comes back once over SSH, is stored in the camera's state folder (`api_key`, 0600) and is never printed;
   `update` then reads the model and version. It asks before it writes `/config/akam/api_keys` on the camera.
+* **Camera options of the 2K** (menu item 3, and the commands `led`, `picture`, `video`, `hostname`, `track`, `wifi`,
+  `settings list|get|set`) go through the same signed API: `GET /settings` to read, one `PATCH /settings` to change, with the
+  key of `key-2k` (no key: the assistant says so and points to `key-2k`, it never makes one). The catalogue is the real registry of
+  the camera (host name, Wi-Fi country and band, LED rules, picture, flip/mirror/ceiling, video, tracking, patrol); values are
+  checked like the firmware does before anything is sent and the camera's own refusal is shown as it is. Each change says
+  applied now, queued (Wi-Fi, name), needs a restart, or not saved; Wi-Fi and name changes ask first (default No, `--yes`).
+  `--dry-run` shows the PATCH body. The registry has no secret and no MQTT or stream-password key yet, so those stay in
+  `akam2k.conf`. Host-tested only (a fake signed API), see [using the 2K](porting/lsc-rotatable-2k/using-the-2k.md#5-the-signed-api-port-8092).
 * `akam update` on a 2K is one flow (the 1080p flow stays what it was):
   1. detect: model and Akam version from the signed control API `GET /info` (`--api-key-file FILE`, or `api_key` in the camera's
      state folder, or `AKAM_KEY_ID` + `AKAM_KEY_SECRET`); no key or a closed API only means "not read";

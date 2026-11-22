@@ -393,8 +393,11 @@ func (a *App) bkFingerprint() string {
 // bkPCDir is bk_pc_dir: a new folder <Documents>/Akam backups/<camera>/<date>[-N] (specs/installer.md)
 // and the folders above it that must be private too.
 // With AKAM_BACKUP_ROOT (test hook) it is <root>/akam-backup-<name>-<date>[-N], the legacy layout.
-func (a *App) bkPCDir() (string, []string) {
-	base, cloud, fold, parents := a.backupBase(time.Now())
+func (a *App) bkPCDir() (string, []string) { return a.bkPCDirAt(time.Now()) }
+
+// bkPCDirAt is bkPCDir for the backup of the day now.
+func (a *App) bkPCDirAt(now time.Time) (string, []string) {
+	base, cloud, fold, parents := a.backupBase(now)
 	if cloud != "" {
 		a.UI.Warn(fmt.Sprintf("your Documents folder is inside %s, which copies files to the cloud and the backup holds your Wi-Fi password.", cloud))
 		a.UI.Say("  The suggested folder is in your home folder instead.")
@@ -523,7 +526,7 @@ func (a *App) backupCamera() error {
 	a.UI.Good("  Backup copied and verified (every file matches the camera's two reads). SHA256SUMS written.")
 	app := fileSHA(filepath.Join(pcdir, "mtdblock7.bin"))
 	if !a.camConfirmUntested(app, "Continue with untested firmware?") {
-		a.UI.Say(fmt.Sprintf("  The verified copy stays in %s (accept it later with: %s backup --backup-dir %s).", pcdir, Prog, pcdir))
+		a.UI.Say(fmt.Sprintf("  The verified copy stays in %s (accept it later with: %s backup --backup-dir %s).", pcdir, Prog, shellPath(pcdir)))
 		return ui.ErrFailed
 	}
 	return a.backupAccept(pcdir)

@@ -24,6 +24,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/akamapi"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/appfs"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/sdcard"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
@@ -60,6 +61,8 @@ type Hooks struct {
 	SD sdcard.Backend
 	// CamAPI builds the client of a camera's signed control API (update of the 2K); nil uses the real one.
 	CamAPI func(host string, k akamapi.Key) *akamapi.Client
+	// Backup2K reads the six partitions of the 2K into a folder (backup-2k); nil uses appfs.Backup over SSH.
+	Backup2K func(ctx context.Context, dial func(port int) (appfs.Conn, error), dir string, say func(string)) (*appfs.BackupResult, error)
 }
 
 // App is one run of the program.
@@ -316,11 +319,17 @@ func (a *App) dispatch(cmd string) error {
 	if len(a.Opt.Args) > 1 {
 		args = a.Opt.Args[1:]
 	}
-	if o := a.Opt; cmd != "config" && (o.CfgGlobal || o.CfgSecrets || o.CfgFrom != "" || o.CfgOnly != "") {
+	if o := a.Opt; cmd != "config" && !(cmd == "import-backup" && !o.CfgGlobal && !o.CfgSecrets && o.CfgOnly == "") && (o.CfgGlobal || o.CfgSecrets || o.CfgFrom != "" || o.CfgOnly != "") {
 		return usageErr("akam: --global, --from, --only and --include-secrets are options of the config command (see " + Prog + " help)")
 	}
 	if cmd == "update" && a.is2K() { // the 2K has its own flow; every other gated command stays refused on it
 		return a.cmdUpdate2K()
+	}
+	if opts2KCommands[cmd] && a.is2K() { // the options of the 2K go through its signed API (rot2kopts.go)
+		return a.dispatch2KOpts(cmd, args)
+	}
+	if cmd == "track" || cmd == "wifi" || cmd == "settings" {
+		return usageErr(fmt.Sprintf("akam: %s is a command of the Rotatable 2K (its options go through the signed API); see %s help", cmd, Prog))
 	}
 	if gatedCommands[cmd] {
 		if err := a.modelGate(cmd); err != nil {
@@ -427,6 +436,10 @@ func (a *App) dispatch(cmd string) error {
 		return a.cmdKey2K()
 	case "backup-2k":
 		return a.cmdBackup2K()
+	case "backup-location":
+		return a.cmdBackupLocation(args)
+	case "import-backup":
+		return a.cmdImportBackup(args)
 	case "appfs-build":
 		return a.cmdAppfsBuild()
 	case "appfs-flash":

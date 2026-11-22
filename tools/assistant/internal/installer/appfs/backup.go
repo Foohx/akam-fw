@@ -21,6 +21,9 @@ import (
 // mtdLayout is the flash map of the 2K (/proc/mtd): partition sizes in bytes.
 var mtdLayout = [6]int{0x40000, 0x180000, 0x150000, 0x490000, 0x40000, 0x20000}
 
+// Layout is the size in bytes of mtd0..mtd5 of the 2K (what a full backup folder must hold).
+func Layout() [6]int { return mtdLayout }
+
 var mtdLineRe = regexp.MustCompile(`(?m)^mtd([0-9]+): ([0-9a-f]{8}) [0-9a-f]{8} "`)
 
 // BackupResult of Backup.

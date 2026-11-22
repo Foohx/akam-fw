@@ -12,8 +12,8 @@ const lsc1080 = "lsc-indoor-1080p-ak3918"
 func TestFlowsAreRefusedForTheRotatable2K(t *testing.T) {
 	for _, args := range [][]string{
 		{"backup"}, {"restore"}, {"verify"}, {"image"}, {"flash"}, {"get-kit"}, // update is the 2K's own flow now (rot2k_install_test.go)
-		{"prepare-backup-sd"}, {"prepare-flash-sd"}, {"config", "show"}, {"led", "status"}, {"onvif", "status"},
-		{"ntp", "status"}, {"mqtt", "status"}, {"video", "show"}, {"audio", "show"}, {"key", "show"}, {"hostname"},
+		{"prepare-backup-sd"}, {"prepare-flash-sd"}, {"config", "show"}, {"onvif", "status"}, // led, video, picture, hostname are the 2K's own commands now (rot2kopts_test.go)
+		{"ntp", "status"}, {"mqtt", "status"}, {"audio", "show"}, {"key", "show"},
 		{"rtsp-auth", "status"}, {"step", "backup"}, {"step", "flash"}, {"step", "get-kit"},
 	} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
@@ -41,11 +41,18 @@ func TestModelFlagOfA2KRefusesTheFlows(t *testing.T) {
 func TestMenuActionsAreRefusedForTheRotatable2K(t *testing.T) {
 	e := newEnv(t)
 	e.writeState("camera_model=" + rotModel + "\ncamera_ip=192.0.2.10\n")
-	// 3 = options, 4 = backup / restore, 2 = update (the 2K flow, not a refusal), 9 = configs, 10 = quit
-	r := e.run("3\n4\n2\n\n9\n10\n") // the update flow asks for the backup folder: an empty answer
+	// 3 = options, 4 = backup (the 2K's own menu since backup-2k and the backup folder are in the menu: its entry 4
+	// is Back), 2 = update (the 2K flow, not a refusal), 9 = configs, 10 = quit
+	r := e.run("3\n4\n4\n2\n\n9\n10\n") // the update flow asks for the backup folder: an empty answer
 	expectRC(t, r, 0)
-	if n := strings.Count(r.out+r.err, "not yet supported for this model"); n < 3 { // options, backup, configs
-		t.Errorf("%d refusals, want 3:\n%s", n, r.out+r.err)
+	if n := strings.Count(r.out+r.err, "not yet supported for this model"); n < 1 { // configs (options is the 2K's own screen now)
+		t.Errorf("%d refusals, want 1:\n%s", n, r.out+r.err)
+	}
+	if !strings.Contains(r.out+r.err, "no API key for this camera") {
+		t.Errorf("the options entry must open the 2K screen (it says there is no API key):\n%s", r.out+r.err)
+	}
+	if strings.Contains(r.out+r.err, "'backup' is not yet supported") || !strings.Contains(r.out, "Back up - default (2K)") {
+		t.Errorf("the backup entry must open the 2K backup menu:\n%s", r.out+r.err)
 	}
 	if !strings.Contains(r.out+r.err, "Update the card-less 2K") {
 		t.Errorf("the update entry did not open the 2K flow:\n%s", r.out+r.err)

@@ -11,11 +11,25 @@ Commands:
   build              build from source instead (optional, needs more tools)
   prepare-backup-sd  prepare the microSD card used to back up the camera
   find-camera        find the camera (asks its IP address, checks the ports)
-  backup             back up the camera (double read, checked, copied to ~/akam-backup-<name>-<date>/),
+  backup             back up the camera (double read, checked, copied to <backup folder>/Akam backups/<name>/<date>/),
                      or accept a backup folder you made by hand (--backup-dir DIR)
   image              build the Akam image from your backup
-  backup-2k          2K only: back up the six flash partitions over SSH (read only, each read twice, checked,
-                     kept in the camera's state folder; --out DIR for another new folder)
+  backup-2k          2K only: back up the six flash partitions over SSH (read only, each read twice, checked),
+                     kept like the 1080p backup in <backup folder>/Akam backups/<camera>/<date>[-N] (private,
+                     with SHA256SUMS, README.txt, camera_info.txt); --out DIR for another new folder
+  backup-location [show | DIR | default]
+                     where backups are kept (both models, no menu): show the folder and the next backup's folder,
+                     set an existing folder that will hold 'Akam backups' (refused inside a git tree; a cloud-synced
+                     folder needs a yes, or --yes), or go back to the default (Documents, else the home folder).
+                     A setting of the camera in use (--camera NAME for another)
+  import-backup      --from DIR [--camera NAME] [--model 1080p|2k] [--date YYYYMMDD] [--record] [--dry-run]
+                     bring a backup you already have (1080p mtdblock0..7.bin, 2K mtd0..5.bin; SHA256SUMS or MD5SUMS
+                     if present must match, sizes must match the model, a partial one is refused) into
+                     <backup folder>/Akam backups/<camera>/<date>[-N]: COPIED (the source is never changed or
+                     removed), SHA256SUMS, README.txt, camera_info.txt added when missing, the copy re-verified.
+                     The date is the folder name's, else the files' (or --date). The same backup already under the
+                     camera is reported, not copied twice. --record makes the copy the camera's backup (the 2K's
+                     for update). --dry-run lists exactly what would be done
   seed-2k            2K only, once, while it runs from the first-install card and BEFORE appfs-flash: copy the Wi-Fi
                      settings and the SSH key of the card into the camera's /config/akam (done on the camera; nothing
                      is shown or kept on this PC; a file already there is never overwritten; needs the SSH key set up)
@@ -71,6 +85,17 @@ Commands:
                      reset puts the four numbers back to 0 (sharpness -15, denoise 2). denoise N is 0 to 4: 0 = the camera's own
                      noise reduction, 2 = default (1080p: each light level uses the 3D noise-reduction tables of the
                      level 2 steps higher). Several words can be combined. Default: show.
+  Rotatable 2K options (through its signed API, port 8092, key from key-2k; host-tested only):
+  led, picture, video and hostname work on a 2K with the words of the 2K's registry, plus:
+    led [show | status auto|on|off | ir auto|off]
+    picture [show | brightness|contrast|sharpness 0-100 | mains 50|60 | flip|mirror|ceiling on|off]
+    video [show | stream 0|1 | bitrate N | maxbitrate N | fps N | gop N | minqp N | maxqp N | rc vbr|cbr|avbr]
+    hostname [NAME]    (no NAME: shows it)
+    track [show | on|off | return stay|home | delay S | tilt on|off | lag MS]
+    wifi [show | country CC|none | band 2.4|5]     (asks first, default No; --yes answers)
+    settings [list | get KEY|PREFIX... | set KEY VALUE...]   the catalogue keys only, one PATCH for all
+                     Values are checked like the camera does; its own refusal is shown. Nothing is created
+                     here: without an API key the assistant says so (akam key-2k). --dry-run prints the PATCH.
   video [show | bitrate N | fps N | gop N]
                      the video encoder settings, over SSH. Default: show. bitrate is the cap in kbit/s (500 to 3000,
                      default 1536); fps is 10, 15, 20 or 25 (default 15; night mode always runs at 10); gop is the key

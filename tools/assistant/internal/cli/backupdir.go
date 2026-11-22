@@ -79,9 +79,12 @@ func (a *App) backupSecure(d string, filesOnly bool) bool {
 			ok = false
 		}
 	}
-	names := []string{"SHA256SUMS", "README.txt", "camera_info.txt"}
+	names := []string{"SHA256SUMS", "MD5SUMS", "README.txt", "camera_info.txt"}
 	for n := 0; n < 8; n++ {
 		names = append(names, fmt.Sprintf("mtdblock%d.bin", n))
+	}
+	for n := 0; n < 6; n++ {
+		names = append(names, fmt.Sprintf("mtd%d.bin", n)) // the 2K layout
 	}
 	// only the backup's own files: the folder may be an existing one holding other things
 	for _, n := range names {
@@ -119,8 +122,11 @@ func (a *App) backupSecretsWarning(d string, private bool) {
 
 // backupValidate reports the problems of a new backup folder (not on the SD card guards: those
 // are in the SD commands).
-func (a *App) backupValidate(d string) []string {
-	st := backuploc.State{FreeBytes: platform.FreeSpace(d), NeedBytes: backupDumpBytes()}
+func (a *App) backupValidate(d string) []string { return a.backupValidateNeed(d, backupDumpBytes()) }
+
+// backupValidateNeed is backupValidate for a folder that will hold need bytes.
+func (a *App) backupValidateNeed(d string, need int64) []string {
+	st := backuploc.State{FreeBytes: platform.FreeSpace(d), NeedBytes: need}
 	st.InRepo = inGitTree(d)
 	if fi, err := os.Stat(d); err == nil {
 		st.Exists = true

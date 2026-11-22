@@ -71,6 +71,22 @@ the camera image does not know is shown as "not available on this image (update 
 commands: `led`, `picture`, `video`, `audio` (including `mic on|off`), `ntp`, `onvif`, `mqtt`, `debug`, `rtsp-auth`,
 `hostname`. Wi-Fi is displayed only; changing it needs the card route.
 
+**On the LSC Rotatable 2K** the same screen and commands work through the camera's signed API (port 8092, the key made by
+`key-2k`; without a key the assistant says so and points to `key-2k`, it never creates one). Groups: LED and night, Picture,
+Video, Tracking, Patrol, Network. Values are read with `GET /settings`, shown with their range, edited locally, and sent
+in ONE `PATCH /settings` after a confirmation (default No). The assistant checks each value like the firmware does (host
+name RFC 1123 1..32, country two capitals or `none`, band 5 needs a country, QP and bitrate order...), and shows the
+camera's own refusal text otherwise. Each result says applied now, queued (Wi-Fi and name: the camera applies them within
+seconds, a Wi-Fi change that loses the network is reverted after about a minute), or needs a restart; settings that are
+not saved are marked. No secret is ever shown or sent (the 2K registry has none: the stream password and MQTT are not
+settable through the API yet, they stay in `akam2k.conf`). Commands: `led [status auto|on|off] [ir auto|off]`,
+`picture [brightness|contrast|sharpness N] [mains 50|60] [flip|mirror|ceiling on|off]`, `video [stream 0|1] [bitrate N]
+[maxbitrate N] [fps N] [gop N] [minqp N] [maxqp N] [rc vbr|cbr|avbr]`, `hostname [NAME]`, `track [on|off] [return stay|home]
+[delay S] [tilt on|off] [lag MS]`, `wifi [country CC|none] [band 2.4|5]`, and the generic `settings [list]`,
+`settings get KEY|PREFIX...`, `settings set KEY VALUE [KEY VALUE...]` (allow-list: the catalogue keys only). `--dry-run`
+prints the PATCH body and sends nothing; `--yes` answers the confirmation of a Wi-Fi or name change. `audio`, `ntp`,
+`mqtt`, `onvif`, `rtsp-auth`, `key`, `config` stay refused on a 2K. Host-tested only (a fake signed API): not run against a real 2K.
+
 ### Backup location
 
 Asked the first time a backup is needed, and in Settings. The default is
@@ -84,6 +100,15 @@ folders.** If Documents lives in OneDrive or iCloud Drive (or a path with Dropbo
 A medium that cannot hold permissions (FAT, exFAT, a network share) shows "Private: no" and asks one yes/no (default
 No). The folder must be new or empty, have 64 MiB plus the dump size free, and not be inside the repository or on the
 card being written. Old `~/akam-backup-*` folders stay valid, `--backup-dir DIR` still works.
+
+The same location serves both models: the 2K's `backup-2k` writes `mtd0..mtd5.bin` (plus `SHA256SUMS`, `README.txt`,
+`camera_info.txt`) there too (`--out DIR` overrides). It is shown and changed in Settings, in "Back up" (1080p and 2K),
+or without a menu: `akam backup-location [show | DIR | default]` (DIR must exist, not be inside a git tree; a cloud
+folder needs a yes or `--yes`; a setting of each camera, `--camera NAME`). A backup you already have is brought in with
+`akam import-backup --from DIR [--camera NAME] [--model 1080p|2k] [--date YYYYMMDD] [--record] [--dry-run]`: it is
+verified (sums, sizes, all partitions), copied (the source is never changed), completed with the missing
+`SHA256SUMS`/`README.txt`/`camera_info.txt` (marked as imported), re-verified, never overwrites a folder (`-N`) and is not
+copied twice (same checksums). Details in [docs/assistant.md](../../docs/assistant.md).
 
 ### Backup routes
 
@@ -198,6 +223,7 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `rtsp-auth [set\|disable\|status]` | the password is typed twice without echo and sent on stdin to `akam_rtsp_auth.sh set-creds` |
 | `hostname [NAME]` | `akam_hostname.sh set NAME` (a note only on an older image) |
 | `talk [SECONDS\|test]`, `say FILE` | RTSP + Digest + ONVIF audio backchannel + G.711 in Go; `talk test` and `say file.wav` need no other program (any rate or channel count; 8/16/24/32-bit PCM or float). Files that are not WAV, MP3, FLAC or Ogg Vorbis need `ffmpeg`; the live microphone is built in on Linux (PulseAudio protocol, also served by PipeWire) and Windows (WASAPI), `ffmpeg` (or `arecord` on Linux) is the fallback and what macOS uses (optional, found automatically) |
+| `backup-location [show\|DIR\|default]`, `import-backup --from DIR` | where backups are kept (both models), and bringing an existing backup into that folder (verified copy, source untouched) |
 | `forget-host-key IP` | forget a camera's pinned SSH host key (asks first) |
 | `doctor` | what this program found on your computer (optional tools included) |
 | menu (`akam` alone) | on a terminal, a full-screen menu (arrows or `j`/`k`, Enter, digits 1 to 7 and 9, `?` details, `c` camera, `q`; no "Press Enter" prompts: results show on a strip that any key clears); with `--plain`, `AKAM_PLAIN=1` or without a terminal, the status table |
@@ -206,7 +232,7 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `update [--image FILE]` | flashes a new image over SSH, no card: precheck (writes nothing), the red box and one yes/no (default No), upload to the camera's RAM, sha256 on both sides, md5 by the camera script, a second Dropbear from RAM on port 2222, detached flash, polled log, independent read-back md5 of `/dev/mtd7`. The camera-side scripts are those of `tools/flash_scripts` (or the kit's `scripts/flash`), unchanged. It never reboots: power-cycle by hand |
 | `restore --backup-dir DIR` | the same path with `mtdblock7.bin` of your backup (SHA256SUMS checked); over SSH when Akam runs (asked), else through the maintenance telnet and the card like `flash` |
 | `verify` | waits for SSH, runs `akam_hwcheck.sh`, checks the ports (22, 554, 8091; 24 only with the card; 80 only when ONVIF is on) and the Wi-Fi gate, asks you to power-cycle without the card by hand, repeats the checks, then the optional password, ONVIF and camera-name offers |
-| `backup` | over the maintenance telnet (port 24, toolkit card): `/proc/mtd` must be the supported 8-partition table, kernel and free space checked, the 8 partitions are `dd`-ed twice on the card, 16 exact sizes, both runs hashed on the camera and compared (CONFIG alone may differ: read again twice), dump1 copied to `~/akam-backup-<name>-<date>/` over `nc` with size + hash checks (3 tries, no partial file left), `SHA256SUMS`, `README.txt`, `camera_info.txt` as bash writes them, hardware verdict (yes/no in a red box, default No, unless validated), second-copy question. `--backup-dir DIR` accepts a folder made by hand |
+| `backup` | over the maintenance telnet (port 24, toolkit card): `/proc/mtd` must be the supported 8-partition table, kernel and free space checked, the 8 partitions are `dd`-ed twice on the card, 16 exact sizes, both runs hashed on the camera and compared (CONFIG alone may differ: read again twice), dump1 copied to `<backup folder>/Akam backups/<name>/<date>/` (see `backup-location`) over `nc` with size + hash checks (3 tries, no partial file left), `SHA256SUMS`, `README.txt`, `camera_info.txt` as bash writes them, hardware verdict (yes/no in a red box, default No, unless validated), second-copy question. `--backup-dir DIR` accepts a folder made by hand |
 | `prepare-backup-sd`, `prepare-flash-sd`, `wipe-sd` | see "The SD card" below. One red box (device path, size, model) with a yes/no default No, refused without a terminal |
 | `flash` | stock or maintenance telnet with the flash card on `/mnt`: layout gate, exactly one image on the card with the right md5 (pushed over `nc` only after a yes), `flash_tool` and scripts checked or pushed, Wi-Fi gate (`preflight_check.sh --ensure-wifi` on the camera), the camera script's md5 line compared, the red box, and only after the explicit yes the `YES` to the camera's own prompt; then the read-back `dd if=/dev/mtd7 | md5sum` decides. SSH route when Akam runs and you say yes. No reboot is ever sent |
 

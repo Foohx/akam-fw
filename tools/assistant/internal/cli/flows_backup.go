@@ -9,6 +9,7 @@ import (
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/backuploc"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/appfs"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
@@ -80,23 +81,35 @@ func (a *App) chooseBackupRoot() {
 	if err != nil || v == "" {
 		return
 	}
+	a.setBackupRoot(v)
+}
+
+// setBackupRoot is the one place that validates and remembers the backup root (the menu and
+// `backup-location DIR`): an existing folder, no control characters, not inside a git tree; a cloud-synced
+// folder needs a yes (--yes answers it). "default" goes back to the suggestion. It returns whether the root is
+// now the one asked for.
+func (a *App) setBackupRoot(v string) bool {
 	if v == "default" {
+		if a.UI.Dry() {
+			a.UI.Say("  WOULD go back to the suggested folder.")
+			return true
+		}
 		_ = a.St.Unset("backup_root")
 		a.UI.Say("  Back to the suggested folder.")
-		return
+		return true
 	}
 	abs, err := filepath.Abs(v)
 	if err != nil || hasControl(abs) {
 		a.UI.Say("  That is not a usable path (no control characters, no line breaks).")
-		return
+		return false
 	}
 	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
 		a.UI.Say("  " + ui.Sanitize(abs) + " is not an existing folder.")
-		return
+		return false
 	}
 	if inGitTree(abs) {
 		a.UI.Say("  That folder is inside a git repository: a backup there could be committed. Choose another one.")
-		return
+		return false
 	}
 	why := backuploc.CloudReason(abs, osFacts())
 	if why == "" {
@@ -106,15 +119,22 @@ func (a *App) chooseBackupRoot() {
 	}
 	if why != "" {
 		a.UI.Warn(fmt.Sprintf("this folder looks like part of %s: its content may be copied to the cloud, with your Wi-Fi password in it.", why))
-		if ok, _ := a.UI.AskYN("  Use it anyway?"); !ok {
-			return
+		if !a.Opt.Yes {
+			if ok, _ := a.UI.AskYN("  Use it anyway?"); !ok {
+				return false
+			}
 		}
+	}
+	if a.UI.Dry() {
+		a.UI.Say("  WOULD keep the backups under " + ui.Sanitize(filepath.Join(abs, backuploc.Folder)) + ".")
+		return true
 	}
 	if err := a.St.Set("backup_root", abs); err != nil {
 		a.UI.Warn("cannot remember the folder: " + err.Error())
-		return
+		return false
 	}
 	a.UI.Good("  The backups will be kept under " + ui.Sanitize(filepath.Join(abs, backuploc.Folder)) + ".")
+	return true
 }
 
 // backupRootOverride is the root the user chose (state key backup_root), "" for the suggestion.
@@ -304,4 +324,40 @@ func (a *App) flowSettings() error {
 		}
 		fmt.Fprint(a.out(), assets.Licenses())
 	}
+}
+
+// flowBackupMenu2K is "Back up / restore" of the card-less 2K: the six-partition backup over SSH (the way back is the
+// Akam SD card, see the 2K docs), the folder where backups are kept, and a check of a backup folder.
+func (a *App) flowBackupMenu2K() error {
+	a.banner("Back up - " + a.Cams.Name + " (2K)")
+	s := a.backupSuggest(time.Now())
+	a.UI.Say("  Backup folder: " + filepath.Dir(filepath.Dir(s.Dir)) + "  (the next backup goes to " + s.Dir + ")")
+	i, err := a.UI.Pick("What do you want to do?", []string{"Back up the camera now (six partitions, read only)", "Choose where backups are kept", "Check a backup folder (SHA256SUMS)", "Back"})
+	if err != nil || i == 3 {
+		return nil
+	}
+	switch i {
+	case 0:
+		if !a.needCamera() {
+			return nil
+		}
+		if a.St.Get("backup_root_ok") == "" && !a.backupLocationScreen() {
+			a.UI.Say("  Cancelled. Nothing was done.")
+			return nil
+		}
+		return a.cmdBackup2K()
+	case 1:
+		a.backupLocationScreen()
+	case 2:
+		d, perr := a.UI.Prompt("  Backup folder to check ["+a.St.Get("rot2k_backup")+"]:", a.St.Get("rot2k_backup"))
+		if perr != nil || d == "" {
+			return nil
+		}
+		abs, _ := filepath.Abs(d)
+		if verr := appfs.VerifyBackupDir(abs); verr != nil {
+			return a.UI.Fail(ui.Sanitize(abs)+": "+ui.Sanitize(verr.Error())+".", "this backup is damaged or incomplete: use your second copy.")
+		}
+		a.UI.Good("  " + ui.Sanitize(abs) + ": 6 partitions present, sizes and SHA256SUMS match.")
+	}
+	return nil
 }

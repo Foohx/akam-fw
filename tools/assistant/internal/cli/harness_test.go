@@ -20,6 +20,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/akamapi"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/cli"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/nativeapp/sdcard"
@@ -45,6 +46,7 @@ type env struct {
 	http      *kit.Client // the client of get-kit (a test server's), nil: none
 	sd        sdcard.Backend
 	disc      cli.DiscoverHooks // the network of the discovery tests (fake addresses mapped to the fake camera)
+	api2k     *testfake.API2K   // the fake signed API of a 2K (rot2kopts_test.go), nil: none
 }
 
 type fakeCapture struct {
@@ -192,6 +194,9 @@ func (e *env) hooks() cli.Hooks {
 		h.SD = noDisks{} // a test never lists or touches the real disks of the machine it runs on
 	}
 	h.Discover = e.disc
+	if e.api2k != nil {
+		h.CamAPI = func(string, akamapi.Key) *akamapi.Client { return e.api2k.Client() }
+	}
 	return h
 }
 

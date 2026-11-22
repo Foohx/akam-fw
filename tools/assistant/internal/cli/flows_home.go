@@ -177,6 +177,13 @@ func (a *App) homeAction(act string) error {
 				return nil
 			}
 			return a.cmdUpdate2K()
+		case "backup":
+			return a.flowBackupMenu2K()
+		case "options":
+			if !a.needCamera() {
+				return nil
+			}
+			return a.flowOptions2K()
 		}
 	}
 	if gatedActions[act] {

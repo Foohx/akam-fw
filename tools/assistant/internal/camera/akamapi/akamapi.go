@@ -215,7 +215,8 @@ type Transport func(ctx context.Context, hostport, path string, h Header) (int, 
 type Client struct {
 	HostPort string // 192.0.2.10:8092
 	Key      Key
-	Do       Transport // nil: the raw client
+	Do       Transport        // nil: the raw client
+	DoReq    RequestTransport // PATCH; nil: the raw client
 	Timeout  time.Duration
 }
 
@@ -225,8 +226,15 @@ func New(host string, k Key) *Client {
 }
 
 func rawGet(ctx context.Context, hostport, path string, h Header) (int, []byte, error) {
+	return rawRequest(ctx, hostport, "GET", path, nil, h)
+}
+
+// RequestTransport does one plain HTTP/1.1 request (GET or PATCH, with a JSON body for PATCH) like Transport.
+type RequestTransport func(ctx context.Context, hostport, method, path string, body []byte, h Header) (int, []byte, error)
+
+func rawRequest(ctx context.Context, hostport, method, path string, reqBody []byte, h Header) (int, []byte, error) {
 	// the request line and the Host header are built by concatenation: no CR, LF or blank may get into them
-	if strings.ContainsAny(hostport+path, "\r\n ") || path == "" || hostport == "" {
+	if strings.ContainsAny(hostport+path, "\r\n ") || path == "" || hostport == "" || (method != "GET" && method != "PATCH") {
 		return 0, nil, errors.New("bad request target")
 	}
 	var d net.Dialer
@@ -244,7 +252,10 @@ func rawGet(ctx context.Context, hostport, path string, h Header) (int, []byte, 
 	}
 	sort.Strings(names)
 	var req strings.Builder
-	req.WriteString("GET " + path + " HTTP/1.1\r\nHost: " + hostport + "\r\nConnection: close\r\nAccept: application/json\r\n")
+	req.WriteString(method + " " + path + " HTTP/1.1\r\nHost: " + hostport + "\r\nConnection: close\r\nAccept: application/json\r\n")
+	if method == "PATCH" {
+		req.WriteString("Content-Type: application/json\r\nContent-Length: " + strconv.Itoa(len(reqBody)) + "\r\n")
+	}
 	for _, k := range names {
 		if strings.ContainsAny(k+h[k], "\r\n") {
 			return 0, nil, errors.New("bad header")
@@ -252,6 +263,7 @@ func rawGet(ctx context.Context, hostport, path string, h Header) (int, []byte, 
 		req.WriteString(k + ": " + h[k] + "\r\n")
 	}
 	req.WriteString("\r\n")
+	req.Write(reqBody)
 	if _, err := io.WriteString(conn, req.String()); err != nil {
 		return 0, nil, err
 	}

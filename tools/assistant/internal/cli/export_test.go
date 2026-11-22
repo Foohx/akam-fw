@@ -56,3 +56,12 @@ func SetCtlTimeout(d time.Duration) func() {
 	ctlTimeout = d
 	return func() { ctlTimeout = old }
 }
+
+// DateFromName exposes the date read from the name of a backup folder (YYYYMMDD, "" when none).
+func DateFromName(p string) string {
+	t, ok := dateFromName(p)
+	if !ok {
+		return ""
+	}
+	return t.Format("20060102")
+}

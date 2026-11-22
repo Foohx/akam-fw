@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/fsutil"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/installer"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/appfs"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/models"
@@ -41,28 +42,63 @@ func (a *App) appfsGate(cmd string) error {
 }
 
 // cmdBackup2K reads the six partitions of the 2K over SSH (read only: nothing is written on the camera), each twice,
-// into a new folder of the camera's state folder, verifies it, and records it as the backup `update` uses.
+// into a new folder, verifies it, and records it as the backup `update` uses. The folder is the one of the 1080p
+// backup: <backup folder>/Akam backups/<camera>/<date>[-N] (the folder chosen with backup-location, else Documents,
+// else the home folder when Documents is synced), private to this user, with SHA256SUMS, README.txt and camera_info.txt.
+// --out DIR names another new (or empty) folder.
 func (a *App) cmdBackup2K() error {
 	if err := a.appfsGate("backup-2k"); err != nil {
 		return err
 	}
 	a.UI.Banner("Back up the card-less 2K (six partitions, read only)")
-	dir := a.Opt.Out
+	dir, parents := a.Opt.Out, []string(nil)
 	if dir == "" {
-		dir = filepath.Join(a.St.Dir, "backups", time.Now().UTC().Format("20060102T150405Z"))
+		dir, parents = a.bkPCDirAt(time.Now())
 	}
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD read /proc/mtd (refused unless it is the 2K layout), then read the six partitions over SSH, each twice, compare the two reads")
-		a.UI.Say("  and the sizes, write mtd0.bin..mtd5.bin and SHA256SUMS in " + dir + " and verify them from the files. Nothing is written on the camera.")
+		a.UI.Say("  and the sizes, write mtd0.bin..mtd5.bin, SHA256SUMS, README.txt and camera_info.txt in " + dir + " (private to your user)")
+		a.UI.Say("  and verify them from the files. Nothing is written on the camera.")
 		return nil
 	}
 	ip, err := a.camNeedIP()
 	if err != nil {
 		return err
 	}
-	res, err := appfs.Backup(a.Ctx, a.flashDial(ip), dir, func(s string) { a.UI.Say("  " + s) })
+	if probs := a.backupValidate(dir); len(probs) > 0 {
+		return a.UI.Fail("cannot use "+dir+": "+strings.Join(probs, "; ")+".", "free some space, or choose another folder with "+Prog+" backup-location DIR (or --out DIR).")
+	}
+	created := false
+	if _, serr := os.Stat(dir); serr != nil { // a new folder; an existing empty one (--out) is taken as it is
+		if len(parents) > 0 {
+			err = fsutil.PrivateMkdirChain(parents...)
+		} else {
+			err = os.MkdirAll(filepath.Dir(dir), 0o700)
+		}
+		if err == nil {
+			err = fsutil.PrivateMkdirNew(dir)
+		}
+		if err != nil {
+			return a.UI.Fail("cannot create "+dir+": "+err.Error(), "")
+		}
+		created = true
+	}
+	run := appfs.Backup
+	if a.Hooks.Backup2K != nil {
+		run = a.Hooks.Backup2K
+	}
+	res, err := run(a.Ctx, a.flashDial(ip), dir, func(s string) { a.UI.Say("  " + s) })
 	if err != nil {
+		if created {
+			_ = os.Remove(dir) // empty: a failed backup removes what it wrote
+		}
 		return a.UI.Fail(ui.Sanitize(err.Error())+".", "nothing was written on the camera.")
+	}
+	if werr := a.writeBackupNotes(res.Dir, backupNotes{Layout2K: true, ModelID: a.modelID2K(), Camera: ip, Source: "ssh"}); werr != nil {
+		return a.UI.Fail("the partitions are saved in "+res.Dir+" but README.txt and camera_info.txt could not be written: "+werr.Error()+".", "")
+	}
+	if !a.backupSecure(res.Dir, !created) {
+		a.UI.Warn("  this folder is not private (its medium has no permissions): keep the copy private.")
 	}
 	_ = a.St.Set("rot2k_backup", res.Dir)
 	a.UI.Good("  Backup verified: " + res.Dir)
@@ -122,7 +158,7 @@ func (a *App) cmdAppfsBuild() error {
 		return a.UI.Fail("cannot write the image: "+err.Error(), "")
 	}
 	a.UI.Good(fmt.Sprintf("Image written: %s (sha256 %s, appfs_sign %s)", filepath.Join(out, appfs.ImageName), res.SHA256, res.Sign))
-	a.UI.Hint(fmt.Sprintf("rehearse the flash: %s appfs-flash --model <2K> --ip ADDRESS --backup-dir %s --image-dir %s", Prog, o.BackupDir, out))
+	a.UI.Hint(fmt.Sprintf("rehearse the flash: %s appfs-flash --model <2K> --ip ADDRESS --backup-dir %s --image-dir %s", Prog, shellPath(o.BackupDir), shellPath(out)))
 	return nil
 }
 
