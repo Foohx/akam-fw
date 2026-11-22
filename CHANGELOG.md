@@ -18,9 +18,9 @@ First public release of the Akam camera firmware, with a kit for each of two mod
 - the **LSC Smart Rotatable Camera 2K (Dual Band)** (article `3225722`, `lsc-rotatable-2k-ak3918av130`), validated on one unit,
   running card-less from its flash since 2026-11-15.
 
-**Which binaries were validated:** those validations were made with earlier builds. The current builds of both models (the
-code shared between them was refactored and the firmware goldens were re-recorded on 2026-11-22; the 2K also gained the picture
-orientation) have not been flashed yet and are verified on the host only: see
+**Which binaries were validated:** the current 2K build was flashed on the validated unit on 2026-11-22 (flip and mirror
+checked on the camera). The current 1080p build (code shared with the 2K refactored, golden re-recorded on 2026-11-22) has not
+been flashed yet; the 1080p validations were made with an earlier build: see
 [testing status](docs/testing-status.md#which-build-the-hardware-results-come-from).
 
 Experimental: keep a verified backup of your stock camera before you flash anything. Everything under "Added" is the 1080p

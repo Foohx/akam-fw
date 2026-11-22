@@ -83,6 +83,7 @@ type App struct {
 	Ctx        context.Context
 	envSecrets map[string]string // AKAM_*PASS* read once at start-up (the environment no longer has them)
 
+	lastSigner   string     // which key signed the kit just verified (trustcmds.go)
 	rel          *relCache  // the release list of this session (fwsource.go)
 	staged       *stagedKit // a verified kit waiting to be installed (fwkit.go)
 	cliFW        fwSource   // the firmware named on the command line (zero: none): the chooser is skipped
@@ -322,6 +323,9 @@ func (a *App) dispatch(cmd string) error {
 	if o := a.Opt; cmd != "config" && !(cmd == "import-backup" && !o.CfgGlobal && !o.CfgSecrets && o.CfgOnly == "") && (o.CfgGlobal || o.CfgSecrets || o.CfgFrom != "" || o.CfgOnly != "") {
 		return usageErr("akam: --global, --from, --only and --include-secrets are options of the config command (see " + Prog + " help)")
 	}
+	if err := a.checkRepoOption(cmd); err != nil {
+		return err
+	}
 	if cmd == "update" && a.is2K() { // the 2K has its own flow; every other gated command stays refused on it
 		return a.cmdUpdate2K()
 	}
@@ -406,6 +410,10 @@ func (a *App) dispatch(cmd string) error {
 			return usageErr("akam: step needs a name: " + strings.Join(state.Steps, " "))
 		}
 		return a.runStep(args[0])
+	case "trust-key":
+		return a.cmdTrustKey(args)
+	case "release-source":
+		return a.cmdReleaseSource(args)
 	case "get-kit":
 		return a.cmdGetKit()
 	case "update":

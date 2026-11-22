@@ -8,7 +8,7 @@ SSH, and through the signed API on port 8092. The 1080p commands `rtsp-auth`, `m
 `config` are **refused on a 2K** ("not yet supported for this model"): do not look for them. `led`, `picture`, `video`,
 `hostname` and the Camera options screen of the `akam` program work on a 2K through the signed API (section 5), as do `track`,
 `wifi` and `settings`. Everything here is host-tested; the checks that ran on the real camera are in
-[testing status](../../testing-status.md) (the current build has not been flashed yet).
+[testing status](../../testing-status.md) (the current build runs on the validated unit since 2026-11-22).
 
 Log in with the key you gave `prepare-2k-sd` (`ssh -i KEY root@CAMERA_IP`). Files are small: the partition is 256 KiB. Each
 file is written only when you change it; Akam never rewrites them while running.

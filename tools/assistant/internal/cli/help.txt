@@ -60,6 +60,10 @@ Commands:
                      camera flashed by the scripts, --card updates from an SD card boot, --force allows a
                      downgrade, --yes answers the rehearsal and the typed question only (never the recovery
                      question, which needs --recovery-at-hand as well); a terminal is always required
+  trust-key [list | add FILE.pub [--name LABEL] | remove LABEL]
+                     the extra signing keys you trust for your own firmware builds (ed25519; asks before adding)
+  release-source [show | owner/name | default]
+                     the GitHub repository that get-kit, update and appfs-build download from (default: the official one)
   releases           list the firmware releases published on GitHub for your camera model, newest first
                      (read only; --include-prereleases)
   hostname [NAME]    give the camera its network name (default: the camera's name), over SSH;
@@ -173,6 +177,9 @@ Options:
   --dry-run          rehearse: show every command, change nothing, ask nothing
   --kit FILE         use a local kit (tarball with SHA256SUMS next to it, or folder)
   --version X.Y.Z    firmware release to download for get-kit, or to put on the camera with update
+  --repo owner/name  get-kit, update, appfs-build, releases: download from this GitHub repository for this run
+                     (the kit must still be signed by the official key or a key you added with trust-key)
+  --name LABEL       trust-key add: the label of the key (default: its comment)
   --model ID         camera model of the kit (default: the model found by the backup, or the only one)
   --allow-unsigned   accept a kit without a signature (checksum only)
   --rescue-telnet    prepare-2k-sd: keep the passwordless root telnet on the card (rescue card only; default: disabled)

@@ -48,6 +48,8 @@ func fail(format string, a ...any) error { return &Fail{Msg: fmt.Sprintf(format,
 type Options struct {
 	// AllowedSigners is the content of the allowed_signers file.
 	AllowedSigners []byte
+	// UserSigners is the content of the user trust file (akam trust-key): tried only after AllowedSigners.
+	UserSigners []byte
 	// Sums is the SHA256SUMS file (default: next to the tarball); Sig the signature (default Sums+".sig").
 	Sums, Sig string
 	SigGiven  bool
@@ -116,9 +118,11 @@ func (o *Options) warn(s string) {
 type Result struct {
 	Signed   bool
 	SignedBy string
-	Dir      string // the verified tree (a private temporary directory unless ExtractTo was given)
-	Manifest map[string]string
-	cleanup  func()
+	// SignerLabel says which key signed: OfficialLabel, or `your key "label"`.
+	SignerLabel string
+	Dir         string // the verified tree (a private temporary directory unless ExtractTo was given)
+	Manifest    map[string]string
+	cleanup     func()
 }
 
 // Close removes the temporary tree (a no-op after ExtractTo copied it).
@@ -264,27 +268,57 @@ func (o *Options) checkSignature(res *Result, sums string, sumsData []byte) erro
 		o.warn("was compared, and a checksum from the same download place proves nothing.")
 		return nil
 	}
-	if o.AllowedSigners == nil {
+	hasUser := HasKeys(o.UserSigners)
+	if o.AllowedSigners == nil && !hasUser {
 		return fail("signature present but allowed_signers not found")
 	}
-	if !HasKeys(o.AllowedSigners) {
+	if !HasKeys(o.AllowedSigners) && !hasUser {
 		return fail("signature present but allowed_signers contains no public key (placeholder not replaced): cannot authenticate")
-	}
-	allowed, err := ParseAllowedSigners(o.AllowedSigners)
-	if err != nil {
-		return fail("INVALID signature on %s: %v", filepath.Base(sums), err)
 	}
 	sig, err := ParseSignature(sigData)
 	if err != nil {
 		return fail("INVALID signature on %s: %v", filepath.Base(sums), err)
 	}
-	out, err := Verify(allowed, SigIdentity, SigNamespace, sig, sumsData)
-	if err != nil {
-		return fail("INVALID signature on %s: %v", filepath.Base(sums), err)
+	// The official key first; a key the user chose to trust (akam trust-key) is only a second chance.
+	var out, who string
+	var verr error
+	if HasKeys(o.AllowedSigners) {
+		allowed, perr := ParseAllowedSigners(o.AllowedSigners)
+		if perr != nil {
+			return fail("INVALID signature on %s: %v", filepath.Base(sums), perr)
+		}
+		out, verr = Verify(allowed, SigIdentity, SigNamespace, sig, sumsData)
+		who = OfficialLabel
+	} else {
+		verr = errors.New("no official key")
 	}
-	res.Signed, res.SignedBy = true, out
+	if verr != nil && hasUser {
+		allowed, perr := ParseAllowedSigners(o.UserSigners)
+		if perr != nil {
+			return fail("INVALID signature on %s: your trusted keys cannot be read: %v", filepath.Base(sums), perr)
+		}
+		if uout, uerr := Verify(allowed, SigIdentity, SigNamespace, sig, sumsData); uerr == nil {
+			out, verr = uout, nil
+			who = "your key " + userLabel(allowed, sig)
+		}
+	}
+	if verr != nil {
+		return fail("INVALID signature on %s: %v", filepath.Base(sums), verr)
+	}
+	res.Signed, res.SignedBy, res.SignerLabel = true, out, who
 	o.say(fmt.Sprintf("ok: signature valid (%s)", out))
+	o.say("ok: signed by " + withThe(who))
 	return nil
+}
+
+// userLabel is the label of the trusted key that signed.
+func userLabel(allowed []Allowed, sig *Signature) string {
+	for _, a := range allowed {
+		if bytes.Equal(a.Key.Marshal(), sig.PublicKey.Marshal()) {
+			return `"` + a.Label + `"`
+		}
+	}
+	return `""`
 }
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9._+/-]*$`)
@@ -918,3 +952,14 @@ func CopyTree(src, dst string) error {
 		}
 	})
 }
+
+// withThe reads a signer label in a sentence: "the official Akam release key", `your key "label"`.
+func withThe(who string) string {
+	if strings.HasPrefix(who, "your ") {
+		return who
+	}
+	return "the " + who
+}
+
+// WithThe is withThe for the messages of the assistant.
+func WithThe(who string) string { return withThe(who) }

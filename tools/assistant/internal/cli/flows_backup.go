@@ -314,12 +314,16 @@ func (a *App) flowSettings() error {
 			el = "(not set: the default helper of this system)"
 		}
 		a.UI.Say("  SD helper mode: " + el + "  (AKAM_SD_ELEVATE, shown, not edited)")
-		i, err := a.UI.Pick("Settings:", []string{"Change the backup folder", "Licences (the software built into this program)", "Back"})
-		if err != nil || i == 2 {
+		i, err := a.UI.Pick("Settings:", []string{"Change the backup folder", "Licences (the software built into this program)", "Your own firmware builds (trusted keys, release source)", "Back"})
+		if err != nil || i == 3 {
 			return nil
 		}
 		if i == 0 {
 			a.backupLocationScreen()
+			continue
+		}
+		if i == 2 {
+			a.flowTrust()
 			continue
 		}
 		fmt.Fprint(a.out(), assets.Licenses())

@@ -132,6 +132,7 @@ func (a *App) fwNoteBuild(ip string) {
 // relCache is the release list of this session (asked once; a failure is remembered too).
 type relCache struct {
 	pre   bool
+	repo  string
 	model string
 	list  []kit.Release
 	err   error
@@ -156,18 +157,19 @@ func (a *App) releaseList() ([]kit.Release, error) {
 	if merr != nil {
 		return nil, merr
 	}
-	if a.rel != nil && a.rel.pre == a.Opt.IncludePre && a.rel.model == model {
+	if a.rel != nil && a.rel.pre == a.Opt.IncludePre && a.rel.repo == a.repo() && a.rel.model == model {
 		return a.rel.list, a.rel.err
 	}
-	rc := &relCache{pre: a.Opt.IncludePre, model: model}
+	rc := &relCache{pre: a.Opt.IncludePre, repo: a.repo(), model: model}
 	base, ok := a.apiBase()
 	if !ok {
 		rc.err = errors.New("no network in a test build")
 	} else {
 		a.UI.Say("  Asking GitHub for the firmware releases for " + models.Label(model) + " (read only) ...")
+		a.UI.Say("  Release source: " + a.repoText() + ".")
 		ctx, cancel := context.WithTimeout(a.Ctx, 20*time.Second)
-		a.Log.Line("CMD list releases %s/repos/%s/releases", base, kitRepo)
-		rc.list, rc.err = kit.ListReleases(ctx, a.Hooks.HTTP, base, kitRepo, a.Opt.IncludePre, model)
+		a.Log.Line("CMD list releases %s/repos/%s/releases", base, a.repo())
+		rc.list, rc.err = kit.ListReleases(ctx, a.Hooks.HTTP, base, a.repo(), a.Opt.IncludePre, model)
 		cancel()
 		if rc.err != nil && a.Ctx.Err() != nil {
 			rc.err = a.Ctx.Err()
@@ -248,9 +250,9 @@ func (a *App) kitModelInUse() string {
 
 // cmdReleases is `akam releases`: the versions published on GitHub, newest first.
 func (a *App) cmdReleases() error {
-	a.banner("Akam firmware releases published on GitHub (" + kitRepo + ")")
+	a.banner("Akam firmware releases published on GitHub (" + a.repoShort() + ")")
 	if a.UI.Dry() {
-		a.UI.Say("  WOULD ask GitHub (HTTPS, read only) for the newest releases of " + kitRepo + ". Nothing is downloaded.")
+		a.UI.Say("  WOULD ask GitHub (HTTPS, read only) for the newest releases of " + a.repoText() + ". Nothing is downloaded.")
 		return nil
 	}
 	if m, ok := a.wantModel(); ok {

@@ -9,12 +9,16 @@ This page separates three levels of evidence, so you know what to trust:
 
 ## Which build the hardware results come from
 
-**The current builds of both models have not been flashed yet.** The hardware results below were recorded with earlier
-binaries. Since then the code shared between the two models was refactored (commits `d5d523f` and `e580d22`), the 2K gained
-the picture orientation (flip, mirror, ceiling mount: `24e6e2e`), and both firmware goldens were re-recorded on
-2026-11-22. Those builds are verified on the host only (tests, byte-identical goldens, repeatable builds); no camera has
-run them. Treat every "Yes" below as "Yes, with the earlier binary" until the first-flash checks of the
-[hardware checklists](hardware-test-checklists.md) have been ticked on the current build.
+**LSC Rotatable 2K:** the current build was flashed on 2026-11-22 (hot update, read back byte for byte, card-less reboot).
+After the reboot: motors calibrated to home, tracking on, both RTSP streams at 2304x1296 and 640x360, signed API, settings
+reload, and the picture orientation checks O2 to O4 below. The results of the other 2K rows were recorded with earlier
+binaries and apply to the current one through its tests.
+
+**LSC Indoor 1080p:** the current build has not been flashed yet. Since the last validated image the code shared with the
+2K was refactored (commits `d5d523f` and `e580d22`) and the golden was re-recorded on 2026-11-22. It is verified on the
+host only (tests, byte-identical golden, repeatable build, image built from a real backup); treat every 1080p "Yes" below as
+"Yes, with the earlier binary" until the first-flash checks of the [hardware checklists](hardware-test-checklists.md) are
+ticked.
 
 "Not yet" means **not run on a camera**. Checklists to tick on your own camera:
 [hardware test checklists](hardware-test-checklists.md).
@@ -86,7 +90,7 @@ One unit (article `3225722`), card-less since 2026-11-15, with an earlier binary
 | MQTT, Home Assistant discovery | yes | **Not yet** | [MQTT](mqtt.md) |
 | Go assistant: `backup-2k`, `prepare-2k-sd`, `key-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`, `update --rollback` | `assistant_test.sh` (fake cameras, fake card) | **Not yet** | Never run on a real camera or card; the scripts they port (`flash_appfs.sh`, `build_appfs.sh`) did run |
 | Back to stock (restore of the six-partition backup) | none: no `akam restore-2k` command | **Never run** | Manual procedure: [back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock) |
-| Picture orientation: `image.flip` (vertical), `image.mirror` (horizontal), `image.ceiling`; also applied to zones, tracker, PTZ directions and scene reference | orientation, zones and tracker unit tests, API and MQTT tests | **Not yet** | Written after the last flash. First checks: [hardware checklist](hardware-test-checklists.md#2k-picture-orientation-flip-mirror-ceiling-mount) |
+| Picture orientation: `image.flip` (vertical), `image.mirror` (horizontal), `image.ceiling`; also applied to zones, tracker, PTZ directions and scene reference | orientation, zones and tracker unit tests, API and MQTT tests | **Partly** (2026-11-22) | Flip is vertical, mirror horizontal, both off restores the picture, applied live without a stream restart or a motor recalibration. Not yet checked: colour (the test ran in night mode), day/night switches, ceiling-mount tracking direction, Home Assistant. Checklist: [hardware checklist](hardware-test-checklists.md#2k-picture-orientation-flip-mirror-ceiling-mount) |
 | Open ports of the card-less image | | **Not yet** (no full port scan) | |
 
 ## How to run the host tests

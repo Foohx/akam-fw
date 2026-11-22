@@ -33,9 +33,9 @@ Two cameras, one project: same Akam core, each with its own hardware features.
 | Installed with | the bash wizard (Linux) or the Go `akam` program | the Go `akam` program only (`prepare-2k-sd`, `backup-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`; host-tested only), or scripts |
 | Docs | [1080p](docs/porting/lsc-1080p/README.md) | [2K](docs/porting/lsc-rotatable-2k/README.md) |
 
-**What "validated" means.** The units were validated with earlier builds of the firmware. The current builds of both models
-(shared code refactored, firmware goldens re-recorded on 2026-11-22, and on the 2K the new flip, mirror and ceiling-mount
-settings) have **not been flashed yet**: they are tested on the host only. Details: [testing status](docs/testing-status.md#which-build-the-hardware-results-come-from).
+**What "validated" means.** The current 2K build runs on the validated unit since 2026-11-22 (flip and mirror checked
+on the camera). The current 1080p build (shared code refactored, golden re-recorded on 2026-11-22) has **not been flashed
+yet**: the 1080p units were validated with an earlier build. Details: [testing status](docs/testing-status.md#which-build-the-hardware-results-come-from).
 
 The codes are on the back of the camera body, under the LSC logo (photos: [hacking guide](docs/hacking.md#photos-of-the-board)).
 5 GHz on the 2K is untested. Other revisions (for example `3215672.2`) are untested; any other

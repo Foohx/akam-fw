@@ -107,18 +107,18 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 				rels, rerr := a.releaseList()
 				if rerr != nil || len(rels) == 0 {
 					return nil, a.UI.Fail("cannot tell which firmware release to download for "+models.Label(model)+".",
-						fmt.Sprintf("pass --version X.Y.Z (see https://github.com/%s/releases), or --kit FILE for a kit you already have, or run %s build.", kitRepo, Prog))
+						fmt.Sprintf("pass --version X.Y.Z (see https://github.com/%s/releases), or --kit FILE for a kit you already have, or run %s build.", a.repo(), Prog))
 				}
 				ver = rels[0].Version
 				a.UI.Say("  Newest firmware release for " + models.Label(model) + ": " + ver + ".")
 			}
 		}
 		if !validKitVersion(ver) {
-			return nil, a.UI.Fail(fmt.Sprintf("'%s' is not a valid version.", ver), fmt.Sprintf("use a number such as 0.1.0 (see https://github.com/%s/releases).", kitRepo))
+			return nil, a.UI.Fail(fmt.Sprintf("'%s' is not a valid version.", ver), fmt.Sprintf("use a number such as 0.1.0 (see https://github.com/%s/releases).", a.repo()))
 		}
 		tag := kit.ReleaseTag(ver)
 		kitFile := kit.KitFile(model, ver)
-		base := fmt.Sprintf("https://github.com/%s/releases/download/%s", kitRepo, tag)
+		base := fmt.Sprintf("https://github.com/%s/releases/download/%s", a.repo(), tag)
 		if o := testhook.Env("AKAM_KIT_URL_BASE"); o != "" { // test hook; still HTTPS only
 			base = strings.TrimRight(o, "/") + "/" + tag
 		}
@@ -127,6 +127,7 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 		kitPath = filepath.Join(dl, kitFile)
 		finalTar = filepath.Join(dlFinal, kitFile)
 		a.UI.Say(fmt.Sprintf("  Downloading the %s kit %s from %s (HTTPS only; nothing from it is run before it is verified).", model, ver, base))
+		a.UI.Say("  Release source: " + a.repoText() + ".")
 		if !dry {
 			_ = os.RemoveAll(dl) // nothing left over from an earlier attempt
 			if err := os.MkdirAll(dl, 0o700); err != nil {
@@ -152,7 +153,7 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 				var he *kit.HTTPError
 				if errors.As(err, &he) && (he.Code == 404 || he.Code == 410) {
 					return nil, a.UI.Fail(fmt.Sprintf("firmware release %s was not found, or it has no kit for %s (%s).", ver, models.Label(model), f),
-						fmt.Sprintf("see https://github.com/%s/releases for the versions that exist, or use a kit you already have: %s get-kit --kit FILE (or build from source: %s build).", kitRepo, Prog, Prog))
+						fmt.Sprintf("see https://github.com/%s/releases for the versions that exist, or use a kit you already have: %s get-kit --kit FILE (or build from source: %s build).", a.repo(), Prog, Prog))
 				}
 				return nil, a.UI.Fail(fmt.Sprintf("download of %s failed (%v).", f, err),
 					fmt.Sprintf("check your network and retry, or use a kit you already have: %s get-kit --kit FILE.", Prog))
@@ -163,6 +164,10 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 		if err := a.download(base+"/SHA256SUMS.sig", sig, kit.MaxSmallDownload); err != nil {
 			var he *kit.HTTPError
 			if errors.As(err, &he) && (he.Code == 404 || he.Code == 410) {
+				if !a.repoOfficial() {
+					return nil, a.UI.Fail("release "+ver+" of "+a.repo()+" has no signature (SHA256SUMS.sig): a download from a source other than the official one must be signed.",
+						"sign it with tools/release/sign_kit.sh and run "+Prog+" trust-key add for your key, or use a kit you built here: --kit FILE --allow-unsigned.")
+				}
 				a.UI.Warn("no signature file in this release: the kit would be checked by checksum only.")
 			} else {
 				return nil, a.UI.Fail(fmt.Sprintf("download of SHA256SUMS.sig failed (%v).", err), "check your network and retry.")
@@ -195,7 +200,7 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 
 	op.start(verifyItem)
 	op.status("checking SHA256SUMS, the signature and the archive layout (read only; nothing from the kit is run)")
-	unsigned := a.Opt.AllowUnsigned
+	unsigned := a.Opt.AllowUnsigned && !(downloadModel != "" && !a.repoOfficial()) // a download from another source is never unsigned
 	if ext != "" {
 		_ = os.RemoveAll(ext)
 	}
@@ -206,7 +211,8 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 	a.UI.Say(fmt.Sprintf("  Verifying %s (read-only; nothing from the kit is run).", shown))
 	opts := kit.Options{
 		AllowedSigners: a.allowedSigners(),
-		AllowUnsigned:  a.Opt.AllowUnsigned,
+		UserSigners:    a.userSigners(),
+		AllowUnsigned:  a.Opt.AllowUnsigned && !(downloadModel != "" && !a.repoOfficial()),
 		Expect:         a.Opt.ExpectSHA256,
 		ExtractTo:      ext,
 		Say: func(s string) {
@@ -260,6 +266,9 @@ func (a *App) getKitStageRaw() (*stagedKit, error) {
 	}
 	op.done(verifyItem, "format "+fmtv)
 	a.UI.Good(fmt.Sprintf("  Kit verified (format %s, sha256 %s...).", fmtv, sha[:12]))
+	if t := a.signerText(); t != "" && !unsigned {
+		a.UI.Good("  " + t)
+	}
 	if a.Opt.ExpectSHA256 == "" {
 		a.UI.Say("  Tip: compare that sha256 with the one in the release notes, or pass --expect-sha256 HEX.")
 	}
@@ -298,6 +307,7 @@ func (a *App) verifyKitFile(opts kit.Options, file string, unsigned *bool) (map[
 			return nil, a.UI.Fail("unsigned kit refused.", "get the signed release, or pass --allow-unsigned if you really mean it.")
 		}
 		*unsigned = true
+		a.lastSigner = ""
 		_ = os.RemoveAll(opts.ExtractTo)
 		opts.AllowUnsigned = true
 		res, err = kit.VerifyTarball(file, opts)
@@ -308,6 +318,10 @@ func (a *App) verifyKitFile(opts kit.Options, file string, unsigned *bool) (map[
 			"do not use it. Download it again or get it from the official release page.")
 	}
 	defer res.Close()
+	a.lastSigner = ""
+	if res.Signed {
+		a.lastSigner = res.SignerLabel
+	}
 	return res.Manifest, nil
 }
 

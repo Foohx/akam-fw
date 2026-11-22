@@ -75,9 +75,9 @@ with the signed API (or the Home Assistant switches **Image flip**, **Image mirr
 | # | Check | How | Done |
 |---|---|---|---|
 | O1 | Default is unchanged | Both off (`image.flip` 0, `image.mirror` 0): the picture is exactly the one of the earlier builds, colour correct; the log has no orientation call | [ ] |
-| O2 | `image.flip` is vertical | `image.flip` 1: the picture is upside down (top and bottom swapped, left and right unchanged); no stream restart; back to 0 restores it | [ ] |
-| O3 | `image.mirror` is horizontal | `image.mirror` 1: left and right swapped, top and bottom unchanged; back to 0 restores it | [ ] |
-| O4 | `(0, 0)` leaves the picture unchanged | After a 1 then 0 round trip of both switches, the picture is identical to O1 (same framing) | [ ] |
+| O2 | `image.flip` is vertical | `image.flip` 1: the picture is upside down (top and bottom swapped, left and right unchanged); no stream restart; back to 0 restores it | [x] 2026-11-22 |
+| O3 | `image.mirror` is horizontal | `image.mirror` 1: left and right swapped, top and bottom unchanged; back to 0 restores it | [x] 2026-11-22 |
+| O4 | `(0, 0)` leaves the picture unchanged | After a 1 then 0 round trip of both switches, the picture is identical to O1 (same framing) | [x] 2026-11-22 |
 | O5 | Colour stays right | With flip, with mirror and with both on, skin and sky colours look natural (no swapped red and blue, no green or magenta cast) | [ ] |
 | O6 | Survives day/night | With `image.ceiling` 1, force `night.mode` night then day (and let it switch by itself once): the orientation is the same after each switch | [ ] |
 | O7 | Survives a restart | Set flip, power cycle: the orientation is still applied (it is saved only when you change it); the stream, the zones and the tracker agree with it | [ ] |

@@ -4,8 +4,8 @@ Entry page of this camera. The 1080p has the same page with the same sections: [
 Source of the model definition: [`firmware/lsc-rotatable-2k-ak3918av130`](../../../firmware/lsc-rotatable-2k-ak3918av130)
 and [`platforms/anyka-ak3918av130`](../../../platforms/anyka-ak3918av130).
 
-Status: **validated on 1 unit** (article `3225722`, label `SZ G26312`), card-less boot since 2026-11-15, with an earlier binary:
-the current build has not been flashed yet ([testing status](../../testing-status.md#which-build-the-hardware-results-come-from)).
+Status: **validated on 1 unit** (article `3225722`, label `SZ G26312`), card-less boot since 2026-11-15; the current build
+runs on it since 2026-11-22 ([testing status](../../testing-status.md#which-build-the-hardware-results-come-from)).
 
 ## Hardware
 
@@ -40,7 +40,7 @@ Settings and API: [control API](control-api.md), [network settings](net-settings
 ## Install
 
 **Status: the 2K commands of the Go `akam` program (the bash `./akam` has none) have passed host tests only, on fake
-cameras; none was run on the real camera, and the current firmware build has not been flashed (see
+cameras; none was run on the real camera (the firmware itself was flashed with the maintainer scripts; see
 [testing status](../../testing-status.md#which-build-the-hardware-results-come-from)). Have a UART or a CH341A at hand
 ([UART recovery](uart-recovery.md)).** Get the program from the
 [assistant releases](https://github.com/Foohx/akam-fw/releases?q=assistant-v) (see the

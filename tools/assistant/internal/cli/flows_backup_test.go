@@ -134,7 +134,7 @@ func TestSettingsScreen(t *testing.T) {
 	akamState(e, "")
 	t.Setenv("AKAM_SD_ELEVATE", "pkexec")
 	want, _ := os.ReadFile(filepath.Join("..", "..", "..", "..", "THIRD_PARTY_NOTICES.md"))
-	r := e.run("6\n2\n3\n10\n", "--camera", "default")
+	r := e.run("6\n2\n4\n10\n", "--camera", "default")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Settings", "Backup folder:  ", "State folder:   "+e.state, "SD helper mode: pkexec", string(want))
 }

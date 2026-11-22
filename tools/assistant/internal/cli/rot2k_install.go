@@ -99,7 +99,7 @@ func (a *App) kit2K() (*appfs.Kit, error) {
 	allowUnsigned := a.Opt.AllowUnsigned && a.Opt.Kit != ""
 	unsigned := allowUnsigned
 	opts := kit.Options{
-		AllowedSigners: a.allowedSigners(), AllowUnsigned: allowUnsigned, Expect: a.Opt.ExpectSHA256,
+		AllowedSigners: a.allowedSigners(), UserSigners: a.userSigners(), AllowUnsigned: allowUnsigned, Expect: a.Opt.ExpectSHA256,
 		ExtractTo: ext, Layout: appfs.KitLayout(), ExpectModel: model,
 		Say:  func(s string) { a.UI.Say("  " + s) },
 		Warn: func(s string) { fmt.Fprintln(a.Streams.Err, "WARNING: "+s) },
@@ -119,6 +119,9 @@ func (a *App) kitModelCheck(k *appfs.Kit, model string) error {
 		return a.UI.Fail(fmt.Sprintf("this kit is for %s, not %s.", models.Label(got), models.Label(model)), "use the kit of this camera's model.")
 	}
 	a.UI.Good(fmt.Sprintf("  Kit verified (version %s, source %s).", k.Version(), shortCommit(k.Commit())))
+	if t := a.signerText(); t != "" {
+		a.UI.Good("  " + t)
+	}
 	return nil
 }
 
@@ -137,7 +140,7 @@ func (a *App) download2KKit(model string) (string, error) {
 		rels, err := a.releaseList()
 		if err != nil || len(rels) == 0 {
 			return "", a.UI.Fail("cannot tell which firmware release to download for "+models.Label(model)+".",
-				fmt.Sprintf("pass --version X.Y.Z (see https://github.com/%s/releases) or --kit FILE.", kitRepo))
+				fmt.Sprintf("pass --version X.Y.Z (see https://github.com/%s/releases) or --kit FILE.", a.repo()))
 		}
 		ver = rels[0].Version
 		a.UI.Say("  Newest firmware release for " + models.Label(model) + ": " + ver + ".")
@@ -145,7 +148,8 @@ func (a *App) download2KKit(model string) (string, error) {
 	if !validKitVersion(ver) {
 		return "", a.UI.Fail(fmt.Sprintf("'%s' is not a valid version.", ver), "use a number such as 0.1.0.")
 	}
-	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", kitRepo, kit.ReleaseTag(ver))
+	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", a.repo(), kit.ReleaseTag(ver))
+	a.UI.Say("  Release source: " + a.repoText() + ".")
 	if o := testhook.Env("AKAM_KIT_URL_BASE"); o != "" { // test hook; still HTTPS only
 		base = strings.TrimRight(o, "/") + "/" + kit.ReleaseTag(ver)
 	}
@@ -169,7 +173,7 @@ func (a *App) download2KKit(model string) (string, error) {
 			}
 			if errors.As(err, &he) && (he.Code == 404 || he.Code == 410) {
 				return "", a.UI.Fail(fmt.Sprintf("firmware release %s was not found, or it has no kit for %s (%s).", ver, models.Label(model), f.name),
-					fmt.Sprintf("see https://github.com/%s/releases, or use a kit you already have: --kit FILE.", kitRepo))
+					fmt.Sprintf("see https://github.com/%s/releases, or use a kit you already have: --kit FILE.", a.repo()))
 			}
 			return "", a.UI.Fail(fmt.Sprintf("download of %s failed (%v).", f.name, err), "check your network and retry, or use --kit FILE.")
 		}

@@ -251,6 +251,39 @@ tree (names, types, modes, owners, links, contents), the squashfs parameters, th
 the creation time and the `appfs_sign` recipe (a test runs the script when `mksquashfs` is installed). The squashfs writer
 also had to learn the flags of the stock image (`mksquashfs -xattrs` without xattrs: `NO_XATTRS` clear).
 
+## Deploy your own build
+
+For a fork, or for your own changes to the firmware. Nothing here lowers the default security: a download is
+verified against `SHA256SUMS` and a signature, and the signature must come from the official Akam key (built into
+the program) or from a key you chose to trust. Nothing from a kit is run before it is verified.
+
+1. **Build the kit** (Linux, from a source checkout). 1080p models: `AKAM_KIT_VERSION=X.Y.Z tools/release/make_kit.sh --model ID`
+   (output `dist/kit/`). Rotatable 2K: `tools/release/make_kit_2k.sh --model ID` (writes `akam-kit-<model>-<version>.tar.xz` and `SHA256SUMS`).
+2. **Option A, local and unsigned.** Nobody else needs to trust it: pass the tarball directly and say so.
+   `akam get-kit --kit dist/kit/akam-kit-<model>-X.Y.Z.tar.xz --allow-unsigned` (or `--kit FILE --allow-unsigned` on
+   `update` and `appfs-build`). The program warns that only the checksum is checked. A kit is only ever unsigned when it
+   is a local file you named; a download is never accepted unsigned.
+3. **Option B, signed with your own key.** Make a key once: `ssh-keygen -t ed25519 -f ~/.ssh/my-akam-signing` (keep it
+   outside the repository). Sign the checksums: `tools/release/sign_kit.sh ~/.ssh/my-akam-signing dist/kit`
+   (namespace `akam-release`, as the official releases; the script warns it cannot cross-check against a key that is not
+   in `tools/release/allowed_signers`, which is expected). Then tell the assistant to trust the PUBLIC key:
+   `akam trust-key add ~/.ssh/my-akam-signing.pub --name my-fork`. It shows the fingerprint and a warning and asks
+   yes/no (default No; `--yes` answers it). Use the kit with `--kit`, or publish it (step 4).
+4. **Download from your fork.** Publish the three files (`akam-kit-<model>-X.Y.Z.tar.xz`, `SHA256SUMS`,
+   `SHA256SUMS.sig`) as the assets of a GitHub release tagged `firmware-vX.Y.Z` in your repository, then use
+   `--repo owner/name` for one run (`akam update --repo me/akam-fw`, `get-kit`, `appfs-build`, `releases`) or make it the
+   default with `akam release-source me/akam-fw` (`akam release-source` shows it, `akam release-source default` goes back
+   to the official source). A download from another source must be signed; an unsigned release is refused even with
+   `--allow-unsigned`. Every download message names the source, and every verified kit names the key that signed it:
+   `Signed by the official Akam release key.` or `Signed by your key "my-fork".`
+
+`akam trust-key` lists the trusted keys; `akam trust-key remove LABEL` stops trusting one (kits it signed are refused
+again). The keys are kept in `trusted_signers` in the assistant's state folder (allowed_signers format, one ed25519 key
+per line, mode 600), for every camera of this computer, and the choice of the source in `release_source`. Both are
+also in the menu: Settings, "Your own firmware builds". `--repo` and the source only accept a GitHub `owner/name`
+(letters, digits, `-`, `.`, `_`): no host, scheme, port, path, `..`. Downloads are HTTPS from github.com only.
+Only trust a key that is yours or whose owner you know: a trusted key can sign firmware that is written to your camera.
+
 ## First run
 
 ```text

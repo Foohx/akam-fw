@@ -172,6 +172,10 @@ Which Akam files end up in the image (overlay, `service.sh` patch, links) is lis
 in `image_files.txt`; `tests/kit_test.sh` builds an image with `build_image.sh` and
 fails if it disagrees with that list. Edit the list, not two scripts.
 
+Deploying your own build (a fork, or your own changes) with the assistant, signed with your own key or local and
+unsigned: see [Deploy your own build](../../docs/assistant.md#deploy-your-own-build) (`sign_kit.sh` with your key,
+`akam trust-key add`, `--repo` / `akam release-source`).
+
 ## The assistant (`build_assistant.sh`)
 
 Run by `make_release.sh`; alone: `AKAM_VERSION=X.Y.Z tools/release/build_assistant.sh` (output `dist/assistant/`,

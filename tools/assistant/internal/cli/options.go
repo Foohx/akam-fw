@@ -39,8 +39,10 @@ type Options struct {
 	APIKeyFile                                 string
 	// import-backup: --date YYYYMMDD (the folder's date), --record (make it the camera's backup). --from, --camera,
 	// --model and --yes are shared with other commands.
-	Date   string
-	Record bool
+	Date string
+	// Your own builds (trustcmds.go): --repo owner/name (release source of one run), --name LABEL (trust-key add).
+	Repo, Name string
+	Record     bool
 }
 
 var negNum = regexp.MustCompile(`^-[0-9]`)
@@ -158,6 +160,10 @@ func ParseArgs(argv []string) (*Options, error) {
 			o.CfgSecrets = true
 		case "--from":
 			set(&o.CfgFrom)
+		case "--repo":
+			set(&o.Repo)
+		case "--name":
+			set(&o.Name)
 		case "--date":
 			set(&o.Date)
 		case "--record":

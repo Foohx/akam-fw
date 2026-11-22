@@ -101,6 +101,7 @@ type Allowed struct {
 	Principals []string
 	Namespaces []string // empty: any
 	Key        gossh.PublicKey
+	Label      string // the comment field of the line, when there is one
 }
 
 // ParseAllowedSigners reads the ssh-keygen allowed_signers format. Comment and blank lines are
@@ -134,6 +135,9 @@ func ParseAllowedSigners(b []byte) ([]Allowed, error) {
 			return nil, fmt.Errorf("allowed_signers line %d: %v", n+1, err)
 		}
 		a.Key = key
+		if i+2 < len(fields) {
+			a.Label = fields[i+2]
+		}
 		out = append(out, a)
 	}
 	return out, nil
