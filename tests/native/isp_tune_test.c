@@ -38,7 +38,7 @@ int main(int argc, char **argv)
     CHECK(access(path, F_OK) != 0);
 
     /* save creates the directory (0700) and the file (0600), round trip, no temp left */
-    isp_tune_t w = { -50, 50, -1, 7, 4 };
+    isp_tune_t w = { -50, 50, -1, 7, 4, ISP_TUNE_DEFAULT_WDR, 0 };
     CHECK(isp_tune_save(path, &w) == 0);
     struct stat st;
     CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     CHECK(isp_tune_load(path, &t) == 1 && !t.brightness);
 
     /* an explicitly saved sharpness 0 (stock) wins over the default: it is a file, and it loads back as 0 */
-    isp_tune_t z = { 0, 0, 0, 0, ISP_TUNE_DEFAULT_DENOISE };
+    isp_tune_t z = { 0, 0, 0, 0, ISP_TUNE_DEFAULT_DENOISE, ISP_TUNE_DEFAULT_WDR, 0 };
     CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
     CHECK(isp_tune_load(path, &t) == 1 && t.sharpness == 0);
     put(path, "contrast=4\n");                                                   /* no sharpness line: the default */
@@ -95,6 +95,28 @@ int main(int argc, char **argv)
     z.sharpness = ISP_TUNE_DEFAULT_SHARPNESS;
     CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) != 0);
     CHECK(isp_tune_save(path, &z) == 0);
+
+    /* wdr: default 90 (the stock curves, a file without the line gets it), range 0..100 (the 2K's scale); an explicit 0 and an explicit 45 are saved lines;
+     * nr2: default 0 (the camera's own table), range 0..4; the defaults of both remove the file */
+    CHECK(ISP_TUNE_DEFAULT_WDR == 90 && ISP_TUNE_WDR_MAX == 100 && ISP_TUNE_NR2_MAX == 4);
+    put(path, "contrast=4\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.wdr == ISP_TUNE_DEFAULT_WDR && t.nr2 == 0);
+    put(path, "wdr=101\nnr2=5\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.wdr == ISP_TUNE_DEFAULT_WDR && t.nr2 == 0);
+    put(path, "wdr=-1\nnr2=-1\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.wdr == ISP_TUNE_DEFAULT_WDR && t.nr2 == 0);
+    put(path, "wdr=0\nnr2=4\n");
+    CHECK(isp_tune_load(path, &t) == 1 && t.wdr == 0 && t.nr2 == 4);
+    z.wdr = 0;
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);
+    CHECK(isp_tune_load(path, &t) == 1 && t.wdr == 0 && t.nr2 == 0);
+    z.wdr = 45; z.nr2 = 3;
+    CHECK(isp_tune_save(path, &z) == 0);
+    CHECK(isp_tune_load(path, &t) == 1 && t.wdr == 45 && t.nr2 == 3 && t.denoise == ISP_TUNE_DEFAULT_DENOISE);
+    z.wdr = ISP_TUNE_DEFAULT_WDR; z.nr2 = 1;
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) == 0);   /* nr2 alone keeps the file */
+    z.nr2 = 0;
+    CHECK(isp_tune_save(path, &z) == 0 && access(path, F_OK) != 0);   /* both at the defaults: the file goes */
 
     /* parse */
     int v = 99;

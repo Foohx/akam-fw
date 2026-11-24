@@ -7,7 +7,7 @@
 PUBLISH_DIR := $(ROOT)/dist/rot2k-app
 VENDOR      := $(PUBLISH_DIR)/vendor/appfs/lib
 # Model-only compile flags: sizes and file names tuned for this camera (not platform facts). Extra include directories of the model.
-MODEL_CFLAGS := -DA2K_API_RESP_MAX=16384 -DONVIF_SCRATCH=2048 -DWSD_INSTANCE_FILE='"/tmp/akam2k_wsd_instance"' -DA2K_API_FAST_ACTION='"ptz.vel"' \
+MODEL_CFLAGS := -DA2K_API_RESP_MAX=18432 -DONVIF_SCRATCH=2048 -DWSD_INSTANCE_FILE='"/tmp/akam2k_wsd_instance"' -DA2K_API_FAST_ACTION='"ptz.vel"' \
                 -DAPISIG_NONCE_CAP=224 -DCRED_NONCE_CACHE=16
 MODEL_INC_DIRS := $(MODEL_DIR)/helpers/ptz
 

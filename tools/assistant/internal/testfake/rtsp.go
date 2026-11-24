@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -258,6 +259,11 @@ func (s *RTSPServer) serve(c net.Conn) {
 		}
 		switch method {
 		case "DESCRIBE":
+			// like the real 2K: only /stream0 and /stream1 exist, a bare URL is a 404
+			if !validStreamURI(uri) {
+				reply(404, "Not Found", "", "")
+				continue
+			}
 			if busy {
 				extra := ""
 				if retryAfter != "" {
@@ -278,7 +284,7 @@ func (s *RTSPServer) serve(c net.Conn) {
 				}
 				sdp += pt + "a=sendonly\r\na=control:track2\r\n"
 			}
-			reply(200, "OK", "Content-Base: rtsp://127.0.0.1/\r\n", sdp)
+			reply(200, "OK", "Content-Base: "+strings.TrimRight(uri, "/")+"/\r\n", sdp)
 		case "SETUP":
 			reply(200, "OK", "Session: "+session+";timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", "")
 		case "PLAY":
@@ -295,6 +301,15 @@ func (s *RTSPServer) serve(c net.Conn) {
 			reply(405, "Method Not Allowed", "", "")
 		}
 	}
+}
+
+// validStreamURI reports whether the request URI path is /stream0 or /stream1.
+func validStreamURI(uri string) bool {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return false
+	}
+	return u.Path == "/stream0" || u.Path == "/stream1"
 }
 
 // DescribeRequire is the Require header of the last DESCRIBE.

@@ -32,7 +32,7 @@ func TestOptionsShowsWifiLevels(t *testing.T) {
 		contains(t, r.out, "Wi-Fi signal: "+c.rssi+" dBm ("+c.level+"), link 65 Mb/s.")
 		if c.warn {
 			contains(t, r.out, "move the camera or the access point closer", "repeater", "UDP loses key frames", "TCP lags",
-				"now: bitrate 1536 kbit/s, key frame every 2 s", "./akam --camera salon video bitrate 1024 gop 1", "nothing is changed automatically")
+				"now: bitrate 1536 kbit/s, key frame every 2 s", "akam --camera salon video bitrate 1024 gop 1", "nothing is changed automatically")
 		} else {
 			notContains(t, r.out, "move the camera", "video bitrate 1024")
 		}
@@ -139,7 +139,7 @@ func TestVideoShowAndNtpStatusShowHealth(t *testing.T) {
 	e.cam.SetCtl("net.wifi_rssi", "-77")
 	r := e.run("", "--camera", "salon", "video", "show")
 	expectRC(t, r, 0)
-	contains(t, r.out, "Wi-Fi signal: -77 dBm (poor)", "./akam --camera salon video bitrate 1024 gop 1")
+	contains(t, r.out, "Wi-Fi signal: -77 dBm (poor)", "akam --camera salon video bitrate 1024 gop 1")
 	r = e.run("", "--camera", "salon", "ntp", "status")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Clock: set, ")

@@ -23,6 +23,8 @@ type APIError struct {
 	Status int
 	Code   string
 	Detail string
+	// RetryAfter is the camera's Retry-After of a 429 (0 when it gave none).
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -56,14 +58,75 @@ type PatchResult struct {
 
 var challengeRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
-// call does one signed request: GET /hello for a challenge, then the request itself.
+// The camera rate-limits /hello (10 a minute, 2 a second per peer) and the signed requests, and answers 429 with
+// Retry-After. A 429 is waited out (bounded) and the READ is repeated. A write is never repeated, but its /hello
+// (which sends nothing yet) is.
+const (
+	rateTries   = 4 // the first try and 3 retries
+	rateMinWait = 1 * time.Second
+	rateMaxWait = 5 * time.Second // a longer Retry-After is not waited for
+)
+
+func (c *Client) wait(ctx context.Context, d time.Duration) {
+	if c.Sleep != nil {
+		c.Sleep(ctx, d)
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
+
+// helloRateError is a 429 of GET /hello: nothing was sent yet, so even a write may try again.
+type helloRateError struct{ *APIError }
+
+func (e *helloRateError) Error() string { return "GET /hello: " + e.APIError.Error() }
+func (e *helloRateError) Unwrap() error { return e.APIError }
+
+// call does one signed request: GET /hello for a challenge, then the request itself. A 429 is retried (see above).
 func (c *Client) call(ctx context.Context, method, path string, body []byte) ([]byte, int, error) {
+	for i := 1; ; i++ {
+		b, code, err := c.call1(ctx, method, path, body)
+		var ae *APIError
+		var hr *helloRateError
+		switch {
+		case errors.As(err, &hr):
+			ae = hr.APIError
+		case err == nil && code == 429 && method == "GET":
+			if ae = apiError(code, b); ae.Code == "flash_rate" {
+				ae = nil
+			}
+		}
+		if ae == nil || i >= rateTries || ctx.Err() != nil {
+			return b, code, err
+		}
+		d := ae.RetryAfter
+		if d < rateMinWait {
+			d = rateMinWait
+		}
+		if d > rateMaxWait {
+			d = rateMaxWait
+		}
+		c.wait(ctx, d)
+		if ctx.Err() != nil {
+			return b, code, err
+		}
+	}
+}
+
+func (c *Client) call1(ctx context.Context, method, path string, body []byte) ([]byte, int, error) {
 	hb, code, err := c.get(ctx, "/hello", false, "")
 	if err != nil {
 		return nil, 0, err
 	}
 	if code == 404 {
 		return nil, 0, fmt.Errorf("%w (HTTP 404)", ErrClosed)
+	}
+	if code == 429 {
+		return nil, 0, &helloRateError{apiError(code, hb)}
 	}
 	if code != 200 {
 		return nil, 0, fmt.Errorf("GET /hello: HTTP %d", code)
@@ -103,11 +166,16 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte) ([]
 // apiError reads an error answer; ok is false when the body is not one.
 func apiError(code int, b []byte) *APIError {
 	var e struct {
-		Error  string `json:"error"`
-		Detail string `json:"detail"`
+		Error      string `json:"error"`
+		Detail     string `json:"detail"`
+		RetryAfter int    `json:"retry_after_s"`
 	}
 	_ = json.Unmarshal(b, &e)
-	return &APIError{Status: code, Code: e.Error, Detail: e.Detail}
+	ra := time.Duration(e.RetryAfter) * time.Second
+	if e.RetryAfter < 0 || e.RetryAfter > 3600 {
+		ra = 0
+	}
+	return &APIError{Status: code, Code: e.Error, Detail: e.Detail, RetryAfter: ra}
 }
 
 func authError(code int) error {

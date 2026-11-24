@@ -39,6 +39,7 @@ in particular `LOG` lines, and SHOULD end a `LIST` read at the `.` line.
 | `GET key` | anyone | `key=value`, or `ERR unknown param key` |
 | `SET key value` | loopback, or anyone while debug is on | `OK key=value`, or `ERR ...` |
 | `QUIT` | anyone | `OK bye`, then close |
+| `WDRDUMP` | any | read-only (1080p): the last `[isp.wdr]` diagnostic line (GET / SET results, mode word, switch / lift entry masks, curve checksums before and after the rescale, bytes changed, read-back) followed by `ae=ok lum= exp= sgain= ispgain= iso_prod=`; see `specs/video-and-streaming.md` 5.8 |
 | `DEBUG on [MINUTES]`, `DEBUG off`, `DEBUG status` | loopback only | `OK ctl.debug=1 minutes=N`, `OK ctl.debug=0`, `ctl.debug=1 remaining=S` or `ctl.debug=0`. MINUTES is 1 to 1440, default 60 |
 | `ONVIF reload` | loopback only | `OK onvif.state=STATE` (starts or stops ONVIF from its flag file) |
 | `MQTT reload` | loopback only | `OK mqtt.state=STATE`, or `ERR mqtt.state=STATE` when the start failed |
@@ -105,6 +106,8 @@ Access: `r` read-only, `rw` read-write (write rule of section 3), `w` write-only
 | `ae.enabled` | rw | 0 or 1 | RAM |
 | `isp.brightness`, `isp.contrast`, `isp.saturation` | rw | -50 to 50 | file `picture` |
 | `isp.sharpness` | rw | -50 to 50, default -15 (all SHARP groups); 0 = stock | file `picture` |
+| `isp.wdr` | rw | 0 to 100, default 90 (1080p: backlight / WDR strength, 90 = the camera's own curves and nothing sent, 0 = no shadow lift, 91..100 = more lift; the 2K's row and scale); refused when the live WDR block is not as decoded; GET = the value that runs | file `picture` |
+| `isp.nr2` | rw | 0 to 4, default 0 (1080p: spatial luma noise reduction, N = `img.nr2d` 100 + 50 N percent, 0 = the camera's own table, nothing sent); refused when the live table is not as decoded; GET = the value that runs | file `picture` |
 | `isp.denoise` | rw | 0 to 4, default 2 (1080p 3D-NR bias, same knob as `img.nr3d_bias`); 0 = stock; refused when the live table is not as decoded; GET = the value that runs | file `picture` |
 | `venc.minqp`, `venc.maxqp` | r | `28 (read-only)`, `43 (read-only)` (the suffix is part of the value) | - |
 

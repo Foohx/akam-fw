@@ -33,6 +33,21 @@ func TestAskSetup2KSpeakerAndPicture(t *testing.T) {
 	}
 }
 
+func TestAskSetup2KAsksNr2AndWdr(t *testing.T) {
+	// speaker no; saturation, denoise skipped; nr2 3; wdr 100
+	a, out := setupApp(setupNoServices + "n\n\n\n3\n100\n")
+	s, err := a.askSetup2K()
+	if err != nil || s == nil {
+		t.Fatalf("%v %v\n%s", s, err, out)
+	}
+	if s.Settings["isp.nr2"] != "3" || s.Settings["isp.wdr"] != "100" {
+		t.Errorf("settings %v", s.Settings)
+	}
+	if _, ok := s.Settings["isp.denoise"]; ok {
+		t.Errorf("an empty answer must keep the camera's own value: %v", s.Settings)
+	}
+}
+
 func TestAskSetup2KSpeakerOffAsksNoAudioDetails(t *testing.T) {
 	a, out := setupApp(setupNoServices + "n\n5\n\n")
 	s, err := a.askSetup2K()

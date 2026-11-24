@@ -25,7 +25,7 @@ func (a *App) ledShow(c *camssh.Client) error {
 	out := a.ctlExchange(c, "GET led.status", "GET led.state", "GET night.ir_led")
 	st, state, ir := ctl.Get("led.status", out), ctl.Get("led.state", out), ctl.Get("night.ir_led", out)
 	if st == "" || ir == "" {
-		return a.UI.Fail("the camera did not answer the LED settings.",
+		return a.ctlNoAnswer("the camera did not answer the LED settings.",
 			fmt.Sprintf("it may run an older Akam image without them (%s update), or its control port may be busy; try again.", Prog))
 	}
 	switch st {
@@ -65,7 +65,7 @@ func (a *App) ledCheckSet(key, val string, answers []string) error {
 	case r.Answered:
 		return a.UI.Fail(fmt.Sprintf("the camera refused %s %s: %s", key, val, r.Err), fmt.Sprintf("this image may not have the LED settings (%s update).", Prog))
 	}
-	return a.UI.Fail(fmt.Sprintf("the camera did not confirm %s %s.", key, val),
+	return a.ctlNoAnswer(fmt.Sprintf("the camera did not confirm %s %s.", key, val),
 		fmt.Sprintf("it may run an older Akam image without the LED settings (%s update), or its control port may be busy; try again.", Prog))
 }
 
@@ -169,7 +169,7 @@ func (a *App) ctlSet(c *camssh.Client, key, val string) (restart bool, err error
 	case r.Answered:
 		return false, a.UI.Fail(fmt.Sprintf("the camera refused %s %s: %s", key, val, r.Err), fmt.Sprintf("this image may not have that setting (%s update).", Prog))
 	}
-	return false, a.UI.Fail(fmt.Sprintf("the camera did not confirm %s %s.", key, val),
+	return false, a.ctlNoAnswer(fmt.Sprintf("the camera did not confirm %s %s.", key, val),
 		fmt.Sprintf("it may run an older Akam image (%s update), or its control port may be busy; try again.", Prog))
 }
 
@@ -192,7 +192,7 @@ func (a *App) audioShow(c *camssh.Client) error {
 	talk, state := ctl.Get("audio.talk_enable", out), ctl.Get("audio.out_state", out)
 	under, drops := ctl.Get("audio.out_underruns", out), ctl.Get("audio.out_drops", out)
 	if vol == "" || en == "" {
-		return a.UI.Fail("the camera did not answer the audio settings.",
+		return a.ctlNoAnswer("the camera did not answer the audio settings.",
 			fmt.Sprintf("it may run an older Akam image without audio output (%s update), or its control port may be busy; try again.", Prog))
 	}
 	if state == "" {
@@ -330,13 +330,13 @@ func (a *App) cmdAudio(args []string) error {
 }
 
 func (a *App) pictureShow(c *camssh.Client) error {
-	out := a.ctlExchange(c, "GET isp.brightness", "GET isp.contrast", "GET isp.saturation", "GET isp.sharpness", "GET isp.denoise", "GET img.wb", "GET night.mode")
+	out := a.ctlExchange(c, "GET isp.brightness", "GET isp.contrast", "GET isp.saturation", "GET isp.sharpness", "GET isp.denoise", "GET isp.wdr", "GET isp.nr2", "GET img.wb", "GET night.mode")
 	br, co := ctl.Get("isp.brightness", out), ctl.Get("isp.contrast", out)
 	sa, sh := ctl.Get("isp.saturation", out), ctl.Get("isp.sharpness", out)
 	wb, nm := ctl.Get("img.wb", out), ctl.Get("night.mode", out)
 	dn := ctl.Get("isp.denoise", out)
 	if br == "" || co == "" || sa == "" || sh == "" {
-		return a.UI.Fail("the camera did not answer the picture settings.", "its control port may be busy; try again.")
+		return a.ctlNoAnswer("the camera did not answer the picture settings.", "its control port may be busy; try again.")
 	}
 	if wb == "" {
 		wb = "unknown"
@@ -347,6 +347,13 @@ func (a *App) pictureShow(c *camssh.Client) error {
 	a.UI.Say(fmt.Sprintf("  Brightness %s, contrast %s, saturation %s, sharpness %s (each -50 to 50; 0 = unchanged, except sharpness: -15 is the default, 0 is the camera's own sharpening). Saved on the camera.", br, co, sa, sh))
 	if dn != "" {
 		a.UI.Say(fmt.Sprintf("  Denoise (3D noise reduction): %s (0 to 4; 2 is the default, 0 is the camera's own noise reduction). Saved on the camera.", dn))
+	}
+	// an image from before these two rows does not answer: nothing is said about them
+	if wd := ctl.Get("isp.wdr", out); wd != "" {
+		a.UI.Say(fmt.Sprintf("  Backlight (WDR) strength: %s (0 to 100; 90 is the camera's own setting, lower = less shadow lift, so more contrast against the light, 0 = off). Saved on the camera.", wd))
+	}
+	if n2 := ctl.Get("isp.nr2", out); n2 != "" {
+		a.UI.Say(fmt.Sprintf("  Spatial noise reduction: %s (0 to 4; 0 is the camera's own, higher = stronger). Saved on the camera.", n2))
 	}
 	a.UI.Say(fmt.Sprintf("  White balance: %s (conf = the camera's calibration, manual = Akam's own block). Saved on the camera.", wb))
 	a.UI.Say(fmt.Sprintf("  Day/night: %s (auto, day or night). Saved on the camera.", nm))
@@ -415,6 +422,17 @@ func (a *App) cmdPicture(args []string) error {
 			}
 			keys, vals = append(keys, "isp.denoise"), append(vals, next)
 			i += 2
+		case "wdr", "nr2":
+			max := map[string]int{"wdr": 100, "nr2": 4}[w]
+			n, err := strconv.Atoi(next)
+			if !picNumRe.MatchString(next) || err != nil || n < 0 || n > max {
+				return audioUsage(fmt.Sprintf("picture %s needs a whole number from 0 to %d", w, max))
+			}
+			if has("isp." + w) {
+				return audioUsage(fmt.Sprintf("picture %s given twice", w))
+			}
+			keys, vals = append(keys, "isp."+w), append(vals, strconv.Itoa(n))
+			i += 2
 		case "wb":
 			if next != "conf" && next != "manual" {
 				return audioUsage("picture wb needs conf or manual")
@@ -475,10 +493,10 @@ func (a *App) cmdPicture(args []string) error {
 			a.UI.Say(fmt.Sprintf("  WOULD send: SET %s %s", keys[i], vals[i]))
 		}
 		if reset {
-			a.UI.Say("  WOULD send: SET isp.denoise 2 (ignored by an image without it)")
+			a.UI.Say("  WOULD send: SET isp.denoise 2, SET isp.wdr 90, SET isp.nr2 0 (each ignored by an image without it)")
 		}
 		if len(keys) == 0 {
-			a.UI.Say("  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode, image.flip, image.mirror")
+			a.UI.Say("  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, isp.wdr, isp.nr2, img.wb, night.mode, image.flip, image.mirror")
 		}
 		return nil
 	}
@@ -496,7 +514,9 @@ func (a *App) cmdPicture(args []string) error {
 		if reset {
 			// an image without isp.denoise refuses it: nothing to reset, no error
 			a.ctlExchange(c, "SET isp.denoise 2")
-			a.UI.Good("  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed. Denoise is back to 2 (the default).")
+			a.ctlExchange(c, "SET isp.wdr 90")
+			a.ctlExchange(c, "SET isp.nr2 0")
+			a.UI.Good("  Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed. Denoise is back to 2 (the default). Backlight (WDR) is back to 90 and spatial noise reduction to 0 (the defaults).")
 		} else {
 			a.UI.Good("  Done.")
 		}

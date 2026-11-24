@@ -116,7 +116,7 @@ func (a *App) askSetup2K() (*appfs.Setup2K, error) {
 			s.Settings["audio.talk_enable"] = "0"
 		}
 	}
-	for _, k := range []struct{ key, label string }{{"isp.saturation", "Picture saturation"}, {"isp.denoise", "Picture denoise"}} {
+	for _, k := range []struct{ key, label string }{{"isp.saturation", "Picture saturation"}, {"isp.denoise", "Picture denoise"}, {"isp.nr2", "Picture spatial noise reduction"}, {"isp.wdr", "Backlight (WDR) strength, 90 is the stock"}} {
 		if v, ok := a.askNumber2K(k.key, k.label); ok {
 			s.Settings[k.key] = v
 		}

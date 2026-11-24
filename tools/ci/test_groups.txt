@@ -38,6 +38,7 @@ native isp_blocks_test.sh
 native isp_effects_test.sh
 native isp_nr_test.sh
 native isp_tune_test.sh
+native isp_wdr_test.sh
 native jitter_test.sh
 shell kit_test.sh
 shell kit2k_test.sh

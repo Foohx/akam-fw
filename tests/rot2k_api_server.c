@@ -121,11 +121,16 @@ static int fx_set(int type, int v)
     return 0;
 }
 static uint8_t g_nr3d[A2K_PIC_NR3D_SIZE];
+static uint8_t g_nr2[A2K_PIC_NR2_SIZE];
 static int32_t g_wbtype = 1;
 static int fk_get(int what, void *buf)
 {
     if (what == A2K_IT_NR3D) {
         memcpy(buf, g_nr3d, sizeof g_nr3d);
+        return 0;
+    }
+    if (what == A2K_IT_NR2) {
+        memcpy(buf, g_nr2, sizeof g_nr2);
         return 0;
     }
     if (what == A2K_IT_WBTYPE) {
@@ -140,6 +145,12 @@ static int fk_set(int what, const void *buf)
         const uint8_t *r1 = (const uint8_t *)buf + 4 + A2K_NR3D_REC, *r16 = (const uint8_t *)buf + 4 + 16 * A2K_NR3D_REC;
         memcpy(g_nr3d, buf, sizeof g_nr3d);
         call("isp.nr3d rec1 %d rec16 %d", r1[4], r16[4]);
+        return 0;
+    }
+    if (what == A2K_IT_NR2) {
+        const uint8_t *r1 = (const uint8_t *)buf + 4 + A2K_NR2_REC, *r16 = (const uint8_t *)buf + 4 + 16 * A2K_NR2_REC;
+        memcpy(g_nr2, buf, sizeof g_nr2);
+        call("isp.nr2 rec1 k %d rec16 k %d", r1[4], r16[4]);
         return 0;
     }
     if (what == A2K_IT_WBTYPE) {
@@ -157,6 +168,10 @@ static void fake_isp_init(void)
     g_nr3d[0] = 1;
     for (i = 0; i < A2K_REC_N; i++)
         g_nr3d[4 + i * A2K_NR3D_REC + 4] = (uint8_t)(100 + i); /* a marker per level */
+    memset(g_nr2, 0, sizeof g_nr2);
+    g_nr2[0] = 1;
+    for (i = 0; i < A2K_REC_N; i++)
+        g_nr2[4 + i * A2K_NR2_REC + 4] = (uint8_t)(i < 16 ? i : 0); /* nr2_k = the record number, 0 for the last */
     a2k_pic_init(&g_fake_isp);
 }
 static int g_isp_flip_rc; /* the fake ISP answer of a2k_isp_flip_mirror (the test script flips it through the file DIR/flip_fail) */

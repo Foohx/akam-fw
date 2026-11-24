@@ -13,6 +13,7 @@
 #include "abi.h"
 #include "cap.h"
 #include "detect.h"
+#include "image.h"
 #include "isp.h"
 #include "log.h"
 #include "orient.h"
@@ -338,6 +339,7 @@ static int it_get(int what, void *buf)
     case A2K_IT_UVNR: return ak_vpss_get_uvnr_attr(0, buf);
     case A2K_IT_NR3D: return ak_vpss_get_3d_nr_attr(0, buf);
     case A2K_IT_AWB: return ak_vpss_get_awb_stat_info(0, buf);
+    case A2K_IT_WDR: return ak_vpss_get_wdr_attr(0, buf); /* read only (the effect 5 owns the WDR curves) */
     default: return -1;
     }
 }
@@ -636,7 +638,7 @@ int a2k_isp_flip_mirror(int flip, int mirror)
 
 int a2k_isp_wdr(int on)
 {
-    return a2k_isp_effect(A2K_FX_WDR, on ? 40 : 0);
+    return a2k_isp_effect(A2K_FX_WDR, on ? a2k_pic_wdr_effect() : 0); /* on = 40 (the stock) unless the user changed isp.wdr */
 }
 
 /* The values the stock yy_cam passes (yy_media_av130_soft_ps_alg_init, 0x2a123c); its two thresholds are the [dn] defaults
@@ -693,7 +695,8 @@ int a2k_isp_mode(int night)
             (void)a2k_isp_flip_mirror(f, m);
             a2k_orient_hold();
         }
-        (void)a2k_pic_replay(night ? 1 : 0); /* the conf set was reloaded: saturation, denoise and white balance are put back (picture.h) */
+        (void)a2k_pic_replay(night ? 1 : 0); /* the conf set was reloaded: saturation, denoise, nr2 and wdr are put back (picture.h) */
+        (void)a2k_image_replay();            /* and brightness, contrast, sharpness, mains (image.h) */
     }
     a2k_orient_isp_unlock();
     for (int c = 0; c < NCHN; c++)

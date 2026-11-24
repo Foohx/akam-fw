@@ -4,7 +4,9 @@
  * first read. The ABI notes (symbols, struct layouts, confidence) are in docs/porting/lsc-rotatable-2k/isp-controls.md.
  *
  * File format: one command per line (up to 16 lines, digits and words only), the file is deleted once read.
- *   get all | fx | yuv | wb | ccm | nr1 | nr2 | uvnr | nr3d | awb | rgb      read and log (never writes)
+ *   get all | fx | yuv | wb | ccm | nr1 | nr2 | uvnr | nr3d | awb | rgb | wdr   read and log (never writes). nr2 logs the enable, nr2_k and both
+ *                                  intensities of the 17 records (what isp.nr2 wrote); fx logs the cached value of effect 5 (isp.wdr - 50); wdr logs the
+ *                                  first fields and the 6 curve checksums of the 0x4228-byte WDR attribute (layout UNVERIFIED)
  *   fx TYPE VALUE                  ak_vpss_effect_set(0, TYPE, VALUE), TYPE 0..5, VALUE -50..50 (0 = the conf value), then ak_vpss_effect_get
  *   hue V | bright V | sat V | contrast V | sharp V      = fx 0 | 1 | 2 | 3 | 4 (V -50..50)
  *   wb auto                        wb_type back to the type read when the hook first looked (the ISP's own AWB)
@@ -24,10 +26,10 @@
 
 #define A2K_ISP_TEST_FILE "/tmp/akam2k_isp_test"
 #define A2K_IT_MAXLINES 16
-#define A2K_IT_BUF 16384 /* every get buffer: larger than the largest attribute (the 3D NR one is 7076 bytes) and than the 9414 bytes of the AWB statistics */
+#define A2K_IT_BUF 18432 /* every get buffer: larger than the largest attribute (the WDR one is 0x4228 = 16936 bytes, the 3D NR one 7076) and than the 9414 bytes of the AWB statistics */
 
 /* The attributes the hook reaches. */
-enum { A2K_IT_YUV, A2K_IT_WBTYPE, A2K_IT_MWB, A2K_IT_CCM, A2K_IT_NR1, A2K_IT_NR2, A2K_IT_UVNR, A2K_IT_NR3D, A2K_IT_AWB, A2K_IT_N };
+enum { A2K_IT_YUV, A2K_IT_WBTYPE, A2K_IT_MWB, A2K_IT_CCM, A2K_IT_NR1, A2K_IT_NR2, A2K_IT_UVNR, A2K_IT_NR3D, A2K_IT_AWB, A2K_IT_WDR, A2K_IT_N };
 
 /* Layouts (offsets in bytes, little endian), see isp-controls.md for the confidence of each. */
 #define A2K_YUV_SIZE 10      /* y_a u16 +0, y_b s16 +2, uv_a s16 +4 (saturation), uv_b s16 +6, dark_margin_en u16 +8 */

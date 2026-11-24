@@ -2,6 +2,6 @@ rc=1
 --- stdout ---
 
 MQTT: status
-  What to do: run: ./akam step find-camera (or pass --ip ADDRESS)
+  What to do: run: akam step find-camera (or pass --ip ADDRESS)
 --- stderr ---
 ERROR: the camera address is not known yet.

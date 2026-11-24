@@ -1,4 +1,4 @@
 rc=2
 --- stdout ---
 --- stderr ---
-akam: mqtt needs status, set, disable, forget or test (see ./akam help)
+akam: mqtt needs status, set, disable, forget or test (see akam help)

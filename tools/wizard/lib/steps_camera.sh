@@ -1234,7 +1234,7 @@ rtsp_auth_disable() {
 rtsp_auth_offer() {
     ui_blank
     ui_say "  Optional: protect the video stream with a password."
-    ui_say "  Without one, anyone on your network can watch the camera at rtsp://${CAM_IP:-<camera-ip>}:554/."
+    ui_say "  Without one, anyone on your network can watch the camera at rtsp://${CAM_IP:-<camera-ip>}:554/stream0."
     ui_say "  With one, players ask for a user name and password (Digest login: VLC, ffmpeg, go2rtc and Frigate support it)."
     ui_say "  You can change your mind at any time: ./akam rtsp-auth set | disable | status"
     if [ "$UI_DRY" = 1 ]; then
@@ -2260,8 +2260,8 @@ talk_capture() {
 # Exit codes of akam-talk: 0 done, 2 network, 3 the camera refuses talk, 4 login refused, 6 no audio.
 talk_run_client() {
     local rc=0
-    log_line "CMD akam-talk --user $TALK_USER $* rtsp://$CAM_IP:$TALK_URL_PORT  (password in the environment)"
-    AKAM_RTSP_PASSWORD=$TALK_PASS "$TALK_BIN" --user "$TALK_USER" "$@" "rtsp://$CAM_IP:$TALK_URL_PORT" || rc=$?
+    log_line "CMD akam-talk --user $TALK_USER $* rtsp://$CAM_IP:$TALK_URL_PORT/stream0  (password in the environment)"
+    AKAM_RTSP_PASSWORD=$TALK_PASS "$TALK_BIN" --user "$TALK_USER" "$@" "rtsp://$CAM_IP:$TALK_URL_PORT/stream0" || rc=$?
     case $rc in
         0) return 0 ;;
         2) ui_fail "the camera did not answer on port $TALK_URL_PORT." "check ./akam status and the network." ;;
@@ -2395,9 +2395,9 @@ cmd_talk() {
         ui_say "  WOULD check over SSH that the stream password is on ($RTSP_AUTH_CMD status) and read the user name (show)."
         ui_say "  WOULD ask the stream password (not shown) unless AKAM_RTSP_PASSWORD is set."
         if [ "$test" = 1 ]; then
-            ui_say "  WOULD run: akam-talk --user <user> --tone 2 rtsp://$CAM_IP:$TALK_URL_PORT   (password in the environment)"
+            ui_say "  WOULD run: akam-talk --user <user> --tone 2 rtsp://$CAM_IP:$TALK_URL_PORT/stream0   (password in the environment)"
         else
-            ui_say "  WOULD run: <microphone as 8 kHz mono s16le> | akam-talk --user <user> --format s16le rtsp://$CAM_IP:$TALK_URL_PORT"
+            ui_say "  WOULD run: <microphone as 8 kHz mono s16le> | akam-talk --user <user> --format s16le rtsp://$CAM_IP:$TALK_URL_PORT/stream0"
         fi
         return 0
     fi
@@ -2427,7 +2427,7 @@ cmd_say() {
     step_banner_free "Play a file on the camera"
     cam_need_ip || return 1
     if [ "$UI_DRY" = 1 ]; then
-        ui_say "  WOULD convert $file to 8 kHz mono (ffmpeg) and send it with akam-talk to rtsp://$CAM_IP:$TALK_URL_PORT (stream password needed)."
+        ui_say "  WOULD convert $file to 8 kHz mono (ffmpeg) and send it with akam-talk to rtsp://$CAM_IP:$TALK_URL_PORT/stream0 (stream password needed)."
         return 0
     fi
     { [ -f "$file" ] && [ -r "$file" ]; } || { ui_fail "cannot read $file." "give the path of an audio file."; return 1; }

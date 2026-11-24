@@ -20,7 +20,7 @@
 #define A2K_API_PREFIX "/akam/v1"
 #define A2K_API_STORE_MAX 4096        /* the largest key file or audit file the core reads or writes */
 #ifndef A2K_API_RESP_MAX
-#define A2K_API_RESP_MAX 12288        /* the largest reply body (the schema is about 6 KB); the 2K app builds with -DA2K_API_RESP_MAX=16384 (its settings schema is larger) */
+#define A2K_API_RESP_MAX 12288        /* the largest reply body (the schema is about 6 KB); the 2K app builds with -DA2K_API_RESP_MAX=18432 (its settings schema is larger) */
 #endif
 #define A2K_API_EVENT_WAIT_MAX 25     /* seconds a GET /events may wait */
 #define A2K_API_CLOCK_FLOOR 1767225600 /* 2026-01-01: a wall clock below it is "not set" */

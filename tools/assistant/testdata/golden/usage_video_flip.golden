@@ -1,4 +1,4 @@
 rc=2
 --- stdout ---
 --- stderr ---
-akam: video flip is a picture setting: ./akam picture flip on|off (see ./akam help)
+akam: video flip is a picture setting: akam picture flip on|off (see akam help)

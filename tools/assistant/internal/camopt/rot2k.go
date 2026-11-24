@@ -47,10 +47,10 @@ var cat2K0 = []crow{
 
 var cat2K1 = []crow{
 	{k: "night.ir_led", g: "LED and night", l: "IR night LEDs", kind: Enum, v: []string{"auto", "off"}},
-	{k: "image.brightness", g: "Picture", l: "Brightness", kind: Int, hi: 100, p: PersistRAM, h: "not saved: back to 50 at the next camera restart"},
-	{k: "image.contrast", g: "Picture", l: "Contrast", kind: Int, hi: 100, p: PersistRAM, h: "not saved: back to 50 at the next camera restart"},
-	{k: "image.sharpness", g: "Picture", l: "Sharpness", kind: Int, hi: 100, p: PersistRAM, h: "not saved: back to 50 at the next camera restart"},
-	{k: "image.mains_hz", g: "Picture", l: "Mains frequency (Hz)", kind: Enum, p: PersistRAM, h: "anti-flicker; not saved", v: []string{"50", "60"}},
+	{k: "image.brightness", g: "Picture", l: "Brightness", kind: Int, hi: 100, h: "0..100, 50 = the camera's own; applied live and saved on the camera (written only when you change it), put back after a day/night switch"},
+	{k: "image.contrast", g: "Picture", l: "Contrast", kind: Int, hi: 100, h: "0..100, 50 = the camera's own; applied live and saved on the camera (written only when you change it), put back after a day/night switch"},
+	{k: "image.sharpness", g: "Picture", l: "Sharpness", kind: Int, hi: 100, h: "0..100, 50 = the camera's own; applied live and saved on the camera (written only when you change it), put back after a day/night switch"},
+	{k: "image.mains_hz", g: "Picture", l: "Mains frequency (Hz)", kind: Enum, h: "anti-flicker; applied live and saved on the camera (written only when you change it)", v: []string{"50", "60"}},
 	{k: "image.flip", g: "Picture", l: "Flip (vertical)", kind: Bool, h: "host-tested only, not verified on a camera yet"},
 	{k: "image.mirror", g: "Picture", l: "Mirror (horizontal)", kind: Bool, h: "host-tested only, not verified on a camera yet"},
 	{k: "image.ceiling", g: "Picture", l: "Ceiling mount (flip + mirror)", kind: Bool, h: "1 turns flip and mirror on, 0 off; saved through the two rows above"},
@@ -59,7 +59,9 @@ var cat2K1 = []crow{
 var cat2K2 = []crow{
 	{k: "isp.saturation", g: "Picture", l: "Saturation", kind: Int, lo: -50, hi: 50, h: "0 = the camera's own; applied live, put back after a day/night switch; not verified on a camera yet"},
 	{k: "isp.denoise", g: "Picture", l: "Denoise (0 = camera's own)", kind: Int, hi: 4, h: "temporal noise reduction taken N light levels higher, like the 1080p (its default there is 2, here 0 until judged); not verified on a camera yet"},
-	{k: "img.wb", g: "Picture", l: "White balance", kind: Enum, p: PersistRAM, h: "conf = the camera's automatic white balance, manual = fixed (day only); not saved; not verified on a camera yet", v: []string{"conf", "manual"}},
+	{k: "isp.nr2", g: "Picture", l: "Noise reduction, spatial (0 = camera's own)", kind: Int, hi: 4, h: "stronger grain removal in the shadows (a backlit scene), more at high gain; 0 sends nothing; applied live; may soften detail; not verified on a camera yet"},
+	{k: "isp.wdr", g: "Picture", l: "Backlight strength (WDR)", kind: Int, hi: 100, h: "0 = off, 100 = the full curves of the ISP file; 90 is the stock (nothing changes by default); applied live; not verified on a camera yet"},
+	{k: "img.wb", g: "Picture", l: "White balance", kind: Enum, p: PersistRAM, h: "always conf = the camera's automatic white balance. A fixed (manual) white balance is refused on the 2K: the camera gives no way to keep the current gains, and the vendor manual gains give a blue picture", v: []string{"conf"}},
 }
 
 var cat2K3 = []crow{
@@ -294,6 +296,9 @@ func Validate2K(key, value string) (string, error) {
 			if v == value {
 				return v, nil
 			}
+		}
+		if o.Key == "img.wb" && value == "manual" {
+			return bad("a fixed (manual) white balance is refused on the 2K: the camera gives no way to keep the current gains, and the vendor manual gains give a blue picture; conf is the camera's automatic white balance")
 		}
 		return bad("one of %s", strings.Join(o.Values, ", "))
 	case Pattern:

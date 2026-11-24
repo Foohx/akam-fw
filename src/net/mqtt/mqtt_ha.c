@@ -57,6 +57,9 @@ static const ent_t g_ent[] = {
     /* controls added later, at the end so that the entity numbers above stay put: the orientation of the picture (the same names as the 2K) */
     { "image_flip",   "Image flip",      "switch", "image.flip",      NULL,           0, 0,   NULL, NULL, CTL | F_PERSIST | F_BOOL },
     { "image_mirror", "Image mirror",    "switch", "image.mirror",    NULL,           0, 0,   NULL, NULL, CTL | F_PERSIST | F_BOOL },
+    /* backlight (WDR) strength and 2D noise-reduction steps: the same keys as the 1080p and the 2K picture rows (isp.wdr, isp.nr2) */
+    { "wdr",          "Backlight (WDR)", "number", "isp.wdr",         NULL,           0, 100,  NULL, NULL, CTL },
+    { "nr2",          "2D noise reduction", "number", "isp.nr2",      NULL,           0, 4,   NULL, NULL, CTL },
 };
 #define N_ENT (sizeof(g_ent) / sizeof(g_ent[0]))
 

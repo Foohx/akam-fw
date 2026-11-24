@@ -111,6 +111,8 @@ func Catalog() []Option {
 		num("isp.saturation", "Picture", "Saturation", -50, 50, PersistCamera, Now),
 		num("isp.sharpness", "Picture", "Sharpness", -50, 50, PersistCamera, Now),
 		num("isp.denoise", "Picture", "Denoise (0 = stock, 2 = default)", 0, 4, PersistCamera, Now),
+		num("isp.wdr", "Picture", "Backlight strength (WDR) (90 = camera's own, lower = more contrast)", 0, 100, PersistCamera, Now),
+		num("isp.nr2", "Picture", "Noise reduction, spatial (0 = camera's own)", 0, 4, PersistCamera, Now),
 		enum("image.flip", "Picture", "Flip (vertical)", PersistCamera, Now, "0", "1"),
 		enum("image.mirror", "Picture", "Mirror (horizontal)", PersistCamera, Now, "0", "1"),
 		enum("image.ceiling", "Picture", "Ceiling mount (flip + mirror)", PersistCamera, Now, "0", "1"),

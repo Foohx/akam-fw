@@ -30,7 +30,7 @@ type row1080 struct {
 var rows1080 = []row1080{
 	{"led.mode", "led.status", true}, {"night.ir_led", "night.ir_led", true}, {"night.mode", "night.mode", true},
 	{"image.brightness", "isp.brightness", true}, {"image.contrast", "isp.contrast", true}, {"image.saturation", "isp.saturation", true},
-	{"image.sharpness", "isp.sharpness", true}, {"image.denoise", "isp.denoise", true}, {"img.wb", "img.wb", true},
+	{"image.sharpness", "isp.sharpness", true}, {"image.denoise", "isp.denoise", true}, {"isp.wdr", "isp.wdr", true}, {"isp.nr2", "isp.nr2", true}, {"img.wb", "img.wb", true},
 	{"image.flip", "image.flip", true}, {"image.mirror", "image.mirror", true}, {"image.ceiling", "image.ceiling", true},
 	{"audio.out_volume", "audio.out_volume", true}, {"audio.out_enable", "audio.out_enable", true},
 	{"audio.talk_enable", "audio.talk_enable", true}, {"audio.mic_enable", "audio.mic_enable", true},

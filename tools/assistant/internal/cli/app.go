@@ -91,6 +91,7 @@ type App struct {
 	camIP        string
 	ctlCl        ctl.Client // the signed-API client of the camera this run reads and changes settings on (ctlapi.go)
 	ctlHost      string
+	ctlReported  bool            // the last ctlExchange already explained its failure
 	ctlNoKey     bool            // the user declined to make an API key in this run: not asked again
 	live         *liveHealth     // what a flow read of the chosen camera this session (header badges)
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)

@@ -11,6 +11,7 @@
 #include "ak_ioctls.h"
 #include "isp.h"
 #include "isp_nr.h"
+#include "isp_tune.h"
 
 #define EXPO_BUF 0x720
 #define SCRATCH  65536
@@ -102,6 +103,23 @@ int isp_set_denoise(int bias)
 {
     int rc = isp_nr_knob_set(ISP_KNOB_NR3D_BIAS, bias);
     return rc < 0 ? rc : 0;
+}
+
+/* isp.nr2: N steps of ISP_TUNE_NR2_STEP_PCT percent on the NR2 strength (img.nr2d = 100 + 25 N); 0 = the camera's own table. */
+int isp_set_nr2(int level)
+{
+    if (level < 0 || level > ISP_TUNE_NR2_MAX) return -1;
+    int rc = isp_nr_knob_set(ISP_KNOB_NR2D, 100 + ISP_TUNE_NR2_STEP_PCT * level);
+    return rc < 0 ? rc : 0;
+}
+
+/* The running level, from the knob (a raw img.nr2d between two steps reads as the nearest one, below 100 as 0). */
+int isp_get_nr2(void)
+{
+    int v = isp_nr_knob_get(ISP_KNOB_NR2D);
+    if (v <= 100) return 0;
+    int n = (v - 100 + ISP_TUNE_NR2_STEP_PCT / 2) / ISP_TUNE_NR2_STEP_PCT;
+    return n > ISP_TUNE_NR2_MAX ? ISP_TUNE_NR2_MAX : n;
 }
 
 /* After a pipeline reload (isp_reset_picture_baselines): the vendor blocks are back, so the cached baselines and the

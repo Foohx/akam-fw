@@ -264,12 +264,16 @@ func (c *conn) request(method, uri, extra string) (*response, error) {
 	return nil, errors.New("login refused")
 }
 
-// parseURLBase builds rtsp://host:port with no credentials.
+// talkPath is the stream that carries the backchannel: the 2K answers 404 to a DESCRIBE
+// without a path, and serves only /stream0 and /stream1 (the main stream has the talk track).
+const talkPath = "/stream0"
+
+// baseURL builds rtsp://host:port/stream0 with no credentials.
 func baseURL(host string, port int) string {
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
 	}
-	return "rtsp://" + host + ":" + strconv.Itoa(port)
+	return "rtsp://" + host + ":" + strconv.Itoa(port) + talkPath
 }
 
 type sdpTrack struct {
@@ -344,7 +348,7 @@ func Talk(ctx context.Context, cfg TalkConfig) error {
 	}
 	switch {
 	case r.code == 551:
-		return terr(CodeRefused, "the camera does not offer talk: the RTSP password must be on (./akam rtsp-auth set), audio out enabled and audio.talk_enable=1")
+		return terr(CodeRefused, "the camera does not offer talk: the RTSP password must be on (akam rtsp-auth set), audio out enabled and audio.talk_enable=1")
 	case r.code == 401 && cfg.Password == "":
 		return terr(CodeLogin, "the camera asks for a password: set AKAM_RTSP_PASSWORD")
 	case r.code == 401:

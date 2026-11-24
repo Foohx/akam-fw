@@ -106,7 +106,7 @@ func TestPrepareBackupSDWritesAVerifiedCard(t *testing.T) {
 	contains(t, r.out, "Step 3/9 - Prepare the backup microSD card",
 		"  Removable disks that can be used as a microSD card (system disks are never listed):",
 		"Test Reader", "sd_card: VERIFY: OK",
-		"  Backup card ready. Put it in the camera, power the camera on, then run: ./akam")
+		"  Backup card ready. Put it in the camera, power the camera on, then run: akam")
 	contains(t, r.err, "Erase "+w.img+" now? [y/N]")
 	contains(t, r.out, "Device: "+w.img, "Model: Test Reader  |  Size: 0.2 GB")
 	f, _ := os.Open(w.img)
@@ -268,7 +268,7 @@ func TestPrepareFlashSDWritesTheFlashFiles(t *testing.T) {
 	w.untouched(t)
 	r = w.run("y\n", "prepare-flash-sd", "--device", w.img)
 	expectRC(t, r, 0)
-	contains(t, r.out, "Step 7/9 - Prepare the flash microSD card", "sd_card: VERIFY: OK", "  Flash card ready. Remember: wifi.conf on the card holds your Wi-Fi password in clear text (./akam wipe-sd erases it).")
+	contains(t, r.out, "Step 7/9 - Prepare the flash microSD card", "sd_card: VERIFY: OK", "  Flash card ready. Remember: wifi.conf on the card holds your Wi-Fi password in clear text (akam wipe-sd erases it).")
 	f, _ := os.Open(w.img)
 	defer f.Close()
 	card, err := sdcard.OpenCard(f)

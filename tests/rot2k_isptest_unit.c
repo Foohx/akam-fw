@@ -153,6 +153,18 @@ static void test_get(void)
     CHECK(logged("rgb average = 0: r 100 g 90 b 70"), "the RGB average is logged");
     c = P("get ccm");
     CHECK(a2k_isptest_exec(&t, &c) == 0 && F.sets == 0 && logged("ccm auto 1 temp 4200"), "get ccm lists the automatic matrices");
+    memset(F.attr[A2K_IT_NR2], 0, A2K_IT_BUF);
+    F.attr[A2K_IT_NR2][4 + 3 * A2K_NR2_REC + 10] = 7; /* record 3, ynr_intensity2 */
+    F.attr[A2K_IT_NR2][4 + 3 * A2K_NR2_REC] = 1;      /* record 3, nr2_enable */
+    F.attr[A2K_IT_WDR][2] = 9;
+    F.fx[5] = 40;
+    c = P("get nr2");
+    CHECK(a2k_isptest_exec(&t, &c) == 0 && F.sets == 0 && logged("nr2 mode 0, field +10 of the manual record then the 16 linked ones: 0 0 0 7") &&
+          logged("nr2 mode 0, field +0 of the manual record then the 16 linked ones: 0 0 0 1"), "get nr2 logs nr2_enable, nr2_k, both intensities of every record");
+    c = P("get wdr");
+    CHECK(a2k_isptest_exec(&t, &c) == 0 && F.sets == 0 && logged("wdr attr (0x4228 bytes, layout UNVERIFIED) first u16: 0 9 ") && logged("u16 sum 9"), "get wdr logs the head and the sum of the 0x4228-byte attribute");
+    c = P("get fx");
+    CHECK(a2k_isptest_exec(&t, &c) == 0 && logged("effect 5 (wdr) get = 0 value 40"), "get fx logs the cached WDR effect value");
     F.rc_get[A2K_IT_NR2] = 0x100;
     c = P("get nr2");
     CHECK(a2k_isptest_exec(&t, &c) == 0x100 && logged("get nr2 = 256"), "a failing get returns the vendor code and is logged");

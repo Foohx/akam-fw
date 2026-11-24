@@ -107,7 +107,9 @@ static int led_set(const char *key, const char *val, st_apply_t *eff)
     return r >= 0 && a2k_leds_run_set_pattern(r, val) == 0 ? 0 : ST_E_SETTER;
 }
 
-/* ------------------------------------------------------------------ image.* (RAM only: the ISP keeps no setting) */
+/* ------------------------------------------------------------------ image.brightness / contrast / sharpness / mains_hz
+ * The ISP keeps no setting of its own, so the registry saves them (written only when the user changes one, never at start or while idle): the loaded file
+ * reaches img_set at start, and a2k_image_apply remembers what was applied so that a2k_image_replay puts it back after each day / night switch. */
 static int img_field(const char *key, int **f)
 {
     if (strcmp(key, "image.brightness") == 0)
@@ -156,13 +158,17 @@ static int img_set(const char *key, const char *val, st_apply_t *eff)
     return 0;
 }
 
-/* ------------------------------------------------------------------ isp.saturation / isp.denoise / img.wb (the 1080p's names, picture.h) */
+/* ------------------------------------------------------------------ isp.saturation / isp.denoise / img.wb (the 1080p's names) and isp.nr2 / isp.wdr (picture.h) */
 static int pic_get(const char *key, char *out, size_t cap)
 {
     if (strcmp(key, "isp.saturation") == 0)
         return put(out, cap, a2k_pic_get_saturation());
     if (strcmp(key, "isp.denoise") == 0)
         return put(out, cap, a2k_pic_get_denoise());
+    if (strcmp(key, "isp.nr2") == 0)
+        return put(out, cap, a2k_pic_get_nr2());
+    if (strcmp(key, "isp.wdr") == 0)
+        return put(out, cap, a2k_pic_get_wdr());
     if (strcmp(key, "img.wb") == 0)
         return puts_(out, cap, a2k_pic_get_wb() == A2K_PIC_WB_MANUAL ? "manual" : "conf");
     return ST_E_GETTER;
@@ -176,6 +182,10 @@ static int pic_set(const char *key, const char *val, st_apply_t *eff)
         rc = a2k_pic_set_saturation(atoi(val));
     else if (strcmp(key, "isp.denoise") == 0)
         rc = a2k_pic_set_denoise(atoi(val));
+    else if (strcmp(key, "isp.nr2") == 0)
+        rc = a2k_pic_set_nr2(atoi(val));
+    else if (strcmp(key, "isp.wdr") == 0)
+        rc = a2k_pic_set_wdr(atoi(val));
     else if (strcmp(key, "img.wb") == 0)
         rc = a2k_pic_set_wb(strcmp(val, "manual") == 0 ? A2K_PIC_WB_MANUAL : A2K_PIC_WB_CONF);
     else
@@ -589,7 +599,7 @@ static const char *const OPT_RC[] = { "vbr", "cbr", "avbr", NULL };
 static const char *const OPT_AUTO[] = { "auto", "on", "off", NULL };
 static const char *const OPT_IR[] = { "auto", "off", NULL };
 static const char *const OPT_MAINS[] = { "50", "60", NULL };
-static const char *const OPT_WB[] = { "conf", "manual", NULL };
+static const char *const OPT_WB[] = { "conf", NULL }; /* "manual" is refused on the 2K (picture.h): there is no way to freeze the automatic gains */
 static const char *const OPT_AMP[] = { "auto", "on", "off", NULL };
 static const char *const OPT_DUPLEX[] = { "half", "full", NULL };
 static const char *const OPT_TRET[] = { "stay", "home", NULL };
@@ -1075,18 +1085,22 @@ static void build_table(void)
     for (r = 0; r < A2K_RULE_N; r++)
         row(LED_KEY[r], ST_PATTERN, 0, 0, G_LED, a2k_rule_default(r), 1, RW, led_get, led_set);
     row("night.ir_led", ST_ENUM, 0, 0, OPT_IR, "auto", 1, RW, led_get, led_set);
-    row("image.brightness", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
-    row("image.contrast", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
-    row("image.sharpness", ST_INT, 0, 100, NULL, "50", 0, RW, img_get, img_set);
-    row("image.mains_hz", ST_ENUM, 0, 0, OPT_MAINS, "50", 0, RW, img_get, img_set);
+    row("image.brightness", ST_INT, 0, 100, NULL, "50", 1, RW, img_get, img_set);
+    row("image.contrast", ST_INT, 0, 100, NULL, "50", 1, RW, img_get, img_set);
+    row("image.sharpness", ST_INT, 0, 100, NULL, "50", 1, RW, img_get, img_set);
+    row("image.mains_hz", ST_ENUM, 0, 0, OPT_MAINS, "50", 1, RW, img_get, img_set);
     row("image.flip", ST_BOOL, 0, 0, NULL, "0", 1, RW, orient_get_row, orient_set_row);
     row("image.mirror", ST_BOOL, 0, 0, NULL, "0", 1, RW, orient_get_row, orient_set_row);
     row("image.ceiling", ST_BOOL, 0, 0, NULL, "0", 0, RW, orient_get_row, orient_set_row); /* flip + mirror: not saved itself, the two rows above are */
     /* The 1080p's picture settings (control port isp.saturation, isp.denoise, img.wb), through the 2K ISP (picture.h). Saturation and denoise are saved and replayed
-     * after every day / night switch; img.wb is RAM only like the 1080p's (a fixed white balance does not survive a restart). The denoise default is 0 here (the camera's
+     * after every day / night switch; img.wb accepts only conf on the 2K (manual is refused, picture.h). The denoise default is 0 here (the camera's
      * own tables; the 1080p defaults to 2) until it has been judged on the camera. */
     row("isp.saturation", ST_INT, -50, 50, NULL, "0", 1, RW, pic_get, pic_set);
     row("isp.denoise", ST_INT, 0, 4, NULL, "0", 1, RW, pic_get, pic_set);
+    /* The 2K's own: isp.nr2 (spatial noise reduction, 0 = the camera's own table) and isp.wdr (backlight strength 0..100, 90 = the stock's effect 40), both saved,
+     * live and replayed after every day / night switch (picture.h). */
+    row("isp.nr2", ST_INT, 0, 4, NULL, "0", 1, RW, pic_get, pic_set);
+    row("isp.wdr", ST_INT, 0, 100, NULL, "90", 1, RW, pic_get, pic_set);
     row("img.wb", ST_ENUM, 0, 0, OPT_WB, "conf", 0, RW, pic_get, pic_set);
     /* Speaker and two-way audio: the 1080p's names and ranges (control port audio.*), the shared engine behind them (speaker.h). The speaker is
      * opt-in here (default 0) until it has run on a camera; the volume default is the 1080p's. out_amp is RAM only (a bring-up knob). */

@@ -634,3 +634,97 @@ firmware `app` partition; nothing of it is stored in the repository.
 - Whether the kernel keeps the orientation across a day / night switch: the call is sent again after each switch (`image_orient_replay_locked`, under the ISP configuration lock the switch already holds; nothing is sent while both are off; the kernel ignores an unchanged value), so it should; the log line after the switch proves it.
 - Whether sending the call before the video channel starts is accepted (the stock does the same, once, in its ISP set-up).
 - The encoder may lose a frame or two while the sensor turns; the stream does not restart.
+
+### 5.8 Haze and backlight: what the ISP offers, and `isp.wdr` / `isp.nr2` (reverse engineering of 2026-11-24, not yet hardware-validated)
+
+Report (2026-11-24): against a bright window the picture looks hazy, which means low contrast in the scene. Sources: `ak_isp.ko`
+(disassembly), `isp_gc20c3.conf` of the stock image (decoded with a script, three subfiles: 0 day, 1 night, 2 a third set whose use is not known), the stock `anyka_ipc` (strings and the one function `check_wdr_params`) and its
+`_ht_sw_settings.ini`. Nothing of it is stored in the repository; evidence levels as in 5.1 (**RE**, **conf**, **guess**).
+
+**What exists in the ISP, ranked by how likely it is to explain the haze**
+
+| # | Control | Block, ioctl | Stock day setting (conf, subfile 0) | Evidence | Done |
+|---|---|---|---|---|---|
+| 1 | **WDR shadow lift** (backlight compensation) | WDR 0x4004491b SET / 0x8004491c GET, 16936 = 0x4228 B (`ak_isp_vp_set_wdr_attr` copies 0x4228) | **on** in the day subfile: entries 1..10 have the switch (`+0x3dc` bit 0) and the curve flag (`+4`) set; entries 1..4 and 10 (the bright levels, ISO levels 0..3 and 9) lift the shadows with tone curves (curve 0: input 8/64 -> 228/1023 instead of 128; input 1/64 -> 38 instead of 16), entries 5..9 are the identity; **off** in the night subfile | RE + conf | `isp.wdr` |
+| 2 | Y gamma toe | Y_GAMMA 0x40044975 / 0x80044976, 302 B = 129 u16 (input step 8 over 0..1023) + 22 | day curve lifts the bottom: 8 -> 17, 96 -> 146, 128 -> 164, back on the identity from about 256 up; the night curve is the identity ramp `8 i` | conf + RE | `isp.wdr` below 90 (1080p), see "Y_GAMMA toe" below |
+| 3 | LCE (local contrast enhancement) | LCE 0x8004498e (set; the table has no getter), 1500 B = mode + 17 x 88 | **off** in the day subfile (`+0` = `+2` = 0 in all 17 entries), in the night subfile `+0` is 1 in entries 1..5 and `+2` only in entry 1 | RE (`_set_lce_attr`, `ak_isp_vp_get_lce_attr` size 0x5dc) + conf | not done, see below |
+| 4 | RGB gamma | RGB_GAMMA 0x4004491a, 1746 B | day and night curves are both a normal gamma (first points 24, 47, 69 against 27, 54, 80) | conf | no |
+| 5 | Contrast block, effect block | CONTRAST 0x40044939 (104 B), EFFECT 0x40044941 (10 B) | day: contrast groups of 1..2 per level; effect `{64, 0, 64, 0, 1}` | conf | `isp.contrast` already drives them |
+| 6 | AE target and weighting | exposure block 0x720 B (`SET_EXPOSURE`), `pub[12]` = the AE target luma (the stock log shows about 47..50), the kernel has `_isp_compensation_all_weight_with_ae` | the target the conf holds | RE | not done: a lower target darkens the whole picture, it does not add contrast; `ae.*` and `isp.brightness` already move it |
+| 7 | Y 2D noise reduction | NR2 (992 B), NR1 (empty on these cameras, 5.5.3) | the camera's own tables | RE + conf (5.5) | `isp.nr2` |
+
+There is **no defog or dehaze block** in the module: no symbol, no string, no conf module for it (the module names are `wdr`, `wdr_ex`,
+`lce`, `lce_ex`, `y_gamma`, `rgb_gamma`, `contrast`, `effect`, and `wdr_ex` / `lce_ex` are 4-byte blocks of which the setter of `wdr_ex` does
+nothing). So `isp.defog` was **not added**. The two candidates that would stand in for one are not implemented because they cannot be judged
+without a camera: LCE is off in the stock day set and its two enable fields (`+0`, `+2`) are not understood (the kernel ORs `+2` into a
+register bit and never clears it, and `+0` selects an internal counter), so turning it on is a guess. The Y_GAMMA toe was left alone at first, then taken up in the "Y_GAMMA toe" paragraph below after the first hardware run.
+
+**The stock default.** The conf says WDR on in the day mode (table above). The stock application sends the block unchanged (section 5.1: three times,
+at the start and at the two switches). Its `_ht_sw_settings.ini` has `wdr_switch = 0` (the cloud / app WDR toggle) and the binary has
+`ht_video_codec_set_wdr`, `ak_vpss_get_wdr_attr` / `ak_vpss_set_wdr_attr`, `check_wdr_params` ("wdr_enable", "wdr_th1..th5" in its messages):
+what the toggle writes is **not decoded**, and whether it was applied at start-up of the stock capture is not known. The 2K's stock sets effect
+type 5 to 40 (`a2k_isp_wdr`, `docs/porting/lsc-rotatable-2k/stock-firmware-reference.md`). The 1080p default here is the conf as it is: nothing is
+sent.
+
+**Layout of the WDR block** (RE of `_set_wdr_attr` 0x27f68 and of the stock `check_wdr_params`; `isp_wdr.h` has the table): `u32 mode` then 17
+entries of 996 bytes (entry 0 manual, entry `1 + L` for ISO level `L`, as in 5.5.1). Per entry: `+0x004` u16 = the six curves are programmed (0
+makes the ISP skip them), `+0x006..+0x00e` five thresholds (32 64 128 196 240), `+0x010 + 130 k` (k = 0..5) six tone curves of 65 u16 of 10 bits
+(the kernel packs three curves into one register word, 64 words, from curve entry 1 up; the identity is `min(1023, 16 i)`), `+0x3dc` u16 (bit 0 =
+WDR on, the stock refuses a value above 1, and the kernel ORs it into register `+0x8c` bit 6), `+0x3de`, `+0x3e0`, `+0x3e2` (the stock
+refuses `+0x3e2 >= 1024`). Stock values per level and subfile are in the conf; the curves of a level that is off are left in the file.
+
+**`isp.wdr` 0..100, default 90 (the 2K's row and scale).** The user value w maps onto an internal strength S: 0..90 linearly onto 0..40 (`S = (40 w + 45) / 90`), 91..100 onto 41..50 (`S = w - 50`), so 90 is the stock. S blends every curve of an entry that is switched on towards the identity:
+`c' = id + (c - id) * S / 40`, rounded, clamped to 0..1023, kept non-decreasing. S = 40 (w = 90) is the stock curves: a plain copy, **nothing is sent**; 0 removes the lift (identity curves, the picture the
+night subfile has); 41..50 push it up to 25 % further (not seen in any stock file). Entry 0, the mode word, the switches, the thresholds and every
+other field are never changed. Implementation: `isp_wdr.c` (composer and sender), the live block is read once with `0x8004491c` (the GET is the
+SET + 1 of the tunnel as for every other block, **not seen on the wire for this block**), kept as the baseline, and the composed block is sent
+with `0x4004491b` (one 16936-byte SET). A block that is not as decoded (length, mode word 0, a switch above 1, a curve value above 1023, a curve
+of a switched-on entry that does not start at 0, `+0x3e2 >= 1024`) is refused: nothing is sent, `SET isp.wdr` answers
+`ERR isp.wdr: live table not as decoded`. RAM, plus the line `wdr=` of `/etc/config/akam/picture` written only on a user change (the defaults
+remove the file), applied once the ISP runs and replayed by `isp_reset_picture_baselines()` after every day / night reload (the reload puts the
+conf block back); the night block has the switch off, so the replay there finds nothing to change and sends nothing.
+
+**`isp.nr2` 0..4, default 0 (the 2K's row and scale).** The spatial luma noise reduction is NR2 (NR1 is empty on these cameras, 5.5.3): `isp.nr2` N is the existing knob
+`img.nr2d` at `100 + 50 N` percent (150, 200, 250, 300), i.e. the Gaussian strength of the NR2 weight table (and NR1's, where it exists) 50 % higher per step; 0 =
+the camera's own table, nothing sent. Same rules as `isp.denoise` (RAM + the `nr2=` line, replayed after the reload by `isp_nr_reapply`, refused
+on a table not as decoded). A raw `SET img.nr2d P` between two steps reads back as the nearest step.
+
+**Self-diagnosis and the re-read of the module (2026-11-24, after the first 1080p run saw no change of the picture).** Every `isp.wdr` change and
+every ISP load logs one line, also kept for the loopback command `WDRDUMP` (port 8091, read-only):
+`[isp.wdr] ev=set|load user=U s=S get=ok|errnoE|none mode=M sw=0x.. prog=0x.. lift=0x.. csum_before=.. csum_after=.. changed=N set=ok|errnoE|none readback=match|DIFFERS|errnoE|none [note=..]`.
+`sw` / `prog` / `lift` are bitmasks over the entries 0..16 (bit e): the switch `+0x3dc`, the programmed flag `+4`, and the switched-on entries whose curves
+are not the identity (the only ones the rescale can change). `csum_*` is FNV-1a of the six curves of all entries before and after the rescale,
+`changed` the bytes that differ, `readback` a GET after the SET compared with what was sent. `WDRDUMP` adds `ae=ok lum= exp= sgain= ispgain=
+iso_prod=` (the exposure product `exp * sgain >> 8 * isp >> 8`, the quantity the kernel's `_get_iso` thresholds; no ioctl returns the level itself).
+An ISP load at the stock strength only reads the block (one GET, never a write) so that the line says what the camera loaded.
+
+Re-read of `ak_isp.ko` (disassembly): (1) **the GET is right**. The ioctl dispatcher of `isp_param_file_open` maps 0x8004491c to
+`ak_isp_vp_get_wdr_attr`, which copies 0x4228 bytes from `dev+0x59f0`, the very place `ak_isp_vp_set_wdr_attr` stores to (then sets the dirty flag
+`dev+0x7c`). So the GET reads the stored block (what the conf loaded, or what the last SET stored), not a hardware register. (2) **The block is not
+what the hardware runs.** `_set_wdr_attr` (0x27f68) programs the registers from ONE 996-byte entry, and its only caller is the blend routine at 0x2b700,
+which works on a live copy at `dev+0xa010`. `_isp_para_change_with_envi` (0x30860, one case per ISO level 0..15) copies the entry of the current
+level (entry 0 when the mode word is 0) from the stored block to that copy; the caller `_isp_3dnr_work` runs it when `_get_iso` (0x2f99c) changes the
+level **or** the dirty flag is set, so a SET is picked up on the next frame, then blended in 16 steps. The blend routine
+skips the blend and writes the entry straight when the flag `+4` of the old or the new entry is 0. (3) The level is a product of exposure time and
+the two gains compared with thresholds in the module, so which entry is live depends on the light. Static reading therefore refutes (a) and (d) as
+causes by themselves and leaves two: the live entry is one of the identity entries 5..9 (nothing to rescale at that light), or the entry copy at
+`dev+0xa010` is refreshed but the register write is gated by something not decoded. The first run of the new line tells which (see the hardware
+checklist, WDR-8). 
+
+**First hardware run (LSC Indoor 1080p, 2026-11-24, backlit living room in daylight) and the Y_GAMMA toe.** The diagnostics answered: `get=ok mode=1`, `sw=0x007fe prog=0x007fe lift=0x0041e`, at `wdr 0` `changed=938 set=ok readback=match`, at `wdr 90` `changed=0` (block restored). So the GET, the SET and the read-back all work and the block is kept by the kernel. At the time of the run `iso_prod=671`, gains `sgain=256 ispgain=256` (1x, the lowest ISO level). Reading `_get_iso` (0x2f99c) with the day pairs of the conf ([0,2) [2,4) [4,8) ..., each compared as `G < pair << 8`): 671 is in `[512,1024)`, the pair `[2,4)`, so **level 1, WDR entry 2**, which IS one of the lifting entries (`lift` has bit 2). The WDR lift was therefore live at that light, `wdr 0` removed it (938 bytes changed) and the picture still looked hazy: the WDR curves are not the (only) cause. (Caveat: the pairs are the conf's, read from a static decode, and the unit of the kernel's exposure word versus `iso_prod` is the spec 5.2 reading, not seen on a camera.) The other candidate of the table, the day Y gamma toe, is a single block (not indexed by ISO level) that no slider moved.
+
+Y_GAMMA, RE of `ak_isp.ko` (this session): SET 0x40044975 (`ak_isp_vp_set_y_gamma_attr` 0x27314) and GET 0x80044976 (`ak_isp_vp_get_y_gamma_attr` 0x273fc) copy 0x12e = 302 bytes; the dispatcher of `isp_param_file_open` maps them. The SET stores the raw block at `dev+0x179c`, the GET reads it back (so a GET returns the stored block, not the blended one). Layout: 129 u16 curve points (input step 8, 10 bit, identity `min(1023, 8 i)`, bytes 0..257) and 22 bytes of fields (+0x120 enable bit 0 into register `+0x8c` bit 5, +0x124 / +0x128 / +0x12c the slope parameters), packed by `_set_y_gamma_attr` (0x27208, three 10 bit points per register word). **The kernel blends the curve toward the identity by a ratio r (0..128)**: `c' = (r * c + (128 - r) * id) / 128` (both in `ak_isp_vp_set_y_gamma_attr` and in a per-frame routine at 0x2bb64 that steps r by 1/8 of the distance per frame). The flag `dev+0x1c044` that enables it is set by the ioctl 0x4004497a (`ISP_INNER_SET_SENSOR_FPS`, which Akam sends in `ae_init_isp_params`), so on these cameras the blend IS active; its target r is 0 (identity) when the share of dark pixels of the frame histogram (`100 * sum(bins 0..n) / total`, n at `dev+0x1c048`) is below `dev+0x1c050`, 128 (the full conf curve) above `dev+0x1c04c`, linear between, and 0 when a product of the exposure words is at or below `dev+0x1c65c`. Those thresholds are runtime values (not in the 302 bytes) and are not known without the camera. Consequence: a backlit room with a large dark share (the interior) keeps the full day toe lift (8 -> 17, 96 -> 146, 128 -> 164), a mostly bright scene is flattened by the kernel itself. The blend works on the stored block, so flattening the stored block toward the identity scales the result in every state (r = 128: the flattened curve; r = 0: identity either way). This is the right lever: it is the one remaining lift that survives at normal daylight at the lowest ISO level. Not better levers found: RGB gamma (day and night are both a normal gamma, no toe lift), CONTRAST / EFFECT (`isp.contrast` already drives them), LCE (off in the day conf, enable fields not understood).
+
+**`isp.wdr` below 90 also flattens the day Y_GAMMA toe (1080p, host-tested only, not hardware-validated).** One slider, no new row (the user already knows `wdr`, and a second row would need API, MQTT, Home Assistant, persistence and assistant plumbing for what is the same intent: less haze against a bright window). At user value w (0..90) every point above the identity moves toward it: `c' = id + (c - id) * w / 90`, rounded, clamped to 1023, kept non-decreasing; points on or below the identity are never touched and the 22 bytes of fields are copied. 90 is the camera's own curve (nothing sent), 0 is the identity ramp, linear in between. **Above 90 nothing more is lifted** (the gamma follows 90: the stock curve, restored if it had been lowered). The night curve is the identity ramp: the composed block equals the live one and nothing is sent. Implementation in `isp_wdr.c` (`isp_ygamma_check`, `isp_ygamma_compose`, sender): the live block is read once with 0x80044976 as the pristine baseline (not cumulative), a block that is not as decoded (length not 302, a point above 1024, a curve that goes down) is refused (nothing sent for the gamma), the composed block is sent with 0x40044975 (one 302 byte SET), read back and compared, the baseline is dropped by `isp_wdr_reset()` and the toe replayed by `isp_wdr_reapply()` after every day/night reload (`isp_reset_picture_baselines`). RAM only (no new flash write; the `wdr=` line of the picture file already holds the value). The WDR part and the gamma part are independent: one refused or failing leaves the other applied, the call fails (old value kept) only when neither could be applied, the line says which. The 2K keeps `isp.wdr` only: its ISP has a Y gamma call (`isp-controls.md`, `ygamma[129]`) but its stock curve is not decoded and the layout is rated MEDIUM there, so it is not driven.
+
+The diagnostic line gained the gamma fields: `... gamma=ok|errnoE|none glift=N gcsum_before=.. gcsum_after=.. gchanged=N gset=ok|errnoE|none greadback=match|DIFFERS|errnoE|none [gnote=..]` (`glift` = points above the identity, `gcsum_*` FNV-1a of the 129 points, `gchanged` bytes that differ, `gnote` one of `stock-nothing-to-send`, `stock-nothing-sent`, `composed-equals-live-nothing-to-send`, `live-block-not-as-decoded`, `get-failed`). An ISP load at the stock value reads both blocks (two GETs, never a write).
+
+**The missing line at start.** The first run showed `no event yet` after the start although each ISP load should leave a line. Cause: the line was written only by `isp_wdr_reapply()`, which `isp_reset_picture_baselines()` calls after a day/night reload; the first load at boot goes through `isp_pipeline_init()` and `control_apply_saved_isp()`, which called `isp_wdr_set` only for a non-default value, so a default camera logged nothing until the first switch. `control_apply_saved_isp()` now calls `isp_wdr_reapply()` (read only) when the value is the default.
+
+**What is not known without the camera**
+
+- Whether `0x8004491c` reads the live WDR block: the disassembly says yes (see above), the first run answered it without error and the block passed the checks. `isp_blocks.c` still has `get_confirmed = 0` for it until the wire is seen.
+- Whether the SET of a changed block takes effect at once or at the next ISO level change (the kernel re-evaluates the linkage entry when the level changes; the SET sets the block's dirty flag `dev+0x7c`, as for NR).
+- How much of the haze `isp.wdr` removes: the WDR part takes out the shadow lift of the bright levels only (levels 4..8 are already the identity in the day conf; measured 2026-11-24: level 1 lifts, removing it was not enough). Whether the Y_GAMMA toe below 90 removes the haze, and the kernel's dark-share thresholds that decide the blend ratio r.
+- Whether the live WDR block of the camera has the mode word 1 of the conf (NR1 reads 192 on the cameras, 5.5.3): any non-zero mode word is accepted, 0 (manual, entry 0 only) is refused.
+- What the stock `wdr_switch` writes (not decoded), and so whether the stock day picture on these cameras has the conf's WDR on.

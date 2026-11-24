@@ -1,4 +1,4 @@
 rc=2
 --- stdout ---
 --- stderr ---
-akam: audio mic needs on or off (see ./akam help)
+akam: audio mic needs on or off (see akam help)

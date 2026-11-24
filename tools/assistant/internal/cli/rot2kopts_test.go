@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/akamapi"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camopt"
@@ -118,7 +119,11 @@ func TestOptions2KWrites(t *testing.T) {
 	}
 	r = e.run("", "picture", "brightness", "70", "flip", "on")
 	expectRC(t, r, 0)
-	contains(t, r.out, "not saved: back to the default at the next restart", "Flip (vertical): on")
+	contains(t, r.out, "Brightness: 70 (applied now, saved on the camera)", "Flip (vertical): on")
+	f.Apply = map[string]string{"audio.out_amp": "applied"} // audio.out_amp is still RAM only on the 2K (settings.c, persist 0): the "not saved" note stays covered
+	r = e.run("", "settings", "set", "audio.out_amp", "on")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Amplifier: on (applied now, not saved: back to the default at the next restart)")
 	r = e.run("", "video", "bitrate", "2000", "fps", "10", "gop", "030")
 	expectRC(t, r, 0)
 	if p := f.Patches(); p[len(p)-1] != `{"video0.fps":"10","video0.gop":"30","video0.kbps":"2000"}` {
@@ -194,7 +199,8 @@ func TestOptions2KValidationRefusals(t *testing.T) {
 		"night mode":         {[]string{"picture", "night", "day"}, "not available on the 2K"},
 		"saturation range":   {[]string{"picture", "saturation", "51"}, "from -50 to 50"},
 		"denoise range":      {[]string{"picture", "denoise", "5"}, "from 0 to 4"},
-		"wb word":            {[]string{"picture", "wb", "auto"}, "one of conf, manual"},
+		"wb word":            {[]string{"picture", "wb", "auto"}, "one of conf"},
+		"wb manual":          {[]string{"picture", "wb", "manual"}, "refused on the 2K"},
 		"volume range":       {[]string{"settings", "set", "audio.out_volume", "101"}, "from 0 to 100"},
 		"gain range":         {[]string{"settings", "set", "audio.out_gain", "6"}, "from 0 to 5"},
 		"duplex word":        {[]string{"settings", "set", "audio.talk_duplex", "both"}, "one of half, full"},
@@ -374,9 +380,9 @@ func TestOptions2KMenu(t *testing.T) {
 func TestOptions2KSpeakerAndPicture(t *testing.T) {
 	e := newEnv(t)
 	f := e.with2K(map[string]string{"audio.out_enable": "0", "audio.out_volume": "100", "isp.saturation": "0", "isp.denoise": "0", "img.wb": "conf"})
-	r := e.run("", "picture", "saturation", "-15", "denoise", "2", "wb", "manual")
+	r := e.run("", "picture", "saturation", "-15", "denoise", "2", "wb", "conf")
 	expectRC(t, r, 0)
-	contains(t, r.out, `WILL send: PATCH /settings {"img.wb":"manual","isp.denoise":"2","isp.saturation":"-15"}`, "Saturation: -15 (applied now, saved on the camera)", "White balance: manual (applied now, not saved")
+	contains(t, r.out, "White balance is already conf: not sent.", `WILL send: PATCH /settings {"isp.denoise":"2","isp.saturation":"-15"}`, "Saturation: -15 (applied now, saved on the camera)")
 	r = e.run("", "settings", "set", "audio.out_enable", "on", "audio.out_volume", "60", "audio.talk_enable", "1", "audio.talk_duplex", "full")
 	expectRC(t, r, 0)
 	contains(t, r.out, `"audio.out_enable":"1"`, `"audio.out_volume":"60"`, `"audio.talk_duplex":"full"`)
@@ -385,10 +391,63 @@ func TestOptions2KSpeakerAndPicture(t *testing.T) {
 	}
 	r = e.run("", "picture", "show")
 	expectRC(t, r, 0)
-	contains(t, r.out, "Saturation", "Denoise", "White balance", "[-50 to 50]", "[0 to 4]", "[conf, manual]")
+	contains(t, r.out, "Saturation", "Denoise", "White balance", "[-50 to 50]", "[0 to 4]", "[conf]")
 	r = e.run("", "settings", "get", "audio.")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Speaker", "Speaker volume", "Talk (two-way audio)", "Talk duplex")
 	allSigned(t, f)
 	noSecret(t, r)
+}
+
+// The 2K's own picture words: spatial noise reduction and the backlight strength, through the same PATCH.
+func TestOptions2KNr2AndWdr(t *testing.T) {
+	e := newEnv(t)
+	f := e.with2K(map[string]string{"isp.nr2": "0", "isp.wdr": "90"})
+	r := e.run("", "picture", "nr2", "3", "wdr", "100")
+	expectRC(t, r, 0)
+	contains(t, r.out, `WILL send: PATCH /settings {"isp.nr2":"3","isp.wdr":"100"}`)
+	r = e.run("", "picture", "show")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Noise reduction, spatial", "Backlight strength (WDR)", "[0 to 100]")
+	for name, w := range map[string][]string{"nr2 range": {"picture", "nr2", "5"}, "wdr range": {"picture", "wdr", "101"}, "wdr word": {"picture", "wdr", "abc"}} {
+		r = e.run("", w...)
+		if r.rc == 0 {
+			t.Errorf("%s accepted:\n%s", name, r.out)
+		}
+	}
+	allSigned(t, f)
+}
+
+// The camera answers 429 to a GET /hello after 2 in the same second. One change makes three (read, PATCH, read back): the
+// third is waited out and repeated, and the command succeeds.
+func TestOptions2KWaitsOutTheHelloRateLimit(t *testing.T) {
+	e := newEnv(t)
+	f := e.with2K(map[string]string{"audio.out_enable": "1", "audio.out_volume": "100"})
+	r := e.run("", "settings", "set", "audio.out_volume", "60")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Speaker volume: 60 (")
+	notContains(t, r.out+r.err, "429", "nothing was changed", "rate-limiting")
+	if f.HelloRefused == 0 {
+		t.Error("the fake never rate-limited: the test proves nothing")
+	}
+	if f.Slept <= 0 || f.Slept > 10*time.Second {
+		t.Errorf("waited %v: want a short, bounded wait", f.Slept)
+	}
+	if got := f.Patches(); len(got) != 1 {
+		t.Errorf("the write was sent %d times: %q", len(got), got)
+	}
+	for i := 0; i < 5; i++ { // and reads after reads
+		expectRC(t, e.run("", "settings", "get", "audio."), 0)
+	}
+}
+
+// A change that was applied must never be reported as "nothing was changed" when only the read-back fails.
+func TestOptions2KFailedReadBackAfterAWriteIsNotNothingChanged(t *testing.T) {
+	e := newEnv(t)
+	f := e.with2K(map[string]string{"audio.out_enable": "1", "audio.out_volume": "100"})
+	f.FailReadsAfterPatch = true
+	r := e.run("", "settings", "set", "audio.out_volume", "60")
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "Speaker volume: 60 (", "could not be read back")
+	notContains(t, r.out+r.err, "nothing was changed")
 }

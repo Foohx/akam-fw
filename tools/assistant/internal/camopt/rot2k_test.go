@@ -54,7 +54,7 @@ func TestValidate2K(t *testing.T) {
 	ok := map[[2]string]string{
 		{"net.hostname", "cam-1a"}: "cam-1a", {"net.hostname", "A"}: "A", {"net.hostname", strings.Repeat("a", 32)}: strings.Repeat("a", 32),
 		{"net.wifi_country", "fr"}: "FR", {"net.wifi_country", "None"}: "none", {"net.wifi_band", "5"}: "5", {"net.wifi_band", "2.4"}: "2.4",
-		{"isp.saturation", "-50"}: "-50", {"isp.saturation", "50"}: "50", {"isp.saturation", "007"}: "7", {"isp.denoise", "0"}: "0", {"isp.denoise", "4"}: "4", {"img.wb", "manual"}: "manual", {"img.wb", "conf"}: "conf",
+		{"isp.saturation", "-50"}: "-50", {"isp.saturation", "50"}: "50", {"isp.saturation", "007"}: "7", {"isp.denoise", "0"}: "0", {"isp.denoise", "4"}: "4", {"img.wb", "conf"}: "conf", {"isp.nr2", "0"}: "0", {"isp.nr2", "4"}: "4", {"isp.wdr", "0"}: "0", {"isp.wdr", "90"}: "90", {"isp.wdr", "100"}: "100",
 		{"audio.out_enable", "on"}: "1", {"audio.out_volume", "0"}: "0", {"audio.out_volume", "100"}: "100", {"audio.out_gain", "5"}: "5", {"audio.out_amp", "auto"}: "auto", {"audio.talk_enable", "false"}: "0", {"audio.talk_duplex", "full"}: "full",
 		{"image.flip", "on"}: "1", {"image.flip", "0"}: "0", {"image.ceiling", "TRUE"}: "1",
 		{"image.brightness", "007"}: "7", {"video0.max_kbps", "0"}: "0", {"video0.max_kbps", "64"}: "64", {"video1.max_kbps", "32"}: "32",
@@ -69,7 +69,7 @@ func TestValidate2K(t *testing.T) {
 	bad := [][2]string{
 		{"net.hostname", ""}, {"net.hostname", "-a"}, {"net.hostname", "a-"}, {"net.hostname", "123"}, {"net.hostname", "a_b"}, {"net.hostname", "a.b"}, {"net.hostname", strings.Repeat("a", 33)},
 		{"net.wifi_country", "F"}, {"net.wifi_country", "F1"}, {"net.wifi_country", "FRA"}, {"net.wifi_band", "6"},
-		{"isp.saturation", "51"}, {"isp.saturation", "-51"}, {"isp.saturation", "1.5"}, {"isp.denoise", "5"}, {"isp.denoise", "-1"}, {"img.wb", "auto"}, {"img.wb", "1"},
+		{"isp.saturation", "51"}, {"isp.saturation", "-51"}, {"isp.saturation", "1.5"}, {"isp.denoise", "5"}, {"isp.denoise", "-1"}, {"isp.nr2", "5"}, {"isp.nr2", "-1"}, {"isp.wdr", "101"}, {"isp.wdr", "-1"}, {"isp.wdr", "9.5"}, {"img.wb", "auto"}, {"img.wb", "1"}, {"img.wb", "manual"},
 		{"audio.out_enable", "2"}, {"audio.out_volume", "101"}, {"audio.out_volume", "-1"}, {"audio.out_gain", "6"}, {"audio.out_amp", "loud"}, {"audio.talk_duplex", "both"}, {"audio.out_state", "idle"}, {"audio.talk_state", "idle"},
 		{"image.flip", "2"}, {"image.brightness", "101"}, {"image.brightness", "-1"}, {"image.brightness", "1.5"}, {"image.brightness", ""},
 		{"video0.fps", "16"}, {"video0.fps", "0"}, {"video0.kbps", "63"}, {"video1.kbps", "1001"}, {"video0.max_kbps", "63"}, {"video1.max_kbps", "31"}, {"video0.rc", "abr"},

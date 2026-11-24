@@ -30,6 +30,14 @@ int a2k_pic_replay(int night) /* picture.c: saturation, denoise and white balanc
     g_pic_after_switch = g_sw_n > 0;
     return 0;
 }
+static int g_img_n, g_img_after_switch, g_img_after_pic;
+int a2k_image_replay(void) /* image.c: brightness, contrast, sharpness and mains are put back */
+{
+    g_img_n++;
+    g_img_after_switch = g_sw_n > 0;
+    g_img_after_pic = g_pic_n > 0;
+    return 0;
+}
 int ak_vpss_switch_flip_mirror(int dev, int f, int m)
 {
     (void)dev;
@@ -48,12 +56,13 @@ int main(void)
     a2k_orient_set(1, 0);
     a2k_orient_test_clock(10000 + A2K_ORIENT_SETTLE_MS + 100); /* the window of the change itself is over */
     CHECK(!a2k_orient_settling(), "the change's own window is over");
-    g_sw_n = g_fm_n = g_pic_n = 0;
+    g_sw_n = g_fm_n = g_pic_n = g_img_n = 0;
     CHECK(a2k_isp_mode(0) == 0 && g_sw_n == 1, "the mode switch ran");
     CHECK(g_sw_settling, "the settling window was already open when the lib switched the mode");
     CHECK(g_fm_n == 1 && g_fm_f == 1 && g_fm_m == 0 && g_order_ok, "the orientation is replayed after the switch");
     CHECK(a2k_orient_settling(), "the window is still open after the replay (the first frames after it may still be unflipped)");
-    CHECK(g_pic_n == 1 && g_pic_night == 0 && g_pic_after_switch, "the picture settings (saturation, denoise, white balance) are replayed once, after the switch, with the day flag");
+    CHECK(g_pic_n == 1 && g_pic_night == 0 && g_pic_after_switch, "the picture settings (saturation, denoise, nr2, wdr) are replayed once, after the switch, with the day flag");
+    CHECK(g_img_n == 1 && g_img_after_switch && g_img_after_pic, "the image settings (brightness, contrast, sharpness, mains) are replayed once, after the switch");
     g_pic_n = 0;
     CHECK(a2k_isp_mode(1) == 0 && g_pic_n == 1 && g_pic_night == 1, "and with the night flag after a switch to night");
     a2k_orient_test_reset();

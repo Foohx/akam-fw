@@ -70,7 +70,7 @@ camera is not supported. See [compatible cameras](docs/compatible-cameras.md) an
 | Pan/tilt, person detection | cloud app only | API, ONVIF, MQTT and button; NPU person detection and tracking (tracking off by default) |
 | Picture orientation | not offered | flip, mirror, ceiling mount (flip and mirror checked on the camera on 2026-11-22; ceiling tracking not yet) |
 | Speaker and two-way audio | through the vendor app | ONVIF backchannel on the stream, speaker volume and gain (beep and talk over TCP checked on the camera on 2026-11-23; volume, go2rtc and Frigate not yet; off until you turn the speaker on) |
-| Saturation, denoise, white balance | not offered | settings like the 1080p's (host-tested only, not yet tried on the camera) |
+| Saturation, denoise, white balance, backlight strength, spatial noise reduction | not offered | settings like the 1080p's plus `isp.wdr` and `isp.nr2` for a backlit scene (host-tested only, not yet tried on the camera) |
 | SSH | no | key only |
 | Vendor updates | yes | the stock update tool is kept but inert |
 | Boot | internal flash | internal flash, no SD card needed |

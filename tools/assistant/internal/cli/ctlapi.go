@@ -260,7 +260,9 @@ func (a *App) ctlFail(err error) {
 // lines in the old form; see internal/camera/ctl. A failure is explained and returns what was answered (often nothing),
 // which the callers already treat as "the camera did not answer".
 func (a *App) ctlExchange(c *camssh.Client, lines ...string) []string {
+	a.ctlReported = false
 	if _, err := a.ctlClient(c); err != nil {
+		a.ctlReported = true // ctlClient said why (no key, declined, refused)
 		return nil
 	}
 	a.Log.Line("CMD api %s: %d line(s) (GET /settings, GET /state, PATCH /settings)", c.Host, len(lines))
@@ -282,8 +284,19 @@ func (a *App) ctlExchange(c *camssh.Client, lines ...string) []string {
 		if !errors.Is(err, ui.ErrFailed) {
 			a.ctlFail(err)
 		}
+		a.ctlReported = true
 	}
 	return out
+}
+
+// ctlNoAnswer is the "the camera did not answer" failure of a command that read or set through ctlExchange. When the
+// exchange already said why it failed (no API key, refused key, port closed), nothing more is printed: a second,
+// vaguer error would only mislead.
+func (a *App) ctlNoAnswer(msg, hint string) error {
+	if a.ctlReported {
+		return ui.ErrFailed
+	}
+	return a.UI.Fail(msg, hint)
 }
 
 // cmdAPIKey is `api-key [replace]`: make (or replace) this PC's API key of the camera. On a 2K it is key-2k.

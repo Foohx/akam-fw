@@ -272,6 +272,16 @@ func (a *App) afterFlash() {
 	a.UI.Say(fmt.Sprintf("  Keep the card in for now; then run: %s step verify", Prog))
 }
 
+// afterUpdate is the end of a write over SSH, with no card: the follow-up is the post-update check of verify
+// (verify_mode=update in the state), not the install check that asks to take a card out.
+func (a *App) afterUpdate() {
+	a.UI.Blank()
+	a.UI.Good("  Update written and verified. The wizard NEVER power-cycles the camera.")
+	a.UI.Say("  Now power-cycle it BY HAND: unplug the USB-C power, wait 5 seconds, plug it back. There is no card to take out.")
+	a.UI.Say(fmt.Sprintf("  When the camera is back on the network, run: %s verify", Prog))
+	a.UI.Say("  (after an update it only waits for SSH, runs the read-only check and shows the image the camera runs.)")
+}
+
 // ---------------------------------------------------------------- update
 
 // cmdUpdate is `update`. Without a choice it writes the image on record (or --image FILE). The firmware can
@@ -335,7 +345,8 @@ func (a *App) updateWrite(ip, img string) error {
 		a.UI.Warn("the camera was written and verified, but the kit that went with it is NOT installed on this computer (" + ui.Sanitize(err.Error()) +
 			"). Run: " + Prog + " get-kit --version X.Y.Z (or --kit FILE) when convenient; the next update needs it.")
 	}
-	a.afterFlash()
+	a.setState("verify_mode", "update")
+	a.afterUpdate()
 	return nil
 }
 
@@ -394,6 +405,7 @@ func (a *App) cmdRestore() error {
 	}
 	_ = a.St.ClearDone("flash")
 	_ = a.St.ClearDone("verify")
+	a.setState("verify_mode", "")
 	a.fwRecordStock()
 	a.UI.Blank()
 	a.UI.Good(fmt.Sprintf("  Restore written and verified (read-back md5 = %s).", md5))
@@ -625,9 +637,54 @@ func (a *App) wifiGate(ip string) bool {
 	return a.wifiVerdict(res.Combined())
 }
 
+// cmdVerifyUpdate is verify after an update over SSH: no card is involved, so there is no card wording and no second
+// power cycle. It waits for SSH (the camera was power-cycled by hand), runs the read-only hwcheck, checks the ports and
+// shows the image the camera runs now.
+func (a *App) cmdVerifyUpdate() error {
+	a.UI.Say("  This follows an update over SSH (no card): the camera is checked once, as it runs now. Nothing is power-cycled here.")
+	ip, err := a.camNeedIP()
+	if err != nil {
+		return err
+	}
+	wait := a.Env.WaitSecs
+	if !a.waitPort(ip, a.Env.PortSSH, wait, "the camera to answer on SSH after the power cycle") {
+		return a.UI.Fail("the camera does not answer on SSH.", "it may still be starting (wait a minute and run verify again), the address may have changed (check your router), or the power cycle was not done: see docs/manual/flash-and-restore.md (Recovery). The check is NOT done.")
+	}
+	c, err := a.dial(ip)
+	if err != nil {
+		var hk *camssh.HostKeyChangedError
+		if errors.As(err, &hk) || errors.Is(err, camssh.ErrHostKeyRefused) {
+			return a.dialFailure(ip, err, "", "")
+		}
+		return a.UI.Fail(fmt.Sprintf("SSH with %s was refused.", a.keyPath()), "is this the key the camera was installed with (--identity FILE)? The check is NOT done.")
+	}
+	c.Close()
+	a.UI.Good("  SSH with your key works.")
+	if !a.hwcheck(ip) {
+		return a.UI.Fail("akam_hwcheck.sh reported a failure (lines above).", "read docs/hardware-test-checklists.md; the camera was not changed by this check.")
+	}
+	if !a.portsCheck(ip, "closed") {
+		return a.UI.Fail("unexpected port state.", "see docs/manual/ssh-and-lockdown.md.")
+	}
+	_ = a.St.MarkDone("verify")
+	a.setState("verify_mode", "")
+	a.fwNoteBuild(ip)
+	if v := a.cameraBuildID(ip); v != "" {
+		a.UI.Say("  The camera runs Akam " + ui.Sanitize(v) + ".")
+	} else {
+		a.UI.Say("  The running Akam version could not be read (no API key on this PC yet?); the checks above passed.")
+	}
+	a.UI.Good("  Update checked: SSH works, only 22 and 554 are open, telnet and FTP are off.")
+	return nil
+}
+
 func (a *App) cmdVerify() error {
 	if err := a.stepNeed("verify"); err != nil {
 		return err
+	}
+	if !a.UI.Dry() && a.St.Get("verify_mode") == "update" {
+		a.stepBanner("verify")
+		return a.cmdVerifyUpdate()
 	}
 	a.stepBanner("verify")
 	if a.UI.Dry() {
@@ -713,7 +770,7 @@ func (a *App) cmdVerify() error {
 func (a *App) verifyHostname(_ *camssh.Client, ip string) {
 	if a.Cams.Name == "default" {
 		if a.UI.Dry() {
-			a.UI.Say("  WOULD also set the camera's network name over SSH when you gave the camera a name (./akam --camera NAME).")
+			a.UI.Say("  WOULD also set the camera's network name over SSH when you gave the camera a name (akam --camera NAME).")
 		}
 		return
 	}
@@ -738,7 +795,7 @@ func (a *App) rtspAuthOffer(ip string) {
 		disp = "<camera-ip>"
 	}
 	a.UI.Say("  Optional: protect the video stream with a password.")
-	a.UI.Say(fmt.Sprintf("  Without one, anyone on your network can watch the camera at rtsp://%s:554/.", disp))
+	a.UI.Say(fmt.Sprintf("  Without one, anyone on your network can watch the camera at rtsp://%s:554/stream0.", disp))
 	a.UI.Say("  With one, players ask for a user name and password (Digest login: VLC, ffmpeg, go2rtc and Frigate support it)")
 	a.UI.Say(fmt.Sprintf("  You can change your mind at any time: %s rtsp-auth set | disable | status", Prog))
 	if a.UI.Dry() {

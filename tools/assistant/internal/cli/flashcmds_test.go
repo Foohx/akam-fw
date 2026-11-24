@@ -128,9 +128,10 @@ func TestUpdateEndToEnd(t *testing.T) {
 		"    | reflash_over_ssh: read-back md5 of /dev/mtd7 = "+w.imgMD5+", equal to the image.",
 		"    | reflash_over_ssh: VERIFIED. Now power-cycle BY HAND",
 		"  The camera confirmed the written image (read-back md5 = "+w.imgMD5+").",
-		"Flash done and verified. The wizard NEVER power-cycles the camera.",
-		"Now power-cycle it BY HAND: unplug the USB-C power, wait 5 seconds, plug it back.",
-		"Keep the card in for now; then run: ./akam step verify")
+		"Update written and verified. The wizard NEVER power-cycles the camera.",
+		"Now power-cycle it BY HAND: unplug the USB-C power, wait 5 seconds, plug it back. There is no card to take out.",
+		"When the camera is back on the network, run: akam verify")
+	notContains(t, r.out, "Keep the card in", "step verify")
 	contains(t, r.err, "Write the camera flash now? [y/N]")
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) {
 		t.Fatal("the camera's APP partition does not hold the image")
@@ -611,5 +612,22 @@ func TestVerifyDryRun(t *testing.T) {
 		"WOULD run over SSH on the camera: /usr/sbin/akam_onvif.sh enable")
 	if len(w.cam.Commands()) != 0 {
 		t.Error("a dry run sent commands")
+	}
+}
+
+// After an update over SSH there is no card: verify is the post-update check (no card wording, no second power cycle,
+// no offers) and the install verify is not used.
+func TestVerifyAfterUpdateHasNoCardWording(t *testing.T) {
+	w := newFlashWorld(t, testfake.FlashOptions{})
+	w.verifyWorld(t)
+	st, _ := os.ReadFile(filepath.Join(w.state, "state"))
+	w.writeState(string(st) + "verify_mode=update\n")
+	r := w.run("", "verify")
+	expectRC(t, r, 0)
+	contains(t, r.out+r.err, "This follows an update over SSH (no card)", "  SSH with your key works.",
+		"    PASS akamd running", "  Update checked: SSH works, only 22 and 554 are open")
+	notContains(t, r.out+r.err, "microSD", "Checks passed with the card in", "rtsp-auth")
+	if got, _ := os.ReadFile(filepath.Join(w.state, "state")); bytes.Contains(got, []byte("verify_mode=update")) {
+		t.Error("verify_mode was not cleared after the check")
 	}
 }

@@ -21,6 +21,7 @@
 #include "imgq.h"
 #include "isp_tune.h"
 #include "isp_nr.h"
+#include "isp_wdr.h"
 #include "talk.h"
 #include "leds.h"
 #include "control.h"
@@ -137,6 +138,9 @@ static int g_isp_sharpness  = ISP_TUNE_DEFAULT_SHARPNESS;   /* applied at start 
  * (live table not as decoded) leaves the stock tables running, and the wanted value stays so that saving another picture
  * value does not overwrite the user's choice. GET isp.denoise reads the running knob. */
 static int g_isp_denoise    = ISP_TUNE_DEFAULT_DENOISE;
+/* isp.wdr / isp.nr2: same rule as isp.denoise (the wanted, saved value; GET reads what runs). Defaults = the camera's own tables. */
+static int g_isp_wdr        = ISP_TUNE_DEFAULT_WDR;
+static int g_isp_nr2        = 0;
 
 /* Saved with the same four values after every successful isp.* SET (8091 SET only; the values come back at the
  * next start through control_apply_saved_isp()). Fills " (not saved: ...)" on failure, else "". All four at the defaults
@@ -147,7 +151,7 @@ static int g_persist_isp;  /* set by do_set() under g_set_lock: only a local (SS
 
 static const char *isp_persist_note(char *note, size_t cap)
 {
-    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, g_isp_denoise };
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, g_isp_denoise, g_isp_wdr, g_isp_nr2 };
     note[0] = '\0';
     /* a slider dragged by the PC tool over the network (DEBUG) would write flash at every step: RAM only */
     if (!g_persist_isp) return note;
@@ -270,7 +274,7 @@ static void send_locked(cli_t *c, const char *buf, size_t len)
  * can never forge a second line. */
 static void reply(cli_t *c, const char *fmt, ...)
 {
-    char buf[512];
+    char buf[1024]; /* WDRDUMP: the isp.wdr line (wdr + gamma parts) and the AE state */
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -360,6 +364,8 @@ static void do_list(cli_t *c)
     reply(c, "isp.brightness=%d",        g_isp_brightness);
     reply(c, "isp.sharpness=%d",         g_isp_sharpness);
     reply(c, "isp.denoise=%d",           isp_nr_knob_get(ISP_KNOB_NR3D_BIAS));
+    reply(c, "isp.wdr=%d",               isp_wdr_get());
+    reply(c, "isp.nr2=%d",               isp_get_nr2());
     /* VENC QP is stock-matched ground truth but
      * not live-settable yet — no confirmed ioctl to update rc params on an
      * already-created encoder channel without a DEACTIVATE/CREATE_ENC
@@ -422,6 +428,8 @@ static void do_get(cli_t *c, const char *param)
     else if (!strcmp(param, "isp.brightness"))        reply(c, "isp.brightness=%d", g_isp_brightness);
     else if (!strcmp(param, "isp.sharpness"))         reply(c, "isp.sharpness=%d", g_isp_sharpness);
     else if (!strcmp(param, "isp.denoise"))           reply(c, "isp.denoise=%d", isp_nr_knob_get(ISP_KNOB_NR3D_BIAS));
+    else if (!strcmp(param, "isp.wdr"))               reply(c, "isp.wdr=%d", isp_wdr_get());
+    else if (!strcmp(param, "isp.nr2"))               reply(c, "isp.nr2=%d", isp_get_nr2());
     else if (!strcmp(param, "venc.minqp"))            reply(c, "venc.minqp=%d (read-only)", video_minqp());
     else if (!strcmp(param, "venc.maxqp"))            reply(c, "venc.maxqp=%d (read-only)", video_maxqp());
     else if (!strcmp(param, "ctl.debug"))             reply(c, "ctl.debug=%d", debug_active());
@@ -590,6 +598,26 @@ static void do_set_locked(char *resp, size_t cap, const char *param, const char 
         g_isp_denoise = v;
         char note[64];
         setmsg(resp, cap, "OK isp.denoise=%d%s", v, isp_persist_note(note, sizeof(note)));
+    } else if (!strcmp(param, "isp.wdr")) {
+        int v;
+        SET_INT(v, "isp.wdr", 0, ISP_TUNE_WDR_MAX);
+        if (!isp_pipeline_ready()) { setmsg(resp, cap, "ERR isp.wdr: the ISP is not ready"); return; }
+        int rc = isp_set_locked(isp_wdr_set, v);
+        if (rc == ISP_NR_REFUSED) { setmsg(resp, cap, "ERR isp.wdr: live table not as decoded (nothing sent)"); return; }
+        if (rc != 0) { setmsg(resp, cap, "ERR isp.wdr: the ISP refused the block"); return; }
+        g_isp_wdr = v;
+        char note[64];
+        setmsg(resp, cap, "OK isp.wdr=%d%s", v, isp_persist_note(note, sizeof(note)));
+    } else if (!strcmp(param, "isp.nr2")) {
+        int v;
+        SET_INT(v, "isp.nr2", 0, ISP_TUNE_NR2_MAX);
+        if (!isp_pipeline_ready()) { setmsg(resp, cap, "ERR isp.nr2: the ISP is not ready"); return; }
+        int rc = isp_set_locked(isp_set_nr2, v);
+        if (rc == ISP_NR_REFUSED) { setmsg(resp, cap, "ERR isp.nr2: live table not as decoded (nothing sent; SET img.dump nr logs the tables)"); return; }
+        if (rc != 0) { setmsg(resp, cap, "ERR isp.nr2: the ISP refused the block"); return; }
+        g_isp_nr2 = v;
+        char note[64];
+        setmsg(resp, cap, "OK isp.nr2=%d%s", v, isp_persist_note(note, sizeof(note)));
     } else if (!strcmp(param, "venc.minqp") || !strcmp(param, "venc.maxqp")) {
         setmsg(resp, cap, "ERR %s is read-only in this version "
                   "(requires an encoder restart, not yet implemented)", param);
@@ -647,6 +675,8 @@ int control_get_setting(const char *key, char *out, size_t cap)
     else if (!strcmp(key, "isp.saturation")) v = g_isp_saturation;
     else if (!strcmp(key, "isp.sharpness"))  v = g_isp_sharpness;
     else if (!strcmp(key, "isp.denoise"))    v = isp_nr_knob_get(ISP_KNOB_NR3D_BIAS);
+    else if (!strcmp(key, "isp.wdr"))        v = isp_wdr_get();
+    else if (!strcmp(key, "isp.nr2"))        v = isp_get_nr2();
     else if (!strcmp(key, "night.mode")) {
         night_tuning_t n; night_get_tuning(&n);
         snprintf(out, cap, "%s", night_mode_name(n.override));
@@ -685,7 +715,7 @@ int control_get_value(const char *key, char *out, size_t cap)
 int control_persist_picture(void)
 {
     pthread_mutex_lock(&g_set_lock);
-    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, g_isp_denoise };
+    isp_tune_t t = { g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, g_isp_denoise, g_isp_wdr, g_isp_nr2 };
     int rc = isp_tune_save(ISP_TUNE_FILE, &t);
     pthread_mutex_unlock(&g_set_lock);
     return rc < 0 ? -1 : 0;
@@ -697,6 +727,8 @@ static void do_set(cli_t *c, const char *param, const char *value)
     (void)control_apply_setting(param, value, c->loopback, resp, sizeof(resp));
     reply(c, "%s", resp);
 }
+
+static int wdr_load_line(int unused) { (void)unused; isp_wdr_reapply(); return 0; }
 
 /* Called once from main() after the ISP runs: applies the saved picture settings (absent file = nothing to do,
  * nothing is written). Values are validated by isp_tune_load(). A value the ISP refuses is logged and the
@@ -717,9 +749,27 @@ void control_apply_saved_isp(void)
             printf("[control] denoise %d not applied (%s): the camera keeps the stock noise-reduction tables\n", t.denoise,
                    rc == ISP_NR_REFUSED ? "live table not as decoded" : "the ISP refused the block");
     }
+    g_isp_wdr = t.wdr;
+    if (t.wdr == ISP_TUNE_DEFAULT_WDR) {
+        /* the stock strength sends nothing, but the start leaves its [isp.wdr] ev=load line like every later ISP load (read only) */
+        (void)isp_set_locked(wdr_load_line, 0);
+    } else {
+        int rc = isp_set_locked(isp_wdr_set, t.wdr);
+        if (rc != 0)
+            printf("[control] wdr %d not applied (%s): the camera keeps its own WDR curves\n", t.wdr,
+                   rc == ISP_NR_REFUSED ? "live table not as decoded" : "the ISP refused the block");
+    }
+    g_isp_nr2 = t.nr2;
+    if (t.nr2) {
+        int rc = isp_set_locked(isp_set_nr2, t.nr2);
+        if (rc != 0)
+            printf("[control] nr2 %d not applied (%s): the camera keeps its own 2D noise-reduction table\n", t.nr2,
+                   rc == ISP_NR_REFUSED ? "live table not as decoded" : "the ISP refused the block");
+    }
     pthread_mutex_unlock(&g_set_lock);
-    printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d denoise=%d\n",
-           g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, isp_nr_knob_get(ISP_KNOB_NR3D_BIAS));
+    printf("[control] saved picture applied: brightness=%d contrast=%d saturation=%d sharpness=%d denoise=%d wdr=%d nr2=%d\n",
+           g_isp_brightness, g_isp_contrast, g_isp_saturation, g_isp_sharpness, isp_nr_knob_get(ISP_KNOB_NR3D_BIAS),
+           isp_wdr_get(), isp_get_nr2());
 }
 
 /* Blocking byte-at-a-time line reader — traffic on this protocol is tiny
@@ -787,6 +837,17 @@ static void handle_control_client(cli_t *c)
                 if (v2) { snprintf(pair, sizeof(pair), "%s %s", value, v2); value = pair; }
             }
             do_set(c, param, value);
+        } else if (!strcasecmp(cmd, "WDRDUMP")) {
+            /* read-only debug: the last [isp.wdr] diagnostic line plus the AE state that picks the ISO level (the entry of the WDR table).
+             * The kernel level is a product of exposure time, sensor gain and ISP gain compared with its own thresholds; no ioctl returns the
+             * level itself, so iso_prod is that product as ae.c reads it (exp * sgain >> 8 * isp >> 8). */
+            char     dump[768];
+            int      lum = 0;
+            uint32_t he = 0, hs = 0, hi = 0;
+            isp_wdr_dump(dump, sizeof(dump));
+            int ok = ae_get_last_stats(&lum, &he, &hs, &hi);
+            unsigned long long prod = (((unsigned long long)he * hs) >> 8) * hi >> 8;
+            reply(c, "%s ae=%s lum=%d exp=%u sgain=%u ispgain=%u iso_prod=%llu", dump, ok == 0 ? "ok" : "none", lum, he, hs, hi, prod);
         } else if (!strcasecmp(cmd, "QUIT")) {
             reply(c, "OK bye");
             return;

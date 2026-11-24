@@ -25,6 +25,7 @@ int isp_tune_load(const char *path, isp_tune_t *t)
     memset(t, 0, sizeof(*t));
     t->sharpness = ISP_TUNE_DEFAULT_SHARPNESS;
     t->denoise = ISP_TUNE_DEFAULT_DENOISE;
+    t->wdr = ISP_TUNE_DEFAULT_WDR;
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -46,6 +47,8 @@ int isp_tune_load(const char *path, isp_tune_t *t)
         else if (!strcmp(line, "saturation")) t->saturation = v;
         else if (!strcmp(line, "sharpness"))  t->sharpness = v;
         else if (!strcmp(line, "denoise") && v >= 0 && v <= ISP_TUNE_DENOISE_MAX) t->denoise = v;
+        else if (!strcmp(line, "wdr") && v >= 0 && v <= ISP_TUNE_WDR_MAX) t->wdr = v;
+        else if (!strcmp(line, "nr2") && v >= 0 && v <= ISP_TUNE_NR2_MAX) t->nr2 = v;
     }
     return 1;
 }
@@ -53,15 +56,15 @@ int isp_tune_load(const char *path, isp_tune_t *t)
 int isp_tune_save(const char *path, const isp_tune_t *t)
 {
     if (!t->brightness && !t->contrast && !t->saturation && t->sharpness == ISP_TUNE_DEFAULT_SHARPNESS &&
-        t->denoise == ISP_TUNE_DEFAULT_DENOISE) {
+        t->denoise == ISP_TUNE_DEFAULT_DENOISE && t->wdr == ISP_TUNE_DEFAULT_WDR && !t->nr2) {
         if (unlink(path) < 0 && errno != ENOENT) return -1;
         return 0;
     }
     isp_tune_t cur;
     if (isp_tune_load(path, &cur) == 1 && !memcmp(&cur, t, sizeof(cur))) return 0; /* unchanged: no flash write */
     char out[192], tmp[512], dir[512];
-    int w = snprintf(out, sizeof(out), "brightness=%d\ncontrast=%d\nsaturation=%d\nsharpness=%d\ndenoise=%d\n",
-                     t->brightness, t->contrast, t->saturation, t->sharpness, t->denoise);
+    int w = snprintf(out, sizeof(out), "brightness=%d\ncontrast=%d\nsaturation=%d\nsharpness=%d\ndenoise=%d\nwdr=%d\nnr2=%d\n",
+                     t->brightness, t->contrast, t->saturation, t->sharpness, t->denoise, t->wdr, t->nr2);
     if (w < 0 || (size_t)w >= sizeof(out)) { errno = ENOSPC; return -1; }
     if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) { errno = ENAMETOOLONG; return -1; }
     snprintf(dir, sizeof(dir), "%s", path);

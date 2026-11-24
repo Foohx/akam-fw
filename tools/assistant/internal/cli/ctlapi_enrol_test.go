@@ -50,7 +50,7 @@ func TestExistingInstallEnrolsTheKeyOnTheFirstSettingCommand(t *testing.T) {
 	}
 	r := e.run("n\n", "led") // a terminal, the question defaults to No
 	expectRC(t, r, 1)
-	contains(t, r.err+r.out, "Create one over SSH", "not confirmed: nothing was changed on the camera", "run ./akam api-key when you want to create it")
+	contains(t, r.err+r.out, "Create one over SSH", "not confirmed: nothing was changed on the camera", "run akam api-key when you want to create it")
 	if e.cam.APIKeys() != 0 {
 		t.Fatal("a key was made without a yes")
 	}
@@ -85,7 +85,7 @@ func TestEnrolmentWithYesAndWithoutATerminal(t *testing.T) {
 	t.Setenv("AKAM_FORCE_TTY", "")
 	r := e.run("y\n", "led")
 	expectRC(t, r, 1)
-	contains(t, r.err+r.out, "no API key for this camera", "run once, in a terminal: ./akam api-key")
+	contains(t, r.err+r.out, "no API key for this camera", "run once, in a terminal: akam api-key")
 	if e.cam.APIKeys() != 0 {
 		t.Fatal("a key was made without a terminal and without --yes")
 	}
@@ -189,4 +189,17 @@ func TestApiKeyFallsBackToTheOldProgramName(t *testing.T) {
 		t.Fatalf("keys %d, the old-name camera did not make the key\n%s%s", e.cam.APIKeys(), r.out, r.err)
 	}
 	noSecretAnywhere(t, e, r.out, r.err)
+}
+
+// Without a key and without a terminal the first error says why; no second, misleading "did not answer" follows.
+func TestNoSecondErrorAfterTheKeyError(t *testing.T) {
+	for _, args := range [][]string{{"audio", "show"}, {"led"}, {"picture"}} {
+		e := newEnv(t)
+		e.noAPIKey()
+		t.Setenv("AKAM_FORCE_TTY", "")
+		r := e.run("", args...)
+		expectRC(t, r, 1)
+		contains(t, r.err+r.out, "no API key for this camera")
+		notContains(t, r.err+r.out, "did not answer", "older Akam image")
+	}
 }

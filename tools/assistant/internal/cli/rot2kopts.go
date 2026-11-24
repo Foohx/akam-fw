@@ -24,7 +24,7 @@ var opts2KCommands = map[string]bool{"led": true, "picture": true, "video": true
 var words2K = map[string]map[string]string{
 	"led": {"status": "led.mode", "ir": "night.ir_led"},
 	"picture": {"brightness": "image.brightness", "contrast": "image.contrast", "sharpness": "image.sharpness", "mains": "image.mains_hz", "flip": "image.flip", "mirror": "image.mirror", "ceiling": "image.ceiling",
-		"saturation": "isp.saturation", "denoise": "isp.denoise", "wb": "img.wb"},
+		"saturation": "isp.saturation", "denoise": "isp.denoise", "nr2": "isp.nr2", "wdr": "isp.wdr", "wb": "img.wb"},
 	"video": {"bitrate": "kbps", "maxbitrate": "max_kbps", "fps": "fps", "gop": "gop", "minqp": "min_qp", "maxqp": "max_qp", "rc": "rc"},
 	"track": {"return": "track.return", "delay": "track.return_delay_s", "tilt": "track.tilt", "lag": "track.lag_ms"},
 	"wifi":  {"country": "net.wifi_country", "band": "net.wifi_band"},
@@ -322,8 +322,12 @@ func (a *App) run2KOpts(title string, changes []camopt.Change, showKeys []string
 		if err := a.send2K(cl, cur, changes); err != nil {
 			return err
 		}
-		if cur, err = cl.Settings(a.Ctx); err != nil {
-			return a.api2KFail(err)
+		// the change is done: a failed read-back must not say that nothing was changed
+		if fresh, err := cl.Settings(a.Ctx); err != nil {
+			a.UI.Warn("the change was sent and answered above, but the new values could not be read back (" + ui.Sanitize(err.Error()) + "): check with: " + Prog + " settings get KEY.")
+			return nil
+		} else {
+			cur = fresh
 		}
 	}
 	for _, k := range showKeys {

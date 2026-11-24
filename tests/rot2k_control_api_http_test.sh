@@ -37,7 +37,7 @@ echo "== build the server harness (ASan/UBSan)"
 SRV=$WORK/apisrv
 # shellcheck disable=SC2086
 if ! $CC -std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -pthread \
- '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=16384 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/platforms/anyka-ak3918av130/picture.c" \
+ '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=18432 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/platforms/anyka-ak3918av130/picture.c" \
     "$REPO/src/api/api_httpd.c" "$REPO/src/api/api_core.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/api_bind.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/settings.c" "$REPO/src/api/api_events.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/net/http/http_req.c" "$REPO/src/api/api_limit.c" \
     "$REPO/src/api/api_keys.c" "$REPO/src/api/api_sig.c" "$REPO/src/net/crypto/sha256.c" "$REPO/src/api/json_min.c" "$REPO/src/core/settings_reg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/netreg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/cfgreg.c" \
     "$REPO/src/features/ptz/ptz_vel.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/speaker.c" "$REPO/src/features/audio/audio_out.c" "$REPO/src/features/audio/talk.c" "$REPO/src/features/audio/audio_jitter.c" "$REPO/src/features/audio/audio_vad.c" "$REPO/src/features/audio/g711.c" "$REPO/src/net/rtsp/rtp_in.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button_rt.c" "$REPO/src/features/button/button_cfg.c" "$REPO/src/features/button/button_gesture.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c"; then
@@ -319,10 +319,11 @@ req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_enable":false}'
 want "audio.out_enable can be turned off again" 200 '"ok":true'
 # ---- picture rows: the 1080p's names (isp.saturation, isp.denoise, img.wb), the real picture.c on a fake ISP
 req "$WID" "$WSEC" GET /akam/v1/schema
-for k in isp.saturation isp.denoise img.wb; do
+for k in isp.saturation isp.denoise isp.nr2 isp.wdr img.wb; do
     printf '%s' "$BODY" | grep -q "\"key\":\"$k\"" && ok "schema lists $k" || ko "schema lists $k"
 done
-want "schema: isp.saturation -50..50 default 0, isp.denoise 0..4 default 0, img.wb conf|manual" 200 '"key":"isp.saturation","type":"int","lo":-50,"hi":50,"default":"0".*"key":"isp.denoise","type":"int","lo":0,"hi":4,"default":"0".*"key":"img.wb","type":"enum".*"conf","manual"'
+want "schema: isp.saturation -50..50 default 0, isp.denoise 0..4 default 0, img.wb conf only (manual is refused on the 2K)" 200 '"key":"isp.saturation","type":"int","lo":-50,"hi":50,"default":"0".*"key":"isp.denoise","type":"int","lo":0,"hi":4,"default":"0".*"key":"img.wb","type":"enum".*"conf"'
+want "schema: isp.nr2 0..4 default 0, isp.wdr 0..100 default 90 (the stock's effect 40)" 200 '"key":"isp.nr2","type":"int","lo":0,"hi":4,"default":"0".*"key":"isp.wdr","type":"int","lo":0,"hi":100,"default":"90"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.saturation":-20}'
 want "PATCH isp.saturation -20" 200 '"isp.saturation":\{"ok":true'
 check "the ISP got effect 2 (saturation) = -20" bash -c "grep -q 'isp.effect 2 -20' '$D2/calls.log'"
@@ -337,13 +338,35 @@ req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.denoise":5}'
 want "isp.denoise 5 is refused" 422 'range'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.denoise":0}'
 check "denoise 0 writes the original table back (marker 101)" bash -c "grep -q 'isp.nr3d rec1 101 rec16 116' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.nr2":0}'
+want "PATCH isp.nr2 0 (the default)" 200 '"isp.nr2":\{"ok":true'
+check "isp.nr2 0 on an untouched camera sends no nr2 table" bash -c "! grep -q 'isp.nr2' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.nr2":2}'
+want "PATCH isp.nr2 2" 200 '"isp.nr2":\{"ok":true'
+check "the nr2 table was written: record 1 nr2_k 1 + 1, record 16 0 + 5 (level 2 step (2 * 20 + 4) / 8)" bash -c "grep -q 'isp.nr2 rec1 k 2 rec16 k 5' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.nr2":5}'
+want "isp.nr2 5 is refused" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.nr2":0}'
+check "nr2 0 writes the original table back (record 1 k 1, record 16 k 0)" bash -c "grep -q 'isp.nr2 rec1 k 1 rec16 k 0' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.wdr":100}'
+want "PATCH isp.wdr 100" 200 '"isp.wdr":\{"ok":true'
+check "the ISP got effect 5 (WDR) = 50" bash -c "grep -q 'isp.effect 5 50' '$D2/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/isp.wdr
+want "GET isp.wdr reads it back" 200 '"value":"100"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.wdr":101}'
+want "isp.wdr 101 is refused" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.wdr":90}'
+check "isp.wdr 90 puts the stock's effect 40 back" bash -c "grep -q 'isp.effect 5 40' '$D2/calls.log'"
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"img.wb":"manual"}'
-want "PATCH img.wb manual" 200 '"img.wb":\{"ok":true'
-check "the wb type went to the other value than the one read (1 -> 0)" bash -c "grep -q 'isp.wbtype 0' '$D2/calls.log'"
+want "PATCH img.wb manual is refused (no way to freeze the automatic gains)" 422 '"img.wb":\{"ok":false,"error":"range"'
+check "the refused manual sent nothing to the ISP (no wb type write)" bash -c "! grep -q 'isp.wbtype' '$D2/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/img.wb
+want "img.wb still reads conf" 200 '"value":"conf"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"img.wb":"auto"}'
 want "img.wb auto is refused (conf or manual)" 422 'range'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"img.wb":"conf"}'
-check "img.wb conf puts the automatic type back (1)" bash -c "grep -q 'isp.wbtype 1' '$D2/calls.log'"
+want "img.wb conf is accepted and sends nothing" 200 '"img.wb":\{"ok":true'
+check "img.wb conf wrote no wb type either" bash -c "! grep -q 'isp.wbtype' '$D2/calls.log'"
 req "$WID" "$WSEC" GET /akam/v1/settings
 want "GET /settings: img.wb is conf, saturation and denoise as set" 200 '"isp.saturation":"-20"'
 req "$WID" "$WSEC" GET /akam/v1/settings
@@ -599,7 +622,7 @@ req "$WID" "$WSEC" GET /akam/v1/events "" "since=1&timeout=99"
 want "timeout over 25 is 400" 400 'bad_query'
 # persistence: the file, the restart, the load
 sleep 2.2
-check "persistent settings were saved (changed keys only)" bash -c "grep -q 'track.enabled=1' '$D2/settings' && grep -q 'track.gain_tilt=900' '$D2/settings' && grep -q 'track.gain_pan=1200' '$D2/settings' && grep -q 'track.tilt_band_pct=8' '$D2/settings' && grep -q 'night.ir_led=off' '$D2/settings' && grep -q 'led.person=2:150:150:0' '$D2/settings' && ! grep -q 'video' '$D2/settings' && ! grep -q 'image' '$D2/settings' && ! grep -q 'led.mode' '$D2/settings'"
+check "persistent settings were saved (changed keys only; image.brightness and image.contrast now persist on the 2K)" bash -c "grep -q 'track.enabled=1' '$D2/settings' && grep -q 'track.gain_tilt=900' '$D2/settings' && grep -q 'track.gain_pan=1200' '$D2/settings' && grep -q 'track.tilt_band_pct=8' '$D2/settings' && grep -q 'night.ir_led=off' '$D2/settings' && grep -q 'led.person=2:150:150:0' '$D2/settings' && ! grep -q 'video' '$D2/settings' && grep -q '^image.brightness=70' '$D2/settings' && grep -q '^image.contrast=60' '$D2/settings' && ! grep -q 'image.flip' '$D2/settings' && ! grep -q 'led.mode' '$D2/settings'"
 stop_srv && ok "stop saves and exits cleanly" || ko "stop (see $D2/err)"
 : >"$D2/calls.log"
 start_srv "$D2" --fast
@@ -690,6 +713,32 @@ want "mirror reads 1 after the restart" 200 '"value":"1"'
 req "$WID" "$WSEC" GET /akam/v1/settings/image.ceiling
 want "ceiling reads 1 after the restart" 200 '"value":"1"'
 stop_srv || true
+
+# image.brightness / contrast / sharpness / mains_hz are saved (the ISP keeps none): written only on a user change, applied at start, never written at start or while idle.
+echo "== image.* rows are saved, applied at start, and not rewritten by a restart"
+D2I=$WORK/p2i
+mkdir -p "$D2I"
+newkey "$D2I" write hi
+WID=$KID
+WSEC=$KSEC
+start_srv "$D2I" --fast
+sleep 1.2
+check "a fresh start writes no settings file" bash -c "[ ! -e '$D2I/settings' ]"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"image.sharpness":70}'
+want "PATCH image.sharpness 70" 200 '"image.sharpness":\{"ok":true'
+sleep 2.2
+check "the file holds image.sharpness=70 only" bash -c "grep -qx 'image.sharpness=70' '$D2I/settings' && [ \$(grep -c image '$D2I/settings') = 1 ]"
+stop_srv || true
+SIG1=$(stat -c '%i %Y %s' "$D2I/settings")
+: >"$D2I/calls.log"
+start_srv "$D2I" --fast
+check "the restart applies the saved sharpness to the ISP (brightness and contrast untouched, mains 50)" bash -c "grep -q 'image -1 -1 70 50' '$D2I/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/image.sharpness
+want "sharpness reads 70 after the restart" 200 '"value":"70"'
+sleep 2.5
+check "the restart and the idle time after it rewrote nothing" bash -c "[ '$SIG1' = \"\$(stat -c '%i %Y %s' '$D2I/settings')\" ]"
+stop_srv || true
+check "stopping without a change rewrote nothing" bash -c "[ '$SIG1' = \"\$(stat -c '%i %Y %s' '$D2I/settings')\" ]"
 
 # ================================================================== phase 3: default limits (lockout, rate)
 echo "== rate limit and lockout with the spec defaults"

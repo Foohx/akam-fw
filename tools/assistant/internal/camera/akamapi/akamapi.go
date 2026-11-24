@@ -218,6 +218,32 @@ type Client struct {
 	Do       Transport        // nil: the raw client
 	DoReq    RequestTransport // PATCH and POST; nil: the raw client
 	Timeout  time.Duration
+	Sleep    func(context.Context, time.Duration) // the wait before a retry after a 429; nil: a real timer
+}
+
+// RetryAfterField is the key the HTTP transport adds to the JSON body of a 429 that carried a Retry-After header
+// (seconds): the body is all a Transport returns.
+const RetryAfterField = "retry_after_s"
+
+// addRetryAfter puts the Retry-After header of a 429 into its JSON error body.
+func addRetryAfter(head, body string) string {
+	for _, l := range strings.Split(head, "\r\n")[1:] {
+		k, v, ok := strings.Cut(l, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "retry-after") {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 0 {
+			return body
+		}
+		m := map[string]any{}
+		_ = json.Unmarshal([]byte(body), &m)
+		m[RetryAfterField] = n
+		if b, err := json.Marshal(m); err == nil {
+			return string(b)
+		}
+	}
+	return body
 }
 
 // New is a client of the camera at host (IP or name) with the default port and a 5 s timeout.
@@ -290,6 +316,9 @@ func rawRequest(ctx context.Context, hostport, method, path string, reqBody []by
 	}
 	if len(body) > maxBody {
 		body = body[:maxBody]
+	}
+	if code == 429 {
+		body = addRetryAfter(head, body)
 	}
 	return code, []byte(body), nil
 }

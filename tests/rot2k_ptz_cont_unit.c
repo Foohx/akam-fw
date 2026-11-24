@@ -42,12 +42,15 @@ static struct {
     int nmove, nstop, nother, bad_cmd, cmds[4096], ncmd, nsave;
     struct { long at; int kind; unsigned dir, a, b; } cl[1024]; /* every stop (kind 0) and move (kind 1) request with its virtual time */
     int ncl;
+    int64_t last_move_ms;                  /* CLOCK_MONOTONIC ms of the last move request (set in d_ioctl, under mu) */
     int real;                              /* sleeping really sleeps (the thread tests) */
     int max_mech[2], min_mech[2];
     long exec[2], exec_pos[2], exec_neg[2]; /* the TRUE motor: net / positive / negative steps really executed (independent of the counters) */
     long hist_t[20000];                    /* truth for the position history test: time, pan */
     int hist_pan[20000], hist_n;
 } M = { .mu = PTHREAD_MUTEX_INITIALIZER };
+
+static int64_t mono(void);
 
 static void d_reset(int pan, int tilt)
 {
@@ -163,6 +166,7 @@ static int d_ioctl(int fd, unsigned long req, void *arg)
         if (w[0] > 7) { M.bad_cmd++; errno = EINVAL; rc = -1; }
         else {
             M.nmove++;
+            M.last_move_ms = mono();
             if (M.ncl < 1024) { M.cl[M.ncl].at = M.clock; M.cl[M.ncl].kind = 1; M.cl[M.ncl].dir = w[0]; M.cl[M.ncl].a = w[1]; M.cl[M.ncl].b = w[2]; M.ncl++; }
             if (M.ncmd < 4096) M.cmds[M.ncmd++] = (int)w[0];
             if (M.nq < 16) { M.q[M.nq].at = M.clock + M.lat_ms; M.q[M.nq].kind = 1; M.q[M.nq].dir = w[0]; M.q[M.nq].a = w[1]; M.q[M.nq].b = w[2]; M.nq++; }
@@ -480,6 +484,53 @@ static int wait_done(int64_t since, int ms)
     return 0;
 }
 
+/* The driver's move-request count, read under the driver lock (the baseline of wait_move_done). */
+static int nmove_now(void)
+{
+    int n;
+    pthread_mutex_lock(&M.mu);
+    n = M.nmove;
+    pthread_mutex_unlock(&M.mu);
+    return n;
+}
+
+/* The completion of a command that must make a driver move (a step): wait_done alone is satisfied by the end of the PREVIOUS session when that session publishes its end after `since`
+ * (a stop's session ends a few ms after the motor went quiet, more under load): the test then samples the pose before the step even started. Here the driver must have received a new move
+ * (nmove > n0, n0 read before the command) and the controller must have published a motion end AFTER that move request, with the motor quiet. */
+static int wait_move_done(int n0, int ms)
+{
+    a2k_ptz_info_t i;
+    for (int t = 0; t < ms; t += 10) {
+        int n, run;
+        int64_t lm;
+        pthread_mutex_lock(&M.mu);
+        n = M.nmove;
+        lm = M.last_move_ms;
+        run = M.running[0] || M.running[1];
+        pthread_mutex_unlock(&M.mu);
+        a2k_ptz_info(&i);
+        if (n > n0 && i.known && i.state != HAL_PTZ_CALIBRATING && i.motion_end_ms > lm && !run) { usleep(50000); return 1; }
+        usleep(10000);
+    }
+    return 0;
+}
+
+/* wait until the pose is inside the box and the motor is quiet (the real condition of a "back at the start pose") */
+static int wait_pose(int pan_lo, int pan_hi, int tilt_lo, int tilt_hi, int ms)
+{
+    for (int t = 0; t < ms; t += 10) {
+        int p, q, run;
+        pthread_mutex_lock(&M.mu);
+        p = M.mech[0];
+        q = M.mech[1];
+        run = M.running[0] || M.running[1];
+        pthread_mutex_unlock(&M.mu);
+        if (!run && p > pan_lo && p < pan_hi && q > tilt_lo && q < tilt_hi) return 1;
+        usleep(10000);
+    }
+    return 0;
+}
+
 static void thread_cases(void)
 {
     a2k_ptz_cfg_t c;
@@ -487,6 +538,7 @@ static void thread_cases(void)
     a2k_ptz_info_t i;
     int pp, pt, rc, ok;
     int64_t t0;
+    int n0;
     printf("== PTZ controller: a2k_ptz_vel sessions, the lease, the position history, preemption\n");
     d_reset(1275, 1300);
     sc.boot_check = boot_ok;
@@ -547,9 +599,10 @@ static void thread_cases(void)
     CHECK(a2k_ptz_vel(-1, 0, 3, 0) == 0, "a new session");
     usleep(150000);
     CHECK(a2k_ptz_nudge_sp(100, 0, 3) == -1, "the tracker's nudge is refused while a session runs");
+    n0 = nmove_now();
     t0 = mono();
     CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0, "a manual step (button) while a session runs is queued");
-    rc = wait_done(t0, 3000);
+    rc = wait_move_done(n0, 3000); /* the step's own move, not the end of the session it cancelled */
     {
         int p0 = mech_pan();
         usleep(100000);
@@ -558,9 +611,9 @@ static void thread_cases(void)
     CHECK(mono() - t0 < 1500, "... quickly");
     CHECK(a2k_ptz_vel(1, 0, 3, 0) == 0, "a session again");
     usleep(150000);
-    t0 = mono();
+    n0 = nmove_now();
     CHECK(a2k_ptz_nudge(50, 0) == 0, "a MANUAL nudge (API ptz.move) cancels the tracker's session and runs");
-    CHECK(wait_done(t0, 3000), "... done");
+    CHECK(wait_move_done(n0, 3000), "... done"); /* the nudge's own move, not the end of the session it cancelled */
     CHECK(a2k_ptz_vel(1, 0, 3, 0) == 0, "a session once more");
     usleep(150000);
     CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0, "park (privacy) while a session runs");
@@ -1345,6 +1398,7 @@ static void manual_cases(void)
     a2k_ptz_info_t i;
     uint32_t pmin, pmax, tmin, tmax;
     int64_t t0;
+    int n0;
     int moves0, p0, ms;
     printf("== MANUAL continuous motion: lease, refresh, stop, refusals, preemption of tracking\n");
     d_reset(1275, 1300);
@@ -1365,7 +1419,7 @@ static void manual_cases(void)
 
     /* 0. image orientation (orient.h): the commands are the viewer's directions, the driver's are the sensor's: a mirror reverses left / right, a flip up / down */
     {
-        int pa, ta, up_off, before;
+        int pa, ta, up_off, before, n0;
         a2k_orient_test_reset();
         pa = mech_pan();
         CHECK(a2k_ptz_vel_manual(1, 0, 3, 0, 600) == 0, "0: orientation off: velocity right");
@@ -1391,27 +1445,27 @@ static void manual_cases(void)
         CHECK(a2k_ptz_manual_stop() == 0 && wait_motor_stop(1500) >= 0 && wait_idle(3000), "0: stop");
         a2k_orient_set(0, 0);
         before = mech_pan();
-        t0 = mono();
-        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_done(t0, 5000), "0: orientation off: the step button right");
+        n0 = M.nmove;
+        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_move_done(n0, 5000), "0: orientation off: the step button right");
         CHECK(mech_pan() - before > 100, "0: orientation off: a step right raises the pan counter by about one step");
         a2k_orient_set(0, 1);
         before = mech_pan();
-        t0 = mono();
-        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_done(t0, 5000), "0: mirror: the step button right");
+        n0 = M.nmove;
+        CHECK(a2k_ptz_command(A2K_PTZ_RIGHT) == 0 && wait_move_done(n0, 5000), "0: mirror: the step button right");
         CHECK(mech_pan() - before < -100, "0: mirror: the same button lowers the pan counter");
         a2k_orient_set(1, 0);
         before = mech_tilt();
-        t0 = mono();
-        CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_done(t0, 5000), "0: flip: the step button up");
+        n0 = M.nmove;
+        CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_move_done(n0, 5000), "0: flip: the step button up");
         ta = mech_tilt() - before;
         a2k_orient_set(0, 0);
         before = mech_tilt();
-        t0 = mono();
-        CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_done(t0, 5000), "0: orientation off: the step button up");
+        n0 = M.nmove;
+        CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_move_done(n0, 5000), "0: orientation off: the step button up");
         CHECK(ta != 0 && (mech_tilt() - before) * ta < 0, "0: flip reverses the tilt of the step button");
         a2k_orient_test_reset();
         CHECK(M.bad_cmd == 0, "0: no forbidden request");
-        CHECK(a2k_ptz_goto(1275, 1300, 3) == 0 && wait_idle(8000) && mech_pan() > 1270 && mech_pan() < 1280 && mech_tilt() > 1295 && mech_tilt() < 1305, "0: back at the start pose for the cases below");
+        CHECK(a2k_ptz_goto(1275, 1300, 3) == 0 && wait_pose(1270, 1280, 1295, 1305, 8000) && mech_pan() > 1270 && mech_pan() < 1280 && mech_tilt() > 1295 && mech_tilt() < 1305, "0: back at the start pose for the cases below");
     }
 
 
@@ -1504,8 +1558,8 @@ static void manual_cases(void)
     /* ... and a manual step ends a velocity session and the hold */
     CHECK(a2k_ptz_vel_manual(1, 0, 3, 0, 2000) == 0, "a long manual move");
     usleep(150000);
-    t0 = mono();
-    CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_done(t0, 3000), "a manual step replaces it");
+    n0 = nmove_now();
+    CHECK(a2k_ptz_command(A2K_PTZ_UP) == 0 && wait_move_done(n0, 3000), "a manual step replaces it");
     CHECK(a2k_ptz_vel(1, 0, 3, 0) == 0, "the hold is gone with it: the tracker is accepted at once");
     CHECK(a2k_ptz_manual_stop() == 0 && wait_idle(3000), "stop");
 
@@ -2885,8 +2939,10 @@ static void f11_cases(void)
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IOLBF, 0); /* a crash or a sanitizer abort must not lose the buffered "ok" / FAIL lines (the report goes to stderr, unbuffered) */
     if (getenv("PTZ_UNIT_ONLY_FLAT")) { flat_cases(); printf("rot2k ptz cont unit (blind drift only): %d failed\n", fails); return fails ? 1 : 0; }
     if (getenv("PTZ_UNIT_ONLY_REHOME")) { rehome_hal_cases(); rehome_ctl_cases(); printf("rot2k ptz cont unit (re-home only): %d failed\n", fails); return fails ? 1 : 0; }
+    if (getenv("PTZ_UNIT_ONLY_THREAD")) { thread_cases(); printf("rot2k ptz cont unit (thread only): %d failed\n", fails); return fails ? 1 : 0; }
     if (getenv("PTZ_UNIT_ONLY_MANUAL")) { manual_cases(); printf("rot2k ptz cont unit (manual motion only): %d failed\n", fails); return fails ? 1 : 0; }
     if (getenv("PTZ_UNIT_ONLY")) {
         if (only("f1")) f1_cases();

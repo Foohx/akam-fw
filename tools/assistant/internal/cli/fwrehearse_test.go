@@ -175,7 +175,7 @@ func TestKitInstallFailureAfterAGoodWriteIsOwnMessage(t *testing.T) {
 	expectRC(t, r, 0)
 	out := r.out + r.err
 	contains(t, out, "the camera was written and verified, but the kit that went with it is NOT installed on this computer",
-		"Flash done and verified.", "Image md5 written and read back: "+w.imgMD5)
+		"Update written and verified.", "Image md5 written and read back: "+w.imgMD5)
 	notContains(t, out, "DO NOT power-cycle the camera; the worker keeps running", "nothing was changed")
 	if string(w.cam.Mtd7()) != string(w.imgData) {
 		t.Fatal("the image was not written")

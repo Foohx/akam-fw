@@ -799,6 +799,21 @@ static void test_image(void)
     a2k_image_defaults(&c);
     c.mains_hz = 55;
     CHECK(!a2k_image_cfg_ok(&c), "mains 55 Hz is invalid");
+
+    /* the replay after a day / night switch (ak_vi_switch_mode reloads the conf set): the last valid configuration is applied again, nothing when none was set */
+    a2k_image_defaults(&c);
+    CHECK(a2k_image_apply(&c) == 0, "defaults applied once (mains only)");
+    fx_n = 0;
+    CHECK(a2k_image_replay() == 0 && fx_n == 0, "replay with brightness, contrast and sharpness all unset sends nothing");
+    c.sharpness = 70;
+    CHECK(a2k_image_apply(&c) == 0, "sharpness 70 applied");
+    fx_n = 0;
+    CHECK(a2k_image_replay() == 0 && fx_n == 2 && fx_log[0].type == A2K_FX_SHARPNESS && fx_log[0].value == 20 && fx_log[1].type == A2K_FX_MAINS_HZ,
+          "replay puts sharpness 70 (effect 20) and the mains back, nothing else");
+    c.sharpness = 101;
+    fx_n = 0;
+    CHECK(a2k_image_apply(&c) == 1 && fx_n == 0, "an invalid configuration is refused");
+    CHECK(a2k_image_replay() == 0 && fx_n == 2 && fx_log[0].value == 20, "...and does not replace what the replay holds");
 }
 
 

@@ -58,6 +58,8 @@ static const struct { const char *key, *legacy; } k_map[] = {
     { "image.saturation", "isp.saturation" },
     { "image.sharpness", "isp.sharpness" },
     { "image.denoise", "isp.denoise" },
+    { "isp.wdr", "isp.wdr" }, /* the 2K's names: the picture rows isp.nr2 and isp.wdr are the same keys on both cameras */
+    { "isp.nr2", "isp.nr2" },
     { "video0.kbps", "video.bitrate_cfg" },
     { "video0.fps", "video.fps_cfg" },
     { "video0.gop", "video.gop_cfg" },
@@ -446,6 +448,9 @@ static void build_table(void)
     row("image.saturation", ST_INT, ISP_TUNE_MIN, ISP_TUNE_MAX, NULL, "0", RW, legacy_get, legacy_set);
     row("image.sharpness", ST_INT, ISP_TUNE_MIN, ISP_TUNE_MAX, NULL, defnum(ISP_TUNE_DEFAULT_SHARPNESS), RW, legacy_get, legacy_set);
     row("image.denoise", ST_INT, 0, ISP_TUNE_DENOISE_MAX, NULL, defnum(ISP_TUNE_DEFAULT_DENOISE), RW, legacy_get, legacy_set);
+    /* backlight (WDR) strength 0..100, 90 = the camera's own curves; spatial noise reduction 0..4, 0 = the camera's own table (the 2K's rows) */
+    row("isp.wdr", ST_INT, 0, ISP_TUNE_WDR_MAX, NULL, defnum(ISP_TUNE_DEFAULT_WDR), RW, legacy_get, legacy_set);
+    row("isp.nr2", ST_INT, 0, ISP_TUNE_NR2_MAX, NULL, "0", RW, legacy_get, legacy_set);
     row("image.flip", ST_BOOL, 0, 0, NULL, "0", RW, orient_get_row, orient_set_row);
     row("image.mirror", ST_BOOL, 0, 0, NULL, "0", RW, orient_get_row, orient_set_row);
     row("image.ceiling", ST_BOOL, 0, 0, NULL, "0", RW, orient_get_row, orient_set_row); /* flip + mirror */

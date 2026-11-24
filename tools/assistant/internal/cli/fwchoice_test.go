@@ -733,10 +733,10 @@ func TestStockFlagUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--stock", "--kit", "x", "update"}, "akam: --stock cannot be combined with --kit, --version or --image: choose one firmware (see ./akam help)"},
+		{[]string{"--stock", "--kit", "x", "update"}, "akam: --stock cannot be combined with --kit, --version or --image: choose one firmware (see akam help)"},
 		{[]string{"--stock", "--version", "1.0.0", "update"}, "--stock cannot be combined"},
 		{[]string{"--stock", "--image", "x", "update"}, "--stock cannot be combined"},
-		{[]string{"--stock", "restore"}, "akam: --stock is for the update command (see ./akam help)"},
+		{[]string{"--stock", "restore"}, "akam: --stock is for the update command (see akam help)"},
 		{[]string{"--stock", "get-kit"}, "akam: --stock is for the update command"},
 	} {
 		r := e.runRaw("", append([]string{"--state-dir", e.state}, c.args...)...)

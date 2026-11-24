@@ -16,6 +16,8 @@ while IFS='|' read -r name args; do
     rc=0
     # shellcheck disable=SC2086  # the scenario words are split on purpose
     bash "$REPO/akam" --no-color --state-dir "$st" $args >"$st.out" 2>"$st.err" </dev/null || rc=$?
+    # the wizard prints ./akam, the assistant prints akam (as help.txt does): the reference is normalised here
+    sed -i 's#\./akam#akam#g' "$st.out" "$st.err"
     {
         echo "rc=$rc"
         echo "--- stdout ---"

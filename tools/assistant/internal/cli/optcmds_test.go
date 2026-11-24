@@ -46,7 +46,7 @@ func TestVideoShowAndSet(t *testing.T) {
 	// yes: the audited kill, once
 	r = e.run("y\n", "video", "fps", "15")
 	expectRC(t, r, 0)
-	contains(t, r.out, "The video service was asked to restart; it is back in about 20 seconds (./akam video show).")
+	contains(t, r.out, "The video service was asked to restart; it is back in about 20 seconds (akam video show).")
 	if e.cam.VideoRestarts() != 1 {
 		t.Errorf("restarts: %d", e.cam.VideoRestarts())
 	}
@@ -110,7 +110,7 @@ func TestNtp(t *testing.T) {
 	r = e.run("", "ntp", "set", "pool.ntp.org", "192.0.2.1")
 	expectRC(t, r, 0)
 	contains(t, r.out, "  The camera will ask pool.ntp.org 192.0.2.1 for the time at start-up and every 6 hours (UDP 123, outgoing only).",
-		"  Nothing is sent unless you do this; ./akam ntp off turns it off again.", "  Time sync on, servers: pool.ntp.org 192.0.2.1.")
+		"  Nothing is sent unless you do this; akam ntp off turns it off again.", "  Time sync on, servers: pool.ntp.org 192.0.2.1.")
 	r = e.run("", "ntp", "status")
 	contains(t, r.out, "  time sync: on, servers: pool.ntp.org 192.0.2.1")
 	r = e.run("", "ntp", "off")
@@ -146,7 +146,7 @@ func TestNtpOldImage(t *testing.T) {
 	r := e.run("", "ntp", "set", "pool.ntp.org")
 	expectRC(t, r, 1)
 	contains(t, r.err, "this camera does not have /usr/sbin/akam_ntp.sh.")
-	contains(t, r.out, "it runs an older Akam image: ./akam update.")
+	contains(t, r.out, "it runs an older Akam image: akam update.")
 }
 
 func TestAudioMicIsOffByDefault(t *testing.T) {

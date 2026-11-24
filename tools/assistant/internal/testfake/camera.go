@@ -237,7 +237,7 @@ func New(t testing.TB, opts Options) *Camera {
 			"led.status": "auto", "led.state": "idle", "night.ir_led": "auto",
 			"audio.out_volume": "60", "audio.out_enable": "1", "audio.talk_enable": "1", "audio.out_state": "idle",
 			"audio.out_underruns": "0", "audio.out_drops": "0", "audio.out_test": "0",
-			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "-15", "isp.denoise": "2",
+			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "-15", "isp.denoise": "2", "isp.wdr": "90", "isp.nr2": "0",
 			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "0",
 			"image.flip": "0", "image.mirror": "0", "image.ceiling": "0",
 			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43", "video.cfg_pending": "0",
@@ -809,7 +809,7 @@ func (c *Camera) setLocked(key, val string) string {
 		}
 	} else if strings.HasPrefix(key, "isp.") {
 		n, err := strconv.Atoi(val)
-		if err != nil || n < -50 || n > 50 || (key == "isp.denoise" && n > 4) || (key == "isp.denoise" && n < 0) {
+		if err != nil || (key != "isp.wdr" && (n < -50 || n > 50)) || (key == "isp.denoise" && (n > 4 || n < 0)) || (key == "isp.wdr" && (n > 100 || n < 0)) || (key == "isp.nr2" && (n > 4 || n < 0)) {
 			reply = "ERR out of range"
 		} else {
 			c.ctl[key] = val

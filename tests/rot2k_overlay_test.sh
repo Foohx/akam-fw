@@ -2369,13 +2369,21 @@ if command -v cc >/dev/null 2>&1; then
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe2" - 2>/dev/null; then HP_SAN="-fsanitize=address,undefined"; fi
     # shellcheck disable=SC2086  # HP_SAN is empty or one flag
  if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/hal_ptz_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_hal_ptz_unit.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz_drv.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c" "$REPO/src/features/ptz/ptz_lease.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c"; then
-        "$WORK/hal_ptz_unit" >"$WORK/hal_ptz_unit.out" 2>&1 || true
+        "$WORK/hal_ptz_unit" >"$WORK/hal_ptz_unit.out" 2>&1 && hal_ptz_unit_rc=0 || hal_ptz_unit_rc=$?
         check "hal_ptz unit test passes" grep -q 'rot2k hal_ptz unit: 0 failed' "$WORK/hal_ptz_unit.out"
         grep 'FAIL' "$WORK/hal_ptz_unit.out" || true
+        if ! grep -q 'rot2k hal_ptz unit: 0 failed' "$WORK/hal_ptz_unit.out"; then
+            echo "  hal_ptz_unit: no success summary, exit code ${hal_ptz_unit_rc}; last 40 lines of its output:"
+            tail -n 40 "$WORK/hal_ptz_unit.out" | sed 's/^/    | /'
+        fi
  if cc -Wall -Wextra -Werror -std=gnu99 -g $HP_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/ptz_cont_unit" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/tests/rot2k_ptz_cont_unit.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz.c" "$REPO/platforms/anyka-ak3918av130/hal_ptz_drv.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz.c" "$REPO/src/features/ptz/ptz_lease.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c"; then
-            "$WORK/ptz_cont_unit" >"$WORK/ptz_cont_unit.out" 2>&1 || true
+            "$WORK/ptz_cont_unit" >"$WORK/ptz_cont_unit.out" 2>&1 && ptz_cont_unit_rc=0 || ptz_cont_unit_rc=$?
             check "continuous motion unit test passes (safe layer + HAL session + controller thread on a fake driver: lease, retarget without a stop, soft range per axis, stall / wrong way / uncommanded axis, cancel, manual preemption, position history)" grep -q 'rot2k ptz cont unit: 0 failed' "$WORK/ptz_cont_unit.out"
             grep 'FAIL' "$WORK/ptz_cont_unit.out" || true
+            if ! grep -q 'rot2k ptz cont unit: 0 failed' "$WORK/ptz_cont_unit.out"; then
+                echo "  ptz_cont_unit: no success summary, exit code ${ptz_cont_unit_rc}; last 40 lines of its output:"
+                tail -n 40 "$WORK/ptz_cont_unit.out" | sed 's/^/    | /'
+            fi
         else
             ko "continuous motion unit test does not compile"
         fi

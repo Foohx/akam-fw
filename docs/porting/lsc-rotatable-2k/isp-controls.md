@@ -80,7 +80,7 @@ the sizes below come from the callers' memsets and the validations, not from the
 | Y gamma | `ak_vpss_get_y_gamma_attr` 0x1aa84 / `set` 0x1a800 | `(dev, void *)` | `ygamma[129]` u16 from +0, `ygamma_key[16]` (<=128) at +258, `ygamma_uv_adjust_enable/level`, `ygamma_cnoise_*` at +290..+304 | symmetric | no | MEDIUM |
 | RGB gamma | `ak_vpss_get_rgb_gamma_attr` 0x19ae4 / `set` 0x19824 | `(dev, void *)` | `gain_threshold`, 16 linked `r/g/b_gamma`, `r/g/b_key` tables | symmetric | no | LOW layout |
 | contrast attribute | `ak_vpss_get_contrast_attr` 0x1a228 / `set` 0x1a00c | `(dev, void *)` | u32 `cc_mode` +0, `y_contrast` u16 +4, `y_shift` s16 +6, then 16 linked records (`dark_pixel_area`, `dark_pixel_rate`, `shift_max`) | symmetric | type 3 | MEDIUM |
-| WDR | effect type 5; `ak_vpss_get_wdr_attr` / `set` 0x15fd8 / 0x16720, 0x4228-byte struct, `check_wdr_params` | | the stock's wdr_type 2 path is get-modify-set of it | symmetric | 5 (40 / 0) | HIGH for type 5; the attr is documented in stock-firmware-reference.md |
+| WDR | effect type 5; `ak_vpss_get_wdr_attr` / `set` 0x15fd8 / 0x16720, 0x4228-byte struct, `check_wdr_params` | | the stock's wdr_type 2 path is get-modify-set of it | symmetric | 5 (40 / 0) | HIGH for type 5: **any -50..50, a linear blend of the conf curves with the identity ramp**, see the last section; the attr is documented in stock-firmware-reference.md |
 | exposure | `ak_vpss_get_ae_attr` 0x14d40 / `set` 0x14e7c (1824-byte struct, `envi_gain_range`, `blacklight_compensation_en`, `exp_route_para.ae_route_node[]`), `ak_vpss_get_me_attr` / `set` (manual exposure: `a_gain`, `d_gain`, `isp_d_gain`), `ak_vpss_set_exp_type`, `ak_vpss_set_ae_convergence_rate` | | | symmetric | no | MEDIUM (names from the lib's checks, layouts not decoded). Out of scope for the colour question |
 
 ### 3.1 The effect types, from the code of `isp_set_effect` (0xe25c)
@@ -146,6 +146,24 @@ Behaviour of a change (one rule for every consumer): the orientation is recorded
 - To **fix** a cast without losing the AWB there are three levers, in order of risk: (1) `fx 2` negative (saturation), (2) `ccm blend` toward the identity (keeps the white point, softens the strong off-diagonals that amplify any red bias), (3) `wb manual` with a lower R gain (loses the AWB: only for a fixed lighting).
   A permanent fix would be a get/modify/set of `ak_vpss_set_ccm_attr` after `ak_vi_switch_mode` (the mode switch reloads the whole set, so it has to be replayed after every switch, exactly like the WDR replay), or a patched copy of the conf file loaded with `ak_vi_load_sensor_cfg`; **not implemented, nothing decided before the measurements**.
 
+### 4.1 `img.wb manual` is refused on the 2K (2026-11-24)
+
+Hardware result: `img.wb manual` (wb_type switched to "the other value than the one read at start", the conf's own manual gains left as they are) gave a strong
+blue cast at once; `conf` restored the picture. The user expectation is "manual = keep the current white balance", i.e. freeze the gains the AWB has now.
+Evidence on whether that is possible with the vendor API (no camera access for this change, so read from the libraries and the earlier dumps only):
+
+- `ak_vpss_get_mwb_attr` / `set_mwb_attr` read and write the **manual** gains (12 bytes: r/g/b gain u16 0..4095, offsets s16). Those hold the conf file's own manual
+  values, not the gains the AWB runs with, so reading them does not give the current white balance. Their unit (256 = 1.0x?) is still UNVERIFIED (section 7).
+- The only place that shows what the AWB currently uses is the 38 byte run info at +9376 of `ak_vpss_get_awb_stat_info`: u16 fields that are unnamed and whose
+  meaning (gains, colour temperature) was never decoded (confidence LOW). Writing guessed fields as gains is exactly the kind of blind write that already gave the
+  blue picture.
+- `ak_vpss_get_awb_attr` is the AWB tuning (weights, steps, colour temperature table), not the current result.
+
+So there is no safe way to read the current AWB gains and set them as the manual ones. Decision: `img.wb` accepts only `conf` on the 2K (the setting row lists
+`conf` alone, `manual` is refused with HTTP 422 `range`, the assistant says why, nothing is sent to the ISP, `a2k_pic_set_wb(MANUAL)` returns `A2K_PIC_REFUSED`).
+To enable it later: read `get awb` and `get wb` on the camera in the same lighting, decode the run info (compare it with the AWB gains of the picture), and
+verify the gain unit with `wb manual R G B`; then freeze = write those gains and switch the type. The hook (`--isp-test 1`, `wb manual R G B`) is unchanged for that work.
+
 ## 5. Noise: what the controls are, and what they probably are not
 
 The ISP has three denoisers in the chain, all with a manual record and 16 gain-linked records (the ISP picks / interpolates the linked one by the current sensor gain, which is why shadows (high gain) are noisier): **nr1** (Bayer domain), **nr2** (luma 2D) with its intensities, **uvnr** (chroma), plus the temporal **3D NR** (`tnr_enable`). The hook edits `nr1_k`, `nr2_k` (+ intensities), `uvnr_k` and `tnr_enable` in **all 17 records**, mode untouched, so the change is felt whatever the gain.
@@ -167,7 +185,7 @@ The hook is a poll thread (every 500 ms) reading `/tmp/akam2k_isp_test`; the fil
 Commands (parser limits are enforced; `fx` type 5 / WDR is refused because the app owns it):
 
 ```
-get all | fx | yuv | wb | ccm | nr1 | nr2 | uvnr | nr3d | awb | rgb      read only
+get all | fx | yuv | wb | ccm | nr1 | nr2 | uvnr | nr3d | awb | rgb | wdr   read only (nr2: enable, k, both intensities of the 17 records; wdr: head + sum of the 0x4228 bytes; fx: the cached effect 5 = isp.wdr - 50)
 sat V | hue V | bright V | contrast V | sharp V | fx TYPE V             V -50..50, 0 = conf value
 wb auto | wb manual R G B | wb type 0|1                                  gains 0..4095
 ccm mode 0|1 | ccm blend P                                               P 0..100 percent of the factory matrices
@@ -207,3 +225,18 @@ read whole, each gain-linked record i replaced by record i+N, the last stays, `t
 - Which NR field is the best "strength" (k, intensity1/2, keep threshold), whether a larger value means more smoothing, and the inner offsets of the 3D NR record (only `tnr_enable` is addressed).
 - Whether the conf file's night and day sets differ in NR / sharpness (step 9 answers it).
 - `ak_vpss_get_rgb_average` argument order (MEDIUM): if the three numbers look wrong (all equal, or implausible) the order is different; the statistics block itself is readable with `get awb`.
+
+## WDR strength (`isp.wdr`) and spatial noise reduction (`isp.nr2`), added 2026-11-24
+
+Why: on a backlit scene (a bright window) the dark areas of the 2K are grainy and `isp.denoise` (temporal, 3D NR) changes almost nothing there.
+
+**Effect type 5 is a continuous strength, not an on/off of 0 and 40 (HIGH, disassembly of `libplat_vpss.so`).**
+- `ak_vpss_effect_set` (0x8a14) accepts the types 0..5 for `value + 50 <= 100`, i.e. **-50..50** (any other value is logged and refused with the lib's error). `isp_set_effect` (0xe25c) dispatches type 5 to a static function at 0xccd8 that is the whole WDR effect.
+- That function computes `w = (value + 50) * 1024 / 100`, takes the ISP's cached copy of the conf file's WDR attribute (the first call reads it with the get path, later calls start from that copy again: **never cumulative**) and, for six 65-entry u16 curves of the first group and then the same for the following groups of the attribute (10-bit values, clamped to 1023), writes `(w * conf + (1024 - w) * default) / 1024`, where `default` is `default_wdr_para` (rodata 0x22664): the straight ramp 0, 16, 32 .. 1008, 1023. The blended attribute goes through `ak_vpss_set_wdr_attr` (so `check_wdr_params` validates the result: blends of two valid curves stay valid). The value is cached for `ak_vpss_effect_get`.
+- So: **-50 = the identity ramp (WDR off), 50 = the conf file's curves in full, linear in between.** The stock's 40 is 90 % of the conf curves; the stock's "off" call (0) is in fact 50 % and not off. `isp.wdr` 0..100 is `value + 50`: 0 = off, 90 = the stock (default, effect 40), 100 = effect 50.
+- No get-modify-set of the 0x4228-byte attribute is needed or done (the stock's `wdr_type 2` path does one; not used). The attribute is only read by the `--isp-test` hook (`get wdr`).
+- Uncertain without a camera: that values 41..50 look stronger than the stock (the maths says so); that the cached conf copy is the day set only (the stock has the same limit); which of the curves the sensor path actually uses.
+- Replay: the vendor's mode switch resets it. The app's replay after a switch (`a2k_isp_wdr(1)`, 100 ms after the switch, unchanged timing) now applies the user's value (40 when `isp.wdr` is untouched, so nothing changes by default); `a2k_pic_replay` also re-applies it once the user changed it, which covers `--wdr 0`.
+
+**`isp.nr2` (`ak_vpss_get_nr2_attr` / `set`, 990 bytes, layout in the table above).** Get-modify-set from the pristine table captured at the first change (and again after every mode switch): for the manual record `nr2_k`, `ynr_intensity1` and `ynr_intensity2` get `+N`, for the gain-linked record i (1..16, low gain first) `+(N * (i + 4) + 4) / 8` (from about N * 5/8 at low gain to N * 20/8 at the highest), clamped at 15. Mode word, enables, `ynr_keep_th`, weights and DPC fields are untouched. The attribute is refused, nothing sent, when the mode word is above 1, an enable is above 1, `nr2_k` or an intensity is above 15 or `ynr_keep_th` is above 31. N = 0 sends nothing on an untouched camera and writes the original table back after a change.
+- **Unproved:** that a larger `nr2_k` / `ynr_intensity` is a stronger filter (the vendor naming says so; the hook's `nr2d` command exists to find the direction), and that the records of the high-gain end are enabled (`nr2_enable` is not touched: a record with the filter off stays off). The hardware run reads `get nr2` before and after (PIC-12, PIC-13).

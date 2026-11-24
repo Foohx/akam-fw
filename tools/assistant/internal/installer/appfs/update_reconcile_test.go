@@ -87,7 +87,7 @@ func TestReconcileSettlesAnUnrecordedWrite(t *testing.T) {
 	t.Run("the camera cannot be reached: refused with the next command", func(t *testing.T) {
 		u, _, _ := stage(t)
 		_, err := u.store.Reconcile(context.Background(), func(int) (Conn, error) { return nil, errors.New("no route") }, "", nil)
-		if err == nil || !strings.Contains(err.Error(), "./akam update") {
+		if err == nil || !strings.Contains(err.Error(), "akam update") {
 			t.Fatal(err)
 		}
 		if _, _, err := u.store.Load("pending"); err != nil {

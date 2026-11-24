@@ -21,12 +21,25 @@
 #define ISP_TUNE_DENOISE_MAX 4
 #define ISP_TUNE_DEFAULT_DENOISE 2
 
+/* isp.wdr 0..ISP_TUNE_WDR_MAX = the strength of the backlight (WDR) shadow lift of the ISP, the 2K's scale: 90 = the stock curves of the
+ * camera's own conf (no change, nothing sent), 0 = the lift taken out (identity curves), 0..90 a linear blend, 91..100 the lift pushed up to
+ * 25 % further (mapping in isp_wdr.h, specs/video-and-streaming.md 5.8). A file with no wdr line gets the default. */
+#define ISP_TUNE_WDR_MAX 100
+#define ISP_TUNE_DEFAULT_WDR 90
+
+/* isp.nr2 0..ISP_TUNE_NR2_MAX = the spatial luma noise-reduction (NR2 table, img.nr2d) taken N steps stronger (the 2K's scale): N = 0 is the
+ * camera's own table (nothing sent), N > 0 = img.nr2d 100 + 50 N percent (150, 200, 250, 300). Default 0. */
+#define ISP_TUNE_NR2_MAX 4
+#define ISP_TUNE_NR2_STEP_PCT 50
+
 typedef struct {
     int brightness;
     int contrast;
     int saturation;
     int sharpness;
     int denoise;
+    int wdr;
+    int nr2;
 } isp_tune_t;
 
 /* Fills `t` (defaults first, then every valid line of `path`). Returns 1 when the file existed, else 0. */

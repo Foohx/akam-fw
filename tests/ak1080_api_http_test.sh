@@ -4,7 +4,7 @@
 # and FAKE hardware modules (tests/native/ak1080_fakes.h), built under ASan + UBSan, listening on loopback and driven by curl with the
 # reference signer tools/akam-api-sign.sh. The generic protocol (hygiene, replay, lockout, slow clients, caps, challenge flow) is covered
 # in depth by tests/rot2k_control_api_http_test.sh on the SAME shared code; this test proves what the 1080p adds or differs in: the key
-# tool and the closed port without a key, the 56 registry rows and the actions of this model, no PTZ/track/button route, scopes, the
+# tool and the closed port without a key, the 58 registry rows and the actions of this model, no PTZ/track/button route, scopes, the
 # settings reaching the module setters, events (night, setting), the flash limiter, the audit file, and that no 2K-only code is compiled.
 # Needs: a C compiler (CC, default cc), curl, openssl, awk, xxd. Env: SH_UNDER_TEST for the signer (default sh).
 # shellcheck disable=SC2015,SC2059,SC2034  # test idioms: "cond && ok || ko" reporters, printf with an escape format, loop counters
@@ -180,7 +180,7 @@ want "schema: video rows apply at the next start, led rows live" 200 '"key":"vid
 want "schema: the four actions of this model" 200 '"actions":\[\{"name":"led.blip".*led.blip_stop.*audio.beep.*settings.reset'
 printf '%s' "$BODY" | grep -Eq 'ptz|track\.|detect\.|zones|button|wifi_band|wifi_country|video1' && ko "schema has no PTZ, tracking, detection, zones, button, 5 GHz or second stream row" || ok "schema has no PTZ, tracking, detection, zones, button, 5 GHz or second stream row"
 NROWS=$(printf '%s' "$BODY" | grep -o '"key":' | wc -l | tr -d ' ')
-[ "$NROWS" = 56 ] && ok "schema: 56 rows (44 + img.wb, audio x4, control.lan, net.wifi_rate, net.ssid, led.state, audio state x3: what the assistant needs now that port 8091 is closed)" || ko "schema: $NROWS rows (want 56)"
+[ "$NROWS" = 58 ] && ok "schema: 58 rows (44 + image.wdr, image.nr2, img.wb, audio x4, control.lan, net.wifi_rate, net.ssid, led.state, audio state x3: what the assistant needs now that port 8091 is closed)" || ko "schema: $NROWS rows (want 58)"
 want "schema: control.lan, audio and white balance rows" 200 '"key":"control.lan".*"key":"audio.out_volume"|"key":"audio.out_volume".*"key":"control.lan"'
 admin GET /akam/v1/settings
 want "settings: writable values as canonical text" 200 '"led.mode":"on".*"video0.kbps":"1536"|"video0.kbps":"1536".*"led.mode":"on"'

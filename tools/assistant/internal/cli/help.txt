@@ -89,13 +89,16 @@ Settings of the camera in use, 1080p (the 2K block follows; talk and say work on
                      the stream (needs a reboot to apply); beep plays a
                      short tone; off silences the speaker and keeps it off after a reboot; on may need a
                      reboot of the camera to start the speaker. No confirmation is asked.
-  picture [show | brightness N | contrast N | saturation N | sharpness N | denoise N | wb conf|manual | night auto|day|night | flip|mirror|ceiling on|off | reset]
+  picture [show | brightness N | contrast N | saturation N | sharpness N | denoise N | wdr N | nr2 N | wb conf|manual | night auto|day|night | flip|mirror|ceiling on|off | reset]
                      the picture, through the camera's signed API. N is -50 to 50 (0 = unchanged); the four numbers, wb (/etc/config/akam/image)
                      and night (/etc/config/akam/night) are saved on the camera and applied at every start.
                      reset puts the four numbers back to 0 (sharpness -15, denoise 2). denoise N is 0 to 4: 0 = the camera's own
                      noise reduction, 2 = default (1080p: each light level uses the 3D noise-reduction tables of the
                      level 2 steps higher). flip (vertical), mirror (horizontal) and ceiling (both) are on or off, saved on the camera and
-                     applied at once (1080p: not yet verified on a camera). Several words can be combined. Default: show.
+                     applied at once (1080p: not yet verified on a camera). nr2 N is 0 to 4: 0 = the camera's own spatial (2D) noise
+                     reduction, higher = stronger. wdr N is 0 to 100: backlight (WDR) strength, 90 = the camera's own setting, lower = less
+                     shadow lift (more contrast against a bright window), 0 = off, 100 = the strongest. Both are applied live and saved on the camera
+                     (1080p: not yet verified on a camera); reset puts nr2 back to 0 and wdr to 90. Several words can be combined. Default: show.
   video [show | bitrate N | fps N | gop N]
                      the video encoder settings, through the camera's signed API. Default: show. bitrate is the cap in kbit/s (500 to 3000,
                      default 1536); fps is 10, 15, 20 or 25 (default 15; night mode always runs at 10); gop is the key
@@ -163,7 +166,7 @@ Settings of the camera in use, 1080p (the 2K block follows; talk and say work on
 Rotatable 2K settings (through its signed API, port 8092, key from key-2k; the same words as the registry keys):
   led, picture, video, hostname, audio, ntp, onvif, mqtt, rtsp-auth, talk and say work on a 2K, plus:
     led [show | status auto|on|off | ir auto|off]
-    picture [show | brightness|contrast|sharpness 0-100 | saturation -50..50 | denoise 0-4 | wb conf|manual | mains 50|60 | flip|mirror|ceiling on|off]
+    picture [show | brightness|contrast|sharpness 0-100 | saturation -50..50 | denoise 0-4 | nr2 0-4 | wdr 0-100 | wb conf|manual | mains 50|60 | flip|mirror|ceiling on|off]
     video [show | stream 0|1 | bitrate N | maxbitrate N | fps N | gop N | minqp N | maxqp N | rc vbr|cbr|avbr]
     hostname [NAME]    (no NAME: shows it)
     track [show | on|off | return stay|home | delay S | tilt on|off | lag MS]

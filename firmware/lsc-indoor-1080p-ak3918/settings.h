@@ -10,7 +10,7 @@
  *
  * Rows (docs/porting/lsc-1080p/control-api.md has the table with ranges and defaults):
  *   led.mode auto|on|off (8091: led.status), led.stream led.boot led.nowifi led.night led.idle (LED patterns), night.ir_led
- *   night.mode auto|day|night, image.brightness/contrast/saturation/sharpness -50..50, image.denoise 0..4
+ *   night.mode auto|day|night, image.brightness/contrast/saturation/sharpness -50..50, image.denoise 0..4, isp.wdr 0..100 (90 = stock), isp.nr2 0..4 (0 = stock)
  *   video0.kbps/fps/gop/min_qp/max_qp (saved, applied at the next start of akamd: apply = "restart_component": akamd reads them at its next start)
  *   onvif.enabled, mqtt.enabled (live: the service is reloaded)
  *   img.wb conf|manual, audio.out_volume/out_enable/talk_enable/mic_enable (the speaker and microphone, same names as the old text port), control.lan (the

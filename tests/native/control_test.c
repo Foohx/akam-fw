@@ -61,6 +61,17 @@ static int g_stub_denoise, g_stub_denoise_rc, g_stub_ready = 1;   /* the running
 int  isp_pipeline_ready(void) { return g_stub_ready; }
 int  isp_nr_knob_get(int k) { (void)k; return g_stub_denoise; }
 int  isp_set_denoise(int v) { int rc = stub_isp_set(v); if (rc == 0 && g_stub_denoise_rc == 0) g_stub_denoise = v; return rc ? rc : g_stub_denoise_rc; }
+/* isp.wdr / isp.nr2: the running values and what the setters answer (0, -1 refused by the ISP, -2 = ISP_NR_REFUSED) */
+static int g_stub_wdr = 90, g_stub_wdr_rc, g_stub_nr2, g_stub_nr2_rc;
+int  isp_wdr_get(void) { return g_stub_wdr; }
+int  isp_wdr_set(int v) { int rc = stub_isp_set(v); if (rc == 0 && g_stub_wdr_rc == 0) g_stub_wdr = v; return rc ? rc : g_stub_wdr_rc; }
+static int g_stub_wdr_loads;
+void isp_wdr_reapply(void) { g_stub_wdr_loads++; }
+int  isp_wdr_dump(char *out, size_t cap) { return snprintf(out, cap, "[isp.wdr] stub line"); }
+static int g_stub_ae_rc;
+int  ae_get_last_stats(int *lum, uint32_t *e, uint32_t *s, uint32_t *i) { *lum = 47; *e = 512; *s = 512; *i = 256; return g_stub_ae_rc; }
+int  isp_get_nr2(void) { return g_stub_nr2; }
+int  isp_set_nr2(int v) { int rc = stub_isp_set(v); if (rc == 0 && g_stub_nr2_rc == 0) g_stub_nr2 = v; return rc ? rc : g_stub_nr2_rc; }
 int  night_ctl_get(const char *k, char *o, size_t c) { (void)k; (void)o; (void)c; return -1; }
 int  night_ctl_set(const char *k, const char *v, char *m, size_t c) { (void)k; (void)v; (void)m; (void)c; return -1; }
 void night_ctl_list(void (*e)(void *, const char *), void *a) { e(a, "night.stub=1"); }
@@ -396,7 +407,7 @@ static void test_server(void)
         "ae.stable_range=3\nae.hold_range=6\nae.speed=4\nae.exp_max=16384\nae.enabled=1\n"
         "night.mode=auto\nnight.state=day\nnight.trigger_hw_exp=0\nnight.day_hw_exp=0\n"
         "night.confirm_samples=0\nnight.lock_ms=0\n"
-        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=-15\nisp.denoise=0\n"
+        "isp.saturation=0\nisp.contrast=0\nisp.brightness=0\nisp.sharpness=-15\nisp.denoise=0\nisp.wdr=90\nisp.nr2=0\n"
         "venc.minqp=28 (read-only)\nvenc.maxqp=43 (read-only)\n"
         "night.stub=1\nled.stub=5\naudio.out_stub=2\nimgq.stub=3\ntalk.stub=4\nvideo.stub=5\n"
         "sys.stub=6\nnet.ssid=my \"net\"=x??y\nctl.clients=1\nctl.debug=0\nfw.version=b1-test\nsys.hostname=akam-test\nonvif.state=off\nmqtt.state=off\n.\n");
@@ -536,6 +547,82 @@ static void test_server(void)
     }
     ask(c, "SET isp.denoise 2", out, sizeof(out));
     CHECK(access(ISP_TUNE_FILE, F_OK) != 0);
+    /* isp.wdr (0..100, default 90 = the camera's own curves) and isp.nr2 (0..4, default 0 = the camera's own table): range, refusal keeps the old
+     * value and the file, saved as a line, the defaults remove the file, applied at start-up */
+    /* WDRDUMP: read-only, the diagnostic line of isp_wdr.c plus the AE product that picks the ISO level */
+    ask(c, "WDRDUMP", out, sizeof(out));
+    CHECK_STR(out, "[isp.wdr] stub line ae=ok lum=47 exp=512 sgain=512 ispgain=256 iso_prod=1024\n");
+    g_stub_ae_rc = -1;
+    ask(c, "WDRDUMP", out, sizeof(out));
+    CHECK(!strncmp(out, "[isp.wdr] stub line ae=none", 27));
+    g_stub_ae_rc = 0;
+    ask(c, "SET isp.wdr 101", out, sizeof(out));
+    CHECK_STR(out, "ERR isp.wdr range [0,100]\n");
+    ask(c, "SET isp.wdr -1", out, sizeof(out));
+    CHECK_STR(out, "ERR isp.wdr range [0,100]\n");
+    ask(c, "SET isp.nr2 5", out, sizeof(out));
+    CHECK_STR(out, "ERR isp.nr2 range [0,4]\n");
+    ask(c, "GET isp.wdr", out, sizeof(out));
+    CHECK_STR(out, "isp.wdr=90\n");
+    ask(c, "GET isp.nr2", out, sizeof(out));
+    CHECK_STR(out, "isp.nr2=0\n");
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);                                        /* a refused range saved nothing */
+    ask(c, "SET isp.wdr 0", out, sizeof(out));
+    CHECK_STR(out, "OK isp.wdr=0\n");
+    ask(c, "GET isp.wdr", out, sizeof(out));
+    CHECK_STR(out, "isp.wdr=0\n");
+    ask(c, "SET isp.nr2 3", out, sizeof(out));
+    CHECK_STR(out, "OK isp.nr2=3\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.wdr == 0 && t.nr2 == 3 && t.sharpness == -15 && t.denoise == 2);
+    }
+    g_stub_wdr_rc = -2;                                                             /* ISP_NR_REFUSED: nothing sent */
+    ask(c, "SET isp.wdr 25", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR isp.wdr: live table not as decoded", 38));
+    g_stub_wdr_rc = -1;
+    ask(c, "SET isp.wdr 25", out, sizeof(out));
+    CHECK_STR(out, "ERR isp.wdr: the ISP refused the block\n");
+    g_stub_wdr_rc = 0;
+    g_stub_nr2_rc = -2;
+    ask(c, "SET isp.nr2 4", out, sizeof(out));
+    CHECK(!strncmp(out, "ERR isp.nr2: live table not as decoded", 38));
+    g_stub_nr2_rc = 0;
+    ask(c, "GET isp.wdr", out, sizeof(out));
+    CHECK_STR(out, "isp.wdr=0\n");
+    {
+        isp_tune_t t;
+        CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.wdr == 0 && t.nr2 == 3);   /* the refused values were not saved */
+    }
+    ask(c, "SET isp.wdr 90", out, sizeof(out));
+    ask(c, "SET isp.nr2 0", out, sizeof(out));
+    CHECK_STR(out, "OK isp.nr2=0\n");
+    CHECK(access(ISP_TUNE_FILE, F_OK) != 0);                                        /* both at the defaults: no file */
+    {   /* start-up: nothing saved = nothing sent; a saved line is applied; a refusal is logged and the wish is kept */
+        FILE *f;
+        g_stub_wdr = 90; g_stub_nr2 = 0;
+        control_apply_saved_isp();
+        CHECK(g_stub_wdr == 90 && g_stub_nr2 == 0);
+        CHECK(g_stub_wdr_loads == 1);                                                /* the default still leaves the [isp.wdr] ev=load line at the start (a read) */
+        if ((f = fopen(ISP_TUNE_FILE, "w"))) { fputs("wdr=12\nnr2=2\n", f); fclose(f); }
+        control_apply_saved_isp();
+        CHECK(g_stub_wdr_loads == 1);                                                /* a saved value goes through isp_wdr_set, which logs its own line */
+        ask(c, "GET isp.wdr", out, sizeof(out));
+        CHECK_STR(out, "isp.wdr=12\n");
+        ask(c, "GET isp.nr2", out, sizeof(out));
+        CHECK_STR(out, "isp.nr2=2\n");
+        g_stub_wdr = 90; g_stub_nr2 = 0; g_stub_wdr_rc = -2; g_stub_nr2_rc = -1;
+        control_apply_saved_isp();
+        ask(c, "GET isp.wdr", out, sizeof(out));
+        CHECK_STR(out, "isp.wdr=90\n");                                            /* refused: the camera's own curves keep running */
+        ask(c, "SET isp.contrast 5", out, sizeof(out));                              /* saving another value ... */
+        { isp_tune_t t; CHECK(isp_tune_load(ISP_TUNE_FILE, &t) == 1 && t.wdr == 12 && t.nr2 == 2 && t.contrast == 5); } /* ... keeps the wish */
+        g_stub_wdr_rc = 0; g_stub_nr2_rc = 0;
+        ask(c, "SET isp.contrast 0", out, sizeof(out));
+        unlink(ISP_TUNE_FILE);
+        g_stub_wdr = 90; g_stub_nr2 = 0;
+        control_apply_saved_isp();
+    }
     /* img.qp takes two values: both reach imgq.c, as "MIN MAX" (also from the "MIN,MAX" token) */
     ask(c, "SET img.qp 28 43", out, sizeof(out));
     CHECK_STR(out, "OK img.qp=28 43\n");

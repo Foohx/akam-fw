@@ -213,7 +213,7 @@ int main(void)
     clear_counts();
     for (int k = 0; k < ISP_KNOB_COUNT; k++) CHECK(isp_nr_knob_set(k, kd.v[k]) == 0);
     isp_reset_picture_baselines();
-    CHECK(total_sets() == 0 && g_gets[0] + g_gets[1] + g_gets[2] + g_gets[3] + g_gets[4] == 0 && g_other == 0);
+    CHECK(total_sets() == 0 && g_gets[0] + g_gets[1] + g_gets[2] + g_gets[3] + g_gets[4] == 0 && g_other == 2); /* the two other calls are the read-only GETs of the WDR and Y_GAMMA blocks for the [isp.wdr] load line, never a SET */
     for (int b = 0; b < ISP_NR_BLOCKS; b++) CHECK(live_is_pristine(b));
 
     /* ---- (b) each knob changes only its declared offsets, and does change something */
@@ -608,6 +608,46 @@ int main(void)
         restore_vendor();
         isp_reset_picture_baselines();
         clear_counts();
+    }
+
+    /* ---- isp.nr2 (isp.c / isp_nr_ctl.c): N steps of 50 % on the NR2 strength (the 2K's 0..4), 0 = the camera's own table (nothing sent) */
+    {
+        restore_vendor();
+        for (int k = 0; k < ISP_KNOB_COUNT; k++) isp_nr_knob_set(k, isp_nr_knob_info(k)->def);
+        isp_reset_picture_baselines();
+        restore_vendor();
+        clear_counts();
+        CHECK(isp_get_nr2() == 0);
+        CHECK(isp_set_nr2(0) == 0 && total_sets() == 0 && g_gets[ISP_NR_NR2] == 0);              /* the default sends and reads nothing */
+        CHECK(isp_set_nr2(-1) == -1 && isp_set_nr2(5) == -1 && total_sets() == 0 && isp_get_nr2() == 0);
+        CHECK(isp_set_nr2(4) == 0 && isp_get_nr2() == 4 && isp_nr_knob_get(ISP_KNOB_NR2D) == 300 && g_sets[ISP_NR_NR2] == 1);
+        CHECK(!live_is_pristine(ISP_NR_NR2) && live_is_pristine(ISP_NR_UVNR) && live_is_pristine(ISP_NR_3DNR) && live_is_pristine(ISP_NR_SHARP));
+        {   /* the same bytes as the img.nr2d 300 knob */
+            isp_nr_knobs_t kn = kd;
+            uint8_t *want = malloc(isp_nr_block_len(ISP_NR_NR2));
+            kn.v[ISP_KNOB_NR2D] = 300;
+            CHECK(isp_nr_compose(ISP_NR_NR2, g_pristine[ISP_NR_NR2], isp_nr_block_len(ISP_NR_NR2), &kn, want) == 0);
+            CHECK(memcmp(want, g_live[ISP_NR_NR2], isp_nr_block_len(ISP_NR_NR2)) == 0);
+            free(want);
+        }
+        /* a reload puts the vendor tables back; the level is applied again on the fresh baselines */
+        restore_vendor();
+        clear_counts();
+        isp_reset_picture_baselines();
+        CHECK(isp_get_nr2() == 4 && g_sets[ISP_NR_NR2] == 1 && !live_is_pristine(ISP_NR_NR2));
+        CHECK(isp_nr_knob_set(ISP_KNOB_NR2D, 162) >= 0 && isp_get_nr2() == 1);                   /* a raw percent reads as the nearest step */
+        CHECK(isp_nr_knob_set(ISP_KNOB_NR2D, 80) >= 0 && isp_get_nr2() == 0);
+        CHECK(isp_set_nr2(2) == 0 && isp_nr_knob_get(ISP_KNOB_NR2D) == 200 && isp_get_nr2() == 2);
+        clear_counts();
+        CHECK(isp_set_nr2(0) == 0 && isp_get_nr2() == 0 && g_sets[ISP_NR_NR2] == 1 && live_is_pristine(ISP_NR_NR2));  /* back: the original bytes, once */
+        CHECK(isp_set_nr2(0) == 0 && g_sets[ISP_NR_NR2] == 1);
+        /* a live NR2 block that is not as decoded: refused, nothing sent, the level stays */
+        w32(g_live[ISP_NR_NR2], 7);
+        isp_reset_picture_baselines();
+        clear_counts();
+        CHECK(isp_set_nr2(3) == ISP_NR_REFUSED && total_sets() == 0 && isp_get_nr2() == 0);
+        restore_vendor();
+        isp_reset_picture_baselines();
     }
 
     /* ---- ISO level and GET img.nr */

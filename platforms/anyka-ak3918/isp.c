@@ -10,6 +10,7 @@
 #include "isp.h"
 #include "isp_blocks.h"
 #include "isp_nr.h"
+#include "isp_wdr.h"
 
 /* -------------------------------------------------------------------------
  * ISP sensor init — parse /tmp/sensor_isp.conf, program GC20C3 via I2C
@@ -821,10 +822,12 @@ void isp_reset_picture_baselines(void)
     free(g_sharp_baseline);
     g_sharp_baseline = NULL;
     isp_nr_reset();
+    isp_wdr_reset();
     if (g_applied_sat) isp_set_saturation(g_applied_sat);
     if (g_applied_con) isp_set_contrast(g_applied_con);
     if (g_applied_bri) isp_set_brightness(g_applied_bri);
     if (g_applied_sha) isp_set_sharpness(g_applied_sha);
     else if (isp_sharp_refresh() < 0) fprintf(stderr, "[isp] sharpness knobs not re-applied after the reload\n");
     isp_nr_reapply();
+    isp_wdr_reapply();
 }

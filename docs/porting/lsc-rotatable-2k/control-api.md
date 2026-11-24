@@ -76,17 +76,19 @@ cap of 20 failures per minute, so a flood cannot lock the owner out).
 | `led.mode` | `auto\|on\|off` | status LED; persisted |
 | `led.boot`, `led.nowifi`, `led.person`, `led.stream`, `led.night`, `led.idle` | pattern `on\|off\|N:on_ms:off_ms:pause_ms` | LED rule patterns; persisted |
 | `night.ir_led` | `auto\|off` | IR LED policy; persisted |
-| `image.brightness`, `image.contrast`, `image.sharpness` | 0..100 | ISP picture, RAM only (reset by a restart) |
+| `image.brightness`, `image.contrast`, `image.sharpness` | 0..100 | ISP picture; saved (written only when you change one, never at start or while idle), applied at start and replayed after a day/night switch (the ISP keeps none of them) |
 | `isp.saturation` | -50..50, default 0 | saturation, the 1080p's key and range (ISP effect type 2); saved; replayed after a day/night switch; host-tested only |
 | `isp.denoise` | 0..4, default 0 | denoise, the 1080p's rule (3D NR record N levels higher); saved; refused when the live table is not as decoded; host-tested only |
-| `img.wb` | `conf`, `manual`, default `conf` | white balance, RAM only (back to `conf` at a restart, as on the 1080p); host-tested only |
+| `isp.nr2` | 0..4, default 0 | spatial (luma 2D) noise reduction: 0 sends nothing (the camera's own table); N raises `nr2_k` and `ynr_intensity1/2` of every record (more at high gain), from the pristine table, so it is never cumulative; saved; replayed after a day/night switch; refused when the live table is not as decoded; host-tested only |
+| `isp.wdr` | 0..100, default 90 | backlight (WDR) strength = ISP effect type 5 with the value N - 50 (the stock's 40 is 90): 0 identity curve (off), 100 the ISP file's curves in full; saved; replayed after a day/night switch; host-tested only |
+| `img.wb` | `conf` only | the automatic white balance. `manual` is refused (422 `range`) on the 2K: the camera gives no way to freeze the current gains, and the vendor manual gains give a blue picture (see [isp-controls](isp-controls.md) section 4) |
 | `audio.out_enable` | 0/1, default 0 | the speaker (opt-in on the 2K); turning it on starts the playback at once; saved |
 | `audio.out_volume`, `audio.out_gain` | 0..100 (default 100), 0..5 (default 2) | speaker volume (software, ramped) and hardware gain step; saved |
 | `audio.out_amp` | `auto`, `on`, `off` | amplifier policy (auto: on while there is sound); RAM only |
 | `audio.talk_enable`, `audio.talk_duplex` | 0/1 (default 1), `half`/`full` (default `half`) | the ONVIF backchannel switch; whether the microphone is silenced while the speaker plays speech; saved |
 | `audio.out_state`, `audio.talk_state` | read only | `off`, `idle`, `talking`, `test`, `disabled_crash`, `error`; `idle` or `active` |
 | action `audio.beep` | | queues the 1 s test beep; 409 while the speaker is not running |
-| `image.mains_hz` | `50\|60` | RAM only |
+| `image.mains_hz` | `50\|60` | anti-flicker; saved like the three rows above |
 | `image.flip` | bool (default 0) | flip the picture vertically (`ak_vpss_switch_flip_mirror`, isp-controls.md 3.2; host-tested only, not verified on the camera); live, no restart; saved in `/config/akam/settings` only when the user changes it (never rewritten while running); Home Assistant switch **Image flip** |
 | `image.mirror` | bool (default 0) | mirror the picture horizontally (not verified on the camera either); same rules; Home Assistant switch **Image mirror** |
 | `image.ceiling` | bool (default 0) | convenience for a camera mounted upside down: 1 = flip and mirror both on, 0 = both off; reads 1 only while both are on; not saved itself (the two rows above are); Home Assistant switch **Ceiling mount**. The orientation also applies to the zones, the tracker, the PTZ directions and the scene reference: see isp-controls.md 3.3 |

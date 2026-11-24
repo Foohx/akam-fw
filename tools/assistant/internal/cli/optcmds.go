@@ -24,7 +24,7 @@ func (a *App) videoShow(c *camssh.Client) error {
 	st := camopt.Read(a.exchanger(c), "video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.cfg_pending", "video.bitrate", "video.fps_actual")
 	br, fps, gop := st[0], st[1], st[2]
 	if br.Unavailable || fps.Unavailable || gop.Unavailable {
-		return a.UI.Fail("the camera did not answer the video settings.",
+		return a.ctlNoAnswer("the camera did not answer the video settings.",
 			fmt.Sprintf("it may run an older Akam image without them (%s update), or its control port may be busy; try again.", Prog))
 	}
 	pend, mbr, mfps := st[3].Value, st[4].Value, st[5].Value
@@ -214,7 +214,7 @@ func (a *App) ctlResult(key, val string, r camopt.Result) error {
 	case r.Answered:
 		return a.UI.Fail(fmt.Sprintf("the camera refused %s %s: %s", key, val, r.Err), fmt.Sprintf("this image may not have that setting (%s update).", Prog))
 	}
-	return a.UI.Fail(fmt.Sprintf("the camera did not confirm %s %s.", key, val),
+	return a.ctlNoAnswer(fmt.Sprintf("the camera did not confirm %s %s.", key, val),
 		fmt.Sprintf("it may run an older Akam image (%s update), or its control port may be busy; try again.", Prog))
 }
 

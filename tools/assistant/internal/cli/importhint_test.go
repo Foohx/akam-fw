@@ -32,8 +32,8 @@ func TestImportHintIsOneCommandWithAQuotedPath(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			q = `"`
 		}
-		contains(t, r.out+r.err, "./akam "+c.cmd+" --backup-dir "+q+dest+q)
-		notContains(t, r.out+r.err, "./akam "+c.other+" --backup-dir", "(1080p)", "(2K)")
+		contains(t, r.out+r.err, "akam "+c.cmd+" --backup-dir "+q+dest+q)
+		notContains(t, r.out+r.err, "akam "+c.other+" --backup-dir", "(1080p)", "(2K)")
 		if !strings.Contains(dest, " ") {
 			t.Fatal("the test folder must contain a space")
 		}

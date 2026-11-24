@@ -57,8 +57,8 @@ static char g_wb[8] = "conf";
 
 static int key_slot(const char *k)
 {
-    static const char *const names[] = { "isp.brightness", "isp.contrast", "isp.saturation", "isp.sharpness", "isp.denoise" };
-    for (int i = 0; i < 5; i++)
+    static const char *const names[] = { "isp.brightness", "isp.contrast", "isp.saturation", "isp.sharpness", "isp.denoise", "isp.wdr", "isp.nr2" };
+    for (int i = 0; i < 7; i++)
         if (!strcmp(k, names[i])) return i;
     return -1;
 }

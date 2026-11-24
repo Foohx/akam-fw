@@ -82,8 +82,11 @@ const struct isp_nr_knobs *isp_nr_knobs(void);
 int  isp_nr_knob_set(int knob, int v);
 int  isp_nr_knob_get(int knob);
 int  isp_set_denoise(int bias);              /* isp.denoise: the 3D-NR bias knob; 0 done, else the isp_nr_knob_set error */
+int  isp_set_nr2(int level);                 /* isp.nr2: the 2D luma NR strength knob (img.nr2d 100 + 25 level); 0 done, else the isp_nr_knob_set error */
+int  isp_get_nr2(void);                       /* the running level */
 int  isp_nr_status(char *out, size_t cap);   /* GET img.nr */
 int  isp_nr_dump_live(void);                 /* SET img.dump nr: number of blocks read */
 void isp_nr_reset(void);
 void isp_nr_reapply(void);
 int  isp_sharp_refresh(void);                /* 1 sent, 0 nothing to send, -1, ISP_NR_REFUSED */
+

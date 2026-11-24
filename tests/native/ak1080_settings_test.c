@@ -62,7 +62,7 @@ static void test_table(void)
     CHECK(ak1080_settings_init() == 0, "the table validates");
     CHECK(ak1080_settings_init() == 0, "init is idempotent");
     const streg_t *r = ak1080_settings_reg();
-    CHECK(r && r->n == 56, "row count %zu", r ? r->n : 0);
+    CHECK(r && r->n == 58, "row count %zu", r ? r->n : 0);
     char *schema = malloc(12288);
     int n = streg_json_schema(r, schema, 12288);
     CHECK(n > 0 && n < 12000, "the schema fits the API reply buffer (%d bytes)", n);
@@ -72,7 +72,7 @@ static void test_table(void)
     free(schema);
     /* every writable row has a setter and a default that its own parser accepts: streg_init checked it; the names are the registry's */
     const char *must[] = { "led.mode", "led.stream", "led.boot", "led.nowifi", "led.night", "led.idle", "night.ir_led", "night.mode",
-                           "image.brightness", "image.denoise", "video0.kbps", "video0.fps", "video0.gop", "video0.min_qp",
+                           "image.brightness", "image.denoise", "isp.wdr", "isp.nr2", "video0.kbps", "video0.fps", "video0.gop", "video0.min_qp",
                            "video0.max_qp", "onvif.enabled", "mqtt.enabled", "sys.cpu_pct", "net.wifi_rssi", "rtsp.clients", "night.active",
                            "api.keys" };
     for (unsigned i = 0; i < sizeof must / sizeof must[0]; i++) CHECK(streg_find(r, must[i]) != NULL, "row %s", must[i]);
@@ -120,6 +120,12 @@ static void test_settings(void)
     CHECK(g_last_persist == 1, "a loopback write persists");
     CHECK(!strcmp(ctl_set("image.contrast", "-12", 0), "OK image.contrast=-12 (not saved: stub)") && g_vals[1] == -12, "network write: RAM only, note kept");
     CHECK(g_last_persist == 0, "persist flag 0 reached the module");
+    /* isp.wdr (0..100, 90 = stock) and isp.nr2 (0..4, 0 = stock): the 2K's row names, the same 8091 keys */
+    CHECK(!strcmp(ctl_set("isp.wdr", "25", 1), "OK isp.wdr=25") && g_vals[5] == 25 && !strcmp(get("isp.wdr"), "25"), "isp.wdr reaches isp.wdr");
+    CHECK(!strcmp(ctl_set("isp.nr2", "4", 1), "OK isp.nr2=4") && g_vals[6] == 4 && !strcmp(get("isp.nr2"), "4"), "isp.nr2 reaches isp.nr2");
+    CHECK(!strncmp(ctl_set("isp.wdr", "101", 1), "ERR invalid isp.wdr value 101 (range)", 37) && g_vals[5] == 25, "wdr 51: nothing applied");
+    CHECK(!strncmp(ctl_set("isp.nr2", "5", 1), "ERR invalid isp.nr2 value 5 (range)", 35) && g_vals[6] == 4, "nr2 9: nothing applied");
+    CHECK(!strncmp(ctl_set("isp.wdr", "-1", 1), "ERR invalid isp.wdr value -1 (range)", 36) && g_vals[5] == 25, "wdr -1: nothing applied");
     CHECK(!strcmp(ctl_set("onvif.enabled", "1", 0), "ERR onvif.enabled can only be set from the camera") &&
               !strncmp(ctl_set("mqtt.enabled", "1", 0), "ERR mqtt.enabled can only", 25) &&
               !strncmp(ctl_set("led.stream", "on", 0), "ERR led.stream can only", 23),

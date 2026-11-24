@@ -22,7 +22,7 @@ static kv_t g_kv[] = {
     { "audio.talk_enable", "1" }, { "audio.out_test", "0" }, { "night.state", "day" }, { "sys.time_set", "0" },
     { "rtsp.clients", "0" }, { "net.wifi_rssi", "-61" }, { "sys.uptime", "1234" }, { "sys.cpu", "7" },
     { "sys.mem_free", "20480" }, { "sys.temp", "unknown" }, { "video.fps_actual", "149" }, { "video.bitrate", "1500" },
-    { "net.mac", "aa:bb:cc:dd:ee:0f" }, { "image.flip", "0" }, { "image.mirror", "1" },
+    { "net.mac", "aa:bb:cc:dd:ee:0f" }, { "image.flip", "0" }, { "image.mirror", "1" }, { "isp.wdr", "90" }, { "isp.nr2", "0" },
 };
 #define NKV (sizeof(g_kv) / sizeof(g_kv[0]))
 
@@ -318,6 +318,8 @@ static void test_state(void)
     CHECK(state_of(&h, "talk", 0, v, sizeof(v), &retain) == 1 && !strcmp(v, "OFF"));
     CHECK(state_of(&h, "image_flip", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "OFF") && retain == 1);
     CHECK(state_of(&h, "image_mirror", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "ON"));
+    CHECK(state_of(&h, "wdr", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "90"));      /* the backlight and 2D noise-reduction numbers */
+    CHECK(state_of(&h, "nr2", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "0"));
     CHECK(state_of(&h, "clock_set", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "OFF") && retain == 0);
     CHECK(state_of(&h, "fps", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "14.9") && retain == 0);
     kv_set("video.fps_actual", "150");

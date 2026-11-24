@@ -66,7 +66,7 @@ static int at_end(const char *p)
 
 static const struct { const char *name; int what; } GET_NAMES[] = {
     { "all", A2K_IT_ALL }, { "fx", A2K_IT_FX }, { "yuv", A2K_IT_YUV }, { "wb", A2K_IT_WBTYPE }, { "ccm", A2K_IT_CCM }, { "nr1", A2K_IT_NR1 },
-    { "nr2", A2K_IT_NR2 }, { "uvnr", A2K_IT_UVNR }, { "nr3d", A2K_IT_NR3D }, { "awb", A2K_IT_AWB }, { "rgb", A2K_IT_RGB }, { NULL, 0 },
+    { "nr2", A2K_IT_NR2 }, { "uvnr", A2K_IT_UVNR }, { "nr3d", A2K_IT_NR3D }, { "awb", A2K_IT_AWB }, { "rgb", A2K_IT_RGB }, { "wdr", A2K_IT_WDR }, { NULL, 0 },
 };
 static const struct { const char *name; int type; } FX_ALIASES[] = {
     { "hue", 0 }, { "bright", 1 }, { "sat", 2 }, { "contrast", 3 }, { "sharp", 4 }, { NULL, 0 },
@@ -219,7 +219,7 @@ void a2k_isptest_free(a2k_isptest_t *t)
     }
 }
 
-static const char *const WHAT[A2K_IT_N] = { "yuv_effect", "wb_type", "mwb", "ccm", "nr1", "nr2", "uvnr", "3d_nr", "awb_stat" };
+static const char *const WHAT[A2K_IT_N] = { "yuv_effect", "wb_type", "mwb", "ccm", "nr1", "nr2", "uvnr", "3d_nr", "awb_stat", "wdr_attr" };
 
 static int get_buf(a2k_isptest_t *t, int what, uint8_t *buf)
 {
@@ -252,8 +252,8 @@ static int put_buf(a2k_isptest_t *t, int what, const uint8_t *buf)
 
 static void dump_fx(a2k_isptest_t *t)
 {
-    static const char *const nm[5] = { "hue", "brightness", "saturation", "contrast", "sharpness" };
-    for (int i = 0; i < 5; i++) {
+    static const char *const nm[6] = { "hue", "brightness", "saturation", "contrast", "sharpness", "wdr" }; /* wdr: the cached value, isp.wdr - 50 (stock 40) */
+    for (int i = 0; i < 6; i++) {
         int v = 0, rc = t->ops->effect_get(i, &v);
         a2k_log("isp-test: effect %d (%s) get = %d value %d", i, nm[i], rc, v);
     }
@@ -322,6 +322,35 @@ static int dump_recs(a2k_isptest_t *t, uint8_t *b, int what, const char *name, s
     return 0;
 }
 
+/* nr2: the mode word, then +4 nr2_k and +8 ynr_intensity1 (dump_recs), +10 ynr_intensity2 and +0 nr2_enable of each record: what isp.nr2 wrote. */
+static int dump_nr2(a2k_isptest_t *t, uint8_t *b)
+{
+    int rc = dump_recs(t, b, A2K_IT_NR2, "nr2", 4, 8);
+    if (rc)
+        return rc;
+    rec_row(b, "nr2", 10);
+    rec_row(b, "nr2", 0);
+    return 0;
+}
+
+/* The 0x4228-byte WDR attribute, layout UNVERIFIED: only the first 8 u16 and a 16-bit sum of the whole attribute are logged (reads with isp.wdr 0 and
+ * 100 differ in the sum if the vendor blend reaches the attribute). */
+static int dump_wdr(a2k_isptest_t *t, uint8_t *b)
+{
+    char line[96];
+    size_t n = 0, i;
+    unsigned sum = 0;
+    int rc = get_buf(t, A2K_IT_WDR, b);
+    if (rc)
+        return rc;
+    for (i = 0; i < 8; i++)
+        n += (size_t)snprintf(line + n, sizeof line - n, "%u ", rd16(b, 2 * i));
+    for (i = 0; i < 0x4228 / 2; i++)
+        sum = (sum + rd16(b, 2 * i)) & 0xffff;
+    a2k_log("isp-test: wdr attr (0x4228 bytes, layout UNVERIFIED) first u16: %s| u16 sum %u", line, sum);
+    return 0;
+}
+
 static int dump_awb(a2k_isptest_t *t, uint8_t *b)
 {
     char line[200];
@@ -354,7 +383,9 @@ static int dump_all(a2k_isptest_t *t, uint8_t *b)
         rc = r;
     if ((r = dump_recs(t, b, A2K_IT_NR1, "nr1", 2, 0)) != 0 && !rc)
         rc = r;
-    if ((r = dump_recs(t, b, A2K_IT_NR2, "nr2", 4, 8)) != 0 && !rc)
+    if ((r = dump_nr2(t, b)) != 0 && !rc)
+        rc = r;
+    if ((r = dump_wdr(t, b)) != 0 && !rc)
         rc = r;
     if ((r = dump_recs(t, b, A2K_IT_UVNR, "uvnr", 4, 0)) != 0 && !rc)
         rc = r;
@@ -556,7 +587,9 @@ int a2k_isptest_exec(a2k_isptest_t *t, const a2k_isptest_cmd_t *c)
         else if (c->a == A2K_IT_NR1)
             rc = dump_recs(t, b, A2K_IT_NR1, "nr1", 2, 0);
         else if (c->a == A2K_IT_NR2)
-            rc = dump_recs(t, b, A2K_IT_NR2, "nr2", 4, 8);
+            rc = dump_nr2(t, b);
+        else if (c->a == A2K_IT_WDR)
+            rc = dump_wdr(t, b);
         else if (c->a == A2K_IT_UVNR)
             rc = dump_recs(t, b, A2K_IT_UVNR, "uvnr", 4, 0);
         else if (c->a == A2K_IT_NR3D)

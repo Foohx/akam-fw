@@ -71,7 +71,7 @@ const (
 )
 
 // rerun is what every refusal that follows a write tells the operator to do next.
-const rerun = "run `./akam update` again: it reads mtd3 on the camera first and records what it finds"
+const rerun = "run `akam update` again: it reads mtd3 on the camera first and records what it finds"
 
 // Reconcile settles a pending record left by an update whose result the PC did not finish recording (Ctrl-C at the
 // power-cycle prompt, a closed terminal, another IP after the reboot, a sleeping PC). It reads mtd3 READ-ONLY and
@@ -117,7 +117,7 @@ func (s ImageStore) Reconcile(ctx context.Context, dial func(port int) (Conn, er
 		say(fmt.Sprintf("The camera still runs the recorded image (sha256 %s): the unfinished update record was dropped.", short(got)))
 		return ReconDiscarded, nil
 	}
-	return ReconNone, fmt.Errorf("mtd3 on the camera (sha256 %s) is neither the pending image of an earlier update (%s) nor the recorded current image (%s). Nothing was changed. If you know which image file is on the camera, run `./akam update --current-image FILE` with it; otherwise restore the camera from your backup (docs/porting/lsc-rotatable-2k/cardless-appfs.md, recovery) before updating", got, pendSHA, orNone(curSHA))
+	return ReconNone, fmt.Errorf("mtd3 on the camera (sha256 %s) is neither the pending image of an earlier update (%s) nor the recorded current image (%s). Nothing was changed. If you know which image file is on the camera, run `akam update --current-image FILE` with it; otherwise restore the camera from your backup (docs/porting/lsc-rotatable-2k/cardless-appfs.md, recovery) before updating", got, pendSHA, orNone(curSHA))
 }
 
 func short(h string) string {

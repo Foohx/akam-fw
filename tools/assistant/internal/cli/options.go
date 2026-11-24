@@ -8,9 +8,9 @@ import (
 	"strconv"
 )
 
-// Prog is how the commands name themselves in messages. It is "./akam" so that the texts equal
-// the bash wizard's (golden tests compare them); both programs share the same help text.
-const Prog = "./akam"
+// Prog is how the commands name themselves in messages, as help.txt writes them (the bash wizard still prints ./akam;
+// gen_golden.sh normalises that in the reference output).
+const Prog = "akam"
 
 // Options are the command-line flags (same names as ./akam help, plus --trust-new-host-key).
 type Options struct {

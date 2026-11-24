@@ -28,6 +28,8 @@ default), not by a different name. "8091 name" is the key the text port has alwa
 | `night.mode` | `auto\|day\|night` | `auto` | live | `night.mode` | `night.c`, `/etc/config/akam/night` |
 | `image.brightness`, `image.contrast`, `image.saturation`, `image.sharpness` | int -50..50 | 0, 0, 0, -15 | live | `isp.brightness` ... `isp.sharpness` | `control.c`/`isp_tune.c`, `/etc/config/akam/picture` |
 | `image.denoise` | int 0..4 (3D-NR bias, 0 = stock tables) | 2 | live | `isp.denoise` | same |
+| `isp.wdr` | int 0..100 (backlight / WDR strength, the 2K's row and scale: 90 = the camera's own curves, 0 = no shadow lift, 0..90 linear, 91..100 = up to 25 % more lift than the camera's own) | 90 | live | `isp.wdr` | `isp_wdr.c`, `/etc/config/akam/picture` (`wdr=`, written only on a change) |
+| `isp.nr2` | int 0..4 (spatial luma noise reduction, the 2K's row and scale: N = the NR2 strength at 100 + 50 N percent, i.e. 150, 200, 250, 300 %; 0 = the camera's own table) | 0 | live | `isp.nr2` | `isp_nr_ctl.c` (knob `img.nr2d`), `/etc/config/akam/picture` (`nr2=`) |
 | `img.wb` | `conf\|manual` (white balance: the stock block of `sensor_isp.conf`, or Akam's own) | `conf` | live | `img.wb` | `imgq.c`, `/etc/config/akam/image` |
 | `audio.out_volume` | int 0..100 | 100 | live | `audio.out_volume` | `audio_out.c`, `/etc/config/akam/audio_out` |
 | `audio.out_enable`, `audio.talk_enable` | bool | 1, 1 | live (`audio.out_enable` 1 answers `restart_component` when the device cannot be opened now) | `audio.out_enable`, `audio.talk_enable` | same |
@@ -71,7 +73,7 @@ Identity data other than the network name (`net.mac`, `net.ip`) is NOT in the re
 
 ### Absent on purpose (hardware or radio the 1080p does not have)
 
-`ptz.*`, `track.*`, `detect.*`, `zones.*`, `button.*`, `net.wifi_band`, `net.wifi_country` (2.4 GHz only), `image.wdr`,
+`ptz.*`, `track.*`, `detect.*`, `zones.*`, `button.*`, `net.wifi_band`, `net.wifi_country` (2.4 GHz only),
 `image.mains_hz`, `video1.*` (one encoder channel). They are not stubs: the 1080p binary has none of that code
 (`src/build/features.mk`: `AKAM_FEAT_PTZ/BUTTON/SCENE/PATROL/TRACK = 0`). `ae.*`, the night thresholds and the `img.*`
 tuning keys stay on the 8091 port only.

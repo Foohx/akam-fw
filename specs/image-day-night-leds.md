@@ -31,6 +31,8 @@ beyond the first comparisons.
 |---|---|---|---|
 | `isp.brightness`, `isp.contrast`, `isp.saturation` | -50 to 50 (integer) | 0 | `/etc/config/akam/picture` |
 | `isp.denoise` | 0 to 4 (integer) | **2** (3D-NR bias, 1080p only: level L uses the vendor 3D_NR entry min(L+2,15)); 0 = the vendor tables, nothing sent | `/etc/config/akam/picture` |
+| `isp.wdr` | 0 to 100 (integer) | **90** (the backlight strength on the 2K's scale; 1080p: 90 = the conf's own WDR curves, nothing sent; 0 = no lift; section 5.8 of [video-and-streaming.md](video-and-streaming.md)) | `/etc/config/akam/picture` |
+| `isp.nr2` | 0 to 4 (integer) | **0** (spatial luma noise reduction on the 2K's scale; 1080p: `img.nr2d` at 100 + 50 N percent; 0 = the camera's own NR2 table, nothing sent) | `/etc/config/akam/picture` |
 | `isp.sharpness` | -50 to 50 (integer) | **-15** (all 16 ISO-level entries of the SHARP block, `img.sharp_all` 1); 0 = the stock picture | `/etc/config/akam/picture` |
 
 - The value is a delta from the hardware baseline captured at the first call. `0` leaves the file's block unchanged.
@@ -48,8 +50,11 @@ beyond the first comparisons.
   the live 3D_NR block is not as decoded nothing is sent: at start-up that is logged and the camera runs with the stock tables, the
   wanted value stays in the file; `SET isp.denoise` answers `ERR isp.denoise: live table not as decoded`. `GET isp.denoise` is the
   value that runs. `img.nr3d_bias` is the RAM-only key on the same knob.
-- Saved file: five lines `brightness=`, `contrast=`, `saturation=`, `sharpness=`, `denoise=`; written after every successful
-  loopback `SET` of any of the five; atomic; all five at their defaults (0, 0, 0, -15, 2) removes the file. A remote `SET` (debug mode) changes the
+- `isp.wdr` and `isp.nr2` (2026-11-24, not yet hardware-validated): the same rules as `isp.denoise`: a file without a `wdr=` / `nr2=` line gets the
+  default (90 / 0, nothing sent), an explicit line wins, they are applied after the ISP runs and again after every day/night reload (`isp_reset_picture_baselines`),
+  and a table that is not as decoded is refused (`ERR isp.wdr: live table not as decoded`, the wanted value stays in the file, `GET` is the value that runs).
+- Saved file: seven lines `brightness=`, `contrast=`, `saturation=`, `sharpness=`, `denoise=`, `wdr=`, `nr2=`; written after every successful
+  loopback `SET` of any of the seven; atomic; all seven at their defaults (0, 0, 0, -15, 2, 90, 0) removes the file. A remote `SET` (debug mode) changes the
   picture in RAM only.
 - Applied at every start after the ISP runs (`control_apply_saved_isp`). A value the ISP refuses is logged and the others
   still apply.

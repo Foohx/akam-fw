@@ -930,7 +930,7 @@ func TestVerifyAppliesThePendingConfigAfterAYes(t *testing.T) {
 	r := w.run("\n\nn\nn\n", "verify")
 	expectRC(t, r, 0)
 	contains(t, r.out+r.err, "The config you chose for this camera", "1 change(s) from the camera's current settings:", "auto  ->  off", "Nothing was sent.",
-		"Not applied yet. When you want it: ./akam config apply --global")
+		"Not applied yet. When you want it: akam config apply --global")
 	if w.readState("config_pending") != "1" || len(w.cam.CtlSets()) != 0 {
 		t.Error("applied without a yes, or the choice was forgotten")
 	}

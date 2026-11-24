@@ -50,7 +50,7 @@ func TestTalkTestTone(t *testing.T) {
 	e.pass = talkPass
 	r := e.run("", "talk", "test")
 	expectRC(t, r, 0)
-	contains(t, r.out, "Talk to the camera", "  Sending a 2 second test tone to the speaker ...", "  Done. Heard it? If not: ./akam audio (volume, beep)")
+	contains(t, r.out, "Talk to the camera", "  Sending a 2 second test tone to the speaker ...", "  Done. Heard it? If not: akam audio (volume, beep)")
 	pk := e.cam.RTSP.Packets()
 	if len(pk) != 100 { // 2 s at 20 ms
 		t.Fatalf("%d RTP packets, want 100", len(pk))
@@ -79,6 +79,15 @@ func TestTalkTestTone(t *testing.T) {
 	if !strings.HasPrefix(reqs, "DESCRIBE rtsp://127.0.0.1:") || strings.Count(reqs, "DESCRIBE") != 2 { // first without, then with the Digest login
 		t.Errorf("requests: %s", reqs)
 	}
+	// the real 2K answers 404 to a DESCRIBE without a path: every request must target /stream0
+	for _, rq := range e.cam.RTSP.Requests() {
+		if !strings.Contains(rq, "/stream0") {
+			t.Errorf("request without the /stream0 path: %s", rq)
+		}
+	}
+	if !strings.Contains(reqs, "SETUP rtsp://127.0.0.1:") || !strings.Contains(reqs, "/stream0/track2") {
+		t.Errorf("SETUP track url: %s", reqs)
+	}
 	// the password was never printed, logged or sent in a command
 	notContains(t, r.out+r.err+e.logText(), talkPass)
 	for _, c := range e.cam.Commands() {
@@ -97,7 +106,7 @@ func TestTalkPasswordPromptWrongPasswordAndFile(t *testing.T) {
 	r = e.run("wrong password\n", "talk", "test")
 	expectRC(t, r, 1)
 	contains(t, r.err, "ERROR: the camera refused the user name or password.")
-	contains(t, r.out, "What to do: check ./akam rtsp-auth status; run ./akam rtsp-auth set to choose a new one.")
+	contains(t, r.out, "What to do: check akam rtsp-auth status; run akam rtsp-auth set to choose a new one.")
 	notContains(t, r.out+r.err+e.logText(), "wrong password")
 	// a file
 	f := filepath.Join(t.TempDir(), "pw")

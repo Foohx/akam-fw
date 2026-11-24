@@ -20,7 +20,7 @@ import (
 var legacyToRegistry = map[string]string{
 	"led.status": "led.mode", "night.ir_led": "night.ir_led", "night.mode": "night.mode", "led.state": "led.state",
 	"isp.brightness": "image.brightness", "isp.contrast": "image.contrast", "isp.saturation": "image.saturation",
-	"isp.sharpness": "image.sharpness", "isp.denoise": "image.denoise", "img.wb": "img.wb",
+	"isp.sharpness": "image.sharpness", "isp.denoise": "image.denoise", "isp.wdr": "isp.wdr", "isp.nr2": "isp.nr2", "img.wb": "img.wb",
 	"image.flip": "image.flip", "image.mirror": "image.mirror", "image.ceiling": "image.ceiling",
 	"audio.out_volume": "audio.out_volume", "audio.out_enable": "audio.out_enable", "audio.talk_enable": "audio.talk_enable",
 	"audio.mic_enable": "audio.mic_enable", "audio.out_state": "audio.out_state", "audio.out_underruns": "audio.out_underruns",

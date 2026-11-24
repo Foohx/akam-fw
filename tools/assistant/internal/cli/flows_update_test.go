@@ -51,8 +51,8 @@ func TestUpdateFlowEndToEnd(t *testing.T) {
 	contains(t, r.out+r.err, "Update default (127.0.0.1)", "[next]  1  Kit downloaded and verified",
 		"Backup checked: "+bk+" (SHA256SUMS ok, re-hashed just now).",
 		"Updating: WRITES THE CAMERA FLASH", "Image md5 written and read back: "+w.imgMD5,
-		"Flash done and verified. The wizard NEVER power-cycles the camera.",
-		"Verify it now? [y/N]", "When it is back: ./akam verify")
+		"Update written and verified. The wizard NEVER power-cycles the camera.",
+		"Verify it now? [y/N]", "When it is back: akam verify")
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) {
 		t.Fatal("the image was not written")
 	}

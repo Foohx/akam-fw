@@ -91,7 +91,7 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 
 // talkClient runs the RTSP client and maps its failures to the texts of talk_run_client.
 func (a *App) talkClient(ctx context.Context, ip, user, pass string, src rtsp.PCMSource) error {
-	a.Log.Line("CMD talk --user %s rtsp://%s:%d  (password not logged)", user, ip, a.Env.PortRTSP)
+	a.Log.Line("CMD talk --user %s rtsp://%s:%d/stream0  (password not logged)", user, ip, a.Env.PortRTSP)
 	err := rtsp.Talk(ctx, rtsp.TalkConfig{
 		Host: ip, Port: a.Env.PortRTSP, User: user, Password: pass, Source: src,
 		Unpaced: os.Getenv("AKAM_TALK_UNPACED") == "1",
@@ -198,9 +198,9 @@ func (a *App) cmdTalk(args []string) error {
 		}
 		a.UI.Say("  WOULD ask the stream password (not shown) unless AKAM_RTSP_PASSWORD is set.")
 		if test {
-			a.UI.Say(fmt.Sprintf("  WOULD run: akam-talk --user <user> --tone 2 rtsp://%s:%d   (password in the environment)", ip, a.Env.PortRTSP))
+			a.UI.Say(fmt.Sprintf("  WOULD run: akam-talk --user <user> --tone 2 rtsp://%s:%d/stream0   (password in the environment)", ip, a.Env.PortRTSP))
 		} else {
-			a.UI.Say(fmt.Sprintf("  WOULD run: <microphone as 8 kHz mono s16le> | akam-talk --user <user> --format s16le rtsp://%s:%d", ip, a.Env.PortRTSP))
+			a.UI.Say(fmt.Sprintf("  WOULD run: <microphone as 8 kHz mono s16le> | akam-talk --user <user> --format s16le rtsp://%s:%d/stream0", ip, a.Env.PortRTSP))
 		}
 		return nil
 	}
@@ -326,7 +326,7 @@ func (a *App) cmdSay(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD decode %s to 8 kHz mono (built in for WAV, MP3, FLAC and Ogg Vorbis; ffmpeg for anything else) and send it to rtsp://%s:%d (stream password needed).", file, ip, a.Env.PortRTSP))
+		a.UI.Say(fmt.Sprintf("  WOULD decode %s to 8 kHz mono (built in for WAV, MP3, FLAC and Ogg Vorbis; ffmpeg for anything else) and send it to rtsp://%s:%d/stream0 (stream password needed).", file, ip, a.Env.PortRTSP))
 		return nil
 	}
 	data, rerr := readSayFile(file)

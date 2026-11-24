@@ -1,4 +1,4 @@
 rc=2
 --- stdout ---
 --- stderr ---
-akam: unknown option --frob (see ./akam help)
+akam: unknown option --frob (see akam help)

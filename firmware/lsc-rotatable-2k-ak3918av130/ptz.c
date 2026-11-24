@@ -128,8 +128,8 @@ static struct {
         .d_idle_ms = A2K_PTZ_DRIFT_IDLE_MS, .d_frame_ms = A2K_PTZ_DRIFT_FRAME_MS, .d_min_travel = A2K_PTZ_DRIFT_MIN_TRAVEL,   .d_recal_idle_ms = A2K_PTZ_RECAL_IDLE_MS, .d_cum_max = A2K_PTZ_DRIFT_CUM_MAX, .d_retry_ms = A2K_PTZ_DRIFT_RETRY_MS, .recal_reason = "none", .drift_last = "none",
         .rh_idle_ms = A2K_PTZ_REHOME_IDLE_MS, .rh_min_travel = A2K_PTZ_REHOME_MIN_TRAVEL, .rh_gap_ms = A2K_PTZ_REHOME_GAP_MIN * 60000u };
 static volatile int g_privacy;
-static volatile int g_hook_abort; /* a person / a tracker command arrived: a scene hook in progress must return, its verdict is void */
-static int hook_abort_fn(void) { return g_hook_abort; }
+static int g_hook_abort; /* atomic: set by any thread, read by the hook */ /* a person / a tracker command arrived: a scene hook in progress must return, its verdict is void */
+static int hook_abort_fn(void) { return __atomic_load_n(&g_hook_abort, __ATOMIC_SEQ_CST); }
 
 void a2k_ptz_defaults(a2k_ptz_cfg_t *c)
 {
@@ -878,7 +878,7 @@ static void drift_correct_locked(int dx, int dy, int refine)
     }
     G.busy = 1;
     G.drift_busy = 1;
-    g_hook_abort = 0;
+    __atomic_store_n(&g_hook_abort, 0, __ATOMIC_SEQ_CST);
     pthread_mutex_unlock(&G.mu);
     publish(HAL_PTZ_MOVED, 1);
     rc = hal_ptz_declare(G.hp, (uint32_t)tp, (uint32_t)tt); /* the counters say where the head really is (no motion) */
@@ -976,14 +976,14 @@ static void drift_run_locked(void)
     G.drift_force = 0;
     d = hal_ptz_desc(G.hp);
     G.busy = 1;
-    g_hook_abort = 0;
+    __atomic_store_n(&g_hook_abort, 0, __ATOMIC_SEQ_CST);
     pthread_mutex_unlock(&G.mu);
     v = G.scene.drift4 ? G.scene.drift4(d->pan_home, d->tilt_home, G.end_ms + (int64_t)G.d_frame_ms, &dx, &dy) : G.scene.drift(d->pan_home, d->tilt_home, G.end_ms + (int64_t)G.d_frame_ms, &dx, &dy);
     pthread_mutex_lock(&G.mu);
     G.busy = 0;
     if (G.stop || G.pend.kind != K_NONE) /* a command came meanwhile: the head may have moved, the verdict is void */
         return;
-    if (g_hook_abort || quiet_until_locked(G.d_idle_ms) > mono_ms()) { /* somebody arrived during the check (the tracker is waiting for the head): whatever it said is void, it is repeated once they are gone */
+    if (__atomic_load_n(&g_hook_abort, __ATOMIC_SEQ_CST) || quiet_until_locked(G.d_idle_ms) > mono_ms()) { /* somebody arrived during the check (the tracker is waiting for the head): whatever it said is void, it is repeated once they are gone */
         G.drift_due = 1;
         G.drift_at = mono_ms();
         a2k_log("ptz: drift check voided: a person / a tracker command arrived while it ran (verdict discarded, checked again once quiet)");
@@ -1297,7 +1297,7 @@ void a2k_ptz_drift_info(a2k_ptz_drift_t *out)
 
 void a2k_ptz_note_person(void)
 {
-    g_hook_abort = 1;
+    __atomic_store_n(&g_hook_abort, 1, __ATOMIC_SEQ_CST);
     pthread_mutex_lock(&G.mu);
     G.last_person_ms = mono_ms();
     rehome_yield_locked();
@@ -1368,7 +1368,7 @@ static void dref_run_locked(void)
     if (G.stop || G.busy || G.pend.kind != K_NONE || !dref_usable_locked() || quiet_until_locked(G.scene_ms) > mono_ms() || G.dref_retry_at > mono_ms())
         return;
     G.busy = 1;
-    g_hook_abort = 0;
+    __atomic_store_n(&g_hook_abort, 0, __ATOMIC_SEQ_CST);
     pthread_mutex_unlock(&G.mu);
     rc = G.scene.dref_capture();
     pthread_mutex_lock(&G.mu);
@@ -1458,7 +1458,7 @@ static void *ptz_thread(void *arg)
                     } else if (scene_capture_start_locked()) {
                         int rc;
                         G.busy = 1; /* nothing else runs on this thread meanwhile; a command is only queued (and runs after) */
-                        g_hook_abort = 0;
+                        __atomic_store_n(&g_hook_abort, 0, __ATOMIC_SEQ_CST);
                         pthread_mutex_unlock(&G.mu);
                         rc = G.scene.capture(); /* outside the lock: the repetitive-texture screening takes a while */
                         pthread_mutex_lock(&G.mu);
@@ -1698,7 +1698,7 @@ static int submit2(int kind, int a, int b, int sp, int patrol, unsigned *ticket,
     if (kind == K_NUDGE || patrol)
         G.last_nudge_ms = mono_ms(); /* a tracker or a patrol is active (also when its move is refused): no multi-view excursion */
     if (!patrol)
-        g_hook_abort = 1; /* any command or tracker nudge: a check / capture in progress gives way */
+        __atomic_store_n(&g_hook_abort, 1, __ATOMIC_SEQ_CST); /* any command or tracker nudge: a check / capture in progress gives way */
     if (G.running && !G.stop && !G.starting) {
         if (patrol && (G.busy || G.pend.kind != K_NONE)) {
             pthread_mutex_unlock(&G.mu);
@@ -1894,7 +1894,7 @@ int a2k_ptz_vel(int sx, int sy, int dx, int dy)
         return -1;
     pthread_mutex_lock(&G.mu);
     if (sx || sy) {
-        g_hook_abort = 1;            /* a check / capture in progress gives way */
+        __atomic_store_n(&g_hook_abort, 1, __ATOMIC_SEQ_CST);            /* a check / capture in progress gives way */
         G.last_nudge_ms = mono_ms(); /* a tracker is active: no multi-view excursion */
         rehome_yield_locked();       /* ... and a running tilt re-home gives way (this command is refused while it ends, the tracker asks again) */
         autohome_yield_locked();     /* ... and so does the automatic return home */
@@ -1979,7 +1979,7 @@ int a2k_ptz_vel_manual(int sx, int sy, int dx, int dy, int lease_ms)
         return rc;
     }
     now = mono_ms();
-    g_hook_abort = 1;
+    __atomic_store_n(&g_hook_abort, 1, __ATOMIC_SEQ_CST);
     G.last_nudge_ms = now; /* no multi-view excursion */
     G.last_manual_ms = now + lease_ms; /* drift machine: a hold is motion activity, its idle timers (check, recalibration) start after it */
     ptzl_arm(&G.man, now, lease_ms);

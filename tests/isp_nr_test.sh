@@ -15,5 +15,5 @@ trap 'rm -rf "$WORK"' EXIT
 "$CC" -std=gnu99 -Wall -Wextra -Werror -DFIXTURE_DIR="\"$REPO/tests/fixtures\"" -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/isp_nr_test" \
     "$REPO/tests/native/isp_nr_test.c" "$REPO/platforms/anyka-ak3918/isp.c" "$REPO/platforms/anyka-ak3918/isp_blocks.c" \
-    "$REPO/platforms/anyka-ak3918/isp_nr.c" "$REPO/platforms/anyka-ak3918/isp_nr_ctl.c" -lpthread -lm
+    "$REPO/platforms/anyka-ak3918/isp_nr.c" "$REPO/platforms/anyka-ak3918/isp_nr_ctl.c" "$REPO/platforms/anyka-ak3918/isp_wdr.c" -lpthread -lm
 "$WORK/isp_nr_test"

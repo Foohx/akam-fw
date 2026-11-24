@@ -219,6 +219,7 @@ extern int ak_vpss_set_ccm_attr(int dev, const void *attr);
 extern int ak_vpss_get_nr1_attr(int dev, void *attr);
 extern int ak_vpss_set_nr1_attr(int dev, const void *attr);
 extern int ak_vpss_get_nr2_attr(int dev, void *attr);
+extern int ak_vpss_get_wdr_attr(int dev, void *attr); /* 0x4228 bytes, read only here */
 extern int ak_vpss_set_nr2_attr(int dev, const void *attr);
 extern int ak_vpss_get_uvnr_attr(int dev, void *attr);
 extern int ak_vpss_set_uvnr_attr(int dev, const void *attr);

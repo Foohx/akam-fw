@@ -153,7 +153,7 @@ if you answer No; change any of them later with the commands above.
 ## 7. Speaker, two-way audio and picture settings
 
 *Status: the speaker beep and talk with `tools/akam-talk` over TCP were checked on the camera on 2026-11-23; volume and gain,
-go2rtc and Frigate are not yet. Saturation, denoise and white balance are host-tested only. Flip and mirror were checked on the
+go2rtc and Frigate are not yet. Saturation and denoise are host-tested only; brightness, contrast, sharpness and mains frequency are now saved (hardware check PIC-15). Flip and mirror were checked on the
 camera on 2026-11-22 (colour, day/night and ceiling tracking not yet). The checks:
 [speaker, talk and picture](../../hardware-test-checklists.md#2k-speaker-two-way-audio-and-picture-settings),
 [orientation](../../hardware-test-checklists.md#2k-picture-orientation-flip-mirror-ceiling-mount).*
@@ -173,7 +173,9 @@ are the file `settings` of the first-install card, which `seed-2k` copies to `/c
 | `audio.talk_duplex` | half, full | half | half silences the microphone track while speech plays on the speaker (stops echo) |
 | `isp.saturation` | -50..50 | 0 | 0 = the camera's own; applied live and put back after a day/night switch |
 | `isp.denoise` | 0..4 | 0 | 0 = the camera's own tables; N takes the temporal noise reduction of each light level from the level N steps higher (the 1080p does the same and defaults to 2) |
-| `img.wb` | conf, manual | conf | conf = the automatic white balance; manual = fixed (day only). Not saved on the 2K: back to conf at a restart (the 1080p saves it) |
+| `isp.nr2` | 0..4 | 0 | spatial noise reduction for grain in the shadows of a backlit scene (`akam picture nr2 N`); 0 = the camera's own table, nothing sent; may soften detail |
+| `isp.wdr` | 0..100 | 90 | backlight (WDR) strength (`akam picture wdr N`): 90 is the stock, 100 the full curves of the ISP file, 0 off. Both new settings are applied live and not verified on a camera yet |
+| `img.wb` | conf | conf | the automatic white balance. `manual` is refused on the 2K: the camera gives no way to keep the current gains, and the vendor manual gains give a strong blue picture |
 
 Read-only state: `audio.out_state` (`off`, `idle`, `talking`, `test`, `error`, `disabled_crash`) and `audio.talk_state` (`idle`, `active`). The action
 `audio.beep` plays a one-second test beep (`POST /akam/v1/actions/audio.beep`).

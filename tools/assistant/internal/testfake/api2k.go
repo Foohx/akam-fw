@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/akamapi"
 )
@@ -37,9 +38,28 @@ type API2K struct {
 	// Beeps counts the audio.beep actions the speaker played.
 	Beeps int
 
+	// NoRateLimit turns the camera's /hello limit off (a test of something else that needs thousands of requests).
+	NoRateLimit bool
+	// FailReadsAfterPatch makes GET /settings answer 500 once a PATCH was applied (the read-back of a change fails).
+	FailReadsAfterPatch bool
+	patched             bool
+	// HelloRefused counts the GET /hello answered 429.
+	HelloRefused int
+	// Slept is the total of the waits the client made before its retries (virtual: the fake never really sleeps).
+	Slept time.Duration
+
 	mu       sync.Mutex
 	Requests []Req2K
 	n        int
+	// the camera's /hello limits (alim_hello of the firmware): 2 a second per peer, 10 a minute in all unless the
+	// peer signed a valid request in the last 10 minutes. The clock is virtual: only the client's waits move it.
+	now        time.Duration
+	helloSec   int64
+	helloN     int
+	helloWin   time.Duration
+	helloCnt   int
+	goodUntil  time.Duration
+	authedOnce bool
 }
 
 // Req2K is one request the fake received.
@@ -65,6 +85,12 @@ func (f *API2K) Patches() []string {
 // Client is a client of the fake, with the fake's key.
 func (f *API2K) Client() *akamapi.Client {
 	c := &akamapi.Client{HostPort: "192.0.2.10:8092", Key: f.Key}
+	c.Sleep = func(_ context.Context, d time.Duration) {
+		f.mu.Lock()
+		f.now += d
+		f.Slept += d
+		f.mu.Unlock()
+	}
 	c.Do = func(_ context.Context, _ string, path string, h akamapi.Header) (int, []byte, error) {
 		return f.serve("GET", path, nil, h)
 	}
@@ -72,6 +98,26 @@ func (f *API2K) Client() *akamapi.Client {
 		return f.serve(method, path, body, h)
 	}
 	return c
+}
+
+// helloLimit is alim_hello of the firmware: 0 = allowed (and counted), else the Retry-After in seconds.
+func (f *API2K) helloLimit() int {
+	if f.now-f.helloWin >= time.Minute {
+		f.helloWin, f.helloCnt = f.now, 0
+	}
+	authed := f.authedOnce && f.goodUntil > f.now
+	if f.helloCnt >= 10 && !authed {
+		return int((f.helloWin + time.Minute - f.now + time.Second - 1) / time.Second)
+	}
+	if sec := int64(f.now / time.Second); sec != f.helloSec {
+		f.helloSec, f.helloN = sec, 0
+	}
+	if f.helloN >= 2 {
+		return 1
+	}
+	f.helloN++
+	f.helloCnt++
+	return 0
 }
 
 func (f *API2K) challenge() string {
@@ -92,6 +138,12 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 	}
 	if path == "/akam/v1/hello" {
 		f.Requests = append(f.Requests, Req2K{Method: method, Path: path})
+		if retry := f.helloLimit(); retry > 0 && !f.NoRateLimit {
+			f.HelloRefused++
+			// what the HTTP transport makes of the Retry-After header of the camera's 429
+			b, _ := json.Marshal(map[string]any{"error": "rate", "detail": "too many hello requests", akamapi.RetryAfterField: retry})
+			return 429, b, nil
+		}
 		b, _ := json.Marshal(map[string]any{"api": 1, "clock_set": false, "challenge": f.challenge()})
 		return 200, b, nil
 	}
@@ -102,6 +154,8 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 	if !ok {
 		return jerr(401, "bad_signature", "-")
 	}
+	f.goodUntil = f.now + 10*time.Minute
+	f.authedOnce = true
 	scope := f.Scope
 	if scope == "" {
 		scope = "admin"
@@ -111,6 +165,9 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 		b, _ := json.Marshal(map[string]any{"model": "lsc-rotatable-2k-ak3918av130", "app": "0.2.0-test", "key_id": f.Key.ID, "scope": scope})
 		return 200, b, nil
 	case method == "GET" && path == "/akam/v1/settings":
+		if f.FailReadsAfterPatch && f.patched {
+			return jerr(500, "internal", "-")
+		}
 		m := map[string]string{}
 		for k, v := range f.Values {
 			m[k] = v
@@ -187,6 +244,7 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 				continue
 			}
 			f.Values[k] = in[k]
+			f.patched = true
 			res[k] = map[string]any{"ok": true, "apply": ap, "value": in[k]}
 		}
 		b, _ := json.Marshal(map[string]any{"results": res})

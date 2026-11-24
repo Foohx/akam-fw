@@ -41,6 +41,12 @@ unless a line says 2K; the 2K has its own sections below.
   level uses the 3D noise-reduction tables of the level 2 steps higher, applied at start-up and after every day/night switch. Measured on
   two cameras: less pulsing at each key frame, 3 to 7 % less static detail. `akam picture denoise 0` gives the stock tables back; a camera
   whose live tables are not as expected keeps the stock tables and logs it.
+- Two more 1080p picture settings, same names and meaning as on the 2K (host-tested only, **not yet tried on a camera**): `isp.wdr` (0 to 100, 90 = the
+  camera's own backlight curves, nothing sent; lower takes out the shadow lift that the stock day picture applies against a bright window, 0 = none; `akam picture wdr N`)
+  and `isp.nr2` (0 to 4, 0 = the camera's own spatial luma noise reduction, N steps of 50 % stronger; `akam picture nr2 N`). Saved only when you change them, put back after
+  every day/night switch, refused (nothing sent) when the live ISP table is not as decoded; API rows `isp.wdr` and `isp.nr2` (the 2K's names), Home Assistant numbers. The ISP has
+  no defog block, so there is no `isp.defog`; what the ISP offers against haze is in `specs/video-and-streaming.md` section 5.8.
+- The 1080p `isp.wdr` below 90 now also flattens the day Y gamma toe that lifts the dark part of the picture (90 = the camera's own, nothing sent; 0 = identity toe, linear between; above 90 nothing more is lifted). A first test showed the WDR curves alone did not clear the haze in a backlit room in daylight. Host-tested only, not yet tried on a camera. The start now leaves its `[isp.wdr] ev=load` diagnostic line like every day/night load, and `WDRDUMP` carries the gamma fields.
 - The noise-reduction experiment keys `img.nr2d` and `img.nr2d_bias` (RAM-only, off by default) decode the first noise-reduction
   block of both cameras (it reports mode 192).
 - Signed local control API on port 8092 (HMAC key, scopes, audit, rate limits), the same as the Rotatable 2K: it listens only
@@ -76,6 +82,11 @@ unless a line says 2K; the 2K has its own sections below.
   settings and names: `audio.out_enable` (off by default on the 2K), `audio.out_volume`, `audio.out_gain`, `audio.out_amp`, `audio.talk_enable`, `audio.talk_duplex`, the action `audio.beep`, and the
   read-only `audio.out_state` and `audio.talk_state`. The ONVIF audio backchannel (G.711 PCMU/PCMA, TCP interleaved, needs the stream password) is offered by the 2K RTSP server.
   The playback ioctl numbers were read from the vendor libraries; the amplifier is switched by the `ak_pcm` driver itself.
+- **Backlight strength and spatial noise reduction** (host-tested only, not tried on a camera): `isp.wdr` (0 to 100, default 90 = the stock WDR, nothing changes by default; `akam picture wdr N`) and
+  `isp.nr2` (0 to 4, default 0 = the camera's own table, nothing sent; `akam picture nr2 N`) for the grain in the dark areas of a backlit scene. Both live, saved, put back after every day/night
+  switch, in the options screen and the install-time questions. `isp.wdr` is the ISP's own WDR effect: the vendor blends the ISP file's WDR curves with a straight line, 0 = off, 100 = in full (the stock runs 90).
+  `isp.nr2` raises the luma 2D filter of every gain record from the original table. The `--isp-test 1` hook gains `get wdr` and logs the nr2 enables and intensities; the API reply buffer of the 2K
+  grows by 2 KB (the settings list no longer fitted).
 - **Saturation, denoise and white balance** (host-tested only, not tried on a camera): `isp.saturation` (-50 to 50), `isp.denoise` (0 to 4) and `img.wb` (`conf` or `manual`), the 1080p's names, ranges and
   meaning, through the 2K ISP; put back after every day/night switch. `isp.denoise` defaults to 0 on the 2K (the 1080p defaults to 2) until it has been judged on the camera.
 - The assistant sets them up at install time (the speaker, two-way audio and picture questions are part of the same `prepare-2k-sd` setup questions as the services: the answers travel as the file `settings` of the first-install card and `seed-2k` copies it to `/config/akam` once) and later in the
@@ -106,6 +117,12 @@ unless a line says 2K; the 2K has its own sections below.
   `--rescue-telnet` keeps the telnet. The video stream has no password until you set one.
 
 All features, with their default and how well each one is tested: [features](docs/features.md).
+
+- 2K fix (2026-11-24): `image.brightness`, `image.contrast`, `image.sharpness` and `image.mains_hz` are now saved on the camera like the `isp.*` rows (written only when
+  you change one, never at start or while idle), applied at start and put back after every day/night switch; before they went back to 50 at each restart (sharpness 70 was
+  lost). Not yet validated on a camera.
+- 2K fix (2026-11-24): `img.wb manual` is refused on the 2K (the setting accepts `conf` only): it switched the white balance to the camera's own manual gains and gave a strong blue
+  picture, and there is no safe way to freeze the current automatic gains ([evidence](docs/porting/lsc-rotatable-2k/isp-controls.md)). The 1080p keeps `conf` and `manual`.
 
 ### Known limits
 

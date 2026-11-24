@@ -38,6 +38,7 @@ SRCS     = main.c \
           isp_blocks.c \
           isp_nr.c \
           isp_nr_ctl.c \
+          isp_wdr.c \
           imgq.c \
           vi.c \
           venc.c \

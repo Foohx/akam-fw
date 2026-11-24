@@ -299,10 +299,10 @@ func (a *App) installImage() error {
 		}
 		if runtime.GOOS == "linux" {
 			return a.UI.Fail("the image is built from your backup by the bash wizard until the native builder lands.",
-				fmt.Sprintf("from a source checkout run: ./akam step image; then choose 'Set up a new camera' again (or pass --image FILE)."))
+				fmt.Sprintf("from a source checkout run: akam step image; then choose 'Set up a new camera' again (or pass --image FILE)."))
 		}
 		return a.UI.Fail("this system cannot build the image yet: it needs an image built on Linux or WSL from your own backup.",
-			fmt.Sprintf("build it there (./akam step image), copy the 5242880 byte file here and run: %s --image FILE image", Prog))
+			fmt.Sprintf("build it there (akam step image), copy the 5242880 byte file here and run: %s --image FILE image", Prog))
 	}
 	md5, err := a.imageGateChecked(f)
 	if err != nil {

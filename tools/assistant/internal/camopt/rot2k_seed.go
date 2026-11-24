@@ -14,7 +14,7 @@ import (
 // SetupKeys2K are the options asked at install time, in the order they are asked: the speaker and the picture (the other options have their own
 // screen and no install-time question). Only options the camera keeps across a restart (Persisted == PersistCamera) can be asked: a RAM option
 // would look set and be gone at the first reboot.
-var SetupKeys2K = []string{"audio.out_enable", "audio.out_volume", "audio.talk_enable", "isp.saturation", "isp.denoise"}
+var SetupKeys2K = []string{"audio.out_enable", "audio.out_volume", "audio.talk_enable", "isp.saturation", "isp.denoise", "isp.nr2", "isp.wdr"}
 
 // SettingsFileMax is the size limit of the camera's settings file (STREG_FILE_MAX in the firmware).
 const SettingsFileMax = 4096

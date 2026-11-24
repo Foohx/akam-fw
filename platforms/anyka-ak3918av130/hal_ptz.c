@@ -29,6 +29,9 @@
 
 #include "hal_ptz.h"
 
+/* cancel / canceled are set by one thread (the caller) and consumed by another (the motion thread): atomic, no data race */
+#define LD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
+#define ST(x, v) __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
 #define PTZ_REQ_INIT_LIMITS 0x40100c03u /* _IOW(0x0c,3,16), as the stock app sends it once at start */
 #define PTZ_REQ_INIT_POS 0x40280c04u    /* _IOW(0x0c,4,40) */
 #define PTZ_INIT_LIMITS_WORDS 4
@@ -56,7 +59,7 @@ struct hal_ptz {
     int pos_valid;  /* pan / tilt below are the last known position (false while moving) */
     int explicit_pose; /* the pose is the result of an explicit command (goto / park / home / step / session) or of the start: only then can it count as "parked"; a re-home settle or a re-declare clears it (the park pose is never inferred from a settle) */
     uint32_t pan, tilt;
-    volatile int cancel;
+    int cancel;
     volatile unsigned cancel_gen; /* bumped by every hal_ptz_cancel (any thread) */
     unsigned mark_gen;            /* cancel_gen at hal_ptz_mark() */
     int marked;
@@ -114,9 +117,9 @@ static void scene_forget(hal_ptz_t *p, const char *why)
 static int w_open(void) { return g_hp->ops.open_dev(); }
 static int w_ioctl(int fd, unsigned long req, void *arg)
 {
-    if (req == PTZ_REQ_POS && g_hp->cancel && !g_hp->nocancel) { /* (nocancel: the re-declare steps of the tilt re-home must finish: a stale or repeated cancel is taken later) a cancel is taken at the next poll: the loops see a read error and stop the motor */
-        g_hp->cancel = 0;
-        g_hp->canceled = 1;
+    if (req == PTZ_REQ_POS && LD(g_hp->cancel) && !g_hp->nocancel) { /* (nocancel: the re-declare steps of the tilt re-home must finish: a stale or repeated cancel is taken later) a cancel is taken at the next poll: the loops see a read error and stop the motor */
+        ST(g_hp->cancel, 0);
+        ST(g_hp->canceled, 1);
         errno = EINTR;
         return -1;
     }
@@ -377,7 +380,7 @@ static int calibrate_x(hal_ptz_t *p, int quick)
         (void)frames_invalidate(p); /* a half-done calibration is never adopted by a restart */
     if (rc) {
         plog(p, "ptz: calibration FAILED (%d): the position stays unknown, motion refused until the next start", rc);
-        if (!p->canceled && !p->cancel) /* not a shutdown: the head is somewhere unknown, the home reference is forgotten (one rare write) */
+        if (!LD(p->canceled) && !LD(p->cancel)) /* not a shutdown: the head is somewhere unknown, the home reference is forgotten (one rare write) */
             scene_forget(p, "calibration failed");
     } else {
         p->scene_claim = 0;
@@ -462,7 +465,7 @@ static int cold_probe_offsets(hal_ptz_t *p, uint32_t pan, uint32_t tilt, unsigne
     for (i = 0; i < PROBE_MAX_OFFSETS && !proven && !cancelled; i++) {
         int dp = 0, dt = 0, pr;
         int64_t tp, tt;
-        if (p->cancel || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0) {
+        if (LD(p->cancel) || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0) {
             cancelled = 1;
             break;
         }
@@ -512,13 +515,13 @@ static int cold_probe_offsets(hal_ptz_t *p, uint32_t pan, uint32_t tilt, unsigne
     p->trusted = 0;
     p->pos_valid = 0;
     (void)frames_invalidate(p);
-    return cancelled || p->cancel || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0 ? -1 : 0;
+    return cancelled || LD(p->cancel) || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0 ? -1 : 0;
 }
 
 int hal_ptz_start(hal_ptz_t *p, int cal)
 {
     const unsigned gen0 = __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST);
-#define START_CANCELLED() (p->cancel || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0)
+#define START_CANCELLED() (LD(p->cancel) || __atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != gen0)
     p->fd = p->ops.open_dev();
     if (p->fd < 0) {
         plog(p, "ptz: cannot open the motor: %s", strerror(errno));
@@ -603,11 +606,11 @@ int hal_ptz_recalibrate(hal_ptz_t *p)
 {
     if (p->fd < 0)
         return HAL_PTZ_EREFUSED;
-    p->cancel = 0; /* a stale flag goes first: a shutdown cancel that arrives later must survive */
-    p->canceled = 0;
+    ST(p->cancel, 0); /* a stale flag goes first: a shutdown cancel that arrives later must survive */
+    ST(p->canceled, 0);
     if (p->marked) { /* like begin(): a cancel between the caller's dequeue (hal_ptz_mark) and now is not lost */
         p->marked = 0;
-        if (p->cancel_gen != p->mark_gen)
+        if (__atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != p->mark_gen)
             return HAL_PTZ_ECANCEL;
     }
     plog(p, "ptz: recalibration requested");
@@ -674,11 +677,11 @@ int hal_ptz_tilt_rehome(hal_ptz_t *p)
     int rc, rc2, canceled, got, leg;
     if (p->fd < 0 || !p->trusted || !p->pos_valid || p->moving || p->cal_active)
         return HAL_PTZ_EREFUSED;
-    p->cancel = 0;
-    p->canceled = 0;
+    ST(p->cancel, 0);
+    ST(p->canceled, 0);
     if (p->marked) { /* like begin(): a cancel between the caller's dequeue (hal_ptz_mark) and now is not lost */
         p->marked = 0;
-        if (p->cancel_gen != p->mark_gen)
+        if (__atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != p->mark_gen)
             return HAL_PTZ_ECANCEL;
     }
     cp = p->pan;
@@ -706,11 +709,11 @@ int hal_ptz_tilt_rehome(hal_ptz_t *p)
             break;
         walked += start;
     }
-    canceled = p->canceled;
+    canceled = LD(p->canceled);
     if (rc) { /* interrupted (or failed) on the way down: the believed position of before, minus what was walked */
         p->nocancel = 1; /* the re-declare must finish whatever cancels arrive meanwhile (a person who stays in view cancels at every frame) */
-        p->cancel = 0;
-        p->canceled = 0;
+        ST(p->cancel, 0);
+        ST(p->canceled, 0);
         belief = 1;
         got = read_settled(p, 1, &cur);
         if (got == 0 && cur <= start) {
@@ -744,11 +747,11 @@ int hal_ptz_tilt_rehome(hal_ptz_t *p)
         x->cf = &p->cf;
         p->pos_valid = 0;
     }
-    canceled = p->canceled;
+    canceled = LD(p->canceled);
     if (rc) { /* interrupted on the way up: settle where the head is (the counter is exact: it was declared at the stop) */
         p->nocancel = 1;
-        p->cancel = 0;
-        p->canceled = 0;
+        ST(p->cancel, 0);
+        ST(p->canceled, 0);
         belief = 1;
         got = read_settled(p, 1, &cur);
         if (got == 0)
@@ -798,8 +801,8 @@ int hal_ptz_declare(hal_ptz_t *p, uint32_t pan, uint32_t tilt)
         return HAL_PTZ_EREFUSED;
     if (pan < p->cf.pan_min || pan > p->cf.pan_max || tilt < p->cf.tilt_min || tilt > p->cf.tilt_max)
         return HAL_PTZ_EREFUSED;
-    p->cancel = 0;
-    p->canceled = 0;
+    ST(p->cancel, 0);
+    ST(p->canceled, 0);
     rc = declare_final(p, pan, tilt);
     if (rc) {
         plog(p, "ptz: re-declaring the position %u/%u failed (%d): the position is no longer trusted", (unsigned)pan, (unsigned)tilt, rc);
@@ -815,7 +818,7 @@ int hal_ptz_verify_pos(hal_ptz_t *p)
     uint32_t pan, tilt;
     if (p->fd < 0 || !p->trusted || !p->pos_valid || p->moving || p->cal_active)
         return -1;
-    p->cancel = 0; /* a stale cancel must not eat the read */
+    ST(p->cancel, 0); /* a stale cancel must not eat the read */
     if (ptzs_read_pos(&p->x, &pan, &tilt) || (p->x.raw[0] == 0 && p->x.raw[1] == 0))
         return -1;
     return (pan > p->pan ? pan - p->pan : p->pan - pan) <= VERIFY_TOL && (tilt > p->tilt ? tilt - p->tilt : p->tilt - tilt) <= VERIFY_TOL ? 0 : -1;
@@ -836,13 +839,13 @@ static int begin(hal_ptz_t *p)
     }
     if (p->marked) { /* a cancel that arrived between the caller's dequeue (hal_ptz_mark) and now is not lost */
         p->marked = 0;
-        if (p->cancel_gen != p->mark_gen) {
-            p->cancel = 0;
+        if (__atomic_load_n(&p->cancel_gen, __ATOMIC_SEQ_CST) != p->mark_gen) {
+            ST(p->cancel, 0);
             return HAL_PTZ_ECANCEL;
         }
     }
-    p->cancel = 0;
-    p->canceled = 0;
+    ST(p->cancel, 0);
+    ST(p->canceled, 0);
     p->moving = 1;
     p->explicit_pose = 1;
     p->wpan = p->wtilt = 1;
@@ -861,7 +864,7 @@ static int end_t(hal_ptz_t *p, int rc, long travel_d)
     char s[SAVED_MAX];
     int lost = 0;
     p->moving = 0;
-    p->cancel = 0; /* a cancel that came too late must not eat the final position read */
+    ST(p->cancel, 0); /* a cancel that came too late must not eat the final position read */
     if (!p->pos_valid && p->fd >= 0 && !ptzs_read_pos(&p->x, &pan, &tilt) && !(p->x.raw[0] == 0 && p->x.raw[1] == 0)) {
         snprintf(s, sizeof s, "pan=%u tilt=%u\n", (unsigned)pan, (unsigned)tilt); /* a cancel can eat the final read */
         (void)store_pos(p, s);
@@ -871,8 +874,8 @@ static int end_t(hal_ptz_t *p, int rc, long travel_d)
             unsigned long d = travel_d >= 0 ? (unsigned long)travel_d : (unsigned long)(p->pan > p->bpan ? p->pan - p->bpan : p->bpan - p->pan) * p->wpan + (unsigned long)(p->tilt > p->btilt ? p->tilt - p->btilt : p->btilt - p->tilt) * p->wtilt;
             p->travel = p->travel > ~0ul - d ? ~0ul : p->travel + d; /* saturates: a counter that wrapped would read as a fresh calibration */
         }
-    if (p->canceled) {
-        p->canceled = 0;
+    if (LD(p->canceled)) {
+        ST(p->canceled, 0);
         return HAL_PTZ_ECANCEL;
     }
     if (rc == HAL_PTZ_ESTALL || (rc == HAL_PTZ_EIO && !p->pos_valid)) { /* an I/O error with a readable position changed nothing */
@@ -1073,7 +1076,7 @@ int hal_ptz_oneshot_stop(const hal_ptz_ops_t *ops)
 void hal_ptz_cancel(hal_ptz_t *p)
 {
     __atomic_add_fetch(&p->cancel_gen, 1u, __ATOMIC_SEQ_CST);
-    p->cancel = 1; /* taken at the next position poll; begin() clears a stale one */
+    ST(p->cancel, 1); /* taken at the next position poll; begin() clears a stale one */
 }
 
 void hal_ptz_mark(hal_ptz_t *p)

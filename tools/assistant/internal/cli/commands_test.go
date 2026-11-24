@@ -33,11 +33,11 @@ func TestLedErrors(t *testing.T) {
 		args []string
 		msg  string
 	}{
-		{[]string{"led", "status", "blue"}, "akam: led status needs on, off or auto (see ./akam help)"},
-		{[]string{"led", "ir", "on"}, "akam: led ir needs auto or off (see ./akam help)"},
-		{[]string{"led", "status", "on", "status", "off"}, "akam: led status given twice (see ./akam help)"},
-		{[]string{"led", "show", "ir", "off"}, "akam: led: show cannot be combined with status or ir (see ./akam help)"},
-		{[]string{"led", "party"}, "akam: led: unknown word 'party' (see ./akam help)"},
+		{[]string{"led", "status", "blue"}, "akam: led status needs on, off or auto (see akam help)"},
+		{[]string{"led", "ir", "on"}, "akam: led ir needs auto or off (see akam help)"},
+		{[]string{"led", "status", "on", "status", "off"}, "akam: led status given twice (see akam help)"},
+		{[]string{"led", "show", "ir", "off"}, "akam: led: show cannot be combined with status or ir (see akam help)"},
+		{[]string{"led", "party"}, "akam: led: unknown word 'party' (see akam help)"},
 	} {
 		r := e.run("", c.args...)
 		expectRC(t, r, 2)
@@ -50,7 +50,7 @@ func TestLedErrors(t *testing.T) {
 	r := e.run("", "led")
 	expectRC(t, r, 1)
 	contains(t, r.err, "ERROR: the camera did not answer the LED settings.")
-	contains(t, r.out, "What to do: it may run an older Akam image without them (./akam update)")
+	contains(t, r.out, "What to do: it may run an older Akam image without them (akam update)")
 	e.cam.SetCtl("led.status", "auto")
 	r = e.run("", "led", "status", "on")
 	e.cam.SetCtl("night.ir_led", "-")
@@ -64,7 +64,7 @@ func TestWithoutAnAddressNothingIsSent(t *testing.T) {
 	r := e.runRaw("", "--no-color", "--state-dir", e.state, "led")
 	expectRC(t, r, 1)
 	contains(t, r.err, "ERROR: the camera address is not known yet.")
-	contains(t, r.out, "What to do: run: ./akam step find-camera (or pass --ip ADDRESS)")
+	contains(t, r.out, "What to do: run: akam step find-camera (or pass --ip ADDRESS)")
 	r = e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "-x", "led")
 	expectRC(t, r, 1) // an option-looking address is never used as a host
 	contains(t, r.err, "ERROR: '-x' is not a valid camera address.")
@@ -85,7 +85,7 @@ func TestAudio(t *testing.T) {
 	r = e.run("", "audio", "beep")
 	contains(t, r.out, "A short beep plays on the speaker")
 	r = e.run("", "audio", "off")
-	contains(t, r.out, "The speaker is off now and stays off after a reboot (./akam audio on to enable it again).", "Speaker output: off")
+	contains(t, r.out, "The speaker is off now and stays off after a reboot (akam audio on to enable it again).", "Speaker output: off")
 	r = e.run("", "audio", "talk", "off")
 	contains(t, r.out, "Talk (RTSP audio backchannel): off.")
 	r = e.run("", "audio", "on")
@@ -124,6 +124,23 @@ func TestPicture(t *testing.T) {
 	}
 	for _, bad := range [][]string{{"picture", "denoise", "5"}, {"picture", "denoise", "-1"}, {"picture", "denoise", "12"}, {"picture", "denoise"}, {"picture", "denoise", "1", "denoise", "2"}} {
 		expectRC(t, e.run("", bad...), 2)
+	}
+	// wdr (0 to 100, 90 = the camera's own) and nr2 (0 to 4, 0 = the camera's own), the same words as on the 2K
+	contains(t, e.run("", "picture", "show").out, "Backlight (WDR) strength: 90 (0 to 100;", "Spatial noise reduction: 0 (0 to 4;")
+	r = e.run("", "picture", "wdr", "12", "nr2", "3")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Backlight (WDR) strength: 12", "Spatial noise reduction: 3")
+	if e.cam.CtlValue("isp.wdr") != "12" || e.cam.CtlValue("isp.nr2") != "3" {
+		t.Error("wdr 12 and nr2 3 did not reach the camera")
+	}
+	for _, bad := range [][]string{{"picture", "wdr", "101"}, {"picture", "wdr", "-1"}, {"picture", "wdr"}, {"picture", "wdr", "x"}, {"picture", "wdr", "1", "wdr", "2"},
+		{"picture", "nr2", "5"}, {"picture", "nr2", "-1"}, {"picture", "nr2"}, {"picture", "nr2", "1", "nr2", "2"}, {"picture", "reset", "wdr", "1"}} {
+		expectRC(t, e.run("", bad...), 2)
+	}
+	r = e.run("", "picture", "reset")
+	contains(t, r.out, "Backlight (WDR) is back to 90 and spatial noise reduction to 0 (the defaults).")
+	if e.cam.CtlValue("isp.wdr") != "90" || e.cam.CtlValue("isp.nr2") != "0" {
+		t.Error("reset did not put wdr and nr2 back")
 	}
 	r = e.run("", "picture", "reset")
 	contains(t, r.out, "Done. Brightness, contrast and saturation are back to 0, sharpness to -15 (the default), and the saved file is removed.")
@@ -273,7 +290,7 @@ func TestHostnameOldFirmwareIsOnlyANote(t *testing.T) {
 	r := e.run("", "hostname", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "  Note: this firmware does not have /usr/sbin/akam_hostname.sh yet, so the camera keeps its default network name.",
-		"  Update to a newer Akam image, then run: ./akam hostname salon")
+		"  Update to a newer Akam image, then run: akam hostname salon")
 	for _, c := range e.cam.Commands() {
 		if strings.Contains(c, "set salon") {
 			t.Error("set was sent to a camera without the helper")
@@ -514,7 +531,7 @@ func TestStatusCamerasRename(t *testing.T) {
 	r := e.run("", "status")
 	contains(t, r.out, "1. [done   ] doctor", "2. [todo   ] get-kit", "4. [blocked] find-camera", "Waiting for: prepare-backup-sd")
 	r = e.run("", "cameras")
-	contains(t, r.out, "Cameras (state in "+e.state+")", "  * default              1/9 steps done  last: doctor", "  Switch with: ./akam --camera NAME   (a new name starts a new camera)")
+	contains(t, r.out, "Cameras (state in "+e.state+")", "  * default              1/9 steps done  last: doctor", "  Switch with: akam --camera NAME   (a new name starts a new camera)")
 	r = e.run("", "rename-camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "  Camera 'default' is now called 'salon'. Backup and image folders already made keep their names.")
@@ -545,7 +562,7 @@ func TestStrayCommandsAreRefusedPolitely(t *testing.T) {
 	}
 	r := e.run("", "frobnicate")
 	expectRC(t, r, 2)
-	contains(t, r.err, "akam: unknown command 'frobnicate' (see ./akam help)")
+	contains(t, r.err, "akam: unknown command 'frobnicate' (see akam help)")
 	if len(e.cam.Commands()) != 0 {
 		t.Errorf("commands reached the camera: %v", e.cam.Commands())
 	}

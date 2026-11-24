@@ -44,7 +44,7 @@ func (a *App) cmdControlPort(args []string) error {
 	out := a.ctlExchange(c, "GET control.lan")
 	saved := ctl.Get("control.lan", out)
 	if saved == "" {
-		return a.UI.Fail("the camera did not report the setting.",
+		return a.ctlNoAnswer("the camera did not report the setting.",
 			fmt.Sprintf("it may run an older Akam image without it (%s update), or its API may be busy; try again.", Prog))
 	}
 	want := map[string]string{"open": "1", "close": "0"}[action]
@@ -66,7 +66,7 @@ func (a *App) cmdControlPort(args []string) error {
 			if r.Answered {
 				return a.UI.Fail("the camera refused the change: "+r.Err, "nothing was changed.")
 			}
-			return a.UI.Fail("the camera did not confirm the change.", "try again.")
+			return a.ctlNoAnswer("the camera did not confirm the change.", "try again.")
 		}
 		saved = want
 		a.UI.Good("  Saved on the camera.")
