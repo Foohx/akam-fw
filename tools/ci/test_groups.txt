@@ -67,6 +67,8 @@ shell release_test.sh
 native rtp_clock_test.sh
 native rtsp_tx_test.sh
 rot2k rot2k_card_test.sh
+rot2k rot2k_cfg_test.sh
+rot2k rot2k_conf_migration_test.sh
 rot2k rot2k_overlay_test.sh
 rot2k rot2k_flash_hot_test.sh
 rot2k rot2k_control_api_test.sh
@@ -79,6 +81,7 @@ native rtsp_auth_test.sh
 native rtsp_backchannel_test.sh
 native rtsp_busy_test.sh
 native rot2k_rtsp_ports_test.sh
+native rot2k_latency_test.sh
 native rtsp_idle_test.sh
 native rtsp_in_test.sh
 native rtsp_sdp_test.sh

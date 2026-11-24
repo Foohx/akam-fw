@@ -230,6 +230,10 @@ func TestClassifyHostOnlyDropbearIsPartial(t *testing.T) {
 		{"silent", bannerDial(""), []int{22}, Unknown},
 		{"refused", func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }, []int{22}, Unknown},
 		{"akam is never demoted", bannerDial("SSH-2.0-OpenSSH_9.6\r\n"), []int{22, 554, 8091}, Akam},
+		// the text port is closed to the network on a current image: SSH and video with the Dropbear banner are an Akam camera
+		{"akam with the text port closed", bannerDial("SSH-2.0-dropbear_2026.94\r\n"), []int{22, 554}, Akam},
+		{"a plain server with a video port is no camera of ours", bannerDial("SSH-2.0-OpenSSH_9.6p1 Debian-3\r\n"), []int{22, 554}, Unknown},
+		{"dropbear with a video port but no banner answer", bannerDial(""), []int{22, 554}, Unknown},
 		{"stock is never demoted", bannerDial("SSH-2.0-OpenSSH_9.6\r\n"), []int{24, 22}, Stock},
 	} {
 		if got := ClassifyHost(ctx, "192.0.2.9", c.open, p, c.dial); got != c.want {

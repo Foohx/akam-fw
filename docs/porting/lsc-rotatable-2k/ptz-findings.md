@@ -608,7 +608,7 @@ move before init refused (exit 4); init --i-know 1275/816 without motion; move r
 
 Pan: left stop = 0, right stop between 3932 and 4151 (total about 4000, the stock default). Tilt: bottom stop = 0, top stop between about 2050 and 2480 (stock default 2160). The level front view (set by hand) is pan about 1275, tilt about 1300 above the bottom stop (the stock home 816 looks lower). The old default tilt soft max 1960 was ABOVE the real top stop in the old frame. New soft range, at least 300 steps from the worst-case stop: pan 300..3650, tilt 300..1750, home 1275/1300. DONE (see "hal_ptz" below): these are the code defaults of `akam_ptz_safe.h` and of the app descriptor; the app keeps its files in /config/akam (the card-less /mnt/sdcard is tmpfs).
 
-## hal_ptz: the motor in `akam2k_rtsp` (host-tested with a fake driver, NOT yet run on hardware)
+## hal_ptz: the motor in `akamd` (host-tested with a fake driver, NOT yet run on hardware)
 
 Files (`platforms/anyka-ak3918av130/`): `hal_ptz.h/.c` (portable engine: calibration, saved position, goto / step /
 nudge / cancel on top of `firmware/lsc-rotatable-2k-ak3918av130/helpers/ptz/akam_ptz_safe.h`, reused unchanged except the new defaults, `ptzs_conf_parse_over` and a `PTZS_QUIET` switch),
@@ -651,7 +651,7 @@ never cancels), `a2k_ptz_command(A2K_PTZ_*)`, `a2k_ptz_info()`, `a2k_ptz_privacy
 commands run on the PTZ thread only; one motion at a time; a new home / park / step cancels the running motion (stopped within ~50 ms, position
 kept) and replaces the pending command; every command is refused while calibrating.
 
-**akam2k.conf keys** (passed by `own_app_run.sh`): `ptz_cal` auto|off, `ptz_park` PAN:TILT (default 1275:300), `ptz_privacy` 0|1, `ptz_scene_check` 0|1, `ptz_scene_min` 0.80..0.99, `track_invert_pan` / `track_invert_tilt` 0|1.
+**akam.conf keys** (passed by `own_app_run.sh`): `ptz_cal` auto|off, `ptz_park` PAN:TILT (default 1275:300), `ptz_privacy` 0|1, `ptz_scene_check` 0|1, `ptz_scene_min` 0.80..0.99, `track_invert_pan` / `track_invert_tilt` 0|1.
 
 **MQTT / Home Assistant** (same filtering as the LED controls: retained commands ignored, 20 commands per 10 s, strict payload): buttons
 `ptz_left` `ptz_right` `ptz_up` `ptz_down` (one step of 200 steps), `ptz_home`, `ptz_park`, `ptz_recal` ("Recalibrate PTZ": the long calibration now; refused with `ptz_cal=off`) (command topic `BASE/<id>/set`, payload exactly `PRESS`);
@@ -906,7 +906,7 @@ The boot does not screen again for the dump (it reads the stored verdict). Fetch
 
 - Park default is now 1275:300 (down, 300 steps above the calibrated bottom stop). Tilt soft max 2100 (level-up view about 2104; top stop 2290..2340).
 - Person tracking: the pan direction was inverted on the 2K (a person on one side turned the camera away, pan 1275 -> 996 -> 695). The 2K now defaults
-  `invert_pan=1` (akam2k.conf `track_invert_pan`, `track_invert_tilt`; tilt default 0, unverified).
+  `invert_pan=1` (akam.conf `track_invert_pan`, `track_invert_tilt`; tilt default 0, unverified).
 
 ## 2026-11-16 tracking follow-ups
 
@@ -945,7 +945,7 @@ Measured with `akam_ptz` on 2026-11-16/17 (timed moves, speed 3): diagonal comma
 
 ### Continuous motion: review follow-ups (same day)
 
-- **A dead process cannot stop the motor by itself.** The lease is software; a directional move is only bounded by the driver's own limits (the soft range), so a killed or crashed app could leave the head walking until the end of travel. Two complements: (a) the fatal-signal handler of the app (`on_crash`: SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT) first sends the motor stop request on the already open node (`hal_ptz_emergency_stop`: async-signal-safe, one `ioctl` stop sent twice, nothing else); (b) the supervisor (`own_app_run.sh`) polls the app every 1 s (was 5 s) and, as soon as the app is gone (crash, SIGKILL, or its own stop), runs `akam2k_rtsp --ptz-stop` (opens the node, one stop request, exits; no calibration, no thread, no other request). SIGKILL and a hard hang cannot run (a); (b) then stops the head within about 1 s. Tests: `rot2k_ptz_cont_unit.c` (emergency + one-shot stop send only the stop request), `rot2k_overlay_test.sh` (the supervisor asks for the stop after a crash and after its own stop signal, the stop call is not an app run, poll default 1 s).
+- **A dead process cannot stop the motor by itself.** The lease is software; a directional move is only bounded by the driver's own limits (the soft range), so a killed or crashed app could leave the head walking until the end of travel. Two complements: (a) the fatal-signal handler of the app (`on_crash`: SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT) first sends the motor stop request on the already open node (`hal_ptz_emergency_stop`: async-signal-safe, one `ioctl` stop sent twice, nothing else); (b) the supervisor (`own_app_run.sh`) polls the app every 1 s (was 5 s) and, as soon as the app is gone (crash, SIGKILL, or its own stop), runs `akamd --ptz-stop` (opens the node, one stop request, exits; no calibration, no thread, no other request). SIGKILL and a hard hang cannot run (a); (b) then stops the head within about 1 s. Tests: `rot2k_ptz_cont_unit.c` (emergency + one-shot stop send only the stop request), `rot2k_overlay_test.sh` (the supervisor asks for the stop after a crash and after its own stop signal, the stop call is not an app run, poll default 1 s).
 - **Hardware kill tests still required (nothing here ran on the camera):** with a person-free scene and a hand on the power cable, start a continuous move and `kill -9` the app: (1) pure tilt up from a mid position, (2) a diagonal (up-right) in a narrow frame, (3) `kill -STOP` the app and wait. Expect the head to stop within ~1 s (supervisor), or, if the supervisor is also dead, to end at the driver limit (soft range), never at a mechanical stop. Record how far it travelled.
 - Diagonals use divisor 3 or slower (both axes moving); divisor 2 is single-axis only (a diagonal at divisor 2 was never measured). Tracking areas: the velocity command is refused toward an area edge within `30 + rate * (tick 200 ms + lease)` steps (385 steps at divisor 2): the head cannot pass the edge before the next refresh or the lease can stop it, at the price of a wide unused band near an area edge at high speed. A session that is refused at a soft limit publishes and logs nothing; a velocity stop cancels a start that has not run; a command arriving while a session is ending is refused (or starts the next session).
 

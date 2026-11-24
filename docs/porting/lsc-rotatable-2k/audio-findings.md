@@ -1,6 +1,6 @@
 # Audio on the LSC Rotatable 2K — offline study (2026-11-15)
 
-Goal: microphone into the RTSP stream of our own `akam2k_rtsp` (which replaced `yy_cam`), speaker/backchannel later.
+Goal: microphone into the RTSP stream of our own `akamd` (which replaced `yy_cam`), speaker/backchannel later.
 **Offline reverse engineering only** (user's own firmware backup, extracted `yy_cam`, `appfs/lib/*.so`, `ak_pcm.ko`; no
 camera access, no code change). Nothing here has run on the camera yet. Confidence: **HIGH** = read directly from
 disassembly or data, **MEDIUM** = inferred from code plus naming, **UNVERIFIED** = guess or needs a hardware check.
@@ -115,7 +115,7 @@ buffer (items up to 1280 bytes), `usleep(5000)` after each pass (10 ms on a writ
 The RTSP callbacks (`yy_rtsp_get_frame_cb` 0x257188, `..get_sample_rate_cb`, `..get_codec_cb`) hand the server library a
 64-bit timestamp per frame; for audio it is the driver timestamp x 1000 (1.6). How `librtsp_server.so` converts it into the
 RTP timestamp (`rtpHeaderInit`, `rtsp_client_audio_send` 0xccc8) was **not** traced: UNVERIFIED. We do not need it:
-`akam2k_rtsp` has its own RTP layer (section 3).
+`akamd` has its own RTP layer (section 3).
 
 ### 1.9 Kernel side and device nodes (HIGH)
 
@@ -205,7 +205,7 @@ Capture thread, 8-slot ring, supervisor with backoff 1/2/4/8/16/32/60 s (never r
 
 ## 4. Memory and CPU budget
 
-- Camera: `MemTotal` ~38 MB, ~14 MB free with video running (feasibility notes: ~20..24 MB without `yy_cam`); `akam2k_rtsp`
+- Camera: `MemTotal` ~38 MB, ~14 MB free with video running (feasibility notes: ~20..24 MB without `yy_cam`); `akamd`
   RSS 1.48 MB (HWM 1.8 MB), CPU ~5 % with both H.264 streams.
 - Route A: audio adds one thread (stack 64..128 KB virtual, a few KB resident), 8 x 512 B ring, one 512 B copy and one
   512 B byte-swap buffer per client: **< 50 KB RSS**. Route B: add the lib mappings (about 500 KB of file size in total, of which only touched pages count) and the
@@ -252,7 +252,7 @@ process, remove the card/reboot". Nothing is written to flash or `/config`.
    If silent: try route B tool (`ak_ai_open` with stock defaults, section 1.2) the same way.
 4. **PoC-A2, level and gain:** repeat in a quiet room and with speech at 1 m; compare with a stock RTSP recording of the
    same scene made earlier (RTSP G.711 from `yy_cam`) if available; tune gain only through a documented knob.
-5. **RTSP track (implemented offline, see section 9; `audio=1` in akam2k.conf, hardware check pending):** enable the audio track in `akam2k_rtsp` (card opt-in, `audio_off = 0`), `ffprobe` must report
+5. **RTSP track (implemented offline, see section 9; `audio=1` in akam.conf, hardware check pending):** enable the audio track in `akamd` (card opt-in, `audio_off = 0`), `ffprobe` must report
    `pcm_s16be 8000 Hz mono` + H.264; 10 min soak: `MemAvailable`, VmRSS (< +0.1 MB route A), CPU, no frame drops, lip sync in
    VLC, ffmpeg and go2rtc; two clients; TCP backpressure client (audio dropped, video policy unchanged).
 6. **Supervisor and kill test:** unplug-style failure (close the fd externally) must trigger the backoff path, not a reboot.
@@ -271,11 +271,11 @@ process, remove the card/reboot". Nothing is written to flash or `/config`.
 (`capture_ioctl` 0x6698). 1080p reference: `platforms/anyka-ak3918/audio.c`, `ak_ioctls.h`, `rtp_clock.h`, `rtsp_sdp.c`,
 `specs/audio.md`.
 
-## 8. PoC tool `akam2k_mic` (plan step 3, manual only)
+## 8. PoC tool `akam-mic` (plan step 3, manual only)
 
 Source `firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/` (host-tested core `mic_core.c`, unit test
 `tests/rot2k_mic_unit.c`). Built by `make -C platforms/anyka-ak3918av130 poc3-dist ...` into
-`dist/rot2k-app/akam2k_mic` (symcheck against the camera libc, `mic_*` lines in `BUILDINFO.txt`). It is NOT installed by
+`dist/rot2k-app/akam-mic` (symcheck against the camera libc, `mic_*` lines in `BUILDINFO.txt`). It is NOT installed by
 `build_card.sh`: copy it by hand. Plain libc, no vendor lib, 13.5 KB stripped.
 
 What it does: opens `/dev/pcmC0D0c` read-only and replays the capture sequence of the 1080p `audio.c`
@@ -284,18 +284,18 @@ What it does: opens `/dev/pcmC0D0c` read-only and replays the capture sequence o
 (header fixed up at the end) and prints bytes, frames, effective rate (CLOCK_MONOTONIC), min/max/peak/RMS in dBFS, read
 errors and the period it got. It writes only OUTFILE (`/tmp/NAME` unless `-f`), never opens the playback or loopback node,
 never touches GPIO 9. No `-g`: the only gain ioctl known from the 1080p tree is the playback one (a microphone gain stays
-step 4 of the plan). `-r 16000` is untested on the hardware. A `flock` refuses a second `akam2k_mic` only: it cannot see
-another capture user, so stop anything else that holds the microphone first (with the Akam stub running, `akam2k_rtsp` does
+step 4 of the plan). `-r 16000` is untested on the hardware. A `flock` refuses a second `akam-mic` only: it cannot see
+another capture user, so stop anything else that holds the microphone first (with the Akam stub running, `akamd` does
 not open it yet). At most 5 consecutive read errors, an alarm of SECONDS+10 s, SIGINT/SIGTERM finalise the file.
 
 Manual test (the camera stays untouched except /tmp, a reboot or removing the card undoes everything):
 
 ```sh
 # on the PC
-scp dist/rot2k-app/akam2k_mic root@CAMERA:/tmp/        # or: ssh root@CAMERA 'cat > /tmp/akam2k_mic' < dist/rot2k-app/akam2k_mic
-ssh root@CAMERA 'chmod 755 /tmp/akam2k_mic && /tmp/akam2k_mic -s 5 /tmp/mic.wav'     # read the stats on stderr
+scp dist/rot2k-app/akam-mic root@CAMERA:/tmp/        # or: ssh root@CAMERA 'cat > /tmp/akam-mic' < dist/rot2k-app/akam-mic
+ssh root@CAMERA 'chmod 755 /tmp/akam-mic && /tmp/akam-mic -s 5 /tmp/mic.wav'     # read the stats on stderr
 ssh root@CAMERA 'cat /tmp/mic.wav' > test-images/rot2k/mic.wav                        # no scp needed
-ssh root@CAMERA 'rm -f /tmp/mic.wav /tmp/akam2k_mic'
+ssh root@CAMERA 'rm -f /tmp/mic.wav /tmp/akam-mic'
 ffplay test-images/rot2k/mic.wav
 ```
 
@@ -305,13 +305,13 @@ which ioctl and stops; do not retry in a loop (the 1080p was once rebooted by a 
 
 ### 8.1 Hardware result (plan step 3: DONE)
 
-Hardware 2026-11-15 (own-app mode, akam2k_rtsp running, mic not used by it): the ioctl sequence is accepted, 8000 Hz mono 16 bit, period 512 B x 16 echoed, 40000 frames in 4.992 s (effective 7961.5 Hz, first read excluded), 157 reads of 128..512 B, 0 errors. Quiet room: RMS about -55 dBFS, peak -42 dBFS, DC offset about -59 LSB, live signal (about 270-340 distinct sample values per second). Speech level / gain not yet measured (needs the user).
+Hardware 2026-11-15 (own-app mode, akamd running, mic not used by it): the ioctl sequence is accepted, 8000 Hz mono 16 bit, period 512 B x 16 echoed, 40000 frames in 4.992 s (effective 7961.5 Hz, first read excluded), 157 reads of 128..512 B, 0 errors. Quiet room: RMS about -55 dBFS, peak -42 dBFS, DC offset about -59 LSB, live signal (about 270-340 distinct sample values per second). Speech level / gain not yet measured (needs the user).
 
 Next: the level check with a voice (speaking at 1 m). The RTSP track is implemented, see section 9.
 
 ## 9. RTSP track (plan step 5: IMPLEMENTED, verified on the camera 2026-11-15)
 
-**Enable:** put `audio=1` in `akam/akam2k.conf` on the card (read once at boot by `own_app_run.sh`, passed as `--audio 1`), then reboot
+**Enable:** put `audio=1` in `akam/akam.conf` on the card (read once at boot by `own_app_run.sh`, passed as `--audio 1`), then reboot
 (or restart the supervisor). **Default is off** (privacy, Akam vision: opt-in): no key or `audio=0` means the capture device is never
 opened, no thread runs, the SDP is exactly what it was (video only). Any other value is ignored and logged by the supervisor. Both streams
 (`/stream0`, `/stream1`) then carry the track: `ffprobe rtsp://<ip>:554/stream0` must show H.264 + `pcm_s16be 8000 Hz mono`.
@@ -347,7 +347,7 @@ network +128 kbit/s plus RTP/TCP overhead per audio client.
 **To verify on the hardware (step 5 soak):** `ffprobe` shows the track; 10 min soak (`MemAvailable`, VmRSS, CPU, no video frame drops); lip sync in
 VLC, ffmpeg and go2rtc (the SRs are untested against a real player); two clients on both streams; a TCP backpressure client; kill test (step 6:
 the capture fd closed externally must hit the backoff path). PCMU (step 7) still needs a `rtsp_sdp.c` phase-B change and is not part of this step.
-`akam2k_mic` and the app cannot capture at once (the `flock` refuses the second).
+`akam-mic` and the app cannot capture at once (the `flock` refuses the second).
 
 ### 9.1 Hardware result (2026-11-15, build 24267e0b, `audio=1`)
 
@@ -358,3 +358,52 @@ the capture fd closed externally must hit the backoff path). PCMU (step 7) still
 - Two simultaneous clients (stream0 + stream1, 20 s): both receive video (201 / 200 packets) and audio (624 / 604 packets).
 - SIGKILL of the app while streaming: the supervisor restarted it, audio capture up again after 1.8 s, the SDP offers the audio track again.
 - Still to do with the user: speech level (gain) and lip sync by eye in VLC; a long soak (hours) is running.
+
+## 10. Speaker and two-way audio
+
+Written 2026-11-23, offline; the hardware result of the same day is in section 10.1. Method: the vendor libraries of the owner's own backup (`libplat_ao.so`, `libplat_osal.so`, extracted with
+`toolchain/prepare_vendor.sh`; never committed) were read with the cross `objdump` of the toolchain, and the `ak_pcm.ko` of the same backup with `strings`.
+
+**The AO path.** `libplat_ao.so` (`ak_ao_open`, `ak_ao_send_frame`, `ak_ao_set_volume`, `ak_ao_set_gain`, `AK_MPI_AO_*`) sits on `libplat_osal.so`, whose `osal_ao_*` functions are the
+only ones that touch the driver. Their literal ioctl numbers (read from the constant pools of the functions) are:
+
+| osal function | request | meaning (same constant as the 1080p `AKPCM_IOC_*`) |
+|---|---|---|
+| `osal_ao_set_param` | `0x401c50e0` | PREPARE: the 28-byte `akpcm_pars` |
+| `osal_ao_start_playing` | `0x000050e1` | RESUME (start the DMA) |
+| `osal_ao_clear_dma_buffer` | `0x000050e3` | reset the buffer |
+| `osal_ao_set_source` / `osal_ao_get_source` | `0x40045010` / `0x80045010` | the mixer route (stock: the DAC to play, 0 = muted) |
+| `osal_ao_set_gain` / `osal_ao_get_gain` | `0x40045030` / `0x80045030` | the DAC gain step (the lib checks `[0, 5]`: "DAC s32Gain must in") |
+| `osal_ao_enable_speaker` | `0x40045081` | the amplifier, value 0 or 1 |
+
+Device node `/dev/pcmC0D0p` (the second one, `/dev/pcmC1D0p`, is a second card this board does not use). These are the numbers the 1080p already drives
+(`src/hal/akpcm.h`), so the 1080p engine (`src/features/audio/audio_out.c`) is reused as is: device sequence SET_SOURCES, SET_SPEAKER, PREPARE, RESUME, GET_RATE, 8 kHz mono 16-bit,
+1024-byte periods.
+
+**The amplifier.** The `ak_pcm.ko` of the 2K has the device-tree properties `speak-gpios` and `speak-gpios-en` and logs `SPEAKER @%d(lv %d)` and `IOC_SET_SPEAKER, value=%d`: the driver drives
+the amplifier GPIO itself when it gets `SET_SPEAKER`, exactly as on the 1080p (where it is GPIO 69). The stock userland also has a `[spk] spk_no` (GPIO 9, polarity 1) in `param.conf`
+(see section 1.10), the same line seen from user space. Akam therefore **does not touch any GPIO**: driving sysfs GPIO 9 as well could fight the driver. Which of the two actually
+gates the amplifier was the first thing to confirm on the camera (checklist SPK-1: `SET_SPEAKER` alone made the sound, see 10.1); if `SET_SPEAKER` alone does not make a sound, the fallback is the stock GPIO 9 (a small change in `speaker.c`).
+
+**Volume.** The engine's software volume (squared, ramped over 10 ms, `audio.out_volume` 0..100) and the hardware gain step (`audio.out_gain` 0..5, default 2 as in the stock `default_ao_gain` table).
+The stock `ao_vol` 80 / `ao_gain` 80 percentages of `param.conf` map to the vendor SDK, which Akam does not use for output.
+
+**Backchannel.** The same code as the 1080p: `rtsp_sdp.c` offers the send-only PCMU/PCMA track `streamid=2` to a client that sends `Require: www.onvif.org/ver20/backchannel`, `rtp_in.c` validates
+and decodes the G.711, `talk.c` runs the one-talker session, the speech gate (half duplex) and the tail flush, `audio_jitter.c` buffers 120 ms. The 2K RTSP server (`rtsp_session.c`) gained
+the backchannel SETUP (TCP interleaved only), PLAY, the interleaved receive path, the talk-only session clock and the end of a talk when the password or `audio.talk_enable` is switched off.
+The microphone track is silenced while speech plays (half duplex).
+
+**What is unverified without a camera** (open points; each one is an item of the [checklist](../../hardware-test-checklists.md#2k-speaker-two-way-audio-and-picture-settings)):
+the playback driver behaves like the 1080p's (the numbers match, the driver could still differ in a detail); the amplifier gating just above; that capture (`/dev/pcmC0D0c`, opened by the microphone track)
+and playback can be open at the same time; the audible level at volume 100 and gain 2 (the 1080p beep level was tuned by ear on the 1080p); CPU and RSS with a talker; the crash guard path (written only when the user turns the speaker on, never at a normal start, so it only guards that first run).
+
+### 10.1 Hardware result (2026-11-23)
+
+- **SPK-1 (the speaker starts, the amplifier opens): yes.** `audio.out_enable` 1 gave `audio.out_state` idle, `audio.beep` and several minutes of
+  melodies were audible and clean at volume 70. `SET_SPEAKER` alone opens the amplifier: no GPIO 9 fallback was needed.
+- **TALK-2 (talk works): partly.** With `tools/akam-talk` over TCP (Digest), six sessions of up to 40 s played clean and complete on the speaker.
+  go2rtc, Frigate and the `audio.talk_state` field were not checked.
+- **Not yet checked:** volume and gain steps, the restart and crash-guard paths, capture and playback together, half duplex, one talker, the
+  cut-off, the ten-minute load (SPK-2 to SPK-6, TALK-1, TALK-3 to TALK-6).
+- The assistant's own `akam audio beep` and `akam say` on a 2K were written after that session and have not run on a camera; the beep and the
+  settings were driven through the signed API with a curl-based helper, and the talk with `tools/akam-talk`.

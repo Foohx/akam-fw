@@ -1,6 +1,6 @@
 /* isp_dump.c — dump ISP AE state to stdout.
  *
- * Run immediately after killing anyka_ipc (before ak_rtsp reinits the ISP)
+ * Run immediately after killing anyka_ipc (before akamd reinits the ISP)
  * to capture ground truth of what 3A-converged anyka_ipc had written.
  *
  * Usage:
@@ -9,9 +9,9 @@
  *   isp_dump --blocks [--all] [--conf FILE] [--out DIR]
  *                       — reads the live ISP blocks and compares them with
  *                         the day / night subfiles of sensor_isp.conf
- *                         (works while ak_rtsp runs; see specs/image-day-night-leds.md)
+ *                         (works while akamd runs; see specs/image-day-night-leds.md)
  *
- * Build: compiled by Makefile as part of the ak_rtsp package.
+ * Build: compiled by Makefile as part of the akamd package.
  */
 #include <stdio.h>
 #include <stdint.h>

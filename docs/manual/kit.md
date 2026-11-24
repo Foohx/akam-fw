@@ -16,8 +16,8 @@ The kit (`akam-kit-<model>-<version>.tar.xz`) holds **only Akam's own files**:
 
 | Path | Content |
 |---|---|
-| `bin/ak_rtsp`, `bin/dropbearmulti`, `bin/flash_tool` | static ARM EABI5 soft-float binaries, stripped |
-| `overlay/` | files copied into the image: `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh, akam_net.sh, akam_ntp.sh, akam_mqtt.sh`, `_ht_process.ini`, `dropbear`/`dropbearkey` links |
+| `bin/akamd`, `bin/dropbearmulti`, `bin/flash_tool` | static ARM EABI5 soft-float binaries, stripped |
+| `overlay/` | files copied into the image: `akam_run.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, `akam_hostname.sh`, `akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh, akam_net.sh, akam_ntp.sh, akam_mqtt.sh`, `_ht_process.ini`, `dropbear`/`dropbearkey` links |
 | `patches/` | `patch_service_sh.sh` turns Telnet/FTP off in the stock `sbin/service.sh`; `patch_ethernet_hostname.sh` makes DHCP announce the camera's name |
 | `scripts/flash/`, `scripts/hwcheck/` | flash, restore and hardware check scripts |
 | `licenses/` | Akam (MIT), `THIRD_PARTY_NOTICES.md`, Dropbear, musl, Zig (compiler-rt), SmolRTSP and its four header-only dependencies |
@@ -84,7 +84,7 @@ source: the model file `tools/release/models/<model>.txt`, one per camera model;
 | Status | Device | Fingerprint |
 |---|---|---|
 | **validated** | LSC Smart Indoor 1080p **3215672.3** (board SI D26228), SoC AK3918AV130 | kernel `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`; 8 MTD partitions, mtd7 = APP (`00500000`); stock APP squashfs **xz**, block 128 KiB, no BCJ filter; stock APP sha256 `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294`; BusyBox 1.30.1 |
-| untested | LSC Smart Indoor 1080p **3215672.2** (boards SI B26101 / C26101) | upstream ak_rtsp ran there; Akam never did |
+| untested | LSC Smart Indoor 1080p **3215672.2** (boards SI B26101 / C26101) | upstream akamd ran there; Akam never did |
 | untested | any other camera, kernel build or stock APP (including a gzip-compressed stock APP) | unknown |
 
 What the words mean:
@@ -103,7 +103,7 @@ built with the same squashfs compression as your stock APP (xz or gzip).
 
 The camera's kernel acknowledges musl's 64-bit time syscalls without executing
 them, which would break every clock read ([the clock bug](../how-it-works.md#the-clock-bug-time64)).
-The maintainer's build refuses to produce a kit unless `ak_rtsp` and
+The maintainer's build refuses to produce a kit unless `akamd` and
 `dropbearmulti` pass `tools/build/check_time32.sh --require-263`; the verdict is
 written in `MANIFEST.txt`. You do not need `gdb` to use the kit.
 
@@ -113,7 +113,7 @@ written in `MANIFEST.txt`. You do not need `gdb` to use the kit.
 [build guide](build.md)). Two builds of the same commit with the same
 `SOURCE_DATE_EPOCH` and the same binaries give a byte-identical tarball. The
 binaries themselves embed a build number and timestamp, so recompiling gives
-different `ak_rtsp` bytes. Maintainer procedure:
+different `akamd` bytes. Maintainer procedure:
 [tools/release/README.md](../../tools/release/README.md).
 
 ## Status

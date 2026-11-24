@@ -1,10 +1,17 @@
-# The setup wizard: menu, steps and the native binary
+# The setup menu and the bash wizard
 
-> Written for the LSC Indoor 1080p. The 2K has its own pages: [LSC Rotatable 2K](porting/lsc-rotatable-2k/README.md).
+> **The bash wizard will be retired.** It stays for the 1080p, on Linux, until the Go program's install has run on a camera;
+> new features go to the Go program only. This page describes the menu and the nine steps of the 1080p install (the Go program
+> has the same menu), then the bash wizard's differences. `akam` is the Go program ([assistant](assistant.md)); `./akam` below
+> means the bash wizard in a source checkout. To install a camera you only need the [install guide](install.md).
 
-This page is for people who want to know what `./akam` does at each step, how its menu works, and what the
-experimental single-file `akam` binary can and cannot do. To install Akam you only need the short steps in the
-[README](../README.md#quick-start).
+### Bash wizard differences
+
+The bash wizard (`./akam` in a source checkout) has `debug` and `video minqp`/`maxqp`, which the Go program does not. It lacks
+`control-port`, `api-key`, `key`, `config`, `releases`, `trust-key`, `release-source`, `import-backup`, `--version` and `--kit`
+on `update`, and every 2K command. It is 1080p and Linux only.
+
+Cameras: this page is about the 1080p install; the 2K: [2K install](porting/lsc-rotatable-2k/README.md#install).
 
 ## The menu
 
@@ -34,7 +41,7 @@ real terminal; `--plain` or no terminal gives line-by-line prompts):
  ↑↓ move  ⏎ run  ? help  r pick several  a run all  c camera  q quit
 ```
 
-Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`; the other settings commands (`led`, `audio`, `picture`, `video`, `onvif`, `ntp`, `mqtt`, `debug`) are typed.
+Below the steps, a *Maintenance* list holds `update`, `hostname`, `rtsp-auth`, `restore` and `wipe-sd`; the other settings commands (`led`, `audio`, `picture`, `video`, `onvif`, `ntp`, `mqtt`; `debug` in the bash wizard only) are typed.
 Before a step starts, the wizard shows what it does and asks **Start this step? [Y/n]**. Anything
 irreversible (erasing a card, writing the camera's flash) shows a **red box** that says exactly what
 will happen and asks one yes/no whose **default is No** (Enter, Esc and `q` mean No). Nothing has to be
@@ -72,21 +79,12 @@ Good to know:
 - Keep your backup (two copies, on two media) and never publish it: it holds your Wi-Fi credentials.
   The cards hold your Wi-Fi password in clear text: erase them with `./akam wipe-sd` when done.
 
-## Native binary (experimental)
+## The Go program
 
-A single static binary version of the wizard is being written in Go ([tools/assistant](../tools/assistant/README.md),
-[plan](../specs/installer.md)). It is **experimental: the bash wizard (`./akam`) remains the
-reference**. The binary covers the daily commands on a camera that already runs Akam (`status`, `led`, `audio`,
-`picture`, `video`, `debug`, `onvif`, `ntp`, `rtsp-auth`, `hostname`, `talk`, `say`, `find-camera`) with no SSH,
-`nc` or `akam-talk` to install, kit download and verification, `update`, `restore` and `verify` over SSH, and a
-first install through the maintenance telnet and a built-in microSD writer (`backup`, `flash`, `prepare-*-sd`,
-`wipe-sd`). The `image` step stays in the bash wizard by default; an experimental native image builder (`akam image --builder native`, opt-in) exists but was never flashed on a camera. It has been tested on fake cameras and files only: the
-update, restore, verify, telnet backup and flash and SD writer phases were never run against a real camera or card.
-Phase 11 adds builds for Linux, Windows and macOS (amd64 and arm64), a home screen with a camera chooser and option screens,
-and a backup over SSH. The Windows and macOS binaries are **built, not hardware-tested**, and they import an image built on Linux
-or in WSL for now ([install and unsigned-binary steps](assistant.md), [hardware test plan](hardware-test-checklists.md#assistant-checklists)).
-It shares the progress files with `./akam`. Build it with `tools/assistant/build.sh` and try it with
-`AKAM_USE_BIN=1 ./akam ...`.
+The single-file Go program `akam` runs on Linux, macOS and Windows and covers both cameras: [assistant](assistant.md) (download, check,
+tested platforms, unsigned-binary steps), [install guide](install.md), [hardware test plan](hardware-checks-assistant.md).
+It shares the progress files with the bash wizard. On Windows and macOS the 1080p image can be built with `--builder native`
+(experimental), or built on Linux or in WSL and given with `--image FILE`, as in the assistant page.
 
 ### Choosing your firmware (Go assistant only)
 
@@ -102,7 +100,7 @@ written. The list (a full-screen list, or numbered in `--plain`; Enter takes the
 | `An image file you built (.squashfs)...` | an image you built yourself: exactly 5 242 880 bytes, md5 shown, checked as a squashfs. This program did not build it, so it asks you to take responsibility (default No) |
 | `Stock firmware (from your backup)` | update only, on an Akam camera, and only when a verified backup of the **stock** firmware exists. It is the restore flow with all its gates (the backup re-hashed, the red box, default No). **Never tested on a real camera.** |
 
-The title shows what the camera runs now: its build id (such as `b35-2af81c5`, read from port 8091) and its Akam version.
+The title shows what the camera runs now: its build id (such as `b35-2af81c5`, read from the signed API, or from port 8091 on an older image or when you opened it) and its Akam version.
 The version is read over SSH from the manifest the image carries (`/usr/local/akam/MANIFEST.txt`, the kit's own, so images
 built from a release kit state it; an image built from a source checkout states a git description, which is not a version).
 When that cannot be read (a camera flashed before this, an image built by hand), the version this assistant recorded after
@@ -111,15 +109,12 @@ is unknown and **no downgrade warning can be given**. The list of releases is on
 per page and 5 pages of 50 releases, once per session): nothing in it is trusted, and a kit is never used without its SHA256SUMS and signature check. If GitHub
 cannot be reached (offline, rate limit), the list says so and the local rows stay available. Prereleases are hidden unless
 you pass `--include-prereleases`. In a source checkout (`mode=source`) the first install shows no list: the kit comes from
-the checkout. A release or a kit needs an image built from it and from your own stock backup. Until the native builder is
-the default that image is built by the bash wizard (`./akam get-kit --version X.Y.Z`, then `./akam step image`, then update
-again and take "The image already built from your backup"); with `--builder native` (experimental) the assistant builds it.
-When no builder is available here and an image built from your backup is ready, that image is the first row and the default.
-A kit is always downloaded or opened and verified again (a recorded kit of the same version is never trusted), into a
-staging folder: the recorded downloads, the kit folder and the state change only after every check passed (signature,
-downgrade question, image ready) and, in the update, after the camera was written and read back. A refusal, a failure, a No
-at the red box or an interruption leave the previous kit, its downloaded files, the state and the image as they were; a crash
-inside the final swap is repaired at the next start (the swap is judged from a marker file, `kit.swap`, never from the state of whichever camera is selected). With `--builder native` an image built for a refused kit stays on disk as a file but is not recorded. If the kit cannot be installed after a successful write, the camera is still recorded and you are told to run `get-kit` yourself. A rehearsal (`--dry-run`) never installs a kit. An imported image on record is never presented as the image of a
+the checkout. A release or a kit needs an image built from it and from your own stock backup: the Go program builds it with `--builder native`
+(experimental) or the bash wizard builds it (`./akam get-kit --version X.Y.Z`, then `./akam step image`, then update again and take
+"The image already built from your backup"). A kit is always downloaded or opened and verified again, into a staging folder: the
+kit, the recorded downloads and the state change only after every check passed and the camera was written and read back; a
+refusal, a failure, a No at the red box or an interruption leave everything as it was. The finer rules (the `kit.swap` marker that
+repairs a crash in the final swap, what a rehearsal never installs) are in [the installer spec](../specs/installer.md). An imported image on record is never presented as the image of a
 release: it has its own row, and a release row asks (default No) before writing it. If the release list failed, "Try again to read the releases" asks again. Naming a firmware on the command line skips the list:
 
 ```bash

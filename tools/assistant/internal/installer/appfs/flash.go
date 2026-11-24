@@ -497,7 +497,7 @@ func (r *runner) stepB() error {
 	}
 	if !r.live {
 		r.say("[dry-run] ssh %s: ps | grep '[b]usybox watchdog'  (abort when absent); SD /mnt/sdcard/akam_flash free > 20 MB, MemFree > 4 MB", p.Target)
-		r.say("[dry-run] ssh %s: kill the own_app_run.sh supervisor (NOT the stub, NOT the feeder), wait for akam2k_rtsp to exit", p.Target)
+		r.say("[dry-run] ssh %s: kill the own_app_run.sh supervisor (NOT the stub, NOT the feeder), wait for akamd (akam2k_rtsp on a 0.1.x image) to exit", p.Target)
 		r.say("[dry-run] ssh %s: no process may map /appfs/lib (grep /proc/*/maps) or abort", p.Target)
 		return nil
 	}
@@ -540,7 +540,7 @@ func (r *runner) stepB() error {
 		return r.fail("MemFree %s kB: too low even for flashcp (need > 4 MB)", trim(mem.Stdout))
 	}
 	r.say("stopping the supervisor (it stops the app); the stub and the feeder keep running")
-	if _, err := r.must(`for p in $(ps | grep "[o]wn_app_run.sh" | while read a b; do echo $a; done); do kill $p; done; i=0; while ps | grep -q "[/]tmp/akam2k_rtsp" && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done; ps | grep -q "[/]tmp/akam2k_rtsp" && exit 1; exit 0`,
+	if _, err := r.must(`for p in $(ps | grep "[o]wn_app_run.sh" | while read a b; do echo $a; done); do kill $p; done; i=0; while ps | grep -qE "[/]tmp/(akamd|akam2k_rtsp)" && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done; ps | grep -qE "[/]tmp/(akamd|akam2k_rtsp)" && exit 1; exit 0`,
 		"the app did not stop: abort, nothing written"); err != nil {
 		return err
 	}

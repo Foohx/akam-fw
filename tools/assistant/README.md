@@ -1,16 +1,16 @@
 # akam: the assistant as a single binary (experimental, phases P1 to P3)
 
-`akam` is the Go version of the guided setup program (`./akam`, bash, in the repository root). It is one
-static executable with no runtime dependency: SSH, the control port, the RTSP talk client, G.711 and
+`akam` is the Go guided setup program, for both cameras (the bash wizard `./akam` in the repository root, 1080p only, will be
+retired). It is one static executable with no runtime dependency: SSH, the signed-API client, the RTSP talk client, G.711 and
 WAV are built in. The plan is in [specs/installer.md](../../specs/installer.md).
 
 **Status: phases P1 to P3 and phase 11 (cross-platform), experimental.** The binary does the daily commands on a
 camera that already runs Akam, gets and verifies the kit, updates or restores a camera over SSH, does the whole first
 install from a stock camera (telnet detection, backup, built-in microSD writer, flash), and since phase 11 it is built
 for six targets (Linux, Windows and macOS, amd64 and arm64) and has a home screen, a camera chooser, option screens, a
-backup over SSH and a guided update. **The bash wizard (`./akam`) remains the reference on Linux for the 1080p.** The LSC Rotatable 2K commands (`backup-2k`, `prepare-2k-sd`, `seed-2k`, `key-2k`, `appfs-build`, `appfs-flash`, `update`) exist only in this program and are host-tested only (`get-kit` is the 1080p's; `prepare-2k-sd`, `appfs-build` and `update` verify and download the signed 2K kit themselves, see [docs/assistant.md](../../docs/assistant.md)). The program never
+backup over SSH and a guided update. The bash wizard (`./akam`) is kept on Linux for the 1080p until this program's install has run on a camera, then it will be removed; new features go here only. The LSC Rotatable 2K commands (`backup-2k`, `prepare-2k-sd`, `seed-2k`, `key-2k`, `appfs-build`, `appfs-flash`, `update`) exist only in this program and are host-tested only (`get-kit` is the 1080p's; `prepare-2k-sd`, `appfs-build` and `update` verify and download the signed 2K kit themselves, see [docs/assistant.md](../../docs/assistant.md)). The program never
 reboots or power-cycles a camera: after a flash it tells you to do it by hand. Evidence: host tests on fake cameras and
-files, plus a few real-camera checks of the SSH and 8091 paths (see [testing status](../../docs/testing-status.md)).
+files, plus a few real-camera checks of the SSH and signed-API paths (see [testing status](../../docs/testing-status.md)).
 **Nothing was run on a real macOS computer.** An earlier Windows build ran discovery, the options over SSH and `talk` on a real computer; no Windows or macOS card write has been tried.
 Details per OS are in "Phase 11" just below.
 
@@ -25,10 +25,10 @@ the verified kit.
 
 Plan: [specs/installer.md](../../specs/installer.md). The release has six
 binaries: `akam-linux-amd64`, `akam-linux-arm64`, `akam-darwin-amd64`, `akam-darwin-arm64`, `akam-windows-amd64.exe` and
-`akam-windows-arm64.exe`. **All of them are experimental. The bash wizard (`./akam`) stays the reference on Linux.**
+`akam-windows-arm64.exe`. **All of them are experimental. The bash wizard (`./akam`, 1080p) is kept until this program's install has run on a camera, then it will be removed.**
 Only the Linux amd64 paths have been exercised on a real camera, and only in part; the Windows and macOS binaries are
 **built and host-tested, not hardware-tested** (see [testing status](../../docs/testing-status.md) and the
-[hardware test plan](../../docs/hardware-test-checklists.md#assistant-checklists)). Download, check and first run:
+[hardware test plan](../../docs/hardware-checks-assistant.md)). Download, check and first run:
 [docs/assistant.md](../../docs/assistant.md).
 
 ### Home screen
@@ -55,7 +55,7 @@ address and its firmware.
 Lists the cameras it knows and finds. Sources, cheapest first: the cameras you set up before (shown at once, probed in
 parallel), a name (DNS, then `<name>.local`), ONVIF WS-Discovery, and a scan of your local /24 on the four camera ports
 only (22, 24, 554, 8091). The two searches that send packets each ask first (default No) and show the range and the
-ports. A camera that answers on 8091 is identified read-only (`GET fw.version`, `GET sys.hostname`). A stock camera
+ports. An Akam camera is SSH + video (+ the Dropbear banner): the text port 8091 is closed to the network on a current image. When it answers (an older image, or after `control-port open`) the camera is identified read-only (`GET fw.version`, `GET sys.hostname`); otherwise the firmware comes from the signed API once this PC has a key. A stock camera
 is only found when it already runs the toolkit card. VPN, point-to-point and virtual adapters are not scanned. If a
 remembered camera got a new address and presents the same SSH host key, one yes/no (default No) re-pins it under
 the new address; a key that differs is a hard error. Names a camera reports are cleaned before they are shown.
@@ -64,12 +64,12 @@ the new address; a key that differs is a hard error. Names a camera reports are 
 
 One screen per group, all values read in one go. Edits are made locally, validated like the command line, shown as
 "Pending", and sent only on `apply`. Every option says whether it is saved on the camera and when it applies (now,
-at the next video restart, at the next reboot). Toggles that open ports (`onvif enable`, `debug on`) or remove
+at the next video restart, at the next reboot). Toggles that open ports (`onvif enable`, `control-port open`) or remove
 protection (`rtsp-auth disable`) keep their yes/no, default No. The only camera process this program ever stops is the
 video service, behind one yes/no (default No) after a video change ("the stream stops for a few seconds"). An option
 the camera image does not know is shown as "not available on this image (update first)". The same settings exist as
-commands: `led`, `picture`, `video`, `audio` (including `mic on|off`), `ntp`, `onvif`, `mqtt`, `debug`, `rtsp-auth`,
-`hostname`. Wi-Fi is displayed only; changing it needs the card route.
+commands: `led`, `picture`, `video`, `audio` (including `mic on|off`), `ntp`, `onvif`, `mqtt`, `rtsp-auth`,
+`hostname` (`debug` was removed). Wi-Fi is displayed only; changing it needs the card route.
 
 **On the LSC Rotatable 2K** the same screen and commands work through the camera's signed API (port 8092, the key made by
 `key-2k`; without a key the assistant says so and points to `key-2k`, it never creates one). Groups: LED and night, Picture,
@@ -78,14 +78,20 @@ in ONE `PATCH /settings` after a confirmation (default No). The assistant checks
 name RFC 1123 1..32, country two capitals or `none`, band 5 needs a country, QP and bitrate order...), and shows the
 camera's own refusal text otherwise. Each result says applied now, queued (Wi-Fi and name: the camera applies them within
 seconds, a Wi-Fi change that loses the network is reverted after about a minute), or needs a restart; settings that are
-not saved are marked. No secret is ever shown or sent (the 2K registry has none: the stream password and MQTT are not
-settable through the API yet, they stay in `akam2k.conf`). Commands: `led [status auto|on|off] [ir auto|off]`,
+not saved are marked. MQTT, ONVIF, the stream password, NTP and the microphone are rows of the same API (groups Network, Audio,
+Security; they need an ADMIN key and apply at the next restart of the app, the stream password at once): the two passwords are
+write-only rows, asked without echo, sent once in the signed body, shown as `***` in every rehearsal, never read back, saved or logged.
+Commands: `led [status auto|on|off] [ir auto|off]`,
 `picture [brightness|contrast|sharpness N] [mains 50|60] [flip|mirror|ceiling on|off]`, `video [stream 0|1] [bitrate N]
 [maxbitrate N] [fps N] [gop N] [minqp N] [maxqp N] [rc vbr|cbr|avbr]`, `hostname [NAME]`, `track [on|off] [return stay|home]
 [delay S] [tilt on|off] [lag MS]`, `wifi [country CC|none] [band 2.4|5]`, and the generic `settings [list]`,
 `settings get KEY|PREFIX...`, `settings set KEY VALUE [KEY VALUE...]` (allow-list: the catalogue keys only). `--dry-run`
-prints the PATCH body and sends nothing; `--yes` answers the confirmation of a Wi-Fi or name change. `audio`, `ntp`,
-`mqtt`, `onvif`, `rtsp-auth`, `key`, `config` stay refused on a 2K. Host-tested only (a fake signed API): not run against a real 2K.
+prints the PATCH body and sends nothing; `--yes` answers the confirmation of a Wi-Fi or name change. The 1080p words work on a
+2K too, through the API: `audio [show|mic on|off]`, `mqtt [status|set|disable|forget]` (`set` asks the broker, port, user and password;
+there is no `mqtt test`), `onvif [status|enable [PORT]|disable]` (port 1024 to 65535, needs the stream password), `ntp [status|set
+SERVER...|off]`, `rtsp-auth [status|set|disable]` (`set` asks the user and the password twice). At install time `prepare-2k-sd` offers
+the same services (every question defaults to No, the passwords are not shown) and puts the files on the first-install card; `seed-2k`
+copies them into `/config/akam`. `key`, `config` stay refused on a 2K. Host-tested only (a fake signed API): not run against a real 2K.
 
 ### Backup location
 
@@ -195,8 +201,7 @@ VERSION=1.0.0 tools/assistant/build.sh   # version shown by `akam version`
 ```
 
 `make -C tools/assistant host|all|test` calls the same script. The build is static (`CGO_ENABLED=0`), uses
-`-trimpath -buildvcs=false -ldflags "-s -w"`, and checks the 12 MiB size budget of the spec (with P3: 9.6 MiB for
-amd64 and 8.9 MiB for arm64).
+`-trimpath -buildvcs=false -ldflags "-s -w"`, and checks the size budget of the spec (20 MiB hard, 16 MiB soft per target; `build.sh sizes` prints the current figures).
 
 ## Use
 
@@ -219,7 +224,9 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `help`, `version`, `self-test` | the text, the version, offline checks (G.711, Digest, state file, the safety rule below) |
 | `status`, `cameras`, `rename-camera NEW`, `register` | progress table, camera list, rename, and record a camera that already runs Akam (`--ip`, optional `--backup-dir`) |
 | `find-camera` | asks the address (or a name: DNS, then mDNS `<name>.local`), probes the four ports in parallel and tells stock + toolkit from Akam. With no address typed, two opt-in searches, each behind its own yes/no (default No): ONVIF discovery (one UDP packet to 239.255.255.250:3702) and a scan of your local /24 (only the four camera ports) |
-| `led`, `audio`, `picture`, `debug`, `onvif` | the same settings, checks and messages as the bash commands; control-port lines are sent to the camera's own loopback by running `nc -w 2 127.0.0.1 8091` over an SSH exec session (its Dropbear has no TCP forwarding) |
+| `led`, `audio`, `picture`, `video`, `onvif` | the same settings, checks and messages as the bash commands; the settings are read and changed through the camera's signed API (`internal/camera/ctl` turns each `GET key` / `SET key value` into GET /settings, GET /state, ONE PATCH /settings or the `audio.beep` action). The key of this PC is the file `api_key` of the camera's state folder, made once over SSH (`akamd --api-key new`; asked, default No; `api-key replace` to renew) |
+| `api-key [status\|replace]` | the API key of this PC for the camera (on a 2K it is `key-2k`); the secret is never printed |
+| `control-port [status\|open\|close]` | the LAN opt-in of the text port 8091 (closed by default; asks first; the video service restarts to apply it). `debug` was removed |
 | `rtsp-auth [set\|disable\|status]` | the password is typed twice without echo and sent on stdin to `akam_rtsp_auth.sh set-creds` |
 | `hostname [NAME]` | `akam_hostname.sh set NAME` (a note only on an older image) |
 | `talk [SECONDS\|test]`, `say FILE` | RTSP + Digest + ONVIF audio backchannel + G.711 in Go; `talk test` and `say file.wav` need no other program (any rate or channel count; 8/16/24/32-bit PCM or float). Files that are not WAV, MP3, FLAC or Ogg Vorbis need `ffmpeg`; the live microphone is built in on Linux (PulseAudio protocol, also served by PipeWire) and Windows (WASAPI), `ffmpeg` (or `arecord` on Linux) is the fallback and what macOS uses (optional, found automatically) |
@@ -232,7 +239,7 @@ state file, it keeps one untouched copy as `state.bak-before-binary`.
 | `get-kit` | downloads `akam-kit-<model>-X.tar.xz`, `SHA256SUMS`, `SHA256SUMS.sig` of the `firmware-vX` release (X: `--version`, else the newest release that has a kit for the camera's model; the model is the one recorded by the backup, or `--model`) (HTTPS only, TLS 1.2+, a redirect to http is refused, 3 tries), checks the sha256, the OpenSSH signature (SSHSIG, principal and namespace `akam-release`, keys of `tools/release/allowed_signers` built in; there is no environment override in a release binary: `AKAM_ALLOWED_SIGNERS`, `AKAM_KIT_URL_BASE`, `AKAM_API_URL_BASE` (the release list; without it a test build never reaches the network), `AKAM_FLASH_TOOL`, `AKAM_FLASH_SCRIPTS_DIR`, `AKAM_PORT_SSH2`, `AKAM_REFLASH_*` and `AKAM_FORCE_TTY` are test hooks, read only by a build with `-tags akamtest`; downloads are capped at 256 MiB and 1 MiB for the checksum files, the archive at 1 GiB decompressed / 200 MiB of content / 10000 entries), the archive layout and the kit's MANIFEST exactly like `verify_kit.sh`, and extracts it to `<state dir>/kit`. `--kit FILE`, `--version`, `--expect-sha256`, `--allow-unsigned` keep their meaning; a kit made for another camera model than the camera's is refused. An unsigned kit needs the yes/no "Unsigned kit" (default No, refused without a terminal) or `--allow-unsigned`. Nothing from a kit is run. The `.tar.xz` is decoded in process (`ulikunitz/xz`, no `xz` program needed): before any byte is decoded the stream structure is checked (exactly one stream with one LZMA2 block, dictionary at most 64 MiB, declared size at most 1 GiB) |
 | `update [--image FILE]` | flashes a new image over SSH, no card: precheck (writes nothing), the red box and one yes/no (default No), upload to the camera's RAM, sha256 on both sides, md5 by the camera script, a second Dropbear from RAM on port 2222, detached flash, polled log, independent read-back md5 of `/dev/mtd7`. The camera-side scripts are those of `tools/flash_scripts` (or the kit's `scripts/flash`), unchanged. It never reboots: power-cycle by hand |
 | `restore --backup-dir DIR` | the same path with `mtdblock7.bin` of your backup (SHA256SUMS checked); over SSH when Akam runs (asked), else through the maintenance telnet and the card like `flash` |
-| `verify` | waits for SSH, runs `akam_hwcheck.sh`, checks the ports (22, 554, 8091; 24 only with the card; 80 only when ONVIF is on) and the Wi-Fi gate, asks you to power-cycle without the card by hand, repeats the checks, then the optional password, ONVIF and camera-name offers |
+| `verify` | waits for SSH, runs `akam_hwcheck.sh`, checks the ports (22 and 554; 8091 must be closed unless you opened it; 24 only with the card; 80 only when ONVIF is on), then offers the API key and the Wi-Fi gate, asks you to power-cycle without the card by hand, repeats the checks, then the optional password, ONVIF and camera-name offers |
 | `backup` | over the maintenance telnet (port 24, toolkit card): `/proc/mtd` must be the supported 8-partition table, kernel and free space checked, the 8 partitions are `dd`-ed twice on the card, 16 exact sizes, both runs hashed on the camera and compared (CONFIG alone may differ: read again twice), dump1 copied to `<backup folder>/Akam backups/<name>/<date>/` (see `backup-location`) over `nc` with size + hash checks (3 tries, no partial file left), `SHA256SUMS`, `README.txt`, `camera_info.txt` as bash writes them, hardware verdict (yes/no in a red box, default No, unless validated), second-copy question. `--backup-dir DIR` accepts a folder made by hand |
 | `prepare-backup-sd`, `prepare-flash-sd`, `wipe-sd` | see "The SD card" below. One red box (device path, size, model) with a yes/no default No, refused without a terminal |
 | `flash` | stock or maintenance telnet with the flash card on `/mnt`: layout gate, exactly one image on the card with the right md5 (pushed over `nc` only after a yes), `flash_tool` and scripts checked or pushed, Wi-Fi gate (`preflight_check.sh --ensure-wifi` on the camera), the camera script's md5 line compared, the red box, and only after the explicit yes the `YES` to the camera's own prompt; then the read-back `dd if=/dev/mtd7 | md5sum` decides. SSH route when Akam runs and you say yes. No reboot is ever sent |
@@ -323,7 +330,7 @@ and `~/.ssh/config` is ignored.
 
 ### Safety rules (tested)
 
-* Every yes/no defaults to No (Enter, Esc, `q`, end of input) and refuses without a terminal; `debug on`,
+* Every yes/no defaults to No (Enter, Esc, `q`, end of input) and refuses without a terminal; `control-port open`,
   `onvif enable` and `rtsp-auth disable` ask exactly as in the bash wizard, the pure reads and the small
   reversible settings (`led`, `audio`, `picture`, `hostname`, `rtsp-auth set`) do not, again as in bash.
 * All camera command lines come from `internal/cli/remote.go`, and the one function that sends them refuses
@@ -344,7 +351,7 @@ ffmpeg:
 
 * `internal/testfake`: the fake camera. An in-process SSH server that runs the **real helper scripts**
   of `firmware/lsc-indoor-1080p-ak3918/overlay/` and `src/scripts/` (`akam_rtsp_auth.sh`, `akam_hostname.sh`, `akam_debug.sh`) in a
-  temporary root, a control port 8091 reached the way the real camera allows (the exec `nc -w 2 127.0.0.1 8091`; `direct-tcpip` is refused like Dropbear), a second Dropbear and a fake flash (a byte slice plays
+  temporary root, the camera's own loopback text port 8091 (the exec `nc -w 2 127.0.0.1 8091`; `direct-tcpip` is refused like Dropbear), the signed API of the 1080p (`testfake/api1080.go`, with the camera's own table of rows), a second Dropbear and a fake flash (a byte slice plays
   `/dev/mtd7`; the behaviour of `akam_reflash_ssh.sh` is emulated, the real script is tested by
   `tests/reflash_ssh_test.sh`), and an RTSP server with Digest login
   against the credentials those scripts wrote and the ONVIF backchannel. `akam_onvif.sh` is in
@@ -372,7 +379,7 @@ internal/cli/             dispatcher, options, one file per group of commands, s
 internal/ui/              the UI interface and the plain implementation; ui/tui = bubbletea
 internal/state/           state files, cameras, log with redaction, lock
 internal/camera/ssh/      SSH client, keys, host-key pinning
-internal/camera/ctl/      control port 8091 client
+internal/camera/ctl/      the old key names and answer lines, translated to the signed API
 internal/camera/telnet/   maintenance telnet client, manual mode, nc transfers with hashing
 internal/installer/       firmware kind -> installer (native-app, cardless-appfs); never by model id
 internal/installer/nativeapp/{image,flash,sdcard}/

@@ -1,29 +1,32 @@
 #!/bin/sh
 # start_rtsp.sh — kill whatever currently holds the ISP/VI/VENC/audio
-# devices (anyka_ipc on stock firmware, OR our own ak_rtsp if this is
-# already the flashed standalone firmware running ak_rtsp as process_0),
-# reload venc modules, run the ak_rtsp binary from the SD card.
+# devices (anyka_ipc on stock firmware, OR our own akamd if this is
+# already the flashed standalone firmware running akamd as process_0),
+# reload venc modules, run the akamd binary from the SD card.
 # Upload to SD card and run from telnet: sh /mnt/start_rtsp.sh
 
 # Kill the Anyka userspace watchdog SUPERVISOR (/usr/bin/watchdog,
 # CWatchdog.cpp) FIRST, before touching anything it supervises. On the
 # permanently-flashed standalone firmware, this process's entire job is to
-# notice when process_0 (ak_rtsp_wrapper.sh -> ak_rtsp) dies and immediately
-# respawn it. Killing ak_rtsp before this (the old order) let the supervisor
-# respawn a fresh ak_rtsp_wrapper.sh/ak_rtsp in the gap before the later
+# notice when process_0 (akam_run.sh -> akamd) dies and immediately
+# respawn it. Killing akamd before this (the old order) let the supervisor
+# respawn a fresh akam_run.sh/akamd in the gap before the later
 # `killall watchdog` line ran -- confirmed via `ps aux` 2026-07-15 showing
-# TWO ak_rtsp_wrapper processes (the original boot one plus a respawned one)
-# and a fresh ak_rtsp still holding /dev/watchdog/VI/VENC, which is exactly
+# TWO akam_run processes (the original boot one plus a respawned one)
+# and a fresh akamd still holding /dev/watchdog/VI/VENC, which is exactly
 # why our own watchdog feeder below got "Device or resource busy" and the
 # board rebooted out from under the test run. Order now: supervisor dies
-# first, so nothing auto-restarts anyka_ipc/ak_rtsp_wrapper.sh/ak_rtsp when
+# first, so nothing auto-restarts anyka_ipc/akam_run.sh/akamd when
 # we kill them next. Both the wrapper's plain name and its busybox
 # `{comm}` form are covered; all calls are harmless no-ops on whichever
 # firmware this ISN'T running on.
 killall -9 watchdog          2>/dev/null
-killall -9 ak_rtsp_wrapper.sh 2>/dev/null
-killall -9 ak_rtsp_wrapper    2>/dev/null
+killall -9 akam_run.sh 2>/dev/null
+killall -9 akam_run    2>/dev/null
 killall -9 anyka_ipc          2>/dev/null
+killall -9 akamd            2>/dev/null
+killall -9 ak_rtsp_wrapper.sh 2>/dev/null   # images of 0.1.x still run the old names
+killall -9 ak_rtsp_wrapper    2>/dev/null
 killall -9 ak_rtsp            2>/dev/null
 sleep 2
 
@@ -71,15 +74,15 @@ echo "venc modules reloaded"
 # Reload ak_pcm too (2026-07-04) — same stale-kernel-module-state class of bug
 # as VENC above, confirmed for audio: a
 # killed+relaunched process gets EPERM opening /dev/pcmC0D0c even though a
-# clean boot's first open works fine. Needed for real now that ak_rtsp's own
+# clean boot's first open works fine. Needed for real now that akamd's own
 # mic capture (audio.c) depends on this device, not just kept for hygiene.
 rmmod ak_pcm 2>/dev/null
 insmod /usr/modules/ak_pcm.ko 2>/dev/null && echo "ak_pcm reloaded" || echo "WARNING: insmod ak_pcm failed"
 
-# IR cut GPIO init is now handled inside ak_rtsp (ircut_init() in ircut.c).
+# IR cut GPIO init is now handled inside akamd (ircut_init() in ircut.c).
 # It fires the proper reset pulse (night→day) with the correct two-phase solenoid
 # drive, matching anyka_ipc's ht_night_mode_init sequence.
-# Clear the per-boot flag so ak_rtsp always fires the reset pulse on this run.
+# Clear the per-boot flag so akamd always fires the reset pulse on this run.
 rm -f /tmp/ircut_has_reset_flag
 
 # Set up dynamic debug if debugfs is compiled in
@@ -90,10 +93,10 @@ if [ -f /sys/kernel/debug/dynamic_debug/control ]; then
     echo "venc drivers dynamic debug enabled"
 fi
 
-# Continuously flush dmesg to the SD card WHILE ak_rtsp runs, not just at
+# Continuously flush dmesg to the SD card WHILE akamd runs, not just at
 # exit (added 2026-07-04 after a real hard reboot during audio testing lost
 # the in-RAM dmesg buffer entirely — the exit-time `dmesg > ...` line below
-# never got a chance to run because the board reset before ak_rtsp's process
+# never got a chance to run because the board reset before akamd's process
 # ever "exited" in the normal sense). `dmesg -c` clears the ring buffer after
 # reading, so each 2s tick only appends what's new — cheap, and survives a
 # hard reset since it's already been fsync'd to the SD card by the time any
@@ -108,7 +111,7 @@ echo "Live dmesg tail started (pid $DMESG_TAIL_PID) -> /mnt/ak_rtsp_dmesg_live.l
 # Run RTSP server, tee its stdout/stderr live to the SD card, and capture
 # dmesg on exit/crash. The tee (not just a plain redirect) matters: if
 # something crashes the KERNEL hard enough to reboot the whole board (not
-# just kill the ak_rtsp process), telnet drops immediately and everything
+# just kill the akamd process), telnet drops immediately and everything
 # below "RET=$?" never runs — dmesg is also gone, wiped by the reboot before
 # it could be saved. main.c's control_start() already line-buffers stdout
 # (see control.c), so every log line is written to /mnt/ak_rtsp_app.log via
@@ -116,12 +119,12 @@ echo "Live dmesg tail started (pid $DMESG_TAIL_PID) -> /mnt/ak_rtsp_dmesg_live.l
 # session — that's what survives on the SD card across the reboot. Cleared
 # at the start of each run so it doesn't keep growing across repeated tests.
 > /mnt/ak_rtsp_app.log
-echo "Starting ak_rtsp (log: /mnt/ak_rtsp_app.log)..."
-/mnt/ak_rtsp 2>&1 | tee -a /mnt/ak_rtsp_app.log
+echo "Starting akamd (log: /mnt/ak_rtsp_app.log)..."
+/mnt/akamd 2>&1 | tee -a /mnt/ak_rtsp_app.log
 RET=$?
 
 kill $DMESG_TAIL_PID 2>/dev/null
-echo "ak_rtsp exited with status $RET"
+echo "akamd exited with status $RET"
 dmesg > /mnt/ak_rtsp_dmesg.log
 echo "dmesg saved to /mnt/ak_rtsp_dmesg.log (full final dump)"
 echo "Live dmesg tail (survives a hard reset): /mnt/ak_rtsp_dmesg_live.log"

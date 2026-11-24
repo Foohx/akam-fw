@@ -32,5 +32,6 @@ of other Anyka SoCs (`ak37d`, `ak37e`, `ak39ev330`, `ak3918av100`) because one d
   The identification rests on the firmware strings above, which name the SDK and the device tree of the SoC the firmware is built for.
 - The 1080p board string `EVB_CBDM_AK3918av130_V1.0.0` is the SDK's evaluation-board name left in the device tree, not the retail board
   (`SI D26228`, article `3215672.3`).
-- Whether the platform stacks should be renamed after the die (`anyka-ak3918av130` for both) or after the interface is a naming decision for
-  step 7; ids are one-way once released. Until then both names stay.
+- Whether the platform stacks should be renamed after the die (`anyka-ak3918av130` for both) or after the interface was a naming decision for
+  step 7 of the repository reorganisation. The decision: the platform directories keep their two names (`anyka-ak3918` for direct drivers, `anyka-ak3918av130`
+  for the vendor-library stack), named after the interface; the step renamed the camera program to `akamd` on both cameras. Model ids are one-way once released.

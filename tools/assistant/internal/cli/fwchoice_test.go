@@ -382,7 +382,7 @@ func TestUpdateWithAReleaseWritesAndRecordsIt(t *testing.T) {
 	w := newFwWorld(t, relList(relJSON("v1.0.0", false, false)), "fw_version=0.5.0\n")
 	r := w.update("1\ny\n\n10\n")
 	expectRC(t, r, 0)
-	contains(t, r.out+r.err, "Which firmware?", "1) Akam 1.0.0 (latest)", "ok: signature valid", "Kit verified (format 1,",
+	contains(t, r.out+r.err, "Which firmware?", "1) Akam 1.0.0 (latest)", "ok: signature valid", "Kit verified (format 2,",
 		"Updating: WRITES THE CAMERA FLASH", "Image md5 written and read back: "+w.imgMD5)
 	if !bytes.Equal(w.cam.Mtd7(), w.imgData) {
 		t.Fatal("the image was not written")

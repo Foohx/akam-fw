@@ -67,7 +67,7 @@ int ctl_slots_acquire(ctl_slots_t *s, int is_loopback);
 void ctl_slots_release(ctl_slots_t *s, int idx);
 int ctl_slots_count(const ctl_slots_t *s);
 
-/* "ak_rtsp ctl <line...>": send the words as one line to 127.0.0.1:port and print the reply
+/* "akamd ctl <line...>": send the words as one line to 127.0.0.1:port and print the reply
  * lines to out, without the LOG lines the port pushes by itself. Ends at the "." line of a
  * LIST, or 250 ms after the last data once a reply line arrived (1 s while none did), 3 s at most. Returns 0 when the first reply line is not an ERR, 1 otherwise (also on
  * no connection or no reply). */

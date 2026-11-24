@@ -3,11 +3,11 @@
  * Logs to /tmp/isp_hook.log:
  *   - get_ae_run_info: windowed min/max/reversal-count summary,
  *     one line per ~1s (AE_WINDOW_N=15 samples @ ~15Hz) — format mirrors
- *     ak_rtsp/ae.c's ae_loop() exactly (lum[min max last], hw_exp[min max],
+ *     akamd/ae.c's ae_loop() exactly (lum[min max last], hw_exp[min max],
  *     reversals, <-- HUNTING flag) so the two logs are directly comparable:
  *     does stock anyka_ipc's own on-chip AE hunt on the same high-contrast
- *     scene ak_rtsp does? A prior 1-in-30 raw-sample throttle was too coarse
- *     to see fast hunting (same mistake fixed in ak_rtsp/ae.c earlier).
+ *     scene akamd does? A prior 1-in-30 raw-sample throttle was too coarse
+ *     to see fast hunting (same mistake fixed in akamd/ae.c earlier).
  *   - set/get_exposure_attr (0x8004498a/8b) every N calls — shows private+public fields
  *   - ISP_INNER_SENSOR_SETREG every call — shows which GC20C3 I2C
  *     registers anyka_ipc writes for gain/exposure, with exact values
@@ -20,7 +20,7 @@
  *     that panicked the kernel on real hardware. This capture reads the
  *     actual bytes off the wire instead.
  *     The actual field dump (added 2026-07-05) now lives in the shared
- *     venc_dump.h, also used by ak_rtsp/venc.c's DEBUG_IOCTL_DUMP build, so
+ *     venc_dump.h, also used by akamd/venc.c's DEBUG_IOCTL_DUMP build, so
  *     "what stock sent" and "what we sent" are always directly diffable.
  *   - AKPCM audio ioctl family (2026-07-04):
  *     generic catch-all for every ioctl whose magic/type byte is 'P' (0x50) —
@@ -122,7 +122,7 @@ static long _sc2(long n, long a, long b)
 
 /* VENC — different ioctl code entirely (not the ISP tunnel), payload is the
  * raw venc_create_enc_req struct directly (not wrapped in isp_wrapper).
- * Offsets match ak_rtsp/ak_ioctls.h's venc_create_enc_req/venc_enc_cfg/
+ * Offsets match akamd/ak_ioctls.h's venc_create_enc_req/venc_enc_cfg/
  * venc_smart_cfg/venc_rc_cfg exactly. */
 #define VENC_IOCTL_CREATE_ENC 0x406056e0U  /* _IOWR('V',0xe0, venc_create_enc_req[96]) */
 
@@ -139,7 +139,7 @@ struct sensor_reg { uint32_t addr; uint32_t val; };
  * Every inner_cmd sent by isp_module_init's 24-module pipeline plus the
  * other individually-confirmed cmds, so the catch-all logger below prints a
  * readable name instead of a bare hex value the reader has to re-look-up
- * every time. Kept in sync with ak_rtsp/ak_ioctls.h's ISP_INNER_* defines —
+ * every time. Kept in sync with akamd/ak_ioctls.h's ISP_INNER_* defines —
  * duplicated here rather than #included because this file is intentionally
  * standalone (no libc, cross-compiles for any target libc on the camera).
  * Add 2026-07-05: request from repeatedly having to re-derive names for
@@ -176,21 +176,21 @@ static const char *isp_cmd_name(uint32_t cmd)
     case 0x40044977U: return "HUE";
     case 0x40044981U: return "GET_SENSOR_AE";
     case 0x80044984U: return "AE_SUSPEND";
-    case 0x40044979U: return "FLIP_MIRROR"; /* not sent by ak_rtsp */
+    case 0x40044979U: return "FLIP_MIRROR"; /* not sent by akamd */
     default:          return (const char *)0;
     }
 }
 
 /* ---- minimal text formatting -------------------------------------------
  * REVERTED to self-contained (2026-07-05): briefly shared this with
- * ak_rtsp/venc.c's DEBUG_IOCTL_DUMP build via venc_dump.h, but the very
+ * akamd/venc.c's DEBUG_IOCTL_DUMP build via venc_dump.h, but the very
  * first hardware re-test after that refactor came back with EVERY log type
  * except the one CREATE_ENC line missing (no AE window, no SETREG, no WB —
  * all of which had worked repeatedly before, same script, same procedure).
  * Could not find the bug by static re-reading — reverting to this exact
  * known-good inline shape rather than risk another blind hardware
  * round-trip chasing a shared-header bug. venc_dump.h still exists and is
- * still used by ak_rtsp/venc.c's DEBUG_IOCTL_DUMP build (verified working
+ * still used by akamd/venc.c's DEBUG_IOCTL_DUMP build (verified working
  * there) — just not included here anymore. If byte-exact comparison
  * between the two logs is needed again, diff the two files by hand; don't
  * re-attempt sharing the implementation without a way to bisect on
@@ -237,11 +237,11 @@ static unsigned g_other_cnt __attribute__((unused)) = 0;
 #define NR_EVERY   30   /* log get_3d_nr_stat every N calls */
 #define EXPO_EVERY  1   /* log every set/get_exposure_attr (infrequent) */
 
-/* ---- windowed AE stats — mirrors ak_rtsp/ae.c's ae_loop() exactly, so the
+/* ---- windowed AE stats — mirrors akamd/ae.c's ae_loop() exactly, so the
  * two logs are directly comparable: does stock anyka_ipc's own AE hunt on
- * the same high-contrast scene where our on-chip-AE-only ak_rtsp does?
+ * the same high-contrast scene where our on-chip-AE-only akamd does?
  * Previously this was a raw 1-in-30 (~2s) sample, which is too coarse to
- * see fast hunting — the same mistake we made in ak_rtsp before adding
+ * see fast hunting — the same mistake we made in akamd before adding
  * windowed diagnostics there. */
 #define AE_WINDOW_N   15   /* ~1s window at anyka_ipc's ~15Hz AE poll rate */
 static int      g_win_n = 0;

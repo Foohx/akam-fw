@@ -80,7 +80,7 @@ func nativeWorld(t *testing.T, answer string) (*App, *bytes.Buffer, string, stri
 	}
 	hwTxt := []byte("supported_hardware_format=1\nmodel=lsc-indoor-1080p-ak3918\nvalidated|Other camera|soc|Linux-x|8 partitions|squashfs xz block=131072 bcj=none|" + strings.Repeat("ab", 32) + "|1\n")
 	put("supported_hardware.txt", hwTxt)
-	put("bin/ak_rtsp", []byte("ak"))
+	put("bin/akamd", []byte("ak"))
 	put("bin/dropbearmulti", []byte("db"))
 	put("bin/flash_tool", []byte("ft"))
 	for _, n := range []string{"LICENSE.akam", "THIRD_PARTY_NOTICES.md", "LICENSE.dropbear", "LICENSE.musl", "LICENSE.zig", "LICENSE.smolrtsp", "LICENSE.slice99", "LICENSE.metalang99", "LICENSE.datatype99", "LICENSE.interface99"} {
@@ -190,7 +190,7 @@ func writeKitManifest(t *testing.T, kd string, hw []byte, extra string) {
 		return nil
 	})
 	sort.Strings(files)
-	man := "kit_format=1\nkit_grade=release\nakam_version=t\nmodel=lsc-indoor-1080p-ak3918\nsource_commit=abc\nbuilt_utc=2023-11-14T22:13:20Z\ntarget=arm-linux-musleabi\n" +
+	man := "kit_format=2\nkit_grade=release\nakam_version=t\nmodel=lsc-indoor-1080p-ak3918\nsource_commit=abc\nbuilt_utc=2023-11-14T22:13:20Z\ntarget=arm-linux-musleabi\n" +
 		"time64_gate=pass\n" + extra + "supported_hardware_sha256=" + sumHex(hw) + "\n"
 	for _, f := range files {
 		b, _ := os.ReadFile(filepath.Join(kd, filepath.FromSlash(f)))
@@ -219,7 +219,7 @@ func TestNativeImageRefusesUnverifiedInputs(t *testing.T) {
 	// a kit edited after get-kit (a binary swapped, MANIFEST untouched)
 	a, out, bk, kd := nativeWorld(t, "")
 	a.Opt.UntestedOK = true
-	if err := os.WriteFile(filepath.Join(kd, "bin", "ak_rtsp"), []byte("evil"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(kd, "bin", "akamd"), []byte("evil"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.runNativeImage(kd, bk); err == nil || !strings.Contains(out.String(), "kit failed verification") {

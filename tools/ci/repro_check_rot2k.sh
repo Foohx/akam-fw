@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 2K golden check (opt-in, not part of local_check by default): builds the Rotatable 2K own app from clean with the
 # pinned uClibc toolchain (make poc3-dist) and compares, with tests/golden/rot2k_app.golden:
-#   - the stripped sha256 of akam2k_rtsp and of the three helper binaries (sntp, mic, led);
-#   - the sha256 of `objdump -d -j .text` of akam2k_rtsp (addresses included: proves identical code layout).
+#   - the stripped sha256 of akamd and of the three helper binaries (sntp, mic, led);
+#   - the sha256 of `objdump -d -j .text` of akamd (addresses included: proves identical code layout).
 # Used to prove that a pure file move or rename does not change the 2K binary (reorganisation steps 1 to 6).
 #
 #   tools/ci/repro_check_rot2k.sh              build once, compare with the golden (exit 1 on any difference)
@@ -26,9 +26,11 @@ case "${1:-}" in --twice) mode=twice ;; --update) mode=update ;; "") ;; *) echo 
 build_and_hash() {
     rm -rf "$OUT"
     make -C "$APP" poc3-dist SMOLRTSP="$SMOLRTSP" CAMERA_LIBC="$CAMERA_LIBC" >&2
-    for b in rtsp sntp mic led; do echo "$b=$(sha256sum "$OUT/akam2k_$b" | cut -d' ' -f1)"; done
+    # the golden keys keep their old short names; the files are akamd (key rtsp) and akam-{sntp,mic,led}
+    echo "rtsp=$(sha256sum "$OUT/akamd" | cut -d' ' -f1)"
+    for b in sntp mic led; do echo "$b=$(sha256sum "$OUT/akam-$b" | cut -d' ' -f1)"; done
     # Drop the "file format" header line (it names the file); everything else, addresses included, is the layout.
-    echo "rtsp_text=$("$TC/bin/arm-linux-objdump" -d -j .text "$OUT/akam2k_rtsp" | grep -v 'file format' | sha256sum | cut -d' ' -f1)"
+    echo "rtsp_text=$("$TC/bin/arm-linux-objdump" -d -j .text "$OUT/akamd" | grep -v 'file format' | sha256sum | cut -d' ' -f1)"
 }
 
 a=$(build_and_hash)
@@ -40,7 +42,7 @@ fi
 if [ "$mode" = update ]; then
     {
         echo "# Golden of the Rotatable 2K own app (tools/ci/repro_check_rot2k.sh): stripped sha256 of the four binaries and sha256 of"
-        echo "# the .text disassembly of akam2k_rtsp, built from clean with the pinned toolchain (uClibc armv5 2018.11). Changes only"
+        echo "# the .text disassembly of akamd, built from clean with the pinned toolchain (uClibc armv5 2018.11). Changes only"
         echo "# with an intentional 2K code or build change; regenerate with: tools/ci/repro_check_rot2k.sh --update"
         echo "$a"
     } >"$GOLDEN"

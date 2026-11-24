@@ -24,7 +24,7 @@ func TestKitRefusals(t *testing.T) {
 		seal   bool
 		want   string
 	}{
-		"a required file is missing":      {func(f map[string][]byte) { delete(f, pathBin+"akam2k_sntp") }, false, "has no appfs/bin/akam2k_sntp"},
+		"a required file is missing":      {func(f map[string][]byte) { delete(f, pathBin+"akam-sntp") }, false, "has no appfs/bin/akam-sntp"},
 		"an unknown file":                 {func(f map[string][]byte) { f["appfs/overlay/evil.sh"] = []byte("x") }, false, "kit newer than the program"},
 		"a vendor-looking file":           {func(f map[string][]byte) { f["appfs/bin/yy_cam"] = []byte("x") }, false, "does not install"},
 		"a file changed after SHA256SUMS": {func(f map[string][]byte) { f[pathOverlay+"common.sh"] = []byte("#!/bin/sh\nrm -rf /\n") }, false, "does not match SHA256SUMS"},

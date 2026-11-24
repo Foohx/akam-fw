@@ -1,7 +1,7 @@
-/* akam2k_rtsp: PoC-3 of the Rotatable 2K own-app study. Both VI channels are captured and encoded (main 2304x1296
+/* akamd: PoC-3 of the Rotatable 2K own-app study. Both VI channels are captured and encoded (main 2304x1296
  * H.264 Main, sub 640x360) and served over RTSP (TCP interleaved):
  *
- *   akam2k_rtsp [-p PORT] [-m MAIN_KBPS] [-s SUB_KBPS] [-g GOP] [-a AUTH_FILE] [-n FRAMES] [-t SECONDS]
+ *   akamd [-p PORT] [-m MAIN_KBPS] [-s SUB_KBPS] [-g GOP] [-a AUTH_FILE] [-n FRAMES] [-t SECONDS]
  *               [-D 0|1] [-H HZ] [-T THRESHOLD] [--detect-on-count K] [--detect-off-s SECONDS] [--detect-debug] [--mqtt-conf FILE]
  *               [--zones-conf FILE] [--snapshot 0|1] [--snapshot-interval SECONDS] [--night auto|day|night] [--ir-led auto|off]
  *               [--image-brightness N] [--image-contrast N] [--image-sharpness N] [--mains-hz 50|60] [--wdr 0|1] [--audio 0|1]
@@ -9,8 +9,8 @@
  *               [--ptz-cal auto|off] [--ptz-park PAN:TILT] [--ptz-privacy 0|1]
  *               [--track 0|1] [--ptz-travel-budget-k 10..99999] [--track-return home|stay] [--track-return-delay-s N] [--track-grace-s N] [--track-band-pct 2..40] [--track-tilt 0|1] [--track-lead-pct 0..100] [--track-head-pct 0..50] [--track-gain-pan 200..4000] [--track-gain-tilt 200..4000] [--track-tilt-band-pct 2..40] [--track-debug 0..2] [--track-lag-ms -150..300] [--detect-age-window 0|1] [--track-tilt-return-s 0..3600] [--track-area NAME=PMIN:PMAX:TMIN:TMAX]... [--button-long-ms 1500..10000] [--track-invert-pan 0|1] [--track-invert-tilt 0|1]
  *               [--ptz-scene-check 0|1] [--ptz-scene-min 0.80..0.99] [--ptz-drift-ref 0|1] [--ptz-drift-correct off|adjust|full] [--ptz-boot-calibrate auto|always] [--ptz-tilt-rehome off|idle] [--ptz-tilt-rehome-gap-min 1..1440] [--api-port 0|1024..65535]
- *   akam2k_rtsp --ptz-stop   (one motor stop request on the motor node, used by the supervisor after the app died)
- *   akam2k_rtsp --api-key new --scope read|write|admin --name LABEL | list | revoke ID|NAME [--force]   (key tool, no hardware touched)
+ *   akamd --ptz-stop   (one motor stop request on the motor node, used by the supervisor after the app died)
+ *   akamd --api-key new --scope read|write|admin --name LABEL | list | revoke ID|NAME [--force]   (key tool, no hardware touched)
  *   long forms: --port --main-kbps --sub-kbps --gop --auth --frames --seconds --detect --detect-hz --detect-threshold
  *
  * Defaults: port 554 (A2K_RTSP_PORT: rtsp://<ip>:554/stream0 main, /stream1 sub), main 2000 kbit/s, sub 800 kbit/s, GOP 30 (2 s at 15 fps), credentials file
@@ -55,6 +55,8 @@
 #include "api_bind.h"
 #include "api_events.h"
 #include "audio.h"
+#include "audio_out.h"
+#include "speaker.h"
 #include "api_httpd.h"
 #include "settings.h"
 #include "cap.h"
@@ -181,7 +183,8 @@ static void on_alarm(int sig)
 {
     (void)sig;
     a2k_pin_emergency_low(); /* never die with the IR-cut coil energised */
-    say("akam2k_rtsp: TIMEOUT, guard fired in step: ", (const char *)g_step);
+    audio_out_emergency_off(); /* amplifier off, crash guard removed (a stop is not a kernel crash) */
+    say("akamd: TIMEOUT, guard fired in step: ", (const char *)g_step);
     _exit(124);
 }
 
@@ -190,7 +193,8 @@ static void on_crash(int sig)
     (void)sig;
     a2k_ptz_emergency_stop(); /* a dead process must not leave the head walking toward a mechanical stop */
     a2k_pin_emergency_low();
-    say("akam2k_rtsp: CRASH signal in step: ", (const char *)g_step);
+    audio_out_emergency_off();
+    say("akamd: CRASH signal in step: ", (const char *)g_step);
     _exit(2);
 }
 
@@ -221,7 +225,7 @@ static void install_signals(void)
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: akam2k_rtsp [-p port] [-m main_kbps] [-s sub_kbps] [-g gop] [-a auth_file] [-n frames] "
+    fprintf(stderr, "usage: akamd [-p port] [-m main_kbps] [-s sub_kbps] [-g gop] [-a auth_file] [-n frames] "
                     "[-t seconds] [-D 0|1] [-H hz] [-T threshold] [--detect-debug] [--mqtt-conf file] [--zones-conf file] "
                     "[--snapshot 0|1] [--snapshot-interval seconds] [--night auto|day|night] [--ir-led auto|off] "
                     "[--image-brightness 0..100] [--image-contrast 0..100] [--image-sharpness 0..100] [--mains-hz 50|60] [--wdr 0|1] [--audio 0|1] [--video<0|1>-kbps|max-kbps|fps|min-qp|max-qp|gop N] [--video<0|1>-rc vbr|cbr|avbr] [--video-live 0|1] [--venc-test 0|1] [--isp-test 0|1] [--api-port 0|1024..65535] [--onvif 0|1] [--onvif-port 1024..65535]\n");
@@ -664,9 +668,10 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     install_signals();
-    a2k_log("akam2k_rtsp: port %d, main %d kbit/s, sub %d kbit/s, GOP %d, auth file %s, test limits: %d frames, %d s",
+    a2k_speaker_init(); /* before anything reaches the speaker engine: its conf dir and the opt-in default */
+    a2k_log("akamd: port %d, main %d kbit/s, sub %d kbit/s, GOP %d, auth file %s, test limits: %d frames, %d s",
             port, cfg.main_kbps, cfg.sub_kbps, cfg.gop, auth, frames, seconds);
-    a2k_log("akam2k_rtsp: detection %s, %d Hz, classify threshold %d, ON after %d, OFF after %d ms",
+    a2k_log("akamd: detection %s, %d Hz, classify threshold %d, ON after %d, OFF after %d ms",
             cfg.det.enabled ? "on" : "off", cfg.det.hz, cfg.det.threshold, cfg.det.on_count, cfg.det.off_ms);
     if (!cfg.det.enabled)
         cfg.snap.enabled = 0; /* a snapshot is taken when the person goes ON: no detection, no snapshot, no third encoder */
@@ -688,7 +693,7 @@ int main(int argc, char **argv)
         (void)a2k_zlive_init(&cfg.det.zones, A2K_STORE_ZONES);
         a2k_zlive_set_notify(a2k_mqtt_zones_changed);
     }
-    /* video settings: built-in defaults, then the video<N>_* options of akam2k.conf (an inconsistent stream is logged and keeps its defaults), then the
+    /* video settings: built-in defaults, then the video<N>_* options of akam.conf (an inconsistent stream is logged and keeps its defaults), then the
      * runtime file written by the Home Assistant entities. Done before the capture threads read them. */
     for (int vc = 0; vc < A2K_VID_STREAMS; vc++) {
         a2k_vid_defaults(vc, vc ? cfg.sub_kbps : cfg.main_kbps, cfg.gop, &vid_base[vc]);
@@ -724,7 +729,7 @@ int main(int argc, char **argv)
         if (a2k_audio_start() != 0)
             a2k_log("audio: not running");
     } else {
-        a2k_log("audio: off (the microphone is never opened; audio=1 in akam2k.conf enables it)");
+        a2k_log("audio: off (the microphone is never opened; audio=1 in akam.conf enables it)");
     }
     /* status LED: the app owns the front blue LED (default on = left as the system set it); never fatal */
     (void)a2k_leds_start(led_mode, led_pat);
@@ -800,6 +805,7 @@ int main(int argc, char **argv)
         sc.image = &icfg;
         if (a2k_settings_start(&sc) == 0) {
             a2k_settings_load();
+            (void)a2k_speaker_boot(); /* audio.out_enable as loaded (the setter already started it when it changed); a failure is logged */
             a2k_mqtt_resync(); /* the saved settings are in: the first state publish must not show the defaults (the MQTT thread starts before the load) */
             a2k_api_env_t aenv;
             a2k_api_env_2k(&aenv);
@@ -887,6 +893,7 @@ int main(int argc, char **argv)
     a2k_leds_stop(); /* before the day/night stop, which closes the pin files */
     a2k_night_stop(); /* then: the ISP and the streams must still be up for the day mode and its keyframe */
     a2k_rtsp_stop();
+    a2k_speaker_stop(); /* after the clients (the talk session writes to it) */
     a2k_audio_stop(); /* after the clients (they read its ring, which is static and stays valid) */
     a2k_cap_stop();
     alarm(0);

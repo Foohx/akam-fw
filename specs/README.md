@@ -4,9 +4,13 @@ This folder describes Akam as it is built today. It is a reference, not a plan: 
 with the values (ports, paths, limits, defaults, file formats) that a reader needs to implement against it, test it or
 review it. When a spec and the code disagree, the code is right and the spec is a bug: fix the spec.
 
-Akam is an open-source replacement firmware for LSC Smart Indoor 1080p IP cameras (SoC Anyka AK3918AV130). It removes
-the Tuya cloud application, serves local RTSP, adds key-only SSH, disables Telnet and FTP, and ships a PC-side installer
-(a bash wizard and a Go assistant).
+Akam is an open-source replacement firmware for two LSC cameras, the Smart Indoor 1080p and the Smart Rotatable 2K (both
+SoC Anyka AK3918AV130). It removes the cloud application, serves local RTSP, adds key-only SSH, disables Telnet and FTP, and
+ships a PC-side installer (the Go assistant `akam`, and a bash wizard for the 1080p that will be retired).
+
+**The specs describe the 1080p.** The as-built reference of the 2K is its findings pages, `docs/porting/lsc-rotatable-2k/`
+([entry page](../docs/porting/lsc-rotatable-2k/README.md)): `control-api.md` (API), `net-settings.md`, `tracking.md`,
+`cardless-appfs.md` (install and flash), `audio-findings.md`, `video-latency.md`. Where a spec has no 2K section, read those pages.
 
 ## How specs relate to code and docs
 
@@ -33,7 +37,7 @@ A spec never contains a task list, a schedule or a review history. Those live in
 
 | Label | Meaning |
 |---|---|
-| **hardware-validated** | Ran on a real camera (model `3215672.3`) as part of a flashed image or a RAM test, and the result was recorded |
+| **hardware-validated** | Ran on a real camera (1080p `3215672.3` or 2K `3225722`, named in the section) as part of a flashed image or a RAM test, and the result was recorded |
 | **host-tested only** | Covered by host tests (fake cameras, fixtures, stubs, sanitizers). Never run on a camera |
 | **experimental** | Opt-in, incomplete or unproven on its target. Do not rely on it for safety |
 
@@ -44,16 +48,16 @@ A file that mixes levels labels each section. The evidence tables are in `docs/t
 | File | Contents |
 |---|---|
 | [architecture.md](architecture.md) | Hardware, flash map, what Akam replaces, boot chain, processes, persistent config, RAM use, watchdogs, logging |
-| [video-and-streaming.md](video-and-streaming.md) | `ak_rtsp` video pipeline, encoder settings, RTSP server, Digest authentication |
+| [video-and-streaming.md](video-and-streaming.md) | `akamd` video pipeline, encoder settings, RTSP server, Digest authentication |
 | [audio.md](audio.md) | Microphone track, speaker output, two-way audio (ONVIF backchannel), `akam-talk` |
 | [image-day-night-leds.md](image-day-night-leds.md) | Picture settings, day/night state machine, IR-cut and IR LEDs, status LED |
-| [control-api.md](control-api.md) | Design: settings registry, signed local HTTP API (HMAC), generated MQTT entities |
+| [control-api.md](control-api.md) | Settings registry, signed local HTTP API (HMAC), generated MQTT entities (as built, with its design history) |
 | [ptz-patrol.md](ptz-patrol.md) | PTZ patrol / scan engine: presets, routes, generated sweeps and rasters, triggers, priorities with tracking and manual control, safety, flash policy |
 | [control-port.md](control-port.md) | TCP port 8091: commands, every key, privacy and write rules |
 | [onvif.md](onvif.md) | ONVIF Profile S subset and WS-Discovery |
 | [mqtt.md](mqtt.md) | MQTT client and Home Assistant discovery |
 | [network-time-security.md](network-time-security.md) | Wi-Fi supervisor, hostname, NTP, SSH, Telnet/FTP lockdown, open ports |
-| [installer.md](installer.md) | The bash wizard and the Go assistant: commands, state, backup, flash and safety gates |
+| [installer.md](installer.md) | The Go assistant and the bash wizard (to be retired): commands, state, backup, flash and safety gates |
 | [kit-and-release.md](kit-and-release.md) | Release kit, signatures, image assembly, release pipeline, size budgets |
 | [roadmap.md](roadmap.md) | Known gaps that are still open |
 
@@ -62,7 +66,8 @@ A file that mixes levels labels each section. The evidence tables are in `docs/t
 1. Light: one static ARM binary does video, audio, control, ONVIF and MQTT. Optional features cost no thread, socket
    or timer while off. Size and memory budgets are measured, not guessed.
 2. Standards first: RTSP, ONVIF Profile S, MQTT 3.1.1 with Home Assistant discovery, SSH. No cloud, no vendor app.
-3. Off by default: RTSP password, ONVIF, MQTT, NTP and remote writes on 8091 are all opt-in.
-4. Only the APP partition is ever rewritten. Bootloader, kernel, root file system and CONFIG are never replaced.
+3. Off by default: the RTSP password, ONVIF, MQTT, NTP, the microphone, the signed API (it opens with its first key) and the
+   LAN side of port 8091 are all opt-in.
+4. Only one application partition is ever rewritten (APP on the 1080p, appfs on the 2K). Bootloader, kernel, root file system and CONFIG are never replaced.
 5. No vendor data is distributed. The user supplies their own dump; images are built locally.
 6. Never claim "validated" for code that was only compiled or host-tested.

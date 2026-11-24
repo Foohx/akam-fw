@@ -31,6 +31,9 @@ type CardInput struct {
 	RescueTelnet bool
 	// ParamConf is the flag akam/enable_param_conf (opt-in: the card may edit /config/param.conf). Off by default.
 	ParamConf bool
+	// Setup holds the optional services chosen at install time (microphone, ONVIF, MQTT, stream password, NTP): written as the files the
+	// camera reads (akam.conf, mqtt, mqtt_pass, rtsp.conf, ntp). nil or the zero value: nothing is written, every service stays off.
+	Setup *Setup2K
 }
 
 // WPAConf is the wpa_supplicant configuration of the card. The SSID is written in hex and the key as the 256-bit PSK
@@ -102,19 +105,19 @@ func BuildCard(k *Kit, in CardInput) (*Card, error) {
 		return nil, errors.New("the kit's yy_debug.ini is not the expected mode=debug file: refused")
 	}
 	files := map[string][]byte{
-		"yy_debug.ini":                   k.File("card/yy_debug.ini"),
-		"akam_boot.sh":                   k.File("card/akam_boot.sh"),
-		"busybox":                        k.File(pathBin + "busybox"),
-		"akam/enable_local.sh":           k.File("card/akam/enable_local.sh"),
-		"akam/restore_param.sh":          k.File("card/akam/restore_param.sh"),
-		"akam/dropbearmulti":             k.File(pathBin + "dropbearmulti"),
-		"akam/bin/akam2k_rtsp":           k.File(pathBin + "akam2k_rtsp"),
-		"akam/bin/akam2k_rtsp.BUILDINFO": k.File(pathBin + "akam2k_rtsp.BUILDINFO"),
-		"akam/bin/akam2k_sntp":           k.File(pathBin + "akam2k_sntp"),
-		"akam/bin/akam2k_sntp.BUILDINFO": []byte("tool=akam2k_sntp\nsha256=" + buildinfo(k.File(pathBin+"akam2k_rtsp.BUILDINFO"), "sntp_sha256") + "\n"),
-		"akam/authorized_keys":           sdcard.PubKeyLF(in.PubKey),
-		"akam/wpa.conf":                  wpa,
-		"akam/own_app":                   {}, // arms the stub: the card boots Akam
+		"yy_debug.ini":                 k.File("card/yy_debug.ini"),
+		"akam_boot.sh":                 k.File("card/akam_boot.sh"),
+		"busybox":                      k.File(pathBin + "busybox"),
+		"akam/enable_local.sh":         k.File("card/akam/enable_local.sh"),
+		"akam/restore_param.sh":        k.File("card/akam/restore_param.sh"),
+		"akam/dropbearmulti":           k.File(pathBin + "dropbearmulti"),
+		"akam/bin/akamd":               k.File(pathBin + "akamd"),
+		"akam/bin/akamd.BUILDINFO":     k.File(pathBin + "akamd.BUILDINFO"),
+		"akam/bin/akam-sntp":           k.File(pathBin + "akam-sntp"),
+		"akam/bin/akam-sntp.BUILDINFO": []byte("tool=akam-sntp\nsha256=" + buildinfo(k.File(pathBin+"akamd.BUILDINFO"), "sntp_sha256") + "\n"),
+		"akam/authorized_keys":         sdcard.PubKeyLF(in.PubKey),
+		"akam/wpa.conf":                wpa,
+		"akam/own_app":                 {}, // arms the stub: the card boots Akam
 	}
 	for _, f := range overlayScripts {
 		if f == "akam_flash_boot.sh" { // the flash-boot launcher is for the flashed image, not the card
@@ -133,6 +136,13 @@ func BuildCard(k *Kit, in CardInput) (*Card, error) {
 	}
 	if in.ParamConf {
 		files["akam/enable_param_conf"] = []byte{}
+	}
+	setup, err := in.Setup.Files()
+	if err != nil {
+		return nil, err
+	}
+	for name, data := range setup {
+		files["akam/"+name] = data
 	}
 	var names []string
 	for p, b := range files {

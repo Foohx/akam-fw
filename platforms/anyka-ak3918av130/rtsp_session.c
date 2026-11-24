@@ -32,6 +32,7 @@
 
 #include "aring.h"
 #include "audio.h"
+#include "audio_out.h"
 #include "cap.h"
 #include "log.h"
 #include "ptz.h"
@@ -45,7 +46,9 @@
 #include "rtsp_idle.h"
 #include "rtsp_in.h"
 #include "rtsp_sdp.h"
+#include "talk.h"
 #include "tx_pace.h"
+#include "lat_stat.h"
 
 #define SESSION_TIMEOUT_SEC 60
 #define VIDEO_CLOCK_RATE 90000
@@ -87,6 +90,7 @@ typedef struct {
     const char *drop_reason;
     net_tx_t tx;
     tx_pace_t pace;
+    lat_stat_t lat; /* frame age at send, logged every LAT_STAT_PERIOD_MS */
 
     a2k_stream_t *stream;
     int stream_idx;
@@ -112,6 +116,12 @@ typedef struct {
     rtp_aclock_t audio_clock;   /* sample index -> monotonic time, for the RTCP SR */
     rtp_astart_t audio_start;   /* holds audio until the first video frame, drops the backlog before it */
     int64_t next_sr_video_us, next_sr_audio_us;
+
+    /* ONVIF audio backchannel (streamid=2, TCP interleaved only): the client sends G.711 to the speaker. */
+    bool bc_setup;   /* SETUP of the backchannel done */
+    bool bc_playing; /* a talk session runs (talk_begin() succeeded) */
+    bool bc_noted;   /* the idle clock of the talk session was started */
+    uint8_t bc_rtp_ch, bc_rtcp_ch;
 
     rtsp_auth_conn_t auth;
     rtsp_in_t in;
@@ -182,9 +192,21 @@ static void play_count(Client *self, bool playing)
     pthread_mutex_unlock(&g_cl_mu);
 }
 
+/* Ends the talk session of this client (the speaker plays what is queued, then the amplifier idles off). Only the client that
+ * began it may end it: talk_end() acts on the one global session. */
+static void bc_stop(Client *self)
+{
+    if (self->bc_playing) {
+        talk_end(talk_global());
+        self->bc_playing = false;
+        self->bc_noted = false;
+    }
+}
+
 static void Client_drop(VSelf)
 {
     VSELF(Client);
+    bc_stop(self);
     play_count(self, false);
     release_video_track(self);
     release_audio_track(self);
@@ -220,6 +242,70 @@ static bool find_header_ci(const SmolRTSP_HeaderMap *m, const char *name, CharSl
     return false;
 }
 
+/* The request carries "Require: www.onvif.org/ver20/backchannel". */
+static bool request_requires_backchannel(const SmolRTSP_Request *req)
+{
+    CharSlice99 v;
+    return find_header_ci(&req->header_map, "Require", &v) && rtsp_require_has(v.ptr, v.len, RTSP_BACKCHANNEL_TAG);
+}
+
+/* Talk is offered only with the RTSP password on (Digest, valid credentials): there is no open talk mode (same rule as the 1080p). */
+static bool backchannel_available(void)
+{
+    return rtsp_auth_db_mode(&g_auth) == RTSP_AUTH_ON && audio_out_talk_available();
+}
+
+/* 551: the option the client requires is not supported; clients that always send Require (go2rtc) retry without it. */
+static void respond_backchannel_unsupported(SmolRTSP_Context *ctx)
+{
+    smolrtsp_header(ctx, SMOLRTSP_HEADER_UNSUPPORTED, "%s", RTSP_BACKCHANNEL_TAG);
+    smolrtsp_respond(ctx, SMOLRTSP_STATUS_OPTION_NOT_SUPPORTED, "Option not supported");
+}
+
+/* SETUP of the backchannel track. TCP interleaved only (this server has no UDP): a client that offers UDP is told 461 and retries. */
+static int setup_backchannel(Client *self, SmolRTSP_Context *ctx, const SmolRTSP_Request *req)
+{
+    CharSlice99 transport_val;
+    SmolRTSP_TransportConfig config;
+
+    if (!backchannel_available()) {
+        if (request_requires_backchannel(req))
+            respond_backchannel_unsupported(ctx);
+        else
+            smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_FOUND, "Not Found");
+        return -1;
+    }
+    if (!SmolRTSP_HeaderMap_find(&req->header_map, SMOLRTSP_HEADER_TRANSPORT, &transport_val)) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Transport not present");
+        return -1;
+    }
+    if (smolrtsp_parse_transport(&config, transport_val) == -1) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Malformed Transport");
+        return -1;
+    }
+    if (config.lower != SmolRTSP_LowerTransport_TCP) {
+        smolrtsp_respond(ctx, SMOLRTSP_STATUS_UNSUPPORTED_TRANSPORT, "Unsupported Transport");
+        return -1;
+    }
+    ifLet(config.interleaved, SmolRTSP_ChannelPair_Some, interleaved)
+    {
+        if (interleaved->rtp_channel == interleaved->rtcp_channel) {
+            smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "Bad interleaved channels");
+            return -1;
+        }
+        self->bc_rtp_ch = interleaved->rtp_channel;
+        self->bc_rtcp_ch = interleaved->rtcp_channel;
+        self->bc_setup = true;
+        a2k_log("backchannel: TCP interleaved (RTP ch %d, RTCP ch %d)", (int)interleaved->rtp_channel,
+                (int)interleaved->rtcp_channel);
+        smolrtsp_header(ctx, SMOLRTSP_HEADER_TRANSPORT, "RTP/AVP/TCP;unicast;interleaved=%d-%d",
+                        (int)interleaved->rtp_channel, (int)interleaved->rtcp_channel);
+        return 0;
+    }
+    smolrtsp_respond(ctx, SMOLRTSP_STATUS_BAD_REQUEST, "interleaved not found");
+    return -1;
+}
+
 static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req)
 {
     VSELF(Client);
@@ -228,9 +314,17 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     char sdp_buf[1536], fmtp[320];
     rtsp_sdp_params_t sp;
     int i;
+    rtsp_bc_decision_t bc;
 
     if (idx < 0) {
         smolrtsp_respond(ctx, SMOLRTSP_STATUS_NOT_FOUND, "Not Found");
+        return;
+    }
+    /* ONVIF backchannel: only for a client that asks for it (Require header). */
+    bc = rtsp_backchannel_decide(request_requires_backchannel(req), rtsp_auth_db_mode(&g_auth) == RTSP_AUTH_ON,
+                                 audio_out_talk_available());
+    if (bc == RTSP_BC_REFUSE) {
+        respond_backchannel_unsupported(ctx);
         return;
     }
     self->stream_idx = idx;
@@ -250,6 +344,7 @@ static void Client_describe(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
     sp.audio_off = !a2k_audio_up(); /* no microphone track unless --audio 1 and the capture is streaming right now */
     sp.audio_rate = 8000;
     sp.audio_channels = 1;
+    sp.backchannel = (bc == RTSP_BC_OFFER);
     if (rtsp_sdp_build(sdp_buf, sizeof sdp_buf, &sp) == 0) {
         smolrtsp_respond_internal_error(ctx);
         return;
@@ -269,6 +364,17 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
 
     if (self->is_playing) {
         smolrtsp_respond(ctx, SMOLRTSP_STATUS_METHOD_NOT_VALID_IN_THIS_STATE, "Method Not Valid in This State");
+        return;
+    }
+    if (rtsp_track_from_uri(CharSlice99_alloca_c_str(req->start_line.uri)) == RTSP_TRACK_BACKCHANNEL) {
+        /* Not tied to a video stream: a talk-only session has none. */
+        if (setup_backchannel(self, ctx, req) < 0)
+            return;
+        if (self->session_id == 0)
+            self->session_id = (uint64_t)rand();
+        smolrtsp_header(ctx, SMOLRTSP_HEADER_SESSION, "%llu;timeout=%d", (unsigned long long)self->session_id,
+                        SESSION_TIMEOUT_SEC);
+        smolrtsp_respond_ok(ctx);
         return;
     }
     idx = stream_from_uri(CharSlice99_alloca_c_str(req->start_line.uri));
@@ -336,13 +442,25 @@ static void Client_setup(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *r
 static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *req)
 {
     VSELF(Client);
-    uint64_t kseq;
+    const bool media = self->nal_transport || self->audio_rtp_transport;
     (void)req;
-    if ((!self->nal_transport && !self->audio_rtp_transport) || !self->stream) {
+    if ((!media && !self->bc_setup) || (media && !self->stream)) {
         smolrtsp_respond(ctx, SMOLRTSP_STATUS_METHOD_NOT_VALID_IN_THIS_STATE, "Method Not Valid in This State");
         return;
     }
-    if (!self->is_playing) {
+    if (self->bc_setup && !self->bc_playing) {
+        char ip[INET6_ADDRSTRLEN];
+        if (backchannel_available() && talk_begin(talk_global(), client_ip(self, ip, sizeof ip)) == 0) {
+            self->bc_playing = true;
+        } else {
+            a2k_log("backchannel: not started (no longer available or the speaker is busy)");
+            if (!media) { /* a talk-only session has nothing else to offer */
+                respond_backchannel_unsupported(ctx);
+                return;
+            }
+        }
+    }
+    if (media && !self->is_playing) {
         tx_pace_init(&self->pace);
         if (net_tx_queue_enable(&self->tx, self->stream_idx ? TX_QUEUE_SUB : TX_QUEUE_MAIN) < 0)
             a2k_log("no memory for the TCP send queue: this client keeps blocking writes");
@@ -371,14 +489,12 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
         self->is_playing = true;
         play_count(self, true);
         if (self->nal_transport) {
-            /* Start on a keyframe: when one is still in the ring begin there (instant start), else ask the encoder
-             * for one now (request_idr, done by the capture thread) and drop frames until it arrives. */
-            if (a2k_stream_latest_key(self->stream, &kseq)) {
-                self->cursor = kseq;
-            } else {
-                self->cursor = a2k_stream_head(self->stream);
-                a2k_stream_want_idr(self->stream);
-            }
+            /* Start on a keyframe: when a recent one (at most A2K_MAX_AGE_MS old) is in the ring begin there (instant
+             * start, a short burst), else ask the encoder for one now (request_idr, done by the capture thread) and
+             * drop frames until it arrives. Never the oldest frame of the ring. */
+            lat_stat_init(&self->lat);
+            if (!a2k_stream_join(self->stream, &self->cursor, rtp_mono_us(), (int64_t)A2K_MAX_AGE_MS * 1000))
+                a2k_stream_want_idr(self->stream); /* none, or one older than the age bound: a fresh one is cheaper than a stale start */
             self->need_idr = true;
             self->idr_wait_frames = 0;
         }
@@ -392,6 +508,7 @@ static void Client_teardown(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request
 {
     VSELF(Client);
     (void)req;
+    bc_stop(self);
     self->is_playing = false;
     play_count(self, false);
     respond_session_header(self, ctx);
@@ -555,6 +672,8 @@ static void send_video_frame(Client *client, const a2k_frame_t *f)
     pcfg.cap = kcap ? kcap + qcap : 0;
     pcfg.stall_ms = TX_PACE_STALL_MS;
     pcfg.max_skip_ms = tx_pace_max_skip_ms(s->gop / (s->fps ? s->fps : 1));
+    pcfg.max_lag_ms = TX_PACE_MAX_LAG_MS;
+    pcfg.rate_bps = (size_t)(s->kbps > 0 ? s->kbps : 1000) * 125u;
     pv = tx_pace_decide(&client->pace, &pcfg, backlog, f->len, room, f->key, ms_now(), &ev);
     if (pv != TX_PACE_SEND) {
         send_it = false;
@@ -563,7 +682,8 @@ static void send_video_frame(Client *client, const a2k_frame_t *f)
     if (pv == TX_PACE_DROP_CLIENT && !client->drop_reason)
         client->drop_reason = ev.drop_reason;
     if (ev.log_enter && ev.entered)
-        a2k_log("%s: client link slow (%zu bytes unsent): dropping video until the next keyframe", s->name, backlog);
+        a2k_log("%s: client link slow (%zu bytes unsent%s): dropping video until the next keyframe", s->name, backlog,
+                ev.lag ? ", backlog standing too long" : "");
     log_recovered = ev.log_leave && ev.left && pv == TX_PACE_SEND;
     if (log_recovered)
         client->pace_recovered = ev.run_skipped;
@@ -599,6 +719,7 @@ static void send_video_frame(Client *client, const a2k_frame_t *f)
                         s->name);
         } else if (r == SEND_OK) {
             client->sent++;
+            lat_stat_add(&client->lat, rtp_mono_us() - f->rx_us, backlog, ms_now());
             if (log_recovered)
                 a2k_log("%s: client link recovered: dropped %u frames, video resumed", s->name,
                         client->pace_recovered);
@@ -610,9 +731,31 @@ static void send_video_frame(Client *client, const a2k_frame_t *f)
 static void pump_video(Client *c)
 {
     int n;
+    unsigned long ln;
+    long lavg, lmax;
+    size_t lbl;
+    if (lat_stat_take(&c->lat, ms_now(), &ln, &lavg, &lmax, &lbl))
+        a2k_log("%s: frame age at send avg %ld ms max %ld ms over %lu frames, unsent backlog max %zu bytes",
+                c->stream->name, lavg, lmax, ln, lbl);
     for (n = 0; n < A2K_RING + 1; n++) {
         int lost = 0;
-        a2k_frame_t *f = a2k_stream_next(c->stream, &c->cursor, &lost);
+        unsigned dropped = 0;
+        a2k_frame_t *f;
+        /* Behind by more than A2K_MAX_AGE_MS (slow link, slow reader): skip to the newest recent keyframe, or drop
+         * the lot and wait for a new one, instead of playing the backlog late. */
+        int cu = a2k_stream_catchup(c->stream, &c->cursor, rtp_mono_us(), (int64_t)A2K_MAX_AGE_MS * 1000, &dropped);
+        if (cu) {
+            c->need_idr = true;
+            c->idr_wait_frames = 0;
+            c->skipped += dropped;
+            if (cu == 2)
+                a2k_stream_want_idr(c->stream);
+            if (c->audio_rtp_transport)
+                rtp_astart_arm(&c->audio_start);
+            a2k_log("%s: client %u frames behind (older than %d ms), %s", c->stream->name, dropped, A2K_MAX_AGE_MS,
+                    cu == 1 ? "skipping to the newest keyframe" : "dropping to the next keyframe");
+        }
+        f = a2k_stream_next(c->stream, &c->cursor, &lost);
         if (lost && !c->need_idr) {
             /* Frames this client never took were overwritten: its P-frame references are gone. */
             c->need_idr = true;
@@ -672,6 +815,9 @@ static void pump_audio(Client *c)
             return;
         if (rtp_astart_stale(&c->audio_start, t_end))
             continue; /* captured before the first video frame: backlog */
+        /* Half duplex (audio.talk_duplex): while speech of the backchannel plays, the microphone is replaced by silence; the packet and its
+         * timestamp go on as usual. */
+        (void)talk_gate_mic(talk_global(), pcm, ns, rtp_mono_us());
         send_audio_period(c, pcm, ns, first, t_end);
         if (c->tx_fail)
             return;
@@ -830,6 +976,10 @@ static int in_on_message(void *user, const char *data, size_t len)
     }
     if (ok) {
         smolrtsp_dispatch(*c->writer, *c->controller, &req);
+        if (c->client->bc_playing && !c->client->bc_noted) {
+            c->client->bc_noted = true; /* PLAY of the backchannel: start of its idle clock */
+            rtsp_idle_talk_activity(&c->client->idle, rtp_mono_us());
+        }
     } else {
         a2k_log("request parse failed (%zu bytes), answering 400", len);
         send_error_reply(c->client, 400, "Bad Request", data, len);
@@ -841,6 +991,27 @@ static int in_on_message(void *user, const char *data, size_t len)
 static int in_on_interleaved(void *user, uint8_t channel, const uint8_t *data, size_t len)
 {
     InCtx *c = user;
+    if (c->client->bc_setup) {
+        /* The backchannel's channel pair is routed first: its RTP is audio for the speaker, its RTCP is only watched for a BYE. */
+        if (channel == c->client->bc_rtp_ch) {
+            if (c->client->bc_playing) {
+                int64_t now = rtp_mono_us();
+                talk_rtp(talk_global(), data, len, now);
+                rtsp_idle_talk_activity(&c->client->idle, now);
+            }
+            return 0;
+        }
+        if (channel == c->client->bc_rtcp_ch) {
+            if (rtsp_rtcp_scan(data, len, NULL)) {
+                bc_stop(c->client);
+                if (!c->client->is_playing) {
+                    c->client->drop_reason = "RTCP BYE from client";
+                    return 1;
+                }
+            }
+            return 0;
+        }
+    }
     if (((c->client->nal_transport && channel == c->client->rtcp_channel) ||
          (c->client->audio_rtp_transport && channel == c->client->audio_rtcp_channel)) &&
         rtsp_rtcp_scan(data, len, NULL)) {
@@ -888,7 +1059,12 @@ static void *client_thread(void *arg)
         pfds[1].fd = client->wake[0];
         pfds[1].events = POLLIN;
         pfds[1].revents = 0;
-        wait_ms = client->is_playing ? POLL_MAX_MS : rtsp_idle_wait_ms(&client->idle, 0, rtp_mono_us(), POLL_MAX_MS);
+        if (client->is_playing)
+            wait_ms = POLL_MAX_MS;
+        else if (client->bc_playing) /* a talk-only session wakes at least every 100 ms for the tail flush and its own idle clock */
+            wait_ms = rtsp_idle_talk_wait_ms(&client->idle, rtp_mono_us(), 100);
+        else
+            wait_ms = rtsp_idle_wait_ms(&client->idle, 0, rtp_mono_us(), POLL_MAX_MS);
         poll_ret = poll(pfds, 2, wait_ms);
         if (poll_ret < 0) {
             if (errno == EINTR)
@@ -948,8 +1124,31 @@ static void *client_thread(void *arg)
                 break;
         }
 
+        if (client->bc_playing) {
+            /* Talk needs the password on and the speaker usable: switching either off (or audio.talk_enable 0) ends the talk; a video
+             * stream of the same connection stays. */
+            if (rtp_mono_us() >= next_auth_check_us) {
+                next_auth_check_us = rtp_mono_us() + 1000000;
+                if (!rtsp_auth_session_ok(&g_auth, &client->auth) || rtsp_auth_db_mode(&g_auth) != RTSP_AUTH_ON) {
+                    client->drop_reason = "RTSP credentials changed or authentication enabled";
+                    break;
+                }
+            }
+            if (!audio_out_talk_available()) {
+                a2k_log("backchannel: talk switched off or speaker unavailable, ending it");
+                bc_stop(client);
+                if (!client->is_playing) {
+                    client->drop_reason = "talk is no longer available";
+                    break;
+                }
+            } else {
+                talk_tick(talk_global(), rtp_mono_us());
+            }
+        }
         if (!client->is_playing) {
-            const char *why = rtsp_idle_check(&client->idle, 0, rtp_mono_us());
+            /* A talk-only session has its own clock: 30 s without audio. */
+            const char *why = client->bc_playing ? rtsp_idle_check_talk(&client->idle, rtp_mono_us())
+                                                 : rtsp_idle_check(&client->idle, 0, rtp_mono_us());
             if (why) {
                 client->drop_reason = why;
                 break;
@@ -1035,7 +1234,7 @@ static void refuse_busy(int fd)
 static void tune_client_socket(int fd)
 {
     struct timeval snd_to = { 1, 0 };
-    int on = 1, sndbuf = 256 * 1024, ka_idle = 30, ka_intvl = 10, ka_cnt = 3;
+    int on = 1, sndbuf = TX_PACE_SNDBUF, ka_idle = 30, ka_intvl = 10, ka_cnt = 3;
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof snd_to);
     setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on);
     setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof sndbuf);

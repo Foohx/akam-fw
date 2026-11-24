@@ -154,3 +154,48 @@ func TestCatalogCoversTheCommandsAndWiFiIsReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// The orientation options of the 1080p (image.flip, image.mirror, image.ceiling): the same names and 0/1 values as the 2K rows, sent on the
+// control port, applied at once and saved on the camera.
+func TestOrientationOptions(t *testing.T) {
+	for _, id := range []string{"image.flip", "image.mirror", "image.ceiling"} {
+		o, ok := Find(id)
+		if !ok || o.Key != id || o.Kind != Enum || o.Applies != Now || o.Persisted != PersistCamera || o.ReadOnly {
+			t.Errorf("%s: %+v (found %v)", id, o, ok)
+		}
+		for _, v := range []string{"0", "1"} {
+			if _, err := Validate(id, v); err != nil {
+				t.Errorf("%s %s: %v", id, v, err)
+			}
+		}
+		for _, v := range []string{"2", "on", "", "-1", "01", "1 ; reboot"} {
+			if _, err := Validate(id, v); err == nil {
+				t.Errorf("%s %q accepted", id, v)
+			}
+		}
+	}
+	f := &fakeCtl{vals: map[string]string{}}
+	res, err := Apply(f.ex, []Change{{"image.flip", "1"}, {"image.mirror", "1"}})
+	if err != nil || len(res) != 2 || res[0].Applies != Now || res[0].Persisted != PersistCamera || res[0].Restart {
+		t.Errorf("apply: %v %+v", err, res)
+	}
+}
+
+// The opt-in that opens the 1080p's text port to the network replaced the network debug mode in the catalogue.
+func TestControlLanOptionReplacedTheDebugMode(t *testing.T) {
+	if _, ok := Find("debug"); ok {
+		t.Error("the network debug mode is gone")
+	}
+	o, ok := Find("control.lan")
+	if !ok || o.Kind != Enum || o.Key != "control.lan" || o.Applies != VideoRestart || o.Persisted != PersistCamera || o.ReadOnly {
+		t.Fatalf("%+v %v", o, ok)
+	}
+	for _, v := range []string{"0", "1"} {
+		if got, err := Validate("control.lan", v); err != nil || got != v {
+			t.Errorf("%q: %q %v", v, got, err)
+		}
+	}
+	if _, err := Validate("control.lan", "2"); err == nil {
+		t.Error("2 accepted")
+	}
+}

@@ -716,7 +716,7 @@ cmd_build() {
         { ui_fail "build tools are missing." "run the install command printed above yourself, then retry."; return 1; }
     fi
     run_cmd bash "$ROOT/tools/build/bootstrap.sh" || return 1
-    run_cmd bash -c "cd '$ROOT' && . tools/build/env.sh && make -C platforms/anyka-ak3918 ak_rtsp flash_tool" || return 1
+    run_cmd bash -c "cd '$ROOT' && . tools/build/env.sh && make -C platforms/anyka-ak3918 akamd flash_tool" || return 1
     run_cmd bash "$ROOT/tools/dropbear/build_dropbear.sh" || return 1
     state_set mode source
     state_set kit_path ""

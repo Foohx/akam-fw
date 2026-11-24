@@ -1,6 +1,6 @@
 # Rotatable 2K: front button (hal_input) and runtime image zones
 
-Both are in the own app `akam2k_rtsp`. Nothing here was run on a camera yet (host-tested with fake gpio, clock and motor).
+Both are in the own app `akamd`. Nothing here was run on a camera yet (host-tested with fake gpio, clock and motor).
 
 ## The front button
 
@@ -27,7 +27,7 @@ API, by `tests/rot2k_control_api_http_test.sh`.
 | element | held |
 |---|---|
 | `S` short | < `short_max_ms` (default 1 s) |
-| `L` long | >= `long_ms` (default 2 s; `button_long_ms` of `akam2k.conf` seeds it) |
+| `L` long | >= `long_ms` (default 2 s; `button_long_ms` of `akam.conf` seeds it) |
 | `V` very long | >= `very_long_ms` (default 5 s); only when some binding contains a `V`, otherwise such a hold is just a long press |
 | between `short_max_ms` and `long_ms` | dead zone: the whole interaction is dropped, nothing happens |
 
@@ -90,9 +90,9 @@ without a binding is cleared with an empty retained config; a change of the bind
 - A button already held when the app starts is ignored until released.
 - The LED cue is a transient override of the status LED engine (`a2k_leds_blip`): it replaces the rules for its duration, then the rules come back. With the
   master LED mode `off` there is no cue (a dark LED stays dark).
-- `button_long_ms` (`akam2k.conf`, 1500..10000, default 2000) is `--button-long-ms`; it only seeds the default config (a saved config has its own `long_ms`).
+- `button_long_ms` (`akam.conf`, 1500..10000, default 2000) is `--button-long-ms`; it only seeds the default config (a saved config has its own `long_ms`).
 - Gesture messages wait for the broker at most 4 deep; a dead broker drops them.
-- Cost (ARM uClibc `-Os`, stripped `akam2k_rtsp`): 360,552 -> 381,352 bytes (+20,800) for the gesture engine, bindings, modes, API handlers and MQTT triggers; about 30 KB of
+- Cost (ARM uClibc `-Os`, stripped `akamd`): 360,552 -> 381,352 bytes (+20,800) for the gesture engine, bindings, modes, API handlers and MQTT triggers; about 30 KB of
   static RAM (live config, modes and the dispatch snapshot); no new thread. Not run on a camera yet (host-tested with a fake line, clock and actions).
 
 ## Runtime image zones and ignore zones
@@ -146,7 +146,7 @@ The two RTSP streams (0 = main 2304x1296 H.264 Main, 1 = sub 640x360 H.264 Main,
 15 fps, VBR, QP 32..51 main / 26..44 sub, target `main_kbps` 2000 / `sub_kbps` 800, peak 1.25 x the target, GOP `gop` 30). The stock firmware uses AVBR 630/800 kbit/s on the
 main stream (archive/rot2k-porting-plan.md "Point 4"); `video0_rc=avbr` with `video0_kbps=630` reproduces it.
 
-| setting | `akam2k.conf` key | Home Assistant entity (`number` / `select`, category config) | range main / sub |
+| setting | `akam.conf` key | Home Assistant entity (`number` / `select`, category config) | range main / sub |
 |---|---|---|---|
 | target bit rate | `video0_kbps` / `video1_kbps` (win over `main_kbps` / `sub_kbps`) | `video0_kbps` "Video main bit rate" | 64..8000 / 32..1000 kbit/s |
 | peak bit rate | `video0_max_kbps` / `video1_max_kbps` | `video0_max_kbps` | 0 = automatic (1.25 x target), else 64..12000 / 32..1500; never below the target |
@@ -157,7 +157,7 @@ main stream (archive/rot2k-porting-plan.md "Point 4"); `video0_rc=avbr` with `vi
 
 14 entities in all (`video0_*`, `video1_*`), with the same command topic `BASE/<id>/set` / state topic `BASE/<id>/state` pattern as the other controls: numbers are plain
 digits (anything else is refused), the select takes exactly one option, retained commands are ignored, the rate limit is shared. A set that is inconsistent (min QP
-above max QP, peak below the target) is refused whole and the real value is published back. `akam2k.conf` values are validated twice, by the supervisor
+above max QP, peak below the target) is refused whole and the real value is published back. `akam.conf` values are validated twice, by the supervisor
 (`own_app_run.sh`: digits only, per-stream ranges, rc exact word, a bad line is logged and ignored) and by the app (an inconsistent stream keeps its defaults).
 
 **Live or restart?** The stock `yy_cam` never calls an `ak_venc_set_*` function; `libmpi_venc` exports `ak_venc_set_fps`, `set_qp`, `set_rc_param`, `set_rc_type` but their
@@ -170,7 +170,7 @@ thread gives up like any dead channel (the supervisor restarts the app). Candida
 `set_qp` / `set_fps`.
 
 **Persistence:** runtime changes are stored atomically in `/config/akam/video` (jffs2), as the keys that differ from the conf-derived base (a value set back to the base leaves
-the file; an empty file is valid). Source order at start: built-in defaults, `akam2k.conf`, then the runtime file (it wins; an invalid file is ignored as a whole and logged).
+the file; an empty file is valid). Source order at start: built-in defaults, `akam.conf`, then the runtime file (it wins; an invalid file is ignored as a whole and logged).
 If the encoder refuses the runtime values at boot they are forgotten (file emptied) and the conf / default values are retried once, so a bad value never causes a boot loop.
-Delete `/config/akam/video` to go back to `akam2k.conf`. Not validated on hardware: QP below 32, CBR / AVBR on the main stream and fps below 15 (the open_ex parameter checks of the
+Delete `/config/akam/video` to go back to `akam.conf`. Not validated on hardware: QP below 32, CBR / AVBR on the main stream and fps below 15 (the open_ex parameter checks of the
 vendor lib are only partly known; a refusal is handled as above).

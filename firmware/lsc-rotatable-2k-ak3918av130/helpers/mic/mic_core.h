@@ -1,4 +1,4 @@
-/* akam2k_mic_core -- the pure part of the akam2k_mic proof of concept: WAV header, level statistics in dBFS, and the
+/* akam2k_mic_core -- the pure part of the akam-mic proof of concept: WAV header, level statistics in dBFS, and the
  * output path rule. No I/O, no libm (the dB maths uses its own log2), so it is host-testable and links on the camera
  * with plain libc. Samples are native int16; the camera (ARM, little endian) and the host test are both LE. */
 #ifndef AKAM2K_MIC_CORE_H

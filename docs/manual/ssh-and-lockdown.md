@@ -1,5 +1,7 @@
 # SSH Provisioning and Telnet/FTP Lockdown
 
+> **LSC Indoor 1080p only** (8 partitions, APP in `mtd7`). The 2K has its own pages: [install](../porting/lsc-rotatable-2k/README.md#install), [back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock), [UART recovery](../porting/lsc-rotatable-2k/uart-recovery.md).
+
 Akam replaces the stock remote access (Telnet 23, FTP 21, and whatever the stock boot scripts
 open) with one service: **SSH on port 22, root login by public key only**, no password. The SSH
 server is [Dropbear](https://github.com/mkj/dropbear) 2026.94 built without password authentication,
@@ -101,8 +103,8 @@ Rules enforced by the script:
 Insert the card **before applying power**. The keys are read only when `akam_ssh.sh` starts at boot, so
 a card inserted later has no effect until the next power cycle.
 
-At boot the wrapper (`ak_rtsp_wrapper.sh`) starts `akam_ssh.sh` in the background before it brings up
-Wi-Fi and starts `ak_rtsp`; the helper can never delay or stop `ak_rtsp` (its exit status is ignored).
+At boot the wrapper (`akam_run.sh`) starts `akam_ssh.sh` in the background before it brings up
+Wi-Fi and starts `akamd`; the helper can never delay or stop `akamd` (its exit status is ignored).
 It then:
 
 1. takes a lock so a respawned wrapper cannot start a second copy;
@@ -317,7 +319,7 @@ effect, or a late start by another script. It:
   `vsftpd`, or one of the SD-hook respawn scripts `telnet.sh` and `hack.sh` (respawn scripts first);
 - runs every 5 s for 2 minutes after boot, then every 60 s without end, so a restart after a Wi-Fi
   reconnect is also caught;
-- never touches `ak_rtsp`, `dropbear`, `wpa_supplicant`, `cmdserver`, `msgserver` or `akam_*`;
+- never touches `akamd`, `dropbear`, `wpa_supplicant`, `cmdserver`, `msgserver` or `akam_*`;
 - uses only `ps` and `kill` (no `pkill`/`killall`), and opens no network socket;
 - logs to `/tmp/akam_lockdown.log`.
 

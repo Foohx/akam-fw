@@ -71,10 +71,10 @@ func TestGetKitDownloadsAndVerifiesASignedKit(t *testing.T) {
 		"Downloading the lsc-indoor-1080p-ak3918 kit 1.0.0 from "+ks.srv.URL+"/firmware-v1.0.0 (HTTPS only; nothing from it is run before it is verified).",
 		"ok: akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz sha256 "+b.TarSHA+" matches SHA256SUMS",
 		"ok: signature valid (Good \"akam-release\" signature for akam-release with ED25519 key SHA256:",
-		"ok: archive layout is safe", "ok: kit_format 1 is supported", "MANIFEST entries match (akam_version 1.0.0",
-		"Kit verified (format 1, sha256 "+b.TarSHA[:12]+"...).",
+		"ok: archive layout is safe", "ok: kit_format 2 is supported", "MANIFEST entries match (akam_version 1.0.0",
+		"Kit verified (format 2, sha256 "+b.TarSHA[:12]+"...).",
 		"Tip: compare that sha256 with the one in the release notes, or pass --expect-sha256 HEX.")
-	if e.readState("mode") != "kit" || e.readState("kit_sha") != b.TarSHA || e.readState("kit_unsigned_ok") != "0" || e.readState("kit_version") != "1.0.0" || e.readState("kit_format") != "1" {
+	if e.readState("mode") != "kit" || e.readState("kit_sha") != b.TarSHA || e.readState("kit_unsigned_ok") != "0" || e.readState("kit_version") != "1.0.0" || e.readState("kit_format") != "2" {
 		t.Errorf("state: mode=%q sha=%q unsigned=%q version=%q format=%q", e.readState("mode"), e.readState("kit_sha"), e.readState("kit_unsigned_ok"), e.readState("kit_version"), e.readState("kit_format"))
 	}
 	if e.readState("step_get_kit_done") == "" {

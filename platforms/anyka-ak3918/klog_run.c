@@ -145,8 +145,8 @@ int klog_run(const char *kmsg_path, const char *sock_path, long window_s)
     return rc;
 }
 
-/* The process shows up as "akam_klog" in ps and /proc/PID/cmdline instead of a second "ak_rtsp", so the
- * health checks that look for ak_rtsp (CPU, pid) keep seeing one process. */
+/* The process shows up as "akam_klog" in ps and /proc/PID/cmdline instead of a second "akamd", so the
+ * health checks that look for akamd (CPU, pid) keep seeing one process. */
 static void rename_process(char **argv)
 {
     static const char name[] = "akam_klog";
@@ -168,11 +168,11 @@ int klog_main(int argc, char **argv)
         else if (!strcmp(argv[i], "--sock") && i + 1 < argc) snprintf(sock_buf, sizeof(sock_buf), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--window") && i + 1 < argc) window = atol(argv[++i]);
         else {
-            fprintf(stderr, "usage: ak_rtsp klog [--kmsg PATH] [--sock PATH] [--window SECONDS]\n");
+            fprintf(stderr, "usage: akamd klog [--kmsg PATH] [--sock PATH] [--window SECONDS]\n");
             return 2;
         }
     }
-    /* same exe as the streamer: `kill -USR1 $(pidof ak_rtsp)` (frame grab) must not reach this process */
+    /* same exe as the streamer: `kill -USR1 $(pidof akamd)` (frame grab) must not reach this process */
     signal(SIGUSR1, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
     rename_process(argv);

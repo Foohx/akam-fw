@@ -17,4 +17,4 @@ trap 'rm -rf "$WORK"' EXIT
  -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/audio_sup_test" \
     "$REPO/tests/native/audio_sup_test.c" "$REPO/platforms/anyka-ak3918/audio.c" "$REPO/src/net/rtsp/rtp_clock.c"
-"$WORK/audio_sup_test" 2>"$WORK/err.txt" | grep -v '^\[ak_rtsp\]'
+"$WORK/audio_sup_test" 2>"$WORK/err.txt" | grep -v '^\[akamd\]'

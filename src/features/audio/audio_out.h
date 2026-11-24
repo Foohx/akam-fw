@@ -8,7 +8,7 @@
 
 /* Speaker output through /dev/pcmC0D0p (specs/audio.md, step A).
  *
- * ak_rtsp already owns the playback device for its whole life (the driver
+ * akamd already owns the playback device for its whole life (the driver
  * refuses a second open) and used to write silence to it. When audio out is
  * enabled this module replaces that silence loop: it runs the stock vendor
  * device sequence SET_SOURCES -> SET_SPEAKER -> PREPARE -> RESUME -> GET_RATE
@@ -112,6 +112,7 @@ typedef struct audio_out {
     int      applied_gain, applied_source;
     int64_t  last_audible_ms;
     int64_t  open_ms;
+    int      guard_arm;         /* 1 (default, the 1080p): every start writes the crash guard first. 0 (the 2K): a start writes nothing; only an existing marker is honoured */
     int      guard_active;
     int      had_error;
     int      fails;
@@ -200,6 +201,14 @@ void ao_ctl_list(audio_out_t *ao, void (*emit)(void *arg, const char *line), voi
 
 /* ---- singleton used by the camera ---------------------------------------- */
 
+/* 1 = every start writes the crash guard marker (default); 0 = starts write nothing (an existing marker still blocks the start). */
+void audio_out_set_guard_arm(int arm);
+/* Required, before anything else touches the singleton: the playback node ("/dev/pcmC0D0p" on both SoCs, named by the model: shared code names no device), the directory of the audio_out file
+ * and of the crash guard, and whether the speaker starts enabled when the file does not say (the 1080p: "/etc/config/akam", 1; the 2K:
+ * "/config/akam", 0, opt-in until it has run on a camera). The strings must stay valid for the process. */
+void audio_out_setup(const char *dev_path, const char *conf_dir, int default_enabled);
+/* 1 once the playback thread owns the device (audio_out_start succeeded and audio_out_stop did not run since). */
+int  audio_out_running(void);
 /* Called by audio.c after capture runs. Loads the config, honours the crash
  * guard, runs the device sequence and starts the playback thread. Returns 0
  * when audio out owns the playback device; -1 when disabled or failed (the
@@ -216,7 +225,7 @@ int  audio_out_talk_available(void);
 int  audio_out_talk_half_duplex(void);
 int  audio_out_feeder_claim(void);
 void audio_out_feeder_release(void);
-/* audio.mic_enable as saved ("mic_enable=" in the audio_out file, default 1); read by audio_start(). */
+/* audio.mic_enable as saved ("mic_enable=" in the audio_out file, default 0: opt-in); read by audio_start(). */
 int  audio_out_mic_enable(void);
 /* Saving on or off for the next 8091 SETs (loopback = 1, remote = 0), set by control.c under its SET lock. */
 void audio_out_set_persist(int persist);

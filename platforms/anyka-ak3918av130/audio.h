@@ -1,6 +1,6 @@
 /* Microphone capture of the Rotatable 2K own app (plan step "RTSP track", docs/porting/lsc-rotatable-2k/audio-findings.md).
  *
- * OFF by default (privacy): the app starts it only with --audio 1 (akam2k.conf audio=1). Off, the device is never
+ * OFF by default (privacy): the app starts it only with --audio 1 (akam.conf audio=1). Off, the device is never
  * opened, no thread runs, the ring is never touched and the SDP has no audio track.
  *
  * One capture thread reads the PCM capture node (read only, 8000 Hz mono 16 bit, 512-byte periods, the ioctl sequence verified

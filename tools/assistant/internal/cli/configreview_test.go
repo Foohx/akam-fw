@@ -18,10 +18,12 @@ import (
 // Review round on dev (5a2ef00): the first-install choice that must stay pending, what counts as a clean
 // apply, a config that does not mention a key, partial reads, key paths, MQTT options, saved passwords.
 
+// ncCount is the number of reads of the camera's settings (one GET /settings per exchange of the signed API; it was one `nc`
+// session on the text port).
 func ncCount(e *env) int {
 	n := 0
-	for _, c := range e.cam.Commands() {
-		if strings.Contains(c, "nc -w 2") {
+	for _, r := range e.cam.APIRequests() {
+		if r.Method == "GET" && r.Path == "/akam/v1/settings" {
 			n++
 		}
 	}

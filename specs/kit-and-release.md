@@ -21,8 +21,8 @@ the firmware version, plain semver, without a prefix; `get-kit` depends on that 
 
 | Path in the kit | Content |
 |---|---|
-| `bin/ak_rtsp`, `bin/dropbearmulti`, `bin/flash_tool` | Stripped ARM binaries (static musl, built with the pinned Zig). Exactly these three |
-| `overlay/` | Files copied into the APP tree: `sbin/ak_rtsp_wrapper.sh`, `sbin/akam_*.sh`, `local/_ht_process.ini`, links `bin/dropbear`, `bin/dropbearkey` |
+| `bin/akamd`, `bin/dropbearmulti`, `bin/flash_tool` | Stripped ARM binaries (static musl, built with the pinned Zig). Exactly these three |
+| `overlay/` | Files copied into the APP tree: `sbin/akam_run.sh`, `sbin/akam_*.sh`, `local/_ht_process.ini`, links `bin/dropbear`, `bin/dropbearkey` |
 | `patches/` | `patch_service_sh.sh`, `patch_ethernet_hostname.sh` (host tools run at image build time) |
 | `scripts/flash/` | The tracked scripts of `tools/flash_scripts/` (flash and restore helpers) |
 | `scripts/hwcheck/akam_hwcheck.sh` | The read-only hardware check |
@@ -41,27 +41,29 @@ The kit build refuses forbidden content: any private key, `*_host_key*`, `id_rsa
 
 ### MANIFEST.txt
 
-`key=value` lines: `kit_format` (1), `kit_grade` (`release` or `test`), `akam_version` (the firmware version), `model` (the
+`key=value` lines: `kit_format` (2), `kit_grade` (`release` or `test`), `akam_version` (the firmware version), `model` (the
 camera model id), `source_commit`, `built_utc`, `deps_lock_sha256`, `zig_version`, `target` (`arm-linux-musleabi`),
 `time64_gate=pass`, the gate tool hash and disassembler, `supported_hardware_sha256`, `supported_hardware` (counts per
 status). `model` is required, appears exactly once, follows the model id rule of section 4, must equal the `model=` header of
 `supported_hardware.txt` and gives the top directory name (`akam-kit-<model>-<akam_version>`).
 
-`kit_format` stays 1: `model=` was added before the first public release, so no kit without it was ever published, and the
-assistant and the verifiers simply require it. Bump `KIT_FORMAT` in `make_kit.sh` and `SUPPORTED_KIT_FORMATS` in
+`kit_format` is 2: format 1 (firmware 0.1.x) carried the camera program as `bin/ak_rtsp` (2K: `appfs/bin/akam2k_rtsp`, `akam2k_sntp`);
+format 2 calls it `bin/akamd` (2K: `appfs/bin/akamd`, `akam-sntp`) and the image gets a compatibility link `bin/ak_rtsp -> akamd` for one
+release. Old assistants and the old wizard refuse a format 2 kit ("use a matching version"); the current verifiers and assistant read
+both. `model=` is required in every kit. Bump `KIT_FORMAT` in `make_kit.sh` and `make_kit_2k.sh` and `SUPPORTED_KIT_FORMATS` in
 `verify_kit.sh` together when the layout changes incompatibly; installers accept only the formats listed in
 `tools/wizard/kit_compat.txt` (and the assistant's own list). `kit_format` is the compatibility contract between an
 installer and a kit; the model decides which camera a kit is for.
 
 ### Build gates
 
-- `ak_rtsp`, `flash_tool` are rebuilt from clean; `dropbearmulti` is rebuilt with `tools/dropbear/build_dropbear.sh`.
-- **time64 gate** (blocking): `tools/build/check_time32.sh --require-263` on `ak_rtsp` and `dropbearmulti`. If it fails no
+- `akamd`, `flash_tool` are rebuilt from clean; `dropbearmulti` is rebuilt with `tools/dropbear/build_dropbear.sh`.
+- **time64 gate** (blocking): `tools/build/check_time32.sh --require-263` on `akamd` and `dropbearmulti`. If it fails no
   kit is written. See [architecture.md](architecture.md) section 8.
 - The tree MUST be clean (no uncommitted and no untracked file) and on the commit to release. Anything else
   (`AKAM_KIT_ALLOW_DIRTY`, `--no-build`, a gate override) yields `kit_grade=test`.
 - The tarball is reproducible for identical inputs: sorted names, fixed mtime from `SOURCE_DATE_EPOCH`, owner 0/0,
-  `xz -9e -T1`. Two separate compilations of `ak_rtsp` are not byte-identical because it embeds a build number and
+  `xz -9e -T1`. Two separate compilations of `akamd` are not byte-identical because it embeds a build number and
   timestamp.
 
 ## 2. Checksums and signature
@@ -207,10 +209,10 @@ label each platform `tested` or `untested`.
 | Artifact | Budget | Notes |
 |---|---|---|
 | APP image | Exactly 5,242,880 bytes | The squashfs content is about 2.6 MB; the build fails when the image comes within one block of the limit (unless `AKAM_ALLOW_TIGHT=1`) |
-| `ak_rtsp` stripped | About 0.33 MB | Features are measured: ONVIF +60 to 110 KB, MQTT about +39 KB (+23 KB without DNS), backchannel about +13 KB. A feature that costs more than twice its estimate, or 200 KB of RAM, stops for a decision |
+| `akamd` stripped | About 0.33 MB | Features are measured: ONVIF +60 to 110 KB, MQTT about +39 KB (+23 KB without DNS), backchannel about +13 KB. A feature that costs more than twice its estimate, or 200 KB of RAM, stops for a decision |
 | Stack protector | Costs +3.1 % on every object (+10.2 KB), over the 2 % budget; applied only to the objects that parse untrusted input (ONVIF, SOAP, HTTP, `rtsp_auth`, `control`): +1.06 % | `_FORTIFY_SOURCE`, RELRO and PIE do not apply to static non-PIE musl |
 | RAM | Idle RSS and per-feature deltas are recorded per feature; video frame rate and bitrate must not change beyond measurement noise with all optional features idle | Not yet measured on a camera |
-| Go assistant binary | 12 MiB hard, 11 MiB soft per target | Measured 9.5 to 10.8 MiB with go1.27.3 (re-measure with the pinned Go); later features pushed windows/amd64 and darwin/amd64 past 11 MiB |
+| Go assistant binary | 20 MiB hard, 16 MiB soft per target (raised from 12/11 MiB on 2026-11-23 by the maintainer: features outgrew it, 12 MiB left windows/amd64 46 KB of margin) | Measured 9.5 to 10.8 MiB with go1.27.3 (re-measure with the pinned Go); later features pushed windows/amd64 and darwin/amd64 past 11 MiB |
 | Assistant archive | 5 MiB per target | |
 | Assistant start | Menu in under 100 ms (`help` under 50 ms); idle RSS under 40 MiB; `talk` under 5 % of one core | Start in about 2 ms measured on the first build |
 

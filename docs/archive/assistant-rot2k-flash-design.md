@@ -1,15 +1,17 @@
 # Assistant: flashing the rotatable 2K (design, step 2)
 
-Status: **mostly implemented, historical design**. Built: the camera type and the refusal of the 1080p flows on a 2K, the
+> **Superseded (2026-11-24).** This is the design of the 2K flows of the assistant. They are built (`prepare-2k-sd`, `backup-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`); the user steps are in [docs/assistant.md](../assistant.md) and the [2K install page](../porting/lsc-rotatable-2k/README.md#install). The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and findings only; do not read its status as current.
+
+Status: **implemented, historical design**. Built: the camera type and the refusal of the 1080p flows on a 2K, the
 backup (`backup-2k`), the card first install (`prepare-2k-sd`), the config seeding (`seed-2k`), the build and the flash of
 section 3.4 (`appfs-build`, `appfs-flash`: `internal/installer/appfs`, Go ports of `build_appfs.sh` and `flash_appfs.sh`) and
-the update flow (`update`, `update --rollback`); see [assistant.md](assistant.md#install-and-update-of-the-2k-from-the-assistant-prepare-2k-sd-update).
+the update flow (`update`, `update --rollback`); see [the 2K flows](../assistant/rot2k-flows.md).
 All host-tested only. **Left to do:** the staged-reboot screens of section 3.5, and a `restore-2k` command (back to stock is manual:
-[back to stock](porting/lsc-rotatable-2k/README.md#back-to-stock)). The text below is the original design and is not
+[back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock)). The text below is the original design and is not
 updated line by line.
 
-Sources of truth (the assistant must not re-implement them, it drives them): [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md),
-[flash test plan](archive/rot2k-flash-test-plan.md), [UART recovery](porting/lsc-rotatable-2k/uart-recovery.md).
+Sources of truth (the assistant must not re-implement them, it drives them): [card-less appfs](../porting/lsc-rotatable-2k/cardless-appfs.md),
+[flash test plan](rot2k-flash-test-plan.md), [UART recovery](../porting/lsc-rotatable-2k/uart-recovery.md).
 
 ## 1. Principles
 
@@ -72,7 +74,7 @@ Outcome: the 2K runs Akam from the card. This is a complete, supported end state
 ### 3.3 Config seeding (before any flash)
 
 For card-less boot, Wi-Fi and the SSH key live in `/config/akam` (jffs2, survives the appfs flash): `wpa.conf` (0600),
-`authorized_keys`, optional `akam2k.conf`, `zones`, `mqtt`, `rtsp.conf`, `ntp`. The assistant writes them over SSH with
+`authorized_keys`, optional `akam.conf`, `zones`, `mqtt`, `rtsp.conf`, `ntp`. The assistant writes them over SSH with
 the commands of cardless-appfs.md section 4 (small jffs2 writes, `umask 077`, nothing printed) and **lists them back**.
 It then tests an SSH login with the key. Without `wpa.conf` a card-less camera loops in resets, so this stage is a hard
 precondition of flashing, not a suggestion.
@@ -125,7 +127,7 @@ Each step has a timeout and a clear failure text ("no answer after 4 minutes: th
 | Situation | What the assistant says and does |
 |---|---|
 | boot fails card-less, appfs mountable | "Power off, insert the Akam SD card, power on": the card wins; then offer to re-flash the stock `mtd3.bin` of the backup with the same worker (rollback), after confirmation |
-| flash interrupted, camera dead | stop; point to [uart-recovery.md](porting/lsc-rotatable-2k/uart-recovery.md) (`sf write` of the backup over UART) or the CH341A; the assistant cannot help over the network |
+| flash interrupted, camera dead | stop; point to [uart-recovery.md](../porting/lsc-rotatable-2k/uart-recovery.md) (`sf write` of the backup over UART) or the CH341A; the assistant cannot help over the network |
 | user wants the stock firmware | flash the backup `mtd3.bin` back (rollback worker) from an SD-card boot, then remove the card |
 | Wi-Fi never comes up card-less | camera resets every ~2-3 min: insert the card, fix `/config/akam/wpa.conf` over SSH |
 

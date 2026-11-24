@@ -62,7 +62,7 @@ static void test_table(void)
     CHECK(ak1080_settings_init() == 0, "the table validates");
     CHECK(ak1080_settings_init() == 0, "init is idempotent");
     const streg_t *r = ak1080_settings_reg();
-    CHECK(r && r->n == 41, "row count %zu", r ? r->n : 0);
+    CHECK(r && r->n == 56, "row count %zu", r ? r->n : 0);
     char *schema = malloc(12288);
     int n = streg_json_schema(r, schema, 12288);
     CHECK(n > 0 && n < 12000, "the schema fits the API reply buffer (%d bytes)", n);
@@ -247,6 +247,146 @@ static void test_switches(void)
     CHECK(!strcmp(get("net.ntp"), "pool.ntp.org 192.0.2.1"), "net.ntp lists the servers: '%s'", get("net.ntp"));
 }
 
+/* The rows the assistant needs now that the text port is closed to the network: audio, white balance, the LAN opt-in, their state. */
+static void test_audio_lan(void)
+{
+    const streg_t *r = ak1080_settings_reg();
+    const char *rows[] = { "audio.out_volume", "audio.out_enable", "audio.talk_enable", "audio.mic_enable", "img.wb", "control.lan" };
+    for (unsigned i = 0; i < sizeof rows / sizeof rows[0]; i++) CHECK(streg_find(r, rows[i]) && (streg_find(r, rows[i])->access & ST_ACC_WRITE), "writable row %s", rows[i]);
+    CHECK(!strcmp(get("net.ssid"), "my net") && streg_find(r, "net.mac") == NULL && streg_find(r, "net.ip") == NULL, "net.ssid is a state row, the MAC and the address are not");
+    const char *state[] = { "audio.out_state", "audio.out_underruns", "audio.out_drops", "led.state", "net.wifi_rate" };
+    for (unsigned i = 0; i < sizeof state / sizeof state[0]; i++) CHECK(streg_find(r, state[i]) && !(streg_find(r, state[i])->access & ST_ACC_WRITE), "read-only row %s", state[i]);
+    CHECK(!strcmp(get("audio.out_volume"), "100") && !strcmp(get("audio.out_enable"), "1") && !strcmp(get("audio.mic_enable"), "0"), "audio values come from the module");
+    CHECK(!strcmp(get("audio.out_state"), "idle") && !strcmp(get("audio.out_underruns"), "3") && !strcmp(get("led.state"), "solid"), "audio and LED state");
+    CHECK(!strcmp(get("net.wifi_rate"), "-1000000") || get("net.wifi_rate")[0] == '<', "wifi_rate is a number or unknown");
+    CHECK(!strcmp(ctl_set("audio.out_volume", "40", 1), "OK audio.out_volume=40") && g_audio_vol == 40 && !strcmp(get("audio.out_volume"), "40"), "volume");
+    CHECK(!strncmp(ctl_set("audio.out_volume", "101", 1), "ERR invalid audio.out_volume", 28), "volume range 0..100 refused by the registry");
+    CHECK(!strcmp(ctl_set("img.wb", "manual", 1), "OK img.wb=manual") && !strcmp(get("img.wb"), "manual"), "img.wb");
+    CHECK(!strncmp(ctl_set("img.wb", "auto", 1), "ERR invalid img.wb", 18), "img.wb options");
+    /* a module that says "restart to apply" makes the write a restart_component one, whatever the row says */
+    const char *k[] = { "audio.out_enable" }, *v[] = { "1" };
+    st_result_t res[1];
+    int http;
+    patch(1, k, v, res, &http);
+    CHECK(http == 200 && res[0].apply == AP_RESTART_COMPONENT, "out_enable: restart note becomes apply=restart_component (http %d apply %d)", http, res[0].apply);
+    v[0] = "0";
+    patch(1, k, v, res, &http);
+    CHECK(http == 200 && res[0].apply == AP_LIVE, "out_enable off: live");
+    /* the opt-in of the text port */
+    CHECK(!strcmp(get("control.lan"), "0"), "closed by default");
+    k[0] = "control.lan"; v[0] = "1";
+    patch(1, k, v, res, &http);
+    CHECK(http == 200 && res[0].apply == AP_RESTART_COMPONENT && g_lan == 1 && !strcmp(get("control.lan"), "1"), "control.lan on is saved and applies at the next start");
+    v[0] = "0";
+    patch(1, k, v, res, &http);
+    CHECK(http == 200 && g_lan == 0, "control.lan off");
+    v[0] = "2";
+    patch(1, k, v, res, &http);
+    CHECK(http != 200 && g_lan == 0, "control.lan takes 0 or 1 only");
+}
+
+/* A save that fails is told in the PATCH reply ("saved":false), not only in the log: the value is applied but lost at the next reboot. */
+static void test_unsaved_is_reported(void)
+{
+    const char *k[] = { "image.contrast", "led.mode" }, *v[] = { "7", "off" };
+    st_result_t res[2];
+    int http;
+    const char *out = patch(1, k, v, res, &http);
+    CHECK(http == 200 && !res[0].unsaved && !strstr(out, "saved"), "a clean save says nothing: %s", out);
+    g_fail_save = 1;
+    out = patch(2, k, v, res, &http);
+    g_fail_save = 0;
+    CHECK(http == 200 && res[0].ok && res[0].unsaved && !res[1].unsaved, "only the row whose file failed is marked (http %d)", http);
+    CHECK(strstr(out, "\"image.contrast\":{\"ok\":true,\"apply\":\"applied\",\"saved\":false,\"value\":\"7\"}") != NULL &&
+              !strstr(strstr(out, "\"led.mode\"") ? strstr(out, "\"led.mode\"") : "", "saved"), "the reply carries saved:false for that key only: %s", out);
+    out = patch(1, k, v, res, &http);
+    CHECK(!res[0].unsaved && !strstr(out, "saved"), "the flag does not stick to the next patch: %s", out);
+}
+
+static void test_orient(void)
+{
+    char path[160], txt[80];
+    FILE *f;
+    size_t n;
+    snprintf(path, sizeof path, "%s/orient", g_root);
+    image_orient_path = path;
+    image_orient_hw = fake_orient_hw;
+    CHECK(!strcmp(get("image.flip"), "0") && !strcmp(get("image.mirror"), "0") && !strcmp(get("image.ceiling"), "0"), "orientation off at first");
+    CHECK(access(path, F_OK) != 0 && g_orient_hw_calls == 0, "nothing sent and no file while it stays off");
+    CHECK(!strcmp(ctl_set("image.flip", "0", 1), "OK image.flip=0") && g_orient_hw_calls == 0, "writing the current value sends nothing");
+    CHECK(!strcmp(ctl_set("image.flip", "1", 1), "OK image.flip=1") && g_orient_hw_f == 1 && g_orient_hw_m == 0, "flip reaches the ISP call (flip=1, mirror=0)");
+    f = fopen(path, "r");
+    n = f ? fread(txt, 1, sizeof txt - 1, f) : 0;
+    if (f) fclose(f);
+    txt[n] = '\0';
+    CHECK(!strcmp(txt, "flip=1\nmirror=0\n"), "saved file: '%s'", txt);
+    CHECK(!strcmp(ctl_set("image.mirror", "1", 1), "OK image.mirror=1") && g_orient_hw_f == 1 && g_orient_hw_m == 1 && !strcmp(get("image.ceiling"), "1"),
+          "mirror on: both on, ceiling reads 1");
+    CHECK(!strcmp(ctl_set("image.ceiling", "0", 1), "OK image.ceiling=0") && !strcmp(get("image.flip"), "0") && !strcmp(get("image.mirror"), "0"), "ceiling 0 turns both off");
+    CHECK(access(path, F_OK) != 0, "both off: the file is removed");
+    CHECK(!strcmp(ctl_set("image.ceiling", "1", 1), "OK image.ceiling=1") && !strcmp(get("image.flip"), "1") && !strcmp(get("image.mirror"), "1"), "ceiling 1 turns both on");
+    /* the ISP refuses: nothing changes, nothing is saved */
+    g_orient_hw_fail = 1;
+    CHECK(!strncmp(ctl_set("image.ceiling", "0", 1), "ERR invalid image.ceiling value 0 (setter)", 41) && !strcmp(get("image.flip"), "1"), "ISP refusal: state kept");
+    g_orient_hw_fail = 0;
+    CHECK(!strncmp(ctl_set("image.flip", "2", 1), "ERR invalid image.flip value 2 (format)", 39) && !strncmp(ctl_set("image.flip", "on", 1), "ERR invalid image.flip", 22), "only 0 or 1");
+    /* a network write in DEBUG mode (persist 0) is refused: the orientation always saves */
+    CHECK(!strcmp(ctl_set("image.flip", "0", 0), "ERR image.flip can only be set from the camera"), "network door refused");
+    /* the API door applies and saves it too */
+    {
+        const char *k[] = { "image.flip" }, *v[] = { "0" };
+        st_result_t res[1];
+        CHECK(ak1080_settings_patch(AKEY_ADMIN, 1, k, v, res) == 200 && !strcmp(get("image.flip"), "0") && !strcmp(get("image.mirror"), "1"), "PATCH flip=0 keeps mirror");
+    }
+    /* start-up: the saved file is applied once, never rewritten; a bad file means "not flipped" */
+    {
+        int calls;
+        int rf, rm;
+        put("orient", "flip=0\nmirror=1\n");
+        calls = g_orient_hw_calls;
+        CHECK(image_orient_apply_saved() == 0 && g_orient_hw_calls == calls + 1 && g_orient_hw_f == 0 && g_orient_hw_m == 1, "boot applies the saved file");
+        image_orient_get(&rf, &rm);
+        CHECK(rf == 0 && rm == 1, "boot state");
+        put("orient", "flip=1\nflip=0\n");
+        calls = g_orient_hw_calls;
+        CHECK(image_orient_apply_saved() == 0 && g_orient_hw_calls == calls, "a bad file sends nothing");
+        unlink(path);
+        CHECK(image_orient_apply_saved() == 0 && g_orient_hw_calls == calls, "no file: nothing to apply");
+    }
+    /* the day / night switch replays the orientation: nothing while off, the current value while on, no flash write */
+    {
+        int calls;
+        unlink(path);
+        image_orient_path = path;
+        ctl_set("image.ceiling", "0", 1);
+        calls = g_orient_hw_calls;
+        image_orient_replay_locked();
+        CHECK(g_orient_hw_calls == calls, "replay with both off sends nothing");
+        snprintf(path, sizeof path, "%s/orient2", g_root);
+        CHECK(!strcmp(ctl_set("image.flip", "1", 1), "OK image.flip=1"), "flip on again");
+        calls = g_orient_hw_calls;
+        g_orient_hw_f = g_orient_hw_m = -1;
+        image_orient_replay_locked();
+        CHECK(g_orient_hw_calls == calls + 1 && g_orient_hw_f == 1 && g_orient_hw_m == 0, "replay sends the current orientation (1, 0)");
+        {
+            char again[160];
+            snprintf(again, sizeof again, "%s/orient2", g_root);
+            unlink(again);
+            image_orient_replay_locked();
+            CHECK(access(again, F_OK) != 0, "replay writes no file");
+        }
+        g_orient_hw_fail = 1;
+        image_orient_replay_locked();
+        g_orient_hw_fail = 0;
+        CHECK(!strcmp(get("image.flip"), "1"), "a refused replay keeps the state");
+        ctl_set("image.flip", "0", 1); /* back to off for the next case */
+    }
+    /* the file cannot be written: the picture turns, the answer says it was not saved */
+    put("blocker", "x");
+    snprintf(path, sizeof path, "%s/blocker/orient", g_root);
+    CHECK(!strncmp(ctl_set("image.flip", "1", 1), "OK image.flip=1 (not saved:", 27), "unwritable file: applied, note kept");
+}
+
 int main(void)
 {
     char tmpl[] = "/tmp/ak1080_settings.XXXXXX";
@@ -259,6 +399,9 @@ int main(void)
     test_settings();
     test_patch();
     test_switches();
+    test_audio_lan();
+    test_unsaved_is_reported();
+    test_orient();
     leds_destroy(&g_leds);
     char cmd[200];
     snprintf(cmd, sizeof cmd, "rm -rf %s", g_root);

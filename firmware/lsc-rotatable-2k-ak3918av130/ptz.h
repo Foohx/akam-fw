@@ -174,7 +174,7 @@ int a2k_ptz_nudge(int dx, int dy);    /* a MANUAL nudge (API ptz.move): relative
 #define A2K_PTZ_LEASE_MS 450
 int a2k_ptz_vel(int sx, int sy, int dx, int dy);
 void a2k_ptz_emergency_stop(void);   /* async-signal-safe: the crash handler sends a motor stop (hal_ptz_emergency_stop) */
-int a2k_ptz_oneshot_stop(void);      /* `akam2k_rtsp --ptz-stop`: open the node, stop, 0 / -1 (no thread, no calibration, nothing else touched) */
+int a2k_ptz_oneshot_stop(void);      /* `akamd --ptz-stop`: open the node, stop, 0 / -1 (no thread, no calibration, nothing else touched) */
 void a2k_ptz_set_lease_ms(int ms);   /* 150..2000, default A2K_PTZ_LEASE_MS (cfg lease_ms of the tracker) */
 /* The driver position at a past instant (CLOCK_MONOTONIC ms), from the polled counters of the session (~50 ms) or the last known position while idle: 0 known (*pan / *tilt filled),
  * -1 unknown (before the first sample, a non-session motion in between, a gap while a session runs). Works DURING a continuous move: a frame is positioned by it. */

@@ -24,7 +24,7 @@ quiet() { "$@" >"$WORK/make.log" 2>&1; }
 outhas() { grep -q -- "$1" "$WORK/out.txt"; }
 
 # ---- 1080p: the object list
-objs() { make -n -C "$P1" BUILD="$WORK/b$1" "${@:2}" ak_rtsp 2>&1 | grep -oE '[^ ]+\.o( |$)' | sort -u; }
+objs() { make -n -C "$P1" BUILD="$WORK/b$1" "${@:2}" akamd 2>&1 | grep -oE '[^ ]+\.o( |$)' | sort -u; }
 objs on >"$WORK/on.txt"
 objs off AKAM_FEAT_ONVIF=0 >"$WORK/off.txt"
 check "1080p default: the ONVIF objects are in the link" bash -c "grep -q 'onvif_device.o' '$WORK/on.txt' && grep -q 'onvif_media.o' '$WORK/on.txt' && grep -q 'onvif_imaging.o' '$WORK/on.txt' && grep -q 'onvif_cfg.o' '$WORK/on.txt' && grep -q 'onvif_model.o' '$WORK/on.txt' && grep -q 'src/net/onvif/soap.o' '$WORK/on.txt' && ! grep -q 'onvif_off.o' '$WORK/on.txt'"
@@ -37,9 +37,9 @@ if [ -z "$ZIG" ]; then ZIG=$(command -v zig || true); fi
 if [ -n "$ZIG" ] && [ -d "$REPO/third_party/smolrtsp/build/_deps" ]; then
     PATH="$(dirname "$ZIG"):$PATH"
     export PATH
-    check "1080p ONVIF=0 links" make -s -C "$P1" BUILD="$WORK/boff" AKAM_FEAT_ONVIF=0 ak_rtsp
-    check "1080p ONVIF=0: the binary has no ONVIF service code" bash -c "! strings '$WORK/boff/ak_rtsp' | grep -q 'GetStreamUri'"
-    check "1080p ONVIF=0: onvif.state still answers off" bash -c "strings -n 3 '$WORK/boff/ak_rtsp' | grep -qx 'off'"
+    check "1080p ONVIF=0 links" make -s -C "$P1" BUILD="$WORK/boff" AKAM_FEAT_ONVIF=0 akamd
+    check "1080p ONVIF=0: the binary has no ONVIF service code" bash -c "! strings '$WORK/boff/akamd' | grep -q 'GetStreamUri'"
+    check "1080p ONVIF=0: onvif.state still answers off" bash -c "strings -n 3 '$WORK/boff/akamd' | grep -qx 'off'"
 else
     echo "  skip - no pinned Zig or SmolRTSP checkout: the ONVIF=0 link was not run"
 fi
@@ -66,7 +66,7 @@ done
 check "2K all four off: the rest of the program is still listed" bash -c "echo '$none' | grep -q '/main.c\$' && echo '$none' | grep -q '/settings.c\$'"
 check "the AKAM_ALLOW_UNLINKABLE escape is gone from the 2K model" bash -c "! grep -rq AKAM_ALLOW_UNLINKABLE '$REPO/firmware' '$REPO/platforms' '$REPO/src'"
 
-# The stand-ins behave (host build, no ARM toolchain): the parsers of an absent feature accept and ignore their akam2k.conf line (a refusal makes main.c exit with usage()),
+# The stand-ins behave (host build, no ARM toolchain): the parsers of an absent feature accept and ignore their akam.conf line (a refusal makes main.c exit with usage()),
 # and pp_name_ok is the real rule (mode.apply validates a button mode name with it) - compared with the real ptz_patrol.c on a list of names.
 if command -v "${HOST_CC:-cc}" >/dev/null 2>&1; then
     # shellcheck source=tests/lib/paths.sh

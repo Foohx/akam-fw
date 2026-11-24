@@ -1,15 +1,15 @@
 /* venc_dump.h — shared VENC_IOCTL_CREATE_ENC struct dumper.
  *
  * Used by BOTH:
- *   - ak_rtsp/isp_hook.c (LD_PRELOAD capture of stock anyka_ipc's real ioctl
+ *   - akamd/isp_hook.c (LD_PRELOAD capture of stock anyka_ipc's real ioctl
  *     payload — no libc, raw ARM syscalls)
- *   - ak_rtsp/venc.c, gated behind DEBUG_IOCTL_DUMP (dumps our OWN payload
+ *   - akamd/venc.c, gated behind DEBUG_IOCTL_DUMP (dumps our OWN payload
  *     right before/after we send it — links a real libc, uses write(2))
  *
  * One field list, one format, defined once here, so the two logs are always
  * byte-for-byte comparable and can never drift out of sync the way two
  * independently hand-copied field lists eventually would. Field offsets
- * match ak_rtsp/ak_ioctls.h's venc_create_enc_req exactly (verified against
+ * match akamd/ak_ioctls.h's venc_create_enc_req exactly (verified against
  * ExtractedData/isp_hook_n.log, 2026-07-04/05 — this is what caught the
  * "rc_mode was wrong all along" bug).
  *
@@ -54,7 +54,7 @@ static void akdump_hex(int fd, uint32_t v)   /* 0x prefix + 8 hex digits */
 
 /* Dump a venc_create_enc_req's fields, given as a raw byte pointer so it
  * works identically whether the caller has a live struct instance
- * (ak_rtsp's own `req`) or a void* ioctl argument (isp_hook.c's `arg`) — the
+ * (akamd's own `req`) or a void* ioctl argument (isp_hook.c's `arg`) — the
  * wire layout is the same either way. `label` distinguishes the source in a
  * merged/diffed log (e.g. "STOCK" vs "AK_RTSP"). */
 static void akdump_create_enc(int fd, const char *label, const void *buf, uint32_t ret)

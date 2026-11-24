@@ -11,7 +11,7 @@
 # firmware (the vendor part of the appfs image comes from the USER'S backup).
 #
 # Inputs are the build outputs the card builders already use, with the same proofs as build_appfs.sh:
-#   --app-dist DIR       akam2k_rtsp + akam2k_sntp + BUILDINFO.txt (make poc3-dist), default dist/rot2k-app
+#   --app-dist DIR       akamd + akam-sntp + BUILDINFO.txt (make poc3-dist), default dist/rot2k-app
 #   --dropbear-dist DIR  dropbearmulti + BUILDINFO.txt (+ LICENSE.dropbear), default dist/dropbear
 #   --busybox FILE       the pinned static busybox, default tools/.cache/rot2k/<name>
 # Steps: proofs -> time64 gate on dropbearmulti (blocking) -> normalised tree -> MANIFEST.txt + SHA256SUMS ->
@@ -26,7 +26,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 FW=$ROOT/firmware/lsc-rotatable-2k-ak3918av130
-KIT_FORMAT=1
+KIT_FORMAT=2
 
 die() { echo "make_kit_2k: error: $*" >&2; exit 1; }
 log() { echo "make_kit_2k: $*"; }
@@ -84,7 +84,7 @@ BUILT_UTC="$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 KITNAME="akam-kit-$MODEL-$VERSION"
 
 # --- proofs on the inputs (the same as build_appfs.sh) ----------------------------------------------------------
-for f in "$APP_DIST/akam2k_rtsp" "$APP_DIST/akam2k_sntp" "$APP_DIST/BUILDINFO.txt" "$DB_DIST/dropbearmulti" "$DB_DIST/BUILDINFO.txt"; do
+for f in "$APP_DIST/akamd" "$APP_DIST/akam-sntp" "$APP_DIST/BUILDINFO.txt" "$DB_DIST/dropbearmulti" "$DB_DIST/BUILDINFO.txt"; do
     [ -f "$f" ] || die "$f not found (build it first: make -C platforms/anyka-ak3918av130 poc3-dist, tools/dropbear/build_dropbear.sh)"
 done
 # The test-only override of the pinned hash marks the kit "test" (verify refuses it without --allow-test-kit).
@@ -96,15 +96,15 @@ fi
 abi() { sed -n "s/^$1=//p" "$APP_DIST/BUILDINFO.txt" | head -n1; }
 dbi() { sed -n "s/^$1=//p" "$DB_DIST/BUILDINFO.txt" | head -n1; }
 [ "$(abi symcheck)" = passed ] || die "$APP_DIST/BUILDINFO.txt does not say symcheck=passed"
-[ "$(abi sha256)" = "$(sha_of "$APP_DIST/akam2k_rtsp")" ] || die "akam2k_rtsp does not match its BUILDINFO.txt"
-[ "$(abi sntp_sha256)" = "$(sha_of "$APP_DIST/akam2k_sntp")" ] || die "akam2k_sntp does not match its BUILDINFO.txt"
+[ "$(abi sha256)" = "$(sha_of "$APP_DIST/akamd")" ] || die "akamd does not match its BUILDINFO.txt"
+[ "$(abi sntp_sha256)" = "$(sha_of "$APP_DIST/akam-sntp")" ] || die "akam-sntp does not match its BUILDINFO.txt"
 [ "$(dbi sha256_stripped)" = "$(sha_of "$DB_DIST/dropbearmulti")" ] || die "dropbearmulti does not match its BUILDINFO.txt"
 if [ "${SKIP_SOURCE_PROOFS:-0}" != 1 ]; then
-    [ "$(abi source_sha256)" = "$(sh "$FW/image/source_hash.sh")" ] || die "akam2k_rtsp was not built from the current sources"
-    [ "$(abi sntp_source_sha256)" = "$(sh "$FW/image/source_hash.sh" sntp)" ] || die "akam2k_sntp was not built from the current sntp sources"
+    [ "$(abi source_sha256)" = "$(sh "$FW/image/source_hash.sh")" ] || die "akamd was not built from the current sources"
+    [ "$(abi sntp_source_sha256)" = "$(sh "$FW/image/source_hash.sh" sntp)" ] || die "akam-sntp was not built from the current sntp sources"
     [ "$(dbi time32_shim_sha256)" = "$(sha_of "$ROOT/src/core/time32_shim.c")" ] || die "dropbearmulti was not built with the current time32 shim"
 fi
-for b in akam2k_rtsp akam2k_sntp; do
+for b in akamd akam-sntp; do
     head -c 4096 "$APP_DIST/$b" | grep -a -q '/lib/ld-uClibc\.so\.0' || die "$b does not request /lib/ld-uClibc.so.0"
     [ "$(od -An -tu1 -j18 -N2 "$APP_DIST/$b" | tr -s ' ' | sed 's/^ //')" = "40 0" ] || die "$b is not an ARM executable"
 done
@@ -130,9 +130,9 @@ done
 install -m 755 "$FW/boot/flash/akam_flash_boot.sh" "$KIT/appfs/overlay/akam_flash_boot.sh"
 install -m 755 "$ROOT/src/scripts/akam_ntp.sh" "$KIT/appfs/overlay/akam_ntp.sh"
 install -m 755 "$ROOT/src/scripts/akam_hostname.sh" "$KIT/appfs/overlay/akam_hostname.sh"
-install -m 755 "$APP_DIST/akam2k_rtsp" "$KIT/appfs/bin/akam2k_rtsp"
-install -m 644 "$APP_DIST/BUILDINFO.txt" "$KIT/appfs/bin/akam2k_rtsp.BUILDINFO"
-install -m 755 "$APP_DIST/akam2k_sntp" "$KIT/appfs/bin/akam2k_sntp"
+install -m 755 "$APP_DIST/akamd" "$KIT/appfs/bin/akamd"
+install -m 644 "$APP_DIST/BUILDINFO.txt" "$KIT/appfs/bin/akamd.BUILDINFO"
+install -m 755 "$APP_DIST/akam-sntp" "$KIT/appfs/bin/akam-sntp"
 install -m 755 "$DB_DIST/dropbearmulti" "$KIT/appfs/bin/dropbearmulti"
 install -m 644 "$DB_DIST/BUILDINFO.txt" "$KIT/appfs/bin/dropbearmulti.BUILDINFO"
 install -m 755 "$BB" "$KIT/appfs/bin/busybox"

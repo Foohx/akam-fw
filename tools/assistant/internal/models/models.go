@@ -137,7 +137,7 @@ func (m Model) Unsupported() string {
 	case KindDecloudOverlay:
 		return "it keeps its stock app and boots from an SD overlay, which the assistant cannot build or install yet (planned for Phase 2)"
 	case KindCardlessAppfs:
-		return "it runs Akam from its flash with no SD card, a flow the assistant cannot drive yet (see docs/assistant-rot2k-flash-design.md); the 1080p installer would brick it"
+		return "it runs Akam from its flash with no SD card, this flow is written for the 1080p and would brick it; the 2K has its own commands (prepare-2k-sd, backup-2k, seed-2k, appfs-build, appfs-flash, update), see docs/porting/lsc-rotatable-2k/README.md#install"
 	default:
 		return "its firmware kind '" + m.Kind + "' is not known to this version"
 	}

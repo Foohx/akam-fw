@@ -1,6 +1,6 @@
 # Host-side helpers (lsc-rotatable-2k-ak3918av130)
 
-Host-side tools of this model (ONVIF probe, PTZ and DP clients, ...). Nothing here runs on the camera.
+Host-side tools of this model (an ONVIF event probe, an MQTT sink, the flash script and the partition signature calculator). Only `flash_appfs.sh` talks to the camera.
 
 - `onvif_events_probe.py`: read-only probe of the stock ONVIF event service (capabilities, announced topics,
   PullPoint refusal, and a push `Subscribe` listener that prints the Notify messages). Python standard library only;
@@ -12,7 +12,7 @@ Host-side tools of this model (ONVIF probe, PTZ and DP clients, ...). Nothing he
 
 - `flash_appfs.sh`: write + verify + rollback of the card-less appfs image to mtd3. **Writes flash**; dry run by default,
   live only with `AKAM_I_HAVE_RECOVERY=yes` and `--execute`. See
-  [cardless-appfs](../../../docs/porting/lsc-rotatable-2k/cardless-appfs.md). Image built by `../appfs/build_appfs.sh`.
+  [cardless-appfs](../../../docs/porting/lsc-rotatable-2k/cardless-appfs.md). Image built by `../image/build_appfs.sh`; the signature of a partition comes from `calc_partition_sign.py`.
 
 The Phase 1 validation otherwise uses `ffprobe`, `ssh` and `curl`
 ([checklist](../../../docs/archive/rot2k-phase1-validation.md)).

@@ -39,7 +39,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUPPORTED_KIT_FORMATS="1"
+SUPPORTED_KIT_FORMATS="1 2"
 SIG_IDENTITY=akam-release
 SIG_NAMESPACE=akam-release
 
@@ -282,8 +282,12 @@ verify_dir() {
     [ "$find_links" = "$(grep -c '^link ' "$m" || true)" ] || die "symlinks in the kit are not all listed in MANIFEST.txt"
 
     # 3. the payload we promise.
-    local payload="bin/ak_rtsp bin/dropbearmulti bin/flash_tool patches/patch_service_sh.sh supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear"
-    [ "$KIND" != cardless-appfs ] || payload="appfs/overlay/own_app_stub.sh appfs/bin/akam2k_rtsp appfs/bin/dropbearmulti appfs/bin/busybox supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear"
+    local payload="bin/akamd bin/dropbearmulti bin/flash_tool patches/patch_service_sh.sh supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear"
+    [ "$KIND" != cardless-appfs ] || payload="appfs/overlay/own_app_stub.sh appfs/bin/akamd appfs/bin/dropbearmulti appfs/bin/busybox supported_hardware.txt licenses/LICENSE.akam licenses/THIRD_PARTY_NOTICES.md licenses/LICENSE.dropbear"
+    if [ "$kf" = 1 ]; then # kit_format 1 (firmware 0.1.x) carries the programs under their old names
+        payload="${payload//bin\/akamd/bin/ak_rtsp}"
+        [ "$KIND" != cardless-appfs ] || payload="${payload//appfs\/bin\/ak_rtsp/appfs/bin/akam2k_rtsp}"
+    fi
     for path in $payload; do
         grep -qx "$path" "$TMP/man.sorted" || die "required file $path is not in the kit"
     done

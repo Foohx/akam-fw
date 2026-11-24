@@ -2,7 +2,7 @@
  * the pure policy track_logic.h and the motor (ptz.h), plus the tracking AREAS. The core (this file's .c) calls the motor only
  * through the ops table, so tests/rot2k_track_wire_unit.c runs it on a fake motor; track_run.c binds the real one.
  *
- * Tracking is OFF by default (akam2k.conf track=1, or the Home Assistant switch "Person tracking"). It never runs while the camera is
+ * Tracking is OFF by default (akam.conf track=1, or the Home Assistant switch "Person tracking"). It never runs while the camera is
  * parked, calibrating, its position is unknown, the privacy mode hides the video, or the position is outside every enabled area.
  * Every detection tick feeds the policy (with n = 0 when nobody is seen); TL_NUDGE becomes a2k_ptz_nudge, TL_HOME the home command.
  * Signs: a target right of the centre -> pan right (dx > 0); a target BELOW the centre (dtilt > 0) -> tilt DOWN (dy < 0): the motor
@@ -101,7 +101,7 @@ typedef struct {
 
 void a2k_track_init(a2k_track_t *t, const a2k_track_ops_t *ops, const char *store_path);
 void a2k_track_destroy(a2k_track_t *t);
-/* conf: the akam2k.conf areas ("track_area_<name>=..." LF lines, may be NULL). The stored file, when present, wins (even empty). Areas that
+/* conf: the akam.conf areas ("track_area_<name>=..." LF lines, may be NULL). The stored file, when present, wins (even empty). Areas that
  * do not fit the soft range are dropped with a log line. Returns the number of areas. */
 int a2k_track_load(a2k_track_t *t, const char *conf);
 void a2k_track_set_enabled(a2k_track_t *t, int on);
@@ -133,7 +133,7 @@ void a2k_track_get_lost_step(a2k_track_t *t, char *out, size_t cap);
 void a2k_track_set_motion(a2k_track_t *t, int motion);
 void a2k_track_get_tune(a2k_track_t *t, int *band_pct, int *head_pct);
 void a2k_track_set_tune(a2k_track_t *t, int band_pct, int head_pct);
-/* Opt-in decision log (akam2k.conf track_debug=1; 2 adds the raw recorder below): one line per decision to a RAM file (/tmp/akam2k_track.log, capped, 2 lines/s at most). */
+/* Opt-in decision log (akam.conf track_debug=1; 2 adds the raw recorder below): one line per decision to a RAM file (/tmp/akam2k_track.log, capped, 2 lines/s at most). */
 void a2k_track_set_debug(a2k_track_t *t, int on);
 /* track_debug=2: the raw recorder, /tmp/akam2k_track.raw (RAM, rolling, 1 MB): C (config), I (every tl_update input), D (the decision line), R t pan tilt (every position-ring push of a
  * continuous session: wire a2k_track_rec_ring to a2k_ptz_set_ring_hook). Input of tests/rot2k_track_replay.c and tools/track_lagfit. */

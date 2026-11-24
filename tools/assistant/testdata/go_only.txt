@@ -1,0 +1,9 @@
+dry_led
+dry_audio
+dry_picture
+dry_debug_on
+usage_debug
+dry_video_show
+dry_video_set
+dry_video_all
+dry_audio_mic

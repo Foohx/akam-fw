@@ -7,6 +7,7 @@ import "testing"
 // GET and QUIT on its control port.
 func TestFindCameraIdentifiesAkamAndCamerasShowsIt(t *testing.T) {
 	e := newEnv(t)
+	e.openCtlPort() // the firmware version and name come from the text port: open here (an older image, or the LAN opt-in)
 	e.cam.SetCtl("sys.hostname", "akam\x1b[2J-01")
 	r := e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")
 	expectRC(t, r, 0)
@@ -25,6 +26,7 @@ func TestFindCameraIdentifiesAkamAndCamerasShowsIt(t *testing.T) {
 
 	// an older image: ERR for both keys
 	e = newEnv(t)
+	e.openCtlPort()
 	e.cam.SetCtl("fw.version", "-")
 	e.cam.SetCtl("sys.hostname", "-")
 	r = e.runRaw("", "--no-color", "--state-dir", e.state, "--ip", "127.0.0.1", "find-camera")

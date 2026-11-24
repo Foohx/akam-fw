@@ -18,12 +18,11 @@
  * without this module. A bad line (unknown key, bad number, out of range) is skipped with one log line and its key
  * keeps the default; nothing else is affected.
  *
- * The values are loaded once (video_cfg_load, first thing in main) and never change while ak_rtsp runs: the
+ * The values are loaded once (video_cfg_load, first thing in main) and never change while akamd runs: the
  * encoder is created from them, and the SDP, ONVIF and the bitrate/GOP bookkeeping of rtsp_session.c report them. A change
- * of the file (./akam video, 8091 SET video.*_cfg) applies at the next start of ak_rtsp.
+ * of the file (./akam video, 8091 SET video.*_cfg) applies at the next start of akamd.
  * Not offered, on purpose (specs/roadmap.md): resolution (ISP crop, VI formats and the encoder DMA pool are sized for
- * 1920x1080 only) and mirror/flip (the ISP flip ioctl number is known, its payload and the sensor register
- * sequence are not). */
+ * 1920x1080 only). Mirror/flip are not video settings: image_orient.h (image.flip / image.mirror, saved in their own file). */
 #pragma once
 #include <stddef.h>
 

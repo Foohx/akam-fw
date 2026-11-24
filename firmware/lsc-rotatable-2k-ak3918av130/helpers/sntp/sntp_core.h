@@ -1,4 +1,4 @@
-/* sntp_core.h -- the pure part of akam2k_sntp (packet build/parse, NTP era handling, offset math).
+/* sntp_core.h -- the pure part of akam-sntp (packet build/parse, NTP era handling, offset math).
  * No socket, no clock, no libc call beyond string.h: the host unit test (tests/rot2k_sntp_unit.c) compiles it natively.
  * All times are int64 microseconds since the Unix epoch unless stated; NTP timestamps are carried as raw
  * 64-bit values (seconds since 1900 << 32 | fraction). */

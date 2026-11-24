@@ -2,23 +2,26 @@
 
 Two programs on the user's PC install and manage Akam, with the same command names and the same state files:
 
-- `./akam` (bash, `tools/wizard/`, root of the repository): the **reference** implementation, Linux only.
-- `akam` (Go, `tools/assistant/`): one static binary with no runtime dependency, for six targets. Built-in SSH, control
-  port client, RTSP talk client, G.711 and WAV, a full-screen interface, and an experimental native image builder.
-  Select it from a checkout with `AKAM_USE_BIN=1 ./akam ARGS...` (never run both at once on the same state).
+- `akam` (Go, `tools/assistant/`): the program new features go to. One static binary with no runtime dependency, for six
+  targets, for both cameras. Built-in SSH, signed-API client, RTSP talk client, G.711 and WAV, a full-screen interface, and an
+  experimental native image builder.
+- `./akam` (bash, `tools/wizard/`, root of the repository): the **bash wizard**, 1080p and Linux only. It did the real first
+  installs and updates, so it is kept until the Go program's install has run on a camera; it will then be removed. It has
+  none of the 2K commands, and none of the commands marked G below.
+  Never run both at once on the same state.
 
 This file covers the commands, the state, configs, install paths, backup and flash rules, safety gates and the platform
 status. The release side is in [kit-and-release.md](kit-and-release.md).
 
-Status: the bash wizard **hardware-validated** on Linux for first install, backup, flash through the maintenance card and
-flash over SSH, on two cameras. The Go assistant: **hardware-validated in part** (Linux amd64: SSH, control-port options,
+Status: the bash wizard (to be retired) **hardware-validated** on Linux for first install, backup, flash through the maintenance card and
+flash over SSH, on two cameras. The Go assistant: **hardware-validated in part** (Linux amd64: SSH, the signed API (camera options),
 `video show`, `led`, `ntp`, `talk`; an earlier Windows build: discovery, options over SSH, talk, clock offer);
 **host-tested only**: update, restore, telnet backup and flash, the SD writer, first install, configs, per-camera keys and
 the firmware chooser; **experimental**: the native image builder, all Windows, macOS and arm64 binaries.
 
 ## 1. Commands
 
-Both programs accept these commands (the Go assistant adds the ones marked G). With no command, the bash wizard opens a
+The commands of the 1080p, as the Go assistant has them (the bash wizard lacks the ones marked G). With no command, the bash wizard opens a
 step menu and the Go assistant opens a home screen. Every command that changes the camera accepts `--dry-run`.
 
 | Command | What it does |
@@ -40,9 +43,9 @@ step menu and the Go assistant opens a home screen. Every command that changes t
 | `rtsp-auth [set\|disable\|status]` | Digest login on the stream. Password typed on the PC, never shown |
 | `led [show \| status on\|off\|auto] [ir auto\|off]` | Front LED and IR LEDs |
 | `audio [show \| volume N \| beep \| on \| off \| talk on\|off \| mic on\|off]` | Speaker and microphone |
-| `picture [show \| brightness N \| contrast N \| saturation N \| sharpness N \| denoise N \| wb conf\|manual \| night auto\|day\|night \| reset]` | Picture. Sliders are saved; `wb` and `night` follow the camera's own rules ([image-day-night-leds.md](image-day-night-leds.md)) |
+| `picture [show \| brightness N \| contrast N \| saturation N \| sharpness N \| denoise N \| wb conf\|manual \| night auto\|day\|night \| flip\|mirror\|ceiling on\|off \| reset]` | Picture. The sliders, `wb` and `night` are saved on the camera and applied at every start ([image-day-night-leds.md](image-day-night-leds.md)) |
 | `video [show \| bitrate N \| fps N \| gop N]` | Encoder settings; asks (default No) whether to restart the video service |
-| `debug [on [MIN] \| off \| status]` | The 8091 debug flag |
+| `control-port [status \| open \| close]` (G), `api-key [status \| replace]` (G) | The LAN opt-in of the text port 8091 (it is closed by default); the API key of this PC (the 1080p settings go through the signed API). `debug` was removed |
 | `ntp [status \| set SERVER... \| off]` | Opt-in time sync |
 | `onvif [enable [PORT] \| disable \| status]` | ONVIF; `enable` asks first and needs the stream password |
 | `mqtt [status \| set \| disable \| forget \| test]` | MQTT client |
@@ -67,6 +70,23 @@ rechecked against the disk (a vanished image makes its step "todo" again).
 
 The camera-side helper scripts the commands run over SSH are listed in [architecture.md](architecture.md) and in the
 specs of the features they manage. The installers MUST NOT send a command shape the camera scripts do not accept.
+
+### The 2K commands (Go assistant only)
+
+| Command | What it does |
+|---|---|
+| `prepare-2k-sd` | Writes the first-install card from the signed 2K kit (no flash write; `--rescue-telnet` keeps the card's telnet) |
+| `backup-2k` | Backs up the six partitions over SSH, read only, each read twice |
+| `seed-2k` | Copies the Wi-Fi settings and SSH key of the card into `/config/akam`, once |
+| `appfs-build`, `appfs-flash` | Builds the appfs image from your `mtd3.bin` and the kit; rehearses or writes it to `mtd3` (`--execute`, recovery acknowledgement, typed confirmation) |
+| `key-2k` | Has the camera create the API key of this PC (every 2K setting command needs it); `api-key` is `key-2k` on a 2K |
+| `update` | The 2K's card-less flow (`--rollback`, `--kit`, `--version`, `--current-image`) |
+| `settings [list\|get\|set]`, `track`, `wifi` | Registry settings through the signed API |
+| `led`, `picture`, `video`, `hostname`, `audio`, `ntp`, `onvif`, `mqtt`, `rtsp-auth`, `talk`, `say` | As the 1080p, through the signed API |
+| `backup-location`, `import-backup`, `trust-key`, `release-source` | Both cameras |
+
+Refused on a 2K: `backup`, `restore`, `verify`, `image`, `flash`, `get-kit`, `prepare-backup-sd`, `prepare-flash-sd`, `config`, `key`,
+`control-port`. The 2K flows in detail: [assistant/rot2k-flows.md](../docs/assistant/rot2k-flows.md).
 
 ## 2. State
 
@@ -127,7 +147,7 @@ question. `forget-secrets` deletes the saved secrets; nothing is ever synchronis
    maintenance Telnet alive and enables the SD hooks), `akam/authorized_keys` with the user's public key, the image,
    `flash_tool`, `flash_guard.sh`, `install_with_flash_tool.sh` and `preflight_check.sh`, and **no `*.bin` at the root**
    (the stock updater would flash it).
-6. **Flash** (section 7.1), power cycle by hand, then **verify** (SSH by key, hardware check, ports 22, 554 and 8091 only).
+6. **Flash** (section 7.1), power cycle by hand, then **verify** (SSH by key, hardware check, ports 22 and 554 only; then the API key of this PC is offered).
 7. Remove the card and power cycle again; `verify` repeats the checks without the card.
 
 The card writer refuses anything that is not a whole, removable (or SD/MMC), plausibly sized disk (128 MiB to 128 GiB)
@@ -293,6 +313,17 @@ model is not known, nothing can be compared (the stock APP fingerprint check of 
 wizard follows the same rule: its `get-kit` needs `--version` (the wizard version is not the firmware version), downloads
 from `firmware-vX.Y.Z`, passes `--expect-model` to `verify_kit.sh` and records `camera_model` at the backup.
 
+**Kit staging and the final swap.** In a source checkout (`mode=source`) the first install shows no list: the kit comes from the
+checkout. When no builder is available and an image built from your backup is ready, that image is the first row and the
+default. A kit is always downloaded or opened and verified again (a recorded kit of the same version is never trusted), into a
+staging folder: the recorded downloads, the kit folder and the state change only after every check passed (signature, downgrade
+question, image ready) and, in the update, after the camera was written and read back. A refusal, a failure, a No at the red box
+or an interruption leave the previous kit, its downloaded files, the state and the image as they were; a crash inside the final
+swap is repaired at the next start (the swap is judged from a marker file, `kit.swap`, never from the state of whichever camera is
+selected). With `--builder native` an image built for a refused kit stays on disk as a file but is not recorded. If the kit cannot
+be installed after a successful write, the camera is still recorded and the user is told to run `get-kit`. A rehearsal
+(`--dry-run`) never installs a kit.
+
 ## 10. Home screen and interface (Go)
 
 - Entries: set up a new camera (the nine steps), update this camera, camera options (LED and night, picture, video, audio,
@@ -302,7 +333,7 @@ from `firmware-vX.Y.Z`, passes `--expect-model` to `verify_kit.sh` and records `
   says whether it is saved on the camera and when it applies (now, next video restart, next reboot). An option an old image
   does not know is shown as "not available on this image (update first)".
 - **Camera chooser.** Known cameras are shown at once and probed in parallel. Further sources: a name (DNS then
-  `<name>.local`), ONVIF WS-Discovery, and a scan of the local /24 on ports 22, 24, 554 and 8091 only. The two searches
+  `<name>.local`), ONVIF WS-Discovery, and a scan of the local /24 on ports 22, 24, 554 and 8091 only (8091 is closed on a current image: Akam is SSH + video + the Dropbear banner). The two searches
   that send packets each ask first (default No) and show range and ports. A camera answering on 8091 is identified read-only
   (`GET fw.version`, `GET sys.hostname`). Names a camera reports are cleaned before display. VPN, point-to-point and virtual
   adapters are not scanned.

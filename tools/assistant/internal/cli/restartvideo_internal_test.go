@@ -9,7 +9,7 @@ import (
 // restartVideo is the one audited exception of the "no kill" rule (specs/installer.md): this exact command,
 // nothing else, and it never names the watchdog.
 func TestRestartVideoCommandIsExactAndTheOnlyKill(t *testing.T) {
-	const want = `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`
+	const want = `for p in $(pidof akamd ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`
 	if restartVideoCmd != want {
 		t.Fatalf("restartVideoCmd = %q", restartVideoCmd)
 	}
@@ -21,8 +21,8 @@ func TestRestartVideoCommandIsExactAndTheOnlyKill(t *testing.T) {
 	}
 	// the exception is by exact string: any variation is refused
 	for _, v := range []string{
-		want + "; reboot", want + " 1", "x; " + want, want + "; kill 1", strings.Replace(want, "ak_rtsp", "watchdog", 1),
-		strings.Replace(want, "ak_rtsp", "ak_rtsp watchdog", 1), "kill $(pidof ak_rtsp)", "killall ak_rtsp", " " + want,
+		want + "; reboot", want + " 1", "x; " + want, want + "; kill 1", strings.Replace(want, "akamd", "watchdog", 1),
+		strings.Replace(want, "akamd", "akamd watchdog", 1), "kill $(pidof akamd)", "killall akamd", " " + want,
 	} {
 		if forbiddenRemote(v) == "" {
 			t.Errorf("the guard lets %q through", v)

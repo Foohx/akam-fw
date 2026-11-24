@@ -22,7 +22,7 @@ the **SD overlay card** (recovery and override: it wins whenever it is inserted)
 | 6 | `/appfs/bin/yy_cam` | the Tuya application (3.6 MB) | **removed**, replaced by a 3-line launcher of `own_app_stub.sh` (no stock app and no cloud OTA client in the image) |
 | 7 | `/appfs/akam/own_app_stub.sh` | what `yy_cam` did that nothing else does: feeds the watchdog (`busybox watchdog -F -t 5 -T 20`), Wi-Fi GPIO 10 + `atbm6132c.ko`, `wpa_supplicant`, `udhcpc`, health check (no network in 120 s: feeder killed, hardware reset), hostname, optional NTP; then starts the supervisor | Akam |
 | 8 | `/appfs/akam/own_app_run.sh` | supervisor: checks the app sha256 against its BUILDINFO, runs it from RAM, backoff restart (gives up after 5 exits in 10 min) | Akam |
-| 9 | `/appfs/akam/bin/akam2k_rtsp` | the one application: ISP, H.264 (2 streams), RTSP, NPU person detection, PTZ, tracking, ONVIF, MQTT, signed API, LEDs, night, button | Akam |
+| 9 | `/appfs/akam/bin/akamd` | the one application: ISP, H.264 (2 streams), RTSP, NPU person detection, PTZ, tracking, ONVIF, MQTT, signed API, LEDs, night, button | Akam |
 
 Stock `yy_upgrade` (OTA), `wpa_supplicant`, drivers, ISP and sensor files stay in the image byte for byte
 (checked by a full `unsquashfs` diff, see cardless-appfs section 1). Nothing downloads `yy_upgrade.bin` any more.
@@ -48,9 +48,9 @@ Image side (`/appfs/akam/`, read-only squashfs; the card has the same names unde
 |---|---|---|---|---|
 | `/appfs/akam/akam_flash_boot.sh` | `init.sh` | card-less boot (section 1, step 4) | writes `/tmp`; `/config/akam/dropbear_ed25519_host_key` once | none |
 | `/appfs/akam/own_app_stub.sh` | `yy_cam` launcher | watchdog, Wi-Fi, health, NTP, supervisor start | reads `/config/akam/wpa.conf` (never printed); RAM only | none |
-| `/appfs/akam/own_app_run.sh` | the stub | supervisor, parses `akam2k.conf` into options | log `/tmp` (size capped, RAM); reads `/config/akam/akam2k.conf` | none |
-| `/appfs/akam/bin/akam2k_rtsp` | supervisor | the application; also `--api-key` tool mode | reads/writes `/config/akam/` files (`api_keys`, `ptz.conf`, `zones`, `mqtt`, `rtsp.conf`, only on user action); `/dev/tymotor`, `/dev/pcmC0D0c`, sysfs GPIO; NPU model from `/appfs` | 554/tcp RTSP, 8092/tcp signed API (only while an API key exists), ONVIF tcp 8000 + 3702/udp (opt-in), MQTT client out (opt-in) |
-| `/appfs/akam/bin/akam2k_sntp` | `akam_ntp.sh` | one-shot SNTP (BusyBox has no `ntpd`) | sets the clock | 123/udp out |
+| `/appfs/akam/own_app_run.sh` | the stub | supervisor, parses `akam.conf` into options | log `/tmp` (size capped, RAM); reads `/config/akam/akam.conf` | none |
+| `/appfs/akam/bin/akamd` | supervisor | the application; also `--api-key` tool mode | reads/writes `/config/akam/` files (`api_keys`, `ptz.conf`, `zones`, `mqtt`, `rtsp.conf`, only on user action); `/dev/tymotor`, `/dev/pcmC0D0c`, sysfs GPIO; NPU model from `/appfs` | 554/tcp RTSP, 8092/tcp signed API (only while an API key exists), ONVIF tcp 8000 + 3702/udp (opt-in), MQTT client out (opt-in) |
+| `/appfs/akam/bin/akam-sntp` | `akam_ntp.sh` | one-shot SNTP (BusyBox has no `ntpd`) | sets the clock | 123/udp out |
 | `/appfs/akam/akam_ntp.sh` | the stub, only with `/config/akam/ntp` | shared with the 1080p | `/config/akam/ntp` | none |
 | `/appfs/akam/akam_hostname.sh` | `akam_net.sh` | shared with the 1080p | `/config/akam/hostname` (user action) | none |
 | `/appfs/akam/akam_net.sh` | the stub, user | hostname, Wi-Fi band and country, dead-man revert | `/config/akam/hostname`, `/config/akam/net` (user action only) | none |

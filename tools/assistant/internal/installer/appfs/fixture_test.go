@@ -85,11 +85,11 @@ func kitFiles() map[string][]byte {
 		f[pathOverlay+s] = []byte("#!/bin/sh\n# " + s + "\n:\n")
 	}
 	rtsp, sntp, db, bb := elf("rtsp"), elf("sntp"), elf("dropbear"), []byte("fake busybox for tests\n")
-	f[pathBin+"akam2k_rtsp"] = rtsp
-	f[pathBin+"akam2k_sntp"] = sntp
+	f[pathBin+"akamd"] = rtsp
+	f[pathBin+"akam-sntp"] = sntp
 	f[pathBin+"dropbearmulti"] = db
 	f[pathBin+"busybox"] = bb
-	f[pathBin+"akam2k_rtsp.BUILDINFO"] = []byte(fmt.Sprintf("symcheck=passed\nsha256=%s\nsource_sha256=%s\nsntp_sha256=%s\nsntp_source_sha256=%s\n",
+	f[pathBin+"akamd.BUILDINFO"] = []byte(fmt.Sprintf("symcheck=passed\nsha256=%s\nsource_sha256=%s\nsntp_sha256=%s\nsntp_source_sha256=%s\n",
 		shaHex(rtsp), "1111", shaHex(sntp), "2222"))
 	f[pathBin+"dropbearmulti.BUILDINFO"] = []byte(fmt.Sprintf("sha256_stripped=%s\ntime32_shim_sha256=%s\nprograms=dropbear dropbearkey scp\n", shaHex(db), shaHex([]byte(time32Shim))))
 	f[pathManifest] = []byte("model=lsc-rotatable-2k-ak3918av130\nkind=cardless-appfs\nakam_version=0.2.0\nsource_commit=abc123\nkit_grade=release\ntime64_gate=pass\n")

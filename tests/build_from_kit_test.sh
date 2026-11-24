@@ -36,7 +36,7 @@ check() {
 # --- stubs and a test kit -------------------------------------------------------------------
 S=$WORK/stub
 mkdir -p "$S/smol/build/_deps" "$S/db"
-printf '#!/bin/sh\necho stub ak_rtsp\n' >"$S/ak_rtsp"
+printf '#!/bin/sh\necho stub akamd\n' >"$S/akamd"
 printf '#!/bin/sh\necho stub flash_tool\n' >"$S/flash_tool"
 printf '#!/bin/sh\necho stub dropbearmulti\n' >"$S/db/dropbearmulti"
 printf 'Dropbear stub licence\n' >"$S/db/LICENSE.dropbear"
@@ -48,12 +48,12 @@ done
 printf 'musl stub\n' >"$S/COPYRIGHT"
 printf 'zig stub\n' >"$S/ZIGLICENSE"
 printf '#!/bin/sh\nexit 0\n' >"$S/gate_ok"
-chmod 755 "$S"/ak_rtsp "$S"/flash_tool "$S/db/dropbearmulti" "$S"/gate_ok
+chmod 755 "$S"/akamd "$S"/flash_tool "$S/db/dropbearmulti" "$S"/gate_ok
 
 export SOURCE_DATE_EPOCH=1700000000
 export SMOLRTSP_DIR=$S/smol MUSL_COPYRIGHT=$S/COPYRIGHT ZIG_LICENSE=$S/ZIGLICENSE
 AKAM_KIT_NO_BUILD=1 AKAM_KIT_ALLOW_DIRTY=1 AKAM_KIT_VERSION=test1 AKAM_KIT_CHECK_TIME32=$S/gate_ok \
-    AK_RTSP_BIN=$S/ak_rtsp FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti \
+    AK_RTSP_BIN=$S/akamd FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti \
     bash "$MAKE" --out "$WORK/kitout" >"$WORK/make.log" 2>&1 || { cat "$WORK/make.log"; exit 1; }
 TB=$WORK/kitout/akam-kit-lsc-indoor-1080p-ak3918-test1.tar.xz
 mkdir -p "$WORK/kx"
@@ -105,7 +105,7 @@ echo "== 1. kit mode equals source mode"
 SRCOUT=$WORK/src
 run_src() {
     mkdir -p "$SRCOUT"
-    (cd "$WORK" && env APP_EXTRACTED="$FIXTURE" FW_DIR="$SRCOUT" AK_RTSP_BIN="$S/ak_rtsp" DROPBEAR_MULTI="$S/db/dropbearmulti" \
+    (cd "$WORK" && env APP_EXTRACTED="$FIXTURE" FW_DIR="$SRCOUT" AK_RTSP_BIN="$S/akamd" DROPBEAR_MULTI="$S/db/dropbearmulti" \
         AKAM_ALLOW_UNCHECKED_TIME64=1 bash "$BUILD") >"$SRCOUT.log" 2>&1
 }
 check "source mode builds" run_src
@@ -133,27 +133,37 @@ check "report says kit mode, grade and authentication" bash -c "
     grep -q '^build mode: *kit' '$WORK/kitdir/build_report.txt' && grep -q 'kit_grade=test' '$WORK/kitdir/build_report.txt' &&
     grep -q '^kit authentication:.*UNSIGNED' '$WORK/kittar/build_report.txt'"
 check "kit mode: no time64 skip warning, none needed" bash -c "! grep -q 'SKIPPED' '$WORK/kitdir.log'"
-check "kit mode: ak_rtsp is the kit's binary" cmp -s "$K/bin/ak_rtsp" "$WORK/x_kit/bin/ak_rtsp"
+check "kit mode: akamd is the kit's binary" cmp -s "$K/bin/akamd" "$WORK/x_kit/bin/akamd"
 check "kit mode: tree has no private key" bash -c "! grep -rlE 'PRIVATE KEY' '$WORK/x_kit'"
 
 # --- 2. refusals ----------------------------------------------------------------------------------
+# a kit_format 1 kit (firmware 0.1.x) carries bin/ak_rtsp: the image still gets bin/akamd plus the ak_rtsp link
+OLDK=$(new_kit old_format_kit)
+mv "$OLDK/bin/akamd" "$OLDK/bin/ak_rtsp"
+sed -i 's/^kit_format=2$/kit_format=1/; s#^\(file [0-9a-f]* 755 \)bin/akamd$#\1bin/ak_rtsp#' "$OLDK/MANIFEST.txt"
+rehash_kit "$OLDK"
+check "a kit_format 1 kit (bin/ak_rtsp) builds" run "$WORK/oldkit" --kit "$OLDK" --allow-test-kit --allow-unsigned --i-understand-untested
+OLD_IMG=$(image_of "$WORK/oldkit")
+check "  ... the image has bin/akamd and the link bin/ak_rtsp -> akamd" bash -c "
+    unsquashfs -ll '$OLD_IMG' 2>/dev/null | grep -q 'bin/ak_rtsp -> akamd' && unsquashfs -ll '$OLD_IMG' 2>/dev/null | grep -q ' squashfs-root/bin/akamd\$'"
+
 echo "== 2. kit refusals"
 refused "a test-grade kit needs --allow-test-kit --allow-unsigned" 'kit_grade|development kits' "$WORK/r1" --kit "$K"
 refused "an unsigned tarball needs --allow-unsigned" 'UNSIGNED' "$WORK/r2" --kit "$TB" --allow-test-kit
 BAD=$(new_kit bad_manifest)
-sed -i 's/^file [0-9a-f]* \(755 bin\/ak_rtsp\)$/file 0000000000000000000000000000000000000000000000000000000000000000 \1/' "$BAD/MANIFEST.txt"
+sed -i 's/^file [0-9a-f]* \(755 bin\/akamd\)$/file 0000000000000000000000000000000000000000000000000000000000000000 \1/' "$BAD/MANIFEST.txt"
 refused "invalid MANIFEST (wrong sha256) is refused" 'FAIL|failed' "$WORK/r3" --kit "$BAD" --allow-test-kit --allow-unsigned
 BAD=$(new_kit bad_binary)
-printf 'tampered\n' >>"$BAD/bin/ak_rtsp"
+printf 'tampered\n' >>"$BAD/bin/akamd"
 refused "a modified binary is refused" 'FAIL|failed' "$WORK/r4" --kit "$BAD" --allow-test-kit --allow-unsigned
 BAD=$(new_kit bad_gate)
 sed -i 's/^time64_gate=pass$/time64_gate=fail/' "$BAD/MANIFEST.txt"
 rehash_kit "$BAD"
 refused "time64_gate != pass is refused" 'time64_gate' "$WORK/r5" --kit "$BAD" --allow-test-kit --allow-unsigned
 BAD=$(new_kit bad_format)
-sed -i 's/^kit_format=1$/kit_format=2/' "$BAD/MANIFEST.txt"
+sed -i 's/^kit_format=2$/kit_format=3/' "$BAD/MANIFEST.txt"
 rehash_kit "$BAD"
-refused "incompatible kit_format is refused" 'kit_format 2 is not supported' "$WORK/r6" --kit "$BAD" --allow-test-kit --allow-unsigned
+refused "incompatible kit_format is refused" 'kit_format 3 is not supported' "$WORK/r6" --kit "$BAD" --allow-test-kit --allow-unsigned
 BAD=$(new_kit extra_file)
 printf 'x\n' >"$BAD/extra.txt"
 refused "an extra file in the kit is refused" 'FAIL|failed' "$WORK/r7" --kit "$BAD" --allow-test-kit --allow-unsigned

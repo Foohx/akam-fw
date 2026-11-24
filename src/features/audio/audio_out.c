@@ -11,7 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "ak_ioctls.h"
+#include "akpcm.h"
 #include "audio_out.h"
 
 #define AO_MIN_PERIOD_US 57600L /* 90% of 64 ms: pacing floor if write() does not block */
@@ -102,6 +102,7 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     snprintf(ao->conf_path, sizeof(ao->conf_path), "%s/%s", ao->conf_dir, AO_CONF_FILE);
     snprintf(ao->guard_path, sizeof(ao->guard_path), "%s/%s", ao->conf_dir, AO_GUARD_FILE);
     ao->enabled  = 1;
+    ao->guard_arm = 1;
     ao->volume   = 100;
     ao->saved_volume = 100;
     ao->gain     = 2;   /* stock value */
@@ -109,7 +110,7 @@ void ao_init(audio_out_t *ao, const ao_ops_t *ops, const ao_cfg_t *cfg)
     ao->amp_mode = AO_AMP_AUTO;
     ao->talk_enable = 1;
     ao->talk_duplex = AO_DUPLEX_HALF;
-    ao->mic_enable = 1;
+    ao->mic_enable = 0;
     ao->persist  = 1;
     ao->state    = AO_OFF;
     ao->fd       = -1;
@@ -378,16 +379,18 @@ int ao_open(audio_out_t *ao)
     if (guard_exists(ao)) {
         ao->guard_blocked = 1;
         ao->state = AO_DISABLED_CRASH;
-        ao_log("skipped: crash guard %s exists (ak_rtsp died during audio init on "
+        ao_log("skipped: crash guard %s exists (akamd died during audio init on "
                "the previous start); remove it to retry", ao->guard_path);
         return -1;
     }
-    if (guard_create(ao) < 0) {
-        ao->state = AO_ERROR;
-        ao_log("skipped: cannot write crash guard %s: %s", ao->guard_path, strerror(errno));
-        return -1;
+    if (ao->guard_arm) {
+        if (guard_create(ao) < 0) {
+            ao->state = AO_ERROR;
+            ao_log("skipped: cannot write crash guard %s: %s", ao->guard_path, strerror(errno));
+            return -1;
+        }
+        ao->guard_active = 1;
     }
-    ao->guard_active = 1;
 
     ao->fd = ao->ops.open(ao->ops.user, ao->dev_path);
     if (ao->fd < 0) {
@@ -809,13 +812,26 @@ static void real_sleep_us(void *u, long us) { (void)u; usleep((useconds_t)us); }
 static audio_out_t   g_ao;
 static pthread_once_t g_ao_once = PTHREAD_ONCE_INIT;
 static int            g_ao_started;
+/* audio_out_setup(): the model hands over the playback node, the directory of the audio_out file and of the crash guard, and whether the speaker
+ * starts enabled when the file does not say. Called by each model before anything else touches the singleton (the 1080p from main(), the 2K from
+ * a2k_speaker_init()). Never called: an empty device path, so every start fails cleanly (state error) instead of opening a node nobody chose. */
+static const char    *g_setup_dev;
+static const char    *g_setup_dir;
+static int            g_setup_enable;
+void audio_out_setup(const char *dev_path, const char *conf_dir, int default_enabled)
+{
+    g_setup_dev = dev_path;
+    g_setup_dir = conf_dir;
+    g_setup_enable = default_enabled ? 1 : 0;
+}
 
 static void single_init(void)
 {
     static const ao_ops_t ops = { real_open, real_ioctl, real_write, real_close,
                                   real_now_us, real_sleep_us, NULL };
-    static const ao_cfg_t cfg = { "/dev/pcmC0D0p", "/etc/config/akam" };
+    ao_cfg_t cfg = { g_setup_dev ? g_setup_dev : "", g_setup_dir ? g_setup_dir : "/tmp" };
     ao_init(&g_ao, &ops, &cfg);
+    g_ao.enabled = g_setup_enable;
     ao_load_config(&g_ao);
 }
 
@@ -842,6 +858,10 @@ int audio_out_start(void)
     g_ao_started = 1;
     return 0;
 }
+
+void audio_out_set_guard_arm(int arm) { single()->guard_arm = arm ? 1 : 0; }
+
+int audio_out_running(void) { return g_ao_started; }
 
 void audio_out_stop(void)
 {

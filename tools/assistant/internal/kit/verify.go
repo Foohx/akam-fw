@@ -20,7 +20,7 @@ import (
 )
 
 // SupportedKitFormats are the kit_format values this program reads (verify_kit.sh SUPPORTED_KIT_FORMATS).
-var SupportedKitFormats = []string{"1"}
+var SupportedKitFormats = []string{"1", "2"}
 
 const (
 	maxTotalSize = 209715200 // 200 MiB of file content, as verify_kit.sh
@@ -76,16 +76,20 @@ type Options struct {
 // Layout is what differs between the kits of two firmware kinds; everything else (MANIFEST lines, SHA256SUMS,
 // archive safety, time64 gate) is the same code. The 2K kit (kind cardless-appfs) is the second user.
 type Layout struct {
-	Target       string   // the MANIFEST "target=" value
-	Payload      []string // files that must be listed in the MANIFEST
-	HardwareFile string   // the registry entry of the model inside the kit
+	Target  string   // the MANIFEST "target=" value
+	Payload []string // files that must be listed in the MANIFEST
+	// LegacyPayload maps a Payload path to the name a kit_format 1 kit (firmware 0.1.x) gives it: such a kit has the
+	// program under its old name (bin/ak_rtsp, appfs/bin/akam2k_rtsp, ...), the renamed ones are kit_format 2.
+	LegacyPayload map[string]string
+	HardwareFile  string // the registry entry of the model inside the kit
 }
 
 // Layout1080p is the default layout.
 var Layout1080p = Layout{
-	Target:       "arm-linux-musleabi",
-	Payload:      []string{"bin/ak_rtsp", "bin/dropbearmulti", "bin/flash_tool", "patches/patch_service_sh.sh", "supported_hardware.txt", "licenses/LICENSE.akam", "licenses/THIRD_PARTY_NOTICES.md", "licenses/LICENSE.dropbear"},
-	HardwareFile: "supported_hardware.txt",
+	Target:        "arm-linux-musleabi",
+	LegacyPayload: map[string]string{"bin/akamd": "bin/ak_rtsp"},
+	Payload:       []string{"bin/akamd", "bin/dropbearmulti", "bin/flash_tool", "patches/patch_service_sh.sh", "supported_hardware.txt", "licenses/LICENSE.akam", "licenses/THIRD_PARTY_NOTICES.md", "licenses/LICENSE.dropbear"},
+	HardwareFile:  "supported_hardware.txt",
 }
 
 func (o *Options) layout() Layout {
@@ -788,6 +792,9 @@ func (o *Options) VerifyDir(d, topExpected string) (map[string]string, error) {
 	// 3. the payload we promise.
 	lay := o.layout()
 	for _, p := range lay.Payload {
+		if old, ok := lay.LegacyPayload[p]; ok && kf[0] == "1" {
+			p = old
+		}
 		if !contains1(manFiles, p) {
 			return nil, fail("required file %s is not in the kit", p)
 		}

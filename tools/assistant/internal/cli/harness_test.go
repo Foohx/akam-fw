@@ -138,6 +138,8 @@ func newEnv(t *testing.T, opts ...func(*testfake.Options)) *env {
 			t.Errorf("the real disk layer was asked for %d times: this test must supply a fake card backend (Hooks.SD)", n)
 		}
 	})
+	// A 1080p install that has the API key of this PC (the normal case); a test of the first enrolment calls noAPIKey.
+	e.provisionAPIKey()
 	t.Setenv("HOME", e.home)
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv("AKAM_STATE_DIR", "")
@@ -146,7 +148,7 @@ func newEnv(t *testing.T, opts ...func(*testfake.Options)) *env {
 	t.Setenv("AKAM_FORCE_TTY", "1")
 	t.Setenv("AKAM_PORT_SSH", itoa(e.cam.SSHPort()))
 	t.Setenv("AKAM_PORT_RTSP", itoa(e.cam.RTSPPort()))
-	t.Setenv("AKAM_PORT_CTL", itoa(e.cam.CtlPort()))
+	t.Setenv("AKAM_PORT_CTL", freeClosedPort(t)) // the text port is closed to the network by default (openCtlPort: the opt-in, or an older image)
 	t.Setenv("AKAM_PORT_TELNET", freeClosedPort(t))
 	t.Setenv("AKAM_RTSP_PASSWORD", "")
 	t.Setenv("AKAM_TALK_CAPTURE_CMD", "")
@@ -167,6 +169,49 @@ func newEnv(t *testing.T, opts ...func(*testfake.Options)) *env {
 		}
 	})
 	return e
+}
+
+// provisionAPIKey gives the fake camera an admin key named "assistant" and this PC its file, as the first enrolment leaves them.
+func (e *env) provisionAPIKey() {
+	e.t.Helper()
+	k, err := e.cam.NewAPIKey("assistant", "admin")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.MkdirAll(e.state, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.state, "api_key"), []byte(k.ID+":"+hex.EncodeToString(k.Secret)+"\n"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// openCtlPort makes the text port 8091 of the fake reachable from the network: the LAN opt-in, or an image from before it was closed
+// (what discovery reads the firmware version and the host name from).
+func (e *env) openCtlPort() {
+	e.t.Helper()
+	e.t.Setenv("AKAM_PORT_CTL", itoa(e.cam.CtlPort()))
+}
+
+// copyAPIKey puts the key of this PC into the state folder of a named camera (the key is per camera folder).
+func (e *env) copyAPIKey(dir string) {
+	e.t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.state, "api_key"))
+	if err != nil {
+		return // a test without a key
+	}
+	if err := os.WriteFile(filepath.Join(dir, "api_key"), b, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// noAPIKey is an install made before the API key existed: the camera has no key and this PC has no file.
+func (e *env) noAPIKey() {
+	e.t.Helper()
+	e.cam.RevokeAPIKeys()
+	if err := os.Remove(filepath.Join(e.state, "api_key")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		e.t.Fatal(err)
+	}
 }
 
 // base are the options every run gets: no colour, this state, this key, this camera, its pinned key.
@@ -194,6 +239,7 @@ func (e *env) hooks() cli.Hooks {
 		h.SD = noDisks{} // a test never lists or touches the real disks of the machine it runs on
 	}
 	h.Discover = e.disc
+	h.CamAPI = func(_ string, k akamapi.Key) *akamapi.Client { return e.cam.APIClient(k) }
 	if e.api2k != nil {
 		h.CamAPI = func(string, akamapi.Key) *akamapi.Client { return e.api2k.Client() }
 	}

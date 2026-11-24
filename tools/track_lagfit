@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """track_lagfit: fit the video latency and the gains of the 2K person tracker from a raw recording of a pan / tilt sweep over a STATIC person.
 
-Input: /tmp/akam2k_track.raw of the camera (akam2k.conf track_debug=2; see docs/porting/lsc-rotatable-2k/tracking.md, experiment E2). The recording holds
+Input: /tmp/akam2k_track.raw of the camera (akam.conf track_debug=2; see docs/porting/lsc-rotatable-2k/tracking.md, experiment E2). The recording holds
   R t pan tilt                  every motor position sample of a continuous session (t: monotonic ms)
   I now cap pan tilt ... n {cls,score,x1,y1,x2,y2}...   every tracker input (cap: capture time of the frame)
   C key=value ...               the tracker configuration (invert_pan, invert_tilt, gains, lag_ms)
@@ -15,7 +15,7 @@ residual wins. The pan and the tilt are fitted on their own and together (the la
 
 Several persons in view: the static one is picked (the world position that appears in most frames), see --window.
 Usage: track_lagfit [--frame WxH] [--window STEPS] [--invert-pan 0|1] [--invert-tilt 0|1] [--lo MS] [--hi MS] [--step MS] [--min-samples N] FILE
-Prints the fit, the residual, and the akam2k.conf lines. Exit 0 when a fit was made, 1 when the recording has too little motion, 2 on a usage error.
+Prints the fit, the residual, and the akam.conf lines. Exit 0 when a fit was made, 1 when the recording has too little motion, 2 on a usage error.
 Standard library only."""
 import argparse
 import bisect
@@ -224,7 +224,7 @@ def main(argv):
     curr = min(rows, key=lambda r: abs(r[0] - cur))
     print("    the recorded lag_ms %d: joint residual %.1f, the best %.1f (variance sum, steps^2)" % (cur, joint(curr), joint(best)))
     print()
-    print("akam2k.conf:")
+    print("akam.conf:")
     for l in out:
         print("  " + l)
     return 0

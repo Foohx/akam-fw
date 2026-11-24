@@ -3,7 +3,7 @@
  * `number` / `select` entities edit and the capture thread applies.
  *
  * Sources, lowest to highest priority: the built-in defaults (unchanged: 15 fps, VBR, QP 32..51 main / 32..50 sub, target from main_kbps /
- * sub_kbps, peak 1.25 x target, GOP from `gop`), the akam2k.conf keys video<N>_kbps, video<N>_max_kbps, video<N>_fps, video<N>_min_qp,
+ * sub_kbps, peak 1.25 x target, GOP from `gop`), the akam.conf keys video<N>_kbps, video<N>_max_kbps, video<N>_fps, video<N>_min_qp,
  * video<N>_max_qp, video<N>_gop, video<N>_rc, then the runtime file /config/akam/video written by the Home Assistant entities. The runtime file
  * lists ONLY the keys that differ from the conf-derived base (a value set back to the base disappears from it), is stored atomically
  * (akam2k_store) and is ignored as a whole when invalid. An invalid conf value is refused by the supervisor script or by the app and the default stays.

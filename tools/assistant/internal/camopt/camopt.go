@@ -111,6 +111,9 @@ func Catalog() []Option {
 		num("isp.saturation", "Picture", "Saturation", -50, 50, PersistCamera, Now),
 		num("isp.sharpness", "Picture", "Sharpness", -50, 50, PersistCamera, Now),
 		num("isp.denoise", "Picture", "Denoise (0 = stock, 2 = default)", 0, 4, PersistCamera, Now),
+		enum("image.flip", "Picture", "Flip (vertical)", PersistCamera, Now, "0", "1"),
+		enum("image.mirror", "Picture", "Mirror (horizontal)", PersistCamera, Now, "0", "1"),
+		enum("image.ceiling", "Picture", "Ceiling mount (flip + mirror)", PersistCamera, Now, "0", "1"),
 		enum("img.wb", "Picture", "White balance", PersistRAM, Now, "conf", "manual"),
 		num("audio.out_volume", "Audio", "Speaker volume", 0, 100, PersistCamera, Now),
 		enum("audio.out_enable", "Audio", "Speaker", PersistCamera, Now, "0", "1"),
@@ -131,7 +134,7 @@ func Catalog() []Option {
 		{ID: "net.hostname", Group: "Network", Label: "Host name", Kind: String, Helper: "akam_hostname.sh", Persisted: PersistCamera, Applies: NextPowerCycle},
 		{ID: "net.ssid", Group: "Network", Label: "Wi-Fi network", Kind: String, Key: "net.ssid", Persisted: PersistNone, ReadOnly: true},
 		{ID: "net.wifi_rssi", Group: "Network", Label: "Wi-Fi signal", Kind: Int, Key: "net.wifi_rssi", Persisted: PersistNone, ReadOnly: true},
-		{ID: "debug", Group: "Advanced", Label: "Debug mode", Kind: Action, Helper: "akam_debug.sh", Persisted: PersistRAM, Applies: Now, Danger: DangerAsks},
+		enum("control.lan", "Network", "Text port 8091 open to the network", PersistCamera, VideoRestart, "0", "1"),
 	}
 }
 

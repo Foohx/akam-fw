@@ -4,7 +4,7 @@
 # and FAKE hardware modules (tests/native/ak1080_fakes.h), built under ASan + UBSan, listening on loopback and driven by curl with the
 # reference signer tools/akam-api-sign.sh. The generic protocol (hygiene, replay, lockout, slow clients, caps, challenge flow) is covered
 # in depth by tests/rot2k_control_api_http_test.sh on the SAME shared code; this test proves what the 1080p adds or differs in: the key
-# tool and the closed port without a key, the 41 registry rows and the actions of this model, no PTZ/track/button route, scopes, the
+# tool and the closed port without a key, the 56 registry rows and the actions of this model, no PTZ/track/button route, scopes, the
 # settings reaching the module setters, events (night, setting), the flash limiter, the audit file, and that no 2K-only code is compiled.
 # Needs: a C compiler (CC, default cc), curl, openssl, awk, xxd. Env: SH_UNDER_TEST for the signer (default sh).
 # shellcheck disable=SC2015,SC2059,SC2034  # test idioms: "cond && ok || ko" reporters, printf with an escape format, loop counters
@@ -43,7 +43,7 @@ SRV=$WORK/apisrv
 # shellcheck disable=SC2086
 if ! $CC -std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -pthread \
  -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" -I"$REPO/tests/native" "${SHARED_INC[@]}" -o "$SRV" "$REPO/tests/native/ak1080_api_server.c" \
-    "$REPO/firmware/lsc-indoor-1080p-ak3918/api_bind.c" "$REPO/firmware/lsc-indoor-1080p-ak3918/settings.c" "$SRC/leds.c" "$SRC/video_cfg.c" \
+    "$REPO/firmware/lsc-indoor-1080p-ak3918/api_bind.c" "$REPO/firmware/lsc-indoor-1080p-ak3918/settings.c" "$SRC/leds.c" "$SRC/video_cfg.c" "$SRC/image_orient.c" \
     "$REPO/src/features/light/led_pat.c" "$REPO/src/features/light/light_logic.c" "$REPO/src/core/cfg_file.c" \
     "$REPO/src/core/settings_reg.c" "$REPO/src/api/json_min.c" "$REPO/src/api/api_keys.c" "$REPO/src/api/api_sig.c" "$REPO/src/api/api_limit.c" \
     "$REPO/src/api/api_events.c" "$REPO/src/api/api_core.c" "$REPO/src/api/api_httpd.c" "$REPO/src/net/http/http_req.c" "$REPO/src/net/crypto/sha256.c" \
@@ -177,10 +177,11 @@ admin GET /akam/v1/schema
 want "schema: led, night, image, video0, onvif, mqtt rows" 200 '"key":"led.mode".*"key":"night.ir_led".*"key":"image.brightness".*"key":"video0.kbps".*"key":"onvif.enabled".*"key":"mqtt.enabled"'
 want "schema: the registry names of the 2K (patterns, state rows)" 200 '"key":"led.stream".*"key":"sys.cpu_pct".*"key":"net.wifi_rssi".*"key":"night.active"'
 want "schema: video rows apply at the next start, led rows live" 200 '"key":"video0.kbps".*"apply":"restart_component".*"key":"led.mode".*"apply":"live"|"key":"led.mode".*"apply":"live".*"key":"video0.kbps".*"apply":"restart_component"'
-want "schema: the three actions of this model" 200 '"actions":\[\{"name":"led.blip".*led.blip_stop.*settings.reset'
+want "schema: the four actions of this model" 200 '"actions":\[\{"name":"led.blip".*led.blip_stop.*audio.beep.*settings.reset'
 printf '%s' "$BODY" | grep -Eq 'ptz|track\.|detect\.|zones|button|wifi_band|wifi_country|video1' && ko "schema has no PTZ, tracking, detection, zones, button, 5 GHz or second stream row" || ok "schema has no PTZ, tracking, detection, zones, button, 5 GHz or second stream row"
 NROWS=$(printf '%s' "$BODY" | grep -o '"key":' | wc -l | tr -d ' ')
-[ "$NROWS" = 41 ] && ok "schema: 41 rows" || ko "schema: $NROWS rows (want 41)"
+[ "$NROWS" = 56 ] && ok "schema: 56 rows (44 + img.wb, audio x4, control.lan, net.wifi_rate, net.ssid, led.state, audio state x3: what the assistant needs now that port 8091 is closed)" || ko "schema: $NROWS rows (want 56)"
+want "schema: control.lan, audio and white balance rows" 200 '"key":"control.lan".*"key":"audio.out_volume"|"key":"audio.out_volume".*"key":"control.lan"'
 admin GET /akam/v1/settings
 want "settings: writable values as canonical text" 200 '"led.mode":"on".*"video0.kbps":"1536"|"video0.kbps":"1536".*"led.mode":"on"'
 printf '%s' "$BODY" | grep -q 'sys.cpu_pct' && ko "settings does not list read-only state" || ok "settings does not list read-only state"
@@ -195,9 +196,12 @@ admin GET /akam/v1/state
 want "state: hal_sys rows" 200 '"sys.cpu_pct":"37".*"sys.mem_avail_kb":"21000"|"sys.mem_avail_kb":"21000".*"sys.cpu_pct":"37"'
 want "state: rtsp, night, service rows" 200 '"rtsp.clients":"1".*"rtsp.auth":"on"|"rtsp.auth":"on".*"rtsp.clients":"1"'
 want "state: night.active day, api.keys, unknown Wi-Fi level" 200 '"night.active":"0"'
+printf '%s' "$BODY" | grep -q '"audio.out_state":"idle"' && printf '%s' "$BODY" | grep -q '"led.state":"solid"' && printf '%s' "$BODY" | grep -q '"audio.out_underruns":"3"' && ok "state: audio and LED state rows" || ko "state: audio and LED state rows"
+printf '%s' "$BODY" | grep -q 'control.lan' && ko "state: control.lan is a setting, not a state row" || ok "state: control.lan is a setting, not a state row"
 printf '%s' "$BODY" | grep -Eq '"api.keys":"3"' && ok "state: api.keys counts the three keys" || ko "state: api.keys ($(printf '%s' "$BODY" | head -c 300))"
 printf '%s' "$BODY" | grep -Eq '"net.wifi_rssi":"-1000000"' && ok "state: an unknown value is -1000000" || ko "state: unknown value"
-printf '%s' "$BODY" | grep -Eq 'net.ssid|net.mac|net.ip|password|secret' && ko "state: no identity data and no secret" || ok "state: no identity data and no secret"
+printf '%s' "$BODY" | grep -Eq 'net.mac|net.ip|password|secret' && ko "state: no MAC, no address, no secret" || ok "state: no MAC, no address, no secret"
+printf '%s' "$BODY" | grep -q '"net.ssid":"my net"' && ok "state: the network name (what any radio in range sees)" || ko "state: net.ssid"
 admin GET /akam/v1/ptz/presets
 want "no PTZ route: 404 unknown_path" 404 'unknown_path'
 admin GET /akam/v1/button
@@ -211,9 +215,21 @@ srvq 'flash 100' >/dev/null # the limiter has its own phase below
 admin PATCH /akam/v1/settings '{"led.mode":"auto"}'
 want "led.mode=auto: applied" 200 '"led.mode":\{"ok":true,"apply":"applied"'
 wantvals "...the 8091 setter received led.status=auto (persist, authenticated)" 'led=auto '
-admin PATCH /akam/v1/settings '{"image.contrast":-5,"image.brightness":12,"night.ir_led":"off"}'
+admin PATCH /akam/v1/settings '{"image.contrast":-5,"image.brightness":12,"night.ir_led":"off","audio.out_volume":35,"img.wb":"manual"}'
 want "JSON integers become canonical text, three rows in one PATCH" 200 '"image.contrast":\{"ok":true'
 wantvals "...every setter ran" 'brightness=12 contrast=-5 .* ir=off '
+admin PATCH /akam/v1/settings '{"image.flip":1,"image.mirror":1,"control.lan":1}'
+want "image.flip and image.mirror in one PATCH: applied" 200 '"image.flip":\{"ok":true'
+admin GET /akam/v1/settings
+want "...both read back as 1, ceiling 1" 200 '"image.ceiling":"1".*"image.flip":"1".*"image.mirror":"1"|"image.flip":"1"'
+want "...audio volume, white balance and the LAN opt-in read back (the opt-in of port 8091 is saved, applies at the next start)" 200 '"audio.out_volume":"35"'
+printf '%s' "$BODY" | grep -q '"img.wb":"manual"' && printf '%s' "$BODY" | grep -q '"control.lan":"1"' && ok "...img.wb manual, control.lan 1" || ko "...img.wb, control.lan ($(printf '%s' "$BODY" | head -c 300))"
+check "...the orientation file was saved (flip and mirror)" grep -q '^flip=1$' "$D/orient"
+admin PATCH /akam/v1/settings '{"image.ceiling":0}'
+want "image.ceiling=0: both off" 200 '"image.ceiling":\{"ok":true'
+check "...both off: the file is removed" test ! -e "$D/orient"
+admin PATCH /akam/v1/settings '{"image.flip":2}'
+want "image.flip=2: 422 format" 422 '"error":"format"'
 admin PATCH /akam/v1/settings '{"image.contrast":51}'
 want "out of range: 422 range" 422 '"error":"range"'
 admin PATCH /akam/v1/settings '{"image.contrast":"+5"}'
@@ -354,6 +370,9 @@ echo "== persistence of the audit, the port follows the key file"
 start_srv "$D1" --fast
 admin GET /akam/v1/audit
 want "after a restart the persisted writes are in the audit" 200 'PATCH /akam/v1/settings'
+# the nonce cache (64 requests for 125 s) is full by the phases above: the action of the speaker is tried on this fresh server
+admin POST /akam/v1/actions/audio.beep
+want "audio.beep: ok (the fake speaker plays)" 200 '"ok":true'
 "$SRV" "$D1" key revoke tool >/dev/null
 "$SRV" "$D1" key revoke "$AID" --force >/dev/null
 for i in $(seq 1 30); do [ "$(srvq 'port?')" = "PORT 0" ] && break; sleep 0.3; done

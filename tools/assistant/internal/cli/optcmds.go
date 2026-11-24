@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camopt"
 )
@@ -51,7 +50,7 @@ func (a *App) videoShow(c *camssh.Client) error {
 	h := a.readHealthOf(c, true) // the same clock report as the options screen and ntp status
 	a.readCamNtp(c, &h)
 	a.showHealth(h)
-	a.UI.Say("  Resolution and flip/mirror cannot be changed in this version (docs/troubleshooting.md, video settings).")
+	a.UI.Say(fmt.Sprintf("  Resolution cannot be changed in this version (docs/troubleshooting.md, video settings). Flip and mirror are picture settings: %s picture flip on.", Prog))
 	return nil
 }
 
@@ -103,7 +102,10 @@ func (a *App) cmdVideo(args []string) error {
 			changes = append(changes, camopt.Change{ID: id, Value: v})
 			i += 2
 		case "flip", "mirror", "resolution":
-			return audioUsage(fmt.Sprintf("video %s is not available: the camera's flip registers and a second resolution are not supported yet", w))
+			if w == "resolution" {
+				return audioUsage("video resolution is not available: a second resolution is not supported")
+			}
+			return audioUsage(fmt.Sprintf("video %s is a picture setting: %s picture %s on|off", w, Prog, w))
 		default:
 			return audioUsage(fmt.Sprintf("video: unknown word '%s'", w))
 		}
@@ -120,13 +122,13 @@ func (a *App) cmdVideo(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 %d", ctl.Port))
+		a.sayWouldAPI(ip)
 		for _, c := range changes {
 			o, _ := camopt.Find(c.ID)
 			a.UI.Say(fmt.Sprintf("  WOULD send: SET %s %s", o.Key, c.Value))
 		}
 		if len(changes) > 0 {
-			a.UI.Say("  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the ak_rtsp pid (the wrapper starts it again)")
+			a.UI.Say("  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the akamd pid (the wrapper starts it again)")
 		} else {
 			a.UI.Say("  WOULD send (read-only): GET video.bitrate_cfg, video.fps_cfg, video.gop_cfg, video.cfg_pending, video.bitrate, video.fps_actual")
 		}

@@ -6,6 +6,7 @@
 
 /* ak_vpss_effect_set(0, type, value). Types: A2K_FX_*. */
 #define A2K_FX_BRIGHTNESS 1
+#define A2K_FX_SATURATION 2 /* -50..50, 0 = the conf value (picture.h) */
 #define A2K_FX_CONTRAST 3
 #define A2K_FX_SHARPNESS 4
 #define A2K_FX_WDR 5 /* the stock "WDR" effect (wdr_type 1): 40 = on, 0 = off, see a2k_isp_wdr */

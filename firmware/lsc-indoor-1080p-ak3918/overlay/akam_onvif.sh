@@ -1,12 +1,12 @@
 #!/bin/sh
-# akam_onvif.sh -- switch the ONVIF service of ak_rtsp (Profile S: discovery, device, media) on or off.
+# akam_onvif.sh -- switch the ONVIF service of akamd (Profile S: discovery, device, media) on or off.
 #
 # Installed as /usr/sbin/akam_onvif.sh (mode 755). Run it over SSH, as root:
 #   akam_onvif.sh enable [PORT]   turn ONVIF on (HTTP port PORT, 1 to 65535 except 21-24, 554, 8091, 8092; default: the port already
 #                                 saved, else 80). Refused unless a stream password is set
 #                                 (./akam rtsp-auth set): ONVIF logins are checked against it
 #   akam_onvif.sh disable         turn ONVIF off (the HTTP port and UDP 3702 are closed again)
-#   akam_onvif.sh status          enabled/disabled, the port, the password, and what ak_rtsp reports
+#   akam_onvif.sh status          enabled/disabled, the port, the password, and what akamd reports
 # Exit status: 0 ok, 1 failure, 2 usage, 3 status found an INVALID flag file.
 #
 # The flag is /etc/config/akam/onvif (CONFIG partition, persistent, mode 0600, directory 0700), two
@@ -14,9 +14,9 @@
 #     enabled=1            1 = on, 0 = off
 #     port=80              HTTP port of the ONVIF service, 1 to 65535
 # An absent file means disabled (the default of every image). The file is replaced atomically.
-# ak_rtsp reads it at start and again on "ONVIF reload" (port 8091, from the camera only): this
-# script sends it with the multi-call alias "ak_rtsp ctl ONVIF reload" after every change. An older
-# ak_rtsp answers "ERR unknown command": the flag is saved anyway and applies at the next reboot.
+# akamd reads it at start and again on "ONVIF reload" (port 8091, from the camera only): this
+# script sends it with the multi-call alias "akamd ctl ONVIF reload" after every change. An older
+# akamd answers "ERR unknown command": the flag is saved anyway and applies at the next reboot.
 # The password is never read out or printed here: only its presence and shape are checked.
 #
 # POSIX sh for the camera's BusyBox 1.30.1: no tr, no mktemp, no stat (ls -ld instead). Paths are
@@ -27,7 +27,7 @@ CONFIG_DIR=${AKAM_CONFIG_DIR:-$AKAM_ROOT/etc/config}
 AKAM_DIR=$CONFIG_DIR/akam
 ONVIF_FILE=${AKAM_ONVIF_FILE:-$AKAM_DIR/onvif}
 CRED_FILE=${AKAM_CRED_FILE:-$AKAM_DIR/credentials}
-AKAM_RTSP_BIN=${AKAM_RTSP_BIN:-/usr/bin/ak_rtsp}
+AKAM_RTSP_BIN=${AKAM_RTSP_BIN:-/usr/bin/akamd}
 DEF_PORT=80
 MIN_PASS=8
 MAX_PASS=128
@@ -119,25 +119,25 @@ write_flag() {
     sync
 }
 
-# ctl LINE...: first reply line in REPLY, exit status of "ak_rtsp ctl" in CTL_RC.
+# ctl LINE...: first reply line in REPLY, exit status of "akamd ctl" in CTL_RC.
 ctl() {
     REPLY=$("$AKAM_RTSP_BIN" ctl "$@" 2>&1)
     CTL_RC=$?
     REPLY=$(printf '%s\n' "$REPLY" | sed -n '1p')
 }
 
-# reload: tell ak_rtsp to read the flag again. Returns 0 when applied or only pending a reboot.
+# reload: tell akamd to read the flag again. Returns 0 when applied or only pending a reboot.
 reload() {
     ctl ONVIF reload
     case $REPLY in
-        OK*) echo "Applied now (ak_rtsp reloaded the setting)."; return 0 ;;
-        *"unknown command"*) echo "Saved. This ak_rtsp is older and cannot reload: reboot the camera to apply."; return 0 ;;
+        OK*) echo "Applied now (akamd reloaded the setting)."; return 0 ;;
+        *"unknown command"*) echo "Saved. This akamd is older and cannot reload: reboot the camera to apply."; return 0 ;;
     esac
     if [ "$CTL_RC" -ne 0 ] || [ -z "$REPLY" ]; then
-        echo "Saved. ak_rtsp did not answer${REPLY:+ ($REPLY)}: it applies the next time ak_rtsp starts (reboot the camera)."
+        echo "Saved. akamd did not answer${REPLY:+ ($REPLY)}: it applies the next time akamd starts (reboot the camera)."
         return 0
     fi
-    echo "akam_onvif: saved, but ak_rtsp refused the reload: $REPLY (reboot the camera to apply)" >&2
+    echo "akam_onvif: saved, but akamd refused the reload: $REPLY (reboot the camera to apply)" >&2
     return 1
 }
 
@@ -190,7 +190,7 @@ do_status() {
     ctl GET onvif.state
     case $REPLY in
         onvif.state=*) echo "state: ${REPLY#onvif.state=}" ;;
-        *) echo "state: unknown (this ak_rtsp does not report it)" ;;
+        *) echo "state: unknown (this akamd does not report it)" ;;
     esac
     [ "$_rc" -ne 3 ] || return 3
     return 0

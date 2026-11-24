@@ -12,7 +12,7 @@ A replacement for `mtd3` (appfs, squashfs, 0x490000): the **stock appfs unchange
 |---|---|
 | `/appfs/script/init.sh` | the stock file with **one branch** changed: mode `normal` (no override card) starts `/appfs/akam/akam_flash_boot.sh`. Modes `debug` and `factory` are untouched stock code. |
 | `/appfs/bin/yy_cam` | the stock 3.6 MB app is **removed** (1.2 MB compressed: the only way the payload fits) and replaced by a 3-line launcher: `exec /bin/sh /appfs/akam/own_app_stub.sh`. The file must exist because the SD overlay bind-mounts its stub over it. |
-| `/appfs/akam/` | `akam_flash_boot.sh`, `own_app_stub.sh`, `own_app_run.sh`, `common.sh`, `decloud.sh`, `akam_ntp.sh`, `start_ssh.sh`, `dropbearmulti`, `busybox` (the card's pinned static one: the camera's own busybox has no `sha256sum`, the stub needs it), `bin/akam2k_rtsp`, `bin/akam2k_sntp` (+ BUILDINFO each). No vendor libs: `/appfs/lib` already has them. |
+| `/appfs/akam/` | `akam_flash_boot.sh`, `own_app_stub.sh`, `own_app_run.sh`, `common.sh`, `decloud.sh`, `akam_ntp.sh`, `start_ssh.sh`, `dropbearmulti`, `busybox` (the card's pinned static one: the camera's own busybox has no `sha256sum`, the stub needs it), `bin/akamd`, `bin/akam-sntp` (+ BUILDINFO each). No vendor libs: `/appfs/lib` already has them. |
 
 Consequence of removing `yy_cam`: no stock app, **and no cloud OTA client** (nothing downloads `yy_upgrade.bin`, so
 nothing can overwrite the flashed appfs behind our back). Restoring stock = flash the backup `mtd3.bin` back.
@@ -31,7 +31,7 @@ backup (checked: a full `unsquashfs` of the image differs from the stock tree on
    `STATUS=active`. That is now our stub: feeder (`busybox watchdog -F -t 5 -T 20`, the card's busybox), Wi-Fi GPIO
    and `atbm6132c.ko`, `wpa_supplicant` with `akam/wpa.conf`, `udhcpc`, health check (else the feeder is killed =
    hardware reset; after 3 unfinished boots the card falls back to the stock app), then `own_app_run.sh`
-   (supervisor, verifies sha256 against BUILDINFO, restarts `akam2k_rtsp`).
+   (supervisor, verifies sha256 against BUILDINFO, restarts `akamd`).
 
 ## 3. Boot logic of the image (recovery-aware)
 
@@ -59,7 +59,7 @@ half-written appfs** (see section 7), nothing else.
    `authorized_keys`);
 3. **bind-mounts `/tmp/akamsd` over `/mnt/sdcard`**: the shared overlay scripts and the app (it hard-codes
    `/mnt/sdcard/akam/{zones,mqtt,rtsp.conf}`) run **unchanged**, no source change. Side effects: logs
-   (`akam_boot.log`, `akam2k.log`, size-capped by the scripts) live in RAM and are lost at reboot; a card
+   (`akam_boot.log`, `akam.log`, size-capped by the scripts) live in RAM and are lost at reboot; a card
    inserted in normal mode is hidden from the app (no recording anyway);
 4. starts `start_ssh.sh` (background), hands off to the stock `start.sh &` (drivers; `yy_cam` = the stub launcher),
    starts `decloud.sh on` in the background (no-op without the flag).
@@ -78,7 +78,7 @@ Akam card with `own_app` and a `wpa.conf` (the normal one).
 | `wpa.conf` (0600) | wpa_supplicant config (SSID/PSK) | no Wi-Fi: reset loop (recover with the card) |
 | `authorized_keys` | `ssh-ed25519` lines | no SSH |
 | `dropbear_ed25519_host_key` | generated on first boot | generated |
-| `akam2k.conf`, `zones`, `mqtt`, `rtsp.conf`, `ntp` | same formats as on the card | app defaults / feature off |
+| `akam.conf`, `zones`, `mqtt`, `rtsp.conf`, `ntp` | same formats as on the card | app defaults / feature off |
 | `no_app`, `decloud` | empty flag files | app runs / no WAN block |
 | `hostname`, `net` | one-line hostname; `wifi_country=XX\|none` / `wifi_band=2.4\|5` (see [net-settings.md](net-settings.md)) | `akam-rot2k`, none, 2.4 |
 
@@ -89,7 +89,7 @@ survives the appfs flash; `/config/akam` is a new directory, nothing existing is
 ssh root@CAM 'mkdir -p /config/akam && chmod 700 /config/akam'
 ssh root@CAM 'umask 077; cat > /config/akam/wpa.conf'       < wpa.conf          # never printed, never committed
 ssh root@CAM 'umask 077; cat > /config/akam/authorized_keys' < ~/.ssh/id_ed25519.pub
-ssh root@CAM 'cat > /config/akam/akam2k.conf' < akam2k.conf                     # optional, also zones/mqtt/ntp...
+ssh root@CAM 'cat > /config/akam/akam.conf' < akam.conf                     # optional, also zones/mqtt/ntp...
 ssh root@CAM 'ls -l /config/akam; df /config'                                    # 256 KiB partition: keep it small
 ```
 

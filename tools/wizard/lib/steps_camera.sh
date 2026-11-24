@@ -143,7 +143,7 @@ cam_ask_ip() {
 }
 
 cmd_find_camera() {
-    local tp sp rp cp tel=0 ssh=0 rtsp=0 ctl=0 kind=""
+    local tp sp rp cp tel=0 ssh=0 rtsp=0 kind=""
     step_need find-camera || return 1
     step_banner find-camera
     tp=$(cam_port telnet) sp=$(cam_port ssh) rp=$(cam_port rtsp) cp=$(cam_port ctl)
@@ -162,7 +162,6 @@ cmd_find_camera() {
     case " $PROBE_OPEN " in *" $tp "*) tel=1 ;; esac
     case " $PROBE_OPEN " in *" $sp "*) ssh=1 ;; esac
     case " $PROBE_OPEN " in *" $rp "*) rtsp=1 ;; esac
-    case " $PROBE_OPEN " in *" $cp "*) ctl=1 ;; esac
     ui_say "  Open ports: ${PROBE_OPEN:-none}"
     if [ -z "$PROBE_OPEN" ]; then
         ui_fail "$CAM_IP does not answer on any expected port." \
@@ -172,11 +171,11 @@ cmd_find_camera() {
     if [ "$tel" = 1 ]; then
         cam_identify_telnet || return 1
         kind=$CAM_KIND
-    elif [ "$ssh" = 1 ] && [ "$rtsp" = 1 ] && [ "$ctl" = 1 ]; then
+    elif [ "$ssh" = 1 ] && [ "$rtsp" = 1 ]; then # the text port 8091 is closed to the network on a current image: not part of the test
         kind=akam
-        ui_say "  Ports $sp, $rp and $cp are open and telnet is closed: this is a camera running Akam."
+        ui_say "  Ports $sp and $rp are open and telnet is closed: this is a camera running Akam."
     elif [ "$ssh" = 1 ]; then
-        ui_fail "only SSH answers. A camera running Akam also opens $rp and $cp once it has finished booting." \
+        ui_fail "only SSH answers. A camera running Akam also opens $rp once it has finished booting." \
             "wait a minute and run this step again."
         return 1
     else
@@ -977,7 +976,7 @@ cam_onvif_flag() {
     done <<<"$out"
 }
 
-# cam_ports_check EXPECT_TELNET: open = 22 554 8091 only (24 allowed while the card is in). When ONVIF is
+# cam_ports_check EXPECT_TELNET: open = 22 554 only (24 allowed while the card is in; 8091 is closed to the network on a current image and is not required). When ONVIF is
 # switched on (flag read over SSH) its HTTP port (80 by default) must be open too; otherwise it must be
 # closed. UDP 3702 (WS-Discovery) cannot be probed from here: akam_hwcheck.sh checks it on the camera.
 cam_ports_check() {
@@ -988,7 +987,7 @@ cam_ports_check() {
     if [ "$ONVIF_ON" = 1 ]; then http=${AKAM_PORT_HTTP:-$ONVIF_PORT}; else http=${AKAM_PORT_HTTP:-80}; fi
     net_probe "$CAM_IP" "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)" "$(cam_port telnet)" "$ftp" "$tel23" "$http"
     ui_say "  Open ports: ${PROBE_OPEN:-none}"
-    for p in "$(cam_port ssh)" "$(cam_port rtsp)" "$(cam_port ctl)"; do
+    for p in "$(cam_port ssh)" "$(cam_port rtsp)"; do
         case " $PROBE_OPEN " in *" $p "*) ;; *) ui_err "port $p should be open and is not."; bad=1 ;; esac
     done
     for p in "$(cam_port telnet)" "$ftp" "$tel23"; do
@@ -1004,7 +1003,7 @@ cam_ports_check() {
             else ui_err "port $http should be closed (ONVIF is off) and is open."; bad=1; fi
             ;;
         *)
-            if [ "$ONVIF_ON" = 1 ]; then ui_err "ONVIF is on but port $http is not open: ak_rtsp may not have started it (./akam onvif status)."; bad=1; fi
+            if [ "$ONVIF_ON" = 1 ]; then ui_err "ONVIF is on but port $http is not open: akamd may not have started it (./akam onvif status)."; bad=1; fi
             ;;
     esac
     return "$bad"
@@ -1024,7 +1023,7 @@ cmd_verify() {
     step_banner verify
     if [ "$UI_DRY" = 1 ]; then
         ui_say "  WOULD wait for the camera, check SSH with your key, copy and run akam_hwcheck.sh (expecting no FAIL),"
-        ui_say "  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in; 80 only if ONVIF is on), make sure the camera has a saved"
+        ui_say "  check that the open ports are 22 and 554 (24 allowed while the card is in; 80 only if ONVIF is on), make sure the camera has a saved"
         ui_say "  Wi-Fi network (preflight_check.sh --ensure-wifi on the camera; it is created from the card's wifi.conf when missing,"
         ui_say "  and you are never asked to remove the card before that is done), then ask you to"
         ui_say "  unplug the power, take the card out and plug the power back in BY HAND, and repeat the checks:"
@@ -1060,7 +1059,7 @@ cmd_verify() {
     cam_ports_check closed || { ui_fail "port check failed without the card." "see docs/manual/ssh-and-lockdown.md."; return 1; }
     cam_hwcheck || { ui_fail "akam_hwcheck.sh reported a failure without the card." ""; return 1; }
     state_mark_done verify
-    ui_good "  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off."
+    ui_good "  Verified: SSH works, only 22 and 554 are open, telnet and FTP are off."
     verify_hostname
     rtsp_auth_offer
     wipe_offer
@@ -1581,7 +1580,7 @@ cmd_ntp() {
 # picture: isp.brightness/contrast/saturation/sharpness are saved on the camera and applied at start-up;
 # img.wb (conf | manual) and night.mode (auto | day | night) are RAM-only: they go back at the next reboot.
 picture_show() {
-    local out br co sa sh wb nm dn
+    local out br co sa sh wb nm dn fl mi
     out=$(led_remote "GET isp.brightness" "GET isp.contrast" "GET isp.saturation" "GET isp.sharpness" "GET isp.denoise" "GET img.wb" "GET night.mode")
     dn=$(led_get isp.denoise "$out")
     br=$(led_get isp.brightness "$out")
@@ -1598,6 +1597,13 @@ picture_show() {
     [ -z "$dn" ] || ui_say "  Denoise (3D noise reduction): $dn (0 to 4; 2 is the default, 0 is the camera's own noise reduction). Saved on the camera."
     ui_say "  White balance: ${wb:-unknown} (conf = the camera's calibration, manual = Akam's own block). Saved on the camera."
     ui_say "  Day/night: ${nm:-unknown} (auto, day or night). Saved on the camera."
+    # an image from before the orientation rows does not answer: nothing is said about them
+    out=$(led_remote "GET image.flip" "GET image.mirror")
+    fl=$(led_get image.flip "$out")
+    mi=$(led_get image.mirror "$out")
+    if [ -n "$fl" ] && [ -n "$mi" ]; then
+        ui_say "  Flip (vertical) $fl, mirror (horizontal) $mi (1 = on). Saved on the camera and applied at once; set both for a camera mounted on the ceiling (not yet verified on a 1080p camera)."
+    fi
 }
 
 picture_num() { # WORD: a whole number from -50 to 50
@@ -1635,6 +1641,18 @@ cmd_picture() {
                 for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != img.wb ] || { echo "akam: picture wb given twice (see ./akam help)" >&2; return 2; }; done
                 keys+=(img.wb); vals+=("$2"); shift 2
                 ;;
+            flip | mirror | ceiling)
+                local ov
+                case ${2:-} in on | 1) ov=1 ;; off | 0) ov=0 ;; *) echo "akam: picture $1 needs on or off (see ./akam help)" >&2; return 2 ;; esac
+                for k in ${keys[@]+"${keys[@]}"}; do
+                    [ "$k" != "image.$1" ] || { echo "akam: picture $1 given twice (see ./akam help)" >&2; return 2; }
+                    if { [ "$1" = ceiling ] && { [ "$k" = image.flip ] || [ "$k" = image.mirror ]; }; } || { [ "$1" != ceiling ] && [ "$k" = image.ceiling ]; }; then
+                        echo "akam: picture: ceiling replaces flip and mirror, use either ceiling or flip/mirror (see ./akam help)" >&2
+                        return 2
+                    fi
+                done
+                keys+=("image.$1"); vals+=("$ov"); shift 2
+                ;;
             night)
                 case ${2:-} in auto | day | night) ;; *) echo "akam: picture night needs auto, day or night (see ./akam help)" >&2; return 2 ;; esac
                 for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != night.mode ] || { echo "akam: picture night given twice (see ./akam help)" >&2; return 2; }; done
@@ -1657,7 +1675,7 @@ cmd_picture() {
         local i
         for i in "${!keys[@]}"; do ui_say "  WOULD send: SET ${keys[$i]} ${vals[$i]}"; done
         [ "$reset" != 1 ] || ui_say "  WOULD send: SET isp.denoise 2 (ignored by an image without it)"
-        [ "${#keys[@]}" -gt 0 ] || ui_say "  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode"
+        [ "${#keys[@]}" -gt 0 ] || ui_say "  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode, image.flip, image.mirror"
         return 0
     fi
     rtsp_connect || return 1
@@ -1673,7 +1691,7 @@ cmd_picture() {
 }
 
 # video: bitrate cap, frame rate and key-frame interval are saved on the camera (/etc/config/akam/video, through
-# the 8091 keys video.bitrate_cfg / video.fps_cfg / video.gop_cfg) and applied when the video service (ak_rtsp)
+# the 8091 keys video.bitrate_cfg / video.fps_cfg / video.gop_cfg) and applied when the video service (akamd)
 # starts: the encoder cannot be changed while it runs. Resolution and flip/mirror are not offered (specs/roadmap.md).
 VIDEO_KBPS_MIN=500
 VIDEO_KBPS_MAX=3000
@@ -1706,14 +1724,14 @@ video_show() {
         ui_warn "these values are saved but not running yet: they apply at the next restart of the video service."
     fi
     [ -z "$mbr$mfps" ] || ui_say "  Measured now: ${mbr:-?} kbit/s, ${mfps:-?} (tenths of a frame per second)."
-    ui_say "  Resolution and flip/mirror cannot be changed in this version (docs/troubleshooting.md, video settings)."
+    ui_say "  Resolution cannot be changed in this version (docs/troubleshooting.md, video settings). Flip and mirror are picture settings: ./akam picture flip on."
 }
 
-video_restart() { # kill ak_rtsp: the wrapper (ak_rtsp_wrapper.sh) starts it again by itself; /usr/bin/watchdog is never touched
+video_restart() { # kill akamd: the wrapper (akam_run.sh) starts it again by itself; /usr/bin/watchdog is never touched
     # no killall: not guaranteed in the camera's BusyBox (see akam_lockdown.sh); pidof also lists the kernel log filter (same exe, cmdline akam_klog): skipped by cmdline
-    log_line "CMD ssh root@$CAM_IP kill \$(pidof ak_rtsp)"
+    log_line "CMD ssh root@$CAM_IP kill \$(pidof akamd ak_rtsp)"
     # shellcheck disable=SC2016 # expanded on the camera, not here
-    "${CAM_SSH[@]}" 'for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done' >/dev/null 2>&1 || true
+    "${CAM_SSH[@]}" 'for p in $(pidof akamd ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done' >/dev/null 2>&1 || true
 }
 
 cmd_video() {
@@ -1741,8 +1759,12 @@ cmd_video() {
                 for k in ${keys[@]+"${keys[@]}"}; do [ "$k" != "video.${1}_cfg" ] || { echo "akam: video $1 given twice (see ./akam help)" >&2; return 2; }; done
                 keys+=("video.${1}_cfg"); vals+=("$((10#$2))"); shift 2
                 ;;
-            flip | mirror | resolution)
-                echo "akam: video $1 is not available: the camera's flip registers and a second resolution are not supported yet (see ./akam help)" >&2
+            resolution)
+                echo "akam: video resolution is not available: a second resolution is not supported (see ./akam help)" >&2
+                return 2
+                ;;
+            flip | mirror)
+                echo "akam: video $1 is a picture setting: ./akam picture $1 on|off (see ./akam help)" >&2
                 return 2
                 ;;
             *) echo "akam: video: unknown word '$1' (see ./akam help)" >&2; return 2 ;;
@@ -1767,7 +1789,7 @@ cmd_video() {
         local i
         for i in "${!keys[@]}"; do ui_say "  WOULD send: SET ${keys[$i]} ${vals[$i]}"; done
         if [ "${#keys[@]}" -gt 0 ]; then
-            ui_say "  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the ak_rtsp pid (the wrapper starts it again)"
+            ui_say "  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the akamd pid (the wrapper starts it again)"
         else
             ui_say "  WOULD send (read-only): GET video.bitrate_cfg, video.fps_cfg, video.gop_cfg, video.cfg_pending, video.bitrate, video.fps_actual"
         fi
@@ -1855,7 +1877,7 @@ cmd_debug() {
     out=$("${CAM_SSH[@]}" "$remote" 2>&1) && rc=0 || rc=$?
     if [ "$rc" -ne 0 ]; then
         [ -z "$out" ] || ui_say "  $out"
-        ui_fail "the camera did not run $DEBUG_CMD $action." "it may run an older Akam image without the debug command (./akam update), or ak_rtsp may not be running."
+        ui_fail "the camera did not run $DEBUG_CMD $action." "it may run an older Akam image without the debug command (./akam update), or akamd may not be running."
         return 1
     fi
     ui_say "  $out"
@@ -1870,7 +1892,7 @@ cmd_debug() {
 # ONVIF (Profile S: discovery, device, media) lets NVRs and apps such as ONVIF Device Manager find the camera and
 # pull its stream (specs/onvif.md). It is OFF by default: switching it on opens
 # TCP 80 (or the chosen port) and UDP 3702 on your network, and it needs the stream password. Done over SSH with
-# akam_onvif.sh, which writes /etc/config/akam/onvif and asks ak_rtsp to reload it.
+# akam_onvif.sh, which writes /etc/config/akam/onvif and asks akamd to reload it.
 #   ./akam onvif status            on or off, the port, what the camera reports (read-only)
 #   ./akam onvif enable [PORT]     turn it on (asks first; default port 80)
 #   ./akam onvif disable           turn it off

@@ -1,6 +1,6 @@
 # MQTT and Home Assistant
 
-`ak_rtsp` contains a small outbound MQTT 3.1.1 client that publishes the camera to a broker, announces it to Home
+`akamd` contains a small outbound MQTT 3.1.1 client that publishes the camera to a broker, announces it to Home
 Assistant through MQTT discovery, and accepts a fixed list of commands. It is **optional and off by default**. While off
 there is no thread, socket, timer or pipe.
 
@@ -48,7 +48,7 @@ files and starts, stops or restarts the thread; `MQTT test` makes one short-live
 `<id>-test`, waits for CONNACK and disconnects, and works while the service is off.
 
 `akam_mqtt.sh` (run over SSH): `set HOST PORT USER` (the password on stdin), `option NAME VALUE`, `disable`, `forget`
-(delete both files), `status`, `test`. Each change ends with `ak_rtsp ctl MQTT reload`.
+(delete both files), `status`, `test`. Each change ends with `akamd ctl MQTT reload`.
 
 ## 3. Connection behaviour
 
@@ -134,5 +134,5 @@ A command that asks for the value the camera already has is acknowledged without
 ## 7. Tests
 
 `tests/mqtt_codec_test.sh`, `mqtt_ha_test.sh`, `mqtt_svc_test.sh` (a fake broker; AddressSanitizer and UBSan),
-`akam_mqtt_test.sh`, `wizard_mqtt_test.sh`, `control_test.sh`, `hwcheck_test.sh` (`MQTT is on: ak_rtsp holds one outbound
+`akam_mqtt_test.sh`, `wizard_mqtt_test.sh`, `control_test.sh`, `hwcheck_test.sh` (`MQTT is on: akamd holds one outbound
 TCP connection`).

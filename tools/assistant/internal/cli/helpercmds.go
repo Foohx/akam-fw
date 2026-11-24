@@ -14,85 +14,8 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
 )
 
-// This file: debug, onvif, hostname, rtsp-auth, the commands that run a camera helper script
+// This file: onvif, hostname, rtsp-auth, the commands that run a camera helper script
 // over SSH (steps_camera.sh). Secrets go on stdin only.
-
-// ---------------------------------------------------------------- debug
-
-func (a *App) cmdDebug(args []string) error {
-	action := "status"
-	if len(args) > 0 {
-		action = args[0]
-	}
-	min := ""
-	switch action {
-	case "on":
-		if len(args) > 2 {
-			return usageErr(fmt.Sprintf("akam: debug on takes at most one number of minutes (see %s help)", Prog))
-		}
-		if len(args) == 2 {
-			min = args[1]
-			n, err := strconv.Atoi(min)
-			if err != nil || !allDigits(min) || n < 1 || n > 1440 {
-				return usageErr(fmt.Sprintf("akam: debug on: MINUTES must be a whole number from 1 to 1440 (see %s help)", Prog))
-			}
-		}
-	case "off", "status":
-		if len(args) > 1 {
-			return usageErr(fmt.Sprintf("akam: debug %s takes no argument (see %s help)", action, Prog))
-		}
-	default:
-		return usageErr(fmt.Sprintf("akam: debug needs on [MINUTES], off or status (see %s help)", Prog))
-	}
-	remote := remoteDebug(action, min)
-	a.banner("Debug mode of the control port: " + action)
-	ip, err := a.camNeedIP()
-	if err != nil {
-		return err
-	}
-	if a.UI.Dry() {
-		if action == "on" {
-			a.UI.Say("  WOULD ask: Let anyone on your network change the camera settings through port 8091? [y/N]")
-		}
-		a.UI.Say("  WOULD run over SSH on the camera: " + remote)
-		return nil
-	}
-	c, err := a.connectTools(ip)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	if action == "on" {
-		if err := a.UI.RequireTTY("allowing writes on the control port"); err != nil {
-			return err
-		}
-		ok, _ := a.UI.AskYN("  Let anyone on your network change the camera settings through port 8091 for a while?")
-		if !ok {
-			a.UI.Say("  Left as it was (read-only).")
-			return nil
-		}
-	}
-	res, err := a.run(c, remote, nil, "")
-	if err != nil {
-		return err
-	}
-	out := strings.TrimRight(res.Combined(), "\n")
-	if res.Status != 0 {
-		if out != "" {
-			a.UI.Say("  " + out)
-		}
-		return a.UI.Fail(fmt.Sprintf("the camera did not run %s %s.", debugCmd, action),
-			fmt.Sprintf("it may run an older Akam image without the debug command (%s update), or ak_rtsp may not be running.", Prog))
-	}
-	a.UI.Say("  " + out)
-	switch action {
-	case "on":
-		a.UI.Warn(fmt.Sprintf("anyone on your network can now change the camera settings through port 8091 until it is switched off: %s debug off.", Prog))
-	case "off":
-		a.UI.Good("  Port 8091 is read-only for the network again.")
-	}
-	return nil
-}
 
 func allDigits(s string) bool {
 	if s == "" {

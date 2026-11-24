@@ -14,13 +14,13 @@ beyond the first comparisons.
 
 - The ISP blocks (30 blocks from 24 modules of the sensor file `/tmp/sensor_isp.conf`, which has a day sub-file and a
   night sub-file) are sent unmodified, exactly as the stock application sends them. A comparison of a stock capture
-  with `ak_rtsp` found no block-level difference at start-up or after a day/night switch, except the white-balance block
+  with `akamd` found no block-level difference at start-up or after a day/night switch, except the white-balance block
   (next paragraph).
 - **White balance (`img.wb`).** `conf` (default): keep the file's WB block, as stock. `manual`: additionally send a
   hand-made manual WB block (type and three gains, rest zero) after the file's block, and re-apply it after every
   night-to-day reload. `conf` was chosen after a side-by-side comparison on a camera (better colours).
 - **Gain limits.** The exposure block limits the sensor gain to 1.0x and the ISP gain to 1.5x (day) or 3.0x (night). The
-  longest exposure is the frame time. `ak_rtsp` keeps those limits.
+  longest exposure is the frame time. `akamd` keeps those limits.
 - All ISP register writes that touch more than one ioctl run under `isp_cfg_lock()`, the same lock the night thread
   holds for a whole day/night reload. Order of locks: control `SET` lock, then ISP lock; the night thread never takes the
   `SET` lock.
@@ -177,7 +177,7 @@ writes only when the level changes. A sysfs failure is logged once and retried q
 | Camera still starting, or Wi-Fi not connected | Blink, 500 ms on and 500 ms off | `blink_wifi` |
 | Otherwise | Solid on | `on` |
 
-- "Starting" lasts from the start of `ak_rtsp` until the RTSP server listens.
+- "Starting" lasts from the start of `akamd` until the RTSP server listens.
 - "Wi-Fi connected" means `wlan0` has an IPv4 address and `/sys/class/net/wlan0/operstate` is not `down`, `dormant`,
   `lowerlayerdown` or `notpresent` (a missing or odd file is accepted).
 - "Playing" counts a client from PLAY until TEARDOWN or the end of the connection, through a counter updated only on
@@ -217,7 +217,7 @@ ir_led=off
 ```
 
 An absent file, an unknown line or a bad value keeps the default. Both settings are applied before the camera is
-initialised, so in `auto` the LED blinks during the whole start of `ak_rtsp`. A `SET` answers `OK key=value`, or
+initialised, so in `auto` the LED blinks during the whole start of `akamd`. A `SET` answers `OK key=value`, or
 `OK key=value (not saved: reason)` when the file cannot be written (the change is live, but lost at the next boot).
 
 ## 7. Image-quality switches (debug)
@@ -227,7 +227,7 @@ then `/etc/config/akam/image` (saved), as `key=value` lines with `#` comments.
 
 | Switch | Values | Default | Effect |
 |---|---|---|---|
-| `venc_rc` (`AKAM_VENC_RC`) | `legacy`, `stock` | `legacy` | `CREATE_ENC` rate-control sub-struct: `legacy` keeps the values `ak_rtsp` always sent; `stock` sends exactly what the stock application sends. `stock` has not been tried without risk: other rate-control words crashed the kernel twice. Keep it in `/tmp/akam_image` (a crash then self-heals at reboot), never in the saved file, until a hardware test has passed |
+| `venc_rc` (`AKAM_VENC_RC`) | `legacy`, `stock` | `legacy` | `CREATE_ENC` rate-control sub-struct: `legacy` keeps the values `akamd` always sent; `stock` sends exactly what the stock application sends. `stock` has not been tried without risk: other rate-control words crashed the kernel twice. Keep it in `/tmp/akam_image` (a crash then self-heals at reboot), never in the saved file, until a hardware test has passed |
 | `wb` (`AKAM_IMG_WB`) | `conf`, `manual` | `conf` | See section 1 |
 | `poll` (`AKAM_IMG_POLL`) | 0, 1 | 0 | 1 polls the 3D-NR statistics (about 1.2 Hz) and sensor fps (about 2 Hz) like stock |
 | `ipdelta` (`AKAM_VENC_IPDELTA`) | -12 to 12 | 0 | `rc.delta` of the `legacy` CREATE_ENC rc sub-struct (I/P QP offset). 0 = the payload always sent. Untested on hardware: keep it in `/tmp/akam_image` (RAM) first. See specs/video-and-streaming.md section 5 |

@@ -1,4 +1,4 @@
-/* Host unit test of the pure part of akam2k_sntp (sntp/sntp_core.c): request layout, reply validation (mode,
+/* Host unit test of the pure part of akam-sntp (sntp/sntp_core.c): request layout, reply validation (mode,
  * version, leap, stratum, origin, zero transmit), the NTP era handling around 2036 and 2038, timestamp round trips,
  * the offset/delay formulas and the 32-bit settimeofday target. Prints "rot2k sntp unit: N failed". */
 #include <stdio.h>

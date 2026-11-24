@@ -25,6 +25,7 @@ func (e *env) with2K(overrides map[string]string) *testfake.API2K {
 		e.t.Fatal(err)
 	}
 	vals := map[string]string{}
+	wo := map[string]bool{}
 	for _, o := range camopt.Catalog2K() {
 		switch o.Kind {
 		case camopt.Int:
@@ -33,13 +34,16 @@ func (e *env) with2K(overrides map[string]string) *testfake.API2K {
 			vals[o.Key] = o.Values[0]
 		case camopt.Pattern:
 			vals[o.Key] = "on"
+		case camopt.Secret:
+			wo[o.Key] = true // write-only rows: the camera never reports them
 		default:
 			vals[o.Key] = "x"
 		}
 	}
 	for k, v := range map[string]string{"video0.kbps": "1536", "video0.max_kbps": "0", "video0.fps": "15", "video0.min_qp": "28", "video0.max_qp": "43",
 		"net.hostname": "akam-rot2k", "net.wifi_country": "none", "net.wifi_band": "2.4", "track.lost_policy": "backsweep,exit,hold:30,home",
-		"ptz.patrol.route_default": "", "led.mode": "on", "track.return": "home", "image.mains_hz": "50"} {
+		"ptz.patrol.route_default": "", "led.mode": "on", "track.return": "home", "image.mains_hz": "50",
+		"mqtt.host": "", "mqtt.user": "", "mqtt.port": "1883", "mqtt.enabled": "0", "onvif.enabled": "0", "onvif.port": "8000", "rtsp.user": "", "ntp.servers": "", "audio.mic_enable": "0"} {
 		vals[k] = v
 	}
 	for k, v := range overrides {
@@ -52,7 +56,7 @@ func (e *env) with2K(overrides map[string]string) *testfake.API2K {
 	if err := os.WriteFile(filepath.Join(e.state, "api_key"), []byte(secret2K+"\n"), 0o600); err != nil {
 		e.t.Fatal(err)
 	}
-	f := &testfake.API2K{Key: k, Values: vals}
+	f := &testfake.API2K{Key: k, Values: vals, WriteOnly: wo}
 	e.api2k = f
 	return f
 }
@@ -168,29 +172,36 @@ func TestOptions2KValidationRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		"hostname dash":    {[]string{"hostname", "bad-"}, "1 to 32 letters, digits"},
-		"hostname digits":  {[]string{"hostname", "12345"}, "not only digits"},
-		"hostname long":    {[]string{"hostname", strings.Repeat("a", 33)}, "1 to 32"},
-		"hostname space":   {[]string{"hostname", "a b"}, "1 to 32"},
-		"band":             {[]string{"wifi", "band", "7"}, "one of 2.4, 5"},
-		"country":          {[]string{"wifi", "country", "FRA"}, "two capital letters"},
-		"band5 no country": {[]string{"--yes", "wifi", "band", "5"}, "needs a Wi-Fi country"},
-		"range":            {[]string{"picture", "brightness", "101"}, "from 0 to 100"},
-		"not a number":     {[]string{"picture", "contrast", "abc"}, "whole number"},
-		"enum":             {[]string{"led", "status", "blink"}, "one of auto, on, off"},
-		"pattern":          {[]string{"settings", "set", "led.boot", "9:10:10:0"}, "on, off or N:on_ms"},
-		"pattern cycle":    {[]string{"settings", "set", "led.boot", "10:60000:60000:0"}, "on, off or N:on_ms"},
-		"qp order offline": {[]string{"video", "minqp", "40", "maxqp", "30"}, "min_qp (40) must not be above"},
-		"qp vs current":    {[]string{"video", "maxqp", "20"}, "must not be above"},
-		"peak below":       {[]string{"video", "bitrate", "4000", "maxbitrate", "3000"}, "must be 0 (automatic)"},
-		"max_kbps small":   {[]string{"video", "maxbitrate", "10"}, "0 (automatic) or 64"},
-		"unknown key":      {[]string{"settings", "set", "mqtt.password", "x"}, "not a setting of the 2K"},
-		"odd pairs":        {[]string{"settings", "set", "led.mode"}, "needs pairs"},
-		"twice":            {[]string{"led", "status", "on", "status", "off"}, "given twice"},
-		"saturation":       {[]string{"picture", "saturation", "10"}, "not available on the 2K"},
-		"lost policy":      {[]string{"settings", "set", "track.lost_policy", "a b"}, "up to 8 steps"},
-		"route":            {[]string{"settings", "set", "ptz.patrol.route_default", "Bad-Name"}, "a route name"},
-		"unknown word":     {[]string{"led", "party"}, "unknown word"},
+		"hostname dash":      {[]string{"hostname", "bad-"}, "1 to 32 letters, digits"},
+		"hostname digits":    {[]string{"hostname", "12345"}, "not only digits"},
+		"hostname long":      {[]string{"hostname", strings.Repeat("a", 33)}, "1 to 32"},
+		"hostname space":     {[]string{"hostname", "a b"}, "1 to 32"},
+		"band":               {[]string{"wifi", "band", "7"}, "one of 2.4, 5"},
+		"country":            {[]string{"wifi", "country", "FRA"}, "two capital letters"},
+		"band5 no country":   {[]string{"--yes", "wifi", "band", "5"}, "needs a Wi-Fi country"},
+		"range":              {[]string{"picture", "brightness", "101"}, "from 0 to 100"},
+		"not a number":       {[]string{"picture", "contrast", "abc"}, "whole number"},
+		"enum":               {[]string{"led", "status", "blink"}, "one of auto, on, off"},
+		"pattern":            {[]string{"settings", "set", "led.boot", "9:10:10:0"}, "on, off or N:on_ms"},
+		"pattern cycle":      {[]string{"settings", "set", "led.boot", "10:60000:60000:0"}, "on, off or N:on_ms"},
+		"qp order offline":   {[]string{"video", "minqp", "40", "maxqp", "30"}, "min_qp (40) must not be above"},
+		"qp vs current":      {[]string{"video", "maxqp", "20"}, "must not be above"},
+		"peak below":         {[]string{"video", "bitrate", "4000", "maxbitrate", "3000"}, "must be 0 (automatic)"},
+		"max_kbps small":     {[]string{"video", "maxbitrate", "10"}, "0 (automatic) or 64"},
+		"unknown key":        {[]string{"settings", "set", "rtsp.auth", "on"}, "not a setting of the 2K"},
+		"odd pairs":          {[]string{"settings", "set", "led.mode"}, "needs pairs"},
+		"twice":              {[]string{"led", "status", "on", "status", "off"}, "given twice"},
+		"night mode":         {[]string{"picture", "night", "day"}, "not available on the 2K"},
+		"saturation range":   {[]string{"picture", "saturation", "51"}, "from -50 to 50"},
+		"denoise range":      {[]string{"picture", "denoise", "5"}, "from 0 to 4"},
+		"wb word":            {[]string{"picture", "wb", "auto"}, "one of conf, manual"},
+		"volume range":       {[]string{"settings", "set", "audio.out_volume", "101"}, "from 0 to 100"},
+		"gain range":         {[]string{"settings", "set", "audio.out_gain", "6"}, "from 0 to 5"},
+		"duplex word":        {[]string{"settings", "set", "audio.talk_duplex", "both"}, "one of half, full"},
+		"state is read-only": {[]string{"settings", "set", "audio.out_state", "idle"}, "not a setting of the 2K"},
+		"lost policy":        {[]string{"settings", "set", "track.lost_policy", "a b"}, "up to 8 steps"},
+		"route":              {[]string{"settings", "set", "ptz.patrol.route_default", "Bad-Name"}, "a route name"},
+		"unknown word":       {[]string{"led", "party"}, "unknown word"},
 	} {
 		r := e.run("", tc.args...)
 		if r.rc == 0 || !strings.Contains(r.out+r.err, tc.want) {
@@ -330,8 +341,8 @@ func TestOptions2KCommandsOnOtherModels(t *testing.T) {
 func TestOptions2KMenu(t *testing.T) {
 	e := newEnv(t)
 	f := e.with2K(nil)
-	// 3 options; 6 Network; 1 Host name -> new name; 4 apply; y confirm; 6 back; 8 back (groups); 10 quit
-	r := e.run("3\n6\n1\ncam-menu\n4\ny\n6\n8\n10\n")
+	// 3 options; 6 Network; 1 Host name -> new name; 12 apply; y confirm; 14 back; 10 back (groups); 10 quit
+	r := e.run("3\n6\n1\ncam-menu\n12\ny\n14\n10\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Rotatable 2K, through its signed API", "Host name", "akam-rot2k", "cam-menu", "(pending)", "About to change:", "queued")
 	if p := f.Patches(); len(p) != 1 || p[0] != `{"net.hostname":"cam-menu"}` {
@@ -339,22 +350,45 @@ func TestOptions2KMenu(t *testing.T) {
 	}
 	// declining the confirmation sends nothing
 	f2 := e.with2K(nil)
-	r = e.run("3\n6\n1\ncam-no\n4\nn\n6\n8\n10\n")
+	r = e.run("3\n6\n1\ncam-no\n12\nn\n14\n10\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Not confirmed: nothing was sent")
 	if len(f2.Patches()) != 0 {
 		t.Error("sent without a confirmation")
 	}
 	// an invalid value is refused on the spot and asked again; an empty answer cancels
-	r = e.run("3\n6\n1\n-bad\n\n6\n8\n10\n")
+	r = e.run("3\n6\n1\n-bad\n\n14\n10\n10\n")
 	expectRC(t, r, 0)
 	contains(t, r.out, "1 to 32 letters")
 	// an enum edit through the list: LED group, front LED -> off
-	r = e.run("3\n1\n1\n3\n9\ny\n11\n8\n10\n")
+	r = e.run("3\n1\n1\n3\n9\ny\n11\n10\n10\n")
 	expectRC(t, r, 0)
 	if p := f2.Patches(); len(p) != 1 || p[0] != `{"led.mode":"off"}` {
 		t.Fatalf("led bodies %q", p)
 	}
+	allSigned(t, f)
+	noSecret(t, r)
+}
+
+// The speaker, two-way audio and picture settings the 1080p also has, on the 2K through the signed API.
+func TestOptions2KSpeakerAndPicture(t *testing.T) {
+	e := newEnv(t)
+	f := e.with2K(map[string]string{"audio.out_enable": "0", "audio.out_volume": "100", "isp.saturation": "0", "isp.denoise": "0", "img.wb": "conf"})
+	r := e.run("", "picture", "saturation", "-15", "denoise", "2", "wb", "manual")
+	expectRC(t, r, 0)
+	contains(t, r.out, `WILL send: PATCH /settings {"img.wb":"manual","isp.denoise":"2","isp.saturation":"-15"}`, "Saturation: -15 (applied now, saved on the camera)", "White balance: manual (applied now, not saved")
+	r = e.run("", "settings", "set", "audio.out_enable", "on", "audio.out_volume", "60", "audio.talk_enable", "1", "audio.talk_duplex", "full")
+	expectRC(t, r, 0)
+	contains(t, r.out, `"audio.out_enable":"1"`, `"audio.out_volume":"60"`, `"audio.talk_duplex":"full"`)
+	if got := f.Patches(); len(got) != 2 {
+		t.Fatalf("PATCH bodies %q", got)
+	}
+	r = e.run("", "picture", "show")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Saturation", "Denoise", "White balance", "[-50 to 50]", "[0 to 4]", "[conf, manual]")
+	r = e.run("", "settings", "get", "audio.")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Speaker", "Speaker volume", "Talk (two-way audio)", "Talk duplex")
 	allSigned(t, f)
 	noSecret(t, r)
 }

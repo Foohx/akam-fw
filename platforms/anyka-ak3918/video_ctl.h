@@ -5,7 +5,7 @@
  * with the answer in `msg`; _list emits one line per key.
  *
  * A SET validates, then rewrites /etc/config/akam/video (all defaults = file removed). It takes effect at the next
- * start of ak_rtsp and the answer says so ("restart to apply"). Only a local (loopback) SET is saved: from the
+ * start of akamd and the answer says so ("restart to apply"). Only a local (loopback) SET is saved: from the
  * network it is refused, because nothing would apply it. */
 #pragma once
 #include <stddef.h>

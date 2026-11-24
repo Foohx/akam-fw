@@ -12,9 +12,9 @@ const lsc1080 = "lsc-indoor-1080p-ak3918"
 func TestFlowsAreRefusedForTheRotatable2K(t *testing.T) {
 	for _, args := range [][]string{
 		{"backup"}, {"restore"}, {"verify"}, {"image"}, {"flash"}, {"get-kit"}, // update is the 2K's own flow now (rot2k_install_test.go)
-		{"prepare-backup-sd"}, {"prepare-flash-sd"}, {"config", "show"}, {"onvif", "status"}, // led, video, picture, hostname are the 2K's own commands now (rot2kopts_test.go)
-		{"ntp", "status"}, {"mqtt", "status"}, {"audio", "show"}, {"key", "show"},
-		{"rtsp-auth", "status"}, {"step", "backup"}, {"step", "flash"}, {"step", "get-kit"},
+		{"prepare-backup-sd"}, {"prepare-flash-sd"}, {"config", "show"}, // led, video, picture, hostname are the 2K's own commands now (rot2kopts_test.go);
+		{"key", "show"}, // onvif, ntp, mqtt, audio and rtsp-auth are served through the signed API too (rot2kservices_test.go)
+		{"step", "backup"}, {"step", "flash"}, {"step", "get-kit"},
 	} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
 			e := newEnv(t)
@@ -40,6 +40,7 @@ func TestModelFlagOfA2KRefusesTheFlows(t *testing.T) {
 // The menu entries that run those flows refuse as well.
 func TestMenuActionsAreRefusedForTheRotatable2K(t *testing.T) {
 	e := newEnv(t)
+	e.noAPIKey() // the options entry says there is no key
 	e.writeState("camera_model=" + rotModel + "\ncamera_ip=192.0.2.10\n")
 	// 3 = options, 4 = backup (the 2K's own menu since backup-2k and the backup folder are in the menu: its entry 4
 	// is Back), 2 = update (the 2K flow, not a refusal), 9 = configs, 10 = quit

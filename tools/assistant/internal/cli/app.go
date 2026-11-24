@@ -22,6 +22,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/assets"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/akamapi"
+	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/telnet"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/installer/appfs"
@@ -88,6 +89,9 @@ type App struct {
 	staged       *stagedKit // a verified kit waiting to be installed (fwkit.go)
 	cliFW        fwSource   // the firmware named on the command line (zero: none): the chooser is skipped
 	camIP        string
+	ctlCl        ctl.Client // the signed-API client of the camera this run reads and changes settings on (ctlapi.go)
+	ctlHost      string
+	ctlNoKey     bool            // the user declined to make an API key in this run: not asked again
 	live         *liveHealth     // what a flow read of the chosen camera this session (header badges)
 	tn           *telnet.Session // the maintenance telnet session (backup, flash)
 	passphrase   *string
@@ -326,16 +330,22 @@ func (a *App) dispatch(cmd string) error {
 	if err := a.checkRepoOption(cmd); err != nil {
 		return err
 	}
+	if cmd == "api-key" && a.is2K() { // on the 2K it is key-2k
+		return a.cmdKey2K()
+	}
 	if cmd == "update" && a.is2K() { // the 2K has its own flow; every other gated command stays refused on it
 		return a.cmdUpdate2K()
 	}
 	if opts2KCommands[cmd] && a.is2K() { // the options of the 2K go through its signed API (rot2kopts.go)
 		return a.dispatch2KOpts(cmd, args)
 	}
+	if services2KCommands[cmd] && a.is2K() { // MQTT, ONVIF, stream password, NTP, microphone: the user-file rows of the same API (rot2kservices.go)
+		return a.dispatch2KServices(cmd, args)
+	}
 	if cmd == "track" || cmd == "wifi" || cmd == "settings" {
 		return usageErr(fmt.Sprintf("akam: %s is a command of the Rotatable 2K (its options go through the signed API); see %s help", cmd, Prog))
 	}
-	if gatedCommands[cmd] {
+	if gatedCommands[cmd] && !((cmd == "talk" || cmd == "say") && a.is2K()) { // talk and say need only RTSP and the API: the 2K serves them
 		if err := a.modelGate(cmd); err != nil {
 			return err
 		}
@@ -384,7 +394,11 @@ func (a *App) dispatch(cmd string) error {
 	case "led":
 		return a.cmdLed(args)
 	case "debug":
-		return a.cmdDebug(args)
+		return usageErr(fmt.Sprintf("akam: debug was removed: port 8091 is closed to the network and the assistant uses the signed API. For the optional LAN opt-in of that port see: %s control-port status", Prog))
+	case "control-port":
+		return a.cmdControlPort(args)
+	case "api-key":
+		return a.cmdAPIKey(args)
 	case "onvif":
 		return a.cmdOnvif(args)
 	case "key":

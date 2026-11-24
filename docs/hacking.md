@@ -1,12 +1,12 @@
 # Hacking guide: build, test and hack your camera
 
-For developers and tinkerers. To just install Akam, use `./akam` ([README](../README.md)).
+For developers and tinkerers. To just install Akam, use the `akam` program ([install guide](install.md)).
 
 ## Repository layout
 
 ```text
 .
-├── akam                          # the bash wizard (Linux)
+├── akam                          # the bash wizard (Linux, 1080p; to be retired)
 ├── docs/                         # documentation (index: docs/README.md)
 ├── firmware/<model-id>/          # ONLY what is specific to one camera model
 │   ├── model.mk                  #   features + ordered object list, model-only flags, vendor/publish dirs, helper programs
@@ -60,7 +60,7 @@ tracking work in progress in those files.
 
 | Component | What it does | Where |
 |---|---|---|
-| `ak_rtsp` | RTSP/RTP H.264 and audio server, control port 8091, ONVIF, MQTT | `platforms/anyka-ak3918/` |
+| `akamd` | RTSP/RTP H.264 and audio server, control port 8091 (1080p), signed API on 8092, ONVIF, MQTT (and on the 2K: pan/tilt, tracking, NPU detection) | `platforms/anyka-ak3918/` (1080p), `platforms/anyka-ak3918av130/` (2K) |
 | Dropbear 2026.94 | Static SSH server, ed25519 keys only | `tools/dropbear/` |
 | Camera scripts | SSH start, lockdown, hostname, password, debug, ONVIF, NTP, MQTT, Wi-Fi supervisor | `firmware/lsc-indoor-1080p-ak3918/overlay/` (and `src/scripts/` for the shared ones) |
 | Image builder | Patches **your own** APP dump, repacks, pads to 5 242 880 bytes | `firmware/lsc-indoor-1080p-ak3918/image/build_image.sh`, `firmware/lsc-indoor-1080p-ak3918/image/assemble_from_kit.sh` |
@@ -75,66 +75,69 @@ checked in containers.
 bash tools/build/check_host.sh      # checks your PC, prints the exact install command if something is missing
 bash tools/build/bootstrap.sh       # once: pinned Zig, SmolRTSP, BusyBox, Go modules
 . tools/build/env.sh
-make -C platforms/anyka-ak3918 ak_rtsp flash_tool
+make -C platforms/anyka-ak3918 akamd flash_tool
 bash tools/dropbear/build_dropbear.sh
 ```
 
-This builds the 1080p. For the 2K (`akam2k_rtsp`, the kit, the card and the appfs image) follow
-[`firmware/lsc-rotatable-2k-ak3918av130/README.md`](../firmware/lsc-rotatable-2k-ak3918av130/README.md).
+This builds the 1080p. For the 2K, `make 2k CAMERA_LIBC=...` builds `akamd`, `make 2k-appfs BACKUP=...` the appfs image and
+`tools/release/make_kit_2k.sh --model lsc-rotatable-2k-ak3918av130` the kit: see
+[`firmware/lsc-rotatable-2k-ak3918av130/README.md`](../firmware/lsc-rotatable-2k-ak3918av130/README.md#build-the-app-the-kit-and-the-appfs-image).
+Per-platform notes: [`platforms/anyka-ak3918`](../platforms/anyka-ak3918/README.md), [`platforms/anyka-ak3918av130`](../platforms/anyka-ak3918av130/README.md).
 
 The result is a static ARM binary (`arm-linux-musleabi`, `-mcpu=arm926ej_s`). To build a flashable image from your own
 APP dump: [build guide](manual/build.md).
 
 ## Run a development build in RAM
 
-You can test a new `ak_rtsp` without flashing anything. A power cycle brings back what was flashed.
+You can test a new `akamd` without flashing anything. A power cycle brings back what was flashed.
 
 1. Get SSH access (an Akam camera) or the maintenance shell, with a microSD card in the camera (mounted on `/mnt`).
 2. Build, then upload the binaries and scripts to `/tmp` over SSH: `make -C platforms/anyka-ak3918 upload CAMERA_IP=<camera-ip>`.
-3. Copy `ak_rtsp` to the card as `/mnt/ak_rtsp` (`cp /tmp/ak_rtsp /mnt/`): `tools/flash_scripts/start_rtsp.sh`
+3. Copy `akamd` to the card as `/mnt/akamd` (`cp /tmp/akamd /mnt/`): `tools/flash_scripts/start_rtsp.sh`
    starts the binary from `/mnt`, and writes its log and a live `dmesg` copy there too.
-4. On the camera run `sh /tmp/start_rtsp.sh`. It stops the stock watchdog, the running `ak_rtsp` (or `anyka_ipc` on a
+4. On the camera run `sh /tmp/start_rtsp.sh`. It stops the stock watchdog, the running `akamd` (or `anyka_ipc` on a
    stock camera), reloads the encoder modules and starts the new binary.
 5. Watch the stream with `ffplay -rtsp_transport tcp rtsp://<camera-ip>:554/`, and the log on the UART or the card.
 
 Because the stock watchdog is stopped, the hardware watchdog may reboot the camera after a while: that is expected.
 
-### Try a new 1080p `ak_rtsp` on one camera with a rollback (RAM only, flash untouched)
+### Try a new 1080p `akamd` on one camera with a rollback (RAM only, flash untouched)
 
-The wrapper (`ak_rtsp_wrapper.sh`) starts `/usr/bin/ak_rtsp` from the read-only squashfs and starts it again whenever it
+The wrapper (`akam_run.sh`) starts `/usr/bin/akamd` from the read-only squashfs and starts it again whenever it
 exits. So the old binary stays in the image and the new one is laid over it in RAM. Not run yet, read it before use, one
 camera, the other one stays untouched.
 
-1. Build: `make -C platforms/anyka-ak3918 ak_rtsp`. Check first that the camera busybox has `mount --bind` (`ssh root@<camera-ip> "mount --help 2>&1 | head -3"`); if not, use the `make upload` path below.
-2. Copy it to RAM: `ssh root@<camera-ip> 'cat > /tmp/ak_rtsp.new && chmod +x /tmp/ak_rtsp.new' < build/lsc-indoor-1080p-ak3918/ak_rtsp`
-   and check `ssh root@<camera-ip> 'sha256sum /tmp/ak_rtsp.new'` against the PC.
+1. Build: `make -C platforms/anyka-ak3918 akamd`. Check first that the camera busybox has `mount --bind` (`ssh root@<camera-ip> "mount --help 2>&1 | head -3"`); if not, use the `make upload` path below.
+2. Copy it to RAM: `ssh root@<camera-ip> 'cat > /tmp/akamd.new && chmod +x /tmp/akamd.new' < build/lsc-indoor-1080p-ak3918/akamd`
+   and check `ssh root@<camera-ip> 'sha256sum /tmp/akamd.new'` against the PC.
 3. Lay it over the old one and restart the video service (the wrapper starts the process again, now the new binary).
    Never stack binds: first check that nothing is bound yet, the answer must be 0 (if it is not, do the `umount -l` of the
    rollback below first; every extra bind hides the previous one and the old binary stays busy):
-   `ssh root@<camera-ip> 'mount | grep -c ak_rtsp'`
-   then `ssh root@<camera-ip> 'mount --bind /tmp/ak_rtsp.new /usr/bin/ak_rtsp && for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done'`
+   `ssh root@<camera-ip> 'mount | grep -c akamd'`
+   (on a 0.1.x image the program is `/usr/bin/ak_rtsp`: bind over that name and use `pidof ak_rtsp`)
+   then `ssh root@<camera-ip> 'mount --bind /tmp/akamd.new /usr/bin/akamd && for p in $(pidof akamd); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done'`
 4. Check that the new binary really runs: after about 20 seconds compare the hash of the running executable with the PC's
-   (`sha256sum build/lsc-indoor-1080p-ak3918/ak_rtsp`): `ssh root@<camera-ip> 'for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || sha256sum /proc/$p/exe; done'`
+   (`sha256sum build/lsc-indoor-1080p-ak3918/akamd`): `ssh root@<camera-ip> 'for p in $(pidof akamd); do grep -qa akam_klog /proc/$p/cmdline || sha256sum /proc/$p/exe; done'`
    (the bound file is what `/proc/<pid>/exe` shows; if the hash is the old one the restart did not pick it up). Then
    `./akam video show` and `ssh root@<camera-ip> 'cat /tmp/akam_wrapper.log; logread | grep -i "\[video\]"'`
    (the log line `[video] settings: ... qp=28..43` proves the new binary runs).
-5. Set the QP, for example `./akam video minqp 22 maxqp 40` (answer yes to the restart), then capture 20 s with
+5. Set the QP, for example `./akam video minqp 22 maxqp 40` (bash wizard only; the Go program's `video` has no `minqp` or `maxqp` for the 1080p) (answer yes to the restart), then capture 20 s with
    `ffmpeg -rtsp_transport tcp -i rtsp://<camera-ip>:554/ -t 20 -c copy after.mkv` and compare with
    `tools/video_quality.sh before.mkv` / `after.mkv` (capture `before.mkv` first, same scene).
 6. Rollback, any of these (each is enough):
-   - back to the defaults: `./akam video minqp 28 maxqp 43` (or `ssh root@<camera-ip> rm /etc/config/akam/video`, then restart);
-   - old binary: a plain `umount /usr/bin/ak_rtsp` fails ("busy") while ak_rtsp runs from it, so detach lazily and then kill,
-     the wrapper starts the flashed binary: `ssh root@<camera-ip> 'umount -l /usr/bin/ak_rtsp; for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done'`,
-     then check `mount | grep -c ak_rtsp` prints 0 (repeat the `umount -l` while it does not) and the hash of `/proc/<pid>/exe` is the flashed one;
+   - back to the defaults: `./akam video minqp 28 maxqp 43` (bash wizard) (or `ssh root@<camera-ip> rm /etc/config/akam/video`, then restart);
+   - old binary: a plain `umount /usr/bin/akamd` fails ("busy") while akamd runs from it, so detach lazily and then kill,
+     the wrapper starts the flashed binary: `ssh root@<camera-ip> 'umount -l /usr/bin/akamd; for p in $(pidof akamd); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done'`,
+     then check `mount | grep -c akamd` prints 0 (repeat the `umount -l` while it does not) and the hash of `/proc/<pid>/exe` is the flashed one;
    - power cycle: the bind mount and `/tmp` are gone, the flashed image runs. A kernel oops while the encoder opens does
      the same by itself (the camera reboots into the flashed image; remove `/etc/config/akam/video` if it keeps
      failing, the file survives reboots). Never save an untested QP pair for long: min must stay below max (enforced).
 
 `make upload` + `start_rtsp.sh` (steps above) is the other path, with a card in the camera and the stock watchdog stopped.
 
-### Install a new 1080p `ak_rtsp` permanently on a camera that already runs Akam
+### Install a new 1080p `akamd` permanently on a camera that already runs Akam
 
-`/usr/bin/ak_rtsp` lives in the APP squashfs (`mtd7`, read-only), so a permanent install means writing a new APP image. There is no
+`/usr/bin/akamd` lives in the APP squashfs (`mtd7`, read-only), so a permanent install means writing a new APP image. There is no
 binary-only update. Nothing below was run for a development build; read it first, one camera at a time.
 
 What exists:
@@ -145,7 +148,7 @@ What exists:
    writes `mtd7` from a detached worker with 3 write-and-verify attempts, and needs two read-backs equal to the image md5 before it says
    done ([installer spec](../specs/installer.md) 7.2). Then unplug and replug the camera by hand. Over SSH it keeps a second Dropbear
    on port 2222 during the write.
-2. **Building the image**: `AK_RTSP_BIN=build/lsc-indoor-1080p-ak3918/ak_rtsp APP_EXTRACTED=<your unsquashed stock APP> FW_DIR=<outside the repo> bash firmware/lsc-indoor-1080p-ak3918/image/build_image.sh`
+2. **Building the image**: `AK_RTSP_BIN=build/lsc-indoor-1080p-ak3918/akamd APP_EXTRACTED=<your unsquashed stock APP> FW_DIR=<outside the repo> bash firmware/lsc-indoor-1080p-ak3918/image/build_image.sh`
    ([build guide](manual/build.md) section 7). It needs your own stock APP backup (nothing vendor ships in the repository). The kit route
    (`tools/release/make_kit.sh`, then `./akam step image`) builds the same image from a kit plus your backup.
 3. **Card route** if SSH does not come back: `./akam flash` or `install_with_flash_tool.sh` with the image on the toolkit card
@@ -158,10 +161,10 @@ What exists:
 
 What is missing:
 
-- A **dev-build update command**: `update --image` works, but nothing builds the image from `build/lsc-indoor-1080p-ak3918/ak_rtsp` for you in one step
+- A **dev-build update command**: `update --image` works, but nothing builds the image from `build/lsc-indoor-1080p-ak3918/akamd` for you in one step
   (`build_image.sh` by hand, or a kit). The Go assistant's native builder is experimental and the bash `update` refuses
   `--version` and `--kit`.
-- A **binary-only or A/B slot update**: `ak_rtsp_wrapper.sh` starts `${AKAM_RTSP_BIN:-/usr/bin/ak_rtsp}` and `AKAM_RTSP_BIN` is only a test
+- A **binary-only or A/B slot update**: `akam_run.sh` starts `${AKAM_RTSP_BIN:-/usr/bin/akamd}` and `AKAM_RTSP_BIN` is only a test
   hook, so there is no persistent override from CONFIG or the card, and a bad binary is replaced only by another full APP write.
 - An **automatic fallback**: no watchdog-driven return to the previous image; the wrapper only restarts a crashing binary with a back-off.
 - Hardware evidence: the bash wizard's first installs, updates over SSH and verify ran on two cameras; the Go assistant's update, restore

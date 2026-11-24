@@ -288,7 +288,7 @@ role() {
         *own_app_run.sh*) echo supervisor ;;
         *akam_ntp.sh*) echo ntp ;;
         *decloud.sh*) echo keeper ;;
-        *akam2k_rtsp*) echo app ;;
+        *akamd* | *akam2k_rtsp*) echo app ;; # a running 0.1.x image still has the old name
         *wpa_supplicant*) echo wpa ;;
         *)
             case $e in
@@ -1089,7 +1089,7 @@ elif [ "$LIVE" = 1 ]; then
     [ "${memfree:-0}" -gt 4096 ] || die "MemFree ${memfree} kB: too low even for flashcp (need > 4 MB)"
     say "stopping the supervisor (it stops the app); the stub and the feeder keep running"
     # shellcheck disable=SC2016  # remote command, expanded on the camera
-    camq 'for p in $(ps | grep "[o]wn_app_run.sh" | while read a b; do echo $a; done); do kill $p; done; i=0; while ps | grep -q "[/]tmp/akam2k_rtsp" && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done; ps | grep -q "[/]tmp/akam2k_rtsp" && exit 1; exit 0' ||
+    camq 'for p in $(ps | grep "[o]wn_app_run.sh" | while read a b; do echo $a; done); do kill $p; done; i=0; while ps | grep -qE "[/]tmp/(akamd|akam2k_rtsp)" && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done; ps | grep -qE "[/]tmp/(akamd|akam2k_rtsp)" && exit 1; exit 0' ||
         die "the app did not stop: abort, nothing written"
     # shellcheck disable=SC2016  # remote command, expanded on the camera
     # NB: the remote for-loop ends in a failed grep when nothing maps /appfs/lib (the GOOD case); without the
@@ -1101,7 +1101,7 @@ elif [ "$LIVE" = 1 ]; then
     say "/appfs/lib is free, feeder alive"
 else
     say "[dry-run] ssh $CAM: ps | grep '[b]usybox watchdog'  (abort when absent); SD /mnt/sdcard/akam_flash free > 20 MB, MemFree > 4 MB"
-    say "[dry-run] ssh $CAM: kill the own_app_run.sh supervisor (NOT the stub, NOT the feeder), wait for akam2k_rtsp to exit"
+    say "[dry-run] ssh $CAM: kill the own_app_run.sh supervisor (NOT the stub, NOT the feeder), wait for akamd (akam2k_rtsp on a 0.1.x image) to exit"
     say "[dry-run] ssh $CAM: no process may map /appfs/lib (grep /proc/*/maps) or abort"
 fi
 

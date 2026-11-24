@@ -97,7 +97,7 @@ static void ircut_set_state(int night)
  *
  * The reset pulse is what causes the characteristic two solenoid clicks at
  * boot — one for night, one for day — ensuring a known filter position.
- * The flag file prevents a second reset if ak_rtsp is restarted without
+ * The flag file prevents a second reset if akamd is restarted without
  * a full reboot.
  */
 int ircut_init(void)
@@ -144,7 +144,7 @@ void ircut_set_ir_led_allowed(int allowed)
     g_ir_allowed = allowed ? 1 : 0;
     /* Only touch the GPIO once it exists (ircut_init() exports GPIO 70 and
      * drives it low; a previous run may have left it exported). "off" always
-     * drives it low, so an IR LED left lit by an earlier ak_rtsp that stopped
+     * drives it low, so an IR LED left lit by an earlier akamd that stopped
      * during a night is darkened at start-up, before ircut_init() runs. "auto"
      * lights it only in night mode. */
     char path[64];

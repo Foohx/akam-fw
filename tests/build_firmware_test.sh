@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end test of firmware/lsc-indoor-1080p-ak3918/image/build_image.sh on the synthetic fixture,
-# with stub ak_rtsp / dropbearmulti binaries. Nothing here touches hardware,
+# with stub akamd / dropbearmulti binaries. Nothing here touches hardware,
 # the repository tree, or a real APP dump. Sizes in the reports are fixture
 # sizes, NOT representative of the real free space.
 set -euo pipefail
@@ -36,10 +36,10 @@ check() {
 
 # Stub binaries (text, so nothing binary is stored in the repository).
 mkdir -p "$WORK/stub"
-printf '#!/bin/sh\necho stub ak_rtsp\n' >"$WORK/stub/ak_rtsp"
+printf '#!/bin/sh\necho stub akamd\n' >"$WORK/stub/akamd"
 printf '#!/bin/sh\necho stub dropbearmulti\n' >"$WORK/stub/dropbearmulti"
 printf 'Dropbear stub licence\n' >"$WORK/stub/LICENSE.dropbear"
-chmod 755 "$WORK/stub/ak_rtsp" "$WORK/stub/dropbearmulti"
+chmod 755 "$WORK/stub/akamd" "$WORK/stub/dropbearmulti"
 # Stub licence sources (the real build copies the pinned ones).
 mkdir -p "$WORK/stub/smol/build/_deps"
 printf 'smolrtsp stub licence\n' >"$WORK/stub/smol/LICENSE"
@@ -49,7 +49,7 @@ for d in slice99 metalang99 datatype99 interface99; do
 done
 printf 'musl stub copyright\n' >"$WORK/stub/COPYRIGHT"
 printf 'zig stub licence\n' >"$WORK/stub/ZIGLICENSE"
-export AK_RTSP_BIN=$WORK/stub/ak_rtsp DROPBEAR_MULTI=$WORK/stub/dropbearmulti
+export AK_RTSP_BIN=$WORK/stub/akamd DROPBEAR_MULTI=$WORK/stub/dropbearmulti
 # The stubs are not ARM ELF files: skip the time64 machine code gate (section 5b tests it).
 export AKAM_ALLOW_UNCHECKED_TIME64=1
 export SMOLRTSP_DIR=$WORK/stub/smol MUSL_COPYRIGHT=$WORK/stub/COPYRIGHT ZIG_LICENSE=$WORK/stub/ZIGLICENSE
@@ -83,7 +83,7 @@ echo "---"
 unsquashfs -no-xattrs -d "$WORK/x1" "$IMG" >/dev/null 2>&1 || true
 X=$WORK/x1
 check "bin/anyka_ipc removed" test ! -e "$X/bin/anyka_ipc"
-check "bin/ak_rtsp present, 755" test "$(stat -c %a "$X/bin/ak_rtsp")" = 755
+check "bin/akamd present, 755" test "$(stat -c %a "$X/bin/akamd")" = 755
 check "bin/dropbearmulti present, 755" test "$(stat -c %a "$X/bin/dropbearmulti")" = 755
 check "bin/dropbear -> dropbearmulti" test "$(readlink "$X/bin/dropbear")" = dropbearmulti
 check "bin/dropbearkey -> dropbearmulti" test "$(readlink "$X/bin/dropbearkey")" = dropbearmulti
@@ -97,9 +97,9 @@ check "sbin/akam_net.sh 755" test "$(stat -c %a "$X/sbin/akam_net.sh")" = 755
 check "sbin/akam_ntp.sh 755" test "$(stat -c %a "$X/sbin/akam_ntp.sh")" = 755
 check "sbin/akam_mqtt.sh 755" test "$(stat -c %a "$X/sbin/akam_mqtt.sh")" = 755
 check "drop_caches.sh slowed to 60 s, still valid, mode kept" bash -c "grep -q '^[[:space:]]*sleep 60\$' '$X/sbin/drop_caches.sh' && ! grep -q 'sleep 5\$' '$X/sbin/drop_caches.sh' && sh -n '$X/sbin/drop_caches.sh' && test \"\$(stat -c %a '$X/sbin/drop_caches.sh')\" = 755"
-check "main.sh runs the kernel log filter with klogd as fallback, still valid, mode kept" bash -c "grep -q '^{ _k=0; while .*/usr/bin/ak_rtsp klog; .*-ge 128.*klogd -n; } & #' '$X/sbin/main.sh' && ! grep -q '^klogd -n &' '$X/sbin/main.sh' && grep -q '^syslogd ' '$X/sbin/main.sh' && sh -n '$X/sbin/main.sh' && test \"\$(stat -c %a '$X/sbin/main.sh')\" = 755"
+check "main.sh runs the kernel log filter with klogd as fallback, still valid, mode kept" bash -c "grep -q '^{ _k=0; while .*/usr/bin/akamd klog; .*-ge 128.*klogd -n; } & #' '$X/sbin/main.sh' && ! grep -q '^klogd -n &' '$X/sbin/main.sh' && grep -q '^syslogd ' '$X/sbin/main.sh' && sh -n '$X/sbin/main.sh' && test \"\$(stat -c %a '$X/sbin/main.sh')\" = 755"
 check "ethernet.sh: DHCP hostname patched, valid shell" bash -c "grep -q 'akam_hostname.sh show' '$X/sbin/ethernet.sh' && ! grep -q IPCamera '$X/sbin/ethernet.sh' && sh -n '$X/sbin/ethernet.sh'"
-check "sbin/ak_rtsp_wrapper.sh 755" test "$(stat -c %a "$X/sbin/ak_rtsp_wrapper.sh")" = 755
+check "sbin/akam_run.sh 755" test "$(stat -c %a "$X/sbin/akam_run.sh")" = 755
 check "LICENSE.dropbear shipped" test -s "$X/local/akam/LICENSE.dropbear"
 for l in musl smolrtsp slice99 metalang99 datatype99 interface99; do
     check "LICENSE.$l shipped, 644, listed in MANIFEST" bash -c "[ -s '$X/local/akam/LICENSE.$l' ] && [ \$(stat -c %a '$X/local/akam/LICENSE.$l') = 644 ] && grep -q '^licence: LICENSE.$l ' '$X/local/akam/MANIFEST.txt'"
@@ -110,9 +110,9 @@ check "THIRD_PARTY_NOTICES.md shipped (flasher MIT notice)" cmp -s "$REPO/THIRD_
 if run_build "$WORK/o_nozig" ZIG_LICENSE="$WORK/nonexistent"; then ko "build fails without Zig LICENSE"; else ok "build fails without Zig LICENSE"; fi
 if run_build "$WORK/o_nomusl" MUSL_COPYRIGHT="$WORK/nonexistent"; then ko "build fails without musl COPYRIGHT"; else ok "build fails without musl COPYRIGHT"; fi
 if run_build "$WORK/o_nosmol" SMOLRTSP_DIR="$WORK/nonexistent"; then ko "build fails without SmolRTSP licences"; else ok "build fails without SmolRTSP licences"; fi
-check "MANIFEST has ak_rtsp sha256" grep -q "^ak_rtsp_sha256=$(sha256sum "$WORK/stub/ak_rtsp" | cut -d' ' -f1)" "$X/local/akam/MANIFEST.txt"
+check "MANIFEST has akamd sha256" grep -q "^akamd_sha256=$(sha256sum "$WORK/stub/akamd" | cut -d' ' -f1)" "$X/local/akam/MANIFEST.txt"
 check "fixture symlink preserved" test "$(readlink "$X/lib/libfake.so")" = libfake.so.1
-check "ini has a single ak_rtsp_wrapper.sh entry" bash -c "[ \$(grep -c '^\[process_' '$X/local/_ht_process.ini') = 1 ] && grep -q 'ak_rtsp_wrapper.sh' '$X/local/_ht_process.ini'"
+check "ini has a single akam_run.sh entry" bash -c "[ \$(grep -c '^\[process_' '$X/local/_ht_process.ini') = 1 ] && grep -q 'akam_run.sh' '$X/local/_ht_process.ini'"
 check "service.sh: no active telnetd/ftpd launch" bash -c "! grep -v '^[[:space:]]*:[[:space:]]*# AKAM-DISABLED' '$X/sbin/service.sh' | grep -vE '^[[:space:]]*#' | grep -Eq 'telnetd|ftpd'"
 check "service.sh: disabled markers present" grep -q 'AKAM-DISABLED:' "$X/sbin/service.sh"
 check "service.sh: valid shell" sh -n "$X/sbin/service.sh"
@@ -154,11 +154,11 @@ check "private key: message" grep -q 'private key' "$WORK/o5b.log"
 cp -a "$FIXTURE" "$WORK/binkey"
 printf 'xx-----BEGIN RSA PRIVATE KEY-----\000\001\002' >"$WORK/binkey/lib/libstring.so"
 check "marker inside a binary (e.g. stock wpa_supplicant) is not a key" with_app "$WORK/binkey" "$WORK/o5d"
-if AK_RTSP_BIN=$WORK/nonexistent run_build "$WORK/o5c"; then ko "missing ak_rtsp refused"; else ok "missing ak_rtsp refused"; fi
-check "missing ak_rtsp: clear message" grep -q 'ak_rtsp binary not found' "$WORK/o5c.log"
+if AK_RTSP_BIN=$WORK/nonexistent run_build "$WORK/o5c"; then ko "missing akamd refused"; else ok "missing akamd refused"; fi
+check "missing akamd: clear message" grep -q 'akamd binary not found' "$WORK/o5c.log"
 
 echo "== 5b. time64 machine code gate on the installed binaries"
-if AK_RTSP_BIN=$WORK/stub/ak_rtsp run_build "$WORK/o5e" AKAM_ALLOW_UNCHECKED_TIME64=0; then
+if AK_RTSP_BIN=$WORK/stub/akamd run_build "$WORK/o5e" AKAM_ALLOW_UNCHECKED_TIME64=0; then
     ko "stub binaries refused by the time64 gate"
 else
     ok "stub binaries refused by the time64 gate"
@@ -166,14 +166,14 @@ fi
 check "gate: clear message" grep -q 'time64 check failed on the installed binaries' "$WORK/o5e.log"
 check "override: stub build accepted" with_app "$FIXTURE" "$WORK/o5f"
 check "override warning recorded" grep -q 'time64 machine code check SKIPPED' "$WORK/o5f/build_report.txt"
-RA=$REPO/build/lsc-indoor-1080p-ak3918/ak_rtsp
+RA=$REPO/build/lsc-indoor-1080p-ak3918/akamd
 RD=$REPO/dist/dropbear/dropbearmulti
 if host_arm_gdb >/dev/null 2>&1 && [ -f "$RA" ] && [ -f "$RD" ]; then
-    check "real ak_rtsp + dropbearmulti pass the gate" \
+    check "real akamd + dropbearmulti pass the gate" \
         with_app "$FIXTURE" "$WORK/o5g" AK_RTSP_BIN="$RA" DROPBEAR_MULTI="$RD" AKAM_ALLOW_UNCHECKED_TIME64=0
     check "gate ran on the installed files" grep -q 'check_time32: .*bin/dropbearmulti: ok' "$WORK/o5g.log"
 else
-    echo "  skip - needs gdb, build/lsc-indoor-1080p-ak3918/ak_rtsp and dist/dropbear/dropbearmulti"
+    echo "  skip - needs gdb, build/lsc-indoor-1080p-ak3918/akamd and dist/dropbear/dropbearmulti"
 fi
 
 echo "== 6. service.sh without telnet/ftp lines"

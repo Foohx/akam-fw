@@ -13,7 +13,7 @@ those flows added (the "What the assistant adds" table). Legend: **exists** = wo
 | First install, SD card | exists | `prepare-backup-sd`, `prepare-flash-sd` (guarded device choice, FAT32, hash verify, all three OS) |
 | Backup | exists | `akam backup` (SSH, SHA256SUMS, second read), recognised by the stock APP sha256 |
 | Flash (first install, SSH) | exists | `akam image` + `akam flash` (red box, md5, detached worker) |
-| Update Akam to Akam | exists | `akam update`, `akam verify` (version from the control port `fw.version`) |
+| Update Akam to Akam | exists | `akam update`, `akam verify` (version from the signed API, `GET /info`, or the manifest over SSH) |
 | Rollback / recovery | exists | `akam restore` (stock APP from the backup), SD recovery |
 
 ## 2K (`lsc-rotatable-2k-ak3918av130`, kind `cardless-appfs`, appfs `mtd3`)
@@ -54,7 +54,7 @@ those flows added (the "What the assistant adds" table). Legend: **exists** = wo
   `publish.sh` like the 1080p kits). `prepare-2k-sd`, `appfs-build` and `update` without `--kit` download the newest release that
   carries it; if the releases page has none, use `--kit FILE` or build the kit yourself (`tools/release/make_kit_2k.sh`).
 * `akam backup-2k` backs the 2K up from the assistant (read only, double read, sizes and `SHA256SUMS` checked, recorded for
-  `update`); it is a separate command, there is no menu entry for it yet.
+  `update`); the menu's "Back up / restore" of a 2K offers it too.
 * `akam key-2k` creates the API key: the camera makes it itself (`akam_api_key.sh new`, its own random pool; the key is NOT
   generated on the PC because that script has no "install this secret" entry), the secret comes back once over SSH, is kept in the
   camera's state folder (`api_key`, 0600) and is never printed. It writes `/config/akam/api_keys` on the camera, so it asks first.
@@ -62,7 +62,7 @@ those flows added (the "What the assistant adds" table). Legend: **exists** = wo
 * Seeding `/config/akam` (Wi-Fi, SSH key) before a first card-less flash is `akam seed-2k` (the camera copies the card's
   `akam/wpa.conf` and `akam/authorized_keys` itself; nothing secret reaches the PC; idempotent; host-tested with a local shell
   standing in for the camera). It is a separate command: `appfs-flash` does not check that it was run. The staged-reboot
-  screens of the first flash are still the design of `assistant-rot2k-flash-design.md` section 3.5 (`appfs-flash` prints the steps).
+  screens of the first flash are still the design of [the archived flash design](../archive/assistant-rot2k-flash-design.md) section 3.5 (`appfs-flash` prints the steps).
 * No `akam restore-2k`: back to stock on the 2K is manual ([back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock)).
 * `prepare-2k-sd` writes `akam/no_telnet` on the card by default; `--rescue-telnet` keeps the passwordless root telnet.
 * Not run on hardware: every test uses fakes (no camera, no network). The hot update itself is the host-tested Go port of

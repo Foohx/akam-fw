@@ -3,7 +3,7 @@
 #define AKAM2K_TRACK_RUN_H
 #include "track.h"
 
-/* After a2k_ptz_start. conf_areas: "track_area_<name>=..." lines of akam2k.conf or NULL; notify: after an edit of the areas (cheap). */
+/* After a2k_ptz_start. conf_areas: "track_area_<name>=..." lines of akam.conf or NULL; notify: after an edit of the areas (cheap). */
 /* Teardown: the detection thread (stopped last) feeds nothing to the motor any more. */
 void a2k_track_run_stop(void);
 /* invert_pan / invert_tilt: the 2K binding's motor direction of the tracker (hardware: pan must be inverted, tilt unverified = 0). */

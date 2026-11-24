@@ -1,5 +1,5 @@
 #pragma once
-/* Shared constants, device paths, and global state for the ak_rtsp binary.
+/* Shared constants, device paths, and global state for the akamd binary.
  * All globals are defined in main.c and declared extern here so each
  * translation unit can access them without passing them as parameters. */
 

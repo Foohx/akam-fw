@@ -1,5 +1,7 @@
 # Convergence plan: 1080p firmware to the code level of the 2K, with an optimisation pass
 
+> **Superseded (2026-11-23).** The state described below is out of date: this snapshot predates later work (the settings API, flip and mirror on the 1080p, speaker and picture on the 2K) and the camera program is now `akamd` on both cameras (files `akam-*`, `akam.conf`). The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and measurements only; do not read its status columns as current.
+
 > Historical document: the file paths below predate the repository reorganisation (`src/common`, `src/ak_rtsp`, `firmware/<model>/app`); the old to new table is `tools/dev/path-map.txt`.
 
 Status: plan only. Written from a read of the code (no camera access, no code changes). Line numbers are those of `dev`

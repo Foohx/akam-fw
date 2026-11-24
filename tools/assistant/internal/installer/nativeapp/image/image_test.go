@@ -183,7 +183,7 @@ func TestDropCachesPatchEqualsSed(t *testing.T) {
 }
 
 func TestKlogdPatchEqualsSed(t *testing.T) {
-	ins := []string{"a\nklogd -n & # -c prio\nb\n", "  klogd -n &\n", "klogd -n &  \n", "klogd -n &x\n", "klogd -n\n", "", "x\n{ /usr/bin/ak_rtsp klog || klogd -n; } &\n"}
+	ins := []string{"a\nklogd -n & # -c prio\nb\n", "  klogd -n &\n", "klogd -n &  \n", "klogd -n &x\n", "klogd -n\n", "", "x\n{ /usr/bin/akamd klog || klogd -n; } &\n"}
 	re := `^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$`
 	for _, in := range ins {
 		out, changed, _ := patchKlogd([]byte(in))
@@ -271,7 +271,7 @@ func TestBuildFixtureProperties(t *testing.T) {
 			t.Fatalf("%s: uid %d gid %d mtime %d", e.Path, e.UID, e.GID, e.MTime)
 		}
 	}
-	for _, p := range []string{"/bin/ak_rtsp", "/bin/dropbearmulti", "/sbin/akam_ssh.sh", "/local/_ht_process.ini", "/local/akam/MANIFEST.txt", "/local/akam/LICENSE.akam"} {
+	for _, p := range []string{"/bin/akamd", "/bin/dropbearmulti", "/sbin/akam_ssh.sh", "/local/_ht_process.ini", "/local/akam/MANIFEST.txt", "/local/akam/LICENSE.akam"} {
 		if _, ok := m[p]; !ok {
 			t.Fatalf("missing %s", p)
 		}
@@ -471,5 +471,19 @@ func TestKernelAndVerdict(t *testing.T) {
 	st.Kernel = ""
 	if v, d := verdict(hw, "abc", "squashfs xz block=131072 bcj=none", st); v != "unknown" || !strings.Contains(d, "could not be read") {
 		t.Fatal(v, d)
+	}
+}
+
+// A kit_format 1 kit (firmware 0.1.x) carries the program as bin/ak_rtsp: it is read as bin/akamd.
+func TestKitFormat1KeepsTheOldProgramName(t *testing.T) {
+	f := stubKitFiles(t, hwFor("00"))
+	f["bin/ak_rtsp"] = f["bin/akamd"]
+	delete(f, "bin/akamd")
+	k, err := NewKit(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(k.File("bin/akamd")) == 0 || k.File("bin/ak_rtsp") != nil {
+		t.Errorf("the old name was not mapped to bin/akamd")
 	}
 }

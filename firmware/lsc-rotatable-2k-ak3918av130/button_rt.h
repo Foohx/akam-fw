@@ -37,7 +37,7 @@ typedef struct {
 } a2k_btn_ops_t;
 
 /* Loads the two files (invalid ones are ignored and logged: the defaults apply; nothing is rewritten) and resets the engine. long_ms = the default
- * long press (button_long_ms of akam2k.conf) when there is no file. 0. */
+ * long press (button_long_ms of akam.conf) when there is no file. 0. */
 int a2k_btn_init(const a2k_btn_ops_t *ops, int long_ms);
 
 /* One sample of the line (raw = -1: read failed) at monotonic now_ms; `in` is the input descriptor (polarity). Dispatches a finished gesture. */

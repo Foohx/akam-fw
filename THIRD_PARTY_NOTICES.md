@@ -52,19 +52,19 @@ and bundled libtom* components) is copied unmodified to
 redistributed binary.
 
 The image also carries, in `/usr/local/akam/`, the licence texts of the other
-code linked into `ak_rtsp` and `dropbearmulti`: `LICENSE.musl` (musl's
+code linked into `akamd` and `dropbearmulti`: `LICENSE.musl` (musl's
 `COPYRIGHT`, from the pinned Zig tarball), `LICENSE.smolrtsp`, and
 `LICENSE.slice99`, `LICENSE.metalang99`, `LICENSE.datatype99`,
-`LICENSE.interface99` (their macros are expanded into `ak_rtsp`), `LICENSE.zig`
+`LICENSE.interface99` (their macros are expanded into `akamd`), `LICENSE.zig`
 (Zig's compiler-rt is linked into both binaries) and `LICENSE.akam` (the
-repository's own MIT licence, covering `ak_rtsp`), plus this file as
+repository's own MIT licence, covering `akamd`), plus this file as
 `THIRD_PARTY_NOTICES.md` (it carries the flasher's MIT notice above). They are
 copied unmodified from the pinned sources by `build_image.sh`, which fails
 if one is missing, and are listed with their SHA-256 in `MANIFEST.txt`.
 
 ## SmolRTSP and its dependencies (all MIT)
 
-Linked into `ak_rtsp` (SmolRTSP) or used as headers at compile time (the
+Linked into `akamd` (SmolRTSP) or used as headers at compile time (the
 other four). Each project's own `LICENSE` file carries the full text.
 
 | Project | Version | Copyright | Source |

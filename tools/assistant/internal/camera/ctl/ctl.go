@@ -1,8 +1,8 @@
-// Package ctl speaks the camera's control port (8091, specs/control-port.md) the way the bash wizard does
-// through `printf 'GET...\n' | nc -w 2 127.0.0.1 8091` on the camera: one GET/SET line each,
-// answers without the asynchronous LOG lines. The camera's Dropbear has no TCP forwarding
-// (DROPBEAR_SVR_LOCALTCPFWD 0), so the lines travel as the stdin of an SSH exec session running
-// busybox nc on the camera's own loopback (loopback trust model, unchanged).
+// Package ctl is the language the commands and the option engine speak to a 1080p: one GET or SET line per setting, in the
+// key names the camera's text control port has always had, and answers in the same shape ("key=value", "OK key=value
+// (note)", "ERR text"). The text port (8091) is closed to the network now: legacy.go turns those lines into calls of the
+// signed API (port 8092) and the camera's answers back, and the parsers below read the answers (the same code that read
+// the old port's, so the texts and the notes did not change).
 package ctl
 
 import (
@@ -11,42 +11,8 @@ import (
 	"time"
 )
 
-// Port is the control port.
-const Port = 8091
-
-// Timeout bounds one whole exchange (send and answers), so a hung camera cannot hang the assistant.
+// Timeout bounds one whole exchange with the camera, so that a hung camera cannot hang the assistant.
 const Timeout = 10 * time.Second
-
-// NcCommand is the command run on the camera: busybox nc. With -w 2 it gives up connecting after 2 s and
-// ends after 2 s of idle input; normally it ends sooner, when the server closes after QUIT.
-const NcCommand = "nc -w 2 127.0.0.1 8091"
-
-// Input is the stdin of NcCommand: every line, then QUIT so the server closes at once.
-func Input(lines []string) string {
-	var b strings.Builder
-	for _, l := range lines {
-		b.WriteString(l)
-		b.WriteString("\n")
-	}
-	b.WriteString("QUIT\n")
-	return b.String()
-}
-
-// Answers filters what nc printed: CRLF trimmed, empty and LOG lines dropped, the "OK bye" answer to
-// QUIT removed when it is the last line.
-func Answers(stdout string) []string {
-	var out []string
-	for _, l := range strings.Split(stdout, "\n") {
-		l = strings.TrimRight(l, "\r")
-		if l != "" && !strings.HasPrefix(l, "LOG ") {
-			out = append(out, l)
-		}
-	}
-	if n := len(out); n > 0 && out[n-1] == "OK bye" {
-		out = out[:n-1]
-	}
-	return out
-}
 
 // Get is led_get: the value of KEY in the answers (text after "KEY=" up to the first space),
 // empty when absent.

@@ -1,4 +1,4 @@
-/* Host unit test of the pure part of akam2k_mic (audio/mic_core.c): the WAV header, the dBFS and RMS maths and
+/* Host unit test of the pure part of akam-mic (audio/mic_core.c): the WAV header, the dBFS and RMS maths and
  * the output path rule. Prints "rot2k mic unit: N failed". */
 #include <math.h>
 #include <stdio.h>

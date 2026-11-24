@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Host tests for akam_debug.sh (camera script, run under busybox sh when available). A fake `ak_rtsp`
-# plays "ak_rtsp ctl <line>" (it records the line and answers like the control port). Nothing touches
+# Host tests for akam_debug.sh (camera script, run under busybox sh when available). A fake `akamd`
+# plays "akamd ctl <line>" (it records the line and answers like the control port). Nothing touches
 # hardware.
 set -uo pipefail
 
@@ -24,8 +24,8 @@ ok() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 ko() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; }
 eq() { if [ "$2" = "$3" ]; then ok "$1"; else ko "$1 (got '$2', want '$3')"; fi; }
 
-# fake ak_rtsp: "ctl DEBUG on N" -> OK, "ctl DEBUG off" -> OK, "ctl DEBUG status" -> state kept in a file
-cat >"$WORK/ak_rtsp" <<'EOF'
+# fake akamd: "ctl DEBUG on N" -> OK, "ctl DEBUG off" -> OK, "ctl DEBUG status" -> state kept in a file
+cat >"$WORK/akamd" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$FAKE_LOG"
 [ "$1" = ctl ] || exit 9
@@ -39,8 +39,8 @@ case "$2 $3" in
     *) echo "ERR unknown command"; exit 1 ;;
 esac
 EOF
-chmod +x "$WORK/ak_rtsp"
-export FAKE_LOG=$WORK/log FAKE_STATE=$WORK/state AKAM_RTSP_BIN=$WORK/ak_rtsp
+chmod +x "$WORK/akamd"
+export FAKE_LOG=$WORK/log FAKE_STATE=$WORK/state AKAM_RTSP_BIN=$WORK/akamd
 run() { "${SHCMD[@]}" "$DBG" "$@" 2>&1; }
 
 out=$(run status); rc=$?
@@ -70,13 +70,13 @@ for bad in "on 0" "on 1441" "on -3" "on abc" "on 5 6" "on 1.5" "on ''" "off now"
     eval "run $bad" >/dev/null; rc=$?
     eq "refused (exit 2): '$bad'" "$rc" 2
 done
-eq "refusals never reached ak_rtsp" "$(wc -c <"$FAKE_LOG" | tr -d ' ')" 0
+eq "refusals never reached akamd" "$(wc -c <"$FAKE_LOG" | tr -d ' ')" 0
 
 out=$(FAKE_DEAD=1 run on); rc=$?
-eq "ak_rtsp not answering: exit 1" "$rc" 1
-case $out in *"did not accept"*) ok "ak_rtsp not answering: message" ;; *) ko "ak_rtsp not answering: message ($out)" ;; esac
+eq "akamd not answering: exit 1" "$rc" 1
+case $out in *"did not accept"*) ok "akamd not answering: message" ;; *) ko "akamd not answering: message ($out)" ;; esac
 out=$(AKAM_RTSP_BIN=$WORK/missing run status); rc=$?
-eq "ak_rtsp missing: exit 1" "$rc" 1
+eq "akamd missing: exit 1" "$rc" 1
 
 echo "akam_debug_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

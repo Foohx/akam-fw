@@ -65,7 +65,7 @@ type Kind string
 
 const (
 	Stock   Kind = "stock"   // maintenance telnet open: stock firmware with the toolkit card
-	Akam    Kind = "akam"    // SSH, video and control ports open, telnet closed
+	Akam    Kind = "akam"    // SSH and video ports open (the Dropbear banner checked), telnet closed
 	Partial Kind = "partial" // only SSH answers, and its banner is Dropbear (Akam still starting)
 	Unknown Kind = "unknown"
 )
@@ -82,7 +82,9 @@ func has(open []int, p int) bool {
 	return false
 }
 
-// Classify is the port-based decision of find-camera (steps_camera.sh).
+// Classify is the port-based decision of find-camera (steps_camera.sh). The text control port (CTL) is closed to the
+// network on a current image, so SSH and video alone leave the decision to ClassifyHost (the SSH banner); with CTL open too
+// (an older image, or the LAN opt-in) the three ports are enough.
 func Classify(open []int, p Ports) Kind {
 	switch {
 	case has(open, p.Telnet):
@@ -133,9 +135,9 @@ func IsDropbear(banner string) bool {
 	return len(parts) == 3 && strings.HasPrefix(strings.ToLower(parts[2]), "dropbear")
 }
 
-// ClassifyHost is Classify, then, for a host where only SSH-like ports answer (Partial), a read of the
-// SSH banner: a plain server (OpenSSH, ...) is not a camera starting up, so it is Unknown. Only a
-// Dropbear banner keeps Partial.
+// ClassifyHost is Classify, then, for a host where SSH answers without the control port (Partial), a read of the
+// SSH banner: a plain server (OpenSSH, ...) is not a camera, so it is Unknown. With a Dropbear banner the host is
+// Akam when the video port answers too, else still Partial (Akam starting).
 func ClassifyHost(ctx context.Context, host string, open []int, p Ports, dial DialFunc) Kind {
 	k := Classify(open, p)
 	if k != Partial {
@@ -143,6 +145,9 @@ func ClassifyHost(ctx context.Context, host string, open []int, p Ports, dial Di
 	}
 	if b, err := SSHBanner(ctx, host, p.SSH, bannerTimeout, dial); err != nil || !IsDropbear(b) {
 		return Unknown
+	}
+	if has(open, p.RTSP) {
+		return Akam
 	}
 	return Partial
 }

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Host tests for the respawn backoff and crash counter of ak_rtsp_wrapper.sh (G04), run under the pinned
-# BusyBox sh when available. ak_rtsp is a stub that advances a fake /proc/uptime and exits with a chosen
+# Host tests for the respawn backoff and crash counter of akam_run.sh (G04), run under the pinned
+# BusyBox sh when available. akamd is a stub that advances a fake /proc/uptime and exits with a chosen
 # code; sleep and logger are stubs. Nothing touches hardware.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-WRAP=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/ak_rtsp_wrapper.sh
+WRAP=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay/akam_run.sh
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then
     if [ -n "${AKAM_BUSYBOX:-}" ]; then SH_UNDER_TEST="$AKAM_BUSYBOX sh"
@@ -36,10 +36,10 @@ cat >"$STUBS/logger" <<'EOF'
 echo "logger $*" >>"$FAKE/calls"
 exit 0
 EOF
-# fake ak_rtsp: "runs" FAKE_RUN seconds (advances the fake uptime) and exits with FAKE_RC
-cat >"$STUBS/ak_rtsp" <<'EOF'
+# fake akamd: "runs" FAKE_RUN seconds (advances the fake uptime) and exits with FAKE_RC
+cat >"$STUBS/akamd" <<'EOF'
 #!/bin/sh
-echo "ak_rtsp started" >>"$FAKE/calls"
+echo "akamd started" >>"$FAKE/calls"
 read -r up _ <"$FAKE/proc/uptime"
 up=${up%%.*}
 echo "$((up + FAKE_RUN)).00 0.00" >"$FAKE/proc/uptime"
@@ -56,7 +56,7 @@ new_env() {
 # run_wrap [env...]: one wrapper run (what the stock watchdog does at each respawn)
 run_wrap() {
     env FAKE="$E/fake" AKAM_ROOT="$E" AKAM_TMP_DIR="$E/tmp" AKAM_PROC_DIR="$E/fake/proc" \
-        AKAM_RTSP_BIN="$STUBS/ak_rtsp" AKAM_LOGGER="${LOGGER_FOR_TEST:-$STUBS/logger}" PATH="$STUBS:$PATH" "$@" \
+        AKAM_RTSP_BIN="$STUBS/akamd" AKAM_LOGGER="${LOGGER_FOR_TEST:-$STUBS/logger}" PATH="$STUBS:$PATH" "$@" \
         "${SHCMD[@]}" "$WRAP" >"$E/out" 2>&1
 }
 sleeps() { grep '^sleep' "$E/fake/calls" | sed 's/^sleep //' | while read -r s; do printf '%s ' "$s"; done; }
@@ -65,9 +65,9 @@ state() { cat "$E/tmp/akam_respawn" 2>/dev/null; }
 # 1. first start: no wait, no helper fork; counter written after the exit
 new_env first
 run_wrap FAKE_RUN=3 FAKE_RC=1; rc=$?
-eq "exit code of ak_rtsp is propagated" "$rc" 1
+eq "exit code of akamd is propagated" "$rc" 1
 eq "first start never sleeps" "$(sleeps)" ""
-eq "ak_rtsp started once" "$(grep -c '^ak_rtsp' "$E/fake/calls")" 1
+eq "akamd started once" "$(grep -c '^akamd' "$E/fake/calls")" 1
 case $(state) in "count=1 total=1 last_rc=1 last_run=3 up=1003") ok "state after the first short run" ;; *) ko "state after the first short run ($(state))" ;; esac
 
 # 2. a crash loop: delays 0, 2, 5, 10, 30, 30 before starts 2..7
@@ -114,8 +114,8 @@ case $(cat "$E/tmp/akam_wrapper.log") in *"code 70 (software stall watchdog) aft
 eq "syslog line sent via logger" "$(grep -c '^logger -t akam_wrapper' "$E/fake/calls")" 1
 new_env nologger
 run_wrap FAKE_RUN=1 FAKE_RC=1 AKAM_LOGGER=/nonexistent/logger; rc=$?
-eq "no logger: wrapper still exits with ak_rtsp's code" "$rc" 1
-eq "no logger: file log written" "$(grep -c 'ak_rtsp exited with code 1' "$E/tmp/akam_wrapper.log")" 1
+eq "no logger: wrapper still exits with akamd's code" "$rc" 1
+eq "no logger: file log written" "$(grep -c 'akamd exited with code 1' "$E/tmp/akam_wrapper.log")" 1
 new_env cap
 for i in $(seq 1 130); do echo "old $i" >>"$E/tmp/akam_wrapper.log"; done
 run_wrap FAKE_RUN=1 FAKE_RC=1
@@ -142,7 +142,7 @@ run_wrap AKAM_RTSP_BIN="$STUBS/ak_rtsp_nouptime"; rc=$?
 eq "missing uptime: exit code kept" "$rc" 5
 case $(state) in "count=1 total=1 last_rc=5 last_run=0 "*) ok "missing uptime: run counted as 0 s" ;; *) ko "missing uptime ($(state))" ;; esac
 
-# 9. the first start stays fast: the block before ak_rtsp forks nothing when count is 0
+# 9. the first start stays fast: the block before akamd forks nothing when count is 0
 if "${SHCMD[@]}" -n "$WRAP"; then ok "sh -n"; else ko "sh -n"; fi
 before=$(awk '/^CRASH_N=0/{f=1} /^# --- Network hostname/{f=0} f' "$WRAP")
 # shellcheck disable=SC2016 # the patterns are literal on purpose

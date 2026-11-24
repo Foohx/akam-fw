@@ -47,7 +47,7 @@ static int open_capture(void)
         return -1;
     }
     if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
-        a2k_log("audio: %s is locked by another process (akam2k_mic running?)", PCM_CAPTURE);
+        a2k_log("audio: %s is locked by another process (akam-mic running?)", PCM_CAPTURE);
         goto fail;
     }
     STEP("SET_STATE(2)", ioctl(fd, AKPCM_IOC_SET_STATE, &v));

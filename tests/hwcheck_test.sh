@@ -52,14 +52,14 @@ mkroot() {
         tcp_line 0100007F 8091
         tcp_line 0100A8C0 5555 01
     } > "$r/proc/net/tcp"
-    mkproc "$r" 101 ak_rtsp 4321
+    mkproc "$r" 101 akamd 4321
     mkproc "$r" 102 dropbear 1234
     mkproc "$r" 103 "sh /usr/sbin/akam_lockdown.sh" 600
     mkproc "$r" 104 wpa_supplicant 800
     mkproc "$r" 105 udhcpc 300
     mkproc "$r" 106 "akam_klog" 200
     echo 300 > "$r/proc/sys/kernel/random/entropy_avail"
-    mkstat "$r" 101 ak_rtsp 100 50
+    mkstat "$r" 101 akamd 100 50
     echo "cpu  1000 0 500 8000 0 0 0 0 0 0" > "$r/proc/stat"
     echo "root:x:0:0:root:/root:/bin/sh" > "$r/etc/passwd"
     printf '/bin/sh\n/bin/ash\n' > "$r/etc/shells"
@@ -119,10 +119,10 @@ has "netstat: source reported" 'source: netstat' "$WORK/t1.out"
 has "netstat: port 22 pass" '^PASS +port 22 listening' "$WORK/t1.out"
 has "netstat: 8091 address info" '8091 listen address: 192.0.2.9' "$WORK/t1.out"
 has "netstat: port 23 closed" '^PASS +port 23 closed' "$WORK/t1.out"
-has "processes: ak_rtsp running" '^PASS +ak_rtsp running \(pid 101\)' "$WORK/t1.out"
+has "processes: akamd running" '^PASS +akamd running \(pid 101\)' "$WORK/t1.out"
 has "processes: lockdown matched via argv1" '^PASS +akam_lockdown running \(pid 103\)' "$WORK/t1.out"
 has "processes: telnetd absent" '^PASS +telnetd absent' "$WORK/t1.out"
-has "rss: ak_rtsp" 'ak_rtsp pid 101 VmRSS 4321 kB' "$WORK/t1.out"
+has "rss: akamd" 'akamd pid 101 VmRSS 4321 kB' "$WORK/t1.out"
 has "rss: dropbear" 'dropbear pid 102 VmRSS 1234 kB' "$WORK/t1.out"
 has "8091 LIST answered" '^PASS +8091 answered LIST' "$WORK/t1.out"
 # hostname section: script absent, then present with a stored name
@@ -205,6 +205,15 @@ stub "$S4" netstat 'exit 1'
 run t4 "$R1" "$S4"
 has "empty netstat: fallback" 'source: /proc/net/tcp' "$WORK/t4.out"
 
+# 4b. an image of 0.1.x still runs the old names (ak_rtsp, ak_rtsp_wrapper.sh): recognised as akamd and akam_run ---------
+R4B=$WORK/r4b; mkroot "$R4B"
+rm -rf "$R4B/proc/101"
+mkproc "$R4B" 101 ak_rtsp 4321
+mkproc "$R4B" 120 "sh /usr/bin/ak_rtsp_wrapper.sh" 100
+run t4b "$R4B" "$WORK/s4b"
+has "0.1.x names: ak_rtsp is found as akamd" '^PASS +akamd running \(pid 101\)' "$WORK/t4b.out"
+hasnt "0.1.x names: the old wrapper and program are on the process allow-list" 'unexpected process: (ak_rtsp|ak_rtsp_wrapper)' "$WORK/t4b.out"
+
 # 5. failures: no dropbear, telnetd running, maintenance flag, bad modes ---------
 R5=$WORK/r5; mkroot "$R5"
 rm -rf "$R5/proc/102" "$R5/proc/103"
@@ -246,8 +255,8 @@ for p in sys.argv[1:]:
         "$R6C/proc/121/cmdline" "$R6C/proc/121/comm" "$R6C/proc/101/status" "$R6C/proc/101/stat"; then
     run t6c "$R6C" "$WORK/s6c"
     hasnt "vanished pid: no can't open error" "can't open|No such file|cannot open|No such device" "$WORK/t6c.out"
-    has "vanished pid: scan still finds ak_rtsp" '^PASS +ak_rtsp running \(pid 101\)' "$WORK/t6c.out"
-    has "vanished pid: unreadable status gives ?" 'ak_rtsp pid 101 VmRSS \? kB' "$WORK/t6c.out"
+    has "vanished pid: scan still finds akamd" '^PASS +akamd running \(pid 101\)' "$WORK/t6c.out"
+    has "vanished pid: unreadable status gives ?" 'akamd pid 101 VmRSS \? kB' "$WORK/t6c.out"
 else
     echo "skip - vanished pid (python3 unavailable)"
 fi
@@ -320,25 +329,25 @@ run t14 "$R14" "$WORK/s14"
 has "no keys in HOME: WARN" "^WARN +root HOME '/root' holds no authorized_keys" "$WORK/t14.out"
 has "no keys in HOME: / on the path is FAIL" '^FAIL +/ is group/other writable and on the key path' "$WORK/t14.out"
 
-# 15. ak_rtsp CPU from /proc deltas: +50 jiffies of 200 total = 25.0% -----------
+# 15. akamd CPU from /proc deltas: +50 jiffies of 200 total = 25.0% -----------
 R15=$WORK/r15; mkroot "$R15"
 S15=$WORK/s15; mkdir -p "$S15"
 cat > "$S15/sleep" <<EOF
 #!/bin/sh
 if [ ! -e "$WORK/cpu_done" ]; then
     : > "$WORK/cpu_done"
-    printf '101 (ak_rtsp) S 1 1 1 0 -1 0 0 0 0 0 130 70 0 0 20 0 5 0 1 2 3\n' > "$R15/proc/101/stat"
+    printf '101 (akamd) S 1 1 1 0 -1 0 0 0 0 0 130 70 0 0 20 0 5 0 1 2 3\n' > "$R15/proc/101/stat"
     echo "cpu  1100 0 550 8050 0 0 0 0 0 0" > "$R15/proc/stat"
 fi
 exit 0
 EOF
 chmod +x "$S15/sleep"
 run t15 "$R15" "$S15"
-has "cpu: 25.0 percent" 'ak_rtsp pid 101 CPU 25\.0% of the machine over 0s \(50 of 200 jiffies\)' "$WORK/t15.out"
-# no ak_rtsp -> UNKNOWN, not a crash
+has "cpu: 25.0 percent" 'akamd pid 101 CPU 25\.0% of the machine over 0s \(50 of 200 jiffies\)' "$WORK/t15.out"
+# no akamd -> UNKNOWN, not a crash
 R15b=$WORK/r15b; mkroot "$R15b"; rm -r "$R15b/proc/101"
 run t15b "$R15b" "$WORK/s15b"
-has "cpu: ak_rtsp absent -> UNKNOWN" '^UNKNOWN +ak_rtsp not running: CPU use skipped' "$WORK/t15b.out"
+has "cpu: akamd absent -> UNKNOWN" '^UNKNOWN +akamd not running: CPU use skipped' "$WORK/t15b.out"
 
 # 16. night mode and flap check through a scripted 8091 -----------------------------
 nc_night() { # nc_night DIR "state1 state2 ..." : GET night.state walks the list
@@ -462,7 +471,7 @@ has "allow-list: healthy camera passes" '^PASS +all [0-9]+ processes are on the 
 R35=$WORK/r35; mkroot "$R35"
 mkproc "$R35" 140 "msgserver" 900; mkproc "$R35" 141 "/usr/bin/cmdserver" 900; mkproc "$R35" 142 "mdnsd -f" 100
 mkproc "$R35" 143 "syslogd -s 200 -b 3" 100; mkproc "$R35" 144 "klogd" 100; mkproc "$R35" 145 "/usr/bin/watchdog" 100
-mkproc "$R35" 146 "sh /usr/bin/ak_rtsp_wrapper.sh" 100; mkproc "$R35" 147 "sh /usr/sbin/akam_net.sh start" 100
+mkproc "$R35" 146 "sh /usr/bin/akam_run.sh" 100; mkproc "$R35" 147 "sh /usr/sbin/akam_net.sh start" 100
 mkproc "$R35" 148 "sh /etc/init.d/drop_caches.sh" 100; mkproc "$R35" 149 "sleep 60" 100; mkproc "$R35" 150 "-sh" 100
 mkproc "$R35" 151 "init" 100; mkproc "$R35" 152 "ntpd -n -q -p pool.ntp.org" 100
 mkdir -p "$R35/proc/160"; : > "$R35/proc/160/cmdline"     # a kernel thread: no cmdline, skipped
@@ -470,7 +479,7 @@ run t35 "$R35" "$WORK/s20"
 has "allow-list: msgserver is WARN vendor daemon, review" '^WARN +vendor daemon, review: msgserver \(pid 140\)' "$WORK/t35.out"
 has "allow-list: cmdserver (full path) is WARN vendor daemon, review" '^WARN +vendor daemon, review: cmdserver \(pid 141\)' "$WORK/t35.out"
 has "allow-list: an unknown daemon is WARN unexpected" '^WARN +unexpected process: mdnsd \(pid 142\)' "$WORK/t35.out"
-hasnt "allow-list: syslogd, klogd, watchdog, wrapper, akam_*, drop_caches, sleep, sh, init, ntpd are fine" 'unexpected process: (syslogd|klogd|watchdog|ak_rtsp_wrapper|akam_net|drop_caches|sleep|sh|init|ntpd)' "$WORK/t35.out"
+hasnt "allow-list: syslogd, klogd, watchdog, wrapper, akam_*, drop_caches, sleep, sh, init, ntpd are fine" 'unexpected process: (syslogd|klogd|watchdog|akam_run|akam_net|drop_caches|sleep|sh|init|ntpd)' "$WORK/t35.out"
 hasnt "allow-list: msgserver/cmdserver are not FAIL" '^FAIL +.*(msgserver|cmdserver)' "$WORK/t35.out"
 has "allow-list: summary counts what needs review" 'processes, 3 to review' "$WORK/t35.out"
 
@@ -502,49 +511,49 @@ stub "$S36" sleep 'for f in '"$R36"'/proc/101/task/*/status; do sed "s/^voluntar
 EXTRA_ENV=(HWCHECK_CPU_WINDOW=2)
 run t36 "$R36" "$S36"
 EXTRA_ENV=(HWCHECK_X=1)
-has "wakeups: 3 threads x 60 switches in 2 s = 90/s" 'ak_rtsp pid 101 wakeups 90/s over 2s' "$WORK/t36.out"
+has "wakeups: 3 threads x 60 switches in 2 s = 90/s" 'akamd pid 101 wakeups 90/s over 2s' "$WORK/t36.out"
 run t37 "$R1" "$S1"
 hasnt "wakeups: no per-thread data, nothing invented" 'wakeups' "$WORK/t37.out"
 
-# 38. MQTT: off = no outbound TCP connection of ak_rtsp, on = exactly one ---------------------------------------
+# 38. MQTT: off = no outbound TCP connection of akamd, on = exactly one ---------------------------------------
 tcp_conn() { printf '   1: 0900A8C0:%04X 0A00A8C0:075B %s 00000000:00000000 00:00000000 00000000     0        0 %s 1 0\n' "$2" "$3" "$4" >> "$1/proc/net/tcp"; }
 sock_of() { mkdir -p "$1/proc/$2/fd"; ln -s "socket:[$3]" "$1/proc/$2/fd/$4"; }
 R38=$WORK/r38; mkroot "$R38"
 sock_of "$R38" 101 900 3                                    # an RTSP client accepted on 554 does not count
 tcp_conn "$R38" 554 01 900
 run t38 "$R38" "$WORK/s20"
-has "mqtt off, only a client on 554: PASS" '^PASS +MQTT is off: ak_rtsp holds no outbound TCP connection' "$WORK/t38.out"
+has "mqtt off, only a client on 554: PASS" '^PASS +MQTT is off: akamd holds no outbound TCP connection' "$WORK/t38.out"
 R39=$WORK/r39; mkroot "$R39"
 sock_of "$R39" 101 901 3
 tcp_conn "$R39" 40001 01 901
 run t39 "$R39" "$WORK/s20"
-has "mqtt off but an outbound connection: FAIL" '^FAIL +MQTT is off but ak_rtsp holds 1 outbound' "$WORK/t39.out"
+has "mqtt off but an outbound connection: FAIL" '^FAIL +MQTT is off but akamd holds 1 outbound' "$WORK/t39.out"
 R40=$WORK/r40; mkroot "$R40"
 mkdir -p "$R40/etc/config/akam"; printf 'enabled=1\nhost=192.0.2.10\nport=1883\nuser=u\n' > "$R40/etc/config/akam/mqtt"
 sock_of "$R40" 101 902 3
 tcp_conn "$R40" 40002 01 902
 run t40 "$R40" "$WORK/s20"
-has "mqtt on with one outbound connection: PASS" '^PASS +MQTT is on: ak_rtsp holds one outbound TCP connection' "$WORK/t40.out"
+has "mqtt on with one outbound connection: PASS" '^PASS +MQTT is on: akamd holds one outbound TCP connection' "$WORK/t40.out"
 hasnt "mqtt on: the password file and the host are not printed" '192\.0\.2\.10' "$WORK/t40.out"
 R41=$WORK/r41; mkroot "$R41"
 mkdir -p "$R41/etc/config/akam"; printf 'enabled=1\nhost=h\n' > "$R41/etc/config/akam/mqtt"
 mkdir -p "$R41/proc/101/fd"
 run t41 "$R41" "$WORK/s20"
-has "mqtt on, no connection (backoff): WARN" '^WARN +MQTT is on but ak_rtsp holds no outbound' "$WORK/t41.out"
+has "mqtt on, no connection (backoff): WARN" '^WARN +MQTT is on but akamd holds no outbound' "$WORK/t41.out"
 R42=$WORK/r42; mkroot "$R42"
 mkdir -p "$R42/etc/config/akam"; printf 'enabled=1\nhost=h\n' > "$R42/etc/config/akam/mqtt"
 sock_of "$R42" 101 903 3; sock_of "$R42" 101 904 4
 tcp_conn "$R42" 40003 01 903; tcp_conn "$R42" 40004 02 904
 run t42 "$R42" "$WORK/s20"
-has "mqtt on with two outbound connections: FAIL" '^FAIL +MQTT is on but ak_rtsp holds 2 outbound' "$WORK/t42.out"
+has "mqtt on with two outbound connections: FAIL" '^FAIL +MQTT is on but akamd holds 2 outbound' "$WORK/t42.out"
 R43=$WORK/r43; mkroot "$R43"
 mkdir -p "$R43/etc/config/akam"; printf 'enabled=0\nhost=h\n' > "$R43/etc/config/akam/mqtt"
 sock_of "$R43" 101 905 3
 tcp_conn "$R43" 40005 01 905
 run t43 "$R43" "$WORK/s20"
-has "mqtt enabled=0 with a connection: FAIL" '^FAIL +MQTT is off but ak_rtsp holds 1 outbound' "$WORK/t43.out"
+has "mqtt enabled=0 with a connection: FAIL" '^FAIL +MQTT is off but akamd holds 1 outbound' "$WORK/t43.out"
 run t44 "$R1" "$S1"
-has "mqtt: no fd directory for ak_rtsp: UNKNOWN, not a guess" '^UNKNOWN +the sockets of ak_rtsp are not readable' "$WORK/t44.out"
+has "mqtt: no fd directory for akamd: UNKNOWN, not a guess" '^UNKNOWN +the sockets of akamd are not readable' "$WORK/t44.out"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

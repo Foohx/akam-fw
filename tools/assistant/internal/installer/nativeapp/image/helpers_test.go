@@ -87,7 +87,7 @@ func stubKitFiles(t testing.TB, hw string) map[string][]byte {
 	t.Helper()
 	root := repoRoot(t)
 	f := map[string][]byte{
-		"bin/ak_rtsp":            []byte("#!/bin/sh\necho stub ak_rtsp\n"),
+		"bin/akamd":              []byte("#!/bin/sh\necho stub akamd\n"),
 		"bin/dropbearmulti":      []byte("#!/bin/sh\necho stub dropbearmulti\n"),
 		"MANIFEST.txt":           []byte("kit_format=1\nkit_grade=test\nakam_version=test1\nsource_commit=0123456789ab\ntime64_gate=pass\n"),
 		"supported_hardware.txt": []byte(hw),
@@ -131,7 +131,7 @@ func listText(l []squashfs.ListEntry, blank map[string]bool) string {
 // kitDerived is the set of paths of the image whose content comes from the kit (golden files must not depend
 // on the templates of the repository).
 func kitDerived() map[string]bool {
-	m := map[string]bool{"/bin/ak_rtsp": true, "/bin/dropbearmulti": true, "/local/akam/MANIFEST.txt": true}
+	m := map[string]bool{"/bin/akamd": true, "/bin/dropbearmulti": true, "/local/akam/MANIFEST.txt": true}
 	for _, e := range parseList() {
 		if e.imgPath != "-" {
 			m["/"+e.imgPath] = true

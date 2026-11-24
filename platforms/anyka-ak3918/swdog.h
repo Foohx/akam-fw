@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-/* Software stall watchdog (G01). Turns a wedged ak_rtsp into a clean exit so the wrapper respawns it.
+/* Software stall watchdog (G01). Turns a wedged akamd into a clean exit so the wrapper respawns it.
  * It is NOT the hardware watchdog: /usr/bin/watchdog keeps feeding /dev/watchdog and is never touched.
  *
  * What is watched (monotonic milliseconds, uint32, wrap-safe):

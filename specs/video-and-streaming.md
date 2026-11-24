@@ -1,6 +1,6 @@
 # Video and streaming
 
-`ak_rtsp` (`platforms/anyka-ak3918`) captures the sensor through the vendor ISP and encoder, and serves one H.264 stream (plus
+`akamd` (`platforms/anyka-ak3918`) captures the sensor through the vendor ISP and encoder, and serves one H.264 stream (plus
 microphone audio) over RTSP on TCP port 554. This file covers the pipeline, the encoder settings, the RTSP server and
 its optional Digest login.
 
@@ -18,9 +18,11 @@ Status: **hardware-validated** (VLC, ffmpeg, go2rtc over TCP; RTSP Digest login;
    (H.264 1080p with MMA); the ring does not wrap for about 1.5 s of video while a client takes its time between
    DESCRIBE and PLAY.
 
-Only one encoder channel exists. The sensor's second and third video devices are opened but no sub-stream is encoded.
+Only one encoder channel exists. The sensor's second and third video devices are opened but no sub-stream is encoded: on the 1080p
+`/stream1` is the same picture as `/stream0`, on purpose (decision of 2026-11-23: a second encoder channel is not wanted here; the stock
+firmware does create one at 640x360, see section 5.1, so it is possible but costs memory and CPU on a small SoC).
 Resolution is fixed at 1920x1080 (the ISP crop, VI formats and the encoder DMA pool are sized for it). Mirror and flip
-are not offered.
+are offered since 2026-11-23 (`image.flip`, `image.mirror`, `image.ceiling`, section 5.7; not yet hardware-validated).
 
 ## 2. Encoder
 
@@ -47,7 +49,7 @@ is tolerated):
 - An absent file or key means the default. A bad line (unknown key, bad number, out of range) is skipped with one log
   line and its key keeps the default.
 - The file holds only keys that differ from the default; with all defaults it is removed.
-- Values never change while `ak_rtsp` runs. A change applies at the next start of `ak_rtsp`. The control port keys
+- Values never change while `akamd` runs. A change applies at the next start of `akamd`. The control port keys
   `video.bitrate_cfg`, `video.fps_cfg`, `video.gop_cfg` write the file (loopback only) and `video.cfg_pending` says
   whether the file differs from the running encoder.
 - `minqp` / `maxqp` (10 to 51, defaults 28 / 43, `minqp < maxqp` required): the QP bounds of the VBR+ rate control. They
@@ -100,7 +102,7 @@ track's RTP timestamp. The video RTP clock is 90 kHz.
 ```
 v=0
 o=- <time> <time> IN IP4 0.0.0.0
-s=ak_rtsp
+s=akamd
 t=0 0
 m=video 0 RTP/AVP 96
 a=rtpmap:96 H264/90000
@@ -255,7 +257,7 @@ stock (`specs/image-day-night-leds.md` section 1). AE and AWB are kernel work to
 | AWB: SET_WB, AWB_EX, AWB_CALIB per mode | same (`img.wb=conf`, default) | capture | none; `img.wb=manual` deviates on purpose |
 | 3DNR statistics and sensor fps reads | off by default (`img.poll=0`) | capture, RE (the kernel reads its own stats) | none expected; `img.poll=1` is the control experiment |
 | AF, DPC, LSC | sent at start and switches only, in both | capture (no AF reads) | none (fixed focus) |
-| Flip/mirror block 0x40044979 sent once (zeros) | never sent | capture | none (default no flip) |
+| Flip/mirror block 0x40044979 sent once (zeros) | sent only when a flip or mirror is on (saved file or a SET), see section 5.7 | capture, RE | none (default no flip: nothing is sent) |
 | 3D NR reference size `{1920,1080}`, sensor fps | sent (`ae.c`) | capture | none |
 | Second encoder channel 640x360 | absent | capture (CREATE_ENC #2) | none for quality |
 | CREATE_ENC rc sub-struct: all zero but `flag=1` | `legacy`: minqp/maxqp 28/43, srd 128, flag2 40; `stock` option exists | capture vs `venc.c` | `venc_rc=stock` was tried on hardware: no gain (`imgq.h`) |
@@ -507,7 +509,7 @@ Implementation rules:
   (g) back to defaults re-sends the baseline byte for byte; (h) 3D_NR SET length 7180, the tail kept (zero). Implemented in `tests/native/isp_nr_test.c`
   (`tests/isp_nr_test.sh`) against a fake driver that holds vendor-like tables built from the formula, plus the reload
   and the SHARP order (bias, slider -15, coring checked value by value). The golden repro hash changed (new code, default
-  behaviour identical): `tests/golden/ak_rtsp_1080p.sha256`.
+  behaviour identical): `tests/golden/lsc-indoor-1080p-ak3918.sha256`.
 - Final syntax: `SET img.nr2d_bias N`, `img.uvnr_bias N`, `img.nr3d_bias N`, `img.sharp_bias N` (0..4), `img.nr2d P`,
   `img.uvnr P` (50..400), `img.sharp_coring P` (100..300), `img.nr3d_motion P` (50..200); answers `OK img.KEY=V (RAM only,
   BLOCK re-sent)`, `... default: nothing sent` or `ERR img.KEY: live table not as decoded ...`; `GET img.KEY`; `GET img.nr`
@@ -561,7 +563,7 @@ noise, which the encoder then has to code in every P frame.
 
 Decision (user, 2026-11-16): **-15 on all SHARP entries is the 1080p default** (`isp.sharpness` -15, `img.sharp_all` 1). The stock
 behaviour stays one setting away: `SET isp.sharpness 0` (saved) or `./akam picture sharpness 0`, and `SET img.sharp_all 0`.
-The trials ran with entries 0..15; the shipped code also covers entry 16 (ISO level 15, section 5.5.1), which the trials missed. The golden reproducible hash was re-recorded for it (tests/golden/ak_rtsp_1080p.sha256).
+The trials ran with entries 0..15; the shipped code also covers entry 16 (ISO level 15, section 5.5.1), which the trials missed. The golden reproducible hash was re-recorded for it (tests/golden/lsc-indoor-1080p-ak3918.sha256).
 
 #### 5.6.2 Second round on both 1080p cameras: sharpness vs 3D-NR bias (akam-01, akam-02, 2026-11-16)
 
@@ -592,5 +594,43 @@ Conclusions:
   camera keeps the stock noise-reduction tables`), the camera keeps running with the stock tables, and the saved or default value is
   not lost; `SET isp.denoise` answers `ERR ... live table not as decoded`.
 * Stock path: `isp.sharpness` 0 and `isp.denoise` 0 send exactly the payloads of the previous release (no GET, no SET of 3D_NR;
-  `tests/isp_nr_test.sh`, `tests/isp_effects_test.sh`). The golden hash changed (behaviour change, `tests/golden/ak_rtsp_1080p.sha256`).
+  `tests/isp_nr_test.sh`, `tests/isp_effects_test.sh`). The golden hash changed (behaviour change, `tests/golden/lsc-indoor-1080p-ak3918.sha256`).
 * Not made a default: `img.nr2d`, `img.nr2d_bias` (NR1 is empty on these cameras, 5.5.3; not A/B-tested), coring, motion, UVNR strength, sharp bias.
+
+### 5.7 Flip and mirror (reverse engineering of 2026-11-23, not yet hardware-validated on the 1080p)
+
+Settings `image.flip` (vertical), `image.mirror` (horizontal), `image.ceiling` (both): the same names, meaning and 0/1 values as the 2K
+(`src/features/orient/orient_rows.h`). Live, no stream restart. Saved in `/etc/config/akam/orient` (`flip=1`, `mirror=1`), written only when
+the user changes a value, removed when both are off, applied once at start-up before the video channel starts (`platforms/anyka-ak3918/image_orient.c`).
+
+**Ways considered, in the order asked, and the one chosen**
+
+1. Vendor SDK call: none on the 1080p. The stock `anyka_ipc` and our `akamd` talk to the kernel module directly (raw ioctls on `/dev/isp-param-0`);
+   the AV130 library `ak_vpss_switch_flip_mirror` of the 2K ends in the same ISP ioctl. The kernel interface IS the SDK call, so this is the first
+   way and the second at once.
+2. Sensor registers through the driver/ISP interface: this is what the kernel does. ISP tunnel command `0x40044979` (`ISP_INNER_FLIP_MIRROR`,
+   the `FLIP_MIRROR` of the stock capture, sent once with zeros by the stock) goes to `isp_param_file_open` of `ak_isp.ko`, which copies **8 bytes**
+   from the payload (the command number encodes 4): two 32-bit words, word 0 = flip, word 1 = mirror, any non-zero is 1. It stores them in the ISP
+   context (+0x954 and +0x955) and calls `collective_set_flip_mirror`, which (module parameter `sensor0_flip_mirror_enable`, default 1) calls
+   `sensor_set_flip_mirror`: the flags `flip | mirror << 1` go to the sensor driver as control `0x3004`. `sensor_gc20c3.ko`
+   (`gc20c3_core_s_ctrl`, case `0x3004`) writes the GC20C3 registers: register `0x022c` = `(flip << 1) | mirror` (page / bank select of the sensor
+   as the driver addresses it), and, when the sensor is not in its initial state (a driver flag), the start-position corrections: register `0x0347`
+   = its table value minus 2 when the picture is flipped, register `0x0b0d` = its table value minus 1 when mirrored (the two registers move the
+   readout window by a whole Bayer pair so the colour order survives). `ak_isp` then updates its
+   misc attribute (Bayer pattern of the VI) with the capture paused for the change (`flip_drop_frames`, default 1 frame dropped). So flip = vertical
+   readout (bit 1 of the sensor register), mirror = horizontal (bit 0), as the 2K.
+3. Flip in the encoder or VI path: not needed.
+
+**Chosen: way 2.** The sensor does the flip while it reads out, so it costs no CPU and no memory in `akamd` (a software flip of a 1080p frame
+would have cost a full frame copy per frame), and every consumer sees the same picture (RTSP, ONVIF snapshots if any, the AE statistics). Cost in
+the binary: about 1.5 KB of code, no thread, no buffer. Source: disassembly of `ak_isp.ko` (functions `isp_param_file_open` case `0x40044979`,
+`collective_set_flip_mirror`, `sensor_set_flip_mirror`, `camera_set_flip_mirror`) and `sensor_gc20c3.ko` (`gc20c3_core_s_ctrl`) of the stock
+firmware `app` partition; nothing of it is stored in the repository.
+
+**What is not known without the camera**
+
+- The exact register meaning and values written by `0x3004` (decoded from a disassembly of the ARM code, not observed on the I2C bus, no GC20C3 datasheet at hand). The numbers above are the reading of the code.
+- Whether the colours stay right after a flip (the Bayer order change is the kernel's job; it is the first thing to look at).
+- Whether the kernel keeps the orientation across a day / night switch: the call is sent again after each switch (`image_orient_replay_locked`, under the ISP configuration lock the switch already holds; nothing is sent while both are off; the kernel ignores an unchanged value), so it should; the log line after the switch proves it.
+- Whether sending the call before the video channel starts is accepted (the stock does the same, once, in its ISP set-up).
+- The encoder may lose a frame or two while the sensor turns; the stream does not restart.

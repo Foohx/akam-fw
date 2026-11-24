@@ -545,7 +545,7 @@ static void test_session(void)
     /* availability first, retained; discovery retained; states */
     CHECK(pub_find(0, "akam/akam-0f0f/status", v, sizeof(v), &retain) == 0 && !strcmp(v, "online") && retain == 1);
     int disc = pub_count_prefix(0, "homeassistant/");
-    CHECK(disc == 20);                                          /* 19 documents + an empty one clearing the absent temperature */
+    CHECK(disc == 22);/* 21 documents (19 + the image flip and mirror switches) + an empty one clearing the absent temperature */
     CHECK(pub_find(0, "homeassistant/select/akam_aabbccddee0f/status_led/config", v, sizeof(v), &retain) > 0 && retain == 1);
     CHECK(strstr(v, "\"unique_id\":\"akam_aabbccddee0f_status_led\"") != NULL);
     CHECK(pub_find(0, "homeassistant/sensor/akam_aabbccddee0f/temperature/config", v, sizeof(v), &retain) > 0 && v[0] == '\0' && retain == 1);
@@ -704,7 +704,7 @@ static void test_session(void)
     CHECK(WAIT_FOR(BGET(connects) == c0 + 1, 10000));
     CHECK(wait_state("connected", 10000));
     CHECK(WAIT_FOR(BGET(subs) == BGET(connects), 10000));
-    CHECK(pub_count_prefix(base, "homeassistant/") == 20);
+    CHECK(pub_count_prefix(base, "homeassistant/") == 22);
     /* the flash-write bucket survives the reconnect: a new session does not refill it (skipped when 25 s went by) */
     if (now_ms() - t_saved < 25000) {
         calls = set_calls();

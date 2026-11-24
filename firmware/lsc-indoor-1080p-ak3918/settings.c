@@ -13,10 +13,12 @@
 #include "control.h"
 #include "ctl_sys.h"
 #include "hal_sys.h"
+#include "image_orient.h"
 #include "isp_tune.h"
 #include "leds.h"
 #include "mqtt_svc.h"
 #include "night.h"
+#include "orient_rows.h"
 #include "onvif_cfg.h"
 #include "onvif_device.h"
 #include "version.h"
@@ -24,7 +26,7 @@
 #include "video_ctl.h"
 
 #define MODEL_1080P 2u
-#define MAX_ROWS 56
+#define MAX_ROWS 80
 #define RO ST_ACC_READ
 #define RW (ST_ACC_READ | ST_ACC_WRITE)
 
@@ -62,6 +64,12 @@ static const struct { const char *key, *legacy; } k_map[] = {
     { "video0.min_qp", "video.minqp_cfg" },
     { "video0.max_qp", "video.maxqp_cfg" },
     { "video0.cfg_pending", "video.cfg_pending" },
+    /* the rows the assistant needs now that the text port is closed to the network (same names as the 8091 keys) */
+    { "img.wb", "img.wb" },
+    { "audio.out_volume", "audio.out_volume" },
+    { "audio.out_enable", "audio.out_enable" },
+    { "audio.talk_enable", "audio.talk_enable" },
+    { "audio.mic_enable", "audio.mic_enable" },
 };
 
 static const char *legacy_of(const char *key)
@@ -96,6 +104,10 @@ static int legacy_get(const char *key, char *out, size_t cap)
         if (video_ctl_get(lg, line, sizeof line) != 0) return ST_E_GETTER;
         return value_of(line, lg, out, cap);
     }
+    if (!strncmp(lg, "audio.", 6) || !strcmp(lg, "img.wb")) {
+        if (control_get_value(lg, out, cap) != 0) return ST_E_GETTER;
+        return (int)strlen(out);
+    }
     if (ledsys_ctl_get(lg, line, sizeof line) != 0) return ST_E_GETTER;
     return value_of(line, lg, out, cap);
 }
@@ -104,12 +116,38 @@ static int legacy_set(const char *key, const char *val, st_apply_t *eff)
 {
     const char *lg = legacy_of(key);
     char msg[200], *p;
-    (void)eff; /* the apply mode of the row (live, or restart_component for video0.*: ak_rtsp reads it at its next start) is the row's own */
     if (!lg) return -1;
     t_note[0] = '\0';
     if (control_apply_setting(lg, val, t_persist, msg, sizeof msg) != 0) return -1;
     p = strstr(msg, " (not saved");
-    if (p) snprintf(t_note, sizeof t_note, "%s", p);
+    if (p) {
+        snprintf(t_note, sizeof t_note, "%s", p);
+        if (t_persist) streg_note_unsaved(); /* a save that was meant to happen and failed: the PATCH reply says so (a RAM-only write is not a failure) */
+    }
+    /* the apply mode of the row (live, or restart_component for video0.*: akamd reads it at its next start) is the row's own; a module that
+     * says "restart to apply" (the speaker that cannot open its device now, the microphone that is read at start) makes this write one too */
+    if (strstr(msg, "(restart to apply)")) *eff = AP_RESTART_COMPONENT;
+    return 0;
+}
+
+static int put_str(char *out, size_t cap, const char *s);
+
+/* ------------------------------------------------------------------ the opt-in that opens the text port 8091 to the LAN */
+static int lan_get(const char *key, char *out, size_t cap)
+{
+    (void)key;
+    return put_str(out, cap, control_lan_get() ? "1" : "0");
+}
+
+static int lan_set(const char *key, const char *val, st_apply_t *eff)
+{
+    (void)key;
+    (void)eff; /* restart_component: the port is bound when akamd starts */
+    t_note[0] = '\0';
+    if (control_lan_set(val[0] == '1') != 0) {
+        snprintf(t_note, sizeof t_note, " (not saved: %s)", strerror(errno));
+        return -1;
+    }
     return 0;
 }
 
@@ -127,7 +165,10 @@ static int pat_set(const char *key, const char *val, st_apply_t *eff)
     (void)eff;
     t_note[0] = '\0';
     int rc = ledsys_pat_set(led_rule(key), val);
-    if (rc == -2) snprintf(t_note, sizeof t_note, " (not saved: %s)", strerror(errno));
+    if (rc == -2) {
+        snprintf(t_note, sizeof t_note, " (not saved: %s)", strerror(errno));
+        streg_note_unsaved();
+    }
     return rc == -1 ? -1 : 0;
 }
 
@@ -140,6 +181,28 @@ static int pat_check(const streg_t *reg, const char *key, const char *val)
     (void)reg;
     (void)key;
     return a2k_pat_parse(val, &p);
+}
+
+/* ------------------------------------------------------------------ image.flip / image.mirror / image.ceiling (live, saved on a user change)
+ * Same rows, same meaning as the 2K (orient_rows.h). The module (image_orient.c) owns the state, the ISP call (sensor readout flip, no
+ * stream restart) and /etc/config/akam/orient. Not yet hardware-validated on the 1080p. */
+static int orient_get_row(const char *key, char *out, size_t cap)
+{
+    int f, m, v;
+    image_orient_get(&f, &m);
+    v = orient_row_value(key, f, m);
+    return v < 0 ? ST_E_GETTER : snprintf(out, cap, "%d", v);
+}
+
+static int orient_set_row(const char *key, const char *val, st_apply_t *eff)
+{
+    int rc;
+    (void)eff;
+    t_note[0] = '\0';
+    rc = image_orient_set_row(key, atoi(val), t_persist);
+    if (rc < 0) return ST_E_SETTER;
+    if (rc == 1) snprintf(t_note, sizeof t_note, " (not saved: %s)", strerror(errno));
+    return 0;
 }
 
 /* ------------------------------------------------------------------ video: min QP below max QP over the whole patch */
@@ -171,7 +234,7 @@ static int state_get(const char *key, char *out, size_t cap)
 {
     char v[96];
     if (!strncmp(key, "sys.", 4) && strcmp(key, "sys.version") && strcmp(key, "sys.time_set")) return sys_num(key, out, cap);
-    if (!strcmp(key, "net.wifi_rssi") || !strcmp(key, "net.wifi_lq") || !strcmp(key, "rtsp.clients") ||
+    if (!strcmp(key, "net.wifi_rssi") || !strcmp(key, "net.wifi_lq") || !strcmp(key, "net.wifi_rate") || !strcmp(key, "rtsp.clients") ||
         !strcmp(key, "rtsp.skipped_frames") || !strcmp(key, "sys.time_set"))
         return sys_num(key, out, cap);
     if (!strcmp(key, "rtsp.auth")) {
@@ -181,6 +244,14 @@ static int state_get(const char *key, char *out, size_t cap)
     if (!strcmp(key, "video0.fps_x10")) return sys_num("video.fps_actual", out, cap);
     if (!strcmp(key, "video0.bitrate_kbps")) return sys_num("video.bitrate", out, cap);
     if (!strcmp(key, "night.active")) return put_str(out, cap, night_is_night() ? "1" : "0");
+    if (!strcmp(key, "net.ssid")) { /* the name of the network the camera is on: what any radio in range sees (the MAC stays off the API) */
+        if (ctl_sys_get("net.ssid", v, sizeof v) != 0) return ST_E_GETTER;
+        return put_str(out, cap, v);
+    }
+    if (!strncmp(key, "audio.out_", 10) || !strcmp(key, "led.state")) { /* the speaker's own state and counters, the LED engine's state */
+        if (control_get_value(key, v, sizeof v) != 0) return ST_E_GETTER;
+        return put_str(out, cap, v);
+    }
     if (!strcmp(key, "sys.version")) return put_str(out, cap, firmware_version());
     if (!strcmp(key, "api.keys")) return put_long(out, cap, g_keys);
     if (!strcmp(key, "net.hostname")) {
@@ -348,6 +419,7 @@ static st_def_t *row(const char *key, st_type_t type, long lo, long hi, const ch
 static const char *const OPT_MODE[] = { "auto", "on", "off", NULL };
 static const char *const OPT_IR[] = { "auto", "off", NULL };
 static const char *const OPT_NIGHT[] = { "auto", "day", "night", NULL };
+static const char *const OPT_WB[] = { "conf", "manual", NULL };
 static const char *const OPT_FPS[] = { "10", "15", "20", "25", NULL };
 static const char *const G_LED[] = { "led", NULL };
 static char g_pat_def[LEDS_RULE_N][A2K_PAT_MAX];
@@ -374,7 +446,10 @@ static void build_table(void)
     row("image.saturation", ST_INT, ISP_TUNE_MIN, ISP_TUNE_MAX, NULL, "0", RW, legacy_get, legacy_set);
     row("image.sharpness", ST_INT, ISP_TUNE_MIN, ISP_TUNE_MAX, NULL, defnum(ISP_TUNE_DEFAULT_SHARPNESS), RW, legacy_get, legacy_set);
     row("image.denoise", ST_INT, 0, ISP_TUNE_DENOISE_MAX, NULL, defnum(ISP_TUNE_DEFAULT_DENOISE), RW, legacy_get, legacy_set);
-    /* video: saved now, used by the encoder at the next start of ak_rtsp (the kernel has no proven live setter, convergence P10) */
+    row("image.flip", ST_BOOL, 0, 0, NULL, "0", RW, orient_get_row, orient_set_row);
+    row("image.mirror", ST_BOOL, 0, 0, NULL, "0", RW, orient_get_row, orient_set_row);
+    row("image.ceiling", ST_BOOL, 0, 0, NULL, "0", RW, orient_get_row, orient_set_row); /* flip + mirror */
+    /* video: saved now, used by the encoder at the next start of akamd (the kernel has no proven live setter, convergence P10) */
     row("video0.kbps", ST_INT, VIDEO_KBPS_MIN, VIDEO_KBPS_MAX, NULL, defnum(vd.bitrate), RW, legacy_get, legacy_set)->apply = AP_RESTART_COMPONENT;
     row("video0.fps", ST_ENUM, 0, 0, OPT_FPS, defnum(vd.fps), RW, legacy_get, legacy_set)->apply = AP_RESTART_COMPONENT;
     row("video0.gop", ST_INT, VIDEO_GOP_S_MIN, VIDEO_GOP_S_MAX, NULL, defnum(vd.gop_s), RW, legacy_get, legacy_set)->apply = AP_RESTART_COMPONENT;
@@ -382,6 +457,12 @@ static void build_table(void)
     g_defs[g_nrows - 1].check = video_check;
     row("video0.max_qp", ST_INT, VIDEO_QP_MIN, VIDEO_QP_MAX, NULL, defnum(vd.maxqp), RW, legacy_get, legacy_set)->apply = AP_RESTART_COMPONENT;
     g_defs[g_nrows - 1].check = video_check;
+    row("img.wb", ST_ENUM, 0, 0, OPT_WB, "conf", RW, legacy_get, legacy_set);
+    row("audio.out_volume", ST_INT, 0, 100, NULL, "100", RW, legacy_get, legacy_set);
+    row("audio.out_enable", ST_BOOL, 0, 0, NULL, "1", RW, legacy_get, legacy_set);
+    row("audio.talk_enable", ST_BOOL, 0, 0, NULL, "1", RW, legacy_get, legacy_set);
+    row("audio.mic_enable", ST_BOOL, 0, 0, NULL, "0", RW, legacy_get, legacy_set)->apply = AP_RESTART_COMPONENT;
+    row("control.lan", ST_BOOL, 0, 0, NULL, "0", RW, lan_get, lan_set)->apply = AP_RESTART_COMPONENT;
     row("onvif.enabled", ST_BOOL, 0, 0, NULL, "0", RW, onvif_get, onvif_set);
     row("mqtt.enabled", ST_BOOL, 0, 0, NULL, "0", RW, mqtt_get, mqtt_set);
     /* read-only state */
@@ -405,6 +486,12 @@ static void build_table(void)
     row("night.active", ST_BOOL, 0, 0, NULL, "0", RO, state_get, NULL);
     row("onvif.state", ST_STRING, 1, 47, NULL, "off", RO, state_get, NULL);
     row("mqtt.state", ST_STRING, 1, 39, NULL, "off", RO, state_get, NULL);
+    row("net.wifi_rate", ST_INT, HAL_SYS_NA, 100000, NULL, "-1000000", RO, state_get, NULL);
+    row("net.ssid", ST_STRING, 0, 32, NULL, "unknown", RO, state_get, NULL);
+    row("led.state", ST_STRING, 1, 15, NULL, "unknown", RO, state_get, NULL);
+    row("audio.out_state", ST_STRING, 1, 15, NULL, "unknown", RO, state_get, NULL);
+    row("audio.out_underruns", ST_INT, 0, 2000000000, NULL, "0", RO, state_get, NULL);
+    row("audio.out_drops", ST_INT, 0, 2000000000, NULL, "0", RO, state_get, NULL);
     row("api.keys", ST_INT, 0, AKEY_MAX, NULL, "0", RO, state_get, NULL);
 }
 

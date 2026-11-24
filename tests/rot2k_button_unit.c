@@ -679,7 +679,7 @@ static void test_cfg(void)
     CHECK(bc_cfg_json(&c, out, sizeof out) > 0 && !strcmp(out, DEFAULT_JSON), "the defaults are short -> none, long -> ptz.toggle_park, default timing, led_ack on (golden JSON)");
     CHECK(bc_cfg_parse(DEFAULT_JSON, strlen(DEFAULT_JSON), &d, &dg) == 0 && d.nbind == 2 && d.led_ack == 1, "the defaults parse back");
     bc_defaults(&c, 3000);
-    CHECK(c.t.long_ms == 3000 && c.t.very_long_ms == 5000 && bc_cfg_json(&c, out, sizeof out) > 0 && strstr(out, "\"long_ms\":3000"), "button_long_ms of akam2k.conf seeds the default long press");
+    CHECK(c.t.long_ms == 3000 && c.t.very_long_ms == 5000 && bc_cfg_json(&c, out, sizeof out) > 0 && strstr(out, "\"long_ms\":3000"), "button_long_ms of akam.conf seeds the default long press");
     bc_defaults(&c, 9900);
     CHECK(c.t.very_long_ms == 10400, "... and keeps very_long above it");
     bc_defaults(&c, 0);

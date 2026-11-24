@@ -593,15 +593,15 @@ sleep 0.5
 check "stub: and the feeder is gone" not_alive "$FP1"
 check "stub: wpa.conf content never printed or logged" test -z "$(grep -rl -- "$SECRET" "$SDC/akam/akam_boot.log" "$R/tmp/stub.out" "$R/tmp/order.log" "$R/tmp/busybox.log" 2>/dev/null || true)"
 
-echo "== own_app: opt-in time sync (akam/ntp, akam_ntp.sh, akam2k_sntp)"
-mk_fake_sntp() { # mk_fake_sntp: a fake akam2k_sntp (a script) on the card with a matching BUILDINFO
+echo "== own_app: opt-in time sync (akam/ntp, akam_ntp.sh, akam-sntp)"
+mk_fake_sntp() { # mk_fake_sntp: a fake akam-sntp (a script) on the card with a matching BUILDINFO
     mkdir -p "$SDC/akam/bin"
-    cat >"$SDC/akam/bin/akam2k_sntp" <<'EOS'
+    cat >"$SDC/akam/bin/akam-sntp" <<'EOS'
 #!/bin/sh
 echo "$*" >>"$AKAM_ROOT/tmp/sntp.args"
 exit 0
 EOS
-    printf 'tool=akam2k_sntp\nsha256=%s\n' "$(sha256sum "$SDC/akam/bin/akam2k_sntp" | cut -d' ' -f1)" >"$SDC/akam/bin/akam2k_sntp.BUILDINFO"
+    printf 'tool=akam-sntp\nsha256=%s\n' "$(sha256sum "$SDC/akam/bin/akam-sntp" | cut -d' ' -f1)" >"$SDC/akam/bin/akam-sntp.BUILDINFO"
 }
 wait_healthy() {
     local i=0
@@ -618,7 +618,7 @@ wait_for "$R/tmp/sntp.args" 50 || true
 check "ntp: the helper ran the card sntp once per pass with the 1080p command line (-n -q -p S -p S)" test "$(cat "$R/tmp/sntp.args" 2>/dev/null)" = "-n -q -p 192.0.2.123 -p time.example.org"
 check "ntp: the helper logs to /tmp/akam_ntp.log (RAM), not the card" test -f "$R/tmp/akam_ntp.log" -a ! -e "$SDC/akam/akam_ntp.log"
 check "ntp: started after the network was healthy, logged" has "$SDC/akam/akam_boot.log" "time sync helper started"
-check "ntp: the binary runs from a verified copy in /tmp" test -x "$R/tmp/akam2k_sntp"
+check "ntp: the binary runs from a verified copy in /tmp" test -x "$R/tmp/akam-sntp"
 check "ntp: a resident helper holds the lock while waiting for the next pass" test -d "$R/tmp/akam_ntp.lock"
 HP=$(cat "$R/tmp/akam_ntp.lock/pid" 2>/dev/null || echo 0)
 end_stub
@@ -632,7 +632,7 @@ mk_fake_sntp
 run_stub
 wait_healthy
 sleep 0.5
-check "ntp: no akam/ntp file = no helper, no sntp copy, no log, no lock" test ! -e "$R/tmp/sntp.args" -a ! -e "$R/tmp/akam2k_sntp" -a ! -e "$R/tmp/akam_ntp.lock" -a ! -e "$R/tmp/akam_ntp.log"
+check "ntp: no akam/ntp file = no helper, no sntp copy, no log, no lock" test ! -e "$R/tmp/sntp.args" -a ! -e "$R/tmp/akam-sntp" -a ! -e "$R/tmp/akam_ntp.lock" -a ! -e "$R/tmp/akam_ntp.log"
 check "ntp: nothing about time sync in the card log without akam/ntp" not_has "$SDC/akam/akam_boot.log" "time sync"
 end_stub
 
@@ -641,12 +641,12 @@ echo "default via 192.0.2.1 dev wlan0" >"$R/tmp/routes"
 cp "$REPO/src/scripts/akam_ntp.sh" "$SDC/akam/akam_ntp.sh"
 mk_fake_sntp
 printf 'server=192.0.2.123\n' >"$SDC/akam/ntp"
-printf '# tampered\n' >>"$SDC/akam/bin/akam2k_sntp"
+printf '# tampered\n' >>"$SDC/akam/bin/akam-sntp"
 run_stub
 wait_healthy
 sleep 0.5
-check "ntp: a binary that does not match its BUILDINFO is refused, the stub stays healthy" has "$SDC/akam/akam_boot.log" "akam2k_sntp refused" 
-check "ntp: refused binary is never copied or run" test ! -e "$R/tmp/akam2k_sntp" -a ! -e "$R/tmp/sntp.args"
+check "ntp: a binary that does not match its BUILDINFO is refused, the stub stays healthy" has "$SDC/akam/akam_boot.log" "akam-sntp refused" 
+check "ntp: refused binary is never copied or run" test ! -e "$R/tmp/akam-sntp" -a ! -e "$R/tmp/sntp.args"
 end_stub
 
 new_stub_root nt4
@@ -665,7 +665,7 @@ printf 'server=192.0.2.123\n' >"$SDC/akam/ntp"
 run_stub
 wait_healthy
 sleep 0.3
-check "ntp: akam/ntp without the sntp binary: logged, no helper" has "$SDC/akam/akam_boot.log" "no akam/bin/akam2k_sntp" 
+check "ntp: akam/ntp without the sntp binary: logged, no helper" has "$SDC/akam/akam_boot.log" "no akam/bin/akam-sntp" 
 check "ntp: no helper lock without a binary" test ! -e "$R/tmp/akam_ntp.lock"
 end_stub
 
@@ -863,16 +863,16 @@ unset AKAM_HEALTH_TRIES AKAM_HEALTH_SLEEP AKAM_IDLE_SLEEP
 
 # ------------------------------------------------------------------------------- own app: supervisor and stub auto-start
 echo "== own app: supervisor (own_app_run.sh)"
-# A fake akam2k_rtsp: a shell script whose behaviour is chosen by the file tmp/app.mode. It records its environment
+# A fake akamd: a shell script whose behaviour is chosen by the file tmp/app.mode. It records its environment
 # and arguments (app.runs) and its pid (app.pids).
 mk_app() { # mk_app <mode>: fake app + a BUILDINFO with its real sha256 on the card, in the current $R
     mkdir -p "$SDC/akam/bin"
-    cat >"$SDC/akam/bin/akam2k_rtsp" <<'EOS'
+    cat >"$SDC/akam/bin/akamd" <<'EOS'
 #!/bin/sh
 if [ "$1" = "--ptz-stop" ]; then echo stop >>"$AKAM_ROOT/tmp/app.stops"; exit 0; fi
 echo "$LD_LIBRARY_PATH|$*" >>"$AKAM_ROOT/tmp/app.runs"
 echo $$ >>"$AKAM_ROOT/tmp/app.pids"
-echo "akam2k_rtsp says hello"
+echo "akamd says hello"
 case $(cat "$AKAM_ROOT/tmp/app.mode") in
     crash) exit 3 ;;
     spam)
@@ -889,9 +889,9 @@ case $(cat "$AKAM_ROOT/tmp/app.mode") in
         ;;
 esac
 EOS
-    chmod 755 "$SDC/akam/bin/akam2k_rtsp"
+    chmod 755 "$SDC/akam/bin/akamd"
     printf '%s\n' "$1" >"$R/tmp/app.mode"
-    printf 'tool=akam2k_rtsp\nsha256=%s\nsymcheck=passed\n' "$(sha256sum "$SDC/akam/bin/akam2k_rtsp" | cut -d' ' -f1)" >"$SDC/akam/bin/akam2k_rtsp.BUILDINFO"
+    printf 'tool=akamd\nsha256=%s\nsymcheck=passed\n' "$(sha256sum "$SDC/akam/bin/akamd" | cut -d' ' -f1)" >"$SDC/akam/bin/akamd.BUILDINFO"
 }
 wait_grep() { # wait_grep <file> <pattern> [tenths of a second]
     local i=0
@@ -919,7 +919,7 @@ export AKAM_APP_POLL=0.1 AKAM_APP_STOP_WAIT=5
 # --- start, options, restart after kill -9, stop
 new_root sup1
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 # comment
 main_kbps = 3000   # trailing comment
 sub_kbps=10
@@ -937,11 +937,11 @@ wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: the app runs" test "$(runs)" = 1
 check "supervisor: LD_LIBRARY_PATH is the camera's /appfs/lib" test "$(cut -d'|' -f1 "$R/tmp/app.runs")" = "$R/appfs/lib"
 check "supervisor: only the valid conf lines became options (-m 3000 -s 256)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "-m 3000 -s 256"
-check "supervisor: bad lines are logged and ignored" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 6
+check "supervisor: bad lines are logged and ignored" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 6
 check "supervisor: a value is never evaluated (no file created)" test ! -e "$R/tmp/pwned" -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
-check "supervisor: sha256 verified, copy in /tmp" has "$SDC/akam/akam_boot.log" "akam2k_rtsp verified"
-check "supervisor: the /tmp copy is executable and equal to the card file" test -x "$R/tmp/akam2k_rtsp" -a "$(cat "$R/tmp/akam2k_rtsp")" = "$(cat "$SDC/akam/bin/akam2k_rtsp")"
-check "supervisor: app output goes to akam/akam2k.log" has "$SDC/akam/akam2k.log" "akam2k_rtsp says hello"
+check "supervisor: sha256 verified, copy in /tmp" has "$SDC/akam/akam_boot.log" "akamd verified"
+check "supervisor: the /tmp copy is executable and equal to the card file" test -x "$R/tmp/akamd" -a "$(cat "$R/tmp/akamd")" = "$(cat "$SDC/akam/bin/akamd")"
+check "supervisor: app output goes to akam/akam.log" has "$SDC/akam/akam.log" "akamd says hello"
 P1=$(head -n1 "$R/tmp/app.pids")
 kill -KILL "$P1"
 i=0
@@ -969,7 +969,7 @@ end_sup
 # --- detection keys: valid values become -D/-H/-T, out-of-range or non-numeric ones are ignored
 new_root supdet
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 detect = 1
 detect_hz=10
 detect_threshold=950
@@ -980,7 +980,7 @@ check "supervisor: detect keys in range become -D 1 -H 10 -T 950" test "$(cut -d
 end_sup
 new_root supdet2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 detect=0
 detect_hz=11
 detect_threshold=499
@@ -993,13 +993,13 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: detect=0 and 500 pass; 11, 0, 499, 951, 2 and non-numbers are ignored (-D 0 -T 500)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "-D 0 -T 500"
-check "supervisor: the rejected detect values are logged" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 5
+check "supervisor: the rejected detect values are logged" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 5
 end_sup
 
 # --- snapshot keys: snapshot 0..1 and snapshot_interval 5..300 become --snapshot / --snapshot-interval; the zones are not a key
 new_root supsnap
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 snapshot = 0
 snapshot_interval=300
 EOS
@@ -1009,7 +1009,7 @@ check "supervisor: snapshot keys in range become --snapshot 0 --snapshot-interva
 end_sup
 new_root supsnap2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 snapshot=2
 snapshot_interval=4
 snapshot_interval=301
@@ -1022,13 +1022,13 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: snapshot 2, interval 4 / 301 / non-number are ignored; 1 and 5 pass; zones are not a supervisor key" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--snapshot 1 --snapshot-interval 5"
-check "supervisor: the rejected snapshot values and the zone lines are logged" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 6
+check "supervisor: the rejected snapshot values and the zone lines are logged" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 6
 end_sup
 
 # --- sub_res: 640x360 is the only sub size (accepted, nothing passed to the app); every other value is dropped and logged
 new_root supres
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 sub_res=1280x720
 sub_res=960x540
 sub_res=640x360
@@ -1044,7 +1044,7 @@ end_sup
 # --- video keys: video0_* / video1_* (kbps, max_kbps, fps, min_qp, max_qp, gop, rc), strict per-stream ranges, rc an exact word
 new_root supvid
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 video0_kbps = 3000
 video0_max_kbps=4000
 video0_fps=10
@@ -1063,7 +1063,7 @@ check "supervisor: video keys in range become --video0-kbps ... --video1-rc avbr
 end_sup
 new_root supvid2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 video0_kbps=63
 video0_kbps=8001
 video1_kbps=31
@@ -1088,14 +1088,14 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: out-of-range video values, other rc words, a third stream and non-numbers are ignored; the valid ones pass" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--video1-kbps 512 --video1-rc vbr"
-check "supervisor: the rejected video lines are logged" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 17
+check "supervisor: the rejected video lines are logged" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 17
 end_sup
 
 # --- day/night and image keys: the only words are night auto|day|night and ir_led auto|off (exact), the image numbers 0..100,
 # mains_hz 50 or 60
 new_root supdn
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 night = day
 ir_led=off
 image_brightness=0
@@ -1110,7 +1110,7 @@ check "supervisor: day/night and image keys become --night day --ir-led off --im
 end_sup
 new_root supdn2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 night=Night
 night=nigh
 night=1
@@ -1132,14 +1132,14 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: only the exact words pass (Night, nigh, 1, injection, empty, on, 1, auto;... are ignored); out-of-range image values and mains 55/49/61 are ignored (--night night --mains-hz 50)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--night night --mains-hz 50"
-check "supervisor: the rejected day/night and image values are logged" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 13
+check "supervisor: the rejected day/night and image values are logged" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 13
 check "supervisor: a word value is never evaluated (no file created)" test ! -e "$SDC/akam/EVIL" -a ! -e EVIL
 end_sup
 
 # --- status LED keys: led auto|on|off and led_<rule> patterns (digits and colons only, never evaluated)
 new_root supled
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 led = auto
 led_boot=2:100:100:1000
 led_person = 3:250:250:5000
@@ -1152,7 +1152,7 @@ check "supervisor: led and led_<rule> patterns become --led auto --led-boot ... 
 end_sup
 new_root supled2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 led=blink
 led=1
 led=
@@ -1168,13 +1168,13 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: bad led values are ignored (only the valid led_nowifi pattern passes)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--led-nowifi 1:250:250:0"
-check "supervisor: the rejected led values are logged and never evaluated" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 9 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
+check "supervisor: the rejected led values are logged and never evaluated" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 9 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
 end_sup
 
 # --- audio key (opt-in microphone): audio=0|1 only, default 0 means no --audio at all (the app's own default, off)
 new_root supau
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 audio = 1
 EOS
 run_sup
@@ -1183,7 +1183,7 @@ check "supervisor: audio=1 becomes --audio 1" test "$(cut -d'|' -f2 "$R/tmp/app.
 end_sup
 new_root supau2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 audio=2
 audio=yes
 audio=
@@ -1194,11 +1194,11 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: audio 2, yes, empty, injection and -1 are ignored; only audio=0 passes (--audio 0)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--audio 0"
-check "supervisor: the rejected audio values are logged and never evaluated" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 5 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
+check "supervisor: the rejected audio values are logged and never evaluated" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 5 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
 end_sup
 new_root supau3
 mk_app run
-: >"$SDC/akam/akam2k.conf"
+: >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: no audio key: no --audio flag (off by default, the app's argument line is unchanged)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = ""
@@ -1207,7 +1207,7 @@ end_sup
 # --- tracking and button keys: track 0|1, button_long_ms 1500..10000, track_area_<name>=PMIN:PMAX:TMIN:TMAX (at most 4)
 new_root suptr
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 track = 1
 button_long_ms = 3000
 track_area_door = 500:1500:500:1500
@@ -1219,7 +1219,7 @@ check "supervisor: track, button_long_ms and track_area_<name> become --track, -
 end_sup
 new_root suptr2
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 track=2
 track=yes
 button_long_ms=1000
@@ -1244,13 +1244,13 @@ EOS
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: bad track / button_long_ms / track_area values are ignored, at most 4 areas pass (only the valid ones reach the app)" test "$(cut -d'|' -f2 "$R/tmp/app.runs")" = "--track-area a=1:2:3:4 --track-area b=1:2:3:4 --track-area c=1:2:3:4 --track-area d=1:2:3:4 --track 0"
-check "supervisor: the rejected values are logged and never evaluated" test "$(grep -c 'akam2k.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 14 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
+check "supervisor: the rejected values are logged and never evaluated" test "$(grep -c 'akam.conf line .* ignored' "$SDC/akam/akam_boot.log")" -ge 14 -a ! -e "$SDC/akam/EVIL" -a ! -e EVIL
 end_sup
 
 # --- tracking tuning keys: track_return home|stay, track_return_delay_s, track_grace_s, track_band_pct, track_tilt, track_lead_pct
 new_root suptr3
 mk_app run
-cat >"$SDC/akam/akam2k.conf" <<'EOS'
+cat >"$SDC/akam/akam.conf" <<'EOS'
 track_return = home
 track_return_delay_s = 0
 track_grace_s=5
@@ -1275,21 +1275,21 @@ end_sup
 # --- track_head_pct, and the conf is re-read at every app (re)start
 new_root suptr4
 mk_app crash
-printf 'track_tilt=1\ntrack_head_pct=20\ntrack_debug=1\ntrack_tilt_return_s=15\ntrack_head_pct=51\n' >"$SDC/akam/akam2k.conf"
+printf 'track_tilt=1\ntrack_head_pct=20\ntrack_debug=1\ntrack_tilt_return_s=15\ntrack_head_pct=51\n' >"$SDC/akam/akam.conf"
 AKAM_APP_BACKOFF_MIN=1 AKAM_APP_BACKOFF_MAX=1 AKAM_APP_CRASH_MAX=50 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_head_pct 0..50 becomes --track-head-pct, 51 is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 20 --track-debug 1 --track-tilt-return-s 15"
-printf 'track_tilt=1\ntrack_head_pct=0\n' >"$SDC/akam/akam2k.conf"
+printf 'track_tilt=1\ntrack_head_pct=0\n' >"$SDC/akam/akam.conf"
 i=0
 while [ "$(runs)" -lt 2 ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 check "supervisor: a conf change applies at the next app restart (no supervisor restart)" test "$(sed -n 2p "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt 1 --track-head-pct 0"
-check "supervisor: the options are logged at each start" test "$(count_grep "$SDC/akam/akam_boot.log" 'akam2k_rtsp options:')" -ge 2
+check "supervisor: the options are logged at each start" test "$(count_grep "$SDC/akam/akam_boot.log" 'akamd options:')" -ge 2
 end_sup
 
 # --- track_gain_pan / track_gain_tilt / track_tilt_band_pct
 new_root suptr5
 mk_app run
-printf 'track_gain_pan=1200\ntrack_gain_tilt=1000\ntrack_tilt_band_pct=8\ntrack_gain_pan=199\ntrack_gain_tilt=4001\ntrack_tilt_band_pct=1\ntrack_gain_tilt=abc\n' >"$SDC/akam/akam2k.conf"
+printf 'track_gain_pan=1200\ntrack_gain_tilt=1000\ntrack_tilt_band_pct=8\ntrack_gain_pan=199\ntrack_gain_tilt=4001\ntrack_tilt_band_pct=1\ntrack_gain_tilt=abc\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_gain_pan / track_gain_tilt / track_tilt_band_pct become their options, out-of-range values are ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-gain-pan 1200 --track-gain-tilt 1000 --track-tilt-band-pct 8"
@@ -1298,14 +1298,14 @@ end_sup
 # --- track_motion continuous|steps, track_zone_pct / track_zone_y_pct / track_zone_head_pct, track_lease_ms
 new_root suptr6
 mk_app run
-printf 'track_motion=steps\ntrack_zone_pct=50\ntrack_zone_y_pct=25\ntrack_zone_head_pct=0\ntrack_lease_ms=600\ntrack_zone_pct=91\ntrack_lease_ms=100\n' >"$SDC/akam/akam2k.conf"
+printf 'track_motion=steps\ntrack_zone_pct=50\ntrack_zone_y_pct=25\ntrack_zone_head_pct=0\ntrack_lease_ms=600\ntrack_zone_pct=91\ntrack_lease_ms=100\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_motion / track_zone_pct / track_zone_y_pct / track_zone_head_pct / track_lease_ms become their options, out-of-range values are ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-motion steps --track-zone-pct 50 --track-zone-y-pct 25 --track-zone-head-pct 0 --track-lease-ms 600"
 end_sup
 new_root suptr7
 mk_app run
-printf 'track_motion=teleport\ntrack_motion=continuous\n' >"$SDC/akam/akam2k.conf"
+printf 'track_motion=teleport\ntrack_motion=continuous\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_motion accepts only continuous or steps (an exact word)" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-motion continuous"
@@ -1314,7 +1314,7 @@ end_sup
 # --- track_lost_policy: the whole chain or nothing
 new_root suplost1
 mk_app run
-printf 'track_lost_policy=backsweep,exit,local:300:4:20,route:walk:45,home\n' >"$SDC/akam/akam2k.conf"
+printf 'track_lost_policy=backsweep,exit,local:300:4:20,route:walk:45,home\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: a valid track_lost_policy becomes --track-lost-policy" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-lost-policy backsweep,exit,local:300:4:20,route:walk:45,home"
@@ -1322,7 +1322,7 @@ end_sup
 for bad in 'hold:0' 'fly' 'backsweep,' 'stay,home' 'local:30:4:20' 'local:300:1:20' 'route:Bad' 'route:a:0' 'hold:5:5' 'exit;reboot' 'none,home' 'a,b,c,d,e,f,g,h,i'; do
     new_root suplost2
     mk_app run
-    printf 'track_lost_policy=%s\n' "$bad" >"$SDC/akam/akam2k.conf"
+    printf 'track_lost_policy=%s\n' "$bad" >"$SDC/akam/akam.conf"
     run_sup
     wait_grep "$R/tmp/app.runs" . || true
     check "supervisor: track_lost_policy '$bad' is ignored as a whole" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = ""
@@ -1330,7 +1330,7 @@ for bad in 'hold:0' 'fly' 'backsweep,' 'stay,home' 'local:30:4:20' 'local:300:1:
 done
 new_root suplost3
 mk_app run
-printf 'track_lost_policy=none\n' >"$SDC/akam/akam2k.conf"
+printf 'track_lost_policy=none\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_lost_policy=none is accepted" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-lost-policy none"
@@ -1339,7 +1339,7 @@ end_sup
 # --- track_tilt_back_s
 new_root suptb
 mk_app run
-printf 'track_tilt_back_s=8\ntrack_tilt_back_s=601\n' >"$SDC/akam/akam2k.conf"
+printf 'track_tilt_back_s=8\ntrack_tilt_back_s=601\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_tilt_back_s 0..600 becomes --track-tilt-back-s, 601 is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-tilt-back-s 8"
@@ -1348,7 +1348,7 @@ end_sup
 # --- track_close_scan, track_close_scan_up, track_close_scan_down
 new_root supcs
 mk_app run
-printf 'track_close_scan=0\ntrack_close_scan=2\ntrack_close_scan_up=120\ntrack_close_scan_down=601\ntrack_close_scan_down=400\ntrack_close_scan_cooldown_s=601\ntrack_close_scan_cooldown_s=45\n' >"$SDC/akam/akam2k.conf"
+printf 'track_close_scan=0\ntrack_close_scan=2\ntrack_close_scan_up=120\ntrack_close_scan_down=601\ntrack_close_scan_down=400\ntrack_close_scan_cooldown_s=601\ntrack_close_scan_cooldown_s=45\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_close_scan 0|1 and track_close_scan_up/_down/_cooldown_s 0..600 become --track-close-scan*, out of range is ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-close-scan 0 --track-close-scan-up 120 --track-close-scan-down 400 --track-close-scan-cooldown-s 45"
@@ -1357,7 +1357,7 @@ end_sup
 # --- detect_debug / detect_model_thr (experiment E1)
 new_root supdd
 mk_app run
-printf 'detect_debug=1\ndetect_debug=2\ndetect_model_thr=450\ndetect_model_thr=299\n' >"$SDC/akam/akam2k.conf"
+printf 'detect_debug=1\ndetect_debug=2\ndetect_model_thr=450\ndetect_model_thr=299\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: detect_debug 0..1 and detect_model_thr 300..950 become --detect-log / --detect-model-thr, out of range ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--detect-log 1 --detect-model-thr 450"
@@ -1366,7 +1366,7 @@ end_sup
 # --- detect_head_threshold (tracking rule 6: the score a head box needs)
 new_root suphd
 mk_app run
-printf 'detect_head_threshold=650\ndetect_head_threshold=299\n' >"$SDC/akam/akam2k.conf"
+printf 'detect_head_threshold=650\ndetect_head_threshold=299\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: detect_head_threshold 300..950 becomes --detect-head-thr, out of range ignored" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--detect-head-thr 650"
@@ -1375,13 +1375,13 @@ end_sup
 # --- track_lag_ms (signed) and detect_age_window
 new_root suplag
 mk_app run
-printf 'track_lag_ms=-120\ntrack_lag_ms=301\ntrack_lag_ms=-151\ntrack_lag_ms=abc\ndetect_age_window=1\ntrack_lag_ms=150\n' >"$SDC/akam/akam2k.conf"
+printf 'track_lag_ms=-120\ntrack_lag_ms=301\ntrack_lag_ms=-151\ntrack_lag_ms=abc\ndetect_age_window=1\ntrack_lag_ms=150\n' >"$SDC/akam/akam.conf"
 run_sup
 wait_grep "$R/tmp/app.runs" . || true
 check "supervisor: track_lag_ms -150..300 (negative allowed) becomes --track-lag-ms=N, out of range and words are ignored; detect_age_window 0|1" test "$(head -n1 "$R/tmp/app.runs" | cut -d'|' -f2)" = "--track-lag-ms=-120 --detect-age-window 1 --track-lag-ms=150"
 end_sup
 
-# --- motor stop after the app ended (a continuous move has no hardware dead-man): one `akam2k_rtsp --ptz-stop` per app exit, polled every second by default
+# --- motor stop after the app ended (a continuous move has no hardware dead-man): one `akamd --ptz-stop` per app exit, polled every second by default
 new_root supstop
 mk_app crash
 run_sup
@@ -1405,25 +1405,25 @@ check "app: --ptz-stop is a tool mode that exits before any hardware init" grep 
 # --- refusals: sha mismatch, no BUILDINFO hash, missing binary
 new_root sup3
 mk_app run
-printf '\n# tampered\n' >>"$SDC/akam/bin/akam2k_rtsp"
+printf '\n# tampered\n' >>"$SDC/akam/bin/akamd"
 run_sup
 wait_sup 50 || true
 check "sha mismatch: the supervisor exits" not_alive "$SUPPID"
 check "sha mismatch: the app never ran" test ! -e "$R/tmp/app.runs"
-check "sha mismatch: no copy in /tmp" test ! -e "$R/tmp/akam2k_rtsp"
+check "sha mismatch: no copy in /tmp" test ! -e "$R/tmp/akamd"
 check "sha mismatch: refusal logged" has "$SDC/akam/akam_boot.log" "refused: sha256 of the card file does not match"
 wait "$SUPPID" 2>/dev/null && rc=0 || rc=$?
 check "sha mismatch: exit status 1" test "$rc" = 1
 new_root sup4
 mk_app run
-printf 'tool=akam2k_rtsp\n' >"$SDC/akam/bin/akam2k_rtsp.BUILDINFO"
+printf 'tool=akamd\n' >"$SDC/akam/bin/akamd.BUILDINFO"
 run_sup
 wait_sup 50 || true
 check "BUILDINFO without sha256: refused, app never ran" test ! -e "$R/tmp/app.runs" -a "$(grep -c 'no valid sha256' "$SDC/akam/akam_boot.log")" = 1
 new_root sup5
 run_sup
 wait_sup 50 || true
-check "no binary: the supervisor logs and exits" has "$SDC/akam/akam_boot.log" "akam2k_rtsp: .*missing"
+check "no binary: the supervisor logs and exits" has "$SDC/akam/akam_boot.log" "akamd: .*missing"
 wait "$SUPPID" 2>/dev/null || true
 
 # --- backoff: 1 s, 2 s, then capped at 2 s
@@ -1431,8 +1431,8 @@ new_root sup6
 mk_app crash
 AKAM_APP_BACKOFF_MIN=1 AKAM_APP_BACKOFF_MAX=2 AKAM_APP_CRASH_MAX=50 run_sup
 i=0
-while [ "$(count_grep "$SDC/akam/akam_boot.log" 'restarting akam2k_rtsp in')" -lt 3 ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
-check "backoff: 1 s, then 2 s, then the 2 s cap" test "$(grep -o 'restarting akam2k_rtsp in [0-9]* s' "$SDC/akam/akam_boot.log" | head -n3 | sed 's/.* in //;s/ s//' | tr '\n' ' ')" = "1 2 2 "
+while [ "$(count_grep "$SDC/akam/akam_boot.log" 'restarting akamd in')" -lt 3 ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+check "backoff: 1 s, then 2 s, then the 2 s cap" test "$(grep -o 'restarting akamd in [0-9]* s' "$SDC/akam/akam_boot.log" | head -n3 | sed 's/.* in //;s/ s//' | tr '\n' ' ')" = "1 2 2 "
 check "backoff: each restart is a new run" test "$(runs)" -ge 3
 end_sup
 
@@ -1482,10 +1482,10 @@ mk_app spam
 AKAM_APP_LOG_MAX=4000 run_sup
 sleep 3
 end_sup
-check "log cap: a rotated generation exists" test -s "$SDC/akam/akam2k.log.1"
-check "log cap: the live log stays near the limit" test "$(wc -c <"$SDC/akam/akam2k.log")" -lt 12000
-check "log cap: the rotated one too" test "$(wc -c <"$SDC/akam/akam2k.log.1")" -lt 12000
-check "log cap: no second generation" test ! -e "$SDC/akam/akam2k.log.2"
+check "log cap: a rotated generation exists" test -s "$SDC/akam/akam.log.1"
+check "log cap: the live log stays near the limit" test "$(wc -c <"$SDC/akam/akam.log")" -lt 12000
+check "log cap: the rotated one too" test "$(wc -c <"$SDC/akam/akam.log.1")" -lt 12000
+check "log cap: no second generation" test ! -e "$SDC/akam/akam.log.2"
 check "log cap: the default limit is 256 KiB x 2" test "$(grep -c 'LOG_MAX:-262144' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh")" = 1
 
 # --- an app that ignores SIGTERM is killed after the grace period
@@ -1544,7 +1544,7 @@ end_stub
 new_stub_root sa3
 stub_env
 run_stub
-wait_grep "$SDC/akam/akam_boot.log" "no akam/bin/akam2k_rtsp" || true
+wait_grep "$SDC/akam/akam_boot.log" "no akam/bin/akamd" || true
 check "no binary on the card: nothing started, PoC-1 behaviour" has "$SDC/akam/akam_boot.log" "no app started"
 check "no binary on the card: no app ran" test ! -e "$R/tmp/app.runs"
 end_stub
@@ -1560,7 +1560,7 @@ end_stub
 unset AKAM_SH AKAM_HEALTH_TRIES AKAM_HEALTH_SLEEP AKAM_IDLE_SLEEP AKAM_IFACE_TRIES AKAM_IFACE_SLEEP AKAM_WPA_TRIES AKAM_WPA_SLEEP AKAM_APP_POLL AKAM_APP_STOP_WAIT
 check "the supervisor script is on every card the builder writes (overlay/akam/*.sh)" test -x "$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh"
 
-echo "== akam2k_rtsp frame ring (C unit test)"
+echo "== akamd frame ring (C unit test)"
 if command -v cc >/dev/null 2>&1; then
  if cc -Wall -Wextra -Werror -std=gnu99 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/stream_unit" "$REPO/tests/rot2k_stream_unit.c" "$REPO/platforms/anyka-ak3918av130/stream.c" "$REPO/src/net/rtsp/h264_params.c" "$REPO/src/net/rtsp/rtp_clock.c" -lpthread; then
         "$WORK/stream_unit" >"$WORK/stream_unit.out" 2>&1 || true
@@ -1573,7 +1573,7 @@ else
     echo "  skip - no host C compiler: stream ring unit test"
 fi
 
-echo "== akam2k_rtsp detection state (C unit test)"
+echo "== akamd detection state (C unit test)"
 if command -v cc >/dev/null 2>&1; then
  if cc -Wall -Wextra -Werror -std=gnu99 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_unit" "$REPO/tests/rot2k_detect_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c"; then
         "$WORK/detect_unit" >"$WORK/detect_unit.out" 2>&1 || true
@@ -1609,7 +1609,7 @@ if command -v cc >/dev/null 2>&1; then
     else
         ko "snapshot unit test does not compile"
     fi
-    echo "== akam2k_mic (PoC microphone tool: C unit test of the WAV header, dBFS maths and output path rule; host compile of the tool)"
+    echo "== akam-mic (PoC microphone tool: C unit test of the WAV header, dBFS maths and output path rule; host compile of the tool)"
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
     if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -I"$FW/helpers/mic" -o "$WORK/mic_unit" "$REPO/tests/rot2k_mic_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic_core.c" -lm; then
         "$WORK/mic_unit" >"$WORK/mic_unit.out" 2>&1 || true
@@ -1619,13 +1619,13 @@ if command -v cc >/dev/null 2>&1; then
         ko "mic unit test does not compile"
     fi
     if cc -Wall -Wextra -Werror -std=gnu99 -I"$FW/helpers/mic" -I"$REPO/src/hal" -o "$WORK/mic_host" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic_core.c"; then
-        ok "akam2k_mic compiles clean on the host"
-        check "akam2k_mic: a path outside /tmp is refused before anything is opened (exit 2)" test "$("$WORK/mic_host" /etc/x.wav >/dev/null 2>&1; echo $?)" = 2
-        check "akam2k_mic: usage errors exit 2 (seconds 0 and 31, rate 44100, no file)" test "$("$WORK/mic_host" -s 0 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" -s 31 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" -r 44100 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" >/dev/null 2>&1; echo $?)" = 2222
+        ok "akam-mic compiles clean on the host"
+        check "akam-mic: a path outside /tmp is refused before anything is opened (exit 2)" test "$("$WORK/mic_host" /etc/x.wav >/dev/null 2>&1; echo $?)" = 2
+        check "akam-mic: usage errors exit 2 (seconds 0 and 31, rate 44100, no file)" test "$("$WORK/mic_host" -s 0 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" -s 31 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" -r 44100 /tmp/x.wav >/dev/null 2>&1; echo $?)$("$WORK/mic_host" >/dev/null 2>&1; echo $?)" = 2222
     else
-        ko "akam2k_mic does not compile on the host"
+        ko "akam-mic does not compile on the host"
     fi
-    echo "== akam2k_rtsp microphone track (C unit tests: multi-reader ring, wake pipes, L16 payload, RTP timestamps, start gate; capture thread without a device)"
+    echo "== akamd microphone track (C unit tests: multi-reader ring, wake pipes, L16 payload, RTP timestamps, start gate; capture thread without a device)"
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
  if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/audio_unit" "$REPO/tests/rot2k_audio_unit.c" "$REPO/platforms/anyka-ak3918av130/aring.c" "$REPO/src/net/rtsp/rtp_clock.c"; then
         "$WORK/audio_unit" >"$WORK/audio_unit.out" 2>&1 || true
@@ -1642,7 +1642,25 @@ if command -v cc >/dev/null 2>&1; then
     else
         ko "audio capture thread test does not compile"
     fi
-    echo "== akam2k_sntp (C unit test of the packet/era/offset core, and a loopback run of the client in a private network namespace)"
+    echo "== akamd speaker and two-way audio (C unit test of the speaker glue on the real shared engine and talk session, no device)"
+    # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/speaker_unit" "$REPO/tests/rot2k_speaker_unit.c" "$FW_2K/speaker.c" "$REPO/src/features/audio/audio_out.c" "$REPO/src/features/audio/talk.c" "$REPO/src/features/audio/audio_jitter.c" "$REPO/src/features/audio/audio_vad.c" "$REPO/src/features/audio/g711.c" "$REPO/src/net/rtsp/rtp_in.c" "$REPO/src/net/rtsp/rtp_clock.c" -lm; then
+        "$WORK/speaker_unit" >"$WORK/speaker_unit.out" 2>&1 || true
+        check "speaker unit test passes (same keys, ranges and defaults as the 1080p, opt-in enable, live volume/gain/amp/duplex, clean failure without a device, crash guard rules, engine file never written)" grep -q 'rot2k speaker unit: 0 failed' "$WORK/speaker_unit.out"
+        grep 'FAIL' "$WORK/speaker_unit.out" || true
+    else
+        ko "speaker unit test does not compile"
+    fi
+    echo "== akamd picture settings (C unit test of saturation, denoise and white balance on a fake ISP)"
+    # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
+    if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -pthread "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/picture_unit" "$REPO/tests/rot2k_picture_unit.c" "$REPO/platforms/anyka-ak3918av130/picture.c"; then
+        "$WORK/picture_unit" >"$WORK/picture_unit.out" 2>&1 || true
+        check "picture unit test passes (saturation range, the 3D NR record shift and its refusals, white balance type, replay after a day/night switch, unbound ISP)" grep -q 'rot2k picture unit: 0 failed' "$WORK/picture_unit.out"
+        grep 'FAIL' "$WORK/picture_unit.out" || true
+    else
+        ko "picture unit test does not compile"
+    fi
+    echo "== akam-sntp (C unit test of the packet/era/offset core, and a loopback run of the client in a private network namespace)"
     # shellcheck disable=SC2086  # ZN_SAN is empty or one flag
     if cc -Wall -Wextra -Werror -std=gnu99 -g $ZN_SAN -I"$FW/helpers/sntp" -o "$WORK/sntp_unit" "$REPO/tests/rot2k_sntp_unit.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp_core.c"; then
         "$WORK/sntp_unit" >"$WORK/sntp_unit.out" 2>&1 || true
@@ -1652,7 +1670,7 @@ if command -v cc >/dev/null 2>&1; then
         ko "sntp unit test does not compile"
     fi
     if cc -Wall -Wextra -Werror -std=gnu99 -o "$WORK/sntp_host" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp_core.c"; then
-        ok "akam2k_sntp compiles clean on the host"
+        ok "akam-sntp compiles clean on the host"
         if command -v python3 >/dev/null 2>&1 && timeout 10 unshare -rn sh -c 'PATH=/usr/sbin:/usr/bin:/sbin:/bin; ip link set lo up 2>/dev/null' 2>/dev/null; then
             cat >"$WORK/fakentp.py" <<'EOPY'
 import socket, struct, sys, time
@@ -1683,9 +1701,9 @@ EOPY
         fi
         check "sntp: usage errors exit 2 (no server; option as server; unknown option)" test "$("$WORK/sntp_host" >/dev/null 2>&1; echo $?)$("$WORK/sntp_host" -p -x >/dev/null 2>&1; echo $?)$("$WORK/sntp_host" -z >/dev/null 2>&1; echo $?)" = 222
     else
-        ko "akam2k_sntp does not compile on the host"
+        ko "akam-sntp does not compile on the host"
     fi
-    echo "== akam2k_rtsp MQTT module (C unit test, stub socket, fuzz; and the host broker sink)"
+    echo "== akamd MQTT module (C unit test, stub socket, fuzz; and the host broker sink)"
 if command -v cc >/dev/null 2>&1; then
     MQ_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe" - 2>/dev/null; then MQ_SAN="-fsanitize=address,undefined"; fi
@@ -1884,7 +1902,7 @@ if command -v cc >/dev/null 2>&1; then
 else
     echo "  skip - no host C compiler: button / tracking / live zones unit tests"
 fi
-echo "== hal_light (C unit test of the portable light logic with a fake driver, the 2K descriptor, the sysfs driver on fake directories; host compile of akam2k_led)"
+echo "== hal_light (C unit test of the portable light logic with a fake driver, the 2K descriptor, the sysfs driver on fake directories; host compile of akam-led)"
 if command -v cc >/dev/null 2>&1; then
     LT_SAN=""
     if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o "$WORK/san_probe3" - 2>/dev/null; then LT_SAN="-fsanitize=address,undefined"; fi
@@ -1898,19 +1916,19 @@ if command -v cc >/dev/null 2>&1; then
         ko "light unit test does not compile"
     fi
  if cc -Wall -Wextra -Werror -std=gnu99 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/led_host" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/led/led.c" "${LT_SRC[@]}"; then
-        ok "akam2k_led compiles clean on the host"
-        check "akam2k_led: 'ir' is refused without --force (exit 2) before any file is touched" test "$("$WORK/led_host" ir on >/dev/null 2>&1; echo $?)" = 2
-        check "akam2k_led: usage errors exit 2 (no args, unknown light, unknown mode, ir-cut pin names, --secs 0 and 61)" test "$("$WORK/led_host" >/dev/null 2>&1; echo $?)$("$WORK/led_host" nope on >/dev/null 2>&1; echo $?)$("$WORK/led_host" white dim >/dev/null 2>&1; echo $?)$("$WORK/led_host" ircut on >/dev/null 2>&1; echo $?)$("$WORK/led_host" --secs 0 white blink-fast >/dev/null 2>&1; echo $?)$("$WORK/led_host" --secs 61 white blink-fast >/dev/null 2>&1; echo $?)" = 222222
-        check "akam2k_led list prints the two emitters" test "$("$WORK/led_host" list | tr '\n' ' ')" = "ir blue "
+        ok "akam-led compiles clean on the host"
+        check "akam-led: 'ir' is refused without --force (exit 2) before any file is touched" test "$("$WORK/led_host" ir on >/dev/null 2>&1; echo $?)" = 2
+        check "akam-led: usage errors exit 2 (no args, unknown light, unknown mode, ir-cut pin names, --secs 0 and 61)" test "$("$WORK/led_host" >/dev/null 2>&1; echo $?)$("$WORK/led_host" nope on >/dev/null 2>&1; echo $?)$("$WORK/led_host" white dim >/dev/null 2>&1; echo $?)$("$WORK/led_host" ircut on >/dev/null 2>&1; echo $?)$("$WORK/led_host" --secs 0 white blink-fast >/dev/null 2>&1; echo $?)$("$WORK/led_host" --secs 61 white blink-fast >/dev/null 2>&1; echo $?)" = 222222
+        check "akam-led list prints the two emitters" test "$("$WORK/led_host" list | tr '\n' ' ')" = "ir blue "
     else
-        ko "akam2k_led does not compile on the host"
+        ko "akam-led does not compile on the host"
     fi
 else
     echo "  skip - no host C compiler: light unit test"
 fi
 check "the shared day/night policy is compiled from platforms/anyka-ak3918, not copied: no night_logic.c in the app, listed in model.mk and in the source hash (the hash list is generated from the build)" bash -c "test ! -e '$PL/night_logic.c' && test ! -e '$FW/night_logic.c' && grep -q '^SHARED_AK := .* night_logic cfg_file' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && make -s -C '$REPO/platforms/anyka-ak3918av130' print-sources | grep -q '/src/features/night/night_logic.c' && sh '$REPO/firmware/lsc-rotatable-2k-ak3918av130/image/source_hash.sh' --list | grep -q '/src/features/night/night_logic.c'"
 
-echo "== akam2k_rtsp detection thread ending (stubbed vendor calls: disable chn 16, else drain it)"
+echo "== akamd detection thread ending (stubbed vendor calls: disable chn 16, else drain it)"
     # The ABI size asserts describe the 32-bit camera ABI: neutered for this host build, the ARM build keeps them.
  if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_thread" "$REPO/platforms/anyka-ak3918av130/orient.c" \
         "$REPO/tests/rot2k_detect_thread_test.c" "$REPO/platforms/anyka-ak3918av130/detect.c" "$REPO/src/features/track/track_relay.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/api/api_events.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/rtsp/rtp_clock.c"; then
@@ -1922,7 +1940,7 @@ echo "== akam2k_rtsp detection thread ending (stubbed vendor calls: disable chn 
     else
         ko "detection thread test does not compile"
     fi
-    echo "== akam2k_rtsp detection frame choice (stubbed vendor calls: newest frame of the chn 16 queue)"
+    echo "== akamd detection frame choice (stubbed vendor calls: newest frame of the chn 16 queue)"
  if cc -Wall -Wextra -Werror -std=gnu99 -pthread '-D_Static_assert(a,b)=' "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$WORK/detect_fresh" "$REPO/platforms/anyka-ak3918av130/orient.c" \
         "$REPO/tests/rot2k_detect_fresh_test.c" "$REPO/platforms/anyka-ak3918av130/detect.c" "$REPO/src/features/track/track_relay.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/detstate.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/api/api_events.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/zones.c" "$REPO/src/net/rtsp/rtp_clock.c"; then
         "$WORK/detect_fresh" >"$WORK/detect_fresh.out" 2>&1 || true
@@ -2003,6 +2021,7 @@ allow_init_sed() {
     case "$1" in
         */ptz/akam_ptz.c | */hal_ptz.c) printf '%s' 's/\b0x40100c03u\b//g; s/\b0x40280c04u\b//g' ;;
         */mic/mic.c | */audio.c) printf '%s' 's/^#define PCM_CAPTURE "\/dev\/pcmC0D0c"$//' ;;
+        */speaker.c) printf '%s' 's/^#define PCM_PLAYBACK "\/dev\/pcmC0D0p"$//' ;; # the playback node, handed to the shared speaker engine (checked separately: once, never opened here)
         *) printf '%s' 's/^$//' ;;
     esac
 }
@@ -2039,7 +2058,7 @@ check "C sources: akam_ptz.c holds the tymotor literal once" test "$(grep -c '"/
 # The PoC microphone tool opens the capture node and nothing else: the one allowed line is the exact
 # '#define PCM_CAPTURE "/dev/pcmC0D0c"' in audio/mic.c (read-only open, see the file header). Any other file,
 # the playback (p) or loopback (l) node, or a second use of the literal is a hit.
-check "mic: the capture node literal is defined once, in helpers/mic/mic.c and the platform audio.c only, and opened O_RDONLY" bash -c "test \"\$(grep -rl 'pcmC0D0' '$FW' '$PL' --include=*.c --include=*.h | sed 's|.*/||' | sort | tr '\\n' ' ')\" = 'audio.c mic.c ' && test \"\$(grep -c '^#define PCM_CAPTURE \"/dev/pcmC0D0c\"\$' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c')\" = 1 && grep -q 'open(PCM_CAPTURE, O_RDONLY)' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c'"
+check "mic: the capture node literal is defined once, in helpers/mic/mic.c and the platform audio.c only, and opened O_RDONLY (speaker.c names only the playback node, checked below)" bash -c "test \"\$(grep -rl 'pcmC0D0' '$FW' '$PL' --include=*.c --include=*.h | sed 's|.*/||' | sort | tr '\\n' ' ')\" = 'audio.c mic.c speaker.c ' && test \"\$(grep -c '^#define PCM_CAPTURE \"/dev/pcmC0D0c\"\$' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c')\" = 1 && grep -q 'open(PCM_CAPTURE, O_RDONLY)' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c'"
 check "mic: no playback/loopback node, no GPIO, no speaker request in the code (comments ignored)" test -z "$(strip_c_comments "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" | grep -E 'pcmC0D0[pl]|[Gg][Pp][Ii][Oo]|SPEAKER' || true)"
 # The app's capture thread (app/audio.c) is the second and last file that may name the node and call ioctl. Narrow
 # on purpose: one literal, one open() (read only, on that literal), ioctl only on its own fd with the seven capture request
@@ -2048,6 +2067,11 @@ AU=$REPO/platforms/anyka-ak3918av130/audio.c
 check "audio: audio.c holds the capture literal once, opens it O_RDONLY once, and has no other open()" test "$(grep -c '^#define PCM_CAPTURE "/dev/pcmC0D0c"$' "$AU")" = 1 -a "$(grep -c 'open(PCM_CAPTURE, O_RDONLY)' "$AU")" = 1 -a "$(strip_c_comments "$AU" | grep -c -E '(^|[^_a-zA-Z0-9])open\(')" = 1
 check "audio: audio.c has no playback/loopback node, no GPIO, no speaker request (comments ignored)" test -z "$(strip_c_comments "$AU" | grep -E 'pcmC0D0[pl]|[Gg][Pp][Ii][Oo]|SPEAKER' || true)"
 check "audio: every ioctl in audio.c is on the capture fd with one of the seven AKPCM_IOC_ macros (8 calls)" test "$(strip_c_comments "$AU" | grep -c 'ioctl(')" = 8 -a "$(strip_c_comments "$AU" | grep -c -E 'ioctl\(fd, AKPCM_IOC_(GET_PARS|SET_RATE|SET_STATE|GET_PERIODS|SET_PERIODS|SET_MODE|RESET_BUF), ')" = 8
+# The speaker glue (firmware/<2k>/speaker.c) is the only 2K file that names the PLAYBACK node, once, and it never opens or ioctls it: the shared engine does
+# (src/features/audio/audio_out.c, which names no device). No capture node, no loopback node, no GPIO and no sysfs in it (the ak_pcm driver owns the amplifier).
+SPK=$REPO/firmware/lsc-rotatable-2k-ak3918av130/speaker.c
+check "speaker: speaker.c holds the playback literal once, no capture/loopback node, no GPIO, no open() or ioctl(), no sysfs (comments ignored)" test "$(strip_c_comments "$SPK" | grep -c '^#define PCM_PLAYBACK "/dev/pcmC0D0p"')" = 1 -a "$(strip_c_comments "$SPK" | grep -c 'pcmC0D0')" = 1 -a -z "$(strip_c_comments "$SPK" | grep -E 'pcmC0D0[cl]|[Gg][Pp][Ii][Oo]|/sys/|(^|[^_a-zA-Z0-9])open\(|ioctl\(' || true)"
+check "speaker: the shared engine names no device node and the model hands it over (audio_out_setup called by the 2K speaker glue)" test -z "$(strip_c_comments "$REPO/src/features/audio/audio_out.c" | grep '"/dev/' || true)" -a "$(grep -c 'audio_out_setup(PCM_PLAYBACK' "$SPK")" = 1
 AKP=$REPO/src/hal/akpcm.h
 check "audio: the seven request numbers and struct akpcm_pars (src/hal/akpcm.h, shared with the PoC tool and the 1080p) are the verified ones, defined nowhere else" test "$(grep -E '^#define AKPCM_IOC_(GET_PARS|SET_RATE|SET_STATE|GET_PERIODS|SET_PERIODS|SET_MODE|RESET_BUF) ' "$AKP" | awk '{print $2, $3}' | tr '\n' ';')" = "AKPCM_IOC_GET_PARS 0x401c50e0;AKPCM_IOC_SET_RATE 0x800450ea;AKPCM_IOC_SET_STATE 0x80045010;AKPCM_IOC_SET_PERIODS 0x80045030;AKPCM_IOC_GET_PERIODS 0x40045030;AKPCM_IOC_SET_MODE 0x000050e1;AKPCM_IOC_RESET_BUF 0x000050e3;" -a "$(grep -c 'uint32_t format;' "$AKP")" = 1 -a -z "$(grep -E '^#define (AKPCM_)?IOC_|^struct akpcm_pars' "$AU" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" || true)" -a "$(grep -c '#include "akpcm.h"' "$AU" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/mic/mic.c" | grep -c ':1')" = 2
 check "audio: the capture is opt-in: a2k_audio_start is called once, under 'if (audio_on)', and audio_on defaults to 0" test "$(grep -c 'a2k_audio_start()' "$REPO/platforms/anyka-ak3918av130/main.c")" = 1 -a "$(grep -c 'audio_on = 0;' "$REPO/platforms/anyka-ak3918av130/main.c")" = 1 -a "$(grep -c -E '^    if \(audio_on\) \{' "$REPO/platforms/anyka-ak3918av130/main.c")" = 1
@@ -2085,7 +2109,7 @@ check "the C scanner ignores comments (block, multi-line, line)" test "$(scan_c 
 # /proc/ text files (RSS, free RAM) plus the output file taken from argv. No bare open(), no /dev, no spawning.
 APPC=()
 while IFS= read -r f; do APPC+=("$f"); done < <(printf '%s\n' "${A2K_APPC[@]}" | sort)
-check "app C sources: poc0, poc2, poc4 and the akam2k_rtsp sources present" test "${#APPC[@]}" -ge 8
+check "app C sources: poc0, poc2, poc4 and the akamd sources present" test "${#APPC[@]}" -ge 8
 # Sockets: rtsp_session.c (the RTSP server of PoC-3) is the ONLY app file that may bind, listen and accept; mqtt_bind.c
 # (the outbound MQTT client) is the ONLY app file that may connect() (and it may not listen); both may create a socket; no
 # app file may use datagram sockets (sendto/recvfrom).
@@ -2140,6 +2164,7 @@ app_hits() {
         [ "$(basename "$f")" != "$APP_AUDIO" ] || pat=$APP_FORBID_AUDIO
         strip_c_comments "$f" | { case "$(basename "$f")" in
             "$APP_AUDIO") sed -e 's/^#define PCM_CAPTURE "\/dev\/pcmC0D0c"$//' ;;
+            speaker.c) sed -e 's/^#define PCM_PLAYBACK "\/dev\/pcmC0D0p"$//' ;; # the exact playback node line of the speaker glue (see the speaker checks)
             ptz_desc.c) sed -e 's|"/dev/tymotor"||' ;;
             onvif_services.c) sed -e 's|/onvif/device_service||g' -e 's|/ver10/device/wsdl||g' ;; # the fixed ONVIF service paths (the word "dev" of device_service)
             settings.c) sed -e 's/sys\.flash_writes_[a-z]*//g' -e 's/"sys\.flash_writes_"//g' ;; # the /state counter names (read-only rows)
@@ -2183,7 +2208,7 @@ check "button / tracking: tracking is off by default (track=0), the button threa
 check "button / tracking: only pin.c reads the button line, through hal_input; the button file names neither a pin number nor a path" test -z "$(grep -n -E '\\b71\\b|/sys/|/dev/|a2k_pin_' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/track.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/track_run.c" "$REPO/platforms/anyka-ak3918av130/zlive.c" || true)"
 check "zones / tracking: the runtime files are the fixed /config/akam/zones and /config/akam/track_areas, and only the detection state writer, the snapshot ring, the settings store and the motor driver rename()" test "$(grep -c -E '#define A2K_STORE_(ZONES|TRACK) A2K_STORE_DIR \"/(zones|track_areas)\"' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.h")" = 2 -a "$(grep -l 'rename(' "${A2K_APPC[@]}" | sed 's|.*/||' | LC_ALL=C sort | tr '\n' ' ')" = "detstate.c hal_ptz_drv.c snap.c store.c "
 
-# akam2k_sntp (../sntp, not under app/: it is the one tool that may open a datagram socket): no file at all, no
+# akam-sntp (../sntp, not under app/: it is the one tool that may open a datagram socket): no file at all, no
 # spawn, no listening socket, no device, settimeofday and the datagram socket calls only in the client file, no ctype.
 SNA=$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp.c
 SNALL=("$FW"/helpers/sntp/*.c "$FW"/helpers/sntp/*.h)
@@ -2192,7 +2217,7 @@ check "sntp sources: no file is opened at all (no fopen, open, creat)" test -z "
 check "sntp sources: no ctype (the camera libc lacks __ctype_b_loc)" test -z "$(for f in "${SNALL[@]}"; do strip_c_comments "$f" | grep -E 'ctype|\bis(alpha|digit|space|alnum|upper|lower|xdigit|print|punct)\b|\bto(upper|lower)\b' || true; done)"
 check "sntp: settimeofday and sockets are used by the client file only, never by the pure core" test -z "$(strip_c_comments "$REPO/firmware/lsc-rotatable-2k-ak3918av130/helpers/sntp/sntp_core.c" | grep -E 'settimeofday|socket|gettimeofday|#include <(sys|netdb|arpa|unistd)' || true)"
 check "sntp: the clock is stepped through settimeofday only (no stime, no adjtime, no clock_settime)" test -z "$(strip_c_comments "$SNA" | grep -E '\bstime|\badjtime|clock_settime' || true)"
-check "sntp: the poc3 Makefile builds it from helpers/sntp and the symcheck covers it" bash -c "grep -q 'SNTP_SRC := \$(MODEL_DIR)/helpers/sntp/sntp.c' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q '^HELPERS := .*sntp:akam2k_sntp:sntp' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q 'for b in \$(ALL_BINS)' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q '^ALL_BINS := \$(APP) \$(HELPER_BINS)' '$REPO/platforms/anyka-ak3918av130/Makefile'"
+check "sntp: the poc3 Makefile builds it from helpers/sntp and the symcheck covers it" bash -c "grep -q 'SNTP_SRC := \$(MODEL_DIR)/helpers/sntp/sntp.c' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q '^HELPERS := .*sntp:akam-sntp:sntp' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q 'for b in \$(ALL_BINS)' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q '^ALL_BINS := \$(APP) \$(HELPER_BINS)' '$REPO/platforms/anyka-ak3918av130/Makefile'"
 PN=$REPO/firmware/lsc-rotatable-2k-ak3918av130/pin.c
 PH=$REPO/firmware/lsc-rotatable-2k-ak3918av130/pin.h
 check "pins: exactly five pin numbers are defined, 24, 25 (IR-cut), 48 (IR LED), 56 (blue status LED) and 71 (the button, INPUT only); 22 / 49 / 55 are not" test "$(grep -E '^#define A2K_PIN_[A-Z_]+ [0-9]+' "$PH" | sed 's/.* //' | sort -n | tr '\n' ' ')" = "24 25 48 56 71 "
@@ -2216,10 +2241,10 @@ check "hal_light: no pin number or sysfs path outside the descriptor binding (lo
 check "hal_light: the 2K binding takes its pin numbers from the pin.h macros and holds no IR-cut pin and no literal number" test -z "$(strip_c_comments "$LB" | grep -E '[^A-Za-z_0-9][0-9]{2,}[^A-Za-z_0-9]|IRCUT' || true)"
 check "hal_light: the 2K descriptor is ir=48, blue=56, both active high, no exclusion, no white / alarm" bash -c "grep -q '\"ir\", LIGHT_GPIO, A2K_PIN_IRLED, 1' '$LB' && grep -q '\"blue\", LIGHT_GPIO, A2K_PIN_BLUE, 1' '$LB' && ! grep -q -w -E 'WHITE|ALARM|white|alarm' '$LB' && grep -q 'A2K_PIN_BLUE 56' '$PH' && ! grep -q -E 'A2K_PIN_(WHITE|ALARM)' '$PH'"
 check "hal_light: the sysfs driver opens write-only, never creates, builds only <led_dir>/trigger and <led_dir>/brightness" test "$(strip_c_comments "$LD" | grep -c 'open(path, O_WRONLY | O_CLOEXEC)')" = 1 -a "$(strip_c_comments "$LD" | grep -o -E '"[^"]*"' | LC_ALL=C sort -u | tr '\n' ' ')" = '"%s/brightness" "%s/trigger" "0" "1" "hal_light.h" "none" "pin.h" ' -a -z "$(strip_c_comments "$LD" | grep -E 'O_CREAT|O_TRUNC|O_RDWR|mmap|ioctl' || true)"
-check "akam2k_led: refuses ir without --force and never names the IR-cut pins or the pin helper" bash -c "grep -q 'strcmp(name, \"ir\") == 0 && !force' '$LT' && ! grep -q -E 'IRCUT|a2k_pin|akam2k_pin' '$LT'"
-check "akam2k_led: blink is bounded (1..60 s, alarm guard) and ends with the light off" bash -c "grep -q 'secs < 1 || secs > 60' '$LT' && grep -q 'alarm((unsigned)secs + 2u)' '$LT' && grep -q 'light_set(&l, name, LIGHT_OFF' '$LT'"
-check "akam2k_led: no spawn, no file of its own, no socket" test -z "$(strip_c_comments "$LT" | grep -E '\bsystem|\bpopen|\bexec[lv]|\bfork|fopen|\bopen[[:space:]]*\(|\bsocket' || true)"
-check "akam2k_led: the poc3 Makefile builds it, the symcheck covers it and BUILDINFO lists its own sha" bash -c "grep -q 'LED_SRC := \$(MODEL_DIR)/helpers/led/led.c' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q '^HELPERS := .*led:akam2k_led:led' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q 'for b in \$(ALL_BINS)' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q '_sha256=' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q '_source_sha256=' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q 'for h in \$(HELPERS)' '$REPO/platforms/anyka-ak3918av130/Makefile'"
+check "akam-led: refuses ir without --force and never names the IR-cut pins or the pin helper" bash -c "grep -q 'strcmp(name, \"ir\") == 0 && !force' '$LT' && ! grep -q -E 'IRCUT|a2k_pin|akam2k_pin' '$LT'"
+check "akam-led: blink is bounded (1..60 s, alarm guard) and ends with the light off" bash -c "grep -q 'secs < 1 || secs > 60' '$LT' && grep -q 'alarm((unsigned)secs + 2u)' '$LT' && grep -q 'light_set(&l, name, LIGHT_OFF' '$LT'"
+check "akam-led: no spawn, no file of its own, no socket" test -z "$(strip_c_comments "$LT" | grep -E '\bsystem|\bpopen|\bexec[lv]|\bfork|fopen|\bopen[[:space:]]*\(|\bsocket' || true)"
+check "akam-led: the poc3 Makefile builds it, the symcheck covers it and BUILDINFO lists its own sha" bash -c "grep -q 'LED_SRC := \$(MODEL_DIR)/helpers/led/led.c' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q '^HELPERS := .*led:akam-led:led' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/model.mk' && grep -q 'for b in \$(ALL_BINS)' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q '_sha256=' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q '_source_sha256=' '$REPO/platforms/anyka-ak3918av130/Makefile' && grep -q 'for h in \$(HELPERS)' '$REPO/platforms/anyka-ak3918av130/Makefile'"
 mkdir -p "$WORK/lt"
 printf 'int f(void){return open("/sys/class/leds/x/brightness",1);}\n' >"$WORK/lt/light_logic.c"
 check "the app C scanner flags open() in the pure light logic (positive control)" test "$(app_hits "$WORK/lt/light_logic.c" | wc -l)" = 1
@@ -2269,7 +2294,15 @@ MC=$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c
 check "connect() appears in mqtt_bind.c and nowhere else in app/" test "$(for f in "${APPC[@]}"; do [ "$(strip_c_comments "$f" | grep -c -E '\bconnect[[:space:]]*\(')" = 0 ] || basename "$f"; done | tr '\n' ' ')" = "mqtt_bind.c "
 check "mqtt_bind.c: no file of its own; mqtt_cfg.c: two fopen, read-only, both with a variable path (the shared config / akam/mqtt_pass reader, and the MAC)" test "$(strip_c_comments "$MQ" | grep -c 'fopen(')" = 0 -a "$(strip_c_comments "$MC" | grep -c 'fopen(path, "r")')" = 2 -a "$(strip_c_comments "$MC" | grep -c 'fopen(')" = 2
 check "MQTT: no log line or printf mentions the password or the user" test -z "$({ strip_c_comments "$MQ"; strip_c_comments "$MC"; } | grep -E 'a2k_log|printf' | grep -E 'pass|user' | grep -v -E 'password set|login %s|c->pass\[0\]|c->user\[0\]' || true)"
-check "the supervisor knows nothing about MQTT: no key, no password, no option for it" test -z "$(grep -i -E 'mqtt|password|pass=' "$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh" || true)"
+# Changed with the user-file settings of the API (cfg_request): the supervisor now WRITES the files of the settings the API queued (mqtt, mqtt_pass, rtsp.conf, ntp,
+# akam.conf), because the app never spawns a process and cannot replace the links of the card-less tree. Its knowledge of MQTT and passwords stays confined to
+# that one marked block (tests/rot2k_cfg_test.sh runs it): outside it the supervisor still knows nothing about MQTT, no key, no password, no option passed to the app;
+# inside it a password is only read from the request file and written to its file through builtins, never echoed, logged or put in a command line.
+OAR=$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh
+check "the supervisor knows nothing about MQTT outside cfg_request: no key, no password, no option for it" test -z "$(sed '/^# --- cfg_request begin/,/^# --- cfg_request end/d' "$OAR" | grep -i -E 'mqtt|password|pass=' || true)"
+# shellcheck disable=SC2016  # the grep patterns are literal
+check "cfg_request: a password is never echoed, logged or passed on a command line" test -z "$(sed -n '/^# --- cfg_request begin/,/^# --- cfg_request end/p' "$OAR" | grep -E '(echo|log|printf [^>|]*>&2)[^|>]*\$(c_mw|c_rw|_v|_pw)|\$\(.*\$c_(mw|rw)' | grep -v -E "md5sum|cfg_mqtt_get" || true)"
+check "cfg_request: the block is marked once and the call is in the supervisor loop" bash -c "[ \$(grep -c '^# --- cfg_request begin' '$OAR') = 1 ] && grep -q '^        cfg_request\$' '$OAR'"
 check "the MQTT password key is read by the app only: main passes the file path, never a secret" bash -c "grep -q 'mqtt-conf' '$REPO/platforms/anyka-ak3918av130/main.c' && ! grep -E 'getopt_long|optarg' '$REPO/platforms/anyka-ak3918av130/mqtt_bind.c' '$REPO/platforms/anyka-ak3918av130/mqtt_cfg.c'"
 mkdir -p "$WORK/st" && printf 'int f(void){rename("a","b");return unlink("a");}\n' >"$WORK/st/$APP_STATE"
 check "the app C scanner allows rename and unlink in the state writer only" test -z "$(app_hits "$WORK/st/$APP_STATE")" -a "$(app_hits "$WORK/st/$APP_STATE" | wc -l)" = 0
@@ -2296,7 +2329,7 @@ if [ -x "$XCC" ]; then
     check "poc2_frame.c compiles clean for ARM (struct size asserts, -Wall -Wextra -Werror)" "$XCC" -std=gnu11 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft "$REPO/platforms/anyka-ak3918av130/probes/poc2_frame.c"
     check "poc4_detect.c compiles clean for ARM (struct size asserts, -Wall -Wextra -Werror)" "$XCC" -std=gnu11 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft "$REPO/platforms/anyka-ak3918av130/probes/poc4_detect.c"
     check "poc0_versions.c compiles clean for ARM" "$XCC" -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft "$REPO/platforms/anyka-ak3918av130/probes/poc0_versions.c"
-    # PoC-3 (akam2k_rtsp): the shared headers come from platforms/anyka-ak3918, the RTSP file also needs SmolRTSP (a fetched,
+    # PoC-3 (akamd): the shared headers come from platforms/anyka-ak3918, the RTSP file also needs SmolRTSP (a fetched,
     # untracked dependency: skipped when it is not there).
     for f in main cap stream detect detstate mqtt_bind mqtt_cfg zones snap pin ircut image night_ctl night_run; do
  check "$f.c compiles clean for ARM" "$XCC" -std=gnu99 -fsyntax-only -Wall -Wextra -Werror -march=armv5te -mfloat-abi=soft "${INC_2K[@]}" "${SHARED_INC[@]}" "$(a2k_src "$f")"
@@ -2370,7 +2403,7 @@ if command -v cc >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
 else
     echo "  skip - no host C compiler or python3: ONVIF conformance smoke"
 fi
-check "ONVIF: off by default (onvif=0), opt-in key onvif / onvif_port in akam2k.conf only, the service never starts without the stream password" bash -c "grep -q 'onvif_on = 0' '$REPO/platforms/anyka-ak3918av130/main.c' && grep -q 'no_password' '$REPO/platforms/anyka-ak3918av130/onvif_services.c' && grep -q 'onvif) lo=0 hi=1 opt=--onvif' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh'"
+check "ONVIF: off by default (onvif=0), opt-in key onvif / onvif_port in akam.conf only, the service never starts without the stream password" bash -c "grep -q 'onvif_on = 0' '$REPO/platforms/anyka-ak3918av130/main.c' && grep -q 'no_password' '$REPO/platforms/anyka-ak3918av130/onvif_services.c' && grep -q 'onvif) lo=0 hi=1 opt=--onvif' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh'"
 check "ONVIF: the 2K ONVIF files write no file (zero flash writes) and open no device" test "$(strip_c_comments "$REPO/platforms/anyka-ak3918av130/onvif_services.c" | grep -c -E 'fopen|open\(|rename\(|fwrite|write\(')" = 0 -a "$(strip_c_comments "$REPO/platforms/anyka-ak3918av130/onvif_ptz.c" | grep -c -E 'fopen|open\(|rename\(|fwrite|write\(')" = 0
 
 echo "== PTZ patrol (specs/ptz-patrol.md): pure engine unit test + fuzz, binding core on a fake motor, the real tracker core, flash policy"
@@ -2443,12 +2476,12 @@ if command -v cc >/dev/null 2>&1; then
     fi
 fi
 check "drift matcher: pure (no I/O, no clock, no libm)" test -z "$(strip_c_comments "$REPO/src/features/track/drift_match.c" | grep -E 'fopen|open\(|ioctl|socket|clock|time\(|#include <math.h>' || true)"
-check "drift: ptz_drift_ref, ptz_drift_correct and ptz_boot_calibrate are akam2k.conf keys passed to the app, validated" bash -c "grep -q 'ptz_drift_ref) lo=0 hi=1 opt=--ptz-drift-ref' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz_drift_correct:off | ptz_drift_correct:adjust | ptz_drift_correct:full' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz_boot_calibrate:auto | ptz_boot_calibrate:always' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz-drift-correct' '$REPO/platforms/anyka-ak3918av130/main.c' && grep -q 'ptz-boot-calibrate' '$REPO/platforms/anyka-ak3918av130/main.c'"
-check "tilt re-home: ptz_tilt_rehome (off|idle) and ptz_tilt_rehome_gap_min (1..1440) are akam2k.conf keys passed to the app, validated" bash -c "grep -q 'ptz_tilt_rehome:off | ptz_tilt_rehome:idle' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz_tilt_rehome_gap_min) lo=1 hi=1440 opt=--ptz-tilt-rehome-gap-min' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz-tilt-rehome' '$REPO/platforms/anyka-ak3918av130/main.c'"
+check "drift: ptz_drift_ref, ptz_drift_correct and ptz_boot_calibrate are akam.conf keys passed to the app, validated" bash -c "grep -q 'ptz_drift_ref) lo=0 hi=1 opt=--ptz-drift-ref' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz_drift_correct:off | ptz_drift_correct:adjust | ptz_drift_correct:full' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz_boot_calibrate:auto | ptz_boot_calibrate:always' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz-drift-correct' '$REPO/platforms/anyka-ak3918av130/main.c' && grep -q 'ptz-boot-calibrate' '$REPO/platforms/anyka-ak3918av130/main.c'"
+check "tilt re-home: ptz_tilt_rehome (off|idle) and ptz_tilt_rehome_gap_min (1..1440) are akam.conf keys passed to the app, validated" bash -c "grep -q 'ptz_tilt_rehome:off | ptz_tilt_rehome:idle' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz_tilt_rehome_gap_min) lo=1 hi=1440 opt=--ptz-tilt-rehome-gap-min' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'ptz-tilt-rehome' '$REPO/platforms/anyka-ak3918av130/main.c'"
 check "scene: the dump dir is fixed (/tmp/akam_scene_dbg) in a production build: the test-only override is under #ifdef A2K_SCENE_TEST" bash -c "grep -B1 'g_dbg_dir, sizeof g_dbg_dir, \"%s.dbg\"' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/scene.c' | grep -q '#ifdef A2K_SCENE_TEST'"
 check "scene: the comparison module is pure (no hardware, no file or network call) and needs no libm" test -z "$(strip_c_comments "$REPO/src/features/scene/scene_check.c" | grep -E 'fopen|open\(|ioctl|socket|rename|unlink|#include <math.h>' || true)"
 check "scene: the 2K enables the person-tracking pan inversion by default (measured on the camera) and keys exist for both axes" bash -c "grep -q 'track_inv_pan = 1' '$REPO/platforms/anyka-ak3918av130/main.c' && grep -q 'track_inv_tilt = 0' '$REPO/platforms/anyka-ak3918av130/main.c' && grep -q 'track_invert_pan) lo=0 hi=1 opt=--track-invert-pan' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q 'track_invert_tilt) lo=0 hi=1 opt=--track-invert-tilt' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh'"
-check "scene: ptz_scene_check and ptz_scene_min are akam2k.conf keys passed to the app" bash -c "grep -q 'ptz_scene_check) lo=0 hi=1 opt=--ptz-scene-check' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q -- '--ptz-scene-min' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh'"
+check "scene: ptz_scene_check and ptz_scene_min are akam.conf keys passed to the app" bash -c "grep -q 'ptz_scene_check) lo=0 hi=1 opt=--ptz-scene-check' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh' && grep -q -- '--ptz-scene-min' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh'"
 check "park: the code default is 1275:300 (down)" bash -c "grep -q '1275, 1300, 1275, 300, 4000' '$REPO/firmware/lsc-rotatable-2k-ak3918av130/ptz_desc.c'"
 
 echo "== net settings (akam_net.sh: hostname, Wi-Fi country/band, dead-man; stub integration; registry rows)"
@@ -2999,6 +3032,18 @@ if command -v cc >/dev/null 2>&1; then
 fi
 check "net registry: the rows spawn nothing (the backend is installed by the caller)" test -z "$(strip_c_comments "$REPO/firmware/lsc-rotatable-2k-ak3918av130/netreg.c" | grep -E '\bsystem|\bpopen|\bexec[lv]|\bfork|fopen|\bopen[[:space:]]*\(|\bsocket' || true)"
 
+echo "== user-file registry rows (C unit test: mqtt.*, onvif.*, rtsp.*, ntp.servers, audio.mic_enable)"
+if command -v cc >/dev/null 2>&1; then
+ if cc -Wall -Wextra -Werror -std=gnu99 -g "${INC_2K[@]}" -o "$WORK/cfgreg_unit" "$REPO/tests/rot2k_cfgreg_unit.c" "$FW/cfgreg.c" "$REPO/src/core/settings_reg.c" "$REPO/src/api/json_min.c" "$REPO/src/api/api_keys.c" "$REPO/src/net/crypto/sha256.c"; then
+        "$WORK/cfgreg_unit" >"$WORK/cfgreg_unit.out" 2>&1 || true
+        check "cfgreg unit test passes" grep -q 'rot2k cfgreg unit: 0 failed' "$WORK/cfgreg_unit.out"
+        grep 'FAIL' "$WORK/cfgreg_unit.out" || true
+    else
+        ko "cfgreg unit test does not compile"
+    fi
+fi
+check "user-file registry: the rows spawn nothing and open nothing (the backend is installed by the caller)" test -z "$(strip_c_comments "$REPO/firmware/lsc-rotatable-2k-ak3918av130/cfgreg.c" | grep -E '\bsystem|\bpopen|\bexec[lv]|\bfork|fopen|\bopen[[:space:]]*\(|\bsocket' || true)"
+
 echo "== onvif_events_probe (host tool, loopback fake camera)"
 if command -v python3 >/dev/null 2>&1; then
     python3 -I "$REPO/tests/rot2k_onvif_probe_test.py" >"$WORK/probe.out" 2>&1 || true
@@ -3018,11 +3063,11 @@ RUNSH=$REPO/firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/own_app_run.sh
 check "api key tool: parses, executable, calls only the app's key mode (no secret in argv, no /dev, no eval)" bash -c "sh -n '$AK_KEY' && test -x '$AK_KEY' && grep -q -- '--api-key' '$AK_KEY' && ! grep -E 'urandom|/dev/|eval|openssl' '$AK_KEY'"
 AKT=$WORK/apikey
 mkdir -p "$AKT/tmp"
-cat >"$AKT/tmp/akam2k_rtsp" <<'EOS'
+cat >"$AKT/tmp/akamd" <<'EOS'
 #!/bin/sh
 echo "app args: $*"
 EOS
-chmod 755 "$AKT/tmp/akam2k_rtsp"
+chmod 755 "$AKT/tmp/akamd"
 check "api key tool: new passes --api-key and the arguments through" bash -c "[ \"\$(AKAM_TMP_DIR='$AKT/tmp' sh '$AK_KEY' new --scope admin --name a)\" = 'app args: --api-key new --scope admin --name a' ]"
 check "api key tool: list and revoke are accepted" bash -c "AKAM_TMP_DIR='$AKT/tmp' sh '$AK_KEY' list >/dev/null && AKAM_TMP_DIR='$AKT/tmp' sh '$AK_KEY' revoke abc --force >/dev/null"
 check "api key tool: another word is a usage error (2)" bash -c "AKAM_TMP_DIR='$AKT/tmp' sh '$AK_KEY' root; [ \$? = 2 ]" 2>/dev/null

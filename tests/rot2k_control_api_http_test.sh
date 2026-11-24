@@ -37,10 +37,10 @@ echo "== build the server harness (ASan/UBSan)"
 SRV=$WORK/apisrv
 # shellcheck disable=SC2086
 if ! $CC -std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -pthread \
- '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=16384 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" "$REPO/platforms/anyka-ak3918av130/orient.c" \
+ '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=16384 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/platforms/anyka-ak3918av130/picture.c" \
     "$REPO/src/api/api_httpd.c" "$REPO/src/api/api_core.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/api_bind.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/settings.c" "$REPO/src/api/api_events.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/net/http/http_req.c" "$REPO/src/api/api_limit.c" \
-    "$REPO/src/api/api_keys.c" "$REPO/src/api/api_sig.c" "$REPO/src/net/crypto/sha256.c" "$REPO/src/api/json_min.c" "$REPO/src/core/settings_reg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/netreg.c" \
-    "$REPO/src/features/ptz/ptz_vel.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button_rt.c" "$REPO/src/features/button/button_cfg.c" "$REPO/src/features/button/button_gesture.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c"; then
+    "$REPO/src/api/api_keys.c" "$REPO/src/api/api_sig.c" "$REPO/src/net/crypto/sha256.c" "$REPO/src/api/json_min.c" "$REPO/src/core/settings_reg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/netreg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/cfgreg.c" \
+    "$REPO/src/features/ptz/ptz_vel.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/speaker.c" "$REPO/src/features/audio/audio_out.c" "$REPO/src/features/audio/talk.c" "$REPO/src/features/audio/audio_jitter.c" "$REPO/src/features/audio/audio_vad.c" "$REPO/src/features/audio/g711.c" "$REPO/src/net/rtsp/rtp_in.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button_rt.c" "$REPO/src/features/button/button_cfg.c" "$REPO/src/features/button/button_gesture.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c"; then
     echo "  FAIL - server harness build"
     exit 1
 fi
@@ -281,6 +281,71 @@ for k in led.mode night.ir_led track.enabled video0.kbps video1.rc image.brightn
     printf '%s' "$BODY" | grep -q "\"key\":\"$k\"" && ok "schema lists $k" || ko "schema lists $k"
 done
 printf '%s' "$BODY" | grep -Eq 'mqtt.pass|secret' && ko "schema shows no secret row" || ok "schema shows no secret row"
+# ---- speaker and two-way audio rows (the 1080p's names and ranges; the real shared engine behind them, no playback node on a host)
+for k in audio.out_enable audio.out_volume audio.out_gain audio.out_amp audio.talk_enable audio.talk_duplex; do
+    printf '%s' "$BODY" | grep -q "\"key\":\"$k\"" && ok "schema lists $k" || ko "schema lists $k"
+done
+for k in audio.out_state audio.talk_state; do
+    printf '%s' "$BODY" | grep -q "\"key\":\"$k\"" && ok "schema lists $k (read only)" || ko "schema lists $k (read only)"
+done
+want "schema: audio.out_volume is 0..100, default 100; audio.out_enable defaults off (opt-in on the 2K)" 200 '"key":"audio.out_enable","type":"bool","default":"0".*"key":"audio.out_volume","type":"int","lo":0,"hi":100,"default":"100"'
+want "schema: the audio.beep action is listed" 200 '"audio.beep"'
+req "$WID" "$WSEC" GET /akam/v1/settings
+want "GET /settings: the speaker values" 200 '"audio.out_volume":"100".*"audio.out_gain":"2".*"audio.talk_enable":"1".*"audio.talk_duplex":"half"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_volume":35,"audio.out_gain":4,"audio.talk_duplex":"full","audio.talk_enable":false}'
+want "PATCH the speaker rows (volume, gain, duplex, talk) is applied" 200 '"audio.out_volume":\{"ok":true'
+req "$WID" "$WSEC" GET /akam/v1/settings/audio.out_volume
+want "GET /settings/audio.out_volume reads the engine back" 200 '"value":"35"'
+req "$WID" "$WSEC" GET /akam/v1/settings/audio.talk_duplex
+want "audio.talk_duplex full" 200 '"value":"full"'
+req "$WID" "$WSEC" GET /akam/v1/settings/audio.talk_enable
+want "audio.talk_enable 0" 200 '"value":"0"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_volume":101}'
+want "volume 101 is refused (range)" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_gain":6}'
+want "gain 6 is refused (range)" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.talk_duplex":"both"}'
+want "duplex both is refused" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_state":"idle"}'
+want "audio.out_state is read only" 422 'readonly'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_enable":true}'
+printf '%s' "$BODY" | grep -q 'setter' && ok "enabling the speaker without a playback node fails in the setter (host), nothing crashes" || ko "enable without a node: $STATUS $BODY"
+req "$WID" "$WSEC" GET /akam/v1/state
+want "GET /state: the speaker state is error after the failed start" 200 '"audio.out_state":"error"'
+want "GET /state: the talk state" 200 '"audio.talk_state":"idle"'
+req "$WID" "$WSEC" POST /akam/v1/actions/audio.beep '{}'
+want "action audio.beep refuses while the speaker is not running" 409 'unavailable'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"audio.out_enable":false}'
+want "audio.out_enable can be turned off again" 200 '"ok":true'
+# ---- picture rows: the 1080p's names (isp.saturation, isp.denoise, img.wb), the real picture.c on a fake ISP
+req "$WID" "$WSEC" GET /akam/v1/schema
+for k in isp.saturation isp.denoise img.wb; do
+    printf '%s' "$BODY" | grep -q "\"key\":\"$k\"" && ok "schema lists $k" || ko "schema lists $k"
+done
+want "schema: isp.saturation -50..50 default 0, isp.denoise 0..4 default 0, img.wb conf|manual" 200 '"key":"isp.saturation","type":"int","lo":-50,"hi":50,"default":"0".*"key":"isp.denoise","type":"int","lo":0,"hi":4,"default":"0".*"key":"img.wb","type":"enum".*"conf","manual"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.saturation":-20}'
+want "PATCH isp.saturation -20" 200 '"isp.saturation":\{"ok":true'
+check "the ISP got effect 2 (saturation) = -20" bash -c "grep -q 'isp.effect 2 -20' '$D2/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings/isp.saturation
+want "GET isp.saturation reads it back" 200 '"value":"-20"'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.saturation":51}'
+want "isp.saturation 51 is refused" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.denoise":2}'
+want "PATCH isp.denoise 2" 200 '"isp.denoise":\{"ok":true'
+check "the 3D NR table was written with level 1 taken from level 3 and level 16 from itself (marker 103, 116)" bash -c "grep -q 'isp.nr3d rec1 103 rec16 116' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.denoise":5}'
+want "isp.denoise 5 is refused" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"isp.denoise":0}'
+check "denoise 0 writes the original table back (marker 101)" bash -c "grep -q 'isp.nr3d rec1 101 rec16 116' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"img.wb":"manual"}'
+want "PATCH img.wb manual" 200 '"img.wb":\{"ok":true'
+check "the wb type went to the other value than the one read (1 -> 0)" bash -c "grep -q 'isp.wbtype 0' '$D2/calls.log'"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"img.wb":"auto"}'
+want "img.wb auto is refused (conf or manual)" 422 'range'
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"img.wb":"conf"}'
+check "img.wb conf puts the automatic type back (1)" bash -c "grep -q 'isp.wbtype 1' '$D2/calls.log'"
+req "$WID" "$WSEC" GET /akam/v1/settings
+want "GET /settings: img.wb is conf, saturation and denoise as set" 200 '"isp.saturation":"-20"'
 req "$WID" "$WSEC" GET /akam/v1/settings
 want "GET /settings: writable values only" 200 '"video0.kbps":"2000"'
 printf '%s' "$BODY" | grep -q 'sys.cpu_pct' && ko "GET /settings has no state keys" || ok "GET /settings has no state keys"
@@ -382,6 +447,82 @@ req "$WID" "$WSEC" GET /akam/v1/settings/net.hostname
 want "net.* values are read from the persisted files" 200 '"value":"cam-salon"'
 req "$WID" "$WSEC" GET /akam/v1/settings/net.wifi_country
 want "net.wifi_country read from the net file" 200 '"value":"DE"'
+# the user-file rows (cfgreg.h): MQTT, ONVIF, stream password, NTP, microphone
+mkdir -p "$D2/cfg"
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"mqtt.host":"broker.lan"}'
+want "mqtt.host needs an admin key (a write key is refused)" 422 'scope'
+check "...and nothing was queued" test ! -e "$D2/cfg.req"
+admin GET /akam/v1/settings/mqtt.port
+want "mqtt.port defaults to 1883" 200 '"value":"1883"'
+admin GET /akam/v1/settings/audio.mic_enable
+want "the microphone is off by default" 200 '"value":"0"'
+admin GET /akam/v1/settings/onvif.port
+want "onvif.port defaults to 8000" 200 '"value":"8000"'
+admin GET /akam/v1/settings/rtsp.auth
+want "rtsp.auth is off without rtsp.conf" 200 '"value":"off"'
+admin PATCH /akam/v1/settings '{"mqtt.enabled":true}'
+want "MQTT on without a host is refused" 422 'check'
+admin PATCH /akam/v1/settings '{"mqtt.host":"bad host"}'
+want "a bad broker host is refused" 422 'check'
+admin PATCH /akam/v1/settings '{"mqtt.password":"hunter2hunter2"}'
+want "a broker password without a user is refused" 422 'check'
+admin PATCH /akam/v1/settings '{"rtsp.user":"bob"}'
+want "a stream user without its password is refused" 422 'check'
+admin PATCH /akam/v1/settings '{"rtsp.user":"bob","rtsp.password":"short"}'
+want "a stream password under 8 characters is refused" 422 'check'
+admin PATCH /akam/v1/settings '{"onvif.enabled":true}'
+want "ONVIF without a stream password is refused" 422 'check'
+admin PATCH /akam/v1/settings '{"ntp.servers":"a.example b.example c.example d.example"}'
+want "four NTP servers are refused" 422 'check'
+check "...nothing was queued by any refusal" test ! -e "$D2/cfg.req"
+admin PATCH /akam/v1/settings '{"mqtt.host":"broker.lan","mqtt.port":1884,"mqtt.user":"ha","mqtt.password":"hunter2hunter2","mqtt.enabled":true,"rtsp.user":"bob","rtsp.password":"correct horse","onvif.enabled":true,"ntp.servers":"pool.ntp.org","audio.mic_enable":true}'
+want "one PATCH of every user-file row is accepted" 200 '"mqtt.host":\{"ok":true'
+check "...the password values are not echoed" bash -c "! printf '%s' '$BODY' | grep -q 'hunter2\\|correct horse'"
+want "...the secret rows say a restart is needed or applied, without a value" 200 '"mqtt.password":\{"ok":true,"apply":"[a-z_]*"\}'
+check "the request holds the ten lines for the supervisor" bash -c "[ \"\$(wc -l <'$D2/cfg.req')\" = 10 ] && grep -qx 'mqtt.host=broker.lan' '$D2/cfg.req' && grep -qx 'rtsp.password=correct horse' '$D2/cfg.req'"
+check "the request file is private (0600)" bash -c "[ \"\$(stat -c %a '$D2/cfg.req')\" = 600 ]"
+admin GET /akam/v1/settings/cfg.apply
+want "cfg.apply says queued while the request waits" 200 '"value":"queued"'
+admin GET /akam/v1/settings/mqtt.password
+want "a write-only row cannot be read" 404 'unknown_key|secret'
+admin GET /akam/v1/settings
+check "no listing shows a write-only row or a password" bash -c "! printf '%s' '$BODY' | grep -q 'mqtt.password\\|rtsp.password\\|hunter2'"
+admin GET /akam/v1/schema
+check "the schema never lists a write-only row" bash -c "! printf '%s' '$BODY' | grep -q 'mqtt.password\\|rtsp.password'"
+rm -f "$D2/cfg.req"
+printf 'ok\n' >"$D2/cfg.res"
+admin GET /akam/v1/settings/cfg.apply
+want "cfg.apply reports the outcome the supervisor left" 200 '"value":"ok"'
+printf 'enabled=1\nhost=broker.lan\nport=1884\nuser=ha\n' >"$D2/cfg/mqtt"
+printf 'bob:akam:0123456789abcdef0123456789abcdef\n' >"$D2/cfg/rtsp.conf"
+printf 'server=pool.ntp.org\nserver=time.example.net\n' >"$D2/cfg/ntp"
+printf '# x\nonvif=1\nonvif_port=8123\naudio=1\n' >"$D2/cfg/akam.conf"
+admin GET /akam/v1/settings/mqtt.host
+want "the broker host is read from its user file" 200 '"value":"broker.lan"'
+admin GET /akam/v1/settings/mqtt.port
+want "the broker port is read from its user file" 200 '"value":"?1884"?'
+admin GET /akam/v1/settings/mqtt.user
+want "the broker user is read from its user file" 200 '"value":"ha"'
+admin GET /akam/v1/settings/mqtt.enabled
+want "MQTT on is read from its user file" 200 '"value":"?(1|true)"?'
+admin GET /akam/v1/settings/ntp.servers
+want "the NTP servers is read from its user file" 200 '"value":"pool.ntp.org time.example.net"'
+admin GET /akam/v1/settings/onvif.port
+want "the ONVIF port is read from its user file" 200 '"value":"?8123"?'
+admin GET /akam/v1/settings/onvif.enabled
+want "ONVIF on is read from its user file" 200 '"value":"?(1|true)"?'
+admin GET /akam/v1/settings/rtsp.user
+want "the stream user is read from its user file" 200 '"value":"bob"'
+admin GET /akam/v1/settings/audio.mic_enable
+want "the microphone on is read from its user file" 200 '"value":"?(1|true)"?'
+admin GET /akam/v1/settings/rtsp.auth
+want "rtsp.auth is on with a valid rtsp.conf" 200 '"value":"on"'
+admin PATCH /akam/v1/settings '{"rtsp.password":"another long one"}'
+want "a new password alone keeps the stored user" 200 '"rtsp.password":\{"ok":true'
+check "the lines of the second request are queued" bash -c "[ \"\$(cat '$D2/cfg.req')\" = 'rtsp.password=another long one' ]"
+admin PATCH /akam/v1/settings '{"mqtt.host":"b2.lan"}'
+check "a request not yet taken keeps its earlier lines (the later line of a key wins)" bash -c "[ \"\$(wc -l <'$D2/cfg.req')\" = 2 ] && grep -qx 'mqtt.host=b2.lan' '$D2/cfg.req'"
+rm -f "$D2/cfg.req" "$D2/cfg.res"
 # actions
 req "$WID" "$WSEC" POST /akam/v1/actions/ptz.step '{"dir":"left"}'
 want "action ptz.step" 200 '"ok":true'

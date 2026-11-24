@@ -26,7 +26,7 @@ SRC_SMOLRTSP=$REPO/third_party/smolrtsp      # fetched by bootstrap, git-ignored
 # Include path of the shared headers (they are included by basename): every directory of src/ that holds headers.
 SHARED_INC=()
 for d in net/rtsp net/mqtt net/http net/onvif net/crypto api core core/control core/version features/audio features/button features/light \
-    features/night features/ptz features/track features/scene hal; do SHARED_INC+=(-I"$SRC_DIR/$d"); done
+    features/night features/orient features/ptz features/track features/scene hal; do SHARED_INC+=(-I"$SRC_DIR/$d"); done
 # Include path of the 2K build: its platform (vendor glue), its firmware directory (binding) and the shared headers.
 # shellcheck disable=SC2034 # used by the 2K tests that source this file
 INC_2K=(-I"$REPO/platforms/anyka-ak3918av130" -I"$FW_2K" -I"$FW_2K/helpers/ptz" "${SHARED_INC[@]}")
@@ -49,9 +49,9 @@ DOCS_DIR=$REPO/docs
 DIST_DIR=$REPO/dist
 DIST_2K=$DIST_DIR/rot2k-app                 # published copy of the 2K binaries (make poc3-dist), what the card/appfs/kit builders read
 BUILD_DIR=$REPO/build
-BUILD_1080P=$BUILD_DIR/$MODEL_1080P          # everything the 1080p build writes (ak_rtsp, flash_tool, ...)
-BUILD_2K=$BUILD_DIR/$MODEL_2K                # everything the 2K build writes (akam2k_rtsp, helpers, BUILDINFO.txt, poc3/ objects)
-GOLDEN_1080P=$TESTS_GOLDEN/ak_rtsp_1080p.sha256
+BUILD_1080P=$BUILD_DIR/$MODEL_1080P          # everything the 1080p build writes (akamd, flash_tool, ...)
+BUILD_2K=$BUILD_DIR/$MODEL_2K                # everything the 2K build writes (akamd, helpers, BUILDINFO.txt, poc3/ objects)
+GOLDEN_1080P=$TESTS_GOLDEN/lsc-indoor-1080p-ak3918.sha256
 GOLDEN_2K=$TESTS_GOLDEN/rot2k_app.golden
 
 export REPO MODEL_1080P MODEL_2K PLATFORM_2K FW_2K FW_1080P SRC_DIR SRC_1080P SRC_CORE SRC_NET SRC_API SRC_FEATURES SRC_HAL SRC_SMOLRTSP \

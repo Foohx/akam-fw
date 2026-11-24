@@ -86,7 +86,7 @@ re-open only (current close/open behaviour).
 - The capture thread tries the live path before the re-open (`a2k_vlive_apply`): fps -> `set_fps`; QP -> `set_qp`; rc vbr/cbr -> `set_rc_type(h, rc_mode)`;
   kbps / peak / gop -> `get_attr`, edit, `set_attr` (fps, QP and rc taken from the running copy, width/height/profile/enc_type left as `get_attr` returned them).
   avbr (either side) is always a re-open. Any non-zero return: logged once, that setter is switched off for the run, and the existing re-open runs with the same `want`.
-- `video_live=0` in akam2k.conf (`--video-live 0`) forces the re-open for everything (default 1).
+- `video_live=0` in akam.conf (`--video-live 0`) forces the re-open for everything (default 1).
 - Hardware test hook: `--venc-test 1` (default off), the capture threads poll `/tmp/akam2k_venc_test`. One line per file, `main|sub` then `fps N`, `qp MIN MAX`,
   `kbps TARGET MAX`, `gop N`, `rc cbr|vbr` or `attr` (logs `get_attr`, `get_cur_qp`, `get_rc_stat` words). It runs the live setter only (no fallback, flags ignored),
   logs the return code (`venc-test:` lines), then deletes the file. Example from a shell on the camera: `echo "sub fps 10" > /tmp/akam2k_venc_test`.
@@ -117,7 +117,7 @@ The three ranges of the warning are the 3DNR buffer limits of the three VI chann
 = 640x480 YUV420, so 640x360 (345600 B) fits and 960x540 (777600 B) and 1280x720 (1382400 B) do not; the encoder DMA pool for the channel then cannot be created either. The board has
 64 MB RAM and the media reserve is fixed by the boot args (not to be changed), so there is no room to lift it. The in-app fallback marker (RAM file, restart at 640x360) worked as designed.
 
-Consequences, as shipped: the 960x540 and 1280x720 sizes and the former `akam2k_subres.c` were removed. `sub_res=640x360` is still accepted in `akam2k.conf` (no effect); any other value is logged
+Consequences, as shipped: the 960x540 and 1280x720 sizes and the former `akam2k_subres.c` were removed. `sub_res=640x360` is still accepted in `akam.conf` (no effect); any other value is logged
 `unsupported on this SoC (sub max 640x480: 3DNR buffer / venc DMA pool)` and ignored. The sub now runs H.264 Main (the main channel proves Main with this encoder; the app retries Baseline
 if `ak_venc_open_ex` refuses Main for the sub, logged), default 800 kbit/s target (peak 1000), QP 26..44. `sub_kbps` / `video1_*` still win (sub range 32..1000, peak 32..1500). The 128 KiB sub
 frame cap is kept: 640x360 at QP 26 is about 1/9 of the main pixels, and the 128 KiB limit holds an IDR up to about 1 Mbit/s (the peak is 1000 kbit/s); the JPEG snapshot path is unchanged

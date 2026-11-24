@@ -223,11 +223,11 @@ unexercised until a result exists.
 Next: pace to ~5 Hz, expose events (MQTT/HA) with box + score, optionally drive auto-tracking with `akam_ptz` (after its
 end-stop protection), and run detection alongside RTSP in the same app (shared VI device: chn 16 + chn 0/1).
 
-## 10. Detection inside `akam2k_rtsp` (2026-11-15, offline, not yet run on hardware)
+## 10. Detection inside `akamd` (2026-11-15, offline, not yet run on hardware)
 
 The walk-test pipeline of sections 7 to 9 now lives in the production app, next to both RTSP streams; the full description,
 options, state file keys and the step-by-step hardware procedure are in
-[archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md), section "Person detection inside `akam2k_rtsp`".
+[archive/rot2k-own-app-feasibility.md](../../archive/rot2k-own-app-feasibility.md), section "Person detection inside `akamd`".
 
 Decisions taken from the walk test:
 - Only **class 0 (person/body)** drives presence; **class 1 (head)** is counted (`heads`) and its best score kept (`head_score`)
@@ -246,7 +246,7 @@ two encoders, and whether chn 16 coexists with chn 0/1 under load (it did in PoC
 
 ## 11. In-app detection misses a still person (hardware 2026-11-15) - root cause CONFIRMED, fixed
 
-Symptom (same scene, low light, user centered 2-3 m): inside `akam2k_rtsp` (dev 75313e2) detection goes ON only while the user
+Symptom (same scene, low light, user centered 2-3 m): inside `akamd` (dev 75313e2) detection goes ON only while the user
 ENTERS the frame (score 0.80-0.87), then OFF after 3 s and stays OFF while the user stands still; ~300 inferences/min, 34 ms avg
 per frame+process, `person=0`. With the app stopped, standalone `poc4_detect -S 4 -n 40` at the same position: 40/40 class 0,
 score ~835, box (40,10)-(158,191), process() 27 ms. Model, NPU and call sequence are fine.

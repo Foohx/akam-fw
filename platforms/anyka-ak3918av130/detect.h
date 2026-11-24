@@ -1,4 +1,4 @@
-/* Person detection inside akam2k_rtsp (all vendor NPU calls of the app live in detect.c). One thread pulls the
+/* Person detection inside akamd (all vendor NPU calls of the app live in detect.c). One thread pulls the
  * third VI channel (id 16, 320x192 NV12, configured by cap.c together with chn 0/1), runs the stock human-detection
  * model through ak_svp2_process at a configurable rate, feeds the hysteresis state machine (detstate.h) and
  * publishes the state file. Any failure (NPU init, model load, a dead channel) is logged once and only ends the

@@ -161,7 +161,8 @@ static int row_ok(const st_def_t *d) {
     }
     if (d->secret) {
         /* write-only, never listed, never persisted by the registry, no way to read it back */
-        if (d->access != ST_ACC_WRITE || d->expose & ST_EXPOSE_HTTP || d->persist || d->get) return 0;
+        if (d->access != ST_ACC_WRITE || (d->expose & ST_EXPOSE_HTTP && d->secret != ST_SECRET_WO) || d->persist || d->get) return 0;
+        if (d->secret == ST_SECRET_WO && (!d->set || d->min_scope < AKEY_ADMIN)) return 0; /* writable over HTTP only with an admin key */
         return 1;
     }
     return d->def && streg_validate(d, d->def) == ST_OK;
@@ -237,7 +238,7 @@ int streg_check_one(const streg_t *r, st_src_t src, int scope, const char *key, 
     const st_def_t *d = streg_find(r, key);
     int need;
     if (!d || !visible(d, src)) return ST_E_UNKNOWN;
-    if (d->secret && src == ST_SRC_HTTP) return ST_E_SECRET;
+    if (d->secret && src == ST_SRC_HTTP && d->secret != ST_SECRET_WO) return ST_E_SECRET;
     if (!(d->access & ST_ACC_WRITE)) return ST_E_READONLY;
     need = d->min_scope ? d->min_scope : AKEY_WRITE;
     if (scope < need) return ST_E_SCOPE;
@@ -245,6 +246,9 @@ int streg_check_one(const streg_t *r, st_src_t src, int scope, const char *key, 
 }
 
 #define PATCH_MAX 64
+
+static __thread int t_unsaved;
+void streg_note_unsaved(void) { t_unsaved = 1; }
 
 int streg_patch(streg_t *r, st_src_t src, int scope, size_t n, const char *const *keys, const char *const *vals,
                 st_result_t *res) {
@@ -283,8 +287,9 @@ int streg_patch(streg_t *r, st_src_t src, int scope, size_t n, const char *const
             st_apply_t eff;
             if (dp[i] != &r->defs[k]) continue;
             eff = dp[i]->apply;
+            t_unsaved = 0;
             if (dp[i]->set(keys[i], vals[i], &eff) != 0) { res[i].ok = 0; res[i].err = ST_E_SETTER; }
-            else { res[i].apply = eff; okn++; }
+            else { res[i].apply = eff; res[i].unsaved = t_unsaved; okn++; }
         }
     }
     return okn == n ? 200 : okn == 0 ? 422 : 207;
@@ -505,8 +510,12 @@ int streg_json_patch_reply(const streg_t *r, size_t n, const char *const *keys, 
         if (i) jw_raw(&w, ",");
         jw_str(&w, keys[i] ? keys[i] : k_nothing);
         if (res[i].ok) {
+            const st_def_t *sd = keys[i] ? streg_find(r, keys[i]) : NULL;
             jw_raw(&w, ":{\"ok\":true,\"apply\":"); jw_str(&w, streg_apply_name(res[i].apply));
-            jw_raw(&w, ",\"value\":"); jw_str(&w, vals[i]);
+            if (res[i].unsaved) jw_raw(&w, ",\"saved\":false");
+            if (!(sd && sd->secret)) { /* a write-only value is never echoed */
+                jw_raw(&w, ",\"value\":"); jw_str(&w, vals[i]);
+            }
             jw_raw(&w, "}");
         } else {
             const st_def_t *d = keys[i] ? streg_find(r, keys[i]) : NULL;

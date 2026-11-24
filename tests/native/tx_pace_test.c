@@ -286,6 +286,31 @@ int main(void)
         CHECK(p.skipping, "and the stream is skipping again");
     }
 
+    {
+        /* Latency bound: a backlog that stands above the idle level for max_lag_ms (+ the keyframe's time at the
+         * nominal rate) drops to a keyframe even though it is far under the byte marks. Off without max_lag_ms. */
+        tx_pace_cfg_t l = { .base = tx_pace_base(3000), .max_lag_ms = 300, .rate_bps = 375000 };
+        tx_pace_cfg_t off = { .base = tx_pace_base(3000) };
+        int64_t t;
+        CHECK(tx_pace_idle(375000) == 18750 && tx_pace_idle(1000) == 8192, "idle level is 50 ms of rate, at least 8 KiB");
+        tx_pace_init(&p);
+        CHECK(step(&p, &l, 0, 100 * KB, 1, 1000) == TX_PACE_SEND, "keyframe on an idle link");
+        for (t = 1100; t <= 1100 + 300 + 273; t += 100)
+            CHECK(step(&p, &l, 60 * KB, 20 * KB, 0, t) == TX_PACE_SEND || t > 1100 + 300 + 273 - 100,
+                  "a standing backlog is tolerated for the budget plus the keyframe's time");
+        CHECK(step(&p, &l, 60 * KB, 20 * KB, 0, 1100 + 300 + 273 + 200) == TX_PACE_SKIP && ev.entered && ev.lag,
+              "then the stream drops to the next keyframe (lag event)");
+        tx_pace_init(&p);
+        step(&p, &l, 0, 5 * KB, 0, 1000);
+        step(&p, &l, 60 * KB, 5 * KB, 0, 1100);
+        CHECK(step(&p, &l, 0, 5 * KB, 0, 1200) == TX_PACE_SEND && step(&p, &l, 60 * KB, 5 * KB, 0, 1900) == TX_PACE_SEND,
+              "a drained link restarts the timer (no steady delay, nothing dropped)");
+        tx_pace_init(&p);
+        for (t = 1000; t < 60000; t += 100)
+            if (step(&p, &off, 60 * KB, 5 * KB, 0, t) != TX_PACE_SEND) break;
+        CHECK(t >= 60000, "without max_lag_ms the byte marks alone decide (old behaviour)");
+    }
+
     printf("%s\n", fails ? "tx_pace_test: FAILED" : "tx_pace_test: OK");
     return fails ? 1 : 0;
 }

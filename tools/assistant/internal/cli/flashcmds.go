@@ -496,8 +496,9 @@ func parseOnvifFlag(out string) (on bool, port int) {
 
 const onvifFlagFile = "/etc/config/akam/onvif"
 
-// portsCheck is cam_ports_check: open = 22 554 8091 only (24 allowed while the card is in; the ONVIF
-// HTTP port only when ONVIF is on).
+// portsCheck is cam_ports_check: open = 22 and 554 (24 allowed while the card is in; the ONVIF HTTP port only when ONVIF is
+// on; 8092, the signed API, listens only once an API key exists and is not judged here). The text port 8091 is closed to the
+// network by default: open is an error unless the user opted in (control.lan) or the image is older than that change.
 func (a *App) portsCheck(ip string, expectTelnet string) bool {
 	c, err := a.connectTools(ip)
 	if err != nil {
@@ -525,10 +526,21 @@ func (a *App) portsCheck(ip string, expectTelnet string) bool {
 		return false
 	}
 	bad := false
-	for _, p := range []int{a.Env.PortSSH, a.Env.PortRTSP, a.Env.PortCTL} {
+	for _, p := range []int{a.Env.PortSSH, a.Env.PortRTSP} {
 		if !isOpen(p) {
 			a.UI.Err(fmt.Sprintf("port %d should be open and is not.", p))
 			bad = true
+		}
+	}
+	if isOpen(a.Env.PortCTL) {
+		switch a.controlLAN(ip) {
+		case "1":
+			a.UI.Say(fmt.Sprintf("  Port %d is open to the network because you chose that (%s control-port close undoes it).", a.Env.PortCTL, Prog))
+		case "0":
+			a.UI.Err(fmt.Sprintf("port %d should be closed to the network (the camera has not been told to open it) and is open.", a.Env.PortCTL))
+			bad = true
+		default:
+			a.UI.Warn(fmt.Sprintf("port %d is open to the network: an image from before it was closed does that. %s update brings the current one.", a.Env.PortCTL, Prog))
 		}
 	}
 	for _, p := range []int{a.Env.PortTelnet, ftp, tel23} {
@@ -544,7 +556,7 @@ func (a *App) portsCheck(ip string, expectTelnet string) bool {
 		a.UI.Err(fmt.Sprintf("port %d should be closed (ONVIF is off) and is open.", http))
 		bad = true
 	case on:
-		a.UI.Err(fmt.Sprintf("ONVIF is on but port %d is not open: ak_rtsp may not have started it (%s onvif status).", http, Prog))
+		a.UI.Err(fmt.Sprintf("ONVIF is on but port %d is not open: akamd may not have started it (%s onvif status).", http, Prog))
 		bad = true
 	}
 	return !bad
@@ -620,7 +632,7 @@ func (a *App) cmdVerify() error {
 	a.stepBanner("verify")
 	if a.UI.Dry() {
 		a.UI.Say("  WOULD wait for the camera, check SSH with your key, copy and run akam_hwcheck.sh (expecting no FAIL),")
-		a.UI.Say("  check that the open ports are 22, 554 and 8091 (24 allowed while the card is in; 80 only if ONVIF is on), make sure the camera has a saved")
+		a.UI.Say("  check that the open ports are 22 and 554 (8091 stays closed to the network; 24 allowed while the card is in; 80 only if ONVIF is on), make sure the camera has a saved")
 		a.UI.Say("  Wi-Fi network (preflight_check.sh --ensure-wifi on the camera; it is created from the card's wifi.conf when missing,")
 		a.UI.Say("  and you are never asked to remove the card before that is done), then ask you to")
 		a.UI.Say("  unplug the power, take the card out and plug the power back in BY HAND, and repeat the checks:")
@@ -686,8 +698,9 @@ func (a *App) cmdVerify() error {
 	}
 	_ = a.St.MarkDone("verify")
 	a.fwNoteBuild(ip)
-	a.UI.Good("  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off.")
+	a.UI.Good("  Verified: SSH works, only 22 and 554 are open, telnet and FTP are off.")
 	a.verifyHostname(nil, ip)
+	a.apiKeyOffer(ip)   // the key the settings need: made now, over the SSH session that just proved the install
 	a.cfgApplyPending() // the config chosen at the start of the install, if any (differences shown, one yes/no)
 	a.rtspAuthOffer(ip)
 	a.wipeOffer()

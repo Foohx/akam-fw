@@ -13,6 +13,7 @@
 #include "night.h"
 #include "night_logic.h"
 #include "imgq.h"
+#include "image_orient.h"
 #include "video_cfg.h"
 
 /* -------------------------------------------------------------------------
@@ -151,6 +152,7 @@ static void switch_to_night_locked(void)
     } else {
         isp_reset_picture_baselines();
     }
+    image_orient_replay_locked(); /* flip / mirror: sent again after the reload (nothing while both are off) */
     /* The pipeline reload just re-sent module 0x14 (AE), which includes its
      * own EXPOSURE sub-block — the exact same "reset the dead-band/exp_max
      * fields back to sensor_isp.conf's raw defaults" risk set_frame_rate()'s
@@ -177,6 +179,7 @@ static void switch_to_day_locked(void)
     } else {
         isp_reset_picture_baselines();
     }
+    image_orient_replay_locked();
     /* See switch_to_night()'s matching comment — the reload can reset AE
      * dead-band/exp_max fields, re-apply current tuning to be safe. */
     {

@@ -13,14 +13,14 @@
 #                                override modes debug/factory behave exactly as stock, the recovery path)
 #   /appfs/akam/                 akam_flash_boot.sh, own_app_stub.sh, own_app_run.sh, common.sh, decloud.sh,
 #                                akam_ntp.sh, start_ssh.sh, dropbearmulti, busybox (the card's static one),
-#                                bin/akam2k_rtsp (+BUILDINFO), bin/akam2k_sntp (+BUILDINFO)
+#                                bin/akamd (+BUILDINFO), bin/akam-sntp (+BUILDINFO)
 #   /appfs/bin/yy_cam            REPLACED by a 3-line launcher of the stub. The stock yy_cam (3.6 MB, 1.2 MB
 #                                compressed) is the only way the Akam payload fits the 0x490000 partition. The stock
 #                                app (and with it the cloud OTA client) is gone from this image; the stock mtd3
 #                                backup restores it.
 # Options:
 #   --backup FILE          stock mtd3 dump (required; must be a squashfs with magic hsqs)
-#   --app-dist DIR         akam2k_rtsp + akam2k_sntp + BUILDINFO.txt from `make poc3-dist` (default dist/rot2k-app)
+#   --app-dist DIR         akamd + akam-sntp + BUILDINFO.txt from `make poc3-dist` (default dist/rot2k-app)
 #   --dropbear-dist DIR    dropbearmulti + BUILDINFO.txt (default dist/dropbear)
 #   --busybox FILE         the pinned static busybox of the card (default tools/.cache/rot2k/<name>)
 #   --out DIR              output directory (default dist/rot2k-appfs, git-ignored)
@@ -67,11 +67,11 @@ if ! command -v mksquashfs >/dev/null || ! command -v unsquashfs >/dev/null; the
 [ -f "$bb" ] && [ "$(sha_of "$bb")" = "$BB_SHA256" ] || die "busybox $bb missing or not the pinned $BB_SHA256"
 abi() { sed -n "s/^$1=//p" "$app_dist/BUILDINFO.txt" | head -n1; }
 [ "$(abi symcheck)" = passed ] || die "$app_dist/BUILDINFO.txt does not say symcheck=passed"
-[ "$(abi sha256)" = "$(sha_of "$app_dist/akam2k_rtsp")" ] || die "akam2k_rtsp does not match its BUILDINFO.txt"
-[ "$(abi source_sha256)" = "$(sh "$HERE/source_hash.sh")" ] || die "akam2k_rtsp was not built from the current sources"
-[ "$(abi sntp_sha256)" = "$(sha_of "$app_dist/akam2k_sntp")" ] || die "akam2k_sntp does not match its BUILDINFO.txt"
-[ "$(abi sntp_source_sha256)" = "$(sh "$HERE/source_hash.sh" sntp)" ] || die "akam2k_sntp was not built from the current sntp sources"
-for b in akam2k_rtsp akam2k_sntp; do
+[ "$(abi sha256)" = "$(sha_of "$app_dist/akamd")" ] || die "akamd does not match its BUILDINFO.txt"
+[ "$(abi source_sha256)" = "$(sh "$HERE/source_hash.sh")" ] || die "akamd was not built from the current sources"
+[ "$(abi sntp_sha256)" = "$(sha_of "$app_dist/akam-sntp")" ] || die "akam-sntp does not match its BUILDINFO.txt"
+[ "$(abi sntp_source_sha256)" = "$(sh "$HERE/source_hash.sh" sntp)" ] || die "akam-sntp was not built from the current sntp sources"
+for b in akamd akam-sntp; do
     head -c 4096 "$app_dist/$b" | grep -a -q '/lib/ld-uClibc\.so\.0' || die "$b does not request /lib/ld-uClibc.so.0"
     [ "$(od -An -tu1 -j18 -N2 "$app_dist/$b" | tr -s ' ' | sed 's/^ //')" = "40 0" ] || die "$b is not an ARM executable"
 done
@@ -128,11 +128,11 @@ install -m 755 "$REPO/src/scripts/akam_ntp.sh" "$ak/akam_ntp.sh"
 install -m 755 "$REPO/src/scripts/akam_hostname.sh" "$ak/akam_hostname.sh"
 install -m 755 "$dbear_dist/dropbearmulti" "$ak/dropbearmulti"
 install -m 755 "$bb" "$ak/busybox"
-install -m 755 "$app_dist/akam2k_rtsp" "$ak/bin/akam2k_rtsp"
-install -m 644 "$app_dist/BUILDINFO.txt" "$ak/bin/akam2k_rtsp.BUILDINFO"
-install -m 755 "$app_dist/akam2k_sntp" "$ak/bin/akam2k_sntp"
-printf 'tool=akam2k_sntp\nsha256=%s\n' "$(abi sntp_sha256)" >"$ak/bin/akam2k_sntp.BUILDINFO"
-chmod 644 "$ak/bin/akam2k_sntp.BUILDINFO"
+install -m 755 "$app_dist/akamd" "$ak/bin/akamd"
+install -m 644 "$app_dist/BUILDINFO.txt" "$ak/bin/akamd.BUILDINFO"
+install -m 755 "$app_dist/akam-sntp" "$ak/bin/akam-sntp"
+printf 'tool=akam-sntp\nsha256=%s\n' "$(abi sntp_sha256)" >"$ak/bin/akam-sntp.BUILDINFO"
+chmod 644 "$ak/bin/akam-sntp.BUILDINFO"
 for f in "$ak"/*.sh; do sh -n "$f" || die "$f has a syntax error"; done
 
 # yy_cam: a launcher of the stub. start.sh runs it (when nvram STATUS=active); the SD overlay bind-mounts its own
@@ -189,8 +189,8 @@ echo "$sign" >"$out/appfs_sign.txt"
     echo "mksquashfs=$(mksquashfs -version | head -n1)"
     echo "params=-comp xz -b 131072 -noappend -xattrs -all-root -mkfs-time $MKFS_TIME -all-time $MKFS_TIME"
     echo "stock_backup_sha256=$(sha_of "$backup")"
-    echo "akam2k_rtsp_sha256=$(abi sha256)"
-    echo "akam2k_sntp_sha256=$(abi sntp_sha256)"
+    echo "akamd_sha256=$(abi sha256)"
+    echo "akam_sntp_sha256=$(abi sntp_sha256)"
     echo "app_source_sha256=$(abi source_sha256)"
     echo "dropbearmulti_sha256=$(dbi sha256_stripped)"
     echo "busybox_sha256=$BB_SHA256"

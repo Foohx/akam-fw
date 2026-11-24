@@ -1,4 +1,4 @@
-/* Host test of the raw recorder (akam2k.conf track_debug=2, track.c): the live tracker is fed a walker with head boxes, the recorder writes /tmp/akam2k_track.raw (C, I, R, D lines),
+/* Host test of the raw recorder (akam.conf track_debug=2, track.c): the live tracker is fed a walker with head boxes, the recorder writes /tmp/akam2k_track.raw (C, I, R, D lines),
  * and tests/rot2k_track_replay.c replays the I lines: the replay must make the SAME decision as the live tracker on every tick (kind, directions, divisors). Also the line formats, the
  * rolling bound of the file, and that level 1 / 0 write no raw file. Build: tests/rot2k_overlay_test.sh. Prints "rot2k track rec unit: N failed". */
 #define REPLAY_LIB 1

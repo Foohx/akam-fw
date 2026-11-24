@@ -13,6 +13,7 @@
 #include "api_httpd.h"
 #include "api_keys.h"
 #include "cfg_file.h"
+#include "control.h"
 #include "leds.h"
 #include "night.h"
 #include "version.h"
@@ -154,6 +155,7 @@ static void do_patch(a2k_job_t *j)
 static const a2k_action_info_t g_actions[] = {
     { "led.blip", AKEY_WRITE, "pattern:<on|off|N:on_ms:off_ms:pause_ms>,ms:1..60000 (default 5000)" },
     { "led.blip_stop", AKEY_WRITE, NULL },
+    { "audio.beep", AKEY_WRITE, NULL },
     { "settings.reset", AKEY_WRITE, "key:<setting key> | prefix:<key prefix>" },
 };
 #define N_ACTIONS (sizeof g_actions / sizeof g_actions[0])
@@ -269,6 +271,10 @@ static void run_action(a2k_job_t *j)
             job_err(j, 422, "args", "pattern is on, off or N:on_ms:off_ms:pause_ms (N 1..10, times from 50 ms); ms is 1..60000");
     } else if (!strcmp(j->name, "led.blip_stop")) {
         ledsys_blip_clear();
+    } else if (!strcmp(j->name, "audio.beep")) {
+        char m[200];
+        if (control_apply_setting("audio.out_test", "1", 1, m, sizeof m) != 0)
+            job_err(j, 422, "audio", strncmp(m, "ERR ", 4) ? "the speaker did not play the beep" : m + 4);
     } else if (!strcmp(j->name, "settings.reset")) {
         act_reset(j);
     }

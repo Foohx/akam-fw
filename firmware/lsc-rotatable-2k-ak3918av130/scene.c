@@ -666,6 +666,10 @@ static int hook_drift4(uint32_t pan, uint32_t tilt, int64_t min_frame_ms, int *d
                 a2k_log("ptz: drift check: the live frame is dark (mean luma %lu): nothing can be judged", sum / ((unsigned long)w * h));
                 return A2K_DRIFT_SKIP;
             }
+            if (cross) { /* the reference was taken in the other light mode: an IR-lit (mono) plain wall is flat against a day reference whether or not the head slipped, so a flat view is no evidence; the check stays owed until a same-mode reference exists */
+                a2k_log("ptz: drift check: flat view against a %s reference while the live view is %s: not evidence of a slip, skipped (no re-home)", ri ? "night" : "day", mode ? "night" : "day");
+                return A2K_DRIFT_SKIP;
+            }
             if (full_after(g_dcur, &w2, &h2, t1 + 500, &t2, 3000) != 0) {
                 a2k_log("ptz: drift check: no second frame to confirm the flat view: inconclusive");
                 return A2K_DRIFT_INCONC;

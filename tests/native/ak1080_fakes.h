@@ -24,6 +24,22 @@
 #include "version.h"
 #include "video_cfg.h"
 #include "video_ctl.h"
+#include "image_orient.h"
+
+/* The ISP behind image_orient.c (the module is the REAL one; its ISP call is replaced by fake_orient_hw below). */
+int isp_pipeline_ready(void) { return 1; }
+void isp_cfg_lock(void) {}
+void isp_cfg_unlock(void) {}
+int isp_tunnel(uint32_t cmd, void *payload) { (void)cmd; (void)payload; return 0; }
+__attribute__((unused)) static int g_orient_hw_calls, g_orient_hw_fail, g_orient_hw_f = -1, g_orient_hw_m = -1;
+__attribute__((unused)) static int fake_orient_hw(int f, int m)
+{
+    g_orient_hw_calls++;
+    if (g_orient_hw_fail) return -1;
+    g_orient_hw_f = f;
+    g_orient_hw_m = m;
+    return 0;
+}
 
 /* ------------------------------------------------------------------ stubs: the modules the rows are built on */
 static char g_root[80];
@@ -34,6 +50,10 @@ static char g_led_status[8] = "on", g_ir[8] = "auto";
 static int g_video[5] = { 1536, 15, 2, 28, 43 }; /* bitrate fps gop minqp maxqp */
 static int g_rssi = -1;
 static int g_fail_apply;
+static int g_fail_save; /* the module applies the value but cannot write its file: "(not saved: ...)" even for a saved write */
+/* audio, white balance and the LAN opt-in of the text port (the modules behind control_get_value / control_apply_setting) */
+static int g_audio_vol = 100, g_audio_out = 1, g_audio_talk = 1, g_audio_mic, g_beeps, g_lan;
+static char g_wb[8] = "conf";
 
 static int key_slot(const char *k)
 {
@@ -59,12 +79,18 @@ int control_apply_setting(const char *key, const char *value, int persist, char 
     int s = key_slot(key);
     if (s >= 0) {
         g_vals[s] = atoi(value);
-        snprintf(msg, cap, "OK %s=%d%s", key, g_vals[s], persist ? "" : " (not saved: stub)");
+        snprintf(msg, cap, "OK %s=%d%s", key, g_vals[s], (persist && !g_fail_save) ? "" : " (not saved: stub)");
         return 0;
     }
     if (!strcmp(key, "night.mode")) { snprintf(g_night_mode, sizeof g_night_mode, "%s", value); snprintf(msg, cap, "OK night.mode=%s", value); return 0; }
     if (!strcmp(key, "led.status")) { snprintf(g_led_status, sizeof g_led_status, "%s", value); snprintf(msg, cap, "OK led.status=%s", value); return 0; }
     if (!strcmp(key, "night.ir_led")) { snprintf(g_ir, sizeof g_ir, "%s", value); snprintf(msg, cap, "OK night.ir_led=%s", value); return 0; }
+    if (!strcmp(key, "audio.out_volume")) { g_audio_vol = atoi(value); snprintf(msg, cap, "OK %s=%d", key, g_audio_vol); return 0; }
+    if (!strcmp(key, "audio.out_enable")) { g_audio_out = atoi(value); snprintf(msg, cap, "OK %s=%d%s", key, g_audio_out, g_audio_out ? " (restart to apply)" : ""); return 0; }
+    if (!strcmp(key, "audio.talk_enable")) { g_audio_talk = atoi(value); snprintf(msg, cap, "OK %s=%d", key, g_audio_talk); return 0; }
+    if (!strcmp(key, "audio.mic_enable")) { g_audio_mic = atoi(value); snprintf(msg, cap, "OK %s=%d (restart to apply)", key, g_audio_mic); return 0; }
+    if (!strcmp(key, "audio.out_test")) { g_beeps++; snprintf(msg, cap, "OK audio.out_test=1"); return 0; }
+    if (!strcmp(key, "img.wb")) { snprintf(g_wb, sizeof g_wb, "%s", value); snprintf(msg, cap, "OK img.wb=%s", value); return 0; }
     if (!strncmp(key, "video.", 6)) {
         int i = !strcmp(key, "video.bitrate_cfg") ? 0 : !strcmp(key, "video.fps_cfg") ? 1 : !strcmp(key, "video.gop_cfg") ? 2
                 : !strcmp(key, "video.minqp_cfg") ? 3 : 4;
@@ -75,6 +101,22 @@ int control_apply_setting(const char *key, const char *value, int persist, char 
     snprintf(msg, cap, "ERR unknown param %s", key);
     return -1;
 }
+
+int control_get_value(const char *key, char *out, size_t cap)
+{
+    if (!strcmp(key, "audio.out_volume")) return snprintf(out, cap, "%d", g_audio_vol), 0;
+    if (!strcmp(key, "audio.out_enable")) return snprintf(out, cap, "%d", g_audio_out), 0;
+    if (!strcmp(key, "audio.talk_enable")) return snprintf(out, cap, "%d", g_audio_talk), 0;
+    if (!strcmp(key, "audio.mic_enable")) return snprintf(out, cap, "%d", g_audio_mic), 0;
+    if (!strcmp(key, "audio.out_state")) return snprintf(out, cap, "idle"), 0;
+    if (!strcmp(key, "audio.out_underruns")) return snprintf(out, cap, "3"), 0;
+    if (!strcmp(key, "audio.out_drops")) return snprintf(out, cap, "1"), 0;
+    if (!strcmp(key, "led.state")) return snprintf(out, cap, "solid"), 0;
+    if (!strcmp(key, "img.wb")) return snprintf(out, cap, "%s", g_wb), 0;
+    return -1;
+}
+int control_lan_get(void) { return g_lan; }
+int control_lan_set(int on) { g_lan = on ? 1 : 0; return 0; }
 
 int video_ctl_get(const char *key, char *out, size_t cap)
 {
@@ -111,7 +153,7 @@ int ctl_sys_get(const char *key, char *out, size_t cap)
 {
     static const struct { const char *k, *v; } t[] = {
         { "sys.cpu_pct", "37" }, { "sys.load1_x100", "12" }, { "sys.mem_total_kb", "57344" }, { "sys.mem_avail_kb", "21000" },
-        { "sys.uptime_s", "86400" }, { "sys.time_set", "1" }, { "net.wifi_lq", "70" }, { "rtsp.clients", "1" }, { "rtsp.auth", "on" },
+        { "sys.uptime_s", "86400" }, { "sys.time_set", "1" }, { "net.wifi_lq", "70" }, { "net.ssid", "my net" }, { "rtsp.clients", "1" }, { "rtsp.auth", "on" },
         { "rtsp.skipped_frames", "2" }, { "video.fps_actual", "unknown" }, { "video.bitrate", "0" },
     };
     if (!strcmp(key, "net.wifi_rssi")) { if (g_rssi >= 0) return -1; snprintf(out, cap, "unknown"); return 0; }

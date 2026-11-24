@@ -1,4 +1,4 @@
-/* MQTT service of ak_rtsp: the optional, outbound-only client that publishes the camera to a broker and takes the
+/* MQTT service of akamd: the optional, outbound-only client that publishes the camera to a broker and takes the
  * allow-listed commands of mqtt_ha.h (specs/mqtt.md). Same on/off wiring as ONVIF (onvif_cfg.h).
  *
  * Config file /etc/config/akam/mqtt, written by akam_mqtt.sh: key=value lines, LF (a trailing CR is tolerated), at

@@ -298,7 +298,7 @@ func (a *App) menuEntries() []menuEntry {
 	tool("Camera: show picture settings", "Brightness, contrast, saturation, sharpness (read-only).", "picture")
 	tool("Camera: video password status", "Whether the stream asks for a password (read-only).", "rtsp-auth", "status")
 	tool("Camera: ONVIF status", "Whether ONVIF is on (read-only).", "onvif", "status")
-	tool("Camera: debug status", "Whether port 8091 accepts writes from the network (read-only).", "debug", "status")
+	tool("Camera: text port 8091", "Whether the text control port is open to the network (read-only).", "control-port", "status")
 	tool("Camera: talk test tone", "Plays a 2 second tone on the camera's speaker.", "talk", "test")
 	tool("Cameras", "List the cameras you set up.", "cameras")
 	return out

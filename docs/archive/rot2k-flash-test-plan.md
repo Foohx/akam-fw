@@ -1,5 +1,7 @@
 # Card-less flash: staged test plan (rot2k)
 
+> **Superseded (2026-11-24).** The staged plan was carried out (card-less boot since 2026-11-15); "Nothing here has been run" was true when it was written. The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and findings only; do not read its status as current.
+
 > Archived document (2026-11): historical, kept for its findings. Paths and status may predate the repository reorganisation (old to new table: `tools/dev/path-map.txt`); current docs are in [docs/README.md](../README.md).
 
 Goal: eventually boot Akam from internal flash (appfs/mtd3) with no SD card. This file is the **staged,

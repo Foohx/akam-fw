@@ -44,7 +44,11 @@ func TestParityWithVerifyKitSh(t *testing.T) {
 		{"unsigned refused", kittest.Spec{Unsigned: true}, nil, nil},
 		{"unsigned allowed", kittest.Spec{Unsigned: true}, []string{"--allow-unsigned"}, allowUnsigned},
 		{"bad sums digest", kittest.Spec{BadSumsLine: true}, nil, nil},
-		{"unsupported format", kittest.Spec{Format: "2"}, nil, nil},
+		{"unsupported format", kittest.Spec{Format: "3"}, nil, nil},
+		// kit_format 1 (firmware 0.1.x) carries the program as bin/ak_rtsp; format 2 as bin/akamd
+		{"format 1 with the old program name", kittest.Spec{Format: "1", Files: map[string][]byte{"bin/akamd": nil, "bin/ak_rtsp": []byte("ak_rtsp stand-in\n")}}, nil, nil},
+		{"format 1 with the new program name", kittest.Spec{Format: "1"}, nil, nil},
+		{"format 2 with the old program name", kittest.Spec{Files: map[string][]byte{"bin/akamd": nil, "bin/ak_rtsp": []byte("ak_rtsp stand-in\n")}}, nil, nil},
 		{"test grade refused", kittest.Spec{Grade: "test"}, nil, nil},
 		{"test grade allowed", kittest.Spec{Grade: "test"}, []string{"--allow-test-kit"}, allowTest},
 		{"time64 gate not pass", kittest.Spec{ManifestExtra: "time64_gate=fail\n"}, nil, nil},
@@ -70,7 +74,7 @@ func TestParityWithVerifyKitSh(t *testing.T) {
 		{"entry outside top", kittest.Spec{TarMutate: add(kittest.Entry{Name: "other/x", Type: tar.TypeReg, Mode: 0o644})}, nil, nil},
 		{"tampered file", kittest.Spec{TarMutate: func(e *[]kittest.Entry) {
 			for i := range *e {
-				if strings.HasSuffix((*e)[i].Name, "bin/ak_rtsp") {
+				if strings.HasSuffix((*e)[i].Name, "bin/akamd") {
 					(*e)[i].Body = []byte("evil\n")
 				}
 			}

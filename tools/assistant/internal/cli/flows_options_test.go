@@ -83,7 +83,8 @@ func TestOptionsLedMicAndAnOptionTheImageLacks(t *testing.T) {
 	e := newEnv(t)
 	e.needHelpers()
 	e.rememberCamera("salon", "127.0.0.1")
-	e.cam.SetCtl("video.gop_cfg", "-") // an older image: ERR for that key
+	e.cam.SetCtl("video.gop_cfg", "-")    // an older image: ERR for that key
+	e.cam.SetCtl("audio.mic_enable", "1") // the fake follows the firmware default (off); this test turns an enabled microphone off
 	r := e.run("3\n1\n1\n2\n4\n6\n8\n10\n", "--camera", "salon")
 	expectRC(t, r, 0)
 	contains(t, r.out, "Front LED: off (applies now; saved on the camera).")

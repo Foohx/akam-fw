@@ -19,6 +19,7 @@
 #include "video.h"
 #include "vlive.h"
 #include "isptest.h"
+#include "picture.h"
 #include "rtp_clock.h"
 
 #define NCHN 2
@@ -585,6 +586,7 @@ int a2k_cap_start(const struct a2k_cap_cfg *cfg, a2k_stream_t *s[2])
     }
     if (g_st.det_chn_on)
         (void)a2k_detect_start(&cfg->det); /* failure is logged there and never affects the streams */
+    a2k_pic_init(&g_it_ops); /* saturation, denoise and white balance rows (picture.h) */
     if (cfg->isp_test && a2k_isptest_start(&g_it_ops) != 0)
         a2k_log("isp-test: the poll thread could not start (the app goes on without the hook)");
     return 0;
@@ -691,6 +693,7 @@ int a2k_isp_mode(int night)
             (void)a2k_isp_flip_mirror(f, m);
             a2k_orient_hold();
         }
+        (void)a2k_pic_replay(night ? 1 : 0); /* the conf set was reloaded: saturation, denoise and white balance are put back (picture.h) */
     }
     a2k_orient_isp_unlock();
     for (int c = 0; c < NCHN; c++)

@@ -28,15 +28,15 @@ Status: **validated on 2 units** (article `3215672.3`, label `SI D26228`). The r
 
 ## What runs on the camera
 
-One application, `ak_rtsp`, started by the stock watchdog in place of `anyka_ipc`: video, audio, RTSP, ONVIF, MQTT, control
+One application, `akamd`, started by the stock watchdog in place of `anyka_ipc`: video, audio, RTSP, ONVIF, MQTT, control
 ports, signed API, day/night and LEDs. Key-only SSH. Stock boot chain, U-Boot, kernel and drivers kept.
 Full table: [on the camera](on-camera.md). Settings and API: [control API](control-api.md), [features](../../features.md).
 
 ## Install
 
 1. Read [compatible cameras](../../compatible-cameras.md) and the risks in the [README](../../../README.md#safety-and-recovery).
-2. Run `./akam` (or the `akam` binary): backup of all 8 partitions, image built from your backup plus the signed kit, flash
-   by SSH or by the maintenance shell, verification. [Wizard guide](../../wizard_guide.md), [assistant](../../assistant.md).
+2. Run `akam` ([install guide](../../install.md)): backup of all 8 partitions, image built from your backup plus the signed kit, flash
+   by SSH or by the maintenance shell, verification. [What each step does](../../wizard_guide.md#what-the-wizard-does), [assistant](../../assistant.md).
 3. Manual route: [back up](../../manual/backup-sd.md), [build the image](../../manual/build.md),
    [flash and restore](../../manual/flash-and-restore.md).
 
@@ -54,6 +54,7 @@ Full table: [on the camera](on-camera.md). Settings and API: [control API](contr
 ## Known limits
 
 - One RTSP client at a time (a second gets 503): put go2rtc or MediaMTX in front.
-- One stream only (no sub stream), no snapshots, no motion detection, no recording to microSD.
+- One stream only (`/stream1` is the same picture as `/stream0`, on purpose), no snapshots, no motion detection, no recording to microSD.
+- Flip, mirror and ceiling mount (`image.flip`, `image.mirror`, `image.ceiling`) are new and **not yet hardware-validated on the 1080p**: [how they work](../../../specs/video-and-streaming.md#57-flip-and-mirror-reverse-engineering-of-2026-11-23-not-yet-hardware-validated-on-the-1080p), checks O1080-1 to O1080-11 of the [hardware checklist](../../hardware-test-checklists.md#1080p-picture-orientation-flip-mirror-ceiling-mount).
 - MQTT and the signed API are host-tested only; the encoder watchdog and the Wi-Fi supervisor were never triggered on hardware.
 - Details per feature: [features](../../features.md), [testing status](../../testing-status.md).

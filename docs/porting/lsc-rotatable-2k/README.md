@@ -4,8 +4,9 @@ Entry page of this camera. The 1080p has the same page with the same sections: [
 Source of the model definition: [`firmware/lsc-rotatable-2k-ak3918av130`](../../../firmware/lsc-rotatable-2k-ak3918av130)
 and [`platforms/anyka-ak3918av130`](../../../platforms/anyka-ak3918av130).
 
-Status: **validated on 1 unit** (article `3225722`, label `SZ G26312`), card-less boot since 2026-11-15; the current build
-runs on it since 2026-11-22 ([testing status](../../testing-status.md#which-build-the-hardware-results-come-from)).
+Status: **validated on 1 unit** (article `3225722`, label `SZ G26312`), card-less boot since 2026-11-15. It runs a build from
+2026-11-23 (before the `akamd` rename); the build of the current tree is not flashed
+([testing status](../../testing-status.md#which-build-the-hardware-results-come-from)). Step by step for both cameras: [install guide](../../install.md).
 
 ## Hardware
 
@@ -14,7 +15,7 @@ runs on it since 2026-11-22 ([testing status](../../testing-status.md#which-buil
 | SoC | Anyka AK3918AV130 (with NPU), Linux 4.4.302-cip94 |
 | Sensor, Wi-Fi | SC1346 (from the ISP configuration file), ATBM6132C |
 | Flash | 8 MiB SPI NOR, 6 partitions: `mtd0` U-Boot, `mtd1` kernel, `mtd2` rootfs, `mtd3` appfs, `mtd4` config (jffs2), `mtd5` factory |
-| Motor, audio, LEDs | pan/tilt motor, microphone, speaker (present, not driven by Akam), status LED and IR LEDs, front button |
+| Motor, audio, LEDs | pan/tilt motor, microphone, speaker (beep and talk checked on the camera on 2026-11-23), status LED and IR LEDs, front button |
 | Features compiled in | system, light, API, ONVIF, PTZ, button, scene, patrol, tracking (`firmware/lsc-rotatable-2k-ak3918av130/model.mk`) |
 
 ## Stock firmware findings
@@ -26,12 +27,12 @@ Offline reverse engineering of your own backup and checks on the camera; no vend
 - Flash write protection and signature: [flash signature findings](flash-signature-findings.md).
 - Motor: [PTZ findings](ptz-findings.md). NPU and detection: [NPU findings](npu-findings.md), [NPU models](npu-models.md),
   [own-app AI](ai-own-app.md). Audio: [audio findings](audio-findings.md). Image: [ISP controls](isp-controls.md),
-  [video live parameters](venc-live-params.md). Light and button: [hal_light](hal-light.md), [button and zones](button-and-zones.md).
+  [video live parameters](venc-live-params.md), [video latency](video-latency.md). Light and button: [hal_light](hal-light.md), [button and zones](button-and-zones.md).
 - Historical plans: [docs/archive](../../archive/README.md).
 
 ## What runs on the camera
 
-One application, `akam2k_rtsp`, in place of the stock `yy_cam`: two RTSP streams (`/stream0` 2304x1296, `/stream1` 640x360),
+One application, `akamd`, in place of the stock `yy_cam`: two RTSP streams (`/stream0` 2304x1296, `/stream1` 640x360),
 NPU person detection, pan/tilt, tracking, patrol, ONVIF, MQTT, the signed API, LEDs, night mode, button. Key-only SSH.
 Vendor libraries, drivers, kernel and U-Boot are kept. Boot chain and files: [on the camera](on-camera.md).
 What to do after the install (stream password, MQTT, ONVIF, settings file): [using the 2K](using-the-2k.md).
@@ -39,31 +40,31 @@ Settings and API: [control API](control-api.md), [network settings](net-settings
 
 ## Install
 
-**Status: the 2K commands of the Go `akam` program (the bash `./akam` has none) have passed host tests only, on fake
-cameras; none was run on the real camera (the firmware itself was flashed with the maintainer scripts; see
-[testing status](../../testing-status.md#which-build-the-hardware-results-come-from)). Have a UART or a CH341A at hand
-([UART recovery](uart-recovery.md)).** Get the program from the
-[assistant releases](https://github.com/Foohx/akam-fw/releases?q=assistant-v) (see the
-[README quick start](../../../README.md#quick-start)); install from Linux, a first install from macOS or Windows has
-never been done.
+**Status: the 2K commands of the Go `akam` program have passed host tests only (fake cameras); none was run on the real camera. The
+firmware itself was flashed with the maintainer scripts. Have a UART or a CH341A at hand** ([UART recovery](uart-recovery.md)). Get the
+program from the [assistant releases](https://github.com/Foohx/akam-fw/releases?q=assistant-v) and check it ([install guide](../../install.md#2-get-the-akam-program));
+install from Linux, a first install from macOS or Windows has never been done.
 
 The order matters. A stock 2K has no SSH, so the card comes first: it is what gives you a shell.
 
 1. **Card.** `prepare-2k-sd` downloads the newest signed 2K kit, verifies it, and writes the first-install card (it asks the
    SSH key, the Wi-Fi and the device). The camera boots Akam from it with **no flash write**. The card holds your Wi-Fi key
-   and SSH public key, and disables the rescue telnet (`akam/no_telnet`) by default; only `--rescue-telnet` keeps a
-   passwordless root telnet on port 23, for a rescue card.
+   and SSH public key and has no rescue telnet (`akam/no_telnet`); only `--rescue-telnet` keeps a passwordless root telnet on
+   port 23, for a rescue card. *You will see:* every file of the card verified by sha256 after the write.
 2. **Boot from the card:** power the camera off, insert the card, power it on, wait about 3 minutes and find its address
-   (your router's list, or `akam find-camera`).
+   (your router's list, or `akam find-camera`). *You will see:* the address answers on SSH (port 22) with your key.
 3. **Backup.** `backup-2k` reads the six partitions over SSH, read only, each twice. Keep the folder private and a second
-   copy elsewhere: `appfs-build` and every later `update` use it.
+   copy elsewhere: `appfs-build` and every later `update` use it. *You will see:* `mtd0.bin` to `mtd5.bin` and `SHA256SUMS` in a new folder.
 4. **Seed.** `seed-2k` copies the Wi-Fi settings and SSH key from the card into `/config/akam` (done on the camera over
    SSH, nothing shown, a file already there is never overwritten; see
    [card-less appfs, section 4](cardless-appfs.md#4-config-and-secrets-configakam-jffs2-persistent-never-the-image)).
-   **Without this step the card-less camera has no Wi-Fi and no SSH.** Optional: `key-2k` creates the API key of the assistant.
+   **Without this step the card-less camera has no Wi-Fi and no SSH.**
 5. **Build, then flash.** `appfs-build` builds the card-less image on your computer from your `mtd3.bin` and the same
    verified kit; `appfs-flash` rehearses by default and writes only with `--execute` (recovery question and typed
-   confirmation). You power-cycle the camera yourself afterwards, without the card.
+   confirmation). You power-cycle the camera yourself afterwards, without the card. *You will see:* the rehearsal prints the plan and
+   writes nothing; after the real write and the power cycle the camera rejoins Wi-Fi with no card and `/stream0` and `/stream1` play. Never cut the power during the flash.
+6. **Key.** After the first card-less boot, `key-2k` creates the API key of the assistant: **every settings command (`led`, `picture`,
+   `rtsp-auth`, `mqtt`...) and `update` need it.** Then set a stream password (`akam rtsp-auth set`).
 
 ```sh
 M=lsc-rotatable-2k-ak3918av130        # pass --model (the 2K commands refuse any other camera type)
@@ -75,6 +76,8 @@ akam seed-2k   --model $M --ip $IP                               # 4. once, befo
 akam appfs-build --model $M --backup-dir BACKUP_DIR --out IMAGE_DIR       # 5. downloads and verifies the kit
 akam appfs-flash --model $M --ip $IP --backup-dir BACKUP_DIR --image-dir IMAGE_DIR            # rehearsal
 akam appfs-flash --model $M --ip $IP --backup-dir BACKUP_DIR --image-dir IMAGE_DIR --execute  # the real write
+# power-cycle the camera yourself, without the card, then:
+akam key-2k --model $M --ip $IP                                  # 6. the API key (settings commands need it)
 ```
 
 Every command takes `--dry-run`. All of them verify the kit the same way: SHA256SUMS, the release signature and the model.
@@ -93,7 +96,7 @@ authenticated: you trust it entirely), or `--kit DIR` on `appfs-build`.
 ## Update
 
 `akam update` (rehearsal, typed confirmation, read-back compare, version check after the reboot; the previous image is kept).
-Details: [assistant](../../assistant.md#install-and-update-of-the-2k-from-the-assistant-prepare-2k-sd-update).
+Details: [the assistant's 2K flows](../../assistant/rot2k-flows.md).
 Host-tested only. Without `--kit` it downloads the newest signed release that carries the 2K kit (see Install if there is none).
 
 ## Recovery
@@ -128,7 +131,7 @@ The `/config` partition (`mtd4`) keeps `/config/akam` (Wi-Fi, SSH key, API keys)
 
 ## Known limits
 
-- No speaker output (no talk), no recording to microSD, no generic motion detection (person presence events only); the microphone track is opt-in. 5 GHz Wi-Fi is untested.
+- Saturation, denoise and white balance are implemented but **not yet validated on a camera** (the camera's own value until you set them; see [using the 2K](using-the-2k.md#7-speaker-two-way-audio-and-picture-settings)). The speaker is validated in part (beep and talk, 2026-11-23) and is off until you turn it on; there are no MQTT entities for it yet. No recording to microSD, no generic motion detection (person presence events only); the microphone track is opt-in. 5 GHz Wi-Fi is untested.
 - ONVIF on the 2K, MQTT, the signed API and the network settings were not all exercised on the camera: see
   [testing status](../../testing-status.md) and each page's status line.
 - The 2K commands of the assistant were never run on the real camera (`prepare-2k-sd`, `backup-2k`, `key-2k`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`, `update --rollback`).

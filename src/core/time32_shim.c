@@ -12,7 +12,7 @@
  * Our binaries are built against musl >= 1.2 with a 64-bit time_t, and musl's
  * clock_gettime() tries syscall 403 first and only falls back to 263 on
  * ENOSYS. It therefore never falls back and hands the caller an unwritten
- * buffer: every monotonic timeout (Dropbear, the ak_rtsp day/night lock) was
+ * buffer: every monotonic timeout (Dropbear, the akamd day/night lock) was
  * garbage.
  *
  * WHAT

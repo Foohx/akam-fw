@@ -178,7 +178,7 @@ func (a *App) modelGate(what string) error {
 			continue
 		}
 		return a.UI.Fail(fmt.Sprintf("'%s' is not yet supported for this model: %s.", what, models.Label(m.ID)),
-			"nothing was changed on the camera. "+m.Unsupported()+". Flows for this model are planned (docs/assistant-rot2k-flash-design.md); see docs/compatible-cameras.md.")
+			"nothing was changed on the camera. "+m.Unsupported()+". This command is written for the 1080p; see docs/compatible-cameras.md.")
 	}
 	return nil
 }
@@ -188,7 +188,7 @@ var gatedCommands = map[string]bool{
 	"backup": true, "restore": true, "update": true, "verify": true, "image": true, "flash": true, "get-kit": true,
 	"prepare-backup-sd": true, "prepare-flash-sd": true, "config": true, "mqtt": true, "audio": true, "picture": true,
 	"video": true, "ntp": true, "talk": true, "say": true, "led": true, "onvif": true, "key": true, "rtsp-auth": true,
-	"hostname": true, "debug": true,
+	"hostname": true, "control-port": true, "api-key": true,
 }
 
 // gatedActions are the home-screen actions that do (setup, update, options, backup, configs).

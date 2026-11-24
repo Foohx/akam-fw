@@ -6,8 +6,8 @@ modules that own the settings, reachable through two doors:
 
 | Door | Port | Who | Rules |
 |---|---|---|---|
-| Text control port (the one the assistant and `./akam` use) | 8091 | LAN, read-only unless loopback or `DEBUG on` | unchanged: `LIST GET SET DEBUG ONVIF MQTT QUIT`, old key names, old replies. Keys it does not know are offered to the registry (section 2) |
-| Signed HTTP API (same protocol, keys, scopes, audit and rate limits as the 2K, see [../lsc-rotatable-2k/control-api.md](../lsc-rotatable-2k/control-api.md) and [specs/control-api.md](../../../specs/control-api.md)) | 8092 | LAN, HMAC key | opens only while an API key exists (section 3) |
+| Text control port (on-camera scripts, the PC tuning tool, monitoring) | 8091 | **127.0.0.1 only** by default; the saved opt-in `control.lan` opens it to the LAN (then read-only from the network unless `DEBUG on`, a loopback command) | unchanged: `LIST GET SET DEBUG ONVIF MQTT QUIT`, old key names, old replies. Keys it does not know are offered to the registry (section 2). The assistant does not use it |
+| Signed HTTP API (same protocol, keys, scopes, audit and rate limits as the 2K, see [../lsc-rotatable-2k/control-api.md](../lsc-rotatable-2k/control-api.md) and [specs/control-api.md](../../../specs/control-api.md)) | 8092 | LAN, HMAC key | opens only while an API key exists (section 3). **The assistant (`./akam`) uses only this door**, for both cameras |
 
 The registry has no file of its own (the 2K's `/config/akam/settings` does not exist here): every row has `persist=0` in the
 registry sense and the module of the row keeps its own file under `/etc/config/akam`, written only when a user changes the value
@@ -28,6 +28,12 @@ default), not by a different name. "8091 name" is the key the text port has alwa
 | `night.mode` | `auto\|day\|night` | `auto` | live | `night.mode` | `night.c`, `/etc/config/akam/night` |
 | `image.brightness`, `image.contrast`, `image.saturation`, `image.sharpness` | int -50..50 | 0, 0, 0, -15 | live | `isp.brightness` ... `isp.sharpness` | `control.c`/`isp_tune.c`, `/etc/config/akam/picture` |
 | `image.denoise` | int 0..4 (3D-NR bias, 0 = stock tables) | 2 | live | `isp.denoise` | same |
+| `img.wb` | `conf\|manual` (white balance: the stock block of `sensor_isp.conf`, or Akam's own) | `conf` | live | `img.wb` | `imgq.c`, `/etc/config/akam/image` |
+| `audio.out_volume` | int 0..100 | 100 | live | `audio.out_volume` | `audio_out.c`, `/etc/config/akam/audio_out` |
+| `audio.out_enable`, `audio.talk_enable` | bool | 1, 1 | live (`audio.out_enable` 1 answers `restart_component` when the device cannot be opened now) | `audio.out_enable`, `audio.talk_enable` | same |
+| `audio.mic_enable` | bool (off = no audio track in the stream) | 0 | restart_component (read at start) | `audio.mic_enable` | same |
+| `control.lan` | bool: the text port 8091 listens on the LAN too | 0 | restart_component (bound when `akamd` starts) | none (registry only) | `control.c`, `/etc/config/akam/control_lan` (file present = on; written only on a change) |
+| `image.flip`, `image.mirror`, `image.ceiling` | bool 0\|1 (vertical, horizontal, both; ceiling reads 1 only while both are on) | 0 | live (sensor readout flip through ISP tunnel command `0x40044979`, no restart) | the same names (rows with no old 8091 name; local only, a network write in DEBUG mode is refused) | `image_orient.c`, `/etc/config/akam/orient` (written only on a change, removed when both are off). **Not yet hardware-validated** |
 | `video0.kbps` | int 500..3000 (VBR+ ceiling, kbit/s) | 1536 | restart_component | `video.bitrate_cfg` | `video_ctl.c`, `/etc/config/akam/video` |
 | `video0.fps` | `10\|15\|20\|25` (30 is refused: dark, grey picture) | 15 | restart_component | `video.fps_cfg` | same |
 | `video0.gop` | int 1..4 (key frame interval in SECONDS; the 2K row is in frames) | 2 | restart_component | `video.gop_cfg` | same |
@@ -35,7 +41,9 @@ default), not by a different name. "8091 name" is the key the text port has alwa
 | `onvif.enabled` | bool | 0 | live (the service is reloaded) | `ONVIF reload` after editing the flag file | `onvif_cfg.c`; keeps the saved port (default 80); enabling is refused unless the service can start (the stream password is set, as `akam_onvif.sh` refuses) and the previous file is put back |
 | `mqtt.enabled` | bool | 0 | live (the service is reloaded) | `MQTT reload` | `mqtt_svc.c`; flips `enabled=` in an existing valid `/etc/config/akam/mqtt` only: no file = refused (configure the broker with `akam_mqtt.sh` first); the password never goes through the API |
 
-`restart_component` means: saved now, read by `ak_rtsp` at its next start (the kernel encoder has no proven live setter yet,
+A key whose value took effect but whose file could not be written answers `"saved":false` in the PATCH reply (the value is lost at the next reboot; the assistant says so, as the text port's "not saved" note did). The 2K saves its registry file later from a worker and retries, so its replies never carry the flag.
+
+`restart_component` means: saved now, read by `akamd` at its next start (the kernel encoder has no proven live setter yet,
 convergence P10). The state row `video0.cfg_pending` is 1 while the saved file differs from what runs. There is no restart action.
 
 ### State (read only, `read` scope)
@@ -54,8 +62,12 @@ convergence P10). The state row `video0.cfg_pending` is 1 while the saved file d
 | `net.hostname` | host name (read only here: change it with `akam_hostname.sh`) |
 | `net.ntp` | the servers of `/etc/config/akam/ntp` ("" while NTP is off; change with `akam_ntp.sh`) |
 | `api.keys` | number of API keys |
+| `net.ssid` | the name of the Wi-Fi network the camera is on (what any radio in range sees; the MAC and the address are not in the API) |
+| `net.wifi_rate` | link rate, Mb/s (`-1000000` = not known) |
+| `led.state` | what the front LED engine does now (`idle`, `solid`, ...) |
+| `audio.out_state`, `audio.out_underruns`, `audio.out_drops` | the speaker's state and counters |
 
-Identity data (`net.ssid`, `net.mac`, `net.ip`) is NOT in the registry: it stays on the 8091 port with its own remote-peer rule.
+Identity data other than the network name (`net.mac`, `net.ip`) is NOT in the registry: it stays on the 8091 port with its own remote-peer rule.
 
 ### Absent on purpose (hardware or radio the 1080p does not have)
 
@@ -90,7 +102,7 @@ What is specific to the 1080p:
 | | 1080p |
 |---|---|
 | Opens | **only while a key exists** in `/etc/config/akam/api_keys` (mode 0600). No key: no listener. A key file that others can read, or an invalid one, keeps it closed (the file is kept). Created or revoked keys open and close the port within about a second, without a restart |
-| First key | over SSH: `ak_rtsp --api-key new --scope admin --name assistant` (prints the id and the 64 hex secret ONCE), also `list` and `revoke ID\|NAME [--force]`. Runs before any hardware is touched, so it is safe while the camera streams. The assistant gets `akam api-key` later (the tool is the on-camera half) |
+| First key | over SSH: `akamd --api-key new --scope admin --name assistant` (prints the id and the 64 hex secret ONCE), also `list` and `revoke ID\|NAME [--force]`. Runs before any hardware is touched, so it is safe while the camera streams. The assistant runs exactly this over SSH for you (`./akam api-key`, also offered at the end of an install and at the first settings command of an existing install; `replace` revokes `assistant` first) and keeps the secret in its state folder (0600). It never prints it. An update does not touch `/etc/config/akam/api_keys` |
 | Threads | ONE HTTP thread (64 KiB stack, 1 s tick that stats the key file). No worker thread: a PATCH or an action runs inline on the HTTP thread (the setters are the 8091 ones). Connection buffers (12 KiB) are malloc'd at accept and freed at close; 4 connections, 3 per peer |
 | Flash | settings are saved by the modules, only when a value changes. A PATCH or `settings.reset` spends one token of a flash limiter (burst 6, then one per 20 s): when empty it is `429 flash_rate` with `Retry-After`, nothing applied (a refused PATCH gives its token back). The audit file `/etc/config/akam/audit` holds the last 20 WRITES, written at most twice at once then one per 30 s, never for reads. No periodic write of any kind |
 | Settings | the rows of section 1; `GET /schema` lists them with bounds, options, defaults, apply mode and scope |
@@ -101,12 +113,12 @@ What is specific to the 1080p:
 
 ```sh
 # over SSH, as root (no helper script on the 1080p yet):
-ak_rtsp --api-key new --scope admin --name assistant
+akamd --api-key new --scope admin --name assistant
 export AKAM_KEY_ID=… AKAM_KEY_SECRET=… AKAM_URL=http://192.0.2.10:8092
 H=$(tools/akam-api-sign.sh GET /akam/v1/state)   # then curl -H, see the 2K reference section 2
 ```
 
-Budget measured on the pinned zig build (stripped `ak_rtsp`, against `dev` 639d44a): see the golden file `tests/golden/ak_rtsp_1080p.sha256`
+Budget measured on the pinned zig build (stripped `akamd`, against `dev` 639d44a): see the golden file `tests/golden/lsc-indoor-1080p-ak3918.sha256`
 (every step records its delta). The RSS on a camera is **not measured yet** (checklist B in `docs/hardware-test-checklists.md`).
 
 ## 4. Tests

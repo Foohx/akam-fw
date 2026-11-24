@@ -38,7 +38,7 @@ type Spec struct {
 	Version string // default 1.0.0
 	Model   string // camera model id, default DefaultModel
 	Grade   string // default release
-	Format  string // default 1
+	Format  string // default 2 (format 1 is the 0.1.x layout: bin/ak_rtsp)
 	Target  string // MANIFEST target, default arm-linux-musleabi (the 1080p kit); the 2K kit says arm-linux
 	NoLink  bool   // no "link" line in the MANIFEST (the 2K kit has none)
 	// Files overrides or adds payload files (path inside the kit -> content, mode 644 unless it
@@ -102,7 +102,7 @@ func DefaultFiles() map[string][]byte { return DefaultFilesFor(DefaultModel) }
 func DefaultFilesFor(model string) map[string][]byte {
 	hw := []byte("# test list\nmodel=" + model + "\nvalidated|Test camera|soc|kernel|8 partitions|xz|" + strings.Repeat("ab", 32) + "\n")
 	return map[string][]byte{
-		"bin/ak_rtsp":                       []byte("ak_rtsp stand-in\n"),
+		"bin/akamd":                         []byte("akamd stand-in\n"),
 		"bin/dropbearmulti":                 []byte("dropbearmulti stand-in\n"),
 		"bin/flash_tool":                    []byte("#!/bin/sh\nflash_tool stand-in\n"),
 		"patches/patch_service_sh.sh":       []byte("#!/bin/sh\n"),
@@ -154,7 +154,7 @@ func Build(t testing.TB, dir string, sp Spec) Built {
 		sp.Grade = "release"
 	}
 	if sp.Format == "" {
-		sp.Format = "1"
+		sp.Format = "2"
 	}
 	if sp.HashAlg == "" {
 		sp.HashAlg = "sha256"

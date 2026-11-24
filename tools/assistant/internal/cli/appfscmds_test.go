@@ -157,7 +157,7 @@ func TestAppfsFlashExecuteNeedsATerminalAndConfirmations(t *testing.T) {
 // is not satisfied, so a build from it stops inside the builder, after the kit was verified and loaded).
 func build2KKit(t *testing.T, sp kittest.Spec) kittest.Built {
 	t.Helper()
-	files := map[string][]byte{"bin/ak_rtsp": nil, "bin/dropbearmulti": nil, "bin/flash_tool": nil, "patches/patch_service_sh.sh": nil,
+	files := map[string][]byte{"bin/akamd": nil, "bin/dropbearmulti": nil, "bin/flash_tool": nil, "patches/patch_service_sh.sh": nil,
 		"scripts/flash/akam_reflash_ssh.sh": nil, "scripts/flash/flash_guard.sh": nil, "scripts/flash/preflight_check.sh": nil,
 		"scripts/hwcheck/akam_hwcheck.sh": nil}
 	for _, p := range appfs.RequiredKitPaths() {

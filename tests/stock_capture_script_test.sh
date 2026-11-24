@@ -193,10 +193,10 @@ runscript --force check; rc=$?
 if [ "$rc" -eq 0 ]; then ok "--force accepts it with a warning"; else ko "--force exit $rc"; fi
 SHA=$STOCK_SHA_SAVE
 
-touch "$R/usr/bin/ak_rtsp"
+touch "$R/usr/bin/akamd"
 runscript check; rc=$?
-if [ "$rc" -ne 0 ]; then ok "an Akam camera is refused"; else ko "ak_rtsp present but check passed"; fi
-rm -f "$R/usr/bin/ak_rtsp"
+if [ "$rc" -ne 0 ]; then ok "an Akam camera is refused"; else ko "akamd present but check passed"; fi
+rm -f "$R/usr/bin/akamd"
 
 # --- full run ------------------------------------------------------------------------------------
 : >"$R/tmp/mount.log"

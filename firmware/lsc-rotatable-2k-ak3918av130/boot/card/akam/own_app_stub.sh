@@ -26,7 +26,7 @@
 # which is the safe direction. SIGKILL of the feeder never disarms: that is the deliberate "reset me" path.
 # The watchdog is not flash: a reset is a plain reboot, undone by the counter fallback or by removing the card.
 #
-# AUTO-START (after "healthy"): when akam/bin/akam2k_rtsp is on the card and the flag akam/no_app is absent, the stub
+# AUTO-START (after "healthy"): when akam/bin/akamd is on the card and the flag akam/no_app is absent, the stub
 # starts akam/own_app_run.sh in the background: a supervisor that verifies (sha256 against the BUILDINFO), copies to
 # /tmp and runs the app with restart, backoff and a crash limit, logging to a size-capped card log. It is a separate
 # process: a crash loop of the app can neither stop the feeder nor touch Wi-Fi, and when it gives up the camera stays
@@ -37,8 +37,8 @@
 # TIME SYNC (opt-in): the camera has no RTC and boots in 1970. When the card has the file akam/ntp (same format as the
 # 1080p: one `server=NAME` line per server, at most 3, a host name or an IPv4 address) the stub starts
 # `akam_ntp.sh run` (the shared 1080p script, copied unchanged to akam/akam_ntp.sh) detached after the network is
-# healthy. BusyBox here has no ntpd applet: AKAM_NTPD points at akam2k_sntp, a one-shot SNTP client from the card
-# (akam/bin/akam2k_sntp, sha256 checked against akam/bin/akam2k_sntp.BUILDINFO, run from a copy in /tmp). Without the
+# healthy. BusyBox here has no ntpd applet: AKAM_NTPD points at akam-sntp, a one-shot SNTP client from the card
+# (akam/bin/akam-sntp, sha256 checked against akam/bin/akam-sntp.BUILDINFO, run from a copy in /tmp). Without the
 # file: no process and no traffic. The helper is stopped with the stub.
 #
 # Writes only to /tmp and the card (boot counter, log). No flash, no nvram. Paths are prefixed by $AKAM_ROOT.
@@ -358,19 +358,19 @@ log own_app "own_app PoC-1 healthy"
 # 5b) opt-in time sync (see the header). Nothing here can fail the stub.
 start_ntp() {
     ntpd=""
-    if [ -f "$AK/bin/akam2k_sntp" ]; then
-        want=$(sed -n 's/^sha256=//p' "$AK/bin/akam2k_sntp.BUILDINFO" 2>/dev/null | head -n1)
-        got=$("$SD/busybox" sha256sum "$AK/bin/akam2k_sntp" 2>/dev/null | cut -d' ' -f1)
-        [ -n "$got" ] || got=$(sha256sum "$AK/bin/akam2k_sntp" 2>/dev/null | cut -d' ' -f1)
+    if [ -f "$AK/bin/akam-sntp" ]; then
+        want=$(sed -n 's/^sha256=//p' "$AK/bin/akam-sntp.BUILDINFO" 2>/dev/null | head -n1)
+        got=$("$SD/busybox" sha256sum "$AK/bin/akam-sntp" 2>/dev/null | cut -d' ' -f1)
+        [ -n "$got" ] || got=$(sha256sum "$AK/bin/akam-sntp" 2>/dev/null | cut -d' ' -f1)
         if [ -z "$want" ] || [ "$got" != "$want" ]; then
-            log own_app "time sync: akam2k_sntp refused (sha256 does not match akam/bin/akam2k_sntp.BUILDINFO)"
-        elif cp "$AK/bin/akam2k_sntp" "$TMP/akam2k_sntp" 2>/dev/null && chmod 755 "$TMP/akam2k_sntp"; then
-            ntpd=$TMP/akam2k_sntp
+            log own_app "time sync: akam-sntp refused (sha256 does not match akam/bin/akam-sntp.BUILDINFO)"
+        elif cp "$AK/bin/akam-sntp" "$TMP/akam-sntp" 2>/dev/null && chmod 755 "$TMP/akam-sntp"; then
+            ntpd=$TMP/akam-sntp
         else
-            log own_app "time sync: cannot copy akam2k_sntp to $TMP"
+            log own_app "time sync: cannot copy akam-sntp to $TMP"
         fi
     else
-        log own_app "time sync: no akam/bin/akam2k_sntp on the card (BusyBox has no ntpd): not started"
+        log own_app "time sync: no akam/bin/akam-sntp on the card (BusyBox has no ntpd): not started"
     fi
     [ -n "$ntpd" ] || return 0
     AKAM_NTPD=$ntpd AKAM_NTP_FILE=$AK/ntp AKAM_CONFIG_DIR=$SD AKAM_TMP_DIR=$TMP \
@@ -387,8 +387,8 @@ else
 fi
 
 # 6) the app, under its supervisor (see the header). Nothing here can fail the stub.
-if [ ! -f "$AK/bin/akam2k_rtsp" ]; then
-    log own_app "no akam/bin/akam2k_rtsp on the card: no app started"
+if [ ! -f "$AK/bin/akamd" ]; then
+    log own_app "no akam/bin/akamd on the card: no app started"
 elif flag no_app; then
     log own_app "flag akam/no_app: app not started"
 elif [ ! -f "$AK/own_app_run.sh" ]; then

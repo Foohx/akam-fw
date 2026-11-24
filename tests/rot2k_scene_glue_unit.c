@@ -310,6 +310,24 @@ static void drift_ref_tests(const a2k_ptz_scene_t *h)
     usleep(300000);
     v = h->drift4(HOME_PAN, HOME_TILT, 0, &dxq, &dyq);
     CHECK(v != A2K_DRIFT_OK && v != A2K_DRIFT_SHIFT, "a shift beyond the range is no correction (recal / inconclusive)");
+    /* a flat night view (IR, plain wall) against the day-only reference is no slip evidence: a skip, never FLAT (no re-home) */
+    g_night = 1;
+    {
+        int x, y;
+        pthread_mutex_lock(&fmu);
+        for (y = 0; y < 192; y++)
+            for (x = 0; x < 320; x++)
+                fpl[0][y][x] = 128;
+        pthread_mutex_unlock(&fmu);
+    }
+    usleep(300000);
+    v = h->drift4(HOME_PAN, HOME_TILT, 0, &dxq, &dyq);
+    CHECK(v == A2K_DRIFT_SKIP, "night: a flat view against a day-mode reference only is a skip, never FLAT (no false re-home)");
+    a2k_scene_drift_ref_info(&caps, &bridges, &have_day, &have_night);
+    CHECK(!have_night, "night: the flat view did not become a night reference");
+    g_night = 0;
+    dm_render(0, 0, 0);
+    usleep(300000);
     /* the night mode with the day reference: the one reference works across modes; the proven view becomes the night reference (bridge) */
     g_night = 1;
     dm_render(0, 0, 1);

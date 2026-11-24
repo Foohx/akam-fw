@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Foohx/akam-fw/tools/assistant/internal/discover"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/kit"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testhook"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/ui"
@@ -121,8 +120,8 @@ func (a *App) fwNoteBuild(ip string) {
 	if a.St.Get("fw_pin") != "1" || a.UI.Dry() { // only the first verify after a write recorded here
 		return
 	}
-	if id, err := discover.Identify(a.Ctx, ip, a.ports().CTL, a.Hooks.Discover.Dial); err == nil && id.Version != "" {
-		a.setState("fw_build", ui.Sanitize(id.Version))
+	if v := a.cameraBuildID(ip); v != "" {
+		a.setState("fw_build", ui.Sanitize(v))
 		a.setState("fw_pin", "")
 	}
 }
@@ -313,8 +312,8 @@ func (a *App) currentFirmware(ip string, live bool) (text, ver string) {
 	raw := ui.Sanitize(a.St.Get("camera_fw"))
 	fromCamera := false // raw was just read from the camera, not remembered from an earlier look
 	if live && !a.UI.Dry() && ip != "" {
-		if id, err := discover.Identify(a.Ctx, ip, a.ports().CTL, a.Hooks.Discover.Dial); err == nil && id.Version != "" {
-			raw, fromCamera = ui.Sanitize(id.Version), true
+		if v := a.cameraBuildID(ip); v != "" {
+			raw, fromCamera = ui.Sanitize(v), true
 		}
 	}
 	if v, ok := kit.ExtractVersion(raw); ok {

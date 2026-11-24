@@ -1,5 +1,5 @@
 /* stock_hook.c - LD_PRELOAD capture of what the STOCK vendor app anyka_ipc does to
- * the speaker, the GPIOs and the ISP, so ak_rtsp can mirror it. Read-only on the
+ * the speaker, the GPIOs and the ISP, so akamd can mirror it. Read-only on the
  * camera: it only observes and writes its own log files. Superset of isp_hook.c
  * (the ISP/VENC/AKPCM decoders are the very same code, #included below).
  *
@@ -995,7 +995,7 @@ __attribute__((noinline)) static void on_ioctl_tracked(int fd, struct fdi *f, un
  * Every ISP tunnel call (ioctl 0xc0cc5616) carries {flag, inner_cmd, payload pointer}; the
  * inner command number does not say how long the payload is. The sizes below are the real
  * struct sizes: the SET blocks are the module blocks of the stock sensor ISP file (the same
- * sizes ak_rtsp/isp.c sends), the GET ones come from ak_ioctls.h. Unknown commands are probed
+ * sizes akamd/isp.c sends), the GET ones come from ak_ioctls.h. Unknown commands are probed
  * with ISP_PROBE bytes. The payload is hashed and, when its content is new (and not more often
  * than ISP_*_MIN_MS per command), written in FULL to isp_blocks.bin with ONE writev() that
  * takes the bytes straight from the application's memory: no copy, no big stack frame, and a

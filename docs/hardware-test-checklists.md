@@ -3,21 +3,25 @@
 Tickable checklists for people who test Akam on real hardware. Tick a box only after you have seen the result on
 your own camera. What was already tested, and where: [testing status](testing-status.md).
 
+Check ids are unique: `API-` (2K control API), `O2K-` and `O1080-` (picture orientation), `L2K-` (2K latency), `SPK-`, `TALK-` and `PIC-` (2K
+speaker, talk and picture), `M` (MQTT), `B` and `C` (1080p remote control), `R` (rename). Camera checks are on this page; the checks of the
+`akam` program per operating system are in [assistant checks](hardware-checks-assistant.md).
+
 Send results as an issue or a pull request. Remove Wi-Fi names, passwords, MAC addresses and real IP addresses from
 anything you post. **Never attach a backup, a dump or an image.**
 
-## Camera checklist (acceptance)
+## LSC Indoor 1080p: camera checklist (acceptance)
 
 | # | Criterion | How to check | Done |
 |---|---|---|---|
 | 1 | Hardware reference confirmed (`3215672.3`, SI `D26228`) | Label; `/proc/mtd`; the wizard's hardware verdict ([backup guide](manual/backup-uart.md)) | [x]|
-| 2 | 8 partitions backed up with SHA-256 | `./akam backup`, or the [backup guide](manual/backup-uart.md) checklist | [x]|
+| 2 | 8 partitions backed up with SHA-256 | `akam backup`, or the [backup guide](manual/backup-uart.md) checklist | [x]|
 | 3 | Boots without a microSD | Remove the card after provisioning, power cycle, `ssh` in, `akam_hwcheck.sh` | [x]|
 | 4 | Wi-Fi connects automatically | Camera appears on the network after power-on; `wpa_supplicant` and `udhcpc` PASS in `akam_hwcheck.sh` | [x]|
 | 5 | H.264 1080p stream | `ffprobe rtsp://<camera-ip>:554/` and a viewer, 1920x1080 | [x]|
 | 6 | Microphone audible (the L16 track exists; listening still to do) | Listen to the stream audio | [ ] |
 | 7 | Night mode works | Cover the lens / darken the room: IR-cut switches, image stays usable | [x]|
-| 8 | Port 8091 works (read-only from the network) | `akam_hwcheck.sh` LIST check and `debug:` line, `nc <camera-ip> 8091` `GET` from the PC works and `SET` is refused, `./akam led` still works, `./akam debug on` then a PC `SET` works and stops after `off` | [x]|
+| 8 | Port 8091 works (read-only from the network) | **Old image only, ticked before the port was closed:** `nc <camera-ip> 8091` `GET` from the PC worked and `SET` was refused. The current behaviour (8091 on 127.0.0.1 only, the `control.lan` opt-in) is checks C1 and C7 below | [x] old image |
 | 9 | Dropbear starts by itself | `dropbear` PASS and port 22 PASS in `akam_hwcheck.sh`; `/tmp/akam_ssh.log` | [x]|
 | 10 | SSH root by key | `ssh -i ~/.ssh/akam root@<camera-ip>`; a password attempt must fail | [x]|
 | 11 | Persists after a power cut | Cut power, reconnect: same key accepted, same host fingerprint | [x]|
@@ -36,84 +40,211 @@ Assistant with its Mosquitto add-on.
 
 | # | Check | How | Done |
 |---|---|---|---|
-| M1 | Off by default: no thread, no socket | Fresh image, no MQTT file: `akam_hwcheck.sh` says `MQTT is off: ak_rtsp holds no outbound TCP connection`; `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || ls /proc/$p/task; done` (pidof also lists the kernel log filter) has the same number of threads as an image without MQTT (record both) | [ ] |
-| M2 | `./akam mqtt set` then `mqtt test` | Wrong password: test says refused; right password: test says ok; `mqtt status` shows `state: connected` | [ ] |
+| M1 | Off by default: no thread, no socket | Fresh image, no MQTT file: `akam_hwcheck.sh` says `MQTT is off: akamd holds no outbound TCP connection`; `for p in $(pidof akamd); do grep -qa akam_klog /proc/$p/cmdline || ls /proc/$p/task; done` (pidof also lists the kernel log filter) has the same number of threads as an image without MQTT (record both) | [ ] |
+| M2 | `akam mqtt set` then `mqtt test` | Wrong password: test says refused; right password: test says ok; `mqtt status` shows `state: connected` | [ ] |
 | M3 | Home Assistant entities | One device `akam-XXXX` with all entities of [the table](mqtt.md#3-what-home-assistant-gets); the MAC merges it with the ONVIF device if both are on | [ ] |
-| M4 | Controls work both ways | Each select, number, switch and button in Home Assistant changes the real LED, IR LEDs, night mode, volume (hear it), picture (see it), talk switch, beep; a change made with `./akam led status off` shows up in Home Assistant within about 2 s | [ ] |
-| M5 | Sensors plausible | Compare CPU load with `top`, Wi-Fi signal with `iwconfig` or `./akam status`, frame rate and bitrate with `./akam video show`; temperature present or absent as the camera reports | [ ] |
-| M6 | Availability | Kill `ak_rtsp` on the camera (the wrapper restarts it) or unplug it: the device shows unavailable within about 90 s (last will), then available again | [ ] |
+| M4 | Controls work both ways | Each select, number, switch and button in Home Assistant changes the real LED, IR LEDs, night mode, volume (hear it), picture (see it), talk switch, beep; a change made with `akam led status off` shows up in Home Assistant within about 2 s | [ ] |
+| M5 | Sensors plausible | Compare CPU load with `top`, Wi-Fi signal with `iwconfig` or `akam status`, frame rate and bitrate with `akam video show`; temperature present or absent as the camera reports | [ ] |
+| M6 | Availability | Kill `akamd` on the camera (the wrapper restarts it) or unplug it: the device shows unavailable within about 90 s (last will), then available again | [ ] |
 | M7 | Broker restart | Stop and start the broker: the camera reconnects (delay 5 s growing to 60 s) and publishes discovery again | [ ] |
-| M8 | One outbound connection, video untouched | `akam_hwcheck.sh` says `MQTT is on: ak_rtsp holds one outbound TCP connection`; frame rate (`video.fps_actual`) and bitrate unchanged compared with MQTT off, over a 10 minute stream; free memory and `ak_rtsp` VmRSS recorded with MQTT off and on (budget: the delta must stay under 100 KB) | [ ] |
+| M8 | One outbound connection, video untouched | `akam_hwcheck.sh` says `MQTT is on: akamd holds one outbound TCP connection`; frame rate (`video.fps_actual`) and bitrate unchanged compared with MQTT off, over a 10 minute stream; free memory and `akamd` VmRSS recorded with MQTT off and on (budget: the delta must stay under 100 KB) | [ ] |
 | M9 | Hostile input | `mosquitto_pub` to `BASE/volume/set` with `101`, `-1`, `5;reboot`, an empty and a 10 KB payload, to `BASE/reboot/set`, `BASE/uptime/set` and a retained `BASE/beep/set PRESS`: nothing changes, the camera stays connected | [ ] |
 | M10 | Broker down at boot | Enable MQTT, power cycle with the broker stopped: the stream and ONVIF come up as usual, MQTT state is `error:connect`, and it connects once the broker is back | [ ] |
 
 
 ### Rotatable 2K control API (port 8092, own app; needs the camera and SSH)
 
-Host tests (`tests/rot2k_control_api_*_test.sh`) cover the whole API; on the camera only a few signed requests were used (a few settings changes, `ptz.recalibrate`, state reads; earlier binary), and none of this checklist has been ticked on the current build. Reference: [control-api.md](porting/lsc-rotatable-2k/control-api.md).
+Host tests (`tests/rot2k_control_api_*_test.sh`) cover the whole API. On the camera, signed requests were used (settings changes, `ptz.recalibrate`, state reads, and on 2026-11-23 the speaker and latency settings written with a curl-based signed helper, on the image that runs now); none of the rows below is ticked yet. Reference: [control-api.md](porting/lsc-rotatable-2k/control-api.md).
 
 | # | Check | How | Done |
 |---|---|---|---|
-| A1 | Closed without a key | Fresh `/config` (no `api_keys`): `ss -ltn` (or `netstat -ltn`) shows no listener on 8092; the log says `no API key installed` | [ ] |
-| A2 | First key opens the port | `akam_api_key.sh new --scope admin --name t` over SSH: key id and secret printed once; port 8092 listens within ~2 s without a restart; `ls -l /config/akam/api_keys` is `-rw-------` | [ ] |
-| A3 | Signed calls | `tools/akam-api-sign.sh` + curl from a PC: `/hello` unsigned, `/info`, `/state`, `/schema` signed answer 200; a wrong secret is 401 `bad_signature`; the same request twice is 401 `replay` | [ ] |
-| A4 | Settings take effect | PATCH `led.mode` off/on (LED), `night.ir_led`, `image.brightness` (see it), `video1.fps` (stream re-opens, other stream untouched), `track.enabled`; read back with GET; reboot by power cut and check `led.mode`/`track.enabled` persisted, `image.*` did not | [ ] |
-| A5 | Actions | `ptz.home`, `ptz.step`, `ptz.move`, `ptz.park`, `ptz.recalibrate` move the head; a second `ptz.move` within 150 ms is 429 | [ ] |
-| A6 | Events | `GET /events?since=N&timeout=25` held; press the front button: the `button` event arrives at once; walk in front of the camera: `person` present true then false; PTZ and day/night events appear | [ ] |
-| A7 | net.* | PATCH `net.hostname`: `/tmp/akam_net.req` disappears within ~5 s, `akam_net.sh` log says set, `GET /settings/net.hostname` shows it; `net.apply` goes queued, pending, ok; `net.wifi_band` 5 with country `none` is refused (422), else keeps the Wi-Fi up (dead-man); do not change the band while the router restarts | [ ] |
-| A8 | Cost | `a2k_mem_report` (log) VmRSS/MemAvailable before the first key, with a key and idle, and after a 1 minute burst of requests (gate: +64 KB RSS, +40 KB binary; the binary is +53 KB, see the spec); `video.fps_actual` and CPU unchanged under a flood of bad requests (they are rejected before any crypto once locked) | [ ] |
-| A9 | Hostile input | `curl --data` of 9 KB, a 5 KB header, chunked upload, `GET /akam/v1/../x`: 413, 431, 411, 400/404; nothing crashes (`akam2k.log` has no CRASH line) | [ ] |
-| A10 | Fail closed | `chmod 644 /config/akam/api_keys`: the API closes (`keys_perm`); `chmod 600` and it reopens; `echo x >> /config/akam/api_keys`: closes (`keys_invalid`) and the file is kept | [ ] |
+| API-1 | Closed without a key | Fresh `/config` (no `api_keys`): `ss -ltn` (or `netstat -ltn`) shows no listener on 8092; the log says `no API key installed` | [ ] |
+| API-2 | First key opens the port | `akam_api_key.sh new --scope admin --name t` over SSH: key id and secret printed once; port 8092 listens within ~2 s without a restart; `ls -l /config/akam/api_keys` is `-rw-------` | [ ] |
+| API-3 | Signed calls | `tools/akam-api-sign.sh` + curl from a PC: `/hello` unsigned, `/info`, `/state`, `/schema` signed answer 200; a wrong secret is 401 `bad_signature`; the same request twice is 401 `replay` | [ ] |
+| API-4 | Settings take effect | PATCH `led.mode` off/on (LED), `night.ir_led`, `image.brightness` (see it), `video1.fps` (stream re-opens, other stream untouched), `track.enabled`; read back with GET; reboot by power cut and check `led.mode`/`track.enabled` persisted, `image.*` did not | [ ] |
+| API-5 | Actions | `ptz.home`, `ptz.step`, `ptz.move`, `ptz.park`, `ptz.recalibrate` move the head; a second `ptz.move` within 150 ms is 429 | [ ] |
+| API-6 | Events | `GET /events?since=N&timeout=25` held; press the front button: the `button` event arrives at once; walk in front of the camera: `person` present true then false; PTZ and day/night events appear | [ ] |
+| API-7 | net.* | PATCH `net.hostname`: `/tmp/akam_net.req` disappears within ~5 s, `akam_net.sh` log says set, `GET /settings/net.hostname` shows it; `net.apply` goes queued, pending, ok; `net.wifi_band` 5 with country `none` is refused (422), else keeps the Wi-Fi up (dead-man); do not change the band while the router restarts | [ ] |
+| API-8 | Cost | `a2k_mem_report` (log) VmRSS/MemAvailable before the first key, with a key and idle, and after a 1 minute burst of requests (gate: +64 KB RSS, +40 KB binary; the binary is +53 KB, see the spec); `video.fps_actual` and CPU unchanged under a flood of bad requests (they are rejected before any crypto once locked) | [ ] |
+| API-9 | Hostile input | `curl --data` of 9 KB, a 5 KB header, chunked upload, `GET /akam/v1/../x`: 413, 431, 411, 400/404; nothing crashes (`akam.log` has no CRASH line) | [ ] |
+| API-10 | Fail closed | `chmod 644 /config/akam/api_keys`: the API closes (`keys_perm`); `chmod 600` and it reopens; `echo x >> /config/akam/api_keys`: closes (`keys_invalid`) and the file is kept | [ ] |
 
 
 ### 2K picture orientation (flip, mirror, ceiling mount)
 
-Written after the last flash of the 2K: host tests only. Do these first on the first flash of the current build. Reference:
+O2K-2 to O2K-4 were done on 2026-11-22; O2K-1 and O2K-5 to O2K-10 are open. Reference:
 [ISP controls, sections 3.2 and 3.3](porting/lsc-rotatable-2k/isp-controls.md). Use a stream player on `/stream0` and `PATCH` the settings
 with the signed API (or the Home Assistant switches **Image flip**, **Image mirror**, **Ceiling mount**).
 
 | # | Check | How | Done |
 |---|---|---|---|
-| O1 | Default is unchanged | Both off (`image.flip` 0, `image.mirror` 0): the picture is exactly the one of the earlier builds, colour correct; the log has no orientation call | [ ] |
-| O2 | `image.flip` is vertical | `image.flip` 1: the picture is upside down (top and bottom swapped, left and right unchanged); no stream restart; back to 0 restores it | [x] 2026-11-22 |
-| O3 | `image.mirror` is horizontal | `image.mirror` 1: left and right swapped, top and bottom unchanged; back to 0 restores it | [x] 2026-11-22 |
-| O4 | `(0, 0)` leaves the picture unchanged | After a 1 then 0 round trip of both switches, the picture is identical to O1 (same framing) | [x] 2026-11-22 |
-| O5 | Colour stays right | With flip, with mirror and with both on, skin and sky colours look natural (no swapped red and blue, no green or magenta cast) | [ ] |
-| O6 | Survives day/night | With `image.ceiling` 1, force `night.mode` night then day (and let it switch by itself once): the orientation is the same after each switch | [ ] |
-| O7 | Survives a restart | Set flip, power cycle: the orientation is still applied (it is saved only when you change it); the stream, the zones and the tracker agree with it | [ ] |
-| O8 | Ceiling mount, tracker | Camera mounted upside down (or the camera turned over on the desk) with `image.ceiling` 1: with `track.enabled` on, the head pans toward the person, not away, and tilts the right way with `track.tilt` on | [ ] |
-| O9 | Zones and PTZ follow | A zone drawn in the displayed picture covers the same part of the scene before and after a change of orientation; the ONVIF or API pan and tilt directions match the picture | [ ] |
-| O10 | Home Assistant | The three switches show the real state; `Ceiling mount` reads ON only while flip and mirror are both on | [ ] |
+| O2K-1 | Default is unchanged | Both off (`image.flip` 0, `image.mirror` 0): the picture is exactly the one of the earlier builds, colour correct; the log has no orientation call | [ ] |
+| O2K-2 | `image.flip` is vertical | `image.flip` 1: the picture is upside down (top and bottom swapped, left and right unchanged); no stream restart; back to 0 restores it | [x] 2026-11-22 |
+| O2K-3 | `image.mirror` is horizontal | `image.mirror` 1: left and right swapped, top and bottom unchanged; back to 0 restores it | [x] 2026-11-22 |
+| O2K-4 | `(0, 0)` leaves the picture unchanged | After a 1 then 0 round trip of both switches, the picture is identical to O1 (same framing) | [x] 2026-11-22 |
+| O2K-5 | Colour stays right | With flip, with mirror and with both on, skin and sky colours look natural (no swapped red and blue, no green or magenta cast) | [ ] |
+| O2K-6 | Survives day/night | With `image.ceiling` 1, force `night.mode` night then day (and let it switch by itself once): the orientation is the same after each switch | [ ] |
+| O2K-7 | Survives a restart | Set flip, power cycle: the orientation is still applied (it is saved only when you change it); the stream, the zones and the tracker agree with it | [ ] |
+| O2K-8 | Ceiling mount, tracker | Camera mounted upside down (or the camera turned over on the desk) with `image.ceiling` 1: with `track.enabled` on, the head pans toward the person, not away, and tilts the right way with `track.tilt` on | [ ] |
+| O2K-9 | Zones and PTZ follow | A zone drawn in the displayed picture covers the same part of the scene before and after a change of orientation; the ONVIF or API pan and tilt directions match the picture | [ ] |
+| O2K-10 | Home Assistant | The three switches show the real state; `Ceiling mount` reads ON only while flip and mirror are both on | [ ] |
+
+### 2K video latency
+
+Written 2026-11-23. Reference: [video latency](porting/lsc-rotatable-2k/video-latency.md). Before the fix: about 2 s glass to glass on `/stream0` (2304x1296, 10 fps, 3000 kbit/s, Wi-Fi -67 dBm, ffplay over TCP with `-fflags nobuffer -flags low_delay -framedrop`).
+
+| # | Check | How | Done |
+|---|---|---|---|
+| L2K-1 | Glass-to-glass latency under 500 ms (stopwatch) and the camera-side frame age in the stats line | Phone stopwatch in front of the camera, ffplay beside it, photograph both (several times); the app log shows `stream0: frame age at send avg ... max ... ms` every 10 s: note avg, max and the unsent backlog max (measured on 2026-11-23: avg about 5 ms, max about 20 ms at send; the stopwatch glass-to-glass part is still open). Repeat on a weak spot of the Wi-Fi: the log may show `client ... frames behind` or `backlog standing too long` (a short freeze to the next keyframe is expected there, a growing delay is not) | [x] partly 2026-11-23: frame age at send avg about 5 ms, max about 20 ms (camera side); glass-to-glass not yet measured with a stopwatch |
+
+### 2K speaker, two-way audio and picture settings
+
+Written 2026-11-23. **SPK-1 and TALK-2 (partly) ran on the 2K on 2026-11-23; the rest is host-tested only.** Reference: [audio findings section 10](porting/lsc-rotatable-2k/audio-findings.md#10-speaker-and-two-way-audio),
+[using the 2K, section 7](porting/lsc-rotatable-2k/using-the-2k.md#7-speaker-two-way-audio-and-picture-settings), [ISP controls](porting/lsc-rotatable-2k/isp-controls.md). Have the UART attached for the first
+speaker start (a kernel fault in the playback driver would reboot the camera; the crash guard then keeps the speaker off at the next start). Use the signed API (`akam settings set`, or a curl helper as on 2026-11-23) and the app log.
+
+| # | Check | How | Done |
+|---|---|---|---|
+| SPK-1 | The speaker starts and the amplifier opens | `audio.out_enable` 1: `audio.out_state` becomes `idle`; `audio.beep`: the one-second beep (three tones) is audible and clean. No sound: note it, then try GPIO 9 by hand (audio findings section 10) | [x] 2026-11-23, on the image that runs now: `audio.out_state` idle, beep and several minutes of melodies audible and clean at volume 70 |
+| SPK-2 | No crash, no loop | After A1 the camera keeps running 10 minutes, `/config/akam/audio_out.trying` is gone (written only by the enable of A1, removed 5 s after the start), the video is unaffected, RSS rise is below 300 kB | [ ] |
+| SPK-3 | Volume and gain | `audio.out_volume` 100, 50, 10, 0 (0 is silent), `audio.out_gain` 0 to 5: the level follows, no click at each change, no hiss at rest (the amplifier is off two seconds after the last sound) | [ ] |
+| SPK-4 | Survives a restart | Power cycle with `audio.out_enable` 1: the speaker comes back by itself, volume and gain as saved; `killall akamd` restarts the app: no `audio_out.trying` appears at any moment (watch `/config/akam` with `ls` during the restart) | [ ] |
+| SPK-5 | Crash guard | With the speaker off, create `/config/akam/audio_out.trying` by hand and set `audio.out_enable` 1: refused, `audio.out_state` is `disabled_crash`; remove the file, enable again: it works | [ ] |
+| SPK-6 | Capture and playback together | `audio=1` (microphone track on): enable the speaker while a player reads the stream with sound: no glitch in the microphone track, no error in the log | [ ] |
+| TALK-1 | The backchannel is offered | With a stream password and `audio.out_enable` 1: go2rtc (or any ONVIF backchannel client) over TCP shows the send-only G.711 track; without the password, or with `audio.talk_enable` 0, the camera answers 551 to a client that requires it | [ ] |
+| TALK-2 | Talk works | go2rtc or Frigate (TCP): speak, hear yourself on the camera speaker, clear and without a large delay; `audio.talk_state` is `active` while talking and `idle` after | [x] 2026-11-23, partly: with `tools/akam-talk` over TCP (Digest), six sessions up to 40 s played clean and complete; go2rtc/Frigate and `audio.talk_state` not checked |
+| TALK-3 | Half duplex | `audio.talk_duplex` half: the microphone track is silent while speech plays; `full`: it is not | [ ] |
+| TALK-4 | One talker | A second client that sets up the backchannel while the first talks is refused; when the first leaves, the second can talk | [ ] |
+| TALK-5 | Cut off | `audio.talk_enable` 0 (or removing the stream password) ends a running talk within about a second; the video of the same connection goes on | [ ] |
+| TALK-6 | Quality and load | Ten minutes of talk: CPU stays low, `MemAvailable` stable, no underrun counter growing (`audio.out_state` stays `talking`/`idle`) | [ ] |
+| PIC-1 | Saturation | `isp.saturation` -30, 0, 30 on a daylight scene: the colour intensity follows, 0 is the earlier picture | [ ] |
+| PIC-2 | Saturation survives day/night | Set 20, force `night.mode` night then day: the saturation is the same after the switch (log line `picture: replayed`) | [ ] |
+| PIC-3 | Denoise | `isp.denoise` 0, 2, 4 in a dim room: less grain and less pulsing at the key frames as it rises, with some loss of detail; the log has no `refused`; 0 gives the first picture back | [ ] |
+| PIC-4 | Denoise table check | With `--isp-test 1`, `get nr3d` before and after `isp.denoise` 2: record 1 of the table equals record 3 of the first read (the shift rule, `picture.h`); `get all` shows `tnr_enable` never lowered | [ ] |
+| PIC-5 | White balance | `img.wb` manual in daylight: the picture stops following the light (move a lamp or a coloured card); `conf` brings the automatic one back within seconds. Note which `wb_type` value (0 or 1) the log shows as automatic | [ ] |
+| PIC-6 | White balance and night | `img.wb` manual, force night: the night picture is the usual mono one; back to day: the manual white balance is applied again | [ ] |
+| PIC-7 | Persistence | `isp.saturation` and `isp.denoise` survive a power cycle; `img.wb` is back to `conf` | [ ] |
+| PIC-8 | Install-time questions | `akam prepare-2k-sd` setup questions, then `seed-2k`: answer yes, speaker on, volume 60, saturation 10: after the flash and the first start, `akam settings get audio.out_volume isp.saturation` read 60 and 10 | [ ] |
+
+### 1080p picture orientation (flip, mirror, ceiling mount)
+
+Not run on a 1080p: host tests only. Do these on the first flash of a build that has `image.flip`. Reference: [video spec, section 5.7](../specs/video-and-streaming.md#57-flip-and-mirror-reverse-engineering-of-2026-11-23-not-yet-hardware-validated-on-the-1080p)
+(what the code does and what is unknown). Have UART or SSH open and a stream player on `/stream0`. Set the values with `akam picture flip on|off`,
+`mirror on|off`, `ceiling on|off`, the camera options screen, or `akamd ctl SET image.flip 1` over SSH. Also compare `/stream1` (same picture as `/stream0`, on purpose).
+
+| # | Check | How | Done |
+|---|---|---|---|
+| O1080-1 | Default is unchanged | No `/etc/config/akam/orient`: the picture and the log are exactly those of the earlier build (no `[orient]` line, colour correct); `GET image.flip` 0, `image.mirror` 0 | [ ] |
+| O1080-2 | `image.flip` is vertical | `SET image.flip 1`: the picture is upside down (top and bottom swapped, left and right unchanged), no stream restart (the player keeps playing; one or two frames may drop); the log shows `isp flip_mirror(1, 0) = 0`; back to 0 restores it | [ ] |
+| O1080-3 | `image.mirror` is horizontal | `SET image.mirror 1`: left and right swapped, top and bottom unchanged; back to 0 restores it | [ ] |
+| O1080-4 | Round trip | After flip 1 then 0 and mirror 1 then 0, the framing is identical to O1 | [ ] |
+| O1080-5 | Colour stays right | With flip, with mirror and with both on, skin and sky colours look natural (no swapped red and blue, no green or magenta cast, no 2-pixel shifted fringe). This is the Bayer order the sensor driver is expected to keep | [ ] |
+| O1080-6 | Survives day/night | With `image.ceiling` 1, `night.mode` night then day (and one automatic switch): the orientation is the same after each switch (the call is sent again after each switch: look for `isp flip_mirror(1, 1) = 0` in the log after the switch; a short frame drop at the switch is expected) | [ ] |
+| O1080-7 | Survives a restart | Set flip, then kill `akamd` (the wrapper restarts it) and power cycle: the orientation is applied at start-up (log `[orient]`), the file `/etc/config/akam/orient` holds `flip=1` and `mirror=0`; with both off the file is gone; `md5sum` of the file is unchanged after 30 minutes idle (no recurring write) | [ ] |
+| O1080-8 | Assistant | `akam picture flip on` shows `Flip (vertical) 1`; the Camera options > Picture screen lists Flip, Mirror and Ceiling mount and changes them live; `akam config save-global` records them and `akam config apply` on another 1080p sets them | [ ] |
+| O1080-9 | API and 8091 | A signed `PATCH /akam/v1/settings {"image.ceiling":1}` turns both on (`GET` shows flip 1, mirror 1, ceiling 1); `{"image.flip":2}` is 422 `format`; a network `SET image.flip 1` in DEBUG mode is refused (local only) | [ ] |
+| O1080-10 | RTSP and audio unaffected | While flipped, one RTSP client for 15 minutes: `video.fps_actual` 14.9 to 15, no skipped frames beyond the first change, CPU of `akamd` unchanged, audio in sync | [ ] |
+| O1080-11 | Home Assistant (needs a broker) | With MQTT on, the switches `Image flip` and `Image mirror` appear; ON turns the picture over / swaps left and right, OFF restores it; the state follows a change made with `akam picture flip on` | [ ] |
 
 ### 1080p remote control (convergence P4-P8; akam-01 first, then akam-02; UART attached, run from /tmp before flashing)
 
 Not run on a camera yet; host tests only (`tests/ak1080_*`, `tests/leds_oracle_test.sh`, `tests/ctl_sys_test.sh`, `tests/control_test.sh`).
-Reference: [control-api.md](porting/lsc-1080p/control-api.md). Baseline first: run the previous `ak_rtsp` 15 minutes with one RTSP client and record
-`video.fps_actual`, `ctl_sys` skipped frames, CPU of `ak_rtsp` and `VmRSS`/`MemAvailable`; every item below must keep them within noise.
+Reference: [control-api.md](porting/lsc-1080p/control-api.md). Baseline first: run the previous `akamd` 15 minutes with one RTSP client and record
+`video.fps_actual`, `ctl_sys` skipped frames, CPU of `akamd` and `VmRSS`/`MemAvailable`; every item below must keep them within noise.
 
 | # | Check | How | Done |
 |---|---|---|---|
-| B1 | Build and boot | `make repro` hash matches the golden; copy the binary to `/tmp/ak_rtsp`, stop the wrapper's copy, run it: stream up, `GET onvif.state`, `GET mqtt.state` as before, no new log errors, no port besides 22, 554, 8091 listening | [ ] |
-| B2 | sys.* (P4) | `ak_rtsp ctl GET sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_lq`: plausible against `top`, `free`, `iwconfig`; `-1000000` is never shown once the camera is up; the older keys (`sys.cpu`, `sys.mem_free`...) unchanged | [ ] |
+| B1 | Build and boot | `make repro` hash matches the golden; copy the binary to `/tmp/akamd`, stop the wrapper's copy, run it: stream up, `GET onvif.state`, `GET mqtt.state` as before, no new log errors, no port besides 22 and 554 listening (8091 only on 127.0.0.1) | [ ] |
+| B2 | sys.* (P4) | `akamd ctl GET sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_lq`: plausible against `top`, `free`, `iwconfig`; `-1000000` is never shown once the camera is up; the older keys (`sys.cpu`, `sys.mem_free`...) unchanged | [ ] |
 | B3 | LED, defaults (P6) | Power cycle with `status=auto` saved: the LED blinks 1 Hz while starting, solid when ready; unplug the router: 1 Hz again; start VLC: 0.5 Hz (1 s on, 1 s off), stop it: solid; `led.status off/on` and `night.ir_led off` as before; `led.state` names `blink_wifi`/`blink_stream`/`on`/`off`/`system` as before. Same on akam-02. This is the visual proof that completes `tests/leds_oracle_test.sh` | [ ] |
-| B4 | LED, patterns (P6/P7) | `ak_rtsp ctl SET led.nowifi 3:250:250:2000` then unplug the router: 3 quick blinks, pause; `GET led.nowifi`; `cat /etc/config/akam/leds` shows the `led_nowifi=` line only while not the default; set it back to `1:500:500:0`: the line is gone | [ ] |
-| B5 | 8091 unchanged (P7) | The assistant (`./akam status`, the LED, picture, video and night screens) works as before; `ak_rtsp ctl LIST` order unchanged (six `sys.*` keys appended in the metrics); `ak_rtsp ctl SET image.contrast -5` from the camera saves `/etc/config/akam/picture` | [ ] |
-| B6 | Closed without a key (P8) | No `/etc/config/akam/api_keys`: `netstat -ltn` shows no listener on 8092 (only 22, 554, 8091); the ak_rtsp log has no API error line | [ ] |
-| B7 | First key opens the port | `ak_rtsp --api-key new --scope admin --name t` over SSH while streaming: id and secret printed once; 8092 listens within ~2 s without a restart; `ls -l /etc/config/akam/api_keys` is `-rw-------`; the stream does not hiccup (`video.fps_actual`) | [ ] |
+| B4 | LED, patterns (P6/P7) | `akamd ctl SET led.nowifi 3:250:250:2000` then unplug the router: 3 quick blinks, pause; `GET led.nowifi`; `cat /etc/config/akam/leds` shows the `led_nowifi=` line only while not the default; set it back to `1:500:500:0`: the line is gone | [ ] |
+| B5 | 8091 unchanged on loopback (P7) | The text port still answers on the camera itself (`nc 127.0.0.1 8091`; the assistant now uses the API, see the checks C below); `akamd ctl LIST` order unchanged (six `sys.*` keys appended in the metrics); `akamd ctl SET image.contrast -5` from the camera saves `/etc/config/akam/picture` | [ ] |
+| B6 | Closed without a key (P8) | No `/etc/config/akam/api_keys`: `netstat -ltn` shows no listener on 8092 (only 22, 554 and 127.0.0.1:8091); the akamd log has no API error line | [ ] |
+| B7 | First key opens the port | `akamd --api-key new --scope admin --name t` over SSH while streaming: id and secret printed once; 8092 listens within ~2 s without a restart; `ls -l /etc/config/akam/api_keys` is `-rw-------`; the stream does not hiccup (`video.fps_actual`) | [ ] |
 | B8 | Signed calls | `tools/akam-api-sign.sh` + curl from a PC: `/hello`, `/info` (model `lsc-smart-indoor-1080p`), `/state`, `/schema` 200; wrong secret 401 `bad_signature`; the same request twice 401 `replay`; `/ptz/presets` and `/button` are 404 | [ ] |
 | B9 | Settings take effect | PATCH `led.mode`, `night.ir_led`, `night.mode` (force night: IR-cut click, IR LEDs per `night.ir_led`), `image.brightness`/`sharpness`/`denoise` (see it), `video0.kbps`/`fps`/`gop` (file written, `video0.cfg_pending` is 1, applied after `kill` + wrapper respawn), `onvif.enabled` (port opens, ODM sees it; refused without the stream password), `mqtt.enabled` (with a broker file); read back; power cut: persisted values survive | [ ] |
 | B10 | Actions and events | `led.blip` (find the camera), `led.blip_stop`, `settings.reset`; `GET /events?since=N&timeout=25` held; force night: the `night` event arrives at once; a PATCH: the `setting` event | [ ] |
 | B11 | Flash discipline | `md5sum /etc/config/akam/*` before and after 30 minutes of idle API polling (state every 30 s): identical (no periodic write); 7 PATCHes in a row: the 7th is 429 `flash_rate`; `audit` appears only after a write request | [ ] |
-| B12 | Cost | `VmRSS`/`MemAvailable` of `ak_rtsp` with no key, with a key idle, and after a 1 minute burst of requests (gate of the spec: +64 KB RSS; the binary is over its +56 KB gate, see the golden file); `video.fps_actual` 14.9-15, `ctl_sys` skipped 0 and CPU unchanged under a flood of bad signatures from a PC (they are rejected before any crypto once the peer is locked) | [ ] |
+| B12 | Cost | `VmRSS`/`MemAvailable` of `akamd` with no key, with a key idle, and after a 1 minute burst of requests (gate of the spec: +64 KB RSS; the binary is over its +56 KB gate, see the golden file); `video.fps_actual` 14.9-15, `ctl_sys` skipped 0 and CPU unchanged under a flood of bad signatures from a PC (they are rejected before any crypto once the peer is locked) | [ ] |
 | B13 | Hostile input and fail closed | As A9 and A10 of the 2K list (9 KB body 413, 5 KB header 431, chunked 411, `..` path 400/404; `chmod 644 api_keys` closes the API, `chmod 600` reopens, garbage in the file closes it and keeps it) | [ ] |
-| B14 | Rollback | Copy back the previous `ak_rtsp` to `/tmp`, restart the wrapper: video identical; `rm /etc/config/akam/api_keys` closes the port; deleting `led_*` lines of `/etc/config/akam/leds` restores the default patterns | [ ] |
+| B14 | Rollback | Copy back the previous `akamd` to `/tmp`, restart the wrapper: video identical; `rm /etc/config/akam/api_keys` closes the port; deleting `led_*` lines of `/etc/config/akam/leds` restores the default patterns | [ ] |
+
+### 1080p: the assistant through the signed API, text port 8091 closed to the network (checks C; run after B7)
+
+Not run on a camera yet; host tests only (`tests/control_test.sh`, `tests/ak1080_settings_test.sh`, `tests/ak1080_api_http_test.sh`, the Go tests of
+`tools/assistant`). Needs a 1080p with the new firmware, a PC with the new `akam`, SSH access. Use a camera that already runs an older Akam image for C9 and C10.
+
+| # | Check | How | Done |
+|---|---|---|---|
+| C1 | 8091 closed to the network | `ss -ltn` on the camera shows `127.0.0.1:8091`, not `0.0.0.0:8091`; from the PC `nc -vz CAMERA 8091` is refused; on the camera `printf 'LIST\nQUIT\n' \| nc -w 2 127.0.0.1 8091` still answers; the akamd log says `listening on port 8091 (loopback only)` | [ ] |
+| C2 | Open ports after a boot | From the PC: only 22 and 554 (and 8092 once a key exists) answer; `akam step verify` agrees ("only 22 and 554 are open") | [ ] |
+| C3 | Key made at the end of an install | After `akam step verify` on a fresh install: asked "Create one over SSH?"; yes: the state folder has `api_key` (0600), the camera has `/etc/config/akam/api_keys` (0600), 8092 listens within seconds, the secret is nowhere on screen or in `akam.log` | [ ] |
+| C4 | Every command through the API | `akam led`, `led status off`, `audio`, `audio volume 40`, `audio beep` (a beep is heard), `picture`, `picture contrast 5`, `picture wb manual`, `video`, `video bitrate 1200` (asks to restart), the options screens (all six groups), `config save-global` (the Wi-Fi name is offered) and `config apply`: all work and the values are the camera's. `akam picture flip on` flips (see the 1080p orientation checks) | [ ] |
+| C5 | No traffic on 8091 | During C4, on the camera: `netstat -tn` shows no connection to 8091 from the PC (nothing came from the PC at all) and `akamd` logs no `tuning client connected` line without `(local)` | [ ] |
+| C6 | Speaker and microphone rows | `akam audio mic on` answers "restart"; after a power cycle the stream has an audio track; `audio off` then `audio on`: the speaker works again (a restart note only when the device cannot open now); `GET /state` shows `audio.out_state` and the counters move during `talk` | [ ] |
+| C7 | The LAN opt-in | `akam control-port open` (asks, default No), restart the video service when asked: from the PC `nc CAMERA 8091` then `LIST` answers, `SET isp.contrast 3` is refused (read-only); `control-port close` and a restart: refused again; `md5sum /etc/config/akam/control_lan` exists only while open; the file is written once per change (look at its mtime) | [ ] |
+| C8 | Flash discipline | `/etc/config/akam/*` unchanged after 30 minutes of the options screen left open and reloaded 10 times (reads write nothing); a change spends one PATCH (one flash token); 7 settings changes in a row from the assistant: the 7th says it is rate-limited and nothing is applied twice | [ ] |
+| C9 | Existing install: enrol over SSH | An older image with no key and 8091 open: run `akam led` in a terminal: "This PC has no API key... Create one?" answer n: nothing changes; answer y: the key is made, the LED values show. The old image has no audio, `img.wb` or `control.lan` rows: they show n/a until `akam update` | [ ] |
+| C10 | Update keeps the keys | `akam update` on that camera: `/etc/config/akam/api_keys` and the PC's `api_key` unchanged (checksums), the next settings command works without asking | [ ] |
+| C11 | Lost or refused key | Delete the PC's `api_key`: `akam api-key` says the camera already has `assistant`, asks before revoking it, makes a new one; `rm /etc/config/akam/api_keys` on the camera: the next command says the camera does not answer its API and `akam api-key` offers to replace the key | [ ] |
+| C12 | Discovery without 8091 | `akam find-camera` (typed address and the network scan): the camera is "Akam" from SSH + video + the Dropbear banner; the firmware shows once the key exists; no connection to 8091 is made | [ ] |
+
+### R - Rename to `akamd` (update from an old image, old config, old names)
+
+Written 2026-11-23: **host tests only.** The camera program is `akamd` on both cameras (1080p: was `ak_rtsp`; 2K: was
+`akam2k_rtsp`, helpers now `akam-sntp`, `akam-mic`, `akam-led`; `akam2k.conf` is now `akam.conf`). Needs one camera of each
+model still running an image of the old names, a PC with the new `akam`, SSH access. Nothing here is validated on a camera yet.
+
+| # | Check | How | Done |
+|---|---|---|---|
+| R1 | 1080p: update from an old image | `akam update` from the old image; after the reboot `pidof akamd` answers, the stream runs on 554, `akam step verify` is green | [ ] |
+| R2 | 1080p: `ak_rtsp` link | `ls -l /usr/bin/ak_rtsp` is a link to `akamd`; `/usr/bin/ak_rtsp ctl` works like `/usr/bin/akamd ctl` | [ ] |
+| R3 | 2K: update from an old image (hot update and reboot) | `flash_appfs.sh` or `akam update` from an image with the old names: the hot update stops the old `akam2k_rtsp`, the new app runs as `/tmp/akamd`, stream on 554 | [ ] |
+| R4 | 2K: old config migrated | With only `/config/akam/akam2k.conf` present before the update: after it `/config/akam/akam.conf` exists with the same lines, `akam2k.conf` is still there, the settings (LED, audio, tracking keys) behave as before | [ ] |
+| R5 | 2K: log and helpers | The app log is `akam.log` (card; RAM copy `/tmp/akam2k_main.log` unchanged); a leftover `akam2k.log` is ignored; `akam-sntp` syncs the clock when a server is set; `akam-led list` and `akam-mic` run | [ ] |
+| R6 | Assistant against OLD firmware | New `akam` against a camera still on the old names: `api-key` makes the key (falls back to `/usr/bin/ak_rtsp`), `video` restart works, `hwcheck` reports the program running | [ ] |
+| R7 | Assistant against NEW firmware | Same commands against the updated camera: the key is made with `/usr/bin/akamd`, restart and `hwcheck` work | [ ] |
+| R8 | Old kit still readable | `akam get-kit --kit` with a 0.1.x kit (`kit_format=1`) still builds an image whose `bin/akamd` is the old binary plus the `ak_rtsp` link | [ ] |
+
+### Talk through the speaker, hands-on (1080p)
+
+Replace `<cam>` by the camera address and `viewer` by the stream user. Prerequisite: `akam rtsp-auth set` done. Written for the 1080p (the 2K's results are in the checks above).
+
+```bash
+# 1. The plain stream is unchanged (no Require header): same SDP, no talk track
+ffprobe -rtsp_transport tcp rtsp://viewer:PASSWORD@<cam>:554/ 2>&1 | grep -E 'Stream|Audio|Video'
+
+# 2. Without the password: the camera refuses a talk request (551) and still serves video
+akam rtsp-auth disable && akam talk test            # expect exit 3: "does not offer talk"
+akam rtsp-auth set                                    # back on
+
+# 3. Tone, file, microphone (listen at the camera)
+akam talk test
+akam say hello.wav
+akam talk 20
+
+# 4. Counters during and after a 10 s talk (loopback port, over SSH)
+ssh root@<cam> "printf 'LIST\n' | nc -w 2 127.0.0.1 8091 | grep -E 'audio\.(talk|out)_'"
+#    expect packets about 500 per 10 s, dropped 0, lost 0, underruns 0, state idle afterwards,
+#    and the amplifier off 2 s after the end (no hiss)
+
+# 5. Half duplex: while talking, the camera's own microphone (ffplay of the stream) goes silent only
+#    while you speak; with audio.talk_duplex=full it does not.
+ffplay -rtsp_transport tcp rtsp://viewer:PASSWORD@<cam>:554/      # in another terminal, mind: one client at a time
+
+# 6. go2rtc / Frigate / Home Assistant: the snippets above; note what works and the failure mode of the
+#    single RTSP slot when go2rtc and another client are connected.
+```
+
+What to report: the exit codes, the `audio.talk_*` and `audio.out_*` lines after a talk, whether the voice
+is clear, any pop when the amplifier switches, and `top` on the camera during a talk (CPU of `akamd`).
 
 ## Post-flash check script
 
 `tools/hw_tests/akam_hwcheck.sh` is a read-only POSIX `sh` script. It never writes to flash or CONFIG,
 never kills or starts anything, and never prints key material. It prints `PASS`, `FAIL`, `WARN`,
 `UNKNOWN` and `INFO` lines, then facts, and exits 0 if there is no `FAIL`. It is **not** installed in
-the image, and it ran on the camera . Run it without copying anything:
+the image, and it has run on the 1080p cameras. Run it without copying anything:
 
 ```bash
 ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh | tee hwcheck-1.txt
@@ -122,15 +253,15 @@ ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh | t
 or copy it to `/tmp` first with `ssh ... 'cat > /tmp/hwcheck.sh' < tools/hw_tests/akam_hwcheck.sh`, or
 from the UART console off the card: `sh /mnt/akam_hwcheck.sh`.
 
-It checks, in sections: listening sockets (22, 554 and 8091 expected; 21, 23, 24 must be closed; 80
-reported as WARN if open), processes (`ak_rtsp`, `dropbear`, `wpa_supplicant`, `udhcpc` present;
+It checks, in sections: listening sockets (22 and 554 expected; 8091 only on 127.0.0.1 (a LAN address is a finding); 21, 23, 24 must be closed; 80
+reported as WARN if open), processes (`akamd`, `dropbear`, `wpa_supplicant`, `udhcpc` present;
 `anyka_ipc`, `telnetd`, `tcpsvd`, `ftpd` absent), resident memory, mounts and `/proc/mtd`, Dropbear
 files and modes, whether root's shell is in `/etc/shells`, the maintenance flag, a `LIST` to port 8091,
 the debug flag of 8091 (`debug:` info line, WARN while it is on), entropy, the Akam logs, and system facts.
 
 Details worth knowing: the Dropbear key path is judged from **root's HOME in `/etc/passwd` as seen at
 runtime** (`akam_ssh.sh` moves it to the private `/tmp/akam_home`), so `/` and `/etc` being 0775 is
-only `INFO`; a group/other-writable HOME or key file is a `FAIL`. The `ak_rtsp` CPU use is the delta of
+only `INFO`; a group/other-writable HOME or key file is a `FAIL`. The `akamd` CPU use is the delta of
 `/proc/PID/stat` over ~2 s (no `top`). The night check reads `night.mode` and samples `night.state` four
 times over ~20 s through 8091 (each sample is a short connection; 8091 serves 4 clients at once, so
 no other client is disturbed) and WARNs if it changed more than once; `HWCHECK_NIGHT_SAMPLES=0` disables it.
@@ -150,174 +281,6 @@ Run order (the first run is expected to WARN about the maintenance flag if you l
    Ports 21, 23 and 24 must be closed.
 4. Power-cut test, then repeat step 3 without the card inserted.
 5. Reconnect test: restart your router or Wi-Fi and run the port check again to see that nothing reopens.
-6. Manual checks the script only reminds you of: microphone, night mode, 8091 `LIST` / `GET` from the PC, `SET` refused from the PC, `SET` after `./akam debug on`,
-   a stream viewer for 1080p.
+6. Manual checks the script only reminds you of: microphone, night mode, 8091 refused from the PC (it listens on 127.0.0.1 only; with `control.lan` the reads work and `SET` is refused), a stream viewer for 1080p.
 
-Compare the port check from outside too: `nmap -p 21,22,23,24,80,554,8091 <camera-ip>`.
-
-
-## Assistant checklists
-
-Checklists for the `akam` program on Windows, macOS and Linux. A platform is called **ready** only when its whole table
-passes. Tested platforms today: [assistant](assistant.md#tested-platforms).
-
-### What you need
-
-- A spare camera on [supported hardware](compatible-cameras.md) (stock, with the maintenance toolkit card route) and a camera that already
-  runs Akam. A UART adapter at hand for the flash tests ([UART notes](hacking.md#uart-access)).
-- One microSD reader of each kind (a built-in slot where the machine has one, a USB reader) and one plain USB stick.
-- A backup of any camera you use, kept on two media ([backup](manual/backup-uart.md)). A flash that is interrupted can brick a camera.
-- Interim rule: on Windows and macOS the first install uses an image built on Linux or in WSL (`--image FILE`) until the native
-  builder passes its gate.
-
-#### How to run and report
-
-1. Download the binary of your target from the release and verify its SHA256 against `SHA256SUMS`.
-2. Go through the table of your OS in order. For each row, write **PASS**, **FAIL** or **SKIP (why)** in "Done" and note what you saw.
-   A row that needs hardware you do not have is SKIP, not PASS.
-3. For a FAIL give: the row number, the exact text on screen (copy it), `akam version`, `akam doctor`, the OS version and build,
-   whether the console was Windows Terminal, the classic console, PowerShell, Terminal or iTerm2, and the end of the log in the
-   state folder (it is redacted; read it before sending).
-4. Remove Wi-Fi names, passwords, MAC addresses and real IP addresses from everything you post. Never attach a backup, an image or a key.
-5. Send the filled table (an issue or a pull request that adds your results below the table, with your OS and date).
-   Results also go in [the test plan](hardware-test-checklists.md).
-
-### H1 - Windows 11 amd64 (repeat on windows/arm64 where hardware exists; Windows 10 1809+ spot check)
-
-| # | Check | Expected result | Done | Notes |
-|---|---|---|---|---|
-| H1.1 | Download, SmartScreen "More info > Run anyway" per 8.3, `akam version`, `akam doctor` | opens, shows `windows/amd64`, no crash | [ ] | |
-| H1.2 | Windows Terminal, classic console host and PowerShell: colours, box drawing, full-screen menu, arrow keys, resize, `q`, Ctrl-C | all render; Ctrl-C leaves a clean prompt | [ ] | |
-| H1.3 | Password prompts (stream password, Wi-Fi password): no echo | no echo | [ ] | |
-| H1.4 | State folder under `%LocalAppData%\Akam`; two instances at once | second refuses (lock) | [ ] | |
-| H1.5 | SSH key creation in `%USERPROFILE%\.ssh`; ACL shows only the user, SYSTEM, Administrators; `ssh -i` (OpenSSH for Windows) works with the key | yes | [ ] | |
-| H1.6 | ssh-agent (OpenSSH agent service) with a passphrase key | agent used | [ ] | |
-| H1.7 | Camera discovery: TCP scan on Wi-Fi and on Ethernet; machine with WSL/Hyper-V/VPN adapters present; WS-Discovery with firewall prompt, both allow and block | cameras listed with host and firmware; virtual adapters not scanned | [ ] | |
-| H1.8 | Backup folder suggestion (local Documents; OneDrive-redirected Documents; USB drive as target) | warns on OneDrive, ACL set, FAT/exFAT warns "not private" | [ ] | |
-| H1.9 | `get-kit` on a clean profile (symlink-less extraction), then image import | kit verifies, no symlink error | [ ] | |
-| H1.10 | SD guards: try the system disk, an internal NVMe, a USB stick, the card with an Explorer window open on it, a BitLocker To Go card, a write-protected card | system/NVMe refused; stick shows model and size; Explorer-open card fails with a clear drive-letter message before any write; BitLocker refused; write-protect reported | [ ] | |
-| H1.11 | UAC: accept; decline (Cancel); run the whole program as Administrator | accept writes; decline writes nothing and says so; admin mode works with no prompt | [ ] | |
-| H1.12 | Prepare backup card: result read back through the uncached handle; Windows Explorer shows `AKAMSD`; the stock camera boots it into telnet 24 | yes | [ ] | |
-| H1.13 | Wipe, then prepare flash card with Wi-Fi password: `verify` passes; password not on disk elsewhere (`%TEMP%`, state, logs) | yes | [ ] | |
-| H1.14 | Full first install of the spare camera from stock with an externally built image (until the native builder passes its gate), backup verified, flash, manual power cycle, `verify` | camera runs Akam | [ ] | |
-| H1.15 | Update Akam to Akam over SSH; options edit and apply (LED, video, NTP, ONVIF) | applied, "applies at" texts true | [ ] | |
-| H1.16 | Close the console window during an SD write and during the flash wait | card refused by the next verify; camera-side flash completes or aborts safely, message says not to power-cycle | [ ] | |
-| H1.17 | Antivirus: Microsoft Defender with real-time protection on: no detection of the unsigned binary, or the documented exclusion/report steps work | recorded | [ ] | |
-| H1.19 | Built-in audio, no ffmpeg on the PATH: `doctor` shows `Audio: ... microphone: Windows WASAPI (built in)`; `say` with a WAV, an MP3, a FLAC and an Ogg Vorbis file (stereo, 44.1 and 48 kHz) plays at the right speed and pitch | all four play clearly on the camera speaker | [ ] | |
-| H1.20 | `talk 20` with the default microphone, no ffmpeg: speech is heard on the camera, no stutter, pitch normal; try a USB headset and the laptop array as default device; microphone privacy switch off gives a clear error | works with both devices; the error names the Windows privacy setting | [ ] | |
-| H1.21 | Ctrl-C during `talk`: returns at once; no `akam` process left; the microphone indicator goes off | yes | [ ] | |
-| H1.18 | Start to menu time (cold, Defender on) | under 100 ms of program time, recorded wall time | [ ] | |
-
-### H2 - macOS arm64 (and amd64 on an Intel Mac, or the amd64 binary under Rosetta for everything except real Intel SD behaviour)
-
-| # | Check | Expected result | Done | Notes |
-|---|---|---|---|---|
-| H2.1 | Download in a browser (quarantine) and with `curl`; Gatekeeper steps of 8.3; `akam version` | runs after the documented step; arm64 binary not killed | [ ] | |
-| H2.2 | Terminal and iTerm2: colours, full-screen menu, Ctrl-C | ok | [ ] | |
-| H2.3 | State folder `~/Library/Application Support/Akam`, key in `~/.ssh`, permissions 0700/0600 | yes | [ ] | |
-| H2.4 | SD guards: internal SSD, a USB card reader, the built-in SDXC slot (if any; records whether `Internal` is true), a USB stick, a disk image mounted with Disk Utility | SSD and disk image refused; reader accepted; slot accepted on protocol; stick policy as designed | [ ] | |
-| H2.5 | `sudo` elevation in a terminal (password prompt, request on stdin); opt-in `osascript` path | both write the card; decline writes nothing | [ ] | |
-| H2.6 | Permissions: no Full Disk Access or Removable Volumes prompt for the raw write (record what appears) | recorded | [ ] | |
-| H2.7 | After the write: automount of the new volume does not break verification; `diskutil eject` message correct | verify passes; extra `.fseventsd` harmless | [ ] | |
-| H2.8 | iCloud Drive "Desktop & Documents" on: backup suggestion warns and proposes `~/Akam backups` | yes | [ ] | |
-| H2.9 | Discovery with Wi-Fi and Ethernet both up; firewall prompt for WS-Discovery | listed; prompt text matches the note | [ ] | |
-| H2.10 | First install from stock, update, options, restore, as H1.14/H1.15 | passes | [ ] | |
-| H2.11 | `talk`/`say` with ffmpeg installed (`avfoundation`) and without (clear message: macOS needs ffmpeg for the microphone). `say` with a WAV, MP3, FLAC and Ogg file works with no ffmpeg | ok | [ ] | |
-
-### H3 - Linux regression (amd64, and arm64 such as a Raspberry Pi)
-
-Repeat the daily-use checks of the Linux wizard and add:
-
-| # | Check | Expected result | Done | Notes |
-|---|---|---|---|---|
-| H3.1 | SD guards on a built-in mmc slot and on a USB reader (`prepare-backup-sd`, answer No at the red box) | the card is listed with model and size; the system disk is never offered; guard messages as before the refactor; No writes nothing | [ ] | |
-| H3.2 | Elevation with `sudo` (terminal) and with `pkexec` (graphical session, `AKAM_SD_ELEVATE=pkexec`) | both write the card; declining writes nothing | [ ] | |
-| H3.3 | Card prepared by the binary: the stock camera boots it into telnet 24 (backup card) and reads the flash card | yes | [ ] | |
-| H3.4 | Home screen, camera chooser (scan and WS-Discovery each asked first, default No), option screens: apply an LED, video and ONVIF change | applied; "applies at" texts true; ports shown match the scan | [ ] | |
-| H3.5 | Backup of an Akam camera over SSH (no card) | folder `Akam backups/<camera>/<date>` with 8 files, `SHA256SUMS` ok, marker `kind=akam`, private permissions | [ ] | |
-| H3.6 | Update Akam to Akam over SSH with a verified backup recorded | the backup gate re-verifies, red box shows the md5, flash, manual power cycle, `verify` passes | [ ] | |
-| H3.8 | Built-in decoders: `say` with a short MP3, FLAC and Ogg Vorbis file whose names have a wrong extension (for example `voice.bin`) | plays, no ffmpeg needed (also with ffmpeg removed from the PATH) | [ ] | |
-| H3.9 | `talk 20` on a PipeWire desktop (`pipewire-pulse` running) with no ffmpeg and no arecord on the PATH; `doctor` shows `microphone: PulseAudio / PipeWire (built in)` | voice heard on the camera at normal pitch; the capture stream shows up in `pavucontrol`/`wpctl status` as `akam` and disappears at the end | [ ] | |
-| H3.10 | `talk` on a plain PulseAudio desktop, and with the server stopped (`AKAM_TALK_CAPTURE_CMD` unset) | PulseAudio works; without a server it falls back to `arecord`/`ffmpeg` if present, else a clear error | [ ] | |
-| H3.11 | `AKAM_TALK_CAPTURE_CMD='arecord -q -t raw -f S16_LE -r 8000 -c 1'` still wins over the built-in backend | the command is used (`Microphone: AKAM_TALK_CAPTURE_CMD`) | [ ] | |
-| H3.7 | Native `image` | only when its gate is open; otherwise SKIP | [ ] | |
-
-### H3b - Doctor hints, Wi-Fi signal and clock (any OS, one real camera)
-
-| # | Check | Expected result | Done | Notes |
-|---|---|---|---|---|
-| H3b.1 | `doctor` with `ffmpeg`, `arecord`, `mksquashfs` missing (use a PATH without them) | each hint names the right package for the OS (alsa-utils, squashfs-tools / squashfs, Gyan.FFmpeg); on Windows the squashfs tools point to `--builder native` or WSL, never a fake `winget install` | [ ] | |
-| H3b.2 | Camera options with the camera close to the access point | `Wi-Fi signal: ... (good)` and no warning; compare the dBm with the router's view | [ ] | |
-| H3b.3 | Move the camera (or add a wall) until the signal is below -70 dBm, open Camera options | level `weak` or `poor`, the warning names moving the camera or a repeater and, with the default video settings, `./akam video bitrate 1024 gop 1`; nothing changes on the camera | [ ] | |
-| H3b.4 | Same, in the dark (night mode, fps around 10) | the warning says the low frame rate at night is the exposure, not the Wi-Fi | [ ] | |
-| H3b.5 | Right after a power-up without time sync, open Camera options | `Clock: not set`; asked `Set the camera clock from this computer now?` with default No; Enter changes nothing; `y` sets it (also confirms busybox `date -u -s 'YYYY-MM-DD hh:mm:ss'` works on the camera), the next screen shows `Clock: set, +/-1 s` | [ ] | |
-| H3b.6 | Reboot the camera (by hand) with time sync off, then on | the clock is unset again when off; with `ntp set ntp.example.net` (a server you chose; use a real one for the test) it is right after a minute | [ ] | |
-| H3b.7 | End of `verify` of an install or update | time sync is offered, default No; there is no default server: `y` asks for the server(s) to use, and an empty answer changes nothing; `y` then a LAN server address (or a server you name) uses it | [ ] | |
-
-### H4 - End to end per OS
-
-Run once on each OS that passed its table. Windows and macOS use an externally built image until the native builder gate.
-
-| # | Check | Expected result | Done | Notes |
-|---|---|---|---|---|
-| H4.1 | Stock camera to verified Akam with only the binary: card, backup, image (import), flash card, flash, manual power cycle, `verify` | the camera runs Akam; ports 22, 554, 8091 only by default | [ ] | |
-| H4.2 | Restore to stock from the stock backup made in H4.1 | the camera boots the original firmware; read-back md5 equal | [ ] | |
-| H4.3 | At no point did the program reboot or power-cycle the camera, and every yes/no default was No | yes | [ ] | |
-
-
-## Assistant screen checklist
-
-A short check of the `akam` home screen and its main screens on the terminals people really use. The automated tests cover
-the logic and the layout; only a person can say whether colours, glyphs and keys feel right in a real terminal. Nothing
-here touches a camera: use `--dry-run` where a step would write (the red box then does not open) or press `n`/Esc at every
-question. For hardware tests see the [assistant checklists](#assistant-checklists).
-
-### Terminals to run
-
-| # | Terminal | Notes |
-|---|----------|-------|
-| 1 | Windows 10, conhost (the classic console window, `akam.exe` from cmd or PowerShell) | uses the console's VT mode; try a raster font and Consolas |
-| 2 | Windows 10, Windows Terminal | PowerShell and cmd tabs |
-| 3 | macOS Terminal.app | also iTerm2 if you have it |
-| 4 | A Linux terminal (gnome-terminal, konsole, xterm...) | |
-| 5 | tmux (inside any of the above, `TERM=screen-256color` or `tmux-256color`) | resize the pane while the program runs |
-| 6 | 16 colours: `TERM=linux` on the Linux console, or `TERM=xterm` with a 16-colour palette | glyphs fall back to ASCII on the Linux console |
-| 7 | No colour: `NO_COLOR=1 akam` (PowerShell: `$env:NO_COLOR=1`) | the screen must stay readable and keep its structure |
-| 8 | Small window: 60 columns by 16 lines, then 40 by 8 | |
-
-Also run once with `AKAM_ASCII=1` (forces ASCII glyphs) and once with `--plain` (no screen, line-by-line text).
-
-### What to look at, per screen
-
-Write PASS, FAIL or SKIP (why) and what you saw. "Fits" means nothing wraps badly, nothing is cut mid-word at the right edge
-and no stray characters (`?`, boxes, `[`...) appear.
-
-| Screen | How to get there | Keys to press | Expected |
-|--------|------------------|---------------|----------|
-| Home | run `akam` | Up/Down, `j`/`k`, a digit 1 to 8 (shortcut, then answer `n` or Esc to the first question), `?`, `q` | Header (product, camera name, address, badges) over a list; one line of keys at the bottom; the selected row is clearly marked; the status colours (ok, warning, error) differ and each has a word or glyph, not colour alone; `?` opens details and Esc closes them; `q` quits; nothing says "Press Enter" |
-| Camera chooser and scan | `c` on the home | `s` then `n` (no packet is sent), `s` then `y` (scan of your own network; stop with Esc), `o` then `n`, `t` (type an address, Esc), Esc | Empty state tells you to press `s` or `t`; the question defaults to No (Enter, Esc, `q` all mean No); the scan shows a status line with a percentage and rows appear as cameras answer; Esc stops it at once and goes back |
-| Options form | choose "Camera options" (needs a camera, or use `--dry-run` with a remembered camera) | Up/Down, Left/Right or Space on a choice, type a number and Enter, `p` (password row is hidden), Esc | Six groups (Video, Picture, LED, Audio, Network, Security) on one screen that scrolls; a change shows `SET ...` then a one-line result; typed passwords never show, not even as `*`; Esc leaves without asking anything |
-| Backup progress | "Back up / restore", then back up (a camera, or `--dry-run`) | Esc once while reading, `?`, resize the window | Steps listed with a spinner on the current one; a bar with size, elapsed time and time left; Esc says it stops after the current step and nothing on the camera changes; `?` shows the log and Esc closes it; the bar redraws cleanly after a resize |
-| Red box | "Prepare the backup microSD card" or "Update this camera" until the box (use a spare card; or `--dry-run`, where it must **not** open and only a `WOULD ask` line shows) | Enter, Esc, `q`, Ctrl-C, then run again and press `y` only on a card you can erase | The box is red (bold uppercase title in no-colour and ASCII), shows the command, and No is highlighted; Enter, Esc, `q` and Ctrl-C all mean No and nothing happens; waiting a minute changes nothing; only `y` (or Left then Enter) means yes |
-| Which firmware? | "Set up a new camera" (a card-less check: stop at the list) or "Update this camera" on an Akam camera, with and without a network | Up/Down, a digit, Enter, `/` (filter), Esc; pick an older release, then answer Enter (No) | Title with what the camera runs; `Akam X.Y.Z (latest)` first and selected, older versions marked `older`, then downloaded kits, "A kit file or folder...", "An image file you built (.squashfs)...", and in Update with a verified stock backup "Stock firmware (from your backup)  - never tested on a real camera"; no stock row in the first install; offline or rate-limited: a warning line, only the local rows and a "Try again to read the releases" row; with an image already built from your backup and no builder, that image is the first row; a release whose image cannot be built here is refused and nothing changes; an older release asks a downgrade yes/no with No as the default and nothing is downloaded on No; an image path shows its md5 and a "you take responsibility" question (No by default); Esc goes back and nothing changes |
-| SSH key | in "Camera options", Security group, look at the row `SSH key` (`shared (~/.ssh/akam)`, `this camera only (...)` or `custom (...)`), press `k` | `k`, Up/Down and Enter on the question, a passphrase (not shown), `y`/`n` | A read-only row; `k` asks "Which SSH key should open this camera from now on?", then a yes/no (default No) that says what changes, then the write (no stop offered while it runs), then "The new key works ..."; a last yes/no (default No) offers to remove the old key; Esc and No change nothing; no key or passphrase appears in the transcript |
-| Configs | "Configs" on the home (digit `9`), then "Edit the global config" (no camera needed) | Up/Down, Left/Right on a choice, type a number and Enter, `s` (passwords, Wi-Fi), `c` (copy from a camera), Esc | The Options-style form on the template: every row starts as "not set" or its saved value; a change is saved at once (no write to any camera); a bad number is refused and the row snaps back; `s` asks "Keep ... in the global config? They are stored on this computer in a private file; anyone with access to your account can read it." with default No, and a typed password is never shown; "Apply the global config to this camera" lists only the differences (passwords as `password: set` or `asked`), asks a yes/no (default No), the video restart is a separate question (default No), and no write is offered a stop while it runs; the Options title then reads `settings: local (from global)` |
-| Error screen | stop a camera (or type a wrong address in the chooser) and run "Update this camera" | `l`, Esc, `r`, `c` | Red title in words, what happened, what to do, a muted technical line; `l` opens the log tail, Esc closes only the log; `r` retries; `c` offers another camera; Esc goes back home; no password or key appears anywhere |
-| Write in progress (hardware plan only) | during a flash write | Esc, Ctrl-C, `q` | Nothing stops or quits; the footer says the write cannot be interrupted safely; the keys work again when it ends |
-
-### Checks that apply to every screen
-
-- **Colour:** in 256 colours the palette is readable on both a light and a dark background; in 16 colours the red box and
-  errors are still red (not invisible); with `NO_COLOR=1` there is no escape-sequence colour at all and warnings still read
-  as warnings (`[!]`, `[x]`, `[ok]` or words).
-- **Glyphs:** boxes and spinner look right (UTF-8), or fall back to plain ASCII on the Linux console and with `AKAM_ASCII=1`.
-- **Width:** a camera name with accents or CJK characters keeps the columns aligned.
-- **Resize:** shrink and grow the window while on the home, the chooser and the form. The screen redraws without leftovers.
-  At 40 by 8 it keeps its title and its key line.
-- **Keys:** arrow keys, Enter, Esc, `q`, `?`, Ctrl-C and the mouse wheel do what the key line says. On Windows conhost also try
-  Esc while typing in a field. In tmux check that Esc is not delayed for a long time (set `escape-time 10` if it is).
-- **Quit:** `q` or Ctrl-C leaves the terminal as it found it: cursor visible, no colour left on, no alternate screen stuck, typed
-  characters echoed again.
-- **No camera needed for safety:** on the red box never press `y` unless you meant to; the tester must be able to read the
-  command in the box before answering.
-
+Compare the port check from outside too: `nmap -p 21,22,23,24,80,554,8091 <camera-ip>` (8091 must show closed unless you opened it with `control-port open`).

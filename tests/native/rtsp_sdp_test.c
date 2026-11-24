@@ -18,7 +18,7 @@ static void legacy_sdp(char *out, size_t cap, unsigned long long t, const char *
     snprintf(out, cap,
         "v=0\r\n"
         "o=- %llu %llu IN IP4 0.0.0.0\r\n"
-        "s=ak_rtsp\r\n"
+        "s=akamd\r\n"
         "t=0 0\r\n"
         "m=video 0 RTP/AVP 96\r\n"
         "c=IN IP4 0.0.0.0\r\n"
@@ -35,7 +35,7 @@ static void legacy_sdp(char *out, size_t cap, unsigned long long t, const char *
 static const char GOLDEN_DEFAULT[] =
     "v=0\r\n"
     "o=- 1700000000 1700000000 IN IP4 0.0.0.0\r\n"
-    "s=ak_rtsp\r\n"
+    "s=akamd\r\n"
     "t=0 0\r\n"
     "m=video 0 RTP/AVP 96\r\n"
     "c=IN IP4 0.0.0.0\r\n"

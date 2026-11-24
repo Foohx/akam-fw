@@ -1,13 +1,17 @@
 # Machine-readable old -> new path table of the repo reorganisation (docs: .local/reviews/fable-architecture-20261118.md, section 2).
-# Done: steps 0-6 of the reorganisation (src/common, src/ak_rtsp, the 2K app tree, the akam2k_ prefix); step 7 (akamd) and the step 8 tests/docs moves are not done.
+# Done: steps 0-6 of the reorganisation (src/common, src/ak_rtsp, the 2K app tree, the akam2k_ prefix); step 7 (the on-camera renames to akamd, 2026-11-23). The step 8 moves still to do: the tests tree mirror (tests/src, tests/platforms, tests/firmware, tests/tools) and, if not marked below, the docs moves.
+# Done (step 8, golden): tests/golden/ak_rtsp_1080p.sha256 -> lsc-indoor-1080p-ak3918.sha256 (line retired).
 # Done (step 8, assistant installer packages): tools/assistant/internal/{image,flash,sdcard}/ -> internal/installer/nativeapp/ (lines retired).
 # Format: "old<TAB>new" per line. A path ending in "/" is a directory (prefix rule); other lines are single files.
 # Matching is longest-prefix-first, so a file line wins over the directory line that contains it. Lines starting
 # with "#" are comments; the "# UNDECIDED" lines list sources whose destination the review leaves open (split files or
 # "stays until the registry merge"): they are NOT rewritten. Used by tools/dev/rewrite_paths.sh.
 # The target names are the review's; where it says only "prefix dropped" the file name keeps its stem.
-# Not paths, kept for the record (on-camera renames, step 7): /usr/bin/ak_rtsp -> akam (+ link), ak_rtsp_wrapper.sh -> akam_run.sh,
-# akam2k_rtsp -> akam, akam2k_{sntp,mic,led} -> akam-{sntp,mic,led}, akam2k.conf/.log -> akam.conf/.log. Image file name and kit path unchanged.
+# Not paths, kept for the record (on-camera renames, step 7, DONE 2026-11-23; the user chose the name akamd, not akam, which stays the PC assistant):
+# /usr/bin/ak_rtsp -> akamd (+ link ak_rtsp -> akamd in the image, one release), ak_rtsp_wrapper.sh -> akam_run.sh,
+# akam2k_rtsp -> akamd, akam2k_{sntp,mic,led} -> akam-{sntp,mic,led}, akam2k.conf/.log -> akam.conf/.log (old conf copied once).
+# Image file name ak_rtsp_firmware_*.squashfs unchanged; kit_format 2 (bin/akamd), format 1 still read. The log prefix [ak_rtsp] of the 1080p
+# is unchanged on purpose (tests and users grep it).
 
 # ---- src/common (step 3)
 src/common/net/h264_params.c	src/net/rtsp/h264_params.c
@@ -127,8 +131,8 @@ src/ak_rtsp/ctl_gate.c	src/core/control/ctl_gate.c
 src/ak_rtsp/ctl_gate.h	src/core/control/ctl_gate.h
 src/ak_rtsp/ctl_sys.c	src/core/control/ctl_sys.c
 src/ak_rtsp/ctl_sys.h	src/core/control/ctl_sys.h
-src/ak_rtsp/talk.c	platforms/anyka-ak3918/talk.c
-src/ak_rtsp/talk.h	platforms/anyka-ak3918/talk.h
+src/ak_rtsp/talk.c	src/features/audio/talk.c
+src/ak_rtsp/talk.h	src/features/audio/talk.h
 src/ak_rtsp/rtp_in.c	src/net/rtsp/rtp_in.c
 src/ak_rtsp/rtp_in.h	src/net/rtsp/rtp_in.h
 src/ak_rtsp/video_cfg.c	platforms/anyka-ak3918/video_cfg.c
@@ -165,8 +169,8 @@ src/ak_rtsp/venc.h	platforms/anyka-ak3918/venc.h
 src/ak_rtsp/venc_dump.h	platforms/anyka-ak3918/venc_dump.h
 src/ak_rtsp/audio.c	platforms/anyka-ak3918/audio.c
 src/ak_rtsp/audio.h	platforms/anyka-ak3918/audio.h
-src/ak_rtsp/audio_out.c	platforms/anyka-ak3918/audio_out.c
-src/ak_rtsp/audio_out.h	platforms/anyka-ak3918/audio_out.h
+src/ak_rtsp/audio_out.c	src/features/audio/audio_out.c
+src/ak_rtsp/audio_out.h	src/features/audio/audio_out.h
 src/ak_rtsp/ircut.c	platforms/anyka-ak3918/ircut.c
 src/ak_rtsp/ircut.h	platforms/anyka-ak3918/ircut.h
 src/ak_rtsp/ledsys.c	platforms/anyka-ak3918/ledsys.c
@@ -350,7 +354,6 @@ firmware/lsc-rotatable-2k-ak3918av130/build_card.sh	firmware/lsc-rotatable-2k-ak
 # ---- release, assistant, tests, docs (step 8 and 4)
 tools/release/models/lsc-indoor-1080p-ak3918.txt	firmware/lsc-indoor-1080p-ak3918/model.txt
 tools/release/models/lsc-rotatable-2k-ak3918av130.txt	firmware/lsc-rotatable-2k-ak3918av130/model.txt
-tests/golden/ak_rtsp_1080p.sha256	tests/golden/lsc-indoor-1080p-ak3918.sha256
 docs/porting/lsc-1080p/	docs/models/lsc-indoor-1080p-ak3918/
 docs/porting/lsc-rotatable-2k/	docs/models/lsc-rotatable-2k-ak3918av130/
 # UNDECIDED: tests/native/*, tests/*_test.sh, tests/rot2k_* -> tests/src/<area>/, tests/platforms/<p>/, tests/firmware/<model>/, tests/tools/<tool>/ (per test; use tests/lib/paths.sh)

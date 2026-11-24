@@ -32,5 +32,5 @@ void a2k_scene_set_min(int permille)
 int sc_parse_min(const char *s)
 {
     (void)s;
-    return 0; /* accepted and ignored: scene_min left in akam2k.conf must not stop the app of a build without the scene check */
+    return 0; /* accepted and ignored: scene_min left in akam.conf must not stop the app of a build without the scene check */
 }

@@ -1,5 +1,7 @@
 # Phase 1 validation checklist (LSC Rotatable 2K, `akam-rot-01`)
 
+> **Superseded (2026-11-24).** The first-boot card was validated long ago and the 2K now runs from its flash. The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and findings only; do not read its status as current.
+
 > Archived document (2026-11): historical, kept for its findings. Paths and status may predate the repository reorganisation (old to new table: `tools/dev/path-map.txt`); current docs are in [docs/README.md](../README.md).
 
 Copy of the PLAN section 5 checklist with the exact commands. One unit, a user "go" for every boot. Replace

@@ -284,7 +284,7 @@ int venc_create_encoder(void)
          * rc_flag=1, rc.flag=1 and every other rc word zero. The two crashes recorded above both
          * had rc.flag=0, i.e. MMA off while QUERY_DMA had sized the ring pool for MMA on (it sets
          * bEnableMMA=1): the same pool shortfall that dma_pool_alloc_obj trips over. With rc.flag=1
-         * the pool matches, as it does in the stock application. Not hardware-tested on ak_rtsp.
+         * the pool matches, as it does in the stock application. Not hardware-tested on akamd.
          *
          * CRASH RISK, opt-in only: this is a hypothesis, not a proof. Two doubts remain. (1) minqp and maxqp
          * are both 0 here, which the first crash note above suspected of a zero divisor (stock does send 0 / 0

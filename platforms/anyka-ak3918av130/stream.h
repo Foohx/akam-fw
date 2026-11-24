@@ -25,12 +25,17 @@
 #define A2K_MAX_FRAME_MAIN (512u << 10)
 #define A2K_MAX_FRAME_SUB (128u << 10)
 #define A2K_MAX_WAKE 8             /* clients that can wait on one stream */
+/* Longest a frame may wait for its client (in the ring, behind the pacing) before the client is moved on to the newest
+ * keyframe: a joining client starts only on a keyframe younger than this, a client whose next frame is older skips to
+ * the newest keyframe (or waits for a new one) instead of playing the backlog. About 3 frames at 10 fps. */
+#define A2K_MAX_AGE_MS 300
 
 typedef struct a2k_frame {
     int refs;                      /* guarded by the stream mutex */
     uint32_t len;
     int key;                       /* carries an IDR slice (NAL 5) */
     int64_t capture_us;            /* smoothed capture time, CLOCK_MONOTONIC (rtp_clock.h) */
+    int64_t rx_us;                 /* CLOCK_MONOTONIC when the capture thread had the access unit (the frame age clock) */
     uint64_t seq;
     uint8_t data[];                /* Annex B */
 } a2k_frame_t;
@@ -67,6 +72,17 @@ void a2k_frame_unref(a2k_stream_t *s, a2k_frame_t *f);
 /* Sequence number of the newest keyframe still in the ring, 1 and *seq set; 0 when there is none. */
 int a2k_stream_latest_key(a2k_stream_t *s, uint64_t *seq);
 uint64_t a2k_stream_head(a2k_stream_t *s);
+
+/* Where a client joining at now_us starts: 1 and *cursor = the newest keyframe when it is at most max_age_us old
+ * (a burst of at most the ring follows, then the client is current); 0 and *cursor = the head when there is none
+ * (the caller asks the encoder for a keyframe and drops frames until it arrives). */
+int a2k_stream_join(a2k_stream_t *s, uint64_t *cursor, int64_t now_us, int64_t max_age_us);
+
+/* A client whose next frame (at *cursor) is older than max_age_us is behind. Returns 0 when it is not. 1 when the cursor
+ * was moved to a keyframe newer than it and at most max_age_us old (*dropped = frames skipped). 2 when there is no such
+ * keyframe: the cursor is at the head, *dropped = frames skipped, and the caller waits for a new keyframe (want_idr).
+ * Bounds the queue latency of a slow client to max_age_us plus one keyframe. */
+int a2k_stream_catchup(a2k_stream_t *s, uint64_t *cursor, int64_t now_us, int64_t max_age_us, unsigned *dropped);
 /* Copy of the SPS/PPS cache. */
 void a2k_stream_params(a2k_stream_t *s, h264_params_t *out);
 /* The capture thread polls and clears it; any thread sets it with a2k_stream_want_idr(). */

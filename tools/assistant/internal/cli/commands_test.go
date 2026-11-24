@@ -146,39 +146,66 @@ func TestPicture(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- debug (real helper script)
+// ---------------------------------------------------------------- the text port 8091 (control-port) and the removed debug mode
 
-func TestDebug(t *testing.T) {
+// `debug on` let the NETWORK write through port 8091. That port is closed to the network now and the assistant uses the signed API,
+// so the command is gone (it answers with the way out); the opt-in that matters is the one that opens the port for monitoring.
+func TestDebugWasRemoved(t *testing.T) {
 	e := newEnv(t)
-	e.needHelpers()
-	r := e.run("", "debug")
-	expectRC(t, r, 0)
-	contains(t, r.out, "  debug off (the control port is read-only for the network)")
+	for _, args := range [][]string{{"debug"}, {"debug", "on", "30"}, {"debug", "off"}, {"debug", "status"}} {
+		r := e.run("y\n", args...)
+		expectRC(t, r, 2)
+		contains(t, r.err, "debug was removed", "control-port status")
+	}
+	if len(e.cam.Commands()) != 0 || len(e.cam.APIPatches()) != 0 {
+		t.Errorf("a removed command reached the camera: %v %v", e.cam.Commands(), e.cam.APIPatches())
+	}
+}
 
+func TestControlPort(t *testing.T) {
+	e := newEnv(t)
+	r := e.run("", "control-port")
+	expectRC(t, r, 0)
+	contains(t, r.out, "Saved choice: closed to the network", "does not answer from this computer")
 	// default No: Enter, n, q, end of input
 	for _, in := range []string{"\n", "n\n", "q\n", ""} {
-		r = e.run(in, "debug", "on", "30")
+		r = e.run(in, "control-port", "open")
 		expectRC(t, r, 0)
-		contains(t, r.out, "  Left as it was (read-only).")
+		contains(t, r.out, "Left as it was (closed to the network).")
 	}
+	if len(e.cam.APIPatches()) != 0 || e.cam.CtlValue("control.lan") != "0" {
+		t.Fatalf("the port was opened without a yes: %v", e.cam.APIPatches())
+	}
+	r = e.run("y\nn\n", "control-port", "open") // yes to opening, no to the restart
+	expectRC(t, r, 0)
+	contains(t, r.out, "Saved on the camera.", "it applies at the next restart", "Not restarted", "Saved choice: open to your network")
+	if got := e.cam.APIPatches(); len(got) != 1 || got[0] != `{"control.lan":"1"}` || e.cam.CtlValue("control.lan") != "1" {
+		t.Errorf("patches %v, value %q", got, e.cam.CtlValue("control.lan"))
+	}
+	r = e.run("y\n", "control-port", "close") // closing needs no question about the port; the restart question is asked
+	expectRC(t, r, 0)
+	contains(t, r.out, "Saved choice: closed to the network")
+	if e.cam.CtlValue("control.lan") != "0" {
+		t.Error("not closed")
+	}
+	// the restart, when taken, is the audited one
+	e.run("y\ny\n", "control-port", "open")
+	found := false
 	for _, c := range e.cam.Commands() {
-		if strings.Contains(c, "debug.sh on") {
-			t.Fatalf("debug on was sent without a yes: %s", c)
+		if strings.Contains(c, "pidof akamd") {
+			found = true
 		}
 	}
-	r = e.run("y\n", "debug", "on", "30")
-	expectRC(t, r, 0)
-	contains(t, r.out, "debug on: the control port accepts writes from the network for 30 minutes", "WARNING: anyone on your network can now change the camera settings through port 8091 until it is switched off: ./akam debug off.")
-	r = e.run("", "debug", "status")
-	contains(t, r.out, "debug on, 1800 s left")
-	r = e.run("", "debug", "off")
-	contains(t, r.out, "debug off: the control port is read-only for the network", "  Port 8091 is read-only for the network again.")
-	// no terminal: refuses, asks nothing
+	if !found {
+		t.Error("the video service was not asked to restart on a yes")
+	}
+	// no terminal: opening refuses and asks nothing
+	e.run("", "control-port", "close")
 	t.Setenv("AKAM_FORCE_TTY", "")
-	r = e.run("y\n", "debug", "on")
+	r = e.run("y\n", "control-port", "open")
 	expectRC(t, r, 1)
-	contains(t, r.err, "allowing writes on the control port needs an interactive terminal and refuses to run without one.")
-	for _, bad := range [][]string{{"debug", "on", "0"}, {"debug", "on", "1441"}, {"debug", "on", "x"}, {"debug", "on", "1", "2"}, {"debug", "off", "1"}, {"debug", "loud"}} {
+	contains(t, r.err, "opening the text port needs an interactive terminal and refuses to run without one.")
+	for _, bad := range [][]string{{"control-port", "maybe"}, {"control-port", "open", "now"}} {
 		expectRC(t, e.run("", bad...), 2)
 	}
 }

@@ -17,6 +17,8 @@
 #define STREG_ENUM_MAX 16
 
 typedef enum { ST_BOOL, ST_INT, ST_ENUM, ST_STRING, ST_PATTERN } st_type_t;
+#define ST_SECRET_WO 2u
+
 typedef enum { AP_LIVE, AP_RESTART_COMPONENT, AP_REBOOT } st_apply_t;
 
 #define ST_ACC_READ 1u
@@ -54,7 +56,7 @@ typedef struct {
     uint8_t persist;          /* 1 = saved in /config/akam/settings, 0 = RAM only. Never 1 for a secret */
     uint8_t access;           /* ST_ACC_READ | ST_ACC_WRITE */
     uint8_t expose;           /* ST_EXPOSE_HTTP | ST_EXPOSE_MQTT (component metadata lives in the MQTT layer) */
-    uint8_t secret;           /* write-only, never in any reply, refused over HTTP, never persisted here; no get hook */
+    uint8_t secret;           /* 1 = write-only, never in any reply, refused over HTTP, never persisted here; no get hook. ST_SECRET_WO (2) = the same, but it MAY be written over HTTP with an admin key (never read, never echoed or listed; the setter keeps the value in a store of its own) */
     uint8_t min_scope;        /* AKEY_* level needed (0 = write for writable keys, read otherwise) */
     uint32_t model_mask;      /* models that have it (0 = all) */
     uint32_t cap_req;         /* capability bits required from the HAL descriptor (0 = none) */
@@ -91,7 +93,12 @@ typedef struct {
     int ok;
     int err;          /* ST_E_* when !ok */
     st_apply_t apply; /* when ok */
+    int unsaved;      /* when ok: the value is applied but the setter could not write it to flash (streg_note_unsaved); the reply says "saved":false */
 } st_result_t;
+
+/* Called by a setter (on its own thread, during set) when the change took effect but its file could not be written: the next reply
+ * of that key carries "saved":false, so the user knows the value is lost at the next reboot. Never called on success. */
+void streg_note_unsaved(void);
 
 /* PATCH as a whole: every key is checked, then every cross-field check, before any setter runs; one failure refuses the
  * whole batch (the others report ST_E_NOTAPPLIED). Setters then run in REGISTRY order. A setter failure leaves the earlier

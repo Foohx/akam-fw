@@ -19,11 +19,11 @@ trap 'rm -rf "$WORK"' EXIT
 "$WORK/klog_test" "$WORK"
 
 # The one-line patch of main.sh (build_image.sh KLOG_NEW): restart after a crash, stock klogd only when the
-# filter cannot start or crashed 5 times in a row. ak_rtsp, sleep, klogd and /proc/uptime are stubs; nothing real
+# filter cannot start or crashed 5 times in a row. akamd, sleep, klogd and /proc/uptime are stubs; nothing real
 # is started. Each RCS entry is "exit-code" or "exit-code:seconds-the-run-lasted" (the stub advances the fake uptime).
 LINE=$(sed -n "s/^    KLOG_NEW='\(.*\)'\$/\1/p" "$REPO/firmware/lsc-indoor-1080p-ak3918/image/build_image.sh")
 [ -n "$LINE" ] || { echo "FAIL: KLOG_NEW not found in build_image.sh"; exit 1; }
-LINE=${LINE//\/usr\/bin\/ak_rtsp/$WORK/fake_ak_rtsp}
+LINE=${LINE//\/usr\/bin\/akamd/$WORK/fake_ak_rtsp}
 LINE=${LINE//\/proc\/uptime/$WORK/uptime}
 mkdir -p "$WORK/stubs"
 printf '#!/bin/sh\nexit 0\n' >"$WORK/stubs/sleep"
@@ -59,7 +59,7 @@ fallback_case "binary missing (127): stock klogd at once" "127" "ak klogd"
 fallback_case "killed (143), then cannot start: restarted, then klogd" "143 137 1" "ak ak ak klogd"
 fallback_case "five crashes in a row (139): klogd after the fifth" "139 139 139 139 139 139" "ak ak ak ak ak klogd"
 fallback_case "SIGSEGV once then clean end: restarted, then klogd" "139 0" "ak ak klogd"
-# the reviewed bug: `kill $(pidof ak_rtsp)` used to hit the filter; every kill counted as a crash and after 5 the
+# the reviewed bug: `kill $(pidof akamd)` used to hit the filter; every kill counted as a crash and after 5 the
 # stock klogd took over for good
 fallback_case "killed by pidof 8 times (143): never counted, never falls back to klogd" "143 143 143 143 143 143 143 143 1" "ak ak ak ak ak ak ak ak ak klogd"
 fallback_case "SIGINT (130) is a stop request too" "130 130 130 130 130 130 1" "ak ak ak ak ak ak ak klogd"
@@ -69,12 +69,12 @@ fallback_case "short runs (59 s) do not reset: klogd after the fifth" "139:59 13
 [ "$sh_fail" = 0 ]
 
 # The restart command of the assistant and the wizard (restartVideoCmd) kills the streamer but never the filter,
-# although `pidof ak_rtsp` lists both (same exe). Two real processes: one shows akam_klog in its cmdline.
+# although `pidof akamd` lists both (same exe). Two real processes: one shows akam_klog in its cmdline.
 RESTART=$(sed -n 's/^const restartVideoCmd = `\(.*\)`$/\1/p' "$REPO/tools/assistant/internal/cli/remote.go")
 [ -n "$RESTART" ] || { echo "FAIL: restartVideoCmd not found"; exit 1; }
 printf '#!/bin/sh\necho "$PIDS"\n' >"$WORK/stubs/pidof"
 chmod +x "$WORK/stubs/pidof"
-( exec -a ak_rtsp sleep 120 ) & STREAMER=$!
+( exec -a akamd sleep 120 ) & STREAMER=$!
 ( exec -a akam_klog sleep 120 ) & FILTER=$!
 cleanup_pids() { kill "$STREAMER" "$FILTER" 2>/dev/null || true; wait 2>/dev/null || true; }
 trap 'cleanup_pids; rm -rf "$WORK"' EXIT

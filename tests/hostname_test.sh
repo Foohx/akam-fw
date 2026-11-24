@@ -10,7 +10,7 @@ REPO=$(cd "$HERE/.." && pwd)
 TPL=$REPO/firmware/lsc-indoor-1080p-ak3918/overlay
 HN=$REPO/src/scripts/akam_hostname.sh
 PATCH=$TPL/patch_ethernet_hostname.sh
-WRAPPER=$TPL/ak_rtsp_wrapper.sh
+WRAPPER=$TPL/akam_run.sh
 FIXTURE_SRC=$REPO/tests/fixtures/app_fake
 
 if [ -z "${SH_UNDER_TEST:-}" ]; then

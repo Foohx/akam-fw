@@ -22,6 +22,29 @@ int64_t tx_pace_max_skip_ms(int gop_s)
 
 size_t tx_pace_low(size_t base) { return base / 4; }
 
+size_t tx_pace_idle(size_t rate_bps)
+{
+    size_t v = rate_bps / 20;
+    return v > 8192 ? v : 8192;
+}
+
+/* Time the backlog has stood above the idle level (0 = not above it). Called for every frame in normal mode. */
+static int lag_over(tx_pace_t *p, const tx_pace_cfg_t *c, size_t backlog, int64_t now_ms)
+{
+    int64_t grace;
+    if (c->max_lag_ms <= 0 || c->rate_bps == 0) return 0;
+    if (backlog <= tx_pace_idle(c->rate_bps)) {
+        p->lag_since_ms = 0;
+        return 0;
+    }
+    if (p->lag_since_ms == 0) {
+        p->lag_since_ms = now_ms ? now_ms : 1;
+        return 0;
+    }
+    grace = (int64_t)(p->key_len > TX_PACE_IKEY_CAP ? TX_PACE_IKEY_CAP : p->key_len) * 1000 / (int64_t)c->rate_bps;
+    return now_ms - p->lag_since_ms > c->max_lag_ms + grace;
+}
+
 size_t tx_pace_high(const tx_pace_t *p, const tx_pace_cfg_t *c, size_t frame_len)
 {
     size_t k = p->key_len > TX_PACE_IKEY_CAP ? TX_PACE_IKEY_CAP : p->key_len;
@@ -37,6 +60,7 @@ size_t tx_pace_high(const tx_pace_t *p, const tx_pace_cfg_t *c, size_t frame_len
 static void enter_skip(tx_pace_t *p, size_t backlog, int64_t now_ms, tx_pace_event_t *e)
 {
     p->skipping = 1;
+    p->lag_since_ms = 0;
     p->run_skipped = 1;
     p->skip_since_ms = now_ms;
     p->best_backlog = backlog;
@@ -81,9 +105,11 @@ tx_pace_verdict_t tx_pace_decide(tx_pace_t *p, const tx_pace_cfg_t *c, size_t ba
         size_t limit = is_key && c->base < high ? c->base : high; /* a keyframe needs a shallower backlog */
         int key_ok = is_key && backlog <= low; /* always sendable, even above the buffer size */
         int over = backlog > limit || (c->cap && backlog + frame_len > c->cap && !key_ok) || !fits;
-        if (!over) return TX_PACE_SEND;
+        int lag = lag_over(p, c, backlog, now_ms);
+        if (!over && !lag) return TX_PACE_SEND;
         enter_skip(p, backlog, now_ms, e);
         e->no_room = !fits;
+        e->lag = !over && lag;
         return TX_PACE_SKIP;
     }
 

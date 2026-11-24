@@ -1,15 +1,17 @@
 # Control port (TCP 8091)
 
-Port 8091 is a plain-text debug, metrics and tuning port served by `ak_rtsp` (`control.c`, `ctl_gate.c`, `ctl_sys.c`).
-Reads are open to the LAN. Writes are refused from the network unless a timed, RAM-only debug flag is on; commands sent
-from the camera itself (SSH helpers) always work. There is no password and no encryption on this port.
+Port 8091 is a plain-text debug, metrics and tuning port served by `akamd` (`control.c`, `ctl_gate.c`, `ctl_sys.c`).
+The port is **closed to the network by default: it binds 127.0.0.1** (the SSH helpers and `akamd ctl` reach it there). The saved opt-in
+`control.lan` (registry row, file `/etc/config/akam/control_lan`, read when `akamd` starts) binds 0.0.0.0 instead; reads are then open to
+the LAN and writes are refused from the network unless a timed, RAM-only debug flag is on. The assistant uses the signed API (8092), not
+this port. There is no password and no encryption on this port.
 
-Status: **hardware-validated**: metrics and reads from the network, `SET` refused remotely, loopback `SET`. **Not yet
+Status: **hardware-validated** (on the earlier image, before the port was closed): metrics and reads from the network, `SET` refused remotely, loopback `SET`. The loopback default and `control.lan` are host-tested only. **Not yet
 hardware checked**: strict `SET` ranges, debug-mode expiry on the final image.
 
 ## 1. Protocol
 
-- TCP, listens on `0.0.0.0:8091` (listen backlog 4). One thread per client.
+- TCP, listens on `127.0.0.1:8091` (`0.0.0.0:8091` with the `control.lan` opt-in), listen backlog 4. One thread per client.
 - Text, one command per line, LF-terminated (CR ignored). A line is at most 255 bytes; longer input is truncated
   without an error and the truncated line is executed.
 - Commands are case-insensitive. Keys are case-sensitive.
@@ -52,8 +54,8 @@ A command that changes state (`SET`, `SAVE`, `RESET`) is allowed only when the p
 otherwise the answer is `ERR read-only mode, see akam_debug.sh` and nothing changes.
 
 - **Loopback** means a peer in `127.0.0.0/8` (also `::1` and IPv4-mapped 127/8). The SSH helper scripts reach it through
-  `ak_rtsp ctl <line>` or the camera's `nc`.
-- **Debug flag**: RAM only, off at every start of `ak_rtsp` and at reboot, off by itself after its delay (monotonic
+  `akamd ctl <line>` or the camera's `nc`.
+- **Debug flag**: RAM only, off at every start of `akamd` and at reboot, off by itself after its delay (monotonic
   clock). Switched on only from loopback (`DEBUG on [MINUTES]`, wrapped by `akam_debug.sh on [MINUTES]`). While it is
   on, remote peers may write, receive `LOG` lines, see `net.ssid` and `net.mac`, and get the long idle limit.
 - **Persistence follows the source.** A loopback `SET` saves what is persistent. A remote `SET` (debug) changes the
@@ -201,9 +203,9 @@ shared by all callers.
 LED, audio, image, talk and video keys, the metrics, then `ctl.clients`, `ctl.debug`, `fw.version`, `sys.hostname`,
 `onvif.state`, `mqtt.state`, and the `.` terminator.
 
-## 7. The `ak_rtsp ctl` helper
+## 7. The `akamd ctl` helper
 
-`ak_rtsp ctl <words...>` joins its arguments into one line, sends it to `127.0.0.1:8091`, and prints the reply without
+`akamd ctl <words...>` joins its arguments into one line, sends it to `127.0.0.1:8091`, and prints the reply without
 `LOG` lines. It ends at the `.` line of a `LIST`, or 250 ms after the last data once a reply line arrived (1 s while none
 did), and at most 3 s. Exit 0 when the first reply line is not `ERR`, 1 otherwise (including no connection). It runs
 before any hardware initialisation. The helper scripts use it instead of the BusyBox `nc`.

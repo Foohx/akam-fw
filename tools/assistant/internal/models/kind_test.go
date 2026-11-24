@@ -22,7 +22,7 @@ func TestThe1080pEntryIsReadExactlyAsBefore(t *testing.T) {
 		Layout: "8 partitions; sizes 204800 4096 4096 65536 1572864 1032192 262144 5242880; APP=mtd7",
 		Records: []models.Record{
 			{Status: "validated", Device: "LSC Smart Indoor 1080p 3215672.3 (board SI D26228)", SoC: "AK3918AV130", Kernel: "4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025", MTD: "8 partitions; mtd7=APP 00500000", Squash: "squashfs xz block=131072 bcj=none", AppSHA: lscAppSHA, Busybox: "1.30.1"},
-			{Status: "untested", Device: "LSC Smart Indoor 1080p 3215672.2 (boards SI B26101 / C26101; run with ak_rtsp upstream, never with Akam)", SoC: "AK3918AV130", Kernel: "-", MTD: "-", Squash: "-", AppSHA: "-", Busybox: "-"},
+			{Status: "untested", Device: "LSC Smart Indoor 1080p 3215672.2 (boards SI B26101 / C26101; run with akamd upstream, never with Akam)", SoC: "AK3918AV130", Kernel: "-", MTD: "-", Squash: "-", AppSHA: "-", Busybox: "-"},
 			{Status: "untested", Device: "any other device, kernel build or stock APP (including a stock APP compressed with gzip)", SoC: "-", Kernel: "-", MTD: "-", Squash: "-", AppSHA: "-", Busybox: "-"},
 		},
 	}
@@ -59,7 +59,7 @@ func TestTheRotatable2KIsCardlessAppfsAndNotActionable(t *testing.T) {
 		r.Squash != "squashfs xz block=131072" || r.AppSHA != "74575a6fe3707cd5a077bc7fd419cd394ede95f57d7b622b444f0636e691c0ef" {
 		t.Errorf("record: %+v", r)
 	}
-	if u := m.Unsupported(); !strings.Contains(u, "no SD card") || !strings.Contains(u, "assistant-rot2k-flash-design.md") {
+	if u := m.Unsupported(); !strings.Contains(u, "no SD card") || !strings.Contains(u, "lsc-rotatable-2k/README.md#install") {
 		t.Errorf("unsupported: %q", u)
 	}
 	if _, _, ok := models.ByAppSHA(r.AppSHA); !ok {

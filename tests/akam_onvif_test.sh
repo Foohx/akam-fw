@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2012  # ls -ld is what the camera script uses too (no stat on BusyBox): the test mirrors it
 # Host tests for akam_onvif.sh (camera script, run under busybox sh when available) in a fake root
-# ($AKAM_ROOT). A fake `ak_rtsp` plays "ak_rtsp ctl <line>". Nothing touches hardware.
+# ($AKAM_ROOT). A fake `akamd` plays "akamd ctl <line>". Nothing touches hardware.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -27,8 +27,8 @@ contains() { case $2 in *"$3"*) ok "$1" ;; *) ko "$1 (no '$3' in: $2)" ;; esac; 
 perm() { ls -ld "$1" | cut -c1-10; }
 exists() { if [ -e "$1" ]; then echo yes; else echo no; fi; }
 
-# fake ak_rtsp: FAKE_MODE = new (answers), old (ERR unknown command), dead (connection refused)
-cat >"$WORK/ak_rtsp" <<'EOF2'
+# fake akamd: FAKE_MODE = new (answers), old (ERR unknown command), dead (connection refused)
+cat >"$WORK/akamd" <<'EOF2'
 #!/bin/sh
 echo "$*" >>"$FAKE_LOG"
 [ "$1" = ctl ] || exit 9
@@ -42,8 +42,8 @@ case "$2 $3" in
     *) echo "ERR unknown command"; exit 1 ;;
 esac
 EOF2
-chmod +x "$WORK/ak_rtsp"
-export FAKE_LOG=$WORK/log AKAM_RTSP_BIN=$WORK/ak_rtsp
+chmod +x "$WORK/akamd"
+export FAKE_LOG=$WORK/log AKAM_RTSP_BIN=$WORK/akamd
 R=$WORK/root
 export AKAM_ROOT=$R
 FLAG=$R/etc/config/akam/onvif
@@ -57,7 +57,7 @@ out=$(run status); rc=$?
 eq "status, no flag: exit 0" "$rc" 0
 contains "status, no flag: disabled" "$out" "ONVIF: disabled (default)"
 contains "status: no password" "$out" "password: no password set"
-contains "status: ak_rtsp state shown" "$out" "state: listening"
+contains "status: akamd state shown" "$out" "state: listening"
 
 # --- enable refused without credentials
 : >"$FAKE_LOG"
@@ -149,8 +149,8 @@ out=$(run status)
 contains "old firmware: state unknown" "$out" "state: unknown"
 export FAKE_MODE=dead
 out=$(run disable); rc=$?
-eq "ak_rtsp down: disable exit 0" "$rc" 0
-contains "ak_rtsp down: applies at next start" "$out" "next time ak_rtsp starts"
+eq "akamd down: disable exit 0" "$rc" 0
+contains "akamd down: applies at next start" "$out" "next time akamd starts"
 unset FAKE_MODE
 
 # --- invalid flag file

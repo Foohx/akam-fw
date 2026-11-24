@@ -4,8 +4,8 @@ This file covers how the camera stays on the network (Wi-Fi supervisor, DHCP hos
 NTP), how it is administered (key-only SSH, per-camera keys, debug flag), how Telnet and FTP are kept off, and which
 ports are open by default.
 
-Status: **hardware-validated** on two cameras: clean boot, SSH key login, Telnet and FTP closed, ports 22, 554 and 8091
-only with no UDP listener, opt-in NTP, DHCP host name. **host-tested only**: the Wi-Fi supervisor under injected
+Status: **hardware-validated** on two cameras: clean boot, SSH key login, Telnet and FTP closed, ports 22, 554 and (on the earlier image, before the port was
+closed) 8091 with no UDP listener, opt-in NTP, DHCP host name. **host-tested only**: the closed-by-default 8091 and the 8092 API port (the current default is 22 and 554 only), the Wi-Fi supervisor under injected
 faults (it runs in the flashed image but no fault was injected), the per-camera key change over SSH, Telnet staying off
 after a Wi-Fi reconnect (never tested on a camera).
 
@@ -15,7 +15,8 @@ after a Wi-Fi reconnect (never tested on a camera).
 |---|---|---|---|
 | 22 | TCP | Dropbear SSH | open |
 | 554 | TCP | RTSP | open |
-| 8091 | TCP | Control port | open (read-only from the network) |
+| 8091 | TCP | Control port (1080p) | closed to the network (127.0.0.1 only; opt-in to the LAN, read-only) |
+| 8092 | TCP | Signed HTTP API | closed until an API key exists |
 | 68 | UDP | DHCP client (`udhcpc`) | open (client) |
 | 80 (configurable) | TCP | ONVIF HTTP | closed until ONVIF is enabled |
 | 3702 | UDP | WS-Discovery | closed until ONVIF is enabled |
@@ -25,14 +26,14 @@ after a Wi-Fi reconnect (never tested on a camera).
 
 `tools/hw_tests/akam_hwcheck.sh` (run on the camera over SSH, read-only) checks TCP listeners, UDP sockets
 (`/proc/net/udp` and `udp6`: only port 68, and 3702 with ONVIF on; ephemeral client ports 32768 to 60999 are listed as
-information) and a process allow-list: `init syslogd klogd wpa_supplicant udhcpc watchdog ak_rtsp_wrapper ak_rtsp akam_*
+information) and a process allow-list: `init syslogd klogd wpa_supplicant udhcpc watchdog akam_run akamd akam_*
 dropbear sh sleep drop_caches`, plus the short-lived tools Akam's own scripts call (`ntpd timeout nice ps grep logger
 kill cat date wc tail sync mv`). `msgserver` and `cmdserver` are a warning ("vendor daemon, review"); `anyka_ipc`, Telnet
 and FTP are failures.
 
 ## 2. Wi-Fi supervisor (`akam_net.sh`)
 
-Started detached by the wrapper. It must never delay or break `ak_rtsp`.
+Started detached by the wrapper. It must never delay or break `akamd`.
 
 - Does nothing at all when `/etc/config/wpa_supplicant.conf` is absent (wired or unconfigured camera).
 - Every 30 s checks that `wpa_supplicant` for `wlan0` and `udhcpc` for `wlan0` run and that `wlan0` has an IPv4 address.
@@ -98,7 +99,7 @@ The camera has no RTC and boots in the past. NTP is **off by default**: no file,
   bind-mounts a private `passwd` whose root entry has that HOME (the real file is untouched), and a private `/etc/shells`
   that lists `/bin/sh` when the stock file would reject it. Dropbear reads the key list from that copy.
 - Host key: `/etc/config/dropbear/dropbear_ed25519_host_key`, generated on first boot with `dropbearkey`, mode 0600.
-- Every failure path only logs and returns 0: SSH can never block or stop `ak_rtsp`. Anti-duplicate lock
+- Every failure path only logs and returns 0: SSH can never block or stop `akamd`. Anti-duplicate lock
   `/tmp/akam_ssh.lock`; pid file `/tmp/dropbear.pid`; `akam_lockdown.sh` restarts a dead Dropbear within about 60 s.
 - Log `/tmp/akam_ssh.log` is trimmed in place (the inode is kept; Dropbear holds it with `O_APPEND`) to the last 50 lines
   when it passes 100 lines or 64 KiB; `akam_lockdown.sh` trims it again every minute. No key material is logged.
@@ -171,7 +172,7 @@ Two layers, so a missed launch path is still caught.
   SD-hook respawn scripts `telnet.sh` and `hack.sh` (the scripts are killed first so they cannot restart a daemon).
 - Schedule: every 5 s for 2 minutes (24 rounds), then every 60 s forever. Every slow round it also launches
   `akam_ssh.sh start` detached (a no-op when Dropbear runs).
-- It never touches `ak_rtsp`, `dropbear`, `wpa_supplicant`, `cmdserver`, `msgserver` or `akam_*`, nor itself (exclusion
+- It never touches `akamd`, `dropbear`, `wpa_supplicant`, `cmdserver`, `msgserver` or `akam_*`, nor itself (exclusion
   list checked first). No `pkill` or `killall`. It opens no socket.
 - It keeps its own anti-duplicate lock (`/tmp/akam_lockdown.lock`, stale locks taken over).
 
@@ -187,7 +188,7 @@ every second). The window at boot is believed to be seconds; it has not been mea
 ## 7. Debug flag (`akam_debug.sh`)
 
 `akam_debug.sh on [MINUTES]` (1 to 1440, default 60), `off`, `status` talks to the control port through
-`ak_rtsp ctl`. It sets the RAM-only debug flag described in [control-port.md](control-port.md): remote peers may write,
+`akamd ctl`. It sets the RAM-only debug flag described in [control-port.md](control-port.md): remote peers may write,
 read `LOG` lines and see `net.ssid` and `net.mac`. Off at every start, off by itself after the delay.
 
 ## 8. Secrets

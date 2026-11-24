@@ -244,7 +244,7 @@ func (a *App) cmdFindCamera() error {
 	a.UI.Say(fmt.Sprintf("  Probing %s on ports %d, %d, %d and %d ...", ip, p.Telnet, p.SSH, p.RTSP, p.CTL))
 	open := a.probe(ip, p.Telnet, p.SSH, p.RTSP, p.CTL)
 	a.UI.Say("  Open ports: " + orNone(joinPorts(open)))
-	if deferred && discover.Classify(open, p) != discover.Akam {
+	if deferred && discover.ClassifyHost(a.Ctx, ip, open, p, a.Hooks.Discover.Dial) != discover.Akam {
 		return a.stepNeed("find-camera")
 	}
 	if len(open) == 0 {
@@ -262,9 +262,9 @@ func (a *App) cmdFindCamera() error {
 		}
 		kind = discover.Kind(k)
 	case discover.Akam:
-		a.UI.Say(fmt.Sprintf("  Ports %d, %d and %d are open and telnet is closed: this is a camera running Akam.", p.SSH, p.RTSP, p.CTL))
+		a.UI.Say(fmt.Sprintf("  Ports %d and %d are open and telnet is closed: this is a camera running Akam.", p.SSH, p.RTSP))
 	case discover.Partial:
-		return a.UI.Fail(fmt.Sprintf("only SSH answers. A camera running Akam also opens %d and %d once it has finished booting.", p.RTSP, p.CTL), "wait a minute and run this step again.")
+		return a.UI.Fail(fmt.Sprintf("only SSH answers. A camera running Akam also opens %d once it has finished booting.", p.RTSP), "wait a minute and run this step again.")
 	default:
 		return a.UI.Fail(fmt.Sprintf("port %d is closed and this is not Akam. Nothing usable answers on %s.", p.Telnet, ip), "is this the camera's address? Is the toolkit card in?")
 	}
@@ -309,7 +309,7 @@ func (a *App) identifyAkam(ip string, port int) (host, fw string) {
 	a.Log.Line("CMD identify %s:%d (GET fw.version, GET sys.hostname, QUIT)", ip, port)
 	id, err := discover.Identify(a.Ctx, ip, port, a.Hooks.Discover.Dial)
 	if err != nil && !id.Akam {
-		a.UI.Say("  (the control port did not tell the firmware version)")
+		a.UI.Say(fmt.Sprintf("  (port %d is closed to the network, as it should be: the firmware version is read later, over SSH or with the API key)", port))
 		return "", ""
 	}
 	host, fw = ui.Sanitize(id.Hostname), ui.Sanitize(id.Version)

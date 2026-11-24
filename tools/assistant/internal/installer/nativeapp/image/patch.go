@@ -292,7 +292,7 @@ func patchDropCaches(in []byte) (out []byte, changed bool, reason string) {
 // klogdNew replaces "klogd -n &": restart the filter when a signal kills it (up to 5 crashes in a row; a run over 60 s resets the count, 143/130 are
 // not counted), run the stock klogd
 // when it cannot start or after the last crash. Identical to KLOG_NEW in build_image.sh.
-const klogdNew = `{ _k=0; while [ "$_k" -lt 5 ]; do read _a _ </proc/uptime; /usr/bin/ak_rtsp klog; _r=$?; [ $_r -ge 128 ] || break; read _b _ </proc/uptime; [ $((${_b%.*}+0 - (${_a%.*}+0))) -gt 60 ] && _k=0; if [ $_r -eq 143 ] || [ $_r -eq 130 ]; then sleep 1; else _k=$((_k + 1)); sleep $((_k * 2)); fi; done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)`
+const klogdNew = `{ _k=0; while [ "$_k" -lt 5 ]; do read _a _ </proc/uptime; /usr/bin/akamd klog; _r=$?; [ $_r -ge 128 ] || break; read _b _ </proc/uptime; [ $((${_b%.*}+0 - (${_a%.*}+0))) -gt 60 ] && _k=0; if [ $_r -eq 143 ] || [ $_r -eq 130 ]; then sleep 1; else _k=$((_k + 1)); sleep $((_k * 2)); fi; done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)`
 
 var klogdRe = regexp.MustCompile(`^([[:space:]]*)klogd -n &([[:space:]]*#.*)?[[:space:]]*$`)
 
@@ -310,7 +310,7 @@ func patchKlogd(in []byte) (out []byte, changed bool, reason string) {
 	switch {
 	case found:
 		return []byte(strings.Join(lines, "\n")), true, ""
-	case strings.Contains(string(in), "ak_rtsp klog"):
+	case strings.Contains(string(in), "akamd klog"), strings.Contains(string(in), "ak_rtsp klog"): // also a tree patched by 0.1.x
 		return in, false, ""
 	}
 	return in, false, "sbin/main.sh has no 'klogd -n &' line: kernel log filter not installed (stock klogd runs unfiltered)"

@@ -1,6 +1,6 @@
-/* akam2k_sntp -- one-shot SNTP client, the "ntpd" of the Rotatable 2K card (BusyBox there has no ntpd applet).
+/* akam-sntp -- one-shot SNTP client, the "ntpd" of the Rotatable 2K card (BusyBox there has no ntpd applet).
  *
- *   akam2k_sntp [-n] [-q] -p SERVER [-p SERVER ...]
+ *   akam-sntp [-n] [-q] -p SERVER [-p SERVER ...]
  *
  * Takes the subset of BusyBox ntpd arguments that src/scripts/akam_ntp.sh uses (-n and -q are
  * accepted and implied: foreground, one shot). Tries the servers in order, 3 s each (name resolution counts against
@@ -92,7 +92,7 @@ static int query(const struct sockaddr_in *sa, const char *name)
         ssize_t n;
         enum sntp_err e;
         if (left <= 0) {
-            fprintf(stderr, "akam2k_sntp: %s: timeout\n", name);
+            fprintf(stderr, "akam-sntp: %s: timeout\n", name);
             break;
         }
         p.fd = fd;
@@ -106,39 +106,39 @@ static int query(const struct sockaddr_in *sa, const char *name)
         t4 = now_us();
         e = sntp_parse_reply(in, (size_t)n, sent, &r);
         if (e != SNTP_OK) {
-            fprintf(stderr, "akam2k_sntp: %s: reply refused (%d)\n", name, (int)e);
+            fprintf(stderr, "akam-sntp: %s: reply refused (%d)\n", name, (int)e);
             continue; /* a bad packet does not end the wait: the real reply may still come */
         }
         if (sntp_ntp_to_us(r.rx_raw, &t2) != 0 || sntp_ntp_to_us(r.tx_raw, &t3) != 0 ||
             t3 < SNTP_MIN_UNIX * 1000000) {
-            fprintf(stderr, "akam2k_sntp: %s: server time out of range\n", name);
+            fprintf(stderr, "akam-sntp: %s: server time out of range\n", name);
             break;
         }
         sntp_offset(t1, t2, t3, t4, &off, &delay);
         if (delay < 0 || delay > 10 * 1000000LL) {
-            fprintf(stderr, "akam2k_sntp: %s: implausible delay\n", name);
+            fprintf(stderr, "akam-sntp: %s: implausible delay\n", name);
             break;
         }
         close(fd);
         if (off > -STEP_MIN_US && off < STEP_MIN_US) {
-            printf("akam2k_sntp: %s: offset %lld us, no step\n", name, (long long)off);
+            printf("akam-sntp: %s: offset %lld us, no step\n", name, (long long)off);
             return 0;
         }
         {
             struct timeval tv;
             int32_t sec, usec;
             if (sntp_target(now_us(), off, &sec, &usec) != 0) {
-                fprintf(stderr, "akam2k_sntp: %s: target time not representable\n", name);
+                fprintf(stderr, "akam-sntp: %s: target time not representable\n", name);
                 return -1;
             }
             tv.tv_sec = sec;
             tv.tv_usec = usec;
             if (settimeofday(&tv, NULL) != 0) {
-                fprintf(stderr, "akam2k_sntp: settimeofday: %s\n", strerror(errno));
+                fprintf(stderr, "akam-sntp: settimeofday: %s\n", strerror(errno));
                 return -1;
             }
         }
-        printf("akam2k_sntp: %s: stepped by %lld us (stratum %u)\n", name, (long long)off, r.stratum);
+        printf("akam-sntp: %s: stepped by %lld us (stratum %u)\n", name, (long long)off, r.stratum);
         return 0;
     }
     close(fd);
@@ -153,7 +153,7 @@ static int try_server(const char *name)
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     if (getaddrinfo(name, "123", &hints, &res) != 0 || !res) {
-        fprintf(stderr, "akam2k_sntp: %s: cannot resolve\n", name);
+        fprintf(stderr, "akam-sntp: %s: cannot resolve\n", name);
         return -1;
     }
     for (a = res; a && rc != 0; a = a->ai_next)
@@ -165,7 +165,7 @@ static int try_server(const char *name)
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: akam2k_sntp [-n] [-q] -p SERVER [-p SERVER ...]\n");
+    fprintf(stderr, "usage: akam-sntp [-n] [-q] -p SERVER [-p SERVER ...]\n");
     return 2;
 }
 

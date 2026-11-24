@@ -36,7 +36,7 @@ const Kind = "cardless-appfs"
 //	MANIFEST.txt      key=value: model, kind=cardless-appfs, akam_version, source_commit, kit_grade, time64_gate=pass
 //	SHA256SUMS        sha256 of every other file (checked here: the kit is refused on any mismatch or extra file)
 //	appfs/overlay/*.sh        the Akam scripts of the image (the payload list below)
-//	appfs/bin/akam2k_rtsp, akam2k_sntp, akam2k_rtsp.BUILDINFO, dropbearmulti, dropbearmulti.BUILDINFO, busybox
+//	appfs/bin/akamd, akam-sntp, akamd.BUILDINFO, dropbearmulti, dropbearmulti.BUILDINFO, busybox
 const (
 	pathManifest = "MANIFEST.txt"
 	pathSums     = "SHA256SUMS"
@@ -48,7 +48,11 @@ const (
 var overlayScripts = []string{"own_app_stub.sh", "own_app_run.sh", "common.sh", "decloud.sh", "start_ssh.sh",
 	"akam_net.sh", "akam_api_key.sh", "akam_flash_boot.sh", "akam_ntp.sh", "akam_hostname.sh"}
 
-var binFiles = []string{"akam2k_rtsp", "akam2k_rtsp.BUILDINFO", "akam2k_sntp", "dropbearmulti", "dropbearmulti.BUILDINFO", "busybox"}
+var binFiles = []string{"akamd", "akamd.BUILDINFO", "akam-sntp", "dropbearmulti", "dropbearmulti.BUILDINFO", "busybox"}
+
+// legacyBinNames maps the names of kit_format 2 to those of kit_format 1 (firmware 0.1.x): the same files, renamed
+// when the camera program became akamd on every camera. A format 1 kit is read through this table.
+var legacyBinNames = map[string]string{"akamd": "akam2k_rtsp", "akamd.BUILDINFO": "akam2k_rtsp.BUILDINFO", "akam-sntp": "akam2k_sntp"}
 
 // BusyBoxName and BusyBoxSHA256 pin the static busybox of the card (BB_SHA256 of build_appfs.sh).
 const (
@@ -107,6 +111,7 @@ func NewKit(files map[string][]byte, opts ...KitOption) (*Kit, error) {
 	for _, f := range opts {
 		f(&o)
 	}
+	files = normaliseLegacy(files)
 	req := map[string]bool{}
 	for _, p := range RequiredKitPaths() {
 		req[p] = true
@@ -184,6 +189,13 @@ func LoadKit(dir string, opts ...KitOption) (*Kit, error) {
 	files := map[string][]byte{}
 	for _, p := range RequiredKitPaths() {
 		b, err := readSmall(filepath.Join(dir, filepath.FromSlash(p)))
+		if old, ok := legacyBinNames[strings.TrimPrefix(p, pathBin)]; ok && err != nil && os.IsNotExist(err) && strings.HasPrefix(p, pathBin) {
+			b, err = readSmall(filepath.Join(dir, filepath.FromSlash(pathBin+old))) // a kit_format 1 kit
+			if err == nil {
+				files[pathBin+old] = b // normaliseLegacy renames it
+				continue
+			}
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil, fmt.Errorf("the appfs kit has no %s", p)
@@ -237,6 +249,35 @@ func readSmall(p string) ([]byte, error) {
 	return b, nil
 }
 
+// normaliseLegacy renames the files of a kit_format 1 kit to the names of format 2 (file map and SHA256SUMS lines), so
+// that everything after it deals with one set of names. A kit that already has the new names is returned unchanged.
+func normaliseLegacy(files map[string][]byte) map[string][]byte {
+	renamed := map[string]string{}
+	for nw, old := range legacyBinNames {
+		if _, has := files[pathBin+nw]; has {
+			continue
+		}
+		if b, ok := files[pathBin+old]; ok {
+			files[pathBin+nw] = b
+			delete(files, pathBin+old)
+			renamed[pathBin+old] = pathBin + nw
+		}
+	}
+	if len(renamed) > 0 {
+		lines := strings.Split(string(files[pathSums]), "\n")
+		for i, l := range lines {
+			if h, p, ok := strings.Cut(l, " "); ok {
+				bare := strings.TrimPrefix(strings.TrimPrefix(p, " "), "*")
+				if nw, ok := renamed[bare]; ok {
+					lines[i] = h + "  " + nw
+				}
+			}
+		}
+		files[pathSums] = []byte(strings.Join(lines, "\n"))
+	}
+	return files
+}
+
 // parseSums reads sha256sum output ("<64 hex>  path", a "*" binary marker tolerated).
 func parseSums(b []byte) (map[string]string, error) {
 	out := map[string]string{}
@@ -284,5 +325,9 @@ func KitLayout() *kit.Layout {
 			pay = append(pay, p)
 		}
 	}
-	return &kit.Layout{Target: "arm-linux", Payload: pay, HardwareFile: "supported_hardware.txt"}
+	legacy := map[string]string{}
+	for nw, old := range legacyBinNames {
+		legacy[pathBin+nw] = pathBin + old
+	}
+	return &kit.Layout{Target: "arm-linux", Payload: pay, LegacyPayload: legacy, HardwareFile: "supported_hardware.txt"}
 }

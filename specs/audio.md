@@ -24,12 +24,12 @@ on a camera, `akam say` for MP3, FLAC and Ogg files on a camera.
 retried after 1, 2, 4, 8, 16, 32 and then 60 seconds. A failing syscall MUST NOT be retried faster than 1 s: an earlier
 100 Hz retry loop rebooted a camera. `audio_mic_restarts()` counts recoveries.
 
-**Disabling.** `audio.mic_enable=0` (saved in `audio_out`) means the capture device is never opened and the SDP has no
-audio section. It applies at the next start of `ak_rtsp`.
+**Enabling.** The microphone is off by default (opt-in): `audio.mic_enable=1` (saved in `audio_out`) turns it on, `0` (the default) means the capture device is never opened and the SDP has no
+audio section. It applies at the next start of `akamd`.
 
 ## 2. Speaker output
 
-The playback device `/dev/pcmC0D0p` can only be opened once, and `ak_rtsp` owns it for its whole life. When audio out is
+The playback device `/dev/pcmC0D0p` can only be opened once, and `akamd` owns it for its whole life. When audio out is
 enabled `audio_out.c` runs the stock vendor sequence and a playback thread; when it is disabled or its sequence fails,
 `audio.c` keeps a legacy silence-writing loop and nothing else touches the device.
 
@@ -48,9 +48,9 @@ enabled `audio_out.c` runs the stock vendor sequence and a playback thread; when
 | States | `off`, `idle`, `talking`, `test`, `chime` (reserved), `disabled_crash`, `error` |
 | Failure | 5 consecutive write failures stop the thread (`error`) |
 
-**Crash guard.** Before the first device call `ak_rtsp` creates `/etc/config/akam/audio_out.trying`. It is removed after
+**Crash guard.** Before the first device call `akamd` creates `/etc/config/akam/audio_out.trying`. It is removed after
 5 s of clean playback, and also after a sequence that failed cleanly (an error, not a crash). If the marker exists at
-the next start, `ak_rtsp` died during audio initialisation: the sequence is skipped (state `disabled_crash`), the legacy
+the next start, `akamd` died during audio initialisation: the sequence is skipped (state `disabled_crash`), the legacy
 silence loop runs, and the log says to remove the file to retry. This prevents a reboot loop. On `SIGTERM`/`SIGINT` the
 amplifier is switched off with an async-signal-safe ioctl.
 
@@ -65,7 +65,7 @@ are kept:
 | `source` | 4 or 6 | 4 |
 | `talk_enable` | 0 or 1 | 1 |
 | `talk_duplex` | `half` or `full` | `half` |
-| `mic_enable` | 0 or 1 | 1 |
+| `mic_enable` | 0 or 1 | 0 (opt-in, the same as the Rotatable 2K) |
 
 An absent file, an unknown line or a bad value keeps the default. A change is saved only when the value changed. A
 SET that does not come from loopback (a remote peer in debug mode, MQTT, ONVIF) changes the running value only and

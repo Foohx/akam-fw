@@ -16,7 +16,7 @@ func TestVideoShowAndSet(t *testing.T) {
 	contains(t, r.out, "Video settings", "  Bitrate cap: 1536 kbit/s (500 to 3000; the default is 1536).",
 		"  Frame rate: 15 per second (10, 15, 20 or 25; the default is 15).", "  Key frame every 2 second(s) (1 to 4; the default is 2).",
 		"  Measured now: 1480 kbit/s, 150 (tenths of a frame per second).",
-		"  Resolution and flip/mirror cannot be changed in this version")
+		"  Resolution cannot be changed in this version", "picture flip on.")
 	notContains(t, r.out, "not running yet")
 
 	// default No: saved, nothing restarted, and the new values are shown as pending
@@ -70,7 +70,7 @@ func TestVideoRestartIsTheOnlyKillAndMatchesTheExactCommand(t *testing.T) {
 			t.Errorf("watchdog in %q", c)
 		}
 	}
-	if len(kills) != 1 || kills[0] != `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done` {
+	if len(kills) != 1 || kills[0] != `for p in $(pidof akamd ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done` {
 		t.Errorf("kill commands: %q", kills)
 	}
 }
@@ -149,8 +149,19 @@ func TestNtpOldImage(t *testing.T) {
 	contains(t, r.out, "it runs an older Akam image: ./akam update.")
 }
 
+func TestAudioMicIsOffByDefault(t *testing.T) {
+	e := newEnv(t)
+	r := e.run("", "audio")
+	expectRC(t, r, 0)
+	contains(t, r.out, "  Microphone: off (off = never opened")
+	if got := e.cam.CtlValue("audio.mic_enable"); got != "0" {
+		t.Errorf("the fake camera must start like the firmware: mic off, got %q", got)
+	}
+}
+
 func TestAudioMic(t *testing.T) {
 	e := newEnv(t)
+	e.cam.SetCtl("audio.mic_enable", "1") // the fake follows the firmware default (off); this test turns an enabled microphone off
 	r := e.run("", "audio")
 	contains(t, r.out, "  Microphone: on (off = never opened and no audio track in the stream; read at start-up).",
 		"  Volume, speaker, talk and microphone switches are saved on the camera and kept after a reboot.")

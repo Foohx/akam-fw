@@ -281,12 +281,12 @@ spawn ftpd "tcpsvd 0 21 ftpd -w /mnt"
 spawn bftpd "/usr/sbin/bftpd -d"
 spawn respawn "sh /mnt/telnet.sh"
 spawn stubborn "telnetd -p 2323" ignore-term
-spawn ak_rtsp "/usr/bin/ak_rtsp"
+spawn akamd "/usr/bin/akamd"
 spawn dropbear "dropbear -r /etc/config/dropbear/k -p 22 -P /tmp/dropbear.pid"
 spawn dbtrick "dropbear -p 22 telnetd"
 spawn wpa "wpa_supplicant -Dnl80211 -i wlan0 -c /etc/config/wpa_supplicant.conf -B"
 spawn cmdserver "/usr/bin/cmdserver"
-spawn wrapper "/bin/sh /usr/bin/ak_rtsp_wrapper.sh"
+spawn wrapper "/bin/sh /usr/bin/akam_run.sh"
 spawn other "udhcpc -i wlan0"
 spawn ttrick "sh /tmp/telnetd_notes.sh"
 sleep 0.2
@@ -295,7 +295,7 @@ sleep 0.3
 for n in telnetd utelnetd ftpd bftpd respawn stubborn; do
     check "$n killed" dead "$(pid_of "$n")"
 done
-for n in ak_rtsp dropbear dbtrick wpa cmdserver wrapper other ttrick; do
+for n in akamd dropbear dbtrick wpa cmdserver wrapper other ttrick; do
     check "$n untouched" alive "$(pid_of "$n")"
 done
 check "log records kills" grep -q 'SIGTERM pid' "$LR/tmp/akam_lockdown.log"

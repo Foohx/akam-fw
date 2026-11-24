@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Host test of the control port 8091 (platforms/anyka-ak3918/control.c + ctl_gate.c): read-only gate, DEBUG with an
-# injected clock, 4 client slots, golden read output, LOG forwarding that never blocks, `ak_rtsp ctl`.
+# injected clock, 4 client slots, golden read output, LOG forwarding that never blocks, `akamd ctl`.
 # control.c is built for real against stub modules and talked to over TCP on a free port chosen per run. No camera.
 set -euo pipefail
 
@@ -29,13 +29,18 @@ for _ in range(200):
 else:
     print(18091)
 ')
-"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT="$PORT" -DCTL_TEST_REGISTRY -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" \
+"$CC" -std=gnu99 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -DCONTROL_PORT="$PORT" -DCTL_TEST_REGISTRY -DCTL_IDLE_REMOTE_S=2 -DCTL_IDLE_TICK_S=1 "-DISP_TUNE_FILE=\"$WORK/picture\"" "-DCONTROL_LAN_FILE=\"$WORK/control_lan\"" \
  -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" \
     -o "$WORK/control_test" \
-    "$REPO/tests/native/control_test.c" "$REPO/platforms/anyka-ak3918/control.c" "$REPO/src/core/control/ctl_gate.c" "$REPO/platforms/anyka-ak3918/isp_tune.c" "$REPO/platforms/anyka-ak3918/swdog.c"
+    "$REPO/tests/native/control_test.c" "$REPO/platforms/anyka-ak3918/control.c" "$REPO/src/core/control/ctl_gate.c" "$REPO/platforms/anyka-ak3918/isp_tune.c" "$REPO/platforms/anyka-ak3918/swdog.c" "$REPO/src/core/cfg_file.c"
 # The server tees stdout (the flood of LOG lines goes through it): keep the noise in a file.
 if "$WORK/control_test" >"$WORK/out.txt" 2>&1; then rc=0; else rc=$?; fi
 grep -E '^(FAIL|skip:|control_test:)|ERROR|runtime error' "$WORK/out.txt" || true
+
+# The text port is closed to the network by default: the same program with no LAN opt-in must refuse a host address.
+if CTL_TEST_NO_LAN=1 "$WORK/control_test" >"$WORK/out_closed.txt" 2>&1; then rcc=0; else rcc=$?; fi
+grep -E '^(FAIL|skip:|control_test:)|ERROR|runtime error' "$WORK/out_closed.txt" || true
+if [ "$rcc" -ne 0 ]; then echo "FAIL: control_test without the LAN opt-in exited $rcc"; rc=1; else echo "  ok   - closed by default: loopback only until control.lan is set"; fi
 
 # G02: the same program again with a stdout that nobody reads and that is full after 64 KiB (the
 # serial console that stalls). Nothing may hang (timeout = failure) and log.dropped must count the loss.

@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-func TestInputEndsWithQuit(t *testing.T) {
-	if got := Input([]string{"GET a", "SET b 1"}); got != "GET a\nSET b 1\nQUIT\n" {
-		t.Errorf("input: %q", got)
-	}
-}
-
-func TestAnswersDropsLogByeAndBlank(t *testing.T) {
-	out := Answers("LOG [early] hello\r\nled.status=auto\r\n\nLOG [x]\nnight.ir_led=off\nOK bye\n")
-	if len(out) != 2 || Get("led.status", out) != "auto" || Get("night.ir_led", out) != "off" {
-		t.Errorf("answers: %q", out)
-	}
-	// a missing answer: the QUIT reply must not take its place
-	if out = Answers("led.status=on\nOK bye\n"); len(out) != 1 {
-		t.Errorf("answers: %q", out)
-	}
-	if out = Answers(""); len(out) != 0 {
-		t.Errorf("answers: %q", out)
-	}
-}
-
 func TestGetTakesTheValueUpToTheFirstSpace(t *testing.T) {
 	ans := []string{"audio.out_state=idle (since 3 s)", "other=1", "led.status=auto"}
 	if Get("audio.out_state", ans) != "idle" || Get("led.status", ans) != "auto" || Get("missing", ans) != "" {

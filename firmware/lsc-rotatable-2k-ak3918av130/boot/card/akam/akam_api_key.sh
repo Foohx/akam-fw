@@ -1,7 +1,7 @@
 #!/bin/sh
 # akam_api_key.sh -- on-camera tool for the keys of the local control API (port 8092; docs/porting/lsc-rotatable-2k/control-api.md).
 # Run it over SSH. With no key installed the API port is CLOSED; the first admin key is created here and the running app opens the port by
-# itself within about a second. It only calls the own app in its key-tool mode (`akam2k_rtsp --api-key ...`: no hardware, no thread, it only
+# itself within about a second. It only calls the own app in its key-tool mode (`akamd --api-key ...`: no hardware, no thread, it only
 # reads and rewrites /config/akam/api_keys, 0600, atomically); the app is the RAM copy the supervisor verified against BUILDINFO.
 #
 #   akam_api_key.sh new --scope read|write|admin --name LABEL    prints the key id and the 64-hex secret ONCE (stdout only)
@@ -12,7 +12,7 @@
 
 ROOT=${AKAM_ROOT:-}
 TMPD=${AKAM_TMP_DIR:-$ROOT/tmp}
-BIN=${AKAM_APP:-$TMPD/akam2k_rtsp}
+BIN=${AKAM_APP:-$TMPD/akamd}
 LIBS=${AKAM_APP_LIBS:-$ROOT/appfs/lib}
 
 usage() {
@@ -25,7 +25,7 @@ new | list | revoke) ;;
 *) usage ;;
 esac
 [ -x "$BIN" ] || {
-    echo "akam_api_key: $BIN not found: the own app is not running on this camera (see akam/akam2k.log)" >&2
+    echo "akam_api_key: $BIN not found: the own app is not running on this camera (see akam/akam.log)" >&2
     exit 1
 }
 umask 077

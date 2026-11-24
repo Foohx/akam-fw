@@ -18,6 +18,12 @@
 
 /* Sensor frame rate */
 #define ISP_INNER_SET_SENSOR_FPS   0x4004497a  /* Ak_ISP_Set_Sensor_Fps   */
+
+/* Flip / mirror (specs/video-and-streaming.md 5.7). The ioctl number encodes 4 bytes but the kernel handler of ak_isp.ko
+ * (isp_param_file_open, case 0x40044979) copies 8 from the payload: two 32-bit words. Any non-zero word is 1. Word 0 = flip
+ * (vertical), word 1 = mirror (horizontal). Live, the sensor driver does the work (GC20C3 registers), no stream restart. */
+#define ISP_INNER_FLIP_MIRROR      0x40044979
+struct isp_flip_mirror { int32_t flip; int32_t mirror; };
 #define ISP_INNER_GET_SENSOR_FPS   0x8004497b  /* Ak_ISP_Get_Sensor_Fps   */
 
 /* AE — exposure attribute (0x720-byte struct) */
@@ -640,11 +646,4 @@ static inline int venc_max_frame_size(int width, int height)
  *          is the GET direction and returns EINVAL on the hardware.
  *   0xEA = RATE: stock reads it back after RESUME (8000).
  * ------------------------------------------------------------------------- */
-#define AKPCM_IOC_PREPARE       AKPCM_IOC_GET_PARS     /* 0x401c50e0, 28-byte struct akpcm_pars */
-#define AKPCM_IOC_RESUME        AKPCM_IOC_SET_MODE     /* 0x000050e1, no argument */
-#define AKPCM_IOC_SET_SOURCES   0x40045010             /* _IOW('P',0x10,4), int32 (stock: 4 play, 0 idle) */
-#define AKPCM_IOC_GET_SOURCES   0x80045010             /* _IOR('P',0x10,4) */
-#define AKPCM_IOC_SET_GAIN      0x40045030             /* _IOW('P',0x30,4), int32 (stock: 2) */
-#define AKPCM_IOC_GET_GAIN      0x80045030             /* _IOR('P',0x30,4) */
-#define AKPCM_IOC_SET_SPEAKER   0x40045081             /* _IOW('P',0x81,4), int32 0/1 (stock: 1) */
-#define AKPCM_IOC_GET_RATE      0x800450ea             /* _IOR('P',0xea,4), 8000 after PREPARE */
+/* PREPARE, RESUME, SOURCES, GAIN, SPEAKER and GET_RATE (the playback side) live in src/hal/akpcm.h, shared with the 2K. */

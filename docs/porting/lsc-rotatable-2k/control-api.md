@@ -1,6 +1,6 @@
 # Local control API of the Rotatable 2K (port 8092)
 
-Signed, plain-HTTP JSON API inside the own app `akam2k_rtsp`, for scripts and other local tools. Home Assistant uses MQTT discovery ([MQTT](../../mqtt.md#lsc-rotatable-2k)), not this API. Design and threat model: [specs/control-api.md](../../../specs/control-api.md). This page is
+Signed, plain-HTTP JSON API inside the own app `akamd`, for scripts and other local tools. Home Assistant uses MQTT discovery ([MQTT](../../mqtt.md#lsc-rotatable-2k)), not this API. Design and threat model: [specs/control-api.md](../../../specs/control-api.md). This page is
 the user and integrator reference of what phase 2 ships.
 
 ## 1. Provisioning: the first key
@@ -8,8 +8,9 @@ the user and integrator reference of what phase 2 ships.
 With **no key installed nothing listens on the port**. Create the first (admin) key from SSH:
 
 ```sh
-sh /mnt/sdcard/akam/akam_api_key.sh new --scope admin --name assistant     # card build
-akam2k_rtsp --api-key new --scope admin --name assistant                   # what the script runs (RAM copy in /tmp)
+sh /appfs/akam/akam_api_key.sh new --scope admin --name assistant         # card-less (flash build)
+sh /mnt/sdcard/akam/akam_api_key.sh new --scope admin --name assistant     # with the first-install card inserted
+akamd --api-key new --scope admin --name assistant                   # what the script runs (RAM copy in /tmp)
 ```
 
 It prints the key id and the 64-hex secret **once**. The running app notices the file within about a second and opens
@@ -76,6 +77,15 @@ cap of 20 failures per minute, so a flood cannot lock the owner out).
 | `led.boot`, `led.nowifi`, `led.person`, `led.stream`, `led.night`, `led.idle` | pattern `on\|off\|N:on_ms:off_ms:pause_ms` | LED rule patterns; persisted |
 | `night.ir_led` | `auto\|off` | IR LED policy; persisted |
 | `image.brightness`, `image.contrast`, `image.sharpness` | 0..100 | ISP picture, RAM only (reset by a restart) |
+| `isp.saturation` | -50..50, default 0 | saturation, the 1080p's key and range (ISP effect type 2); saved; replayed after a day/night switch; host-tested only |
+| `isp.denoise` | 0..4, default 0 | denoise, the 1080p's rule (3D NR record N levels higher); saved; refused when the live table is not as decoded; host-tested only |
+| `img.wb` | `conf`, `manual`, default `conf` | white balance, RAM only (back to `conf` at a restart, as on the 1080p); host-tested only |
+| `audio.out_enable` | 0/1, default 0 | the speaker (opt-in on the 2K); turning it on starts the playback at once; saved |
+| `audio.out_volume`, `audio.out_gain` | 0..100 (default 100), 0..5 (default 2) | speaker volume (software, ramped) and hardware gain step; saved |
+| `audio.out_amp` | `auto`, `on`, `off` | amplifier policy (auto: on while there is sound); RAM only |
+| `audio.talk_enable`, `audio.talk_duplex` | 0/1 (default 1), `half`/`full` (default `half`) | the ONVIF backchannel switch; whether the microphone is silenced while the speaker plays speech; saved |
+| `audio.out_state`, `audio.talk_state` | read only | `off`, `idle`, `talking`, `test`, `disabled_crash`, `error`; `idle` or `active` |
+| action `audio.beep` | | queues the 1 s test beep; 409 while the speaker is not running |
 | `image.mains_hz` | `50\|60` | RAM only |
 | `image.flip` | bool (default 0) | flip the picture vertically (`ak_vpss_switch_flip_mirror`, isp-controls.md 3.2; host-tested only, not verified on the camera); live, no restart; saved in `/config/akam/settings` only when the user changes it (never rewritten while running); Home Assistant switch **Image flip** |
 | `image.mirror` | bool (default 0) | mirror the picture horizontally (not verified on the camera either); same rules; Home Assistant switch **Image mirror** |
@@ -97,20 +107,31 @@ cap of 20 failures per minute, so a flood cannot lock the owner out).
 | `track.lost_policy` | string, `none` or up to 8 steps joined by `,` (default `backsweep,exit,hold:30,home` = the legacy return policy) | what the tracker does when the person is lost: `hold:N`, `backsweep`, `exit`, `local:W:D:N` (oscillate around the last position), `route:<name>[:N]` (a stored patrol route), `home`, `stay` (last); a detection at any step ends the chain; all or nothing (an invalid string is refused). Needs `track.motion=continuous`; live, persisted. Examples: `backsweep,exit,local:300:4:20,home`, `exit,route:entrance:90,stay`, `none` |
 | `track.lost_step` | read only string | the current step of the lost chain: `idle` (followed / nobody lost), `backsweep`, `exit`, `hold`, `local`, `route:<name>`, `home`, `stay`, `done`; every change is also an event `{"type":"track","data":{"lost_step":"..."}}` |
 | `track.tilt_back_s` | 0..600 (default 5; 0 = off) | continuous mode: this many seconds after the person was lost with the tilt more than 250 steps above home, the tilt goes back to the home tilt (the pan follows the return policy, not this); live, persisted |
-| `track.tilt` | 0\|1 (default 0, `track_tilt` in akam2k.conf) | 0 = pan only tracking: the tracker never moves the tilt (no follow, no close scan, no tilt-back, no vertical search; the tilt stays where it is); live, persisted; Home Assistant switch **Pan only tracking** (ON = 0) |
+| `track.tilt` | 0\|1 (default 0, `track_tilt` in akam.conf) | 0 = pan only tracking: the tracker never moves the tilt (no follow, no close scan, no tilt-back, no vertical search; the tilt stays where it is); live, persisted; Home Assistant switch **Pan only tracking** (ON = 0) |
 | `track.close_scan` | 0\|1 (default 1) | continuous mode: a close person lost with no direction evidence is searched up and down around the loss pose before the lost policy runs; 0 = the old WAIT 2.5 s then tilt back to home; live, persisted |
 | `track.close_scan_up` | 0..600 (default 250) | steps above the loss tilt the close-scan goes (clipped to the soft range; 0 = skip); live, persisted |
 | `track.close_scan_down` | 0..600 (default 300) | steps below the loss tilt the close-scan goes (clipped to the soft range; 0 = skip); live, persisted |
 | `track.lag_ms` | -150..300 (default 50) | continuous mode: the video latency subtracted from the capture time when the pose at capture is looked up; negative allowed; calibrate with `tools/track_lagfit` (tracking.md, E2); live, persisted |
 | `video0.*`, `video1.*`: `kbps`, `max_kbps` (0 = auto), `fps`, `min_qp`, `max_qp`, `gop`, `rc` (`vbr\|cbr\|avbr`) | int / enum | ranges from `video.h`; min QP <= max QP and peak >= target are checked for the whole PATCH; the capture thread applies live or re-opens that one channel; stored by the video module in `/config/akam/video` |
+| `audio.mic_enable` | 0\|1 (default 0) | the microphone track (`audio=` in `akam.conf`); admin key; read at the next start of the app |
+| `mqtt.enabled`, `mqtt.host`, `mqtt.port`, `mqtt.user` | 0\|1 (0); host name or IPv4 (1..63 of `A-Za-z0-9.-`, empty = none); 1..65535 (1883); 1..32 of `A-Za-z0-9._@+-` or empty | the files `mqtt` (`enabled=` needs a host); admin key; next start of the app |
+| `mqtt.password` | **write-only** string, at most 128 printable characters | the file `mqtt_pass`; needs a user; empty removes it; never read, listed or echoed |
+| `onvif.enabled`, `onvif.port` | 0\|1 (0); 1024..65535 (8000) | `onvif=` / `onvif_port=` in `akam.conf`; enabling needs a stream password (stored or in the same PATCH); admin key; next start of the app |
+| `rtsp.user` | string, 1..32 of `A-Za-z0-9._@+-`, or empty | the user of `rtsp.conf`; empty removes the stream password; another user needs `rtsp.password` in the same PATCH; admin key; applies at once |
+| `rtsp.password` | **write-only** string, 8..128 printable characters | stored only as the Digest hash `user:akam:HA1` in `rtsp.conf`; never read, listed or echoed |
+| `ntp.servers` | 1..3 host names or IPv4 addresses separated by spaces, or empty (off) | the file `ntp`; admin key; next start of the app |
 | `net.hostname`, `net.wifi_country`, `net.wifi_band` | string / string / `2.4\|5` (default 2.4); country `none` (default) or two capitals | see below |
 
-Read-only state: `sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_rssi`,
+The user-file rows above are not saved by the registry: a PATCH of them is queued in RAM as ONE request (`/tmp/akam_cfg.req`, mode 0600) which the supervisor
+validates again and writes into the files (all or nothing, only when the content changes, atomically; in `/config/akam` with a link in the card-less tree, or on the card).
+`cfg.apply` reads `idle`, `queued` or the outcome (`ok`, `refused KEY`, `failed`). A write-only row is writable over HTTP with an admin key and is never readable, listed, in the schema or echoed.
+
+Read-only state: `rtsp.auth` (`off|on|invalid`), `cfg.apply`, `sys.cpu_pct`, `sys.load1_x100`, `sys.mem_total_kb`, `sys.mem_avail_kb`, `sys.uptime_s`, `net.wifi_rssi`,
 `net.wifi_lq` (`-1000000` = not available yet; the sample is refreshed every 30 s), `rtsp.clients`, `detect.person`, `detect.boxes` (the latest list of person boxes, JSON text, see section 6),
 `night.active`, `net.apply`, `ptz.state` (`home|parked|moved|calibrating|unknown`), `ptz.pan`, `ptz.tilt` (`-1` unknown), `ptz.untrusted` (0 / 1, HTTP only: the position is doubted, a drift recalibration is due or running; moves are still allowed), `ptz.travel_since_cal` (weighted steps since the last calibration: fast steps and reversals count more, ptz-findings.md "Drift"), `ptz.drift_last_px` (`none`, then the last displacement `dx,dy` of the home view against the home reference, in QUARTER pixels of the 320 px detection frame: 4 per px), `ptz.drift_ref` (`none` | `day` | `night` | `both`: the drift reference held in RAM) and `ptz.drift_ref_age_s` (its age, `-1` when none), `ptz.drift_last` (`none`, then the verdict of the last home-view check: `ok`, `shift`, `recal`, `inconc`, `skip` (nothing to compare), `skip-flat` (flat view where the reference had detail: a tilt re-home, or a recalibration when the re-home is off, is scheduled), `flat-persist` (still flat after a completed re-home: not a slip, nothing more is done)), `ptz.drift_corrections` (counters corrected by the scene since the start), `ptz.recal_reason` (`none`, or why the last drift-triggered recalibration was scheduled), `ptz.rehome_count` / `ptz.rehome_cancel` (tilt-only re-homes completed / interrupted since the start; a person or a command cancels one), `ptz.rehome_last_s` (`none`, or the uptime seconds at which the last re-home completed) and `ptz.rehome_last_reason` (`none`, `gap` = enough travel since the last one, `flat` = scheduled by a flat home view), `sys.flash_writes_ptzpos` (always 0: the position lives in RAM), `sys.flash_writes_scene` (home reference files), `sys.flash_writes_store` (`/config` writes since the start, by source), `sys.flash_writes_button` (writes of `/config/akam/button` and `/config/akam/modes`), `button.last_gesture` (`none` until the first press, then the gesture name: `short`, `double`, `S S L`, ...), `api.keys`.
 
 Persistence: `/config/akam/settings` (`key=value`, only keys that differ from the default), saved by the settings worker within a second of a
-change, limited to a burst of 4 writes then one per 30 s (flash wear), loaded at boot after `akam2k.conf`
+change, limited to a burst of 4 writes then one per 30 s (flash wear), loaded at boot after `akam.conf`
 (default < conf < settings file; an invalid file is ignored as a whole and logged).
 
 `net.*`: the app never spawns a process, so a change writes one request line into the RAM file `/tmp/akam_net.req`; the supervisor
@@ -136,7 +157,7 @@ soft limits as for tracking; it preempts a tracking move like a manual nudge). *
 150..450 ms and the nonce cache of the normal budget (sized for 0.4/s) could not hold them. It is still signed (a valid key with the write scope, scope 403), the per-peer lockout and flood rules apply, the bucket is spent only after the signature
 passed (a flood without a key costs the others nothing), and it has its **own nonce cache and the shortest timestamp window (10 s)**: the camera clock must be set (the challenge mode of `/hello` is for the slow budget only) and a full cache refuses (429 `busy`), it never evicts a live nonce.
 A working call is not written to the audit log (it would flood the ring and the flash); refusals are. Compile time (`A2K_API_FAST_ACTION`, 2K only: the 1080p binary does not have it).
-ONVIF is the preferred way (no Akam change needed); the same motion over MQTT: `BASE/ptz_vel/set` (ptz-findings.md, MQTT). `onvif.enabled` / `onvif.port` / `onvif.state` (read only, `akam2k.conf onvif=1`, see [docs/onvif.md](../../onvif.md)) report the ONVIF service;
+ONVIF is the preferred way (no Akam change needed); the same motion over MQTT: `BASE/ptz_vel/set` (ptz-findings.md, MQTT). `onvif.enabled` / `onvif.port` (settable, see above) and `onvif.state` (read only) report the ONVIF service, see [docs/onvif.md](../../onvif.md);
 `settings.reset {"key":"led.mode"} or `{"prefix":"led."}` (back to the defaults); `settings.save` (save now).
 PTZ patrol (see [specs/ptz-patrol.md](../../../specs/ptz-patrol.md)): `ptz.patrol.start {"route":"<name>"}` (404 `not_found`, 409 `unavailable` when the
 position is unknown, calibrating or the video is withheld), `ptz.patrol.stop` (idempotent), `ptz.goto_preset {"name":"<preset>"}` (a manual move: it stops a
@@ -242,7 +263,7 @@ sustained limit of 0.4/s) plus `GET /state` every 30 s.
 
 ## 7. Resource cost (measured, ARM uClibc, `-Os`)
 
-Stripped binary `akam2k_rtsp`: 211,712 -> 265,024 bytes (+53,312; the spec estimate was +25 KB, its phase gate +40 KB, see the
+Stripped binary `akamd`: 211,712 -> 265,024 bytes (+53,312; the spec estimate was +25 KB, its phase gate +40 KB, see the
 spec section "Phase 2"). `size`: text +54 KB, bss +101 KB (mostly untouched pages: 4 x 12 KiB connection buffers, the
 12 KiB reply buffer, the audit ring, the job slot), two threads (HTTP 64 KiB, settings worker 32 KiB stacks, a few KiB touched). The
 port is closed and the HTTP thread sleeps in `poll` (1 s tick) without a key; the worker wakes once a second.

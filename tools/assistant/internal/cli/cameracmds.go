@@ -240,15 +240,15 @@ func (a *App) cmdRegister() error {
 	}
 	p := a.ports()
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD probe %s (ports %d, %d, %d open and %d closed = Akam), check the backup folder given with --backup-dir, log in over SSH and read /dev/mtd7 back,", ip, p.SSH, p.RTSP, p.CTL, p.Telnet))
+		a.UI.Say(fmt.Sprintf("  WOULD probe %s (ports %d and %d open and %d closed = Akam), check the backup folder given with --backup-dir, log in over SSH and read /dev/mtd7 back,", ip, p.SSH, p.RTSP, p.Telnet))
 		a.UI.Say(fmt.Sprintf("  then record the address and mark find-camera, flash and verify (and backup, with a backup folder) as done for camera '%s'.", a.Cams.Name))
 		return nil
 	}
-	open := a.probe(ip, p.SSH, p.RTSP, p.CTL, p.Telnet)
+	open := a.probe(ip, p.SSH, p.RTSP, p.Telnet)
 	a.UI.Say("  Open ports: " + orNone(joinPorts(open)))
-	for _, port := range []int{p.SSH, p.RTSP, p.CTL} {
+	for _, port := range []int{p.SSH, p.RTSP} {
 		if !containsInt(open, port) {
-			return a.UI.Fail(fmt.Sprintf("%s does not look like a camera running Akam (SSH, video and control ports must answer; port %d does not).", ip, port),
+			return a.UI.Fail(fmt.Sprintf("%s does not look like a camera running Akam (the SSH and video ports must answer; port %d does not).", ip, port),
 				"check the address in your router, and that the camera has finished booting.")
 		}
 	}

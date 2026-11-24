@@ -139,7 +139,7 @@ int ae_set_tuning(const ae_tuning_t *in)
  * ExtractedData/strace_ioctl_anyka_ipc_combined_capture/): stock issues
  * every one of these ISP tunnel calls (including SET_FRAME_RATE/
  * SET_SENSOR_FPS) BEFORE it ever touches a VI channel (crop/S_FMT), let
- * alone STREAMON. ak_rtsp used to call this from ae_start() — after
+ * alone STREAMON. akamd used to call this from ae_start() — after
  * vi_start_capture() — which left the ISP driver's per-channel cached-fps
  * field (camera_device+0x40 / the gate flag at +0x44 in ak_isp.ko) still at
  * its zeroed default when the first VI frame interrupt landed, hitting a

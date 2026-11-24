@@ -1,5 +1,5 @@
 # Build of the Anyka AK3918 "direct drivers" platform (raw kernel ioctls, static musl, pinned Zig): the program of the LSC indoor 1080p,
-# shipped under the name ak_rtsp (renamed in a later step). Run from this directory: `make -C platforms/anyka-ak3918 [all|repro|firmware|...]`
+# shipped under the name akamd (`ak_rtsp` in 0.1.x). Run from this directory: `make -C platforms/anyka-ak3918 [all|repro|firmware|...]`
 # (the root Makefile delegates: `make 1080p`, `make repro-1080p`). What differs per camera model lives in firmware/<MODEL>/model.mk
 # (features, the ordered object list); the shared modules are named by src/build/sources.mk; the generic rules and flags are here.
 ZIG    ?= zig
@@ -9,7 +9,7 @@ MODEL  ?= lsc-indoor-1080p-ak3918
 MODEL_DIR = $(ROOT)/firmware/$(MODEL)
 include $(SRC_DIR)/build/sources.mk
 # Everything a build writes goes under build/$(MODEL) (out of tree, git-ignored; two models never overwrite each other): the binaries
-# (ak_rtsp, ak_rtsp.repro, flash_tool, isp_dump, patch_div0, the two hook libraries), version_info.h, and the objects, mirroring the source tree below the repository root: a source named
+# (akamd, akamd.repro, flash_tool, isp_dump, patch_div0, the two hook libraries), version_info.h, and the objects, mirroring the source tree below the repository root: a source named
 # ../../src/net/rtsp/x.c gets build/$(MODEL)/src/net/rtsp/x.o, a platform source x.c gets build/$(MODEL)/x.o.
 # `$(call O,a.o ../../b/c.o)` maps source-relative object names to those paths.
 BUILD ?= $(ROOT)/build/$(MODEL)
@@ -42,7 +42,7 @@ $(call O,$(API_OBJS)): CFLAGS += -Os
 # G17 (the comment in model.mk): stack canaries only on the parsers of untrusted network input.
 $(call O,$(HARDENED_OBJS)): CFLAGS += -fstack-protector-strong
 
-TARGET     = $(BUILD)/ak_rtsp
+TARGET     = $(BUILD)/akamd
 TARGET_DBG = $(BUILD)/isp_dump
 TARGET_HOOK = $(BUILD)/isp_hook.so
 TARGET_STOCK = $(BUILD)/stock_hook.so
@@ -77,9 +77,9 @@ SHIM    = $(BUILD)/src/core/time32_shim.o
 ASM_SRCS = arm_atomics.S
 OBJS    = $(call O,$(SRCS:.c=.o) $(ASM_SRCS:.S=.o)) $(SHIM)
 
-# Short names of the binaries (`make ak_rtsp flash_tool`): the files themselves are build/$(MODEL)/<name>.
-.PHONY: ak_rtsp isp_dump isp_hook.so stock_hook.so flash_tool patch_div0
-ak_rtsp: $(TARGET)
+# Short names of the binaries (`make akamd flash_tool`): the files themselves are build/$(MODEL)/<name>.
+.PHONY: akamd isp_dump isp_hook.so stock_hook.so flash_tool patch_div0
+akamd: $(TARGET)
 isp_dump: $(TARGET_DBG)
 isp_hook.so: $(TARGET_HOOK)
 stock_hook.so: $(TARGET_STOCK)
@@ -89,7 +89,7 @@ patch_div0: $(TARGET_DIV0)
 all: $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) $(TARGET_STOCK) $(TARGET_TOOL) $(TARGET_DIV0)
 
 # -----------------------------------------------------------------------
-# debug-dump — builds ak_rtsp with DEBUG_IOCTL_DUMP defined, so venc.c logs
+# debug-dump — builds akamd with DEBUG_IOCTL_DUMP defined, so venc.c logs
 # our own CREATE_ENC payload to /tmp/ak_rtsp_ioctl_dump.log in the same
 # format isp_hook.c uses for stock's capture (see venc_dump.h). Not part of
 # `all`/`$(TARGET)` — the normal build never defines DEBUG_IOCTL_DUMP.
@@ -102,7 +102,7 @@ debug-dump:
 	"$(MAKE)" $(TARGET) $(TARGET_DBG) $(TARGET_HOOK) CFLAGS="$(CFLAGS) -DDEBUG_IOCTL_DUMP"
 
 # -----------------------------------------------------------------------
-# aec-custom — builds ak_rtsp with AEC_CUSTOM defined, swapping ae.c's
+# aec-custom — builds akamd with AEC_CUSTOM defined, swapping ae.c's
 # on-chip-tick-only AE loop for aec_custom.c's software AEC loop.
 # Compile-time only, not a runtime toggle. Not part of `all`/the normal build.
 # -----------------------------------------------------------------------
@@ -186,9 +186,9 @@ $(BUILD)/src/core/version/version.o: $(SRC_DIR)/core/version/version.c FORCE
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # -----------------------------------------------------------------------
-# repro — reproducible, stripped 1080p ak_rtsp (docs/archive/convergence-plan.md 2.5, tools/ci/repro_check.sh).
+# repro — reproducible, stripped 1080p akamd (docs/archive/convergence-plan.md 2.5, tools/ci/repro_check.sh).
 # Fixed version stamp (AKAM_REPRO=1, see gen_version.sh), no absolute paths (-ffile-prefix-map), no debug info,
-# the frozen SRCS link order, then `zig objcopy --strip-all`. Output: ak_rtsp.repro, its sha256 is printed.
+# the frozen SRCS link order, then `zig objcopy --strip-all`. Output: akamd.repro, its sha256 is printed.
 # The normal build is untouched: only the stamp and the paths differ.
 # -----------------------------------------------------------------------
 REPRO_ROOT = $(abspath ../..)
@@ -204,12 +204,12 @@ repro:
 clean:
 	rm -rf $(BUILD)
 	@# outputs of builds from before the per-model build directory
-	rm -f *.o ak_rtsp ak_rtsp.repro isp_dump isp_hook.so stock_hook.so flash_tool patch_div0 version_info.h
+	rm -f *.o akamd akamd.repro isp_dump isp_hook.so stock_hook.so flash_tool patch_div0 version_info.h
 
 # -----------------------------------------------------------------------
 # firmware — builds the flashable, timestamped APP squashfs image
 # (ak_rtsp_firmware_YYYYMMDD_HHMMSS.squashfs, written next to build_image.sh
-# unless FW_DIR is overridden). Rebuilds ak_rtsp first, then runs
+# unless FW_DIR is overridden). Rebuilds akamd first, then runs
 # build_image.sh (needs mksquashfs/unsquashfs on the host). Requires an
 # app_extracted/ dump of your own camera's APP partition — see
 # docs/manual/build.md for the full walkthrough and what

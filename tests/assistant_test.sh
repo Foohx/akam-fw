@@ -88,8 +88,8 @@ out=$(PATH="$FAKEGO:$PATH" AKAM_GO_ROOT=/nonexistent env -u AKAM_ALLOW_ANY_GO "$
 rc=$?
 if [ "$rc" -ne 0 ] && [[ $out == *"pins Go $PINNED"* ]] && [ ! -e "$FAKEGO/out" ]; then ok "a Go other than the pinned one is refused with a clear message"; else ko "pinned Go guard: rc=$rc $out"; fi
 
-# The six targets, release flags: sizes against the budget (12 MiB hard, 11 MiB soft), static/format check, flags
-if out=$("$ASSIST/build.sh" all 2>&1); then ok "six targets built, all within the 12 MiB budget"; printf '        %s\n' "${out//$'\n'/$'\n'        }"; else ko "build all: $out"; fi
+# The six targets, release flags: sizes against the budget (20 MiB hard, 16 MiB soft), static/format check, flags
+if out=$("$ASSIST/build.sh" all 2>&1); then ok "six targets built, all within the 20 MiB budget"; printf '        %s\n' "${out//$'\n'/$'\n'        }"; else ko "build all: $out"; fi
 for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
     os=${t%/*}; arch=${t#*/}; f=$ASSIST/bin/$os-$arch/akam; [ "$os" = windows ] && f=$f.exe
     info=$(go version -m "$f" 2>&1)

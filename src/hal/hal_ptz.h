@@ -138,7 +138,7 @@ typedef int (*hal_ptz_cont_cb)(void *ctx, const hal_ptz_cstate_t *st, hal_ptz_cm
 int hal_ptz_cont_run(hal_ptz_t *p, const hal_ptz_cmd_t *first, unsigned lease_ms, hal_ptz_cont_cb cb, void *ctx);
 
 /* The motor stop for a process that is going down or already gone: hal_ptz_emergency_stop() is async-signal-safe (the crash handler of the app: a stop request on the open node, nothing else);
- * hal_ptz_oneshot_stop(ops) opens the node and sends the stop request (the supervisor's `akam2k_rtsp --ptz-stop` after the app died). No other request is used. 0 / -1. */
+ * hal_ptz_oneshot_stop(ops) opens the node and sends the stop request (the supervisor's `akamd --ptz-stop` after the app died). No other request is used. 0 / -1. */
 void hal_ptz_emergency_stop(void);
 int hal_ptz_oneshot_stop(const hal_ptz_ops_t *ops);
 

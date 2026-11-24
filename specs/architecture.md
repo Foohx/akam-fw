@@ -54,21 +54,21 @@ The camera has no real-time clock: it boots with a date in the past (see section
 
 | Stock content | Akam |
 |---|---|
-| `anyka_ipc` (Tuya application: cloud, video, audio, IR, LED) | Removed. Replaced by `ak_rtsp` |
-| `_ht_process.ini` with three process entries (`anyka_ipc`, `rtspserver`, `nvtservice`) | One entry that starts `ak_rtsp_wrapper.sh` |
+| `anyka_ipc` (Tuya application: cloud, video, audio, IR, LED) | Removed. Replaced by `akamd` |
+| `_ht_process.ini` with three process entries (`anyka_ipc`, `rtspserver`, `nvtservice`) | One entry that starts `akam_run.sh` |
 | `sbin/service.sh` (starts Telnet, FTP, SD hooks) | Patched at build time: Telnet/FTP launch lines disabled, SD hooks guarded by a maintenance flag |
 | `sbin/ethernet.sh` | Patched: the DHCP host name comes from `akam_hostname.sh show` |
 | `sbin/drop_caches.sh` (`sleep 5`) | `sleep 60` (fewer wakeups) |
-| `sbin/main.sh` (`klogd -n &`) | A loop that runs `ak_rtsp klog` (filtered kernel log), restarts it after a crash (up to 5 in a row; a run over 60 s resets the count; a plain `kill` is not counted) and falls back to stock `klogd` |
+| `sbin/main.sh` (`klogd -n &`) | A loop that runs `akamd klog` (filtered kernel log), restarts it after a crash (up to 5 in a row; a run over 60 s resets the count; a plain `kill` is not counted) and falls back to stock `klogd` |
 | `cmdserver`, `msgserver` | Kept. They are local IPC started from `service.sh`; removing them stalls the boot |
 
 Files added to the image (the single list is `tools/release/image_files.txt`):
 
 | Image path | Mode | Source |
 |---|---|---|
-| `bin/ak_rtsp` | 755 | `platforms/anyka-ak3918` (stripped) |
+| `bin/akamd` | 755 | `platforms/anyka-ak3918` (stripped) |
 | `bin/dropbearmulti`, links `bin/dropbear`, `bin/dropbearkey` | 755 | `tools/dropbear` (Dropbear 2026.94) |
-| `sbin/ak_rtsp_wrapper.sh` | 755 | `firmware/lsc-indoor-1080p-ak3918/overlay/` |
+| `sbin/akam_run.sh` | 755 | `firmware/lsc-indoor-1080p-ak3918/overlay/` |
 | `sbin/akam_ssh.sh`, `akam_lockdown.sh`, `akam_net.sh`, `akam_ntp.sh`, `akam_hostname.sh` | 755 | same |
 | `sbin/akam_rtsp_auth.sh`, `akam_debug.sh`, `akam_onvif.sh`, `akam_mqtt.sh` | 755 | same |
 | `local/_ht_process.ini` | 644 | same |
@@ -88,25 +88,25 @@ No key of any kind is put in the image. SSH keys come from the microSD card or f
 
 ```ini
 [process_0]
-name = ak_rtsp_wrapper.sh
+name = akam_run.sh
 param = ""
 delay = 0
 onvif = 0
 ```
 
-4. `ak_rtsp_wrapper.sh` (a direct child of the watchdog) runs in this order:
+4. `akam_run.sh` (a direct child of the watchdog) runs in this order:
    1. Respawn backoff (section 6).
    2. `akam_hostname.sh apply` (kernel host name), then reads the effective name for DHCP (`akam` when the helper
       fails).
    3. Background helpers, each detached with output discarded and its exit status ignored: `akam_ssh.sh start`,
       `akam_lockdown.sh`, `akam_net.sh start`, and `akam_ntp.sh run` only when `/etc/config/akam/ntp` exists.
-      A helper can never delay or break `ak_rtsp`; each has an anti-duplicate guard (lock directory in `/tmp`).
+      A helper can never delay or break `akamd`; each has an anti-duplicate guard (lock directory in `/tmp`).
    4. Wi-Fi bring-up when `/etc/config/wpa_supplicant.conf` exists and no `wpa_supplicant` runs:
       `wpa_supplicant -Dnl80211 -i wlan0 -c /etc/config/wpa_supplicant.conf -B`, then
       `udhcpc -i wlan0 -x hostname:<name> &`, then `touch /tmp/connect_type_wifi`. Plain DHCP only.
       The wrapper does this itself because stock `ethernet.sh` skips Wi-Fi when `/tmp/_ak39_factory.ini` exists.
-   5. Runs `/usr/bin/ak_rtsp` in the foreground and records its exit.
-5. `ak_rtsp` start order: stdout tee and control port, status LED, software watchdog arm, then ISP/VI/VENC
+   5. Runs `/usr/bin/akamd` in the foreground and records its exit.
+5. `akamd` start order: stdout tee and control port, status LED, software watchdog arm, then ISP/VI/VENC
    initialisation, AE thread, night thread, audio capture, speaker, ONVIF and MQTT services (if enabled), and the RTSP
    accept loop on port 554. Every Akam camera MUST serve the canonical `rtsp://<ip>:554/stream0` (main) and, with a second encoder, `/stream1` (sub); the Rotatable 2K takes its port from one constant, `A2K_RTSP_PORT`, and serves only the paths `/stream0` and `/stream1`. Failure of audio, ONVIF or MQTT MUST NOT stop video.
 
@@ -115,20 +115,20 @@ onvif = 0
 | Process | Role |
 |---|---|
 | `init`, `syslogd`, kernel threads | Stock |
-| `ak_rtsp klog` | Filtered kernel log forwarder (replaces `klogd`) |
+| `akamd klog` | Filtered kernel log forwarder (replaces `klogd`) |
 | `watchdog` (`/usr/bin/watchdog`) | Stock. Feeds the hardware watchdog and respawns the wrapper. Akam never touches it |
-| `ak_rtsp_wrapper.sh` / `ak_rtsp` | Video, audio, control, optional ONVIF and MQTT |
+| `akam_run.sh` / `akamd` | Video, audio, control, optional ONVIF and MQTT |
 | `dropbear` | SSH on port 22 |
 | `wpa_supplicant`, `udhcpc` | Wi-Fi and DHCP |
 | `akam_lockdown.sh`, `akam_net.sh`, optional `akam_ntp.sh` | Background helpers |
 | `cmdserver`, `msgserver` | Stock local IPC (no network listener) |
 | `drop_caches.sh` | Stock loop, period 60 s |
 
-`ak_rtsp` threads: main (RTSP accept loop and client session), AE, night, control accept loop (plus up to 4 short
+`akamd` threads: main (RTSP accept loop and client session), AE, night, control accept loop (plus up to 4 short
 client threads, 64 KiB stack each), stdout log pump, audio capture, audio playback, status LED, software watchdog,
 and, only when enabled, ONVIF HTTP, WS-Discovery and MQTT (one thread each, asleep until traffic arrives).
 
-`ak_rtsp` is also a multi-call binary: `ak_rtsp klog` runs the kernel log filter, `ak_rtsp ctl <line>` sends one line
+`akamd` is also a multi-call binary: `akamd klog` runs the kernel log filter, `akamd ctl <line>` sends one line
 to the control port on `127.0.0.1:8091` and prints the reply (used by the helper scripts, so they do not depend on the
 BusyBox `nc`).
 
@@ -159,7 +159,7 @@ Status: host-tested only (`tests/wrapper_backoff_test.sh`).
 | Watchdog | Behaviour |
 |---|---|
 | Hardware | Stock `watchdog` feeds `/dev/watchdog`. Unchanged |
-| Software stall (`swdog.c`) | A thread checks every 1 s. `ak_rtsp` exits with code 70 (the wrapper then restarts it) when: no video frame was fetched from the encoder for 30 s while one is expected (suspended while a client write is blocked or no session issued PLAY); a heartbeat thread (main loop, AE, control accept) was silent for 60 s; the init sequence took longer than 120 s. The first frame gets 60 s of extra grace after arming |
+| Software stall (`swdog.c`) | A thread checks every 1 s. `akamd` exits with code 70 (the wrapper then restarts it) when: no video frame was fetched from the encoder for 30 s while one is expected (suspended while a client write is blocked or no session issued PLAY); a heartbeat thread (main loop, AE, control accept) was silent for 60 s; the init sequence took longer than 120 s. The first frame gets 60 s of extra grace after arming |
 | Network | `akam_net.sh` (see [network-time-security.md](network-time-security.md)) |
 | Telnet/FTP | `akam_lockdown.sh` |
 
@@ -193,17 +193,17 @@ mode 0600 unless noted. A missing file means the compiled-in default.
 | `credentials` | `akam_rtsp_auth.sh` | `user=NAME` / `pass=PASSWORD` | Clear-text copy needed by ONVIF WS-Security |
 | `hostname` | `akam_hostname.sh` | one line, mode 0644 | Network host name. Absent = `akam-XXXX` |
 | `onvif` | `akam_onvif.sh` | `enabled=0\|1`, `port=N` | ONVIF opt-in. Absent = off |
-| `wsd_instance` | `ak_rtsp` | counter | WS-Discovery instance id |
+| `wsd_instance` | `akamd` | counter | WS-Discovery instance id |
 | `mqtt` | `akam_mqtt.sh` | key=value | MQTT client settings. Absent = off |
 | `mqtt_pass` | `akam_mqtt.sh` | one line | Broker password |
 | `ntp` | `akam_ntp.sh` | `server=NAME` (max 3) | NTP opt-in. Absent = off |
-| `video` | `ak_rtsp` | `bitrate=`, `fps=`, `gop=` | Encoder settings (only keys that differ from the default) |
-| `picture` | `ak_rtsp` | `brightness=`, `contrast=`, `saturation=`, `sharpness=` | Picture sliders, -50..50 |
-| `night` | `ak_rtsp` | `mode=day\|night` | Forced day/night mode. Absent = auto |
-| `leds` | `ak_rtsp` | `status=`, `ir_led=` | Status LED and IR LED policy |
-| `audio_out` | `ak_rtsp` | `enable`, `volume`, `gain`, `source`, `talk_enable`, `talk_duplex`, `mic_enable` | Speaker, talk and microphone |
-| `audio_out.trying` | `ak_rtsp` | marker | Audio crash guard (see [audio.md](audio.md)) |
-| `image` | hand or `ak_rtsp` | key=value, `#` comments | Image-quality switches (`wb`, `venc_rc`, `poll`) |
+| `video` | `akamd` | `bitrate=`, `fps=`, `gop=` | Encoder settings (only keys that differ from the default) |
+| `picture` | `akamd` | `brightness=`, `contrast=`, `saturation=`, `sharpness=` | Picture sliders, -50..50 |
+| `night` | `akamd` | `mode=day\|night` | Forced day/night mode. Absent = auto |
+| `leds` | `akamd` | `status=`, `ir_led=` | Status LED and IR LED policy |
+| `audio_out` | `akamd` | `enable`, `volume`, `gain`, `source`, `talk_enable`, `talk_duplex`, `mic_enable` | Speaker, talk and microphone |
+| `audio_out.trying` | `akamd` | marker | Audio crash guard (see [audio.md](audio.md)) |
+| `image` | hand or `akamd` | key=value, `#` comments | Image-quality switches (`wb`, `venc_rc`, `poll`) |
 
 Other persistent paths:
 
@@ -235,7 +235,7 @@ history).
 
 ## 11. Logging
 
-- `ak_rtsp` prints to stdout with a bracketed prefix (`[ak_rtsp]`, `[control]`, `[night]`, ...). Stdout is teed
+- `akamd` prints to stdout with a bracketed prefix (`[ak_rtsp]`, `[control]`, `[night]`, ...). Stdout is teed
   through a pipe: the real stdout (serial console) always gets the bytes, and complete lines are forwarded as `LOG`
   lines on the control port (see [control-port.md](control-port.md)).
 - The tee never blocks any thread. The pipe write end is non-blocking; the console is written through a private
@@ -243,7 +243,7 @@ history).
   (`log.dropped`).
 - Logs never contain passwords, HA1 values, SSH key material, `Authorization` headers or user names typed by clients.
   Request URIs have any `user:pass@` replaced by `***@`.
-- Kernel log filter (`ak_rtsp klog`): drops known noise (the vendor LED driver prints a line per brightness write),
+- Kernel log filter (`akamd klog`): drops known noise (the vendor LED driver prints a line per brightness write),
   collapses a message repeated within 60 s into one summary line ("message repeated N times"), compares messages after
   removing counter prefixes and replacing digit runs with `#`, and never collapses priorities `crit`, `alert` and
   `emerg` (oops, panic, BUG). Up to 32 distinct messages are tracked. Status: hardware-validated.

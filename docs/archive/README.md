@@ -10,4 +10,5 @@ status may be out of date (old to new path table: `tools/dev/path-map.txt`). Cur
 | [rot2k-phase1-validation.md](rot2k-phase1-validation.md) | first-boot checklist of the 2K overlay card |
 | [rot2k-flash-test-plan.md](rot2k-flash-test-plan.md) | staged plan that led to the card-less boot (done) |
 | [convergence-plan.md](convergence-plan.md) | plan to bring the 1080p code to the level of the 2K (executed) |
+| [assistant-rot2k-flash-design.md](assistant-rot2k-flash-design.md) | design of the assistant's 2K install and update flows (built since) |
 | [parity-matrix.md](parity-matrix.md) | feature parity table between the two cameras, as of the plan |

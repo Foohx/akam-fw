@@ -328,7 +328,7 @@ static int server_closed(conn_t *c, int ms)
  * Scenarios
  * ====================================================================== */
 static const char *SDP_DEFAULT_TAIL =
-    "s=ak_rtsp\r\n"
+    "s=akamd\r\n"
     "t=0 0\r\n"
     "m=video 0 RTP/AVP 96\r\n"
     "c=IN IP4 0.0.0.0\r\n"

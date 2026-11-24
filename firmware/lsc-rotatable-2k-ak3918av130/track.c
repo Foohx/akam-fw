@@ -228,7 +228,7 @@ int a2k_track_load(a2k_track_t *t, const char *conf)
     int n, r[4], have = 0;
     memset(&a, 0, sizeof a);
     if (conf && a2k_tareas_parse(conf, strlen(conf), &a) != 0) {
-        a2k_log("track: the track_area keys of akam2k.conf are invalid, ignored");
+        a2k_log("track: the track_area keys of akam.conf are invalid, ignored");
         memset(&a, 0, sizeof a);
     }
     if (t->path[0] && (n = a2k_store_read(t->path, buf, sizeof buf)) >= 0) {
@@ -257,7 +257,7 @@ int a2k_track_load(a2k_track_t *t, const char *conf)
     pthread_mutex_lock(&t->mu);
     t->areas = a;
     pthread_mutex_unlock(&t->mu);
-    a2k_log("track: %d area(s) from %s", a.n, have ? t->path : "akam2k.conf");
+    a2k_log("track: %d area(s) from %s", a.n, have ? t->path : "akam.conf");
     return a.n;
 }
 

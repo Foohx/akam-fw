@@ -37,6 +37,7 @@ func TestBackup2KCommand(t *testing.T) {
 // key-2k: the dry run changes nothing, a key already kept on this PC is never replaced, a 1080p is refused.
 func TestKey2KCommand(t *testing.T) {
 	e := newEnv(t)
+	e.noAPIKey() // a 2K whose PC has no key yet (the harness gives a 1080p install one by default)
 	e.writeState("camera_model=" + rotModel + "\n")
 	r := e.run("", "--dry-run", "--model", rotModel, "key-2k")
 	expectRC(t, r, 0)

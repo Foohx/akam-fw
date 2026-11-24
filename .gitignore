@@ -32,6 +32,7 @@
 *.app
 *.squashfs
 *.bin
+/platforms/anyka-ak3918/akamd
 /platforms/anyka-ak3918/ak_rtsp
 /platforms/anyka-ak3918/flash_tool
 /platforms/anyka-ak3918/isp_dump
@@ -48,7 +49,7 @@ obj/
 *.tmp
 .pio/
 
-# ak_rtsp build versioning (regenerated every `make`)
+# akamd build versioning (regenerated every `make`)
 /platforms/anyka-ak3918/build_number.txt
 /platforms/anyka-ak3918/version_info.h
 
@@ -86,6 +87,7 @@ Thumbs.db
 # Synthetic test fixtures must stay tracked despite the bin/, *.bin and
 # *.squashfs rules above (keep this negation last).
 !/tests/fixtures/**
+/platforms/anyka-ak3918/akamd.repro
 /platforms/anyka-ak3918/ak_rtsp.repro
 
 # Real camera frames of the drift matcher test (never committed; the test skips its real-frame part without them).

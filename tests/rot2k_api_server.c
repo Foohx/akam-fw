@@ -28,6 +28,8 @@
 #include "store.h"
 #include "ptz.h"
 #include "rtsp_session.h"
+#include "audio_out.h"
+#include "picture.h"
 #include "settings.h"
 #include "track_run.h"
 #include "video.h"
@@ -111,6 +113,51 @@ int a2k_image_apply(const a2k_image_cfg_t *c)
     g_last_img = *c;
     call("image %d %d %d %d", c->brightness, c->contrast, c->sharpness, c->mains_hz);
     return 0;
+}
+/* ---- the fake ISP of the picture rows (the REAL picture.c runs on it): every call is logged in calls.log ---- */
+static int fx_set(int type, int v)
+{
+    call("isp.effect %d %d", type, v);
+    return 0;
+}
+static uint8_t g_nr3d[A2K_PIC_NR3D_SIZE];
+static int32_t g_wbtype = 1;
+static int fk_get(int what, void *buf)
+{
+    if (what == A2K_IT_NR3D) {
+        memcpy(buf, g_nr3d, sizeof g_nr3d);
+        return 0;
+    }
+    if (what == A2K_IT_WBTYPE) {
+        memcpy(buf, &g_wbtype, 4);
+        return 0;
+    }
+    return -1;
+}
+static int fk_set(int what, const void *buf)
+{
+    if (what == A2K_IT_NR3D) {
+        const uint8_t *r1 = (const uint8_t *)buf + 4 + A2K_NR3D_REC, *r16 = (const uint8_t *)buf + 4 + 16 * A2K_NR3D_REC;
+        memcpy(g_nr3d, buf, sizeof g_nr3d);
+        call("isp.nr3d rec1 %d rec16 %d", r1[4], r16[4]);
+        return 0;
+    }
+    if (what == A2K_IT_WBTYPE) {
+        memcpy(&g_wbtype, buf, 4);
+        call("isp.wbtype %d", (int)g_wbtype);
+        return 0;
+    }
+    return -1;
+}
+static const a2k_isptest_ops_t g_fake_isp = { fx_set, NULL, fk_get, fk_set, NULL };
+static void fake_isp_init(void)
+{
+    int i;
+    memset(g_nr3d, 0, sizeof g_nr3d);
+    g_nr3d[0] = 1;
+    for (i = 0; i < A2K_REC_N; i++)
+        g_nr3d[4 + i * A2K_NR3D_REC + 4] = (uint8_t)(100 + i); /* a marker per level */
+    a2k_pic_init(&g_fake_isp);
 }
 static int g_isp_flip_rc; /* the fake ISP answer of a2k_isp_flip_mirror (the test script flips it through the file DIR/flip_fail) */
 int a2k_isp_flip_mirror(int flip, int mirror)
@@ -460,7 +507,7 @@ int main(int argc, char **argv)
     a2k_settings_cfg_t sc;
     a2k_image_cfg_t img;
     a2k_vid_t base[A2K_VID_STREAMS];
-    char keys[260], audit[260], setf[260], netdir[260], netreq[260], vidf[260], line[128], bpath[260], mpath[260];
+    char keys[260], audit[260], setf[260], netdir[260], netreq[260], cfgdir[260], cfgreq[260], vidf[260], line[128], bpath[260], mpath[260];
     int i, fast = 0;
     if (argc < 2)
         return 2;
@@ -476,6 +523,8 @@ int main(int argc, char **argv)
     snprintf(setf, sizeof setf, "%s/settings", g_dir);
     snprintf(netdir, sizeof netdir, "%s/net", g_dir);
     snprintf(netreq, sizeof netreq, "%s/net.req", g_dir);
+    snprintf(cfgdir, sizeof cfgdir, "%s/cfg", g_dir);
+    snprintf(cfgreq, sizeof cfgreq, "%s/cfg.req", g_dir);
     snprintf(vidf, sizeof vidf, "%s/video", g_dir);
     a2k_api_env_2k(&env);
     env.keys_path = keys;
@@ -494,6 +543,8 @@ int main(int argc, char **argv)
     sc.settings_path = setf;
     sc.net_dir = netdir;
     sc.net_req = netreq;
+    sc.cfg_dir = cfgdir;
+    sc.cfg_req = cfgreq;
     sc.image = &img;
     snprintf(g_pcfg, sizeof g_pcfg, "%s/ptz_patrol", g_dir);
     {
@@ -507,6 +558,10 @@ int main(int argc, char **argv)
     snprintf(mpath, sizeof mpath, "%s/modes", g_dir);
     a2k_btn_set_paths(bpath, mpath);
     a2k_btn_init(&g_bops, 2000);
+    /* the speaker rows run on the REAL shared engine (no playback node on a host: enabling it fails cleanly), its files in this directory */
+    audio_out_setup("/nonexistent/pcm_playback", g_dir, 0);
+    audio_out_set_persist(0);
+    fake_isp_init();
     if (a2k_settings_start(&sc) != 0)
         return 1;
     a2k_settings_load();

@@ -11,9 +11,11 @@
  * Rows (docs/porting/lsc-1080p/control-api.md has the table with ranges and defaults):
  *   led.mode auto|on|off (8091: led.status), led.stream led.boot led.nowifi led.night led.idle (LED patterns), night.ir_led
  *   night.mode auto|day|night, image.brightness/contrast/saturation/sharpness -50..50, image.denoise 0..4
- *   video0.kbps/fps/gop/min_qp/max_qp (saved, applied at the next start of ak_rtsp: apply = "restart_component": ak_rtsp reads them at its next start)
+ *   video0.kbps/fps/gop/min_qp/max_qp (saved, applied at the next start of akamd: apply = "restart_component": akamd reads them at its next start)
  *   onvif.enabled, mqtt.enabled (live: the service is reloaded)
- *   read-only state: sys.* net.wifi_rssi net.wifi_lq rtsp.clients rtsp.auth rtsp.skipped_frames video0.fps_x10 video0.bitrate_kbps
+ *   img.wb conf|manual, audio.out_volume/out_enable/talk_enable/mic_enable (the speaker and microphone, same names as the old text port), control.lan (the
+ *   opt-in that opens the text port 8091 to the LAN: bound when akamd starts)
+ *   read-only state: audio.out_state/underruns/drops led.state net.ssid net.wifi_rate sys.* net.wifi_rssi net.wifi_lq rtsp.clients rtsp.auth rtsp.skipped_frames video0.fps_x10 video0.bitrate_kbps
  *   video0.cfg_pending night.active onvif.state mqtt.state sys.time_set net.hostname net.ntp sys.version api.keys
  * Not here on purpose: ptz.* track.* detect.* zones.* button.* net.wifi_band/country (no such hardware or radio), ae.* and the
  * night thresholds (tuning, stay on 8091), anything that holds a secret (RTSP and MQTT passwords stay write-only files). */

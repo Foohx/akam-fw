@@ -59,6 +59,9 @@ int main(int argc, char **argv)
     onvif_cfg_path = strdup(p);
     snprintf(p, sizeof p, "%s/mqtt", g_root);
     mqtt_cfg_path = strdup(p);
+    snprintf(p, sizeof p, "%s/orient", g_root);
+    image_orient_path = strdup(p);
+    image_orient_hw = fake_orient_hw;
     ak1080_api_env(&env);
     env.keys_path = keys;
     env.audit_path = audit;

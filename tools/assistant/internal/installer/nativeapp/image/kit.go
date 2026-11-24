@@ -57,6 +57,13 @@ func parseList() []listEntry {
 var licenseNames = []string{"LICENSE.akam", "THIRD_PARTY_NOTICES.md", "LICENSE.dropbear", "LICENSE.musl", "LICENSE.zig",
 	"LICENSE.smolrtsp", "LICENSE.slice99", "LICENSE.metalang99", "LICENSE.datatype99", "LICENSE.interface99"}
 
+// binName is the camera program in a kit_format 2 kit; kit_format 1 kits (0.1.x) carry it as legacyBinName.
+// The image always gets bin/akamd, plus the compatibility link bin/ak_rtsp -> akamd.
+const (
+	binName       = "bin/akamd"
+	legacyBinName = "bin/ak_rtsp"
+)
+
 // maxKitFile caps one kit file read into memory (the largest is dropbearmulti, a few hundred KiB).
 const maxKitFile = 32 << 20
 
@@ -69,7 +76,7 @@ type Kit struct {
 
 // requiredKitPaths are the files the assembly reads or insists on (build_image.sh dies without them).
 func requiredKitPaths() []string {
-	p := []string{"MANIFEST.txt", "supported_hardware.txt", "bin/ak_rtsp", "bin/dropbearmulti"}
+	p := []string{"MANIFEST.txt", "supported_hardware.txt", "bin/akamd", "bin/dropbearmulti"}
 	for _, e := range parseList() {
 		if e.kind == "file" {
 			p = append(p, e.kitPath)
@@ -81,10 +88,16 @@ func requiredKitPaths() []string {
 	return p
 }
 
-// NewKit builds a Kit from kit-relative paths ("bin/ak_rtsp", "overlay/sbin/akam_ssh.sh", ...). A path with
+// NewKit builds a Kit from kit-relative paths ("bin/akamd", "overlay/sbin/akam_ssh.sh", ...). A path with
 // empty content still counts for the "unknown overlay file" check.
 func NewKit(files map[string][]byte) (*Kit, error) {
 	k := &Kit{files: files, Manifest: map[string]string{}}
+	if _, ok := files[binName]; !ok {
+		if b, old := files[legacyBinName]; old { // kit_format 1: the program is bin/ak_rtsp
+			files[binName] = b
+			delete(files, legacyBinName)
+		}
+	}
 	for _, p := range requiredKitPaths() {
 		if _, ok := files[p]; !ok {
 			if strings.HasPrefix(p, "patches/") || strings.HasPrefix(p, "overlay/") || strings.HasPrefix(p, "scripts/") {
@@ -134,6 +147,10 @@ func LoadKit(dir string) (*Kit, error) {
 	files := map[string][]byte{}
 	for _, p := range requiredKitPaths() {
 		b, err := readSmall(filepath.Join(dir, filepath.FromSlash(p)))
+		if err != nil && os.IsNotExist(err) && p == binName {
+			// a kit_format 1 kit (released 0.1.x) carries the program under its old name
+			b, err = readSmall(filepath.Join(dir, filepath.FromSlash(legacyBinName)))
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				if strings.HasPrefix(p, "patches/") || strings.HasPrefix(p, "overlay/") || strings.HasPrefix(p, "scripts/") {

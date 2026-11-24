@@ -5,7 +5,7 @@
  * pipe) or at its deadline. The listener exists only while at least one API key is installed (nothing listens on an unprovisioned
  * camera); the key file is re-read about once a second, so the on-camera tool opens and closes the port without a restart.
  * This file is the only API file that creates a socket, binds, listens or accepts (the anti-brick scan lists it next to
- * rtsp_session.c and ak_rtsp rtsp_session.c). */
+ * rtsp_session.c and akamd rtsp_session.c). */
 #ifndef AKAM_API_HTTPD_H
 #define AKAM_API_HTTPD_H
 

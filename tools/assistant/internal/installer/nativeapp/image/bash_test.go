@@ -103,7 +103,7 @@ func makeKit(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	wr("ak_rtsp", "#!/bin/sh\necho stub ak_rtsp\n", 0o755)
+	wr("akamd", "#!/bin/sh\necho stub akamd\n", 0o755)
 	wr("flash_tool", "#!/bin/sh\necho stub flash_tool\n", 0o755)
 	wr("db/dropbearmulti", "#!/bin/sh\necho stub dropbearmulti\n", 0o755)
 	wr("db/LICENSE.dropbear", "Dropbear stub licence\n", 0o644)
@@ -122,7 +122,7 @@ func makeKit(t *testing.T) string {
 	cmd.Env = append(os.Environ(), "SOURCE_DATE_EPOCH=1700000000", "SMOLRTSP_DIR="+filepath.Join(stub, "smol"),
 		"MUSL_COPYRIGHT="+filepath.Join(stub, "COPYRIGHT"), "ZIG_LICENSE="+filepath.Join(stub, "ZIGLICENSE"),
 		"AKAM_KIT_NO_BUILD=1", "AKAM_KIT_ALLOW_DIRTY=1", "AKAM_KIT_VERSION=test1", "AKAM_KIT_CHECK_TIME32="+filepath.Join(stub, "gate_ok"),
-		"AK_RTSP_BIN="+filepath.Join(stub, "ak_rtsp"), "FLASH_TOOL_BIN="+filepath.Join(stub, "flash_tool"),
+		"AK_RTSP_BIN="+filepath.Join(stub, "akamd"), "FLASH_TOOL_BIN="+filepath.Join(stub, "flash_tool"),
 		"DROPBEAR_MULTI="+filepath.Join(stub, "db/dropbearmulti"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("make_kit.sh failed here (%v): %s", err, tail(out))

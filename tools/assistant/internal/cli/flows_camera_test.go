@@ -50,6 +50,7 @@ func (e *env) rememberCamera(name, ip string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		e.t.Fatal(err)
 	}
+	e.copyAPIKey(dir)
 	st := "camera_ip=" + ip + "\ncamera_kind=akam\ncamera_fw=b30-old\ncamera_host=" + name + "\ncamera_seen=2026-11-01T10:00:00Z\n"
 	if err := os.WriteFile(filepath.Join(dir, "state"), []byte(st), 0o600); err != nil {
 		e.t.Fatal(err)
@@ -76,6 +77,7 @@ func TestChooserSameCameraNewAddress(t *testing.T) {
 	}{{"yes", "y\n", true}, {"default no", "\n", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
+			e.openCtlPort() // the firmware version and name come from the text port: open here (an older image, or the LAN opt-in)
 			e.rememberCamera("salon", "192.0.2.21")
 			e.fakeLAN("192.0.2.99")
 			// home: 5 = find cameras; chooser: 1 row (the moved camera is found, so the scan row comes first), 3 = scan
@@ -148,6 +150,7 @@ func TestChooserScanDefaultsToNo(t *testing.T) {
 // A camera that is not remembered is named (validated) and chosen; the text it sends is cleaned.
 func TestChooserNewCameraIsNamed(t *testing.T) {
 	e := newEnv(t)
+	e.openCtlPort() // the host name comes from the text port: open here (an older image, or the LAN opt-in)
 	e.cam.SetCtl("sys.hostname", "evil\x1b[2Jcam")
 	e.fakeLAN("192.0.2.57")
 	// find (5) > type an address (4 with no rows: after the 4 fixed actions, index 4) ; bad name, then salon

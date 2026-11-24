@@ -29,7 +29,7 @@
  * the IR LED off. At least 60 s between two switches (the policy lock, plus a hard guard here). After 3 failed switches in a
  * row the automatic mode switches itself off (day position, logged).
  *
- * Config (akam2k.conf, passed by the supervisor): night = auto | day | night (default auto), ir_led = auto | off (default
+ * Config (akam.conf, passed by the supervisor): night = auto | day | night (default auto), ir_led = auto | off (default
  * auto: the IR LED lights in night mode; off: never), wdr = 1 | 0 (default 1: re-apply WDR after every ISP mode switch). */
 #ifndef AKAM2K_NIGHT_H
 #define AKAM2K_NIGHT_H

@@ -86,7 +86,7 @@ for lag, gp, gt in ((50, 1000.0, 700.0), (120, 1180.0, 820.0), (-60, 900.0, 640.
     check(fpan is not None and abs(fpan - gp) <= 0.03 * gp, "gain_pan %.0f: fitted %s" % (gp, fpan))
     check(ftilt is not None and abs(ftilt - gt) <= 0.03 * gt, "gain_tilt %.0f: fitted %s" % (gt, ftilt))
     check(rms is not None and rms < 4.0, "pan residual %s steps rms (< 4, the pose swings +-500)" % rms)
-    check(("track_lag_ms=%d" % round(fl)) in out and "track_gain_pan=" in out, "the akam2k.conf lines are printed")
+    check(("track_lag_ms=%d" % round(fl)) in out and "track_gain_pan=" in out, "the akam.conf lines are printed")
 # a walker in view next to the static decoy: the decoy is picked
 p = os.path.join(d, "walker.raw")
 make(p, 80, 1100.0, 760.0, walker=True)

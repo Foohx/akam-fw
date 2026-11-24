@@ -1,5 +1,5 @@
 #!/bin/sh
-# akam_rtsp_auth.sh -- manage the optional RTSP Digest authentication of ak_rtsp.
+# akam_rtsp_auth.sh -- manage the optional RTSP Digest authentication of akamd.
 #
 # Installed as /usr/sbin/akam_rtsp_auth.sh (mode 755). Run it over SSH, as root:
 #   akam_rtsp_auth.sh status           enabled (user NAME, ONVIF-ready | not ONVIF-ready) | disabled | INVALID
@@ -23,7 +23,7 @@
 #     user=NAME
 #     pass=PASSWORD        (8 to 128 characters, no control character)
 # set, set-creds and disable keep the two files in step. The password is never put
-# in argv and never printed. ak_rtsp reads the htdigest file again at every
+# in argv and never printed. akamd reads the htdigest file again at every
 # protected request: no restart is needed. A
 # client that is streaming when authentication is switched on, or the
 # credentials change, is disconnected within a second and must log in again.
@@ -157,7 +157,7 @@ read_current() {
     [ -e "$AUTH_FILE" ] || return 1
     _l=
     _more=
-    # Exactly one line, as ak_rtsp requires (a second line makes it refuse everything).
+    # Exactly one line, as akamd requires (a second line makes it refuse everything).
     {
         IFS= read -r _l || [ -n "$_l" ] || return 3
         if IFS= read -r _more; then return 3; fi
@@ -179,7 +179,7 @@ read_current() {
 }
 
 # onvif_ready: the plain-text copy exists, is exactly "user=NAME" / "pass=PASSWORD", has the mode 0600
-# ak_rtsp insists on, and agrees with the htdigest file (md5 of NAME:akam:PASSWORD is its HA1).
+# akamd insists on, and agrees with the htdigest file (md5 of NAME:akam:PASSWORD is its HA1).
 # Needs read_current to have succeeded.
 onvif_ready() {
     [ -f "$PLAIN_FILE" ] || return 1
@@ -210,7 +210,7 @@ do_status() {
             else echo "enabled (user $CUR_USER, not ONVIF-ready)"; fi
             ;;
         1) echo "disabled" ;;
-        *) echo "INVALID (ak_rtsp refuses every protected request; run set or disable)"; return 3 ;;
+        *) echo "INVALID (akamd refuses every protected request; run set or disable)"; return 3 ;;
     esac
 }
 

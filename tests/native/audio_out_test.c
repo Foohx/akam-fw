@@ -289,6 +289,23 @@ static void test_guard(void)
     ao_close(ao);
     CHECK(!file_exists(ao->guard_path), "but a clean close still removes it");
 
+    /* guard_arm = 0 (the 2K): a normal start writes NOTHING under the conf dir (no marker, no directory, no file at any time), runs the whole sequence,
+     * plays, and closes; an existing marker (left by an armed start that crashed) still blocks it. */
+    new_case(ao);
+    ao->guard_arm = 0;
+    CHECK(!file_exists(ao->conf_dir), "unarmed: the conf dir does not exist before the start");
+    CHECK(ao_open(ao) == 0 && ao->state == AO_IDLE && F.n == 7, "unarmed: the whole device sequence runs");
+    CHECK(!file_exists(ao->conf_dir) && !file_exists(ao->guard_path), "unarmed: open wrote nothing (no marker, no directory)");
+    for (int i = 0; i < 120; i++) step(ao);   /* past the 5 s mark */
+    CHECK(!file_exists(ao->conf_dir) && !file_exists(ao->guard_path), "unarmed: nothing written while playing either");
+    ao_close(ao);
+    CHECK(!file_exists(ao->conf_dir) && !file_exists(ao->guard_path), "unarmed: nothing written at close");
+    new_case(ao);
+    ao->guard_arm = 0;
+    mkdir(ao->conf_dir, 0700);
+    f = fopen(ao->guard_path, "w"); fputs("1\n", f); fclose(f);
+    CHECK(ao_open(ao) == -1 && F.n == 0 && ao->state == AO_DISABLED_CRASH && file_exists(ao->guard_path), "unarmed: a marker left by a crashed armed start still blocks, and stays");
+
     /* directory that cannot be created: refuse rather than run unguarded */
     new_case(ao);
     char bad[400];
@@ -693,7 +710,7 @@ static void test_config(void)
     CHECK((st.st_mode & 0777) == 0700, "directory mode 0700");
     char buf[512] = "";
     f = fopen(ao->conf_path, "r"); size_t n = fread(buf, 1, sizeof(buf) - 1, f); buf[n] = 0; fclose(f);
-    CHECK(strstr(buf, "chime=1\n") && strstr(buf, "enable=1\n") && strstr(buf, "volume=77\n") && !strstr(buf, "enable=0"),
+    CHECK(strstr(buf, "chime=1\n") && strstr(buf, "enable=1\n") && strstr(buf, "volume=77\n") && !strstr(buf, "\nenable=0") && strncmp(buf, "enable=0", 8),
           "foreign keys kept, ours rewritten");
     char tmp[300];
     snprintf(tmp, sizeof(tmp), "%s.tmp", ao->conf_path);
@@ -887,23 +904,23 @@ static void test_talk_support(void)
     CHECK(cnt == 1, "saving twice does not duplicate the talk lines");
     free(ao2);
 
-    /* G07: audio.mic_enable: default 1, saved with the other keys, reloaded, remote SET is RAM only */
+    /* G07: audio.mic_enable: default 0 (opt-in), saved with the other keys, reloaded, remote SET is RAM only */
     new_case(ao); open_quiet(ao);
     ao_ctl_get(ao, "audio.mic_enable", out, sizeof(out));
-    CHECK(!strcmp(out, "audio.mic_enable=1"), "mic_enable defaults to 1");
+    CHECK(!strcmp(out, "audio.mic_enable=0"), "mic_enable defaults to 0 (opt-in)");
     CHECK(ao_ctl_set(ao, "audio.mic_enable", "2", out, sizeof(out)) == 1, "mic_enable range checked");
     CHECK(ao_ctl_set(ao, "audio.mic_enable", "x", out, sizeof(out)) == 1, "mic_enable must be a number");
-    CHECK(ao_ctl_set(ao, "audio.mic_enable", "0", out, sizeof(out)) == 0 && !strcmp(out, "OK audio.mic_enable=0 (restart to apply)"), "set mic_enable 0 says a restart is needed");
+    CHECK(ao_ctl_set(ao, "audio.mic_enable", "1", out, sizeof(out)) == 0 && !strcmp(out, "OK audio.mic_enable=1 (restart to apply)"), "set mic_enable 1 says a restart is needed");
     ao_ctl_get(ao, "audio.mic_enable", out, sizeof(out));
-    CHECK(!strcmp(out, "audio.mic_enable=0"), "mic_enable reads back");
+    CHECK(!strcmp(out, "audio.mic_enable=1"), "mic_enable reads back");
     {
         audio_out_t *a3 = calloc(1, sizeof(*a3));
         ao_cfg_t c3 = { "/dev/fake", ao->conf_dir };
         ao_init(a3, &OPS, &c3);
-        CHECK(a3->mic_enable == 1, "a fresh instance has the mic on");
-        CHECK(ao_load_config(a3) == 1 && a3->mic_enable == 0, "mic_enable is saved and reloaded");
+        CHECK(a3->mic_enable == 0, "a fresh instance has the mic off");
+        CHECK(ao_load_config(a3) == 1 && a3->mic_enable == 1, "mic_enable is saved and reloaded");
         FILE *fm = fopen(ao->conf_path, "r"); size_t nm = fread(buf, 1, sizeof(buf) - 1, fm); buf[nm] = 0; fclose(fm);
-        CHECK(strstr(buf, "mic_enable=0\n") && strstr(buf, "talk_enable=") && strstr(buf, "volume="), "file has mic_enable next to the other keys");
+        CHECK(strstr(buf, "mic_enable=1\n") && strstr(buf, "talk_enable=") && strstr(buf, "volume="), "file has mic_enable next to the other keys");
         ao_set_amp_mode(a3, AO_AMP_AUTO);
         ao_save_config(a3); ao_save_config(a3);
         fm = fopen(ao->conf_path, "r"); nm = fread(buf, 1, sizeof(buf) - 1, fm); buf[nm] = 0; fclose(fm);

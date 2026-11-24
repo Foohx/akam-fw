@@ -10,10 +10,11 @@ SRCDIR_api := json_min api_sig api_keys api_limit api_events api_core api_httpd
 SRCDIR_core := settings_reg cfg_file klog time32_shim
 SRCDIR_core_control := ctl_gate ctl_sys
 SRCDIR_core_version := version
-SRCDIR_features_audio := audio_jitter audio_vad g711
+SRCDIR_features_audio := audio_jitter audio_vad g711 audio_out talk
 SRCDIR_features_button := button_logic button_gesture button_cfg
 SRCDIR_features_light := light_logic led_pat
 SRCDIR_features_night := night_logic
+SRCDIR_features_orient :=
 SRCDIR_features_ptz := ptz_vel ptz_lease ptz_patrol
 SRCDIR_features_track := drift_match track_logic track_relay
 SRCDIR_features_scene := scene_check
@@ -24,7 +25,7 @@ SRCDIR_net_mqtt := mqtt mqtt_ha
 SRCDIR_net_onvif := http_srv soap onvif wsd onvif_common
 SRCDIR_net_rtsp := h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtsp_busy rtp_clock tx_pace net_tx rtp_in h264_nalu rtcp_sr
 
-SRC_SUBDIRS := api core core/control core/version features/audio features/button features/light features/night features/ptz features/scene features/track hal net/crypto net/http net/mqtt net/onvif net/rtsp
+SRC_SUBDIRS := api core core/control core/version features/audio features/button features/light features/night features/orient features/ptz features/scene features/track hal net/crypto net/http net/mqtt net/onvif net/rtsp
 
 # common_src <name>: the path of src/<dir>/<name>.c, found through the SRCDIR_* lists above.
 common_dir = $(or $(strip $(foreach d,$(SRC_SUBDIRS),$(if $(filter $(1),$(SRCDIR_$(subst /,_,$(d)))),$(d)))),$(error not a shared source: $(1)))

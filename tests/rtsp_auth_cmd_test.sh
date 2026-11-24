@@ -253,7 +253,7 @@ check "status: extra line: not ONVIF-ready" test "$(cat "$OUT")" = "enabled (use
 printf 'user=viewer\npass=Correct-Horse-9\n' >"$PLAIN"
 chmod 644 "$PLAIN"
 run "$EMPTY" status
-check "status: mode 0644: not ONVIF-ready (ak_rtsp refuses it)" test "$(cat "$OUT")" = "enabled (user viewer, not ONVIF-ready)"
+check "status: mode 0644: not ONVIF-ready (akamd refuses it)" test "$(cat "$OUT")" = "enabled (user viewer, not ONVIF-ready)"
 chmod 600 "$PLAIN"
 run "$EMPTY" status
 check "status: mode 0600 and matching: ready" test "$(cat "$OUT")" = "enabled (user viewer, ONVIF-ready)"
@@ -280,7 +280,7 @@ run "$EMPTY" show
 check "show: INVALID, exit 3" test "$RC" = 3
 printf 'u:akam:%s\nv:akam:%s\n' "$good" "$good" >"$FILE"
 run "$EMPTY" status
-check "status: a second line makes the file INVALID (as for ak_rtsp)" test "$RC" = 3
+check "status: a second line makes the file INVALID (as for akamd)" test "$RC" = 3
 printf 'u:akam:%s\n' "$good" >"$FILE"
 run "$EMPTY" status
 check "status: valid again" test "$RC" = 0 -a "$(cat "$OUT")" = "enabled (user u, not ONVIF-ready)"
@@ -403,7 +403,7 @@ if [ "$(id -u)" != 0 ]; then
     chmod 755 "$CONF"
 fi
 
-# --- 9. the file is what ak_rtsp reads: end-to-end with ffprobe ----------------
+# --- 9. the file is what akamd reads: end-to-end with ffprobe ----------------
 if command -v ffprobe >/dev/null 2>&1 && command -v cc >/dev/null 2>&1; then
  cc -std=gnu99 -I"$REPO/platforms/anyka-ak3918" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/srv" "$REPO/tests/native/rtsp_auth_server.c" \
         "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" -pthread 2>/dev/null

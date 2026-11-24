@@ -1,43 +1,16 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
 
-// This file: led, audio, picture, the commands that talk to the control port (8091) through an
-// `nc` run on the camera over SSH (its Dropbear has no forwarding), to its own loopback. Texts are those of steps_camera.sh.
-
-// ctlTimeout bounds one control-port exchange (a variable so that a test can shorten it).
-var ctlTimeout = ctl.Timeout
-
-// ctlExchange is led_remote: send GET/SET lines to 127.0.0.1:8091 on the camera, return the
-// answers without the LOG lines. The lines are the stdin of `nc -w 2 127.0.0.1 8091` run over an SSH
-// exec session (the camera's Dropbear has no TCP forwarding), followed by QUIT so the server closes.
-func (a *App) ctlExchange(c *camssh.Client, lines ...string) []string {
-	cmd := ctl.NcCommand
-	if why := forbiddenRemote(cmd); why != "" {
-		a.Log.Line("%s", why)
-		return nil
-	}
-	a.Log.Line("CMD ssh root@%s printf <%d> | nc -w 2 127.0.0.1 %d", c.Host, len(lines), ctl.Port)
-	ctx, cancel := context.WithTimeout(a.Ctx, ctlTimeout)
-	defer cancel()
-	res, err := c.Run(ctx, cmd, strings.NewReader(ctl.Input(lines)))
-	if err != nil {
-		// A timeout keeps the answers received so far (the caller treats a missing one as unknown).
-		a.Log.Line("control port exchange failed: %v (kept %d byte(s) of output)", err, len(res.Stdout))
-	} else if res.Status != 0 || len(res.Stderr) > 0 {
-		a.Log.Line("control port exchange: nc exited with status %d, stderr %q", res.Status, strings.TrimSpace(string(res.Stderr)))
-	}
-	return ctl.Answers(string(res.Stdout))
-}
+// This file: led, audio, picture, the commands that read and change the settings of the 1080p through the camera's
+// signed API (ctlapi.go: the text port 8091 is closed to the network). Texts are those of steps_camera.sh.
 
 // connectTools is rtsp_connect with the wording of the "tools" commands.
 func (a *App) connectTools(ip string) (*camssh.Client, error) {
@@ -140,7 +113,7 @@ func (a *App) cmdLed(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 %d", ctl.Port))
+		a.sayWouldAPI(ip)
 		if status != "" {
 			a.UI.Say("  WOULD send: SET led.status " + status)
 		}
@@ -314,7 +287,7 @@ func (a *App) cmdAudio(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 %d", ctl.Port))
+		a.sayWouldAPI(ip)
 		if key != "" {
 			a.UI.Say(fmt.Sprintf("  WOULD send: SET %s %s", key, val))
 		} else {
@@ -377,6 +350,11 @@ func (a *App) pictureShow(c *camssh.Client) error {
 	}
 	a.UI.Say(fmt.Sprintf("  White balance: %s (conf = the camera's calibration, manual = Akam's own block). Saved on the camera.", wb))
 	a.UI.Say(fmt.Sprintf("  Day/night: %s (auto, day or night). Saved on the camera.", nm))
+	// an image from before the orientation rows does not answer: nothing is said about it
+	or := a.ctlExchange(c, "GET image.flip", "GET image.mirror")
+	if fl, mi := ctl.Get("image.flip", or), ctl.Get("image.mirror", or); fl != "" && mi != "" {
+		a.UI.Say(fmt.Sprintf("  Flip (vertical) %s, mirror (horizontal) %s (1 = on). Saved on the camera and applied at once; set both for a camera mounted on the ceiling (not yet verified on a 1080p camera).", fl, mi))
+	}
 	return nil
 }
 
@@ -446,6 +424,19 @@ func (a *App) cmdPicture(args []string) error {
 			}
 			keys, vals = append(keys, "img.wb"), append(vals, next)
 			i += 2
+		case "flip", "mirror", "ceiling":
+			v, ok := map[string]string{"on": "1", "1": "1", "off": "0", "0": "0"}[next]
+			if !ok {
+				return audioUsage(fmt.Sprintf("picture %s needs on or off", w))
+			}
+			if has("image." + w) {
+				return audioUsage(fmt.Sprintf("picture %s given twice", w))
+			}
+			if (w == "ceiling" && (has("image.flip") || has("image.mirror"))) || (w != "ceiling" && has("image.ceiling")) {
+				return audioUsage("picture: ceiling replaces flip and mirror, use either ceiling or flip/mirror")
+			}
+			keys, vals = append(keys, "image."+w), append(vals, v)
+			i += 2
 		case "night":
 			if next != "auto" && next != "day" && next != "night" {
 				return audioUsage("picture night needs auto, day or night")
@@ -479,7 +470,7 @@ func (a *App) cmdPicture(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET/SET lines>' | nc -w 2 127.0.0.1 %d", ctl.Port))
+		a.sayWouldAPI(ip)
 		for i := range keys {
 			a.UI.Say(fmt.Sprintf("  WOULD send: SET %s %s", keys[i], vals[i]))
 		}
@@ -487,7 +478,7 @@ func (a *App) cmdPicture(args []string) error {
 			a.UI.Say("  WOULD send: SET isp.denoise 2 (ignored by an image without it)")
 		}
 		if len(keys) == 0 {
-			a.UI.Say("  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode")
+			a.UI.Say("  WOULD send (read-only): GET isp.brightness, isp.contrast, isp.saturation, isp.sharpness, isp.denoise, img.wb, night.mode, image.flip, image.mirror")
 		}
 		return nil
 	}

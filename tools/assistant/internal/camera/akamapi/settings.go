@@ -38,11 +38,13 @@ func (e *APIError) Error() string {
 
 // KeyResult is the camera's answer for one key of a PATCH.
 type KeyResult struct {
-	OK     bool
-	Apply  string // applied | restart_component | pending_device_restart
-	Value  string
-	Error  string // range, format, check, unknown_key, ...
-	Detail string
+	OK    bool
+	Apply string // applied | restart_component | pending_device_restart
+	Value string
+	// NotSaved: applied, but the camera could not write it to flash (the reply says "saved":false): lost at the next reboot.
+	NotSaved bool
+	Error    string // range, format, check, unknown_key, ...
+	Detail   string
 }
 
 // PatchResult is the answer of PATCH /settings: HTTP status 200 (all applied), 207 (a setter failed after others
@@ -120,7 +122,16 @@ func authError(code int) error {
 
 // Settings reads the writable settings: GET /settings, key to canonical text.
 func (c *Client) Settings(ctx context.Context) (map[string]string, error) {
-	b, code, err := c.call(ctx, "GET", "/settings", nil)
+	return c.readMap(ctx, "/settings")
+}
+
+// State reads the read-only state rows: GET /state, key to canonical text (measures, service states, versions).
+func (c *Client) State(ctx context.Context) (map[string]string, error) {
+	return c.readMap(ctx, "/state")
+}
+
+func (c *Client) readMap(ctx context.Context, path string) (map[string]string, error) {
+	b, code, err := c.call(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +143,7 @@ func (c *Client) Settings(ctx context.Context) (map[string]string, error) {
 	}
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(b, &raw) != nil {
-		return nil, errors.New("GET /settings: unreadable answer")
+		return nil, errors.New("GET " + path + ": unreadable answer")
 	}
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
@@ -143,6 +154,34 @@ func (c *Client) Settings(ctx context.Context) (map[string]string, error) {
 		out[k] = s
 	}
 	return out, nil
+}
+
+var actionNameRe = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,39}$`)
+
+// Action runs one action of the camera (POST /actions/<name>, the arguments a flat JSON object of strings, nil for none).
+// The camera's error answer comes back as an *APIError; a 200 answer is success.
+func (c *Client) Action(ctx context.Context, name string, args map[string]string) error {
+	if !actionNameRe.MatchString(name) {
+		return errors.New("action name refused")
+	}
+	body := []byte("{}")
+	if len(args) > 0 {
+		var err error
+		if body, err = PatchBody(args); err != nil {
+			return err
+		}
+	}
+	b, code, err := c.call(ctx, "POST", "/actions/"+name, body)
+	if err != nil {
+		return err
+	}
+	if e := authError(code); e != nil {
+		return e
+	}
+	if code != 200 {
+		return apiError(code, b)
+	}
+	return nil
 }
 
 // PatchBody is the JSON body of a PATCH /settings for these values (every value as a JSON string, the canonical
@@ -176,6 +215,7 @@ func (c *Client) Patch(ctx context.Context, kv map[string]string) (PatchResult, 
 		Results map[string]struct {
 			OK     bool   `json:"ok"`
 			Apply  string `json:"apply"`
+			Saved  *bool  `json:"saved"`
 			Value  any    `json:"value"`
 			Error  string `json:"error"`
 			Detail string `json:"detail"`
@@ -199,7 +239,7 @@ func (c *Client) Patch(ctx context.Context, kv map[string]string) (PatchResult, 
 				vb, _ := json.Marshal(x)
 				v = string(vb)
 			}
-			res.Results[k] = KeyResult{OK: r.OK, Apply: r.Apply, Value: v, Error: r.Error, Detail: r.Detail}
+			res.Results[k] = KeyResult{OK: r.OK, Apply: r.Apply, Value: v, NotSaved: r.Saved != nil && !*r.Saved, Error: r.Error, Detail: r.Detail}
 		}
 		return res, nil
 	}

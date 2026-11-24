@@ -2,7 +2,7 @@
 # akam_lockdown.sh -- runtime safety net: keep telnet and FTP daemons dead.
 #
 # Installed as /usr/sbin/akam_lockdown.sh (mode 755) and launched in the
-# background by ak_rtsp_wrapper.sh. Second layer only: the first layer is the
+# background by akam_run.sh. Second layer only: the first layer is the
 # build-time patch of the APP's service.sh (patch_service_sh.sh), which stops
 # the daemons from being launched at all. This script covers a patch that had
 # no effect, or a late start by some other script.
@@ -28,7 +28,7 @@
 #     line has a token whose basename is telnetd, utelnetd, ftpd, bftpd,
 #     vsftpd, or one of the SD-hook respawn scripts (telnet.sh, hack.sh).
 #     The respawn scripts are killed first so they cannot restart a daemon.
-#   - NEVER touches ak_rtsp, dropbear, wpa_supplicant, cmdserver, msgserver,
+#   - NEVER touches akamd, dropbear, wpa_supplicant, cmdserver, msgserver,
 #     akam_* (exclusion list checked before anything else), nor itself.
 #   - no pkill/killall (not guaranteed on the target BusyBox); only ps + kill.
 #   - never opens or listens on a network socket.
@@ -47,7 +47,7 @@
 #   Cost: one sleeping sh plus one `ps` fork per round (~0.2 per second in the
 #     fast phase, ~0.017 per second after). RAM cost to be measured on hardware.
 #
-# Every failure path only logs and returns 0: it must never break ak_rtsp.
+# Every failure path only logs and returns 0: it must never break akamd.
 # Paths are prefixed by $AKAM_ROOT (empty on the camera) so the host test can
 # run it in a fake root.
 
@@ -101,7 +101,7 @@ classify() {
     for _tok in $1; do
         _b=${_tok##*/}
         case "$_b" in
-            ak_rtsp* | dropbear* | wpa_supplicant* | cmdserver | msgserver | akam_*)
+            akamd* | dropbear* | wpa_supplicant* | cmdserver | msgserver | akam_*)
                 echo protect
                 return 0
                 ;;

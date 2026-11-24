@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mqtt_sink.py - a minimal MQTT 3.1.1 broker SINK for testing akam2k_rtsp's MQTT output without a real broker.
+"""mqtt_sink.py - a minimal MQTT 3.1.1 broker SINK for testing akamd's MQTT output without a real broker.
 
 Standard library only. It accepts CONNECT (always CONNACK 0, any credentials), SUBSCRIBE (SUBACK, granted QoS as
 requested but nothing is ever delivered), PUBLISH (prints topic and payload; QoS 1 gets a PUBACK, QoS 2 is refused by

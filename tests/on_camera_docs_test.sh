@@ -4,7 +4,7 @@
 #   - a stock path is written `/path` (stock) and is not checked;
 #   - runtime paths (/tmp /etc/config /config /dev /sys /proc, /mnt/sdcard/akam/<non-script>) are not checked.
 # 1080p: /usr/<path> must be in tools/release/image_files.txt (image path column), or be a build output
-#        (bin/ak_rtsp, bin/dropbearmulti, local/akam/LICENSE.*, local/akam/MANIFEST.txt).
+#        (bin/akamd, bin/dropbearmulti, local/akam/LICENSE.*, local/akam/MANIFEST.txt).
 # 2K:    /appfs/... names must appear in image/build_appfs.sh; /mnt/sdcard/<x>.sh|.ini and
 #        /mnt/sdcard/akam/<x>.sh must exist under boot/card, boot/rescue or the shared script templates.
 set -euo pipefail
@@ -35,7 +35,7 @@ check_1080p() {
         N=$((N + 1))
         rel=${p#/usr/}
         case $rel in
-            bin/ak_rtsp | bin/dropbearmulti | local/akam/LICENSE.* | local/akam/MANIFEST.txt) continue ;;
+            bin/akamd | bin/dropbearmulti | local/akam/LICENSE.* | local/akam/MANIFEST.txt) continue ;;
         esac
         awk -v r="$rel" '($1 == "file" || $1 == "link") && $4 == r { f = 1 } END { exit !f }' "$list" ||
             bad "$doc: $p (image path $rel) is not in $list"
@@ -82,11 +82,11 @@ echo "  checked $N Akam paths"
 
 # the parser itself works: the marked stock path is skipped, the others are kept
 # shellcheck disable=SC2016  # literal Markdown backticks, not command substitution
-sample=$(printf '%s\n' '`/usr/sbin/akam_nope.sh` and `/usr/sbin/ak_rtsp_wrapper.sh`' '`/usr/bin/x` (stock)')
+sample=$(printf '%s\n' '`/usr/sbin/akam_nope.sh` and `/usr/sbin/akam_run.sh`' '`/usr/bin/x` (stock)')
 echo "$sample" >"${TMPDIR:-.}/.oncam_sample.$$"
 got=$(paths_of "${TMPDIR:-.}/.oncam_sample.$$" | tr '\n' ' ')
 rm -f "${TMPDIR:-.}/.oncam_sample.$$"
-[ "$got" = "/usr/sbin/ak_rtsp_wrapper.sh /usr/sbin/akam_nope.sh " ] || bad "paths_of parsing is wrong: '$got'"
+[ "$got" = "/usr/sbin/akam_nope.sh /usr/sbin/akam_run.sh " ] || bad "paths_of parsing is wrong: '$got'"
 [ "$N" -ge 20 ] || bad "only $N paths checked, the docs lost their paths"
 
 if [ "$FAIL" -ne 0 ]; then

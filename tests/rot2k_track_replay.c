@@ -1,4 +1,4 @@
-/* Replay of a raw tracker recording (akam2k.conf track_debug=2, /tmp/akam2k_track.raw on the camera; docs/porting/lsc-rotatable-2k/tracking.md "Hardware calibration
+/* Replay of a raw tracker recording (akam.conf track_debug=2, /tmp/akam2k_track.raw on the camera; docs/porting/lsc-rotatable-2k/tracking.md "Hardware calibration
  * experiments"): reads the C (config), I (one tl_update input) and ignores the R / D / # lines, runs tl_update with the configuration and the exact inputs, and prints one
  * decision line per I line:
  *   O <now> <kind> pan=<dir>/<div> tilt=<dir>/<div> nudge=<dpan>/<dtilt> why=<why> rule=<n> dist=<mm> cue=<h|w|carried|none|->

@@ -1,7 +1,7 @@
 /* Host test of the control port (8091): the read-only gate, DEBUG, client slots, golden read output.
  * Part 1 tests the pure logic of src/core/control/ctl_gate.c (no sockets, injected clock).
  * Part 2 links the REAL platforms/anyka-ak3918/control.c with stub modules (built with -DCONTROL_PORT=<free port>) and talks to it
- * over TCP: loopback clients, the 4-client limit, LOG forwarding that never blocks, `ak_rtsp ctl`. A "remote" client
+ * over TCP: loopback clients, the 4-client limit, LOG forwarding that never blocks, `akamd ctl`. A "remote" client
  * is a connection to this host's own non-loopback address (skipped when the host has none). No camera. */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -382,6 +382,8 @@ static void test_server(void)
 #ifdef CTL_TEST_REGISTRY
     control_set_registry(&g_reg_ops);
 #endif
+    /* the port is closed to the network by default (loopback only); the remote-peer checks below need the saved LAN opt-in */
+    if (!getenv("CTL_TEST_NO_LAN")) CHECK(control_lan_set(1) == 0);
     CHECK(control_start() == 0);
     int c = -1;
     for (int i = 0; i < 50 && c < 0; i++) { c = dial("127.0.0.1"); if (c < 0) usleep(100000); }
@@ -980,10 +982,50 @@ static void test_server(void)
     control_stop();
 }
 
+/* Default: the text port listens on 127.0.0.1 only. A host address of this machine must be refused, the loopback must work,
+ * and the opt-in file is written only on a change and removed again (no stale file, no write for an equal value). */
+static void test_closed_by_default(void)
+{
+    char out[256], remote_ip[64] = "";
+    struct ifaddrs *ifa = NULL, *p;
+    if (getifaddrs(&ifa) == 0) {
+        for (p = ifa; p; p = p->ifa_next)
+            if (p->ifa_addr && p->ifa_addr->sa_family == AF_INET && !(p->ifa_flags & 8 /* IFF_LOOPBACK */)) {
+                inet_ntop(AF_INET, &((struct sockaddr_in *)p->ifa_addr)->sin_addr, remote_ip, sizeof(remote_ip));
+                break;
+            }
+        freeifaddrs(ifa);
+    }
+    unlink(CONTROL_LAN_FILE);
+    CHECK(control_lan_get() == 0);
+    CHECK(control_start() == 0);
+    int c = -1;
+    for (int i = 0; i < 50 && c < 0; i++) { c = dial("127.0.0.1"); if (c < 0) usleep(100000); }
+    CHECK(c >= 0);
+    if (c >= 0) {
+        ask(c, "GET ae.speed", out, sizeof(out));
+        CHECK_STR(out, "ae.speed=4\n");
+        close(c);
+    }
+    if (remote_ip[0]) {
+        int r = dial(remote_ip);
+        CHECK(r < 0);   /* connection refused: nothing listens on the LAN address */
+        if (r >= 0) close(r);
+    } else {
+        printf("skip: no non-loopback address on this host\n");
+    }
+    control_stop();
+    CHECK(control_lan_set(0) == 0);       /* equal value: nothing to do, no file */
+    CHECK(access(CONTROL_LAN_FILE, F_OK) != 0);
+    CHECK(control_lan_set(1) == 0 && control_lan_get() == 1 && access(CONTROL_LAN_FILE, F_OK) == 0);
+    CHECK(control_lan_set(0) == 0 && control_lan_get() == 0 && access(CONTROL_LAN_FILE, F_OK) != 0);
+}
+
 int main(void)
 {
     test_pure();
-    test_server();
+    if (getenv("CTL_TEST_NO_LAN")) test_closed_by_default();
+    else test_server();
     if (g_failed) { fprintf(stderr, "control_test: %d FAILED\n", g_failed); return 1; }
     fprintf(stderr, "control_test: all passed\n");
     return 0;

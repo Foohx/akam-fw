@@ -1,5 +1,5 @@
 #!/bin/sh
-# ak_rtsp_wrapper.sh — process_0's actual entry point in the de-Tuyafied
+# akam_run.sh — process_0's actual entry point in the de-Tuyafied
 # firmware (see _ht_process.ini in this same directory). Runs as a direct
 # child of the stock /usr/bin/watchdog, exactly where anyka_ipc used to run,
 # on a clean boot where sensor_driver.sh has already insmod'd ak_isp/
@@ -12,13 +12,13 @@ PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin
 
 # --- Respawn backoff and crash counter (G04) ---
 # The stock watchdog relaunches this script the moment it exits (delay = 0 in _ht_process.ini), so a
-# persistent failure of ak_rtsp would loop at full speed. The state lives in /tmp (RAM, gone at reboot):
+# persistent failure of akamd would loop at full speed. The state lives in /tmp (RAM, gone at reboot):
 #   /tmp/akam_respawn   one line: count=<consecutive short runs> total=<exits since boot> last_rc=<code>
 #                       last_run=<seconds> up=<uptime at the last exit>
-#   /tmp/akam_wrapper.log  one line per ak_rtsp exit (capped), and the same lines go to syslog if `logger` exists.
+#   /tmp/akam_wrapper.log  one line per akamd exit (capped), and the same lines go to syslog if `logger` exists.
 # A run of at least 10 minutes counts as stable and clears `count`. Delay before the next start, by
 # `count`: 1 -> 0 s (a one-off crash recovers at once), 2 -> 2 s, 3 -> 5 s, 4 -> 10 s, 5 and more -> 30 s.
-# The very first start (count 0) never waits and never forks anything. ak_rtsp exit code 70 = its own
+# The very first start (count 0) never waits and never forks anything. akamd exit code 70 = its own
 # software stall watchdog (swdog.h) fired. The /proc and /tmp prefixes are overridable for the host test.
 AKAM_ROOT=${AKAM_ROOT:-}
 AKAM_TMP=${AKAM_TMP_DIR:-$AKAM_ROOT/tmp}
@@ -28,8 +28,8 @@ STABLE_S=${AKAM_STABLE_S:-600}
 LOGGER=${AKAM_LOGGER:-logger}
 
 wlog() {
-    echo "ak_rtsp_wrapper: $*"
-    echo "ak_rtsp_wrapper: $*" >>"$WRAPPER_LOG" 2>/dev/null
+    echo "akam_run: $*"
+    echo "akam_run: $*" >>"$WRAPPER_LOG" 2>/dev/null
     if [ "$(wc -l <"$WRAPPER_LOG" 2>/dev/null)" -gt 100 ] 2>/dev/null; then
         tail -n 50 "$WRAPPER_LOG" >"$WRAPPER_LOG.tmp" 2>/dev/null && mv -f "$WRAPPER_LOG.tmp" "$WRAPPER_LOG"
     fi
@@ -82,7 +82,7 @@ AKAM_DHCP_HOSTNAME=$(/usr/sbin/akam_hostname.sh show 2>/dev/null)
 
 # --- Akam background helpers (SSH, lockdown) ---
 # Fire and forget: detached, output discarded, exit status ignored, so a
-# missing or failing helper can never delay or affect ak_rtsp below. Each
+# missing or failing helper can never delay or affect akamd below. Each
 # helper has its own anti-duplicate guard (this wrapper may be respawned).
 if [ -x /usr/sbin/akam_ssh.sh ]; then
     ( /usr/sbin/akam_ssh.sh start </dev/null >/dev/null 2>&1 & )
@@ -114,7 +114,7 @@ WPA_CONF=/etc/config/wpa_supplicant.conf
 # pgrep may not be built into the camera BusyBox, so keep ps|grep (SC2009 is deliberate).
 # shellcheck disable=SC2009
 if [ -f "$WPA_CONF" ] && ! ps | grep -v grep | grep -q wpa_supplicant; then
-    echo "ak_rtsp_wrapper: starting wpa_supplicant + udhcpc"
+    echo "akam_run: starting wpa_supplicant + udhcpc"
     wpa_supplicant -Dnl80211 -i wlan0 -c "$WPA_CONF" -B
     udhcpc -i wlan0 -x "hostname:$AKAM_DHCP_HOSTNAME" &
     touch /tmp/connect_type_wifi
@@ -122,7 +122,7 @@ fi
 
 read_uptime
 START_UP=$UP
-${AKAM_RTSP_BIN:-/usr/bin/ak_rtsp}
+${AKAM_RTSP_BIN:-/usr/bin/akamd}
 RET=$?
 read_uptime
 RUN_S=$((UP - START_UP))
@@ -138,5 +138,5 @@ CRASH_TOTAL=$((CRASH_TOTAL + 1))
 echo "count=$CRASH_N total=$CRASH_TOTAL last_rc=$RET last_run=$RUN_S up=$UP" >"$RESPAWN_FILE.tmp" 2>/dev/null &&
     mv -f "$RESPAWN_FILE.tmp" "$RESPAWN_FILE"
 [ "$RET" = 70 ] && _why=" (software stall watchdog)"
-wlog "ak_rtsp exited with code $RET${_why} after ${RUN_S}s, short runs in a row: $CRASH_N, exits since boot: $CRASH_TOTAL"
+wlog "akamd exited with code $RET${_why} after ${RUN_S}s, short runs in a row: $CRASH_N, exits since boot: $CRASH_TOTAL"
 exit $RET

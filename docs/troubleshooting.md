@@ -1,6 +1,6 @@
 # Troubleshooting
 
-> Written for the LSC Indoor 1080p. The 2K has its own pages: [LSC Rotatable 2K](porting/lsc-rotatable-2k/README.md).
+> Both cameras. Sections are for the 1080p unless the title says otherwise; the 2K's own symptoms are in [Rotatable 2K](#rotatable-2k) at the end. `akam` is the Go program.
 
 **What this page is for:** something does not work (no network, no video, a password refused, a card problem)
 and you want the fix. Look for your symptom in the headings below.
@@ -9,9 +9,9 @@ Words used here: **RTSP** is the protocol the camera uses to send its video (por
 that NVRs (network video recorders) and apps use to find a camera; **MQTT** is a messaging protocol used by home
 automation; **UART** is the serial port on the camera's board used for recovery.
 
-Real problems met while installing and using Akam, with their fixes. Start with `./akam doctor`
-(checks the tools on your PC) and `./akam status` (shows which step is done, todo or blocked). The
-wizard keeps a log in `~/.local/state/akam/` (it never contains your Wi-Fi password).
+Real problems met while installing and using Akam, with their fixes. Start with `akam doctor`
+(checks the tools on your PC) and `akam status` (shows which step is done, todo or blocked). The
+program keeps a log in `~/.local/state/akam/` (it never contains your Wi-Fi password).
 
 Back to the [README](../README.md) or the [documentation index](README.md).
 
@@ -20,7 +20,7 @@ Back to the [README](../README.md) or the [documentation index](README.md).
 The camera gets its address by DHCP. Options:
 
 - look at your router's list of clients; the Wi-Fi chip's maker shows up as **AltoBeam**;
-- use the wizard's `find-camera` step (`./akam step find-camera`);
+- use the wizard's `find-camera` step (`akam step find-camera`);
 - reserve a fixed address for the camera in your router, so it never changes
   ([network hardening](using_akam.md#network-hardening)).
 
@@ -45,12 +45,12 @@ written: run the step again. When you run `tools/sd/sd_card.sh` by hand it still
 
 A camera that was never paired with the vendor app has no `/etc/config/wpa_supplicant.conf`. With the
 toolkit card in, the card brings the Wi-Fi up; without it the camera boots with no network, and
-`./akam step verify` times out after the power cycle ("the camera is not on the network"). The
+`akam step verify` times out after the power cycle ("the camera is not on the network"). The
 wizard creates that file from the card's Wi-Fi settings during `flash` and `verify` (and never asks you
 to remove the card before), so this mostly happens after a manual install or when the card holds a
 password the wizard cannot copy (it contains a `"`, a `\` or a line break, or is not 8 to 63 characters).
 
-Fix: put the card back, power-cycle, wait two minutes, and either run `./akam step verify` again, or on
+Fix: put the card back, power-cycle, wait two minutes, and either run `akam step verify` again, or on
 the camera (telnet 24, or SSH) run the same script the wizard uses:
 
 ```sh
@@ -113,8 +113,8 @@ from the camera whatever the player does.
 
 Players that send RTCP receiver reports over the same TCP connection (VLC and anything built on
 live555) were dropped after about 13 minutes by older images. This is fixed in the firmware (the
-interleaved RTCP input is now read and discarded properly): update your camera with `./akam update`
-(or `./akam flash`) using an image built from a current kit.
+interleaved RTCP input is now read and discarded properly): update your camera with `akam update`
+(or `akam flash`) using an image built from a current kit.
 
 ## Only one viewer works at a time
 
@@ -130,30 +130,30 @@ need.
 
 ## Talk (two-way audio) does not work
 
-`./akam talk` and the go2rtc / Home Assistant microphone button use the ONVIF audio backchannel on port 554.
-The camera offers it only with the video password on (`./akam rtsp-auth status`), audio out enabled and
+`akam talk` and the go2rtc / Home Assistant microphone button use the ONVIF audio backchannel on port 554.
+The camera offers it only with the video password on (`akam rtsp-auth status`), audio out enabled and
 `audio.talk_enable=1`; otherwise it answers `551 Option not supported` and clients fall back to plain
 video. A second client gets `503` while another one is connected (the same single-client limit as above: let
 go2rtc be the only client). The full list of causes, the counters to read (`audio.talk_*`) and the
 configuration examples are in [two-way audio](two_way_audio.md).
 
-## Video settings (`./akam video`): bitrate, frame rate, key frames
+## Video settings (`akam video`): bitrate, frame rate, key frames
 
-- The values are saved in `/etc/config/akam/video` on the camera (mode 0600; removed again when every value is back to its default) and read **once, when the video service (`ak_rtsp`) starts**: the hardware encoder cannot be changed while it runs. `./akam video bitrate 900` therefore says "applies at the next restart of the video service" and asks whether to restart it now (default No). Yes only runs `kill the ak_rtsp pid`: the camera's own wrapper starts it again within a few seconds; nothing else is touched (the hardware watchdog `/usr/bin/watchdog` never). If you answer No, the new values apply at the next reboot.
-- `./akam video` shows the saved values and warns "saved but not running yet" while they differ from what the running encoder uses.
+- The values are saved in `/etc/config/akam/video` on the camera (mode 0600; removed again when every value is back to its default) and read **once, when the video service (`akamd`) starts**: the hardware encoder cannot be changed while it runs. `akam video bitrate 900` therefore says "applies at the next restart of the video service" and asks whether to restart it now (default No). Yes only runs `kill the akamd pid`: the camera's own wrapper starts it again within a few seconds; nothing else is touched (the hardware watchdog `/usr/bin/watchdog` never). If you answer No, the new values apply at the next reboot.
+- `akam video` shows the saved values and warns "saved but not running yet" while they differ from what the running encoder uses.
 - Allowed values: bitrate 500 to 3000 kbit/s (it is a ceiling for the variable-bitrate encoder, not a fixed rate: a still scene stays well under it), fps 10, 15, 20 or 25 (the frame rates for which the sensor timing was checked on a real camera: it delivered exactly that rate over RTSP with no encoder error; 30 was tested too and is refused because the picture came out dark, grainy and nearly grey), key frame interval 1 to 4 seconds (shorter = quicker start of a viewer and faster recovery after a lost packet, bigger stream). A bad line in the file is ignored with a line in the log and that value stays at its default.
-- What a higher frame rate costs (20 or 25 fps): the longest exposure is one frame time, so it gets shorter (25 fps: 40 ms instead of 66 ms at 15 fps). In daylight the picture is the same as at 15 fps, but in dim light it gets darker and grainier, and night mode starts earlier. With a bitrate cap, each frame gets fewer bits at the same cap: raise the cap (`./akam video bitrate N`) if the Wi-Fi allows it, or the picture gets softer. Night mode always runs at 10 fps, whatever is configured. If dim scenes look worse than before, go back to `./akam video fps 15`.
-- Resolution (always 1920x1080) and flip/mirror (ceiling mount) cannot be changed in this version; ONVIF clients are told the configured bitrate, frame rate and GOP length (the key frame interval).
-- If the picture is wrong after a change (no video, a reboot loop): remove the file over SSH (`rm /etc/config/akam/video`) and restart `ak_rtsp`, or run `./akam video bitrate 1536 fps 15 gop 2`.
+- What a higher frame rate costs (20 or 25 fps): the longest exposure is one frame time, so it gets shorter (25 fps: 40 ms instead of 66 ms at 15 fps). In daylight the picture is the same as at 15 fps, but in dim light it gets darker and grainier, and night mode starts earlier. With a bitrate cap, each frame gets fewer bits at the same cap: raise the cap (`akam video bitrate N`) if the Wi-Fi allows it, or the picture gets softer. Night mode always runs at 10 fps, whatever is configured. If dim scenes look worse than before, go back to `akam video fps 15`.
+- Resolution (always 1920x1080) cannot be changed in this version; flip, mirror and ceiling mount are picture settings (`akam picture flip on`, `mirror on`, `ceiling on`; not yet verified on a camera); ONVIF clients are told the configured bitrate, frame rate and GOP length (the key frame interval).
+- If the picture is wrong after a change (no video, a reboot loop): remove the file over SSH (`rm /etc/config/akam/video`) and restart `akamd`, or run `akam video bitrate 1536 fps 15 gop 2`.
 
 ## The picture is softer than before, or too grainy (sharpness)
 
 Since the sharpness default changed, the 1080p camera runs with `isp.sharpness` -15 on every ISO level of its ISP sharpening. The stock
 sharpening amplifies the sensor noise, so the stream was grainy and heavy (about 8 KB per P frame on a still scene against 1.8 KB now).
-- Too soft for your taste: `./akam picture sharpness -5` (closer to stock) or `./akam picture sharpness 0` for the camera's own sharpening.
+- Too soft for your taste: `akam picture sharpness -5` (closer to stock) or `akam picture sharpness 0` for the camera's own sharpening.
   Values below -15 get softer quickly (-25 is already too soft on a knitted texture). The value is saved on the camera.
 - A camera that saved a picture setting before this change keeps its saved `sharpness=0` (the stock picture) until you run
-  `./akam picture sharpness -15` or `./akam picture reset` (reset sets sharpness -15, the rest 0).
+  `akam picture sharpness -15` or `akam picture reset` (reset sets sharpness -15, the rest 0).
 - Over SSH on the camera, until the next restart: `printf 'SET img.sharp_all 0\n' | nc -w 2 127.0.0.1 8091` puts the slider back on the unused manual entry only (the stock behaviour).
 
 ## The picture lost fine detail, or pulses at every key frame (denoise)
@@ -161,8 +161,8 @@ sharpening amplifies the sensor noise, so the stream was grainy and heavy (about
 The 1080p camera runs with `isp.denoise` 2: for each light level it uses the 3D noise-reduction tables of the level 2 steps higher
 (stronger temporal denoising). In the A/B on two cameras this lowered the sharpness pulse at each key frame and the loss over a GOP,
 for 3 to 7 % less static detail.
-- Want the camera's own tables back: `./akam picture denoise 0` (saved). `./akam picture denoise 1` is a lighter step, up to 4.
-- `./akam picture` shows `Denoise ...`; `./akam picture reset` puts sharpness -15 and denoise 2 back.
+- Want the camera's own tables back: `akam picture denoise 0` (saved). `akam picture denoise 1` is a lighter step, up to 4.
+- `akam picture` shows `Denoise ...`; `akam picture reset` puts sharpness -15 and denoise 2 back.
 - A camera that saved picture values before this update has no `denoise` line and gets 2; an explicit 0 stays 0.
 - If `GET isp.denoise` answers 0 while you expect 2, the camera refused the table at start-up (the log has
   `[control] denoise 2 not applied (live table not as decoded)`): the stock tables run, the picture is the one of the previous release.
@@ -187,7 +187,7 @@ The stream is protected by a password when you (or the wizard, at your request) 
 login. Check it:
 
 ```bash
-./akam rtsp-auth status
+akam rtsp-auth status
 ```
 
 - **`401 Unauthorized`, or the player asks for credentials:** use
@@ -196,20 +196,20 @@ login. Check it:
 - **Still 401 with the right password:** special characters in the password must be URL-encoded in the
   address: `@` is `%40`, `:` is `%3A`, `/` is `%2F`, `?` is `%3F`, `#` is `%23`, `%` is `%25`, a space is
   `%20`. The quickest test is a password with letters and digits only
-  (`./akam rtsp-auth set`). The user name takes letters, digits and `. _ @ + -`.
+  (`akam rtsp-auth set`). The user name takes letters, digits and `. _ @ + -`.
 - **Several wrong tries in a row:** the camera slows the answers down (up to 2 seconds) and closes the
   connection after 5 failures; wait a minute, then try again with the right password.
 - **Forgot the password:** the wizard cannot show it (root can read `/etc/config/akam/credentials` over
-  SSH, but do not rely on it). `./akam rtsp-auth disable` removes it (and the stored copy),
-  `./akam rtsp-auth set` sets a new one.
+  SSH, but do not rely on it). `akam rtsp-auth disable` removes it (and the stored copy),
+  `akam rtsp-auth set` sets a new one.
 - **`not ONVIF-ready` in `status`:** the camera has the RTSP login but not the clear-text copy that ONVIF needs
-  (set by an older image or by hand); run `./akam rtsp-auth set` again.
+  (set by an older image or by hand); run `akam rtsp-auth set` again.
 - **`INVALID` in `status`:** the credentials file is damaged. The camera then refuses every request
-  until you run `./akam rtsp-auth set` or `disable`.
+  until you run `akam rtsp-auth set` or `disable`.
 - **A player that was working stops after you changed the password:** expected; it is disconnected and
   must log in again with the new one.
 - **`rtsp-auth` says the command is missing:** your image is older than this feature; flash a new one
-  (`./akam update`). Without it the stream is open, as before.
+  (`akam update`). Without it the stream is open, as before.
 - Frigate and go2rtc: put the credentials in the stream URL as above (URL-encoded).
 
 ## A transfer from the camera hangs or fails
@@ -232,25 +232,25 @@ purpose.
 ## GitHub error 5xx while downloading (bootstrap or `get-kit`)
 
 A `502` or `503` from GitHub is temporary. The bootstrap already retries by itself; if it still
-fails, wait a few minutes and run the step again (`./akam step get-kit`). With no network, use a kit
-you already have (`./akam get-kit --kit FILE`) or run the bootstrap offline
+fails, wait a few minutes and run the step again (`akam step get-kit`). With no network, use a kit
+you already have (`akam get-kit --kit FILE`) or run the bootstrap offline
 (`bash tools/build/bootstrap.sh --offline`).
 
 ## Downloads behind a proxy
 
 `get-kit` and the SD toolkit download read `HTTPS_PROXY` (or `https_proxy`) and `NO_PROXY` (or
 `no_proxy`). Use an HTTP proxy that supports CONNECT, for example
-`HTTPS_PROXY=http://proxy.example:3128 ./akam get-kit`. SOCKS proxies are not supported; use an HTTP
+`HTTPS_PROXY=http://proxy.example:3128 akam get-kit`. SOCKS proxies are not supported; use an HTTP
 CONNECT proxy via `HTTPS_PROXY`. Localhost and loopback addresses are never sent through the proxy.
 
 ## An ONVIF app does not find the camera
 
 ONVIF is off unless you turned it on, and it needs the video password (this arrived in the same release as the
-`./akam onvif` command; an older image has no ONVIF). Check:
+`akam onvif` command; an older image has no ONVIF). Check:
 
 ```bash
-./akam onvif status      # "enabled, port 80", "password: set", "state: ..."
-./akam onvif enable      # if it says disabled (set the password first: ./akam rtsp-auth set)
+akam onvif status      # "enabled, port 80", "password: set", "state: ..."
+akam onvif enable      # if it says disabled (set the password first: akam rtsp-auth set)
 ```
 
 If it is enabled and the app still lists nothing, discovery is the usual culprit: it uses UDP multicast
@@ -259,15 +259,15 @@ PC or the NVR can drop the reply. Put the app and the camera on the same subnet,
 machine, then add the camera by hand with its address: `<camera-ip>`, port 80 (or the port you chose), and the
 video user name and password. Adding by address does not need discovery. A "not authorized" answer means the
 user name or password is wrong, or the app's clock is more than 5 minutes off the camera's while the camera
-clock is set. With ONVIF on, 80/tcp and 3702/udp are expected to be open on the camera (`./akam step verify` checks it);
-without it only 22, 554 and 8091 are.
+clock is set. With ONVIF on, 80/tcp and 3702/udp are expected to be open on the camera (`akam step verify` checks it);
+without it only 22 and 554 are (8091 too, on an image from before it was closed or after `akam control-port open`; 8092 once an API key exists).
 
 **ONVIF login fails** (ODM or an NVR says "not authorized", or the camera is found but the device is refused):
 
-- Run `./akam rtsp-auth set` again, even if a password exists: ONVIF checks the clear-text copy
-  `/etc/config/akam/credentials`, which older setups do not have. `./akam rtsp-auth status` must say `ONVIF-ready`.
-- `./akam onvif status` should show the state `on:<port>`. `no_password` means the copy is missing or invalid;
-  `error:port_in_use` means another service holds the port (pick another with `./akam onvif enable 8080`).
+- Run `akam rtsp-auth set` again, even if a password exists: ONVIF checks the clear-text copy
+  `/etc/config/akam/credentials`, which older setups do not have. `akam rtsp-auth status` must say `ONVIF-ready`.
+- `akam onvif status` should show the state `on:<port>`. `no_password` means the copy is missing or invalid;
+  `error:port_in_use` means another service holds the port (pick another with `akam onvif enable 8080`).
 - Use the same user name and password as the video stream. If the camera clock is set (NTP) and the app's clock
   differs by more than 5 minutes, the WS-Security login is refused: fix the clock on either side.
 - With the video password off, ONVIF reads are open but reboot, time and name changes are always refused.
@@ -286,7 +286,7 @@ It asks for the video password without echo. `--rtsp` also does an RTSP DESCRIBE
 and expects `200` and an H264 video line; `--yes-imaging` changes the brightness for 5 s and restores it (RAM only),
 `--no-imaging` skips that, `--no-discovery` skips the multicast probe. Without a password the camera answers HTTP 401
 with an empty body and a `WWW-Authenticate` header: that is the expected refusal, shown as `ok`. If the tool prints
-"the camera clock is not set", run `./akam ntp set`: the camera has no battery clock and boots in the past.
+"the camera clock is not set", run `akam ntp set`: the camera has no battery clock and boots in the past.
 A call that now and then takes about 1 s while most take 25 to 75 ms is Wi-Fi round-trip jitter (compare with
 `ping 192.0.2.10`), not a slow ONVIF server.
 
@@ -318,31 +318,27 @@ post-quantum key exchange. The connection still works and is still encrypted. It
 LAN; ignore it. The wizard hides it (`ssh -o LogLevel=ERROR`, real errors are still shown); to hide it in
 your own ssh commands add `-o LogLevel=ERROR`.
 
-## Speaker output: test the camera speaker by ear (step A)
+## Speaker output: test the camera speaker by ear
 
-Work in progress (specs/audio.md): this image makes `ak_rtsp` drive the camera speaker, with a
-built-in beep to check it. It is on by default and follows the sequence of the stock firmware (mono, 8 kHz,
-route 4, gain 2, taken from a capture of the stock application). It is **not validated end to end on
-hardware yet**: an earlier build used a wrong ioctl number for the amplifier and stayed silent, this one
-should be audible. The route and amplifier are switched on at start, then off again after 2 seconds of
-silence, and on during a beep and for 2 seconds after.
-
-From your PC the wizard does it over SSH (port 8091 is read-only from the network; the wizard sends the
-lines from the camera itself, as `./akam led` does). No confirmation is asked:
+`akamd` drives the camera speaker and has a built-in beep to check it (mono, 8 kHz, route 4, gain 2, the sequence of the stock firmware).
+The route and amplifier are switched on at start, then off again after 2 seconds of silence, and on during a beep and for 2 seconds
+after. From your PC the assistant does it through the camera's signed API (the camera's own text port 8091 is closed to the network;
+the API key of this PC is made once, see [the API key](#this-pc-has-no-api-key-for-this-camera--the-camera-refused-this-pcs-api-key)). No
+confirmation is asked. These commands work on both cameras (on a 2K the speaker is off until `audio on`):
 
 ```bash
-./akam audio                  # 1. Is it running? volume, speaker on/off, talk on/off, underruns and drops
-./akam audio volume 30        # 2. Volume 0 to 100 (saved on the camera)
-./akam audio beep             #    A short 1 kHz tone (about 1 s); fails with "audio out is not running" when the speaker is off
-./akam audio off              # 3. Speaker off (at once, and it stays off after a reboot)
-./akam audio on               #    Speaker on; the camera says when it only starts after a reboot
-./akam audio talk off         #    Soft switch of the network talk (ONVIF backchannel); `on` to allow it again
-./akam audio mic off          #    Microphone off: never opened, no audio track in the stream (needs a reboot); `mic on` undoes it
+akam audio                  # 1. Is it running? volume, speaker on/off, talk on/off, underruns and drops
+akam audio volume 30        # 2. Volume 0 to 100 (saved on the camera)
+akam audio beep             #    A short 1 kHz tone (about 1 s); fails with "audio out is not running" when the speaker is off
+akam audio off              # 3. Speaker off (at once, and it stays off after a reboot)
+akam audio on               #    Speaker on; the camera says when it only starts after a reboot
+akam audio talk off         #    Soft switch of the network talk (ONVIF backchannel); `on` to allow it again
+akam audio mic off          #    Microphone off: never opened, no audio track in the stream (needs a reboot); `mic on` undoes it
 ```
 
 The hardware gain, the route (source), the amplifier mode and the volume sweeps below are developer
-experiments with no wizard command. Run them over SSH on the camera (`ssh root@<cam>`), where port 8091
-accepts writes; reads (`GET`, `LIST`) also work from the PC with `nc`. The answer starts with `OK` or `ERR`.
+experiments with no assistant command (1080p). Run them over SSH on the camera (`ssh root@<cam>`), where port 8091
+accepts writes; reads (`GET`, `LIST`) work from the PC with `nc` only after `akam control-port open`. The answer starts with `OK` or `ERR`.
 
 ```bash
 # On the camera, in an SSH session:
@@ -366,26 +362,26 @@ What to note: the combination that is audible (source, gain), the comfortable ga
 `on`, any pop when the amplifier switches, and whether the video and microphone of the RTSP stream stay
 normal while a beep plays (the beep itself is heard on the stream, about a second late).
 
-To see what the camera did, read the log lines on port 8091 (`nc <cam> 8091` from the PC and wait; reads
-need no permission) or the serial console: lines starting with `[audio_out]` show the device calls and every error.
+To see what the camera did, read the log lines on port 8091 over SSH (`nc 127.0.0.1 8091` on the camera, then wait; the log
+stream goes to loopback peers) or the serial console: lines starting with `[audio_out]` show the device calls and every error.
 
 - **`audio.out_state=disabled_crash`:** the previous start crashed while opening the speaker, so audio out
-  stays off to avoid a reboot loop. Over SSH: `rm /etc/config/akam/audio_out.trying`, then restart `ak_rtsp`
+  stays off to avoid a reboot loop. Over SSH: `rm /etc/config/akam/audio_out.trying`, then restart `akamd`
   (or reboot) to try again. Send the log lines to the project if it happens twice.
 - **A `SET_SPEAKER(0)` line in the log:** the stock firmware never switches the speaker off, only the route
   (`SET_SOURCES 0`), so a refused `SET_SPEAKER(0)` is logged once and is harmless; the muted route is
   what silences the speaker.
 - **`audio.out_state=error`:** a device call failed; the `[audio_out]` lines say which. Video and microphone
   carry on. If it failed at start, the old silence path is used; if it failed later, the speaker stays
-  silent until `ak_rtsp` restarts.
+  silent until `akamd` restarts.
 - **Saved settings:** `audio.out_volume`, `audio.out_gain` and `audio.out_source` are saved like `enable`
   (only when the value changes), so the last tuning survives a restart. `audio.out_amp` is not saved.
-- **Turn it off:** `./akam audio off` silences it at once and the choice is saved in
-  `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `./akam audio on` turns it back
-  on; when `ak_rtsp` started with it off, the wizard says the speaker only starts after the camera is rebooted.
-- **`audio out is not running`** (from `./akam audio beep`): it was disabled or failed at boot; see
-  `./akam audio` (state) and the `[audio_out]` log lines.
-- **Sound over the network:** `./akam talk test`, `./akam talk` and `./akam say FILE` send sound to this speaker
+- **Turn it off:** `akam audio off` silences it at once and the choice is saved in
+  `/etc/config/akam/audio_out` (`enable=0`), so it stays off after a restart. `akam audio on` turns it back
+  on; when `akamd` started with it off, the wizard says the speaker only starts after the camera is rebooted.
+- **`audio out is not running`** (from `akam audio beep`): it was disabled or failed at boot; see
+  `akam audio` (state) and the `[audio_out]` log lines.
+- **Sound over the network:** `akam talk test`, `akam talk` and `akam say FILE` send sound to this speaker
   through the RTSP port ([two-way audio](two_way_audio.md)). A client that streams G.711 silence does not
   switch the amplifier on: the amp follows sound above about -56 dBFS.
 
@@ -396,29 +392,39 @@ after 1, 2, 4, 8, 16, 32, then 60 seconds (it used to give up until the next reb
 `[audio] capture down, retrying` and then `capture recovered`. Sound returns by itself; players that dropped the
 audio track during the gap may need a reconnect.
 
-If you do not want the microphone at all (privacy, less work for the camera): `./akam audio mic off`, then power
-cycle the camera. With the microphone off the capture device is never opened and the stream has **no audio track**
+The microphone is off by default (opt-in, like on the Rotatable 2K). To use it: `akam audio mic on`, then power
+cycle the camera. A camera that already had `mic_enable` saved keeps its value. With the microphone off the capture device is never opened and the stream has **no audio track**
 (video only), which every player accepts; a track that never carries data makes some players wait for it.
-`./akam audio` shows `Microphone: on` or `off`; `./akam audio mic on` and a reboot bring it back. The setting is
+`akam audio` shows `Microphone: on` or `off`; `akam audio mic on` and a reboot switch it on. The setting is
 `mic_enable` in `/etc/config/akam/audio_out`, saved like the speaker settings.
 
 ## The camera clock is wrong (1970 or the build date)
 
 The camera has no battery clock: it starts in the past after every power cut. Nothing sets it unless you ask:
-`./akam ntp set ntp.example.net` (you choose the server: there is no default one; your router's address works, up to 3 servers) makes it ask those servers at start-up
-and every 6 hours (UDP 123, outgoing only); `./akam ntp status` shows the clock and `./akam ntp off` removes the
-setting. If `./akam ntp status` still shows a year near 1970, the camera cannot reach the server (outgoing UDP 123 is blocked, or the name does not resolve): try your router's address or an IPv4 address. Without a clock the WS-Security time window of ONVIF logins is not checked (the replay cache still is) and
-the RTCP sender reports carry a wrong date; the video itself is not affected. `GET sys.time_set` on port 8091 is
+`akam ntp set ntp.example.net` (you choose the server: there is no default one; your router's address works, up to 3 servers) makes it ask those servers at start-up
+and every 6 hours (UDP 123, outgoing only); `akam ntp status` shows the clock and `akam ntp off` removes the
+setting. If `akam ntp status` still shows a year near 1970, the camera cannot reach the server (outgoing UDP 123 is blocked, or the name does not resolve): try your router's address or an IPv4 address. Without a clock the WS-Security time window of ONVIF logins is not checked (the replay cache still is) and
+the RTCP sender reports carry a wrong date; the video itself is not affected. `sys.time_set` in `akam settings` (2K) or `GET sys.time_set` on the camera's own port 8091 is
 `1` once the year is 2024 or later. The helper is `/usr/sbin/akam_ntp.sh`, it logs to `/tmp/akam_ntp.log`.
 
-## Port 8091 refuses SET ("read-only mode")
+## Port 8091 does not answer, or refuses SET ("read-only mode")
 
-`SET`, `SAVE` and `RESET` from another machine answer `ERR read-only mode, see akam_debug.sh`: this is by design,
-the port has no password. Reading (`LIST`, `GET`) always works. To change settings from the PC (for example with the
-tuning tool), open debug mode for a while with `./akam debug on [MINUTES]` (default 60, up to 1440), and close it
-with `./akam debug off`; it also ends at the timeout and at every reboot. For everyday settings use `./akam led`,
-`audio`, `picture` and `video`, which write from the camera itself. While debug mode is on, the log lines and the
-Wi-Fi name and MAC address on 8091 are visible to the network too.
+The text port 8091 of the 1080p is **closed to the network**: it listens on the camera's own
+loopback only (`nc 127.0.0.1 8091` over SSH still works). A monitoring tool that read it from the LAN needs
+`akam control-port open` (it asks first; the video service restarts to apply it). Over the network it stays read-only: `SET`,
+`SAVE` and `RESET` answer `ERR read-only mode, see akam_debug.sh`, by design, the port has no password. The assistant's
+`debug` command is gone; the PC tuning tool can still use the on-camera `/usr/sbin/akam_debug.sh on [MINUTES]` (over SSH) once
+the port is open. For everyday settings use `akam led`, `audio`, `picture`, `video` or the options screens: they go through
+the signed API (port 8092) and need the API key of this PC.
+
+## "this PC has no API key for this camera" / "the camera refused this PC's API key"
+
+The settings of the 1080p go through its signed API. The assistant makes the key once, over SSH (an admin key named
+`assistant`, the secret kept in the state folder, never printed): at the end of an install, at the first settings command of an
+existing install (it asks, default No), or with `akam api-key`. If the camera forgot it (CONFIG partition wiped, key revoked) or
+another PC took the name, `akam api-key replace` revokes the old key and makes a new one. Without a terminal the commands refuse and
+name `akam api-key`; `--yes` answers the question. An update never touches keys. An older image has the API
+but not the audio and white-balance rows: those show as n/a until `akam update`.
 
 ## The camera restarted itself, or the stream came back after a gap
 
@@ -426,17 +432,17 @@ Over SSH (`ssh root@<camera>`):
 
 ```sh
 cat /tmp/akam_respawn        # count=<short runs in a row> total=<exits since boot> last_rc=<code> last_run=<s>
-cat /tmp/akam_wrapper.log    # one line per exit of ak_rtsp (also in syslog: logread | grep akam_wrapper)
+cat /tmp/akam_wrapper.log    # one line per exit of akamd (also in syslog: logread | grep akam_wrapper)
 ```
 
-`total` is how many times `ak_rtsp` ended since the camera booted (the files are in RAM, they restart at 0 after a
+`total` is how many times `akamd` ended since the camera booted (the files are in RAM, they restart at 0 after a
 reboot). `count` is the number of runs shorter than 10 minutes in a row: it sets the wait before the next start
 (0, 2, 5, 10, then 30 seconds), and a run of 10 minutes or more resets it. A camera stuck in a loop therefore shows a
 large `count` and the wrapper log gives the exit code of each run. Exit code 70 means the software watchdog stopped
-`ak_rtsp` because the encoder produced no frame for 30 s or one of its threads stopped answering; the line it wrote
+`akamd` because the encoder produced no frame for 30 s or one of its threads stopped answering; the line it wrote
 is on the serial console (`[swdog] ...`). Other codes are crashes or start-up failures (read the log above it).
 
-Lines lost by the console tee (a console that cannot keep up): `ak_rtsp ctl GET log.dropped` on the camera, or
+Lines lost by the console tee (a console that cannot keep up): `akamd ctl GET log.dropped` on the camera, or
 `GET log.dropped` on port 8091. It only counts lost log lines; a growing number is harmless for the video.
 
 ## The system log (`/var/log/messages`)
@@ -444,7 +450,7 @@ Lines lost by the console tee (a console that cannot keep up): `ak_rtsp ctl GET 
 The camera keeps its syslog in RAM: up to 4 files of 200 KB (`/var/log/messages`, `messages.0` to `messages.2`),
 read with `logread` or `cat`. The vendor kernel drivers are very chatty (a line for every LED write, bursts of
 identical encoder errors while the Wi-Fi is bad), so the stock `klogd` filled these files in about five minutes.
-The image therefore starts `ak_rtsp klog` (shown as `akam_klog` in `ps`) instead of `klogd -n`:
+The image therefore starts `akamd klog` (shown as `akam_klog` in `ps`) instead of `klogd -n`:
 
 - the LED driver trace (`gpio_led_set value=...`) is dropped;
 - a kernel message that repeats is written once, then counted: you get one line such as
@@ -464,8 +470,43 @@ does nothing at all if `/etc/config/wpa_supplicant.conf` does not exist. `/usr/s
 it runs. If the router was off for a while the camera should be back within about five minutes after the router is
 up; if not, send that log.
 
+## The picture is late
+
+Both cameras log, every 10 seconds, a line such as `stream0: frame age at send avg 5 ms max 20 ms` and the unsent backlog. The encoder never
+queues old frames: a client that cannot keep up is skipped to the next key frame instead of falling further behind. How to read it:
+
+- Where the log is: over SSH on the camera, the app log (`/tmp/akam2k_main.log` on a 2K, `logread` on a 1080p).
+- **Frame age at send** small (a few ms to a few tens of ms): the camera is not the cause. The delay is the network, your player's buffer or
+  your restreamer. Start the player with its low-latency options (for ffplay: `-fflags nobuffer -flags low_delay -framedrop`, TCP).
+- `client ... frames behind` or `backlog standing too long` in the log: the Wi-Fi link cannot carry the bitrate. A short freeze to the next
+  key frame is expected there; lower the bitrate or the frame rate (`akam video bitrate 1024 fps 10`), or move the camera or the access point.
+- A delay that keeps growing is not expected: report it with the log.
+
+Details and measurements: [video latency](porting/lsc-rotatable-2k/video-latency.md).
+
+## Rotatable 2K
+
+Symptoms of the 2K. Everything above that is not about the 1080p's single RTSP client, the text port 8091 or the bash wizard applies here too.
+
+- **The camera has no SSH or no Wi-Fi after the flash.** `seed-2k` was not run before `appfs-flash`: the card-less camera has no Wi-Fi settings and
+  no key. Insert the first-install card (it overrides the flash), boot, run `seed-2k`, then remove the card and power cycle.
+- **`akam` says it has no API key, or the camera refused it** (any settings command). The 2K's key is made by `akam key-2k` (not `api-key`) after the first
+  card-less boot; the key stays on this PC. Details of the key and its refusal: [the 1080p section above](#this-pc-has-no-api-key-for-this-camera--the-camera-refused-this-pcs-api-key) applies, with `key-2k` in place of `api-key`.
+  By hand, over SSH: `sh /appfs/akam/akam_api_key.sh new --scope admin --name NAME` (card-less) or `/mnt/sdcard/akam/...` with the card in.
+- **Port 8092 does not answer.** Nothing listens until a key exists; check with `ss -ltn` on the camera.
+- **A 1080p command is refused ("not yet supported for this model").** `backup`, `restore`, `verify`, `image`, `flash`, `get-kit`, `config`, `key` and
+  `control-port` are 1080p only; the 2K has `backup-2k`, `prepare-2k-sd`, `seed-2k`, `appfs-build`, `appfs-flash`, `update`. See the [install guide](install.md).
+- **The settings did not change.** Some settings are queued (Wi-Fi, name) or need the app restarted (`killall akamd` over SSH, the supervisor restarts it in a few
+  seconds; it gives up after 5 exits in 10 minutes). The assistant says which; it never restarts or power-cycles the camera.
+- **No sound from the speaker.** It is off by default: `akam audio on`, then `akam audio beep`. If `audio.out_state` says `disabled_crash`, see the end of
+  [using the 2K, section 7](porting/lsc-rotatable-2k/using-the-2k.md#7-speaker-two-way-audio-and-picture-settings).
+- **A flash was interrupted, or the camera does not boot.** Do not power cycle in the middle of a flash. With the first-install or rescue card inserted the
+  camera starts from the card as long as the appfs still mounts; a half-written `mtd3` needs a UART or a CH341A:
+  [2K recovery](porting/lsc-rotatable-2k/README.md#recovery), [UART recovery](porting/lsc-rotatable-2k/uart-recovery.md).
+- **A root telnet answers on port 23.** An Akam card without `akam/no_telnet` is in the camera: remove it or create that empty file on it.
+
 ## Still stuck
 
-Run `./akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the
+Run `akam status`, read the end of the log in `~/.local/state/akam/`, and open an issue on the
 project's repository with the step name and the (redacted) log. Never attach your backup or keys. For
 a camera that no longer boots, see [recovery](manual/flash-and-restore.md#5-restore).

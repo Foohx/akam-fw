@@ -232,10 +232,10 @@ func (c *Camera) flashExec(cmd string, stdin io.Reader, stdout, stderr io.Writer
 		return 0, true
 	case cmd == "sh /tmp/akam_hwcheck.sh":
 		if fo.HwcheckFails {
-			fmt.Fprintln(stdout, "PASS ssh key login\nFAIL ak_rtsp is not running")
+			fmt.Fprintln(stdout, "PASS ssh key login\nFAIL akamd is not running")
 			return 1, true
 		}
-		fmt.Fprintln(stdout, "PASS ssh key login\nPASS ak_rtsp running\nINFO RTSP auth: off")
+		fmt.Fprintln(stdout, "PASS ssh key login\nPASS akamd running\nINFO RTSP auth: off")
 		return 0, true
 	case cmd == "sh /tmp/akam_preflight.sh --ensure-wifi":
 		v := fo.WifiVerdict

@@ -12,7 +12,7 @@ PLAT2K := $(ROOT)/platforms/anyka-ak3918av130
 .PHONY: help 1080p 2k 2k-appfs test check lint repro repro-1080p repro-2k clean
 
 help:
-	@echo "make 1080p     LSC indoor 1080p: ak_rtsp, flash_tool, helpers (everything under build/lsc-indoor-1080p-ak3918)"
+	@echo "make 1080p     LSC indoor 1080p: akamd, flash_tool, helpers (everything under build/lsc-indoor-1080p-ak3918)"
 	@echo "make 2k        LSC Rotatable 2K own app (platforms/anyka-ak3918av130) built in build/lsc-rotatable-2k-ak3918av130, published to dist/rot2k-app; needs CAMERA_LIBC=<libuClibc-*.so of your camera backup>"
 	@echo "make 2k-appfs  card-less 2K appfs image (after make 2k); needs BACKUP=<stock mtd3 dump>"
 	@echo "make test      shell, native and 2K test groups"

@@ -1,8 +1,10 @@
 # Capturing what the stock firmware does to the speaker, the ISP and the day/night switch
 
+> **LSC Indoor 1080p only** (8 partitions, APP in `mtd7`). The 2K has its own pages: [install](../porting/lsc-rotatable-2k/README.md#install), [back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock), [UART recovery](../porting/lsc-rotatable-2k/uart-recovery.md).
+
 > **Advanced / developer procedure.** Nothing here is needed to install or use Akam. It records how
 > the vendor app `anyka_ipc` drives the speaker, the ISP (image quality, grain) and the IR-cut /
-> IR LED day/night switch, so that `ak_rtsp` can do the same (see `specs/audio.md`). It
+> IR LED day/night switch, so that `akamd` can do the same (see `specs/audio.md`). It
 > runs on a camera that is **still stock**, booted from the toolkit microSD, and writes **nothing to
 > flash**: no `/etc/config`, no MTD partition. A power cycle returns the camera to exactly what it
 > was.
@@ -90,7 +92,7 @@ a place that is not `system()`/`popen()` (the `reboot` system call itself, the s
   (`/tmp/_ak39_factory.ini`): the script does not leave it, because the normal consumer mode may start
   Wi-Fi provisioning.
 * It refuses to run on anything but a stock camera: `anyka_ipc` and the watchdog running, no
-  `ak_rtsp`, no Akam helper, and (when `sha256sum` exists) the content of `/dev/mtdblock7` equal to
+  `akamd`, no Akam helper, and (when `sha256sum` exists) the content of `/dev/mtdblock7` equal to
   the known stock APP image `14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294`
   (`--force` overrides a mismatch).
 * A foreground run restores on `SIGINT` (Ctrl-C), `SIGTERM` and `SIGHUP` (lost telnet). A **detached**

@@ -71,7 +71,8 @@ int a2k_stream_publish(a2k_stream_t *s, const uint8_t *data, size_t len)
     key = au_is_key(f->data, len);
     f->key = key;
     f->refs = 1; /* the ring's */
-    f->capture_us = rtp_vclock_stamp(&s->vclock, rtp_mono_us());
+    f->rx_us = rtp_mono_us();
+    f->capture_us = rtp_vclock_stamp(&s->vclock, f->rx_us);
     memset(&p, 0, sizeof p);
     if (key)
         found = h264_params_scan(&p, f->data, len, 256);
@@ -145,6 +146,58 @@ int a2k_stream_latest_key(a2k_stream_t *s, uint64_t *seq)
         }
     pthread_mutex_unlock(&s->mu);
     return ok;
+}
+
+/* Newest keyframe in the ring with seq >= from and age <= max_age_us (mutex held). */
+static int newest_key_locked(const a2k_stream_t *s, uint64_t from, int64_t now_us, int64_t max_age_us, uint64_t *seq)
+{
+    uint64_t q, oldest = s->head > A2K_RING ? s->head - A2K_RING : 0;
+    if (from < oldest)
+        from = oldest;
+    for (q = s->head; q > from; q--) {
+        const a2k_frame_t *f = s->ring[(q - 1) % A2K_RING];
+        if (f->key) {
+            if (now_us - f->rx_us > max_age_us)
+                return 0; /* the newest keyframe is too old, every older one is older still */
+            *seq = q - 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int a2k_stream_join(a2k_stream_t *s, uint64_t *cursor, int64_t now_us, int64_t max_age_us)
+{
+    int ok;
+    pthread_mutex_lock(&s->mu);
+    ok = newest_key_locked(s, 0, now_us, max_age_us, cursor);
+    if (!ok)
+        *cursor = s->head;
+    pthread_mutex_unlock(&s->mu);
+    return ok;
+}
+
+int a2k_stream_catchup(a2k_stream_t *s, uint64_t *cursor, int64_t now_us, int64_t max_age_us, unsigned *dropped)
+{
+    int r = 0;
+    uint64_t oldest, seq;
+    *dropped = 0;
+    pthread_mutex_lock(&s->mu);
+    oldest = s->head > A2K_RING ? s->head - A2K_RING : 0;
+    /* A cursor behind the ring is left to a2k_stream_next(), which reports the loss. */
+    if (*cursor >= oldest && *cursor < s->head && now_us - s->ring[*cursor % A2K_RING]->rx_us > max_age_us) {
+        if (newest_key_locked(s, *cursor + 1, now_us, max_age_us, &seq)) {
+            *dropped = (unsigned)(seq - *cursor);
+            *cursor = seq;
+            r = 1;
+        } else {
+            *dropped = (unsigned)(s->head - *cursor);
+            *cursor = s->head;
+            r = 2;
+        }
+    }
+    pthread_mutex_unlock(&s->mu);
+    return r;
 }
 
 uint64_t a2k_stream_head(a2k_stream_t *s)

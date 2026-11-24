@@ -1,5 +1,7 @@
 # Flashing and Restoring (manual procedures)
 
+> **LSC Indoor 1080p only** (8 partitions, APP in `mtd7`). The 2K has its own pages: [install](../porting/lsc-rotatable-2k/README.md#install), [back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock), [UART recovery](../porting/lsc-rotatable-2k/uart-recovery.md).
+
 > **Advanced / manual procedure (without the wizard).** `./akam flash`, `./akam update` and `./akam restore`
 > run these routes for you, with the same checks and a red yes/no (default No) before any write
 > ([README](../../README.md#quick-start)). Use this page to understand them, audit them, or when you cannot run
@@ -24,9 +26,9 @@ The [Action-Smart-Connect-Flasher](https://github.com/4ddict/Action-Smart-Connec
 a good tool, but Akam does **not** use it:
 
 - Its repository and commit constants (`FIRMWARE_REPO`, `FIRMWARE_COMMIT`) are hard-coded to the upstream
-  project. It builds upstream's `ak_rtsp`, not this tree, and knows nothing about Dropbear, the SSH
+  project. It builds upstream's `akamd`, not this tree, and knows nothing about Dropbear, the SSH
   boot script, or the lockdown patch.
-- It patches `ak_rtsp` sources on the fly. Its fourth patch (the `night.c` day/night override) is
+- It patches `akamd` sources on the fly. Its fourth patch (the `night.c` day/night override) is
   expected to **fail on this source tree**, where the flasher's fixes are already integrated
   (see [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)).
 - It talks to the camera through an unauthenticated Telnet shell on port 24, opened by an SD-card hook,
@@ -202,7 +204,7 @@ rewrites or deletes the file is `recover_cfg.sh` (factory reset, run when the se
 512 bytes; it is 3010 bytes here) and Tuya pairing inside `anyka_ipc`, which Akam removes. Akam's flash does
 not touch CONFIG. The router must still accept the saved credentials (same SSID, 2.4 GHz).
 - `/etc/config/wpa_supplicant.conf` must exist and be non-empty. Akam removes the Tuya agent that
-  used to write it, and `ak_rtsp_wrapper.sh` only starts Wi-Fi when this file exists. The SD backup
+  used to write it, and `akam_run.sh` only starts Wi-Fi when this file exists. The SD backup
   route does **not** write it (the toolkit keeps the Wi-Fi settings in RAM). If it is missing, the
   camera will boot Akam without a network. Create it first, from the same shell, with the block
   below (the wizard's `--ensure-wifi` writes the same format, validated on hardware; this is a
@@ -282,7 +284,7 @@ to investigate (Wi-Fi, `/tmp/akam_ssh.log`) before touching anything else.
 Do **not** re-flash a running Akam camera by running the flash script from an ordinary SSH login (the SSH
 route below is different: it runs from RAM). On a running Akam camera the APP
 partition is mounted on `/usr`, and everything Akam starts lives there: `dropbear` and `dropbearkey`
-(`/usr/bin`), `ak_rtsp_wrapper.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, and the stock
+(`/usr/bin`), `akam_run.sh`, `akam_ssh.sh`, `akam_lockdown.sh`, and the stock
 `/usr/bin/watchdog` that supervises the system. `flash_tool` erases `/dev/mtd7` in place while those
 programs are paged in from it. Expected consequences *(reasoned from the layout and from
 the fact that killing the watchdog stops the hardware timer from being fed; not tested)*:
@@ -378,7 +380,7 @@ erased), but it cannot make the write itself safe:
   debugger): its main loop wakes about once per second (`CMsgClient::waitMsg`, 1 s limit) and each time
   calls `clearHardwareWatchdog`, an `ioctl(WDIOC_KEEPALIVE)` on `/dev/watchdog`, then
   `respawnProcessList` and `checkWatchdog`. Nothing else on an Akam image feeds the hardware timer
-  (`ak_rtsp` and the wrapper never open the device). The kernel driver (`ak_top_wdt`) is a nowayout
+  (`akamd` and the wrapper never open the device). The kernel driver (`ak_top_wdt`) is a nowayout
   one ("Device closed unexpectedly - timer will not stop"), so if the daemon dies the timer keeps
   counting and the board resets when it expires. The timeout was not read from the kernel; it is longer
   than the 5 s feeding period of `start_rtsp.sh`. What follows:
@@ -387,7 +389,7 @@ erased), but it cannot make the write itself safe:
     reason the live flashes survived.
   - If the daemon takes a fault (a page evicted, then re-read from erased flash: SIGBUS) the hardware
     resets the board within the timeout, in the middle of the write, and only UART recovers it.
-  - Cold paths also read `/usr`: a respawned child (`/usr/bin/ak_rtsp_wrapper.sh`) and
+  - Cold paths also read `/usr`: a respawned child (`/usr/bin/akam_run.sh`) and
     `akam_lockdown.sh`, which runs `/usr/sbin/akam_ssh.sh start` every 60 s. They can fail or run
     garbage; that hurts that child, not the write.
   - A few successes prove little: with no failure in two trials the 95 % upper bound on the failure rate

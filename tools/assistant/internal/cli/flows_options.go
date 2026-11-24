@@ -163,7 +163,7 @@ func (a *App) flowOptions() error {
 	}
 	if a.UI.Dry() {
 		a.banner("Camera options - " + a.Cams.Name)
-		a.UI.Say(fmt.Sprintf("  WOULD run over SSH on the camera: printf '<GET lines>' | nc -w 2 127.0.0.1 %d (every option in one go, then QUIT),", 8091))
+		a.sayWouldAPI(ip)
 		a.UI.Say("  show the groups, edit values locally, and only on 'apply' send the SET lines (read-only until then).")
 		a.UI.Say("  WOULD ask: Restart the video service now? [y/N] (default No) after a video change.")
 		a.UI.Say("  WOULD also read (read-only): the Wi-Fi signal and clock (date +%s over SSH), and offer to set the clock from this computer [y/N] (default No) when it is unset or off by more than 120 s; with time sync on and working, a difference is reported as a probable wrong clock on this computer and nothing is offered.")

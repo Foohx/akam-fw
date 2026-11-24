@@ -122,11 +122,11 @@ func Build(in Inputs) (*BuildResult, error) {
 	}
 	ak.Add(squashfs.NewFile("dropbearmulti", 0o755, k.File(pathBin+"dropbearmulti")))
 	ak.Add(squashfs.NewFile("busybox", 0o755, k.File(pathBin+"busybox")))
-	bin.Add(squashfs.NewFile("akam2k_rtsp", 0o755, k.File(pathBin+"akam2k_rtsp")))
-	bin.Add(squashfs.NewFile("akam2k_rtsp.BUILDINFO", 0o644, k.File(pathBin+"akam2k_rtsp.BUILDINFO")))
-	bin.Add(squashfs.NewFile("akam2k_sntp", 0o755, k.File(pathBin+"akam2k_sntp")))
-	sntpSHA := buildinfo(k.File(pathBin+"akam2k_rtsp.BUILDINFO"), "sntp_sha256")
-	bin.Add(squashfs.NewFile("akam2k_sntp.BUILDINFO", 0o644, []byte("tool=akam2k_sntp\nsha256="+sntpSHA+"\n")))
+	bin.Add(squashfs.NewFile("akamd", 0o755, k.File(pathBin+"akamd")))
+	bin.Add(squashfs.NewFile("akamd.BUILDINFO", 0o644, k.File(pathBin+"akamd.BUILDINFO")))
+	bin.Add(squashfs.NewFile("akam-sntp", 0o755, k.File(pathBin+"akam-sntp")))
+	sntpSHA := buildinfo(k.File(pathBin+"akamd.BUILDINFO"), "sntp_sha256")
+	bin.Add(squashfs.NewFile("akam-sntp.BUILDINFO", 0o644, []byte("tool=akam-sntp\nsha256="+sntpSHA+"\n")))
 	root.Add(ak)
 
 	// yy_cam: a launcher of the stub (start.sh runs it; the SD overlay bind-mounts its own stub over it)
@@ -165,17 +165,17 @@ func checkKitProofs(k *Kit) error {
 	if sum(k.File(pathBin+"busybox")) != busyBoxPin {
 		return fmt.Errorf("busybox is not the pinned %s", busyBoxPin)
 	}
-	bi := k.File(pathBin + "akam2k_rtsp.BUILDINFO")
+	bi := k.File(pathBin + "akamd.BUILDINFO")
 	if buildinfo(bi, "symcheck") != "passed" {
-		return errors.New("akam2k_rtsp.BUILDINFO does not say symcheck=passed")
+		return errors.New("akamd.BUILDINFO does not say symcheck=passed")
 	}
-	if buildinfo(bi, "sha256") != sum(k.File(pathBin+"akam2k_rtsp")) {
-		return errors.New("akam2k_rtsp does not match its BUILDINFO")
+	if buildinfo(bi, "sha256") != sum(k.File(pathBin+"akamd")) {
+		return errors.New("akamd does not match its BUILDINFO")
 	}
-	if buildinfo(bi, "sntp_sha256") != sum(k.File(pathBin+"akam2k_sntp")) {
-		return errors.New("akam2k_sntp does not match its BUILDINFO")
+	if buildinfo(bi, "sntp_sha256") != sum(k.File(pathBin+"akam-sntp")) {
+		return errors.New("akam-sntp does not match its BUILDINFO")
 	}
-	for _, n := range []string{"akam2k_rtsp", "akam2k_sntp"} {
+	for _, n := range []string{"akamd", "akam-sntp"} {
 		f := k.File(pathBin + n)
 		head := f[:min(len(f), 4096)]
 		if !bytes.Contains(head, []byte("/lib/ld-uClibc.so.0")) {
@@ -285,7 +285,7 @@ func diffTree(p string, a, b *squashfs.Node) string {
 }
 
 func manifest(r *BuildResult, stock []byte, k *Kit, initSHA string, mkfs uint32) string {
-	bi := k.File(pathBin + "akam2k_rtsp.BUILDINFO")
+	bi := k.File(pathBin + "akamd.BUILDINFO")
 	db := k.File(pathBin + "dropbearmulti.BUILDINFO")
 	var sb strings.Builder
 	line := func(f string, a ...any) { fmt.Fprintf(&sb, f+"\n", a...) }
@@ -297,8 +297,8 @@ func manifest(r *BuildResult, stock []byte, k *Kit, initSHA string, mkfs uint32)
 	line("builder=akam assistant (in-process squashfs writer)")
 	line("params=-comp xz -b 131072 -noappend -all-root -mkfs-time %d -all-time %d", mkfs, mkfs)
 	line("stock_backup_sha256=%s", sum(stock))
-	line("akam2k_rtsp_sha256=%s", buildinfo(bi, "sha256"))
-	line("akam2k_sntp_sha256=%s", buildinfo(bi, "sntp_sha256"))
+	line("akamd_sha256=%s", buildinfo(bi, "sha256"))
+	line("akam_sntp_sha256=%s", buildinfo(bi, "sntp_sha256"))
 	line("app_source_sha256=%s", buildinfo(bi, "source_sha256"))
 	line("dropbearmulti_sha256=%s", buildinfo(db, "sha256_stripped"))
 	line("busybox_sha256=%s", busyBoxPin)

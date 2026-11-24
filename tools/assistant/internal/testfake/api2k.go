@@ -27,8 +27,15 @@ type API2K struct {
 	Apply map[string]string
 	// Closed: nothing listens (no key installed on the camera).
 	Closed bool
+	// WriteOnly are the write-only rows (mqtt.password, rtsp.password): accepted in a PATCH, kept in Secrets, never returned by a GET and never
+	// echoed in a PATCH reply (the firmware's ST_SECRET_WO rows).
+	WriteOnly map[string]bool
+	Secrets   map[string]string
 	// Extra holds hypothetical extra values the camera returns in GET /settings (a test that a credential is never shown).
 	Extra map[string]string
+
+	// Beeps counts the audio.beep actions the speaker played.
+	Beeps int
 
 	mu       sync.Mutex
 	Requests []Req2K
@@ -113,6 +120,15 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 		}
 		b, _ := json.Marshal(m)
 		return 200, b, nil
+	case method == "POST" && path == "/akam/v1/actions/audio.beep":
+		if scope == "read" {
+			return jerr(403, "scope", "write scope needed")
+		}
+		if f.Values["audio.out_enable"] != "1" {
+			return jerr(409, "unavailable", "the speaker is not running (audio.out_enable 1, see audio.out_state)")
+		}
+		f.Beeps++
+		return 200, []byte(`{"ok":true}`), nil
 	case method == "PATCH" && path == "/akam/v1/settings":
 		if scope == "read" {
 			return jerr(403, "scope", "write scope needed")
@@ -129,8 +145,15 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 		res := map[string]map[string]any{}
 		bad := false
 		for _, k := range keys {
-			if _, known := f.Values[k]; !known {
+			_, known := f.Values[k]
+			if !known && f.WriteOnly[k] {
+				known = true
+			}
+			if !known {
 				res[k] = map[string]any{"ok": false, "error": "unknown_key"}
+				bad = true
+			} else if scope != "admin" && adminRow2K(k) {
+				res[k] = map[string]any{"ok": false, "error": "scope"} // the user-file rows need an admin key
 				bad = true
 			} else if r, refused := f.Refuse[k]; refused {
 				code, detail, _ := strings.Cut(r, "|")
@@ -148,15 +171,36 @@ func (f *API2K) serve(method, path string, body []byte, h akamapi.Header) (int, 
 			return 422, b, nil
 		}
 		for _, k := range keys {
-			f.Values[k] = in[k]
 			ap := "applied"
+			if adminRow2K(k) && !strings.HasPrefix(k, "rtsp.") {
+				ap = "restart_component" // the supervisor writes the files; the app reads them at its next start
+			}
 			if a, o := f.Apply[k]; o {
 				ap = a
 			}
+			if f.WriteOnly[k] {
+				if f.Secrets == nil {
+					f.Secrets = map[string]string{}
+				}
+				f.Secrets[k] = in[k]
+				res[k] = map[string]any{"ok": true, "apply": ap} // never echoed
+				continue
+			}
+			f.Values[k] = in[k]
 			res[k] = map[string]any{"ok": true, "apply": ap, "value": in[k]}
 		}
 		b, _ := json.Marshal(map[string]any{"results": res})
 		return 200, b, nil
 	}
 	return jerr(404, "unknown_path", "-")
+}
+
+// adminRow2K: the rows of the firmware's cfgreg.c need an admin key.
+func adminRow2K(k string) bool {
+	for _, p := range []string{"mqtt.", "onvif.", "rtsp.", "ntp.", "audio."} {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
 }

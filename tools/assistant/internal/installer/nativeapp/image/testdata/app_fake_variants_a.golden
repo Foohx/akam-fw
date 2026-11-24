@@ -1,6 +1,7 @@
 "/" d 0755 0 0 1700000000 6 0 0,0 - -
 "/bin" d 0755 0 0 1700000000 2 0 0,0 - -
-"/bin/ak_rtsp" f 0755 0 0 1700000000 1 0 0,0 - (kit)
+"/bin/ak_rtsp" l 0777 0 0 1700000000 1 5 0,0 "akamd" -
+"/bin/akamd" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/bin/cmdserver" f 0755 0 0 1700000000 1 61 0,0 - 63d9935b60925bf5a7c932ac370e4104c5df2d6e1897367e558c33adac4165d3
 "/bin/dropbear" l 0777 0 0 1700000000 1 0 0,0 "dropbearmulti" -
 "/bin/dropbearkey" l 0777 0 0 1700000000 1 0 0,0 "dropbearmulti" -
@@ -26,7 +27,6 @@
 "/local/akam/MANIFEST.txt" f 0644 0 0 1700000000 1 0 0,0 - (kit)
 "/local/akam/THIRD_PARTY_NOTICES.md" f 0644 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin" d 0755 0 0 1700000000 2 0 0,0 - -
-"/sbin/ak_rtsp_wrapper.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_debug.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_hostname.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_lockdown.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
@@ -35,8 +35,9 @@
 "/sbin/akam_ntp.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_onvif.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_rtsp_auth.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
+"/sbin/akam_run.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/akam_ssh.sh" f 0755 0 0 1700000000 1 0 0,0 - (kit)
 "/sbin/drop_caches.sh" f 0755 0 0 1700000000 1 273 0,0 - dae74b4c6425db93bd464a015d55e08fa2759da7f410f6157044ace78f81920f
 "/sbin/ethernet.sh" f 0755 0 0 1700000000 1 396 0,0 - 102c76dd3cb87d3158a7e1c931c8b28eb5fd933b81de6886a44f3a59d8a95548
-"/sbin/main.sh" f 0755 0 0 1700000000 1 497 0,0 - 5b610f34c446970103bad03ee8661a79c35610649c8480d98dca469e041d1a9f
+"/sbin/main.sh" f 0755 0 0 1700000000 1 495 0,0 - 4ea8e22f26c1eda0ae7ea05aad38034d9258a4a7d7b4662c1949e3e191d80b0d
 "/sbin/service.sh" f 0755 0 0 1700000000 1 767 0,0 - f93bb3247344bbec20a76fe027dd26fac32d49f21c482af031e6b7d35c71e9f7

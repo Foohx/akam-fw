@@ -42,7 +42,7 @@ SRCS     = main.c \
           vi.c \
           venc.c \
           audio.c \
-          audio_out.c \
+          $(call common_src,audio_out) \
           rtsp_session.c \
           $(call common_src,h264_params) \
           $(call common_src,h264_nalu) \
@@ -56,7 +56,7 @@ SRCS     = main.c \
           $(call common_src,rtsp_sdp) \
           $(call common_src,rtp_in) \
           $(call common_src,audio_vad) \
-          talk.c \
+          $(call common_src,talk) \
           $(call common_src,md5) \
           $(call common_src,rtsp_auth) \
           $(call common_src,sha1) \
@@ -86,6 +86,7 @@ SRCS     = main.c \
           $(call common_src,klog) \
           klog_run.c \
           isp_tune.c \
+          image_orient.c \
           video_cfg.c \
           video_ctl.c \
           $(call common_src,ctl_gate) \

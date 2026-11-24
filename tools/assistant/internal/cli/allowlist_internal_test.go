@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 )
 
 // The guard is an allow-list: harmless arguments that merely contain a scary word are fine, and
@@ -15,7 +13,7 @@ func TestGuardIsAnAllowListNotADenyList(t *testing.T) {
 		remoteHostnameSet("watchdog"), remoteHostnameSet("date"), remoteHostnameSet("halt"), remoteHostnameSet("kill-1"),
 		remoteNtp("set", "halt.lan"), remoteNtp("set", "pool.ntp.org", "192.0.2.1", "2001:db8::1"),
 		remoteMqtt("set", "kill.lan", "1883", "reboot"), remoteMqtt("set", "broker.lan", "1883", "-"),
-		remoteRtspAuth("set-creds"), remoteDebug("on", "60"), remoteOnvif("enable", "80"),
+		remoteRtspAuth("set-creds"), remoteOnvif("enable", "80"), apiKeyNewCmd1080, apiKeyRevokeCmd1080, apiKeyNewCmd1080Legacy, apiKeyRevokeCmd1080Legacy,
 		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), restartVideoCmd,
 		remoteMtdList, remoteKernelInfo, remoteHwcheckPut, remoteHwcheckRun, remotePreflightPut, remotePreflightRun, remoteOnvifFlag,
 		remoteAuthkeysPut, remoteAuthkeysAdd, remoteAuthkeysRemove, remoteAuthkeysCard,
@@ -37,7 +35,13 @@ func TestGuardIsAnAllowListNotADenyList(t *testing.T) {
 		"/tmp/usr/sbin/akam_ntp.sh status", "x/usr/sbin/akam_ntp.sh status", "date -s x", "date", " date +%s",
 		restartVideoCmd + "; reboot", remoteHwcheckRun + " x", "sh /tmp/akam_hwcheck.sh; reboot",
 		"cat > /tmp/x", "dd if=/dev/mtdblock3 bs=64k of=/tmp/x",
-		ctl.NcCommand + "; reboot", ctl.NcCommand + " ", "nc -w 2 127.0.0.1 22", "nc -w 2 192.0.2.1 8091", "nc -w 9 127.0.0.1 8091", "nc 127.0.0.1 8091",
+		// the text port is closed to the network and the assistant no longer reaches it: not even the old nc line is allowed
+		"nc -w 2 127.0.0.1 8091", "nc -w 2 127.0.0.1 8091; reboot", "nc -w 2 127.0.0.1 22", "nc -w 2 192.0.2.1 8091", "nc -w 9 127.0.0.1 8091", "nc 127.0.0.1 8091",
+		// the two key commands are exact: another scope, name or extra word is refused
+		apiKeyNewCmd1080 + "; reboot", apiKeyNewCmd1080 + " ", "/usr/bin/akamd --api-key new --scope read --name assistant",
+		"/usr/bin/akamd --api-key new --scope admin --name other", "/usr/bin/akamd --api-key revoke other --force", "/usr/bin/akamd --api-key list",
+		"/usr/bin/ak_rtsp --api-key list", "/usr/bin/ak_rtsp --api-key new --scope read --name assistant", apiKeyNewCmd1080Legacy + "; reboot",
+		"/usr/bin/akamd ctl DEBUG on", "/usr/sbin/akam_debug.sh on",
 	} {
 		if forbiddenRemote(bad) == "" {
 			t.Errorf("the guard lets %q through", bad)

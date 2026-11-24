@@ -4,7 +4,7 @@
  * driver and compares them with the file (specs/image-day-night-leds.md).
  *
  * Nothing here talks to the device by itself: the caller passes a "get" function (the ISP tunnel on
- * the camera, a fake in the host test), so the same code serves ak_rtsp (8091 key img.dump), the
+ * the camera, a fake in the host test), so the same code serves akamd (8091 key img.dump), the
  * isp_dump tool and tests/isp_blocks_test.sh. */
 
 #include <stdint.h>

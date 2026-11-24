@@ -1,5 +1,5 @@
 #!/bin/sh
-# akam_mqtt.sh -- switch the optional MQTT client of ak_rtsp (Home Assistant discovery) on or off.
+# akam_mqtt.sh -- switch the optional MQTT client of akamd (Home Assistant discovery) on or off.
 #
 # Installed as /usr/sbin/akam_mqtt.sh (mode 755). Run it over SSH, as root:
 #   akam_mqtt.sh set HOST PORT USER   save the broker and turn MQTT on. HOST: a host name or IPv4 address; PORT 1 to
@@ -14,7 +14,7 @@
 #   akam_mqtt.sh test                 one connection attempt with the saved settings (works while MQTT is off)
 # Exit status: 0 ok, 1 failure, 2 usage, 3 status found an INVALID file.
 #
-# Off by default and outbound only: with no file the camera has no MQTT thread and no socket. Enabled, ak_rtsp opens ONE
+# Off by default and outbound only: with no file the camera has no MQTT thread and no socket. Enabled, akamd opens ONE
 # TCP connection to HOST:PORT (no TLS: the password travels in clear on your network).
 #
 # Files (CONFIG partition, persistent, directory 0700):
@@ -22,8 +22,8 @@
 #                                 enabled=1  host=NAME  port=N  user=NAME  [client_id=  base_topic=  discovery=
 #                                 discovery_prefix=  interval=]
 #   /etc/config/akam/mqtt_pass  mode 0600, the password alone on one line; absent = no password
-# Both are replaced atomically. ak_rtsp reads them at start and on "MQTT reload" (port 8091, from the camera only),
-# which this script sends after every change. An older ak_rtsp answers "ERR unknown command": the settings are saved
+# Both are replaced atomically. akamd reads them at start and on "MQTT reload" (port 8091, from the camera only),
+# which this script sends after every change. An older akamd answers "ERR unknown command": the settings are saved
 # and apply at the next reboot.
 #
 # The password only ever passes through the shell built-in printf and a pipe (checked with `type printf`).
@@ -36,7 +36,7 @@ CONFIG_DIR=${AKAM_CONFIG_DIR:-$AKAM_ROOT/etc/config}
 AKAM_DIR=$CONFIG_DIR/akam
 MQTT_FILE=${AKAM_MQTT_FILE:-$AKAM_DIR/mqtt}
 PASS_FILE=${AKAM_MQTT_PASS_FILE:-$AKAM_DIR/mqtt_pass}
-AKAM_RTSP_BIN=${AKAM_RTSP_BIN:-/usr/bin/ak_rtsp}
+AKAM_RTSP_BIN=${AKAM_RTSP_BIN:-/usr/bin/akamd}
 USER_MAX=32
 PASS_MAX=128
 # One test attempt can take 20 s (name lookup) + 10 s (connect) + 10 s (CONNACK): 45 one-second polls cover it.
@@ -97,7 +97,7 @@ valid_interval() {
 }
 
 # read_cfg: sets C_EN C_HOST C_PORT C_USER C_ID C_BASE C_DISC C_PREFIX C_INT (empty = not in the file). Returns 0
-# valid, 1 absent, 3 invalid (same rules as mqtt_cfg_parse in ak_rtsp: unknown or repeated key, bad value).
+# valid, 1 absent, 3 invalid (same rules as mqtt_cfg_parse in akamd: unknown or repeated key, bad value).
 read_cfg() {
     C_EN='' C_HOST='' C_PORT='' C_USER='' C_ID='' C_BASE='' C_DISC='' C_PREFIX='' C_INT=''
     _seen=''
@@ -155,26 +155,26 @@ write_cfg() {
     } | write_private "$MQTT_FILE"
 }
 
-# ctl LINE...: first reply line in REPLY, exit status of "ak_rtsp ctl" in CTL_RC.
+# ctl LINE...: first reply line in REPLY, exit status of "akamd ctl" in CTL_RC.
 ctl() {
     REPLY=$("$AKAM_RTSP_BIN" ctl "$@" 2>&1)
     CTL_RC=$?
     REPLY=$(printf '%s\n' "$REPLY" | sed -n '1p')
 }
 
-# reload: tell ak_rtsp to read the files again. Returns 0 when applied or only pending a reboot.
+# reload: tell akamd to read the files again. Returns 0 when applied or only pending a reboot.
 reload() {
     ctl MQTT reload
     case $REPLY in
-        "OK mqtt.state="*) echo "Applied now: ak_rtsp reloaded the setting, the MQTT state is ${REPLY#OK mqtt.state=}."; return 0 ;;
-        OK*) echo "Applied now: ak_rtsp reloaded the setting."; return 0 ;;
-        *"unknown command"*) echo "Saved. This ak_rtsp is older and cannot reload: reboot the camera to apply."; return 0 ;;
+        "OK mqtt.state="*) echo "Applied now: akamd reloaded the setting, the MQTT state is ${REPLY#OK mqtt.state=}."; return 0 ;;
+        OK*) echo "Applied now: akamd reloaded the setting."; return 0 ;;
+        *"unknown command"*) echo "Saved. This akamd is older and cannot reload: reboot the camera to apply."; return 0 ;;
     esac
     if [ "$CTL_RC" -ne 0 ] || [ -z "$REPLY" ]; then
-        echo "Saved. ak_rtsp did not answer${REPLY:+ ($REPLY)}: it applies the next time ak_rtsp starts (reboot the camera)."
+        echo "Saved. akamd did not answer${REPLY:+ ($REPLY)}: it applies the next time akamd starts (reboot the camera)."
         return 0
     fi
-    echo "akam_mqtt: saved, but ak_rtsp refused the reload: $REPLY (reboot the camera to apply)" >&2
+    echo "akam_mqtt: saved, but akamd refused the reload: $REPLY (reboot the camera to apply)" >&2
     return 1
 }
 
@@ -185,7 +185,7 @@ pass_state() {
     _lsl=$(ls -ld "$PASS_FILE" 2>/dev/null) || { PASS_MSG="unreadable"; return 1; }
     case $_lsl in
         '-rw-------'* | '-r--------'*) PASS_MSG='set' ;;
-        *) PASS_MSG="the password file is not private (mode 0600 needed): ak_rtsp ignores it"; return 1 ;;
+        *) PASS_MSG="the password file is not private (mode 0600 needed): akamd ignores it"; return 1 ;;
     esac
     return 0
 }
@@ -296,7 +296,7 @@ do_status() {
     ctl GET mqtt.state
     case $REPLY in
         mqtt.state=*) echo "state: ${REPLY#mqtt.state=}" ;;
-        *) echo "state: unknown (this ak_rtsp does not report it)" ;;
+        *) echo "state: unknown (this akamd does not report it)" ;;
     esac
     [ "$_rc" -ne 3 ] || return 3
     return 0
@@ -311,8 +311,8 @@ do_test() {
     ctl MQTT test
     case $REPLY in
         "OK mqtt.test=running") ;;
-        *"unknown command"*) die "this ak_rtsp is older and has no connection test: update the image" ;;
-        *) die "ak_rtsp did not start the test${REPLY:+ ($REPLY)}" ;;
+        *"unknown command"*) die "this akamd is older and has no connection test: update the image" ;;
+        *) die "akamd did not start the test${REPLY:+ ($REPLY)}" ;;
     esac
     _n=0
     while [ "$_n" -lt "$TEST_TRIES" ]; do

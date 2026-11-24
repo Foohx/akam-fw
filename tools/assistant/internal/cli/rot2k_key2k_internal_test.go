@@ -69,7 +69,7 @@ func TestKey2KIsKeptAndNeverPrinted(t *testing.T) {
 func TestKey2KFailuresKeepNothingAndShowNoSecret(t *testing.T) {
 	for name, c := range map[string]*keyConn{
 		"the name exists on the camera": {status: 1, errOut: "akam_api_key: a key named assistant exists\n"},
-		"the app is not running":        {status: 1, errOut: "akam_api_key: /tmp/akam2k_rtsp not found\n"},
+		"the app is not running":        {status: 1, errOut: "akam_api_key: /tmp/akamd not found\n"},
 		"an answer without a key":       {out: "something else\n"},
 		"a malformed secret":            {out: "key_id:   3fa91c07\nsecret:   nothex\n"},
 	} {

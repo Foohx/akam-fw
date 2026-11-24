@@ -287,7 +287,7 @@ static void cfg_for(int mode, struct tl_cfg *c)
 
 static a2k_track_ops_t OPS;
 static int g_debug;                                   /* track_debug=1 for the run */
-static const char *g_area_conf;                       /* a tracking area (akam2k.conf text) for the area scenario */
+static const char *g_area_conf;                       /* a tracking area (akam.conf text) for the area scenario */
 
 static res_t run(const scen_t *s, int mode, int verbose)
 {

@@ -10,7 +10,7 @@ Akam is a personal, non-commercial project. I answer when I can and have no fixe
 
 ## Scope
 
-In scope: the camera firmware (`ak_rtsp`, `akam2k_rtsp` and the camera scripts), the PC assistants (`./akam` bash wizard and the Go
+In scope: the camera firmware (`akamd` and the camera scripts), the PC assistants (`./akam` bash wizard and the Go
 `akam` program), and the signing and verification of the release kit.
 
 Out of scope: the stock firmware and its vendors, Dropbear, SmolRTSP and other upstream projects (report to them),

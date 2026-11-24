@@ -21,7 +21,7 @@ AKAM_FEAT_TRACK  := 1
 AKAM_FEAT_SYS    := 1
 AKAM_FEAT_LIGHT  := 1
 AKAM_FEAT_ONVIF  := 1
-SHARED_AK := h264_params h264_nalu rtcp_sr rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtp_clock tx_pace net_tx md5 mqtt mqtt_ha night_logic cfg_file
+SHARED_AK := h264_params h264_nalu rtcp_sr rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtp_clock tx_pace net_tx md5 mqtt mqtt_ha night_logic cfg_file rtp_in audio_vad audio_jitter g711 audio_out talk
 # PTZ, TRACK, SCENE and PATROL gate their objects below: with one at 0 its objects (and the shared modules only it uses) are dropped and <feature>_off.c
 # is linked instead. The model code that stays (settings.c, detect.c, main.c, mqtt_bind.c, the API binding ...) calls the feature unconditionally; the
 # stand-ins answer "not available" (a refusal, an empty value, nothing), so the program links and runs without the feature.
@@ -31,7 +31,7 @@ SHARED_AK := h264_params h264_nalu rtcp_sr rtsp_sdp rtsp_auth rtsp_in rtsp_idle 
 # `c:` names a shared module of src/ (src/build/sources.mk; feature-gated when wrapped in feat_objs), the other names are sources of this
 # directory (firmware/<model>) or of the platform directory (platforms/anyka-ak3918av130), found by the pattern rules of the platform Makefile.
 # A model without a feature links none of its shared objects.
-POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring audio cap stream rtsp_session detect detstate mqtt_bind mqtt_cfg zones snap pin ircut image orient night_ctl night_run \
+POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring audio speaker cap stream rtsp_session detect detstate mqtt_bind mqtt_cfg zones snap pin ircut image picture orient night_ctl night_run \
   $(call feat_objs,SYS,c:hal_sys) \
   leds leds_run hal hal_light_sysfs \
   $(call feat_objs,LIGHT,c:light_logic c:led_pat) \
@@ -39,7 +39,7 @@ POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring 
   $(call feat_objs,BUTTON,c:hal_input) \
   hal_input_sysfs \
   $(call feat_objs,BUTTON,c:button_logic) \
-  button store $(call feat_objs,TRACK,track track_run) zlive $(call feat_objs,TRACK,c:track_logic c:track_relay) video_cfg video vlive isptest netreg \
+  button store $(call feat_objs,TRACK,track track_run) zlive $(call feat_objs,TRACK,c:track_logic c:track_relay) video_cfg video vlive isptest netreg cfgreg \
   $(call feat_objs,API,c:api_events) \
   detpub settings api_bind $(call feat_objs,API,c:api_core c:api_httpd c:http_req) \
   $(call feat_objs,BUTTON,c:button_gesture c:button_cfg) \
@@ -55,32 +55,32 @@ POC3_ORDER += $(if $(call feat_on,PTZ),,ptz_off) $(if $(call feat_on,TRACK),,tra
 # ---- helper programs of this model --------------------------------------------------------------------------------------------------------------
 # HELPERS = key:binary:argument of image/source_hash.sh. The platform Makefile builds them in the symcheck/dist targets and records them in BUILDINFO
 # (<key>_source_sha256, <key>_sha256, <key>_size). Each is plain libc, linked without the vendor libraries.
-HELPERS := sntp:akam2k_sntp:sntp mic:akam2k_mic:audio led:akam2k_led:led
+HELPERS := sntp:akam-sntp:sntp mic:akam-mic:audio led:akam-led:led
 .PHONY: sntp mic led
 
-# akam2k_sntp: the one-shot SNTP client that stands in for the missing BusyBox ntpd (helpers/sntp of the model, host-tested core). It uses
+# akam-sntp: the one-shot SNTP client that stands in for the missing BusyBox ntpd (helpers/sntp of the model, host-tested core). It uses
 # plain libc only (sockets, getaddrinfo, settimeofday): no ctype, no vendor lib, no SmolRTSP.
 SNTP_SRC := $(MODEL_DIR)/helpers/sntp/sntp.c $(MODEL_DIR)/helpers/sntp/sntp_core.c
-sntp: $(OUT)/akam2k_sntp
-$(OUT)/akam2k_sntp: $(SNTP_SRC) $(MODEL_DIR)/helpers/sntp/sntp_core.h
+sntp: $(OUT)/akam-sntp
+$(OUT)/akam-sntp: $(SNTP_SRC) $(MODEL_DIR)/helpers/sntp/sntp_core.h
 	@test -x "$(CC)" || { echo "toolchain missing: run fetch_toolchain.sh"; exit 1; }
 	@mkdir -p $(OUT)
 	$(CC) -std=gnu99 $(CFLAGS) -I$(MODEL_DIR)/helpers/sntp -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(SNTP_SRC)
 
-# akam2k_mic: the standalone microphone PoC (helpers/mic of the model, host-tested core). Plain libc only, no vendor lib, no libm. A manual
+# akam-mic: the standalone microphone PoC (helpers/mic of the model, host-tested core). Plain libc only, no vendor lib, no libm. A manual
 # tool: copied by hand to /tmp on the camera, never installed by build_card.sh.
 MIC_SRC := $(MODEL_DIR)/helpers/mic/mic.c $(MODEL_DIR)/helpers/mic/mic_core.c
-mic: $(OUT)/akam2k_mic
-$(OUT)/akam2k_mic: $(MIC_SRC) $(MODEL_DIR)/helpers/mic/mic_core.h
+mic: $(OUT)/akam-mic
+$(OUT)/akam-mic: $(MIC_SRC) $(MODEL_DIR)/helpers/mic/mic_core.h
 	@test -x "$(CC)" || { echo "toolchain missing: run fetch_toolchain.sh"; exit 1; }
 	@mkdir -p $(OUT)
 	$(CC) -std=gnu99 $(CFLAGS) -I$(MODEL_DIR)/helpers/mic -I$(SRC_DIR)/hal -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(MIC_SRC)
 
-# akam2k_led: the light PoC / control tool (hal_light: portable logic + generic sysfs driver + the 2K descriptor). Plain libc only,
+# akam-led: the light PoC / control tool (hal_light: portable logic + generic sysfs driver + the 2K descriptor). Plain libc only,
 # no vendor lib. A manual tool: copied by hand to /tmp on the camera, never installed by build_card.sh.
 LED_SRC := $(MODEL_DIR)/helpers/led/led.c $(call common_src,light_logic) $(MODEL_DIR)/hal_light_sysfs.c $(MODEL_DIR)/hal.c $(MODEL_DIR)/pin.c
-led: $(OUT)/akam2k_led
-$(OUT)/akam2k_led: $(LED_SRC) $(SRC_DIR)/hal/hal_light.h $(SRC_DIR)/features/light/light_logic.h $(MODEL_DIR)/hal.h $(MODEL_DIR)/pin.h
+led: $(OUT)/akam-led
+$(OUT)/akam-led: $(LED_SRC) $(SRC_DIR)/hal/hal_light.h $(SRC_DIR)/features/light/light_logic.h $(MODEL_DIR)/hal.h $(MODEL_DIR)/pin.h
 	@test -x "$(CC)" || { echo "toolchain missing: run fetch_toolchain.sh"; exit 1; }
 	@mkdir -p $(OUT)
 	$(CC) -std=gnu99 $(CFLAGS) -I. -I$(MODEL_DIR) -I$(MODEL_DIR)/helpers/ptz $(common_inc) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(LED_SRC)

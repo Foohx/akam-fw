@@ -1,12 +1,12 @@
 #!/bin/sh
-# own_app_run.sh -- tiny supervisor of akam2k_rtsp (the Rotatable 2K own app) for lsc-rotatable-2k-ak3918av130.
+# own_app_run.sh -- tiny supervisor of akamd (the Rotatable 2K own app) for lsc-rotatable-2k-ak3918av130.
 # Started in the background by own_app_stub.sh once the stub is "healthy" (network up). Never run by hand on the
 # camera, except for tests. It is a SEPARATE process: whatever happens here (a crash loop, a broken card file, a
 # missing binary) cannot touch the stub's watchdog feeder or the Wi-Fi it set up. It only ever exits itself.
 #
-#   1  akam/bin/akam2k_rtsp is copied to /tmp (FAT exec quirks) and its sha256 must equal the sha256= of
-#      akam/bin/akam2k_rtsp.BUILDINFO (and the copy is verified again): a mismatch or a missing hash tool = refuse.
-#   2  options from the optional akam/akam2k.conf (key=value, # comments). Allowed keys and ranges:
+#   1  akam/bin/akamd is copied to /tmp (FAT exec quirks) and its sha256 must equal the sha256= of
+#      akam/bin/akamd.BUILDINFO (and the copy is verified again): a mismatch or a missing hash tool = refuse.
+#   2  options from the optional akam/akam.conf (key=value, # comments). Allowed keys and ranges:
 #      main_kbps 64..8000 (default 2000), sub_kbps 32..1000 (default 800; the sub is 640x360 H.264 Main, QP 26..44; the 128 KiB sub frame cap holds an IDR up to ~1 Mbit/s), sub_res 640x360 (the only size this SoC supports, accepted for old confs; any other value is logged and ignored), gop 1..300 (default: the app's), port
 #      1..65535 (default: the app's); the encoder of each stream (0 = main, 1 = sub, the defaults are unchanged): video0_kbps 64..8000 / video1_kbps 32..1000
 #      (target bit rate; they win over main_kbps / sub_kbps), video<N>_max_kbps 0 (automatic, 1.25 x the target) or 64..12000 / 32..1500 (peak),
@@ -22,7 +22,7 @@
 #      (the default stays): a typo never keeps the camera from streaming. Values are digits only, never evaluated.
 #      The conf is re-read before every app (re)start, so a change applies when the app restarts.
 #   3  the app runs with LD_LIBRARY_PATH=/appfs/lib (the camera's own vendor libs), stdout and stderr appended to
-#      akam/akam2k.log. The log is size capped: above 256 KiB it is copied to akam2k.log.1 (one generation, so
+#      akam/akam.log. The log is size capped: above 256 KiB it is copied to akam.log.1 (one generation, so
 #      512 KiB at most) and truncated in place, checked every few seconds and at every start.
 #   4  restart on exit with exponential backoff (2 s, 4 s ... capped at 60 s; a run of 120 s or more resets it).
 #      More than 5 exits within 10 minutes: give up, log it, and exit (the camera stays reachable by SSH).
@@ -45,11 +45,22 @@ else
     log() { :; }
 fi
 
-BIN=$AK/bin/akam2k_rtsp
-INFO=$AK/bin/akam2k_rtsp.BUILDINFO
-CONF=$AK/akam2k.conf
-APPLOG=$AK/akam2k.log
-RUN=$TMP/akam2k_rtsp
+BIN=$AK/bin/akamd
+INFO=$AK/bin/akamd.BUILDINFO
+CONF=$AK/akam.conf
+# 0.1.x named the file akam2k.conf. Update from such an install: when akam.conf does not exist yet, the old file is
+# copied once (the old one stays, so an old image can still be put back). When the copy is impossible (read-only
+# card) the old file is read in place. The old log name akam2k.log is never read nor written: a leftover file is harmless.
+if [ ! -e "$CONF" ] && [ -f "$AK/akam2k.conf" ]; then
+    if cp "$AK/akam2k.conf" "$CONF.new" 2>/dev/null && mv -f "$CONF.new" "$CONF" 2>/dev/null; then
+        log own_app "akam2k.conf migrated to akam.conf (the old file is kept)"
+    else
+        rm -f "$CONF.new" 2>/dev/null
+        CONF=$AK/akam2k.conf
+    fi
+fi
+APPLOG=$AK/akam.log
+RUN=$TMP/akamd
 LIBS=${AKAM_APP_LIBS:-$ROOT/appfs/lib}
 BO_MIN=${AKAM_APP_BACKOFF_MIN:-2}
 BO_MAX=${AKAM_APP_BACKOFF_MAX:-60}
@@ -64,7 +75,7 @@ SLP=""
 STOPPING=0
 
 # now: seconds on a MONOTONIC clock (/proc/uptime, first field, integer part). The camera boots in 1970 and the opt-in time
-# sync (akam2k_sntp) steps the wall clock forward by ~1.8e9 s once: crash windows, "stable run" and backoff must not see
+# sync (akam-sntp) steps the wall clock forward by ~1.8e9 s once: crash windows, "stable run" and backoff must not see
 # that step. Falls back to date +%s only when /proc/uptime is unreadable (tests that fake the root).
 UPTIME=${AKAM_APP_UPTIME:-$ROOT/proc/uptime}
 now() {
@@ -75,7 +86,7 @@ now() {
 }
 
 # motor_stop: the app is gone (it crashed, was killed or was stopped): a continuous motor move has no hardware dead-man, so ask the app binary for ONE stop request on the motor node
-# (`akam2k_rtsp --ptz-stop`: open, stop, exit; no other request). Best effort, bounded by the binary's own exit, never blocks the restart.
+# (`akamd --ptz-stop`: open, stop, exit; no other request). Best effort, bounded by the binary's own exit, never blocks the restart.
 motor_stop() {
     [ -x "$RUN" ] || return 0
     LD_LIBRARY_PATH=$LIBS "$RUN" --ptz-stop >/dev/null 2>&1 </dev/null
@@ -140,7 +151,7 @@ stop_app() {
             i=$((i + 1))
         done
         if kill -0 "$APP" 2>/dev/null; then
-            log own_app "akam2k_rtsp did not stop within $STOP_WAIT s: SIGKILL"
+            log own_app "akamd did not stop within $STOP_WAIT s: SIGKILL"
             kill -KILL "$APP" 2>/dev/null
         fi
     fi
@@ -148,7 +159,7 @@ stop_app() {
     APP=""
     motor_stop
 }
-trap 'STOPPING=1; [ -z "$SLP" ] || kill "$SLP" 2>/dev/null; log own_app "supervisor got a stop signal: stopping akam2k_rtsp"; stop_app; log own_app "supervisor stopped"; exit 0' TERM INT
+trap 'STOPPING=1; [ -z "$SLP" ] || kill "$SLP" 2>/dev/null; log own_app "supervisor got a stop signal: stopping akamd"; stop_app; log own_app "supervisor stopped"; exit 0' TERM INT
 
 # is_sha256 <string>: 64 lowercase hex digits.
 is_sha256() {
@@ -166,28 +177,28 @@ sha_of() {
 
 # prepare: verified copy of the app in /tmp. 0 = ready, 1 = refused (logged).
 prepare() {
-    [ -f "$BIN" ] || { log own_app "akam2k_rtsp: $BIN missing"; return 1; }
+    [ -f "$BIN" ] || { log own_app "akamd: $BIN missing"; return 1; }
     want=$(sed -n 's/^sha256=//p' "$INFO" 2>/dev/null | head -n1)
-    is_sha256 "$want" || { log own_app "akam2k_rtsp refused: no valid sha256= in $INFO"; return 1; }
-    got=$(sha_of "$BIN") || { log own_app "akam2k_rtsp refused: cannot compute a sha256 (no applet)"; return 1; }
-    [ "$got" = "$want" ] || { log own_app "akam2k_rtsp refused: sha256 of the card file does not match BUILDINFO"; return 1; }
+    is_sha256 "$want" || { log own_app "akamd refused: no valid sha256= in $INFO"; return 1; }
+    got=$(sha_of "$BIN") || { log own_app "akamd refused: cannot compute a sha256 (no applet)"; return 1; }
+    [ "$got" = "$want" ] || { log own_app "akamd refused: sha256 of the card file does not match BUILDINFO"; return 1; }
     mkdir -p "$TMP" 2>/dev/null
     rm -f "$RUN"
     if ! { cp "$BIN" "$RUN" 2>/dev/null && chmod 755 "$RUN"; }; then
-        log own_app "akam2k_rtsp refused: cannot copy it to $TMP"
+        log own_app "akamd refused: cannot copy it to $TMP"
         return 1
     fi
     got=$(sha_of "$RUN") || got=""
     if [ "$got" != "$want" ]; then
-        log own_app "akam2k_rtsp refused: the copy in $TMP does not match BUILDINFO"
+        log own_app "akamd refused: the copy in $TMP does not match BUILDINFO"
         rm -f "$RUN"
         return 1
     fi
-    log own_app "akam2k_rtsp verified (sha256 $want), copied to $RUN"
+    log own_app "akamd verified (sha256 $want), copied to $RUN"
     return 0
 }
 
-# read_conf: sets ARGS (a word list of validated "-x number" options) from akam2k.conf.
+# read_conf: sets ARGS (a word list of validated "-x number" options) from akam.conf.
 ARGS=""
 read_conf() {
     ARGS=""
@@ -200,7 +211,7 @@ read_conf() {
         case $line in
             *=*) ;;
             *)
-                [ -z "$(echo "$line" | tr -d ' \t\r')" ] || log own_app "akam2k.conf line $n ignored: not key=value"
+                [ -z "$(echo "$line" | tr -d ' \t\r')" ] || log own_app "akam.conf line $n ignored: not key=value"
                 continue
                 ;;
         esac
@@ -212,15 +223,15 @@ read_conf() {
                 # colons only, never evaluated; the app validates the numbers and keeps its default for a bad one)
                 case $k:$v in
                     led:auto | led:on | led:off) ARGS="$ARGS --led $v" ;;
-                    led:*) log own_app "akam2k.conf line $n ignored: led must be auto, on or off" ;;
+                    led:*) log own_app "akam.conf line $n ignored: led must be auto, on or off" ;;
                     *:on | *:off) ARGS="$ARGS --$(echo "$k" | tr _ -) $v" ;;
                     *:[0-9]*:[0-9]*:[0-9]*:[0-9]*)
                         case $v in
-                            *[!0-9:]* | *:*:*:*:*) log own_app "akam2k.conf line $n ignored: $k is not a pattern" ;;
+                            *[!0-9:]* | *:*:*:*:*) log own_app "akam.conf line $n ignored: $k is not a pattern" ;;
                             *) ARGS="$ARGS --$(echo "$k" | tr _ -) $v" ;;
                         esac
                         ;;
-                    *) log own_app "akam2k.conf line $n ignored: $k must be on, off or N:on_ms:off_ms:pause_ms" ;;
+                    *) log own_app "akam.conf line $n ignored: $k must be on, off or N:on_ms:off_ms:pause_ms" ;;
                 esac
                 continue
                 ;;
@@ -230,9 +241,9 @@ read_conf() {
                     ptz_drift_correct:off | ptz_drift_correct:adjust | ptz_drift_correct:full) ARGS="$ARGS --ptz-drift-correct $v" ;;
                     ptz_boot_calibrate:auto | ptz_boot_calibrate:always) ARGS="$ARGS --ptz-boot-calibrate $v" ;;
                     ptz_tilt_rehome:off | ptz_tilt_rehome:idle) ARGS="$ARGS --ptz-tilt-rehome $v" ;;
-                    ptz_tilt_rehome:*) log own_app "akam2k.conf line $n ignored: ptz_tilt_rehome must be off or idle" ;;
-                    ptz_drift_correct:*) log own_app "akam2k.conf line $n ignored: ptz_drift_correct must be off, adjust or full" ;;
-                    *) log own_app "akam2k.conf line $n ignored: ptz_boot_calibrate must be auto or always" ;;
+                    ptz_tilt_rehome:*) log own_app "akam.conf line $n ignored: ptz_tilt_rehome must be off or idle" ;;
+                    ptz_drift_correct:*) log own_app "akam.conf line $n ignored: ptz_drift_correct must be off, adjust or full" ;;
+                    *) log own_app "akam.conf line $n ignored: ptz_boot_calibrate must be auto or always" ;;
                 esac
                 continue
                 ;;
@@ -241,28 +252,28 @@ read_conf() {
                 # and one colon, the park position; the app range-checks it against the soft range)
                 case $k:$v in
                     ptz_cal:auto | ptz_cal:off) ARGS="$ARGS --ptz-cal $v" ;;
-                    ptz_cal:*) log own_app "akam2k.conf line $n ignored: ptz_cal must be auto or off" ;;
+                    ptz_cal:*) log own_app "akam.conf line $n ignored: ptz_cal must be auto or off" ;;
                     ptz_park:[0-9]*:[0-9]*)
                         case $v in
-                            *[!0-9:]* | *:*:*) log own_app "akam2k.conf line $n ignored: ptz_park must be PAN:TILT" ;;
+                            *[!0-9:]* | *:*:*) log own_app "akam.conf line $n ignored: ptz_park must be PAN:TILT" ;;
                             *) ARGS="$ARGS --ptz-park $v" ;;
                         esac
                         ;;
-                    *) log own_app "akam2k.conf line $n ignored: ptz_park must be PAN:TILT" ;;
+                    *) log own_app "akam.conf line $n ignored: ptz_park must be PAN:TILT" ;;
                 esac
                 continue
                 ;;
             track_lost_policy)
                 # person tracking, what to do when the person is lost: "none" or steps joined by commas: hold:N backsweep exit local:W:D:N route:NAME[:N] home stay (see tracking.md).
                 # Validated here word by word (an invalid value would make the app refuse to start): the whole value or nothing.
-                if lost_policy_ok "$v"; then ARGS="$ARGS --track-lost-policy $v"; else log own_app "akam2k.conf line $n ignored: track_lost_policy is not a valid chain"; fi
+                if lost_policy_ok "$v"; then ARGS="$ARGS --track-lost-policy $v"; else log own_app "akam.conf line $n ignored: track_lost_policy is not a valid chain"; fi
                 continue
                 ;;
             track_motion)
                 # person tracking motion: continuous (one ongoing move, re-targeted without a stop) | steps (timed nudges, the fallback); an exact word, never evaluated
                 case $v in
                     continuous | steps) ARGS="$ARGS --track-motion $v" ;;
-                    *) log own_app "akam2k.conf line $n ignored: track_motion must be continuous or steps" ;;
+                    *) log own_app "akam.conf line $n ignored: track_motion must be continuous or steps" ;;
                 esac
                 continue
                 ;;
@@ -270,7 +281,7 @@ read_conf() {
                 # person tracking, what to do when the person is gone: home | stay (default stay); an exact word, never evaluated
                 case $v in
                     home | stay) ARGS="$ARGS --track-return $v" ;;
-                    *) log own_app "akam2k.conf line $n ignored: track_return must be home or stay" ;;
+                    *) log own_app "akam.conf line $n ignored: track_return must be home or stay" ;;
                 esac
                 continue
                 ;;
@@ -278,7 +289,7 @@ read_conf() {
                 # the scene check threshold: 0.80 .. 0.999 (the app parses it again and refuses anything else)
                 case $v in
                     0.[8-9] | 0.[8-9][0-9] | 0.[8-9][0-9][0-9] | 1 | 1.0) ARGS="$ARGS --ptz-scene-min $v" ;;
-                    *) log own_app "akam2k.conf line $n ignored: ptz_scene_min must be 0.80..0.99" ;;
+                    *) log own_app "akam.conf line $n ignored: ptz_scene_min must be 0.80..0.99" ;;
                 esac
                 continue
                 ;;
@@ -287,18 +298,18 @@ read_conf() {
                 # app checks the order and the soft range and drops a bad one). The name is [a-z][a-z0-9_]{0,15}; at most 4 areas are passed.
                 an=${k#track_area_}
                 case $an in
-                    '' | [!a-z]* | *[!a-z0-9_]*) log own_app "akam2k.conf line $n ignored: $k has a bad area name" ;;
+                    '' | [!a-z]* | *[!a-z0-9_]*) log own_app "akam.conf line $n ignored: $k has a bad area name" ;;
                     *)
                         if [ "${#an}" -gt 16 ]; then
-                            log own_app "akam2k.conf line $n ignored: $k has a bad area name"
+                            log own_app "akam.conf line $n ignored: $k has a bad area name"
                         else
                             case $v in
                                 [0-9]*:[0-9]*:[0-9]*:[0-9]*)
                                     case $v in
-                                        *[!0-9:]* | *:*:*:*:* | *::* | *: | *[0-9][0-9][0-9][0-9][0-9][0-9]*) log own_app "akam2k.conf line $n ignored: $k must be PMIN:PMAX:TMIN:TMAX" ;;
+                                        *[!0-9:]* | *:*:*:*:* | *::* | *: | *[0-9][0-9][0-9][0-9][0-9][0-9]*) log own_app "akam.conf line $n ignored: $k must be PMIN:PMAX:TMIN:TMAX" ;;
                                         *)
                                             if [ "$NAREA" -ge 4 ]; then
-                                                log own_app "akam2k.conf line $n ignored: at most 4 tracking areas"
+                                                log own_app "akam.conf line $n ignored: at most 4 tracking areas"
                                             else
                                                 NAREA=$((NAREA + 1))
                                                 ARGS="$ARGS --track-area $an=$v"
@@ -306,7 +317,7 @@ read_conf() {
                                             ;;
                                     esac
                                     ;;
-                                *) log own_app "akam2k.conf line $n ignored: $k must be PMIN:PMAX:TMIN:TMAX" ;;
+                                *) log own_app "akam.conf line $n ignored: $k must be PMIN:PMAX:TMIN:TMAX" ;;
                             esac
                         fi
                         ;;
@@ -316,21 +327,21 @@ read_conf() {
             track_lag_ms) # the only signed number: -150..300 (a negative lag is allowed), matched by exact patterns, never evaluated
                 case $v in
                     0 | [1-9] | [1-9][0-9] | [12][0-9][0-9] | 300 | -[1-9] | -[1-9][0-9] | -1[0-4][0-9] | -150) ARGS="$ARGS --track-lag-ms=$v" ;;
-                    *) log own_app "akam2k.conf line $n ignored: track_lag_ms must be -150..300" ;;
+                    *) log own_app "akam.conf line $n ignored: track_lag_ms must be -150..300" ;;
                 esac
                 continue
                 ;;
             video0_rc | video1_rc) # the encoder rate-control mode of a stream: an exact word, never evaluated
                 case $v in
                     vbr | cbr | avbr) ARGS="$ARGS --$(echo "$k" | tr _ -) $v" ;;
-                    *) log own_app "akam2k.conf line $n ignored: $k must be vbr, cbr or avbr" ;;
+                    *) log own_app "akam.conf line $n ignored: $k must be vbr, cbr or avbr" ;;
                 esac
                 continue
                 ;;
             sub_res) # 640x360 is the only sub size (3DNR buffer / venc DMA pool of the 64 MB config, venc-live-params.md section 8): exact word, never evaluated
                 case $v in
                     640x360) ;;
-                    *) log own_app "akam2k.conf line $n ignored: sub_res $v unsupported on this SoC (sub max 640x480: 3DNR buffer / venc DMA pool)" ;;
+                    *) log own_app "akam.conf line $n ignored: sub_res $v unsupported on this SoC (sub max 640x480: 3DNR buffer / venc DMA pool)" ;;
                 esac
                 continue
                 ;;
@@ -338,21 +349,21 @@ read_conf() {
                 case $k:$v in
                     night:auto | night:day | night:night) ARGS="$ARGS --night $v" ;;
                     ir_led:auto | ir_led:off) ARGS="$ARGS --ir-led $v" ;;
-                    night:*) log own_app "akam2k.conf line $n ignored: night must be auto, day or night" ;;
-                    *) log own_app "akam2k.conf line $n ignored: ir_led must be auto or off" ;;
+                    night:*) log own_app "akam.conf line $n ignored: night must be auto, day or night" ;;
+                    *) log own_app "akam.conf line $n ignored: ir_led must be auto or off" ;;
                 esac
                 continue
                 ;;
         esac
         case $v in '' | *[!0-9]*)
-            log own_app "akam2k.conf line $n ignored: $k needs a number"
+            log own_app "akam.conf line $n ignored: $k needs a number"
             continue
             ;;
         esac
         v=$(echo "$v" | sed 's/^0*//')
         [ -n "$v" ] || v=0
         if [ "${#v}" -gt 5 ]; then
-            log own_app "akam2k.conf line $n ignored: $k out of range"
+            log own_app "akam.conf line $n ignored: $k out of range"
             continue
         fi
         case $k in
@@ -415,21 +426,21 @@ read_conf() {
             video0_min_qp | video0_max_qp | video1_min_qp | video1_max_qp) lo=10 hi=51 opt=--$(echo "$k" | tr _ -) ;;
             video0_gop | video1_gop) lo=1 hi=300 opt=--$(echo "$k" | tr _ -) ;;
             *)
-                log own_app "akam2k.conf line $n ignored: unknown key"
+                log own_app "akam.conf line $n ignored: unknown key"
                 continue
                 ;;
         esac
         if [ "$v" -lt "$lo" ] || [ "$v" -gt "$hi" ]; then
-            log own_app "akam2k.conf line $n ignored: $k must be $lo..$hi"
+            log own_app "akam.conf line $n ignored: $k must be $lo..$hi"
             continue
         fi
         # a peak bit rate is 0 (automatic) or at least the lowest target of its stream
         if { [ "$k" = video0_max_kbps ] && [ "$v" -ne 0 ] && [ "$v" -lt 64 ]; } || { [ "$k" = video1_max_kbps ] && [ "$v" -ne 0 ] && [ "$v" -lt 32 ]; }; then
-            log own_app "akam2k.conf line $n ignored: $k must be 0 (automatic) or at least the lowest target (64 main, 32 sub)"
+            log own_app "akam.conf line $n ignored: $k must be 0 (automatic) or at least the lowest target (64 main, 32 sub)"
             continue
         fi
         if [ "$k" = mains_hz ] && [ "$v" != 50 ] && [ "$v" != 60 ]; then
-            log own_app "akam2k.conf line $n ignored: mains_hz must be 50 or 60"
+            log own_app "akam.conf line $n ignored: mains_hz must be 50 or 60"
             continue
         fi
         ARGS="$ARGS $opt $v"
@@ -476,6 +487,231 @@ net_request() {
     return 0
 }
 
+# --- cfg_request begin
+# cfg_request: the user-file settings of the control API (cfgreg.h: audio.mic_enable, mqtt.*, onvif.*, rtsp.user / rtsp.password, ntp.servers). The app
+# writes ONE request file $TMP/akam_cfg.req (mode 0600: it may hold a password), key=value lines, one PATCH. It is taken whole (renamed, so the app can
+# queue the next one), every line is validated again here, and NOTHING is written unless every line is valid and consistent. Files are written only when
+# their content changes (flash wear), atomically, mode 0600. In the card-less image the files live in /config/akam and are linked into the Akam tree
+# (the modules read $AK/<file>); with a card they are the card's files. The password never appears in a command line or a log (only builtins and pipes);
+# the result is one word in $TMP/akam_cfg.res: ok | refused KEY | failed.
+CFGD=${AKAM_CONFIG:-$ROOT/config}/akam
+
+# cfg_target FILE: where the file really lives
+cfg_target() {
+    if [ -L "$SD/busybox" ]; then echo "$CFGD/$1"; else echo "$AK/$1"; fi
+}
+
+# cfg_put FILE TMPFILE: the new content (a file made next to the target) replaces the old one only when it differs
+cfg_put() {
+    _t=$(cfg_target "$1")
+    if [ -f "$_t" ] && [ "$(md5sum <"$_t")" = "$(md5sum <"$2")" ]; then
+        rm -f "$2"
+        return 0
+    fi
+    mv -f "$2" "$_t" || {
+        rm -f "$2"
+        return 1
+    }
+    chmod 600 "$_t" 2>/dev/null
+    if [ -L "$SD/busybox" ] && [ ! -e "$AK/$1" ]; then ln -sf "$_t" "$AK/$1"; fi
+    return 0
+}
+
+cfg_rm() {
+    rm -f "$(cfg_target "$1")"
+    if [ -L "$SD/busybox" ]; then rm -f "$AK/$1"; fi
+}
+
+cfg_new() { # a private empty file next to the target of $1; its name on stdout
+    _d=$(cfg_target "$1")
+    mkdir -p "${_d%/*}" 2>/dev/null
+    (umask 077 && : >"${_d%/*}/.$1.new") && echo "${_d%/*}/.$1.new"
+}
+
+cfg_isuser() { # 1 to 32 of A-Z a-z 0-9 . _ @ + -, not a lone -
+    case $1 in '' | - | *[!A-Za-z0-9._@+-]*) return 1 ;; esac
+    [ ${#1} -le 32 ]
+}
+
+cfg_ishost() { # 1 to 63 of A-Z a-z 0-9 . -
+    case $1 in '' | *[!A-Za-z0-9.-]*) return 1 ;; esac
+    [ ${#1} -le 63 ]
+}
+
+cfg_isname() { # a NTP server: a host name or an IPv4 address (labels of letters, digits and inner hyphens)
+    case $1 in '' | *[!A-Za-z0-9.-]*) return 1 ;; -* | .* | *..* | *. | *.-) return 1 ;; esac
+    [ ${#1} -le 253 ]
+}
+
+cfg_isnum() { # $1 is a number from $2 to $3 without leading zero
+    case $1 in '' | *[!0-9]* | 0?*) return 1 ;; esac
+    [ ${#1} -le 5 ] && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]
+}
+
+# cfg_conf_set KEY VALUE: the line key=value of akam.conf replaced (or appended), the other lines untouched
+cfg_conf_set() {
+    _n=$(cfg_new akam.conf) || return 1
+    _f=$(cfg_target akam.conf)
+    # first write after an update from 0.1.x: start from the old akam2k.conf (this write creates akam.conf)
+    [ -f "$_f" ] || { _o=$(cfg_target akam2k.conf); [ ! -f "$_o" ] || _f=$_o; }
+    if [ -f "$_f" ]; then
+        while IFS= read -r _l || [ -n "$_l" ]; do
+            _s=$(echo "${_l%%#*}" | tr -d ' \t\r')
+            case $_s in "$1"=*) ;; *) printf '%s\n' "$_l" >>"$_n" ;; esac
+        done <"$_f"
+    fi
+    printf '%s=%s\n' "$1" "$2" >>"$_n"
+    cfg_put akam.conf "$_n"
+}
+
+# cfg_mqtt_get KEY: the value of KEY in the current mqtt file
+cfg_mqtt_get() {
+    _v=
+    _f=$(cfg_target mqtt)
+    [ -f "$_f" ] || return 0
+    while IFS= read -r _l || [ -n "$_l" ]; do
+        case $_l in "$1"=*) _v=${_l#*=} ;; esac
+    done <"$_f"
+    echo "${_v:-}"
+}
+
+# cfg_apply FILE: 0 applied, 1 refused (cfg_why names the key), 2 failed to write
+cfg_apply() {
+    s_mic='' s_me='' s_mh='' s_mp='' s_mu='' s_mw='' s_oe='' s_op='' s_ru='' s_rw='' s_ns=''
+    c_mic='' c_me='' c_mh='' c_mp='' c_mu='' c_mw='' c_oe='' c_op='' c_ru='' c_rw='' c_ns='' cfg_why=''
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        _k=${_line%%=*}
+        _v=${_line#*=}
+        case $_k in
+        audio.mic_enable) case $_v in 0 | 1) s_mic=1 c_mic=$_v ;; *) cfg_why=$_k ;; esac ;;
+        mqtt.enabled) case $_v in 0 | 1) s_me=1 c_me=$_v ;; *) cfg_why=$_k ;; esac ;;
+        mqtt.host) if [ -z "$_v" ] || cfg_ishost "$_v"; then s_mh=1 c_mh=$_v; else cfg_why=$_k; fi ;;
+        mqtt.port) if cfg_isnum "$_v" 1 65535; then s_mp=1 c_mp=$_v; else cfg_why=$_k; fi ;;
+        mqtt.user) if [ -z "$_v" ] || cfg_isuser "$_v"; then s_mu=1 c_mu=$_v; else cfg_why=$_k; fi ;;
+        mqtt.password) case $_v in *[[:cntrl:]]*) cfg_why=$_k ;; *) if [ ${#_v} -le 128 ]; then s_mw=1 c_mw=$_v; else cfg_why=$_k; fi ;; esac ;;
+        onvif.enabled) case $_v in 0 | 1) s_oe=1 c_oe=$_v ;; *) cfg_why=$_k ;; esac ;;
+        onvif.port) if cfg_isnum "$_v" 1024 65535; then s_op=1 c_op=$_v; else cfg_why=$_k; fi ;;
+        rtsp.user) if [ -z "$_v" ] || cfg_isuser "$_v"; then s_ru=1 c_ru=$_v; else cfg_why=$_k; fi ;;
+        rtsp.password) case $_v in *[[:cntrl:]]*) cfg_why=$_k ;; *) if [ ${#_v} -ge 8 ] && [ ${#_v} -le 128 ]; then s_rw=1 c_rw=$_v; else cfg_why=$_k; fi ;; esac ;;
+        ntp.servers)
+            c_ns=
+            _cnt=0
+            _bad=
+            for _w in $_v; do
+                _cnt=$((_cnt + 1))
+                cfg_isname "$_w" || _bad=1
+            done
+            if [ -z "$_bad" ] && [ "$_cnt" -le 3 ]; then s_ns=1 c_ns=$_v; else cfg_why=$_k; fi
+            ;;
+        *) cfg_why=$_k ;;
+        esac
+        [ -z "$cfg_why" ] || return 1
+    done <"$1"
+    _auth_file=$(cfg_target rtsp.conf)
+    _cur_user=
+    if [ -f "$_auth_file" ]; then
+        IFS= read -r _al <"$_auth_file"
+        _cur_user=${_al%%:*}
+        case $_al in *:akam:????????????????????????????????) ;; *) _cur_user= ;; esac
+    fi
+    # consistency (the same rules as the registry of the app): all or nothing
+    if [ -n "$s_rw" ]; then
+        if [ -n "$s_ru" ]; then [ -n "$c_ru" ] || { cfg_why=rtsp.password; return 1; }; else [ -n "$_cur_user" ] || { cfg_why=rtsp.password; return 1; }; fi
+    elif [ -n "$s_ru" ] && [ -n "$c_ru" ] && [ "$c_ru" != "$_cur_user" ]; then
+        cfg_why=rtsp.user
+        return 1 # another user needs its password: only the password makes the hash
+    fi
+    if [ -n "$s_oe" ] && [ "$c_oe" = 1 ]; then
+        if [ -n "$s_ru" ]; then [ -n "$c_ru" ] || { cfg_why=onvif.enabled; return 1; }; else [ -n "$_cur_user" ] || { cfg_why=onvif.enabled; return 1; }; fi
+    fi
+    _fh=$c_mh
+    [ -n "$s_mh" ] || _fh=$(cfg_mqtt_get host)
+    _fu=$c_mu
+    [ -n "$s_mu" ] || _fu=$(cfg_mqtt_get user)
+    _fe=$c_me
+    [ -n "$s_me" ] || _fe=$(cfg_mqtt_get enabled)
+    if [ "$_fe" = 1 ] && [ -z "$_fh" ]; then
+        cfg_why=mqtt.enabled
+        return 1
+    fi
+    if [ -n "$s_mw" ] && [ -n "$c_mw" ] && [ -z "$_fu" ]; then
+        cfg_why=mqtt.password
+        return 1
+    fi
+    # everything is valid: write
+    if [ -n "$s_mic" ]; then cfg_conf_set audio "$c_mic" || return 2; fi
+    if [ -n "$s_oe" ]; then cfg_conf_set onvif "$c_oe" || return 2; fi
+    if [ -n "$s_op" ]; then cfg_conf_set onvif_port "$c_op" || return 2; fi
+    if [ -n "$s_ns" ]; then
+        if [ -z "$c_ns" ]; then
+            cfg_rm ntp
+        else
+            _n=$(cfg_new ntp) || return 2
+            for _w in $c_ns; do printf 'server=%s\n' "$_w" >>"$_n"; done
+            cfg_put ntp "$_n" || return 2
+        fi
+    fi
+    if [ -n "$s_ru" ] || [ -n "$s_rw" ]; then
+        if [ -n "$s_ru" ] && [ -z "$c_ru" ]; then
+            cfg_rm rtsp.conf
+        elif [ -n "$s_rw" ]; then
+            _u=$c_ru
+            [ -n "$s_ru" ] || _u=$_cur_user
+            _h=$(printf '%s' "$_u:akam:$c_rw" | md5sum | cut -d' ' -f1)
+            _n=$(cfg_new rtsp.conf) || return 2
+            printf '%s:akam:%s\n' "$_u" "$_h" >"$_n"
+            cfg_put rtsp.conf "$_n" || return 2
+        fi
+    fi
+    if [ -n "$s_me$s_mh$s_mp$s_mu" ]; then
+        _fp=$c_mp
+        [ -n "$s_mp" ] || _fp=$(cfg_mqtt_get port)
+        if [ -z "$_fh" ]; then
+            cfg_rm mqtt
+            cfg_rm mqtt_pass
+        else
+            _n=$(cfg_new mqtt) || return 2
+            printf 'enabled=%s\nhost=%s\n' "${_fe:-0}" "$_fh" >>"$_n"
+            [ -z "$_fp" ] || printf 'port=%s\n' "$_fp" >>"$_n"
+            [ -z "$_fu" ] || printf 'user=%s\n' "$_fu" >>"$_n"
+            _f=$(cfg_target mqtt)
+            if [ -f "$_f" ]; then # the options the user set by hand (client_id, base_topic, discovery ...) are kept
+                while IFS= read -r _l || [ -n "$_l" ]; do
+                    case $_l in enabled=* | host=* | port=* | user=* | '') ;; *) printf '%s\n' "$_l" >>"$_n" ;; esac
+                done <"$_f"
+            fi
+            cfg_put mqtt "$_n" || return 2
+            if [ -z "$_fu" ]; then cfg_rm mqtt_pass; fi
+        fi
+    fi
+    if [ -n "$s_mw" ] && [ -n "$_fh" ]; then
+        if [ -z "$c_mw" ]; then
+            cfg_rm mqtt_pass
+        else
+            _n=$(cfg_new mqtt_pass) || return 2
+            printf '%s\n' "$c_mw" >"$_n"
+            cfg_put mqtt_pass "$_n" || return 2
+        fi
+    fi
+    return 0
+}
+
+cfg_request() {
+    req=$TMP/akam_cfg.req
+    [ -f "$req" ] || return 0
+    mv -f "$req" "$req.work" 2>/dev/null || return 0
+    cfg_apply "$req.work"
+    _rc=$?
+    rm -f "$req.work"
+    case $_rc in
+    0) echo ok >"$TMP/akam_cfg.res"; log own_app "cfg request applied" ;;
+    1) echo "refused $cfg_why" >"$TMP/akam_cfg.res"; log own_app "cfg request refused ($cfg_why)" ;;
+    *) echo failed >"$TMP/akam_cfg.res"; log own_app "cfg request failed (a file could not be written)" ;;
+    esac
+    return 0
+}
+# --- cfg_request end
+
 log own_app "supervisor start"
 prepare || {
     log own_app "supervisor: not starting the app"
@@ -489,18 +725,18 @@ while [ "$STOPPING" = 0 ]; do
     rotate_log
     # the /tmp copy is verified again before EVERY exec (restarts included): nothing runs that is not the hash
     if [ "$(sha_of "$RUN")" != "$WANT" ]; then
-        log own_app "akam2k_rtsp refused: $RUN no longer matches BUILDINFO, supervisor exits"
+        log own_app "akamd refused: $RUN no longer matches BUILDINFO, supervisor exits"
         rm -f "$RUN"
         exit 1
     fi
     # the conf is re-read before EVERY (re)start: a change applies with an app restart, no supervisor restart needed
     read_conf
-    log own_app "akam2k_rtsp options:${ARGS:- (defaults)}"
+    log own_app "akamd options:${ARGS:- (defaults)}"
     t0=$(now)
     # shellcheck disable=SC2086  # ARGS is a validated word list of "-x number" pairs
     LD_LIBRARY_PATH=$LIBS "$RUN" $ARGS >>"$APPLOG" 2>&1 </dev/null &
     APP=$!
-    log own_app "akam2k_rtsp started, pid $APP"
+    log own_app "akamd started, pid $APP"
     # Under memory pressure the OOM killer should take the app, never the stub or the feeder.
     echo 500 >"$ROOT/proc/$APP/oom_score_adj" 2>/dev/null
     while kill -0 "$APP" 2>/dev/null; do
@@ -510,6 +746,7 @@ while [ "$STOPPING" = 0 ]; do
         SLP=""
         rotate_log
         net_request
+        cfg_request
     done
     wait "$APP" 2>/dev/null
     rc=$?
@@ -517,7 +754,7 @@ while [ "$STOPPING" = 0 ]; do
     motor_stop
     t1=$(now)
     run=$((t1 - t0))
-    log own_app "akam2k_rtsp exited with status $rc after $run s"
+    log own_app "akamd exited with status $rc after $run s"
     # crash accounting: the exits that fall inside the window
     keep=""
     cnt=0
@@ -529,11 +766,11 @@ while [ "$STOPPING" = 0 ]; do
     done
     exits=$keep
     if [ "$cnt" -gt "$CRASH_MAX" ]; then
-        log own_app "akam2k_rtsp exited $cnt times within $CRASH_WINDOW s: giving up (SSH and the network are unaffected; reboot to try again)"
+        log own_app "akamd exited $cnt times within $CRASH_WINDOW s: giving up (SSH and the network are unaffected; reboot to try again)"
         exit 0
     fi
     [ "$run" -lt "$STABLE" ] || bo=$BO_MIN
-    log own_app "restarting akam2k_rtsp in $bo s"
+    log own_app "restarting akamd in $bo s"
     sleep "$bo" &
     SLP=$!
     wait "$SLP"

@@ -40,6 +40,15 @@
  * clocks keep running for a keyframe that never fits and max_skip_ms ends the session. A queue that makes no
  * progress for the stall budget ends the session like a stalled blocking write.
  *
+ * Latency bound (max_lag_ms, rate_bps set): the byte marks above only bound the memory and the worst burst; a backlog
+ * that never drains (the link carries a little less than the stream) would sit at the high mark for ever, i.e. add
+ * about 0.5 s + one keyframe of steady delay. So the time the backlog has stayed above an "idle" level (50 ms of
+ * the stream rate, at least 8 KiB) is tracked: when it exceeds max_lag_ms plus the time the latest keyframe needs at the
+ * nominal rate (a keyframe burst is expected, not congestion), the stream enters SKIP mode and resumes at the next
+ * keyframe found at a low backlog. Dropping to a keyframe beats a growing delay. The pacing itself never delays a
+ * frame (no sleep, no fixed hold-back): frames are either written at once or dropped, so on a healthy link the
+ * added delay is only the serialisation of the frame itself.
+ *
  * Pure logic (no I/O, no clock besides the injected one): tests/tx_pace_test.sh. */
 #include <stddef.h>
 #include <stdint.h>
@@ -48,6 +57,11 @@
 #define TX_PACE_IKEY_CAP   (256u * 1024u)  /* keyframe size counted into the high mark is capped */
 #define TX_PACE_STALL_MS   15000           /* same as TX_STALL_BUDGET_MS in rtsp_session.c */
 #define TX_PACE_LOG_MS     10000           /* at most one enter/leave log pair per this long */
+/* SO_SNDBUF to request on a video client socket (the kernel doubles it, and a fixed value also switches the buffer
+ * autotuning off). Every byte of the kernel buffer is delay when the link is slow; the private queue absorbs the
+ * keyframe burst instead, and 64 KiB (128 KiB real) still carries about 50 Mbit/s at 20 ms of round trip. */
+#define TX_PACE_SNDBUF     (64 * 1024)
+#define TX_PACE_MAX_LAG_MS 300             /* default latency budget of a standing backlog, see tx_pace_cfg_t.max_lag_ms */
 
 typedef enum { TX_PACE_SEND = 0, TX_PACE_SKIP, TX_PACE_DROP_CLIENT } tx_pace_verdict_t;
 
@@ -61,6 +75,7 @@ typedef struct {
     int64_t  skip_since_ms;  /* start of the current SKIP run */
     size_t   best_backlog;   /* smallest backlog seen in the run */
     int64_t  best_ms;        /* when it was reached */
+    int64_t  lag_since_ms;   /* the backlog has been above the idle level since then, 0 = not (needs max_lag_ms) */
 } tx_pace_t;
 
 typedef struct {
@@ -68,6 +83,8 @@ typedef struct {
     size_t  cap;          /* tx_pace_cap(), 0 = unknown */
     int64_t stall_ms;     /* skipping without a new backlog minimum for this long: drop the client */
     int64_t max_skip_ms;  /* a skip run longer than this: drop the client */
+    int64_t max_lag_ms;   /* latency budget of a standing backlog; 0 = no bound (the byte marks only) */
+    size_t  rate_bps;     /* nominal stream rate in bytes per second (needed with max_lag_ms) */
 } tx_pace_cfg_t;
 
 typedef struct {
@@ -77,6 +94,7 @@ typedef struct {
     int log_it;    /* log_enter || log_leave */
     int log_enter; /* the caller may print the "link slow" line (rate limited) */
     int log_leave; /* the caller may print the "recovered" line (only when the enter line was printed) */
+    int lag;       /* this call entered SKIP mode because the backlog stood too long (max_lag_ms) */
     int no_room;   /* the frame is dropped (or kept dropped) because it does not fit `room` */
     const char *drop_reason; /* set with TX_PACE_DROP_CLIENT */
 } tx_pace_event_t;
@@ -90,6 +108,8 @@ size_t tx_pace_cap(size_t sndbuf_reported);
 int64_t tx_pace_max_skip_ms(int gop_s);
 size_t tx_pace_high(const tx_pace_t *p, const tx_pace_cfg_t *c, size_t frame_len);
 size_t tx_pace_low(size_t base);
+/* Backlog level at or below which the link counts as drained: 50 ms of rate_bps, at least 8 KiB. */
+size_t tx_pace_idle(size_t rate_bps);
 
 /* Bytes a frame of frame_len payload bytes takes on the wire: + 4 B interleave + 12 B RTP + 2 B FU-A per
  * ~1400 B packet, rounded up. */

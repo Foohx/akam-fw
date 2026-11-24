@@ -1,5 +1,5 @@
 #pragma once
-/* Kernel log filter ("ak_rtsp klog"): replaces the stock `klogd -n`.
+/* Kernel log filter ("akamd klog"): replaces the stock `klogd -n`.
  *
  * Why: the vendor LED driver prints a line on every brightness write (about 60 lines a minute while the
  * status LED blinks) and the encoder driver prints bursts of identical errors while the network is bad, so
@@ -66,5 +66,5 @@ int  klog_is_noise(const char *msg);
 /* Lines are sent without blocking; when the socket is full (a unix datagram queue holds about 11 messages on
  * this kernel) the sender waits up to 300 ms for room, then drops the line (see klog.c lost). */
 int  klog_run(const char *kmsg_path, const char *sock_path, long window_s);
-/* "ak_rtsp klog [--kmsg PATH] [--sock PATH] [--window SECONDS]" */
+/* "akamd klog [--kmsg PATH] [--sock PATH] [--window SECONDS]" */
 int  klog_main(int argc, char **argv);

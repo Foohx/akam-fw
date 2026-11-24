@@ -3,3 +3,4 @@
 # A kit with another kit_format is refused with an explanation: use the wizard release that
 # ships with that kit, or build from source.
 accept_kit_format|1
+accept_kit_format|2

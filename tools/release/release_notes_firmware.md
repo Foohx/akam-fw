@@ -1,8 +1,8 @@
 # Akam firmware <version>
 
-Draft. Not published. `tools/release/make_release.sh firmware` writes the filled copy (`<version>`, `<date>`, `<key>`, the kit list, the CHANGELOG section, absolute links) next to the release directory.
+Draft. Not published. `tools/release/make_release.sh firmware` writes the filled copy (`<version>`, `<date>`, `<key>`, the kit list, the CHANGELOG section, absolute links) next to the release directory. The relative links of this template (`testing-status.md`, `assistant.md`, `manual/kit.md`...) are docs-relative: `make_release.sh` rewrites them to absolute URLs, so they do not resolve from `tools/release/`.
 
-Released on <date>. Open firmware add-ons for LSC Smart Indoor cameras: one **kit** per camera model. It is
+Released on <date>. Open firmware for the LSC Smart Indoor 1080p and the LSC Smart Rotatable 2K: one **kit** per camera model. It is
 **experimental**. Read the [kit documentation](manual/kit.md) and keep a verified backup of your stock camera before you
 flash anything: a flash can brick a camera if the power is cut during the write. Pick the kit of YOUR model
 (see [compatible cameras](compatible-cameras.md)); the `akam` assistant

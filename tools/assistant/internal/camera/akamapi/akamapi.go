@@ -216,7 +216,7 @@ type Client struct {
 	HostPort string // 192.0.2.10:8092
 	Key      Key
 	Do       Transport        // nil: the raw client
-	DoReq    RequestTransport // PATCH; nil: the raw client
+	DoReq    RequestTransport // PATCH and POST; nil: the raw client
 	Timeout  time.Duration
 }
 
@@ -229,12 +229,12 @@ func rawGet(ctx context.Context, hostport, path string, h Header) (int, []byte, 
 	return rawRequest(ctx, hostport, "GET", path, nil, h)
 }
 
-// RequestTransport does one plain HTTP/1.1 request (GET or PATCH, with a JSON body for PATCH) like Transport.
+// RequestTransport does one plain HTTP/1.1 request (GET, PATCH or POST, with a JSON body for the last two) like Transport.
 type RequestTransport func(ctx context.Context, hostport, method, path string, body []byte, h Header) (int, []byte, error)
 
 func rawRequest(ctx context.Context, hostport, method, path string, reqBody []byte, h Header) (int, []byte, error) {
 	// the request line and the Host header are built by concatenation: no CR, LF or blank may get into them
-	if strings.ContainsAny(hostport+path, "\r\n ") || path == "" || hostport == "" || (method != "GET" && method != "PATCH") {
+	if strings.ContainsAny(hostport+path, "\r\n ") || path == "" || hostport == "" || (method != "GET" && method != "PATCH" && method != "POST") {
 		return 0, nil, errors.New("bad request target")
 	}
 	var d net.Dialer
@@ -253,7 +253,7 @@ func rawRequest(ctx context.Context, hostport, method, path string, reqBody []by
 	sort.Strings(names)
 	var req strings.Builder
 	req.WriteString(method + " " + path + " HTTP/1.1\r\nHost: " + hostport + "\r\nConnection: close\r\nAccept: application/json\r\n")
-	if method == "PATCH" {
+	if method == "PATCH" || method == "POST" {
 		req.WriteString("Content-Type: application/json\r\nContent-Length: " + strconv.Itoa(len(reqBody)) + "\r\n")
 	}
 	for _, k := range names {

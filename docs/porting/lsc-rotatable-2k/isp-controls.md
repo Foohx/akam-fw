@@ -162,7 +162,7 @@ Direction of `k` (bigger = more smoothing?) is MEDIUM; the test plan measures it
 ## 7. The test hook (`--isp-test 1`, default OFF, RAM only)
 
 Files: `platforms/anyka-ak3918av130/isptest.c` and `isptest.h`, vendor access in `cap.c` (`g_it_ops`), prototypes in `platforms/anyka-ak3918av130/abi.h`, host test `tests/rot2k_isptest_unit.c` (run by `tests/rot2k_overlay_test.sh`).
-The hook is a poll thread (every 500 ms) reading `/tmp/akam2k_isp_test`; the file is deleted once read; up to 16 lines; every result is logged as `isp-test: ...` in the app log (before / after values, return codes). Nothing is persistent: the ISP restarts from the conf file at the next boot, `restore` puts back the first read of everything changed (effects are set back to 0). Option `--isp-test 1` is a command-line option of the binary only (no `akam2k.conf` key: run the binary from RAM like the `--venc-test` runs).
+The hook is a poll thread (every 500 ms) reading `/tmp/akam2k_isp_test`; the file is deleted once read; up to 16 lines; every result is logged as `isp-test: ...` in the app log (before / after values, return codes). Nothing is persistent: the ISP restarts from the conf file at the next boot, `restore` puts back the first read of everything changed (effects are set back to 0). Option `--isp-test 1` is a command-line option of the binary only (no `akam.conf` key: run the binary from RAM like the `--venc-test` runs).
 
 Commands (parser limits are enforced; `fx` type 5 / WDR is refused because the app owns it):
 
@@ -192,6 +192,13 @@ Abort criteria: any `ak_*` rc other than 0 that repeats, a stream stall, the app
 9. **Night check (after the day steps).** `night=night`: `get all`, confirm `ccm mode 0` and the luma matrix (the night set loaded by `ak_vi_switch_mode(0, 1)`), and that `nr*` differ from the day ones (the night set has its own tables). Nothing to change in night.
 
 What to report: the first `get all` block (it settles the unit and layout questions), the `rt` results, the numbers per step and the frames. If steps 4 to 6 find a good setting, the follow-up is a persisted conf key replayed after each mode switch (a2k_image / a2k_isp_mode), the same way WDR is replayed; that design is **not done** and depends on those numbers.
+
+## 8b. What the app does with this (2026-11-23, host-tested only)
+
+`platforms/anyka-ak3918av130/picture.c` applies three of the controls above as settings, with the 1080p's names and ranges: `isp.saturation` (effect type 2, -50..50), `isp.denoise` (0..4: the 3D NR attribute
+read whole, each gain-linked record i replaced by record i+N, the last stays, `tnr_enable` never lowered, written whole; refused without a write when the mode word or a record flag is not 0/1) and `img.wb`
+(`conf` = untouched; `manual` = `ak_vpss_set_wb_type` to the other value than the one read before the first change, the conf's own manual gains unchanged, day set only). `ak_vi_switch_mode` reloads the set, so
+`a2k_isp_mode` replays them after every switch (`a2k_pic_replay`). Not on a camera yet: the open questions below (which `wb_type` is automatic, the gain unit, the meaning of the 3D NR record) are exactly what the checklist P-items answer.
 
 ## 9. Open questions
 

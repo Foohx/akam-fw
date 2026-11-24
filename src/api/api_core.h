@@ -80,7 +80,7 @@ void a2k_api_handle(const a2k_api_in_t *in, char *out, size_t cap, a2k_api_out_t
 /* The /events body for a held request (woken by an event or by its deadline). Returns the length. */
 int a2k_api_events_reply(uint32_t since, char *out, size_t cap);
 
-/* On-camera key tool (akam2k_rtsp --api-key new|list|revoke ...), run from SSH by overlay/akam/akam_api_key.sh before any
+/* On-camera key tool (akamd --api-key new|list|revoke ...), run from SSH by overlay/akam/akam_api_key.sh before any
  * hardware init. new --scope read|write|admin --name LABEL prints the copy block (the secret) ONCE on stdout; list never prints a
  * secret; revoke <id|name> [--force]. Returns the process exit status (0, 1 failure, 2 usage, 4 the pool is not seeded). */
 int a2k_api_key_cli(const a2k_api_env_t *env, int argc, char **argv);

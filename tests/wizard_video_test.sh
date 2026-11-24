@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for ./akam video (show, bitrate, fps, gop, the refused flip/mirror/resolution, the restart question)
 # against a fake ssh that runs the command line the wizard sends on a fake camera: a fake `nc` plays the 8091
-# control port (video.*_cfg keys, LOG lines, an old firmware) and the fake ssh records `kill the ak_rtsp pid`.
+# control port (video.*_cfg keys, LOG lines, an old firmware) and the fake ssh records `kill the akamd pid`.
 # The real camera is never contacted.
 set -uo pipefail
 
@@ -97,7 +97,7 @@ cmd=${cmd# }
 case $cmd in
     true) exit 0 ;;
     printf\ *) exec env PATH="$STUB_DIR/bin:$PATH" bash -c "$cmd" ;;
-    'for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done') echo killed >>"$CAM/killed"; exit 0 ;;
+    'for p in $(pidof akamd ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done') echo killed >>"$CAM/killed"; exit 0 ;;
 esac
 exit 0
 EOF
@@ -121,7 +121,7 @@ check "video: bitrate" has "$T/show.out" "Bitrate cap: 1536 kbit/s"
 check "video: fps" has "$T/show.out" "Frame rate: 15 per second"
 check "video: gop" has "$T/show.out" "Key frame every 2 second(s)"
 check "video: measured values shown" has "$T/show.out" "Measured now: 1480 kbit/s, 147"
-check "video: says resolution and flip are not available" has "$T/show.out" "Resolution and flip/mirror cannot be changed"
+check "video: says resolution cannot be changed and points flip and mirror to picture" bash -c 'grep -qF "Resolution cannot be changed" "$1" && grep -qF "picture flip on" "$1"' _ "$T/show.out"
 check "video: nothing pending, no warning" hasnt "$T/show.out" "not running yet"
 check "video: LOG lines are not shown" hasnt "$T/show.out" "noise before"
 a "$S" video show </dev/null >"$T/show2.out" 2>&1
@@ -150,9 +150,9 @@ printf 'n\n' | a_tty "$S" video gop 3 >"$T/n2.out" 2>&1
 check "gop 3 + n: saved, not restarted" bash -c '[ "$(cat "$1")" = 3 ] && [ "$2" -eq 0 ]' _ "$CAM/video.gop_cfg" "$(killed)"
 printf 'y\n' | a_tty "$S" video bitrate 1200 gop 4 >"$T/y.out" 2>&1
 check "yes: both values saved" test "$(cam video.bitrate_cfg)" = 1200 -a "$(cam video.gop_cfg)" = 4
-check "yes: ak_rtsp was killed once (the wrapper respawns it)" test "$(killed)" -eq 1
+check "yes: akamd was killed once (the wrapper respawns it)" test "$(killed)" -eq 1
 check "yes: says it comes back" has "$T/y.out" "back in about 20 seconds"
-check "yes: only kill of the ak_rtsp pid (no killall), never the watchdog or the wrapper" bash -c '! grep -E "watchdog|wrapper|reboot|killall" "$1"' _ "$STUB_DIR/ssh.log"
+check "yes: only kill of the akamd pid (no killall), never the watchdog or the wrapper" bash -c '! grep -E "watchdog|wrapper|reboot|killall" "$1"' _ "$STUB_DIR/ssh.log"
 
 # ---- back to the defaults: nothing pending, no question ----------------------------------------------
 : >"$CAM/killed"
@@ -211,7 +211,7 @@ done
 check "refusals: the camera was never contacted" test ! -s "$STUB_DIR/ssh.log"
 check "refusals: nothing changed" test "$(cam video.bitrate_cfg)" = 1536
 a "$S" video flip h </dev/null >"$T/flip.out" 2>&1
-check "flip: explains it is not available" has "$T/flip.out" "is not available"
+check "flip: points to the picture command" has "$T/flip.out" "is a picture setting: ./akam picture flip on|off"
 
 # ---- dry run -------------------------------------------------------------------------------------
 : >"$STUB_DIR/ssh.log"

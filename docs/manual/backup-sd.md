@@ -1,5 +1,7 @@
 # Back Up the Camera with a microSD Root Shell (manual, no UART)
 
+> **LSC Indoor 1080p only** (8 partitions, APP in `mtd7`). The 2K has its own pages: [install](../porting/lsc-rotatable-2k/README.md#install), [back to stock](../porting/lsc-rotatable-2k/README.md#back-to-stock), [UART recovery](../porting/lsc-rotatable-2k/uart-recovery.md).
+
 > **Advanced / manual procedure (without the wizard).** `./akam prepare-backup-sd`, `find-camera` and
 > `backup` do all of this for you ([README](../../README.md#quick-start)). Read on to understand or audit what
 > they do, or when you cannot run the wizard.

@@ -6,13 +6,13 @@
 # --model ID: the model id (a file tools/release/models/ID.txt; default: the only model of the registry).
 # The kit carries that file as supported_hardware.txt and the id as "model=ID" in MANIFEST.txt.
 #
-# The kit holds ONLY Akam's own files: ARM binaries built here (ak_rtsp,
+# The kit holds ONLY Akam's own files: ARM binaries built here (akamd,
 # dropbearmulti, flash_tool), the image overlay (wrapper, ini, akam_*.sh), the
 # service.sh patch, flash/hwcheck scripts and the licence texts. It never
 # contains anything from a camera dump or from the vendor firmware. The user
 # supplies their own APP dump and assembles the image locally (spec section 4).
 #
-# Steps: clean build -> strip copies -> time64 machine-code gate on ak_rtsp AND
+# Steps: clean build -> strip copies -> time64 machine-code gate on akamd AND
 # dropbearmulti (blocking) -> normalised tree -> MANIFEST.txt + SHA256SUMS
 # inside the kit -> reproducible tarball -> SHA256SUMS next to the tarball.
 # Signing is a separate step (tools/release/sign_kit.sh).
@@ -35,7 +35,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-KIT_FORMAT=1
+KIT_FORMAT=2
 TARGET=arm-linux-musleabi
 
 die() { echo "make_kit: error: $*" >&2; exit 1; }
@@ -106,10 +106,10 @@ if [ "$NO_BUILD" != 1 ]; then
     [ -x "$PINNED_ZIG" ] || die "pinned Zig missing: run tools/build/bootstrap.sh"
     # shellcheck source=tools/build/env.sh
     . "$ROOT/tools/build/env.sh"
-    log "building ak_rtsp and flash_tool from a clean tree"
+    log "building akamd and flash_tool from a clean tree"
     make -C "$ROOT/platforms/anyka-ak3918" clean >/dev/null
-    make -C "$ROOT/platforms/anyka-ak3918" ak_rtsp flash_tool >/dev/null
-    AK_RTSP_BIN="$ROOT/build/lsc-indoor-1080p-ak3918/ak_rtsp"
+    make -C "$ROOT/platforms/anyka-ak3918" akamd flash_tool >/dev/null
+    AK_RTSP_BIN="$ROOT/build/lsc-indoor-1080p-ak3918/akamd"
     FLASH_TOOL_BIN="$ROOT/build/lsc-indoor-1080p-ak3918/flash_tool"
     log "building dropbearmulti"
     rm -rf "$ROOT/dist/dropbear"
@@ -171,14 +171,14 @@ strip_copy() {
     install -m 755 "$dst.tmp" "$dst"
     rm -f "$dst.tmp"
 }
-strip_copy "$AK_RTSP_BIN" "$KIT/bin/ak_rtsp"
+strip_copy "$AK_RTSP_BIN" "$KIT/bin/akamd"
 strip_copy "$DROPBEAR_MULTI" "$KIT/bin/dropbearmulti"
 strip_copy "$FLASH_TOOL_BIN" "$KIT/bin/flash_tool"
 
 # --- time64 gate (blocking), on the files that go into the kit ------------------------
 GATE_TOOL="${AKAM_KIT_CHECK_TIME32:-$ROOT/tools/build/check_time32.sh}"
-log "time64 gate on ak_rtsp and dropbearmulti"
-if ! bash "$GATE_TOOL" --require-263 "$KIT/bin/ak_rtsp" "$KIT/bin/dropbearmulti"; then
+log "time64 gate on akamd and dropbearmulti"
+if ! bash "$GATE_TOOL" --require-263 "$KIT/bin/akamd" "$KIT/bin/dropbearmulti"; then
     die "time64 gate FAILED: the binaries would misbehave on the camera's kernel (docs/how-it-works.md). No kit written."
 fi
 GATE_DISASM="$(gdb --version 2>/dev/null | head -1 || true)"
@@ -245,7 +245,7 @@ BAD="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$KIT" 2>/dev/null || true
     grep -rl --binary-files=binary -e 'hsqs' "$KIT/scripts" "$KIT/overlay" "$KIT/patches" "$KIT/licenses" 2>/dev/null || true) | sort -u)"
 [ -z "$BAD" ] || die "forbidden content in the kit (key, image, vendor or toolkit file):
 $BAD"
-[ "$(find "$KIT/bin" -type f -printf "%f\n" | LC_ALL=C sort | tr "\n" " ")" = 'ak_rtsp dropbearmulti flash_tool ' ] || die "unexpected content in bin/"
+[ "$(find "$KIT/bin" -type f -printf "%f\n" | LC_ALL=C sort | tr "\n" " ")" = 'akamd dropbearmulti flash_tool ' ] || die "unexpected content in bin/"
 
 # --- normalise ----------------------------------------------------------------------------
 find "$KIT" -type d -exec chmod 755 {} +

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for ./akam onvif (enable [PORT], disable, status) against a fake ssh that runs the command line the
-# wizard sends: the real akam_onvif.sh and akam_rtsp_auth.sh in a fake camera root, with a fake `ak_rtsp ctl`.
+# wizard sends: the real akam_onvif.sh and akam_rtsp_auth.sh in a fake camera root, with a fake `akamd ctl`.
 # The real camera is never contacted.
 set -uo pipefail
 
@@ -27,7 +27,7 @@ unset AKAM_STATE_DIR AKAM_SSH
 export STUB_DIR=$T/stub CAM=$T/cam HELPER AUTH
 mkdir -p "$STUB_DIR" "$CAM/root/etc/config"
 FLAG=$CAM/root/etc/config/akam/onvif
-cat >"$STUB_DIR/ak_rtsp" <<'EOF'
+cat >"$STUB_DIR/akamd" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$CAM/ctl.log"
 case "$2 $3" in
@@ -36,7 +36,7 @@ case "$2 $3" in
     *) echo "ERR unknown command"; exit 1 ;;
 esac
 EOF
-chmod +x "$STUB_DIR/ak_rtsp"
+chmod +x "$STUB_DIR/akamd"
 cat >"$STUB_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_DIR/ssh.log"
@@ -47,7 +47,7 @@ for x in "$@"; do
 done
 cmd=${cmd# }
 [ "${STUB_SSH_RC:-0}" = 0 ] || exit "$STUB_SSH_RC"
-export AKAM_ROOT="$CAM/root" AKAM_RTSP_BIN="$STUB_DIR/ak_rtsp"
+export AKAM_ROOT="$CAM/root" AKAM_RTSP_BIN="$STUB_DIR/akamd"
 case $cmd in
     true) exit 0 ;;
     "/usr/sbin/akam_onvif.sh "*)

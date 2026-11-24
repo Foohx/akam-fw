@@ -34,7 +34,7 @@
 # run the script against a fake root. $HWCHECK_INTERVAL (default 1) is the
 # --boot-window sampling period in seconds.
 #
-# Other knobs: HWCHECK_CPU_WINDOW (default 2) is the ak_rtsp CPU sampling
+# Other knobs: HWCHECK_CPU_WINDOW (default 2) is the akamd CPU sampling
 # window in seconds; HWCHECK_NIGHT_SAMPLES (default 4, 0 disables) and
 # HWCHECK_NIGHT_INTERVAL (default 6) drive the day/night flap check, which
 # opens a short connection to 8091 per sample (the control port serves up
@@ -202,8 +202,8 @@ check_onvif_ports() {
 }
 
 # ---------------------------------------------------------------- MQTT (G17)
-# MQTT is off by default (akam_mqtt.sh): no file, or enabled=0, means ak_rtsp has no MQTT thread and no socket, so it
-# must hold no outbound TCP connection. On, it holds exactly one (to the broker). "Outbound" = a TCP socket of ak_rtsp
+# MQTT is off by default (akam_mqtt.sh): no file, or enabled=0, means akamd has no MQTT thread and no socket, so it
+# must hold no outbound TCP connection. On, it holds exactly one (to the broker). "Outbound" = a TCP socket of akamd
 # (found through its /proc/<pid>/fd inodes) in state ESTABLISHED or SYN_SENT whose local port is ephemeral (32768 and
 # up); RTSP and control-port clients are accepted on 554 and 8091 and do not count. Prints the number, or "?".
 tcp_outbound_of_pid() {
@@ -234,21 +234,21 @@ check_mqtt() {
             case $ml in enabled=1) mon=1 ;; esac
         done < "$mf"
     fi
-    mp=$(pids_of ak_rtsp)
+    mp=$(pids_of akamd)
     mp=${mp%% *}
-    if [ -z "$mp" ]; then unk "ak_rtsp not running: MQTT not checked"; return; fi
+    if [ -z "$mp" ]; then unk "akamd not running: MQTT not checked"; return; fi
     mn=$(tcp_outbound_of_pid "$mp")
-    if [ "$mn" = "?" ]; then unk "the sockets of ak_rtsp are not readable: MQTT not checked"; return; fi
+    if [ "$mn" = "?" ]; then unk "the sockets of akamd are not readable: MQTT not checked"; return; fi
     if [ "$mon" = 1 ]; then
         case $mn in
-            1) pass "MQTT is on: ak_rtsp holds one outbound TCP connection (the broker)" ;;
-            0) warn "MQTT is on but ak_rtsp holds no outbound TCP connection (broker unreachable or backing off: akam_mqtt.sh status)" ;;
-            *) fail "MQTT is on but ak_rtsp holds $mn outbound TCP connections (one expected)" ;;
+            1) pass "MQTT is on: akamd holds one outbound TCP connection (the broker)" ;;
+            0) warn "MQTT is on but akamd holds no outbound TCP connection (broker unreachable or backing off: akam_mqtt.sh status)" ;;
+            *) fail "MQTT is on but akamd holds $mn outbound TCP connections (one expected)" ;;
         esac
     else
         case $mn in
-            0) pass "MQTT is off: ak_rtsp holds no outbound TCP connection" ;;
-            *) fail "MQTT is off but ak_rtsp holds $mn outbound TCP connection(s): no socket is allowed (akam_mqtt.sh status)" ;;
+            0) pass "MQTT is off: akamd holds no outbound TCP connection" ;;
+            *) fail "MQTT is off but akamd holds $mn outbound TCP connection(s): no socket is allowed (akam_mqtt.sh status)" ;;
         esac
     fi
 }
@@ -322,6 +322,7 @@ find_pids() {
             [ -n "$tok" ] || continue
             b=${tok##*/}
             b=${b%.sh}
+            case $b in ak_rtsp) b=akamd ;; ak_rtsp_wrapper) b=akam_run ;; esac # 0.1.x images still run the old names
             if [ "$b" = "$NAME" ]; then echo "$pid"; break; fi
         done
     done
@@ -341,7 +342,7 @@ check_procs() {
         unk "no /proc/<pid> entries readable; process checks skipped"
         return
     fi
-    for n in ak_rtsp dropbear akam_lockdown; do
+    for n in akamd dropbear akam_lockdown; do
         p=$(pids_of $n)
         if [ -n "$p" ]; then pass "$n running (pid $p)"
         elif [ "$n" = akam_lockdown ] && [ "$maint" = 1 ]; then
@@ -352,7 +353,7 @@ check_procs() {
         p=$(pids_of $n)
         if [ -n "$p" ]; then pass "$n running (pid $p)"; else warn "$n not running"; fi
     done
-    # Kernel log: "ak_rtsp klog" (shown as akam_klog) drops the LED driver's trace and collapses repeats; the stock
+    # Kernel log: "akamd klog" (shown as akam_klog) drops the LED driver's trace and collapses repeats; the stock
     # klogd is the fallback when it cannot start and works, but floods syslog.
     p=$(pids_of akam_klog)
     if [ -n "$p" ]; then pass "kernel log filter akam_klog running (pid $p)"
@@ -365,7 +366,7 @@ check_procs() {
         else fail "$n running (pid $p)"; fi
     done
     section "resident memory (VmRSS)"
-    for n in ak_rtsp dropbear akam_lockdown; do
+    for n in akamd dropbear akam_lockdown; do
         for p in $(pids_of $n); do info "$n pid $p VmRSS $(rss_of "$p") kB"; done
     done
 }
@@ -437,7 +438,7 @@ check_udp() {
 # scripts call. Names are argv0, or argv1 for "sh script": directory and .sh removed (as find_pids). The vendor
 # daemons msgserver and cmdserver are kept deliberately (local IPC, docs/manual/build.md) and are
 # reported as WARN "review": whether they can go is a hardware decision. Kernel threads have no cmdline: skipped.
-PROC_ALLOW=" init syslogd klogd wpa_supplicant udhcpc watchdog ak_rtsp_wrapper ak_rtsp dropbear dropbearmulti sh ash sleep drop_caches ntpd timeout nice ps grep logger kill cat date wc tail sync mv "
+PROC_ALLOW=" init syslogd klogd wpa_supplicant udhcpc watchdog akam_run akamd dropbear dropbearmulti sh ash sleep drop_caches ntpd timeout nice ps grep logger kill cat date wc tail sync mv "
 proc_name() { # name of the process in dir $1, empty when none
     read_cmdline "$1"
     _cl=$CL
@@ -453,7 +454,7 @@ proc_name() { # name of the process in dir $1, empty when none
             _a1=${2:-}
             case $_a1 in '' | -*) ;; *) _a0=${_a1##*/}; _a0=${_a0%.sh} ;; esac ;;
     esac
-    echo "${_a0#-}"
+    case ${_a0#-} in ak_rtsp) echo akamd ;; ak_rtsp_wrapper) echo akam_run ;; *) echo "${_a0#-}" ;; esac # 0.1.x images run the old names
 }
 check_proc_allowlist() {
     section "process allow-list"
@@ -529,11 +530,11 @@ proc_wakeups() { # sum of voluntary_ctxt_switches over all threads of pid $1; em
     return 0
 }
 check_cpu() {
-    section "CPU use (ak_rtsp, ${CPU_WINDOW}s window)"
+    section "CPU use (akamd, ${CPU_WINDOW}s window)"
     if ! ls "$ROOT"/proc/[0-9]* >/dev/null 2>&1; then unk "no /proc/<pid> entries: CPU use skipped"; return; fi
-    p=$(pids_of ak_rtsp)
+    p=$(pids_of akamd)
     p=${p%% *}
-    if [ -z "$p" ]; then unk "ak_rtsp not running: CPU use skipped"; return; fi
+    if [ -z "$p" ]; then unk "akamd not running: CPU use skipped"; return; fi
     if ! j1=$(proc_jiffies "$p") || ! t1=$(total_jiffies); then unk "/proc/$p/stat or /proc/stat unreadable: CPU use skipped"; return; fi
     w1=$(proc_wakeups "$p")
     sleep "$CPU_WINDOW"
@@ -541,15 +542,15 @@ check_cpu() {
     # G10: wakeups per second = voluntary context switches of all threads (each sleep that ended); the budget of
     # specs/roadmap.md is about 80/s with no client, the estimate from the code is about 140/s before the cuts.
     if [ -n "$w1" ] && [ -n "$w2" ] && [ "$CPU_WINDOW" -gt 0 ]; then
-        info "ak_rtsp pid $p wakeups $(( (w2 - w1) / CPU_WINDOW ))/s over ${CPU_WINDOW}s (voluntary context switches, all threads)"
+        info "akamd pid $p wakeups $(( (w2 - w1) / CPU_WINDOW ))/s over ${CPU_WINDOW}s (voluntary context switches, all threads)"
     fi
-    if ! j2=$(proc_jiffies "$p") || ! t2=$(total_jiffies); then unk "ak_rtsp (pid $p) vanished during the CPU sample"; return; fi
+    if ! j2=$(proc_jiffies "$p") || ! t2=$(total_jiffies); then unk "akamd (pid $p) vanished during the CPU sample"; return; fi
     dt=$((t2 - t1))
     dj=$((j2 - j1))
     if [ "$dt" -le 0 ]; then unk "CPU clock did not advance during the sample"; return; fi
     tenths=$((dj * 1000 / dt))
-    info "ak_rtsp pid $p CPU $((tenths / 10)).$((tenths % 10))% of the machine over ${CPU_WINDOW}s ($dj of $dt jiffies)"
-    if [ "$tenths" -ge 900 ]; then warn "ak_rtsp uses $((tenths / 10))% CPU: no headroom"; fi
+    info "akamd pid $p CPU $((tenths / 10)).$((tenths % 10))% of the machine over ${CPU_WINDOW}s ($dj of $dt jiffies)"
+    if [ "$tenths" -ge 900 ]; then warn "akamd uses $((tenths / 10))% CPU: no headroom"; fi
 }
 
 # ------------------------------------------------------------------ files
@@ -705,11 +706,11 @@ check_rtsp_auth() {
     ra_r=${ra_rest%%:*}
     ra_h=${ra_rest#*:}
     if [ "$ra_rest" = "$line" ] || [ -z "$ra_u" ] || [ "$ra_r" != akam ] || [ "${#ra_h}" -ne 32 ]; then
-        warn "RTSP auth: INVALID credentials file: ak_rtsp refuses every protected request (run akam_rtsp_auth.sh set USER, or disable)"
+        warn "RTSP auth: INVALID credentials file: akamd refuses every protected request (run akam_rtsp_auth.sh set USER, or disable)"
         return 0
     fi
     case $ra_h in
-        *[!0-9a-f]*) warn "RTSP auth: INVALID credentials file (hash is not 32 lowercase hex characters): ak_rtsp refuses every protected request"; return 0 ;;
+        *[!0-9a-f]*) warn "RTSP auth: INVALID credentials file (hash is not 32 lowercase hex characters): akamd refuses every protected request"; return 0 ;;
     esac
     info "RTSP auth: enabled (user $ra_u, Digest)"
     info "talk: offered on port 554 to ONVIF backchannel clients (audio.talk_enable and audio out permitting)"
@@ -932,7 +933,7 @@ section "manual tests still to do (not automated)"
 cat <<'MSG'
     - microphone audible, night mode/IR cut, H.264 1080p stream in a player
     - 80/tcp and 3702/udp: closed by default; open only after ./akam onvif enable
-    - MQTT (./akam mqtt set): off = ak_rtsp holds no outbound TCP connection; on = exactly one (to the broker)
+    - MQTT (./akam mqtt set): off = akamd holds no outbound TCP connection; on = exactly one (to the broker)
     - 8091: LIST / GET from the PC (read-only), SET refused, SET after akam_debug.sh on
     - SSH login by key from another machine, and persistence across a power cut
     - boot without microSD, Wi-Fi auto-reconnect, Telnet never reachable

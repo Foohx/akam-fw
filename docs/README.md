@@ -1,16 +1,19 @@
 # Documentation index
 
-New here? Read the [README](../README.md), then follow the install of your camera: the bash wizard `./akam` for the 1080p,
-the Go `akam` program for the 2K ([2K install](porting/lsc-rotatable-2k/README.md#install)). The pages below are for details, integration,
-development, or when something goes wrong.
+New here? Read the [README](../README.md), then the [install guide](install.md): one page for both cameras (1080p and 2K).
+The pages below are for details, integration, development, or when something goes wrong. Unknown words: the
+[glossary](#glossary) at the end.
 
 ## User docs
 
 - [Compatible cameras](compatible-cameras.md): is my camera supported, how to report a new one.
-- [The setup wizard](wizard_guide.md) (1080p) and [the `akam` program](assistant.md) (tested platforms, 2K install and update).
-- [Using Akam day to day](using_akam.md) (1080p): commands, settings, ports, updates. The 2K: [using the 2K](porting/lsc-rotatable-2k/using-the-2k.md).
+- [Install guide](install.md), both cameras; [the `akam` program](assistant.md) (download, check, tested platforms); the old
+  bash wizard, to be retired: [wizard guide](wizard_guide.md).
+- [Using Akam day to day](using_akam.md), both cameras: commands, settings, ports, updates. 2K specifics (pan/tilt, files):
+  [using the 2K](porting/lsc-rotatable-2k/using-the-2k.md).
 - [Features and protocols](features.md): everything implemented, with defaults, ports and test status.
-- [Troubleshooting](troubleshooting.md) (1080p). The 2K has no troubleshooting page yet: start with its [recovery section](porting/lsc-rotatable-2k/README.md#recovery) and [UART recovery](porting/lsc-rotatable-2k/uart-recovery.md).
+- [Troubleshooting](troubleshooting.md), both cameras (the 2K has its own [section](troubleshooting.md#rotatable-2k)); recovery:
+  [2K recovery](porting/lsc-rotatable-2k/README.md#recovery), [UART recovery](porting/lsc-rotatable-2k/uart-recovery.md).
 - [Legal notes](legal.md).
 
 ## Integration
@@ -41,7 +44,9 @@ Also: [models](models.md), [SoCs](socs.md), [how it works](how-it-works.md).
   [SSH keys and lockdown](manual/ssh-and-lockdown.md), [release kit](manual/kit.md), [stock capture](manual/stock-capture.md).
 - Tests: [testing status](testing-status.md) (1080p and 2K sections; which builds the hardware results come from), [hardware checklists](hardware-test-checklists.md); CI: `tools/ci/local_check.sh`.
 - Code behaviour: [specs/](../specs/README.md). Contributing: [CONTRIBUTING](../CONTRIBUTING.md). Assistant design:
-  [2K flash design (partly implemented)](assistant-rot2k-flash-design.md), [install and update journey](assistant/install-update-journey.md).
+  [the 2K flows](assistant/rot2k-flows.md), [install and update journey](assistant/install-update-journey.md); the original design is archived.
+- Code layout per platform and camera: [`platforms/anyka-ak3918`](../platforms/anyka-ak3918/README.md),
+  [`platforms/anyka-ak3918av130`](../platforms/anyka-ak3918av130/README.md) (see [hacking](hacking.md#repository-layout)).
 
 ## Porting a new camera
 
@@ -50,3 +55,20 @@ Also: [models](models.md), [SoCs](socs.md), [how it works](how-it-works.md).
 ## Archive
 
 Historical plans and studies: [docs/archive](archive/README.md). Project history: [CHANGELOG](../CHANGELOG.md).
+
+## Glossary
+
+- **Host-tested only**: checked by automated tests on a PC (a fake camera, no hardware); not yet run on a real camera. Every
+  status says which: [testing status](testing-status.md).
+- **Validated on a camera**: run on a real camera, with the build named in the testing status.
+- **Golden**: a recorded expected output that a test compares against; it is regenerated only when the output is meant to change.
+- **Kit**: the signed archive of one camera model (`akam-kit-<model>-X.Y.Z.tar.xz`) that holds only Akam code; the program
+  downloads and verifies it. Your image is assembled on your computer from the kit and your own backup.
+- **Image**: the file written to the camera's flash (APP on the 1080p, appfs on the 2K).
+- **APP, appfs**: the flash partition Akam replaces (`mtd7` on the 1080p, `mtd3` on the 2K). **Card-less**: the 2K boots Akam
+  from its flash with no SD card.
+- **Rehearsal**: a run that shows every step and writes nothing (`--dry-run`, or the default of `appfs-flash`).
+- **Hot update**: the 2K updates its flash from itself, with no card.
+- **jffs2**: the small writable flash file system that keeps the settings (`/config` on the 2K).
+- **HA**: Home Assistant. **NPU**: the camera's neural-network unit (person detection on the 2K). **Signed API**: the camera's
+  HMAC-signed JSON API on port 8092 that the assistant uses for settings.

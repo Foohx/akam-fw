@@ -15,7 +15,7 @@
 
 #define A2K_RTSP_MAX_CLIENTS 4
 /* The one place the default RTSP port is set: 554, the same canonical URL as the 1080p (rtsp://<ip>:554/stream0).
- * akam2k.conf `port` (-p) overrides it; the stock yy_cam's 8554 is not served. */
+ * akam.conf `port` (-p) overrides it; the stock yy_cam's 8554 is not served. */
 #ifndef A2K_RTSP_PORT
 #define A2K_RTSP_PORT 554
 #endif

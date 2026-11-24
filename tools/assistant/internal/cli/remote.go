@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Foohx/akam-fw/tools/assistant/internal/camera/ctl"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 )
 
@@ -18,18 +17,17 @@ import (
 const (
 	hostnameCmd = "/usr/sbin/akam_hostname.sh"
 	rtspAuthCmd = "/usr/sbin/akam_rtsp_auth.sh"
-	debugCmd    = "/usr/sbin/akam_debug.sh"
 	onvifCmd    = "/usr/sbin/akam_onvif.sh"
 	ntpCmd      = "/usr/sbin/akam_ntp.sh"
 	mqttCmd     = "/usr/sbin/akam_mqtt.sh"
 )
 
-// restartVideoCmd is the ONE command that kills a process: it stops ak_rtsp (the video service), which its
-// wrapper starts again by itself. pidof also lists the kernel log filter (same binary, renamed akam_klog in
+// restartVideoCmd is the ONE command that kills a process: it stops akamd (the video service), which its
+// wrapper starts again by itself (a 0.1.x camera still names it ak_rtsp: pidof takes both). pidof also lists the kernel log filter (same binary, renamed akam_klog in
 // its cmdline), so the loop skips it by cmdline; nothing else, and never the watchdog, is touched. It is one
 // of the exact strings the guard (forbiddenRemote) allows, and it is only sent by
 // restartVideo below, after a yes/no that defaults to No (specs/installer.md).
-const restartVideoCmd = `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`
+const restartVideoCmd = `for p in $(pidof akamd ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`
 
 // restartVideo asks (default No) and, on yes, restarts the video service. It reports whether it did.
 func (a *App) restartVideo(c *camssh.Client) bool {
@@ -38,7 +36,7 @@ func (a *App) restartVideo(c *camssh.Client) bool {
 		return false
 	}
 	// the exit status is not an error: nothing to kill means the service was not running
-	_, _ = a.run(c, restartVideoCmd, nil, `kill $(pidof ak_rtsp)`)
+	_, _ = a.run(c, restartVideoCmd, nil, `kill $(pidof akamd ak_rtsp)`)
 	return true
 }
 
@@ -67,14 +65,6 @@ func remoteHostnameSet(name string) string { return hostnameCmd + " set " + name
 
 func remoteRtspAuth(args ...string) string { return rtspAuthCmd + " " + strings.Join(args, " ") }
 
-func remoteDebug(action string, minutes string) string {
-	s := debugCmd + " " + action
-	if minutes != "" {
-		s += " " + minutes
-	}
-	return s
-}
-
 func remoteOnvif(args ...string) string { return onvifCmd + " " + strings.Join(args, " ") }
 
 // remoteMqtt is the MQTT helper. The broker password is never an argument: it goes on stdin (see mqttSet).
@@ -97,13 +87,12 @@ func allRemoteCommands() []string {
 	return []string{
 		remoteTrue(), remoteTestX(hostnameCmd), remoteHostnameSet("salon"),
 		remoteRtspAuth("status"), remoteRtspAuth("show"), remoteRtspAuth("set-creds"), remoteRtspAuth("disable"),
-		remoteDebug("on", "60"), remoteDebug("off", ""), remoteDebug("status", ""),
 		remoteOnvif("enable", "80"), remoteOnvif("disable"), remoteOnvif("status"),
 		remoteMqtt("status"), remoteMqtt("set", "192.0.2.10", "1883", "bob"), remoteMqtt("set", "broker.lan", "1883", "-"),
 		remoteMqtt("disable"), remoteMqtt("forget"), remoteMqtt("test"),
 		remoteMqttOption("base_topic", "home/akam/salon"), remoteMqttOption("discovery", "off"),
 		remoteRegister(), remoteManifest, remoteReadMtd(0), remoteReadMtd(7), remoteNtp("status"), remoteNtp("off"), remoteNtp("set", "pool.ntp.org", "192.0.2.1"),
-		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), ctl.NcCommand,
+		remoteDateRead(), remoteDateSet(time.Unix(1893456000, 0)), apiKeyNewCmd1080, apiKeyRevokeCmd1080, apiKeyNewCmd1080Legacy, apiKeyRevokeCmd1080Legacy,
 	}
 }
 
@@ -142,7 +131,7 @@ func remoteReadMtd(n int) string {
 // space inside an argument, so nothing can be chained, substituted or redirected.
 var helperRe = func() *regexp.Regexp {
 	var alt []string
-	for _, h := range []string{hostnameCmd, rtspAuthCmd, debugCmd, onvifCmd, ntpCmd, mqttCmd} {
+	for _, h := range []string{hostnameCmd, rtspAuthCmd, onvifCmd, ntpCmd, mqttCmd} {
 		alt = append(alt, regexp.QuoteMeta(h))
 	}
 	return regexp.MustCompile(`\A(?:` + strings.Join(alt, "|") + `)(?: [A-Za-z0-9._@:+-]+)*\z`)
@@ -156,7 +145,7 @@ var fixedRemote = map[string]bool{
 	remoteHwcheckPut: true, remoteHwcheckRun: true, remotePreflightPut: true, remotePreflightRun: true, remoteOnvifFlag: true,
 	remoteManifest:    true,
 	remoteAuthkeysPut: true, remoteAuthkeysAdd: true, remoteAuthkeysRemove: true, remoteAuthkeysCard: true,
-	ctl.NcCommand: true,
+	apiKeyNewCmd1080: true, apiKeyRevokeCmd1080: true, apiKeyNewCmd1080Legacy: true, apiKeyRevokeCmd1080Legacy: true,
 }
 
 // forbiddenRemote is an ALLOW-list: it returns "" only for a command line the assistant itself

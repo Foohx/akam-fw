@@ -15,7 +15,7 @@ size_t rtsp_sdp_build(char *buf, size_t cap, const rtsp_sdp_params_t *p)
     int n = snprintf(buf, cap,
         "v=0\r\n"
         "o=- %llu %llu IN IP4 0.0.0.0\r\n"
-        "s=ak_rtsp\r\n"
+        "s=akamd\r\n"
         "t=0 0\r\n"
         "m=video 0 RTP/AVP 96\r\n"
         "c=IN IP4 0.0.0.0\r\n"

@@ -7,5 +7,5 @@ Video settings
   WOULD send: SET video.bitrate_cfg 800
   WOULD send: SET video.fps_cfg 10
   WOULD send: SET video.gop_cfg 4
-  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the ak_rtsp pid (the wrapper starts it again)
+  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the akamd pid (the wrapper starts it again)
 --- stderr ---

@@ -39,7 +39,7 @@ there too, since the scripts run them through `sudo`. macOS is not supported yet
 Tested in clean Docker containers (`debian:12`, `ubuntu:24.04`, mawk as `awk`,
 shellcheck 0.9.x): the packages `check_host.sh` asks for, then `bootstrap.sh`, `make` in
 `platforms/anyka-ak3918`, `tools/dropbear/build_dropbear.sh`, `tools/build/check_time32.sh --require-263` on
-`ak_rtsp` and `dropbearmulti`, and `tools/ci/local_check.sh` (ends with `LOCAL CHECK: OK`).
+`akamd` and `dropbearmulti`, and `tools/ci/local_check.sh` (ends with `LOCAL CHECK: OK`).
 Maintainers can repeat it with `tools/ci/distro_check.sh` (docker or podman, no sudo, read-only
 source mount, `--rm`). Host scripts use POSIX awk only, so mawk and busybox awk work.
 
@@ -64,26 +64,26 @@ The script is idempotent and refuses to overwrite a locally modified `third_part
 `AKAM_OFFLINE=1`) uses `tools/.cache` only and fails clearly if something is missing. Transient
 failures (HTTP 5xx/429, network errors) are retried with exponential backoff.
 
-## 3. Build `ak_rtsp` and `flash_tool`
+## 3. Build `akamd` and `flash_tool`
 
 ```bash
 . tools/build/env.sh                      # exports ZIG, AKAM_CC, ... and puts the pinned zig on PATH
-make -C platforms/anyka-ak3918 ak_rtsp flash_tool
-file build/lsc-indoor-1080p-ak3918/ak_rtsp                  # expect: ELF 32-bit LSB executable, ARM, EABI5, statically linked
-readelf -A build/lsc-indoor-1080p-ak3918/ak_rtsp            # expect ARM926EJ-S / v5TE and no VFP attributes (soft-float)
+make -C platforms/anyka-ak3918 akamd flash_tool
+file build/lsc-indoor-1080p-ak3918/akamd                  # expect: ELF 32-bit LSB executable, ARM, EABI5, statically linked
+readelf -A build/lsc-indoor-1080p-ak3918/akamd            # expect ARM926EJ-S / v5TE and no VFP attributes (soft-float)
 ```
 
 The repository root also has a `Makefile` that delegates to the per-model Makefiles and CI scripts (it puts the pinned
 zig on `PATH` itself): `make help` lists `1080p`, `2k` (needs `CAMERA_LIBC=`), `2k-appfs` (needs `BACKUP=`), `test`, `lint`,
 `check`, `repro` and `clean`. Everything a build writes goes to a per-model directory `build/<model-id>/` (git-ignored): the 1080p binaries
-(`ak_rtsp`, `flash_tool`, ...) and objects in `build/lsc-indoor-1080p-ak3918/`, the 2K binaries, `BUILDINFO.txt` and objects in
+(`akamd`, `flash_tool`, ...) and objects in `build/lsc-indoor-1080p-ak3918/`, the 2K binaries, `BUILDINFO.txt` and objects in
 `build/lsc-rotatable-2k-ak3918av130/` (objects in `poc3/`). `make 2k` (`poc3-dist`) then publishes a copy of the 2K binaries and
 `BUILDINFO.txt` to `dist/rot2k-app/`, the location `build_card.sh`, `build_appfs.sh` and `make_kit_2k.sh` read (it is also where
 `prepare_vendor.sh` puts the vendor libraries).
 
 `env.sh` must be sourced in the same shell as `make` (it is also how `make` finds `zig`). The Makefile
 default is `zig cc -target arm-linux-musleabi -mcpu=arm926ej_s` and `make CC=...` still overrides it.
-`ak_rtsp` is built with `-g`; `build_image.sh` installs a **stripped copy** (the build output is
+`akamd` is built with `-g`; `build_image.sh` installs a **stripped copy** (the build output is
 not modified).
 
 ## 4. Build Dropbear
@@ -157,7 +157,7 @@ Environment variables (all optional), from the script header:
 |---|---|
 | `APP_EXTRACTED` | Your unsquashed APP tree (default `firmware/lsc-indoor-1080p-ak3918/image/app_extracted`) |
 | `FW_DIR` | Output directory (default `firmware/lsc-indoor-1080p-ak3918/image`) |
-| `AK_RTSP_BIN` | `ak_rtsp` binary (default `build/lsc-indoor-1080p-ak3918/ak_rtsp`) |
+| `AK_RTSP_BIN` | `akamd` binary (default `build/lsc-indoor-1080p-ak3918/akamd`) |
 | `ZIG_LICENSE`, `MUSL_COPYRIGHT` | Licence texts shipped in the image (default: from the pinned Zig tarball) |
 | `DROPBEAR_MULTI` | Prebuilt `dropbearmulti` (default `dist/dropbear/dropbearmulti`) |
 | `AKAM_SQUASHFS_COMP` | `xz` (default) or `gzip` |
@@ -168,7 +168,7 @@ Environment variables (all optional), from the script header:
 | `SOURCE_DATE_EPOCH` | Fixed timestamp for the SquashFS (default: now) |
 
 What the script does, in order: copies the tree to `$FW_DIR/app_patched/`; removes `bin/anyka_ipc`;
-installs the wrapper and the single-entry `_ht_process.ini`, the stripped `ak_rtsp`, the stripped
+installs the wrapper and the single-entry `_ht_process.ini`, the stripped `akamd`, the stripped
 `dropbearmulti` (plus `dropbear` / `dropbearkey` symlinks), `akam_ssh.sh`, `akam_lockdown.sh`,
 the licence texts under `/usr/local/akam/` (`LICENSE.dropbear`, `.musl`, `.zig`, `.smolrtsp`, its four dependencies, `.akam`, `THIRD_PARTY_NOTICES.md`) and a `MANIFEST.txt`; patches `sbin/service.sh`
 ([lockdown guide](ssh-and-lockdown.md#6-telnet-and-ftp-lockdown)); checks modes and refuses any
@@ -187,7 +187,7 @@ The APP partition is 5 242 880 bytes. The check runs on the SquashFS **before** 
 
 The padded image is then checked to be exactly 5 242 880 bytes, to start with the SquashFS bytes and to
 contain nothing but `0xFF` afterwards. The free space on a real APP is **unknown until you build from
-your dump** (the stock `anyka_ipc`, about 5.9 MB uncompressed, is removed; `ak_rtsp` stripped is about
+your dump** (the stock `anyka_ipc`, about 5.9 MB uncompressed, is removed; `akamd` stripped is about
 129 KB and `dropbearmulti` about 213 KB, see the [resource report](../hardware-test-checklists.md)).
 
 ### Outputs in `FW_DIR`

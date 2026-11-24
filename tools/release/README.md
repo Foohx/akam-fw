@@ -156,16 +156,16 @@ Run by `make_release.sh`; alone: `AKAM_KIT_VERSION=X.Y.Z tools/release/make_kit.
 `--model` defaults to the only model of the registry). The version has no prefix: the kit is named
 `akam-kit-<model>-<AKAM_KIT_VERSION>` and `akam get-kit` looks for that exact name. `MANIFEST.txt` carries `model=<id>`.
 
-`make_kit.sh` rebuilds `ak_rtsp` and `flash_tool` (`make clean` first) and
+`make_kit.sh` rebuilds `akamd` and `flash_tool` (`make clean` first) and
 `dropbearmulti` (`build_dropbear.sh`, fresh work tree), strips copies, and runs
-`tools/build/check_time32.sh --require-263` on `ak_rtsp` and `dropbearmulti`.
+`tools/build/check_time32.sh --require-263` on `akamd` and `dropbearmulti`.
 If that gate fails, no kit is written. The verdict is recorded in
 `MANIFEST.txt` (`time64_gate=pass`).
 
 The tarball is reproducible for identical inputs: sorted names, fixed mtime from
-`SOURCE_DATE_EPOCH`, owner 0/0, `xz -9e -T1`. Note that `ak_rtsp` embeds a build
+`SOURCE_DATE_EPOCH`, owner 0/0, `xz -9e -T1`. Note that `akamd` embeds a build
 number and timestamp (`gen_version.sh`), so two separate compilations of
-`ak_rtsp` are not byte-identical; reproducibility holds for the packaging of
+`akamd` are not byte-identical; reproducibility holds for the packaging of
 given binaries (this is what `tests/kit_test.sh` checks).
 
 Which Akam files end up in the image (overlay, `service.sh` patch, links) is listed once,
@@ -201,9 +201,9 @@ each of the six targets; `AKAM_REPRO_FRESH=1` gives the second build an empty bu
 public release also compare a run on a second machine. Archives are reproducible for a given Go release
 (`compress/flate` output may change between Go releases, hence the exact pin).
 
-Size budget (`tools/assistant/build.sh sizes`): 12 MiB hard, 11 MiB soft per target; archives 5 MiB.
+Size budget (`tools/assistant/build.sh sizes`): 20 MiB hard, 16 MiB soft per target (raised from 12 and 11 MiB on 2026-11-23); archives 5 MiB.
 `tools/assistant/build.sh sizes --by-package [os/arch]` shows the biggest Go packages of an unstripped build.
-Measured with `go1.27.3-X:nodwarf5` (not the pinned Go; re-measure with the pinned one), project flags:
+Measured with `go1.27.3-X:nodwarf5` several phases ago (not the pinned Go; the figures below are old, run `tools/assistant/build.sh sizes` for the current ones), project flags:
 
 | target | size (MiB) |
 |---|---|
@@ -215,7 +215,7 @@ Measured with `go1.27.3-X:nodwarf5` (not the pinned Go; re-measure with the pinn
 | windows/arm64 | 9.79 |
 
 The figure of 14.6 MiB seen once for windows/amd64 comes from a build without `-trimpath -ldflags "-s -w"`.
-The binaries grew past 11 MiB (windows/amd64 11.35, darwin/amd64 11.14) with the TUI, the audio decoders and the
+The binaries have since grown past the old 11 MiB soft limit (windows/amd64 11.35, darwin/amd64 11.14 when it was raised) with the TUI, the audio decoders and the
 Windows audio layer; the downloads no longer use `net/http` (`kit.Client`, about 0.6 MiB: no HTTP/1 stack, no IDNA
 or Unicode normalisation tables). The biggest remaining parts are the runtime, `crypto/tls` and `x/crypto/ssh`,
 `encoding/json` (about 0.4 MiB, used by the SD helper frames), `regexp` and the CLI code itself.
@@ -256,6 +256,9 @@ a newer firmware release simply does not see that release.
 | `verify_kit.sh` | user-side verification (checksums, signature, MANIFEST, `kit_format`, `--expect-model`) |
 | `allowed_signers` | the release public key (the assistant embeds a copy) |
 
-`kit_format` stays 1: `model=` was added before the first public release, so no kit without it exists. Bump `KIT_FORMAT`
+`kit_format` is 2: format 1 (firmware 0.1.x) carried the camera program as `bin/ak_rtsp` (2K: `appfs/bin/akam2k_rtsp`,
+`akam2k_sntp`); format 2 calls it `bin/akamd` (2K: `appfs/bin/akamd`, `akam-sntp`) and the image gets a compatibility link
+`bin/ak_rtsp -> akamd` for one release. Old assistants and the old wizard refuse a format 2 kit ("use a matching version");
+this version reads both. Bump `KIT_FORMAT`
 in `make_kit.sh`, `SUPPORTED_KIT_FORMATS` in `verify_kit.sh` and the assistant together when the kit layout changes
 incompatibly.

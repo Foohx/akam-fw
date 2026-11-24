@@ -279,11 +279,17 @@ func TestExecStdinControlPortAndUnknownCommand(t *testing.T) {
 			t.Errorf("show: %q err=%q status=%d", r.Stdout, r.Stderr, r.Status)
 		}
 	}
-	r, err = c.Run(ctx, ctl.NcCommand, strings.NewReader(ctl.Input([]string{"GET led.status", "GET night.ir_led"})))
+	// the camera's own loopback text port, as an on-camera script reaches it (the assistant itself uses the signed API now)
+	r, err = c.Run(ctx, "nc -w 2 127.0.0.1 8091", strings.NewReader("GET led.status\nGET night.ir_led\nQUIT\n"))
 	if err != nil || r.Status != 0 {
 		t.Fatalf("nc: %+v %v", r, err)
 	}
-	out := ctl.Answers(string(r.Stdout))
+	var out []string
+	for _, l := range strings.Split(string(r.Stdout), "\n") {
+		if l = strings.TrimRight(l, "\r"); l != "" && !strings.HasPrefix(l, "LOG ") && l != "OK bye" {
+			out = append(out, l)
+		}
+	}
 	if ctl.Get("led.status", out) != "auto" || ctl.Get("night.ir_led", out) != "auto" || len(out) != 2 {
 		t.Errorf("control answers: %v (raw %q)", out, r.Stdout)
 	}

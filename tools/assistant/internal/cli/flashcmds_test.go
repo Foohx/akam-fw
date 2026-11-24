@@ -493,12 +493,12 @@ func TestVerifyEndToEnd(t *testing.T) {
 		"  Waiting for the camera to answer on SSH: 127.0.0.1 port "+itoa(w.cam.SSHPort()),
 		"  SSH with your key works.",
 		"  Copying akam_hwcheck.sh to the camera's RAM (/tmp, nothing is installed) ...",
-		"    PASS ssh key login", "    PASS ak_rtsp running", "    INFO RTSP auth: off",
+		"    PASS ssh key login", "    PASS akamd running", "    INFO RTSP auth: off",
 		"  Open ports: ",
 		"  Checks passed with the card in.",
 		"  /etc/config/wpa_supplicant.conf holds a Wi-Fi network: the camera keeps its network without the card.",
 		"    1. unplug the camera's USB-C power  2. take the microSD card out  3. plug the power back in.",
-		"  Verified: SSH works, only 22, 554 and 8091 are open, telnet and FTP are off.",
+		"  Verified: SSH works, only 22 and 554 are open, telnet and FTP are off.",
 		"  Optional: protect the video stream with a password.",
 		"  Stream left open.", "  ONVIF left off.")
 	contains(t, r.err, "Press Enter when the camera is powered again (or q to stop):")
@@ -519,7 +519,7 @@ func TestVerifyFailures(t *testing.T) {
 		w.verifyWorld(t)
 		r := w.run("\n", "verify")
 		expectRC(t, r, 1)
-		contains(t, r.out+r.err, "    FAIL ak_rtsp is not running", "akam_hwcheck.sh reported a failure (lines above).", "do not remove the card yet; read docs/hardware-test-checklists.md.")
+		contains(t, r.out+r.err, "    FAIL akamd is not running", "akam_hwcheck.sh reported a failure (lines above).", "do not remove the card yet; read docs/hardware-test-checklists.md.")
 		if w.readState("step_verify_done") != "" {
 			t.Error("marked done")
 		}
@@ -547,6 +547,32 @@ func TestVerifyFailures(t *testing.T) {
 		r := w.run("\n", "verify")
 		expectRC(t, r, 1)
 		contains(t, r.out+r.err, "Checks passed with the card in.", "should be closed (telnet/FTP must be off without the card) and is open.", "port check failed without the card.")
+	})
+	t.Run("text port open to the network without the opt-in", func(t *testing.T) {
+		w := newFlashWorld(t, testfake.FlashOptions{})
+		w.verifyWorld(t)
+		w.openCtlPort()
+		r := w.run("\n", "verify")
+		expectRC(t, r, 1)
+		contains(t, r.out+r.err, "should be closed to the network (the camera has not been told to open it) and is open.", "unexpected port state.")
+	})
+	t.Run("text port open because the user chose it", func(t *testing.T) {
+		w := newFlashWorld(t, testfake.FlashOptions{})
+		w.verifyWorld(t)
+		w.openCtlPort()
+		w.cam.SetCtl("control.lan", "1")
+		r := w.run("\nn\nn\nn\n", "verify")
+		expectRC(t, r, 0)
+		contains(t, r.out+r.err, "is open to the network because you chose that")
+	})
+	t.Run("text port open on an image from before it was closed", func(t *testing.T) {
+		w := newFlashWorld(t, testfake.FlashOptions{})
+		w.verifyWorld(t)
+		w.openCtlPort()
+		w.cam.SetCtl("control.lan", "-") // no such row on that image
+		r := w.run("\nn\nn\nn\n", "verify")
+		expectRC(t, r, 0)
+		contains(t, r.out+r.err, "an image from before it was closed does that")
 	})
 	t.Run("stopped at the prompt", func(t *testing.T) {
 		w := newFlashWorld(t, testfake.FlashOptions{})

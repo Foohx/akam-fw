@@ -32,7 +32,7 @@ int a2k_vid_init(const a2k_vid_t base[A2K_VID_STREAMS], const char *store_path)
                 used = 1;
                 a2k_log("video: runtime file %s used", g_path);
             } else {
-                a2k_log("video: %s is invalid, ignored (akam2k.conf and the defaults stay in use)", g_path);
+                a2k_log("video: %s is invalid, ignored (akam.conf and the defaults stay in use)", g_path);
             }
         }
     }
@@ -137,7 +137,7 @@ int a2k_vid_reset_runtime(void)
         persist_locked();
     pthread_mutex_unlock(&g_mu);
     if (changed)
-        a2k_log("video: the runtime settings could not be opened, forgotten (akam2k.conf and the defaults are back)");
+        a2k_log("video: the runtime settings could not be opened, forgotten (akam.conf and the defaults are back)");
     return changed;
 }
 

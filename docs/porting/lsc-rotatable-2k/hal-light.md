@@ -11,7 +11,7 @@ descriptor, a generic driver, and a per-model binding. It lives in `platforms/an
 | `light_logic.c/.h` | pure logic | resolve by name, `light_set()` off / on / blink-fast / blink-slow, `light_tick(now_ms)`, optional exclusion pair (unused on the 2K). Ops and time are injected: no I/O, no clock |
 | `hal_light_sysfs.c` | generic driver | GPIO through `akam2k_pin` (whitelist, export, direction out, polarity here); LED class: `<led_dir>/trigger` = `none` once, then `<led_dir>/brightness` |
 | `hal.c/.h` | 2K binding | `a2k_light_desc`, the only place the emitters are listed |
-| `led.c` | PoC tool | `akam2k_led`, see below |
+| `led.c` | PoC tool | `akam-led`, see below |
 
 ## 2K descriptor
 
@@ -29,11 +29,11 @@ later `hal_ircut`), 48 (`ir`), 56 (`blue`); every other pin is refused. No exclu
 Blink timing: fast 1 Hz (500 ms on / 500 ms off), slow 0.5 Hz (1000 ms / 1000 ms). The stock's own `blink_fast_ms` 250 / `blink_slow_ms` 1500
 are not reproduced on purpose.
 
-## akam2k_led
+## akam-led
 
 ```
-akam2k_led list
-akam2k_led [--force] [--secs N] <name> <on|off|blink-fast|blink-slow>
+akam-led list
+akam-led [--force] [--secs N] <name> <on|off|blink-fast|blink-slow>
 ```
 
 `on` / `off` set the light and exit (the pin keeps its level). `blink-*` stays in the foreground for N seconds (default 15, 1..60), then
@@ -55,9 +55,9 @@ installed by `build_card.sh`; copy it to `/tmp` on the camera by hand.
 `tests/rot2k_light_unit.c` (host, ASan / UBSan, in `tests/rot2k_overlay_test.sh`): fake driver and fake clock for on / off, both blink
 rates, errors; the 2K descriptor (ir, blue) and the pin whitelist (22 / 49 / 55 refused); the sysfs driver on fake LED-class and GPIO directories. The overlay test also audits
 the module (pure logic has no I/O, no pin number or path outside the descriptor and the pin helper, write-only `open` in the driver only, the
-tool's `ir` guard and bounded blink) and compiles `akam2k_led` on the host.
+tool's `ir` guard and bounded blink) and compiles `akam-led` on the host.
 
-## Status LED policy (`akam2k_rtsp`, the app owns `blue`)
+## Status LED policy (`akamd`, the app owns `blue`)
 
 Engine `leds.c/.h` (pure, host-tested: `tests/rot2k_led_unit.c`), thread `leds_run.c` (50 ms tick, 32 KiB stack). The LED
 is only written when its level changes; while the wanted pattern is `on` and the engine never wrote the LED, it is left as the system set it
@@ -69,7 +69,7 @@ is only written when its level changes; while the wanted pattern is `on` and the
 
 **Rules**, first true wins; each has a pattern:
 
-| akam2k.conf key | Rule | Default |
+| akam.conf key | Rule | Default |
 |---|---|---|
 | `led_boot` | first 20 s after start, until the Wi-Fi has had an IPv4 address once | `1:100:100:0` |
 | `led_nowifi` | no IPv4 address on `wlan0` (a non-multicast route exists in `/proc/net/route` only with an address) | `1:250:250:0` |
@@ -79,7 +79,7 @@ is only written when its level changes; while the wanted pattern is `on` and the
 | `led_idle` | none of the above | `on` |
 
 **Master key** `led=on|off|auto` (default `on`, today's behaviour): `on` / `off` force the LED, `auto` evaluates the rules. The rule keys
-only act with `led=auto`. A bad value is logged by `own_app_run.sh` (`akam2k.conf line N ignored`) and the default stays; the shell only
+only act with `led=auto`. A bad value is logged by `own_app_run.sh` (`akam.conf line N ignored`) and the default stays; the shell only
 lets `on`, `off` or digits-and-colons through, the app validates the numbers and keeps the default for a bad pattern.
 
 **Home Assistant** (MQTT, `mqtt_cfg.c`, all `entity_category: config`, command topic `BASE/<id>/set`, state `BASE/<id>/state`; the
@@ -88,8 +88,8 @@ discovery documents are retained, states are not, like every state of the 2K app
 `led_idle`. The app subscribes to the single filter `BASE/+/set`; only these eight topics are obeyed, a payload must be an exact option or
 `[0-9a-z:]` text of at most 31 bytes, at most 20 commands per 10 s are applied. An invalid pattern keeps the old one and the real value is
 published back. `ir_led` off: the IR LEDs never light, the IR-cut filter and the night image still switch (the same as `ir_led=off` in
-akam2k.conf). **Runtime only**: nothing is written to the card or the flash (the 2K app has no persistence), a restart returns to the
-akam2k.conf values.
+akam.conf). **Runtime only**: nothing is written to the card or the flash (the 2K app has no persistence), a restart returns to the
+akam.conf values.
 
 ## Hardware result 2026-11-15 - gpio49 and gpio22 are not lights on this board
 

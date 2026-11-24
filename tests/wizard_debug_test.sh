@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for ./akam debug (on [MINUTES], off, status) against a fake ssh that runs the command line the wizard
-# sends: the real akam_debug.sh with a fake `ak_rtsp ctl`. The real camera is never contacted.
+# sends: the real akam_debug.sh with a fake `akamd ctl`. The real camera is never contacted.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +24,7 @@ unset AKAM_STATE_DIR AKAM_SSH
 export STUB_DIR=$T/stub CAM=$T/cam HELPER
 mkdir -p "$STUB_DIR" "$CAM"
 echo 0 >"$CAM/state"
-cat >"$STUB_DIR/ak_rtsp" <<'EOF'
+cat >"$STUB_DIR/akamd" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$CAM/ctl.log"
 case "$2 $3" in
@@ -35,7 +35,7 @@ case "$2 $3" in
     *) echo "ERR unknown command"; exit 1 ;;
 esac
 EOF
-chmod +x "$STUB_DIR/ak_rtsp"
+chmod +x "$STUB_DIR/akamd"
 cat >"$STUB_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_DIR/ssh.log"
@@ -51,7 +51,7 @@ case $cmd in
     "/usr/sbin/akam_debug.sh "*)
         [ -z "${STUB_OLD:-}" ] || { echo "sh: /usr/sbin/akam_debug.sh: not found"; exit 127; }
         # shellcheck disable=SC2086
-        exec env AKAM_RTSP_BIN="$STUB_DIR/ak_rtsp" sh "$HELPER" ${cmd#/usr/sbin/akam_debug.sh } ;;
+        exec env AKAM_RTSP_BIN="$STUB_DIR/akamd" sh "$HELPER" ${cmd#/usr/sbin/akam_debug.sh } ;;
 esac
 exit 0
 EOF

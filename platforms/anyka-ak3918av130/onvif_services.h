@@ -1,7 +1,7 @@
 /* ONVIF of the Rotatable 2K own app (opt-in, default OFF): ONVIF Profile S device + media + PTZ and WS-Discovery on top of the shared core in
  * src/net (http_srv, soap, onvif, wsd, cred). The 2K binding of the model hook of onvif.h (onvif_model_services) is here.
  *
- * Enabling: akam2k.conf `onvif=1` (+ optional `onvif_port=N`) -> `--onvif 1 --onvif-port N`; the control API row `onvif.state` (read only: off | on:<port> |
+ * Enabling: akam.conf `onvif=1` (+ optional `onvif_port=N`) -> `--onvif 1 --onvif-port N`; the control API row `onvif.state` (read only: off | on:<port> |
  * no_password | error:<reason>) shows what runs, `onvif.enabled` / `onvif.port` show what was asked. Nothing runs until then: no thread, no socket, no timer.
  *
  * Port: a plain HTTP port, default A2K_ONVIF_PORT (8000: not 554 RTSP, not 8092 control API, not 22 SSH, not the stock's 5000 / 8554 / 6668). Accepted: 1024..65535

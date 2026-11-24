@@ -1,0 +1,5 @@
+rc=2
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+--- stderr ---
+akam: debug was removed: port 8091 is closed to the network and the assistant uses the signed API. For the optional LAN opt-in of that port see: ./akam control-port status

@@ -229,7 +229,7 @@ type cfgRead struct {
 	f       *profile.File
 	ssid    string   // the Wi-Fi name the camera reports (a default for the Wi-Fi question)
 	missing []string // what could not be read (an older image, a helper that did not answer)
-	ctlOK   bool     // the control port answered at least one option: false means ak_rtsp said nothing
+	ctlOK   bool     // the control port answered at least one option: false means akamd said nothing
 	miss    []string // the settings keys, or the helper groups (onvif, ntp, mqtt, auth), that could not be read
 }
 

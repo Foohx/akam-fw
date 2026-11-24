@@ -19,7 +19,7 @@ if [ -x "$ZIG" ]; then
     export AKAM_TARGET=arm-linux-musleabi
     export AKAM_MCPU=arm926ej_s
     export AKAM_CC="$ZIG cc -target $AKAM_TARGET -mcpu=$AKAM_MCPU"
-    # Make "zig" resolvable too: the ak_rtsp Makefile default CC is "zig cc ...".
+    # Make "zig" resolvable too: the akamd Makefile default CC is "zig cc ...".
     PATH="$(dirname "$ZIG"):$PATH"
     export PATH
 else

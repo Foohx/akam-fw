@@ -1,6 +1,6 @@
 # Akam assistant <version>
 
-Draft. Not published. `tools/release/make_release.sh assistant` writes the filled copy (`<version>`, `<date>`, `<key>`, the CHANGELOG section, absolute links) next to the release directory.
+Draft. Not published. `tools/release/make_release.sh assistant` writes the filled copy (`<version>`, `<date>`, `<key>`, the CHANGELOG section, absolute links) next to the release directory. The relative links of this template (`testing-status.md`, `assistant.md`, `manual/kit.md`...) are docs-relative: `make_release.sh` rewrites them to absolute URLs, so they do not resolve from `tools/release/`.
 
 Released on <date>. `akam` is a single static program that guides you through putting Akam on a supported camera and
 managing it afterwards (backup, install, update, options, `talk`). It downloads the camera firmware kit itself from the
@@ -22,7 +22,7 @@ SmartScreen, Gatekeeper and the UAC prompt ("Unknown publisher") warn, so check 
 | Linux arm64, macOS arm64 and amd64, Windows arm64 | `akam-<os>-<arch>` | built, not hardware-tested |
 
 Details: [testing status](testing-status.md). Testers are welcome:
-[hardware test checklists](hardware-test-checklists.md#assistant-checklists).
+[hardware test checklists](hardware-checks-assistant.md).
 
 ## Verify your download
 

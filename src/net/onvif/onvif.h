@@ -49,7 +49,7 @@
 
 /* Capabilities element of the media and imaging services: the body of their GetServiceCapabilities response and,
  * wrapped in <tds:Capabilities>, of GetServices with IncludeCapability. RTP_TCP is RTP over HTTP tunnelling (not
- * offered), RTP_RTSP_TCP is the interleaved RTP/RTSP/TCP that ak_rtsp serves. */
+ * offered), RTP_RTSP_TCP is the interleaved RTP/RTSP/TCP that akamd serves. */
 #define ONVIF_MEDIA_CAPS \
     "<trt:Capabilities SnapshotUri=\"false\" Rotation=\"false\"" \
     " VideoSourceMode=\"false\" OSD=\"false\" TemporaryOSDText=\"false\" EXICompression=\"false\">" \

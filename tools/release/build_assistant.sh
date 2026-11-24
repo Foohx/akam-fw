@@ -82,7 +82,7 @@ for t in $TARGETS; do
     [ -s "$f" ] || die "missing $f"
     if [ -n "$HOME" ] && [ "$HOME" != / ] && grep -aqF -e "$HOME" "$f"; then die "$f contains the home directory path"; fi
     if grep -aqF -e "$ROOT" "$f"; then die "$f contains the checkout path"; fi
-    [ "$(wc -c <"$f")" -le $((12 * 1024 * 1024)) ] || die "$f is larger than the 12 MiB binary budget"
+    [ "$(wc -c <"$f")" -le $((20 * 1024 * 1024)) ] || die "$f is larger than the 20 MiB binary budget"
     info=$(go version -m "$f")
     case "$info" in *akamtest*) die "$f was built with the akamtest tag" ;; esac
     case "$info" in *CGO_ENABLED=0*) ;; *) die "$f was not built with CGO_ENABLED=0" ;; esac

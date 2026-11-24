@@ -32,9 +32,22 @@ func TestUpdateFlowEndToEnd(t *testing.T) {
 	w := newFlashWorld(t, testfake.FlashOptions{})
 	bk := backupFixture(t)
 	w.seedUpdate(t, bk)
+	keyBefore, err := os.ReadFile(filepath.Join(w.state, "api_key")) // the key of this PC, made before this update
+	if err != nil {
+		t.Fatal(err)
+	}
 	// home 2 = update; red box y; "verify now?" Enter (No); 9 = quit
 	r := w.homeRun("2\ny\n\n10\n", "--image", w.img)
 	expectRC(t, r, 0)
+	// an update keeps the keys: the file of this PC is byte for byte the same, the camera keeps its key, and no key command was sent
+	if keyAfter, _ := os.ReadFile(filepath.Join(w.state, "api_key")); !bytes.Equal(keyBefore, keyAfter) || w.cam.APIKeys() != 1 {
+		t.Error("the update changed the API key")
+	}
+	for _, c := range w.cam.Commands() {
+		if strings.Contains(c, "--api-key") {
+			t.Errorf("the update sent a key command: %s", c)
+		}
+	}
 	contains(t, r.out+r.err, "Update default (127.0.0.1)", "[next]  1  Kit downloaded and verified",
 		"Backup checked: "+bk+" (SHA256SUMS ok, re-hashed just now).",
 		"Updating: WRITES THE CAMERA FLASH", "Image md5 written and read back: "+w.imgMD5,

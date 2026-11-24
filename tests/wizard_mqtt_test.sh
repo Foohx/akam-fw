@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # commands for other shells are single-quoted on purpose
 # Tests for ./akam mqtt (status, set, disable, forget, test) against a fake ssh that runs the command line the wizard
-# sends: the real akam_mqtt.sh in a fake camera root, with a fake `ak_rtsp ctl`. The real camera is never contacted.
+# sends: the real akam_mqtt.sh in a fake camera root, with a fake `akamd ctl`. The real camera is never contacted.
 # The broker password is a sentinel that must never reach a command line, the output, the log or the state.
 set -uo pipefail
 
@@ -28,7 +28,7 @@ export STUB_DIR=$T/stub CAM=$T/cam HELPER
 mkdir -p "$STUB_DIR" "$CAM/root/etc/config"
 CFG=$CAM/root/etc/config/akam/mqtt
 PW=$CAM/root/etc/config/akam/mqtt_pass
-cat >"$STUB_DIR/ak_rtsp" <<'EOF'
+cat >"$STUB_DIR/akamd" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$CAM/ctl.log"
 case "$2 $3" in
@@ -41,7 +41,7 @@ case "$2 $3" in
     *) echo "ERR unknown command"; exit 1 ;;
 esac
 EOF
-chmod +x "$STUB_DIR/ak_rtsp"
+chmod +x "$STUB_DIR/akamd"
 cat >"$STUB_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_DIR/ssh.log"
@@ -52,7 +52,7 @@ for x in "$@"; do
 done
 cmd=${cmd# }
 [ "${STUB_SSH_RC:-0}" = 0 ] || exit "$STUB_SSH_RC"
-export AKAM_ROOT="$CAM/root" AKAM_RTSP_BIN="$STUB_DIR/ak_rtsp"
+export AKAM_ROOT="$CAM/root" AKAM_RTSP_BIN="$STUB_DIR/akamd"
 case $cmd in
     true) exit 0 ;;
     "/usr/sbin/akam_mqtt.sh "*)

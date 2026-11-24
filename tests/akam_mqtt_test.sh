@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2012  # ls -ld is what the camera script uses too (no stat on BusyBox): the test mirrors it
 # Host tests for akam_mqtt.sh (camera script, run under busybox sh when available) in a fake root ($AKAM_ROOT). A fake
-# `ak_rtsp` plays "ak_rtsp ctl <line>". Nothing touches hardware or the network. The broker password is a sentinel
+# `akamd` plays "akamd ctl <line>". Nothing touches hardware or the network. The broker password is a sentinel
 # that must never appear in any output or in the settings file.
 set -uo pipefail
 
@@ -30,9 +30,9 @@ perm() { ls -ld "$1" | cut -c1-10; }
 exists() { if [ -e "$1" ]; then echo yes; else echo no; fi; }
 SECRET='S3NTINEL-br0ker-pw'
 
-# fake ak_rtsp: FAKE_MODE = new (answers), old (ERR unknown command), dead (connection refused); FAKE_TEST = the
+# fake akamd: FAKE_MODE = new (answers), old (ERR unknown command), dead (connection refused); FAKE_TEST = the
 # results of successive "GET mqtt.test" calls, one word per call (the last one repeats)
-cat >"$WORK/ak_rtsp" <<'EOF2'
+cat >"$WORK/akamd" <<'EOF2'
 #!/bin/sh
 echo "$*" >>"$FAKE_LOG"
 [ "$1" = ctl ] || exit 9
@@ -56,12 +56,12 @@ case "$2 $3" in
     *) echo "ERR unknown command"; exit 1 ;;
 esac
 EOF2
-chmod +x "$WORK/ak_rtsp"
+chmod +x "$WORK/akamd"
 # no real sleeping in the poll loop
 mkdir "$WORK/bin"
 printf '#!/bin/sh\nexit 0\n' >"$WORK/bin/sleep"
 chmod +x "$WORK/bin/sleep"
-export FAKE_LOG=$WORK/log AKAM_RTSP_BIN=$WORK/ak_rtsp
+export FAKE_LOG=$WORK/log AKAM_RTSP_BIN=$WORK/akamd
 R=$WORK/root
 export AKAM_ROOT=$R
 CFG=$R/etc/config/akam/mqtt
@@ -79,7 +79,7 @@ out=$(run status); rc=$?
 eq "status, no file: exit 0" "$rc" 0
 contains "status, no file: disabled" "$out" "MQTT: disabled (default)"
 contains "status: no password" "$out" "password: none"
-contains "status: ak_rtsp state shown" "$out" "state: connected"
+contains "status: akamd state shown" "$out" "state: connected"
 
 # --- set
 : >"$FAKE_LOG"
@@ -225,8 +225,8 @@ eq "test that never ends: exit 1" "$rc" 1
 contains "test that never ends: says so" "$out" "no result after 3 seconds"
 export FAKE_MODE=old
 out=$(run test); rc=$?
-eq "test on an older ak_rtsp: exit 1" "$rc" 1
-contains "test on an older ak_rtsp: update hint" "$out" "older"
+eq "test on an older akamd: exit 1" "$rc" 1
+contains "test on an older akamd: update hint" "$out" "older"
 unset FAKE_MODE
 
 # --- older firmware: reboot to apply, still exit 0, settings saved
@@ -238,8 +238,8 @@ eq "old firmware: file saved" "$(sed -n 1p "$CFG")" "enabled=1"
 contains "old firmware: state unknown" "$(run status)" "state: unknown"
 export FAKE_MODE=dead
 out=$(run disable); rc=$?
-eq "ak_rtsp down: disable exit 0" "$rc" 0
-contains "ak_rtsp down: applies at next start" "$out" "next time ak_rtsp starts"
+eq "akamd down: disable exit 0" "$rc" 0
+contains "akamd down: applies at next start" "$out" "next time akamd starts"
 unset FAKE_MODE
 
 # --- invalid files

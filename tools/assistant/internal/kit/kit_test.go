@@ -47,7 +47,7 @@ func TestSignedKitVerifies(t *testing.T) {
 			t.Errorf("%s: signer text %q", alg, r.SignedBy)
 		}
 		joined := strings.Join(said, "\n")
-		for _, w := range []string{"ok: akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz sha256 ", "ok: signature valid (", "ok: archive layout is safe", "ok: kit_format 1 is supported", "MANIFEST entries match (akam_version 1.0.0, source 0123456789ab)"} {
+		for _, w := range []string{"ok: akam-kit-lsc-indoor-1080p-ak3918-1.0.0.tar.xz sha256 ", "ok: signature valid (", "ok: archive layout is safe", "ok: kit_format 2 is supported", "MANIFEST entries match (akam_version 1.0.0, source 0123456789ab)"} {
 			if !strings.Contains(joined, w) {
 				t.Errorf("missing %q in:\n%s", w, joined)
 			}
@@ -242,7 +242,7 @@ func TestManifestRefusals(t *testing.T) {
 		// the file content differs from MANIFEST and SHA256SUMS (made after the digests were taken)
 		b := kittest.Build(t, t.TempDir(), kittest.Spec{TarMutate: func(e *[]kittest.Entry) {
 			for i := range *e {
-				if strings.HasSuffix((*e)[i].Name, "bin/ak_rtsp") {
+				if strings.HasSuffix((*e)[i].Name, "bin/akamd") {
 					(*e)[i].Body = []byte("evil\n")
 				}
 			}
@@ -258,9 +258,9 @@ func TestManifestRefusals(t *testing.T) {
 		wantFail(t, err, "files differ from SHA256SUMS")
 	})
 	t.Run("unsupported format", func(t *testing.T) {
-		b := kittest.Build(t, t.TempDir(), kittest.Spec{Format: "2"})
+		b := kittest.Build(t, t.TempDir(), kittest.Spec{Format: "3"})
 		_, err, _ := verify(t, b, nil)
-		wantFail(t, err, "kit_format 2 is not supported")
+		wantFail(t, err, "kit_format 3 is not supported")
 	})
 	t.Run("test grade", func(t *testing.T) {
 		b := kittest.Build(t, t.TempDir(), kittest.Spec{Grade: "test"})
@@ -345,7 +345,7 @@ func TestDirectoryMode(t *testing.T) {
 	if _, err := o.VerifyExtracted(to); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(to, "bin", "ak_rtsp"), []byte("changed"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(to, "bin", "akamd"), []byte("changed"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	_, err = o.VerifyExtracted(to)

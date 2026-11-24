@@ -31,6 +31,7 @@
 #include "rtp_clock.h"
 #include "net_tx.h"
 #include "tx_pace.h"
+#include "lat_stat.h"
 #include "rtsp_in.h"
 #include "rtsp_idle.h"
 #include "control.h"
@@ -118,6 +119,7 @@ typedef struct {
     /* RTSP/TCP backpressure (tx_pace.h): frames are dropped for this client
      * while its socket backlog is high, so the encoder keeps being drained. */
     tx_pace_t pace;
+    lat_stat_t lat; /* time from the frame leaving the encoder to its last byte handed to the socket */
 
     bool is_tcp;
     uint8_t rtp_channel;
@@ -656,6 +658,7 @@ static void Client_play(VSelf, SmolRTSP_Context *ctx, const SmolRTSP_Request *re
     if (media) {
         client_set_playing(self, true);
         tx_pace_init(&self->pace); /* a new PLAY starts with a clean pacing state */
+        lat_stat_init(&self->lat);
         if (self->is_tcp && net_tx_queue_enable(&self->tx, TX_QUEUE_BYTES) < 0)
             printf("[ak_rtsp] no memory for the TCP send queue: this client keeps blocking writes\n");
         if (self->nal_transport) {
@@ -892,6 +895,7 @@ static int send_video_frame(Client *client)
         return -1;
     }
 
+    const int64_t fetch_us = rtp_mono_us(); /* the frame is read from the encoder ring the moment it is ready */
     swdog_frame();
     swdog_mode(SWDOG_SEND); /* a blocked client write is not an encoder stall; the next loop pass resets this */
     void *data = (char *)g_venc_virt + (req.frame_offset - g_venc_phys);
@@ -995,6 +999,8 @@ static int send_video_frame(Client *client)
             .cap = kcap ? kcap + qcap : 0, /* the queue extends the kernel buffer */
             .stall_ms = TX_PACE_STALL_MS,
             .max_skip_ms = tx_pace_max_skip_ms(video_gop_frames() / (video_fps() ? video_fps() : 1)),
+            .max_lag_ms = TX_PACE_MAX_LAG_MS,
+            .rate_bps = (size_t)(video_kbps() > 0 ? video_kbps() : 1000) * 125u,
         };
         /* Room for this frame: never start one that cannot be queued completely (a part would tear the
          * interleaved stream). Without a queue the writer blocks instead and there is no limit to give. */
@@ -1020,8 +1026,8 @@ static int send_video_frame(Client *client)
         if (pv == TX_PACE_DROP_CLIENT && !client->drop_reason)
             client->drop_reason = ev.drop_reason; /* the client loop ends the session after this frame */
         if (ev.log_enter && ev.entered)
-            printf("[ak_rtsp] client link slow (%zu bytes unsent): dropping video until the next keyframe\n",
-                   backlog);
+            printf("[ak_rtsp] client link slow (%zu bytes unsent%s): dropping video until the next keyframe\n",
+                   backlog, ev.lag ? ", backlog standing too long" : "");
         log_recovered = ev.log_leave && ev.left && pv == TX_PACE_SEND;
         if (log_recovered) client->pace_recovered = ev.run_skipped;
     }
@@ -1062,6 +1068,15 @@ static int send_video_frame(Client *client)
                 printf("[ak_rtsp] client link slow (TCP send queue full): dropping video until the next keyframe\n");
         } else {
             ctl_sys_note_video_frame(req.len);
+            if (client->is_tcp) {
+                unsigned long ln;
+                long lavg, lmax;
+                size_t lbl;
+                lat_stat_add(&client->lat, rtp_mono_us() - fetch_us, pace_backlog, ms_ts_now());
+                if (lat_stat_take(&client->lat, ms_ts_now(), &ln, &lavg, &lmax, &lbl))
+                    printf("[ak_rtsp] frame age at send avg %ld ms max %ld ms over %lu frames, unsent backlog max %zu bytes\n",
+                           lavg, lmax, ln, lbl);
+            }
             if (log_recovered)
                 printf("[ak_rtsp] client link recovered: dropped %u frames, video resumed\n", client->pace_recovered);
         }
@@ -1461,10 +1476,11 @@ void handle_client(int client_fd, struct sockaddr_storage *client_addr,
     int keepalive = 1;
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
     setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
-    /* Send buffer: ask for 256 KiB. The kernel clamps to net.core.wmem_max (160 KiB on the camera) and
-     * doubles it (~320 KiB sk_sndbuf), and a fixed SO_SNDBUF switches the buffer autotuning off. The pacing
-     * (tx_pace.h) reads the resulting size back every frame and keeps its watermarks inside it. */
-    int sndbuf = 256 * 1024;
+    /* Send buffer: ask for TX_PACE_SNDBUF (64 KiB; it was 256 KiB, i.e. up to ~0.8 s of stream standing in the kernel
+     * on a slow link). The kernel doubles it, and a fixed SO_SNDBUF switches the buffer autotuning off. The pacing
+     * (tx_pace.h) reads the resulting size back every frame and keeps its watermarks inside it; the private queue
+     * takes the keyframe burst. */
+    int sndbuf = TX_PACE_SNDBUF;
     setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
     /* The kernel default probes only after 2 h of silence: a peer that vanished
      * before PLAY (or while paused) would keep this single-client server busy

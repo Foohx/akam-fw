@@ -1,0 +1,12 @@
+rc=0
+--- stdout ---
+REHEARSAL (--dry-run): commands are shown, nothing is changed.
+
+Video settings
+  WOULD use the signed API of the camera (http://<camera-ip>:8092/akam/v1): GET /settings and GET /state for the values, ONE PATCH /settings for a change.
+  WOULD ask once, if this PC has no API key for the camera, to create one over SSH (/usr/bin/akamd --api-key new: the secret is never shown).
+  WOULD send: SET video.bitrate_cfg 800
+  WOULD send: SET video.fps_cfg 10
+  WOULD send: SET video.gop_cfg 4
+  WOULD ask: Restart the video service now? [y/N] (default No); if yes: ssh kill the akamd pid (the wrapper starts it again)
+--- stderr ---

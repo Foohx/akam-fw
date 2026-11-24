@@ -7,7 +7,7 @@
  *
  * Start-up options come from the environment, then from /tmp/akam_image (RAM, gone at reboot), then from
  * /etc/config/akam/image (saved; key=value lines, '#' comments), then from the defaults:
- *   venc_rc  = legacy | stock   AKAM_VENC_RC   CREATE_ENC rate-control sub-struct: legacy = the values ak_rtsp
+ *   venc_rc  = legacy | stock   AKAM_VENC_RC   CREATE_ENC rate-control sub-struct: legacy = the values akamd
  *                                               always sent, stock = exactly what the stock application sends
  *   wb       = conf | manual    AKAM_IMG_WB     conf (default) = keep the sensor_isp.conf block, as stock; manual =
  *                                               the hand-made manual white-balance block ae.c used to send
@@ -48,7 +48,7 @@ int imgq_venc_rc_stock(void);
 int imgq_wb_conf(void);
 int imgq_poll_stats(void);
 /* ipdelta = -12..12 (AKAM_VENC_IPDELTA or the option files, default 0): rc.delta of the legacy CREATE_ENC rc sub-struct (the
- * encoder's I/P QP offset, "uIpDelta" in the kernel log). 0 = the payload ak_rtsp always sent. Applies when the encoder is
+ * encoder's I/P QP offset, "uIpDelta" in the kernel log). 0 = the payload akamd always sent. Applies when the encoder is
  * created. Not hardware-tested: use the RAM file /tmp/akam_image only, until it has survived a test. */
 int imgq_venc_ipdelta(void);
 

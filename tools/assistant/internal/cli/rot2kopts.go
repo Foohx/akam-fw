@@ -22,17 +22,17 @@ var opts2KCommands = map[string]bool{"led": true, "picture": true, "video": true
 
 // words2K maps the words of a command to registry keys.
 var words2K = map[string]map[string]string{
-	"led":     {"status": "led.mode", "ir": "night.ir_led"},
-	"picture": {"brightness": "image.brightness", "contrast": "image.contrast", "sharpness": "image.sharpness", "mains": "image.mains_hz", "flip": "image.flip", "mirror": "image.mirror", "ceiling": "image.ceiling"},
-	"video":   {"bitrate": "kbps", "maxbitrate": "max_kbps", "fps": "fps", "gop": "gop", "minqp": "min_qp", "maxqp": "max_qp", "rc": "rc"},
-	"track":   {"return": "track.return", "delay": "track.return_delay_s", "tilt": "track.tilt", "lag": "track.lag_ms"},
-	"wifi":    {"country": "net.wifi_country", "band": "net.wifi_band"},
+	"led": {"status": "led.mode", "ir": "night.ir_led"},
+	"picture": {"brightness": "image.brightness", "contrast": "image.contrast", "sharpness": "image.sharpness", "mains": "image.mains_hz", "flip": "image.flip", "mirror": "image.mirror", "ceiling": "image.ceiling",
+		"saturation": "isp.saturation", "denoise": "isp.denoise", "wb": "img.wb"},
+	"video": {"bitrate": "kbps", "maxbitrate": "max_kbps", "fps": "fps", "gop": "gop", "minqp": "min_qp", "maxqp": "max_qp", "rc": "rc"},
+	"track": {"return": "track.return", "delay": "track.return_delay_s", "tilt": "track.tilt", "lag": "track.lag_ms"},
+	"wifi":  {"country": "net.wifi_country", "band": "net.wifi_band"},
 }
 
 // unavailable2K are the words of the 1080p commands the 2K has no equivalent for.
 var unavailable2K = map[string]string{
-	"saturation": "the 2K has no saturation setting", "denoise": "the 2K has no denoise setting",
-	"wb": "the 2K has no white balance setting", "night": "the 2K has no night mode setting (night.ir_led is 'led ir')",
+	"night": "the 2K has no night mode setting (night.ir_led is 'led ir')",
 	"reset": "there is no reset yet: set the values you want",
 }
 
@@ -116,7 +116,7 @@ func (a *App) dispatch2KOpts(cmd string, args []string) error {
 		case "led":
 			show = keysWithPrefix2K("led.", "night.ir_led")
 		case "picture":
-			show = keysWithPrefix2K("image.")
+			show = keysWithPrefix2K("image.", "isp.", "img.")
 		case "video":
 			show = keysWithPrefix2K(prefix)
 		case "track":
@@ -274,6 +274,9 @@ func (a *App) confirm2K(q string) bool {
 
 func (a *App) valueLine2K(o camopt.Option, cur map[string]string) string {
 	v, ok := cur[o.Key]
+	if !ok && o.Kind == camopt.Secret { // write-only: the camera never reports it
+		return fmt.Sprintf("  %-44s write-only (never shown, never read back)", o.Label)
+	}
 	if !ok {
 		return fmt.Sprintf("  %-44s n/a (this camera does not report it)", o.Label)
 	}
@@ -355,7 +358,7 @@ func (a *App) send2K(cl *akamapi.Client, cur map[string]string, changes []camopt
 		return nil
 	}
 	if asks {
-		a.UI.Say("  A Wi-Fi or name change is applied by the camera within seconds; a Wi-Fi change that loses the network is reverted by the camera after about a minute.")
+		a.UI.Say("  A Wi-Fi or name change is applied by the camera within seconds; a Wi-Fi change that loses the network is reverted by the camera after about a minute. A new stream password disconnects the viewers that are logged in.")
 		if !a.confirm2K("Send " + maskedBody(todo) + " to the camera?") {
 			return a.UI.Fail("not confirmed.", "nothing was changed.")
 		}
@@ -494,7 +497,7 @@ func (a *App) groupSummary2K(g string, cur map[string]string) string {
 }
 
 var summaryKeys2K = []string{"led.mode", "night.ir_led", "image.brightness", "image.flip", "image.mirror", "video0.kbps", "video0.fps",
-	"track.enabled", "track.return", "ptz.patrol.idle_start_s", "net.hostname", "net.wifi_country", "net.wifi_band"}
+	"track.enabled", "track.return", "ptz.patrol.idle_start_s", "net.hostname", "net.wifi_country", "net.wifi_band", "audio.mic_enable", "mqtt.enabled", "onvif.enabled"}
 
 func (a *App) groupScreen2K(cl *akamapi.Client, group string, cur map[string]string) {
 	var opts []camopt.Option
@@ -527,7 +530,7 @@ func (a *App) groupScreen2K(cl *akamapi.Client, group string, cur map[string]str
 		switch {
 		case i < len(opts):
 			o := opts[i]
-			if _, ok := cur[o.Key]; !ok {
+			if _, ok := cur[o.Key]; !ok && o.Kind != camopt.Secret {
 				a.UI.Say("  This camera does not report that setting: update it first (Update this camera).")
 				continue
 			}
@@ -607,8 +610,18 @@ func (a *App) askValue2K(o camopt.Option, cur string) (string, bool) {
 		v, err := camopt.Validate2K(o.Key, labels[i])
 		return v, err == nil
 	case camopt.Secret:
-		a.UI.Say("  A secret cannot be set through the API.")
-		return "", false
+		a.UI.Say("  " + o.Help + ".")
+		s, err := a.UI.Secret(fmt.Sprintf("  %s (not shown; empty cancels):", o.Label))
+		if err != nil || s == "" {
+			return "", false
+		}
+		v, verr := camopt.Validate2K(o.Key, s)
+		if verr != nil {
+			a.UI.Say("  " + verr.Error() + ".")
+			return "", false
+		}
+		a.Secrets.Add(v)
+		return v, true
 	}
 	for {
 		if o.Help != "" {

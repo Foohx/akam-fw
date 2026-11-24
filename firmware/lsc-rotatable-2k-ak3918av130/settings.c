@@ -15,12 +15,15 @@
 #include "isp.h"
 #include "leds.h"
 #include "log.h"
+#include "cfgreg.h"
 #include "netreg.h"
 #include "night_ctl.h"
 #include "orient.h"
+#include "picture.h"
 #include "patrol.h"
 #include "ptz.h"
 #include "rtsp_session.h"
+#include "speaker.h"
 #include "store.h"
 #include "track_run.h"
 #include "video.h"
@@ -41,6 +44,7 @@ static int g_overflow; /* rows that did not fit MAX_ROWS */
 static size_t g_nrows;
 static a2k_settings_cfg_t g_cfg;
 static char g_path[160], g_netdir[120], g_netreq[120], g_netres[128];
+static char g_cfgdir[120], g_cfgreq[120], g_cfgres[128]; /* the user files (cfgreg.h) and the request of the supervisor */
 static a2k_image_cfg_t g_img;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; /* guards g_img, g_sys, g_keys */
 static hal_sys_sample_t g_sys;
@@ -150,6 +154,33 @@ static int img_set(const char *key, const char *val, st_apply_t *eff)
         return ST_E_SETTER;
     }
     return 0;
+}
+
+/* ------------------------------------------------------------------ isp.saturation / isp.denoise / img.wb (the 1080p's names, picture.h) */
+static int pic_get(const char *key, char *out, size_t cap)
+{
+    if (strcmp(key, "isp.saturation") == 0)
+        return put(out, cap, a2k_pic_get_saturation());
+    if (strcmp(key, "isp.denoise") == 0)
+        return put(out, cap, a2k_pic_get_denoise());
+    if (strcmp(key, "img.wb") == 0)
+        return puts_(out, cap, a2k_pic_get_wb() == A2K_PIC_WB_MANUAL ? "manual" : "conf");
+    return ST_E_GETTER;
+}
+
+static int pic_set(const char *key, const char *val, st_apply_t *eff)
+{
+    int rc;
+    (void)eff;
+    if (strcmp(key, "isp.saturation") == 0)
+        rc = a2k_pic_set_saturation(atoi(val));
+    else if (strcmp(key, "isp.denoise") == 0)
+        rc = a2k_pic_set_denoise(atoi(val));
+    else if (strcmp(key, "img.wb") == 0)
+        rc = a2k_pic_set_wb(strcmp(val, "manual") == 0 ? A2K_PIC_WB_MANUAL : A2K_PIC_WB_CONF);
+    else
+        return ST_E_SETTER;
+    return rc == A2K_PIC_OK ? 0 : ST_E_SETTER;
 }
 
 /* ------------------------------------------------------------------ image.flip / image.mirror / image.ceiling (live, saved only on a user change)
@@ -558,6 +589,9 @@ static const char *const OPT_RC[] = { "vbr", "cbr", "avbr", NULL };
 static const char *const OPT_AUTO[] = { "auto", "on", "off", NULL };
 static const char *const OPT_IR[] = { "auto", "off", NULL };
 static const char *const OPT_MAINS[] = { "50", "60", NULL };
+static const char *const OPT_WB[] = { "conf", "manual", NULL };
+static const char *const OPT_AMP[] = { "auto", "on", "off", NULL };
+static const char *const OPT_DUPLEX[] = { "half", "full", NULL };
 static const char *const OPT_TRET[] = { "stay", "home", NULL };
 static const char *const G_LED[] = { "led", NULL };
 static char g_vkey[A2K_VID_STREAMS][A2K_VP_N][20], g_vdef[A2K_VID_STREAMS][A2K_VP_N][12];
@@ -691,7 +725,209 @@ static int netb_set(const char *key, const char *val)
 
 static const a2k_netreg_backend_t g_netb = { netb_get, netb_set };
 
-/* ------------------------------------------------------------------ onvif.* (read only: akam2k.conf onvif=1 / onvif_port=N asks, the app reports; no flash write from the API) */
+/* ------------------------------------------------------------------ the user-file rows (cfgreg.h): MQTT, ONVIF, stream password, NTP, microphone
+ * Getters read the files the app and the supervisor read (plain fopen: in the card-less image they are symlinks into /config/akam, which
+ * a2k_store_read refuses). Setters queue the changes of ONE PATCH in RAM and cfg_flush (end of the PATCH, on the worker) writes them as ONE request
+ * file in /tmp (mode 0600: it may hold a password) which the supervisor takes, validates again and applies (own_app_run.sh, cfg_request).
+ * The app writes nothing to the flash here. */
+#define CFG_PEND_MAX 12
+static struct {
+    char key[24];
+    char val[132];
+} g_cpend[CFG_PEND_MAX];
+static int g_cpend_n;
+
+static int cfg_file(const char *name, char *buf, size_t cap)
+{
+    char path[200];
+    FILE *f;
+    size_t n;
+    snprintf(path, sizeof path, "%s/%s", g_cfgdir, name);
+    f = fopen(path, "r");
+    if (!f)
+        return -1;
+    n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return (int)n;
+}
+
+/* key=value of a file (the last line of the key wins; "#" comments and blanks as the supervisor reads akam.conf); 1 found, 0 absent */
+static int cfg_kv(const char *file, const char *key, char *out, size_t cap)
+{
+    char buf[1024], *save = NULL, *line;
+    size_t kl = strlen(key);
+    int found = 0;
+    if (cfg_file(file, buf, sizeof buf) < 0)
+        return 0;
+    for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *h = strchr(line, '#'), *w, *r;
+        if (h)
+            *h = '\0';
+        for (w = r = line; *r; r++) /* the supervisor drops spaces, tabs and CR everywhere in the line */
+            if (*r != ' ' && *r != '\t' && *r != '\r')
+                *w++ = *r;
+        *w = '\0';
+        if (strncmp(line, key, kl) == 0 && line[kl] == '=') {
+            snprintf(out, cap, "%s", line + kl + 1);
+            found = 1;
+        }
+    }
+    return found;
+}
+
+static int cfg_auth(char *user, size_t ucap, char *state, size_t scap)
+{
+    char buf[300], *c, *p;
+    size_t i;
+    user[0] = '\0';
+    if (cfg_file("rtsp.conf", buf, sizeof buf) < 0) {
+        snprintf(state, scap, "off");
+        return 0;
+    }
+    buf[strcspn(buf, "\r\n")] = '\0';
+    snprintf(state, scap, "invalid");
+    c = strchr(buf, ':');
+    if (!c || c == buf || (size_t)(c - buf) > 32 || strncmp(c, ":akam:", 6) != 0)
+        return -1;
+    p = c + 6;
+    if (strlen(p) != 32)
+        return -1;
+    for (i = 0; i < 32; i++)
+        if (!((p[i] >= '0' && p[i] <= '9') || (p[i] >= 'a' && p[i] <= 'f')))
+            return -1;
+    *c = '\0';
+    snprintf(user, ucap, "%.32s", buf);
+    snprintf(state, scap, "on");
+    return 0;
+}
+
+static int cfg_apply_state(char *out, size_t cap)
+{
+    char buf[40];
+    int n = a2k_store_read(g_cfgreq, buf, sizeof buf);
+    if (n >= 0 || n == -2)
+        return puts_(out, cap, "queued");
+    n = a2k_store_read(g_cfgres, buf, sizeof buf);
+    if (n < 0)
+        return puts_(out, cap, "idle");
+    buf[strcspn(buf, " \r\n")] = '\0';
+    return puts_(out, cap, buf[0] && strspn(buf, "abcdefghijklmnopqrstuvwxyz") == strlen(buf) ? buf : "idle");
+}
+
+static int cfgb_get(const char *key, char *out, size_t cap)
+{
+    char v[200], u[40], st[16];
+    if (strcmp(key, "cfg.apply") == 0)
+        return cfg_apply_state(out, cap);
+    if (strcmp(key, "rtsp.user") == 0 || strcmp(key, "rtsp.auth") == 0) {
+        (void)cfg_auth(u, sizeof u, st, sizeof st);
+        return puts_(out, cap, strcmp(key, "rtsp.user") == 0 ? u : st);
+    }
+    if (strcmp(key, "audio.mic_enable") == 0)
+        return puts_(out, cap, cfg_kv("akam.conf", "audio", v, sizeof v) && !strcmp(v, "1") ? "1" : "0");
+    if (strcmp(key, "onvif.enabled") == 0)
+        return puts_(out, cap, cfg_kv("akam.conf", "onvif", v, sizeof v) && !strcmp(v, "1") ? "1" : "0");
+    if (strcmp(key, "onvif.port") == 0)
+        return puts_(out, cap, cfg_kv("akam.conf", "onvif_port", v, sizeof v) && atoi(v) >= 1024 && atoi(v) <= 65535 ? v : "8000");
+    if (strncmp(key, "mqtt.", 5) == 0) {
+        const char *k = key + 5, *def = !strcmp(k, "port") ? "1883" : !strcmp(k, "enabled") ? "0" : "";
+        return puts_(out, cap, cfg_kv("mqtt", k, v, sizeof v) ? v : def);
+    }
+    if (strcmp(key, "ntp.servers") == 0) { /* the servers of the file ntp, space separated; "" while NTP is off (no file) */
+        char buf[400], *save = NULL, *line;
+        out[0] = '\0';
+        if (cfg_file("ntp", buf, sizeof buf) < 0)
+            return 0;
+        for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+            size_t l = strlen(out), s;
+            line[strcspn(line, "\r")] = '\0';
+            if (strncmp(line, "server=", 7) != 0)
+                continue;
+            s = strlen(line + 7);
+            if (s == 0 || l + s + 2 >= cap)
+                continue;
+            if (l) { /* servers are separated by one space */
+                out[l++] = ' ';
+                out[l] = '\0';
+            }
+            snprintf(out + l, cap - l, "%s", line + 7);
+        }
+        return (int)strlen(out);
+    }
+    return -1;
+}
+
+static int cfgb_set(const char *key, const char *val)
+{
+    int i;
+    for (i = 0; i < g_cpend_n; i++)
+        if (strcmp(g_cpend[i].key, key) == 0)
+            break;
+    if (i == g_cpend_n) {
+        if (i >= CFG_PEND_MAX || strlen(key) >= sizeof g_cpend[0].key)
+            return -1;
+        g_cpend_n++;
+    }
+    if (strlen(val) >= sizeof g_cpend[0].val)
+        return -1;
+    snprintf(g_cpend[i].key, sizeof g_cpend[i].key, "%s", key);
+    snprintf(g_cpend[i].val, sizeof g_cpend[i].val, "%s", val);
+    return 0;
+}
+
+static void wipe(void *p, size_t n)
+{
+    volatile unsigned char *q = p;
+    while (n--)
+        *q++ = 0;
+}
+
+/* End of a PATCH: the queued changes become ONE request (after any request the supervisor has not taken yet: the later line of a key wins).
+ * 0 nothing queued or written, < 0 the request could not be written (the caller fails the rows). Never logs a value. */
+static int cfg_flush(void)
+{
+    char text[A2K_STORE_MAX + 1], old[A2K_STORE_MAX + 1];
+    size_t o = 0;
+    int i, n, rc;
+    if (g_cpend_n == 0)
+        return 0;
+    n = a2k_store_read(g_cfgreq, old, sizeof old);
+    if (n > 0 && (size_t)n < sizeof text) {
+        memcpy(text, old, (size_t)n);
+        o = (size_t)n;
+    }
+    for (i = 0; i < g_cpend_n; i++) {
+        int w = snprintf(text + o, sizeof text - o, "%s=%s\n", g_cpend[i].key, g_cpend[i].val);
+        if (w < 0 || (size_t)w >= sizeof text - o) {
+            rc = -1;
+            goto out;
+        }
+        o += (size_t)w;
+    }
+    rc = a2k_store_write_mode(g_cfgreq, text, o, 0600);
+    a2k_log("cfg: request queued (%d key(s): %s%s)", g_cpend_n, g_cpend[0].key, g_cpend_n > 1 ? ", ..." : "");
+out:
+    wipe(text, sizeof text);
+    wipe(old, sizeof old);
+    wipe(g_cpend, sizeof g_cpend);
+    g_cpend_n = 0;
+    return rc == 0 ? 0 : -1;
+}
+
+static int is_cfg_key(const char *key)
+{
+    int i;
+    for (i = 0; i < A2K_CFGREG_N; i++)
+        if (strcmp(a2k_cfgreg_defs[i].key, key) == 0)
+            return 1;
+    return 0;
+}
+
+static const a2k_cfgreg_backend_t g_cfgb = { cfgb_get, cfgb_set };
+
+
+/* ------------------------------------------------------------------ onvif.* (read only: akam.conf onvif=1 / onvif_port=N asks, the app reports; no flash write from the API) */
 static void (*g_onvif_state)(char *, size_t);
 static int (*g_onvif_wanted)(int *);
 
@@ -846,6 +1082,22 @@ static void build_table(void)
     row("image.flip", ST_BOOL, 0, 0, NULL, "0", 1, RW, orient_get_row, orient_set_row);
     row("image.mirror", ST_BOOL, 0, 0, NULL, "0", 1, RW, orient_get_row, orient_set_row);
     row("image.ceiling", ST_BOOL, 0, 0, NULL, "0", 0, RW, orient_get_row, orient_set_row); /* flip + mirror: not saved itself, the two rows above are */
+    /* The 1080p's picture settings (control port isp.saturation, isp.denoise, img.wb), through the 2K ISP (picture.h). Saturation and denoise are saved and replayed
+     * after every day / night switch; img.wb is RAM only like the 1080p's (a fixed white balance does not survive a restart). The denoise default is 0 here (the camera's
+     * own tables; the 1080p defaults to 2) until it has been judged on the camera. */
+    row("isp.saturation", ST_INT, -50, 50, NULL, "0", 1, RW, pic_get, pic_set);
+    row("isp.denoise", ST_INT, 0, 4, NULL, "0", 1, RW, pic_get, pic_set);
+    row("img.wb", ST_ENUM, 0, 0, OPT_WB, "conf", 0, RW, pic_get, pic_set);
+    /* Speaker and two-way audio: the 1080p's names and ranges (control port audio.*), the shared engine behind them (speaker.h). The speaker is
+     * opt-in here (default 0) until it has run on a camera; the volume default is the 1080p's. out_amp is RAM only (a bring-up knob). */
+    row("audio.out_enable", ST_BOOL, 0, 0, NULL, "0", 1, RW, a2k_speaker_get, a2k_speaker_set);
+    row("audio.out_volume", ST_INT, 0, 100, NULL, "100", 1, RW, a2k_speaker_get, a2k_speaker_set);
+    row("audio.out_gain", ST_INT, 0, 5, NULL, "2", 1, RW, a2k_speaker_get, a2k_speaker_set);
+    row("audio.out_amp", ST_ENUM, 0, 0, OPT_AMP, "auto", 0, RW, a2k_speaker_get, a2k_speaker_set);
+    row("audio.talk_enable", ST_BOOL, 0, 0, NULL, "1", 1, RW, a2k_speaker_get, a2k_speaker_set);
+    row("audio.talk_duplex", ST_ENUM, 0, 0, OPT_DUPLEX, "half", 1, RW, a2k_speaker_get, a2k_speaker_set);
+    row("audio.out_state", ST_STRING, 1, 16, NULL, "off", 0, RO, a2k_speaker_get, NULL);
+    row("audio.talk_state", ST_STRING, 1, 16, NULL, "idle", 0, RO, a2k_speaker_get, NULL);
     row("detect.publish_hz", ST_INT, 0, 10, NULL, "2", 1, RW, dpub_get, dpub_set);
     row("track.enabled", ST_BOOL, 0, 0, NULL, "0", 1, RW, track_get, track_set);
     row("track.return", ST_ENUM, 0, 0, OPT_TRET, "home", 1, RW, tret_get, tret_set);
@@ -937,10 +1189,11 @@ static void build_table(void)
     row("sys.flash_writes_store", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
     row("net.apply", ST_STRING, 1, 16, NULL, "idle", 0, RO, st_get, NULL);
     row("api.keys", ST_INT, 0, AKEY_MAX, NULL, "0", 0, RO, st_get, NULL);
-    row("onvif.enabled", ST_BOOL, 0, 0, NULL, "0", 0, RO, onvif_get, NULL); /* ONVIF (onvif_services.h) is opt-in: akam2k.conf onvif=1, a restart */
-    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
-    row("onvif.port", ST_INT, 1024, 65535, NULL, "8000", 0, RO, onvif_get, NULL);
-    g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
+    for (i = 0; i < A2K_CFGREG_N; i++) /* onvif.enabled / onvif.port (the configured value, cfgreg.h), mqtt.*, rtsp.*, ntp.servers, audio.mic_enable */
+        if (g_nrows < MAX_ROWS)
+            g_defs[g_nrows++] = a2k_cfgreg_defs[i];
+        else
+            g_overflow++;
     row("onvif.state", ST_STRING, 1, 47, NULL, "off", 0, RO, onvif_get, NULL); /* off | on:<port> | no_password | error:<reason> */
     g_defs[g_nrows - 1].expose = ST_EXPOSE_HTTP;
 }
@@ -974,6 +1227,7 @@ static const a2k_action_info_t g_actions[] = {
     { "ptz.patrol.stop", AKEY_WRITE, NULL },
     { "ptz.goto_preset", AKEY_WRITE, "name:<preset name>" },
     { "mode.apply", AKEY_WRITE, "name:<mode name>" },
+    { "audio.beep", AKEY_WRITE, NULL },
     { "settings.reset", AKEY_WRITE, "key:<setting key> | prefix:<key prefix>" },
     { "settings.save", AKEY_WRITE, NULL },
 };
@@ -1183,6 +1437,11 @@ static void run_action(a2k_job_t *j)
     } else if (strcmp(j->name, "settings.reset") == 0) {
         act_reset(j);
         return;
+    } else if (strcmp(j->name, "audio.beep") == 0) {
+        if (a2k_speaker_beep() != 0) {
+            job_err(j, 409, "unavailable", "the speaker is not running (audio.out_enable 1, see audio.out_state)");
+            return;
+        }
     } else if (strcmp(j->name, "settings.save") == 0) {
         g_dirty = 1;
         a2k_settings_test_flush();
@@ -1276,6 +1535,18 @@ static void do_patch(a2k_job_t *j)
     }
     j->err = NULL;
     j->http = streg_patch(&g_reg, j->src, j->scope, j->in.n, k, v, j->res);
+    if (cfg_flush() != 0) { /* the request of the user-file rows could not be queued: those rows did not apply */
+        size_t okn = 0, n;
+        for (i = 0; i < j->in.n; i++) {
+            if (j->res[i].ok && is_cfg_key(k[i])) {
+                j->res[i].ok = 0;
+                j->res[i].err = ST_E_SETTER;
+            }
+            okn += j->res[i].ok ? 1 : 0;
+        }
+        n = j->in.n;
+        j->http = okn == n ? 200 : okn == 0 ? 422 : 207;
+    }
     for (i = 0; i < j->in.n; i++) {
         const st_def_t *d = j->res[i].ok ? streg_find(&g_reg, k[i]) : NULL;
         if (d && row_saves(d))
@@ -1470,6 +1741,14 @@ int a2k_settings_start(const a2k_settings_cfg_t *cfg)
     else
         a2k_image_defaults(&g_img);
     a2k_netreg_set_backend(&g_netb);
+    snprintf(g_cfgdir, sizeof g_cfgdir, "%s", g_cfg.cfg_dir ? g_cfg.cfg_dir : A2K_SET_CFG_DIR);
+    snprintf(g_cfgreq, sizeof g_cfgreq, "%s", g_cfg.cfg_req ? g_cfg.cfg_req : A2K_SET_CFG_REQ);
+    {
+        size_t l = strlen(g_cfgreq);
+        snprintf(g_cfgres, sizeof g_cfgres, "%.*s.res", (int)(l > 4 && !strcmp(g_cfgreq + l - 4, ".req") ? l - 4 : l), g_cfgreq);
+    }
+    g_cpend_n = 0;
+    a2k_cfgreg_set_backend(&g_cfgb);
     g_overflow = 0;
     build_table();
     if (g_overflow) {
@@ -1509,7 +1788,7 @@ void a2k_settings_load(void)
     if (n < 0) {
         if (n == -2)
             a2k_log("settings: %s is larger than %d bytes: ignored", g_path, A2K_STORE_MAX);
-        return; /* none yet: the defaults and akam2k.conf apply */
+        return; /* none yet: the defaults and akam.conf apply */
     }
     rc = streg_load_text(&g_reg, buf, (size_t)n, &err, &ignored, &failed);
     if (rc != 0)

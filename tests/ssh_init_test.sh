@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host-side test of akam_ssh.sh and the ak_rtsp_wrapper.sh hook, run in a fake
+# Host-side test of akam_ssh.sh and the akam_run.sh hook, run in a fake
 # root with stub dropbear/dropbearkey. Camera scripts are run with $SH_UNDER_TEST
 # (default: "busybox sh" if installed, else "sh"). Nothing here touches hardware.
 set -euo pipefail
@@ -92,12 +92,12 @@ echo "$*" >>"$(dirname "$pf")/dropbear_launches"
 exit 0
 EOF
     chmod 755 "$R/usr/bin/dropbear" "$R/usr/bin/dropbearkey"
-    cat >"$R/usr/bin/ak_rtsp" <<'EOF'
+    cat >"$R/usr/bin/akamd" <<'EOF'
 #!/bin/sh
-echo "ak_rtsp ran" >>"$(dirname "$0")/../../tmp/ak_rtsp_ran"
+echo "akamd ran" >>"$(dirname "$0")/../../tmp/ak_rtsp_ran"
 exit 7
 EOF
-    chmod 755 "$R/usr/bin/ak_rtsp"
+    chmod 755 "$R/usr/bin/akamd"
     export AKAM_ROOT=$R AKAM_WAIT_TRIES=2
     unset STUB_KEY_DELAY || true
 }
@@ -105,12 +105,12 @@ ssh_run() { "${SHCMD[@]}" "$R/usr/sbin/akam_ssh.sh" "$@"; }
 killdb() { { [ -f "$R/tmp/dropbear.pid" ] && kill "$(cat "$R/tmp/dropbear.pid")" 2>/dev/null; } || true; rm -f "$R/tmp/dropbear.pid"; }
 launches() { [ -f "$R/tmp/dropbear_launches" ] && wc -l <"$R/tmp/dropbear_launches" || echo 0; }
 
-# Wrapper copy that points at the fake root (only the helper/ak_rtsp/wpa paths).
+# Wrapper copy that points at the fake root (only the helper/akamd/wpa paths).
 make_wrapper() {
     sed -e "s#/usr/sbin/akam#$R/usr/sbin/akam#g" \
-        -e "s#/usr/bin/ak_rtsp#$R/usr/bin/ak_rtsp#g" \
+        -e "s#/usr/bin/akamd#$R/usr/bin/akamd#g" \
         -e "s#^WPA_CONF=/etc#WPA_CONF=$R/etc#" \
-        "$TPL/ak_rtsp_wrapper.sh" >"$R/wrapper.sh"
+        "$TPL/akam_run.sh" >"$R/wrapper.sh"
 }
 
 echo "== 1. first boot: key from SD, host key generated"
@@ -418,7 +418,7 @@ ssh_run start
 check "existing keys kept when SD has none valid" cmp -s "$R/etc/config/dropbear/authorized_keys" <(printf '%s\n' "$K2")
 killdb
 
-echo "== 6. missing dropbear binary: launcher returns 0, wrapper still runs ak_rtsp"
+echo "== 6. missing dropbear binary: launcher returns 0, wrapper still runs akamd"
 new_root t6
 rm "$R/usr/bin/dropbear"
 ssh_run start && rc=0 || rc=$?
@@ -427,12 +427,12 @@ check "no daemon" test ! -e "$R/tmp/dropbear.pid"
 check "reason logged" grep -q 'missing/not executable' "$R/tmp/akam_ssh.log"
 make_wrapper
 "${SHCMD[@]}" "$R/wrapper.sh" >/dev/null 2>&1 && rc=0 || rc=$?
-check "wrapper returned ak_rtsp status (7)" test "$rc" = 7
-check "ak_rtsp executed" test -f "$R/tmp/ak_rtsp_ran"
+check "wrapper returned akamd status (7)" test "$rc" = 7
+check "akamd executed" test -f "$R/tmp/ak_rtsp_ran"
 # no akam_ssh.sh at all: legacy behaviour
 rm "$R/usr/sbin/akam_ssh.sh" "$R/tmp/ak_rtsp_ran"
 "${SHCMD[@]}" "$R/wrapper.sh" >/dev/null 2>&1 && rc=0 || rc=$?
-check "wrapper without akam_ssh.sh: status 7, ak_rtsp ran" test "$rc" = 7 -a -f "$R/tmp/ak_rtsp_ran"
+check "wrapper without akam_ssh.sh: status 7, akamd ran" test "$rc" = 7 -a -f "$R/tmp/ak_rtsp_ran"
 
 echo "== 7. wrapper does not wait for a slow/blocked akam_ssh.sh"
 new_root t7
@@ -445,7 +445,7 @@ t1=$(date +%s%N)
 ms=$(((t1 - t0) / 1000000))
 echo "  wrapper took ${ms} ms while dropbearkey was blocking 5 s"
 check "wrapper status 7" test "$rc" = 7
-check "ak_rtsp ran" test -f "$R/tmp/ak_rtsp_ran"
+check "akamd ran" test -f "$R/tmp/ak_rtsp_ran"
 check "wrapper returned in < 2 s" test "$ms" -lt 2000
 unset STUB_KEY_DELAY
 sleep 6
@@ -564,7 +564,7 @@ echo "== 9c. camera scripts only use applets present in the stock ROOTFS BusyBox
 # shellcheck disable=SC2016
 check "no tr/uniq/gzip/mktemp/flock/nohup/wget command in camera scripts" bash -c '
     ! grep -nE "(^|[|;&(]|\\$\\()[[:space:]]*(tr|uniq|gzip|mktemp|flock|nohup|wget)[[:space:]]" \
-        "$1"/akam_ssh.sh "$1"/akam_lockdown.sh "$1"/ak_rtsp_wrapper.sh' _ "$TPL"
+        "$1"/akam_ssh.sh "$1"/akam_lockdown.sh "$1"/akam_run.sh' _ "$TPL"
 
 echo "== 9d. root HOME = key directory (stock / and /etc are 0775: dropbear would refuse the key)"
 # Stub mount: "-o bind SRC DST" copies SRC over DST (a real bind needs root).

@@ -1,4 +1,4 @@
-/* Tiny logging and step-tracking interface shared by the akam2k_rtsp sources (implemented in main.c). */
+/* Tiny logging and step-tracking interface shared by the akamd sources (implemented in main.c). */
 #ifndef AKAM2K_LOG_H
 #define AKAM2K_LOG_H
 

@@ -196,7 +196,7 @@ func (a *App) cmdPrepare2KSD() error {
 		a.UI.Say("  The card disables the rescue telnet (flag akam/no_telnet): the camera is reached over SSH with your key. For a rescue card that keeps telnet, use --rescue-telnet.")
 	}
 	if a.UI.Dry() {
-		a.UI.Say("  WOULD verify the 2K kit, ask for the SSH key and the Wi-Fi, ask the red-box yes/no, then write an MBR + FAT32 card and verify every file by sha256.")
+		a.UI.Say("  WOULD verify the 2K kit, ask for the SSH key and the Wi-Fi, offer the optional services (microphone, stream password, ONVIF, MQTT, time sync: all off by default, passwords not shown), ask the red-box yes/no, then write an MBR + FAT32 card and verify every file by sha256.")
 		return nil
 	}
 	if err := a.UI.RequireTTY("preparing the card"); err != nil {
@@ -240,7 +240,11 @@ func (a *App) cmdPrepare2KSD() error {
 	if ok, e := a.UI.AskYN("Block the vendor cloud at boot (flag akam/decloud)?"); e == nil {
 		decloud = ok
 	}
-	card, err := appfs.BuildCard(k, appfs.CardInput{PubKey: pk, SSID: ssid, Pass: pass, Decloud: decloud, RescueTelnet: a.Opt.RescueTelnet})
+	setup, err := a.askSetup2K()
+	if err != nil {
+		return err
+	}
+	card, err := appfs.BuildCard(k, appfs.CardInput{PubKey: pk, SSID: ssid, Pass: pass, Decloud: decloud, RescueTelnet: a.Opt.RescueTelnet, Setup: setup})
 	if err != nil {
 		return a.UI.Fail("preparing the card failed: "+err.Error(), "the camera was not touched; fix the problem above and retry.")
 	}

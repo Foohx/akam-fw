@@ -1,5 +1,5 @@
 /* RAM-only ISP test hook of the Rotatable 2K own app (--isp-test 1, default OFF): a poll thread reads /tmp/akam2k_isp_test, runs its lines
- * through the vendor ISP / VPSS getters and setters and logs the return codes and the before / after values (akam2k.log, "isp-test: ..."). Nothing
+ * through the vendor ISP / VPSS getters and setters and logs the return codes and the before / after values (akam.log, "isp-test: ..."). Nothing
  * is written to flash and nothing is persistent: the ISP restarts from its conf file at the next boot, and "restore" puts back what the hook
  * first read. The ABI notes (symbols, struct layouts, confidence) are in docs/porting/lsc-rotatable-2k/isp-controls.md.
  *

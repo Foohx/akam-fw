@@ -1,8 +1,8 @@
 // Package testfake is the fake camera of the tests: an in-process SSH server that runs the real
 // camera helper scripts (firmware/lsc-indoor-1080p-ak3918/overlay) in a temporary root file system, a fake
-// control port 8091 reached the way the real camera allows it (the exec command
+// control port 8091 on the camera's own loopback (the exec command
 // `nc -w 2 127.0.0.1 8091`; direct-tcpip is refused like Dropbear built without forwarding; the port
-// also listens on a real loopback port, for port probes), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
+// also listens on a real loopback port, for port probes), the signed API of the 1080p (port 8092, api1080.go: closed until a key exists), and a fake RTSP server with Digest login and the ONVIF audio backchannel. It never
 // listens outside the loopback, never runs anything but the closed set of commands below, and
 // removes everything it started when the test ends.
 package testfake
@@ -37,6 +37,9 @@ import (
 type Options struct {
 	// AuthorizedKey is the public key allowed to log in (required).
 	AuthorizedKey gossh.PublicKey
+	// LegacyNames makes the camera answer like firmware 0.1.x: the program is /usr/bin/ak_rtsp and
+	// /usr/bin/akamd is "not found" (exit 127).
+	LegacyNames bool
 	// NoHostnameHelper makes "test -x /usr/sbin/akam_hostname.sh" fail (an older image).
 	NoHostnameHelper bool
 	// Manifest is the text of /usr/local/akam/MANIFEST.txt of the image ("" : the file is absent).
@@ -52,6 +55,8 @@ type Options struct {
 	// SSHVersion is the SSH identification string the server sends (default "SSH-2.0-dropbear_fake", like
 	// the camera's Dropbear); a test may make the host look like a plain OpenSSH server.
 	SSHVersion string
+	// FlashSaveFails makes every accepted write of the signed API answer "saved":false (the camera applied it but could not write its file).
+	FlashSaveFails bool
 	// NoCtl closes the control port answers (nothing answered).
 	NoCtl bool
 	// CtlAnswerLimit, when above 0, makes the control port answer only that many lines and then stay
@@ -95,17 +100,20 @@ type Camera struct {
 	commands      []string
 	ctl           map[string]string
 	ctlSets       []string
-	ctlWords      []string // first word of every line received on the control port
+	ctlWords      []string     // first word of every line received on the control port
+	apiKeys       []apiKey1080 // the API keys of the camera: none, no listener on 8092 (api1080.go)
+	apiReqs       []Req2K
+	apiN          int
 	onvifOn       bool
 	clockOff      time.Duration // camera clock minus the clock of the machine running the test
 	clockSets     []string
 	ntpOn         bool
 	ntpList       string
 	ntpLog        string            // last log line of the helper ("" none)
-	vRun          map[string]string // the video values the running ak_rtsp uses (applied at its restart)
+	vRun          map[string]string // the video values the running akamd uses (applied at its restart)
 	onvifPrt      string
 	restarts      int
-	ctlDown       bool // the control port answers nothing (ak_rtsp is down)
+	ctlDown       bool // the control port answers nothing (akamd is down)
 	downOnRestart bool // a video restart takes the control port down until SetCtlDown(false)
 	mtdReads      [8]int
 	conns         []net.Conn
@@ -194,7 +202,7 @@ func HelpersAvailable() bool {
 }
 
 const stubRtsp = `#!/bin/sh
-# stub of "ak_rtsp ctl LINE..." for the fake camera (the debug flag lives in a file)
+# stub of "akamd ctl LINE..." for the fake camera (the debug flag lives in a file)
 [ "$1" = ctl ] || exit 2
 shift
 f=$AKAM_ROOT/debug.state
@@ -230,11 +238,12 @@ func New(t testing.TB, opts Options) *Camera {
 			"audio.out_volume": "60", "audio.out_enable": "1", "audio.talk_enable": "1", "audio.out_state": "idle",
 			"audio.out_underruns": "0", "audio.out_drops": "0", "audio.out_test": "0",
 			"isp.brightness": "0", "isp.contrast": "0", "isp.saturation": "0", "isp.sharpness": "-15", "isp.denoise": "2",
-			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "1",
+			"img.wb": "conf", "night.mode": "auto", "audio.mic_enable": "0",
+			"image.flip": "0", "image.mirror": "0", "image.ceiling": "0",
 			"video.bitrate_cfg": "1536", "video.fps_cfg": "15", "video.gop_cfg": "2", "video.minqp_cfg": "28", "video.maxqp_cfg": "43", "video.cfg_pending": "0",
 			"video.bitrate": "1480", "video.fps_actual": "150",
 			"fw.version": "b35-2af81c5", "sys.hostname": "akam-01",
-			"net.wifi_rssi": "-55", "net.wifi_rate": "72", "night.state": "day", "sys.time_set": "1",
+			"net.wifi_rssi": "-55", "net.wifi_rate": "72", "night.state": "day", "sys.time_set": "1", "control.lan": "0",
 		}}
 	if opts.FwVersion != "" {
 		c.ctl["fw.version"] = opts.FwVersion
@@ -247,7 +256,7 @@ func New(t testing.TB, opts Options) *Camera {
 	if err := os.MkdirAll(filepath.Join(c.Root, "bin"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(c.Root, "bin", "ak_rtsp"), []byte(stubRtsp), 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(c.Root, "bin", "akamd"), []byte(stubRtsp), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(c.Root, "bin", "true_cmd"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
@@ -473,6 +482,9 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 			c.RotateHostKey()
 		}
 		return st
+	case strings.HasPrefix(cmd, "/usr/bin/akamd --api-key "), strings.HasPrefix(cmd, "/usr/bin/ak_rtsp --api-key "):
+		st, _ := c.execKey(cmd, stdout, stderr)
+		return st
 	case cmd == "nc -w 2 127.0.0.1 8091":
 		return c.ncCtl(stdin, stdout)
 	case cmd == "test -x /usr/sbin/akam_hostname.sh":
@@ -480,7 +492,7 @@ func (c *Camera) exec(cmd string, stdin io.Reader, stdout, stderr io.Writer, nc 
 			return 1
 		}
 		return 0
-	case cmd == `for p in $(pidof ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`:
+	case cmd == `for p in $(pidof akamd ak_rtsp); do grep -qa akam_klog /proc/$p/cmdline || kill $p; done`:
 		c.mu.Lock()
 		c.restarts++
 		if c.downOnRestart {
@@ -560,7 +572,7 @@ func (c *Camera) runScriptFile(script string, args []string, stdin io.Reader, st
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"AKAM_ROOT=" + c.Root,
-		"AKAM_RTSP_BIN=" + filepath.Join(c.Root, "bin", "ak_rtsp"),
+		"AKAM_RTSP_BIN=" + filepath.Join(c.Root, "bin", "akamd"),
 		"AKAM_HOSTNAME_CMD=" + filepath.Join(c.Root, "bin", "true_cmd"), // never change the host's name
 		"HOME=" + c.Root,
 	}
@@ -577,7 +589,7 @@ func (c *Camera) runScriptFile(script string, args []string, stdin io.Reader, st
 	return 0
 }
 
-// VideoRestarts is how many times the video service was restarted (the audited kill of ak_rtsp).
+// VideoRestarts is how many times the video service was restarted (the audited kill of akamd).
 func (c *Camera) VideoRestarts() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -667,21 +679,21 @@ func (c *Camera) onvif(args []string, stdout, stderr io.Writer) int {
 			c.onvifPrt = args[1]
 		}
 		c.onvifOn = true
-		fmt.Fprintf(stdout, "ONVIF enabled on port %s (TCP %s, and UDP 3702 for discovery).\nApplied now (ak_rtsp reloaded the setting).\n", c.onvifPrt, c.onvifPrt)
+		fmt.Fprintf(stdout, "ONVIF enabled on port %s (TCP %s, and UDP 3702 for discovery).\nApplied now (akamd reloaded the setting).\n", c.onvifPrt, c.onvifPrt)
 	case "disable":
 		if !c.onvifOn {
 			fmt.Fprintln(stdout, "ONVIF was already disabled.")
 			return 0
 		}
 		c.onvifOn = false
-		fmt.Fprintln(stdout, "ONVIF disabled.\nApplied now (ak_rtsp reloaded the setting).")
+		fmt.Fprintln(stdout, "ONVIF disabled.\nApplied now (akamd reloaded the setting).")
 	case "status":
 		if c.onvifOn {
 			fmt.Fprintf(stdout, "ONVIF: enabled, port %s\n", c.onvifPrt)
 		} else {
 			fmt.Fprintln(stdout, "ONVIF: disabled (default)")
 		}
-		fmt.Fprintln(stdout, "password: set\nstate: unknown (this ak_rtsp does not report it)")
+		fmt.Fprintln(stdout, "password: set\nstate: unknown (this akamd does not report it)")
 	default:
 		return 2
 	}
@@ -727,64 +739,90 @@ func (c *Camera) handleCtl(nc net.Conn) {
 			}
 		case f[0] == "SET" && len(f) == 3:
 			c.ctlSets = append(c.ctlSets, line)
-			if _, ok := c.ctl[f[1]]; !ok {
-				reply = "ERR unknown param " + f[1]
-			} else if strings.HasPrefix(f[1], "video.") {
-				n, err := strconv.Atoi(f[2])
-				lo, hi := 0, 0
-				switch f[1] {
-				case "video.bitrate_cfg":
-					lo, hi = 500, 3000
-				case "video.fps_cfg":
-					lo, hi = 10, 25
-				case "video.gop_cfg":
-					lo, hi = 1, 4
-				case "video.minqp_cfg", "video.maxqp_cfg":
-					lo, hi = 10, 51
-				}
-				if hi == 0 {
-					reply = "ERR " + f[1] + " is read-only"
-				} else if err != nil || n < lo || n > hi || (f[1] == "video.fps_cfg" && n != 10 && n != 15 && n != 20 && n != 25) {
-					reply = "ERR invalid " + f[1] + " value"
-				} else if (f[1] == "video.minqp_cfg" && n >= atoiOr(c.ctl["video.maxqp_cfg"])) ||
-					(f[1] == "video.maxqp_cfg" && n <= atoiOr(c.ctl["video.minqp_cfg"])) {
-					reply = "ERR " + f[1] + "=" + f[2] + " refused: minqp must stay below maxqp"
-				} else {
-					c.ctl[f[1]] = f[2]
-					pend := false
-					for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.minqp_cfg", "video.maxqp_cfg"} {
-						if c.ctl[k] != c.vRun[k] {
-							pend = true
-						}
-					}
-					c.ctl["video.cfg_pending"] = "0"
-					reply = "OK " + f[1] + "=" + f[2]
-					if pend {
-						c.ctl["video.cfg_pending"] = "1"
-						reply += " (restart to apply)"
-					}
-				}
-			} else if strings.HasPrefix(f[1], "isp.") {
-				n, err := strconv.Atoi(f[2])
-				if err != nil || n < -50 || n > 50 || (f[1] == "isp.denoise" && n > 4) || (f[1] == "isp.denoise" && n < 0) {
-					reply = "ERR out of range"
-				} else {
-					c.ctl[f[1]] = f[2]
-					reply = "OK " + f[1] + "=" + f[2]
-				}
-			} else {
-				c.ctl[f[1]] = f[2]
-				reply = "OK " + f[1] + "=" + f[2]
-				if f[1] == "audio.mic_enable" {
-					reply += " (restart to apply)"
-				}
-			}
+			c.ctlSets = append(c.ctlSets, line)
+			reply = c.setLocked(f[1], f[2])
 		default:
 			reply = "ERR syntax"
 		}
 		c.mu.Unlock()
 		fmt.Fprintf(nc, "%s\n", reply)
 	}
+}
+
+// setLocked is the SET of the control port, with c.mu held: the same rules whatever door the write came through (the text port, or
+// the signed API of api1080.go). It returns the answer line of the old port.
+func (c *Camera) setLocked(key, val string) string {
+	var reply string
+	if _, ok := c.ctl[key]; !ok {
+		reply = "ERR unknown param " + key
+	} else if strings.HasPrefix(key, "video.") {
+		n, err := strconv.Atoi(val)
+		lo, hi := 0, 0
+		switch key {
+		case "video.bitrate_cfg":
+			lo, hi = 500, 3000
+		case "video.fps_cfg":
+			lo, hi = 10, 25
+		case "video.gop_cfg":
+			lo, hi = 1, 4
+		case "video.minqp_cfg", "video.maxqp_cfg":
+			lo, hi = 10, 51
+		}
+		if hi == 0 {
+			reply = "ERR " + key + " is read-only"
+		} else if err != nil || n < lo || n > hi || (key == "video.fps_cfg" && n != 10 && n != 15 && n != 20 && n != 25) {
+			reply = "ERR invalid " + key + " value"
+		} else if (key == "video.minqp_cfg" && n >= atoiOr(c.ctl["video.maxqp_cfg"])) ||
+			(key == "video.maxqp_cfg" && n <= atoiOr(c.ctl["video.minqp_cfg"])) {
+			reply = "ERR " + key + "=" + val + " refused: minqp must stay below maxqp"
+		} else {
+			c.ctl[key] = val
+			pend := false
+			for _, k := range []string{"video.bitrate_cfg", "video.fps_cfg", "video.gop_cfg", "video.minqp_cfg", "video.maxqp_cfg"} {
+				if c.ctl[k] != c.vRun[k] {
+					pend = true
+				}
+			}
+			c.ctl["video.cfg_pending"] = "0"
+			reply = "OK " + key + "=" + val
+			if pend {
+				c.ctl["video.cfg_pending"] = "1"
+				reply += " (restart to apply)"
+			}
+		}
+	} else if key == "image.flip" || key == "image.mirror" || key == "image.ceiling" {
+		// the orientation rows of the 1080p (firmware settings.c): bool 0|1 only; ceiling is both at once and reads 1 only while both are on
+		if val != "0" && val != "1" {
+			reply = "ERR invalid " + key + " value " + val + " (format)"
+		} else {
+			if key == "image.ceiling" {
+				c.ctl["image.flip"], c.ctl["image.mirror"] = val, val
+			} else {
+				c.ctl[key] = val
+			}
+			both := "0"
+			if c.ctl["image.flip"] == "1" && c.ctl["image.mirror"] == "1" {
+				both = "1"
+			}
+			c.ctl["image.ceiling"] = both
+			reply = "OK " + key + "=" + val
+		}
+	} else if strings.HasPrefix(key, "isp.") {
+		n, err := strconv.Atoi(val)
+		if err != nil || n < -50 || n > 50 || (key == "isp.denoise" && n > 4) || (key == "isp.denoise" && n < 0) {
+			reply = "ERR out of range"
+		} else {
+			c.ctl[key] = val
+			reply = "OK " + key + "=" + val
+		}
+	} else {
+		c.ctl[key] = val
+		reply = "OK " + key + "=" + val
+		if key == "audio.mic_enable" || key == "control.lan" {
+			reply += " (restart to apply)"
+		}
+	}
+	return reply
 }
 
 // ncCtl emulates busybox `nc -w 2 127.0.0.1 8091` on the camera: stdin goes to the control port, what
@@ -921,7 +959,7 @@ func (c *Camera) ClockSets() []string {
 	return append([]string(nil), c.clockSets...)
 }
 
-// SetCtlDown makes the control port answer nothing (true) or answer again (false): ak_rtsp is down.
+// SetCtlDown makes the control port answer nothing (true) or answer again (false): akamd is down.
 func (c *Camera) SetCtlDown(down bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -929,7 +967,7 @@ func (c *Camera) SetCtlDown(down bool) {
 }
 
 // CtlDownAfterRestart makes every video restart take the control port down until SetCtlDown(false), like
-// the few seconds in which the killed ak_rtsp is not back yet.
+// the few seconds in which the killed akamd is not back yet.
 func (c *Camera) CtlDownAfterRestart(on bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

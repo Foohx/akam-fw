@@ -33,9 +33,14 @@
 #include "version.h"
 #include "onvif_device.h"
 #include "mqtt_svc.h"
+#include "cfg_file.h"
 
 #ifndef CONTROL_PORT
 #define CONTROL_PORT 8091   /* the host test builds with another port */
+#endif
+
+#ifndef CONTROL_LAN_FILE
+#define CONTROL_LAN_FILE "/etc/config/akam/control_lan" /* "1": the text port listens on the LAN too; no file: loopback only */
 #endif
 
 static const control_reg_ops_t *g_regops; /* the settings registry, see control.h (NULL = none) */
@@ -72,6 +77,26 @@ static cli_t           g_cli[CTL_MAX_CLIENTS] = {
     { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 },
     { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 }, { -1, 0, 0, PTHREAD_MUTEX_INITIALIZER, 0 },
 };
+
+/* The opt-in that opens port 8091 to the LAN: a flag file, written only when the user changes it (skip-if-equal), read at start. */
+int control_lan_get(void)
+{
+    char b[8];
+    FILE *f = fopen(CONTROL_LAN_FILE, "r");
+    size_t n;
+    if (!f) return 0;
+    n = fread(b, 1, sizeof b - 1, f);
+    fclose(f);
+    b[n] = '\0';
+    return b[0] == '1';
+}
+
+int control_lan_set(int on)
+{
+    if ((control_lan_get() != 0) == (on != 0)) return 0; /* no flash write for the value it already has */
+    if (!on) return unlink(CONTROL_LAN_FILE) == 0 || errno == ENOENT ? 0 : -1;
+    return cfg_write_atomic(CONTROL_LAN_FILE, "1\n", 2);
+}
 
 /* RAM-only debug flag (writes from remote peers), off at every start. */
 static pthread_mutex_t g_dbg_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -641,6 +666,12 @@ int control_get_value(const char *key, char *out, size_t cap)
     if (control_get_setting(key, out, cap) == 0) return 0;
     if (!strcmp(key, "night.state")) { snprintf(out, cap, "%s", night_is_night() ? "night" : "day"); return 0; }
     if (ctl_sys_get(key, out, cap) == 0) return 0;
+    if (g_regops && !strncmp(key, "image.", 6) && g_regops->get(key, line, sizeof(line)) == 0) { /* registry rows without an old 8091 name: image.flip / mirror */
+        size_t kl = strlen(key);
+        if (strncmp(line, key, kl) != 0 || line[kl] != '=') return -1;
+        snprintf(out, cap, "%s", line + kl + 1);
+        return 0;
+    }
     if (ledsys_ctl_get(key, line, sizeof(line)) == 0 || audio_out_ctl_get(key, line, sizeof(line)) == 0) {
         size_t kl = strlen(key);
         if (strncmp(line, key, kl) != 0 || line[kl] != '=') return -1;   /* "ERR unknown param ..." */
@@ -823,7 +854,10 @@ static void *control_accept_loop(void *arg)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    /* Closed to the network by default: only the camera itself (SSH helpers, `akamd ctl`) reaches the port. The saved opt-in
+     * (control.lan, read here, so at the next start of akamd) opens it to the LAN for monitoring. */
+    int lan = control_lan_get();
+    addr.sin_addr.s_addr = lan ? htonl(INADDR_ANY) : htonl(INADDR_LOOPBACK);
     addr.sin_port        = htons(CONTROL_PORT);
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
@@ -835,7 +869,7 @@ static void *control_accept_loop(void *arg)
 
     fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL) | O_NONBLOCK); /* a connection reset between poll and accept must not block */
     g_server_fd = server_fd;
-    printf("[control] tuning server listening on port %d\n", CONTROL_PORT);
+    printf("[control] tuning server listening on port %d (%s)\n", CONTROL_PORT, lan ? "LAN opt-in" : "loopback only");
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);

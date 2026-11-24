@@ -54,6 +54,9 @@ static const ent_t g_ent[] = {
     { "temperature",  "Temperature",     "sensor", "sys.temp",        NULL,           0, 0,   "\\u00b0C", "temperature", F_OPT | F_MEASURE | F_DIAG },
     { "fps",          "Frame rate",      "sensor", "video.fps_actual", NULL,          0, 0,   "fps", NULL, F_TENTHS | F_MEASURE },
     { "bitrate",      "Video bitrate",   "sensor", "video.bitrate",   NULL,           0, 0,   "kbit/s", "data_rate", F_MEASURE },
+    /* controls added later, at the end so that the entity numbers above stay put: the orientation of the picture (the same names as the 2K) */
+    { "image_flip",   "Image flip",      "switch", "image.flip",      NULL,           0, 0,   NULL, NULL, CTL | F_PERSIST | F_BOOL },
+    { "image_mirror", "Image mirror",    "switch", "image.mirror",    NULL,           0, 0,   NULL, NULL, CTL | F_PERSIST | F_BOOL },
 };
 #define N_ENT (sizeof(g_ent) / sizeof(g_ent[0]))
 

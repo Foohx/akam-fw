@@ -11,23 +11,27 @@ there is no extra port. Any client that speaks the standard (go2rtc, Frigate thr
 card, some NVRs) can talk to the camera. The
 design is in [specs/audio.md](../specs/audio.md), step 1.
 
-**Status: `talk` (the speaker) is validated on two cameras** (see [testing status](testing-status.md)). The
-rest (`say`, go2rtc and Frigate set-ups) follows the same path; please report what you hear.
+**The Rotatable 2K** has the same feature, with the same settings (`audio.*`, see [2K API](porting/lsc-rotatable-2k/control-api.md)): the speaker is **off by default** there
+(`akam audio on`, or `audio.out_enable 1` through the options screen or the signed API, turns it on at once), and the backchannel works over TCP only
+(go2rtc and ffmpeg ask for TCP by default). `akam talk`, `akam say` and `akam audio` work on both cameras. There are no Home Assistant entities for the speaker on the 2K yet.
+
+**Status.** 1080p: `talk` (the speaker) is validated on two cameras (see [testing status](testing-status.md)); `say`, the volume and the beep were not heard on a 1080p yet.
+2K, validated on 2026-11-23: the beep, and talk with `tools/akam-talk` over TCP; go2rtc and Frigate were not checked, and the assistant's own `audio beep` and `say` on a 2K have not
+run on a camera ([checks](hardware-test-checklists.md#2k-speaker-two-way-audio-and-picture-settings)). Please report what you hear.
 
 ## What you need
 
-- The **video password** (`./akam rtsp-auth set`). The camera **never offers talk without it**: anyone on
+- The **video password** (`akam rtsp-auth set`). The camera **never offers talk without it**: anyone on
   your network could otherwise speak through the camera. There is no "open talk" mode.
 - Audio output on (the default). The setting `audio.out_enable=1`, and `audio.talk_enable=1` (the default).
-- An image built from this version (`./akam update`).
 
 ## From this computer
 
 ```bash
-./akam talk            # your microphone, until Ctrl-C
-./akam talk 30         # the same, at most 30 seconds
-./akam talk test       # a 2 second test tone: checks the whole chain without a microphone
-./akam say hello.mp3   # any audio file ffmpeg can read (a WAV at 8 kHz mono 16-bit needs no ffmpeg)
+akam talk            # your microphone, until Ctrl-C
+akam talk 30         # the same, at most 30 seconds
+akam talk test       # a 2 second test tone: checks the whole chain without a microphone
+akam say hello.mp3   # any audio file ffmpeg can read (a WAV at 8 kHz mono 16-bit needs no ffmpeg)
 ```
 
 The native `akam` binary needs no external program for this on Linux and Windows: it decodes WAV, MP3, FLAC and Ogg
@@ -104,8 +108,8 @@ practice:
 - Let **go2rtc be the only client of the camera**, and point Frigate, Home Assistant and your viewers at
   go2rtc (as in the Frigate example above). Do not also open the camera directly with another player or
   with Frigate's own ffmpeg: it would wait, or cut the other one.
-- `./akam talk` opens its own connection. While go2rtc is connected, it waits like any other second client.
-  Stop the stream (or the go2rtc source) first, or run `./akam talk` when nothing else watches.
+- `akam talk` opens its own connection. While go2rtc is connected, it waits like any other second client.
+  Stop the stream (or the go2rtc source) first, or run `akam talk` when nothing else watches.
 - If a client that opens a separate connection just to talk is needed, report it: that is the case a second
   slot would solve.
 
@@ -117,13 +121,13 @@ the camera while a client keeps the talk channel open and sends silence, as go2r
 the audio timestamps are not affected. A stream of silence also does not switch the amplifier on, so no
 hiss while nobody speaks.
 
-Settings (port 8091 from the camera itself, over SSH; saved in `/etc/config/akam/audio_out`):
+Settings (`akam audio ...` or the options screens, through the signed API; by hand: port 8091 on the camera's own loopback, over SSH; saved in `/etc/config/akam/audio_out`):
 
 | Key | Values | Meaning |
 |---|---|---|
 | `audio.talk_enable` | `1` (default), `0` | soft switch of talk (`0`: the camera refuses the backchannel with 551, and ends a talk in progress within a second) |
 | `audio.talk_duplex` | `half` (default), `full` | `full` never mutes the microphone (use it with headphones elsewhere, or to hear the echo) |
-| `audio.out_volume`, `audio.out_gain`, `audio.out_amp` | see [speaker output](troubleshooting.md#speaker-output-test-the-camera-speaker-by-ear-step-a) | volume and amplifier |
+| `audio.out_volume`, `audio.out_gain`, `audio.out_amp` | see [speaker output](troubleshooting.md#speaker-output-test-the-camera-speaker-by-ear) | volume and amplifier |
 
 ```bash
 ssh root@<camera-ip> "printf 'SET audio.talk_duplex full\n' | nc -w 2 127.0.0.1 8091"
@@ -137,13 +141,13 @@ arrived), `audio.talk_sessions`, `audio.talk_mic_muted`, and for the speaker buf
 
 ## When it does not work
 
-- **`./akam talk` says the camera does not offer talk (exit 3):** the video password is off (`./akam
+- **`akam talk` says the camera does not offer talk (exit 3):** the video password is off (`akam
   rtsp-auth status`), or `audio.out_enable=0` / `audio.talk_enable=0`, or the speaker failed to start
   (`audio.out_state` should be `idle`).
-- **Login refused (exit 4):** the user or password is wrong; `./akam rtsp-auth set` chooses new ones.
+- **Login refused (exit 4):** the user or password is wrong; `akam rtsp-auth set` chooses new ones.
 - **The camera does not answer (exit 2), or waits:** another client holds the camera, see above.
-- **Silence, or only clicks:** check the speaker alone first with the beep (`./akam talk test` sends a
-  tone; the beep test is in the [speaker output](troubleshooting.md#speaker-output-test-the-camera-speaker-by-ear-step-a)
+- **Silence, or only clicks:** check the speaker alone first with the beep (`akam talk test` sends a
+  tone; the beep test is in the [speaker output](troubleshooting.md#speaker-output-test-the-camera-speaker-by-ear)
   section). Then watch `audio.talk_packets` rise while you speak.
 - **Choppy voice:** `audio.out_underruns` rises: the Wi-Fi link drops packets or is late. Talk is carried
   in the RTSP TCP connection, so nothing is lost, but it can arrive late.
@@ -159,41 +163,9 @@ password: switching the password off, or choosing another one, ends a talk in pr
 
 ## Cost on the camera
 
-Measured on the build: the stripped `ak_rtsp` grows by about 13 KB (the project estimate was 8 to 15 KB).
+Measured on the build: the stripped `akamd` grows by about 13 KB (the project estimate was 8 to 15 KB).
 The jitter buffer already existed. Expected CPU while talking, not measured yet on a camera: well under
 0.5 % (about 50 packets a second, a table-free decode and an integer energy gate); nothing when nobody
 talks.
 
-## Hardware check list (for whoever tests on a camera)
-
-Replace `<cam>` by the camera address and `viewer` by the stream user. Prerequisite: an image with this
-version flashed (`./akam update`), `./akam rtsp-auth set` done.
-
-```bash
-# 1. The plain stream is unchanged (no Require header): same SDP, no talk track
-ffprobe -rtsp_transport tcp rtsp://viewer:PASSWORD@<cam>:554/ 2>&1 | grep -E 'Stream|Audio|Video'
-
-# 2. Without the password: the camera refuses a talk request (551) and still serves video
-./akam rtsp-auth disable && ./akam talk test            # expect exit 3: "does not offer talk"
-./akam rtsp-auth set                                    # back on
-
-# 3. Tone, file, microphone (listen at the camera)
-./akam talk test
-./akam say hello.wav
-./akam talk 20
-
-# 4. Counters during and after a 10 s talk (loopback port, over SSH)
-ssh root@<cam> "printf 'LIST\n' | nc -w 2 127.0.0.1 8091 | grep -E 'audio\.(talk|out)_'"
-#    expect packets about 500 per 10 s, dropped 0, lost 0, underruns 0, state idle afterwards,
-#    and the amplifier off 2 s after the end (no hiss)
-
-# 5. Half duplex: while talking, the camera's own microphone (ffplay of the stream) goes silent only
-#    while you speak; with audio.talk_duplex=full it does not.
-ffplay -rtsp_transport tcp rtsp://viewer:PASSWORD@<cam>:554/      # in another terminal, mind: one client at a time
-
-# 6. go2rtc / Frigate / Home Assistant: the snippets above; note what works and the failure mode of the
-#    single RTSP slot when go2rtc and another client are connected.
-```
-
-What to report: the exit codes, the `audio.talk_*` and `audio.out_*` lines after a talk, whether the voice
-is clear, any pop when the amplifier switches, and `top` on the camera during a talk (CPU of `ak_rtsp`).
+A hands-on check list for whoever tests on a camera is in the [hardware checklists](hardware-test-checklists.md#talk-through-the-speaker-hands-on-1080p).

@@ -91,8 +91,8 @@ mkptzinfo "$PSRC"
 printf 'tampered\n' >"$PD/akam_ptz"
 check "akam_ptz not matching its BUILDINFO is refused" fails env AKAM_PTZ_DIST="$PD" bash "$BUILD" "$T" --authorized-keys "$KEYS"
 
-echo "== akam2k_rtsp (own app) on the card"
-check "no akam2k_rtsp on the card when none was built" test ! -e "$T/akam/bin"
+echo "== akamd (own app) on the card"
+check "no akamd on the card when none was built" test ! -e "$T/akam/bin"
 AD=$WORK/appdist
 mkdir -p "$AD"
 mkelf() { # mkelf <file> <arm|x86_64> <interpreter>
@@ -108,29 +108,29 @@ mkelf() { # mkelf <file> <arm|x86_64> <interpreter>
 APPSRC=$(sh "$REPO/firmware/lsc-rotatable-2k-ak3918av130/image/source_hash.sh")
 mkappinfo() { # mkappinfo <source sha> <symcheck>
     {
-        echo "tool=akam2k_rtsp"
+        echo "tool=akamd"
         echo "source_sha256=$1"
-        echo "sha256=$(sha256sum "$AD/akam2k_rtsp" | cut -d' ' -f1)"
+        echo "sha256=$(sha256sum "$AD/akamd" | cut -d' ' -f1)"
         echo "interpreter=/lib/ld-uClibc.so.0"
         [ -z "$2" ] || echo "symcheck=$2"
     } >"$AD/BUILDINFO.txt"
 }
-mkelf "$AD/akam2k_rtsp" arm /lib/ld-uClibc.so.0
+mkelf "$AD/akamd" arm /lib/ld-uClibc.so.0
 printf 'fake vendor lib\n' >"$AD/libplat_vi.so"
 mkappinfo "$APPSRC" passed
 T=$WORK/card_app1
 mkdir -p "$T"
 check "overlay with --own-app-bin builds" bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$AD"
-check "card has akam/bin/akam2k_rtsp (executable)" test -x "$T/akam/bin/akam2k_rtsp"
-check "card has its BUILDINFO" cmp -s "$T/akam/bin/akam2k_rtsp.BUILDINFO" "$AD/BUILDINFO.txt"
-check "the installed binary equals the built one" cmp -s "$T/akam/bin/akam2k_rtsp" "$AD/akam2k_rtsp"
+check "card has akam/bin/akamd (executable)" test -x "$T/akam/bin/akamd"
+check "card has its BUILDINFO" cmp -s "$T/akam/bin/akamd.BUILDINFO" "$AD/BUILDINFO.txt"
+check "the installed binary equals the built one" cmp -s "$T/akam/bin/akamd" "$AD/akamd"
 check "the supervisor script is on the card" test -x "$T/akam/own_app_run.sh"
 check "no vendor library is ever copied to the card" test -z "$(find "$T" -name '*.so*' -o -name 'vendor' -o -name 'appfs')"
-check "no akam2k.conf is created (optional, the user's)" test ! -e "$T/akam/akam2k.conf"
+check "no akam.conf is created (optional, the user's)" test ! -e "$T/akam/akam.conf"
 T=$WORK/card_app2
 mkdir -p "$T"
 check "AKAM_OWN_APP_DIST is the default dir" env AKAM_OWN_APP_DIST="$AD" bash "$BUILD" "$T" --authorized-keys "$KEYS"
-check "default dir: binary installed" test -x "$T/akam/bin/akam2k_rtsp"
+check "default dir: binary installed" test -x "$T/akam/bin/akamd"
 T=$WORK/card_app3
 mkdir -p "$T"
 mkappinfo "$APPSRC" ""
@@ -144,48 +144,48 @@ mkappinfo "$APPSRC" passed
 rm -f "$AD/BUILDINFO.txt"
 check "a missing BUILDINFO is refused" fails bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$AD"
 mkappinfo "$APPSRC" passed
-printf 'tampered\n' >>"$AD/akam2k_rtsp"
+printf 'tampered\n' >>"$AD/akamd"
 check "a binary not matching its BUILDINFO is refused" fails bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$AD"
-mkelf "$AD/akam2k_rtsp" arm /lib/ld-linux-armhf.so.3
+mkelf "$AD/akamd" arm /lib/ld-linux-armhf.so.3
 mkappinfo "$APPSRC" passed
 check "a glibc interpreter is refused" fails bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$AD"
 check "refusal names the interpreter" outhas "ld-uClibc"
-mkelf "$AD/akam2k_rtsp" x86_64 /lib/ld-uClibc.so.0
+mkelf "$AD/akamd" x86_64 /lib/ld-uClibc.so.0
 mkappinfo "$APPSRC" passed
 check "an x86-64 ELF is refused" fails bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$AD"
-printf '#!/bin/sh\necho /lib/ld-uClibc.so.0\n' >"$AD/akam2k_rtsp"
+printf '#!/bin/sh\necho /lib/ld-uClibc.so.0\n' >"$AD/akamd"
 mkappinfo "$APPSRC" passed
 check "a non-ELF file is refused" fails bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$AD"
 check "nothing was installed by the refusals" test ! -e "$T/akam/bin"
 check "--own-app-bin with a missing directory is refused" fails bash "$BUILD" "$T" --authorized-keys "$KEYS" --own-app-bin "$WORK/nodir"
 check "--rescue-only refuses --own-app-bin" fails bash "$BUILD" "$T" --rescue-only --own-app-bin "$AD"
 
-echo "== akam2k_sntp + akam_ntp.sh (opt-in time sync) on the card"
+echo "== akam-sntp + akam_ntp.sh (opt-in time sync) on the card"
 T=$WORK/card_ntp0
 mkdir -p "$T"
 check "overlay without an sntp build still builds" bash "$BUILD" "$T" --authorized-keys "$KEYS"
 check "card has the shared 1080p akam_ntp.sh, byte for byte" cmp -s "$T/akam/akam_ntp.sh" "$REPO/src/scripts/akam_ntp.sh"
 check "akam_ntp.sh is executable" test -x "$T/akam/akam_ntp.sh"
 check "no akam/ntp file is ever created by the builder (off by default)" test ! -e "$T/akam/ntp"
-check "no sntp binary when none was built" test ! -e "$T/akam/bin/akam2k_sntp"
+check "no sntp binary when none was built" test ! -e "$T/akam/bin/akam-sntp"
 SD2=$WORK/sntpdist
 mkdir -p "$SD2"
-mkelf "$SD2/akam2k_sntp" arm /lib/ld-uClibc.so.0
+mkelf "$SD2/akam-sntp" arm /lib/ld-uClibc.so.0
 SNSRC=$(sh "$REPO/firmware/lsc-rotatable-2k-ak3918av130/image/source_hash.sh" sntp)
 mksnbi() { # mksnbi <source sha> <symcheck>
     {
-        echo "tool=akam2k_rtsp"
+        echo "tool=akamd"
         echo "symcheck=$2"
         echo "sntp_source_sha256=$1"
-        echo "sntp_sha256=$(sha256sum "$SD2/akam2k_sntp" | cut -d' ' -f1)"
+        echo "sntp_sha256=$(sha256sum "$SD2/akam-sntp" | cut -d' ' -f1)"
     } >"$SD2/BUILDINFO.txt"
 }
 mksnbi "$SNSRC" passed
 T=$WORK/card_ntp1
 mkdir -p "$T"
-check "overlay with akam2k_sntp builds" env AKAM_OWN_APP_DIST="$SD2" bash "$BUILD" "$T" --authorized-keys "$KEYS"
-check "card has akam/bin/akam2k_sntp (executable, equal to the build)" test -x "$T/akam/bin/akam2k_sntp" -a "$(cmp -s "$T/akam/bin/akam2k_sntp" "$SD2/akam2k_sntp" && echo same)" = same
-check "card has akam2k_sntp.BUILDINFO with its sha256" test "$(sed -n 's/^sha256=//p' "$T/akam/bin/akam2k_sntp.BUILDINFO")" = "$(sha256sum "$SD2/akam2k_sntp" | cut -d' ' -f1)"
+check "overlay with akam-sntp builds" env AKAM_OWN_APP_DIST="$SD2" bash "$BUILD" "$T" --authorized-keys "$KEYS"
+check "card has akam/bin/akam-sntp (executable, equal to the build)" test -x "$T/akam/bin/akam-sntp" -a "$(cmp -s "$T/akam/bin/akam-sntp" "$SD2/akam-sntp" && echo same)" = same
+check "card has akam-sntp.BUILDINFO with its sha256" test "$(sed -n 's/^sha256=//p' "$T/akam/bin/akam-sntp.BUILDINFO")" = "$(sha256sum "$SD2/akam-sntp" | cut -d' ' -f1)"
 check "still no akam/ntp on the card" test ! -e "$T/akam/ntp"
 T=$WORK/card_ntp2
 mkdir -p "$T"
@@ -194,9 +194,9 @@ check "an sntp built from other sources is refused" fails env AKAM_OWN_APP_DIST=
 mksnbi "$SNSRC" ""
 check "an sntp without symcheck=passed is refused" fails env AKAM_OWN_APP_DIST="$SD2" bash "$BUILD" "$T" --authorized-keys "$KEYS"
 mksnbi "$SNSRC" passed
-printf 'tampered\n' >>"$SD2/akam2k_sntp"
+printf 'tampered\n' >>"$SD2/akam-sntp"
 check "an sntp not matching its BUILDINFO is refused" fails env AKAM_OWN_APP_DIST="$SD2" bash "$BUILD" "$T" --authorized-keys "$KEYS"
-mkelf "$SD2/akam2k_sntp" x86_64 /lib/ld-uClibc.so.0
+mkelf "$SD2/akam-sntp" x86_64 /lib/ld-uClibc.so.0
 mksnbi "$SNSRC" passed
 check "an x86-64 sntp is refused" fails env AKAM_OWN_APP_DIST="$SD2" bash "$BUILD" "$T" --authorized-keys "$KEYS"
 

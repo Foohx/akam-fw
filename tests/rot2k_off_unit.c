@@ -1,5 +1,5 @@
 /* Host test of the switched-off stand-ins of the Rotatable 2K (the *_off.c files of firmware/<model>, linked instead of a feature with AKAM_FEAT_<X>=0): the parsers of the
- * absent features ACCEPT and ignore their akam2k.conf lines (main.c turns a refusal into usage() and exits: a left-over line would stop the app), and
+ * absent features ACCEPT and ignore their akam.conf lines (main.c turns a refusal into usage() and exits: a left-over line would stop the app), and
  * pp_name_ok stays the real name rule (the settings use it for a button mode name: mode.apply). Built twice by feature_switch_test.sh: with the stand-ins
  * (OFF) and with the real ptz_patrol.c (REAL, only the name rule is compared). Prints "rot2k off unit: N failed" and one result line per name. */
 #include <stdio.h>

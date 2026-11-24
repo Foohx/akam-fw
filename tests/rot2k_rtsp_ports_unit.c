@@ -23,6 +23,13 @@ void a2k_log(const char *fmt, ...) { (void)fmt; }
 int a2k_audio_up(void) { return 0; }
 a2k_aring_t *a2k_audio_ring(void) { return NULL; }
 int a2k_ptz_privacy_active(void) { return 0; }
+/* the speaker engine (shared talk session links against it): nothing to talk to here */
+int audio_out_talk_available(void) { return 0; }
+int audio_out_talk_half_duplex(void) { return 1; }
+size_t audio_out_queued(void) { return 0; }
+size_t audio_out_push(const int16_t *pcm, size_t n) { (void)pcm; return n; }
+int audio_out_feeder_claim(void) { return -1; }
+void audio_out_feeder_release(void) { }
 
 static int fails;
 #define CHECK(c, msg) do { if (c) printf("  ok   - %s\n", msg); else { printf("  FAIL - %s\n", msg); fails++; } } while (0)

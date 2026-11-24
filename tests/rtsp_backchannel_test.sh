@@ -45,7 +45,7 @@ done
     -o "$WORK/rtsp_backchannel_test" \
     "$REPO/tests/native/rtsp_backchannel_test.c" \
     "$SRC/rtsp_session.c" "$REPO/src/net/rtsp/rtsp_in.c" "$REPO/src/net/rtsp/rtsp_idle.c" "$REPO/src/net/rtsp/rtsp_busy.c" "$REPO/src/net/rtsp/rtsp_sdp.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" \
-    "$REPO/src/net/rtsp/net_tx.c" "$REPO/src/net/rtsp/tx_pace.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/src/net/rtsp/h264_params.c" "$REPO/src/net/rtsp/h264_nalu.c" "$REPO/src/net/rtsp/rtcp_sr.c" "$SRC/talk.c" "$REPO/src/core/control/ctl_sys.c" "$REPO/src/hal/hal_sys.c" "$REPO/src/net/rtsp/rtp_in.c" \
+    "$REPO/src/net/rtsp/net_tx.c" "$REPO/src/net/rtsp/tx_pace.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/src/net/rtsp/h264_params.c" "$REPO/src/net/rtsp/h264_nalu.c" "$REPO/src/net/rtsp/rtcp_sr.c" "$REPO/src/features/audio/talk.c" "$REPO/src/core/control/ctl_sys.c" "$REPO/src/hal/hal_sys.c" "$REPO/src/net/rtsp/rtp_in.c" \
     "$REPO/src/features/audio/audio_vad.c" "$REPO/src/features/audio/g711.c" "$SRC/swdog.c" "$SRC/video_cfg.c" "${SMOL_OBJS[@]}" 2>"$WORK/cc.log" || { cat "$WORK/cc.log"; exit 1; }
 
 # The host client (tools/akam-talk) is built here too and run against the same server.
@@ -53,4 +53,4 @@ done
  -I"$SRC" -I"$REPO/firmware/lsc-indoor-1080p-ak3918" "${SHARED_INC[@]}" -o "$WORK/akam-talk" "$REPO/tools/akam-talk/akam_talk.c" "$REPO/src/net/crypto/md5.c" "$REPO/src/features/audio/g711.c"
 export AKAM_TALK_BIN="$WORK/akam-talk"
 
-"$WORK/rtsp_backchannel_test" | grep -v '^\[ak_rtsp\]\|^\[audio_out\]'
+"$WORK/rtsp_backchannel_test" | grep -v '^\[akamd\]\|^\[audio_out\]'

@@ -46,5 +46,5 @@ soc=AK3918AV130
 flash=8 MiB SPI NOR
 layout=8 partitions; sizes 204800 4096 4096 65536 1572864 1032192 262144 5242880; APP=mtd7
 validated|LSC Smart Indoor 1080p 3215672.3 (board SI D26228)|AK3918AV130|4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025|8 partitions; mtd7=APP 00500000|squashfs xz block=131072 bcj=none|14a2e43f9169575ff181d4027b78da652fb343714b4045b8b1f129b8a0d85294|1.30.1
-untested|LSC Smart Indoor 1080p 3215672.2 (boards SI B26101 / C26101; run with ak_rtsp upstream, never with Akam)|AK3918AV130|-|-|-|-|-
+untested|LSC Smart Indoor 1080p 3215672.2 (boards SI B26101 / C26101; run with akamd upstream, never with Akam)|AK3918AV130|-|-|-|-|-
 untested|any other device, kernel build or stock APP (including a stock APP compressed with gzip)|-|-|-|-|-|-

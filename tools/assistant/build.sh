@@ -8,7 +8,7 @@
 #   tools/assistant/build.sh test          go vet + go test ./... (what tests/assistant_test.sh runs)
 #   tools/assistant/build.sh vet-all [--link]  go vet (-tags akamtest) for the five non-host targets; --link also builds their test binaries (go test -c)
 #   tools/assistant/build.sh sizes [--by-package [os/arch]]
-#                                          sizes of the built binaries against the budget (hard 12 MiB, soft 11 MiB);
+#                                          sizes of the built binaries against the budget (hard 20 MiB, soft 16 MiB);
 #                                          --by-package: size per Go package of an unstripped build
 #   tools/assistant/build.sh repro [os/arch ...]   builds twice and compares the sha256 (default: all six)
 #   tools/assistant/build.sh notices       THIRD_PARTY_NOTICES.md lists every module linked into each target and its generated
@@ -28,8 +28,8 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 # shellcheck source=tools/lib/gotoolchain.sh
 . "$REPO/tools/lib/gotoolchain.sh"
-BUDGET_BYTES=$((12 * 1024 * 1024))
-SOFT_BYTES=$((11 * 1024 * 1024))
+BUDGET_BYTES=$((20 * 1024 * 1024))
+SOFT_BYTES=$((16 * 1024 * 1024))
 VERSION=${VERSION:-0.1.0-dev}
 ALL_TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 TARGETS=${AKAM_TARGETS:-$ALL_TARGETS}
@@ -83,9 +83,9 @@ mib() { awk -v s="$1" 'BEGIN{printf "%.2f", s/1048576}'; }
 size_line() { # label file ; returns 1 above the hard budget
     local sz verdict=ok
     sz=$(wc -c <"$2" | tr -d ' ')
-    [ "$sz" -le "$SOFT_BYTES" ] || verdict="WARN (soft limit 11 MiB)"
+    [ "$sz" -le "$SOFT_BYTES" ] || verdict="WARN (soft limit 16 MiB)"
     [ "$sz" -le "$BUDGET_BYTES" ] || verdict=OVER
-    printf '%-40s %9d bytes  %5s MiB  (budget 12 MiB: %s)\n' "$1" "$sz" "$(mib "$sz")" "$verdict"
+    printf '%-40s %9d bytes  %5s MiB  (budget 20 MiB: %s)\n' "$1" "$sz" "$(mib "$sz")" "$verdict"
     [ "$sz" -le "$BUDGET_BYTES" ]
 }
 

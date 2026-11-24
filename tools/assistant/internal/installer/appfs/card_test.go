@@ -57,8 +57,8 @@ func TestBuildCardTreeAndVerify(t *testing.T) {
 		have[f.Path] = f.Data
 	}
 	for _, p := range []string{"yy_debug.ini", "akam_boot.sh", "busybox", "akam/own_app", "akam/decloud", "akam/wpa.conf", "akam/authorized_keys",
-		"akam/own_app_stub.sh", "akam/common.sh", "akam/akam_ntp.sh", "akam/akam_hostname.sh", "akam/dropbearmulti", "akam/bin/akam2k_rtsp",
-		"akam/bin/akam2k_sntp.BUILDINFO", "akam/enable_local.sh", "akam/restore_param.sh", "akam/LICENSE.dropbear", "akam/no_telnet"} {
+		"akam/own_app_stub.sh", "akam/common.sh", "akam/akam_ntp.sh", "akam/akam_hostname.sh", "akam/dropbearmulti", "akam/bin/akamd",
+		"akam/bin/akam-sntp.BUILDINFO", "akam/enable_local.sh", "akam/restore_param.sh", "akam/LICENSE.dropbear", "akam/no_telnet"} {
 		if _, ok := have[p]; !ok {
 			t.Errorf("card lacks %s", p)
 		}
@@ -74,7 +74,7 @@ func TestBuildCardTreeAndVerify(t *testing.T) {
 			t.Errorf("a firmware-like file on the card: %s", p)
 		}
 	}
-	if !bytes.Contains(have["akam/bin/akam2k_sntp.BUILDINFO"], []byte("tool=akam2k_sntp\nsha256="+shaHex(k.File(pathBin+"akam2k_sntp")))) {
+	if !bytes.Contains(have["akam/bin/akam-sntp.BUILDINFO"], []byte("tool=akam-sntp\nsha256="+shaHex(k.File(pathBin+"akam-sntp")))) {
 		t.Error("sntp BUILDINFO")
 	}
 	// written to a directory and verified with the card verifier: ok, then a changed file and a trigger fail it

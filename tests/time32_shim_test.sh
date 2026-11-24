@@ -7,7 +7,7 @@
 #   - without it, stock musl does call clock_gettime64 (control: the test
 #     would notice if the shim stopped being necessary or stopped working);
 #   - no forbidden time64 syscall number is loaded into r7 anywhere in the
-#     machine code of the probe, ak_rtsp, flash_tool and dropbearmulti
+#     machine code of the probe, akamd, flash_tool and dropbearmulti
 #     (gdb disassembly; skipped when gdb is missing);
 #   - the probe's verdict logic reports NOOP when the time64 syscalls are
 #     simulated as "success without effect" and WORKS otherwise.
@@ -113,10 +113,10 @@ EOF
             echo "  skip - $b not built"
         fi
     done
-    if [ -f "$REPO/build/lsc-indoor-1080p-ak3918/ak_rtsp" ]; then
-        check "ak_rtsp: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/build/lsc-indoor-1080p-ak3918/ak_rtsp"
+    if [ -f "$REPO/build/lsc-indoor-1080p-ak3918/akamd" ]; then
+        check "akamd: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/build/lsc-indoor-1080p-ak3918/akamd"
     else
-        echo "  skip - build/lsc-indoor-1080p-ak3918/ak_rtsp not built"
+        echo "  skip - build/lsc-indoor-1080p-ak3918/akamd not built"
     fi
     if [ -f "$REPO/dist/dropbear/dropbearmulti" ]; then
         check "dropbearmulti: no forbidden time64 syscall, clock_gettime32 present" "$CHECK" --require-263 "$REPO/dist/dropbear/dropbearmulti"

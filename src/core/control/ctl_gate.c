@@ -111,7 +111,7 @@ int ctl_slots_count(const ctl_slots_t *s)
     return n;
 }
 
-/* "ak_rtsp ctl <line...>": send one line to the control port on 127.0.0.1 and print the
+/* "akamd ctl <line...>": send one line to the control port on 127.0.0.1 and print the
  * answer (without the LOG lines the port pushes by itself). Used by akam_debug.sh and the
  * other helper scripts, so they do not depend on the BusyBox nc. Runs before any hardware
  * init. Exit 0 when the first reply line is not an ERR, 1 otherwise (also: no connection,

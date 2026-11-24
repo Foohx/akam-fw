@@ -9,7 +9,7 @@ import (
 	"github.com/Foohx/akam-fw/tools/assistant/internal/testfake"
 )
 
-// The MQTT commands run the REAL akam_mqtt.sh of this checkout in the fake camera's root (the fake ak_rtsp answers
+// The MQTT commands run the REAL akam_mqtt.sh of this checkout in the fake camera's root (the fake akamd answers
 // MQTT reload/test), so these tests cover the whole path: prompts, validation, stdin password, helper, files.
 
 const mqttPass = "S3NTINEL-br0ker-pw"

@@ -10,7 +10,7 @@ Today one camera uses it: [`firmware/lsc-indoor-1080p-ak3918`](../../firmware/ls
 | libc, linking | musl 1.2, static, `-Wl,--gc-sections`; `time32_shim.c` replaces the time64 syscalls the 4.4 kernel does not run |
 | Toolchain | pinned Zig (`tools/build/deps.lock`, fetched by `tools/build/bootstrap.sh`) |
 | Kernel interface | raw ioctls, no vendor `.so` (the ioctl layouts are in `ak_ioctls.h`, `isp_nr_layout.h`) |
-| Output | `ak_rtsp` (renamed `akamd` in a later step), `flash_tool`, `isp_dump`, `isp_hook.so`, `stock_hook.so`, `patch_div0` |
+| Output | `akamd` (`ak_rtsp` in 0.1.x; the image keeps a compatibility link `ak_rtsp`), `flash_tool`, `isp_dump`, `isp_hook.so`, `stock_hook.so`, `patch_div0` |
 
 ## What is here
 

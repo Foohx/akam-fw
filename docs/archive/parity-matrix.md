@@ -1,5 +1,7 @@
 # Parity matrix: 1080p versus the Rotatable 2K
 
+> **Superseded (2026-11-23).** The state described below is out of date: this snapshot predates later work (the settings API, flip and mirror on the 1080p, speaker and picture on the 2K) and the camera program is now `akamd` on both cameras (files `akam-*`, `akam.conf`). The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and measurements only; do not read its status columns as current.
+
 > Archived document (2026-11): historical, kept for its findings. Paths and status may predate the repository reorganisation (old to new table: `tools/dev/path-map.txt`); current docs are in [docs/README.md](../README.md).
 
 Directive: the LSC Smart Indoor 1080p (`platforms/anyka-ak3918`) reaches the same level of features and remote control as the

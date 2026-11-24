@@ -5,7 +5,7 @@
 #   akam_ntp.sh set SERVER [SERVER [SERVER]]   save 1 to 3 NTP servers (host names or IPv4 addresses) and start
 #   akam_ntp.sh off                            remove the setting and stop the helper
 #   akam_ntp.sh status                         servers, the camera clock, whether the helper runs, last log line
-#   akam_ntp.sh run                            the loop (started by ak_rtsp_wrapper.sh at boot, only when the
+#   akam_ntp.sh run                            the loop (started by akam_run.sh at boot, only when the
 #                                              file below exists; fire and forget, detached)
 # Exit status: 0 ok, 1 failure, 2 usage or an invalid server.
 #

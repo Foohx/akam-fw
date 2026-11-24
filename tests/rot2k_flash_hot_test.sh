@@ -135,7 +135,7 @@ addp 16615 /appfs/akam/dropbearmulti /mnt/sdcard/akam/dropbearmulti dropbear -r 
 addp 602 /appfs/bin/wpa_supplicant /appfs/bin/wpa_supplicant -Dnl80211 -i wlan0 -c /tmp/wpa.conf
 AP_FD=/appfs/akam/akam_ntp.sh addp 706 /bin/busybox sh /mnt/sdcard/akam/akam_ntp.sh run
 AP_FD=/appfs/akam/own_app_run.sh AP_ENV="AKAM_X=/tmp/y" addp 709 /bin/busybox sh /mnt/sdcard/akam/own_app_run.sh
-AP_MAPS="00400000-00500000 r-xp 0 0 0 /appfs/lib/libakam.so" addp 783 /tmp/akam2k_rtsp /tmp/akam2k_rtsp --audio 1
+AP_MAPS="00400000-00500000 r-xp 0 0 0 /appfs/lib/libakam.so" addp 783 /tmp/akamd /tmp/akamd --audio 1
 AP_FD=/appfs/akam/decloud.sh addp 806 /bin/busybox sh /mnt/sdcard/akam/decloud.sh keeper
 addp 19 /bin/busybox /bin/busybox sleep 3600   # touches nothing in /appfs: must not be listed
 

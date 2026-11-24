@@ -13,7 +13,7 @@ int a2k_tareas_parse(const char *text, size_t len, a2k_tareas_t *out)
     (void)text;
     (void)len;
     if (out) memset(out, 0, sizeof *out);
-    return 0; /* accepted and ignored (a track_area line left in akam2k.conf must not stop the app) */
+    return 0; /* accepted and ignored (a track_area line left in akam.conf must not stop the app) */
 }
 
 int a2k_track_area_corner(a2k_track_t *t, int slot, int corner)

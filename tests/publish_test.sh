@@ -138,9 +138,9 @@ reset_gh() { rm -rf "$GH_FAKE_STATE"; mkdir -p "$GH_FAKE_STATE/rel"; }
 # --- a stub firmware kit (test grade) and a throw-away repository -------------------------------------
 S=$WORK/stub
 mkdir -p "$S/smol/build/_deps" "$S/db"
-printf '#!/bin/sh\necho stub\n' >"$S/ak_rtsp"
-cp "$S/ak_rtsp" "$S/flash_tool"
-cp "$S/ak_rtsp" "$S/db/dropbearmulti"
+printf '#!/bin/sh\necho stub\n' >"$S/akamd"
+cp "$S/akamd" "$S/flash_tool"
+cp "$S/akamd" "$S/db/dropbearmulti"
 printf 'Dropbear stub licence\n' >"$S/db/LICENSE.dropbear"
 printf 'smolrtsp stub licence\n' >"$S/smol/LICENSE"
 for d in slice99 metalang99 datatype99 interface99; do
@@ -150,13 +150,13 @@ done
 printf 'musl stub\n' >"$S/COPYRIGHT"
 printf 'zig stub\n' >"$S/ZIGLICENSE"
 printf '#!/bin/sh\nexit 0\n' >"$S/gate_ok"
-chmod 755 "$S"/ak_rtsp "$S"/flash_tool "$S/db/dropbearmulti" "$S"/gate_ok
+chmod 755 "$S"/akamd "$S"/flash_tool "$S/db/dropbearmulti" "$S"/gate_ok
 V=1.0.0
 MODEL=lsc-indoor-1080p-ak3918
 KIT=$WORK/kit
 (
     export AKAM_KIT_NO_BUILD=1 AKAM_KIT_ALLOW_DIRTY=1 AKAM_KIT_VERSION=$V SOURCE_DATE_EPOCH=1700000000
-    export AK_RTSP_BIN=$S/ak_rtsp FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti
+    export AK_RTSP_BIN=$S/akamd FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti
     export SMOLRTSP_DIR=$S/smol MUSL_COPYRIGHT=$S/COPYRIGHT ZIG_LICENSE=$S/ZIGLICENSE AKAM_KIT_CHECK_TIME32=$S/gate_ok
     bash "$REL/make_kit.sh" --out "$KIT" >"$WORK/kit.log" 2>&1
 ) || { cat "$WORK/kit.log"; echo "cannot build the stub kit"; exit 1; }

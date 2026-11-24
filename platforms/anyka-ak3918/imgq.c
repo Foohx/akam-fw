@@ -414,7 +414,7 @@ int imgq_ctl_set(const char *key, const char *val, char *msg, size_t cap)
     }
 
     if (!strcmp(key, "img.venc_rc")) {
-        snprintf(msg, cap, "ERR img.venc_rc is decided when the encoder is created: start ak_rtsp with "
+        snprintf(msg, cap, "ERR img.venc_rc is decided when the encoder is created: start akamd with "
                            "AKAM_VENC_RC=stock, or put venc_rc=stock in " IMGQ_RAM_FILE " (RAM) or " IMGQ_CONF_FILE);
         return 1;
     }

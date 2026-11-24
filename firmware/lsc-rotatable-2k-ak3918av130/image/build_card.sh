@@ -22,14 +22,14 @@
 #                            always copied; only the flag arms it.
 #   --wpa-conf FILE          copy FILE to <dir>/akam/wpa.conf (mode 600) for the stub; never read or printed.
 #                            Without it the builder neither creates nor overwrites akam/wpa.conf.
-#   --own-app-bin DIR        directory with akam2k_rtsp + BUILDINFO.txt (made by `make poc3-dist` in app/) to install as
-#                            akam/bin/akam2k_rtsp (+ akam/bin/akam2k_rtsp.BUILDINFO). Default: $AKAM_OWN_APP_DIST or
-#                            dist/rot2k-app when akam2k_rtsp is there. Refused unless BUILDINFO proves symcheck=passed,
+#   --own-app-bin DIR        directory with akamd + BUILDINFO.txt (made by `make poc3-dist` in app/) to install as
+#                            akam/bin/akamd (+ akam/bin/akamd.BUILDINFO). Default: $AKAM_OWN_APP_DIST or
+#                            dist/rot2k-app when akamd is there. Refused unless BUILDINFO proves symcheck=passed,
 #                            matches the binary and the CURRENT sources, and the binary is a 32-bit ARM ELF with the
 #                            interpreter /lib/ld-uClibc.so.0. Only that one file is copied: vendor libs are never
 #                            shipped (the camera's /appfs/lib is used at run time). The stub starts it when it is
-#                            on the card (flag akam/own_app); optional akam/akam2k.conf is never created here.
-#   (time sync) akam/akam_ntp.sh (the shared 1080p script, unchanged) is always copied; akam/bin/akam2k_sntp (+ its
+#                            on the card (flag akam/own_app); optional akam/akam.conf is never created here.
+#   (time sync) akam/akam_ntp.sh (the shared 1080p script, unchanged) is always copied; akam/bin/akam-sntp (+ its
 #                            BUILDINFO) is copied when make poc3-dist built it (same dist directory as the app, refused unless
 #                            BUILDINFO matches it and the current sntp sources). Nothing runs until YOU create akam/ntp.
 #   -h, --help
@@ -231,52 +231,52 @@ else
     log "note: no akam_ptz in $ptz_dist: the card has no PTZ tool (build it with ptz/build_akam_ptz.sh)"
 fi
 
-# --- the own app (akam2k_rtsp): built with the Bootlin uClibc toolchain, proven by its BUILDINFO ------------------------
+# --- the own app (akamd): built with the Bootlin uClibc toolchain, proven by its BUILDINFO ------------------------
 app_dist=${appbin:-${AKAM_OWN_APP_DIST:-$REPO/dist/rot2k-app}}
 app_hint="rebuild with: make -C platforms/anyka-ak3918av130 poc3-dist CAMERA_LIBC=<libuClibc from your backup>"
-if [ -n "$appbin" ] && [ ! -f "$app_dist/akam2k_rtsp" ]; then
-    die "--own-app-bin: $app_dist/akam2k_rtsp not found; $app_hint"
+if [ -n "$appbin" ] && [ ! -f "$app_dist/akamd" ]; then
+    die "--own-app-bin: $app_dist/akamd not found; $app_hint"
 fi
-if [ -f "$app_dist/akam2k_rtsp" ]; then
-    app=$app_dist/akam2k_rtsp
+if [ -f "$app_dist/akamd" ]; then
+    app=$app_dist/akamd
     [ -f "$app_dist/BUILDINFO.txt" ] || die "$app_dist/BUILDINFO.txt not found (poc3-symcheck proof missing); $app_hint"
     abi() { sed -n "s/^$1=//p" "$app_dist/BUILDINFO.txt" | head -n1; }
-    [ "$(abi symcheck)" = passed ] || die "akam2k_rtsp: BUILDINFO.txt does not say symcheck=passed (poc3-symcheck against the camera libc was not run); $app_hint"
-    [ "$(abi sha256)" = "$(sha_of "$app")" ] || die "akam2k_rtsp does not match its BUILDINFO.txt; $app_hint"
-    [ "$(abi source_sha256)" = "$(sh "$HERE/source_hash.sh")" ] || die "akam2k_rtsp was not built from the current sources; $app_hint"
+    [ "$(abi symcheck)" = passed ] || die "akamd: BUILDINFO.txt does not say symcheck=passed (poc3-symcheck against the camera libc was not run); $app_hint"
+    [ "$(abi sha256)" = "$(sha_of "$app")" ] || die "akamd does not match its BUILDINFO.txt; $app_hint"
+    [ "$(abi source_sha256)" = "$(sh "$HERE/source_hash.sh")" ] || die "akamd was not built from the current sources; $app_hint"
     # ELF check without any ARM tool: magic, 32-bit class, little endian, e_machine ARM (40), and the interpreter string.
-    [ "$(head -c 4 "$app" | od -An -c | tr -d ' ')" = '177ELF' ] || die "akam2k_rtsp is not an ELF file"
-    [ "$(od -An -tu1 -j4 -N2 "$app" | tr -s ' ' | sed 's/^ //')" = "1 1" ] || die "akam2k_rtsp is not a 32-bit little-endian ELF"
-    [ "$(od -An -tu1 -j18 -N2 "$app" | tr -s ' ' | sed 's/^ //')" = "40 0" ] || die "akam2k_rtsp is not an ARM executable"
-    head -c 4096 "$app" | grep -a -q '/lib/ld-uClibc\.so\.0' || die "akam2k_rtsp does not request the interpreter /lib/ld-uClibc.so.0 (built with another libc?); $app_hint"
-    install_file "$app" "$target/akam/bin/akam2k_rtsp" 755
-    install_file "$app_dist/BUILDINFO.txt" "$target/akam/bin/akam2k_rtsp.BUILDINFO" 644
-    log "akam2k_rtsp installed (sha256 $(abi sha256))"
+    [ "$(head -c 4 "$app" | od -An -c | tr -d ' ')" = '177ELF' ] || die "akamd is not an ELF file"
+    [ "$(od -An -tu1 -j4 -N2 "$app" | tr -s ' ' | sed 's/^ //')" = "1 1" ] || die "akamd is not a 32-bit little-endian ELF"
+    [ "$(od -An -tu1 -j18 -N2 "$app" | tr -s ' ' | sed 's/^ //')" = "40 0" ] || die "akamd is not an ARM executable"
+    head -c 4096 "$app" | grep -a -q '/lib/ld-uClibc\.so\.0' || die "akamd does not request the interpreter /lib/ld-uClibc.so.0 (built with another libc?); $app_hint"
+    install_file "$app" "$target/akam/bin/akamd" 755
+    install_file "$app_dist/BUILDINFO.txt" "$target/akam/bin/akamd.BUILDINFO" 644
+    log "akamd installed (sha256 $(abi sha256))"
 else
-    log "note: no akam2k_rtsp in $app_dist: the own-app stub will run without video (build it with make poc3-dist in app/)"
+    log "note: no akamd in $app_dist: the own-app stub will run without video (build it with make poc3-dist in app/)"
 fi
 # --- time sync (opt-in on the card by the file akam/ntp, see own_app_stub.sh) ------------------------------------------
-# The shared 1080p script, copied UNCHANGED (inert without the card file akam/ntp), plus akam2k_sntp, the one-shot SNTP
+# The shared 1080p script, copied UNCHANGED (inert without the card file akam/ntp), plus akam-sntp, the one-shot SNTP
 # client that replaces the BusyBox ntpd this camera does not have. The binary comes from the same dist directory as the
 # app and is refused unless BUILDINFO.txt matches it and the CURRENT ../sntp sources. Optional: without it the stub just
 # logs that time sync cannot start.
 install_file "$REPO/src/scripts/akam_ntp.sh" "$target/akam/akam_ntp.sh" 755
 install_file "$REPO/src/scripts/akam_hostname.sh" "$target/akam/akam_hostname.sh" 755
-if [ -f "$app_dist/akam2k_sntp" ]; then
+if [ -f "$app_dist/akam-sntp" ]; then
     [ -f "$app_dist/BUILDINFO.txt" ] || die "$app_dist/BUILDINFO.txt not found (sntp proof missing); $app_hint"
     abi() { sed -n "s/^$1=//p" "$app_dist/BUILDINFO.txt" | head -n1; }
-    [ "$(abi symcheck)" = passed ] || die "akam2k_sntp: BUILDINFO.txt does not say symcheck=passed; $app_hint"
-    [ "$(abi sntp_sha256)" = "$(sha_of "$app_dist/akam2k_sntp")" ] || die "akam2k_sntp does not match its BUILDINFO.txt (sntp_sha256); $app_hint"
-    [ "$(abi sntp_source_sha256)" = "$(sh "$HERE/source_hash.sh" sntp)" ] || die "akam2k_sntp was not built from the current sntp sources; $app_hint"
-    sntp=$app_dist/akam2k_sntp
-    [ "$(head -c 4 "$sntp" | od -An -c | tr -d ' ')" = '177ELF' ] || die "akam2k_sntp is not an ELF file"
-    [ "$(od -An -tu1 -j18 -N2 "$sntp" | tr -s ' ' | sed 's/^ //')" = "40 0" ] || die "akam2k_sntp is not an ARM executable"
-    head -c 4096 "$sntp" | grep -a -q '/lib/ld-uClibc\.so\.0' || die "akam2k_sntp does not request the interpreter /lib/ld-uClibc.so.0"
-    install_file "$sntp" "$target/akam/bin/akam2k_sntp" 755
-    printf 'tool=akam2k_sntp\nsha256=%s\n' "$(abi sntp_sha256)" >"$target/akam/bin/akam2k_sntp.BUILDINFO"
-    log "akam2k_sntp installed (sha256 $(abi sntp_sha256)); time sync stays off until the card has akam/ntp"
+    [ "$(abi symcheck)" = passed ] || die "akam-sntp: BUILDINFO.txt does not say symcheck=passed; $app_hint"
+    [ "$(abi sntp_sha256)" = "$(sha_of "$app_dist/akam-sntp")" ] || die "akam-sntp does not match its BUILDINFO.txt (sntp_sha256); $app_hint"
+    [ "$(abi sntp_source_sha256)" = "$(sh "$HERE/source_hash.sh" sntp)" ] || die "akam-sntp was not built from the current sntp sources; $app_hint"
+    sntp=$app_dist/akam-sntp
+    [ "$(head -c 4 "$sntp" | od -An -c | tr -d ' ')" = '177ELF' ] || die "akam-sntp is not an ELF file"
+    [ "$(od -An -tu1 -j18 -N2 "$sntp" | tr -s ' ' | sed 's/^ //')" = "40 0" ] || die "akam-sntp is not an ARM executable"
+    head -c 4096 "$sntp" | grep -a -q '/lib/ld-uClibc\.so\.0' || die "akam-sntp does not request the interpreter /lib/ld-uClibc.so.0"
+    install_file "$sntp" "$target/akam/bin/akam-sntp" 755
+    printf 'tool=akam-sntp\nsha256=%s\n' "$(abi sntp_sha256)" >"$target/akam/bin/akam-sntp.BUILDINFO"
+    log "akam-sntp installed (sha256 $(abi sntp_sha256)); time sync stays off until the card has akam/ntp"
 else
-    log "note: no akam2k_sntp in $app_dist: no time sync on this card (build it with make poc3-dist in app/)"
+    log "note: no akam-sntp in $app_dist: no time sync on this card (build it with make poc3-dist in app/)"
 fi
 install_file "$keys" "$target/akam/authorized_keys" 600
 [ "$f_decloud" = 0 ] || : >"$target/akam/decloud"

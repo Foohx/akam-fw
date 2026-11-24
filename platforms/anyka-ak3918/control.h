@@ -14,6 +14,7 @@
  *   MQTT reload|test      (loopback only) -> "OK mqtt.state=<state>" re-reads /etc/config/akam/mqtt and starts/stops the
  *                         MQTT client (mqtt_svc.h); "OK mqtt.test=running" starts a one-shot broker test whose result
  *                         is "GET mqtt.test" (running|ok|error:<reason>); GET mqtt.state and mqtt.stats are readable by all
+ * Bound to 127.0.0.1 unless the control.lan opt-in is saved (then 0.0.0.0).
  * Read-only by default: SET (and SAVE/RESET) from a non-loopback peer answer
  * "ERR read-only mode, see akam_debug.sh" unless DEBUG is on (RAM-only flag, off at start,
  * auto-off after 60 min by default). Loopback peers always may write.
@@ -31,6 +32,11 @@
  * just ae/night's own logging. control_stop() on shutdown. */
 
 int  control_start(void);
+
+/* Port 8091 listens on 127.0.0.1 only, unless the user opted in to the LAN (/etc/config/akam/control_lan holds "1"; setting `control.lan`
+ * of the registry). Read when the server starts, so a change applies at the next start of akamd. _set returns 0, or -1 (errno). */
+int  control_lan_get(void);
+int  control_lan_set(int on);
 void control_stop(void);
 
 /* After the ISP is up (once, from main): apply the saved isp.* picture settings (isp_tune.h). */

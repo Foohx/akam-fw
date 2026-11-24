@@ -1,6 +1,6 @@
 #!/bin/bash
 # Assembles the patched APP squashfs tree and builds the flashable, padded
-# firmware image. Invoked by `make firmware` after ak_rtsp itself has been
+# firmware image. Invoked by `make firmware` after akamd itself has been
 # built, and by the flasher as
 #     APP_EXTRACTED=<tree> FW_DIR=<out> bash firmware/lsc-indoor-1080p-ak3918/image/build_image.sh
 #
@@ -10,7 +10,7 @@
 # docs/manual/build.md). Steps:
 #   1. copy APP_EXTRACTED to $FW_DIR/app_patched/ (always from scratch, unless
 #      KEEP_PATCHED=1; the Akam install/patch steps below run in both cases)
-#   2. de-Tuyafication: remove anyka_ipc, install ak_rtsp + wrapper + ini
+#   2. de-Tuyafication: remove anyka_ipc, install akamd + wrapper + ini
 #   3. Akam: install dropbearmulti (+ dropbear/dropbearkey symlinks),
 #      akam_ssh.sh, akam_lockdown.sh, akam_rtsp_auth.sh, akam_hostname.sh, akam_debug.sh, akam_onvif.sh, akam_net.sh, akam_ntp.sh, akam_mqtt.sh, LICENSE.dropbear, MANIFEST.txt;
 #      patch sbin/service.sh (telnet/ftp off)
@@ -52,7 +52,7 @@
 # Env vars (all optional):
 #   APP_EXTRACTED   unsquashed stock APP dump (default: ./app_extracted)
 #   FW_DIR          output directory (default: this script's directory)
-#   AK_RTSP_BIN     ak_rtsp binary (default: ./ak_rtsp next to this script)
+#   AK_RTSP_BIN     akamd binary (default: ./akamd next to this script)
 #   SMOLRTSP_DIR    SmolRTSP checkout for licence texts (default: third_party/smolrtsp)
 #   MUSL_COPYRIGHT  musl COPYRIGHT (default: from the pinned Zig tarball)
 #   ZIG_LICENSE     Zig LICENSE (compiler-rt is linked in; default: pinned Zig tarball)
@@ -62,7 +62,7 @@
 #                   (stock is xz, no BCJ, 128 KiB blocks)
 #   AKAM_ALLOW_UNPATCHED_SERVICE=1  continue when service.sh could not be patched
 #   AKAM_ALLOW_UNCHECKED_TIME64=1  skip the machine-code time64 gate (tools/build/check_time32.sh,
-#                   needs gdb) on the installed ak_rtsp and dropbearmulti; for stub binaries only
+#                   needs gdb) on the installed akamd and dropbearmulti; for stub binaries only
 #   AKAM_ALLOW_UNSTRIPPED=1  install ELF binaries unstripped when no strip tool is found
 #   AKAM_ALLOW_TIGHT=1  allow an image within one block of the partition size
 #   KEEP_PATCHED=1  reuse an existing app_patched/ instead of starting over
@@ -77,7 +77,7 @@ PARTITION=5242880   # mtd7 (APP) size
 APP_EXTRACTED="${APP_EXTRACTED:-$SCRIPT_DIR/app_extracted}"
 FW_DIR="${FW_DIR:-$SCRIPT_DIR}"
 PATCHED="$FW_DIR/app_patched"
-BINARY="${AK_RTSP_BIN:-$ROOT/build/lsc-indoor-1080p-ak3918/ak_rtsp}"
+BINARY="${AK_RTSP_BIN:-$ROOT/build/lsc-indoor-1080p-ak3918/akamd}"
 COMP_ARG="${AKAM_SQUASHFS_COMP:-${AKAM_SQUASH_COMP:-}}"
 EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 IMAGE_FILES="$ROOT/tools/release/image_files.txt"
@@ -193,7 +193,8 @@ if [ -n "$KIT_ARG" ]; then
     KIT_VERSION="$(kit_key akam_version)"
     KIT_COMMIT="$(kit_key source_commit)"
     KIT_GRADE="$(kit_key kit_grade)"
-    BINARY="$KIT/bin/ak_rtsp"
+    BINARY="$KIT/bin/akamd"
+    [ -f "$BINARY" ] || BINARY="$KIT/bin/ak_rtsp" # kit_format 1 (0.1.x): the program under its old name
     DROPBEAR_MULTI="$KIT/bin/dropbearmulti"
     SUPPORTED_HW="$KIT/supported_hardware.txt"
     for n in LICENSE.akam THIRD_PARTY_NOTICES.md LICENSE.dropbear LICENSE.musl LICENSE.zig LICENSE.smolrtsp \
@@ -212,7 +213,7 @@ else
             if native_app_model "$hwf"; then cat "$hwf" >>"$SUPPORTED_HW"; fi
         done
     fi
-    [ -f "$BINARY" ] || die "ak_rtsp binary not found at $BINARY (build it first: make -C platforms/anyka-ak3918 ak_rtsp, or set AK_RTSP_BIN)"
+    [ -f "$BINARY" ] || die "akamd binary not found at $BINARY (build it first: make -C platforms/anyka-ak3918 akamd, or set AK_RTSP_BIN)"
     # Dropbear: prebuilt, or build it with the pinned toolchain.
     DROPBEAR_MULTI="${DROPBEAR_MULTI:-$ROOT/dist/dropbear/dropbearmulti}"
     if [ ! -f "$DROPBEAR_MULTI" ]; then
@@ -240,7 +241,7 @@ else
         done
     fi
     [ -f "${ZIG_LICENSE:-}" ] || die "Zig LICENSE not found (run tools/build/bootstrap.sh or set ZIG_LICENSE)"
-    # Akam's own notices (ak_rtsp is FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware MIT code; the ported flasher fixes carry their own MIT notice).
+    # Akam's own notices (akamd is FluxAlchemist/LSC_AK3918AV130_cam_custom_firmware MIT code; the ported flasher fixes carry their own MIT notice).
     { [ -s "$ROOT/LICENSE" ] && [ -s "$ROOT/THIRD_PARTY_NOTICES.md" ]; } || die "LICENSE or THIRD_PARTY_NOTICES.md missing in $ROOT"
     LICS=("LICENSE.akam:$ROOT/LICENSE" "THIRD_PARTY_NOTICES.md:$ROOT/THIRD_PARTY_NOTICES.md"
         "LICENSE.dropbear:$DROPBEAR_LICENSE" "LICENSE.musl:$MUSL_COPYRIGHT" "LICENSE.zig:$ZIG_LICENSE"
@@ -436,7 +437,7 @@ zig_pinned() {
     done
     return 1
 }
-# Flash budget: the Makefile builds ak_rtsp with -g (~1.6 MB vs ~130 KB
+# Flash budget: the Makefile builds akamd with -g (~1.6 MB vs ~130 KB
 # stripped). Install a stripped COPY; the build output is never modified.
 # Uses `zig objcopy --strip-all` (pinned toolchain: $ZIG or zig on PATH), or
 # $AKAM_STRIP (a command taking "<in> <out>") if set. Kit binaries are already stripped.
@@ -475,8 +476,9 @@ fi
 echo "Applying de-Tuyafication patch..."
 rm -f "$PATCHED/bin/anyka_ipc"
 echo "Installing Akam components ($MODE mode)..."
-rm -f "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" "$PATCHED/bin/dropbear" "$PATCHED/bin/dropbearkey"
-install_stripped "$BINARY" "$PATCHED/bin/ak_rtsp"
+rm -f "$PATCHED/bin/akamd" "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" "$PATCHED/bin/dropbear" "$PATCHED/bin/dropbearkey"
+install_stripped "$BINARY" "$PATCHED/bin/akamd"
+ln -s akamd "$PATCHED/bin/ak_rtsp" # compatibility link for user scripts and old assistants, kept for one release
 install_stripped "$DROPBEAR_MULTI" "$PATCHED/bin/dropbearmulti"
 # Overlay files and links: exactly the entries of tools/release/image_files.txt.
 while read -r kind a b c d; do
@@ -537,7 +539,7 @@ fi
 
 # The stock sbin/main.sh starts "klogd -n &", which forwards every kernel line to syslog. The vendor LED
 # driver prints a line per brightness write and the encoder driver prints bursts of identical errors, so
-# the 3 x 200 KB syslog files rotate every few minutes. "ak_rtsp klog" (src/core/klog.h) drops the LED
+# the 3 x 200 KB syslog files rotate every few minutes. "akamd klog" (src/core/klog.h) drops the LED
 # trace and collapses repeats. It is restarted (2 s, 4 s, ... up to 5 crashes in a row) when a signal kills it; a run that lasted over 60 s
 # resets the count, and SIGTERM/SIGINT (143/130, someone asked for the stop) restarts after 1 s without counting; the stock
 # klogd runs only when it cannot start (exit code other than a signal: no /proc/kmsg, binary missing) or after
@@ -550,10 +552,10 @@ if [ ! -f "$MAINSH" ]; then
     warn "sbin/main.sh not found in the APP tree: kernel log filter not installed"
 elif grep -qE "$KLOG_RE" "$MAINSH"; then
     # shellcheck disable=SC2016  # the text is written to main.sh as it is, nothing expands here
-    KLOG_NEW='{ _k=0; while [ "$_k" -lt 5 ]; do read _a _ </proc/uptime; /usr/bin/ak_rtsp klog; _r=$?; [ $_r -ge 128 ] || break; read _b _ </proc/uptime; [ $((${_b%.*}+0 - (${_a%.*}+0))) -gt 60 ] && _k=0; if [ $_r -eq 143 ] || [ $_r -eq 130 ]; then sleep 1; else _k=$((_k + 1)); sleep $((_k * 2)); fi; done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)'
+    KLOG_NEW='{ _k=0; while [ "$_k" -lt 5 ]; do read _a _ </proc/uptime; /usr/bin/akamd klog; _r=$?; [ $_r -ge 128 ] || break; read _b _ </proc/uptime; [ $((${_b%.*}+0 - (${_a%.*}+0))) -gt 60 ] && _k=0; if [ $_r -eq 143 ] || [ $_r -eq 130 ]; then sleep 1; else _k=$((_k + 1)); sleep $((_k * 2)); fi; done; klogd -n; } & # AKAM: filtered kernel log (stock: klogd -n)'
     sed -E -i "s@$KLOG_RE@\\1${KLOG_NEW//&/\\&}@" "$MAINSH"
     sh -n "$MAINSH" || die "sbin/main.sh fails sh -n after the klogd patch"
-elif grep -q 'ak_rtsp klog' "$MAINSH"; then
+elif grep -qE '(akamd|ak_rtsp) klog' "$MAINSH"; then
     :   # already patched (KEEP_PATCHED=1)
 else
     warn "sbin/main.sh has no 'klogd -n &' line: kernel log filter not installed (stock klogd runs unfiltered)"
@@ -565,7 +567,7 @@ if [ -f "$TEMPLATES/audit_remote_services.sh" ]; then
     AUDIT_OUT="audit_remote_services.txt"
 fi
 
-SHA_AK="$(sha256sum "$PATCHED/bin/ak_rtsp" | cut -d' ' -f1)"
+SHA_AK="$(sha256sum "$PATCHED/bin/akamd" | cut -d' ' -f1)"
 SHA_DB="$(sha256sum "$PATCHED/bin/dropbearmulti" | cut -d' ' -f1)"
 if [ "$MODE" = kit ]; then
     GIT_DESC="$KIT_VERSION"
@@ -575,7 +577,7 @@ else
     {
         echo "akam_version=$GIT_DESC"
         echo "build_date=$(date -u -d "@$EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
-        echo "ak_rtsp_sha256=$SHA_AK"
+        echo "akamd_sha256=$SHA_AK"
         echo "dropbearmulti_sha256=$SHA_DB"
         for l in "$PATCHED"/local/akam/LICENSE.*; do
             echo "licence: $(basename "$l") sha256=$(sha256sum "$l" | cut -d' ' -f1)"
@@ -608,7 +610,7 @@ elif [ "$MODE" = source ] && [ "${AKAM_ALLOW_UNCHECKED_TIME64:-0}" = 1 ]; then
     TIME64_NOTE="SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1)"
     warn "*** time64 machine code check SKIPPED (AKAM_ALLOW_UNCHECKED_TIME64=1): clocks may not work on the camera. ***"
 else
-    bash "$ROOT/tools/build/check_time32.sh" --require-263 "$PATCHED/bin/ak_rtsp" "$PATCHED/bin/dropbearmulti" \
+    bash "$ROOT/tools/build/check_time32.sh" --require-263 "$PATCHED/bin/akamd" "$PATCHED/bin/dropbearmulti" \
         || die "time64 check failed on the installed binaries (see above; missing gdb also lands here)"
     TIME64_NOTE="replayed on the installed binaries: ok"
 fi
@@ -618,12 +620,12 @@ BADKEYS="$( (grep -rIlE -e 'BEGIN [A-Z0-9 ]*PRIVATE KEY' "$PATCHED" 2>/dev/null 
     find "$PATCHED" \( -name '*_host_key*' -o -name 'id_rsa*' -o -name 'id_ed25519*' \) ) | sort -u)"
 [ -z "$BADKEYS" ] || die "private key material found in the image tree (O-5: none allowed):
 $BADKEYS"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh; do
+for f in bin/akamd bin/dropbearmulti sbin/akam_run.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh; do
     [ "$(stat -c %a "$PATCHED/$f")" = 755 ] || die "$f is not mode 755"
 done
 BADW="$(find "$PATCHED/local/akam" \( -type f -o -type d \) -perm /022 2>/dev/null)"
 [ -z "$BADW" ] || die "group/other-writable files in local/akam: $BADW"
-for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh sbin/service.sh; do
+for f in bin/akamd bin/dropbearmulti sbin/akam_run.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh sbin/service.sh; do
     if [ ! -e "$PATCHED/$f" ] || [ -n "$(find "$PATCHED/$f" -perm /022)" ]; then
         die "$f is group/other-writable or missing"
     fi
@@ -716,10 +718,10 @@ REPORT="$FW_DIR/build_report.txt"
     echo "squashfs size:      $SQ_SIZE bytes"
     echo "free in mtd7:       $FREE bytes ($((FREE * 100 / PARTITION))% of $PARTITION)"
     echo "added components (uncompressed file size):"
-    for f in bin/ak_rtsp bin/dropbearmulti sbin/ak_rtsp_wrapper.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
+    for f in bin/akamd bin/dropbearmulti sbin/akam_run.sh sbin/akam_ssh.sh sbin/akam_lockdown.sh sbin/akam_rtsp_auth.sh sbin/akam_hostname.sh sbin/akam_debug.sh sbin/akam_onvif.sh sbin/akam_net.sh sbin/akam_ntp.sh sbin/akam_mqtt.sh local/akam/LICENSE.dropbear local/akam/LICENSE.musl local/akam/LICENSE.smolrtsp local/akam/MANIFEST.txt; do
         printf '  %-36s %9s bytes\n' "$f" "$(stat -c %s "$PATCHED/$f")"
     done
-    echo "ak_rtsp sha256:     $SHA_AK"
+    echo "akamd sha256:     $SHA_AK"
     echo "dropbearmulti sha256: $SHA_DB"
     echo "10 largest files in the image:"
     (cd "$PATCHED" && find . -type f -printf '%s %p\n' | sort -rn | head -10 | sed 's/^/  /')

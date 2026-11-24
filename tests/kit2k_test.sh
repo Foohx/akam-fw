@@ -37,10 +37,10 @@ fake_elf() { # fake_elf FILE TAG
       printf '/lib/ld-uClibc.so.0\000%s\n' "$2"; } >"$1"
     chmod 755 "$1"
 }
-fake_elf "$S/app/akam2k_rtsp" rtsp
-fake_elf "$S/app/akam2k_sntp" sntp
+fake_elf "$S/app/akamd" rtsp
+fake_elf "$S/app/akam-sntp" sntp
 printf 'symcheck=passed\nsha256=%s\nsntp_sha256=%s\nsource_sha256=x\nsntp_source_sha256=y\n' \
-    "$(sha "$S/app/akam2k_rtsp")" "$(sha "$S/app/akam2k_sntp")" >"$S/app/BUILDINFO.txt"
+    "$(sha "$S/app/akamd")" "$(sha "$S/app/akam-sntp")" >"$S/app/BUILDINFO.txt"
 printf '#!/bin/sh\necho stub dropbearmulti\n' >"$S/db/dropbearmulti"
 chmod 755 "$S/db/dropbearmulti"
 printf 'sha256_stripped=%s\nprograms=dropbear dropbearkey scp\ntime32_shim_sha256=z\n' "$(sha "$S/db/dropbearmulti")" >"$S/db/BUILDINFO.txt"
@@ -87,7 +87,7 @@ check "inner SHA256SUMS verifies every file but itself" bash -c "
     [ \"\$(wc -l <SHA256SUMS)\" = \"\$(find . -type f ! -name SHA256SUMS | wc -l)\" ]"
 check "the file list is the one the Go installer expects" bash -c "
     cd '$K' && find . -type f | LC_ALL=C sort | tr '\n' ' ' | grep -q \
-'^./MANIFEST.txt ./SHA256SUMS ./appfs/bin/akam2k_rtsp ./appfs/bin/akam2k_rtsp.BUILDINFO ./appfs/bin/akam2k_sntp ./appfs/bin/busybox ./appfs/bin/dropbearmulti ./appfs/bin/dropbearmulti.BUILDINFO ./appfs/overlay/akam_api_key.sh ./appfs/overlay/akam_flash_boot.sh ./appfs/overlay/akam_hostname.sh ./appfs/overlay/akam_net.sh ./appfs/overlay/akam_ntp.sh ./appfs/overlay/common.sh ./appfs/overlay/decloud.sh ./appfs/overlay/own_app_run.sh ./appfs/overlay/own_app_stub.sh ./appfs/overlay/start_ssh.sh ./card/akam/enable_local.sh ./card/akam/restore_param.sh ./card/akam_boot.sh ./card/yy_debug.ini ./licenses/LICENSE.akam ./licenses/LICENSE.dropbear ./licenses/SOURCES.txt ./licenses/THIRD_PARTY_NOTICES.md ./supported_hardware.txt '"
+'^./MANIFEST.txt ./SHA256SUMS ./appfs/bin/akam-sntp ./appfs/bin/akamd ./appfs/bin/akamd.BUILDINFO ./appfs/bin/busybox ./appfs/bin/dropbearmulti ./appfs/bin/dropbearmulti.BUILDINFO ./appfs/overlay/akam_api_key.sh ./appfs/overlay/akam_flash_boot.sh ./appfs/overlay/akam_hostname.sh ./appfs/overlay/akam_net.sh ./appfs/overlay/akam_ntp.sh ./appfs/overlay/common.sh ./appfs/overlay/decloud.sh ./appfs/overlay/own_app_run.sh ./appfs/overlay/own_app_stub.sh ./appfs/overlay/start_ssh.sh ./card/akam/enable_local.sh ./card/akam/restore_param.sh ./card/akam_boot.sh ./card/yy_debug.ini ./licenses/LICENSE.akam ./licenses/LICENSE.dropbear ./licenses/SOURCES.txt ./licenses/THIRD_PARTY_NOTICES.md ./supported_hardware.txt '"
 check "card yy_debug.ini is mode=debug, never factory" bash -c "
     grep -qx mode=debug '$K/card/yy_debug.ini' && ! grep -q factory '$K/card/yy_debug.ini'"
 check "no image, dump, key or factory file" bash -c "! find '$K' -iname '*.squashfs' -o -iname 'mtd*' -o -iname 'fac_av130*' -o -name '*_host_key*' | grep -q ."
@@ -110,12 +110,12 @@ check "refuses a busybox that is not the pinned one" bash -c "
     printf 'x' >'$WORK/bb2'; ! env -u AKAM_ROT2K_BUSYBOX_SHA256_TEST_ONLY bash '$MAKE' ${ARGS[*]} --busybox '$WORK/bb2' --out '$WORK/o5' >'$WORK/b.out' 2>&1 &&
     grep -q 'not the pinned' '$WORK/b.out'"
 check "refuses an app that does not match its BUILDINFO" bash -c "
-    cp -a '$S/app' '$WORK/app2' && printf 'tamper' >>'$WORK/app2/akam2k_rtsp' &&
+    cp -a '$S/app' '$WORK/app2' && printf 'tamper' >>'$WORK/app2/akamd' &&
     ! bash '$MAKE' --app-dist '$WORK/app2' --dropbear-dist '$S/db' --busybox '$S/busybox' --out '$WORK/o5' >'$WORK/a.out' 2>&1 &&
     grep -q 'does not match its BUILDINFO' '$WORK/a.out'"
 check "refuses an app that is not ARM" bash -c "
-    cp -a '$S/app' '$WORK/app3' && printf 'not an elf /lib/ld-uClibc.so.0' >'$WORK/app3/akam2k_sntp' &&
-    sed -i \"s/^sntp_sha256=.*/sntp_sha256=\$(sha256sum '$WORK/app3/akam2k_sntp' | cut -d' ' -f1)/\" '$WORK/app3/BUILDINFO.txt' &&
+    cp -a '$S/app' '$WORK/app3' && printf 'not an elf /lib/ld-uClibc.so.0' >'$WORK/app3/akam-sntp' &&
+    sed -i \"s/^sntp_sha256=.*/sntp_sha256=\$(sha256sum '$WORK/app3/akam-sntp' | cut -d' ' -f1)/\" '$WORK/app3/BUILDINFO.txt' &&
     ! bash '$MAKE' --app-dist '$WORK/app3' --dropbear-dist '$S/db' --busybox '$S/busybox' --out '$WORK/o5' >'$WORK/a.out' 2>&1 &&
     grep -q 'not an ARM executable' '$WORK/a.out'"
 

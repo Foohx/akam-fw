@@ -2,7 +2,7 @@
 # akam_ssh.sh -- start Dropbear (public-key SSH, ed25519 only) at boot.
 #
 # Installed as /usr/sbin/akam_ssh.sh (mode 755) and launched in the background
-# by ak_rtsp_wrapper.sh. It must NEVER block or break ak_rtsp: every failure
+# by akam_run.sh. It must NEVER block or break akamd: every failure
 # path only logs and returns 0.
 #
 # Usage: akam_ssh.sh [start|status]      (default: start)

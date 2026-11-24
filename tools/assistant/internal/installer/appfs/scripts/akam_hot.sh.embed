@@ -78,7 +78,7 @@ role() {
         *own_app_run.sh*) echo supervisor ;;
         *akam_ntp.sh*) echo ntp ;;
         *decloud.sh*) echo keeper ;;
-        *akam2k_rtsp*) echo app ;;
+        *akamd* | *akam2k_rtsp*) echo app ;; # a running 0.1.x image still has the old name
         *wpa_supplicant*) echo wpa ;;
         *)
             case $e in

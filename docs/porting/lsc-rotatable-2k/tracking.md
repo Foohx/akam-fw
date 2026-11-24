@@ -105,12 +105,12 @@ beyond the soft range just pins the camera at the limit without further commands
 - `stay`: nothing happens, the camera stays where the person was last seen, forever.
 - `home`: `track_return_delay_s` seconds after the end of the grace the head goes home, once, only if tracking moved it. `0` = right after the grace.
   A person back before that cancels it; the delay restarts from the next loss.
-- `akam2k.conf`: `track_return`, `track_return_delay_s`, `track_grace_s` (-> `--track-return`, `--track-return-delay-s`, `--track-grace-s`).
+- `akam.conf`: `track_return`, `track_return_delay_s`, `track_grace_s` (-> `--track-return`, `--track-return-delay-s`, `--track-grace-s`).
 - Control API (live, persisted in `/config/akam/settings`): `track.return` (`stay|home`) and `track.return_delay_s` (0..86400) next to `track.enabled`.
   The grace is conf-only.
 - 0.1.0 behaviour (home 10 s after the last box) = `track_return=home`, `track_grace_s=10`, `track_return_delay_s=0`.
 
-Other conf keys: `track_gain_pan` / `track_gain_tilt` (200..4000, default 1000 / 700), `track_tilt_band_pct` (2..40, default 10), `track_band_pct` (2..40, default 6), `track_tilt_return_s` (0..3600, default 0 = off), `track_debug` (0..2: 1 = decision log, 2 = also the raw recorder, see "Hardware calibration experiments"), `track_lag_ms` (-150..300, default 50, signed: the video latency of the pose at capture), `detect_debug` (0|1), `detect_model_thr` (300..950, off), `detect_age_window` (0|1, default 0), `track_tilt` (0|1, default 0), `track_lead_pct` (0..100), `track_head_pct` (0..50, default 15). The supervisor re-reads `akam2k.conf` before every app (re)start, so a change applies when the app restarts (no supervisor restart).
+Other conf keys: `track_gain_pan` / `track_gain_tilt` (200..4000, default 1000 / 700), `track_tilt_band_pct` (2..40, default 10), `track_band_pct` (2..40, default 6), `track_tilt_return_s` (0..3600, default 0 = off), `track_debug` (0..2: 1 = decision log, 2 = also the raw recorder, see "Hardware calibration experiments"), `track_lag_ms` (-150..300, default 50, signed: the video latency of the pose at capture), `detect_debug` (0|1), `detect_model_thr` (300..950, off), `detect_age_window` (0|1, default 0), `track_tilt` (0|1, default 0), `track_lead_pct` (0..100), `track_head_pct` (0..50, default 15). The supervisor re-reads `akam.conf` before every app (re)start, so a change applies when the app restarts (no supervisor restart).
 
 ## Targeting policy, person state and continuous motion (`track_motion`)
 
@@ -118,7 +118,7 @@ Hardware reports of 2026-11-17: "much better, less lag, but the camera often re-
 
 ### Keys, API rows, fallback
 
-| conf key (`akam2k.conf`) | API row | default | meaning |
+| conf key (`akam.conf`) | API row | default | meaning |
 |---|---|---|---|
 | `track_motion` | `track.motion` | `continuous` | `continuous` = one ongoing move re-targeted without a stop; `steps` = the timed nudges (the fallback; also used when the motor layer has no continuous mode). Live. |
 | `track_zone_pct` | `track.zone_pct` | 40 | the comfort zone, % of the frame WIDTH (40 = the central 40 %, +-20 %). `0` = the dev targeting of before (central band 6 %, upper-third rule): the whole new targeting off. Live. |
@@ -254,7 +254,7 @@ or AE effects after a motion, no vertical walking, one person.
 - Cost of the `stay` option: with `track_return=stay` the head stays where the person was last seen. A power cut while it is away from home means a full calibration at the next
   cold boot (the home view does not match, so home cannot be claimed). `track_return=home` returns it home after the delay and avoids that.
 - Travel budget: the steps travelled since the last calibration are counted (`ptz.travel_since_cal` in `/state`; an app start without a calibration counts as
-  half the budget). Past `ptz_travel_budget_k` thousand steps (default 200, akam2k.conf, 10..99999) the home reference is no longer checked / rewritten in this run (RAM-only counter,
+  half the budget). Past `ptz_travel_budget_k` thousand steps (default 200, akam.conf, 10..99999) the home reference is no longer checked / rewritten in this run (RAM-only counter,
   lost with a power cut).
 - A nudge is accepted by the PTZ controller only while it is idle: it never queues behind, replaces or outlives a step, home or park (no un-park after a
   park). While a command runs `a2k_ptz_nudge` returns -1 (the control API `ptz.move` too).
@@ -287,7 +287,7 @@ frames, tilt, lead, return policy). `tests/rot2k_track_wire_unit.c` (wiring on a
 binding). The detection thread calls `a2k_track_feed(now, capture_time, ...)` after every inference with the person boxes that count (not ignored, in a zone when zones apply;
 `n = 0` when nobody), `TL_NUDGE` becomes `a2k_ptz_nudge_sp(dx, dy, speed)`, `TL_HOME` the home command.
 
-- **Off by default.** `track=1` in `akam2k.conf` (`--track 1`) or the Home Assistant switch **Person tracking** (runtime only: a restart goes back to the key).
+- **Off by default.** `track=1` in `akam.conf` (`--track 1`) or the Home Assistant switch **Person tracking** (runtime only: a restart goes back to the key).
 - **Signs.** `hal_ptz.h`: pan + = right, tilt + = up, and `a2k_ptz_nudge` takes right / up positive. A target right of the centre: `dx = +dpan`; a target below
   the centre (`dtilt > 0`): tilt DOWN, `dy = -dtilt`. `invert_pan` defaults to 1 on the 2K (measured), `invert_tilt` to 0: measured 2026-11-16 (API `ptz.move` dy=+250 from home, user absent): the tilt counter 1300 -> 1553 made the camera look UP (the ceiling entered at the top of the image, image upright), so a person above the centre needs the counter to increase. The tracker maps image-above (`dtilt < 0`) to `dy = -dtilt > 0` = counter up, which is what `invert_tilt=0` gives: the default is correct. `track_tilt` stays 0 until a test with a live person.
 - **Never** while the camera is parked, calibrating, its position unknown, the privacy mode hides the video, the motor is moving, or the position is outside
@@ -301,13 +301,13 @@ enabled or disabled.
 - No complete area: the whole soft range. With areas: tracking is allowed only while the current position lies inside at least ONE ENABLED complete area (all
   disabled = never), and a nudge is clipped to the enabled area that contains the current position (when several overlap, the one that lets the nudge go the
   furthest). An incomplete area (no corners yet) does not count.
-- `akam2k.conf`: `track_area_<name>=...` lines (up to 4), passed as `--track-area name=...`; one outside the soft range is dropped with a log line.
+- `akam.conf`: `track_area_<name>=...` lines (up to 4), passed as `--track-area name=...`; one outside the soft range is dropped with a log line.
 - **Home Assistant:** the `text` **New tracking area name** creates an (incomplete, enabled) area; per area: the switch **Tracking area <name>** (enabled),
   the buttons **Set tracking area <name> corner A** / **corner B** (they store the CURRENT camera position; any order; complete with both; two equal corners are
   refused), and **Delete tracking area <name>**; a diagnostic sensor **Tracking areas** shows all of them. Slot based entities (`tarea0` .. `tarea3`, `_a`,
   `_b`, `_del`): when the list changes the entities are announced again and the unused slots are cleared.
 - Persisted atomically in `/config/akam/track_areas` (`track_area_<name>=PMIN:PMAX:TMIN:TMAX:ENABLED`, or `=none:ENABLED` while incomplete); this file wins over
-  the `akam2k.conf` keys when it exists (even when empty).
+  the `akam.conf` keys when it exists (even when empty).
 
 Tests: `tests/rot2k_track_wire_unit.c` (sign mapping, the "never" cases, home after loss, parse / format, overlap, enable, clip, corners, persistence, the responsive wiring).
 
@@ -330,7 +330,7 @@ Tests: `tests/rot2k_track_wire_unit.c` (sign mapping, the "never" cases, home af
 ## Debug log and live tuning
 
 - **No accumulating lag (hardware report 2026-11-17, checked in `rot2k_track_sim.c`, latency model: capture 60 ms before the tick, inference 63..110 ms, 220 ms settle, 5 ms motor steps).** A nudge is computed from the CURRENT pose and only from a frame captured after the last motion end + `settle_ms` and after the last nudge started (`stale` in `tl_update`); the HAL refuses a nudge while it is busy (never queues, never cancels), so nothing stacks; the velocity lead is computed from world positions (pan at the frame + the offset in it) of fresh frames only, with the horizon capped at 1.5 s and `lead_max`, and a lead against the correction is dropped. The sim now counts, for every walking speed 50..500 steps/s, the nudges sent while the motor was busy, the nudges from a stale frame, the overshoot (camera ahead of the person, max px) and the cumulative error (mean |offset| while walking): 0 busy, 0 stale, 0 px overshoot at every speed; mean |offset| 13 px at 50, 47 px at 200, 107 px at 300 steps/s (a lag, never an overshoot; the person leaves the frame above 350 steps/s because the motor cannot keep up). Nothing needed fixing; the checks are asserted.
-- `track_debug=1` in `akam2k.conf` (`--track-debug 1`): one line per decision to the RAM file `/tmp/akam2k_track.log` (never the card; a rolling window: past 64 KiB the newest half is kept, never truncated to empty; at most 2 lines per second, every nudge is logged): frame time, number of boxes, the box, the rule (`centre`, `head-clip`, `near`, `far`), the target row, the offset in px, the pan/tilt position, the wanted and sent nudge, and the reason when nothing was sent (`stale`, `confirm`, `interval`, `gap-hold`, `approach`, `in-band`, `min-step`, `range`, `pan-hold`, `pan-reversal-cap`, `tilt-reversal-cap`, `no-person`, `nudge`). Read it over SSH: `cat /tmp/akam2k_track.log`.
+- `track_debug=1` in `akam.conf` (`--track-debug 1`): one line per decision to the RAM file `/tmp/akam2k_track.log` (never the card; a rolling window: past 64 KiB the newest half is kept, never truncated to empty; at most 2 lines per second, every nudge is logged): frame time, number of boxes, the box, the rule (`centre`, `head-clip`, `near`, `far`), the target row, the offset in px, the pan/tilt position, the wanted and sent nudge, and the reason when nothing was sent (`stale`, `confirm`, `interval`, `gap-hold`, `approach`, `in-band`, `min-step`, `range`, `pan-hold`, `pan-reversal-cap`, `tilt-reversal-cap`, `no-person`, `nudge`). Read it over SSH: `cat /tmp/akam2k_track.log`.
 - Control API (live, persisted): `track.band_pct` (2..40, pan band), `track.head_pct` (0..50, head row), `track.gain_pan` / `track.gain_tilt` (200..4000 steps per frame width / height) and `track.tilt_band_pct` (2..40, the vertical band, the head band is half of it), see control-api.md; the conf keys `track_band_pct` / `track_head_pct` are the defaults.
 
 ## Recovery after losing the person (hardware test of dev ca11529, 2026-11-16)
@@ -442,7 +442,7 @@ The 2026-11-18 E1 run (below) showed that the head class is far more available t
 
 Instrumentation for the tuning that cannot be done on the host. Everything below runs on the camera with a person, RAM only.
 
-**The raw recorder (`track_debug=2`).** `akam2k.conf` `track_debug=2` (restart the app after editing the card file) writes `/tmp/akam2k_track.raw` (tmpfs, rolling, 1 MB: past that the newest half is kept and the `C` line is written again). Four kinds of lines:
+**The raw recorder (`track_debug=2`).** `akam.conf` `track_debug=2` (restart the app after editing the card file) writes `/tmp/akam2k_track.raw` (tmpfs, rolling, 1 MB: past that the newest half is kept and the `C` line is written again). Four kinds of lines:
 
 | Line | Content |
 |---|---|
@@ -480,9 +480,9 @@ The raw recorder already holds what a replay needs: per tick the two clocks (`no
 ### E1. Does the model see heads, and how well (class 1)
 
 Is the head class (class 1 of the stock model, `ai-own-app.md` section 9, `npu-models.md`) reliable enough to become a distance or vertical cue? The detector passes up to 4 head boxes (class, score) next to the 8 persons; since P1-1 the continuous policy uses an associated head (rule 6 above).
-1. `akam2k.conf`: `detect_debug=1`, and to see weak candidates `detect_model_thr=450` (the model returns boxes down to this score; persons below `detect_threshold` are logged but never counted or tracked).
+1. `akam.conf`: `detect_debug=1`, and to see weak candidates `detect_model_thr=450` (the model returns boxes down to this score; persons below `detect_threshold` are logged but never counted or tracked).
 2. Stand at 0.6, 1, 2, 3, 4, 6 m facing the camera, sideways, with a cap, the head partly cut by the frame top, sitting; 20 s each.
-3. `grep 'detect-debug: all' /mnt/sdcard/akam/akam2k.log` (the app log): one line per second, every box as `cls:score:x1,y1,x2,y2`. Read at which distances and poses class 1 appears, its score, and whether its box sits at the top of the person box (head y1 within a few px of the person y1, centred in x).
+3. `grep 'detect-debug: all' /mnt/sdcard/akam/akam.log` (the app log): one line per second, every box as `cls:score:x1,y1,x2,y2`. Read at which distances and poses class 1 appears, its score, and whether its box sits at the top of the person box (head y1 within a few px of the person y1, centred in x).
 
 **Result (2026-11-18, `detect_model_thr=500`, user about 0.6 m, camera on a desk, raw log `test-images/lsc-rotatable-2k/e1_detect_log_20261118.txt`, per-inference counts, no head coordinates).** Fraction of inferences with:
 
@@ -501,11 +501,11 @@ At this range the person box is rarely there (it is cut and wide) while the head
 ### E2. Lag and gain sweep (the latency of the pose at capture, the pan / tilt gains)
 
 `lag_ms` (default 50) and the gains (1000 / 700 steps per frame width / height) are estimates. Measure them with a STATIC target while the head sweeps in a continuous session. Only the tracker moves the head in a continuous session, so the sweep is made by the tracker following a WALKER while a STATIC DECOY (a person standing still, or a life-size poster / mannequin, away from the walker's path) stays in view.
-1. `akam2k.conf` on the card: `track=1`, `track_tilt=1`, `track_motion=continuous`, `track_debug=2`; restart the app.
+1. `akam.conf` on the card: `track=1`, `track_tilt=1`, `track_motion=continuous`, `track_debug=2`; restart the app.
 2. Put the decoy in view at 2 to 3 m. The walker walks left / right (and sits / stands for the tilt) in front of the decoy so that the head sweeps +-300 steps or more on pan and +-100 on tilt several times, for 60 s. The decoy must stay in the frame (stay within +-35 deg of it).
 3. `ssh root@$CAM cat /tmp/akam2k_track.raw > sweep.raw`
-4. `tools/track_lagfit sweep.raw` (Python, standard library only; `--invert-pan` / `--invert-tilt` when there is no `C` line, `--window` for the decoy selection). It picks the static box (the world position that appears in most frames) and, for every lag of -150..300 ms in 5 ms steps, fits the gains in closed form by minimising the variance of the compensated world position `pose(cap - lag) + offset x gain`; it prints the best lag, each axis' own lag, the gains, the residual (steps rms) and the `akam2k.conf` lines.
-5. Apply `track_lag_ms=<fit>`, `track_gain_pan=<fit>`, `track_gain_tilt=<fit>` in `akam2k.conf` (or live with `PATCH /settings {"track.lag_ms":<fit>,"track.gain_pan":<fit>}`, control-api.md), record again: the residual must be smaller (a few steps rms is a good fit). A negative gain means the invert flag is wrong. Pan and tilt lags that differ by more than 30 ms point to a clock problem rather than to a latency: report both.
+4. `tools/track_lagfit sweep.raw` (Python, standard library only; `--invert-pan` / `--invert-tilt` when there is no `C` line, `--window` for the decoy selection). It picks the static box (the world position that appears in most frames) and, for every lag of -150..300 ms in 5 ms steps, fits the gains in closed form by minimising the variance of the compensated world position `pose(cap - lag) + offset x gain`; it prints the best lag, each axis' own lag, the gains, the residual (steps rms) and the `akam.conf` lines.
+5. Apply `track_lag_ms=<fit>`, `track_gain_pan=<fit>`, `track_gain_tilt=<fit>` in `akam.conf` (or live with `PATCH /settings {"track.lag_ms":<fit>,"track.gain_pan":<fit>}`, control-api.md), record again: the residual must be smaller (a few steps rms is a good fit). A negative gain means the invert flag is wrong. Pan and tilt lags that differ by more than 30 ms point to a clock problem rather than to a latency: report both.
 
 Expected: a lag between 50 and 150 ms.
 

@@ -16,6 +16,7 @@
 #include "video_cfg.h"
 #include "ak_ioctls.h"
 #include "isp.h"
+#include "image_orient.h"
 #include "ircut.h"
 #include "ae.h"
 #ifdef AEC_CUSTOM
@@ -42,7 +43,7 @@
 
 /* -------------------------------------------------------------------------
  * Frame grab — triggered by SIGUSR1
- * Send with: kill -USR1 $(pidof ak_rtsp)  (the kernel log filter, same exe, ignores SIGUSR1)
+ * Send with: kill -USR1 $(pidof akamd)  (the kernel log filter, same exe, ignores SIGUSR1)
  * Saves 640×360 NV12 to /mnt/grab_NNNN.yuv; view with:
  *   ffplay -f rawvideo -video_size 640x360 -pixel_format nv12 /mnt/grab_0001.yuv
  * ------------------------------------------------------------------------- */
@@ -218,6 +219,9 @@ int main(int argc, char **argv)
     if (argc >= 2 && strcmp(argv[1], "--api-key") == 0)
         return ak1080_api_key_main(argc - 2, argv + 2);
 
+    /* The speaker engine is shared with the 2K: it is told here where its node and its files are (before anything touches it). */
+    audio_out_setup("/dev/pcmC0D0p", "/etc/config/akam", 1);
+
     /* Before any thread exists: the credentials state (htdigest db + failure limiter) and the plain-credential
      * store are shared by the RTSP loop and the ONVIF HTTP thread, so both are set up once, here. */
     rtsp_auth_shared_init();
@@ -278,6 +282,10 @@ int main(int argc, char **argv)
      * in ae_init_isp_params, then the encoder). Absent file = the compiled-in defaults. */
     video_cfg_load();
     if (ae_init_isp_params()     < 0) goto err;
+
+    /* Saved orientation (image.flip / image.mirror): turned here, with the ISP tunnel calls and before any VI channel exists, like the
+     * stock does its one flip call. Non fatal: a refusal leaves the picture as the sensor makes it. Absent file: nothing sent. */
+    (void)image_orient_apply_saved();
 
     ircut_init();
     if (vi_set_channel_attr()    < 0) goto err;
@@ -373,7 +381,7 @@ int main(int argc, char **argv)
         printf("[ak_rtsp] mqtt.state=%s\n", mstate);
     }
 
-    /* The signed control API (port 8092) is opt-in as well: the thread only listens while an API key exists (ak_rtsp --api-key new). It is
+    /* The signed control API (port 8092) is opt-in as well: the thread only listens while an API key exists (akamd --api-key new). It is
      * started last, after the stream, and never touches the video path; a failure is logged and the camera goes on without it. */
     if (ak1080_api_start(A2K_API_PORT, 0, NULL) != 0)
         printf("[ak_rtsp] api: not running\n");

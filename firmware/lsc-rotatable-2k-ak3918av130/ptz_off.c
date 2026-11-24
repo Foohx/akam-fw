@@ -106,19 +106,19 @@ int a2k_ptz_park(int *pan, int *tilt)
 int a2k_ptz_parse_boot_calibrate(const char *s)
 {
     (void)s;
-    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam.conf must not stop the app) */
 }
 
 int a2k_ptz_parse_cal(const char *s)
 {
     (void)s;
-    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam.conf must not stop the app) */
 }
 
 int a2k_ptz_parse_drift_correct(const char *s)
 {
     (void)s;
-    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam.conf must not stop the app) */
 }
 
 int a2k_ptz_parse_park(const char *s, int *pan, int *tilt)
@@ -132,7 +132,7 @@ int a2k_ptz_parse_park(const char *s, int *pan, int *tilt)
 int a2k_ptz_parse_tilt_rehome(const char *s)
 {
     (void)s;
-    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam2k.conf must not stop the app) */
+    return 0; /* a switched-off feature accepts and ignores its configuration line (a ptz_* line left in akam.conf must not stop the app) */
 }
 
 void a2k_ptz_patrol_cancel(void)

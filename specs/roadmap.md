@@ -10,8 +10,7 @@ Status: this file is a list of gaps, not a promise or a schedule.
 
 | Pri | Gap | Detail |
 |---|---|---|
-| P0 | No release key | `tools/release/allowed_signers` holds no key, so a signed kit cannot be authenticated; installers need `--allow-unsigned` |
-| P0 | No published release | `get-kit` and the firmware chooser were only tested against a test server that plays the release host |
+| P0 | No published release yet | The release key exists (`tools/release/allowed_signers`, fingerprint in the README), but `get-kit` and the firmware chooser were only tested against a test server that plays the release host |
 | P1 | Release kit never flashed | A second camera has not been flashed from a release kit (only from development kits) |
 | P1 | Unsigned PC binaries | Windows SmartScreen and macOS Gatekeeper warn; signing hooks are reserved but empty |
 | P2 | Legacy aliases | The `camyn/` SD folder, `CAMYN_MAINTENANCE` and `CAMYN_FLASH_I_KNOW` still work and are marked for removal at the first release, with `tests/upgrade_from_camyn_test.sh` |
@@ -35,7 +34,7 @@ Never seen on a camera (see `docs/testing-status.md` and `docs/hardware-test-che
 | Pri | Item |
 |---|---|
 | P0 | Telnet and FTP stay closed after a Wi-Fi reconnect (router restart); exposure window at boot not measured (`akam_hwcheck.sh --boot-window` exists) |
-| P0 | Kill and hang tests of `ak_rtsp` (software watchdog exit 70, wrapper respawn backoff), respawn storm |
+| P0 | Kill and hang tests of `akamd` (software watchdog exit 70, wrapper respawn backoff), respawn storm |
 | P0 | Router off for 2, 10 and 40 minutes, DHCP renewal, wrong Wi-Fi password then corrected (Wi-Fi supervisor under real faults) |
 | P1 | 72 h soak: RSS, descriptors, threads, `/tmp` size, CPU, with a viewer reconnecting every minute; log caps measured |
 | P1 | Day/night over a whole dusk and dawn cycle (only a covered-lens check was done) |
@@ -47,6 +46,7 @@ Never seen on a camera (see `docs/testing-status.md` and `docs/hardware-test-che
 | P1 | MQTT end to end with a real broker and Home Assistant (host-tested only), and its RSS |
 | P1 | Per-camera SSH key change over SSH, and configs, on a real camera (host-tested only) |
 | P1 | Stack-protector build boot test |
+| P1 | 1080p flip and mirror: implemented, never run on a 1080p (checks O1080-1 to O1080-11 of the 1080p picture-orientation checklist); the 2K's were checked on 2026-11-22 |
 | P2 | Idle wakeups, idle CPU, power draw (the measurement table is empty); Wi-Fi power save experiment |
 
 ## 4. Security hardening
@@ -64,8 +64,7 @@ Never seen on a camera (see `docs/testing-status.md` and `docs/hardware-test-che
 
 | Pri | Item | Note |
 |---|---|---|
-| P2 | Sub-stream and extra resolutions | The encoder, ISP crop and DMA pool are sized for 1920x1080 only |
-| P2 | Mirror and flip (1080p only; built on the 2K, host-tested, not yet tried on the camera) | On the 1080p the ISP flip ioctl number is known; its payload and the sensor register sequence are not |
+| P2 | Resolutions other than 1920x1080 on the 1080p | The encoder, ISP crop and DMA pool are sized for 1920x1080 only. No sub-stream on the 1080p, by design: `/stream1` is `/stream0` (the 2K has a real one) |
 | P2 | More than one RTSP viewer | One client at a time by design (go2rtc restreams) |
 | P2 | Snapshot (JPEG), ONVIF Events and motion detection | No JPEG path; motion would be frame differencing on the sub-channel luma or encoder frame-size spikes, off by default |
 | P2 | On-screen display (timestamp) and time zone | The vendor OSD module is not used; needs a reverse-engineering session and a clock |
@@ -78,6 +77,6 @@ Never seen on a camera (see `docs/testing-status.md` and `docs/hardware-test-che
 | Pri | Gap |
 |---|---|
 | P1 | Windows and macOS (Go assistant): the full-screen interface, SD writer, UAC and `osascript` flows, flash. Linux arm64 untested |
-| P1 | Only camera model `3215672.3` is validated. The `3215672.2` boards are untested; any other camera is unsupported |
+| P1 | Two models are validated (1080p `3215672.3`, two units; 2K `3225722`, one unit). The `3215672.2` boards are untested; any other camera is unsupported |
 | P2 | The bash wizard has no macOS support and no configs, per-camera key change or firmware chooser |
-| P2 | Dev-only code in the production daemon: `--grab-then-exit`, the SIGUSR1 frame grab to `/mnt`, the alternate AE (`aec_custom.c`) and Makefile dev variants; the kit ships only `ak_rtsp`, `dropbearmulti` and `flash_tool` |
+| P2 | Dev-only code in the production daemon: `--grab-then-exit`, the SIGUSR1 frame grab to `/mnt`, the alternate AE (`aec_custom.c`) and Makefile dev variants; the kit ships only `akamd`, `dropbearmulti` and `flash_tool` |

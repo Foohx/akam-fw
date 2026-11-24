@@ -3,7 +3,7 @@
  * rate limits are those of the Rotatable 2K, see docs/porting/lsc-1080p/control-api.md). Convergence step P8.
  *
  * - The port opens only while an API key exists in /etc/config/akam/api_keys (mode 0600): a camera without a key listens on nothing. The key
- *   tool is `ak_rtsp --api-key new|list|revoke`, run from SSH before any hardware is touched; the running HTTP thread notices the file within
+ *   tool is `akamd --api-key new|list|revoke`, run from SSH before any hardware is touched; the running HTTP thread notices the file within
  *   a second, so creating the first key opens the port and revoking the last one closes it, without a restart.
  * - ONE HTTP thread (64 KiB stack, 1 s tick: one stat of the key file), connection buffers malloc'd at accept and freed at close, no worker
  *   thread: a PATCH or an action runs inline on the HTTP thread (the setters are the ones of the 8091 port and return in milliseconds).
@@ -25,7 +25,7 @@ void ak1080_api_env(a2k_api_env_t *env);
 int ak1080_api_start(int port, int loopback_only, const a2k_api_env_t *env);
 void ak1080_api_stop(void);
 
-/* `ak_rtsp --api-key new|list|revoke ...` (argv after the option). Returns the process exit status. */
+/* `akamd --api-key new|list|revoke ...` (argv after the option). Returns the process exit status. */
 int ak1080_api_key_main(int argc, char **argv);
 
 /* Test hooks: the flash limiter state. */

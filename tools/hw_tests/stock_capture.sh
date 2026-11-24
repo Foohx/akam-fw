@@ -360,10 +360,10 @@ verify_stock() {
     need_cmds awk pidof grep || return 1
     if [ ! -x "$ROOT$IPC" ]; then fail "$IPC missing: not the stock firmware"; return 1; fi
     ok "$IPC present"
-    if [ -n "$(first_pid ak_rtsp)" ] || [ -e "$ROOT/usr/bin/ak_rtsp" ] || [ -e "$ROOT/usr/sbin/akam_ssh.sh" ]; then
-        fail "ak_rtsp / Akam files found: this is not a stock camera"; return 1
+    if [ -n "$(first_pid akamd)" ] || [ -e "$ROOT/usr/bin/akamd" ] || [ -e "$ROOT/usr/sbin/akam_ssh.sh" ]; then
+        fail "akamd / Akam files found: this is not a stock camera"; return 1
     fi
-    ok "no ak_rtsp, no Akam helper"
+    ok "no akamd, no Akam helper"
     if [ -z "$(first_pid watchdog)" ]; then fail "watchdog is not running: killing anyka_ipc would not respawn it"; return 1; fi
     ok "watchdog running (left alone, it feeds the hardware watchdog)"
     if [ -z "$(first_pid anyka_ipc)" ]; then fail "anyka_ipc is not running"; return 1; fi

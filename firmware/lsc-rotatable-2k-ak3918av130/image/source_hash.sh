@@ -1,13 +1,13 @@
 #!/bin/sh
-# source_hash.sh -- sha256 of the sources of akam2k_rtsp. The file list is GENERATED from the build, not kept by hand: the platform Makefile's
+# source_hash.sh -- sha256 of the sources of akamd. The file list is GENERATED from the build, not kept by hand: the platform Makefile's
 # `print-sources` (every source of POC3_ORDER: platform, model and shared src/ files) plus the closure of their quoted includes over the build's
 # include path (`print-incdirs`, tools/build/include_closure.sh), plus the whole platform and model directories (*.c, *.h, Makefile, model.mk, probes)
 # and the shared build rules src/build/*.mk. The hash covers each file's repository-relative path and its bytes. SmolRTSP (third party, fetched) is
 # not part of it. Used by `make poc3-dist` (BUILDINFO source_sha256) and by build_card.sh / build_appfs.sh / make_kit_2k.sh (refuse a stale
 # binary). Host only: needs make and POSIX sh, no compiler.
-#   source_hash.sh            akam2k_rtsp                  source_hash.sh sntp   akam2k_sntp (helpers/sntp)
-#   source_hash.sh audio      akam2k_mic (helpers/mic)     source_hash.sh led    akam2k_led
-#   source_hash.sh --list     the file list of akam2k_rtsp (what tests/rot2k_source_hash_test.sh checks)
+#   source_hash.sh            akamd                  source_hash.sh sntp   akam-sntp (helpers/sntp)
+#   source_hash.sh audio      akam-mic (helpers/mic)     source_hash.sh led    akam-led
+#   source_hash.sh --list     the file list of akamd (what tests/rot2k_source_hash_test.sh checks)
 set -eu
 here=$(cd "$(dirname "$0")" && pwd -P)
 fw=$(cd "$here/.." && pwd -P)
@@ -28,7 +28,7 @@ closure() { # closure of the sources given as arguments over the build's include
     # shellcheck disable=SC2086
     sh "$root/tools/build/include_closure.sh" $incargs "$@"
 }
-inputs() { # absolute paths of every input of the akam2k_rtsp hash
+inputs() { # absolute paths of every input of the akamd hash
     # shellcheck disable=SC2046
     closure $(mk print-sources)
     printf '%s\n' "$plat"/*.c "$plat"/*.h "$plat"/Makefile "$plat"/probes/*.c "$fw"/*.c "$fw"/*.h "$fw"/model.mk "$root"/src/build/*.mk "$fw/helpers/ptz/akam_ptz_safe.h"

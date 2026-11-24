@@ -7,8 +7,9 @@ package camopt
 // firmware, so a value that cannot work is refused before anything is sent; the camera still has the last word
 // and its own refusal text is shown as it is.
 //
-// Not in the registry of the camera (so not here): the MQTT keys (akam2k.conf), the stream password and
-// anything secret ("No secret setting exists; a secret would be refused over HTTP").
+// The user-file rows (firmware cfgreg.c: audio.mic_enable, mqtt.*, onvif.*, rtsp.user / rtsp.password, ntp.servers) need an ADMIN key. The two
+// passwords are write-only rows (Kind Secret): the camera never returns them, they are never listed, echoed or logged, and the assistant
+// asks for them without echo and shows them as "***". All of these apply at the next restart of the app (the supervisor writes the files).
 
 import (
 	"fmt"
@@ -25,9 +26,91 @@ const Pattern Kind = Action + 1
 const Queued Applies = NextPowerCycle + 1
 
 // Groups2K are the groups of the 2K catalogue, in screen order.
-var Groups2K = []string{"LED and night", "Picture", "Video", "Tracking", "Patrol", "Network"}
+var Groups2K = []string{"LED and night", "Picture", "Video", "Tracking", "Patrol", "Network", "Audio", "Security"}
 
 var ledRules = []string{"boot", "nowifi", "person", "stream", "night", "idle"}
+
+// crow is one static row of the 2K catalogue (smaller than an Option: no ID, Helper, Needs or ReadOnly).
+type crow struct {
+	k, g, l, h string
+	v          []string
+	lo, hi     int32
+	kind       Kind
+	p          Persist
+	ap         Applies
+	d          Danger
+}
+
+var cat2K0 = []crow{
+	{k: "led.mode", g: "LED and night", l: "Front LED", kind: Enum, h: "auto follows the rules below, on and off force it", v: []string{"auto", "on", "off"}},
+}
+
+var cat2K1 = []crow{
+	{k: "night.ir_led", g: "LED and night", l: "IR night LEDs", kind: Enum, v: []string{"auto", "off"}},
+	{k: "image.brightness", g: "Picture", l: "Brightness", kind: Int, hi: 100, p: PersistRAM, h: "not saved: back to 50 at the next camera restart"},
+	{k: "image.contrast", g: "Picture", l: "Contrast", kind: Int, hi: 100, p: PersistRAM, h: "not saved: back to 50 at the next camera restart"},
+	{k: "image.sharpness", g: "Picture", l: "Sharpness", kind: Int, hi: 100, p: PersistRAM, h: "not saved: back to 50 at the next camera restart"},
+	{k: "image.mains_hz", g: "Picture", l: "Mains frequency (Hz)", kind: Enum, p: PersistRAM, h: "anti-flicker; not saved", v: []string{"50", "60"}},
+	{k: "image.flip", g: "Picture", l: "Flip (vertical)", kind: Bool, h: "host-tested only, not verified on a camera yet"},
+	{k: "image.mirror", g: "Picture", l: "Mirror (horizontal)", kind: Bool, h: "host-tested only, not verified on a camera yet"},
+	{k: "image.ceiling", g: "Picture", l: "Ceiling mount (flip + mirror)", kind: Bool, h: "1 turns flip and mirror on, 0 off; saved through the two rows above"},
+}
+
+var cat2K2 = []crow{
+	{k: "isp.saturation", g: "Picture", l: "Saturation", kind: Int, lo: -50, hi: 50, h: "0 = the camera's own; applied live, put back after a day/night switch; not verified on a camera yet"},
+	{k: "isp.denoise", g: "Picture", l: "Denoise (0 = camera's own)", kind: Int, hi: 4, h: "temporal noise reduction taken N light levels higher, like the 1080p (its default there is 2, here 0 until judged); not verified on a camera yet"},
+	{k: "img.wb", g: "Picture", l: "White balance", kind: Enum, p: PersistRAM, h: "conf = the camera's automatic white balance, manual = fixed (day only); not saved; not verified on a camera yet", v: []string{"conf", "manual"}},
+}
+
+var cat2K3 = []crow{
+	{k: "detect.publish_hz", g: "Tracking", l: "Person boxes published per second", kind: Int, hi: 10, h: "0 = off; never more than 5 a second"},
+	{k: "track.enabled", g: "Tracking", l: "Person tracking", kind: Bool},
+	{k: "track.tilt", g: "Tracking", l: "Tilt while tracking", kind: Bool, h: "0 = pan only"},
+	{k: "track.return", g: "Tracking", l: "When the person is gone", kind: Enum, h: "stay where it was, or go home", v: []string{"stay", "home"}},
+	{k: "track.return_delay_s", g: "Tracking", l: "Seconds before going home", kind: Int, hi: 86400},
+	{k: "track.tilt_return_s", g: "Tracking", l: "Seconds before the tilt returns (stay mode)", kind: Int, hi: 3600, h: "0 = never"},
+	{k: "track.tilt_back_s", g: "Tracking", l: "Tilt back after (seconds)", kind: Int, hi: 600, h: "0 = off"},
+	{k: "track.motion", g: "Tracking", l: "Motion style", kind: Enum, v: []string{"continuous", "steps"}},
+	{k: "track.band_pct", g: "Tracking", l: "Pan dead band (% of the width)", kind: Int, lo: 2, hi: 40},
+	{k: "track.head_pct", g: "Tracking", l: "Head row (% of the height from the top)", kind: Int, hi: 50},
+	{k: "track.tilt_band_pct", g: "Tracking", l: "Tilt dead band (% of the height)", kind: Int, lo: 2, hi: 40},
+	{k: "track.gain_pan", g: "Tracking", l: "Pan gain (steps per frame width)", kind: Int, lo: 200, hi: 4000},
+	{k: "track.gain_tilt", g: "Tracking", l: "Tilt gain (steps per frame height)", kind: Int, lo: 200, hi: 4000},
+	{k: "track.zone_pct", g: "Tracking", l: "Comfort zone width (%)", kind: Int, hi: 90, h: "0 = the old targeting"},
+	{k: "track.zone_y_pct", g: "Tracking", l: "Comfort zone height, body (%)", kind: Int, hi: 90},
+	{k: "track.zone_head_pct", g: "Tracking", l: "Comfort zone height, head (%)", kind: Int, hi: 90},
+	{k: "track.lost_policy", g: "Tracking", l: "Lost-person policy", kind: String, lo: 1, hi: 255, h: "none, or up to 8 steps joined by commas: hold:N, backsweep, exit, local:W:D:N, route:NAME[:N], home, stay (needs track.motion continuous)"},
+	{k: "track.close_scan", g: "Tracking", l: "Close-person scan", kind: Bool},
+	{k: "track.close_scan_up", g: "Tracking", l: "Close scan, steps up", kind: Int, hi: 600},
+	{k: "track.close_scan_down", g: "Tracking", l: "Close scan, steps down", kind: Int, hi: 600},
+	{k: "track.lag_ms", g: "Tracking", l: "Video lag (ms)", kind: Int, lo: -150, hi: 300, h: "calibrate with tools/track_lagfit"},
+	{k: "ptz.patrol.idle_start_s", g: "Patrol", l: "Start the patrol after idle (seconds)", kind: Int, hi: 86400, h: "0 = patrol off"},
+	{k: "ptz.patrol.travel_budget", g: "Patrol", l: "Patrol travel budget (steps)", kind: Int, lo: 1000, hi: 2000000000},
+	{k: "ptz.patrol.route_default", g: "Patrol", l: "Default patrol route", kind: String, hi: 16, h: "a route name (a-z first, then a-z 0-9 _, at most 16), or empty"},
+	{k: "net.hostname", g: "Network", l: "Host name", kind: String, lo: 1, hi: 32, ap: Queued, d: DangerAsks, h: "1 to 32 letters, digits and '-', not starting or ending with '-', not only digits (RFC 1123 label)"},
+	{k: "net.wifi_country", g: "Network", l: "Wi-Fi country", kind: String, lo: 2, hi: 4, ap: Queued, d: DangerAsks, h: "two capital letters (FR, DE, US...) or none; 5 GHz needs a country"},
+	{k: "net.wifi_band", g: "Network", l: "Wi-Fi band (GHz)", kind: Enum, v: []string{"2.4", "5"}, ap: Queued, d: DangerAsks, h: "5 needs a country; a change that loses the network is reverted by the camera after about a minute"},
+	{k: "audio.mic_enable", g: "Audio", l: "Microphone", kind: Bool, ap: NextPowerCycle, h: "off by default (opt-in): on adds an L16 audio track to both streams, read when the app starts; needs an admin key"},
+}
+
+var cat2K4 = []crow{
+	{k: "audio.out_enable", g: "Audio", l: "Speaker", kind: Bool, h: "off by default on the 2K; starts at once, no restart; not verified on a camera yet"},
+	{k: "audio.out_volume", g: "Audio", l: "Speaker volume", kind: Int, hi: 100, h: "0 mutes"},
+	{k: "audio.out_gain", g: "Audio", l: "Speaker hardware gain", kind: Int, hi: 5, h: "the amplifier gain step, 2 is the stock one"},
+	{k: "audio.out_amp", g: "Audio", l: "Amplifier", kind: Enum, p: PersistRAM, h: "auto switches it on while there is sound; not saved", v: []string{"auto", "on", "off"}},
+	{k: "audio.talk_enable", g: "Audio", l: "Talk (two-way audio)", kind: Bool, h: "the ONVIF backchannel of the stream; needs the stream password and the speaker on"},
+	{k: "audio.talk_duplex", g: "Audio", l: "Talk duplex", kind: Enum, h: "half silences the microphone while the speaker plays speech, full never does", v: []string{"half", "full"}},
+	{k: "mqtt.host", g: "Network", l: "MQTT broker host", kind: String, hi: 63, ap: NextPowerCycle, h: "a host name or IPv4 address (letters, digits, '.' and '-', at most 63); empty forgets the broker; read when the app starts"},
+	{k: "mqtt.port", g: "Network", l: "MQTT broker port", kind: Int, lo: 1, hi: 65535, ap: NextPowerCycle, h: "plain TCP, usually 1883"},
+	{k: "mqtt.user", g: "Network", l: "MQTT user", kind: String, hi: 32, ap: NextPowerCycle, h: "1 to 32 of A-Z a-z 0-9 . _ @ + -, or empty for none"},
+	{k: "mqtt.password", g: "Network", l: "MQTT password", kind: Secret, hi: 128, ap: NextPowerCycle, h: "write-only, never shown; needs an MQTT user; empty removes it. It travels in clear on your network (no TLS)"},
+	{k: "mqtt.enabled", g: "Network", l: "MQTT (Home Assistant)", kind: Bool, ap: NextPowerCycle, h: "off by default; needs a broker host"},
+	{k: "onvif.enabled", g: "Network", l: "ONVIF", kind: Bool, ap: NextPowerCycle, h: "off by default; needs a stream password (ONVIF logs in with it)"},
+	{k: "onvif.port", g: "Network", l: "ONVIF port", kind: Int, lo: 1024, hi: 65535, ap: NextPowerCycle, h: "default 8000"},
+	{k: "ntp.servers", g: "Network", l: "NTP servers", kind: String, hi: 200, ap: NextPowerCycle, h: "1 to 3 host names or IPv4 addresses separated by spaces, or empty for no time sync; the camera has no clock of its own"},
+	{k: "rtsp.user", g: "Security", l: "Stream user", kind: String, hi: 32, ap: Now, d: DangerAsks, h: "1 to 32 of A-Z a-z 0-9 . _ @ + - ; empty removes the stream password (no login); a new user needs its password in the same change"},
+	{k: "rtsp.password", g: "Security", l: "Stream password", kind: Secret, lo: 8, hi: 128, ap: Now, d: DangerAsks, h: "write-only, never shown; 8 to 128 characters; only its Digest hash is stored on the camera"},
+}
 
 // Catalog2K returns every settable option of the 2K, in screen order. ID and Key are both the registry key.
 func Catalog2K() []Option {
@@ -39,28 +122,27 @@ func Catalog2K() []Option {
 		}
 		l = append(l, o)
 	}
+	// emit adds the static rows (the tables above, kept as data: a table is smaller than one call per option).
+	emit := func(rows []crow) {
+		for _, r := range rows {
+			add(Option{Key: r.k, Group: r.g, Label: r.l, Help: r.h, Kind: r.kind, Values: r.v, Min: int(r.lo), Max: int(r.hi),
+				Persisted: r.p, Applies: r.ap, Danger: r.d})
+		}
+	}
 	num := func(key, group, label string, lo, hi int, p Persist, help string) {
 		add(Option{Key: key, Group: group, Label: label, Kind: Int, Min: lo, Max: hi, Persisted: p, Help: help})
 	}
 	enum := func(key, group, label string, p Persist, help string, vals ...string) {
 		add(Option{Key: key, Group: group, Label: label, Kind: Enum, Values: vals, Persisted: p, Help: help})
 	}
-	boolean := func(key, group, label string, p Persist, help string) {
-		add(Option{Key: key, Group: group, Label: label, Kind: Bool, Persisted: p, Help: help})
-	}
-	enum("led.mode", "LED and night", "Front LED", PersistCamera, "auto follows the rules below, on and off force it", "auto", "on", "off")
+	emit(cat2K0)
 	for _, r := range ledRules {
 		add(Option{Key: "led." + r, Group: "LED and night", Label: "LED pattern: " + r, Kind: Pattern, Persisted: PersistCamera,
 			Help: "on, off or N:on_ms:off_ms:pause_ms (N 1..10, times 50..60000 ms, pause 0 or 50..60000, whole cycle at most 120000 ms)"})
 	}
-	enum("night.ir_led", "LED and night", "IR night LEDs", PersistCamera, "", "auto", "off")
-	num("image.brightness", "Picture", "Brightness", 0, 100, PersistRAM, "not saved: back to 50 at the next camera restart")
-	num("image.contrast", "Picture", "Contrast", 0, 100, PersistRAM, "not saved: back to 50 at the next camera restart")
-	num("image.sharpness", "Picture", "Sharpness", 0, 100, PersistRAM, "not saved: back to 50 at the next camera restart")
-	enum("image.mains_hz", "Picture", "Mains frequency (Hz)", PersistRAM, "anti-flicker; not saved", "50", "60")
-	boolean("image.flip", "Picture", "Flip (vertical)", PersistCamera, "host-tested only, not verified on a camera yet")
-	boolean("image.mirror", "Picture", "Mirror (horizontal)", PersistCamera, "host-tested only, not verified on a camera yet")
-	boolean("image.ceiling", "Picture", "Ceiling mount (flip + mirror)", PersistCamera, "1 turns flip and mirror on, 0 off; saved through the two rows above")
+	emit(cat2K1)
+	// The 1080p's own names, ranges and meaning (control port isp.saturation, isp.denoise, img.wb), through the 2K ISP. Host-tested only on the 2K.
+	emit(cat2K2)
 	for s, r := range [2]struct{ kLo, kHi, mLo, mHi int }{{64, 8000, 64, 12000}, {32, 1000, 32, 1500}} {
 		g := "Video"
 		p := fmt.Sprintf("video%d.", s)
@@ -74,38 +156,9 @@ func Catalog2K() []Option {
 		num(p+"gop", g, "Key frame interval, "+name+" (frames)", 1, 300, PersistCamera, "")
 		enum(p+"rc", g, "Rate control, "+name, PersistCamera, "", "vbr", "cbr", "avbr")
 	}
-	num("detect.publish_hz", "Tracking", "Person boxes published per second", 0, 10, PersistCamera, "0 = off; never more than 5 a second")
-	boolean("track.enabled", "Tracking", "Person tracking", PersistCamera, "")
-	boolean("track.tilt", "Tracking", "Tilt while tracking", PersistCamera, "0 = pan only")
-	enum("track.return", "Tracking", "When the person is gone", PersistCamera, "stay where it was, or go home", "stay", "home")
-	num("track.return_delay_s", "Tracking", "Seconds before going home", 0, 86400, PersistCamera, "")
-	num("track.tilt_return_s", "Tracking", "Seconds before the tilt returns (stay mode)", 0, 3600, PersistCamera, "0 = never")
-	num("track.tilt_back_s", "Tracking", "Tilt back after (seconds)", 0, 600, PersistCamera, "0 = off")
-	enum("track.motion", "Tracking", "Motion style", PersistCamera, "", "continuous", "steps")
-	num("track.band_pct", "Tracking", "Pan dead band (% of the width)", 2, 40, PersistCamera, "")
-	num("track.head_pct", "Tracking", "Head row (% of the height from the top)", 0, 50, PersistCamera, "")
-	num("track.tilt_band_pct", "Tracking", "Tilt dead band (% of the height)", 2, 40, PersistCamera, "")
-	num("track.gain_pan", "Tracking", "Pan gain (steps per frame width)", 200, 4000, PersistCamera, "")
-	num("track.gain_tilt", "Tracking", "Tilt gain (steps per frame height)", 200, 4000, PersistCamera, "")
-	num("track.zone_pct", "Tracking", "Comfort zone width (%)", 0, 90, PersistCamera, "0 = the old targeting")
-	num("track.zone_y_pct", "Tracking", "Comfort zone height, body (%)", 0, 90, PersistCamera, "")
-	num("track.zone_head_pct", "Tracking", "Comfort zone height, head (%)", 0, 90, PersistCamera, "")
-	add(Option{Key: "track.lost_policy", Group: "Tracking", Label: "Lost-person policy", Kind: String, Min: 1, Max: 255, Persisted: PersistCamera,
-		Help: "none, or up to 8 steps joined by commas: hold:N, backsweep, exit, local:W:D:N, route:NAME[:N], home, stay (needs track.motion continuous)"})
-	boolean("track.close_scan", "Tracking", "Close-person scan", PersistCamera, "")
-	num("track.close_scan_up", "Tracking", "Close scan, steps up", 0, 600, PersistCamera, "")
-	num("track.close_scan_down", "Tracking", "Close scan, steps down", 0, 600, PersistCamera, "")
-	num("track.lag_ms", "Tracking", "Video lag (ms)", -150, 300, PersistCamera, "calibrate with tools/track_lagfit")
-	num("ptz.patrol.idle_start_s", "Patrol", "Start the patrol after idle (seconds)", 0, 86400, PersistCamera, "0 = patrol off")
-	num("ptz.patrol.travel_budget", "Patrol", "Patrol travel budget (steps)", 1000, 2000000000, PersistCamera, "")
-	add(Option{Key: "ptz.patrol.route_default", Group: "Patrol", Label: "Default patrol route", Kind: String, Min: 0, Max: 16, Persisted: PersistCamera,
-		Help: "a route name (a-z first, then a-z 0-9 _, at most 16), or empty"})
-	add(Option{Key: "net.hostname", Group: "Network", Label: "Host name", Kind: String, Min: 1, Max: 32, Persisted: PersistCamera, Applies: Queued, Danger: DangerAsks,
-		Help: "1 to 32 letters, digits and '-', not starting or ending with '-', not only digits (RFC 1123 label)"})
-	add(Option{Key: "net.wifi_country", Group: "Network", Label: "Wi-Fi country", Kind: String, Min: 2, Max: 4, Persisted: PersistCamera, Applies: Queued, Danger: DangerAsks,
-		Help: "two capital letters (FR, DE, US...) or none; 5 GHz needs a country"})
-	add(Option{Key: "net.wifi_band", Group: "Network", Label: "Wi-Fi band (GHz)", Kind: Enum, Values: []string{"2.4", "5"}, Persisted: PersistCamera, Applies: Queued, Danger: DangerAsks,
-		Help: "5 needs a country; a change that loses the network is reverted by the camera after about a minute"})
+	emit(cat2K3)
+	// Speaker and two-way audio: the 1080p's keys (control port audio.*), the same engine. The speaker is opt-in on the 2K.
+	emit(cat2K4)
 	return l
 }
 
@@ -175,6 +228,37 @@ func Validate2K(key, value string) (string, error) {
 		}
 		if !countryRe.MatchString(v) {
 			return bad("two capital letters (for example FR) or none")
+		}
+		return v, nil
+	}
+	switch key {
+	case "mqtt.host":
+		if value != "" && !ValidServiceHost(value) {
+			return bad("a host name or IPv4 address (letters, digits, '.' and '-', at most 63), or empty")
+		}
+		return value, nil
+	case "mqtt.user", "rtsp.user":
+		if value != "" && !ValidServiceUser(value) {
+			return bad("1 to 32 of A-Z a-z 0-9 . _ @ + - (not a lone -), or empty")
+		}
+		return value, nil
+	case "mqtt.password":
+		if len(value) > 128 || hasControl(value) {
+			return bad("at most 128 printable characters")
+		}
+		return value, nil
+	case "rtsp.password":
+		if len(value) < 8 || len(value) > 128 || hasControl(value) {
+			return bad("8 to 128 printable characters")
+		}
+		return value, nil
+	case "ntp.servers":
+		v := strings.Join(strings.Fields(value), " ")
+		if v == "" {
+			return "", nil
+		}
+		if err := ValidNTPServers(strings.Fields(v)); err != nil {
+			return bad("%s", strings.TrimPrefix(err.Error(), "ntp set needs "))
 		}
 		return v, nil
 	}
@@ -290,7 +374,7 @@ func Check2K(pending, current map[string]string) []error {
 			}
 		}
 	}
-	return errs
+	return append(errs, checkServices2K(pending, current)...)
 }
 
 // Display2K is how a value is shown: secrets (none exist in the 2K registry today) are never echoed, and a value
@@ -333,4 +417,63 @@ func Describe2K(o Option) string {
 		return when + "; not saved (back to the default at a restart)"
 	}
 	return when + "; saved on the camera"
+}
+
+// ValidServiceHost mirrors a2k_cfgreg_host_ok (the grammar of the strict mqtt file of the app): 1 to 63 of A-Z a-z 0-9 . -.
+func ValidServiceHost(s string) bool { return hostRe.MatchString(s) }
+
+// ValidServiceUser mirrors a2k_cfgreg_user_ok: 1 to 32 of A-Z a-z 0-9 . _ @ + -, not a lone '-'.
+func ValidServiceUser(s string) bool { return s != "-" && userRe.MatchString(s) }
+
+var (
+	hostRe = regexp.MustCompile(`^[A-Za-z0-9.-]{1,63}$`)
+	userRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,32}$`)
+)
+
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// checkServices2K mirrors the cross-field rules of cfgreg.c for a change set; what the camera alone knows (the stored hash, its auth state) is left
+// to the camera, whose refusal text is shown as it is.
+func checkServices2K(pending, current map[string]string) []error {
+	var errs []error
+	val := func(k string) (string, bool) {
+		if v, ok := pending[k]; ok {
+			return v, true
+		}
+		v, ok := current[k]
+		return v, ok
+	}
+	if v, ok := pending["mqtt.enabled"]; ok && v == "1" {
+		if h, known := val("mqtt.host"); known && h == "" {
+			errs = append(errs, fmt.Errorf("MQTT needs a broker host: set mqtt.host in the same change"))
+		}
+	}
+	if pw, ok := pending["mqtt.password"]; ok && pw != "" {
+		if u, known := val("mqtt.user"); known && u == "" {
+			errs = append(errs, fmt.Errorf("an MQTT password needs an MQTT user: set mqtt.user in the same change"))
+		}
+	}
+	user, userSet := pending["rtsp.user"]
+	_, pwSet := pending["rtsp.password"]
+	if userSet && user == "" && pwSet {
+		errs = append(errs, fmt.Errorf("an empty stream user removes the stream password: it cannot come with a new password"))
+	}
+	if userSet && user != "" && !pwSet {
+		if cur, known := current["rtsp.user"]; !known || cur != user {
+			errs = append(errs, fmt.Errorf("a new stream user needs its password in the same change (only the password makes the hash)"))
+		}
+	}
+	if v, ok := pending["onvif.enabled"]; ok && v == "1" {
+		if u, known := val("rtsp.user"); known && u == "" {
+			errs = append(errs, fmt.Errorf("ONVIF logs in with the stream credentials: set a stream user and password first (in the same change is fine)"))
+		}
+	}
+	return errs
 }

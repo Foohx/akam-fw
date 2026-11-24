@@ -68,10 +68,10 @@ func TestBuildHappyPath(t *testing.T) {
 			t.Errorf("akam/%s missing, not 755 or changed", s)
 		}
 	}
-	if n := read("akam/bin/akam2k_rtsp.BUILDINFO"); n == nil || n.Mode != 0o644 {
+	if n := read("akam/bin/akamd.BUILDINFO"); n == nil || n.Mode != 0o644 {
 		t.Error("BUILDINFO missing or not 644")
 	}
-	if got, want := string(read("akam/bin/akam2k_sntp.BUILDINFO").Data), "tool=akam2k_sntp\nsha256="+shaHex(f[pathBin+"akam2k_sntp"])+"\n"; got != want {
+	if got, want := string(read("akam/bin/akam-sntp.BUILDINFO").Data), "tool=akam-sntp\nsha256="+shaHex(f[pathBin+"akam-sntp"])+"\n"; got != want {
 		t.Errorf("sntp BUILDINFO %q", got)
 	}
 	// the vendor part is untouched and everything is root-owned
@@ -108,7 +108,7 @@ func TestBuildHappyPath(t *testing.T) {
 func setBin(f map[string][]byte, name string, data []byte) {
 	old := shaHex(f[pathBin+name])
 	f[pathBin+name] = data
-	for _, bi := range []string{"akam2k_rtsp.BUILDINFO", "dropbearmulti.BUILDINFO"} {
+	for _, bi := range []string{"akamd.BUILDINFO", "dropbearmulti.BUILDINFO"} {
 		f[pathBin+bi] = bytes.ReplaceAll(f[pathBin+bi], []byte(old), []byte(shaHex(data)))
 	}
 }
@@ -129,15 +129,15 @@ func TestBuildRefusals(t *testing.T) {
 		{"init branch twice", func() []byte { return stockAppfs(t, stockInit+stockInit[strings.Index(stockInit, "        normal)"):]) }, nil, "exactly once"},
 		{"busybox not the pinned one", stock, func(f map[string][]byte) { f[pathBin+"busybox"] = []byte("other") }, "not the pinned"},
 		{"symcheck failed", stock, func(f map[string][]byte) {
-			f[pathBin+"akam2k_rtsp.BUILDINFO"] = bytes.Replace(f[pathBin+"akam2k_rtsp.BUILDINFO"], []byte("symcheck=passed"), []byte("symcheck=failed"), 1)
+			f[pathBin+"akamd.BUILDINFO"] = bytes.Replace(f[pathBin+"akamd.BUILDINFO"], []byte("symcheck=passed"), []byte("symcheck=failed"), 1)
 		}, "symcheck=passed"},
-		{"rtsp differs from its BUILDINFO", stock, func(f map[string][]byte) { f[pathBin+"akam2k_rtsp"] = elf("other") }, "akam2k_rtsp does not match"},
-		{"sntp differs from its BUILDINFO", stock, func(f map[string][]byte) { f[pathBin+"akam2k_sntp"] = elf("other") }, "akam2k_sntp does not match"},
-		{"rtsp without uClibc interpreter", stock, func(f map[string][]byte) { setBin(f, "akam2k_rtsp", append([]byte("\x7fELF"), make([]byte, 100)...)) }, "ld-uClibc"},
+		{"rtsp differs from its BUILDINFO", stock, func(f map[string][]byte) { f[pathBin+"akamd"] = elf("other") }, "akamd does not match"},
+		{"sntp differs from its BUILDINFO", stock, func(f map[string][]byte) { f[pathBin+"akam-sntp"] = elf("other") }, "akam-sntp does not match"},
+		{"rtsp without uClibc interpreter", stock, func(f map[string][]byte) { setBin(f, "akamd", append([]byte("\x7fELF"), make([]byte, 100)...)) }, "ld-uClibc"},
 		{"sntp not ARM", stock, func(f map[string][]byte) {
 			b := elf("sntp")
 			b[18] = 62 // x86-64
-			setBin(f, "akam2k_sntp", b)
+			setBin(f, "akam-sntp", b)
 		}, "not an ARM executable"},
 		{"dropbear differs from its BUILDINFO", stock, func(f map[string][]byte) { f[pathBin+"dropbearmulti"] = elf("x") }, "dropbearmulti does not match"},
 		{"dropbear without dropbearkey", stock, func(f map[string][]byte) {

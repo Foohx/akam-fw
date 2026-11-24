@@ -107,7 +107,7 @@ func TestEveryQuestionDefaultsToNo(t *testing.T) {
 		args []string
 		bad  string // a command that must never reach the camera
 	}{
-		{"debug on", []string{"debug", "on"}, "akam_debug.sh on"},
+		{"control-port open", []string{"control-port", "open"}, `"control.lan":"1"`},
 		{"onvif enable", []string{"onvif", "enable"}, "akam_onvif.sh enable"},
 		{"rtsp-auth disable", []string{"rtsp-auth", "disable"}, "akam_rtsp_auth.sh disable"},
 	}
@@ -117,7 +117,7 @@ func TestEveryQuestionDefaultsToNo(t *testing.T) {
 			expectRC(t, r, 0)
 			contains(t, r.out, "Left as it was")
 		}
-		for _, cmd := range e.cam.Commands() {
+		for _, cmd := range append(e.cam.Commands(), e.cam.APIPatches()...) {
 			if strings.Contains(cmd, c.bad) {
 				t.Errorf("%s: %q was sent without a yes", c.name, cmd)
 			}
@@ -128,7 +128,7 @@ func TestEveryQuestionDefaultsToNo(t *testing.T) {
 		expectRC(t, r, 1)
 		contains(t, r.err, "needs an interactive terminal and refuses to run without one.")
 		t.Setenv("AKAM_FORCE_TTY", "1")
-		for _, cmd := range e.cam.Commands() {
+		for _, cmd := range append(e.cam.Commands(), e.cam.APIPatches()...) {
 			if strings.Contains(cmd, c.bad) {
 				t.Errorf("%s: %q was sent without a terminal", c.name, cmd)
 			}

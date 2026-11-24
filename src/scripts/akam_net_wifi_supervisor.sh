@@ -1,8 +1,8 @@
 #!/bin/sh
 # akam_net.sh -- keep Wi-Fi alive: supervise wpa_supplicant and udhcpc on wlan0 (G03).
 #
-# Installed as /usr/sbin/akam_net.sh (mode 755) and launched detached by ak_rtsp_wrapper.sh, like
-# akam_ssh.sh. It must NEVER delay or break ak_rtsp: it only sleeps, looks, and (when something is
+# Installed as /usr/sbin/akam_net.sh (mode 755) and launched detached by akam_run.sh, like
+# akam_ssh.sh. It must NEVER delay or break akamd: it only sleeps, looks, and (when something is
 # really down) restarts a daemon, with a growing delay between two repair attempts.
 #
 # Usage: akam_net.sh [start|status]      (default: start; "start" runs the loop in the foreground,

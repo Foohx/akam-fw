@@ -221,7 +221,7 @@ RE of yy_cam (objdump, HIGH for the sequence and values, MEDIUM for the meaning 
    (get-modify-set). Our app does **not** implement it (layout UNVERIFIED, and not the default).
 5. `wdr_onoff` source: `[dsp] wdr_onoff` of param.conf, loader default **1** (and `wdr_type` default **1**); `yy_media_av130_isp_set_wdr_onoff`
    (0x2a26f0) stores a new value there (and `yy_conf_set_int`s it) and calls the same 0x2a2560 with apply 0 (the Tuya / ONVIF switch).
-   The value on the user's camera (param.conf) can be read later: if `wdr_onoff` is 0 or `wdr_type` is 2, use `wdr=0` in akam2k.conf and revisit.
+   The value on the user's camera (param.conf) can be read later: if `wdr_onoff` is 0 or `wdr_type` is 2, use `wdr=0` in akam.conf and revisit.
 
 6. **Re-check (review, objdump, HIGH):** 0x2a1eb4 with wdr_type 1 does `mov r2,#40; mov r1,#5; mov r0,#0; bl ak_vpss_effect_set` (0x2a1f8c..98) for
    on and `r2=0, r1=5, r0=0` (0x2a2028..34) for off, as written above. **Startup:** `yy_media_av130_video_init` (0x29ecf8) calls 0x2a2560 with
@@ -310,7 +310,7 @@ light); ~27 ms per inference on the NPU. → [ai-own-app.md](ai-own-app.md) §9
   `depth` (2) frames per tick and keep the newest. `ak_vi_get_frame` BLOCKS on an empty queue (~50 ms), so never "get until empty"
   (ai-own-app.md section 11). The stock hd thread does one get per 100 ms loop without draining.
 - **UNVERIFIED:** VI chn 16 (320x192, depth 2) enabled together with chn 0/1 AND two encoders running: PoC-4 ran chn 16 only
-  with chn 0/1 drained by the program, never with encoders. See archive/rot2k-own-app-feasibility.md, "Person detection inside akam2k_rtsp".
+  with chn 0/1 drained by the program, never with encoders. See archive/rot2k-own-app-feasibility.md, "Person detection inside akamd".
 
 ## JPEG snapshot encoder (venc) — offline RE of `yy_cam` and `libmpi_venc.so`, 2026-11-15 (MEDIUM, no hardware run yet)
 

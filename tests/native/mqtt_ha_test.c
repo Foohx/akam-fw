@@ -22,7 +22,7 @@ static kv_t g_kv[] = {
     { "audio.talk_enable", "1" }, { "audio.out_test", "0" }, { "night.state", "day" }, { "sys.time_set", "0" },
     { "rtsp.clients", "0" }, { "net.wifi_rssi", "-61" }, { "sys.uptime", "1234" }, { "sys.cpu", "7" },
     { "sys.mem_free", "20480" }, { "sys.temp", "unknown" }, { "video.fps_actual", "149" }, { "video.bitrate", "1500" },
-    { "net.mac", "aa:bb:cc:dd:ee:0f" },
+    { "net.mac", "aa:bb:cc:dd:ee:0f" }, { "image.flip", "0" }, { "image.mirror", "1" },
 };
 #define NKV (sizeof(g_kv) / sizeof(g_kv[0]))
 
@@ -316,6 +316,8 @@ static void test_state(void)
     CHECK(state_of(&h, "talk", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "ON") && retain == 1);
     kv_set("audio.talk_enable", "0");
     CHECK(state_of(&h, "talk", 0, v, sizeof(v), &retain) == 1 && !strcmp(v, "OFF"));
+    CHECK(state_of(&h, "image_flip", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "OFF") && retain == 1);
+    CHECK(state_of(&h, "image_mirror", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "ON"));
     CHECK(state_of(&h, "clock_set", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "OFF") && retain == 0);
     CHECK(state_of(&h, "fps", 1, v, sizeof(v), &retain) == 1 && !strcmp(v, "14.9") && retain == 0);
     kv_set("video.fps_actual", "150");
@@ -371,6 +373,9 @@ static const cmd_t k_cmds[] = {
     { "saturation", "-7", 1, "isp.saturation", "-7", 0 }, { "sharpness", "0", 1, "isp.sharpness", "0", 0 },
     { "talk", "ON", 1, "audio.talk_enable", "1", 1 }, { "talk", "OFF", 1, "audio.talk_enable", "0", 1 },
     { "talk", "on", 0, 0, 0, 0 }, { "talk", "1", 0, 0, 0, 0 }, { "talk", "TOGGLE", 0, 0, 0, 0 },
+    { "image_flip", "ON", 1, "image.flip", "1", 1 }, { "image_flip", "OFF", 1, "image.flip", "0", 1 },
+    { "image_mirror", "ON", 1, "image.mirror", "1", 1 }, { "image_mirror", "OFF", 1, "image.mirror", "0", 1 },
+    { "image_flip", "on", 0, 0, 0, 0 }, { "image_mirror", "1", 0, 0, 0, 0 }, { "image_flip", "TOGGLE", 0, 0, 0, 0 },
     { "beep", "PRESS", 1, "audio.out_test", "1", 0 }, { "beep", "press", 0, 0, 0, 0 }, { "beep", "1", 0, 0, 0, 0 },
     { "beep", "PRESSPRESS", 0, 0, 0, 0 },
 };

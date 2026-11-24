@@ -27,6 +27,8 @@
 #define A2K_SET_FILE "/config/akam/settings"
 #define A2K_SET_NET_DIR "/config/akam"
 #define A2K_SET_NET_REQ "/tmp/akam_net.req"
+#define A2K_SET_CFG_DIR "/mnt/sdcard/akam" /* the user files the supervisor and the modules read (cfgreg.h) */
+#define A2K_SET_CFG_REQ "/tmp/akam_cfg.req"
 #define A2K_SET_FLASH_BURST 4
 #define A2K_SET_FLASH_GAP_S 30
 
@@ -34,12 +36,14 @@ typedef struct {
     const char *settings_path; /* NULL = A2K_SET_FILE */
     const char *net_dir;       /* where hostname / net live; NULL = A2K_SET_NET_DIR */
     const char *net_req;       /* the request file; NULL = A2K_SET_NET_REQ */
+    const char *cfg_dir;       /* akam.conf, mqtt, rtsp.conf, ntp (cfgreg.h); NULL = A2K_SET_CFG_DIR */
+    const char *cfg_req;       /* the request of the user-file rows; NULL = A2K_SET_CFG_REQ */
     const a2k_image_cfg_t *image; /* what main applied at start (the image.* getters); NULL = defaults */
 } a2k_settings_cfg_t;
 
 /* Builds and validates the table, starts the worker. 0 or -1 (logged). Call once, after the modules it drives were started. */
 int a2k_settings_start(const a2k_settings_cfg_t *cfg);
-/* Loads the persisted file (default < akam2k.conf < this file): the whole file or nothing. Call after a2k_settings_start. */
+/* Loads the persisted file (default < akam.conf < this file): the whole file or nothing. Call after a2k_settings_start. */
 void a2k_settings_load(void);
 /* Saves what is pending, stops the worker. Idempotent. */
 void a2k_settings_stop(void);
@@ -70,7 +74,7 @@ int a2k_settings_mode_key_ok(const char *key, const char *val);
 /* Test hooks. */
 void a2k_settings_test_flush(void); /* save now, ignoring the flash limiter */
 
-/* The ONVIF rows (onvif.enabled / onvif.port / onvif.state, read only): the app binds the state source at start (onvif_services.h); unbound they read off. */
+/* The ONVIF state row (onvif.state, read only; onvif.enabled / onvif.port are user-file rows, cfgreg.h): the app binds the state source at start (onvif_services.h); unbound they read off. */
 void a2k_settings_set_onvif(void (*state)(char *out, size_t cap), int (*wanted)(int *port));
 
 #endif

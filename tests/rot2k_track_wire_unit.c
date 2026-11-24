@@ -216,7 +216,7 @@ static void test_areas_run(const char *dir)
     snprintf(p, sizeof p, "%s/track_areas", dir);
     reset();
     tinit(&t, p);
-    CHECK(a2k_track_load(&t, conf3) == 2, "akam2k.conf areas loaded");
+    CHECK(a2k_track_load(&t, conf3) == 2, "akam.conf areas loaded");
     a2k_track_areas_text(&t, txt, sizeof txt);
     CHECK(!strcmp(txt, "door=500:1500:500:1500;yard=1400:2400:400:1200"), "areas text");
     CHECK(a2k_track_area_new(&t, "gate") == 0 && a2k_track_area_new(&t, "gate") == -1 && a2k_track_area_new(&t, "Bad") == -1 && a2k_track_area_new(&t, "x") == 0 &&
@@ -243,7 +243,7 @@ static void test_areas_run(const char *dir)
     CHECK(a2k_store_read(p, buf, sizeof buf) > 0 && strstr(buf, "track_area_yard=1400:2400:400:1200:0\n") && strstr(buf, "track_area_gate=800:1000:1000:1400:1\n") &&
               strstr(buf, "track_area_x=none:1\n"),
           "persisted (complete, enabled flag, incomplete as none)");
-    /* a restart: the file wins over akam2k.conf */
+    /* a restart: the file wins over akam.conf */
     tinit(&t2, p);
     CHECK(a2k_track_load(&t2, "track_area_other=1000:2000:1000:1500\n") == 4, "a restart reads the stored areas");
     a2k_track_areas(&t2, &a);

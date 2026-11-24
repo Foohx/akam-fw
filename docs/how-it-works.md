@@ -1,7 +1,11 @@
-# How Akam works on this camera
+# How Akam works on the 1080p
 
-This page describes the **LSC Indoor 1080p** (APP partition replaced by `ak_rtsp`). The 2K runs `akam2k_rtsp` from the appfs
-partition: see [card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md) and [on the camera](porting/lsc-rotatable-2k/on-camera.md).
+This page describes the **LSC Indoor 1080p** (APP partition replaced by `akamd`). The 2K, in short: the same `akamd` core runs from the
+**appfs** partition (`mtd3`), which is the stock appfs with one boot branch changed and the Akam payload added under `/appfs/akam`; the
+vendor libraries and drivers of the camera (ISP, NPU, motor, audio) stay in place and `akamd` loads them at run time, so a 2K image is
+assembled on your computer from your own `mtd3.bin` backup plus the signed kit. The Akam SD card is read before any Akam code and
+overrides the flash (first install, rescue). Settings live in small files in `/config/akam` (jffs2, kept across updates). Details:
+[card-less appfs](porting/lsc-rotatable-2k/cardless-appfs.md) and [on the camera](porting/lsc-rotatable-2k/on-camera.md).
 
 For curious users and hackers. You do not need this page to install Akam. The exact values (ports, limits, file
 formats) are in [`specs/`](../specs/README.md); this page explains the picture and links there.
@@ -11,7 +15,7 @@ formats) are in [`specs/`](../specs/README.md); this page explains the picture a
 The camera runs Linux from an 8 MiB flash chip. The stock firmware splits that chip in 8 partitions. One of them, the
 APP partition, holds the vendor application (the Tuya cloud client, `anyka_ipc`). Akam replaces **only that
 partition**. The boot loader, kernel, root file system and drivers stay stock, so the camera boots exactly as before.
-Only the last step changes: the stock watchdog starts Akam's `ak_rtsp` instead of the Tuya client.
+Only the last step changes: the stock watchdog starts Akam's `akamd` instead of the Tuya client.
 
 ## Hardware
 
@@ -50,15 +54,15 @@ The installer compares the camera's whole partition table with this one and refu
 
 | Stock | With Akam |
 |---|---|
-| `anyka_ipc` (Tuya application: cloud, video, audio, IR, LED) | Removed. Replaced by `ak_rtsp` |
-| Process list `_ht_process.ini` | One entry: `ak_rtsp_wrapper.sh` |
+| `anyka_ipc` (Tuya application: cloud, video, audio, IR, LED) | Removed. Replaced by `akamd` |
+| Process list `_ht_process.ini` | One entry: `akam_run.sh` |
 | `service.sh` (starts Telnet, FTP and SD card hooks) | Patched at build time: Telnet and FTP lines disabled |
 | `ethernet.sh` | Patched: the DHCP host name comes from `akam_hostname.sh` |
-| `klogd` | Replaced by a filtered kernel log forwarder (`ak_rtsp klog`) |
+| `klogd` | Replaced by a filtered kernel log forwarder (`akamd klog`) |
 | `cmdserver`, `msgserver` | **Kept.** Local helpers, not cloud programs; removing them stalls the boot |
 | Kernel, drivers (`ak_isp`, `sensor_gc20c3`, `ak_pcm`, Wi-Fi), hardware watchdog | Stock, untouched |
 
-Akam adds to the image: `ak_rtsp` (about 130 KB), Dropbear SSH (about 210 KB) and a handful of small shell scripts.
+Akam adds to the image: `akamd` (about 130 KB), Dropbear SSH (about 210 KB) and a handful of small shell scripts.
 The vendor files in the image come from **your own backup** at build time.
 
 ## Boot sequence
@@ -66,15 +70,15 @@ The vendor files in the image come from **your own backup** at build time.
 1. U-Boot loads the kernel; the kernel mounts `ROOTFS`; stock `init` runs.
 2. Stock scripts mount `APP` on `/usr` and `CONFIG` on `/etc/config`, load the sensor, ISP, encoder and audio
    drivers, and run the (patched) `service.sh`.
-3. The stock `watchdog` reads `_ht_process.ini`, starts `ak_rtsp_wrapper.sh` and feeds the hardware watchdog.
+3. The stock `watchdog` reads `_ht_process.ini`, starts `akam_run.sh` and feeds the hardware watchdog.
 4. The wrapper sets the host name, starts the helpers in the background (SSH, Telnet/FTP lockdown, Wi-Fi supervisor,
-   optional NTP), brings up Wi-Fi and DHCP, then runs `ak_rtsp`. A crash is restarted with a growing delay.
-5. `ak_rtsp` starts the ISP, video encoder, audio, optional ONVIF and MQTT, and the RTSP server on port 554. A failure
+   optional NTP), brings up Wi-Fi and DHCP, then runs `akamd`. A crash is restarted with a growing delay.
+5. `akamd` starts the ISP, video encoder, audio, optional ONVIF and MQTT, and the RTSP server on port 554. A failure
    of audio, ONVIF or MQTT never stops the video.
 
 Details: [architecture](../specs/architecture.md).
 
-## Inside `ak_rtsp`
+## Inside `akamd`
 
 One static ARM program (musl libc, built with Zig) does everything.
 
@@ -91,9 +95,9 @@ One static ARM program (musl libc, built with Zig) does everything.
   playback device. [Details](../specs/audio.md).
 - **Day/night:** a state machine watches the auto-exposure, switches the IR-cut filter and the IR LEDs, and probes the
   ambient light before going back to day. [Details](../specs/image-day-night-leds.md).
-- **Control port 8091:** a text protocol for metrics and settings. [Details](../specs/control-port.md).
+- **Control port 8091 (1080p):** a text protocol for metrics and settings, on the camera's own loopback unless you opt in to the LAN. The assistant uses the signed API (port 8092) instead. [Details](../specs/control-port.md).
 - **ONVIF and MQTT:** optional, cost nothing while off. [ONVIF](../specs/onvif.md), [MQTT](../specs/mqtt.md).
-- **Watchdogs:** a software watchdog exits `ak_rtsp` if the encoder stalls; the wrapper restarts it.
+- **Watchdogs:** a software watchdog exits `akamd` if the encoder stalls; the wrapper restarts it.
 
 How the code was found (UART access, `strace` of the stock application, decompiling kernel modules, then rewriting
 from scratch and comparing with the traces) is the upstream project's work: see
@@ -111,7 +115,7 @@ Two findings worth knowing:
 The picture is grainier than the stock firmware's in dim light, because Akam does not have the vendor's closed
 dynamic tuning (white balance is a fixed, hand-calibrated set of gains). Improvements are welcome.
 
-| | Stock (`anyka_ipc`) | Akam (`ak_rtsp`) |
+| | Stock (`anyka_ipc`) | Akam (`akamd`) |
 |:---:|:---:|:---:|
 | **Static scene** | ![Stock static scene](../images/video_out/anyka_stable.png) | ![Akam static scene](../images/video_out/ours_stable.png) |
 | **Motion** | ![Stock motion](../images/video_out/anyka_movement.png) | ![Akam motion](../images/video_out/ours_movement.png) |
@@ -130,13 +134,14 @@ A backup of `CONFIG` therefore contains your Wi-Fi password and the video passwo
 - **SSH:** key only (ed25519), no passwords, root only. No key is ever put in the image: keys come from the microSD
   card at the first boot or from a later change over SSH. [Procedures](manual/ssh-and-lockdown.md).
 - **Telnet and FTP:** disabled twice, at build time and by a helper that closes them if anything starts them.
-- **Control port 8091:** has no login, so it is read-only from the network. Writes are accepted from the camera itself
-  (loopback, used by the SSH helper scripts). **Debug mode** (`./akam debug on`, 60 minutes by default, RAM only)
-  temporarily lets the network write.
+- **Control port 8091 (1080p):** has no login, so it is **closed to the network** (it binds 127.0.0.1) and writes are accepted
+  from the camera itself (the SSH helper scripts). `akam control-port open` saves an opt-in that opens it to your LAN for
+  monitoring tools (reads only: writes from the network stay refused unless the on-camera `DEBUG` command is used for the PC
+  tuning tool). The signed API (8092, HMAC key) is the door for the assistant.
 - **RTSP and ONVIF:** one optional user and password (Digest). Talk needs it.
 - **Maintenance flag:** a microSD card holding `AKAM_MAINTENANCE` can run code as root at boot. Treat the card slot as
   physical access.
-- **Network:** never expose ports 22, 554 or 8091 to the Internet. Use a VPN. [Advice](using_akam.md#security-notes).
+- **Network:** never expose ports 22, 554, 8091 or 8092 to the Internet. Use a VPN. [Advice](using_akam.md#security-notes).
 
 ## The clock bug (time64)
 
@@ -154,8 +159,8 @@ image. The software `reboot` is unreliable on this hardware, so you unplug and r
 
 ## Updates and restore
 
-- **Update (Akam to Akam):** `./akam update` flashes the new APP image over SSH from RAM, with read-back verification.
-- **Restore to stock:** from your own backup, `./akam restore` writes the stock APP back. It has never been rehearsed on
+- **Update (Akam to Akam):** `akam update` flashes the new APP image over SSH from RAM, with read-back verification.
+- **Restore to stock:** from your own backup, `akam restore` writes the stock APP back. It has never been rehearsed on
   a camera, so treat it as likely but not guaranteed.
 - **Recovery** if the camera does not boot or has no network: the maintenance microSD card, then the UART shell, then
   an external SPI programmer. Because the boot loader, kernel and root file system are never written, the UART route

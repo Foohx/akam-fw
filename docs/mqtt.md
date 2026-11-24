@@ -3,9 +3,9 @@
 *What this page is for: connecting the camera to Home Assistant or another home automation system. Skip it if you
 only want to watch the video.*
 
-> **Two cameras.** Sections 1 to 8 describe the **LSC Indoor 1080p** (`./akam mqtt set`, `ak_rtsp`,
-> `/etc/config/akam/mqtt`, the entity table of section 3). The **LSC Rotatable 2K** has its own commands and files, and its own entities: see
-> [LSC Rotatable 2K](#lsc-rotatable-2k) at the end. The assistant's `mqtt` command is refused on a 2K.
+> **Two cameras, the same commands.** Turn it on with `akam mqtt set` (then `mqtt test`, `status`, `disable`, `forget`) on either camera.
+> Sections 1 to 8 describe the **LSC Indoor 1080p** (`akamd`, `/etc/config/akam/mqtt`, the entity table of section 3). The
+> **LSC Rotatable 2K** has its own files and its own entities: see [LSC Rotatable 2K](#lsc-rotatable-2k) at the end.
 
 **MQTT** is a light messaging protocol for home automation; a **broker** (for example Mosquitto) is the server that
 passes the messages around. Akam can publish the camera to an MQTT broker and take a few commands from it. Home Assistant finds the camera by itself
@@ -17,7 +17,7 @@ and the wizard). It has not run on a real camera yet: the checks to make are in 
 
 ## 1. What it is
 
-- A small MQTT 3.1.1 client inside `ak_rtsp` (about 1000 lines of C, MIT, no library). **The camera is never a broker.**
+- A small MQTT 3.1.1 client inside `akamd` (about 1000 lines of C, MIT, no library). **The camera is never a broker.**
 - **Outbound only.** The camera opens one TCP connection to the broker you give it. No new port is opened on the camera.
 - **Plain TCP** (usually port 1883). TLS is not available yet (it is a separate, later step). The broker password therefore
   travels in clear on your network: use a broker on your own network and a user that only has the rights it needs.
@@ -30,7 +30,7 @@ You need a broker on your network (the Mosquitto add-on of Home Assistant, or yo
 of Home Assistant pointed at it. Then, from your computer:
 
 ```sh
-./akam mqtt set        # or: akam mqtt set   (the native assistant)
+akam mqtt set
 ```
 
 It asks, in order: the broker address (an IPv4 address, or a host name your router's DNS resolves; names ending in `.local` do not work, the camera has no mDNS), the port (Enter = 1883), the
@@ -40,7 +40,7 @@ command line, a log or the saved state. Then it can run a connection test.
 
 | Command | What it does |
 |---|---|
-| `mqtt status` | on or off, the broker, whether a password is set (never its value), and what `ak_rtsp` reports (`off`, `connecting`, `connected`, `error:<reason>`) |
+| `mqtt status` | on or off, the broker, whether a password is set (never its value), and what `akamd` reports (`off`, `connecting`, `connected`, `error:<reason>`) |
 | `mqtt set` | asks, then saves the settings and turns MQTT on at once (no reboot) |
 | `mqtt test` | one connection attempt with the saved settings; says why it failed (wrong address, refused login, not MQTT...). Works while MQTT is off |
 | `mqtt disable` | turns MQTT off (the settings and the password stay for later) |
@@ -59,7 +59,7 @@ with `akam_mqtt.sh option NAME VALUE` over SSH; the defaults suit Home Assistant
 | `/etc/config/akam/mqtt_pass` (mode 0600) | the broker password alone on one line; absent = no password. A password file that other users can read is ignored |
 
 An invalid or missing file means MQTT stays off. The files survive reflashes of the APP partition. To remove everything:
-`./akam mqtt forget`.
+`akam mqtt forget`.
 
 ## 3. What Home Assistant gets
 
@@ -74,6 +74,7 @@ integration's device when both are used). The MAC is part of the discovery messa
 | Speaker volume | number | `audio.out_volume` | 0 to 100 |
 | Brightness, Contrast, Saturation, Sharpness | number | `isp.*` | -50 to 50 |
 | Talk enabled | switch | `audio.talk_enable` | ON, OFF |
+| Image flip, Image mirror | switch | `image.flip`, `image.mirror` | ON, OFF (vertical, horizontal; saved on the camera; not yet hardware-validated on the 1080p) |
 | Beep | button | `audio.out_test` | PRESS |
 | Day/night state | sensor | `night.state` | day, night |
 | Video viewers | sensor | `rtsp.clients` | count |
@@ -81,12 +82,12 @@ integration's device when both are used). The MAC is part of the discovery messa
 | Uptime, CPU load, Free memory | sensors (diagnostic) | `sys.uptime`, `sys.cpu`, `sys.mem_free` | s, %, kB |
 | Temperature | sensor | `sys.temp` | degrees C (only if the camera reports it) |
 | Frame rate, Video bitrate | sensors | `video.fps_actual`, `video.bitrate` | fps, kbit/s |
-| Clock set | binary sensor (diagnostic) | `sys.time_set` | ON when the camera clock is believable (the camera has no clock of its own: see `./akam ntp`) |
+| Clock set | binary sensor (diagnostic) | `sys.time_set` | ON when the camera clock is believable (the camera has no clock of its own: see `akam ntp`) |
 
-The LED, IR, night mode and talk choices are saved on the camera like the same settings made with `./akam led`. The
+The LED, IR, night mode and talk choices are saved on the camera like the same settings made with `akam led`. The
 volume and the four picture sliders are applied **in RAM only** (a slider drag must not write flash many times): they go
 back to the saved values at the next reboot, and a later saved change of another setting does not make them permanent; save
-them with `./akam audio volume N` or `./akam picture ...`.
+them with `akam audio volume N` or `akam picture ...`.
 
 **Rate limits** (all are token buckets; a command refused by a limit is counted in `rejected` and never applied):
 
@@ -118,7 +119,7 @@ never more than 5 a second), and once with `"boxes":[]` when the last person has
 connected (lists made while the broker is away are dropped, never queued) and has **no discovery document**: Home Assistant does not create an entity for it; subscribe from an automation, Node-RED or your own script,
 for example `mosquitto_sub -t 'akam/<hostname>/detections' | jq -c '.boxes[]'`. Nothing is written to the camera's flash.
 
-Controls are published at once when they change, also when the change was made elsewhere (`./akam led`, ONVIF, an app):
+Controls are published at once when they change, also when the change was made elsewhere (`akam led`, ONVIF, an app):
 the camera checks them every 2 seconds. Sensors are published every 30 seconds.
 
 ## 4. Security
@@ -156,7 +157,7 @@ docker run --rm -p 1883:1883 -v /tmp/mosq/mosquitto.conf:/mosquitto/config/mosqu
 Without a container tool, install Mosquitto from your system's package manager on your computer, put the same two lines
 in a file and run `mosquitto -c that-file`. Open port 1883 on your computer's firewall for your local network only.
 
-Then `./akam mqtt set` with your computer's address as the broker, port 1883, **no user name**. Watch what the camera
+Then `akam mqtt set` with your computer's address as the broker, port 1883, **no user name**. Watch what the camera
 publishes:
 
 ```sh
@@ -169,12 +170,12 @@ and send a command, for example to set the speaker volume to 30:
 mosquitto_pub -h 127.0.0.1 -t 'akam/<camera-name>/volume/set' -m 30
 ```
 
-When you are done: `./akam mqtt forget`, stop the broker, close the firewall port. An open broker with
+When you are done: `akam mqtt forget`, stop the broker, close the firewall port. An open broker with
 `allow_anonymous true` lets anyone on the network command the camera: never leave it running.
 
 ## 6. Troubleshooting
 
-`./akam mqtt test` names the problem. The reasons also appear in `./akam mqtt status` as `error:<reason>`:
+`akam mqtt test` names the problem. The reasons also appear in `akam mqtt status` as `error:<reason>`:
 
 | Reason | Meaning |
 |---|---|
@@ -192,13 +193,13 @@ If the device does not appear in Home Assistant: the MQTT integration must use t
 (Settings, Devices, MQTT, Configure). The device shows as unavailable when the camera is off or disconnected (the
 `offline` message above).
 
-To remove the camera from Home Assistant after `./akam mqtt forget`, delete the device in its MQTT integration page.
+To remove the camera from Home Assistant after `akam mqtt forget`, delete the device in its MQTT integration page.
 
 ## 7. Cost on the camera (measured on the host, build for the camera)
 
 | | |
 |---|---|
-| `ak_rtsp` binary (stripped) | +39 KB with name resolution, **+23 KB** when built with `make EXTRA_CFLAGS=-DMQTT_NO_DNS` (then the broker must be an IPv4 address) |
+| `akamd` binary (stripped) | +39 KB with name resolution, **+23 KB** when built with `make EXTRA_CFLAGS=-DMQTT_NO_DNS` (then the broker must be an IPv4 address) |
 | Static data (`bss`) | +3 KB (one 1.4 KB send buffer, one 0.9 KB entity state, the settings) |
 | Thread | one, 64 KB stack reserved, only a few KB touched; lower priority than the video threads |
 | CPU | a check of about 13 values every 2 s and a publish of about 10 values every 30 s: well under 0.1 % of the single core |
@@ -208,16 +209,16 @@ See `specs/audio.md` (status notes) for the exact figures and what is still to m
 
 ## 8. Hardware checks
 
-These need a camera and a broker; they are listed in the [test plan](hardware-test-checklists.md).
+These need a camera and a broker; they are the M checks of the [hardware checklists](hardware-test-checklists.md#mqtt-optional-needs-a-camera-and-a-broker).
 
 ## LSC Rotatable 2K
 
 The 2K runs the same MQTT client design (outbound only, plain TCP, no broker on the camera, one Home Assistant device, off
-until you configure it) inside `akam2k_rtsp`. Status: host tests only (golden discovery documents, fuzzed parser, fake broker);
+until you configure it) inside `akamd`. Status: host tests only (golden discovery documents, fuzzed parser, fake broker);
 not run on the camera.
 
-**Turn it on.** There is no assistant command for it on the 2K. Create two files over SSH in `/config/akam`, then restart the
-app: [using the 2K](porting/lsc-rotatable-2k/using-the-2k.md#2-mqtt-and-home-assistant).
+**Turn it on.** `akam mqtt set` (through the signed API, the admin key of `key-2k` is needed; applies at the next restart of the app). By hand: two files
+in `/config/akam` written over SSH, then restart the app: [using the 2K](porting/lsc-rotatable-2k/using-the-2k.md#2-mqtt-and-home-assistant).
 
 | File | Content |
 |---|---|
@@ -239,5 +240,5 @@ states to `BASE/<entity>/state` (payloads are validated by the camera). The exac
 **`BASE/detections`** (section 3, topics) exists only on the 2K: the boxes of the people in view, same JSON as the `detections`
 event of the [2K API](porting/lsc-rotatable-2k/control-api.md).
 
-Not on the 2K: the 1080p entities of section 3 that depend on the speaker (volume, talk, beep) and the 1080p's `akam_mqtt.sh`
+**No speaker entities on the 2K yet** (the speaker itself works: `akam audio`, `akam talk`): the 1080p entities of section 3 that depend on the speaker (volume, talk, beep) and the 1080p's `akam_mqtt.sh`
 options. The security advice of section 4 applies: whoever can publish to `BASE/+/set` on your broker commands the camera.

@@ -9,7 +9,7 @@ The app of the Anyka AK3918AV130 cameras (the NPU and ISP parts are used through
 | libc, linking | dynamic uClibc 1.0.31 against the camera's own libraries (`LD_LIBRARY_PATH=/appfs/lib`); the camera's libc is the reference for `make poc3-symcheck` |
 | Toolchain | Bootlin armv5 uClibc 2018.11 gcc 7, pinned in `toolchain/toolchain.lock` (`toolchain/fetch_toolchain.sh`) |
 | Kernel interface | the vendor libraries (own prototypes in `abi.h`, no vendor header, no vendor binary in the repository: `toolchain/prepare_vendor.sh` extracts the `.so` from **your own** backup) |
-| Output | `akam2k_rtsp` (renamed `akamd` in a later step) and the helpers `akam2k_sntp`, `akam2k_mic`, `akam2k_led` into `build/<model-id>/` (published as a copy to the model's `PUBLISH_DIR`, `dist/rot2k-app/` for the 2K, by `make poc3-dist`) |
+| Output | `akamd` (`ak_rtsp` in 0.1.x; the image keeps a compatibility link `ak_rtsp`) and the helpers `akam-sntp`, `akam-mic`, `akam-led` into `build/<model-id>/` (published as a copy to the model's `PUBLISH_DIR`, `dist/rot2k-app/` for the 2K, by `make poc3-dist`) |
 
 | Path | What |
 |---|---|

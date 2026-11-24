@@ -1,5 +1,7 @@
 # Porting plan — LSC Smart Rotatable Camera 2K (Dual Band)
 
+> **Superseded (2026-11-24).** The plan was carried out; the 2K runs Akam from its flash. The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and findings only; do not read its status as current.
+
 > Historical document: the file paths below predate the repository reorganisation (`src/common`, `src/ak_rtsp`, `firmware/<model>/app`); the old to new table is `tools/dev/path-map.txt`.
 
 > Hand-off document. It is self-contained: a fresh conversation should be able to read **only this file**

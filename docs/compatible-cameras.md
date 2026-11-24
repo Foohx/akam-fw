@@ -2,8 +2,9 @@
 
 **Will Akam run on my camera?** Read this page before you flash anything.
 
-Akam has run on real cameras of **two** models (with earlier builds than the current ones, see [testing status](testing-status.md#which-build-the-hardware-results-come-from)): the LSC Smart Indoor 1080p, article `3215672.3` (two units), and the
-LSC Smart Rotatable Camera 2K, article `3225722` (one unit, see [models](models.md)). Everything else is untested, and a
+Akam has run on real cameras of **two** models: the LSC Smart Indoor 1080p, article `3215672.3` (two units), and the
+LSC Smart Rotatable Camera 2K, article `3225722` (one unit, see [models](models.md)). Which build was tested on which camera:
+[testing status](testing-status.md#which-build-the-hardware-results-come-from). Everything else is untested, and a
 camera with a different flash layout is refused by the installer. Per-camera pages: [1080p](porting/lsc-1080p/README.md),
 [2K](porting/lsc-rotatable-2k/README.md). What Akam does: [features](features.md).
 
@@ -13,12 +14,13 @@ camera with a different flash layout is refused by the installer. Per-camera pag
    codes such as `3215672.3  SI D26228`. Photos: [hacking guide](hacking.md#photos-of-the-board); the photo
    [images/8.jpg](../images/8.jpg) shows a `3215672.2` label.
 2. Look for the article number in the table below.
-3. Run `./akam`. Its `backup` and `image` steps show a verdict from
+3. Run `akam`. On a 1080p its `backup` and `image` steps show a verdict from
    [`tools/release/models/`](../tools/release/models/) (one file per camera model). The verdict is decided by the
    **sha256 of your stock APP partition**: a match with a validated line continues; anything else is "untested" (a
    warning and an explicit yes). The kernel line is compared and only warns. The flash layout is checked separately:
    the whole 8-line partition table (`/proc/mtd`) must match exactly, otherwise the wizard refuses. This is a safety
-   net, not a guarantee.
+   net, not a guarantee. On a 2K, `akam backup-2k` reads `/proc/mtd` and accepts only the 2K layout (six partitions,
+   `mtd3` the appfs), and the stock appfs fingerprint is checked the same way.
 
 If you are not sure, do not flash. Make the backup (it changes nothing on the camera) and report what the wizard says
 ([Report your camera](#report-your-camera)).
@@ -31,9 +33,9 @@ not expected to work.
 | Status | Camera | Article no. and SI code | Notes |
 |---|---|---|---|
 | validated | LSC Smart Indoor 1080p (sold at Action) | `3215672.3`, SI `D26228` | 2 units tested, see below |
-| validated | LSC Smart Rotatable Camera 2K (Dual Band) | `3225722`, SZ `G26312` | 1 unit (earlier build), card-less boot (no SD card); installed with the `akam` 2K commands, see [the 2K page](porting/lsc-rotatable-2k/README.md) |
-| untested | LSC Smart Indoor 1080p (sold at Action) | `3215672.2`, SI `B26101` / `C26101` | The upstream project ran its `ak_rtsp` on a unit of this model. Akam's installer and image were never run on it |
-| not supported | Other Anyka or Tuya cameras | any | `ak_rtsp` is specific to the AK3918AV130 SoC and the GC20C3 sensor. Older rectangular boards (AK3918EV200, GK7102) use other register maps and layouts. The wizard warns and refuses a different flash layout |
+| validated | LSC Smart Rotatable Camera 2K (Dual Band) | `3225722`, SZ `G26312` | 1 unit, card-less boot (no SD card); installed with the `akam` 2K commands, see [the 2K page](porting/lsc-rotatable-2k/README.md) |
+| untested | LSC Smart Indoor 1080p (sold at Action) | `3215672.2`, SI `B26101` / `C26101` | The upstream project ran its `akamd` on a unit of this model. Akam's installer and image were never run on it |
+| not supported | Other Anyka or Tuya cameras | any | `akamd` is specific to the AK3918AV130 SoC and the GC20C3 sensor. Older rectangular boards (AK3918EV200, GK7102) use other register maps and layouts. The wizard warns and refuses a different flash layout |
 
 **The validated 1080p model** (the 2K: [hardware](porting/lsc-rotatable-2k/README.md#hardware))
 
@@ -43,7 +45,7 @@ not expected to work.
 | Board | `IPC280KG2-GNA-MAIN-V1.0` (circular PCB) |
 | Flash | 8 MiB SPI NOR, 8 partitions ([flash map](how-it-works.md#flash-map)); only the APP partition (`mtd7`, 5 242 880 bytes) is rewritten |
 | Stock firmware fingerprint | Linux `4.4.302-cip94 #1 Fri Nov 14 19:06:55 CST 2025`, APP squashfs xz with 128 KiB blocks, BusyBox 1.30.1. The sha256 of the stock APP is in `tools/release/models/lsc-indoor-1080p-ak3918.txt` |
-| Tested | 2 units, on an earlier image (the current build is host-tested only, see [testing status](testing-status.md#which-build-the-hardware-results-come-from)): RTSP, talk, day/night, NTP, SSH and more ([testing status](testing-status.md)) |
+| Tested | 2 units: RTSP, talk, day/night, NTP, SSH and more; build details in the [testing status](testing-status.md#which-build-the-hardware-results-come-from) |
 
 ## What identifies a model
 
@@ -53,7 +55,7 @@ Akam is built for one hardware design, so "same model" means all of these match:
 |---|---|
 | Article number and SI code | The label on the back of the camera body |
 | SoC | `cat /proc/cpuinfo` on the camera, or the markings on the chip |
-| Flash layout | `cat /proc/mtd` must show the same 8 partitions and sizes as the [flash map](how-it-works.md#flash-map) |
+| Flash layout | `cat /proc/mtd` must show the same partitions and sizes: 8 for the 1080p ([flash map](how-it-works.md#flash-map)), 6 for the 2K ([hardware](porting/lsc-rotatable-2k/README.md#hardware)) |
 | Kernel | `uname -a` (only a warning if different) |
 | Stock APP content | The sha256 of the stock APP partition of your backup, compared with the model files of `tools/release/models/` |
 
@@ -81,7 +83,7 @@ Several LSC cameras are planned; a new model needs real hardware, not only a new
 
 1. **Hardware.** Back up the stock camera (see the [backup guide](manual/backup-uart.md)), read the article number and SI
    code on the label, `cat /proc/cpuinfo`, `cat /proc/mtd`, `uname -r` and `uname -v`, and the sha256 of the stock APP
-   partition. If the sensor, the IR or LED wiring or the register maps differ, `ak_rtsp` needs code changes too.
+   partition. If the sensor, the IR or LED wiring or the register maps differ, `akamd` needs code changes too.
 2. **Registry entry.** Add `tools/release/models/<model-id>.txt` (copy the existing file and read its comment): the header,
    and a record with the fingerprints, status `untested` at first. Add it to `tools/assistant/internal/assets/sources.txt` and
    run `go generate ./internal/assets` so that the assistant embeds it (a test fails otherwise).
@@ -90,7 +92,7 @@ Several LSC cameras are planned; a new model needs real hardware, not only a new
    `native-app` and `cardless-appfs` models and none for the others; the assistant refuses a model of a kind it has no
    installer for, and, for `native-app`, a model without a validated record.
    The camera **type** is asked when a camera is created in the assistant (see [camera type](assistant.md#camera-type)).
-3. **Validation.** Build an image from a kit of that model, flash a real unit, run `./akam verify` and the checks of the
+3. **Validation.** Build an image from a kit of that model, flash a real unit, run `akam verify` and the checks of the
    [testing status](testing-status.md). Only then change the record to `validated`: a kit is only built for a model that has
    a validated record.
 4. **Release.** The next firmware release builds one kit per file of the registry (`tools/release/make_release.sh firmware
@@ -103,9 +105,9 @@ Whether it works or not, a report helps, especially for a camera that is not in 
 - the article number and the code printed on the label (for example `3215672.3`, `SI D26228`);
 - the SoC, from the camera: `cat /proc/cpuinfo` (over SSH on an Akam camera, or on the maintenance shell);
 - the partition table: `cat /proc/mtd`, and the kernel line: `uname -a`;
-- the wizard's hardware verdict, shown by `./akam backup` and `./akam image`, and the output of `./akam status`;
+- the hardware verdict, shown by `akam backup` and `akam image` (1080p; on a 2K the output of `akam backup-2k`: the six partition sizes and `camera_info.txt`), and the output of `akam status`;
 - on a camera that already runs Akam, the output of the read-only check script, which changes nothing:
-  `ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh` (`./akam verify` runs it for you);
+  `ssh -i ~/.ssh/akam root@<camera-ip> 'sh -s' < tools/hw_tests/akam_hwcheck.sh` (`akam verify` runs it for you on a 1080p);
 - what you did, what you saw, and the end of the log in `~/.local/state/akam/` (redacted).
 
 **Never attach your backup, dumps, images or keys**, and remove Wi-Fi names, passwords, MAC addresses and IP addresses

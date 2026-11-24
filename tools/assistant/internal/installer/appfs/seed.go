@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-// Seed copies the Wi-Fi configuration and the SSH public key of the first-install card into /config/akam of the
+// Seed copies the Wi-Fi configuration and the SSH public key of the first-install card (and the optional service files the
+// install questions made: akam.conf, mqtt, mqtt_pass, rtsp.conf, ntp) into /config/akam of the
 // camera (jffs2, kept across the appfs flash), once, over SSH, while the camera runs from that card. Without them a
 // card-less camera has no Wi-Fi and no SSH (docs/porting/lsc-rotatable-2k/cardless-appfs.md section 4).
 //
@@ -36,7 +37,11 @@ umask 077
 mkdir -p "$CF" || { echo "mkdir-failed"; exit 5; }
 chmod 700 "$CF"
 rc=0
-for f in wpa.conf authorized_keys; do
+OPT=""
+for f in ` + strings.Join(SetupFileNames, " ") + `; do
+  [ -f "$SD/$f" ] && OPT="$OPT $f"
+done
+for f in wpa.conf authorized_keys $OPT; do
   src=$(md5sum < "$SD/$f" | cut -d' ' -f1)
   if [ -s "$CF/$f" ]; then
     dst=$(md5sum < "$CF/$f" | cut -d' ' -f1)

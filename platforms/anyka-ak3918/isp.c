@@ -269,7 +269,7 @@ static int isp_skip_subfile_data(FILE *f)
  * 2025-11-10** — a completely separate, real night calibration (different
  * WDR/NR/gamma/CCM/sharpness tables, not just different WB/exposure) that
  * anyka_ipc's own isp_switch()/isp_switch_mode() load and apply via
- * isp_cfg_file_load() when switching modes, and that `ak_rtsp` had never
+ * isp_cfg_file_load() when switching modes, and that `akamd` had never
  * read before this — `night.c` only ever replicated 3 fields (IR-cut,
  * frame-rate/VTS, WB gains) because that's all the first
  * capture of the stock mode switch had shown; the actual per-mode *data* this whole time was

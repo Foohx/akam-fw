@@ -81,7 +81,7 @@ void a2k_track_run_start(int enabled, const char *conf_areas, void (*notify)(voi
             g_t.cfg.lost_grace_s);
     a2k_log("track: motion %s, comfort zone %d%% x %d%% (head %d%%), lease %d ms", g_t.cfg.motion == TL_MOTION_CONT ? "continuous" : "steps", g_t.cfg.zone_x_pct, g_t.cfg.zone_y_pct,
             g_t.cfg.zone_head_pct, g_t.cfg.lease_ms);
-    a2k_log("track: person tracking %s", enabled ? "on" : "off (akam2k.conf track=1 or the Home Assistant switch turns it on)");
+    a2k_log("track: person tracking %s", enabled ? "on" : "off (akam.conf track=1 or the Home Assistant switch turns it on)");
 }
 
 void a2k_track_run_stop(void)

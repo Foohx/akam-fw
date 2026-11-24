@@ -157,10 +157,14 @@ func Build(o Options) (*Result, error) {
 	b.say("Applying de-Tuyafication patch...")
 	removeChild(child(root, "bin"), "anyka_ipc")
 	b.say("Installing Akam components (kit mode)...")
-	for _, n := range []string{"ak_rtsp", "dropbearmulti", "dropbear", "dropbearkey"} {
+	for _, n := range []string{"akamd", "ak_rtsp", "dropbearmulti", "dropbear", "dropbearkey"} {
 		removeChild(child(root, "bin"), n)
 	}
-	if err := putFile(root, "bin/ak_rtsp", 0o755, k.File("bin/ak_rtsp")); err != nil {
+	if err := putFile(root, "bin/akamd", 0o755, k.File("bin/akamd")); err != nil {
+		return nil, err
+	}
+	// Compatibility link kept for one release: user scripts and assistants that still call the old name.
+	if err := putLink(root, "bin/ak_rtsp", "akamd"); err != nil {
 		return nil, err
 	}
 	if err := putFile(root, "bin/dropbearmulti", 0o755, k.File("bin/dropbearmulti")); err != nil {
@@ -327,7 +331,7 @@ func hasPrivateKeyPEM(data []byte) bool {
 }
 
 // requiredModes are the files that must be mode 755 in the image.
-var requiredModes = []string{"bin/ak_rtsp", "bin/dropbearmulti", "sbin/ak_rtsp_wrapper.sh", "sbin/akam_ssh.sh", "sbin/akam_lockdown.sh",
+var requiredModes = []string{"bin/akamd", "bin/dropbearmulti", "sbin/akam_run.sh", "sbin/akam_ssh.sh", "sbin/akam_lockdown.sh",
 	"sbin/akam_rtsp_auth.sh", "sbin/akam_hostname.sh", "sbin/akam_debug.sh", "sbin/akam_onvif.sh", "sbin/akam_net.sh", "sbin/akam_ntp.sh", "sbin/akam_mqtt.sh"}
 
 func (b *builder) safety(root *squashfs.Node) error {
@@ -498,7 +502,7 @@ func (b *builder) report(r *Result, root *squashfs.Node, stockSHA, stockComp str
 		}
 		p("  %-36s %9d bytes", f, sz)
 	}
-	p("ak_rtsp sha256:     %s", sha(lookup(root, "bin/ak_rtsp").Data))
+	p("akamd sha256:     %s", sha(lookup(root, "bin/akamd").Data))
 	p("dropbearmulti sha256: %s", sha(lookup(root, "bin/dropbearmulti").Data))
 	p("10 largest files in the image:")
 	var big []string

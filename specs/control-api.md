@@ -1,14 +1,12 @@
 # Control API: settings registry, signed local HTTP API, generated MQTT entities
 
-Status: **design; phase 1 building blocks and phase 2 (HTTP server, endpoints, key tool, events) implemented and host-tested on the 2K, not yet measured on a camera (see the last two sections).** 2K first (`platforms/anyka-ak3918av130`); the 1080p adopts
-the same modules later (section 11). This spec does not touch `src/` (the no-regression rule of
-[hal-architecture.md](../docs/hal-architecture.md) stays: new shared code is added, 1080p files are not edited).
+Status: **built.** Both cameras ship the signed API (port 8092) and the settings registry behind it, and the assistant uses it for every setting. **Hardware-used:** on the 2K, signed requests on the camera (settings changes, flip and mirror, speaker and latency settings, `ptz.recalibrate`, state reads; 2026-11-22 and 2026-11-23, the last ones with a curl-based signed helper); **host-tested only:** the rest of the endpoints, the 1080p side (convergence P7 and P8) and the MQTT entities generated from the registry. The sections 1 to 13 and the phase sections below are the design and its history, kept as written (the first adopter was the 2K; the 1080p adopted the same modules later, section 11). Per-camera reference: [2K](../docs/porting/lsc-rotatable-2k/control-api.md), [1080p](../docs/porting/lsc-1080p/control-api.md).
 
 ## 1. Goals and non-goals
 
 Goals:
 - One **settings registry** describes every user-visible setting once. Everything else (MQTT/HA entities, HTTP API,
-  `akam2k.conf` parsing, persistence, docs) is derived from it.
+  `akam.conf` parsing, persistence, docs) is derived from it.
 - Feature toggles (MQTT, RTSP streams, audio, detection, tracking, LEDs) change **live** where physically possible,
   without restarting the app.
 - A **local, authenticated, signed HTTP JSON API** that works without SSH and without MQTT. It is the recovery
@@ -55,7 +53,7 @@ Rules:
   discovery payload cleans old ones). Example: `ptz.*` only on the 2K.
 - **Persistence**: one file `/config/akam/settings` (key=value lines, only keys that differ from the default, LF,
   max 4 KiB), written with the existing atomic store (`store.c`: temp file, fsync, rename). Precedence:
-  default < `akam2k.conf` < `/config/akam/settings`. The existing `/config/akam/video` file keeps its format and is
+  default < `akam.conf` < `/config/akam/settings`. The existing `/config/akam/video` file keeps its format and is
   read as registry keys `video<N>.*` (no regression).
 - **Apply modes** appear in every write reply: `applied` (live), `restart_component` (the app restarted the component
   itself, section 6), `pending_device_restart` (saved, effective at next boot; the API never reboots).
@@ -434,7 +432,7 @@ lock a capture thread holds across I/O.
 
 ## 10. Relation to the 2K today
 
-The 2K has no 8091 port; it is configured by `akam2k.conf` and MQTT. v1 adds the API only; no legacy text port is added.
+The 2K has no 8091 port; it is configured by `akam.conf` and MQTT. v1 adds the API only; no legacy text port is added.
 
 ## 11. Portability to the 1080p
 
@@ -509,7 +507,7 @@ tested against the same vector file as the C code.
 1. **Registry core and parsers** (pure C, host tests): types, strict parsers, table API, model filter. Wrap the
    existing video keys as the first entries (no behaviour change; conf and `/config/akam/video` still work).
 2. **Persistence and settings worker**: `/config/akam/settings`, precedence, coalesced rate-limited writes, request
-   queue. Migrate `akam2k.conf` key groups one at a time, each proving identical effective values.
+   queue. Migrate `akam.conf` key groups one at a time, each proving identical effective values.
 3. **Crypto and signing library**: SHA-256, HMAC, canonicalizer, nonce cache, clock/challenge, lockout; host tests with
    the shared vector file in `tests/fixtures/control_api_vectors.txt`.
 4. **HTTP server and read endpoints** (`hello`, `info`, `schema`, `settings`, `state`), keys read from the file;
@@ -576,7 +574,7 @@ Phase 2 wires (not done here): the HTTP server and the per-peer lockout and acce
 CSPRNG (`/dev/urandom`, `entropy` refusal) feeding `akey_make` and `apisig_hello`, wall and monotonic clocks, `sys.time_set`;
 the settings worker queue with the 3 s wait, the `/config/akam/settings` file with its flash-wear limiter, the registry
 table of the 2K with real hooks (video keys first, `a2k_vid_parse` as the `ST_INT`/`ST_ENUM` source of truth), the
-`akam2k.conf` precedence, the action table and the actions in `GET /schema`, audit; the generated MQTT entities and aliases;
+`akam.conf` precedence, the action table and the actions in `GET /schema`, audit; the generated MQTT entities and aliases;
 `akam-key` and the Go client consuming the vectors; adding the new files to the Makefile, the anti-brick scan and
 `tools/ci/test_groups.txt`.
 
@@ -599,7 +597,7 @@ Files (written under `platforms/anyka-ak3918av130/`; the generic ones moved to `
 | `akam2k_settings.[ch]` | the 2K registry table over the real modules, the settings worker (32 KiB stack, one job slot, 3 s wait, 504 `busy`), persistence (`/config/akam/settings`, burst 4 then 1 per 30 s), actions, the net.* backend |
 | `akam2k_api.[ch]` (now `src/api/api_core.[ch]`, bound by `akam2k_apibind.[ch]`) | routing, verification order of 5.3, endpoints, key store (0600, reload by stat), audit ring, `--api-key` tool |
 | `akam2k_httpd.[ch]` (now `src/api/api_httpd.[ch]`) | the socket side: one thread, `poll`, 4 connections (3 per peer), 5 s idle / 10 s per request, 2 s write bound, held long polls; the only API file that may create a socket |
-| `firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/akam_api_key.sh` | SSH tool: runs the app in key-tool mode (`akam2k_rtsp --api-key new\|list\|revoke`) |
+| `firmware/lsc-rotatable-2k-ak3918av130/boot/card/akam/akam_api_key.sh` | SSH tool: runs the app in key-tool mode (`akamd --api-key new\|list\|revoke`) |
 | `own_app_run.sh` `net_request` | hands one validated request line of `/tmp/akam_net.req` to `akam_net.sh` |
 
 Decisions and departures from the earlier text:
@@ -612,7 +610,7 @@ Decisions and departures from the earlier text:
   the event ring, the state key and `a2k_mqtt_detections` (MQTT `BASE/detections`, QoS 0, not retained, no discovery entity). The events have a **separate ring of 4** entries of 800 bytes
   (`api_events.c` merges the two rings by sequence number; `missed` is true when any number after the cursor is gone), so detections never evict `button`/`ptz`/`setting`. Boxes in an ignore zone
   are published with `ignored:true` (the tracker and the presence still skip them). RAM only. Caveat: the signed-request bucket (0.4/s) limits a long-poll client to about one reply per 2.5 s.
-- **Bootstrap:** the SSH tool is `akam_api_key.sh` calling the app (`akam2k_rtsp --api-key ...`) instead of a separate `akam-key` binary: the app already has the
+- **Bootstrap:** the SSH tool is `akam_api_key.sh` calling the app (`akamd --api-key ...`) instead of a separate `akam-key` binary: the app already has the
   CSPRNG, the key code and the atomic store, so nothing new ships. The running app picks the file up by `stat` (mtime, ctime, mode, size, inode) about once a second, so
   no loopback reload socket exists. A file with any group/other permission bit, or an invalid one, closes the API (`keys_perm`, `keys_invalid`) and is kept.
 - **Randomness:** `rtsp_auth_rng` (getrandom without blocking, falling back to the non-blocking urandom): the spec's refusal when the pool is not seeded
@@ -632,7 +630,7 @@ Decisions and departures from the earlier text:
 - **Limits actually enforced:** head 4096, body 8192, path 128, query 512, 40 headers, value 160; 413/414/431/411/417/408 as in the user doc.
 
 Measured on the host (ASan/UBSan) by `tests/rot2k_control_api_http_test.sh` (134 checks) and `tests/rot2k_control_api_test.sh` (unit, fuzz); budget measured with the
-pinned ARM toolchain: stripped `akam2k_rtsp` **+53,312 bytes** (211,712 -> 265,024), above the +40 KB phase gate of section 9 (the estimate there said +25 KB: the registry table and the
+pinned ARM toolchain: stripped `akamd` **+53,312 bytes** (211,712 -> 265,024), above the +40 KB phase gate of section 9 (the estimate there said +25 KB: the registry table and the
 JSON/schema code are larger than guessed). bss +57 KB after the review (the 4 connection buffers of 12 KiB are malloc'd at accept and freed at close, so an idle slot holds none; what remains is the shared reply buffer 12 KiB, audit ring 16 KiB and write ring 5 KiB, key/nonce/peer tables). The persisted audit file comes from a separate ring of the last 20 WRITE events, so a flood of reads or failed logins cannot push them out; `GET /audit` returns the newest entries that fit one reply. **RSS on the camera is not
 measured yet**; the gate (+64 KB) is to be checked with `a2k_mem_report` before and after a request burst, see the checklist.
 
@@ -661,7 +659,7 @@ reference for users and integrators: [docs/porting/lsc-1080p/control-api.md](../
   (`restart_component`), no live setter (P10). (e) `net.hostname` and `net.ntp` are read-only (their files belong to `akam_hostname.sh` and
   `akam_ntp.sh`, which also set the kernel host name and start the time helper; the app never spawns).
 - **Events:** `night` (the night thread calls `night_set_notify` after the ISP lock is released) and `setting`. No `person`, `ptz` or `button`.
-- **Budget** (pinned zig, stripped `ak_rtsp`, against `dev` 639d44a, details per step in `tests/golden/ak_rtsp_1080p.sha256`): P4 +2.4 KB, P6 +4.9 KB, P7 +17.9 KB,
+- **Budget** (pinned zig, stripped `akamd`, against `dev` 639d44a, details per step in `tests/golden/lsc-indoor-1080p-ak3918.sha256`): P4 +2.4 KB, P6 +4.9 KB, P7 +17.9 KB,
   P8 +61.6 KB; **+86.8 KB in total (text +86.5 KB, bss +62.4 KB)**. The registry-plus-API part (P7+P8, +79.5 KB) is OVER the section 9 gate (+56 KB),
   like the 2K (+53 KB for the API alone, whose gate was +40 KB): the schema and JSON code, the HMAC and key code and the 41-row table are larger than
   estimated, and the 1080p links them as static musl. bss is mostly untouched pages (the 12 KiB reply buffer, the 16 KiB audit ring, the 5 KiB write ring).

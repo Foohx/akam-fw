@@ -1,5 +1,7 @@
 # LSC Rotatable 2K: replacing `yy_cam` with an Akam app, feasibility study (offline)
 
+> **Superseded (2026-11-24).** The study led to the Akam application that replaces `yy_cam`. The source of truth for what each camera does today is [docs/features.md](../features.md); the old to new names are in `tools/dev/path-map.txt`. Kept for its reasoning and findings only; do not read its status as current.
+
 > Historical document: the file paths below predate the repository reorganisation (`src/common`, `src/ak_rtsp`, `firmware/<model>/app`); the old to new table is `tools/dev/path-map.txt`.
 
 Status: **offline reverse engineering only, nothing was run on a camera** (2026-11-14). Same method and conventions

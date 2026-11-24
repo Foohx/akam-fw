@@ -55,7 +55,7 @@ P_NAMES = {
     0xEA: ("SET_RATE", "u32"),
 }
 # Request numbers of platforms/anyka-ak3918/ak_ioctls.h. The number actually issued by the stock app is
-# always printed (req=...); it is flagged when it differs from the one ak_rtsp uses.
+# always printed (req=...); it is flagged when it differs from the one akamd uses.
 KNOWN_REQ = {
     0xE0: 0x401c50e0, 0xE1: 0x000050e1, 0x10: 0x80045010, 0x30: 0x80045030,
     0x81: 0x80045081, 0xEA: 0x800450ea, 0xE3: 0x000050e3,

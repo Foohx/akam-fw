@@ -1,7 +1,7 @@
-/* akam2k_led: PoC / control tool for the lights of the Rotatable 2K, through the portable hal_light module.
+/* akam-led: PoC / control tool for the lights of the Rotatable 2K, through the portable hal_light module.
  *
- *   akam2k_led list
- *   akam2k_led [--force] [--secs N] <name> <on|off|blink-fast|blink-slow>
+ *   akam-led list
+ *   akam-led [--force] [--secs N] <name> <on|off|blink-fast|blink-slow>
  *
  * on / off set the light and exit (the pin keeps its level). blink-* stays in the foreground for N seconds (default 15, 1..60)
  * and then turns the light off; SIGINT / SIGTERM / SIGALRM do the same. The running app owns the IR LED (day/night), so "ir"
@@ -31,7 +31,7 @@ static long now_ms(void)
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: akam2k_led list\n       akam2k_led [--force] [--secs N] <name> <on|off|blink-fast|blink-slow>\n");
+    fprintf(stderr, "usage: akam-led list\n       akam-led [--force] [--secs N] <name> <on|off|blink-fast|blink-slow>\n");
     return 2;
 }
 
@@ -60,15 +60,15 @@ int main(int argc, char **argv)
         return usage();
     name = argv[a];
     if (light_find(&l, name) < 0) {
-        fprintf(stderr, "akam2k_led: unknown light '%s' (try: akam2k_led list)\n", name);
+        fprintf(stderr, "akam-led: unknown light '%s' (try: akam-led list)\n", name);
         return 2;
     }
     if (strcmp(name, "ir") == 0 && !force) {
-        fprintf(stderr, "akam2k_led: 'ir' belongs to the running app (day/night); pass --force to override\n");
+        fprintf(stderr, "akam-led: 'ir' belongs to the running app (day/night); pass --force to override\n");
         return 2;
     }
     if (light_set(&l, name, mode, now_ms()) != 0) {
-        fprintf(stderr, "akam2k_led: cannot drive '%s'\n", name);
+        fprintf(stderr, "akam-led: cannot drive '%s'\n", name);
         return 1;
     }
     if (mode == LIGHT_BLINK_FAST || mode == LIGHT_BLINK_SLOW) {

@@ -1,4 +1,4 @@
-/* Open-loop replay and score of a recorded tracker session (host). Reads a raw recording (akam2k.conf track_debug=2, /tmp/akam2k_track.raw on the camera, format in
+/* Open-loop replay and score of a recorded tracker session (host). Reads a raw recording (akam.conf track_debug=2, /tmp/akam2k_track.raw on the camera, format in
  * docs/porting/lsc-rotatable-2k/tracking.md "The raw recorder"), runs the CURRENT tl_update (track_logic.c) on the recorded C / I lines (exact inputs, so the camera pose is the
  * recorded one, not a simulated one: the decisions are scored, the motor loop is not) and prints one "name key=value ..." line like tools/dev/track_sim.
  * Usage: track_replay_score [--cfg k=v] [--frame WxH] [--emit] FILE...      --emit: also print "V <ms> pan_dir pan_div tilt_dir tilt_div" for every command of the current tracker

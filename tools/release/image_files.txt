@@ -3,13 +3,13 @@
 # make_kit.sh reads this list to build the kit's overlay/ and patches/; tests/kit_test.sh
 # builds an image with firmware/lsc-indoor-1080p-ak3918/image/build_image.sh and fails when the image and this
 # list disagree (paths, modes, links), so the two code paths cannot drift apart.
-# Binaries (bin/ak_rtsp, bin/dropbearmulti) and licences (local/akam/LICENSE.*) are
+# Binaries (bin/akamd, bin/dropbearmulti) and licences (local/akam/LICENSE.*) are
 # built from variables in both scripts and are covered by the same test.
 #
 # Format, fields separated by one space:
 #   file <mode> <kit path> <image path> <source in the repository>
 #   link <target> <kit path> <image path>
-file 755 overlay/sbin/ak_rtsp_wrapper.sh sbin/ak_rtsp_wrapper.sh firmware/lsc-indoor-1080p-ak3918/overlay/ak_rtsp_wrapper.sh
+file 755 overlay/sbin/akam_run.sh sbin/akam_run.sh firmware/lsc-indoor-1080p-ak3918/overlay/akam_run.sh
 file 755 overlay/sbin/akam_ssh.sh sbin/akam_ssh.sh firmware/lsc-indoor-1080p-ak3918/overlay/akam_ssh.sh
 file 755 overlay/sbin/akam_lockdown.sh sbin/akam_lockdown.sh firmware/lsc-indoor-1080p-ak3918/overlay/akam_lockdown.sh
 file 755 overlay/sbin/akam_hostname.sh sbin/akam_hostname.sh src/scripts/akam_hostname.sh

@@ -14,7 +14,7 @@
 #   4  background: decloud.sh on (a no-op unless /config/akam/decloud exists).
 #
 # User files, all in /config/akam (seed them over SSH, see docs/porting/lsc-rotatable-2k/cardless-appfs.md):
-#   wpa.conf  authorized_keys  dropbear_ed25519_host_key (generated)  akam2k.conf  zones  mqtt  rtsp.conf  ntp
+#   wpa.conf  authorized_keys  dropbear_ed25519_host_key (generated)  akam.conf (akam2k.conf in 0.1.x, copied once)  zones  mqtt  rtsp.conf  ntp
 #   no_app  decloud   (the last two are flag files: empty)
 # Never written here: nvram, mtd, /config/param.conf, anything outside /tmp and the host key above.
 # Never reads a secret (wpa.conf is only symlinked; the stub copies it to /tmp with mode 600).
@@ -57,7 +57,21 @@ say() { echo "akam_flash_boot: $*"; }
     fi
 )
 
-for f in wpa.conf authorized_keys dropbear_ed25519_host_key akam2k.conf ptz.conf zones mqtt rtsp.conf ntp no_app decloud; do
+# Update from 0.1.x: the conf file was called akam2k.conf. Copied ONCE to akam.conf (rare, user-visible event; the old
+# file stays, so the previous image still finds its own). Without a copy the old file is linked under the new name.
+(
+    if [ ! -e "$CFG/akam.conf" ] && [ -f "$CFG/akam2k.conf" ]; then
+        if cp "$CFG/akam2k.conf" "$CFG/.akam.conf.new" 2>/dev/null && mv -f "$CFG/.akam.conf.new" "$CFG/akam.conf" 2>/dev/null; then
+            say "akam2k.conf migrated to akam.conf"
+        else
+            rm -f "$CFG/.akam.conf.new" 2>/dev/null
+            ln -sf "$CFG/akam2k.conf" "$FAKE/akam/akam.conf"
+            say "akam2k.conf could not be copied: read under the new name"
+        fi
+    fi
+)
+
+for f in wpa.conf authorized_keys dropbear_ed25519_host_key akam.conf ptz.conf zones mqtt rtsp.conf ntp no_app decloud; do
     [ -e "$CFG/$f" ] && ln -sf "$CFG/$f" "$FAKE/akam/$f"
 done
 

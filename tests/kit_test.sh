@@ -49,7 +49,7 @@ rc_is() {
 # --- stubs ----------------------------------------------------------------------------
 S=$WORK/stub
 mkdir -p "$S/smol/build/_deps" "$S/db"
-printf '#!/bin/sh\necho stub ak_rtsp\n' >"$S/ak_rtsp"
+printf '#!/bin/sh\necho stub akamd\n' >"$S/akamd"
 printf '#!/bin/sh\necho stub flash_tool\n' >"$S/flash_tool"
 printf '#!/bin/sh\necho stub dropbearmulti\n' >"$S/db/dropbearmulti"
 printf 'Dropbear stub licence\n' >"$S/db/LICENSE.dropbear"
@@ -62,11 +62,11 @@ printf 'musl stub\n' >"$S/COPYRIGHT"
 printf 'zig stub\n' >"$S/ZIGLICENSE"
 printf '#!/bin/sh\nexit 0\n' >"$S/gate_ok"
 printf '#!/bin/sh\necho "forbidden syscall 403" >&2\nexit 1\n' >"$S/gate_bad"
-chmod 755 "$S"/ak_rtsp "$S"/flash_tool "$S/db/dropbearmulti" "$S"/gate_ok "$S"/gate_bad
+chmod 755 "$S"/akamd "$S"/flash_tool "$S/db/dropbearmulti" "$S"/gate_ok "$S"/gate_bad
 
 MODEL=lsc-indoor-1080p-ak3918
 export AKAM_KIT_NO_BUILD=1 AKAM_KIT_ALLOW_DIRTY=1 AKAM_KIT_VERSION=test1
-export AK_RTSP_BIN=$S/ak_rtsp FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti
+export AK_RTSP_BIN=$S/akamd FLASH_TOOL_BIN=$S/flash_tool DROPBEAR_MULTI=$S/db/dropbearmulti
 export SMOLRTSP_DIR=$S/smol MUSL_COPYRIGHT=$S/COPYRIGHT ZIG_LICENSE=$S/ZIGLICENSE
 export AKAM_KIT_CHECK_TIME32=$S/gate_ok
 export SOURCE_DATE_EPOCH=1700000000
@@ -85,18 +85,18 @@ mkdir -p "$WORK/x"
 tar -xJf "$TB" -C "$WORK/x"
 K=$WORK/x/akam-kit-$MODEL-test1
 check "MANIFEST has kit_format, version, gate and date" bash -c "
-    grep -qx kit_format=1 '$K/MANIFEST.txt' && grep -qx akam_version=test1 '$K/MANIFEST.txt' &&
+    grep -qx kit_format=2 '$K/MANIFEST.txt' && grep -qx akam_version=test1 '$K/MANIFEST.txt' &&
     grep -qx time64_gate=pass '$K/MANIFEST.txt' && grep -qx 'built_utc=2023-11-14T22:13:20Z' '$K/MANIFEST.txt'"
-check "MANIFEST lists flash_tool, ak_rtsp and dropbearmulti with modes" bash -c "
+check "MANIFEST lists flash_tool, akamd and dropbearmulti with modes" bash -c "
     grep -qE '^file [0-9a-f]{64} 755 bin/flash_tool\$' '$K/MANIFEST.txt' &&
-    grep -qE '^file [0-9a-f]{64} 755 bin/ak_rtsp\$' '$K/MANIFEST.txt' &&
+    grep -qE '^file [0-9a-f]{64} 755 bin/akamd\$' '$K/MANIFEST.txt' &&
     grep -qE '^file [0-9a-f]{64} 644 overlay/local/_ht_process.ini\$' '$K/MANIFEST.txt' &&
     grep -qx 'link dropbearmulti 777 overlay/bin/dropbear' '$K/MANIFEST.txt'"
 check "kit holds only our top-level directories" bash -c "
     [ \"\$(LC_ALL=C ls '$K' | tr '\n' ' ')\" = 'MANIFEST.txt SHA256SUMS SOURCES.txt bin licenses overlay patches scripts supported_hardware.txt ' ]"
 check "no image, squashfs or dump in the kit" bash -c "! find '$K' -iname '*.squashfs' -o -iname '*.img' -o -iname 'app_*' | grep -q ."
 check "wrapper, akam_*.sh, hwcheck and flash scripts present" bash -c "
-    cd '$K' && test -x overlay/sbin/ak_rtsp_wrapper.sh && test -x overlay/sbin/akam_ssh.sh &&
+    cd '$K' && test -x overlay/sbin/akam_run.sh && test -x overlay/sbin/akam_ssh.sh &&
     test -x overlay/sbin/akam_lockdown.sh && test -x overlay/sbin/akam_rtsp_auth.sh && test -x overlay/sbin/akam_hostname.sh && test -x overlay/sbin/akam_debug.sh && test -x overlay/sbin/akam_onvif.sh && test -x overlay/sbin/akam_net.sh && test -x overlay/sbin/akam_ntp.sh && test -x overlay/sbin/akam_mqtt.sh && test -x scripts/hwcheck/akam_hwcheck.sh &&
     test -x scripts/flash/flash_guard.sh && test -x patches/patch_service_sh.sh"
 
@@ -164,25 +164,25 @@ tamper() {
 vt() { rc_is 1 bash "$VERIFY" --allow-test-kit --allow-unsigned "$WORK/t_$1/out/akam-kit-$MODEL-test1.tar.xz"; }
 tamper control true
 check "control repack verifies" rc_is 0 bash "$VERIFY" --allow-test-kit --allow-unsigned "$WORK/t_control/out/akam-kit-$MODEL-test1.tar.xz"
-tamper byte bash -c "printf 'x' >>bin/ak_rtsp"
-check "one byte added to bin/ak_rtsp: fail" vt byte
+tamper byte bash -c "printf 'x' >>bin/akamd"
+check "one byte added to bin/akamd: fail" vt byte
 tamper licence bash -c "printf 'x' >>licenses/LICENSE.musl"
 check "one byte added to a licence: fail" vt licence
 tamper manifest bash -c "sed -i 's/^akam_version=test1/akam_version=test2/' MANIFEST.txt"
 check "one edit in MANIFEST.txt: fail" vt manifest
 tamper manhash bash -c "sed -i '0,/^file [0-9a-f]/s/^file [0-9a-f]/file z/' MANIFEST.txt"
 check "edited hash in MANIFEST.txt: fail" vt manhash
-tamper mode bash -c "chmod 777 bin/ak_rtsp"
+tamper mode bash -c "chmod 777 bin/akamd"
 check "mode changed: fail" vt mode
 tamper extra bash -c "echo hi >extra.txt"
 check "extra file: fail" vt extra
 tamper missing bash -c "rm licenses/LICENSE.zig"
 check "missing file: fail" vt missing
-tamper link bash -c "ln -sf ../../bin/ak_rtsp overlay/bin/dropbear"
+tamper link bash -c "ln -sf ../../bin/akamd overlay/bin/dropbear"
 check "symlink retargeted: fail" vt link
-tamper fmt bash -c "sed -i 's/^kit_format=1/kit_format=2/' MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS"
+tamper fmt bash -c "sed -i 's/^kit_format=2/kit_format=3/' MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS"
 check "unsupported kit_format: fail" vt fmt
-check "  ... says so" grep -q 'kit_format 2 is not supported' "$WORK/last.out"
+check "  ... says so" grep -q 'kit_format 3 is not supported' "$WORK/last.out"
 tamper gate bash -c "sed -i 's/^time64_gate=pass/time64_gate=skipped/' MANIFEST.txt && sha256sum \$(find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||') >SHA256SUMS"
 check "time64_gate not pass: fail" vt gate
 check "sha256 of the tarball not in SHA256SUMS: fail" bash -c "
@@ -228,7 +228,7 @@ check "no record other than validated/reported/untested" bash -c "
     ! grep -vE '^(#|[a-z_]+=|validated\\||reported\\||untested\\||\$)' '$SH' | grep -q ."
 echo "== camera model (per-model kits)"
 check "the registry file is named after its model= header" bash -c "[ \"\$(sed -n 's/^model=//p' '$SH')\" = '$MODEL' ]"
-check "MANIFEST carries model=<id>; kit_format stays 1" bash -c "grep -qx 'model=$MODEL' '$K/MANIFEST.txt' && grep -qx kit_format=1 '$K/MANIFEST.txt'"
+check "MANIFEST carries model=<id>; kit_format is 2" bash -c "grep -qx 'model=$MODEL' '$K/MANIFEST.txt' && grep -qx kit_format=2 '$K/MANIFEST.txt'"
 check "an unknown --model is refused" fails_msg 'unknown model' bash "$MAKE" --model nope-model --out "$WORK/om1"
 check "a bad --model id is refused" fails_msg 'bad model id' bash "$MAKE" --model 'Bad_Model' --out "$WORK/om2"
 check "--model builds the same kit as the default" bash -c "bash '$MAKE' --model $MODEL --out '$WORK/om3' >/dev/null 2>&1 && cmp -s '$TB' '$WORK/om3/akam-kit-$MODEL-test1.tar.xz'"
@@ -258,13 +258,13 @@ check "supported_hardware.txt edited behind the MANIFEST: fail" vt hwedit
 check "  ... on the hardware checksum" grep -q 'supported_hardware_sha256' "$WORK/last.out"
 
 echo "== hostile archives (more)"
-tamper hardlink bash -c "ln bin/ak_rtsp bin/hl"
+tamper hardlink bash -c "ln bin/akamd bin/hl"
 check "hard link entry: fail" vt hardlink
 check "  ... rejected from the listing, before extraction" grep -q 'unexpected archive entry' "$WORK/last.out"
 tamper fifo bash -c "mkfifo bin/pipe"
 check "fifo entry: fail" vt fifo
 check "  ... rejected from the listing" grep -q 'unexpected archive entry' "$WORK/last.out"
-tamper setuid bash -c "chmod 4755 bin/ak_rtsp"
+tamper setuid bash -c "chmod 4755 bin/akamd"
 check "setuid file: fail" vt setuid
 check "  ... rejected from the listing" grep -q 'unexpected file mode' "$WORK/last.out"
 tamper spacename bash -c "echo x >'sp ace'"
@@ -338,10 +338,13 @@ drift_check() {
         esac
     done <"$REPO/tools/release/image_files.txt"
     # binaries and licences: built from variables, compared by name
-    for f in bin/ak_rtsp bin/dropbearmulti; do
+    for f in bin/akamd bin/dropbearmulti; do
         echo "$f" >>"$want"
         { cmp -s "$P/$f" "$K/$f" && [ "$(stat -c %a "$P/$f")" = "$(stat -c %a "$K/$f")" ]; } || { echo "$f differs between image and kit"; rc=1; }
     done
+    # the compatibility link of the old program name (built from code, not listed in the kit)
+    echo bin/ak_rtsp >>"$want"
+    [ "$(readlink "$P/bin/ak_rtsp")" = akamd ] || { echo "bin/ak_rtsp is not a link to akamd"; rc=1; }
     for f in "$K"/licenses/*; do
         f=$(basename "$f")
         case "$f" in THIRD_PARTY_NOTICES.md | LICENSE.*) ;; *) continue ;; esac

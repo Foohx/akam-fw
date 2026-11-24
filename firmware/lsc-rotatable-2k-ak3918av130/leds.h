@@ -21,7 +21,7 @@
 #define A2K_LEDS_BOOT_MS 20000
 
 enum { A2K_RULE_BOOT, A2K_RULE_NOWIFI, A2K_RULE_PERSON, A2K_RULE_STREAM, A2K_RULE_NIGHT, A2K_RULE_IDLE, A2K_RULE_N };
-const char *a2k_rule_key(int rule);     /* "led_boot", "led_nowifi", ... as in akam2k.conf */
+const char *a2k_rule_key(int rule);     /* "led_boot", "led_nowifi", ... as in akam.conf */
 const char *a2k_rule_default(int rule); /* the default pattern text */
 enum { A2K_LEDS_ON, A2K_LEDS_OFF, A2K_LEDS_AUTO };
 int a2k_leds_parse_mode(const char *s); /* exact "on" "off" "auto" -> enum, else -1 */
@@ -78,7 +78,7 @@ void a2k_leds_release(a2k_leds_t *l);
 int a2k_leds_last_rule(a2k_leds_t *l);
 
 /* ---- singleton (leds_run.c) ---- */
-/* Starts the thread (50 ms tick). mode and pats[] are the akam2k.conf values (pats may be NULL: defaults). 0 or -1 (logged). */
+/* Starts the thread (50 ms tick). mode and pats[] are the akam.conf values (pats may be NULL: defaults). 0 or -1 (logged). */
 int a2k_leds_start(int mode, const char *const pats[A2K_RULE_N]);
 void a2k_leds_stop(void);          /* before a2k_night_stop (which closes the pin files) */
 void a2k_leds_person(int present); /* detection thread */

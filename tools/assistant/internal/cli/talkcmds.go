@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Foohx/akam-fw/tools/assistant/internal/profile"
+
 	"github.com/Foohx/akam-fw/tools/assistant/internal/audio"
 	camssh "github.com/Foohx/akam-fw/tools/assistant/internal/camera/ssh"
 	"github.com/Foohx/akam-fw/tools/assistant/internal/platform"
@@ -37,6 +39,9 @@ func (a *App) execCapture() *audio.Exec {
 
 // talkLogin is talk_login: the stream password must be on; returns the user name and password.
 func (a *App) talkLogin(ip string) (user, pass string, err error) {
+	if a.is2K() {
+		return a.talkLogin2K(ip)
+	}
 	c, err := a.connectTools(ip)
 	if err != nil {
 		return "", "", err
@@ -76,19 +81,9 @@ func (a *App) talkLogin(ip string) (user, pass string, err error) {
 	if !rtspUserValid(user) {
 		return "", "", a.UI.Fail("could not read the stream user name from the camera.", fmt.Sprintf("check %s rtsp-auth status.", Prog))
 	}
-	pass = a.envSecret("AKAM_RTSP_PASSWORD")
-	if a.Opt.PasswordFile != "" && pass == "" {
-		b, rerr := os.ReadFile(a.Opt.PasswordFile)
-		if rerr != nil {
-			return "", "", a.UI.Fail("cannot read the password file.", "check the path given with --password-file.")
-		}
-		pass = strings.TrimRight(strings.SplitN(string(b), "\n", 2)[0], "\r")
-	}
-	if pass == "" {
-		pass, err = a.UI.Secret(fmt.Sprintf("  Stream password of user %s (not shown):", user))
-		if err != nil {
-			return "", "", a.UI.Fail("no input.", "")
-		}
+	pass, err = a.streamPassword(user)
+	if err != nil {
+		return "", "", err
 	}
 	a.Secrets.Add(pass)
 	return user, pass, nil
@@ -196,7 +191,11 @@ func (a *App) cmdTalk(args []string) error {
 		return err
 	}
 	if a.UI.Dry() {
-		a.UI.Say(fmt.Sprintf("  WOULD check over SSH that the stream password is on (%s status) and read the user name (show).", rtspAuthCmd))
+		if a.is2K() {
+			a.UI.Say("  WOULD read the stream user and the speaker switches from the signed API of the 2K (GET /settings; no SSH needed).")
+		} else {
+			a.UI.Say(fmt.Sprintf("  WOULD check over SSH that the stream password is on (%s status) and read the user name (show).", rtspAuthCmd))
+		}
 		a.UI.Say("  WOULD ask the stream password (not shown) unless AKAM_RTSP_PASSWORD is set.")
 		if test {
 			a.UI.Say(fmt.Sprintf("  WOULD run: akam-talk --user <user> --tone 2 rtsp://%s:%d   (password in the environment)", ip, a.Env.PortRTSP))
@@ -388,3 +387,71 @@ func (a *App) cmdSay(args []string) error {
 }
 
 var _ = camssh.ErrAuth
+
+// streamPassword is the stream password of user: AKAM_RTSP_PASSWORD, then --password-file, then the one the assistant keeps for this
+// camera (the private secrets file of its local config, used only when it was saved for this very user), else typed without echo.
+func (a *App) streamPassword(user string) (string, error) {
+	pass := a.envSecret("AKAM_RTSP_PASSWORD")
+	if a.Opt.PasswordFile != "" && pass == "" {
+		b, rerr := os.ReadFile(a.Opt.PasswordFile)
+		if rerr != nil {
+			return "", a.UI.Fail("cannot read the password file.", "check the path given with --password-file.")
+		}
+		pass = strings.TrimRight(strings.SplitN(string(b), "\n", 2)[0], "\r")
+	}
+	if pass == "" {
+		if sec, err := profile.Load(a.cameraPlace(a.Cams.Name), profile.Secrets); err == nil {
+			pass = profile.BoundAuth(sec, user)
+		}
+	}
+	if pass == "" {
+		var err error
+		if pass, err = a.UI.Secret(fmt.Sprintf("  Stream password of user %s (not shown):", user)); err != nil {
+			return "", a.UI.Fail("no input.", "")
+		}
+	}
+	a.Secrets.Add(pass)
+	return pass, nil
+}
+
+// talkLogin2K is talkLogin for a 2K: the stream user and the state of the speaker come from the signed API (no SSH is needed, which is
+// what the card-less layout has), the password from streamPassword. Talk needs the stream password and the speaker and talk switches on.
+func (a *App) talkLogin2K(ip string) (user, pass string, err error) {
+	cl, err := a.api2K(ip)
+	if err != nil {
+		return "", "", err
+	}
+	cur, err := cl.Settings(a.Ctx)
+	if err != nil {
+		return "", "", a.api2KFail(err)
+	}
+	user = cur["rtsp.user"]
+	if user == "" {
+		a.UI.Say("  Talk needs the video stream password: the camera never offers talk without one.")
+		a.UI.Say("  (Anyone on your network could otherwise speak through the camera.)")
+		set := false
+		if a.UI.Interactive() {
+			set, _ = a.UI.AskYN("  Set a password now?")
+		}
+		if !set {
+			return "", "", a.UI.Fail("no stream password, no talk.", fmt.Sprintf("run %s rtsp-auth set, then try again.", Prog))
+		}
+		if err := a.rtspAuthSet2K(); err != nil {
+			return "", "", err
+		}
+		if cur, err = cl.Settings(a.Ctx); err != nil {
+			return "", "", a.api2KFail(err)
+		}
+		if user = cur["rtsp.user"]; user == "" {
+			return "", "", a.UI.Fail("the stream password is still not set.", "")
+		}
+	}
+	if !rtspUserValid(user) {
+		return "", "", a.UI.Fail("could not read the stream user name from the camera.", fmt.Sprintf("check %s rtsp-auth status.", Prog))
+	}
+	if cur["audio.out_enable"] == "0" || cur["audio.talk_enable"] == "0" {
+		return "", "", a.UI.Fail("the speaker or the talk switch is off on the camera.", fmt.Sprintf("run %s audio on and %s audio talk on (the speaker is off by default on the 2K).", Prog, Prog))
+	}
+	pass, err = a.streamPassword(user)
+	return user, pass, err
+}

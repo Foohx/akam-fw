@@ -31,6 +31,7 @@ reset_cam() {
     printf -- '-15\n' >"$CAM/isp.sharpness"
     printf 'conf\n' >"$CAM/img.wb"
     printf 'auto\n' >"$CAM/night.mode"
+    for k in image.flip image.mirror image.ceiling; do printf '0\n' >"$CAM/$k"; done
 }
 reset_cam
 cat >"$STUB_DIR/bin/nc" <<'EOF'
@@ -45,7 +46,7 @@ while IFS= read -r line; do
     echo "LOG [ak_rtsp] noise before $1"
     key=${2:-}
     case $key in
-        isp.brightness | isp.contrast | isp.saturation | isp.sharpness | img.wb | night.mode) ;;
+        isp.brightness | isp.contrast | isp.saturation | isp.sharpness | img.wb | night.mode | image.flip | image.mirror | image.ceiling) ;;
         isp.denoise) [ "$mode" != nodenoise ] || { echo "ERR unknown param $key"; continue; } ;;
         *) echo "ERR unknown param $key"; continue ;;
     esac
@@ -63,6 +64,7 @@ while IFS= read -r line; do
                     if [ "$v" -lt -50 ] || [ "$v" -gt 50 ]; then echo "ERR $key range [-50,50]"; continue; fi
                     if [ "$key" = isp.denoise ] && { [ "$v" -lt 0 ] || [ "$v" -gt 4 ]; }; then echo "ERR $key range [0,4]"; continue; fi
                     ;;
+                image.*) case $v in 0 | 1) ;; *) echo "ERR invalid $key value $v (format)"; continue ;; esac ;;
                 img.wb) case $v in conf | manual) ;; *) echo "ERR invalid img.wb value $v (want conf|manual)"; continue ;; esac; note="" ;;
                 night.mode) case $v in auto | day | night) ;; *) echo "ERR invalid night.mode value $v (want auto|day|night)"; continue ;; esac; note="" ;;
             esac
@@ -194,6 +196,25 @@ done
 check "refusals: the camera was never contacted" test ! -s "$STUB_DIR/ssh.log"
 check "refusals: nothing changed" test "$(cam isp.brightness)" = 0 -a "$(cam img.wb)" = conf
 
+# ---- flip, mirror, ceiling (1080p orientation rows, not yet verified on a camera) --------------------
+reset_cam
+: >"$STUB_DIR/ssh.log"
+a "$S" picture flip on mirror 1 </dev/null >"$T/flip.out" 2>&1
+check "flip on, mirror 1: both reached the camera" test "$(cam image.flip)" = 1 -a "$(cam image.mirror)" = 1
+check "flip: the picture screen shows the orientation" has "$T/flip.out" "Flip (vertical) 1, mirror (horizontal) 1"
+a "$S" picture ceiling off </dev/null >"$T/ceil.out" 2>&1
+check "ceiling off reached the camera" test "$(cam image.ceiling)" = 0
+for bad in "flip" "flip maybe" "flip 2" "flip on flip off" "ceiling on flip on" "mirror on ceiling on" "reset flip on"; do
+    : >"$STUB_DIR/ssh.log"
+    # shellcheck disable=SC2086
+    a "$S" picture $bad </dev/null >/dev/null 2>&1
+    check "refused before the camera: picture $bad" bash -c '[ "$1" -eq 2 ] && [ ! -s "$2" ]' _ $? "$STUB_DIR/ssh.log"
+done
+a "$S" video flip on </dev/null >"$T/vflip.out" 2>&1
+check "video flip points to the picture command" has "$T/vflip.out" "./akam picture flip on|off"
+a "$S" --dry-run picture mirror on </dev/null >"$T/dryf.out" 2>&1
+check "dry-run: WOULD send SET image.mirror 1" has "$T/dryf.out" "WOULD send: SET image.mirror 1"
+
 # ---- dry run -------------------------------------------------------------------------------------
 : >"$STUB_DIR/ssh.log"
 a "$S" --dry-run picture brightness -5 wb manual </dev/null >"$T/dry.out" 2>&1
@@ -206,7 +227,7 @@ check "dry-run: the camera was not contacted" test ! -s "$STUB_DIR/ssh.log"
 
 # ---- help ----------------------------------------------------------------------------------------
 a "$S" help >"$T/help.out" 2>&1
-check "help lists picture" has "$T/help.out" "picture [show | brightness N | contrast N | saturation N | sharpness N | denoise N | wb conf|manual | night auto|day|night | reset]"
+check "help lists picture" has "$T/help.out" "picture [show | brightness N | contrast N | saturation N | sharpness N | denoise N | wb conf|manual | night auto|day|night | flip|mirror|ceiling on|off | reset]"
 
 echo "wizard_picture_test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

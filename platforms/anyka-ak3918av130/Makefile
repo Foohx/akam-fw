@@ -1,5 +1,5 @@
-# Build of the Anyka AK3918AV130 platform (vendor libraries, dynamic uClibc, gcc 2018.11): the app of the LSC Rotatable 2K, shipped as akam2k_rtsp
-# (renamed in a later step) with its helpers akam2k_sntp, akam2k_mic, akam2k_led. Run from this directory, or through the root Makefile (`make 2k`).
+# Build of the Anyka AK3918AV130 platform (vendor libraries, dynamic uClibc, gcc 2018.11): the app of the LSC Rotatable 2K, shipped as akamd (`akam2k_rtsp` in 0.1.x)
+# with its helpers akam-sntp, akam-mic, akam-led. Run from this directory, or through the root Makefile (`make 2k`).
 # What differs per camera model lives in firmware/<MODEL>/model.mk (features, the ORDERED object list); the shared modules are named by
 # src/build/sources.mk; the generic rules, flags and the dist/symcheck targets are here. Everything a build writes goes under
 # build/$(MODEL) (git-ignored; MODEL=<id> selects the model, two models never overwrite each other). `poc3-dist` then PUBLISHES a copy of the
@@ -43,7 +43,7 @@ NPULIBS := -lmpi_svp2 -lplat_npu -lak_nne
 all: poc0 poc2 poc3 poc4
 poc0: $(OUT)/poc0_versions
 poc2: $(OUT)/poc2_frame
-poc3: $(OUT)/akam2k_rtsp
+poc3: $(OUT)/akamd
 poc4: $(OUT)/poc4_detect
 
 $(OUT)/poc0_versions: probes/poc0_versions.c
@@ -68,7 +68,7 @@ $(OUT)/poc4_detect: probes/poc4_detect.c
 	@mkdir -p $(OUT)
 	$(CC) -std=gnu11 $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS) -lmpi_svp2 -lplat_npu -lak_nne
 
-# ---- PoC-3: akam2k_rtsp -------------------------------------------------------------------------------------------
+# ---- PoC-3: akamd -------------------------------------------------------------------------------------------
 # The RTSP/RTP/SDP/H.264 sources are the SHARED ones, in src/ (listed once in src/build/sources.mk), compiled
 # UNMODIFIED from where they are (PLAN section 8ter, phase A). night_logic.h includes night.h, which lives in src/features/night too.
 # SmolRTSP is a fetched dependency that is not tracked in git: point SMOLRTSP at a checkout that has build/_deps
@@ -138,14 +138,14 @@ $(POC3_OBJ)/smol_nal_%.o: $(SMOLRTSP)/src/nal/%.c
 	$(poc3_check)
 	$(CC) $(POC3_CFLAGS) -c -o $@ $<
 
-$(OUT)/akam2k_rtsp: $(POC3_OBJS)
+$(OUT)/akamd: $(POC3_OBJS)
 	@test -d "$(VENDOR)" || { echo "vendor libs missing: run prepare_vendor.sh"; exit 1; }
 	$(CC) $(LDFLAGS) -Wl,--gc-sections -pthread -o $@ $^ $(LDLIBS) $(NPULIBS)
 
 # Every libc symbol the binary needs must be exported by the CAMERA's libc, not only by the build toolchain's.
 #   make poc3-symcheck CAMERA_LIBC=/path/to/libuClibc-1.0.31.so   (from your own camera backup)
 # APP is the main program, HELPER_BINS the helper programs of the model (HELPERS in model.mk).
-APP := akam2k_rtsp
+APP := akamd
 HELPER_BINS := $(foreach h,$(HELPERS),$(word 2,$(subst :, ,$(h))))
 ALL_BINS := $(APP) $(HELPER_BINS)
 CAMERA_LIBC ?=
@@ -184,7 +184,7 @@ poc3-dist: poc3-symcheck
 	@cp $(addprefix $(OUT)/,$(ALL_BINS)) $(OUT)/BUILDINFO.txt $(PUBLISH_DIR)/
 	@echo "poc3-dist: $(OUT)/{$(ALL_BINS)} + BUILDINFO.txt, published to $(PUBLISH_DIR)"
 
-# Hash inputs (image/source_hash.sh, tests/rot2k_source_hash_test.sh): what akam2k_rtsp and akam2k_led are compiled from, one path per line, and
+# Hash inputs (image/source_hash.sh, tests/rot2k_source_hash_test.sh): what akamd and akam-led are compiled from, one path per line, and
 # the quoted-include search path. They need no compiler and no checkout of SmolRTSP.
 .PHONY: print-sources print-incdirs print-led-sources
 print-sources:
