@@ -18,6 +18,8 @@
 #define IRCUT_GPIO_A        65
 #define IRCUT_GPIO_B_EN     66
 #define IR_LED_GPIO         70
+#define IR_LED_CLASS        "/sys/class/leds/irled/brightness"
+#define IR_LED_MAX          "/sys/class/leds/irled/max_brightness"
 
 #define IRCUT_A_DAY         0   /* ircut_a_day_level */
 #define IRCUT_B_DAY         1   /* ircut_b_en_day_level */
@@ -62,6 +64,60 @@ static void gpio_set(int gpio, int value)
     gpio_write_file(path, value ? "1" : "0");
 }
 
+/* Some revisions register the IR LED with the kernel LED class, which
+ * owns the GPIO. Prefer that interface; keep direct GPIO for older boards. */
+static int ir_led_has_class(void)
+{
+    return access(IR_LED_CLASS, F_OK) == 0;
+}
+
+static int ir_led_ready(void)
+{
+    char path[64];
+    if (ir_led_has_class()) return 1;
+    snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", IR_LED_GPIO);
+    return access(path, F_OK) == 0;
+}
+
+static void ir_led_set(int on)
+{
+    if (ir_led_has_class()) {
+        if (!on) {
+            gpio_write_file(IR_LED_CLASS, "0");
+            return;
+        }
+        FILE *f = fopen(IR_LED_MAX, "r");
+        unsigned int max = 0;
+        if (!f) {
+            fprintf(stderr, "[ircut] open %s: %s\n", IR_LED_MAX, strerror(errno));
+            return;
+        }
+        int valid = fscanf(f, "%u", &max) == 1 && max > 0;
+        fclose(f);
+        if (!valid) {
+            fprintf(stderr, "[ircut] invalid max_brightness\n");
+            return;
+        }
+        char val[32];
+        snprintf(val, sizeof(val), "%u", max);
+        gpio_write_file(IR_LED_CLASS, val);
+        return;
+    }
+    gpio_set(IR_LED_GPIO, on);
+}
+
+static void ir_led_init(void)
+{
+    if (ir_led_has_class()) {
+        printf("[ak_rtsp] ircut: using kernel IR LED class\n");
+        ir_led_set(0);
+    } else {
+        printf("[ak_rtsp] ircut: using IR LED GPIO %d\n", IR_LED_GPIO);
+        gpio_export(IR_LED_GPIO);
+        gpio_direction_out(IR_LED_GPIO, 0);
+    }
+}
+
 /* Drive the solenoid to night or day position.
  *
  * Mirrors SetIrcutState for ircut_type=1 (IRCUT_LINE_TYPE_A_B):
@@ -92,7 +148,7 @@ static void ircut_set_state(int night)
  *   ht_night_mode_init
  *     → ircut_gpio_export_and_reset   (export GPIO A/B, reset pulse)
  *       → ircut_reset_pulse_once      (night→day once per boot)
- *   → export GPIO 70 and set it as output (IR LED)
+ *   → initialize the IR LED through the LED class or GPIO 70
  *   → SetDayNightMode(0)                            (already in day state: no-op)
  *
  * The reset pulse is what causes the characteristic two solenoid clicks at
@@ -109,9 +165,8 @@ int ircut_init(void)
     gpio_export(IRCUT_GPIO_B_EN);
     gpio_direction_out(IRCUT_GPIO_B_EN, IRCUT_B_DAY); /* high */
 
-    /* Export IR LED GPIO, start off. */
-    gpio_export(IR_LED_GPIO);
-    gpio_direction_out(IR_LED_GPIO, 0);
+    /* Initialize the appropriate IR LED interface, start off. */
+    ir_led_init();
 
     usleep(100000);  /* 100ms settling before any pulse */
 
@@ -132,7 +187,7 @@ int ircut_init(void)
 
 /* IR LED policy (night.ir_led, see leds.h). g_ir_lock orders the night
  * thread's ircut_switch() against the control thread's setting change, so the
- * GPIO never ends up lit while the policy says off. */
+ * IR LED never ends up lit while the policy says off. */
 static pthread_mutex_t g_ir_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_ir_allowed = 1;  /* night.ir_led=auto */
 static int g_ir_night   = 0;  /* last requested day/night position */
@@ -142,15 +197,9 @@ void ircut_set_ir_led_allowed(int allowed)
 {
     pthread_mutex_lock(&g_ir_lock);
     g_ir_allowed = allowed ? 1 : 0;
-    /* Only touch the GPIO once it exists (ircut_init() exports GPIO 70 and
-     * drives it low; a previous run may have left it exported). "off" always
-     * drives it low, so an IR LED left lit by an earlier ak_rtsp that stopped
-     * during a night is darkened at start-up, before ircut_init() runs. "auto"
-     * lights it only in night mode. */
-    char path[64];
-    snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", IR_LED_GPIO);
-    if ((!g_ir_allowed || g_ir_night) && access(path, F_OK) == 0)
-        gpio_set(IR_LED_GPIO, g_ir_allowed && g_ir_night && !g_ir_probe);
+    /* Also handle an LED left on before init (e.g. after a daemon restart). */
+    if ((!g_ir_allowed || g_ir_night) && ir_led_ready())
+        ir_led_set(g_ir_allowed && g_ir_night && !g_ir_probe);
     pthread_mutex_unlock(&g_ir_lock);
 }
 
@@ -165,7 +214,7 @@ void ircut_switch(int night)
     g_ir_night = night ? 1 : 0;
     g_ir_probe = 0;  /* a switch ends any probe: the LED follows the new position */
     int led = night && g_ir_allowed;
-    gpio_set(IR_LED_GPIO, led);
+    ir_led_set(led);
     pthread_mutex_unlock(&g_ir_lock);
     printf("[ak_rtsp] ircut: switched to %s mode (IR LED %s)\n",
            night ? "NIGHT" : "DAY", led ? "on" : "off");
@@ -188,7 +237,7 @@ void ircut_ir_led_probe(int off)
     pthread_mutex_lock(&g_ir_lock);
     g_ir_probe = off ? 1 : 0;
     if (g_ir_night) {
-        gpio_set(IR_LED_GPIO, g_ir_allowed && !g_ir_probe);
+        ir_led_set(g_ir_allowed && !g_ir_probe);
         printf("[ak_rtsp] ircut: IR LED probe %s (IR LED %s)\n", off ? "start" : "end",
                (g_ir_allowed && !g_ir_probe) ? "on" : "off");
     }

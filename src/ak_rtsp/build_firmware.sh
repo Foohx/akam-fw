@@ -507,6 +507,10 @@ case "$SVC_RC" in
     *) die "patch_service_sh.sh failed (exit $SVC_RC)" ;;
 esac
 
+# Some stock firmware revisions ship service.sh group/other-writable.
+# Normalize permissions in the patched tree before the security checks.
+chmod go-w "$PATCHED/sbin/service.sh" || die "cannot secure service.sh permissions"
+
 echo "Patching sbin/ethernet.sh (DHCP hostname from akam_hostname.sh)..."
 bash "$PATCH_ETH" "$PATCHED" || die "patch_ethernet_hostname.sh failed: the DHCP hostname of ethernet.sh would stay hard-coded"
 
