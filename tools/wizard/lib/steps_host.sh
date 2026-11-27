@@ -1112,7 +1112,7 @@ cmd_image() {
 
     ui_warn "reminder: your backup must exist on TWO different media. Never publish dumps or images."
     if [ "$(state_get mode)" = source ]; then
-        run_cmd bash -c "d=\$(mktemp -d) && unsquashfs -d \"\$d/app\" '$bdir/mtdblock7.bin' && APP_EXTRACTED=\"\$d/app\" FW_DIR='$out' bash '$ROOT/src/ak_rtsp/build_firmware.sh' --backup-dir '$bdir'" || rc=$?
+        run_cmd bash -c "d=\$(mktemp -d) && unsquashfs -d \"\$d/app\" '$bdir/mtdblock7.bin' && APP_EXTRACTED=\"\$d/app\" FW_DIR='$out' bash '$ROOT/src/ak_rtsp/build_firmware.sh' --backup-dir '$bdir' \"\$@\"" _ "${pass[@]}" || rc=$?
     else
         [ "$UI_DRY" = 1 ] || [ -e "$kit" ] || { ui_fail "kit not found: $kit" "run ./akam get-kit again."; return 1; }
         run_task "Building the image" bash "$(wiz_tool assemble)" --backup-dir "$bdir" --kit "${kit:-<kit>}" --out "$out" ${pass[@]+"${pass[@]}"} || rc=$?
