@@ -221,7 +221,7 @@ static int g_rtsp_port;
 static a2k_mqtt_viewers_fn g_viewers;
 static uint8_t g_tx[TX_CAP];
 static a2k_zones_t g_zones;                       /* set before start; names only are used */
-static int g_snap_enabled, g_night_enabled, g_sys_enabled;
+static int g_snap_enabled, g_night_enabled, g_sys_enabled, g_motion_enabled;
 static a2k_mqtt_leds_t g_leds;                    /* get == NULL: no controls */
 static a2k_mqtt_ctl_t g_ctl;                      /* get == NULL: no ctl entities */
 static int g_resync, g_btn_n;                     /* under g_mu: announce the zones / areas again; button presses to publish */
@@ -265,6 +265,7 @@ void a2k_mqtt_set_zones(const a2k_zones_t *z)
 
 void a2k_mqtt_set_snapshot(int enabled) { g_snap_enabled = enabled ? 1 : 0; }
 void a2k_mqtt_set_night(int enabled) { g_night_enabled = enabled ? 1 : 0; }
+void a2k_mqtt_set_motion(int enabled) { g_motion_enabled = enabled ? 1 : 0; }
 void a2k_mqtt_set_leds(const a2k_mqtt_leds_t *ops)
 {
     memset(&g_leds, 0, sizeof g_leds);
@@ -496,6 +497,24 @@ void a2k_mqtt_night(const struct a2k_mqtt_night *n)
     pthread_mutex_unlock(&g_mu);
 }
 
+void a2k_mqtt_motion(int active, const char *dir)
+{
+    pthread_mutex_lock(&g_mu);
+    g_cur.mo.valid = 1;
+    g_cur.mo.active = active ? 1 : 0;
+    snprintf(g_cur.mo.dir, sizeof g_cur.mo.dir, "%s", dir ? dir : "none");
+    if (g_running && g_motion_enabled) {
+        if (g_ring_n == A2K_MQTT_RING) {
+            memmove(&g_ring[0], &g_ring[1], sizeof g_ring[0] * (A2K_MQTT_RING - 1));
+            g_ring_n--;
+        }
+        g_ring[g_ring_n++] = g_cur;
+        if (g_wake[1] >= 0 && write(g_wake[1], "x", 1) < 0) {
+        }
+    }
+    pthread_mutex_unlock(&g_mu);
+}
+
 void a2k_mqtt_ptz(const char *state, int known, int pan, int tilt)
 {
     pthread_mutex_lock(&g_mu);
@@ -692,6 +711,8 @@ static int pub_all(conn_t *c, const a2k_mqtt_ids_t *ids, const struct a2k_mqtt_d
             return -1;
     if (ids->night && pub_ent(c, ids, A2K_E_NIGHT, d, -1) != 0)
         return -1;
+    if (ids->motion && (pub_ent(c, ids, A2K_E_MOTION, d, -1) != 0 || pub_ent(c, ids, A2K_E_MOTION_DIR, d, -1) != 0))
+        return -1;
     return pub_sys(c, ids, d);
 }
 
@@ -765,6 +786,11 @@ static int announce(conn_t *c, const a2k_mqtt_ids_t *ids, const struct a2k_mqtt_
         }
         if (ids->night) {
             int n = a2k_mqtt_discovery(ids, A2K_E_NIGHT, t, sizeof t, doc, sizeof doc);
+            if (n > 0 && pub(c, t, doc, 1) != 0)
+                return -1;
+        }
+        for (int k = 0; ids->motion && k < 2; k++) {
+            int n = a2k_mqtt_discovery(ids, A2K_E_MOTION + k, t, sizeof t, doc, sizeof doc);
             if (n > 0 && pub(c, t, doc, 1) != 0)
                 return -1;
         }
@@ -1090,6 +1116,7 @@ static int session(char *reason, size_t rcap)
     ids_sync(&ids);
     ids.snapshot = g_snap_enabled;
     ids.night = g_night_enabled;
+    ids.motion = g_motion_enabled;
     ids.sys = g_sys_enabled;
     ids.leds = g_leds.get != NULL;
     ids.ptz = g_ptz.press != NULL;
@@ -1173,6 +1200,8 @@ static int session(char *reason, size_t rcap)
                 if (pub_ent(&c, &ids, A2K_E_ZONE0 + z, &ev, -1) != 0)
                     goto out;
             if (ids.night && pub_ent(&c, &ids, A2K_E_NIGHT, &ev, -1) != 0)
+                goto out;
+            if (ids.motion && (pub_ent(&c, &ids, A2K_E_MOTION, &ev, -1) != 0 || pub_ent(&c, &ids, A2K_E_MOTION_DIR, &ev, -1) != 0))
                 goto out;
             if (pub_ptz(&c, &ids, &ev) != 0)
                 goto out;
@@ -1287,6 +1316,8 @@ static int session(char *reason, size_t rcap)
                 if (pub_ent(&c, &ids, A2K_E_ZONE0 + z, &cur, -1) != 0)
                     goto out;
             if (ids.night && pub_ent(&c, &ids, A2K_E_NIGHT, &cur, -1) != 0)
+                goto out;
+            if (ids.motion && (pub_ent(&c, &ids, A2K_E_MOTION, &cur, -1) != 0 || pub_ent(&c, &ids, A2K_E_MOTION_DIR, &cur, -1) != 0))
                 goto out;
             if (pub_sys(&c, &ids, &cur) != 0)
                 goto out;

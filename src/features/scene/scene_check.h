@@ -47,7 +47,7 @@
 #define SC_REP_MARGIN 50     /* ... the match rule applied to the image against itself, with this much margin below the match threshold (permille) */
 #define SC_DETAIL_RATIO 3    /* a block is detailed when its high-pass energy is >= this times the image noise energy */
 #define SC_DETAIL_BLOCKS_MIN 4 /* of SC_BX * SC_BY: detailed blocks needed in the reference, in the current view and in common */
-#define SC_MIN_DEFAULT 900   /* permille: strict match threshold (config ptz_scene_min = 0.90) */
+#define SC_MIN_DEFAULT 850   /* permille: strict match threshold (config ptz_scene_min / API ptz.scene_min = 0.85; was 0.90 until 2026-11-26) */
 #define SC_MIN_LOWEST 800    /* ptz_scene_min below this is refused */
 #define SC_BX 4              /* the block grid of the per-block decision */
 #define SC_BY 3

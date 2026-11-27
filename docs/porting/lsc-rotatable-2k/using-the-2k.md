@@ -185,6 +185,23 @@ must be on: `akam audio on`). Any other client that speaks the ONVIF backchannel
 default): the 2K server has no UDP. Nothing is offered without the stream password. One talker at a time; the speaker is then silent again
 after two seconds. Home Assistant has no speaker entities on the 2K yet.
 
+### Motion detection and the search for a lost person
+
+`motion.enabled` (on by default) watches the picture on a coarse grid and gives the read-only rows `motion.active`, `motion.dir` (none, left, right, up, down, always in the picture you see, whatever
+`image.flip` / `image.mirror` / `image.ceiling` say), `motion.x` / `motion.y` (percent) and `motion.source`; `motion.sensitivity` is 1 to 10 (5). With MQTT, Home Assistant gets a **Motion** binary sensor and a
+**Motion direction** sensor. It costs about 15 thousand pixel reads per detection frame (5 Hz) and no new video channel. The head's own moves, an orientation change, a day/night switch and a restart of
+the stream never count as motion.
+
+`track.search` is `motion` by default (`track_search` in `akam.conf`, or the Tracking options of the assistant): when the person is lost the head makes **one short look**
+(about 190 steps, 0.7 s, at most two per loss) toward where they left, or toward motion that appears afterwards, at most one look per 30 s, never near the end of the range, then goes home (3 s after the look for a passer-by seen
+less than 4 s, else after `track.return_delay_s`). No scans, no sweeps, no stops. The trade-off: someone who stays just out of view is no longer searched for. If you want the old behaviour (the backsweep, the close scan, the exit search and the
+full-range sweep), set `track.search` to `legacy`; it moves the motor about five times more on a passer-by (see
+[tracking](tracking.md#motion-detection-and-the-motion-aware-search) for the numbers). Not yet tried on a camera.
+
+`ptz.scene_min` (0.80 to 0.99, default 0.85) is how alike the view must be to the saved home view for the boot scene check to skip the motor calibration. It is an option of the assistant (Patrol group) and of the API,
+saved only when you change it and used at the next boot check; once it was set through the API, it wins over `ptz_scene_min` in `akam.conf`. A head that moved by 3 pixels or more is refused whatever the score, so a lower value
+only forgives noise and light, never a moved head. `motion.enabled` and `motion.sensitivity` are in the same Tracking options.
+
 ### Picture orientation (flip, mirror, ceiling)
 
 `image.flip` (vertical), `image.mirror` (horizontal) and `image.ceiling` (both, for a camera mounted upside down) are API settings and
@@ -196,3 +213,16 @@ tracking are not yet checked. `akam picture flip on|off`, `mirror on|off`, `ceil
 that start, and removed five seconds later (or at once on a clean stop); if the camera ever rebooted inside that window, the guard is still there at the next start and
 the speaker is skipped, so a kernel fault on the first run cannot loop the camera. Normal starts (power-up, a restart of the app by the supervisor or the watchdog) write nothing. After you have looked at the log, remove it over SSH
 (`rm /config/akam/audio_out.trying`) and set `audio.out_enable` 1 again. That is the only flash write of the speaker besides the saved setting itself.
+
+## 8. Long press: the lens fully hidden, and sparing the motors
+
+A long press on the button (about 1 s) **closes the camera**: the head turns down and the lens tucks into the base (pan to the home heading, tilt 80 steps above the bottom stop; the video is withheld when `ptz_privacy=1`). A second long press **opens** it again: back to the home view. The same through the API (`ptz.privacy on|off|toggle`, `ptz.park`, `ptz.home`) and Home Assistant buttons. Park is the only motion allowed below the soft range; manual moves, tracking and patrol keep the usual range and are refused while the camera is closed.
+
+The closed pose is a margin above the stop on purpose: the motor never presses against the stop, so closing does not grind and does not lose steps. If your lens is not completely hidden, lower it in `akam.conf`: `ptz_park 1275:60` (PAN:TILT, tilt 50 is the lowest accepted); `ptz_park 1275:300` is the old pose, looking down.
+
+To spare the motors the app now:
+
+- does **not** calibrate at boot when the camera was last left closed (it remembers that, written to the flash only when you close or open it);
+- calibrates at boot only when it cannot prove where the head is: the stock walk to the end stops, once (the motor skipping for about 35 to 60 s is that walk). When the view at home still matches the saved reference, there is no calibration. If it keeps calibrating with a score just under the limit, `ptz_scene_min 0.85` in `akam.conf` accepts it;
+- fixes slow tilt drift with a re-home (the tilt walks down to the stop and back, the full stroke, so the position stays proven) at most once per 6 hours (`ptz_tilt_rehome_gap_min`, minutes, was 30; `ptz_tilt_rehome=off` never);
+- counts what it did: `GET /state` rows `ptz.stall_steps_est` (estimated steps the motor skipped against a stop since the app started), `ptz.cal_full`, `ptz.cal_short`, `ptz.rehome_count`, and logs the estimate with every calibration and re-home.

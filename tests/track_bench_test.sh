@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tracker bench regression test (host, no hardware): runs the closed-loop synthetic scenarios of tools/dev/track_sim.c through the CURRENT tracker
-# (track_logic.c + track.c) and compares every number with tests/golden/track_bench.txt, the numbers of the tracker when the bench was created. A metric that got WORSE than
+# (track_logic.c + track.c) and compares every number with tests/golden/track_bench.txt (the default tracker: the motion-aware search; tests/golden/track_bench_legacy.txt = track.search legacy). A metric that got WORSE than
 # the baseline fails; one that got better is reported ("improved"), and then the baseline is updated on purpose:
 #     TRACK_BENCH_UPDATE=1 tests/track_bench_test.sh      (rewrites tests/golden/track_bench.txt: review the diff, it is the proof of the change)
 # Direction per key: lock / frame: higher is better; err_*, rev_lat_*, still_travel, flips, cmds, starts, reacq_*, lost_ms, tilt_travel, err_drift: lower is better; pan_range / tilt_range are
@@ -30,12 +30,16 @@ if [ "$n" -ge 10 ]; then ok "the sim produced $n scenarios"; else bad "the sim p
 "$REPO/tools/dev/track_score" sim --raw > "$WORK/now2.txt"
 if cmp -s "$WORK/now.txt" "$WORK/now2.txt"; then ok "the sim is deterministic (two runs byte for byte equal)"; else bad "the sim is not deterministic"; fi
 
+GOLDL=$REPO/tests/golden/track_bench_legacy.txt
+TRACK_SIM_SEARCH=legacy "$REPO/tools/dev/track_score" sim --raw > "$WORK/legacy.txt" || { echo "FAIL - track_sim (legacy search) did not run"; exit 1; }
 if [ "${TRACK_BENCH_UPDATE:-0}" = 1 ]; then
     cp "$WORK/now.txt" "$GOLD"
-    echo "baseline rewritten: $GOLD"
+    cp "$WORK/legacy.txt" "$GOLDL"
+    echo "baselines rewritten: $GOLD $GOLDL"
 fi
 
-awk -v gold="$GOLD" '
+compare() { # compare GOLD NOW OUT: 0 when no metric is worse
+    awk -v gold="$1" '
 function tol(k, b,   t) {
     t = (k == "lock" || k == "frame" || k == "err_drift") ? 0.5 : (k ~ /^err_/ ? 1 : (k ~ /^(rev_lat|reacq)/ ? 50 : (k ~ /^(still_travel|tilt_travel)$/ ? 20 : (k == "lost_ms" ? 50 : 2))))
     if (k == "err_drift") t = 1
@@ -65,9 +69,27 @@ END {
     for (nm in has) if (!(nm in seen)) { printf "FAIL - %s: in the baseline, not produced\n", nm; bad++ }
     printf "%s - %d metric(s) worse than the baseline, %d improved\n", bad ? "FAIL" : "ok  ", bad + 0, imp + 0
     exit bad ? 1 : 0
-}' "$WORK/now.txt" > "$WORK/cmp.txt" && cmpst=0 || cmpst=1
+}' "$2" > "$3"
+}
+compare "$GOLD" "$WORK/now.txt" "$WORK/cmp.txt" && cmpst=0 || cmpst=1
 cat "$WORK/cmp.txt"
 [ "$cmpst" = 0 ] || fail=$((fail + 1))
+
+# the legacy lost-target search (track.search legacy, still selectable): its own baseline. The default above is the motion-aware search (the 2K default since 2026-11-26), whose motor travel must stay lower than the legacy search on the pass-by scenarios
+compare "$GOLDL" "$WORK/legacy.txt" "$WORK/cmpm.txt" && cmpm=0 || cmpm=1
+sed 's/^/legacy search: /' "$WORK/cmpm.txt"
+[ "$cmpm" = 0 ] || fail=$((fail + 1))
+for sc in pass_lr pass_rl leave_back hide_still leave_return; do
+    lt=$(grep "^$sc " "$WORK/legacy.txt" | sed 's/.* travel=//')
+    mt=$(grep "^$sc " "$WORK/now.txt" | sed 's/.* travel=//')
+    if [ -n "$lt" ] && [ -n "$mt" ] && [ "${mt%.*}" -lt "${lt%.*}" ]; then ok "$sc: motor travel $lt steps (legacy search) -> $mt (motion search)"; else bad "$sc: motion search travel $mt is not below the legacy $lt"; fi
+done
+# the pass-by must not be tracked worse (lock / frame on the pass scenarios, both directions)
+for sc in pass_lr pass_rl hide_still leave_back; do
+    ll=$(grep "^$sc " "$WORK/legacy.txt" | sed 's/.* lock=\([0-9.]*\) .*/\1/')
+    ml=$(grep "^$sc " "$WORK/now.txt" | sed 's/.* lock=\([0-9.]*\) .*/\1/')
+    if awk -v a="$ml" -v b="$ll" 'BEGIN { exit !(a + 0.5 >= b) }'; then ok "$sc: lock $ll % (legacy) -> $ml % (motion search), not worse"; else bad "$sc: lock $ml % is worse than the legacy $ll %"; fi
+done
 
 # the open-loop replay on the two recorded sessions (tests/fixtures/track): runs, counts the inputs
 out=$("$REPO/tools/dev/track_score" replay --raw "$REPO/tests/fixtures/track/torso_down.raw" "$REPO/tests/fixtures/track/fills_frame.raw")

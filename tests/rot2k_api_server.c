@@ -32,6 +32,7 @@
 #include "picture.h"
 #include "settings.h"
 #include "track_run.h"
+#include "motion.h"
 #include "video.h"
 
 static char g_dir[200];
@@ -243,6 +244,20 @@ int a2k_track_set_tilt(a2k_track_t *t, int on) { (void)t; g_tilt = on; call("tra
 static int g_cscan[3] = { 1, 250, 300 };
 int a2k_track_get_close_scan(a2k_track_t *t, int which) { (void)t; return g_cscan[which]; }
 int a2k_track_set_close_scan(a2k_track_t *t, int which, int v) { (void)t; g_cscan[which] = v; call("track.close_scan %d %d", which, v); return 0; }
+static int g_search = 1; /* TL_SEARCH_MOTION: the 2K default */
+int a2k_track_get_search(a2k_track_t *t) { (void)t; return g_search; }
+int a2k_track_set_search(a2k_track_t *t, int mode) { (void)t; g_search = mode; call("track.search %d", mode); return 0; }
+static int g_smin = 850;
+int a2k_scene_get_min(void) { return g_smin; }
+int a2k_scene_set_min_api(int permille) { if (permille < 800 || permille > 990) return -1; g_smin = permille; call("ptz.scene_min %d", permille); return 0; }
+/* motion (motion.h): a fake with the state of a person moving right */
+static int g_motion_on = 1, g_motion_sens = 5;
+void a2k_motion_set_enabled(int on) { g_motion_on = on; call("motion.enabled %d", on); }
+void a2k_motion_set_sensitivity(int s) { g_motion_sens = s; call("motion.sensitivity %d", s); }
+int a2k_motion_get_sensitivity(void) { return g_motion_sens; }
+void a2k_motion_info(struct a2k_motion_info *o) { memset(o, 0, sizeof *o); o->enabled = g_motion_on; o->valid = 1; o->active = g_motion_on; o->dir = 4; o->x = 40; o->y = 55; o->cells = 9; }
+const char *a2k_motion_source_name(void) { return g_motion_on ? "diff" : "off"; }
+const char *mg_dir_name(int d) { return d == 4 ? "right" : "none"; }
 static int g_lag = 50;
 int a2k_track_get_lag(a2k_track_t *t) { (void)t; return g_lag; }
 void a2k_track_set_lag(a2k_track_t *t, int v) { (void)t; g_lag = v; call("track.lag %d", v); }
@@ -339,6 +354,7 @@ void a2k_ptz_drift_info(a2k_ptz_drift_t *o) { memset(o, 0, sizeof *o); o->have =
 /* real, non-zero values so that the HTTP test proves the REAL settings code (settings.c) serves the re-home / drift-reference keys, not that the rows merely exist */
 void a2k_ptz_rehome_last(unsigned long *last_s, const char **reason) { *last_s = 4242; *reason = "flat"; }
 void a2k_ptz_rehome_info(unsigned *runs, unsigned *cancels) { if (runs) *runs = 3; if (cancels) *cancels = 2; }
+void a2k_ptz_stall_info(unsigned long *stall_est, unsigned *cal_full, unsigned *cal_short, unsigned *rehomes) { if (stall_est) *stall_est = 120; if (cal_full) *cal_full = 1; if (cal_short) *cal_short = 2; if (rehomes) *rehomes = 3; }
 int a2k_ptz_drift_ref_info(unsigned long *age_s) { if (age_s) *age_s = 12; return 3; }
 void a2k_ptz_wear_counts(unsigned *pos, unsigned *scene) { *pos = 7; *scene = 3; }
 int a2k_ptz_nudge(int dx, int dy)

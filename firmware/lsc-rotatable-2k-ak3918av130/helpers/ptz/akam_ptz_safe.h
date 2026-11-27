@@ -102,6 +102,7 @@ struct ptzs_conf {
     uint32_t settle_ms;                            /* pause between the stop and the opposite direction of a reversal, 0..1000 */
     uint32_t ramp_ms;                              /* one rung of the speed ladder per this long, 0 = none, else 50..500 */
     uint32_t px_pan_x10, px_tilt_x10;              /* steps per thumbnail pixel x10 of the scene check (drift correction), 20..2000 */
+    uint32_t tilt_floor;                           /* the frame's tilt minimum when lower than tilt_min (0 = tilt_min): the driver's own tilt limit then sits there, so a PARK below the soft range stays inside the driver frame; only a park goes below tilt_min, in software */
     uint32_t drift_cum_max;                        /* signed cumulative corrected steps per axis since the last calibration, beyond which a recalibration replaces the correction, 10..2000 */
 };
 
@@ -144,7 +145,7 @@ static void ptzs_frame_from_conf(struct ptzs_frame *f, const struct ptzs_conf *c
 {
     f->mn[0] = c->pan_min;
     f->mx[0] = c->pan_max;
-    f->mn[1] = c->tilt_min;
+    f->mn[1] = c->tilt_floor && c->tilt_floor < c->tilt_min ? c->tilt_floor : c->tilt_min;
     f->mx[1] = c->tilt_max;
 }
 
@@ -223,6 +224,7 @@ static void ptzs_conf_defaults(struct ptzs_conf *c)
     c->ramp_ms = PTZS_DEF_RAMP_MS;
     c->px_pan_x10 = PTZS_DEF_PX_PAN_X10;
     c->px_tilt_x10 = PTZS_DEF_PX_TILT_X10;
+    c->tilt_floor = 0;
     c->drift_cum_max = PTZS_DEF_DRIFT_CUM_MAX;
 }
 
@@ -252,6 +254,8 @@ static int ptzs_conf_check(const struct ptzs_conf *c, char *err, size_t n)
         m = "pan_max/tilt_max must be at most 3700 / 2100 (measured mechanical stops)";
     else if (c->pan_min < PTZS_MARGIN || c->tilt_min < PTZS_MARGIN)
         m = "pan_min/tilt_min must be at least 50 steps from the driver's 0";
+    else if (c->tilt_floor && (c->tilt_floor < PTZS_MARGIN || c->tilt_floor > c->tilt_min))
+        m = "tilt_floor must be 50 steps or more from the driver's 0 and not above tilt_min";
     else if (c->pan_max + PTZS_MARGIN > c->pan_step_max || c->tilt_max + PTZS_MARGIN > c->tilt_step_max)
         m = "pan_max/tilt_max must be at least 50 steps below pan_step_max/tilt_step_max";
     else if (c->pan_max < c->pan_min + PTZS_MIN_SPAN || c->tilt_max < c->tilt_min + PTZS_MIN_SPAN)

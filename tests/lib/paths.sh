@@ -26,7 +26,7 @@ SRC_SMOLRTSP=$REPO/third_party/smolrtsp      # fetched by bootstrap, git-ignored
 # Include path of the shared headers (they are included by basename): every directory of src/ that holds headers.
 SHARED_INC=()
 for d in net/rtsp net/mqtt net/http net/onvif net/crypto api core core/control core/version features/audio features/button features/light \
-    features/night features/orient features/ptz features/track features/scene hal; do SHARED_INC+=(-I"$SRC_DIR/$d"); done
+    features/night features/orient features/ptz features/track features/scene features/motion hal; do SHARED_INC+=(-I"$SRC_DIR/$d"); done
 # Include path of the 2K build: its platform (vendor glue), its firmware directory (binding) and the shared headers.
 # shellcheck disable=SC2034 # used by the 2K tests that source this file
 INC_2K=(-I"$REPO/platforms/anyka-ak3918av130" -I"$FW_2K" -I"$FW_2K/helpers/ptz" "${SHARED_INC[@]}")

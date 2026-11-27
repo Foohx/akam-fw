@@ -49,6 +49,9 @@ void a2k_mqtt_set_zones(const a2k_zones_t *z);
 void a2k_mqtt_set_snapshot(int enabled);
 /* Before a2k_mqtt_start: whether the day/night binary_sensor `night` exists. Its state arrives through a2k_mqtt_night. */
 void a2k_mqtt_set_night(int enabled);
+/* Before a2k_mqtt_start: whether the motion entities (binary_sensor `motion`, sensor `motion_direction`) exist. Their state arrives through a2k_mqtt_motion (dir: none | left | right | up | down). */
+void a2k_mqtt_set_motion(int enabled);
+void a2k_mqtt_motion(int active, const char *dir);
 /* Before a2k_mqtt_start: whether the hal_sys diagnostic sensors exist. They are fed by a2k_mqtt_sys (cheap, thread safe, never
  * blocks; a no-op value store when MQTT is off) and published at the periodic republish, not on every sample. */
 void a2k_mqtt_set_sys(int enabled);

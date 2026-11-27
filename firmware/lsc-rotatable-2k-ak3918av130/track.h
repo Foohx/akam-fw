@@ -146,6 +146,9 @@ void a2k_track_get_tilt_back(a2k_track_t *t, int *s);
  * set returns -1 for a value out of range. */
 int a2k_track_set_close_scan(a2k_track_t *t, int which, int v);
 int a2k_track_get_close_scan(a2k_track_t *t, int which);
+/* The lost-target search (API track.search legacy|motion): TL_SEARCH_LEGACY / TL_SEARCH_MOTION; set returns -1 for another value. */
+int a2k_track_set_search(a2k_track_t *t, int mode);
+int a2k_track_get_search(a2k_track_t *t);
 void a2k_track_set_tilt_back(a2k_track_t *t, int s);
 void a2k_track_set_tilt_return(a2k_track_t *t, int s);
 int a2k_track_enabled(a2k_track_t *t);

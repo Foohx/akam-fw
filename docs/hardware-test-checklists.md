@@ -68,6 +68,10 @@ Host tests (`tests/rot2k_control_api_*_test.sh`) cover the whole API. On the cam
 | API-8 | Cost | `a2k_mem_report` (log) VmRSS/MemAvailable before the first key, with a key and idle, and after a 1 minute burst of requests (gate: +64 KB RSS, +40 KB binary; the binary is +53 KB, see the spec); `video.fps_actual` and CPU unchanged under a flood of bad requests (they are rejected before any crypto once locked) | [ ] |
 | API-9 | Hostile input | `curl --data` of 9 KB, a 5 KB header, chunked upload, `GET /akam/v1/../x`: 413, 431, 411, 400/404; nothing crashes (`akam.log` has no CRASH line) | [ ] |
 | API-10 | Fail closed | `chmod 644 /config/akam/api_keys`: the API closes (`keys_perm`); `chmod 600` and it reopens; `echo x >> /config/akam/api_keys`: closes (`keys_invalid`) and the file is kept | [ ] |
+| PARK-1 | Long press: closed, then back | Long press the button: the lens is fully hidden in the base (not looking down out of it), no grinding or clicking, the video stops (`ptz_privacy=1`); long press again: back to the home view. If the lens is not hidden, try `ptz_park 1275:60` | [ ] |
+| PARK-2 | The closed pose is not against the stop | Close the camera ten times: smooth moves, no skipping sound at the end; `ptz.stall_steps_est` in `GET /state` does not grow by a close | [ ] |
+| PARK-3 | Boot after a close | Close the camera, power cycle: it boots closed with no head motion (log `the head was last left parked`, `ptz.cal_full` 0); a long press opens it at the home view | [ ] |
+| PARK-4 | Motor skipping at boot | Cold boot with the head at home: does it calibrate? Read `ptz.stall_steps_est`, `ptz.cal_full`, `ptz.cal_short`; the default threshold is now 0.85 (`ptz.scene_min`, API or assistant; was 0.90): the boot that read `score 0.899, needs 0.900` should now say MATCH and skip the calibration; if it still calibrates, read the score in the log. Also try `ptz.scene_min` 0.95 then 0.85 and check the next boot line names the new threshold | [ ] |
 
 
 ### 2K picture orientation (flip, mirror, ceiling mount)
@@ -88,6 +92,25 @@ with the signed API (or the Home Assistant switches **Image flip**, **Image mirr
 | O2K-8 | Ceiling mount, tracker | Camera mounted upside down (or the camera turned over on the desk) with `image.ceiling` 1: with `track.enabled` on, the head pans toward the person, not away, and tilts the right way with `track.tilt` on | [ ] |
 | O2K-9 | Zones and PTZ follow | A zone drawn in the displayed picture covers the same part of the scene before and after a change of orientation; the ONVIF or API pan and tilt directions match the picture | [ ] |
 | O2K-10 | Home Assistant | The three switches show the real state; `Ceiling mount` reads ON only while flip and mirror are both on | [ ] |
+
+### 2K motion detection and the lost-target search (host-tested only, nothing here was run on a camera)
+
+Settings: `motion.enabled` (default on), `motion.sensitivity` (1-10, 5), `track.search` (`motion` default, `legacy`), `ptz.scene_min` (0.80-0.99, 0.85); read-only rows `motion.active`, `motion.dir`, `motion.x`, `motion.y`, `motion.source`. [How it works](porting/lsc-rotatable-2k/tracking.md#motion-detection-and-the-motion-aware-search)
+
+| # | Check | How | Done |
+|---|---|---|---|
+| MOT-1 | Motion row follows a hand | Wave in front of the camera (head still): `motion.active` 1, `motion.x` / `motion.y` where you are in the picture; still: 0 within a second. Note `sys.cpu_pct` with `motion.enabled` 1 and 0 | [ ] |
+| MOT-2 | Direction is the picture's | Walk left to right in the picture: `motion.dir` right; back: left; with `image.mirror` 1 the same physical walk reads the other way; with `image.flip` 1 up / down swap; ceiling both. Change the orientation while walking: nothing false for about 3 s | [ ] |
+| MOT-3 | Nothing false | The head moving (a patrol or `ptz.vel`), a day/night switch (force `night.mode`), an RTSP client connecting / leaving, a `video0.fps` change: `motion.active` stays 0 with nobody there. If it fires, set `motion_source` or lower `motion.sensitivity` | [ ] |
+| MOT-4 | Home Assistant | The binary sensor `Motion` and the sensor `Motion direction` appear (MQTT on) and follow the rows | [ ] |
+| MOT-5 | Pass-by, left to right | `track.enabled` 1, `track.search` motion, walk across the view in 3 s and leave: one short pan look toward where you left, then home within about 3 s of the look; no scan, no sweep | [ ] |
+| MOT-6 | Pass-by, right to left | Same, the other way | [ ] |
+| MOT-7 | Leave and come back | Leave through one edge, come back after 5 s: at most one look, the head follows you again; leave and come back twice within 30 s: only the first leave gets a look | [ ] |
+| MOT-8 | Standing still | Stand still in view, then hide behind something: no search move at all, the head goes home after `track.return_delay_s` | [ ] |
+| MOT-9 | Steer toward motion | Leave the view, then wave at one side within 8 s: one short move toward the motion, the detector takes over | [ ] |
+| MOT-10 | Motor travel | `ptz.travel_since_cal` before and after ten pass-bys: with `track.search` motion about a fifth of the legacy travel | [ ] |
+| MOT-12 | Defaults and options | A fresh install: `track.search` reads `motion` and `ptz.scene_min` reads `0.85` with no setting saved; set each through the assistant (Tracking / Patrol options) or `PATCH /settings`, reboot: the value is kept, the boot log names the threshold, and `track.search legacy` brings the sweeps back | [ ] |
+| MOT-11 | Vendor statistics (optional) | `motion_source=md`: `motion.source` reads `md` and the direction is right in the four orientations; if it reads `md>diff` the statistics are not usable (log). Try `motion_md_frame=sensor` when the direction is mirrored under flip / mirror | [ ] |
 
 ### 2K video latency
 

@@ -42,6 +42,7 @@
 #define VERIFY_TOL 4u                   /* steps: counters re-read before a scene reference is written */
 #define SHORT_PAN_MARGIN 400u           /* short calibration: the counters are declared this far above home (pan) ... */
 #define SHORT_TILT_MARGIN 300u          /* ... and this far (tilt): the head is believed within this of home, the sweep still ends on the stop */
+#define TILT_BOUND_MARGIN 250u          /* bounded tilt re-home: the counter is declared this far above the BELIEVED tilt (about 11 % of the 2315 stroke: covers the corrected drift budget, 120 steps, and the backlash), not at the stock maximum */
 #define TILT_EXTRA_STEPS 300u           /* second tilt sweep: the real travel (about 2315) is longer than the declared step maximum (2160) */
 
 struct hal_ptz {
@@ -66,6 +67,8 @@ struct hal_ptz {
     int canceled;
     int scene_claim;             /* this start's position is a claim proven by the scene check (a failure of the position later forgets the reference) */
     unsigned cal_runs;           /* completed calibrations (this process) */
+    unsigned cal_short, rehomes; /* completed SHORT calibrations, completed tilt re-homes (this process) */
+    unsigned long stall_est;     /* ESTIMATED steps the motor skipped against a stop since the process start: per sweep, the steps declared beyond the believed (or, unknown, assumed mid-stroke) distance to the stop */
     uint32_t bpan, btilt;        /* the position when the current motion began */
     unsigned wpan, wtilt;        /* the weight of a step of each axis in the travel of the current goto / step / nudge (1, 2 at divisor 3, 3 at divisor 2) */
     unsigned long travel;        /* weighted steps travelled by tracked motions since the last calibration (this process): see the continuous block of akam_ptz_safe.h */
@@ -186,7 +189,15 @@ hal_ptz_t *hal_ptz_new(const hal_ptz_desc_t *d, const hal_ptz_ops_t *ops, const 
     if (p->d.step < 1 || p->d.step > 1000)
         p->d.step = 200;
     p->d.pan_park = clampu(p->d.pan_park, p->d.pan_min, p->d.pan_max); /* a park outside the soft range is pulled in */
-    p->d.tilt_park = clampu(p->d.tilt_park, p->d.tilt_min, p->d.tilt_max);
+    /* The park tilt is the ONLY target allowed below the soft range (the closed pose: the lens hidden in the base, a margin above the bottom stop). The driver frame then reaches down to it
+     * (tilt_floor), so the driver's own limit holds the head there even if this process dies; every other motion keeps the soft range in software (park runs with its own copy of the conf). */
+    p->d.tilt_park = clampu(p->d.tilt_park, PTZS_MARGIN, p->d.tilt_max);
+    p->cf.tilt_floor = p->d.tilt_park < p->d.tilt_min ? p->d.tilt_park : 0;
+    if (ptzs_conf_check(&p->cf, e, sizeof e)) {
+        if (err)
+            snprintf(err, errcap, "%s", e);
+        return NULL;
+    }
     p->sops.open_dev = w_open;
     p->sops.ioctl_fn = w_ioctl;
     p->sops.sleep_ms = w_sleep;
@@ -279,7 +290,7 @@ static int declare_final(hal_ptz_t *p, uint32_t pan, uint32_t tilt)
 }
 
 /* One sweep: the driver counter was declared at its maximum; walk the axis to 0 (the driver stops itself there). */
-static int sweep(hal_ptz_t *p, unsigned ax, uint32_t steps)
+static int sweep(hal_ptz_t *p, unsigned ax, uint32_t steps, uint32_t dist)
 {
     struct ptzs_ctx *x = &p->x;
     const unsigned dir = p->d.dir[ax ? HAL_PTZ_DOWN : HAL_PTZ_LEFT], sp = p->cf.speed;
@@ -288,6 +299,7 @@ static int sweep(hal_ptz_t *p, unsigned ax, uint32_t steps)
     int rc = 0;
     if (ptzs_read_axis(x, ax, &cur) || cur != steps)
         return HAL_PTZ_EIO;
+    p->stall_est += steps > dist ? steps - dist : 0; /* the walk that ends against the stop skips this many steps (an estimate: nothing can see the stop) */
     if (ptzs_send_move(x, dir, sp, sp)) {
         plog(p, "ptz: calibration: move failed: %s", strerror(errno));
         (void)ptzs_stop(x);
@@ -339,7 +351,7 @@ static int calibrate_x(hal_ptz_t *p, int quick)
     }
     rc = drv_init(p, lim, cnt, NULL);
     if (!rc)
-        rc = sweep(p, 1, cnt[1]);
+        rc = sweep(p, 1, cnt[1], quick ? p->cf.tilt_home : cnt[1] / 2); /* quick: believed at home; else unknown: assumed mid-stroke */
     if (!rc && !quick) {
         /* The real tilt travel (about 2315 steps, measured) is longer than the declared maximum (2160): the first sweep can end 150 steps
          * above the bottom stop. Declare a short distance again (the pan counter keeps its maximum) and walk down once more: the motor
@@ -347,10 +359,10 @@ static int calibrate_x(hal_ptz_t *p, int quick)
         uint32_t cnt2[2] = { p->cf.pan_step_max, TILT_EXTRA_STEPS };
         rc = drv_init(p, lim, cnt2, NULL);
         if (!rc)
-            rc = sweep(p, 1, TILT_EXTRA_STEPS);
+            rc = sweep(p, 1, TILT_EXTRA_STEPS, 0);
     }
     if (!rc)
-        rc = sweep(p, 0, cnt[0]);
+        rc = sweep(p, 0, cnt[0], quick ? p->cf.pan_home : cnt[0] / 2);
     if (!rc) {
         plog(p, "ptz: calibration: both stops reached, going home %u/%u", (unsigned)p->cf.pan_home, (unsigned)p->cf.tilt_home);
         ac.pan_min = ac.tilt_min = 1;
@@ -371,6 +383,8 @@ static int calibrate_x(hal_ptz_t *p, int quick)
     if (!rc)
         rc = declare_final(p, p->cf.pan_home, p->cf.tilt_home);
     p->cal_active = 0;
+    if (!rc && quick)
+        p->cal_short++;
     if (!rc && !quick) { /* a SHORT calibration does not reset the travel (the wear budget) nor count as a full one: the periodic full calibration keeps counting */
         p->cal_runs++;
         p->travel = 0;
@@ -384,7 +398,7 @@ static int calibrate_x(hal_ptz_t *p, int quick)
             scene_forget(p, "calibration failed");
     } else {
         p->scene_claim = 0;
-        plog(p, "ptz: calibrated, at home %u/%u", (unsigned)p->cf.pan_home, (unsigned)p->cf.tilt_home);
+        plog(p, "ptz: calibrated, at home %u/%u (%s; estimated steps skipped against the stops since start: %lu)", (unsigned)p->cf.pan_home, (unsigned)p->cf.tilt_home, quick ? "short" : "full stroke, the position was unknown", p->stall_est);
     }
     return rc;
 }
@@ -535,6 +549,20 @@ int hal_ptz_start(hal_ptz_t *p, int cal)
         plog(p, "ptz: ptz_cal=off: the motor is not initialised, motion is refused (akam_ptz init, then restart)");
         return 0;
     }
+    /* Last left parked (recorded by the app when the park finished): the head is believed at the park pose, declared to the driver without any motion: no calibration, no stall against a stop. The risk
+     * (a head turned by hand while the power was off, a park interrupted by a power cut after the record) is bounded by the park margin and caught by the drift check once the head is home again. */
+    if (p->ops.boot_pose && !START_CANCELLED()) {
+        uint32_t bp = 0, bt = 0;
+        if (p->ops.boot_pose(&bp, &bt) == 1 && bp == p->d.pan_park && bt == p->d.tilt_park) {
+            if (declare_final(p, bp, bt) == 0) {
+                p->scene_claim = 0;
+                plog(p, "ptz: the head was last left parked: position %u/%u declared, no calibration, no motion", (unsigned)bp, (unsigned)bt);
+                return 0;
+            }
+            (void)frames_invalidate(p);
+            plog(p, "ptz: last left parked, but the driver init failed: the usual start");
+        }
+    }
     /* A cold boot calibrates (like the stock) unless the scene check proves the head is at HOME: the head can move outside the app (by hand,
      * akam_ptz, the stock firmware, a power cut while it was away) and the open-loop counters cannot tell. No position is stored on the flash:
      * the only claim a cold boot can make is the configured home, proven by the home reference image. */
@@ -668,13 +696,18 @@ static int rehome_settle(hal_ptz_t *p, uint32_t cp, uint32_t belief)
     return rc ? rc : declare_final(p, cp, p->cf.tilt_min);
 }
 
-int hal_ptz_tilt_rehome(hal_ptz_t *p)
+static int tilt_rehome(hal_ptz_t *p, int bounded);
+int hal_ptz_tilt_rehome(hal_ptz_t *p) { return tilt_rehome(p, 0); }
+int hal_ptz_tilt_rehome_bounded(hal_ptz_t *p) { return tilt_rehome(p, 1); }
+
+static int tilt_rehome(hal_ptz_t *p, int bounded)
 {
     struct ptzs_ctx *x = &p->x;
     struct ptzs_conf ac = p->cf;
     struct ptzs_frame fr;
     uint32_t lim[2] = { p->cf.pan_step_max, p->cf.tilt_step_max }, cnt[2], cp, ct, start, cur = 0, belief, walked;
-    int rc, rc2, canceled, got, leg;
+    int rc, rc2, canceled, got, leg, legs = 2;
+    unsigned long stall0 = p->stall_est;
     if (p->fd < 0 || !p->trusted || !p->pos_valid || p->moving || p->cal_active)
         return HAL_PTZ_EREFUSED;
     ST(p->cancel, 0);
@@ -686,13 +719,18 @@ int hal_ptz_tilt_rehome(hal_ptz_t *p)
     }
     cp = p->pan;
     ct = p->tilt;
-    plog(p, "ptz: tilt re-home: down to the bottom stop whatever the slip (the full stroke; believed %u, pan %u untouched), then up to home %u", (unsigned)ct, (unsigned)cp, (unsigned)p->cf.tilt_home);
+    if (bounded && ct + TILT_BOUND_MARGIN <= lim[1])
+        legs = 1; /* one walk of the believed distance + the margin: the motor skips at most the margin against the stop */
+    if (legs == 1)
+        plog(p, "ptz: tilt re-home (bounded): down to the bottom stop, at most believed %u + %u steps (pan %u untouched), then up to home %u", (unsigned)ct, TILT_BOUND_MARGIN, (unsigned)cp, (unsigned)p->cf.tilt_home);
+    else
+        plog(p, "ptz: tilt re-home: down to the bottom stop whatever the slip (the full stroke; believed %u, pan %u untouched), then up to home %u", (unsigned)ct, (unsigned)cp, (unsigned)p->cf.tilt_home);
     p->cal_active = 1;
     /* The walk must reach the bottom stop from ANY real tilt: like the boot calibration, the counter is declared at the stock maximum (2160) and walked to 0, then declared 300 and walked again
      * (the real travel, about 2315, is longer than the declared maximum): the head always ends ON the stop, however large the slip (up to the whole stroke). */
     walked = 0;
-    for (leg = 0; leg < 2; leg++) {
-        start = leg ? TILT_EXTRA_STEPS : lim[1];
+    for (leg = 0; leg < legs; leg++) {
+        start = legs == 1 ? ct + TILT_BOUND_MARGIN : leg ? TILT_EXTRA_STEPS : lim[1];
         cnt[0] = cp;
         cnt[1] = start;
         p->nocancel = 1; /* the driver inits (1 s each) are not interrupted: a cancel is taken by the first poll of the walk */
@@ -704,7 +742,7 @@ int hal_ptz_tilt_rehome(hal_ptz_t *p)
             plog(p, "ptz: tilt re-home: the driver init failed (%d): the position is no longer trusted", rc);
             return rc;
         }
-        rc = sweep(p, 1, start);
+        rc = sweep(p, 1, start, leg ? 0 : ct);
         if (rc)
             break;
         walked += start;
@@ -776,11 +814,23 @@ int hal_ptz_tilt_rehome(hal_ptz_t *p)
         (void)frames_invalidate(p);
         return rc;
     }
-    plog(p, "ptz: tilt re-homed: the tilt counter is the stop-derived one again, at home %u/%u", (unsigned)cp, (unsigned)p->cf.tilt_home);
+    p->rehomes++;
+    plog(p, "ptz: tilt re-homed (%s): the tilt counter is the stop-derived one again, at home %u/%u; estimated steps skipped against the stop: %lu (since start: %lu)", legs == 1 ? "bounded" : "full stroke", (unsigned)cp, (unsigned)p->cf.tilt_home, p->stall_est - stall0, p->stall_est);
     return 0;
 }
 
 unsigned hal_ptz_cal_count(const hal_ptz_t *p) { return p->cal_runs; }
+void hal_ptz_stall_stats(const hal_ptz_t *p, unsigned long *stall_est, unsigned *cal_full, unsigned *cal_short, unsigned *rehomes)
+{
+    if (stall_est)
+        *stall_est = p->stall_est;
+    if (cal_full)
+        *cal_full = p->cal_runs;
+    if (cal_short)
+        *cal_short = p->cal_short;
+    if (rehomes)
+        *rehomes = p->rehomes;
+}
 unsigned long hal_ptz_travel(const hal_ptz_t *p) { return p->travel; }
 unsigned long hal_ptz_reversals(const hal_ptz_t *p) { return p->reversals; }
 
@@ -946,7 +996,22 @@ int hal_ptz_home(hal_ptz_t *p)
         rc = ptzs_goto(&p->x, p->d.pan_home, p->d.tilt_home, p->cf.speed);
     return end(p, rc);
 }
-int hal_ptz_park(hal_ptz_t *p) { return hal_ptz_goto(p, p->d.pan_park, p->d.tilt_park); }
+/* Park = the closed pose. Its tilt may lie below the soft range (never below the park margin above the bottom stop: no stall, no grinding): the goto runs on a copy of the conf whose
+ * tilt minimum is the park tilt, so the soft range keeps applying to every other motion. The position stays trusted: the counter is the driver's own, inside its frame (tilt_floor). */
+int hal_ptz_park(hal_ptz_t *p)
+{
+    struct ptzs_conf pc = p->cf;
+    int rc = begin(p);
+    if (rc)
+        return rc;
+    set_weights(p, p->cf.speed);
+    if (pc.tilt_min > p->d.tilt_park)
+        pc.tilt_min = p->d.tilt_park;
+    p->x.cf = &pc;
+    rc = ptzs_goto(&p->x, p->d.pan_park, p->d.tilt_park, p->cf.speed);
+    p->x.cf = &p->cf;
+    return end(p, rc);
+}
 
 int hal_ptz_step(hal_ptz_t *p, int dir)
 {

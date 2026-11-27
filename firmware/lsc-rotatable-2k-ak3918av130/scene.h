@@ -21,6 +21,9 @@
 
 /* ptz_scene_min as permille (sc_parse_min); default SC_MIN_DEFAULT. Before a2k_ptz_start. */
 void a2k_scene_set_min(int permille);
+/* API ptz.scene_min (permille 800..990): applied now, so the next boot check uses it, and it overrides the akam.conf key from then on. -1 out of range. */
+int a2k_scene_set_min_api(int permille);
+int a2k_scene_get_min(void);
 /* Detection thread: the Y plane of one frame (w x h, stride bytes per line). Cheap; throttled inside. */
 void a2k_scene_feed(const uint8_t *y, unsigned w, unsigned h, unsigned stride);
 /* ptz_drift_ref (default 1): the drift reference (src/features/track/drift_match.h) is captured in RAM after a calibration and used by the drift check; 0 = neither. Before a2k_ptz_start. */

@@ -979,6 +979,14 @@ int main(void)
     rmdir(dir);
     drift_ref_tests(h);
     orient_tests(h);
+    printf("== boot scene threshold: default 0.85, akam.conf key, API row overrides it\n");
+    CHECK(SC_MIN_DEFAULT == 850 && a2k_scene_get_min() == 850, "the default threshold is 0.85");
+    a2k_scene_set_min(900);
+    CHECK(a2k_scene_get_min() == 900, "akam.conf ptz_scene_min 0.90 still works while the API row was never set");
+    CHECK(a2k_scene_set_min_api(799) == -1 && a2k_scene_set_min_api(991) == -1 && a2k_scene_get_min() == 900, "the API row refuses below 0.80 and above 0.99 and keeps the value");
+    CHECK(a2k_scene_set_min_api(870) == 0 && a2k_scene_get_min() == 870, "the API row sets 0.87");
+    a2k_scene_set_min(900);
+    CHECK(a2k_scene_get_min() == 870, "once set through the API, the akam.conf key no longer overrides it");
     printf("rot2k scene glue unit: %d failed\n", fails);
     return fails ? 1 : 0;
 }

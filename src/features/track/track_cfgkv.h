@@ -12,7 +12,7 @@
     X(lead_pct) X(lead_max) X(tilt_enable) X(lost_grace_s) X(return_home) X(return_delay_s) X(head_pct) X(tilt_return_s) X(sticky_gate_pct) X(invert_pan) \
     X(invert_tilt) X(zone_x_pct) X(zone_y_pct) X(zone_head_pct) X(zone_stop_pct) X(meas_px) X(accel_mms2) X(steps_rad) X(person_h_mm) X(shoulder_mm) \
     X(full_pct) X(predict_ms) X(motion) X(lease_ms) X(rate_k) X(gap_predict_ms) X(lost_n) X(tilt_back_s) X(tilt_back_min) X(close_scan) X(close_scan_up) X(close_scan_down) X(close_scan_cooldown_s) X(lag_ms) \
-    X(head_row_pct) X(head_band_pct) X(head_meas_px) X(head_mm)
+    X(head_row_pct) X(head_band_pct) X(head_meas_px) X(head_mm) X(search_mode) X(pass_s) X(pass_home_s) X(search_cooldown_s) X(reacq_s)
 
 /* "key=value " for every field into out; returns the length (truncated at cap - 1). */
 static inline size_t tl_cfg_kv_dump(const struct tl_cfg *c, char *out, size_t cap)

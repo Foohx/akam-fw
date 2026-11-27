@@ -535,6 +535,26 @@ int a2k_track_get_close_scan(a2k_track_t *t, int which)
     return v;
 }
 
+/* The lost-target search (API track.search): 0 = legacy, 1 = motion (track_logic.h TL_SEARCH_*). set: -1 for another value. */
+int a2k_track_set_search(a2k_track_t *t, int mode)
+{
+    if (mode != TL_SEARCH_LEGACY && mode != TL_SEARCH_MOTION) return -1;
+    pthread_mutex_lock(&t->mu);
+    t->cfg.search_mode = mode;
+    t->tl.cfg.search_mode = mode;
+    pthread_mutex_unlock(&t->mu);
+    return 0;
+}
+
+int a2k_track_get_search(a2k_track_t *t)
+{
+    int v;
+    pthread_mutex_lock(&t->mu);
+    v = t->cfg.search_mode;
+    pthread_mutex_unlock(&t->mu);
+    return v;
+}
+
 void a2k_track_get_tilt_back(a2k_track_t *t, int *s)
 {
     pthread_mutex_lock(&t->mu);

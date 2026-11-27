@@ -82,6 +82,10 @@ Rules:
 | `track.close_scan_up` | int 0..600 (default 250) | steps above the loss tilt the close-scan goes; 0 = skip | live | yes |
 | `track.close_scan_down` | int 0..600 (default 300) | steps below the loss tilt the close-scan goes; 0 = skip | live | yes |
 | `track.lag_ms` | int -150..300 (default 50) | video latency of the pose-at-capture lookup (negative allowed) | live | yes |
+| `track.search` | enum legacy, motion (default motion) | the lost-target search: motion = short looks toward the exit / new motion, no scans or sweeps | live | yes |
+| `motion.enabled` | bool (default 1) | motion detection on the picture | live | yes |
+| `motion.sensitivity` | int 1..10 (default 5) | motion detection sensitivity | live | yes |
+| `motion.active`, `motion.dir`, `motion.x`, `motion.y`, `motion.source` | read only | motion now, direction in the picture (none, left, right, up, down), centroid percent, source | n/a | no |
 | `led.mode`, `led.boot/nowifi/person/stream/night/idle` | enum / pattern | `auto|on|off`; patterns | live | yes |
 | `video0.kbps/max_kbps/fps/min_qp/max_qp/gop/rc` (and `video1.*`) | int/enum | `video.h` ranges | live, else restart-component | yes |
 | `ptz.park`, `ptz.privacy`, `ptz.cal` | pattern/bool/enum | `PAN:TILT`, 0/1, `auto|off` | live | yes |

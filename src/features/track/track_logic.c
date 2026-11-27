@@ -144,6 +144,11 @@ void tl_cfg_defaults(struct tl_cfg *c) {
     c->rev_n = REV_N;
     c->rev_window_ms = REV_WINDOW_MS_V;
     c->rev_hold_ms = REV_HOLD_MS_V;
+    c->search_mode = TL_SEARCH_LEGACY;
+    c->pass_s = 4;
+    c->pass_home_s = 3;
+    c->search_cooldown_s = 30;
+    c->reacq_s = 8;
 }
 
 void tl_cfg_dev(struct tl_cfg *c) {
@@ -296,6 +301,7 @@ int tl_cfg_validate(const struct tl_cfg *c) {
     if (c->lost_n < -1 || c->lost_n > TL_MAX_STEPS || c->tilt_back_s < 0 || c->tilt_back_s > 600 || c->tilt_back_min < 40 || c->tilt_back_min > 1500) return -1;
     if ((c->close_scan & ~1) || c->close_scan_up < 0 || c->close_scan_up > 600 || c->close_scan_down < 0 || c->close_scan_down > 600 || c->close_scan_cooldown_s < 0 || c->close_scan_cooldown_s > 600 || c->close_bridge_ms < 0 || c->close_bridge_ms > 10000) return -1;
     if (c->rev_guard_ms < 0 || c->rev_guard_ms > 5000 || c->rev_n < 1 || c->rev_n > TL_REV_MAX || c->rev_window_ms < 1000 || c->rev_window_ms > 60000 || c->rev_hold_ms < 0 || c->rev_hold_ms > 60000) return -1;
+    if ((c->search_mode != TL_SEARCH_LEGACY && c->search_mode != TL_SEARCH_MOTION) || c->pass_s < 0 || c->pass_s > 60 || c->pass_home_s < 0 || c->pass_home_s > 600 || c->search_cooldown_s < 0 || c->search_cooldown_s > 3600 || c->reacq_s < 0 || c->reacq_s > 60) return -1;
     if ((c->return_home & ~1) || (c->tilt_enable & ~1) || (c->invert_pan & ~1) || (c->invert_tilt & ~1)) return -1;
     return 0;
 }
@@ -768,12 +774,19 @@ static int loss_evidence(const tl_t *t, int fw, int fh, int *dir) {
 
 static int sweep_step(tl_t *t, int64_t now, const struct tl_ptz *ptz, struct tl_out *out);
 
+/* The delay of the home return after the grace: the passer-by of the motion-aware search goes home sooner (pass_home_s), nobody else changes. */
+static int ms_home_delay(const tl_t *t) {
+    const struct tl_cfg *c = &t->cfg;
+    if (c->search_mode == TL_SEARCH_MOTION && c->lost_n < 0 && t->ms_passer && t->ms_ep == t->last_seen_ms && c->pass_home_s < c->return_delay_s) return c->pass_home_s;
+    return c->return_delay_s;
+}
+
 /* The loss is over (the grace ran out): the return home, or the tilt back to the home tilt in stay mode. Shared by both motion modes. 1 when *out was set. */
 static int loss_tail(tl_t *t, int64_t now_ms, const struct tl_ptz *ptz, int stale, int modern, struct tl_out *out) {
     const struct tl_cfg *c = &t->cfg;
     if (modern && sweep_step(t, now_ms, ptz, out)) return 1;
     if (c->return_home && t->home_pending && t->nudged && !ptz->moving && now_ms >= t->home_retry_at &&
-        now_ms - t->last_seen_ms >= ((int64_t)c->lost_grace_s + c->return_delay_s) * 1000) {
+        now_ms - t->last_seen_ms >= ((int64_t)c->lost_grace_s + ms_home_delay(t)) * 1000) {
         t->home_pending = 0;
         t->nudged = 0;
         t->settle_wait = t->has_settled = 0;
@@ -927,7 +940,7 @@ static int sweep_step(tl_t *t, int64_t now, const struct tl_ptz *ptz, struct tl_
     const struct tl_cfg *c = &t->cfg;
     int64_t lost = now - t->last_seen_ms;
     int room_lo = ptz->pan - ptz->pan_min, room_hi = ptz->pan_max - ptz->pan, rm = t->sw_dir > 0 ? room_hi : room_lo, v = 0;
-    if (c->lost_n >= 0 || c->motion != TL_MOTION_CONT || !t->last_seen_ms || t->sw_st == SW_DONE) return 0;
+    if (c->lost_n >= 0 || c->motion != TL_MOTION_CONT || c->search_mode == TL_SEARCH_MOTION || !t->last_seen_ms || t->sw_st == SW_DONE) return 0; /* the motion-aware search never sweeps the range */
     if (t->sw_st == SW_IDLE) {
         if (lost < ((int64_t)c->lost_grace_s * 1000 + SW_AFTER_MS)) return 0;
         if (lost > (int64_t)c->lost_grace_s * 1000 + SW_AFTER_MS + SW_START_WIN_MS || ptz->pan_max - ptz->pan_min < 2 * SW_STRIDE) { t->sw_st = SW_DONE; return 0; }
@@ -1065,6 +1078,79 @@ static int policy_keeps_tilt(const struct tl_cfg *c) {
     int i;
     if (c->lost_n < 0) return !c->return_home;
     for (i = 0; i < c->lost_n; i++) if (c->lost[i].kind == TLS_HOME) return 0;
+    return 1;
+}
+
+/* ---- the motion-aware search (search_mode = TL_SEARCH_MOTION, continuous, legacy lost policy): SIMPLE and sparing the motors. At most MS_MAX_MOVES short moves per loss (one look toward where the person
+ * went, and one steer toward motion that appears afterwards), each MS_LOOK_MS long at rate_k / SWEEP_DIV (about 190 steps), never within MS_ROOM of a soft limit, at most one look per search_cooldown_s,
+ * no close scan, no backsweep, no full-range sweep. A passer-by (followed for less than pass_s) gets one look and only after an edge exit. No evidence = no move: the head waits, then goes home. 1 when a command was emitted. ---- */
+#define MS_MAX_MOVES 2
+#define MS_LOOK_MS 700
+#define MS_ROOM 300        /* steps to a soft limit under which no look is started toward it (a look travels about 190 steps: a stop is never reached) */
+#define MS_STEER_X 150     /* a motion centroid further than this (permille of the width) from the middle is steered to; closer, the person is in view and the detector gets it */
+#define MS_STEER_Y 200
+#define MS_DIR_AGE_MS 1500 /* the motion direction before the loss counts when it is this recent */
+static int ms_loss(tl_t *t, int64_t now, const struct tl_ptz *ptz, int fw, int fh, int rpan_lo, int rpan_hi, int rt_lo, int rt_hi, struct tl_out *out) {
+    const struct tl_cfg *c = &t->cfg;
+    const struct tl_mot *mo = &t->mot;
+    int m = c->invert_pan ? -1 : 1, kt = c->invert_tilt ? 1 : -1, sp = c->rate_k / SWEEP_DIV, dir = TL_EXIT_NONE, steer = 0, dx = 0, dy = 0;
+    int64_t dur = MS_LOOK_MS;
+    if (t->ms_ep != t->last_seen_ms) { /* a new loss */
+        int ed = (t->last_ff || t->ff_set || t->last_nl) ? TL_EXIT_NONE : exit_dir(t, fw, fh), md = mo->last_dir;
+        t->ms_ep = t->last_seen_ms;
+        t->ms_moves = 0;
+        t->ms_until = 0;
+        t->ms_tilt0 = ptz->tilt;
+        /* the motion heading the other way just before the loss (a person at the edge who turned back) cancels the look */
+        if (mo->valid && md && mo->dir_ms && t->last_seen_ms - mo->dir_ms <= MS_DIR_AGE_MS &&
+            (((ed == TL_EXIT_LEFT && md == TL_EXIT_RIGHT) || (ed == TL_EXIT_RIGHT && md == TL_EXIT_LEFT) || (ed == TL_EXIT_UP && md == TL_EXIT_DOWN))))
+            ed = TL_EXIT_NONE;
+        /* a passer-by: followed briefly AND gone through a side or the top (a short sighting that just vanishes in the middle is not "passing by") */
+        t->ms_passer = t->seen0_ms && t->last_seen_ms - t->seen0_ms < (int64_t)c->pass_s * 1000 && (ed == TL_EXIT_LEFT || ed == TL_EXIT_RIGHT || ed == TL_EXIT_UP);
+        t->ms_dir = ed;
+        t->dbg.exit = ed;
+    }
+    if (t->ms_until > 0) { /* a look is running: bounded, re-commanded, checked against the soft limits */
+        int sx = t->ms_vx, sy = t->ms_vy;
+        if (now >= t->ms_until || (sx > 0 && rpan_hi <= ROOM_MIN) || (sx < 0 && rpan_lo <= ROOM_MIN) || (sy > 0 && rt_hi <= ROOM_MIN) || (sy < 0 && rt_lo <= ROOM_MIN)) {
+            t->ms_until = -1;
+            emit_vel(t, out, now, 0, 0);
+            return 1;
+        }
+        t->dbg.why = "look";
+        emit_vel(t, out, now, sx, sy);
+        return 1;
+    }
+    if (t->ms_moves >= MS_MAX_MOVES || (t->ms_passer && t->ms_moves >= 1)) return 0;
+    if (!t->fresh_loss_ms) t->fresh_loss_ms = now;
+    if (now - t->fresh_loss_ms < LOSS_FRESH_MS) return 0; /* fresh no-box frames first: never right after the camera's own move */
+    /* motion that appeared after the loss wins: steer toward it, the detector confirms */
+    if (mo->valid && !mo->masked && mo->active && mo->last_active_ms > t->last_seen_ms && now - t->last_seen_ms <= ((int64_t)c->lost_grace_s + c->reacq_s) * 1000 && !t->ms_passer) {
+        int ox = mo->cx - 500, oy = mo->cy - 500;
+        if (iabs64(ox) >= MS_STEER_X && iabs64(ox) * 3 >= iabs64(oy) * 2) dir = ox < 0 ? TL_EXIT_LEFT : TL_EXIT_RIGHT;
+        else if (c->tilt_enable && iabs64(oy) >= MS_STEER_Y) dir = oy < 0 ? TL_EXIT_UP : TL_EXIT_DOWN;
+        if (dir) { steer = 1; dur = 300 + (int64_t)(iabs64(ox) > iabs64(oy) * fw / fh ? iabs64(ox) : iabs64(oy)) * 600 / 500; if (dur > MS_LOOK_MS + 200) dur = MS_LOOK_MS + 200; }
+    }
+    if (!dir && t->ms_moves == 0 && t->ms_dir && now - t->last_seen_ms <= ((int64_t)c->lost_grace_s + c->reacq_s) * 1000) dir = t->ms_dir;
+    if (!dir) return 0;
+    if (!steer && t->ms_last_look && now - t->ms_last_look < (int64_t)c->search_cooldown_s * 1000) { t->ms_moves = MS_MAX_MOVES; t->dbg.why = "look-cooldown"; return 0; }
+    switch (dir) {
+    case TL_EXIT_DOWN: dy = c->tilt_enable ? kt * sp : 0; break;
+    case TL_EXIT_UP: dy = c->tilt_enable && (c->invert_tilt ? -1 : 1) * (ptz->tilt - t->ms_tilt0) < EXIT_UP_BUDGET ? -kt * sp : 0; break;
+    case TL_EXIT_LEFT: dx = -m * sp; break;
+    case TL_EXIT_RIGHT: dx = m * sp; break;
+    default: break;
+    }
+    if ((dx > 0 && rpan_hi <= MS_ROOM) || (dx < 0 && rpan_lo <= MS_ROOM)) dx = 0;
+    if ((dy > 0 && rt_hi <= MS_ROOM) || (dy < 0 && rt_lo <= MS_ROOM)) dy = 0;
+    if (!dx && !dy) { t->ms_moves = MS_MAX_MOVES; t->dbg.why = "look-range"; return 0; } /* at a limit: nothing to look at that way */
+    t->ms_moves++;
+    if (!steer || !t->ms_last_look) t->ms_last_look = now;
+    t->ms_vx = dx;
+    t->ms_vy = dy;
+    t->ms_until = now + dur;
+    t->dbg.why = steer ? "steer" : "look";
+    emit_vel(t, out, now, dx, dy);
     return 1;
 }
 
@@ -1521,6 +1607,8 @@ static void tl_update_v(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int
         if (pick) t->last_nl = rule == 7 || (pick->y2 >= fh - HEAD_CLIP_PX && (int64_t)(pick->y2 - pick->y1) * 100 >= (int64_t)HEAD_CUT_PCT * fh) || (t->kd_valid && t->dist_mm < NL_NEAR_MM);
         else if (hd) t->last_nl = (t->kd_valid && t->dist_mm < NL_NEAR_MM) || hd->y2 >= fh - HEAD_CLIP_PX; /* held by a head alone (rule 6): the close-range evidence still counts, a head-held close target lost afterwards enters the close-loss machine */
         t->nl_phase = 0;
+        t->ms_ep = 0; t->ms_until = 0; t->ms_moves = 0; /* a person again: the motion-aware search of that loss is over (the cooldown stays) */
+        if (!t->has_target) t->seen0_ms = now_ms;
         t->exit_set = 0; t->search_n = 0; t->sweep_n = 0; t->sweeping = 0; t->fresh_loss_ms = 0; t->search_until = 0;
         if (t->lost_i >= 0 || t->lost_done || t->lost_route_on) { /* a person again: the lost chain ends (a route it started is stopped) */
             if (t->lost_route_on) { out->route_op = 2; t->lost_route_on = 0; }
@@ -1795,6 +1883,10 @@ static void tl_update_v(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int
         fresh_gap = (int)(now_ms - t->fresh_loss_ms);
         if (!t->exit_set) { t->exit_set = 1; t->exit_dir = t->last_ff || t->ff_set ? TL_EXIT_NONE : exit_dir(t, fw, fh); t->exit_tilt0 = ptz->tilt; } /* a frame-filling loss has no direction: it is too close, not gone up */
         t->dbg.exit = t->exit_dir;
+        if (c->search_mode == TL_SEARCH_MOTION && c->lost_n < 0) { /* the motion-aware search replaces the close scan, the sweep back and the exit search */
+            if (ms_loss(t, now_ms, ptz, fw, fh, rpan_lo, rpan_hi, rt_lo, rt_hi, out)) return;
+            goto grace_tail;
+        }
         if (near_loss(t, now_ms, ptz, fw, fh, halfx, rpan_lo, rpan_hi, rt_lo, rt_hi, out)) return;
         edge = t->exit_dir == TL_EXIT_LEFT || t->exit_dir == TL_EXIT_RIGHT || t->exit_dir == TL_EXIT_UP;
         /* A: lost shortly after a large move and not through an edge: back toward the pose before it, never beyond; the next tick with a box takes over */
@@ -1830,6 +1922,7 @@ static void tl_update_v(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int
                 t->dbg.why = "exit-search-range";
             }
         }
+    grace_tail:
         if (predict_gap(t, now_ms, ptz, gap, halfx, rpan_lo, rpan_hi, rt_lo, rt_hi, out)) return;
         t->mv_x = t->mv_y = 0;
         if (t->vact) emit_vel(t, out, now_ms, 0, 0); /* nothing to follow: stop (the lease would too) */
@@ -1846,6 +1939,7 @@ static void tl_update_v(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int
     t->mv_x = t->mv_y = 0;
     t->sweeping = 0;
     t->search_until = 0;
+    if (c->search_mode == TL_SEARCH_MOTION && c->lost_n < 0 && ms_loss(t, now_ms, ptz, fw, fh, rpan_lo, rpan_hi, rt_lo, rt_hi, out)) return;
     if (tilt_back(t, now_ms, ptz, rt_lo, rt_hi, out)) return;
     if (sweep_step(t, now_ms, ptz, out)) return; /* before the stop below: a running search is re-commanded, not stopped */
     if (t->vact) { emit_vel(t, out, now_ms, 0, 0); return; }
@@ -2227,6 +2321,10 @@ static void tl_update_p(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int
     }
     if (t->hn > 1) { t->hist[0] = t->hist[t->hn - 1]; t->hn = 1; } /* the older boxes belong to the pose before this nudge: only the last one is kept */
     if (p) t->last_sign = sgn(p);
+}
+
+void tl_set_motion(tl_t *t, const struct tl_mot *m) {
+    if (m) t->mot = *m;
 }
 
 /* The public entry: person boxes (at most TL_MAX_BOXES) and head boxes (at most TL_MAX_HEADS). The steps policy ignores the heads (the dev / legacy "before" of the simulations). */

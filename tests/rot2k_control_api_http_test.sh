@@ -40,7 +40,7 @@ if ! $CC -std=gnu99 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -f
  '-DA2K_API_FAST_ACTION="ptz.vel"' -DA2K_API_RESP_MAX=18432 -DAPISIG_NONCE_CAP=224 "${INC_2K[@]}" "${SHARED_INC[@]}" -o "$SRV" "$HERE/rot2k_api_server.c" "$REPO/platforms/anyka-ak3918av130/orient.c" "$REPO/platforms/anyka-ak3918av130/picture.c" \
     "$REPO/src/api/api_httpd.c" "$REPO/src/api/api_core.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/api_bind.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/settings.c" "$REPO/src/api/api_events.c" "$REPO/platforms/anyka-ak3918av130/detpub.c" "$REPO/src/net/http/http_req.c" "$REPO/src/api/api_limit.c" \
     "$REPO/src/api/api_keys.c" "$REPO/src/api/api_sig.c" "$REPO/src/net/crypto/sha256.c" "$REPO/src/api/json_min.c" "$REPO/src/core/settings_reg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/netreg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/cfgreg.c" \
-    "$REPO/src/features/ptz/ptz_vel.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/speaker.c" "$REPO/src/features/audio/audio_out.c" "$REPO/src/features/audio/talk.c" "$REPO/src/features/audio/audio_jitter.c" "$REPO/src/features/audio/audio_vad.c" "$REPO/src/features/audio/g711.c" "$REPO/src/net/rtsp/rtp_in.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button_rt.c" "$REPO/src/features/button/button_cfg.c" "$REPO/src/features/button/button_gesture.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c"; then
+    "$REPO/src/features/ptz/ptz_vel.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/speaker.c" "$REPO/src/features/audio/audio_out.c" "$REPO/src/features/audio/talk.c" "$REPO/src/features/audio/audio_jitter.c" "$REPO/src/features/audio/audio_vad.c" "$REPO/src/features/audio/g711.c" "$REPO/src/net/rtsp/rtp_in.c" "$REPO/src/net/rtsp/rtp_clock.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/video_cfg.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/patrol.c" "$REPO/src/features/ptz/ptz_patrol.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/button_rt.c" "$REPO/src/features/button/button_cfg.c" "$REPO/src/features/button/button_gesture.c" "$REPO/src/features/button/button_logic.c" "$REPO/src/hal/hal_input.c" "$REPO/src/net/rtsp/rtsp_auth.c" "$REPO/src/net/crypto/md5.c" "$REPO/src/features/scene/scene_check.c" -lm; then
     echo "  FAIL - server harness build"
     exit 1
 fi
@@ -1009,6 +1009,20 @@ stop_srv && ok "stage 2 server exits cleanly (ASan/UBSan clean)" || ko "stage 2 
 
 echo "== PTZ patrol: settings, idle trigger, persistence"
 start_srv "$D6" --fast
+req "$WID" "$WSEC" GET /akam/v1/settings/ptz.scene_min
+want "ptz.scene_min defaults to 0.85" 200 '"value":"0.85"'
+req "$WID" "$WSEC" GET /akam/v1/settings/track.search
+want "track.search defaults to motion" 200 '"value":"motion"'
+for bad in 0.79 0.5 1 0.855 abc; do
+    req "$WID" "$WSEC" PATCH /akam/v1/settings "{\"ptz.scene_min\":\"$bad\"}"
+    want "ptz.scene_min $bad is refused" 422 'check|range|type'
+done
+req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.scene_min":"0.92","track.search":"legacy"}'
+want "ptz.scene_min 0.92 and track.search legacy are set" 200 '"ptz.scene_min":\{"ok":true'
+req "$WID" "$WSEC" GET /akam/v1/settings/ptz.scene_min
+want "ptz.scene_min reads back 0.92" 200 '"value":"0.92"'
+req "$WID" "$WSEC" GET /akam/v1/settings/track.search
+want "track.search reads back legacy" 200 '"value":"legacy"'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.route_default":"Bad Name"}'
 want "route_default: a bad name is refused" 422 'check'
 req "$WID" "$WSEC" PATCH /akam/v1/settings '{"ptz.patrol.idle_start_s":100000}'

@@ -79,6 +79,8 @@
 #include "rtsp_session.h"
 #include "store.h"
 #include "track_run.h"
+#include "motion.h"
+#include "motion_grid.h"
 #include "video.h"
 #include "zlive.h"
 #include "zones.h"
@@ -320,6 +322,15 @@ static void ptz_to_mqtt(const a2k_ptz_info_t *i)
     a2k_api_event("ptz", d);
 }
 
+/* Motion state changes (motion.h): an event on /events and, with MQTT, the binary sensor / direction sensor. Called from the detection thread, never blocks. */
+static void motion_to_events(const struct a2k_motion_info *i)
+{
+    char d[A2K_EVT_DATA];
+    snprintf(d, sizeof d, "{\"active\":%s,\"dir\":\"%s\",\"x\":%d,\"y\":%d}", i->active ? "true" : "false", mg_dir_name(i->dir), i->x, i->y);
+    a2k_api_event("motion", d);
+    a2k_mqtt_motion(i->active, mg_dir_name(i->dir));
+}
+
 static const a2k_mqtt_ptz_t ptz_ctl = { a2k_ptz_command, a2k_ptz_vel_manual, a2k_ptz_manual_stop, };
 
 /* The tracking / zones / tracking-areas controls (mqtt_cfg.h, the ctl group): index k of A2K_CTL_*. */
@@ -488,6 +499,15 @@ int main(int argc, char **argv)
         { "track-close-scan-up", required_argument, NULL, 1091 },
         { "track-close-scan-down", required_argument, NULL, 1092 },
         { "track-close-scan-cooldown-s", required_argument, NULL, 1093 },
+        { "track-search", required_argument, NULL, 1094 },
+        { "track-pass-s", required_argument, NULL, 1095 },
+        { "track-pass-home-s", required_argument, NULL, 1096 },
+        { "track-search-cooldown-s", required_argument, NULL, 1097 },
+        { "track-reacq-s", required_argument, NULL, 1098 },
+        { "motion", required_argument, NULL, 1099 },
+        { "motion-sensitivity", required_argument, NULL, 1107 },
+        { "motion-source", required_argument, NULL, 1108 },
+        { "motion-md-frame", required_argument, NULL, 1109 },
         { "track-lag-ms", required_argument, NULL, 1062 },
         { "detect-age-window", required_argument, NULL, 1063 },
         { "detect-head-thr", required_argument, NULL, 1064 },
@@ -526,6 +546,7 @@ int main(int argc, char **argv)
     a2k_vid_t vid_opt[A2K_VID_STREAMS], vid_base[A2K_VID_STREAMS];
     unsigned vid_set[A2K_VID_STREAMS] = { 0, 0 };
     int track_inv_pan = 1, track_inv_tilt = 0, scene_min = SC_MIN_DEFAULT;
+    int motion_on = 1, motion_sens = 5, motion_src = A2K_MOTION_DIFF, motion_md_pic = 1;
     int ptz_on = 0, track_on = 0, button_long = BTN_LONG_DEFAULT_MS;
     struct tl_cfg tune;
     int track_debug = 0;
@@ -553,6 +574,7 @@ int main(int argc, char **argv)
     memset(vid_opt, 0, sizeof vid_opt);
     tl_cfg_defaults(&tune);
     tl_cfg_geometry_2k(&tune);
+    tune.search_mode = TL_SEARCH_MOTION; /* the 2K default (2026-11-26): the motion-aware search; track_search legacy / API track.search legacy bring the old one back */
     while ((ch = getopt_long(argc, argv, "p:m:s:g:a:n:t:D:H:T:", longopts, NULL)) != -1) {
         switch (ch) {
         case 'p': if (parse_int(optarg, 1, 65535, &port)) return usage(); break;
@@ -637,6 +659,15 @@ int main(int argc, char **argv)
         case 1091: if (parse_int(optarg, 0, 600, &tune.close_scan_up)) return usage(); break;
         case 1092: if (parse_int(optarg, 0, 600, &tune.close_scan_down)) return usage(); break;
         case 1093: if (parse_int(optarg, 0, 600, &tune.close_scan_cooldown_s)) return usage(); break;
+        case 1094: if (!strcmp(optarg, "motion")) tune.search_mode = TL_SEARCH_MOTION; else if (!strcmp(optarg, "legacy")) tune.search_mode = TL_SEARCH_LEGACY; else return usage(); break;
+        case 1095: if (parse_int(optarg, 0, 60, &tune.pass_s)) return usage(); break;
+        case 1096: if (parse_int(optarg, 0, 600, &tune.pass_home_s)) return usage(); break;
+        case 1097: if (parse_int(optarg, 0, 3600, &tune.search_cooldown_s)) return usage(); break;
+        case 1098: if (parse_int(optarg, 0, 60, &tune.reacq_s)) return usage(); break;
+        case 1099: if (parse_int(optarg, 0, 1, &motion_on)) return usage(); break;
+        case 1107: if (parse_int(optarg, 1, 10, &motion_sens)) return usage(); break;
+        case 1108: if (!strcmp(optarg, "md")) motion_src = A2K_MOTION_MD; else if (!strcmp(optarg, "diff")) motion_src = A2K_MOTION_DIFF; else return usage(); break;
+        case 1109: if (!strcmp(optarg, "picture")) motion_md_pic = 1; else if (!strcmp(optarg, "sensor")) motion_md_pic = 0; else return usage(); break;
         case 1051: if (parse_int(optarg, 0, 600, &tune.tilt_back_s)) return usage(); break;
         case 1062: if (parse_int(optarg, -150, 300, &tune.lag_ms)) return usage(); break;
         case 1063: if (parse_int(optarg, 0, 1, &cfg.det.age_window)) return usage(); break;
@@ -738,7 +769,14 @@ int main(int argc, char **argv)
     pcfg.scene_check = pcfg.scene_check && cfg.det.enabled; /* the detection channel is the only frame source */
     a2k_scene_set_min(scene_min);
     a2k_scene_set_drift_ref(pcfg.drift_ref && pcfg.scene_check); /* the drift reference needs the detection frames like the scene check */
-    a2k_detect_set_frame_cb(pcfg.scene_check ? a2k_scene_feed : NULL);
+    /* motion detection (motion.h): the frame callback of the detection channel runs it, then the scene check */
+    a2k_motion_init(motion_on, motion_sens, motion_src);
+    a2k_motion_set_md_frame(motion_md_pic);
+    a2k_motion_set_md_reader(a2k_motion_md_read);
+    a2k_motion_set_sink(a2k_track_run_set_motion);
+    a2k_motion_set_notify(motion_to_events);
+    a2k_motion_set_chain(pcfg.scene_check ? a2k_scene_feed : NULL);
+    a2k_detect_set_frame_cb(a2k_motion_frame);
     a2k_ptz_set_scene(a2k_scene_hooks());
     ptz_on = a2k_ptz_start(&pcfg) == 0;
     /* person tracking: off unless track=1; the detection thread feeds it (a no-op while it is off or the camera cannot be moved) */
@@ -786,6 +824,7 @@ int main(int argc, char **argv)
     a2k_mqtt_set_vid(&vid_ctl);
     a2k_mqtt_set_snapshot(a2k_snap_enabled()); /* false when the JPEG encoder could not be opened */
     a2k_mqtt_set_night(1);
+    a2k_mqtt_set_motion(1); /* the entities always exist; with motion off they stay OFF / none */
     a2k_mqtt_set_sys(1);
     a2k_mqtt_set_leds(&led_ctl);
     a2k_mqtt_set_ptz(ptz_on ? &ptz_ctl : NULL);

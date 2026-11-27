@@ -28,7 +28,7 @@ typedef struct hal_ptz_desc {
     uint32_t pan_min, pan_max;       /* soft range (a motion never leaves it) */
     uint32_t tilt_min, tilt_max;
     uint32_t pan_home, tilt_home;    /* "home" */
-    uint32_t pan_park, tilt_park;    /* "park" (default pan home, tilt soft max: looking up) */
+    uint32_t pan_park, tilt_park;    /* "park" = the CLOSED pose (2K: pan home, tilt 80, below the soft range and 80 steps above the bottom stop; a park is the only motion allowed below the soft range) */
     uint32_t pan_step_max, tilt_step_max; /* the stock numbering: driver limits of the calibration sweep */
     uint32_t speed;                  /* speed divisor (one step per `speed` ms), 2..20 */
     uint32_t step;                   /* one button step, in steps */
@@ -65,6 +65,10 @@ typedef struct hal_ptz_ops {
     int (*cold_offset)(unsigned i, int *dpan, int *dtilt); /* 0: offset i is available, -1: not (i = 0..7 are asked) */
     int (*cold_probe)(unsigned i); /* 1 match, 0 no match, -1 cancelled (shutdown): nothing more is moved, no calibration starts */
     int (*scene_drop)(void); /* 0 ok, -1 not done (logged, nothing refused: a stale reference is only ever used when the live view matches it) */
+    /* boot_pose(&pan, &tilt) (optional): at a cold boot with cal auto, BEFORE the scene check: 1 when the head was LAST LEFT PARKED (the app recorded it when the park finished and clears it before any other
+     * motion; a rare user-driven flash write, never periodic) and fills the park pose it was recorded at. The engine then declares that pose to the driver (no motion, no calibration, no scene check: a parked
+     * head looks at the base) when it equals the configured park; anything else falls through to the scene check / calibration. */
+    int (*boot_pose)(uint32_t *pan, uint32_t *tilt);
 } hal_ptz_ops_t;
 
 /* The real driver for the node `dev`: open O_RDWR, ioctl, nanosleep, fopen + rename. */
@@ -90,6 +94,11 @@ int hal_ptz_recalibrate(hal_ptz_t *p);
  * as the stop (real 1), then UP to the tilt home (last leg from below). The pan is never commanded and keeps its counter. No flash write. Needs a trusted known position (EREFUSED otherwise).
  * hal_ptz_cancel stops it: the believed position of before is kept (ECANCEL). 0 ok; an I/O error leaves the position unknown or the believed one (the caller recalibrates). Takes up to ~15 s. */
 int hal_ptz_tilt_rehome(hal_ptz_t *p);
+/* The same, BOUNDED: the counter is declared at the believed tilt + 250 steps (not at the stock maximum) and one walk ends on the stop: the motor skips at most about 250 steps against it instead of about 1100 (from home).
+ * Only right when the believed tilt is within 250 steps of the truth (a re-home asked for by the travel gap); a flat home view (a large slip) uses the full stroke above. A believed tilt above 1910 uses the full stroke too. */
+int hal_ptz_tilt_rehome_bounded(hal_ptz_t *p);
+/* Counters for the field (/state): ESTIMATED steps the motor skipped against a stop since the process start (declared steps beyond the believed distance to the stop), calibrations by kind, completed tilt re-homes. Any pointer may be NULL. */
+void hal_ptz_stall_stats(const hal_ptz_t *p, unsigned long *stall_est, unsigned *cal_full, unsigned *cal_short, unsigned *rehomes);
 /* Re-reads the driver counters (PTZ thread) and compares them with the cached position: 0 when the position is trusted, known and the counters agree
  * (within a few steps), else -1. Used before the scene reference is written: the position it stores must be the real one. */
 int hal_ptz_verify_pos(hal_ptz_t *p);

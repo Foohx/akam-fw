@@ -18,6 +18,7 @@ SRCDIR_features_orient :=
 SRCDIR_features_ptz := ptz_vel ptz_lease ptz_patrol
 SRCDIR_features_track := drift_match track_logic track_relay
 SRCDIR_features_scene := scene_check
+SRCDIR_features_motion := motion_grid
 SRCDIR_hal := hal_sys hal_input
 SRCDIR_net_crypto := md5 sha1 b64 cred sha256
 SRCDIR_net_http := http_req
@@ -25,7 +26,7 @@ SRCDIR_net_mqtt := mqtt mqtt_ha
 SRCDIR_net_onvif := http_srv soap onvif wsd onvif_common
 SRCDIR_net_rtsp := h264_params rtsp_sdp rtsp_auth rtsp_in rtsp_idle rtsp_busy rtp_clock tx_pace net_tx rtp_in h264_nalu rtcp_sr
 
-SRC_SUBDIRS := api core core/control core/version features/audio features/button features/light features/night features/orient features/ptz features/scene features/track hal net/crypto net/http net/mqtt net/onvif net/rtsp
+SRC_SUBDIRS := api core core/control core/version features/audio features/button features/light features/motion features/night features/orient features/ptz features/scene features/track hal net/crypto net/http net/mqtt net/onvif net/rtsp
 
 # common_src <name>: the path of src/<dir>/<name>.c, found through the SRCDIR_* lists above.
 common_dir = $(or $(strip $(foreach d,$(SRC_SUBDIRS),$(if $(filter $(1),$(SRCDIR_$(subst /,_,$(d)))),$(d)))),$(error not a shared source: $(1)))

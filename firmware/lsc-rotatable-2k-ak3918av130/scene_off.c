@@ -29,6 +29,16 @@ void a2k_scene_set_min(int permille)
     (void)permille;
 }
 
+int a2k_scene_set_min_api(int permille)
+{
+    return permille >= 800 && permille <= 990 ? 0 : -1;
+}
+
+int a2k_scene_get_min(void)
+{
+    return SC_MIN_DEFAULT;
+}
+
 int sc_parse_min(const char *s)
 {
     (void)s;

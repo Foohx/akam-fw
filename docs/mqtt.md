@@ -229,7 +229,7 @@ The broker address is an IPv4 address or a host name your DNS resolves (no mDNS)
 
 **What Home Assistant gets** (discovery only; the device is named after the camera and identified by its Wi-Fi MAC): person
 presence, last detection score, video viewers and the firmware version; one presence sensor per detection zone; a JPEG snapshot
-image when a person appears; the day/night state; the diagnostic system sensors; the status LED and IR LED selects and the LED
+image when a person appears; the day/night state; the binary sensor **Motion** and the sensor **Motion direction** (none, left, right, up, down, in the picture you see; host-tested only); the diagnostic system sensors; the status LED and IR LED selects and the LED
 rule patterns; the PTZ buttons and position sensors; the video settings (bit rate, frame rate, ...); the controls of person
 tracking (switch, pan-only switch), the zone and tracking-area texts; the front button as an event and as device triggers; and
 the three picture switches **Image flip**, **Image mirror** and **Ceiling mount** (host-tested only, not verified on the camera:

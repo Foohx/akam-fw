@@ -31,7 +31,7 @@ SHARED_AK := h264_params h264_nalu rtcp_sr rtsp_sdp rtsp_auth rtsp_in rtsp_idle 
 # `c:` names a shared module of src/ (src/build/sources.mk; feature-gated when wrapped in feat_objs), the other names are sources of this
 # directory (firmware/<model>) or of the platform directory (platforms/anyka-ak3918av130), found by the pattern rules of the platform Makefile.
 # A model without a feature links none of its shared objects.
-POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring audio speaker cap stream rtsp_session detect detstate mqtt_bind mqtt_cfg zones snap pin ircut image picture orient night_ctl night_run \
+POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring audio speaker cap stream rtsp_session detect detstate motion motion_md mqtt_bind mqtt_cfg zones snap pin ircut image picture orient night_ctl night_run \
   $(call feat_objs,SYS,c:hal_sys) \
   leds leds_run hal hal_light_sysfs \
   $(call feat_objs,LIGHT,c:light_logic c:led_pat) \
@@ -39,7 +39,7 @@ POC3_ORDER = $(call feat_objs,PATROL,c:ptz_patrol patrol patrol_run) main aring 
   $(call feat_objs,BUTTON,c:hal_input) \
   hal_input_sysfs \
   $(call feat_objs,BUTTON,c:button_logic) \
-  button store $(call feat_objs,TRACK,track track_run) zlive $(call feat_objs,TRACK,c:track_logic c:track_relay) video_cfg video vlive isptest netreg cfgreg \
+  button store $(call feat_objs,TRACK,track track_run) zlive $(call feat_objs,TRACK,c:track_logic c:track_relay) c:motion_grid video_cfg video vlive isptest netreg cfgreg \
   $(call feat_objs,API,c:api_events) \
   detpub settings api_bind $(call feat_objs,API,c:api_core c:api_httpd c:http_req) \
   $(call feat_objs,BUTTON,c:button_gesture c:button_cfg) \

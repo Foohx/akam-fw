@@ -86,6 +86,10 @@ var cat2K3 = []crow{
 	{k: "track.close_scan_up", g: "Tracking", l: "Close scan, steps up", kind: Int, hi: 600},
 	{k: "track.close_scan_down", g: "Tracking", l: "Close scan, steps down", kind: Int, hi: 600},
 	{k: "track.lag_ms", g: "Tracking", l: "Video lag (ms)", kind: Int, lo: -150, hi: 300, h: "calibrate with tools/track_lagfit"},
+	{k: "track.search", g: "Tracking", l: "Search when the person is lost", kind: Enum, v: []string{"legacy", "motion"}, h: "motion (default) = at most two short looks toward where the person went or where something moves, no sweeps, no stops, fewer motor moves; someone who stays just out of view is no longer searched for. legacy = the scans and sweeps. Needs track.motion continuous"},
+	{k: "motion.enabled", g: "Tracking", l: "Motion detection", kind: Bool, h: "on by default; a coarse grid on the picture, gives the direction of a moving person (motion.dir) to the search"},
+	{k: "motion.sensitivity", g: "Tracking", l: "Motion sensitivity", kind: Int, lo: 1, hi: 10, h: "5 by default; higher reacts to smaller changes"},
+	{k: "ptz.scene_min", g: "Patrol", l: "Boot scene check threshold", kind: String, lo: 4, hi: 5, h: "0.80 to 0.99, default 0.85: how alike the view must be to the saved home view for the motor to skip its boot calibration; a shifted head is refused whatever the score; applied at the next boot check, overrides ptz_scene_min of akam.conf"},
 	{k: "ptz.patrol.idle_start_s", g: "Patrol", l: "Start the patrol after idle (seconds)", kind: Int, hi: 86400, h: "0 = patrol off"},
 	{k: "ptz.patrol.travel_budget", g: "Patrol", l: "Patrol travel budget (steps)", kind: Int, lo: 1000, hi: 2000000000},
 	{k: "ptz.patrol.route_default", g: "Patrol", l: "Default patrol route", kind: String, hi: 16, h: "a route name (a-z first, then a-z 0-9 _, at most 16), or empty"},
@@ -176,6 +180,7 @@ func Find2K(key string) (Option, bool) {
 
 var (
 	patternRe  = regexp.MustCompile(`^([0-9]{1,2}):([0-9]{1,5}):([0-9]{1,5}):([0-9]{1,5})$`)
+	sceneMinRe = regexp.MustCompile(`^0\.(8[0-9]|9[0-9])$`)
 	lostPolRe  = regexp.MustCompile(`^[A-Za-z0-9:,._-]{1,255}$`)
 	routeRe    = regexp.MustCompile(`^[a-z][a-z0-9_]{0,15}$`)
 	countryRe  = regexp.MustCompile(`^[A-Z]{2}$`)
@@ -310,6 +315,12 @@ func Validate2K(key, value string) (string, error) {
 		if key == "ptz.patrol.route_default" {
 			if value != "" && !routeRe.MatchString(value) {
 				return bad("a route name: a-z first, then a-z 0-9 _, at most 16 characters (or empty)")
+			}
+			return value, nil
+		}
+		if key == "ptz.scene_min" {
+			if !sceneMinRe.MatchString(value) {
+				return bad("0.80 to 0.99 (two decimals, for example 0.85)")
 			}
 			return value, nil
 		}

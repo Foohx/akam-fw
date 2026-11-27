@@ -561,3 +561,70 @@ The tracker works on the DISPLAYED frame (the boxes come from the picture the vi
 the orientation off) with `invert_pan` toggled by the mirror and `invert_tilt` by the flip (`a2k_orient_invert_pan` / `a2k_orient_invert_tilt`, set live on the running
 policy by `a2k_track_set_invert` from a listener of `orient.h`); the ceiling mount (both) toggles both. `tests/rot2k_orient_unit.c` pins the four cases. Not verified on the
 camera: with a ceiling mount, a person walking to the right of the picture must turn the camera towards them. See isp-controls.md 3.3 for the whole convention.
+
+## Motion detection and the motion-aware search
+
+User report (LSC Rotatable 2K, tracking on): "it searches too often for someone who just passed by for a few seconds, and it searches badly"; then: simple, few motor moves, never to a mechanical stop,
+and it must work with the picture flipped or mirrored. Host-tested only; **nothing here was run on a camera**.
+
+### Motion detection (`src/features/motion/motion_grid.c`, wiring `firmware/lsc-rotatable-2k-ak3918av130/motion.c`)
+
+- **Grid.** 24 x 16 cells over the picture. Output: motion yes / no, the centroid (permille) and the bounding box of the moving cells, and a direction (left / right / up / down / none) from the net
+  travel of the centroid over the last 4 frames (about 0.6 s at 5 Hz): at least 1.0 cell to set it, 0.5 cell to keep it, the dominant axis must win by 1.3x, so jitter does not flip it. The direction
+  is held 0.8 s after the motion stops (the tracker reads it at the loss) and the last one is remembered.
+- **Sources** (`motion_source`, default `diff`). `diff`: frame differencing of the 320x192 luma plane of the detection channel that the detector already pulls (block means, every second pixel, the global
+  brightness shift removed): about 15 thousand reads per frame, 5.8 us on the dev host (about 0.1 ms estimated on the ARM926, under 0.1 % CPU at 5 Hz, no vendor call, no extra channel), 4 KB of RAM.
+  `md`: the vendor statistics `ak_vpss_md_get_stat` (1536 bytes, polled with each frame): near zero cost, **but its layout is not decoded** (see `ai-own-app.md` section 5: probably 24 x 16 words of the 3D noise
+  reduction). The adapter is scale-free (a cell is moving when it leaves its own slow baseline by more than 6 deviations) and falls back to `diff` by itself when the statistics answer nothing usable (a failing
+  call, all zero for 100 frames): `motion.source` then reads `md>diff`. Because it could not be tried without a camera, `diff` is the default; switch with `motion_source=md` and check MOT-11 in the checklist.
+- **Orientation.** The detection channel is the picture (flip / mirror applied by the sensor readout), so `diff` is in the picture frame by construction. The vendor grid is most likely computed after the
+  flip too (`ak_vpss_switch_flip_mirror` flips the sensor readout, upstream of the VPSS), so `motion_md_frame` defaults to `picture`; `motion_md_frame=sensor` converts the grid with the current orientation
+  (`mg_grid_orient`). `motion.dir` and the Home Assistant sensor are always in the picture the user sees. The search maps them to the motor with the invert flags the tracker already has (`a2k_orient_invert_pan` /
+  `_tilt`, `track_run.c`): tests/rot2k_motion_unit.c checks the four orientations (none, flip, mirror, ceiling): the same physical motion gives the right picture direction, and the look and the steer drive the
+  same physical way (the same motor sign for a person leaving through the physical right / top in all four).
+- **Masks (no false motion).** The head moving (the position counters change, or the position is unknown) and 0.7 s after; an orientation change (3 s, the reference dropped; frames of both orientations are in
+  flight) and the settle window that a day / night switch opens; a gap of 2 s in the frames (stream restart) or a size change (the next frame is only a reference); a global change (more than 55 % of the
+  cells at once, or a shift of the whole picture above 12 levels: light, exposure, IR cut): masked 2 s. Tested for each.
+- **Rows and events.** `motion.enabled` (default on), `motion.sensitivity` (1-10, 5); read-only `motion.active`, `motion.dir`, `motion.x`, `motion.y` (percent, -1 when idle), `motion.source`; an event
+  `{"type":"motion","data":{"active":true,"dir":"right","x":40,"y":55}}` on each change of active / direction; Home Assistant binary sensor `Motion` and sensor `Motion direction` (always announced, OFF / none
+  while disabled). `akam.conf`: `motion`, `motion_sensitivity`, `motion_source`, `motion_md_frame`.
+
+### The search (`track.search`, conf `track_search`, default `motion` since 2026-11-26; `legacy` stays selectable, live, through the API and the assistant)
+
+`motion` replaces the backsweep, the close scan, the exit search and the full-range sweep of the legacy lost policy (the explicit `track_lost_policy` chains are unchanged). Design, `ms_loss()` in `track_logic.c`:
+
+1. **At most two short moves per loss**, each 0.7 s at `rate_k / 4` (about 190 steps), never started within 300 steps of a soft limit (the existing 45-step guard stays under it); no mechanical stop is ever reached.
+2. **Exit direction** = the existing box evidence (the last box touching a side or the top edge, narrower than 60 % of the frame, not frame-filling). Motion heading the other way just before the loss cancels it.
+   A mid-frame loss has no direction: no look.
+3. **Passer-by**: followed for less than `track_pass_s` (4 s) and gone through a side / the top: one look at most, and the head goes home `track_pass_home_s` (3 s) after the grace instead of the
+   `track_return_delay_s`. A short sighting that just vanishes in the middle is not a passer-by.
+4. **No evidence, no search**: the grid shows nothing after a mid-frame loss (the person is hidden or still): the head waits and goes home per `track.return`.
+5. **Re-acquire**: motion that appears after the loss (within grace + `track_reacq_s`, 8 s), at least 15 % of the width from the middle (or 20 % of the height), is steered to with one bounded move, the detector
+   confirms. Motion is masked while the head moves, so it never chases its own move.
+6. **Cooldown**: one look per `track_search_cooldown_s` (30 s); a second loss inside it only waits.
+
+### Bench (closed loop, `tools/dev/track_score sim`, deterministic; `TRACK_SIM_SEARCH=motion` for the new search; `travel` = pan + tilt steps moved, new key)
+
+The sim feeds the REAL grid logic with a synthetic grid (the person's box marks its cells when he moves, still = nothing, the head moving masks it). New scenarios: `pass_lr`, `pass_rl` (crosses the view in about 7 s
+and is gone; `return_home` on), `leave_back` (leaves right, away 6 s, comes back from the right), `hide_still` (stops in view, hidden 15 s, seen again). Legacy search -> motion search:
+
+| scenario | lock % | frame % | lost_ms | commands | travel (steps) |
+|---|---|---|---|---|---|
+| pass_lr | 69.3 -> 69.3 | 78.6 -> 78.6 | 1425 -> 1425 | 57 -> 20 | 4627 -> 1063 |
+| pass_rl | 69.3 -> 69.3 | 78.6 -> 78.6 | 1425 -> 1425 | 62 -> 15 | 5583 -> 910 |
+| leave_back | 100 -> 100 | 100 -> 100 | 0 -> 0 | 43 -> 21 | 3328 -> 1106 |
+| hide_still | 85.8 -> 98.8 | 89.9 -> 100 | 1470 -> 0 | 19 -> 4 | 1640 -> 150 |
+| leave_return | 53.0 -> 52.1 | 64.4 -> 54.9 | 6940 -> 8785 | 41 -> 13 | 3030 -> 821 |
+| long_10min | 95.7 -> 65.0 | 98.5 -> 67.1 | 7445 -> 167460 | 431 -> 199 | 26568 -> 11235 |
+| walk_z0.8..z5, stand, crouch, sit | unchanged (walk_z2_fast 50.6 -> 50.8) | | | | travel unchanged (walk_z2_fast 947 -> 927) |
+
+The pass-by travel drops by 77 to 91 % with the same tracking score. **The cost** is `long_10min`: a person who left and stands outside the view is never found because the new search does not sweep the range
+(out of view 7 s -> 167 s in the 10-minute session); `leave_return` ends with a slightly longer time out of the frame for the same reason. That is the trade-off of the `motion` default (2026-11-26, user decision): someone who stays just out of view is no longer searched for; `track.search = legacy`
+brings the sweeps back. Open loop (the three hardware sessions, `track_score replay --cfg search_mode=1`, no motion data, so the box evidence only): lock, error and reacquire are identical
+(session 20261119-1: 42.5 / 20.9 px, session 20261120-1: 52.4, session 20261120-2: 63.6); commands 170 -> 153, 189 -> 217, 300 -> 219. The old golden numbers are unchanged (only the `travel` key and the new
+scenarios were added); Since the default changed, `tests/golden/track_bench.txt` is the baseline of the default (motion) search (`track_sim` default; the old `track_bench_motion.txt` renamed, same numbers), `tests/golden/track_bench_legacy.txt` the baseline of `TRACK_SIM_SEARCH=legacy` (the old `track_bench.txt`), and `tests/track_bench_test.sh` still fails if the motion travel is not below the legacy one on the pass-by scenarios. The default is set in `main.c` (`tune.search_mode`); `tl_cfg_defaults()` stays legacy, the library default the unit tests use.
+
+### To verify on the camera
+
+`docs/hardware-test-checklists.md` MOT-1 to MOT-11: the `motion.*` rows with a hand, the direction in each orientation (also changing it while walking), no false motion (head moving, day / night, client
+connecting), Home Assistant, the pass-by both ways, leave and come back, standing still, the steer, the travel counter, and the vendor statistics (`motion_source=md`, `motion_md_frame`).

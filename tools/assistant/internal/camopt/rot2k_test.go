@@ -60,6 +60,7 @@ func TestValidate2K(t *testing.T) {
 		{"image.brightness", "007"}: "7", {"video0.max_kbps", "0"}: "0", {"video0.max_kbps", "64"}: "64", {"video1.max_kbps", "32"}: "32",
 		{"track.lag_ms", "-150"}: "-150", {"led.idle", "3:250:250:5000"}: "3:250:250:5000", {"led.idle", "off"}: "off", {"led.idle", "1:50:50:0"}: "1:50:50:0",
 		{"track.lost_policy", "backsweep,exit,hold:30,home"}: "backsweep,exit,hold:30,home", {"ptz.patrol.route_default", ""}: "", {"ptz.patrol.route_default", "entrance"}: "entrance",
+		{"ptz.scene_min", "0.85"}: "0.85", {"ptz.scene_min", "0.80"}: "0.80", {"ptz.scene_min", "0.99"}: "0.99", {"track.search", "motion"}: "motion", {"track.search", "legacy"}: "legacy", {"motion.sensitivity", "5"}: "5", {"motion.enabled", "off"}: "0",
 	}
 	for in, want := range ok {
 		if got, err := Validate2K(in[0], in[1]); err != nil || got != want {
@@ -75,6 +76,7 @@ func TestValidate2K(t *testing.T) {
 		{"video0.fps", "16"}, {"video0.fps", "0"}, {"video0.kbps", "63"}, {"video1.kbps", "1001"}, {"video0.max_kbps", "63"}, {"video1.max_kbps", "31"}, {"video0.rc", "abr"},
 		{"led.idle", "2:49:50:0"}, {"led.idle", "11:100:100:0"}, {"led.idle", "1:100:100:49"}, {"led.idle", "10:60000:60000:0"}, {"led.idle", "blink"},
 		{"track.lost_policy", ""}, {"track.lost_policy", "a b"}, {"track.lost_policy", "a,b,c,d,e,f,g,h,i"},
+		{"ptz.scene_min", "0.79"}, {"ptz.scene_min", "0.5"}, {"ptz.scene_min", "1"}, {"ptz.scene_min", "0.855"}, {"ptz.scene_min", "x"}, {"track.search", "both"}, {"motion.sensitivity", "11"},
 		{"ptz.patrol.route_default", "Bad"}, {"ptz.patrol.route_default", strings.Repeat("a", 17)},
 		{"ptz.state", "x"}, {"sys.cpu_pct", "1"}, {"mqtt.host", "bad host"}, {"api.keys", "1"},
 	}

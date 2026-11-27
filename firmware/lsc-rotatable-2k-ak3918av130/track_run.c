@@ -94,6 +94,12 @@ void a2k_track_run_stop(void)
 
 a2k_track_t *a2k_track_run_get(void) { return g_up ? &g_t : 0; }
 
+void a2k_track_run_set_motion(const struct tl_mot *m)
+{
+    if (g_up)
+        tl_set_motion(&g_t.tl, m); /* the detection thread both sets it and ticks the policy: no race with the tick */
+}
+
 void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *boxes, int n, int fw, int fh)
 {
     if (n > 0)

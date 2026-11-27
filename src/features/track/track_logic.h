@@ -82,10 +82,26 @@ struct tl_cfg {
     int rev_n;               /* ... after this many reversals inside rev_window_ms (4; 1..TL_REV_MAX) ... */
     int rev_window_ms;       /* ... (4000; 1000..60000) ... */
     int rev_hold_ms;         /* ... the next one is refused and the axis is held still this long (1500; 0..60000) */
+    int search_mode;         /* continuous, legacy lost policy only: TL_SEARCH_LEGACY (the backsweep / close scan / full-range sweep) or TL_SEARCH_MOTION (one short look toward the exit direction or the motion, no scans: see tracking.md "Motion-aware search") */
+    int pass_s;              /* TL_SEARCH_MOTION: a person followed for less than this many seconds is a passer-by: at most one look (toward an edge exit), then home (4) */
+    int pass_home_s;         /* ... after a passer-by's loss (grace included) the head goes home this long after the look, instead of return_delay_s (3) */
+    int search_cooldown_s;   /* ... at most one look per this many seconds (30) */
+    int reacq_s;             /* ... the grid motion that appears this long after the loss (grace included) is steered to (8) */
     int lag_ms;              /* continuous: video latency subtracted from the capture time when the pose at capture is looked up (50; -150..300, a negative value is allowed: the calibration of tools/track_lagfit may find the stamp later than the exposure) */
 };
 
 enum { TL_MOTION_STEPS = 0, TL_MOTION_CONT = 1 };
+enum { TL_SEARCH_LEGACY = 0, TL_SEARCH_MOTION = 1 };
+
+/* The motion grid (src/features/motion/motion_grid.h) as the policy sees it, in the PICTURE frame; fed before every tick with tl_set_motion. dir / last_dir are TL_EXIT_* values. */
+struct tl_mot {
+    int valid;               /* a source feeds the grid and is usable (0: the policy uses the box evidence only) */
+    int masked;              /* the last frame was ignored (the head moves, an orientation / day-night change) */
+    int active;              /* motion now */
+    int cx, cy;              /* centroid, permille of the frame width / height */
+    int last_dir;            /* the last direction seen (TL_EXIT_*) */
+    int64_t last_active_ms, dir_ms; /* when there was motion / a direction last (same clock as now_ms; 0 = never) */
+};
 
 struct tl_ptz {
     int moving;              /* 1 while the motor runs: never nudge */
@@ -283,6 +299,11 @@ typedef struct {
     int64_t ff_low0, ff_low_last; /* the start / the last of a run of boxes shorter than 77 % (the sighting ends after 2 s of them) */
     int kf_force;            /* the box is the same close person as the last one (close_same): the lateral filter takes it, no hold as an outlier */
     int last_ff;             /* the last accepted person box was frame-filling: a short detector dropout is bridged (no loss, nothing moves) */
+    struct tl_mot mot;       /* the latest grid state (tl_set_motion) */
+    int64_t seen0_ms;        /* motion-aware search: when the current target was first seen (a passer-by is short) */
+    int64_t ms_ep;           /* ... the loss it was initialised for (last_seen_ms of the loss), 0 = none */
+    int ms_dir, ms_passer, ms_moves, ms_vx, ms_vy, ms_tilt0; /* ... the exit direction (TL_EXIT_*), passer-by, looks made in this loss, the look in progress (motor sign steps/s), the tilt at the loss */
+    int64_t ms_until, ms_last_look; /* ... the look ends then (0 = none running), the start of the last look of any loss (cooldown) */
     int vs_ev, vs_ev_tilt;   /* a VSCAN event for the caller to log (VSEV_*) and the tilt it happened at; the caller clears vs_ev */
 } tl_t;
 
@@ -314,6 +335,8 @@ void tl_home_refused(tl_t *t, int64_t now_ms);
 /* -1 on an invalid cfg (state zeroed, tl_update then does nothing), 0 otherwise. */
 int tl_init(tl_t *t, const struct tl_cfg *c);
 /* One tick. n boxes (invalid/empty boxes are ignored; head boxes (cls 1) are used by the continuous policy only (rule 6), the steps policy drops them; more than TL_MAX_BOXES persons / TL_MAX_HEADS heads are truncated). Fills *out. */
+/* The latest motion grid state, before tl_update (cheap, no side effect but the copy). Without it (never called, valid 0) the motion-aware search uses the box evidence only. */
+void tl_set_motion(tl_t *t, const struct tl_mot *m);
 void tl_update(tl_t *t, int64_t now_ms, const struct tl_box *boxes, int n, int fw, int fh, const struct tl_ptz *ptz,
                struct tl_out *out);
 #endif

@@ -292,7 +292,7 @@ void a2k_log(const char *fmt, ...)
     s_log(line);
 }
 
-static const hal_ptz_ops_t OPS = { s_open, s_ioctl, s_sleep, s_load, s_save, s_log, NULL, NULL, NULL, NULL };
+static const hal_ptz_ops_t OPS = { s_open, s_ioctl, s_sleep, s_load, s_save, s_log, NULL, NULL, NULL, NULL, NULL };
 
 static hal_ptz_t *mk(const char *conf)
 {
@@ -336,8 +336,8 @@ static void test_desc(void)
     CHECK(!strcmp(d.dev, "/dev/tymotor") && d.dir[HAL_PTZ_UP] == 0 && d.dir[HAL_PTZ_RIGHT] == 2 && d.dir[HAL_PTZ_DOWN] == 4 && d.dir[HAL_PTZ_LEFT] == 6,
           "the 2K descriptor: /dev/tymotor, up 0, right 2, down 4, left 6");
     CHECK(d.pan_min == 300 && d.pan_max == 3650 && d.tilt_min == 300 && d.tilt_max == 2100 && d.pan_home == 1275 && d.tilt_home == 1300 &&
-          d.pan_park == 1275 && d.tilt_park == 300 && d.pan_step_max == 4000 && d.tilt_step_max == 2160 && d.speed == 3,
-          "measured defaults: pan 300..3650, tilt 300..2100, home 1275/1300, park 1275/300 (down), step_max 4000/2160, speed 3");
+          d.pan_park == 1275 && d.tilt_park == 80 && d.pan_step_max == 4000 && d.tilt_step_max == 2160 && d.speed == 3,
+          "measured defaults: pan 300..3650, tilt 300..2100, home 1275/1300, park 1275/80 (the closed pose, below the soft range), step_max 4000/2160, speed 3");
     {
         struct ptzs_conf c;
         ptzs_conf_defaults(&c);
@@ -348,9 +348,19 @@ static void test_desc(void)
     p = mk("pan_min=400\ntilt_max=1700\nspeed=4\n");
     CHECK(p && hal_ptz_desc(p)->pan_min == 400 && hal_ptz_desc(p)->tilt_max == 1700 && hal_ptz_desc(p)->speed == 4 && hal_ptz_desc(p)->pan_max == 3650,
           "ptz.conf overrides the descriptor, the rest stays");
-    CHECK(hal_ptz_desc(p)->tilt_park == 300, "the default park (1275/300) is inside the soft range and stays");
+    CHECK(hal_ptz_desc(p)->tilt_park == 80, "the default park (1275/80, the closed pose) lies below the soft range and stays (only a park may)");
     p = mk("tilt_min=400\n");
-    CHECK(p && hal_ptz_desc(p)->tilt_park == 400, "a park outside the soft range is pulled in");
+    CHECK(p && hal_ptz_desc(p)->tilt_park == 80, "a park below the soft range stays whatever the soft minimum is");
+    {
+        hal_ptz_desc_t dd = a2k_ptz_desc;
+        dd.tilt_park = 10;
+        reset(0, 0);
+        p = hal_ptz_new(&dd, &OPS, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_desc(p)->tilt_park == 50, "a park closer than 50 steps to the bottom stop is pulled up to 50 (never a stall against the stop)");
+        dd.tilt_park = 300;
+        p = hal_ptz_new(&dd, &OPS, NULL, err, sizeof err);
+        CHECK(p && hal_ptz_desc(p)->tilt_park == 300, "an explicit old-style park (1275/300) still works");
+    }
     CHECK(mk("pan_min=10\n") == NULL && mk("bogus=1\n") == NULL && mk("pan_min=400\npan_min=500\n") == NULL && mk("speed=1\n") == NULL,
           "a bad ptz.conf is refused (range margin, unknown key, repeated key, speed 1)");
     d.dir[0] = 9;
@@ -375,12 +385,12 @@ static void test_calibration(void)
     CHECK(M.cmds[0] == 4 && M.cmds[1] == 4 && M.cmds[2] == 6, "tilt DOWN (4), tilt DOWN again (the real travel is longer than the declared maximum), then pan LEFT (6)");
     CHECK(M.bad_cmd == 0 && (M.dirs & ~((1u << 0) | (1u << 2) | (1u << 4) | (1u << 6))) == 0, "only the four single-axis commands 0 2 4 6 are ever sent (never 9, 10, 12)");
     CHECK(M.ninit1 == 4 && M.ninit2 == 4, "four inits: stock frame, tilt re-declared, approach frame, final frame");
-    CHECK(M.last_lim[1] == 3351 && M.last_lim[2] == 1801 && M.last_ipos[0] == 976 && M.last_ipos[1] == 1001,
-          "final frame: driver limits = the soft range {3351,1801}, counters = home - (soft_min - 1) = 976/1001");
+    CHECK(M.last_lim[1] == 3351 && M.last_lim[2] == 2021 && M.last_ipos[0] == 976 && M.last_ipos[1] == 1221,
+          "final frame: driver limits = pan soft range / tilt park floor..soft max {3351,2021}, counters = home - (min - 1) = 976/1221 (the tilt frame reaches down to the closed pose, 80)");
     CHECK(near_mech(1275, 1300, 12), "the camera is at home (mechanically)");
     CHECK(hal_ptz_state(p) == HAL_PTZ_HOME && pos_is(p, 1275, 1300, 0), "state home, position 1275/1300");
     CHECK(strstr(M.log, "calibrating") && strstr(M.log, "calibrated, at home"), "logged");
-    CHECK(!strcmp(get_file("/tmp/akam_ptz.frame"), "pan_min=300 pan_max=3650 tilt_min=300 tilt_max=2100\n"), "the frame file is written");
+    CHECK(!strcmp(get_file("/tmp/akam_ptz.frame"), "pan_min=300 pan_max=3650 tilt_min=80 tilt_max=2100\n"), "the frame file is written (the tilt frame starts at the park floor 80)");
     CHECK(writes_of(POSF) == 0 && !strcmp(get_file(POSF), ""), "no ptz.pos on the flash: the position lives in RAM, not one write for the calibration");
     {
         unsigned long g = M.grind;
@@ -419,7 +429,7 @@ static void test_skip_and_off(void)
     put_file(POSF, "pan=2000 tilt=900\n");
     p = mk(NULL);
     CHECK(hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0, "start ok");
-    CHECK(M.ninit1 == 4 && M.nmove > 0 && M.last_lim[1] == 3351 && M.last_ipos[0] == 1275 - 299 && M.last_ipos[1] == 1300 - 299,
+    CHECK(M.ninit1 == 4 && M.nmove > 0 && M.last_lim[1] == 3351 && M.last_ipos[0] == 1275 - 299 && M.last_ipos[1] == 1300 - 79,
           "the calibration runs (4 inits), the final frame is declared at HOME, not at the saved position");
     CHECK(pos_is(p, 1275, 1300, 0) && hal_ptz_state(p) == HAL_PTZ_HOME && near_mech(1275, 1300, 15), "calibrated at home");
     CHECK(strstr(M.log, "home view is not proven") != NULL, "logged");
@@ -487,7 +497,7 @@ static void test_motion(void)
     uint32_t a, b;
     printf("== park / home\n");
     p = booted(1275, 1300);
-    CHECK(p && hal_ptz_park(p) == 0 && hal_ptz_state(p) == HAL_PTZ_PARKED && pos_is(p, 1275, 300, 4) && near_mech(1275, 300, 14), "park: pan home, tilt at the soft min 300 (down), state parked");
+    CHECK(p && hal_ptz_park(p) == 0 && hal_ptz_state(p) == HAL_PTZ_PARKED && pos_is(p, 1275, 80, 4) && near_mech(1275, 80, 14), "park: pan home, tilt at the closed pose 80 (below the soft min 300), state parked");
     CHECK(hal_ptz_home(p) == 0 && hal_ptz_state(p) == HAL_PTZ_HOME && pos_is(p, 1275, 1300, 4), "home: state home");
     {
         hal_ptz_desc_t d = a2k_ptz_desc;
@@ -696,7 +706,7 @@ static void test_thread(void)
     /* park / home toggle and privacy */
     CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_PARKED, 5000) && a2k_ptz_privacy_active(), "toggle at home: parked, privacy active (video withheld)");
     a2k_ptz_info(&i);
-    CHECK(i.pan >= 1270 && i.pan <= 1280 && i.tilt >= 295 && i.tilt <= 310, "parked at pan home, tilt 300 (down)");
+    CHECK(i.pan >= 1270 && i.pan <= 1280 && i.tilt >= 75 && i.tilt <= 90, "parked at pan home, tilt 80 (the closed pose)");
     CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_HOME, 5000) && !a2k_ptz_privacy_active(), "toggle when parked: home, privacy off");
     CHECK(g_nnotify >= 6 && !strcmp(a2k_ptz_state_name(g_notified.state), "home"), "the state changes were notified");
 
@@ -1733,8 +1743,8 @@ static void test_patrol_controller(void)
     pc_hook_n = 0;
     {
         int pp = 0, pt = 0;
-        CHECK(a2k_ptz_park(&pp, &pt) == 0 && pp == 1275 && pt == 300, "the controller reports the park position");
-        CHECK(a2k_ptz_patrol_goto(1275, 300, 3, &tk) == -1 && a2k_ptz_patrol_goto(1288, 312, 3, &tk) == -1 && a2k_ptz_patrol_goto(1291, 300, 3, &tk) == 0, "a patrol move within +-15 of the park position is refused, 16 away is accepted");
+        CHECK(a2k_ptz_park(&pp, &pt) == 0 && pp == 1275 && pt == 80, "the controller reports the park position");
+        CHECK(a2k_ptz_patrol_goto(1275, 80, 3, &tk) == -1 && a2k_ptz_patrol_goto(1288, 92, 3, &tk) == -1 && a2k_ptz_patrol_goto(1291, 300, 3, &tk) == 0, "a patrol move to the park position (below the soft range: refused) is refused, the soft minimum 300 is an ordinary target now");
         CHECK(pc_ticket_done(tk, &rc, 5000), "(it ran)");
         pc_hook_n = 0;
         /* Race-free: the head is MOVED (away from home) before the call, so waiting for the state MOVED proves nothing and, on a loaded host, the
@@ -1852,6 +1862,164 @@ static void test_patrol_controller(void)
     CHECK(M.bad_cmd == 0, "no forbidden driver command word during the whole patrol test");
 }
 
+/* ---- park = the closed pose (below the soft range, never against the stop), the boot that skips the calibration, the bounded re-home, the counters */
+static int g_boot_parked;
+static int bp_hook(uint32_t *pan, uint32_t *tilt)
+{
+    *pan = 1275;
+    *tilt = 80;
+    return g_boot_parked;
+}
+
+static void test_park_closed(void)
+{
+    hal_ptz_t *p;
+    hal_ptz_desc_t d = a2k_ptz_desc;
+    hal_ptz_ops_t bo = OPS;
+    char err[96] = "";
+    unsigned long g, st0, st1;
+    printf("== park: the closed pose, the margin to the stop, the boot after a park, the bounded re-home\n");
+    /* park from home: below the soft range (300), 80 steps above the stop, not one step against it; home again; the soft range still holds for everything else */
+    p = booted(1275, 1300);
+    g = M.grind;
+    CHECK(p && hal_ptz_park(p) == 0 && hal_ptz_state(p) == HAL_PTZ_PARKED && near_mech(1275, 80, 4) && pos_is(p, 1275, 80, 3), "park goes to 1275/80: tilt below the soft minimum 300, 80 steps above the bottom stop");
+    CHECK(M.grind == g && M.mech[1] > 50, "...without a single step against the stop (no stall, no grinding)");
+    CHECK(hal_ptz_goto(p, 1275, 200) == HAL_PTZ_EREFUSED && near_mech(1275, 80, 4), "a goto below the soft range is refused even while parked (only park may go there)");
+    CHECK(hal_ptz_nudge(p, 0, -100) == 0 && M.grind == g && M.mech[1] >= 79, "a nudge down from the closed pose does not go lower");
+    CHECK(hal_ptz_park(p) == 0 && M.grind == g && near_mech(1275, 80, 4), "park again while parked: stays, no stall");
+    CHECK(hal_ptz_home(p) == 0 && hal_ptz_state(p) == HAL_PTZ_HOME && pos_is(p, 1275, 1300, 4) && M.grind == g, "open: back to home 1275/1300, trusted, no stall");
+    CHECK(hal_ptz_goto(p, 1275, 299) == HAL_PTZ_EREFUSED && hal_ptz_goto(p, 1275, 300) == 0 && near_mech(1275, 300, 5) && M.grind == g, "the soft range of every other motion is unchanged: 299 refused, 300 reached");
+    CHECK(hal_ptz_nudge(p, 0, -900) == 0 && M.mech[1] >= 296 && hal_ptz_step(p, HAL_PTZ_DOWN) == HAL_PTZ_EREFUSED && M.mech[1] >= 296 && M.grind == g, "a nudge down stops at the soft minimum 300, a step down from it is refused (nothing moves)");
+    CHECK(hal_ptz_park(p) == 0 && near_mech(1275, 80, 4) && hal_ptz_home(p) == 0 && near_mech(1275, 1300, 4) && M.grind == g, "park from the soft minimum and back");
+    /* ten park / open cycles: the counters stay equal to the mechanics (no step lost, the position stays trusted) */
+    for (int k = 0; k < 10; k++)
+        if (hal_ptz_park(p) || hal_ptz_home(p))
+            break;
+    CHECK(M.grind == g && near_mech(1275, 1300, 6) && hal_ptz_verify_pos(p) == 0, "10 park / open cycles: no stall, the driver counters agree with the believed position");
+    /* the old explicit override keeps working (the default changed, the override did not) */
+    d.pan_park = 1275;
+    d.tilt_park = 300;
+    reset(1275, 1300);
+    p = hal_ptz_new(&d, &OPS, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && hal_ptz_park(p) == 0 && hal_ptz_state(p) == HAL_PTZ_PARKED && near_mech(1275, 300, 5) && hal_ptz_home(p) == 0, "ptz_park 1275:300 (the old default) still parks at 300 and opens");
+
+    /* the boot after a park: declared at the park pose, no calibration, no stall; a different configured park falls back to the usual start */
+    bo.boot_pose = bp_hook;
+    g_boot_parked = 1;
+    reset(1275, 80);
+    d = a2k_ptz_desc;
+    p = hal_ptz_new(&d, &bo, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.nmove == 0 && M.grind == 0 && hal_ptz_state(p) == HAL_PTZ_PARKED && pos_is(p, 1275, 80, 0) && strstr(M.log, "last left parked"),
+          "boot after a park: position declared, no motor command at all, no calibration, state parked");
+    CHECK(hal_ptz_home(p) == 0 && near_mech(1275, 1300, 4) && M.grind == 0 && hal_ptz_verify_pos(p) == 0, "...and the first open goes home from the closed pose, trusted");
+    d.tilt_park = 300;
+    reset(1275, 300);
+    p = hal_ptz_new(&d, &bo, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0 && !strstr(M.log, "last left parked"), "a record made for another park position is ignored: the usual start (calibration)");
+    g_boot_parked = 0;
+    reset(1275, 1300);
+    d = a2k_ptz_desc;
+    p = hal_ptz_new(&d, &bo, NULL, err, sizeof err);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0 && M.grind > 0, "no park record: the usual start");
+
+    /* full stroke ONCE when the position is unknown (before: every boot); the estimate and the counters */
+    reset(1275, 1300);
+    p = mk(NULL);
+    CHECK(p && hal_ptz_start(p, HAL_PTZ_CAL_AUTO) == 0, "cold boot, position unknown: the full-stroke calibration");
+    hal_ptz_stall_stats(p, &st0, NULL, NULL, NULL);
+    printf("  info: full calibration from home: real skipped steps %lu, estimated %lu\n", M.grind, st0);
+    CHECK(st0 > 0 && M.grind > 0, "the full calibration is counted as skipped steps (estimate > 0)");
+    {
+        unsigned cf = 9, cs = 9, rh = 9;
+        hal_ptz_stall_stats(p, NULL, &cf, &cs, &rh);
+        CHECK(cf == 1 && cs == 0 && rh == 0, "counters: one full calibration, no short one, no re-home");
+    }
+
+    /* the tilt re-home: bounded (believed distance + 250) against the full stroke (before) */
+    g = M.grind;
+    st0 = 0;
+    hal_ptz_stall_stats(p, &st0, NULL, NULL, NULL);
+    CHECK(hal_ptz_tilt_rehome(p) == 0 && near_mech(1275, 1300, 6), "re-home, full stroke (what every re-home did before)");
+    {
+        unsigned long full_real = M.grind - g, full_est;
+        hal_ptz_stall_stats(p, &full_est, NULL, NULL, NULL);
+        full_est -= st0;
+        g = M.grind;
+        st0 += full_est;
+        CHECK(hal_ptz_tilt_rehome_bounded(p) == 0 && near_mech(1275, 1300, 6) && pos_is(p, 1275, 1300, 0), "re-home, bounded: at home again, trusted");
+        hal_ptz_stall_stats(p, &st1, NULL, NULL, NULL);
+        printf("  info: re-home from home: full stroke skipped %lu real / %lu est., bounded %lu real / %lu est.\n", full_real, full_est, M.grind - g, st1 - st0);
+        CHECK(M.grind - g <= 260 && M.grind - g > 0 && (M.grind - g) * 3 < full_real, "the bounded re-home skips at most 260 steps against the stop, under a third of the full stroke");
+        CHECK(st1 - st0 <= 260 && st1 - st0 >= 200, "its estimate is the margin (about 250)");
+        CHECK(hal_ptz_verify_pos(p) == 0 && M.mech[1] >= 1295 && M.mech[1] <= 1305, "after it the counters agree with the head");
+    }
+    /* a slip inside the margin is corrected by the bounded re-home: the head is really 150 steps lower than believed */
+    g = M.grind;
+    M.mech[1] -= 150;
+    CHECK(hal_ptz_tilt_rehome_bounded(p) == 0 && near_mech(1275, 1300, 8), "a real slip of 150 steps (inside the margin): the bounded re-home puts the tilt right");
+    /* a believed tilt too high for the margin falls back to the full stroke */
+    CHECK(hal_ptz_goto(p, 1275, 2000) == 0, "go up to 2000");
+    g = M.grind;
+    {
+        size_t l0 = strlen(M.log);
+        CHECK(hal_ptz_tilt_rehome_bounded(p) == 0 && near_mech(1275, 1300, 8) && strstr(M.log + l0, "tilt re-homed (full stroke)"), "a believed tilt above 1910: the margin does not fit below the stock maximum, the full stroke runs");
+    }
+}
+
+/* ---- the controller: long press (toggle) = park / open, a toggle while moving, the park record (one flash write per change), the boot after a park */
+static void test_park_controller(void)
+{
+    static const char *const SP = "/config/akam/ptz.conf.state";
+    a2k_ptz_cfg_t c;
+    a2k_ptz_info_t i;
+    unsigned long grind0, est = 0;
+    unsigned cf = 0, cs = 0, rh = 0;
+    char rec[64];
+    printf("== controller: long press = closed pose / back home, toggle while moving, the park record, the boot after a park\n");
+    reset(1275, 1300);
+    a2k_ptz_defaults(&c);
+    c.privacy = 1;
+    a2k_ptz_test_set(&OPS, "/config/akam/ptz.conf");
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000), "start: calibrated at home");
+    grind0 = M.grind;
+    a2k_ptz_stall_info(&est, &cf, &cs, &rh);
+    CHECK(cf == 1 && est > 0 && file_writes(SP) == 0, "counters: one full calibration, estimated skipped steps > 0; no park record written by a boot");
+    CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_PARKED, 5000) && a2k_ptz_privacy_active(), "long press at home: parked, video withheld");
+    a2k_ptz_info(&i);
+    CHECK(i.tilt >= 77 && i.tilt <= 83 && near_mech(1275, 80, 5) && M.grind == grind0, "the lens is at the closed pose (tilt 80), not against the stop");
+    CHECK(file_writes(SP) == 1 && !strncmp(get_file(SP), "parked 1275 80", 14), "one record written: parked 1275 80");
+    CHECK(a2k_ptz_command(A2K_PTZ_PARK) == 0 && usleep(300000) == 0 && file_writes(SP) == 1, "parking again writes nothing");
+    /* a toggle while the head is moving: the open is interrupted, the next long press parks again, ends parked, no stall */
+    set_gate(1);
+    CHECK(a2k_ptz_toggle_park() == 0 && wait_blocked(), "long press when parked: opening, the motor thread is inside the move");
+    a2k_ptz_info(&i);
+    CHECK(i.state == HAL_PTZ_MOVED && file_writes(SP) == 2 && !strncmp(get_file(SP), "open", 4), "while moving: state moved; the record already says open (before the head left)");
+    CHECK(a2k_ptz_toggle_park() == 0, "a long press while moving is accepted (it replaces the running move)");
+    set_gate(0);
+    CHECK(wait_state(HAL_PTZ_PARKED, 8000) && near_mech(1275, 80, 5) && M.grind == grind0, "...and ends parked at the closed pose, no stall");
+    usleep(100000);
+    CHECK(file_writes(SP) == 3 && !strncmp(get_file(SP), "parked 1275 80", 14), "the record says parked again (3 writes in all: park, open, park)");
+    CHECK(a2k_ptz_nudge(0, -50) < 0, "a manual move while parked is refused");
+    CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_HOME, 8000) && near_mech(1275, 1300, 6) && !a2k_ptz_privacy_active(), "long press again: back home, privacy off");
+    CHECK(file_writes(SP) == 4 && !strncmp(get_file(SP), "open", 4), "the record says open (written before the head left)");
+    CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_PARKED, 5000), "parked once more for the boot test");
+    snprintf(rec, sizeof rec, "%s", get_file(SP));
+    a2k_ptz_stop();
+    /* power cycle: the driver and the files are gone, the record stays; the head is where it was left */
+    reset(1275, 80);
+    put_file(SP, rec);
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_PARKED, 5000) && M.nmove == 0 && M.grind == 0 && file_writes(SP) == 0, "boot after a park: parked at once, no motor command, no calibration, no write");
+    a2k_ptz_stall_info(&est, &cf, &cs, &rh);
+    CHECK(est == 0 && cf == 0 && cs == 0, "counters of that boot: 0 estimated skipped steps, 0 calibrations");
+    CHECK(a2k_ptz_toggle_park() == 0 && wait_state(HAL_PTZ_HOME, 8000) && near_mech(1275, 1300, 6) && M.grind == 0 && file_writes(SP) == 1, "open: home, no stall, the record cleared with one write");
+    a2k_ptz_stop();
+    /* a record that says open (the open record was written, the power failed during the open): the usual start */
+    reset(1275, 1300);
+    put_file(SP, "open\n");
+    CHECK(a2k_ptz_start(&c) == 0 && wait_state(HAL_PTZ_HOME, 20000) && M.grind > 0, "record 'open': the usual start (calibration)");
+    a2k_ptz_stop();
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -1859,9 +2027,11 @@ int main(void)
     test_calibration();
     test_skip_and_off();
     test_motion();
+    test_park_closed();
     test_persistence();
     test_real_files();
     test_thread();
+    test_park_controller();
     test_scene();
     test_multiview();
     test_patrol_controller();

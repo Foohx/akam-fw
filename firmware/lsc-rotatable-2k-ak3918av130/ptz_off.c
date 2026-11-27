@@ -177,6 +177,14 @@ int a2k_ptz_range(uint32_t *pan_min, uint32_t *pan_max, uint32_t *tilt_min, uint
     return -1;
 }
 
+void a2k_ptz_stall_info(unsigned long *stall_est, unsigned *cal_full, unsigned *cal_short, unsigned *rehomes)
+{
+    if (stall_est) *stall_est = 0;
+    if (cal_full) *cal_full = 0;
+    if (cal_short) *cal_short = 0;
+    if (rehomes) *rehomes = 0;
+}
+
 void a2k_ptz_rehome_info(unsigned *runs, unsigned *cancels)
 {
     if (runs) *runs = 0;

@@ -74,6 +74,24 @@ void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *boxes, 
     (void)fh;
 }
 
+int a2k_track_get_search(a2k_track_t *t)
+{
+    (void)t;
+    return 0;
+}
+
+int a2k_track_set_search(a2k_track_t *t, int mode)
+{
+    (void)t;
+    (void)mode;
+    return -1;
+}
+
+void a2k_track_run_set_motion(const struct tl_mot *m)
+{
+    (void)m;
+}
+
 int a2k_track_get_close_scan(a2k_track_t *t, int which)
 {
     (void)t;

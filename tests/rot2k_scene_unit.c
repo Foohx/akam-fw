@@ -478,11 +478,11 @@ static void test_boot(void)
     fresh();
     F.ref.rep = 0;
     F.ref.repmin = 950;
-    CHECK(BOOT() == SC_MATCH && strstr(F.log, "screened now") && F.ref.repmin == SC_MIN_DEFAULT, "a verdict screened at a stricter threshold than the configured one (0.95 > 0.90) is not trusted: screened again");
+    CHECK(BOOT() == SC_MATCH && strstr(F.log, "screened now") && F.ref.repmin == SC_MIN_DEFAULT, "a verdict screened at a stricter threshold than the configured one (0.95 > 0.85) is not trusted: screened again");
     fresh();
     F.ref.rep = 0;
     F.ref.repmin = 800;
-    CHECK(BOOT() == SC_MATCH && strstr(F.log, "screened now") && F.ref.repmin == SC_MIN_DEFAULT && F.ref.rep == 0, "a verdict screened at another threshold (0.80 != 0.90) is not trusted either: screened once, stored back at 0.90");
+    CHECK(BOOT() == SC_MATCH && strstr(F.log, "screened now") && F.ref.repmin == SC_MIN_DEFAULT && F.ref.rep == 0, "a verdict screened at another threshold (0.80 != 0.85) is not trusted either: screened once, stored back at 0.85");
     {
         int x, y;
         fresh();
@@ -1052,7 +1052,7 @@ static void test_probe_repetitive_home(void)
         for (p = 5; p <= 26; p += 7)
             for (st = 30; st <= 90; st += 30)
                 for (fstart = -20; fstart <= 8; fstart += 7)
-                    for (seed = 1; seed <= 2; seed++)
+                    for (seed = 1; seed <= 3; seed++)
                         for (side = 0; side < 2; side++) {
                             int x0 = 160, off = side ? -12 : 12, any = 0;
                             sc_thumb_t home, alt;

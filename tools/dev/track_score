@@ -18,8 +18,8 @@ CC=${HOST_CC:-cc}
 mkdir -p "$B"
 
 build_sim() {
-    "$CC" -O2 -Wall -Wextra -std=gnu99 -pthread -I"$PL" -I"$FW" -I"$REPO/src/features/scene" -I"$REPO/src/features/track" -I"$REPO/src/features/ptz" -I"$REPO/src/features/night" -I"$REPO/src/api" -I"$REPO/src/core" -I"$REPO/src/hal" -o "$B/track_sim" "$HERE/track_sim.c" \
-        "$REPO/firmware/lsc-rotatable-2k-ak3918av130/track.c" "$REPO/src/features/track/track_logic.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" -lm
+    "$CC" -O2 -Wall -Wextra -std=gnu99 -pthread -I"$PL" -I"$FW" -I"$REPO/src/features/scene" -I"$REPO/src/features/track" -I"$REPO/src/features/motion" -I"$REPO/src/features/ptz" -I"$REPO/src/features/night" -I"$REPO/src/api" -I"$REPO/src/core" -I"$REPO/src/hal" -o "$B/track_sim" "$HERE/track_sim.c" \
+        "$REPO/firmware/lsc-rotatable-2k-ak3918av130/track.c" "$REPO/src/features/track/track_logic.c" "$REPO/src/features/motion/motion_grid.c" "$REPO/firmware/lsc-rotatable-2k-ak3918av130/store.c" -lm
 }
 build_replay() {
     "$CC" -O2 -Wall -Wextra -std=gnu99 -I"$PL" -I"$FW" -I"$REPO/src/features/scene" -o "$B/track_replay_score" "$HERE/track_replay_score.c" "$REPO/src/features/track/track_logic.c" -lm

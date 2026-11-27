@@ -34,6 +34,8 @@ static struct {
     hal_ptz_ops_t ops;
     int custom_ops;
     char conf_path[96];
+    char state_path[112];       /* A2K_PTZ_STATE (next to conf_path in tests) */
+    int park_saved;             /* the state file says "parked" */
     unsigned scene_ms, scene_confirm_ms, scene_gap_ms;
     a2k_ptz_scene_t scene;
     int scene_on;          /* ptz_scene_check: boot check + saves (the drop always runs) */
@@ -419,17 +421,54 @@ static int run_session(int a, int b)
     return rc;
 }
 
+/* The "last left parked" record (the boot skips the calibration for it, hal_ptz_ops_t.boot_pose). Written only on a CHANGE of that fact, i.e. when the user parks or opens (about two writes per privacy
+ * cycle of the flash, never periodic); G.park_saved caches it so nothing is written when it already says so. */
+static void park_record(int parked)
+{
+    char buf[48];
+    int pp = 0, pt = 0;
+    if (G.park_saved == parked || !G.hp)
+        return;
+    if (parked && a2k_ptz_park(&pp, &pt) == 0)
+        snprintf(buf, sizeof buf, "parked %d %d\n", pp, pt);
+    else
+        snprintf(buf, sizeof buf, "open\n");
+    if (G.ops.save_file && G.ops.save_file(G.state_path, buf) == 0)
+        G.park_saved = parked;
+    else
+        a2k_log("ptz: cannot record the park state (%s): the next boot calibrates as usual", G.state_path);
+}
+
+static int hook_boot_pose(uint32_t *pan, uint32_t *tilt)
+{
+    char buf[48];
+    int n, a, b;
+    errno = 0;
+    n = G.ops.load_file ? G.ops.load_file(G.state_path, buf, sizeof buf - 1) : -1;
+    if (n <= 0)
+        return 0;
+    buf[n] = 0;
+    if (sscanf(buf, "parked %d %d", &a, &b) != 2 || a < 0 || b < 0)
+        return 0;
+    *pan = (uint32_t)a;
+    *tilt = (uint32_t)b;
+    G.park_saved = 1;
+    return 1;
+}
+
 static int run_cmd(int kind, int a, int b, int sp, int quiet)
 {
     static const char *const names[] = { "none", "step", "home", "park", "nudge", "recalibrate", "goto", "velocity", "tilt re-home" };
     static const char *const dirs[] = { " up", " right", " down", " left" };
     int rc = HAL_PTZ_EREFUSED;
     a2k_ptz_info_t i;
+    if (kind != K_PARK && kind != K_VEL)
+        park_record(0); /* the head leaves the park pose (or is recalibrated): recorded BEFORE it moves, so a power cut mid-way never boots as "parked" */
     if (kind != K_VEL)
         publish(kind == K_RECAL ? HAL_PTZ_CALIBRATING : HAL_PTZ_MOVED, 1); /* a session publishes at its first poll (vel_cb): a refused one leaves no trace */
     switch (kind) {
     case K_RECAL: rc = hal_ptz_recalibrate(G.hp); break;
-    case K_REHOME: rc = hal_ptz_tilt_rehome(G.hp); break;
+    case K_REHOME: rc = hal_ptz_tilt_rehome(G.hp); break; /* always the FULL stroke: nothing here proves the slip is small (F13 in rot2k_ptz_cont_unit.c: a shorter walk that stops before the real stop declares a wrong position as proven); hal_ptz_tilt_rehome_bounded is for a caller that knows the slip */
     case K_STEP: rc = hal_ptz_step(G.hp, a); break;
     case K_HOME: rc = hal_ptz_home(G.hp); break;
     case K_PARK: rc = hal_ptz_park(G.hp); break;
@@ -446,6 +485,8 @@ static int run_cmd(int kind, int a, int b, int sp, int quiet)
         G.scene_tries = 0;
         pthread_mutex_unlock(&G.mu);
     }
+    if (kind == K_PARK && rc == HAL_PTZ_OK && hal_ptz_state(G.hp) == HAL_PTZ_PARKED)
+        park_record(1);
     publish(hal_ptz_state(G.hp), 0);
     a2k_ptz_info(&i);
     if ((quiet || kind == K_VEL) && (rc == HAL_PTZ_OK || rc == HAL_PTZ_ECANCEL)) /* a patrol move or a tracker session: only start / stop / interrupt are logged (by the patrol), not every move */
@@ -1260,6 +1301,20 @@ void a2k_ptz_test_set_rehome_timing(unsigned idle_ms, unsigned gap_ms, unsigned 
     G.rh_min_travel = min_travel ? min_travel : A2K_PTZ_REHOME_MIN_TRAVEL;
 }
 
+void a2k_ptz_stall_info(unsigned long *stall_est, unsigned *cal_full, unsigned *cal_short, unsigned *rehomes)
+{
+    pthread_mutex_lock(&G.mu);
+    if (G.hp)
+        hal_ptz_stall_stats(G.hp, stall_est, cal_full, cal_short, rehomes);
+    else {
+        if (stall_est) *stall_est = 0;
+        if (cal_full) *cal_full = 0;
+        if (cal_short) *cal_short = 0;
+        if (rehomes) *rehomes = 0;
+    }
+    pthread_mutex_unlock(&G.mu);
+}
+
 void a2k_ptz_rehome_info(unsigned *runs, unsigned *cancels)
 {
     pthread_mutex_lock(&G.mu);
@@ -1557,6 +1612,7 @@ void a2k_ptz_test_set(const hal_ptz_ops_t *ops, const char *conf_path)
         G.custom_ops = 0;
     }
     snprintf(G.conf_path, sizeof G.conf_path, "%s", conf_path ? conf_path : A2K_PTZ_CONF);
+    snprintf(G.state_path, sizeof G.state_path, "%s.state", G.conf_path);
 }
 
 int a2k_ptz_start(const a2k_ptz_cfg_t *cfg)
@@ -1571,6 +1627,10 @@ int a2k_ptz_start(const a2k_ptz_cfg_t *cfg)
         G.ops = *hal_ptz_linux_ops(d.dev);
     G.ops.log = log_line;
     G.ops.cold_check = hook_cold_check;
+    G.ops.boot_pose = hook_boot_pose;
+    G.park_saved = 0;
+    if (!G.state_path[0])
+        snprintf(G.state_path, sizeof G.state_path, "%s", A2K_PTZ_STATE);
     G.ops.cold_offset = hook_cold_offset;
     G.ops.cold_probe = hook_cold_probe;
     G.ops.scene_drop = hook_drop;

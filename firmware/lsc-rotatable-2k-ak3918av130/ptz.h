@@ -24,6 +24,7 @@
 #include "hal_ptz.h"
 
 #define A2K_PTZ_CONF "/config/akam/ptz.conf"
+#define A2K_PTZ_STATE "/config/akam/ptz.state" /* "parked PAN TILT" while the head was last left parked; "open" otherwise. Written only when the user parks / opens (never periodic) */
 #define A2K_PTZ_SCENE_MS 6000          /* quiet time after a motion / calibration before the candidate view is captured (the AE settles) */
 #define A2K_PTZ_SCENE_CONFIRM_MS 6000  /* from the capture to the write: the view must still match the candidate */
 #define A2K_PTZ_SCENE_GAP_MS 300000    /* at most one reference write per this long within a run; the first one has no wait */
@@ -47,7 +48,7 @@
 #define A2K_PTZ_RECAL_MAX 2             /* drift recalibrations per window (a picture that never matches must not calibrate for ever; the held-back one is retried, never dropped) */
 /* Tilt-only re-home (ptz_tilt_rehome=idle, default): once the head is back HOME, quiet, with nobody in view, and enough was travelled since the last one, tilt goes down into the bottom stop and back up to home: the tilt counter becomes the stop-derived one again, so lost tilt steps never accumulate (RAM only, no flash write). */
 #define A2K_PTZ_REHOME_IDLE_MS 10000    /* quiet (no motion, no person seen, no tracker command) this long at home before the re-home starts */
-#define A2K_PTZ_REHOME_GAP_MIN 30       /* default of ptz_tilt_rehome_gap_min: at most one re-home per this many minutes (an attempt counts, an interrupted one too) */
+#define A2K_PTZ_REHOME_GAP_MIN 360      /* default of ptz_tilt_rehome_gap_min (was 30): at most one automatic re-home per this many minutes (6 h: every re-home wears the tilt, the user asks for one with Recalibrate) (an attempt counts, an interrupted one too) */
 #define A2K_PTZ_REHOME_URGENT_GAP_MS 300000 /* a re-home asked for by a flat-view verdict ignores the normal gap but runs at most once per this long */
 #define A2K_PTZ_DRIFT_PERIODIC_MS 1800000 /* the picture check also runs this long after the last look while the head sits at home, idle (no motor wear) */
 #define A2K_PTZ_VERIFY_TRAVEL 30000    /* (weighted) steps travelled since the picture was last checked beyond which the controller goes home by itself to verify, when nobody is in view */
@@ -227,6 +228,7 @@ void a2k_ptz_test_set_drift_timing(unsigned idle_ms, unsigned frame_ms, unsigned
 void a2k_ptz_test_set_drift_retry(unsigned retry_ms);  /* 0 = A2K_PTZ_DRIFT_RETRY_MS */
 void a2k_ptz_test_set_rehome_timing(unsigned idle_ms, unsigned gap_ms, unsigned min_travel); /* 0 = the defaults; gap in ms (tests) */
 void a2k_ptz_rehome_last(unsigned long *last_s, const char **reason); /* uptime seconds of the last completed re-home (0 and "none" when none yet) and why it ran: gap | flat | none */
+void a2k_ptz_stall_info(unsigned long *stall_est, unsigned *cal_full, unsigned *cal_short, unsigned *rehomes); /* /state: ESTIMATED steps skipped against a stop since start, full / short calibrations, completed tilt re-homes (any pointer may be NULL) */
 void a2k_ptz_rehome_info(unsigned *runs, unsigned *cancels); /* tilt re-homes completed / interrupted in this run (either pointer may be NULL) */
 void a2k_ptz_test_set_verify_timing(unsigned dref_refresh_ms, unsigned periodic_ms, unsigned verify_travel); /* 0 = the defaults */
 void a2k_ptz_test_set_ladder_timing(unsigned urgent_gap_ms, unsigned rehome_retry_ms, unsigned recal_window_ms, unsigned recal_retry_ms); /* 0 = the defaults */

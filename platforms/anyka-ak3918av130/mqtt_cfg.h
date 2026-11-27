@@ -106,6 +106,7 @@ typedef struct {
     char zone[A2K_ZONE_MAX][A2K_ZONE_NAME_MAX + 1];
     int  snapshot;                                /* 1: the JPEG snapshot `image` entity exists (snap.h) */
     int  night;                                   /* 1: the day/night binary_sensor `night` exists (night_ctl.h) */
+    int  motion;                                  /* 1: the motion binary_sensor `motion` and the sensor `motion_direction` exist (A2K_E_MOTION, motion.h) */
     int  sys;                                     /* 1: the diagnostic sensors of hal_sys exist (A2K_E_SYS0..) */
     int  leds;                                    /* 1: the status LED / IR LED selects and the rule texts exist (A2K_E_LED0..), commanded */
     int  ctl;                                     /* 1: the button event, tracking switch, zone texts and tracking-area controls exist (A2K_E_CTL0..) */
@@ -166,11 +167,22 @@ enum { A2K_E_PERSON, A2K_E_SCORE, A2K_E_LAST, A2K_E_VIEWERS, A2K_E_VERSION, A2K_
 #define A2K_VID_N (A2K_VID_STREAMS * A2K_VP_N)
 /* The button gesture device triggers (only with ids->ctl), after the video entities: slot k = A2K_E_BTN0 + k. */
 #define A2K_E_BTN0 (A2K_E_VID0 + A2K_VID_N)
+/* The motion entities (only with ids->motion), after the button triggers: the binary_sensor `motion` (ON while something moves in the picture) and the sensor `motion_direction` (none | left | right | up | down,
+ * in the picture the user sees). */
+#define A2K_E_MOTION (A2K_E_BTN0 + A2K_BTN_TRIG_N)
+#define A2K_E_MOTION_DIR (A2K_E_MOTION + 1)
 
 struct a2k_mqtt_ptz {
     int  valid;                  /* 0 until the first report */
     char state[12];
     int  known, pan, tilt;
+};
+
+/* What the motion detection reported last (motion.h distilled). */
+struct a2k_mqtt_motion {
+    int  valid;                  /* 0 until the first report */
+    int  active;
+    char dir[8];
 };
 
 /* What the day/night engine reported last (night_ctl.h distilled). */
@@ -196,6 +208,7 @@ struct a2k_mqtt_det {
     int64_t last_on_epoch;       /* wall clock seconds of the last OFF->ON transition, 0 unknown */
     char    status[10];          /* "run", "stopped", "failed" */
     struct a2k_mqtt_night dn;    /* the day/night state, kept across detection reports */
+    struct a2k_mqtt_motion mo;   /* the motion state, kept across detection reports */
     int      sys_valid;          /* 0 until the first hal_sys sample; kept across detection reports */
     hal_sys_sample_t sys;
     struct a2k_mqtt_ptz ptz;

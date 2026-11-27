@@ -201,7 +201,7 @@ void a2k_log(const char *fmt, ...) { (void)fmt; }
 static void d_log(const char *line) { (void)line; }
 
 static int claim_home(uint32_t *pan, uint32_t *tilt) { (void)pan; (void)tilt; return 1; } /* the scene check "proves" home: no calibration, no driver motion */
-static const hal_ptz_ops_t OPS = { d_open, d_ioctl, d_sleep, d_load, d_save, d_log, claim_home, NULL, NULL, NULL };
+static const hal_ptz_ops_t OPS = { d_open, d_ioctl, d_sleep, d_load, d_save, d_log, claim_home, NULL, NULL, NULL, NULL };
 
 static hal_ptz_t *mk(void)
 {
@@ -1608,7 +1608,7 @@ static void manual_cases(void)
     c.scene_check = 0;
     M.real = 1;
     {
-        const hal_ptz_ops_t cal_ops = { d_open, d_ioctl, d_sleep, d_load, d_save, d_log, NULL, NULL, NULL, NULL };
+        const hal_ptz_ops_t cal_ops = { d_open, d_ioctl, d_sleep, d_load, d_save, d_log, NULL, NULL, NULL, NULL, NULL };
         a2k_ptz_test_set(&cal_ops, "/nonexistent/ptz.conf");
         CHECK(a2k_ptz_start(&c) == 0, "start with a boot calibration");
         CHECK(wait_state(HAL_PTZ_CALIBRATING, 3000), "calibrating");
@@ -1910,11 +1910,11 @@ static void tilt_account_cases(void)
     CHECK(legs == 150 && ok_legs == 150, "50 VSCAN cycles (up 250 / down 300 / up 50): every leg, counter delta == steps the motor really executed == the mechanical delta");
     CHECK(hal_ptz_pos(p, &pan, &tilt) && (int)tilt == mech_tilt(), "after 50 cycles + tracking reversals the reported tilt equals the mechanical tilt");
     CHECK(M.exec[1] == (long)mech_tilt() - t_start, "the true net tilt travel equals the mechanical displacement");
-    CHECK((long)M.cnt[1] + 299 == (long)mech_tilt(), "the driver counter (shifted frame, offset 299) equals the true tilt: no drift between counted and executed");
+    CHECK((long)M.cnt[1] + 79 == (long)mech_tilt(), "the driver counter (shifted frame, offset 79: the tilt frame starts at the park floor 80) equals the true tilt: no drift between counted and executed");
     CHECK(M.exec_pos[1] > 0 && M.exec_neg[1] > 0, "the run really moved up and down");
     CHECK(M.bad_cmd == 0 && M.nother == 0, "only move / stop / pos requests reached the driver");
     printf("  info - tilt steps up %ld, down %ld; %ld driver move commands in 50 cycles (%.1f per cycle); true - counted = %ld\n", M.exec_pos[1], M.exec_neg[1],
-           (long)M.nmove - cmds0, (double)((long)M.nmove - cmds0) / 50.0, (long)mech_tilt() - ((long)M.cnt[1] + 299));
+           (long)M.nmove - cmds0, (double)((long)M.nmove - cmds0) / 50.0, (long)mech_tilt() - ((long)M.cnt[1] + 79));
 }
 
 
@@ -2082,7 +2082,7 @@ static void rehome_hal_cases(void)
         CHECK(rc == HAL_PTZ_OK, "the re-home succeeds");
         CHECK(hal_ptz_pos(p, &pan, &tilt) && abs((int)tilt - 1300) <= 3 && (int)pan == 1275, "the controller position is home 1275/1300 again");
         CHECK(abs(mech_tilt() - 1299) <= 4, "the head is PHYSICALLY at the stop-derived home (1299 steps above the bottom stop): the slip (including +800 and +1000) is gone");
-        CHECK(labs((long)M.cnt[1] + 299 - (long)mech_tilt()) <= 2, "the driver counter equals the true tilt");
+        CHECK(labs((long)M.cnt[1] + 79 - (long)mech_tilt()) <= 2, "the driver counter equals the true tilt");
         CHECK(mech_pan() == pan0 && M.exec[0] == 0, "the pan never moved (no pan step executed)");
         CHECK(M.min_mech[1] == 0 || M.min_mech[1] == M.lo[1], "the head went down onto the bottom stop");
         CHECK(M.bad_cmd == 0 && M.nother == 0 && !M.running[0] && !M.running[1], "only move / stop / pos / init requests reached the driver, the motor is at rest");

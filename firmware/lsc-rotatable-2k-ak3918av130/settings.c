@@ -22,10 +22,14 @@
 #include "picture.h"
 #include "patrol.h"
 #include "ptz.h"
+#include "scene.h"
+#include "scene_check.h"
 #include "rtsp_session.h"
 #include "speaker.h"
 #include "store.h"
 #include "track_run.h"
+#include "motion.h"
+#include "motion_grid.h"
 #include "video.h"
 #include "api_keys.h"
 #include "ptz_vel.h"
@@ -34,7 +38,7 @@
 #define RO ST_ACC_READ
 #define HM (ST_EXPOSE_HTTP | ST_EXPOSE_MQTT)
 #define MODEL_2K 1u
-#define MAX_ROWS 128 /* raise when the table grows: build_table() logs and the self-check fails on overflow */
+#define MAX_ROWS 144 /* raise when the table grows: build_table() logs and the self-check fails on overflow */
 static const char k_none[1] = { 0 }; /* the empty default of the patrol string rows */
 
 /* ------------------------------------------------------------------ module state */
@@ -490,6 +494,83 @@ static int ttilt_set(const char *key, const char *val, st_apply_t *eff)
     if (!t || a2k_track_set_tilt(t, strcmp(val, "1") == 0 ? 1 : 0) != 0)
         return ST_E_SETTER;
     a2k_log("track: tilt %s (API)", strcmp(val, "1") == 0 ? "follows (pan and tilt)" : "off (pan only)");
+    return 0;
+}
+
+/* ------------------------------------------------------------------ ptz.scene_min (the boot scene check threshold, "0.80".."0.99") */
+static int smin_get(const char *key, char *out, size_t cap)
+{
+    int v = a2k_scene_get_min();
+    char b[16];
+    (void)key;
+    if (v % 10) snprintf(b, sizeof b, "0.%03d", v);
+    else snprintf(b, sizeof b, "0.%02d", v / 10);
+    return puts_(out, cap, b);
+}
+
+static int smin_set(const char *key, const char *val, st_apply_t *eff)
+{
+    int v = sc_parse_min(val);
+    (void)key;
+    (void)eff;
+    if (v < 0 || a2k_scene_set_min_api(v) != 0) return ST_E_SETTER;
+    a2k_log("ptz: scene check threshold %s (API)", val);
+    return 0;
+}
+
+static int smin_check(const struct streg *reg, const char *key, const char *val)
+{
+    int v = sc_parse_min(val);
+    (void)reg;
+    (void)key;
+    return v >= 800 && v <= 990 && strlen(val) == 4 ? 0 : ST_E_CHECK; /* two decimals, like the assistant sends */
+}
+
+/* ------------------------------------------------------------------ track.search (the lost-target search: legacy | motion) */
+static const char *const OPT_TSEARCH[] = { "legacy", "motion", NULL };
+
+static int tsearch_get(const char *key, char *out, size_t cap)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    return puts_(out, cap, !t || a2k_track_get_search(t) == TL_SEARCH_MOTION ? "motion" : "legacy");
+}
+
+static int tsearch_set(const char *key, const char *val, st_apply_t *eff)
+{
+    a2k_track_t *t = a2k_track_run_get();
+    (void)key;
+    (void)eff;
+    if (!t || a2k_track_set_search(t, strcmp(val, "motion") == 0 ? TL_SEARCH_MOTION : TL_SEARCH_LEGACY) != 0)
+        return ST_E_SETTER;
+    a2k_log("track: lost-target search %s (API)", val);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ motion.* (motion.h): enabled / sensitivity settings, active / dir / x / y / source read-only state */
+static int motion_get(const char *key, char *out, size_t cap)
+{
+    struct a2k_motion_info i;
+    a2k_motion_info(&i);
+    if (strcmp(key, "motion.enabled") == 0) return puts_(out, cap, i.enabled ? "1" : "0");
+    if (strcmp(key, "motion.sensitivity") == 0) return put(out, cap, a2k_motion_get_sensitivity());
+    if (strcmp(key, "motion.active") == 0) return puts_(out, cap, i.active ? "1" : "0");
+    if (strcmp(key, "motion.dir") == 0) return puts_(out, cap, mg_dir_name(i.dir));
+    if (strcmp(key, "motion.x") == 0) return put(out, cap, i.x);
+    if (strcmp(key, "motion.y") == 0) return put(out, cap, i.y);
+    return puts_(out, cap, a2k_motion_source_name());
+}
+
+static int motion_set(const char *key, const char *val, st_apply_t *eff)
+{
+    (void)eff;
+    if (strcmp(key, "motion.enabled") == 0) {
+        a2k_motion_set_enabled(strcmp(val, "1") == 0);
+        a2k_log("motion: detection %s (API)", strcmp(val, "1") == 0 ? "on" : "off");
+        return 0;
+    }
+    a2k_motion_set_sensitivity(atoi(val));
+    a2k_log("motion: sensitivity %d (API)", atoi(val));
     return 0;
 }
 
@@ -1000,6 +1081,12 @@ static int st_get(const char *key, char *out, size_t cap)
         if (strcmp(key, "ptz.drift_ref") == 0) return puts_(out, cap, m == 3 ? "both" : m == 2 ? "night" : m == 1 ? "day" : "none");
         return put(out, cap, m ? (long)age : -1);
     }
+    if (strcmp(key, "ptz.stall_steps_est") == 0 || strcmp(key, "ptz.cal_full") == 0 || strcmp(key, "ptz.cal_short") == 0) {
+        unsigned long st;
+        unsigned cf, cs;
+        a2k_ptz_stall_info(&st, &cf, &cs, NULL);
+        return put(out, cap, key[4] == 's' ? (long)st : key[8] == 'f' ? (long)cf : (long)cs);
+    }
     if (strncmp(key, "ptz.rehome_", 11) == 0) {
         unsigned runs, canc;
         unsigned long ls;
@@ -1135,6 +1222,16 @@ static void build_table(void)
     row("track.close_scan_up", ST_INT, 0, 600, NULL, "250", 1, RW, cscan_get, cscan_set);
     row("track.close_scan_down", ST_INT, 0, 600, NULL, "300", 1, RW, cscan_get, cscan_set);
     row("track.lag_ms", ST_INT, -150, 300, NULL, "50", 1, RW, tlag_get, tlag_set);
+    row("track.search", ST_ENUM, 0, 0, OPT_TSEARCH, "motion", 1, RW, tsearch_get, tsearch_set);
+    row("ptz.scene_min", ST_STRING, 4, 5, NULL, "0.85", 1, RW, smin_get, smin_set);
+    g_defs[g_nrows - 1].check = smin_check;
+    row("motion.enabled", ST_BOOL, 0, 0, NULL, "1", 1, RW, motion_get, motion_set);
+    row("motion.sensitivity", ST_INT, 1, 10, NULL, "5", 1, RW, motion_get, motion_set);
+    row("motion.active", ST_BOOL, 0, 0, NULL, "0", 0, RO, motion_get, NULL);
+    row("motion.dir", ST_STRING, 1, 8, NULL, "none", 0, RO, motion_get, NULL);
+    row("motion.x", ST_INT, -1, 100, NULL, "-1", 0, RO, motion_get, NULL);
+    row("motion.y", ST_INT, -1, 100, NULL, "-1", 0, RO, motion_get, NULL);
+    row("motion.source", ST_STRING, 1, 8, NULL, "diff", 0, RO, motion_get, NULL);
     for (c = 0; c < A2K_VID_STREAMS; c++) {
         a2k_vid_t cur;
         a2k_vid_get(c, &cur);
@@ -1172,6 +1269,9 @@ static void build_table(void)
     row("ptz.drift_last", ST_STRING, 1, 16, NULL, "none", 0, RO, st_get, NULL); /* verdict of the last home-view check: none, ok, shift, recal, inconc, skip, skip-flat (flat view where the reference had detail: a re-home / recalibration is scheduled), flat-persist (still flat after a completed re-home: not a slip, nothing more is done) */
     row("ptz.drift_corrections", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL);
     row("ptz.recal_reason", ST_STRING, 1, 71, NULL, "none", 0, RO, st_get, NULL);
+    row("ptz.stall_steps_est", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL); /* ESTIMATED steps the motor skipped against a stop since the app start (calibrations and re-homes: declared steps beyond the believed distance to the stop; a park never counts) */
+    row("ptz.cal_full", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL); /* full-stroke calibrations completed since the app start */
+    row("ptz.cal_short", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL); /* short calibrations (head very likely at home) completed since the app start */
     row("ptz.rehome_count", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL); /* tilt-only re-homes completed in this run */
     row("ptz.rehome_cancel", ST_INT, 0, 2000000000, NULL, "0", 0, RO, st_get, NULL); /* tilt-only re-homes interrupted (a person, a command) in this run */
     row("ptz.rehome_last_s", ST_STRING, 1, 16, NULL, "none", 0, RO, st_get, NULL); /* uptime seconds when the last re-home completed, or none */

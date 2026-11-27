@@ -11,6 +11,8 @@ void a2k_track_run_stop(void);
 void a2k_track_run_start(int enabled, const char *conf_areas, void (*notify)(void), int invert_pan, int invert_tilt, const struct tl_cfg *tune);
 a2k_track_t *a2k_track_run_get(void); /* NULL before start */
 /* The detection thread, once per inference (n = 0: nobody seen). cap_ms: capture time of the frame (0 = unknown). Never blocks. */
+/* The motion grid state (motion.h), called by the detection thread before each a2k_track_feed. Never blocks. */
+void a2k_track_run_set_motion(const struct tl_mot *m);
 void a2k_track_feed(int64_t now_ms, int64_t cap_ms, const struct tl_box *boxes, int n, int fw, int fh);
 
 #endif

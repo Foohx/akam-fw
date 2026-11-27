@@ -73,6 +73,13 @@ unless a line says 2K; the 2K has its own sections below.
 
 ### Added, LSC Rotatable 2K
 
+- **Motion detection and a motion-aware search for a lost person** (host-tested only, **not yet tried on a camera**): a coarse motion grid on the picture (frame differencing of the detection plane, no extra
+  channel, the vendor statistics optional) gives the rows `motion.active`, `motion.dir` (left / right / up / down in the picture you see, also with flip, mirror or ceiling), `motion.x`, `motion.y`,
+  `motion.source`, the settings `motion.enabled` (on) and `motion.sensitivity`, an event, and the Home Assistant entities **Motion** and **Motion direction**. The head's own moves, orientation changes, day / night
+  switches and stream restarts never count. New `track.search motion` (the default; `legacy` stays selectable through the API, `akam.conf` and the assistant): when the person is lost, one short look toward where they went or toward new motion, a passer-by gets one
+  look then goes home after 3 s, a 30 s cooldown, no scans and no sweeps, never near a soft limit; in the bench the motor travel of a pass-by drops by 77 to 91 % at the same tracking score, at the cost of not
+  searching for someone who stands outside the view. The 1080p has no motion detection yet (parity item).
+- **2K boot scene check: threshold 0.85 and a new setting** (host-tested only, **not yet tried on a camera**): the default `ptz_scene_min` goes from 0.90 to 0.85 (a real boot with an unmoved head scored 0.899; the recorded negatives score under 0.5 and a head shifted by 3 px is refused whatever the score). The new API setting `ptz.scene_min` (0.80 to 0.99, an option of the assistant, saved only when you change it, used at the next boot check) overrides the `ptz_scene_min` key of `akam.conf` once set. The assistant also lists `track.search`, `motion.enabled` and `motion.sensitivity`. [Details](docs/porting/lsc-rotatable-2k/tracking.md#motion-detection-and-the-motion-aware-search)
 - **Lower video latency on `/stream0`** (camera side validated on 2026-11-23: frame age at send avg about 5 ms, max about 20 ms; glass to glass not yet measured with a stopwatch; measured before: about 2 s glass to glass at 2304x1296, 10 fps, 3000 kbit/s on a weak Wi-Fi): a joining client starts only
   on a keyframe younger than 300 ms, a client that falls behind skips to the newest keyframe instead of playing the backlog, the TCP send buffer is 64 KiB (was 256 KiB; also on the 1080p), and the
   pacing drops to the next keyframe when a backlog stands for more than 300 ms plus the keyframe's own time (also on the 1080p). The app log shows every 10 s per client the frame age at send
@@ -123,6 +130,8 @@ All features, with their default and how well each one is tested: [features](doc
   lost). Not yet validated on a camera.
 - 2K fix (2026-11-24): `img.wb manual` is refused on the 2K (the setting accepts `conf` only): it switched the white balance to the camera's own manual gains and gave a strong blue
   picture, and there is no safe way to freeze the current automatic gains ([evidence](docs/porting/lsc-rotatable-2k/isp-controls.md)). The 1080p keeps `conf` and `manual`.
+
+- **2K long press now really closes the camera, and the motors are spared** (host-tested only, **not yet tried on the camera**): the park pose is tilt 80, 80 steps above the bottom stop (was 300, the soft minimum: the lens still looked out), below the soft range for the park only (the driver frame reaches down to it, every other motion keeps the soft range); a park never presses against the stop. The old `ptz_park 1275:300` still works. The boot does not calibrate when the camera was last left closed (a record written only when you close or open it); the automatic tilt re-home runs at most every 6 hours (`ptz_tilt_rehome_gap_min` default 360, was 30); `/state` rows `ptz.stall_steps_est`, `ptz.cal_full`, `ptz.cal_short` count what the motor skipped. [Details](docs/porting/lsc-rotatable-2k/ptz-findings.md)
 
 ### Known limits
 

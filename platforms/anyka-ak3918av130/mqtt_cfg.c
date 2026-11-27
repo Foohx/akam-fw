@@ -967,6 +967,24 @@ static int discovery_extra(const a2k_mqtt_ids_t *ids, int i, char *topic, size_t
         jb_device(&j, ids);
         return j.bad ? -1 : (int)j.n;
     }
+    if ((i == A2K_E_MOTION || i == A2K_E_MOTION_DIR) && ids->motion) {
+        int dir = i == A2K_E_MOTION_DIR;
+        if (snprintf(topic, tcap, "%s/%s/%s/%s/config", ids->prefix, dir ? "sensor" : "binary_sensor", ids->node, dir ? "motion_direction" : "motion") >= (int)tcap)
+            return -1;
+        payload[0] = '\0';
+        snprintf(uid, sizeof uid, "%s_%s", ids->node, dir ? "motion_direction" : "motion");
+        jb_raw(&j, "{\"name\":");
+        jb_str(&j, dir ? "Motion direction" : "Motion");
+        jb_kv(&j, "unique_id", uid);
+        snprintf(t, sizeof t, "%s/status", ids->base);
+        jb_kv(&j, "availability_topic", t);
+        snprintf(t, sizeof t, "%s/%s/state", ids->base, dir ? "motion_direction" : "motion");
+        jb_kv(&j, "state_topic", t);
+        if (!dir) jb_kv(&j, "device_class", "motion");
+        else jb_kv(&j, "icon", "mdi:arrow-all");
+        jb_device(&j, ids);
+        return j.bad ? -1 : (int)j.n;
+    }
     if (i == A2K_E_NIGHT && ids->night) {
         if (snprintf(topic, tcap, "%s/binary_sensor/%s/night/config", ids->prefix, ids->node) >= (int)tcap)
             return -1;
@@ -1067,6 +1085,12 @@ int a2k_mqtt_state(const a2k_mqtt_ids_t *ids, int i, const struct a2k_mqtt_det *
             return 0;
         snprintf(val, vcap, "%s", (d->zmask >> z) & 1u ? "ON" : "OFF");
         return snprintf(topic, tcap, "%s/person_%s/state", ids->base, ids->zone[z]) >= (int)tcap ? 0 : 1;
+    }
+    if (i == A2K_E_MOTION || i == A2K_E_MOTION_DIR) { /* ON = something moves; the direction in the picture */
+        if (!ids->motion || !d->mo.valid)
+            return 0;
+        snprintf(val, vcap, "%s", i == A2K_E_MOTION ? (d->mo.active ? "ON" : "OFF") : d->mo.dir);
+        return snprintf(topic, tcap, "%s/%s/state", ids->base, i == A2K_E_MOTION ? "motion" : "motion_direction") >= (int)tcap ? 0 : 1;
     }
     if (i == A2K_E_NIGHT) { /* ON = night mode */
         if (!ids->night || !d->dn.valid)

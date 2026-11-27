@@ -170,6 +170,8 @@ Rotatable 2K settings (through its signed API, port 8092, key from key-2k; the s
     video [show | stream 0|1 | bitrate N | maxbitrate N | fps N | gop N | minqp N | maxqp N | rc vbr|cbr|avbr]
     hostname [NAME]    (no NAME: shows it)
     track [show | on|off | return stay|home | delay S | tilt on|off | lag MS]
+    Also through settings set: track.search motion|legacy (default motion: the lost-person search), ptz.scene_min 0.80..0.99
+    (default 0.85: the boot scene check), motion.enabled on|off, motion.sensitivity 1..10.
     wifi [show | country CC|none | band 2.4|5]     (asks first, default No; --yes answers)
     settings [list | get KEY|PREFIX... | set KEY VALUE...]   the catalogue keys only, one PATCH for all
                      Values are checked like the camera does; its own refusal is shown. Nothing is created

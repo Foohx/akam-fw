@@ -15,6 +15,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "motion_grid.h"
 #include "store.h"
 #include "track.h"
 
@@ -257,6 +258,8 @@ static int render(const person_t *pp, double pan, double tilt, struct tl_box *b,
 }
 
 
+static int g_search;               /* TRACK_SIM_SEARCH=legacy: the legacy lost-target search (search_mode); default the motion-aware one (the 2K default since 2026-11-26) */
+static int g_home;                 /* the scenario goes home after a loss (return_home 1, the 30 s delay of the defaults) */
 static void cfg_for(int mode, struct tl_cfg *c)
 {
     (void)mode;
@@ -266,7 +269,9 @@ static void cfg_for(int mode, struct tl_cfg *c)
     c->invert_tilt = 0;
     c->tilt_enable = 1;
     c->lead_pct = 70;
-    c->return_home = 0;
+    c->return_home = g_home;
+    c->search_mode = g_search ? TL_SEARCH_MOTION : TL_SEARCH_LEGACY;
+    if (getenv("TRACK_SIM_REACQ")) c->reacq_s = atoi(getenv("TRACK_SIM_REACQ"));
 }
 static a2k_track_ops_t OPS;
 
@@ -327,6 +332,26 @@ static void sb_leave(void)  /* walks out of the frame to the right, gone 10 s, c
     wp_add(14000, -4.0, 2.2, 1.7, 0); wp_add(14001, -4.0, 2.2, 1.7, 1); wp_add(17000, -1.0, 2.2, 1.7, 1); wp_add(22000, -1.0, 2.2, 1.7, 1);
     wp_add(24000, 2.0, 4.0, 1.7, 1); wp_add(24001, 2.0, 4.0, 1.7, 0); wp_add(34000, 0.5, 3.5, 1.7, 0); wp_add(34001, 0.5, 3.5, 1.7, 1); wp_add(40000, 0.5, 3.5, 1.7, 1);
 }
+/* A short pass-by: crosses the view from one side to the other at 1.2 m/s (about 4 s in view), then nobody. 45 s in all, the head goes home after the loss. */
+static void sb_pass(void)
+{
+    wp_add(0, -4.0, 3.0, 1.7, 0); wp_add(2000, -4.0, 3.0, 1.7, 1); wp_add(2000 + 8000 * 1000 / 1200 + 1, 4.0, 3.0, 1.7, 1); wp_add(2000 + 8000 * 1000 / 1200 + 2, 4.0, 3.0, 1.7, 0); wp_add(45000, 4.0, 3.0, 1.7, 0);
+}
+static void sb_pass_rl(void)
+{
+    wp_add(0, 4.0, 3.0, 1.7, 0); wp_add(2000, 4.0, 3.0, 1.7, 1); wp_add(2000 + 8000 * 1000 / 1200 + 1, -4.0, 3.0, 1.7, 1); wp_add(2000 + 8000 * 1000 / 1200 + 2, -4.0, 3.0, 1.7, 0); wp_add(45000, -4.0, 3.0, 1.7, 0);
+}
+/* Leaves the frame to the right, is away for 6 s, comes back from the right and stays 10 s. */
+static void sb_leave_back(void)
+{
+    wp_add(0, 0, 3.0, 1.7, 1); wp_add(1000, 0, 3.0, 1.7, 1); wp_add(4500, 3.6, 3.0, 1.7, 1); wp_add(4501, 3.6, 3.0, 1.7, 0);
+    wp_add(10500, 3.6, 3.0, 1.7, 0); wp_add(10501, 3.6, 3.0, 1.7, 1); wp_add(13000, 0.5, 3.0, 1.7, 1); wp_add(25000, 0.5, 3.0, 1.7, 1); wp_add(25001, 0.5, 3.0, 1.7, 0); wp_add(45000, 0.5, 3.0, 1.7, 0);
+}
+/* Walks 2 s, stops inside the view and the detector loses him for 15 s (still, behind something: no motion either), then he is seen again. */
+static void sb_hide_still(void)
+{
+    wp_add(0, 0, 3.0, 1.7, 1); wp_add(1000, 0, 3.0, 1.7, 1); wp_add(3000, 1.0, 3.0, 1.7, 1); wp_add(3001, 1.0, 3.0, 1.7, 0); wp_add(18000, 1.0, 3.0, 1.7, 0); wp_add(18001, 1.0, 3.0, 1.7, 1); wp_add(30000, 1.0, 3.0, 1.7, 1);
+}
 static unsigned g_ws;
 static double wr(void) { g_ws = g_ws * 1103515245u + 12345u; return ((g_ws >> 16) & 0x7fff) / 32767.0; }
 static void sb_long(void)   /* 10 minutes: pauses of 3..20 s, walks of 0.4..1.5 m/s with reversals, depths 1.5..4.5 m, 6 departures (8..25 s) */
@@ -354,6 +379,7 @@ static const sc_t SCS[] = {
     { "walk_z0.8_slow", 60000, sb_walk }, { "walk_z0.8_fast", 60000, sb_walk }, { "walk_z2_slow", 60000, sb_walk }, { "walk_z2_fast", 60000, sb_walk },
     { "walk_z5_slow", 60000, sb_walk }, { "walk_z5_fast", 60000, sb_walk }, { "stand_z3_60s", 60000, sb_stand }, { "crouch_z1.2", 13000, sb_crouch }, { "sit_stand_z1.0", 20000, sb_sit },
     { "leave_return", 40000, sb_leave }, { "long_10min", 600000, sb_long },
+    { "pass_lr", 45000, sb_pass }, { "pass_rl", 45000, sb_pass_rl }, { "leave_back", 45000, sb_leave_back }, { "hide_still", 30000, sb_hide_still },
 };
 #define NSC ((int)(sizeof SCS / sizeof SCS[0]))
 static void params_for(const char *n)
@@ -363,12 +389,45 @@ static void params_for(const char *n)
     if (strstr(n, "z2")) { g_z = 2.0; g_a = 1.2; }
     if (strstr(n, "z5")) { g_z = 5.0; g_a = 3.0; }
     g_v = strstr(n, "fast") ? 1.5 : 0.6;
+    g_home = !strcmp(n, "pass_lr") || !strcmp(n, "pass_rl") || !strcmp(n, "leave_back") || !strcmp(n, "hide_still");
 }
 
 /* ------------------------------------------------------------------ one run and its metrics */
 static int cmp_i(const void *a, const void *b) { return *(const int *)a - *(const int *)b; }
 static int g_err[MAXT / DT + 8];
 static signed char g_vs[MAXT / DT + 8];
+/* The synthetic motion grid: the person's box (at the pose of the frame) marks its cells when he MOVES (the waypoint speed over the last 200 ms), a standing person marks nothing; the head moving
+ * masks it (the whole picture shifts), as the real wiring does. Fed to the REAL grid logic (motion_grid.c) and given to the policy. */
+static mg_t g_mg;
+static double g_last_pan = -1, g_last_tilt = -1;
+static void mot_feed(a2k_track_t *t, long T)
+{
+    uint8_t act[MG_N];
+    struct tl_mot mo;
+    const struct mg_state *st;
+    person_t a[2], b[2];
+    struct tl_box bx;
+    int cut = 0, cx, cy;
+    double exv = 0, v;
+    memset(act, 0, sizeof act);
+    if (g_last_pan >= 0 && (fabs(P.pan - g_last_pan) > 0.4 || fabs(P.tilt - g_last_tilt) > 0.4)) mg_mask(&g_mg, T, MG_PTZ_AFTER_MS);
+    g_last_pan = P.pan; g_last_tilt = P.tilt;
+    who_wp(T, a); who_wp(T - 200, b);
+    v = hypot(a[0].x - b[0].x, a[0].z - b[0].z) / 0.2;
+    if (a[0].on && b[0].on && v > 0.15 && render(&a[0], P.pan, P.tilt, &bx, &cut, &exv)) {
+        for (cy = 0; cy < MG_H; cy++) for (cx = 0; cx < MG_W; cx++) {
+            int px = cx * FW / MG_W + FW / MG_W / 2, py = cy * FH / MG_H + FH / MG_H / 2;
+            if (px >= bx.x1 && px <= bx.x2 && py >= bx.y1 && py <= bx.y2) act[cy * MG_W + cx] = 255;
+        }
+    }
+    mg_feed_cells(&g_mg, T, act);
+    st = mg_get(&g_mg);
+    memset(&mo, 0, sizeof mo);
+    mo.valid = st->valid; mo.masked = st->masked; mo.active = st->active; mo.cx = st->cx; mo.cy = st->cy;
+    mo.last_dir = st->last_dir; mo.last_active_ms = st->last_active_ms; mo.dir_ms = st->dir_ms;
+    tl_set_motion(&t->tl, &mo);
+}
+
 static void run(const sc_t *sc)
 {
     a2k_track_t t;
@@ -383,6 +442,8 @@ static void run(const sc_t *sc)
     params_for(sc->name);
     sc->build();
     p_reset(M_CONT);
+    mg_init(&g_mg, NULL);
+    g_last_pan = -1;
     OPS = (a2k_track_ops_t){ f_info, f_range, f_nudge, f_home, f_priv, NULL, NULL, NULL, f_vel, f_pos_at, NULL, NULL, NULL, NULL, NULL };
     a2k_track_init(&t, &OPS, NULL);
     cfg_for(M_CONT, &c);
@@ -411,6 +472,7 @@ static void run(const sc_t *sc)
                 if (b.y2 > FH - 1) b.y2 = FH - 1;
                 if (b.x2 - b.x1 >= 6 && b.y2 - b.y1 >= 10) bx[nb++] = b;
             }
+            mot_feed(&t, T);
             a2k_track_tick_ts(&t, T, cap, bx, nb, FW, FH);
         }
     }
@@ -424,6 +486,7 @@ static void run(const sc_t *sc)
         if (P.hp[i] > pmax) pmax = P.hp[i];
         if (P.ht[i] < tmin) tmin = P.ht[i];
         if (P.ht[i] > tmax) tmax = P.ht[i];
+        if (getenv("TRACK_SIM_PAN") && T % 500 == 0) fprintf(stderr, "%ld on=%d pan=%.0f tilt=%.0f\n", T, pp[0].on, P.hp[i], P.ht[i]);
         if (!pp[0].on) continue;   /* nobody there: no error */
         ex = FHZ * tan(atan2(pp[0].x, pp[0].z) - yaw);
         a = fabs(ex);
@@ -480,15 +543,16 @@ static void run(const sc_t *sc)
         ra_sum += (double)T; ra_n++; if (T > ra_max) ra_max = (int)T;
     }
     qsort(g_err, (size_t)ne, sizeof g_err[0], cmp_i);
-    printf("%s lock=%.1f frame=%.1f err_mean=%.1f err_p95=%d rev_lat_mean=%.0f rev_lat_max=%d still_travel=%.0f flips=%d cmds=%d starts=%d reacq_mean=%.0f reacq_max=%d lost_ms=%ld pan_range=%.0f tilt_range=%.0f tilt_travel=%.0f err_drift=%.1f\n",
+    printf("%s lock=%.1f frame=%.1f err_mean=%.1f err_p95=%d rev_lat_mean=%.0f rev_lat_max=%d still_travel=%.0f flips=%d cmds=%d starts=%d reacq_mean=%.0f reacq_max=%d lost_ms=%ld pan_range=%.0f tilt_range=%.0f tilt_travel=%.0f err_drift=%.1f travel=%.0f\n",
            sc->name, ne ? 100.0 * nloc / ne : 0, ne ? 100.0 * nfr / ne : 0, ne ? esum / ne : 0, ne ? g_err[(long)ne * 95 / 100] : 0,
            rl_n ? rl_sum / rl_n : -1.0, rl_n ? rl_max : -1, still_travel, flips, P.vels, P.starts, ra_n ? ra_sum / ra_n : -1.0, ra_n ? ra_max : -1, lost_ms,
-           pmax - pmin, tmax - tmin, P.tilt_travel, (n1 && n3) ? e3 / n3 - e1 / n1 : 0.0);
+           pmax - pmin, tmax - tmin, P.tilt_travel, (n1 && n3) ? e3 / n3 - e1 / n1 : 0.0, P.pan_travel + P.tilt_travel);
     a2k_track_destroy(&t);
 }
 
 int main(int argc, char **argv)
 {
+    g_search = !(getenv("TRACK_SIM_SEARCH") && !strcmp(getenv("TRACK_SIM_SEARCH"), "legacy"));
     for (int k = 0; k < NSC; k++) {
         int want = argc < 2;
         for (int a = 1; a < argc; a++) if (!strcmp(argv[a], SCS[k].name)) want = 1;

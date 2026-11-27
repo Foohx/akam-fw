@@ -20,6 +20,7 @@ static sc_thumb_t g_th;
 static unsigned g_seq;
 static int64_t g_th_ms = -1;
 static volatile int g_min = SC_MIN_DEFAULT;
+static volatile int g_min_api; /* 1 once the API row ptz.scene_min was set: it overrides the akam.conf key */
 static char g_path[160] = A2K_PTZ_SCENE;
 static char g_dbg_dir[180] = "/tmp/akam_scene_dbg"; /* diagnosis dumps: RAM only, always on (about 10 KB, overwritten, at most 6 files) */
 static unsigned g_probe_ms = 0;
@@ -103,7 +104,21 @@ static int verdict_stale(int v)
 
 void a2k_scene_set_drift_ref(int on) { g_dm_on = on ? 1 : 0; }
 
-void a2k_scene_set_min(int permille) { g_min = permille >= SC_MIN_LOWEST && permille <= 1000 ? permille : SC_MIN_DEFAULT; }
+void a2k_scene_set_min(int permille)
+{
+    if (g_min_api) return; /* the API row (saved settings, loaded after this call at boot) wins over the akam.conf key */
+    g_min = permille >= SC_MIN_LOWEST && permille <= 1000 ? permille : SC_MIN_DEFAULT;
+}
+
+int a2k_scene_set_min_api(int permille)
+{
+    if (permille < SC_MIN_LOWEST || permille > 990) return -1;
+    g_min = permille;
+    g_min_api = 1;
+    return 0;
+}
+
+int a2k_scene_get_min(void) { return g_min; }
 
 void a2k_scene_feed(const uint8_t *y, unsigned w, unsigned h, unsigned stride)
 {
